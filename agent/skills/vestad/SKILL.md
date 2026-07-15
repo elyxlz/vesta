@@ -20,6 +20,17 @@ Every call authenticates with the agent's own token:
 Restarting or stopping this agent is not a curl: use the `restart_vesta` / `stop_vesta`
 tools, which call vestad's self-scoped lifecycle endpoints.
 
+## Health check (is vestad up?)
+
+Run `~/agent/skills/vestad/scripts/health` (add `-q` for exit-code only). It prints
+`UP` / `DOWN <code>`. Use this instead of hand-typing a curl: vestad is HTTPS with a
+self-signed cert and the path is `/agents/$AGENT_NAME/services`, so a plain
+`http://127.0.0.1:$VESTAD_PORT/services` returns `000` unconditionally and mimics an
+outage (that misread cost a 9-hour phantom "vestad down", 2026-07-14). Before ever
+concluding vestad is down, run the helper; a `000` from a hand-typed http call is your
+bug, not an outage. The local config/provider API is a separate thing: plain http on
+`$WS_PORT`, not this.
+
 ## Services (get a port, keep it alive)
 
 A service is a port inside the container that vestad reverse-proxies, optionally public
