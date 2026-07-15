@@ -5,6 +5,7 @@ import PagerView, {
   type PagerViewOnPageScrollEvent,
   type PagerViewOnPageSelectedEvent,
 } from "react-native-pager-view";
+import * as Haptics from "expo-haptics";
 import Animated, {
   Easing,
   cancelAnimation,
@@ -64,6 +65,7 @@ function AgentPages() {
   const pageProgress = useSharedValue(0);
   const tabVisibility = useSharedValue(0);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hapticPageKey = useRef<AgentPageKey>("chat");
   const [activePageKey, setActivePageKey] = useState<AgentPageKey>("chat");
   const [tabsInteractive, setTabsInteractive] = useState(false);
   const pages = useMemo(
@@ -143,17 +145,28 @@ function AgentPages() {
       const position = event.nativeEvent.position;
       const page = pages[position];
       pageProgress.set(position);
-      if (page) setActivePageKey(page);
+      if (page) {
+        setActivePageKey(page);
+        if (page !== hapticPageKey.current) {
+          hapticPageKey.current = page;
+          void Haptics.selectionAsync().catch(() => undefined);
+        }
+      }
     },
     [pageProgress, pages],
   );
 
   const selectPage = useCallback(
     (page: number) => {
+      const target = pages[page];
+      if (target && target !== hapticPageKey.current) {
+        hapticPageKey.current = target;
+        void Haptics.selectionAsync().catch(() => undefined);
+      }
       showTabs();
       pager.current?.setPage(page);
     },
-    [showTabs],
+    [pages, showTabs],
   );
 
   return (
