@@ -251,57 +251,7 @@ def test_format_for_display_strips_timestamp_microseconds():
     assert 'timestamp="2025-01-01T12:34:56+00:00"' in display
 
 
-@pytest.mark.parametrize(
-    "payload,expected_substr",
-    [
-        (
-            {"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "message", "contact_name": "Alice", "message": "hi"},
-            "Reply using the `whatsapp` skill",
-        ),
-        (
-            {
-                "timestamp": "2025-01-01T00:00:00",
-                "source": "whatsapp",
-                "type": "message",
-                "chat_name": "Group",
-                "sender": "bob",
-                "message": "hi",
-            },
-            "Reply using the `whatsapp` skill",
-        ),
-        (
-            {"timestamp": "2025-01-01T00:00:00", "source": "telegram", "type": "message", "contact_name": "Carol", "message": "hi"},
-            "Reply using the `telegram` skill",
-        ),
-        (
-            {"timestamp": "2025-01-01T00:00:00", "source": "app-chat", "type": "message", "message": "hi"},
-            "Reply using the `app-chat` skill",
-        ),
-    ],
-    ids=["whatsapp-direct", "whatsapp-group", "telegram-direct", "app-chat"],
-)
-def test_batch_includes_reply_hint(payload, expected_substr):
-    notif = Notification.model_validate(payload)
-    formatted = format_notification_batch([notif])
-    assert "Reply using" in formatted
-    assert expected_substr in formatted
-
-
-def test_batch_no_hint_for_unknown_source():
-    notif = Notification.model_validate({"timestamp": "2025-01-01T00:00:00", "source": "email", "type": "message", "sender": "alice"})
-    formatted = format_notification_batch([notif])
-    assert "Reply using" not in formatted
-
-
-def test_batch_no_hint_for_non_message_type():
-    notif = Notification.model_validate(
-        {"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "reaction", "contact_name": "Alice", "emoji": "👍"}
-    )
-    formatted = format_notification_batch([notif])
-    assert "Reply using" not in formatted
-
-
-def test_group_message_flagged_maybe_not_for_you():
+def test_batch_reply_guidance_appears_only_in_producer_reply_hint():
     notif = Notification.model_validate(
         {
             "timestamp": "2025-01-01T00:00:00",
@@ -310,19 +260,14 @@ def test_group_message_flagged_maybe_not_for_you():
             "chat_name": "Bride squad",
             "sender": "bob",
             "message": "hi",
+            "reply_hint": "reply with `whatsapp send`; this is a group chat, so it may not be expecting a reply from you",
         }
     )
     formatted = format_notification_batch([notif])
-    assert "from a group chat" in formatted
-    assert "chip in or stay out" in formatted
-
-
-def test_direct_message_not_flagged_as_group():
-    notif = Notification.model_validate(
-        {"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "message", "contact_name": "Alice", "message": "hi"}
-    )
-    formatted = format_notification_batch([notif])
-    assert "from a group chat" not in formatted
+    assert formatted.count("group chat") == 1
+    assert formatted.count("whatsapp send") == 1
+    assert "[Reply using" not in formatted
+    assert "chip in or stay out" not in formatted
 
 
 # --- process_batch ---

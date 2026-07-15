@@ -114,33 +114,12 @@ async def trash_notification_files(notifications: list[Notification], *, trash_d
     _trash_paths([n.file_path for n in notifications if n.file_path], trash_dir)
 
 
-_REPLY_SKILLS = frozenset({"app-chat", "whatsapp", "telegram"})
-
-
-def _format_one(notif: Notification) -> str:
-    """Embed hints inside the <channel> element so the model sees them as one unit.
-
-    A reply hint points the model at the originating channel's reply skill instead of copying its CLI
-    syntax. A group-chat message (a `chat_name` attribute is present) also gets a note that it may not
-    be addressed to the agent, so the model decides whether to engage rather than always replying."""
-    body = notif.format_for_display()
-    if notif.type != "message" or notif.source not in _REPLY_SKILLS:
-        return body
-    extras = notif.model_extra or {}
-    hints = []
-    if "chat_name" in extras and extras["chat_name"]:
-        hints.append("[This message is from a group chat and may not be for you; decide whether to chip in or stay out]")
-    hints.append(f"[Reply using the `{notif.source}` skill]")
-    hint = "\n" + "\n".join(hints)
-    return body.replace("</channel>", f"{hint}\n</channel>")
-
-
 def format_notification_batch(notifications: list[Notification]) -> str:
     """Join the batch as newline-separated <channel> elements, matching how Claude Code delivers
     several native channel events together on one turn. No wrapper element: each <channel> is
-    self-contained. Any read-time guidance is carried per-notification by the producer (e.g. the
-    `reply_hint` attribute), not appended as a global suffix here."""
-    return "\n".join(_format_one(n) for n in notifications)
+    self-contained. All read-time guidance (the reply command, the group-chat caveat) is the
+    producer's, carried in its `reply_hint` attribute; core injects nothing."""
+    return "\n".join(n.format_for_display() for n in notifications)
 
 
 async def process_batch(

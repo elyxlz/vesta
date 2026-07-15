@@ -126,7 +126,7 @@ def _write_app_chat_notification(config: VestaConfig, text: str) -> None:
             "type": "message",
             "message": text,
             "interrupt": True,
-            "reply_hint": "reply with a short message, and think about how you can best show your personality",
+            "reply_hint": "reply with `app-chat send`, and think about how you can best show your personality",
         }
     )
     path = directory / f"{time.time_ns()}-app-chat-message.json"
