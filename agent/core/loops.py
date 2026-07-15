@@ -223,14 +223,15 @@ async def _run_messages_with_preempts(
     mid-turn is pre-sent via send_preempt and the running turn ends CLI-side on its own — this
     loop never aborts anything."""
 
-    async def run_one(text: str, *, user: bool, pre_sent: bool) -> None:
+    async def run_one(text: str, *, user: bool, pre_sent: bool, is_notification: bool) -> None:
         try:
             if user:
                 logger.user(text)
                 state.event_bus.emit({"type": "user", "text": text})
             else:
                 preview = text[:1000] + "..." if len(text) > 1000 else text
-                logger.system(preview.replace("\n", " "))
+                log = logger.notification if is_notification else logger.system
+                log(preview.replace("\n", " "))
             state.event_bus.set_state("thinking")
             await process_message(text, state=state, config=config, is_user=user, pre_sent=pre_sent)
         except asyncio.CancelledError:
@@ -287,7 +288,14 @@ async def _run_messages_with_preempts(
             state.noninterruptible_turn_active = not current.interruptible
             state.in_flight_notification_paths = current.file_paths
             state.query_not_delivered = False
-            process_task = asyncio.create_task(run_one(current.text, user=current.is_user, pre_sent=current.pre_sent))
+            process_task = asyncio.create_task(
+                run_one(
+                    current.text,
+                    user=current.is_user,
+                    pre_sent=current.pre_sent,
+                    is_notification=current.interruptible and not current.is_user,
+                )
+            )
 
             while not process_task.done():
                 queue_task: asyncio.Task[vm.QueuedTurn] = asyncio.create_task(queue.get())

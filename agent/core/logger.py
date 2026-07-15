@@ -10,6 +10,12 @@ from rich.console import Console
 from rich.logging import RichHandler
 
 console = Console(force_terminal=True)
+_file_console = Console(
+    force_terminal=True,
+    color_system="standard",
+    no_color=False,
+    highlight=False,
+)
 
 _MARKUP_RE = re.compile(r"\[/?[a-z_]+\]")
 
@@ -60,6 +66,13 @@ def _strip_markup(msg: str) -> str:
     return _MARKUP_RE.sub("", msg)
 
 
+def _render_markup(msg: str) -> str:
+    """Render the logger's Rich markup to portable ANSI without wrapping."""
+    with _file_console.capture() as capture:
+        _file_console.print(msg, markup=True, highlight=False, soft_wrap=True, end="")
+    return capture.get()
+
+
 def _log(msg: str, *, level: int = logging.INFO) -> None:
     record = _logger.makeRecord(_logger.name, level, "", 0, msg, (), None)
     _console_handler.emit(record)
@@ -69,8 +82,8 @@ def _log(msg: str, *, level: int = logging.INFO) -> None:
         pass
 
     if _file_handler:
-        clean_record = _logger.makeRecord(_logger.name, level, "", 0, _strip_markup(msg), (), None)
-        _file_handler.emit(clean_record)
+        colored_record = _logger.makeRecord(_logger.name, level, "", 0, _render_markup(msg), (), None)
+        _file_handler.emit(colored_record)
 
 
 def _system_phase(phase: str, msg: tp.Any, *, level: int = logging.INFO) -> None:
@@ -83,6 +96,10 @@ def _agent_phase(phase: str, msg: tp.Any, *, level: int = logging.INFO) -> None:
 
 def _user_phase(phase: str, msg: tp.Any, *, level: int = logging.INFO) -> None:
     _log(f"> [white][USER][/white] - [dim][{phase}][/dim] {msg}", level=level)
+
+
+def _notification_phase(phase: str, msg: tp.Any, *, level: int = logging.INFO) -> None:
+    _log(f"* [green][NOTIFICATION][/green] - [dim][{phase}][/dim] {msg}", level=level)
 
 
 # Category loggers
@@ -131,6 +148,10 @@ def tool(msg: tp.Any) -> None:
 
 def system(msg: tp.Any) -> None:
     _system_phase("MESSAGE", msg)
+
+
+def notification(msg: tp.Any) -> None:
+    _notification_phase("MESSAGE", msg)
 
 
 def subagent(msg: tp.Any) -> None:

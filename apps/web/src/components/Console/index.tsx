@@ -8,7 +8,7 @@ import {
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useLayout } from "@/stores/use-layout";
 import { streamLogs, stopLogs } from "@/api";
-import { stripAnsi } from "@/lib/ansi";
+import { renderAnsiHtml } from "@/lib/ansi";
 import { linkify } from "@/lib/linkify";
 import { logStreamAction, isAgentContainerUp } from "@/lib/log-stream-policy";
 import type { AgentStatus } from "@/lib/types";
@@ -33,75 +33,8 @@ const INITIAL_FILL_QUIESCE_MS = 150;
 // ...or this long has passed regardless, so a perpetually-chatty agent still renders.
 const INITIAL_FILL_MAX_MS = 1500;
 
-const LOG_LEVEL_TAGS = new Set([
-  "DEBUG",
-  "INFO",
-  "WARNING",
-  "ERROR",
-  "CRITICAL",
-]);
-const FAMILY_TAGS = new Set(["AGENT", "SYSTEM", "USER", "EVENT"]);
-
-const FAMILY_COLOR_CLASS: Record<string, string> = {
-  AGENT: "text-fuchsia-300/90",
-  SYSTEM: "text-green-300/90",
-  USER: "text-white/90",
-  EVENT: "text-yellow-300/90",
-};
-
-const SUBFAMILY_COLOR_CLASS: Record<string, Record<string, string>> = {
-  AGENT: {
-    ASSISTANT: "text-fuchsia-200/90",
-    THINKING: "text-fuchsia-300/90",
-    "TOOL CALL": "text-fuchsia-400/90",
-    SUBAGENT: "text-fuchsia-500/90",
-  },
-  SYSTEM: {
-    INIT: "text-green-200/90",
-    STARTUP: "text-green-300/90",
-    SHUTDOWN: "text-green-500/90",
-    CLIENT: "text-green-400/90",
-    DREAMER: "text-green-200/90",
-    INTERRUPT: "text-green-500/90",
-    PROACTIVE: "text-green-200/90",
-    MESSAGE: "text-green-300/90",
-    SDK: "text-green-500/90",
-    USAGE: "text-green-400/90",
-  },
-  USER: {
-    MESSAGE: "text-white/90",
-  },
-  EVENT: {
-    NOTIFICATION: "text-yellow-200/90",
-  },
-};
-
-function extractTags(line: string): string[] {
-  return [...line.matchAll(/\[([A-Z ]+)\]/g)]
-    .map((match) => match[1])
-    .filter((tag) => !LOG_LEVEL_TAGS.has(tag));
-}
-
-function lineColorClass(line: string): string | null {
-  const tags = extractTags(line);
-  const familyIndex = tags.findIndex((tag) => FAMILY_TAGS.has(tag));
-
-  if (familyIndex !== -1) {
-    const family = tags[familyIndex];
-    const subfamily = tags[familyIndex + 1];
-    return (
-      (subfamily && SUBFAMILY_COLOR_CLASS[family]?.[subfamily]) ||
-      FAMILY_COLOR_CLASS[family] ||
-      null
-    );
-  }
-
-  return null;
-}
-
 interface LogLine {
   id: number;
-  colorClass: string | null;
   html: string;
 }
 
@@ -194,11 +127,9 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
             case "append": {
               // A line means the connection is healthy, so reset the backoff.
               reconnectDelayRef.current = RECONNECT_BASE;
-              const stripped = stripAnsi(action.text);
               const line = {
                 id: idRef.current++,
-                colorClass: lineColorClass(stripped),
-                html: linkify(stripped),
+                html: renderAnsiHtml(action.text, linkify),
               };
               if (fillingRef.current) {
                 // Buffer the opening tail; flush on quiescence or the max cap.
@@ -376,11 +307,7 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
                         <div className="h-6" />
                       ))}
                     <div
-                      className={cn(
-                        "break-words whitespace-pre-wrap",
-                        linePad,
-                        line.colorClass,
-                      )}
+                      className={cn("break-words whitespace-pre-wrap", linePad)}
                       dangerouslySetInnerHTML={{ __html: line.html }}
                     />
                     {isLast && (
