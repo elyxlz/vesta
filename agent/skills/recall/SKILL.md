@@ -19,6 +19,7 @@ uv tool install --editable ~/agent/skills/recall/cli
 recall "meeting notes"
 recall "sched*" --limit 5
 recall "wifi password" --snippet
+recall "wifi password" --snippet 10
 ```
 
 Results are ranked by relevance with a recency boost, so recent conversations surface higher.
@@ -26,7 +27,7 @@ Results are ranked by relevance with a recency boost, so recent conversations su
 ## Flags
 
 - `--limit N`: max results (default 20).
-- `--snippet`: return a short windowed excerpt around each match instead of the whole message. Use it to scan many hits cheaply when you just need to locate the right conversation; omit it when you need the full text of a message. The window is centered on the first matched term and elided with `…` on either trimmed side.
+- `--snippet [WORDS]`: return a windowed excerpt instead of the whole message, `WORDS` words on each side of the match (default 24). Use it to scan many hits cheaply when you just need to locate the right conversation, and pass a smaller `WORDS` to compress harder; omit the flag entirely when you need the full text. The window is centered on the first matched term and elided with `…` on either trimmed side.
 
 ## Query syntax (FTS5)
 

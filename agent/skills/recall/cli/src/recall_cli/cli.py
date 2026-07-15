@@ -62,21 +62,21 @@ def _matches(word: str, terms: list[str]) -> bool:
     return any(cleaned.startswith(term) for term in terms)
 
 
-def window(content: str, query: str) -> str:
-    """A short excerpt of content centered on the first word matching any query term, marked with
-    SNIPPET_ELLIPSIS on each trimmed side. Falls back to the head of the message when no term can
-    be located (e.g. an operator-only query)."""
+def window(content: str, query: str, window_words: int) -> str:
+    """A short excerpt of content with window_words words on each side of the first word matching any
+    query term, marked with SNIPPET_ELLIPSIS on each trimmed side. Falls back to the head of the
+    message when no term can be located (e.g. an operator-only query)."""
     if not content:
         return content
     words = content.split()
     terms = query_terms(query)
     hit = next((i for i, candidate in enumerate(words) if _matches(candidate, terms)), None)
     if hit is None:
-        head = words[: SNIPPET_WINDOW_WORDS * 2]
+        head = words[: window_words * 2]
         suffix = f" {SNIPPET_ELLIPSIS}" if len(words) > len(head) else ""
         return " ".join(head) + suffix
-    start = max(0, hit - SNIPPET_WINDOW_WORDS)
-    end = min(len(words), hit + SNIPPET_WINDOW_WORDS + 1)
+    start = max(0, hit - window_words)
+    end = min(len(words), hit + window_words + 1)
     prefix = f"{SNIPPET_ELLIPSIS} " if start > 0 else ""
     suffix = f" {SNIPPET_ELLIPSIS}" if end < len(words) else ""
     return prefix + " ".join(words[start:end]) + suffix
@@ -106,9 +106,13 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=20, help="Max results to return (default 20)")
     parser.add_argument(
         "--snippet",
-        action="store_true",
-        help="Return a short windowed excerpt around each match instead of the full message "
-        "(compresses large result sets; omit when you need full fidelity)",
+        nargs="?",
+        type=int,
+        const=SNIPPET_WINDOW_WORDS,
+        default=None,
+        metavar="WORDS",
+        help=f"Return a windowed excerpt of WORDS words on each side of each match (default {SNIPPET_WINDOW_WORDS}) "
+        "instead of the full message; omit for full fidelity",
     )
     args = parser.parse_args()
 
@@ -117,9 +121,9 @@ def main() -> int:
     except sqlite3.OperationalError as e:
         print(f"Search error: {e}", file=sys.stderr)
         return 1
-    if args.snippet:
+    if args.snippet is not None:
         for r in results:
-            r["content"] = window(r["content"], args.query)
+            r["content"] = window(r["content"], args.query, args.snippet)
     print(format_results(results))
     return 0
 
