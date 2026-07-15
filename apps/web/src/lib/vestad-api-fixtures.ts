@@ -14,6 +14,7 @@ export const vestadApiFixtures = {
     "starting",
     "not_authenticated",
     "unprovisioned",
+    "rebuilding",
     "stopped",
     "dead",
     "not_found"

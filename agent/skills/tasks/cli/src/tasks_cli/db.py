@@ -186,12 +186,20 @@ def _migrate_v2_to_v3(conn: sqlite3.Connection):
     logger.info("Migrated schema v2 -> v3")
 
 
-AUTO_REMINDER_WINDOWS = [
+AUTO_REMINDER_TAIL = [
     ("1 week", timedelta(weeks=1)),
     ("1 day", timedelta(days=1)),
     ("1 hour", timedelta(hours=1)),
     ("15 minutes", timedelta(minutes=15)),
 ]
+
+CHECKPOINT_FLOOR = timedelta(weeks=2)
+
+DUE_NOW_MESSAGE = (
+    'Task "{title}" ({task_id}) is due now. Decide immediately: do it and run `tasks done {task_id}`, '
+    "or postpone it (`tasks postpone {task_id} --in-days N`), or tell the user you are dropping it and run "
+    "`tasks delete {task_id}`. Never leave a task sitting overdue."
+)
 
 
 def parse_datetime(s: str) -> datetime:
@@ -199,24 +207,45 @@ def parse_datetime(s: str) -> datetime:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
-def create_auto_reminders(conn: sqlite3.Connection, task_id: str, title: str, due_date_str: str, priority: int):
+def _humanize_delta(delta: timedelta) -> str:
+    days = round(delta.total_seconds() / 86400)
+    if days >= 60:
+        return f"about {round(days / 30)} months"
+    return f"about {round(days / 7)} weeks"
+
+
+def auto_reminder_deltas(lead: timedelta) -> list[tuple[str, timedelta]]:
+    """Lead-time offsets for a task's auto reminders: checkpoints that halve the remaining lead
+    while they stay more than two weeks out, then the fixed 1w/1d/1h/15m tail."""
+    checkpoints = []
+    half = lead / 2
+    while half > CHECKPOINT_FLOOR:
+        checkpoints.append((_humanize_delta(half), half))
+        half = half / 2
+    return checkpoints + AUTO_REMINDER_TAIL
+
+
+def _insert_auto_reminder(conn: sqlite3.Connection, task_id: str, message: str, schedule_type: str, fire_time: datetime):
+    trigger_data = {"type": "date", "run_date": fire_time.isoformat()}
+    conn.execute(
+        """INSERT INTO reminders (id, task_id, message, schedule_type, scheduled_time, completed, trigger_data, auto_generated)
+           VALUES (?, ?, ?, ?, ?, 0, ?, 1)""",
+        (str(uuid.uuid4())[:8], task_id, message, schedule_type, fire_time.isoformat(), json.dumps(trigger_data)),
+    )
+
+
+def create_auto_reminders(conn: sqlite3.Connection, task_id: str, title: str, due_date_str: str):
     now = datetime.now(UTC)
     due_dt = parse_datetime(due_date_str)
 
-    for label, delta in AUTO_REMINDER_WINDOWS:
+    for label, delta in auto_reminder_deltas(due_dt - now):
         fire_time = due_dt - delta
         if fire_time <= now:
             continue
+        _insert_auto_reminder(conn, task_id, f"Task due in {label}: {title}", f"auto: {label} before due", fire_time)
 
-        reminder_id = str(uuid.uuid4())[:8]
-        trigger_data = {"type": "date", "run_date": fire_time.isoformat()}
-        message = f"Task due in {label}: {title}"
-
-        conn.execute(
-            """INSERT INTO reminders (id, task_id, message, schedule_type, scheduled_time, completed, trigger_data, auto_generated)
-               VALUES (?, ?, ?, ?, ?, 0, ?, 1)""",
-            (reminder_id, task_id, message, f"auto: {label} before due", fire_time.isoformat(), json.dumps(trigger_data)),
-        )
+    if due_dt > now:
+        _insert_auto_reminder(conn, task_id, DUE_NOW_MESSAGE.format(title=title, task_id=task_id), "auto: at due", due_dt)
 
 
 def delete_auto_reminders(conn: sqlite3.Connection, task_id: str):
@@ -225,13 +254,34 @@ def delete_auto_reminders(conn: sqlite3.Connection, task_id: str):
 
 def _create_auto_reminders_for_existing(conn: sqlite3.Connection):
     """Create auto-generated reminders for all pending tasks with due dates."""
-    tasks = conn.execute("SELECT id, title, due_date, priority FROM tasks WHERE due_date IS NOT NULL AND status='pending'").fetchall()
+    tasks = conn.execute("SELECT id, title, due_date FROM tasks WHERE due_date IS NOT NULL AND status='pending'").fetchall()
     created = 0
     for task in tasks:
-        create_auto_reminders(conn, task["id"], task["title"], task["due_date"], task["priority"])
+        create_auto_reminders(conn, task["id"], task["title"], task["due_date"])
         created += 1
     if created:
         logger.info(f"Created auto-generated reminders for {created} tasks")
+
+
+def _migrate_v3_to_v4(conn: sqlite3.Connection):
+    """v3 -> v4: add the meta key-value table (digest bookkeeping) and regenerate pending auto
+    reminders so existing tasks pick up the at-due decision fire and the spaced checkpoints."""
+    conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
+    conn.execute("DELETE FROM reminders WHERE auto_generated = 1 AND completed = 0")
+    _create_auto_reminders_for_existing(conn)
+    logger.info("Migrated schema v3 -> v4")
+
+
+def get_meta(conn: sqlite3.Connection, key: str) -> str | None:
+    row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else None
+
+
+def set_meta(conn: sqlite3.Connection, key: str, value: str):
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (key, value),
+    )
 
 
 def init_db(data_dir: Path):
@@ -274,6 +324,11 @@ def init_db(data_dir: Path):
         if version < 3:
             _migrate_v2_to_v3(conn)
             conn.execute("UPDATE schema_version SET version = 3")
+            version = 3
+
+        if version < 4:
+            _migrate_v3_to_v4(conn)
+            conn.execute("UPDATE schema_version SET version = 4")
 
         conn.commit()
 

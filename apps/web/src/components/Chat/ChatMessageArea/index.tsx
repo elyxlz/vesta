@@ -364,13 +364,13 @@ export function ChatMessageArea({
       {count > 0 && (
         <Button
           type="button"
-          variant="secondary"
+          variant="outline"
           size="icon-sm"
           aria-label="Scroll to latest message"
           data-active={!atBottom}
           onClick={() => virtualizer.scrollToEnd({ behavior: "smooth" })}
           className={cn(
-            "absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full border border-border bg-background text-foreground shadow-sm transition-all duration-200 hover:bg-muted hover:text-foreground",
+            "absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full shadow-sm transition-all duration-200",
             "data-[active=false]:pointer-events-none data-[active=false]:translate-y-full data-[active=false]:scale-95 data-[active=false]:opacity-0 data-[active=false]:duration-150 data-[active=false]:ease-[cubic-bezier(0.7,0,0.84,0)]",
             "data-[active=true]:translate-y-0 data-[active=true]:scale-100 data-[active=true]:opacity-100 data-[active=true]:ease-[cubic-bezier(0.23,1,0.32,1)]",
           )}

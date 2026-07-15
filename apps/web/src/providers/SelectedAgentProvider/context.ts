@@ -24,7 +24,6 @@ export interface SelectedAgentContextValue {
   start: () => void;
   stop: () => void;
   restart: () => Promise<void>;
-  rebuild: () => void;
   backup: () => void;
   backups: BackupInfo[];
   refreshBackups: () => Promise<void>;

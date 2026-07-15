@@ -2,17 +2,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+# mail.google.com is the full-Gmail scope (a superset the Gmail REST API accepts,
+# covering everything gmail.modify + gmail.send did), so one sign-in grants both
+# mail and calendar in a single consent screen.
 GMAIL_SCOPES = [
-    "https://www.googleapis.com/auth/gmail.modify",
-    "https://www.googleapis.com/auth/gmail.send",
+    "https://mail.google.com/",
 ]
 CALENDAR_SCOPES = [
     "https://www.googleapis.com/auth/calendar",
 ]
-MEET_SCOPES = [
-    "https://www.googleapis.com/auth/meetings.space.created",
-]
-SCOPES = GMAIL_SCOPES + CALENDAR_SCOPES + MEET_SCOPES
+SCOPES = GMAIL_SCOPES + CALENDAR_SCOPES
 
 
 @dataclass

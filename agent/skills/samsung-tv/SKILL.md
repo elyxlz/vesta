@@ -170,32 +170,25 @@ tv.rest_app_install('APP_ID')
 tv.rest_app_run('111299001912')
 ```
 
-YouTube must be running before casting via the Lounge API. Launch it with the above command and wait a few seconds if it is not already open.
-
 ### Play a Specific Video (YouTube Lounge API) -- WORKING METHOD
 
 The Lounge API uses DIAL on port 8080 to get the screen ID, then the YouTube Lounge API at youtube.com to create a remote-control session and send a `setPlaylist` command.
 
 **Note:** This casts as a "guest" session, which means ads will play.
 
-**Prerequisite:** YouTube must be running on the TV. Launch it first if needed:
-
-```python
-tv.rest_app_run('111299001912')
-import time; time.sleep(5)
-```
+**Prerequisite:** YouTube must be running on the TV. Launch it first (snippet above) and wait a few seconds if it is not already open.
 
 #### Preferred method: pyytlounge (pip: pyytlounge)
 
-The `pyytlounge` library wraps the Lounge API and provides playback control, event listening, and session management. This is the recommended approach.
+The `pyytlounge` library wraps the Lounge API and provides playback control, event listening, and session management.
 
-**Auth persistence:** The Lounge API auth state is saved to `~/.tv/youtube_lounge_auth.json` after first successful pairing. On subsequent runs, the saved `screen_id` is used to refresh the lounge token without triggering the TV pairing popup. Only falls back to full `pair_with_screen_id()` if the saved state is invalid.
+**Auth persistence:** The Lounge API auth state is saved to `~/.tv/youtube_lounge_auth.json` after first successful pairing. On subsequent runs, the saved `screen_id` is used to refresh the lounge token without triggering the TV pairing popup. Only falls back to full `pair_with_screen_id()` if the saved state is invalid. If YouTube restarts on the TV the `screen_id` changes, but the code re-fetches it via DIAL automatically; the pairing popup only fires when `connect()` opens a brand-new session with an unknown device. Use `api.auth.serialize()` / `api.auth.deserialize()` (NOT `store_auth_state()`, which has a key naming bug in v3.2.0).
 
 ```python
 import asyncio, json, os, requests, xml.etree.ElementTree as ET
 from pyytlounge import YtLoungeApi
 
-TV_IP = find_tv_ip()  # use auto-discovery above
+TV_IP = find_tv_ip()
 AUTH_FILE = "~/.tv/youtube_lounge_auth.json"
 
 def get_screen_id():
@@ -255,10 +248,6 @@ async def play_youtube_video(video_id: str):
 asyncio.run(play_youtube_video("VIDEO_ID"))
 ```
 
-**Notes on auth persistence:**
-- Use `api.auth.serialize()` / `api.auth.deserialize()` (NOT `store_auth_state()`, which has a key naming bug in v3.2.0).
-- If YouTube restarts on the TV the `screen_id` changes, but the code re-fetches it via DIAL automatically; the pairing popup only fires when `connect()` opens a brand-new session with an unknown device.
-
 Additional pyytlounge commands (after connect):
 
 ```python
@@ -286,19 +275,13 @@ curl -s "https://www.youtube.com/results?search_query=QUERY" -H "User-Agent: Moz
 
 Replace `QUERY` with a URL-encoded search term (e.g., `lo+fi+beats`). Each result gives `"videoId":"XXXXXXXXXXX"` -- extract the 11-character ID.
 
-### Deep Link Method -- may not work on all models
+### Deep Link Method
 
 `tv.run_app('111299001912', app_type='DEEP_LINK', meta_tag=f'v={video_id}')` may not work on all models; prefer the Lounge API above.
 
 ### YouTube Playback Control
 
-Once a video is playing, you can control it via the Lounge API (see pyytlounge commands above) or via remote keys:
-
-```python
-tv.send_key('KEY_PLAY')    # Play
-tv.send_key('KEY_PAUSE')   # Pause
-tv.send_key('KEY_RETURN')  # Back (exit video, return to YouTube browse)
-```
+Once a video is playing, you can control it via the Lounge API (see pyytlounge commands above) or via the playback remote keys from the Common Keys table (`KEY_RETURN` exits the video back to YouTube browse).
 
 ## Browser
 
@@ -332,7 +315,6 @@ tv.move_cursor(x=500, y=300, duration=0)
 1. Install the Python library: `uv add samsungtvws`
 2. Set `<TV_MAC>` to your TV's MAC address (found in TV Settings > General > Network > Network Status)
 3. On first WebSocket connection, approve the pairing request on the TV screen
-4. The token is saved to `~/.tv/samsung_tv_token.json` for subsequent connections
 
 ## Notes
 
@@ -340,5 +322,5 @@ tv.move_cursor(x=500, y=300, duration=0)
 - REST API calls (rest_*) work without WebSocket -- useful for status checks
 - WebSocket calls (send_key, run_app, open_browser) require an active connection
 - Port 9197 is UPnP/SOAP (DLNA renderer), not useful for app control
-- **Don't blindly navigate YouTube UI with remote keys** (KEY_UP/DOWN/LEFT/RIGHT). You can't see the screen, so you'll end up in the wrong place. Use the Lounge API for playback control (play, pause, seek). KEY_CC does not reliably toggle subtitles on all models.
+- **Don't blindly navigate YouTube UI with remote keys** (KEY_UP/DOWN/LEFT/RIGHT). You can't see the screen, so you'll end up in the wrong place. KEY_CC does not reliably toggle subtitles on all models.
 - **Spotify on TV**: Launch Spotify app (`rest_app_run('3201606009684')`), then use the Spotify playback API with the TV device ID to control what plays. This is more reliable than remote keys.

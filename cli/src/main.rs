@@ -188,10 +188,6 @@ enum Command {
         /// Change the context window in tokens, e.g. 200000 / 500000 / 1000000
         #[arg(long)]
         context_window: Option<u64>,
-        /// How urgent messages preempt a running turn: message (background work survives,
-        /// waits for a running tool) or interrupt (immediate, kills background subagents)
-        #[arg(long)]
-        preempt_mode: Option<PreemptMode>,
     },
     /// Sign out an agent: clear its provider credentials. It stays running but can't respond
     /// until you reconnect a provider with `vesta auth`.
@@ -215,7 +211,7 @@ enum Command {
         clear: bool,
     },
     /// View or edit an agent's notification interrupt policy: which incoming notifications
-    /// preempt the agent's current turn (interrupt) vs. wait in the pool until it's idle (pool).
+    /// preempt the agent's current turn (interrupt) vs. snooze until it's idle (snooze).
     Notifications {
         /// Agent name
         name: String,
@@ -224,11 +220,6 @@ enum Command {
     },
     /// Destroy an agent (irreversible)
     Destroy {
-        /// Agent name
-        name: String,
-    },
-    /// Snapshot, destroy, recreate, restore auth
-    Rebuild {
         /// Agent name
         name: String,
     },
@@ -393,7 +384,7 @@ enum RulesAction {
     List,
     /// Append a rule (first matching rule wins, so order matters)
     Add {
-        /// interrupt = preempt the agent's current turn; pool = wait until idle
+        /// interrupt = preempt the agent's current turn; snooze = wait until idle
         #[arg(long)]
         action: PolicyAction,
         /// Exact match on notification source (case-insensitive), e.g. twitter, whatsapp
@@ -421,29 +412,14 @@ enum RulesAction {
 #[derive(Clone, Copy, clap::ValueEnum)]
 enum PolicyAction {
     Interrupt,
-    Pool,
-}
-
-#[derive(Clone, Copy, clap::ValueEnum)]
-enum PreemptMode {
-    Message,
-    Interrupt,
-}
-
-impl PreemptMode {
-    fn as_str(self) -> &'static str {
-        match self {
-            PreemptMode::Message => "message",
-            PreemptMode::Interrupt => "interrupt",
-        }
-    }
+    Snooze,
 }
 
 impl PolicyAction {
     fn as_str(self) -> &'static str {
         match self {
             PolicyAction::Interrupt => "interrupt",
-            PolicyAction::Pool => "pool",
+            PolicyAction::Snooze => "snooze",
         }
     }
 }
@@ -1110,7 +1086,7 @@ fn print_update_available(latest: &str) {
 }
 
 fn print_welcome() {
-    println!("vesta: your personal AI assistant");
+    println!("vesta: your AI guardian angel");
     println!();
     println!("quick start:");
     println!("  vesta connect <link>   link this machine to your server (from vestad status)");
@@ -1185,7 +1161,6 @@ fn run(cli: Cli) {
                         model: opts.model.as_deref(),
                         max_context_tokens: opts.max_context_tokens,
                         timezone: timezone.as_deref(),
-                        ..Default::default()
                     })
                     .or_die();
                     eprintln!("authenticated (claude)");
@@ -1198,7 +1173,6 @@ fn run(cli: Cli) {
                         model: opts.model.as_deref(),
                         max_context_tokens: opts.max_context_tokens,
                         timezone: timezone.as_deref(),
-                        ..Default::default()
                     })
                     .or_die();
                     eprintln!("authenticated!");
@@ -1258,13 +1232,12 @@ fn run(cli: Cli) {
             }
         }
 
-        Command::Settings { name, model, context_window, preempt_mode } => {
+        Command::Settings { name, model, context_window } => {
             let c = get_client(host_ref, token_ref);
-            if model.is_some() || context_window.is_some() || preempt_mode.is_some() {
+            if model.is_some() || context_window.is_some() {
                 c.update_settings(&name, client::SettingsUpdate {
                     model: model.as_deref(),
                     max_context_tokens: context_window,
-                    preempt_mode: preempt_mode.map(PreemptMode::as_str),
                     ..Default::default()
                 })
                 .or_die();
@@ -1272,11 +1245,6 @@ fn run(cli: Cli) {
             } else {
                 let result = c.get_agent_settings(&name).or_die();
                 eprintln!("manage_agent_code = {}", result["manage_agent_code"].as_bool().unwrap_or(true));
-                if let Ok(config) = c.get_agent_config(&name) {
-                    if let Some(mode) = config["preempt_mode"].as_str() {
-                        eprintln!("preempt_mode = {mode}");
-                    }
-                }
                 // Only report model/context when a provider is actually configured; a signed-out
                 // agent (kind "none") has a stored default model but no active provider.
                 if let Ok(provider) = c.get_provider(&name) {
@@ -1683,12 +1651,6 @@ fn run(cli: Cli) {
             eprintln!("{name}: destroyed");
         }
 
-        Command::Rebuild { name } => {
-            let c = get_client(host_ref, token_ref);
-            c.rebuild_agent(&name).or_die();
-            eprintln!("{name}: rebuilt and running");
-        }
-
         Command::WaitReady { name, timeout } => {
             let c = get_client(host_ref, token_ref);
             c.wait_until_alive(&name, std::time::Duration::from_secs(timeout))
@@ -1825,10 +1787,10 @@ mod tests {
 
     #[test]
     fn build_rule_omits_unset_fields_and_stamps_id() {
-        let rule = build_rule(PolicyAction::Pool, Some("twitter".into()), None, None, Some("ad|spam".into()));
+        let rule = build_rule(PolicyAction::Snooze, Some("twitter".into()), None, None, Some("ad|spam".into()));
         assert_eq!(rule["source"], "twitter");
         assert_eq!(rule["keyword"], "ad|spam");
-        assert_eq!(rule["action"], "pool");
+        assert_eq!(rule["action"], "snooze");
         // Unset match fields are omitted entirely (the engine folds sender/keyword into predicates itself).
         assert!(rule.get("type").is_none());
         assert!(rule.get("sender").is_none());

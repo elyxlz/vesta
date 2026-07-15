@@ -64,7 +64,7 @@ Edit `~/.spotify/organize.json` to customize:
 
 ## Step 6: Register the service
 
-If using the watch daemon, register it for restart (see [service](../service/SKILL.md)) with this startup command:
+If using the watch daemon, register it for restart (see [vestad](../vestad/SKILL.md)) with this startup command:
 ```
 screen -dmS spotify-watch spotify organize watch
 ```

@@ -108,10 +108,10 @@ fn interrupt_aborts_counting_and_runs_redirect_task() {
 }
 
 /// The other half of the preemption contract, and the #982 regression guard: when the main turn
-/// is preempted, an already-running BACKGROUND subagent must survive and run to completion. The
-/// default `preempt_mode = "message"` pre-sends the interrupt as a priority:"now" message, which
-/// aborts only the turn; the old `interrupt()` control request (still used by `preempt_mode =
-/// "interrupt"`) swept the CLI's task registry and killed every backgrounded subagent, so this
+/// is preempted, an already-running BACKGROUND subagent must survive and run to completion.
+/// Preemption pre-sends the interrupting prompt as a priority:"now" message, which aborts only
+/// the turn; the old `interrupt()` control request (now fired only on failure paths) swept the
+/// CLI's task registry and killed every backgrounded subagent, so this
 /// test would fail under that mode — it pins the default behavior against a silent regression.
 ///
 /// The main agent launches a background subagent that slowly counts to 10 in its own file, then

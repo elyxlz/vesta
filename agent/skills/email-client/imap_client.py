@@ -217,7 +217,7 @@ def account_profile(account: str) -> tuple[str, dict]:
         _, profile = resolve_provider(dict(os.environ))
         profile = dict(profile)
     # Layer per-account config overrides, then env overrides, on top.
-    for key in ("imap_host", "smtp_host", "smtp_port", "oauth_client_id", "oauth_authority"):
+    for key in ("imap_host", "smtp_host", "smtp_port", "oauth_client_id", "oauth_authority", "caldav_url"):
         if cfg.get(key):
             profile[key] = cfg[key]
     if cfg.get("oauth_scopes"):
@@ -246,13 +246,16 @@ def _refresh_google(tok: dict, profile: dict, account: str) -> dict:
     rt = tok.get("refresh_token")
     if not rt:
         sys.exit("no refresh_token in cached token; re-run auth")
-    data = urllib.parse.urlencode(
-        {
-            "client_id": profile["oauth_client_id"],
-            "refresh_token": rt,
-            "grant_type": "refresh_token",
-        }
-    ).encode()
+    refresh_params = {
+        "client_id": profile["oauth_client_id"],
+        "refresh_token": rt,
+        "grant_type": "refresh_token",
+    }
+    # Same published desktop-app secret the code exchange uses; Google's token
+    # endpoint requires it on refresh for this client too.
+    if profile.get("oauth_client_secret"):
+        refresh_params["client_secret"] = profile["oauth_client_secret"]
+    data = urllib.parse.urlencode(refresh_params).encode()
     req = urllib.request.Request(
         profile["oauth_token_url"],
         data=data,
@@ -842,6 +845,28 @@ def cmd_auth_remove(args):
     print(f"removed account {name}")
 
 
+def cmd_auth_probe(args):
+    """Health-probe the Google OAuth client for one or all Gmail accounts.
+
+    Exits non-zero if any account's client is found dead and could not be
+    self-healed, so it is scriptable as a monitor.
+    """
+    import google_health
+
+    notify = not args.no_notify
+    if args.account:
+        acc = resolve_account(args.account)
+        results = [google_health.run_probe(acc, notify=notify)]
+    else:
+        results = google_health.run_probe_all(notify=notify)
+        if not results:
+            print(json.dumps({"status": "skipped", "reason": "no Gmail accounts registered"}, indent=2))
+            return
+    print(json.dumps(results if len(results) != 1 else results[0], indent=2))
+    if any(r.get("status") == google_health.DEAD_CLIENT for r in results):
+        sys.exit(1)
+
+
 def main():
     ap = argparse.ArgumentParser(prog="email-client")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -1017,6 +1042,20 @@ def main():
     asub.add_parser("list", help="show registered accounts")
     pa_rm = asub.add_parser("remove", help="delete an account dir")
     pa_rm.add_argument("--account", required=True)
+    pa_probe = asub.add_parser(
+        "probe",
+        help="health-check a Gmail account's OAuth client (no user interaction); self-heals + alerts on a dead client",
+    )
+    pa_probe.add_argument(
+        "--account",
+        default=None,
+        help="Gmail account to probe; omit to probe every registered Gmail account",
+    )
+    pa_probe.add_argument(
+        "--no-notify",
+        action="store_true",
+        help="do not write a notification even if the client is found dead",
+    )
 
     pd = sub.add_parser("daemon", help="manage the poll daemon: start|stop|restart|status")
     dsub = pd.add_subparsers(dest="daemon_cmd", required=True)
@@ -1031,6 +1070,12 @@ def main():
     pd_restart = dsub.add_parser("restart", help="stop then start, reusing the last --interval unless overridden")
     pd_restart.add_argument("--interval", type=int, default=None)
     dsub.add_parser("status", help="daemon process state plus per-account auth health, in one JSON blob")
+
+    # Calendar over CalDAV (see calendar_client.py). Imported lazily because
+    # calendar_client imports this module; a top-level import would be circular.
+    import calendar_client  # noqa: E402
+
+    calendar_client.build_parser(sub)
 
     if len(sys.argv) == 1:
         ap.print_help()
@@ -1054,6 +1099,9 @@ def main():
             return
         if args.auth_cmd == "remove":
             cmd_auth_remove(args)
+            return
+        if args.auth_cmd == "probe":
+            cmd_auth_probe(args)
             return
 
     if args.cmd == "folder":
@@ -1080,6 +1128,12 @@ def main():
             "restart": cmd_daemon_restart,
             "status": cmd_daemon_status,
         }[args.daemon_cmd](args)
+        return
+
+    if args.cmd == "calendar":
+        import calendar_client
+
+        calendar_client.dispatch(args)
         return
 
     {

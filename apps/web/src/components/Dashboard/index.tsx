@@ -9,7 +9,7 @@ import { LayoutDashboard, AlertCircle } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useTheme } from "@/providers/ThemeProvider";
-import { useTauri } from "@/providers/TauriProvider";
+import { useRuntime } from "@/providers/RuntimeProvider";
 import { getConnection } from "@/lib/connection";
 import { openExternalUrl } from "@/lib/open-external-url";
 import {
@@ -37,7 +37,8 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
   const { name, agent } = useSelectedAgent();
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const { resolvedTheme } = useTheme();
-  const { isTauri, platform, isDesktop, isMobile, vibrancy } = useTauri();
+  const { isDesktopApp, platform, isDesktop, isMobile, vibrancy } =
+    useRuntime();
   const [error, setError] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [iframeKey, setIframeKey] = useState(0);
@@ -104,7 +105,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
     frame.postMessage(
       {
         type: "vesta-platform",
-        isTauri,
+        isDesktopApp,
         platform,
         isDesktop,
         isMobile,
@@ -125,7 +126,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
   }, [
     resolvedTheme,
     fullscreen,
-    isTauri,
+    isDesktopApp,
     platform,
     isDesktop,
     isMobile,
@@ -145,8 +146,8 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
         handshakeRef.current = true;
         sendContext();
       }
-      // Dashboard widgets can't open external URLs themselves: <a target="_blank">
-      // inside an iframe is swallowed by Tauri's mobile WKWebView. Widgets post
+      // Dashboard widgets can't open external URLs themselves: the desktop
+      // app's window-open handler owns navigation. Widgets post
       // { type: "vesta-open-url", url } and we route through the platform opener.
       if (e.data?.type === "vesta-open-url" && typeof e.data.url === "string") {
         const url: string = e.data.url;

@@ -7,7 +7,7 @@ let _fullscreen = false;
 const _layoutListeners: Set<(fullscreen: boolean) => void> = new Set();
 
 export interface PlatformInfo {
-  isTauri: boolean;
+  isDesktopApp: boolean;
   platform: string;
   isDesktop: boolean;
   isMobile: boolean;
@@ -15,7 +15,7 @@ export interface PlatformInfo {
 }
 
 let _platform: PlatformInfo = {
-  isTauri: false,
+  isDesktopApp: false,
   platform: "unknown",
   isDesktop: false,
   isMobile: false,
@@ -89,13 +89,16 @@ export function initParentBridge() {
     }
     if (event.data?.type === "vesta-platform") {
       _platform = {
-        isTauri: !!event.data.isTauri,
+        isDesktopApp: !!event.data.isDesktopApp,
         platform: event.data.platform ?? "unknown",
         isDesktop: !!event.data.isDesktop,
         isMobile: !!event.data.isMobile,
         vibrancy: !!event.data.vibrancy,
       };
-      document.documentElement.classList.toggle("tauri", _platform.isTauri);
+      document.documentElement.classList.toggle(
+        "desktop",
+        _platform.isDesktopApp,
+      );
       document.documentElement.classList.toggle("vibrancy", _platform.vibrancy);
       _platformListeners.forEach((cb) => cb(_platform));
     }

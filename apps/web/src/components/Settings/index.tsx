@@ -17,7 +17,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useTheme } from "@/providers/ThemeProvider";
 type Theme = "dark" | "light" | "system";
 import { useAuth } from "@/providers/AuthProvider";
-import { useTauri } from "@/providers/TauriProvider";
+import { useRuntime } from "@/providers/RuntimeProvider";
 import { useGateway } from "@/providers/GatewayProvider";
 import { connectionHostname } from "@/lib/connection";
 import { StatusPill } from "@/components/StatusPill";
@@ -44,7 +44,7 @@ const ACCOUNT_URL = "https://vesta.run/account";
 // box concerns only — per-agent config lives at /agent/:name/settings.
 export function AppSettings() {
   const { theme, setTheme } = useTheme();
-  const { isTauri } = useTauri();
+  const { isDesktopApp } = useRuntime();
   const { disconnect } = useAuth();
   const { reachable, managed, gatewayVersion, gatewayBranch } = useGateway();
   const naturalPacing = useChatPacing((s) => s.natural);
@@ -69,7 +69,7 @@ export function AppSettings() {
               variant="outline"
               spacing={2}
             >
-              {!isTauri && (
+              {!isDesktopApp && (
                 <ToggleGroupItem value="system">
                   <Monitor /> system
                 </ToggleGroupItem>

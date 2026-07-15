@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { isTauri } from "@/lib/env";
+import { native } from "@/lib/native";
 
 function initialFocused(): boolean {
   if (typeof document === "undefined") return true;
@@ -12,9 +12,6 @@ export function useWindowFocus(): boolean {
   const [focused, setFocused] = useState<boolean>(initialFocused);
 
   useEffect(() => {
-    let disposed = false;
-    let unlistenTauri: (() => void) | null = null;
-
     const onFocus = () => setFocused(true);
     const onBlur = () => setFocused(false);
     const onVisibility = () => {
@@ -26,24 +23,13 @@ export function useWindowFocus(): boolean {
     window.addEventListener("focus", onFocus);
     window.addEventListener("blur", onBlur);
     document.addEventListener("visibilitychange", onVisibility);
-
-    if (isTauri) {
-      import("@tauri-apps/api/window").then(({ getCurrentWindow }) => {
-        if (disposed) return;
-        const w = getCurrentWindow();
-        w.onFocusChanged(({ payload }) => setFocused(payload)).then((fn) => {
-          if (disposed) fn();
-          else unlistenTauri = fn;
-        });
-      });
-    }
+    const unlistenNative = native.onWindowFocusChange(setFocused);
 
     return () => {
-      disposed = true;
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("blur", onBlur);
       document.removeEventListener("visibilitychange", onVisibility);
-      if (unlistenTauri) unlistenTauri();
+      unlistenNative();
     };
   }, []);
 

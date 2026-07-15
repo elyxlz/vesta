@@ -5,6 +5,7 @@ export type AgentStatus =
   | "not_authenticated"
   | "unprovisioned"
   | "restarting"
+  | "rebuilding"
   | "stopped"
   | "dead"
   | "not_found";
@@ -64,7 +65,7 @@ export type VestaEvent =
       notif_type?: string;
       sender?: string;
       fields?: Record<string, string>; // targetable structured extras, e.g. { chat_name: "Bride squad" }
-      decided?: "interrupt" | "pool" | "trash"; // effective decision given the rules (trash = dropped)
+      decided?: "interrupt" | "snooze" | "trash"; // effective decision given the rules (trash = dropped)
       notif_id?: string; // file stem; pending while its file is on disk, cleared once processed
     })
   | (BaseEvent & {

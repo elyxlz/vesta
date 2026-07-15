@@ -25,14 +25,14 @@ const GATEWAY_RESTART_DELAY_MS: u64 = 200;
 // streams (logs tail -f, backup create/restore progress, agent proxy), which must stay open.
 const CONTROL_REQUEST_TIMEOUT_SECS: u64 = 120;
 
-// Agent create and rebuild build/pull the image (minutes on a cold cache), which the 120s control
+// Agent create builds/pulls the image (minutes on a cold cache), which the 120s control
 // deadline would 408 mid-progress. A generous deadline that still bounds a truly-hung build.
 const LONGRUN_REQUEST_TIMEOUT_SECS: u64 = 1800;
 
 const API_KEY_BYTES: usize = 32;
 
 const RESERVED_SERVICE_NAMES: &[&str] = &[
-    "start", "stop", "restart", "destroy", "rebuild", "auth", "logs", "tree", "file", "backups",
+    "start", "stop", "restart", "destroy", "auth", "logs", "tree", "file", "backups",
     "settings", "services",
 ];
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
@@ -152,6 +152,22 @@ pub fn ensure_api_key(config_dir: &std::path::Path) -> Result<String, String> {
 /// (e.g. the spawned backup/restore pipelines) without borrowing `state`.
 async fn agent_write_guard(state: &AppState, name: &str) -> tokio::sync::OwnedRwLockWriteGuard<()> {
     state.agent_lock(name).await.write_owned().await
+}
+
+/// Refuse a container-mutating operation while the agent's container is mid-rebuild: the rebuild
+/// (boot reconcile included, which doesn't hold the per-agent write lock) removes and recreates
+/// the container, so a concurrent start/restart/destroy would race the recreate.
+fn ensure_not_rebuilding(
+    rebuilding: &docker::RebuildTracker,
+    name: &str,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    if rebuilding.is_rebuilding(name) {
+        return Err(err_response(
+            StatusCode::CONFLICT,
+            &format!("agent '{name}' is updating (container rebuild in progress); wait for it to finish"),
+        ));
+    }
+    Ok(())
 }
 
 /// Run a container-mutating operation on a detached task and await its single result over a oneshot
@@ -413,7 +429,7 @@ async fn gateway_update_handler(
 async fn list_agents_handler(
     State(state): State<SharedState>,
 ) -> impl IntoResponse {
-    let agents = agent_status::list_agents(&state.docker, &state.http_client, &state.env_config.agents_dir).await;
+    let agents = agent_status::list_agents(&state.docker, &state.http_client, &state.env_config.agents_dir, &state.rebuilding).await;
     Json(agents)
 }
 
@@ -503,7 +519,7 @@ async fn agent_status_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Result<Json<docker::StatusJson>, (StatusCode, Json<serde_json::Value>)> {
-    let status = agent_status::get_status(&state.docker, &state.http_client, &name, &state.env_config.agents_dir)
+    let status = agent_status::get_status(&state.docker, &state.http_client, &name, &state.env_config.agents_dir, &state.rebuilding)
         .await
         .map_err(map_docker_err)?;
     Ok(Json(status))
@@ -514,6 +530,7 @@ async fn start_agent_handler(
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     tracing::info!(name = %name, "starting agent");
+    ensure_not_rebuilding(&state.rebuilding, &name)?;
     let _guard = agent_write_guard(&state, &name).await;
 
     {
@@ -563,6 +580,7 @@ async fn stop_agent_handler(
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     tracing::info!(name = %name, "stopping agent");
+    ensure_not_rebuilding(&state.rebuilding, &name)?;
     let _guard = agent_write_guard(&state, &name).await;
 
     {
@@ -607,6 +625,7 @@ async fn restart_agent_handler(
     body: axum::body::Bytes,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     tracing::info!(name = %name, "restarting agent");
+    ensure_not_rebuilding(&state.rebuilding, &name)?;
     let reason =
         parse_restart_reason(&body).map_err(|msg| err_response(StatusCode::BAD_REQUEST, &msg))?;
     // Detached from this request's connection: a self-restart's client is the agent inside the very
@@ -635,6 +654,7 @@ async fn restart_agent_handler(
             &state.env_config,
             &user_mounts,
             reason,
+            &state.rebuilding,
         )
         .await
         .map_err(map_docker_err)?;
@@ -648,6 +668,7 @@ async fn destroy_agent_handler(
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     tracing::info!(name = %name, "destroying agent");
+    ensure_not_rebuilding(&state.rebuilding, &name)?;
     let _guard = agent_write_guard(&state, &name).await;
 
     docker::destroy_agent(&state.docker, &name, &state.env_config.agents_dir)
@@ -661,36 +682,6 @@ async fn destroy_agent_handler(
         save_settings(&settings);
     }
 
-    Ok(ok_json())
-}
-
-async fn rebuild_agent_handler(
-    State(state): State<SharedState>,
-    Path(name): Path<String>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    tracing::info!(name = %name, "rebuilding agent");
-    let _guard = agent_write_guard(&state, &name).await;
-
-    let user_mounts = {
-        let settings = state.settings.read().await;
-        settings.agent_mounts(&name)
-    };
-    docker::rebuild_agent(&state.docker, &name, &state.env_config, &user_mounts)
-        .await
-        .map_err(map_docker_err)?;
-    // A rebuild ends by starting the agent, so record it as desired-running for boot-start.
-    {
-        let mut settings = state.settings.write().await;
-        settings
-            .agents
-            .entry(name.clone())
-            .or_default()
-            .user_desired = UserDesired::Running;
-        save_settings(&settings);
-    }
-    docker::start_agent(&state.docker, &name)
-        .await
-        .map_err(map_docker_err)?;
     Ok(ok_json())
 }
 
@@ -1531,13 +1522,32 @@ fn allocate_service_port(registry: &HashMap<String, HashMap<String, ServiceEntry
     scan(safe_min).or_else(|| scan(SERVICE_PORT_MIN))
 }
 
-/// Bindable = reusable. A port that merely has a listener isn't enough:
-/// callers always bind the returned port themselves, so a squatter would
-/// trap them in a crash loop. See #371 and #433.
+/// A cached service port is reusable when it's the service's own live server
+/// (TCP connect succeeds) or genuinely free (bind succeeds). Only a port that is
+/// neither — a zombie/TIME_WAIT corpse left by a crashed startup (#371) — is
+/// dropped so the caller gets a fresh one.
+///
+/// The bind-only probe this replaced (#436) assumed every caller binds the
+/// returned port, so any listener meant a squatter that would crash the caller.
+/// That no longer holds: resolvers (whatsapp's `resolveVoiceBaseURL`, voice's own
+/// status/stop/restart) POST here purely to *find* the live port, and treating
+/// their own live server as a squatter reallocated the port out from under a
+/// resident service — every later lookup then resolved a fresh, dead port. The
+/// one caller that binds (voice `start`) guards with `port_alive` first, so it
+/// never binds a live port.
 async fn is_cached_port_reusable(port: u16) -> bool {
-    tokio::net::TcpListener::bind(("127.0.0.1", port))
-        .await
-        .is_ok()
+    use std::net::Ipv4Addr;
+    use std::time::Duration;
+    let alive = tokio::time::timeout(
+        Duration::from_millis(200),
+        tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port)),
+    )
+    .await
+    .is_ok_and(|r| r.is_ok());
+    alive
+        || tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port))
+            .await
+            .is_ok()
 }
 
 async fn register_service_handler(
@@ -2230,9 +2240,6 @@ pub fn build_router(state: SharedState) -> Router {
         // for a registered, rotating refresh token — so the box never mints a
         // refresh token for an unauthenticated caller.
         .route("/auth/exchange", post(auth::exchange_session_handler))
-        .route("/version", get(version))
-        .route("/version/check", post(version_check))
-        .route("/gateway/update", post(gateway_update_handler))
         .route("/gateway/restart", post(restart_gateway_handler))
         .route("/gateway/info", get(gateway_info_handler))
         .route(
@@ -2314,10 +2321,9 @@ pub fn build_router(state: SharedState) -> Router {
             auth::auth_middleware,
         ));
 
-    // Create and rebuild run image builds; the longrun deadline keeps them from 408ing (see the const).
+    // Create runs an image build; the longrun deadline keeps it from 408ing (see the const).
     let vestad_protected_longrun = Router::new()
         .route("/agents", post(create_agent_handler))
-        .route("/agents/{name}/rebuild", post(rebuild_agent_handler))
         .layer(longrun_timeout_layer())
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -2379,7 +2385,7 @@ pub fn build_router(state: SharedState) -> Router {
     // how the agent's restart_vesta/stop_vesta tools reach vestad (it then does the docker action).
     // Stop is quick (control tier); restart can trigger a full snapshot+recreate when host-folder
     // grants drifted (docker export|import), which for a multi-GB agent exceeds the control deadline —
-    // so it rides the longrun timeout like the rebuild route, not the control tier.
+    // so it rides the longrun timeout like the create route, not the control tier.
     let agents_self_stop = Router::new()
         .route("/agents/{name}/stop", post(stop_agent_handler))
         .layer(control_timeout_layer())
@@ -2407,17 +2413,34 @@ pub fn build_router(state: SharedState) -> Router {
         ))
         .with_state(state.clone());
 
-    // Gateway logs: accepts either API key or the agent's token (agent self-diagnosis)
+    // Gateway self-update surface, shared with agents: the agent reads /version to see
+    // whether an update exists and POSTs /gateway/update to apply it (the vestad skill's
+    // flow). These paths carry no agent name, so the middleware accepts any of this
+    // host's agent tokens. Update is host-global: it restarts vestad, which stops and
+    // restarts every agent on the host, the caller included.
+    let gateway_agent_shared = Router::new()
+        .route("/version", get(version))
+        .route("/version/check", post(version_check))
+        .route("/gateway/update", post(gateway_update_handler))
+        .layer(control_timeout_layer())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_middleware_api_or_any_agent_token,
+        ));
+
+    // Gateway logs: accepts either API key or any agent's token (agent self-diagnosis;
+    // no agent name in the path, so the self-scoped middleware cannot apply here)
     let gateway_logs = Router::new()
         .route("/gateway/logs", get(gateway_logs_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
-            auth::auth_middleware_api_or_agent_token,
+            auth::auth_middleware_api_or_any_agent_token,
         ))
         .with_state(state.clone());
 
     Router::new()
         .merge(vestad_public)
+        .merge(gateway_agent_shared)
         .merge(vestad_protected_timed)
         .merge(vestad_protected_longrun)
         .merge(vestad_protected_streaming)
@@ -2725,6 +2748,7 @@ pub async fn run_server(cfg: ServerConfig) {
     // snapshots each container's filesystem (minutes), and awaiting it would leave vestad unreachable.
     let reconcile_docker = docker.clone();
     let reconcile_env = state.env_config.clone();
+    let reconcile_rebuilding = state.rebuilding.clone();
     tokio::spawn(async move {
         docker::reconcile_containers(
             &reconcile_docker,
@@ -2742,6 +2766,7 @@ pub async fn run_server(cfg: ServerConfig) {
             // Mount grants are also read LIVE so a grant added/removed during the reconcile window
             // (or via a later `vesta restart`) is reflected without needing a fresh vestad boot.
             &|name| load_settings().agent_mounts(name),
+            &reconcile_rebuilding,
         )
         .await;
     });
@@ -2754,6 +2779,7 @@ pub async fn run_server(cfg: ServerConfig) {
         state.http_client.clone(),
         state.env_config.agents_dir.clone(),
         on_agents_changed,
+        state.rebuilding.clone(),
     );
     let app = build_router(state.clone());
     spawn_auto_backup_task(state.clone());
@@ -2846,7 +2872,18 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_cached_port_reusable, spawn_pipeline_sse};
+    use super::{
+        allocate_service_port, ensure_not_rebuilding, is_cached_port_reusable, spawn_pipeline_sse,
+    };
+
+    #[test]
+    fn mutating_agent_ops_conflict_while_rebuilding() {
+        let rebuilding = crate::docker::RebuildTracker::default();
+        assert!(ensure_not_rebuilding(&rebuilding, "apollo").is_ok());
+        let _mark = rebuilding.mark("apollo");
+        let err = ensure_not_rebuilding(&rebuilding, "apollo").expect_err("expected 409 while rebuilding");
+        assert_eq!(err.0, axum::http::StatusCode::CONFLICT);
+    }
 
     // ── SSE cancellation safety ───────────────────────────────────
     //
@@ -3013,7 +3050,7 @@ mod tests {
     #[tokio::test]
     async fn longrun_layer_allows_a_request_past_the_control_deadline() {
         // A handler slower than a control-class deadline must survive under the longrun layer —
-        // the mechanism that keeps agent create/rebuild (multi-minute image builds) from 408ing.
+        // the mechanism that keeps agent create (a multi-minute image build) from 408ing.
         let slow = || async {
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
             "ok"
@@ -3059,14 +3096,65 @@ mod tests {
         );
     }
 
-    // Regression for #433.
+    // A live listener is the service's own resident server (voice-server, a
+    // dashboard, etc.): reuse must return its port so register stays idempotent
+    // and lookups keep resolving the live port. Reallocating here moved the port
+    // out from under resident services (vesta#1254).
     #[tokio::test]
-    async fn cached_port_is_not_reusable_when_squatted() {
-        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    async fn cached_port_is_reusable_when_listening() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
         let port = listener.local_addr().unwrap().port();
         assert!(
-            !is_cached_port_reusable(port).await,
-            "a port held by another listener must not be reported reusable",
+            is_cached_port_reusable(port).await,
+            "a port with a live listener must be reported reusable",
+        );
+    }
+
+    // Reproduction of vesta#1254. A resident service (voice-server) stays bound
+    // to its registered port; re-registration -- which is also how consumers
+    // resolve the port, e.g. whatsapp's resolveVoiceBaseURL and voice's own
+    // status/stop/restart -- must return that same live port. This replays the
+    // exact choice register_service_handler makes (reuse the cached port when
+    // reusable, else allocate a fresh one) against a real live listener, using
+    // the same allocate_service_port + is_cached_port_reusable it calls. Under
+    // the old bind-only probe the live listener made reuse fail and the port
+    // drifted to a fresh, dead one; the fix keeps it sticky.
+    #[tokio::test]
+    async fn resident_service_keeps_its_port_across_reregistration() {
+        use std::collections::HashMap;
+
+        // First registration: a fresh port for "voice", recorded in the registry.
+        let mut registry: HashMap<String, HashMap<String, ServiceEntry>> = HashMap::new();
+        let p1 = allocate_service_port(&registry).expect("a port should be free");
+        registry.entry("agent".into()).or_default().insert(
+            "voice".into(),
+            ServiceEntry {
+                port: p1,
+                public: false,
+                key: "0123456789abcdef".to_string(),
+            },
+        );
+
+        // The service is now resident: voice-server is listening on p1.
+        let _server = tokio::net::TcpListener::bind(("127.0.0.1", p1))
+            .await
+            .unwrap();
+
+        // Re-registration, replaying register_service_handler's port decision.
+        let cached = registry
+            .get("agent")
+            .and_then(|s| s.get("voice"))
+            .map(|e| e.port);
+        let resolved = match cached {
+            Some(p) if is_cached_port_reusable(p).await => p,
+            _ => allocate_service_port(&registry).expect("a port should be free"),
+        };
+
+        assert_eq!(
+            resolved, p1,
+            "a resident service must resolve to its live port {p1}, not a fresh dead one ({resolved})",
         );
     }
 
@@ -3091,6 +3179,7 @@ mod tests {
             AgentStatus::Starting,
             AgentStatus::NotAuthenticated,
             AgentStatus::Unprovisioned,
+            AgentStatus::Rebuilding,
             AgentStatus::Stopped,
             AgentStatus::Dead,
             AgentStatus::NotFound,

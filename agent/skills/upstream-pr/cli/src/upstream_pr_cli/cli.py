@@ -97,13 +97,6 @@ def main():
     current_branch = result.stdout.strip()
     branch = args.branch or current_branch
 
-    # Set commit author so pushes are attributed to this vesta instance
-    run(["git", "config", "user.name", author_name])
-    run(["git", "config", "user.email", author_email])
-
-    # Amend the latest commit to update its author to this vesta instance
-    run(["git", "commit", "--amend", "--no-edit", f"--author={author_name} <{author_email}>"])
-
     # Configure upstream remote
     remote_url = f"https://x-access-token:{token}@github.com/{UPSTREAM_REPO}.git"
     result = run(["git", "remote", "get-url", "upstream"])
@@ -111,6 +104,27 @@ def main():
         run(["git", "remote", "add", "upstream", remote_url])
     else:
         run(["git", "remote", "set-url", "upstream", remote_url])
+
+    # Guard: HEAD must share history with the base branch, else PR-create fails 422 with a
+    # cryptic "no history in common with master". This happens when upstream-pr is run from
+    # the workspace branch (~), whose base is a standalone stock snapshot tag with no ancestry
+    # to real GitHub master, so pushing it force-pushes an unrelated root. Catch it here with
+    # an actionable message BEFORE we amend the commit author or push anything.
+    run(["git", "fetch", "--quiet", "upstream", args.base])
+    merge_base = run(["git", "merge-base", "FETCH_HEAD", "HEAD"])
+    if merge_base.returncode != 0 or not merge_base.stdout.strip():
+        print(f"Error: HEAD shares no history with upstream/{args.base}.", file=sys.stderr)
+        print("You are probably running from your workspace branch (~), whose base is a", file=sys.stderr)
+        print("standalone stock snapshot tag unrelated to real master. Run upstream-pr from", file=sys.stderr)
+        print("your PR worktree (branch off FETCH_HEAD after fetching master), not from ~.", file=sys.stderr)
+        sys.exit(1)
+
+    # Set commit author so pushes are attributed to this vesta instance
+    run(["git", "config", "user.name", author_name])
+    run(["git", "config", "user.email", author_email])
+
+    # Amend the latest commit to update its author to this vesta instance
+    run(["git", "commit", "--amend", "--no-edit", f"--author={author_name} <{author_email}>"])
 
     # Push
     print(f"Pushing {current_branch} -> upstream/{branch}...")

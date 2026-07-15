@@ -168,14 +168,17 @@ def auth_loopback_oauth(provider: str, profile: dict, user: str) -> dict:
     if not code:
         sys.exit("no code in redirect; aborting")
 
-    data = urllib.parse.urlencode(
-        {
-            "client_id": profile["oauth_client_id"],
-            "code": code,
-            "redirect_uri": redirect_uri,
-            "grant_type": "authorization_code",
-        }
-    ).encode()
+    token_params = {
+        "client_id": profile["oauth_client_id"],
+        "code": code,
+        "redirect_uri": redirect_uri,
+        "grant_type": "authorization_code",
+    }
+    # Thunderbird's Google desktop client requires its published (public)
+    # client_secret in the code exchange; omitting it yields invalid_client.
+    if profile.get("oauth_client_secret"):
+        token_params["client_secret"] = profile["oauth_client_secret"]
+    data = urllib.parse.urlencode(token_params).encode()
     req = urllib.request.Request(
         profile["oauth_token_url"],
         data=data,

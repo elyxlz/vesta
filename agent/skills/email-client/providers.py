@@ -4,7 +4,9 @@
 Each provider profile describes how to talk IMAP/SMTP to one mail
 host: where to connect, which OAuth client to use (if any), which
 scopes to request, and which auth strategy the daemon and CLI should
-follow.
+follow. Providers that also run a CalDAV calendar server carry a
+``caldav_url``, reused by the ``calendar`` commands with the same
+credential as mail (see ``caldav_client.py``).
 
 Auth strategies:
 
@@ -26,11 +28,29 @@ profile can be reshaped without touching the dict (or use the
 
 from __future__ import annotations
 
+import os
+
+from thunderbird_client import resolve_google_client
+
 # Mozilla Thunderbird's published public OAuth client IDs. These are
 # baked into Thunderbird's source and are the canonical "open-source
 # mail client" choice for personal Microsoft and Google accounts.
 THUNDERBIRD_MS_CLIENT_ID = "9e5f94bc-e8a4-4e73-b8be-63364c29d753"
-THUNDERBIRD_GOOGLE_CLIENT_ID = "406964657835-aq8lmia8j95dhl1a2bvharmfk3t1glqf.apps.googleusercontent.com"
+# Thunderbird's CURRENT published Google desktop client. The previous value
+# shipped here (...t1glqf) was an older Thunderbird client that Google no
+# longer recognizes: its token endpoint returns invalid_client ("The OAuth
+# client was not found"), so a fresh Gmail sign-in fails. The live client is
+# ...t1hgqj (verified against comm-central OAuth2Providers.sys.mjs and a live
+# probe of Google's token endpoint). It is registered under Mozilla's Google
+# Cloud project (number 406964657835) whose verified consent screen already
+# grants mail + calendar + carddav in one sign-in.
+THUNDERBIRD_GOOGLE_CLIENT_ID = "406964657835-aq8lmia8j95dhl1a2bvharmfk3t1hgqj.apps.googleusercontent.com"
+# Thunderbird's published desktop-app "client secret". Desktop-app OAuth
+# clients are public by design (the binary ships this string), so this is NOT
+# a credential to protect: it is baked into every Thunderbird release. Google's
+# token endpoint nonetheless requires it in the authorization-code and
+# refresh-token exchanges for this client, so it must be sent.
+THUNDERBIRD_GOOGLE_CLIENT_SECRET = "kSmqreRr0qwBWJgbf5Y-PjSU"
 
 
 PROVIDERS: dict[str, dict] = {
@@ -81,11 +101,24 @@ PROVIDERS: dict[str, dict] = {
         "smtp_starttls": True,
         "sent_folder": "[Gmail]/Sent Mail",
         "oauth_client_id": THUNDERBIRD_GOOGLE_CLIENT_ID,
+        "oauth_client_secret": THUNDERBIRD_GOOGLE_CLIENT_SECRET,
         # Google does not use this field but we keep the shape uniform.
         "oauth_authority": "https://accounts.google.com",
         "oauth_auth_url": "https://accounts.google.com/o/oauth2/v2/auth",
         "oauth_token_url": "https://oauth2.googleapis.com/token",
-        "oauth_scopes": ["https://mail.google.com/"],
+        # mail.google.com covers IMAP/SMTP. The calendar scope rides the same
+        # verified Thunderbird consent screen, so one Gmail sign-in also grants
+        # Google Calendar (used by the `calendar` commands over CalDAV).
+        # calendar is a "sensitive" (not "restricted") scope, so no CASA.
+        # Existing Gmail accounts authed before this scope was added must
+        # re-run: email-client auth add --account <name> --provider gmail --reauth
+        "oauth_scopes": [
+            "https://mail.google.com/",
+            "https://www.googleapis.com/auth/calendar",
+        ],
+        # CalDAV, not the Calendar REST API: Thunderbird's Cloud project has the
+        # REST API disabled, while CalDAV needs only the scope above.
+        "caldav_url": "https://apidata.googleusercontent.com/caldav/v2",
     },
     "yahoo-app-password": {
         "label": "Yahoo Mail (app password)",
@@ -106,6 +139,8 @@ PROVIDERS: dict[str, dict] = {
         "smtp_port": 587,
         "smtp_starttls": True,
         "sent_folder": "Sent Messages",
+        # Same app password as mail; iCloud redirects to per-user partition hosts.
+        "caldav_url": "https://caldav.icloud.com",
     },
     "fastmail-app-password": {
         "label": "Fastmail (app password)",
@@ -116,6 +151,8 @@ PROVIDERS: dict[str, dict] = {
         "smtp_port": 587,
         "smtp_starttls": True,
         "sent_folder": "Sent",
+        # Same app password as mail (scope it to include CalDAV when generating).
+        "caldav_url": "https://caldav.fastmail.com",
     },
     "generic": {
         "label": "Generic IMAP/SMTP (env-driven, no defaults)",
@@ -180,16 +217,52 @@ def detect_provider(email: str) -> str | None:
     return None
 
 
+def gmail_oauth_client() -> tuple[str, str]:
+    """Resolve the Gmail OAuth client id/secret via the dynamic resolver.
+
+    Reads Thunderbird's current published Google client from the local cache
+    (populated by the daily health-probe / self-heal), falling back to the
+    hardcoded ``...t1hgqj`` constant when there is no cache yet. This is the
+    cache-only, no-network path so building a Gmail profile never blocks on the
+    network; the daily probe is what actually refreshes the cache from upstream.
+
+    Set ``EMAIL_CLIENT_NO_DYNAMIC_GOOGLE_CLIENT=1`` to pin the hardcoded constant
+    and skip the resolver entirely.
+    """
+    if os.environ.get("EMAIL_CLIENT_NO_DYNAMIC_GOOGLE_CLIENT"):
+        return THUNDERBIRD_GOOGLE_CLIENT_ID, THUNDERBIRD_GOOGLE_CLIENT_SECRET
+    try:
+        creds = resolve_google_client(
+            THUNDERBIRD_GOOGLE_CLIENT_ID,
+            THUNDERBIRD_GOOGLE_CLIENT_SECRET,
+            allow_fetch=False,
+        )
+        return creds["client_id"], creds["client_secret"]
+    except Exception:
+        # The resolver never raises by contract, but never let a Gmail profile
+        # fail to build over client resolution: the hardcoded constant is the floor.
+        return THUNDERBIRD_GOOGLE_CLIENT_ID, THUNDERBIRD_GOOGLE_CLIENT_SECRET
+
+
 def get_profile(name: str) -> dict:
     """Return a copy of the named provider profile.
 
     Raises ``KeyError`` if the profile name is unknown. Callers
     typically pass the result through :func:`apply_env_overrides` to
     let the user override defaults via environment variables.
+
+    For the Gmail profile the OAuth client id/secret are resolved through the
+    dynamic Thunderbird resolver (cache-only) so an upstream client rotation is
+    followed automatically; the hardcoded constants remain the fallback.
     """
     if name not in PROVIDERS:
         raise KeyError(f"unknown provider {name!r}; known: {sorted(PROVIDERS)}")
-    return dict(PROVIDERS[name])
+    profile = dict(PROVIDERS[name])
+    if name == "gmail":
+        client_id, client_secret = gmail_oauth_client()
+        profile["oauth_client_id"] = client_id
+        profile["oauth_client_secret"] = client_secret
+    return profile
 
 
 def apply_env_overrides(profile: dict, env: dict) -> dict:
@@ -203,6 +276,7 @@ def apply_env_overrides(profile: dict, env: dict) -> dict:
         "smtp_host": env.get("EMAIL_CLIENT_SMTP_HOST"),
         "smtp_port": env.get("EMAIL_CLIENT_SMTP_PORT"),
         "oauth_client_id": env.get("EMAIL_CLIENT_OAUTH_CLIENT_ID"),
+        "oauth_client_secret": env.get("EMAIL_CLIENT_OAUTH_CLIENT_SECRET"),
         "oauth_authority": env.get("EMAIL_CLIENT_OAUTH_AUTHORITY"),
     }
     for k, v in overrides.items():

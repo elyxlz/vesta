@@ -257,12 +257,6 @@ export async function deleteAgent(name: string): Promise<void> {
   });
 }
 
-export async function rebuildAgent(name: string): Promise<void> {
-  await apiJson(`/agents/${encodeURIComponent(name)}/rebuild`, {
-    method: "POST",
-  });
-}
-
 export interface BackupInfo {
   id: string;
   agent_name: string;
@@ -341,7 +335,7 @@ export interface NotificationInterruptRule {
   // All conditions beyond source/type (sender, keyword, and any arbitrary field) are predicates here,
   // ANDed together. Empty = the rule matches every notification of the given source/type.
   match?: FieldPredicate[];
-  action: "interrupt" | "pool" | "trash";
+  action: "interrupt" | "snooze" | "trash";
 }
 
 /// Read the agent's ordered notification interrupt ruleset from its config (GET /config).
@@ -366,28 +360,6 @@ export async function setNotificationInterruptRules(
     jsonInit("PUT", { notification_rules: rules }),
   );
   return rules;
-}
-
-export type PreemptMode = "message" | "interrupt";
-
-/// How urgent messages preempt a running turn, from the agent's config (GET /config).
-export async function getPreemptMode(name: string): Promise<PreemptMode> {
-  const resp = await apiJson<{ preempt_mode?: PreemptMode }>(
-    `/agents/${encodeURIComponent(name)}/config`,
-  );
-  return resp.preempt_mode ?? "message";
-}
-
-/// Set how urgent messages preempt a running turn (PUT /config with {preempt_mode}). A pref:
-/// saved immediately but applies on the agent's next restart, so the caller flags restart-pending.
-export async function setPreemptMode(
-  name: string,
-  mode: PreemptMode,
-): Promise<void> {
-  await apiFetch(
-    `/agents/${encodeURIComponent(name)}/config`,
-    jsonInit("PUT", { preempt_mode: mode }),
-  );
 }
 
 /// One page of received notifications, newest first (GET /history?channel=notifications). Pass the

@@ -158,15 +158,13 @@ structure.
 Camoufox stealth handles the large majority of sites. When one still blocks you, escalate in this
 order, most-preferred first:
 
-1. **Stealth (default).** Just `browser launch`. The fingerprint is spoofed in C++, so most
-   automated-browser detection never fires. Try this first, always.
+1. **Stealth (default).** Just `browser launch`. Try this first, always.
 2. **Handover (primary fallback).** If a site gates on *account trust* (sign-in walls, banking,
    locked tenants) rather than fingerprint, hand your headed browser to the user to sign in once;
    the session persists in the shared profile and you resume automating. One command does it:
    `browser handover start --url "<sign-in URL>"` registers the public route itself and returns a
    ready-to-send `user_url` (send the user that link, not `web_port`). See
-   [interaction-skills/handover.md](interaction-skills/handover.md). This is the go-to when
-   stealth is not enough.
+   [interaction-skills/handover.md](interaction-skills/handover.md).
 3. **Remote-control the user's own browser (last resort).** Only when you specifically need *their*
    logged-in Chrome, drive it over a tunnel with `browser connect`. See
    [interaction-skills/remote-control.md](interaction-skills/remote-control.md).
@@ -175,8 +173,6 @@ order, most-preferred first:
 
 Occasional topics live in their own files so this one stays lean:
 
-- [interaction-skills/handover.md](interaction-skills/handover.md) : hand the browser to the user to sign in (primary fallback)
-- [interaction-skills/remote-control.md](interaction-skills/remote-control.md) : drive the user's own Chrome over a tunnel (last resort)
 - [interaction-skills/advanced-usage.md](interaction-skills/advanced-usage.md) : extending helpers, multi-session, the raw BiDi escape hatch, how stealth works, contributing back
 - [interaction-skills/](interaction-skills/) : reusable mechanics (dialogs, iframes, shadow DOM, uploads, tabs)
 
@@ -191,3 +187,8 @@ Occasional topics live in their own files so this one stays lean:
 - **Bot detection / blocked**: `browser screenshot` to see the page. Camoufox is already
   stealthy, so a block is usually account-trust, geo/IP, or a CAPTCHA, so try handover.
 - **Stale refs**: take a fresh `browser snapshot` after navigation or major DOM change.
+
+## Auth-gated / heavy-JS pages
+
+- **Heavy-JS auth pages (Google, Zoom, Apple `idmsa`/`dev.apple`, and similar SPAs) HANG `goto`/`wait_for_load` for the full timeout**: these SPAs keep network connections open so the `load` event never fires cleanly, yet the page almost always loaded underneath. After a `goto` that times out, do NOT retry it and NEVER call `wait_for_load()` on these. Run a SEPARATE short call (`timeout 30 browser`) that reads `page_info()` and inspects the DOM directly (no navigation, no wait_for_load). Cap every browser call at `timeout 40-55` so a hang costs seconds, not minutes. Long blocking browser calls during a live exchange make the agent go unresponsive, so keep them short.
+- **Login-form fills need care**: some sign-in widgets live in an iframe (e.g. Apple's `aid-auth-widget-iFrame`, same-origin so `contentDocument` works). A JS `value`-set often does NOT satisfy the form's own validation (it re-renders back to empty after "Verifying..."), and real keystrokes (`type_text`) can DOUBLE a field that already holds a value, so CLEAR it first. These flows also commonly gate on device-2FA or a passcode that only the user's phone has, so browser automation frequently cannot finish them: prefer the official API or app path.

@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# vestad health check. Encodes the ONE correct endpoint so it is never
+# hand-typed wrong again. vestad is HTTPS with a self-signed cert (`-sk`) and
+# the services path is /agents/$AGENT_NAME/services, NOT /services. Plain
+# `http://127.0.0.1:$VESTAD_PORT/services` returns 000 unconditionally (wrong
+# scheme + wrong path) and mimics an outage: that misread cost a 9-hour phantom
+# "vestad down" on 2026-07-14. Use THIS, don't reconstruct the curl by hand.
+#
+# Prints "UP" (exit 0) or "DOWN <code>" (exit 1). -q suppresses stdout.
+# The local config/provider API is a DIFFERENT thing: plain http on $WS_PORT.
+set -u
+QUIET="false"
+[ "${1:-}" = "-q" ] && QUIET="true"
+
+CODE=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 5 \
+  "https://localhost:${VESTAD_PORT}/agents/${AGENT_NAME}/services" \
+  -H "X-Agent-Token: ${AGENT_TOKEN}" 2>/dev/null)
+
+if [ "$CODE" = "200" ]; then
+  [ "$QUIET" = "true" ] || echo "UP"
+  exit 0
+else
+  [ "$QUIET" = "true" ] || echo "DOWN ${CODE}"
+  exit 1
+fi

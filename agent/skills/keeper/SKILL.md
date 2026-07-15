@@ -114,3 +114,13 @@ keeper "generate -dr 6"                  # diceware passphrase (6 words)
 
 ### Vault Organization
 [How the user organizes folders and records]
+
+## Cleanup / standardization gotchas
+Doing a vault cleanup pass, a few CLI edges to know:
+- **Legacy records can't be renamed**: `record-update` on a `type=general` (legacy) record errors "Legacy record type is not supported." Fix: `record-add` a fresh `login`-type copy (login/password/url), `get <uid> --unmask` to VERIFY the password copied, `mv` to the folder, then `rm <old> -f`. Verify BEFORE deleting the original.
+- **Special-char passwords** (with `$` or `!`) break single-quoting in the `record-add` command string ("No closing quotation"). Use double-quotes and escape the dollar sign, e.g. `password="p@ss\$w!rd"`. Verify after.
+- **Dash-prefixed UIDs** (e.g. `-KomRZ...`): `rm` parses the leading `-` as a flag. Use `rm -f -- <uid>` (the `--` ends flag parsing).
+- **Duplicates**: `find-duplicate`. Often one copy holds the real creds and the other is an empty shell (just a URL) check both with `--unmask` before deleting; NEVER delete the one with a unique password.
+- **VERIFY a field update via `--format json`, NOT grep on the `keeper get` display**: after `record-update`, the human-readable output can show a STALE or wrong value for a field (masking, formatting, or label collision), reading as a false "update failed" when it actually succeeded. Confirm by reading the field from `keeper get <uid> --format json` (walk `fields[]` for the matching `type`) and check that `client_modified_time`/`revision` bumped.
+- **`record-update "password=<val>"` splits on the FIRST `=` and treats a leading `$GEN:` specially**: values containing `=` or starting with `$` get mangled silently (exit 0, no visible change until re-checked via JSON). For a value you control, prefer alphanumeric-only (`keeper generate --symbols 0`), and for arbitrary values use a data file.
+- **Legacy `general`-type records: set a field with `keeper edit -r <uid> --pass <val>`, NOT `record-update`**: `record-update` on a legacy record errors "Legacy record type is not supported." The deprecated `edit --pass` still works and takes the value as plain argv (so commas, `$`, `|`, `[]` are safe, with no field-string parsing). Verify with `keeper get <uid> --unmask`. Simpler than the record-add-a-login-copy migration when you only need to set one field.

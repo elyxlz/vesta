@@ -14,7 +14,7 @@ description: WhatsApp messages, contacts, groups, and live voice calls (place/an
 - Most common subcommands accept leading positional args that the CLI rewrites into flags (e.g. `whatsapp send 'Alice' 'Hi'` is identical to `whatsapp send --to 'Alice' --message 'Hi'`). You can always use the flag form.
 - Flags for a specific subcommand: `whatsapp <subcommand> --help`. The top-level `whatsapp` with no args prints the command list.
 - Names for `--to` / `--chat-id` / `--group`: contact name, phone (`+E.164`), group name, or JID - the CLI resolves them.
-- For `send-message`, prefer `--message-file <path>` (or `--message-file -` / `--message -` to read from stdin) when the body contains apostrophes, quotes, or multiple lines: this avoids shell-escaping issues that break `--message 'text'`.
+- For `send-message`, prefer `--message-file <path>` (or `--message-file -` / `--message -` to read from stdin) when the body contains apostrophes, quotes, backticks, `$(...)`, or multiple lines: an inline `--message 'text'` lets the shell mangle or even evaluate it.
 - `send-message` enforces short-bubble texting: a wall (over ~220 chars, or 3+ sentences in one bubble) is rejected so you re-send as several short calls, one thought each. For genuine reference material the user asked for (a brief, a code block, a list), pass `--longform` to bypass. This applies to `--message-file` sends too, so `--longform` is the only escape hatch.
 
 ## Reply / Quote
@@ -25,7 +25,7 @@ The `--reply-to` flag quotes the referenced message in WhatsApp's native reply U
 
 ## Voice calls
 
-You can hold a real voice call over WhatsApp, in your own voice (the `voice` skill's TTS), and hear the other person (the same skill's STT). It is a live spoken conversation: you hear them, you speak back:
+You can hold a live voice call over WhatsApp, in your own voice (the `voice` skill's TTS), and hear the other person (the same skill's STT):
 
 - **Being on a call.** Everything the other person says arrives as a `call_utterance` notification with their transcript and who they are; it interrupts like any WhatsApp message, so you respond live. You reply by **speaking**, with `whatsapp say`, one short spoken line per call (the same short-bubble instinct as texting, not a monologue). `say` replaces whatever is still playing, so your newest line always wins, and the other person talking over you cuts your current line short. When you place a call, `whatsapp call` returns once they answer, that is your cue to greet them with `say`.
 - **Inbound calls** are answered automatically (you get a `call_started`, then their utterances). A call you cannot take (already on another call, or `voice` not set up) becomes a `call_missed` notification instead. `call_ended` closes the loop.
@@ -67,7 +67,7 @@ Aliases in parentheses. Positional signature shown after `:` for commands that t
 - `get-group-invite-link` - `--help` for flags
 - `update-group-participants` - add/remove members; `--help` for flags
 
-**Calling** (live voice calls; needs the `voice` skill set up, both STT and TTS)
+**Calling** (live voice calls)
 - `call` : `<to>` - place a live voice call. Blocks until answered, declined, or times out, then returns the outcome.
 - `say` : `<text>` - speak a line into the active call (prefer `--text-file` / `--text -` for lines with apostrophes or quotes)
 - `hangup` - end the active call
@@ -80,9 +80,9 @@ Aliases in parentheses. Positional signature shown after `:` for commands that t
 - `clear-all-chats` - destructive; wipes local message DB
 
 **Auth / daemon** (see SETUP.md for details)
-- `daemon start|stop|restart|status` - manage the background daemon; `stop`/`restart` refuse during the 5-minute post-link sync window (`--force` overrides, at the cost of a re-pair)
+- `daemon start|stop|restart|status` - manage the background daemon; `stop`/`restart` refuse during the 5-minute post-link sync window because restarting there logs the device out (`--force` overrides, at the cost of a re-pair)
 - `link` - link an account: serves a self-refreshing public QR page and prints its URL; `--phone '+E.164'` for a pairing code instead. Rate-limited to 2 attempts/hour (`--acknowledge-ban-risk` overrides)
-- `serve` - runs the daemon in the foreground (what `daemon start` and `link` launch under the hood); `--notifications-dir` defaults to `~/agent/notifications`
+- `serve` - runs the daemon in the foreground (what `daemon start` and `link` launch under the hood); flags below
 - `authenticate` - prints auth status
 
 ### `serve` flags
@@ -104,7 +104,7 @@ The agent can read/search that account on demand (`whatsapp list-chats --instanc
 - **Send one tool call at a time. Never batch WhatsApp sends (or `say` lines) in a single parallel tool-call block.**
   *Why:* If one parallel call fails while another succeeds, you can't tell which went through. Retrying "the failed one" sends a duplicate that the recipient sees. For `say`, parallel lines also race to play over each other.
 
-- **Manage the daemon only through `whatsapp daemon ...`** (never raw `screen` or signals). `stop`/`restart` refuse during the post-link sync window because restarting there logs the device out.
+- **Manage the daemon only through `whatsapp daemon ...`** (never raw `screen` or signals).
 
 - **Never re-link / re-pair without the user's explicit go-ahead.** Pairing is rate-limited because repeated attempts get WhatsApp numbers flagged and banned. If linking fails, report it and wait; don't retry-loop.
 
@@ -122,15 +122,7 @@ The agent can read/search that account on demand (`whatsapp list-chats --instanc
 
 ## Developing & Testing Changes
 
-The WhatsApp CLI runs as a **daemon** via `screen`. One-shot commands (send, list, etc.) connect to the daemon over a Unix socket. The `whatsapp` command is a launcher (the `whatsapp` script in this skill directory) that compiles from source on every invocation, so there is no rebuild step and never a static binary to manage:
-
-1. **Restart daemon**: The running daemon is still the old build. Restart it to pick up source changes:
-   ```bash
-   whatsapp daemon restart
-   ```
-2. **Test**: Send a message and verify the new behavior. The daemon handles all command execution, so changes won't take effect until step 1.
-
-**Common mistake**: editing source and testing immediately without restarting the daemon. The CLI client just forwards commands to the daemon over the socket, so the daemon process must be restarted to run the new code.
+The WhatsApp CLI runs as a **daemon** via `screen`. One-shot commands (send, list, etc.) connect to the daemon over a Unix socket. The launcher compiles from source on every invocation (see Rules), but the daemon keeps running the old build until `whatsapp daemon restart`; restart it, then send a message to verify the new behavior.
 
 **If the daemon won't start after a change** (screen session dies immediately), run any foreground command, e.g. `whatsapp --help`: the launcher recompiles and the compile error prints to your terminal. A daemon start also pulls the latest whatsmeow first, so an upstream breaking change surfaces the same way; fix the source against the new API rather than pinning back.
 

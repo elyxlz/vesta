@@ -18,14 +18,20 @@ pub async fn get_status(
     http_client: &reqwest::Client,
     name: &str,
     agents_dir: &std::path::Path,
+    rebuilding: &docker::RebuildTracker,
 ) -> Result<docker::StatusJson, docker::DockerError> {
     docker::validate_name(name)?;
     let cname = docker::container_name(name);
     let info = docker::inspect_container(docker, &cname, Some(agents_dir)).await;
 
+    let status = if rebuilding.is_rebuilding(name) {
+        docker::AgentStatus::Rebuilding
+    } else {
+        combined_status(http_client, agents_dir, &cname, &info).await
+    };
     Ok(docker::StatusJson {
         name: name.to_string(),
-        status: combined_status(http_client, agents_dir, &cname, &info).await,
+        status,
         id: info.id,
         ws_port: info.port.unwrap_or(0),
     })
@@ -35,6 +41,7 @@ pub async fn list_agents(
     docker: &Docker,
     http_client: &reqwest::Client,
     agents_dir: &std::path::Path,
+    rebuilding: &docker::RebuildTracker,
 ) -> Vec<ListEntry> {
     let agents = docker::list_managed_agents(docker).await;
     let mut entries = Vec::new();
@@ -46,6 +53,26 @@ pub async fn list_agents(
             ws_port: info.port.unwrap_or(0),
             started_at: info.started_at.clone(),
         });
+    }
+    apply_rebuilding(entries, rebuilding.names())
+}
+
+/// Overlay live rebuild state onto the docker-derived listing: a mid-rebuild agent reports
+/// `Rebuilding`, and one whose container is momentarily removed (between the rebuild's remove
+/// and create steps) stays listed instead of vanishing. Names are sorted so the merged list is
+/// deterministic across polls (the watch channel diffs on equality).
+fn apply_rebuilding(mut entries: Vec<ListEntry>, mut rebuilding: Vec<String>) -> Vec<ListEntry> {
+    rebuilding.sort();
+    for name in rebuilding {
+        match entries.iter_mut().find(|entry| entry.name == name) {
+            Some(entry) => entry.status = docker::AgentStatus::Rebuilding,
+            None => entries.push(ListEntry {
+                name,
+                status: docker::AgentStatus::Rebuilding,
+                ws_port: 0,
+                started_at: None,
+            }),
+        }
     }
     entries
 }
@@ -198,6 +225,7 @@ pub fn spawn_agent_status_task(
     http_client: reqwest::Client,
     agents_dir: PathBuf,
     on_agents_changed: OnAgentsChanged,
+    rebuilding: docker::RebuildTracker,
 ) {
     tokio::spawn(async move {
         let mut agent_ws_handles: HashMap<String, AgentWsHandle> = HashMap::new();
@@ -206,7 +234,7 @@ pub fn spawn_agent_status_task(
 
         loop {
             // Poll agent list via async bollard
-            let agents = list_agents(&docker, &http_client, &agents_dir).await;
+            let agents = list_agents(&docker, &http_client, &agents_dir, &rebuilding).await;
 
             // Update the agents watch channel (only notifies if changed)
             let changed = cache.agents_tx.send_if_modified(|current| {
@@ -356,6 +384,37 @@ async fn agent_activity_listener(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn apply_rebuilding_overrides_status_and_keeps_missing_agents_listed() {
+        let entries = vec![
+            ListEntry {
+                name: "apollo".into(),
+                status: docker::AgentStatus::Stopped,
+                ws_port: 4200,
+                started_at: None,
+            },
+            ListEntry {
+                name: "hera".into(),
+                status: docker::AgentStatus::Alive,
+                ws_port: 4201,
+                started_at: Some("2026-01-01T00:00:00Z".into()),
+            },
+        ];
+        // apollo is mid-rebuild with its container still present; zeus is mid-rebuild
+        // with its container removed (it dropped out of the docker listing entirely).
+        let merged = apply_rebuilding(entries, vec!["apollo".into(), "zeus".into()]);
+        assert_eq!(merged.len(), 3);
+        assert_eq!(merged[0].name, "apollo");
+        assert_eq!(merged[0].status, docker::AgentStatus::Rebuilding);
+        assert_eq!(merged[0].ws_port, 4200);
+        assert_eq!(merged[1].name, "hera");
+        assert_eq!(merged[1].status, docker::AgentStatus::Alive);
+        assert_eq!(merged[2].name, "zeus");
+        assert_eq!(merged[2].status, docker::AgentStatus::Rebuilding);
+        assert_eq!(merged[2].ws_port, 0);
+        assert_eq!(merged[2].started_at, None);
+    }
 
     #[test]
     fn status_from_readiness_distinguishes_unprovisioned_from_unauthenticated() {

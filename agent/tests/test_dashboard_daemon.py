@@ -52,9 +52,9 @@ echo "${FAKE_DASHBOARD_PORT:-4321}"
 def _rig(tmp_path):
     """Builds a fake $HOME plus a fake screen/curl on PATH, returns the env for subprocess."""
     home = tmp_path / "home"
-    (home / "agent/skills/service/scripts").mkdir(parents=True)
+    (home / "agent/skills/vestad/scripts").mkdir(parents=True)
     (home / "agent/skills/restart").mkdir(parents=True)
-    register_service = home / "agent/skills/service/scripts/register-service"
+    register_service = home / "agent/skills/vestad/scripts/register-service"
     register_service.write_text(FAKE_REGISTER_SERVICE)
     register_service.chmod(0o755)
 
