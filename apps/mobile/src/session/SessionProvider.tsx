@@ -53,8 +53,7 @@ interface SessionValue {
   managed: boolean;
   version: GatewayVersionInfo | null;
   compatibility: CompatibilityState | null;
-  recentGateways: RecentGateway[];
-  recentGatewaysReady: boolean;
+  recentGateways: RecentGateway[] | null;
   connectLink: (link: string) => Promise<void>;
   connectRecentGateway: (id: string) => Promise<void>;
   forgetRecentGateway: (id: string) => Promise<void>;
@@ -93,8 +92,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [compatibility, setCompatibility] = useState<CompatibilityState | null>(
     null,
   );
-  const [recentGateways, setRecentGateways] = useState<RecentGateway[]>([]);
-  const [recentGatewaysReady, setRecentGatewaysReady] = useState(false);
+  const [recentGateways, setRecentGateways] = useState<RecentGateway[] | null>(
+    null,
+  );
   const [connectionStore] = useState(() => new ConnectionStore());
 
   const commitConnection = useCallback(
@@ -153,7 +153,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let active = true;
-    const loadRecent = async (stored: ConnectionConfig | null) => {
+
+    const restoreSession = async () => {
+      let stored: ConnectionConfig | null = null;
+      try {
+        stored = await readConnection();
+      } catch (cause) {
+        console.warn("Could not load the active gateway:", cause);
+      }
+      if (!active) return;
+
+      connectionStore.write(stored);
+      setConnection(stored);
+      setStatus(stored ? "connected" : "disconnected");
+
       try {
         const recent = stored
           ? await saveRecentGateway(stored, { touch: false })
@@ -161,25 +174,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         if (active) setRecentGateways(recent);
       } catch (cause) {
         console.warn("Could not load recent gateways:", cause);
-      } finally {
-        if (active) setRecentGatewaysReady(true);
+        if (active) setRecentGateways([]);
       }
     };
 
-    void readConnection()
-      .then((stored) => {
-        if (!active) return;
-        connectionStore.write(stored);
-        setConnection(stored);
-        setStatus(stored ? "connected" : "disconnected");
-        void loadRecent(stored);
-      })
-      .catch((cause: unknown) => {
-        console.warn("Could not load the active gateway:", cause);
-        if (!active) return;
-        setStatus("disconnected");
-        void loadRecent(null);
-      });
+    void restoreSession();
     return () => {
       active = false;
     };
@@ -354,7 +353,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       version,
       compatibility,
       recentGateways,
-      recentGatewaysReady,
       connectLink,
       connectRecentGateway,
       forgetRecentGateway,
@@ -373,7 +371,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       version,
       compatibility,
       recentGateways,
-      recentGatewaysReady,
       connectLink,
       connectRecentGateway,
       forgetRecentGateway,

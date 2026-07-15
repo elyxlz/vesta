@@ -43,7 +43,6 @@ function RecentGatewaysContent() {
   const router = useRouter();
   const {
     recentGateways,
-    recentGatewaysReady,
     connectRecentGateway,
     forgetRecentGateway,
     clearRecentGateways,
@@ -135,7 +134,7 @@ function RecentGatewaysContent() {
         </Text>
       </View>
 
-      {!recentGatewaysReady ? (
+      {recentGateways === null ? (
         <ActivityIndicator style={styles.loading} color={colors.interactive} />
       ) : recentGateways.length === 0 ? (
         <Text style={[styles.empty, { color: colors.secondaryText }]}>
@@ -233,7 +232,7 @@ function RecentGatewaysContent() {
         </Text>
       ) : null}
 
-      {recentGateways.length > 1 ? (
+      {(recentGateways?.length ?? 0) > 1 ? (
         <Pressable
           accessibilityRole="button"
           disabled={Boolean(connectingId)}

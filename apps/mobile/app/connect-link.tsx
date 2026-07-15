@@ -60,7 +60,7 @@ function ConnectLinkContent({
   scanId: string;
 }) {
   const router = useRouter();
-  const { connectLink, recentGateways, recentGatewaysReady } = useSession();
+  const { connectLink, recentGateways } = useSession();
   const { colors } = usePreferences();
   const handledScan = useRef("");
   const [link, setLink] = useState(initialLink);
@@ -183,7 +183,7 @@ function ConnectLinkContent({
               <Ionicons name="qr-code-outline" size={21} color={colors.text} />
             </Pressable>
           </View>
-          {recentGatewaysReady && recentGateways.length > 0 ? (
+          {recentGateways?.length ? (
             <Pressable
               accessibilityRole="button"
               onPress={() => router.push("/recent-gateways")}
