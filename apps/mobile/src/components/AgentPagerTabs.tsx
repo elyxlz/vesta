@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import { Pressable, StyleSheet, View, type ViewStyle } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import {
@@ -14,19 +14,27 @@ import Animated, {
   type AnimatedStyle,
   type SharedValue,
 } from "react-native-reanimated";
+import { getPagerAnimationRanges } from "@/agent/pager-model";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { radii } from "@/theme/layout";
 
-const BAR_WIDTH = 104;
 const BAR_PADDING = 4;
-const TAB_WIDTH = (BAR_WIDTH - BAR_PADDING * 2) / 2;
+const TAB_WIDTH = 48;
 const AnimatedGlassView = Animated.createAnimatedComponent(GlassView);
+
+export interface AgentPagerTab {
+  key: string;
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  selectedIcon: keyof typeof Ionicons.glyphMap;
+}
 
 interface AgentPagerTabsProps {
   activePage: number;
   top: number;
   progress: SharedValue<number>;
   interactive: boolean;
+  tabs: readonly AgentPagerTab[];
   onSelect: (page: number) => void;
 }
 
@@ -34,10 +42,12 @@ function TabSurface({
   children,
   selectionStyle,
   glassAnimatedProps,
+  width,
 }: {
   children: ReactNode;
   selectionStyle: AnimatedStyle<ViewStyle>;
   glassAnimatedProps: Partial<GlassViewProps>;
+  width: number;
 }) {
   const { colors, dark } = usePreferences();
   const content = (
@@ -62,7 +72,7 @@ function TabSurface({
         animatedProps={glassAnimatedProps}
         colorScheme={dark ? "dark" : "light"}
         isInteractive
-        style={styles.surface}
+        style={[styles.surface, { width }]}
       >
         {content}
       </AnimatedGlassView>
@@ -74,6 +84,7 @@ function TabSurface({
       style={[
         styles.surface,
         styles.surfaceFallback,
+        { width },
         { backgroundColor: colors.elevated, borderColor: colors.border },
       ]}
     >
@@ -87,13 +98,23 @@ export function AgentPagerTabs({
   top,
   progress,
   interactive,
+  tabs,
   onSelect,
 }: AgentPagerTabsProps) {
+  const ranges = useMemo(
+    () => getPagerAnimationRanges(tabs.length),
+    [tabs.length],
+  );
+  const selectionOutput = useMemo(
+    () => ranges.selection.map((page) => page * TAB_WIDTH),
+    [ranges.selection],
+  );
+  const surfaceWidth = tabs.length * TAB_WIDTH + BAR_PADDING * 2;
   const overlayStyle = useAnimatedStyle(() => {
     const visibility = interpolate(
       progress.value,
-      [0, 0.16, 0.84, 1],
-      [0, 1, 1, 0],
+      ranges.input,
+      ranges.visibility,
       Extrapolation.CLAMP,
     );
     return {
@@ -115,8 +136,8 @@ export function AgentPagerTabs({
       {
         translateX: interpolate(
           progress.value,
-          [0, 0.16, 0.84, 1],
-          [0, 0, TAB_WIDTH, TAB_WIDTH],
+          ranges.input,
+          selectionOutput,
           Extrapolation.CLAMP,
         ),
       },
@@ -125,8 +146,8 @@ export function AgentPagerTabs({
   const glassAnimatedProps = useAnimatedProps<GlassViewProps>(() => {
     const visibility = interpolate(
       progress.value,
-      [0, 0.16, 0.84, 1],
-      [0, 1, 1, 0],
+      ranges.input,
+      ranges.visibility,
       Extrapolation.CLAMP,
     );
     return {
@@ -142,21 +163,18 @@ export function AgentPagerTabs({
       <TabSurface
         selectionStyle={selectionStyle}
         glassAnimatedProps={glassAnimatedProps}
+        width={surfaceWidth}
       >
-        <Tab
-          label="Chat"
-          icon="chatbubble-outline"
-          selectedIcon="chatbubble"
-          selected={activePage === 0}
-          onPress={() => onSelect(0)}
-        />
-        <Tab
-          label="Dashboard"
-          icon="grid-outline"
-          selectedIcon="grid"
-          selected={activePage === 1}
-          onPress={() => onSelect(1)}
-        />
+        {tabs.map((tab, index) => (
+          <Tab
+            key={tab.key}
+            label={tab.label}
+            icon={tab.icon}
+            selectedIcon={tab.selectedIcon}
+            selected={activePage === index}
+            onPress={() => onSelect(index)}
+          />
+        ))}
       </TabSurface>
     </Animated.View>
   );
@@ -200,7 +218,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   surface: {
-    width: BAR_WIDTH,
     height: 44,
     borderRadius: radii.pill,
   },

@@ -6,6 +6,22 @@ describe("preference persistence", () => {
     expect(readStoredPreferences(null)).toEqual(initialPreferences);
     expect(initialPreferences.remoteNotifications).toBe(true);
     expect(initialPreferences.showToolCalls).toBe(false);
+    expect(initialPreferences.showNotificationsPage).toBe(false);
+    expect(initialPreferences.showLogsPage).toBe(false);
+  });
+
+  it("restores optional agent pages", () => {
+    expect(
+      readStoredPreferences(
+        JSON.stringify({
+          showNotificationsPage: true,
+          showLogsPage: true,
+        }),
+      ),
+    ).toMatchObject({
+      showNotificationsPage: true,
+      showLogsPage: true,
+    });
   });
 
   it("restores disabled notifications instead of replacing them with defaults", () => {

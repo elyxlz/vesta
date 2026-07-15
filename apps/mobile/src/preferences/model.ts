@@ -4,6 +4,8 @@ export interface PreferencesState {
   theme: ThemePreference;
   naturalChatPacing: boolean;
   showToolCalls: boolean;
+  showNotificationsPage: boolean;
+  showLogsPage: boolean;
   remoteNotifications: boolean;
   pushChatReplies: boolean;
   pushStatusChanges: boolean;
@@ -14,6 +16,8 @@ export const initialPreferences: PreferencesState = {
   theme: "system",
   naturalChatPacing: true,
   showToolCalls: false,
+  showNotificationsPage: false,
+  showLogsPage: false,
   remoteNotifications: true,
   pushChatReplies: true,
   pushStatusChanges: true,
@@ -38,6 +42,12 @@ export function readStoredPreferences(value: string | null): PreferencesState {
         typeof parsed.showToolCalls === "boolean"
           ? parsed.showToolCalls
           : false,
+      showNotificationsPage:
+        typeof parsed.showNotificationsPage === "boolean"
+          ? parsed.showNotificationsPage
+          : false,
+      showLogsPage:
+        typeof parsed.showLogsPage === "boolean" ? parsed.showLogsPage : false,
       remoteNotifications:
         typeof parsed.remoteNotifications === "boolean"
           ? parsed.remoteNotifications
