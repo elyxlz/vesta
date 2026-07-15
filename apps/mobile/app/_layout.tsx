@@ -35,6 +35,7 @@ import {
 import { PushCoordinator } from "@/notifications/PushCoordinator";
 import { SessionProvider, useSession } from "@/session/SessionProvider";
 import { BootSplash } from "@/components/BootSplash";
+import { GatewayConnectionBanner } from "@/components/GatewayConnectionBanner";
 import { Text } from "@/components/ui/Typography";
 import {
   BootTransitionProvider,
@@ -47,7 +48,7 @@ WebBrowser.maybeCompleteAuthSession();
 void SplashScreen.preventAutoHideAsync();
 
 function SessionNavigation() {
-  const { status, agents, agentsReady, disconnect } = useSession();
+  const { status, agents, agentsReady, reachable, disconnect } = useSession();
   const { colors, dark } = usePreferences();
   const segments = useSegments();
   const router = useRouter();
@@ -230,6 +231,14 @@ function SessionNavigation() {
             <Stack.Screen name="debug" options={{ title: "Diagnostics" }} />
             <Stack.Screen name="agent/[name]" />
           </Stack>
+          <GatewayConnectionBanner
+            visible={
+              status === "connected" &&
+              !reachable &&
+              !isConnectRoute &&
+              !bootSplashVisible
+            }
+          />
           {bootSplashVisible ? (
             <BootSplash
               ready={routeMatchesSession}
