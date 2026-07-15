@@ -106,7 +106,7 @@ function AgentPages() {
     );
   }, [clearHideTimer, tabVisibility]);
 
-  const unmountTabSurface = useCallback(() => {
+  const disableTabs = useCallback(() => {
     setTabsInteractive(false);
   }, []);
 
@@ -119,11 +119,11 @@ function AgentPages() {
           easing: Easing.in(Easing.cubic),
         },
         (finished) => {
-          if (finished) scheduleOnRN(unmountTabSurface);
+          if (finished) scheduleOnRN(disableTabs);
         },
       ),
     );
-  }, [tabVisibility, unmountTabSurface]);
+  }, [disableTabs, tabVisibility]);
 
   const hideTabsImmediately = useCallback(() => {
     clearHideTimer();
