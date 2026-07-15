@@ -247,8 +247,8 @@ export function HostAccessCard() {
           <DialogHeader>
             <DialogTitle>add a folder</DialogTitle>
             <DialogDescription>
-              choose a folder on this computer for {agentName || "the agent"} to
-              open.
+              choose a folder on {agentName || "the agent"}'s computer for them
+              to open.
             </DialogDescription>
           </DialogHeader>
 
@@ -281,7 +281,7 @@ export function HostAccessCard() {
               value={hostPath}
               onChange={(e) => setHostPath(e.target.value)}
               placeholder="/mnt/media"
-              aria-label="folder path on this computer"
+              aria-label={`folder path on ${agentName || "the agent"}'s computer`}
               className="h-8 text-xs"
             />
             {showContainerPath ? (
