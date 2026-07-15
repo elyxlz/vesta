@@ -43,9 +43,10 @@ fi
 STORYBOARD="$MOBILE/ios/Vesta/SplashScreen.storyboard"
 INFO_PLIST="$MOBILE/ios/Vesta/Info.plist"
 EXPO_PLIST="$MOBILE/ios/Vesta/Supporting/Expo.plist"
+ENTITLEMENTS_PLIST="$MOBILE/ios/Vesta/Vesta.entitlements"
 ANDROID_MANIFEST="$MOBILE/android/app/src/main/AndroidManifest.xml"
 
-for generated in "$STORYBOARD" "$INFO_PLIST" "$EXPO_PLIST" "$ANDROID_MANIFEST"; do
+for generated in "$STORYBOARD" "$INFO_PLIST" "$EXPO_PLIST" "$ENTITLEMENTS_PLIST" "$ANDROID_MANIFEST"; do
   if [ ! -f "$generated" ]; then
     echo "error: Expo prebuild did not generate ${generated#"$ROOT/"}" >&2
     exit 1
@@ -57,7 +58,7 @@ if rg -q 'imageView|SplashScreenLogo' "$STORYBOARD"; then
   exit 1
 fi
 
-python3 - "$INFO_PLIST" "$EXPO_PLIST" <<'PY'
+python3 - "$INFO_PLIST" "$EXPO_PLIST" "$ENTITLEMENTS_PLIST" <<'PY'
 import plistlib
 import sys
 
@@ -73,6 +74,11 @@ if not str(expo.get("EXUpdatesURL", "")).startswith("https://u.expo.dev/"):
     raise SystemExit("error: generated Expo.plist is missing the EAS Update URL")
 if not expo.get("EXUpdatesRuntimeVersion"):
     raise SystemExit("error: generated Expo.plist is missing the runtime version")
+
+with open(sys.argv[3], "rb") as handle:
+    entitlements = plistlib.load(handle)
+if entitlements.get("aps-environment") != "development":
+    raise SystemExit("error: generated iOS app is missing the APNs development entitlement")
 PY
 
 echo "mobile clean prebuild verified"
