@@ -2,7 +2,9 @@
 # Sync shared files from the main Vesta app into the dashboard skill.
 # Run this before committing dashboard changes or as part of CI.
 #
-# `apps/web/src/components/ui/` is the CANONICAL shadcn registry for this repo:
+# `design/tokens.json` is the canonical visual-token source and is generated
+# before the web outputs are copied. `apps/web/src/components/ui/` is the
+# CANONICAL shadcn registry for this repo:
 # it is the single source of truth that this script mirrors into the dashboard
 # skill's own `app/src/components/ui/`. Those primitives are intentionally the
 # FULL set, not only what apps/web itself renders, so the dashboard skill (which
@@ -18,10 +20,13 @@ DASHBOARD="$REPO_ROOT/agent/skills/dashboard/app"
 DASHBOARD_SRC="$DASHBOARD/src"
 APP_SRC="$REPO_ROOT/apps/web/src"
 
+python3 "$REPO_ROOT/scripts/sync-design-tokens.py"
+
 mkdir -p "$DASHBOARD_SRC/lib" "$DASHBOARD_SRC/hooks" "$DASHBOARD_SRC/components/ui"
 
 cp "$REPO_ROOT/apps/web/components.json" "$DASHBOARD/components.json"
 cp "$APP_SRC/index.css" "$DASHBOARD_SRC/index.css"
+cp "$APP_SRC/design-tokens.css" "$DASHBOARD_SRC/design-tokens.css"
 cp "$APP_SRC/lib/utils.ts" "$DASHBOARD_SRC/lib/utils.ts"
 cp "$APP_SRC/hooks/use-mobile.ts" "$DASHBOARD_SRC/hooks/use-mobile.ts"
 cp "$APP_SRC/hooks/use-media-query.ts" "$DASHBOARD_SRC/hooks/use-media-query.ts" # use-mobile delegates to it

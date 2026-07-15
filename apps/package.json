@@ -12,6 +12,10 @@
     "web:lint": "npm -w @vesta/web run lint",
     "web:test": "npm -w @vesta/web run test",
     "desktop:dev": "npm -w @vesta/desktop run dev",
-    "desktop:build": "npm -w @vesta/desktop run build"
+    "desktop:build": "npm -w @vesta/desktop run build",
+    "mobile:start": "npm --prefix mobile run start",
+    "mobile:ios": "npm --prefix mobile run ios",
+    "mobile:android": "npm --prefix mobile run android",
+    "mobile:check": "npm --prefix mobile run check"
   }
 }

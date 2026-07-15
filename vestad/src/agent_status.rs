@@ -7,6 +7,7 @@ use futures_util::StreamExt;
 use tokio::sync::watch;
 
 use crate::docker::{self, ListEntry};
+use crate::mobile_app::MobileApp;
 use crate::settings::ServiceEntry;
 
 const POLL_INTERVAL_SECS: u64 = 3;
@@ -93,7 +94,8 @@ async fn combined_status(
             // If the WS server is up but /config isn't responding yet (transient
             // mid-boot state), treat as Starting; the next ~3s poll will resolve.
             let agent_name = docker::name_from_cname(cname);
-            let provider = crate::agent_provider::AgentProvider::new(http_client, agents_dir, agent_name);
+            let provider =
+                crate::agent_provider::AgentProvider::new(http_client, agents_dir, agent_name);
             match provider.status().await {
                 Ok(s) => status_from_readiness(s.authed, s.setup_complete, s.provider_configured),
                 Err(_) => docker::AgentStatus::Starting,
@@ -108,7 +110,11 @@ async fn combined_status(
 /// Map the agent's `GET /status` readiness slice to its `AgentStatus`. An authenticated agent is
 /// `SettingUp` until first-start finishes, then `Alive`; a not-authenticated agent is `Unprovisioned`
 /// when it has no provider chosen at all, else `NotAuthenticated` (a chosen credential is invalid).
-fn status_from_readiness(authed: bool, setup_complete: bool, provider_configured: bool) -> docker::AgentStatus {
+fn status_from_readiness(
+    authed: bool,
+    setup_complete: bool,
+    provider_configured: bool,
+) -> docker::AgentStatus {
     match (authed, setup_complete, provider_configured) {
         (true, true, _) => docker::AgentStatus::Alive,
         (true, false, _) => docker::AgentStatus::SettingUp,
@@ -218,7 +224,7 @@ impl AgentStatusCache {
 }
 
 /// Spawns the background polling loop that keeps the cache fresh and manages
-/// internal WebSocket connections to alive agents for activity state relay.
+/// internal WebSocket connections to observe live events from alive agents.
 pub fn spawn_agent_status_task(
     cache: Arc<AgentStatusCache>,
     docker: Docker,
@@ -226,15 +232,25 @@ pub fn spawn_agent_status_task(
     agents_dir: PathBuf,
     on_agents_changed: OnAgentsChanged,
     rebuilding: docker::RebuildTracker,
+    mobile_app: MobileApp,
 ) {
     tokio::spawn(async move {
         let mut agent_ws_handles: HashMap<String, AgentWsHandle> = HashMap::new();
+        let mut previous_agents: Option<Vec<ListEntry>> = None;
         let (activity_event_tx, mut activity_event_rx) =
             tokio::sync::mpsc::channel::<(String, String)>(64);
 
         loop {
             // Poll agent list via async bollard
             let agents = list_agents(&docker, &http_client, &agents_dir, &rebuilding).await;
+
+            // Mobile lifecycle notifications come from vestad's authoritative
+            // agent list, never the agent EventBus's thinking/idle activity. The
+            // first poll establishes a baseline without notifying every agent.
+            if let Some(previous) = &previous_agents {
+                mobile_app.observe_agent_status_changes(previous, &agents);
+            }
+            previous_agents = Some(agents.clone());
 
             // Update the agents watch channel (only notifies if changed)
             let changed = cache.agents_tx.send_if_modified(|current| {
@@ -248,7 +264,7 @@ pub fn spawn_agent_status_task(
                 on_agents_changed(&agents);
             }
 
-            // Reconcile internal WS connections for activity state
+            // Reconcile internal WS connections for activity and mobile app events.
             let alive_agents: HashMap<String, u16> = agents
                 .iter()
                 .filter(|a| a.status == docker::AgentStatus::Alive)
@@ -278,9 +294,10 @@ pub fn spawn_agent_status_task(
                 let port = *ws_port;
                 let tx = activity_event_tx.clone();
                 let dir = agents_dir.clone();
+                let mobile_app = mobile_app.clone();
 
                 let join_handle = tokio::spawn(async move {
-                    agent_activity_listener(agent_name, port, dir, tx).await;
+                    agent_event_listener(agent_name, port, dir, tx, mobile_app).await;
                 });
 
                 agent_ws_handles.insert(
@@ -315,13 +332,14 @@ struct AgentWsHandle {
     abort_handle: tokio::task::AbortHandle,
 }
 
-/// Connects to a single agent's WebSocket and relays activity state changes
-/// back through the mpsc channel. Reconnects on failure.
-async fn agent_activity_listener(
+/// Connects to a single agent's WebSocket, relays activity state changes to the
+/// cache, and hands all parsed frames to the mobile app module. Reconnects on failure.
+async fn agent_event_listener(
     name: String,
     ws_port: u16,
     agents_dir: PathBuf,
     tx: tokio::sync::mpsc::Sender<(String, String)>,
+    mobile_app: MobileApp,
 ) {
     const RECONNECT_BASE_MS: u64 = 1000;
     const RECONNECT_MAX_MS: u64 = 15000;
@@ -365,6 +383,7 @@ async fn agent_activity_listener(
                             let _ = tx.send((name.clone(), state.to_string())).await;
                         }
                     }
+                    mobile_app.observe_agent_event(&name, parsed);
                 }
 
                 // Connection lost -- reset to idle so the frontend doesn't

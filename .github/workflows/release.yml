@@ -72,12 +72,15 @@ jobs:
           sed -i "0,/^version = \"${CURRENT}\"/s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" cli/Cargo.toml
           sed -i "s|\"version\": \"${CURRENT}\"|\"version\": \"${NEW}\"|" apps/web/package.json
           sed -i "s|\"version\": \"${CURRENT}\"|\"version\": \"${NEW}\"|" apps/desktop/package.json
+          sed -i "s|\"version\": \"${CURRENT}\"|\"version\": \"${NEW}\"|" apps/mobile/package.json
+          sed -i "s|^  version: \"${CURRENT}\",|  version: \"${NEW}\",|" apps/mobile/app.config.ts
 
       - name: Refresh lockfiles
         run: |
           (cd vestad && cargo check --quiet) &
           (cd cli && cargo check --quiet) &
           (cd agent && uv lock --project core --quiet) &
+          (cd apps && npm install --package-lock-only --ignore-scripts --quiet) &
           wait
 
       - name: Commit and push

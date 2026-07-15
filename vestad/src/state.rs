@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 
 use crate::settings::{load_settings, Settings};
-use crate::{agent_status, docker, update_check};
+use crate::{agent_status, docker, mobile_app, update_check};
 
 pub(crate) const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
 
@@ -99,6 +99,7 @@ pub struct AppState {
     pub(crate) updating: AtomicBool,
     pub(crate) http_client: reqwest::Client,
     pub(crate) settings: RwLock<Settings>,
+    pub(crate) mobile_app: mobile_app::MobileApp,
     pub(crate) dev_mode: bool,
     pub(crate) agent_status_cache: Arc<agent_status::AgentStatusCache>,
     /// Agents whose container is mid-rebuild; shared with the boot reconcile and the
@@ -131,32 +132,41 @@ impl AppState {
         https_port: u16,
         expose_lan: bool,
         lan_url: Option<String>,
-    ) -> Self {
+    ) -> (Self, mobile_app::MobileAppWorker) {
         let settings = load_settings();
         // Restore the refresh-token registry from disk (dropping expired families)
         // so a restart/self-update doesn't log everyone out. Read before `env_config`
         // is moved into the struct below.
         let refresh_live = load_refresh_live(&env_config.config_dir);
-        Self {
-            api_key,
-            env_config,
-            docker,
-            auth_sessions: Mutex::new(HashMap::new()),
-            refresh_live: Mutex::new(refresh_live),
-            agent_locks: Mutex::new(HashMap::new()),
-            tunnel_url: Mutex::new(tunnel_url),
-            update_info: Mutex::new(None),
-            updating: AtomicBool::new(false),
-            http_client: reqwest::Client::new(),
-            settings: RwLock::new(settings),
-            dev_mode,
-            agent_status_cache: Arc::new(agent_status::AgentStatusCache::new()),
-            rebuilding: docker::RebuildTracker::default(),
-            https_port,
-            expose_lan,
-            lan_url,
-            build_phases: Arc::new(std::sync::Mutex::new(HashMap::new())),
-        }
+        let http_client = reqwest::Client::new();
+        let (mobile_app, mobile_app_worker) = mobile_app::MobileApp::new(
+            env_config.config_dir.clone(),
+            http_client.clone(),
+        );
+        (
+            Self {
+                api_key,
+                env_config,
+                docker,
+                auth_sessions: Mutex::new(HashMap::new()),
+                refresh_live: Mutex::new(refresh_live),
+                agent_locks: Mutex::new(HashMap::new()),
+                tunnel_url: Mutex::new(tunnel_url),
+                update_info: Mutex::new(None),
+                updating: AtomicBool::new(false),
+                http_client,
+                settings: RwLock::new(settings),
+                mobile_app,
+                dev_mode,
+                agent_status_cache: Arc::new(agent_status::AgentStatusCache::new()),
+                rebuilding: docker::RebuildTracker::default(),
+                https_port,
+                expose_lan,
+                lan_url,
+                build_phases: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            },
+            mobile_app_worker,
+        )
     }
 
     /// Record the current build phase for `name` (normalized). Lock poisoning is

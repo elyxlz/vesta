@@ -15,7 +15,10 @@ use std::sync::Arc;
 
 use crate::settings::{load_settings, save_settings, AgentBackupOverride, BackupGlobalSettings, ServiceEntry, Settings, UserDesired};
 use crate::state::{err_response, map_docker_err, ok_json, AppState, SharedState};
-use crate::{agent_provider, agent_proxy, agent_status, auth, backup, control_ws, docker, self_update, systemd, update_check};
+use crate::{
+    agent_provider, agent_proxy, agent_status, auth, backup, control_ws, docker, mobile_app,
+    self_update, systemd, update_check,
+};
 
 const GATEWAY_RESTART_DELAY_MS: u64 = 200;
 
@@ -2292,6 +2295,11 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/agents/{name}/mounts", put(set_mounts_handler))
         .route("/host/folders", get(host_folder_suggestions_handler))
         .route(
+            "/mobile/devices",
+            put(mobile_app::register_device_handler)
+                .delete(mobile_app::delete_device_handler),
+        )
+        .route(
             "/gateway/settings",
             get(get_gateway_settings_handler).put(put_gateway_settings_handler),
         )
@@ -2714,7 +2722,7 @@ pub async fn run_server(cfg: ServerConfig) {
         std::process::exit(1);
     }
     let agent_settings = load_settings().agents.clone();
-    let state = Arc::new(AppState::new(
+    let (app_state, mobile_app_worker) = AppState::new(
         api_key,
         env_config,
         docker.clone(),
@@ -2723,7 +2731,9 @@ pub async fn run_server(cfg: ServerConfig) {
         port,
         expose_lan,
         lan_url,
-    ));
+    );
+    let state = Arc::new(app_state);
+    let mobile_app_handle = tokio::spawn(mobile_app_worker.run());
     // Reconcile in the background so the API serves immediately: a rebuild (entrypoint/mount change)
     // snapshots each container's filesystem (minutes), and awaiting it would leave vestad unreachable.
     let reconcile_docker = docker.clone();
@@ -2760,6 +2770,7 @@ pub async fn run_server(cfg: ServerConfig) {
         state.env_config.agents_dir.clone(),
         on_agents_changed,
         state.rebuilding.clone(),
+        state.mobile_app.clone(),
     );
     let app = build_router(state.clone());
     spawn_auto_backup_task(state.clone());
@@ -2817,6 +2828,10 @@ pub async fn run_server(cfg: ServerConfig) {
     tokio::select! {
         r = http_handle => r.expect("http task panicked"),
         r = https_handle => r.expect("https task panicked"),
+        r = mobile_app_handle => match r {
+            Ok(()) => panic!("mobile app delivery worker exited unexpectedly"),
+            Err(error) => panic!("mobile app delivery worker failed: {error}"),
+        },
         _ = shutdown_signal() => {
             tracing::info!("shutdown signal received, stopping all agents before exit");
             docker::stop_all_agents(&shutdown_docker).await;

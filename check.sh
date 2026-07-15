@@ -16,7 +16,8 @@ Suites:
   vestad         cargo clippy -p vestad -D warnings + cargo test -p vestad
   vestad-docker  vestad #[ignore] Docker tests (needs Docker + an agent image:
                  set VESTAD_AGENT_IMAGE or docker pull ghcr.io/elyxlz/vesta:latest)
-  web            eslint + prettier --check + tsc + vitest (web) and eslint + tsc (desktop)
+  web            eslint + prettier --check + tsc + vitest (web), eslint + tsc (desktop),
+                 and Expo dependency validation + eslint + tsc + vitest (mobile)
   guards         repo-wide ruff check + format, skills index, uv.lock, and
                  dashboard-sync freshness + the vite base check
   whatsapp       gofmt + go vet + go build + go test for the whatsapp skill CLI
@@ -97,10 +98,14 @@ check_vestad_docker() {
 }
 
 check_web() {
+  python3 scripts/sync-design-tokens.py --check
   (
     cd apps
     if [ ! -d node_modules ]; then
       npm install
+    fi
+    if [ ! -d mobile/node_modules ]; then
+      npm --prefix mobile install
     fi
     npm -w @vesta/web run lint
     npm -w @vesta/web run format:check
@@ -108,6 +113,11 @@ check_web() {
     npm -w @vesta/web run test
     npm -w @vesta/desktop run lint
     npm -w @vesta/desktop run check
+    (cd mobile && npx expo install --check)
+    npm --prefix mobile run lint
+    npm --prefix mobile run check
+    npm --prefix mobile run test
+    bash ../scripts/check-mobile-prebuild.sh
   )
 }
 
@@ -138,6 +148,11 @@ check_guards() {
     failed=1
   }
   rm -f agent/core/uv.lock.before
+
+  python3 scripts/sync-design-tokens.py --check || {
+    echo "error: generated design tokens are stale — run 'python3 scripts/sync-design-tokens.py' and commit the changes" >&2
+    failed=1
+  }
 
   bash scripts/sync-dashboard.sh
   git diff --quiet agent/skills/dashboard/app/ || {

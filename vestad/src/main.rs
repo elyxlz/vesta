@@ -16,6 +16,7 @@ mod control_ws;
 mod docker;
 mod jwt;
 mod manifest;
+mod mobile_app;
 mod mounts;
 mod paths;
 mod providers;

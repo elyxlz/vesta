@@ -1,0 +1,154 @@
+import type { ConnectionConfig } from "./types";
+
+const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
+
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+interface ClientOptions {
+  getConnection: () => ConnectionConfig | null;
+  onConnectionChange: (connection: ConnectionConfig) => Promise<void>;
+  onSessionExpired: () => Promise<void>;
+}
+
+export interface ApiClient {
+  request: (path: string, init?: RequestInit) => Promise<Response>;
+  json: <ResponseBody>(
+    path: string,
+    init?: RequestInit,
+  ) => Promise<ResponseBody>;
+  jsonInit: (method: string, body: unknown) => RequestInit;
+  websocketUrl: (path: string, query?: URLSearchParams) => string;
+  mediaUrl: (path: string, query?: URLSearchParams) => string;
+}
+
+export function createApiClient(options: ClientOptions): ApiClient {
+  let refreshPromise: Promise<ConnectionConfig | null> | null = null;
+
+  const refresh = async (force: boolean): Promise<ConnectionConfig | null> => {
+    const current = options.getConnection();
+    if (!current) return null;
+    if (!force && Date.now() < current.expiresAt - TOKEN_REFRESH_BUFFER_MS) {
+      return current;
+    }
+    if (refreshPromise) return refreshPromise;
+
+    refreshPromise = (async () => {
+      if (!current.refreshToken) {
+        await options.onSessionExpired();
+        return null;
+      }
+      try {
+        const response = await fetch(`${current.url}/auth/refresh`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refresh_token: current.refreshToken }),
+        });
+        if (response.status === 401) {
+          await options.onSessionExpired();
+          return null;
+        }
+        if (!response.ok) return current;
+        const tokens: {
+          access_token: string;
+          refresh_token: string;
+          expires_in: number;
+        } = await response.json();
+        const next: ConnectionConfig = {
+          ...current,
+          accessToken: tokens.access_token,
+          refreshToken: tokens.refresh_token,
+          expiresAt: Date.now() + tokens.expires_in * 1000,
+        };
+        await options.onConnectionChange(next);
+        return next;
+      } catch {
+        return current;
+      }
+    })();
+
+    try {
+      return await refreshPromise;
+    } finally {
+      refreshPromise = null;
+    }
+  };
+
+  const request = async (
+    path: string,
+    init?: RequestInit,
+  ): Promise<Response> => {
+    let connection = await refresh(false);
+    if (!connection) throw new Error("Not connected to a Vesta gateway.");
+
+    const send = (active: ConnectionConfig) =>
+      fetch(`${active.url}${path}`, {
+        ...init,
+        headers: {
+          Authorization: `Bearer ${active.accessToken}`,
+          ...init?.headers,
+        },
+      });
+
+    let response = await send(connection);
+    if (response.status === 401) {
+      connection = await refresh(true);
+      if (!connection) throw new ApiError(401, "Your session expired.");
+      response = await send(connection);
+    }
+    if (!response.ok) {
+      const body = await response.text();
+      let message = body || `Request failed with status ${response.status}.`;
+      try {
+        const parsed: { error?: string } = JSON.parse(body);
+        message = parsed.error ?? message;
+      } catch {
+        // The plain response body is already the best error available.
+      }
+      throw new ApiError(response.status, message);
+    }
+    return response;
+  };
+
+  const json = async <ResponseBody>(
+    path: string,
+    init?: RequestInit,
+  ): Promise<ResponseBody> => {
+    const response = await request(path, init);
+    return response.json();
+  };
+
+  const withToken = (
+    path: string,
+    query: URLSearchParams,
+    protocol: "http" | "ws",
+  ): string => {
+    const connection = options.getConnection();
+    if (!connection) throw new Error("Not connected to a Vesta gateway.");
+    query.set("token", connection.accessToken);
+    const base =
+      protocol === "ws" ? connection.url.replace(/^http/, "ws") : connection.url;
+    return `${base}${path}?${query.toString()}`;
+  };
+
+  return {
+    request,
+    json,
+    jsonInit: (method, body) => ({
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+    websocketUrl: (path, query = new URLSearchParams()) =>
+      withToken(path, query, "ws"),
+    mediaUrl: (path, query = new URLSearchParams()) =>
+      withToken(path, query, "http"),
+  };
+}
