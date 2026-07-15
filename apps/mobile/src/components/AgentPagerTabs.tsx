@@ -24,7 +24,7 @@ export interface AgentPagerTab {
 
 interface AgentPagerTabsProps {
   activePage: number;
-  top: number;
+  bottom: number;
   progress: SharedValue<number>;
   visibility: SharedValue<number>;
   interactive: boolean;
@@ -89,7 +89,7 @@ function TabSurface({
 
 export function AgentPagerTabs({
   activePage,
-  top,
+  bottom,
   progress,
   visibility,
   interactive,
@@ -104,7 +104,7 @@ export function AgentPagerTabs({
         translateY: interpolate(
           visibility.value,
           [0, 1],
-          [-10, 0],
+          [10, 0],
           Extrapolation.CLAMP,
         ),
       },
@@ -125,7 +125,7 @@ export function AgentPagerTabs({
   return (
     <Animated.View
       pointerEvents={interactive ? "box-none" : "none"}
-      style={[styles.overlay, { top }, overlayStyle]}
+      style={[styles.overlay, { bottom }, overlayStyle]}
     >
       <TabSurface
         selectionStyle={selectionStyle}
