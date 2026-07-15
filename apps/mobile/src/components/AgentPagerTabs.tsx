@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { Pressable, StyleSheet, View, type ViewStyle } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { GlassView, isGlassEffectAPIAvailable } from "expo-glass-effect";
@@ -9,7 +9,6 @@ import Animated, {
   type AnimatedStyle,
   type SharedValue,
 } from "react-native-reanimated";
-import { getPagerAnimationRanges } from "@/agent/pager-model";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { radii } from "@/theme/layout";
 
@@ -97,14 +96,6 @@ export function AgentPagerTabs({
   tabs,
   onSelect,
 }: AgentPagerTabsProps) {
-  const ranges = useMemo(
-    () => getPagerAnimationRanges(tabs.length),
-    [tabs.length],
-  );
-  const selectionOutput = useMemo(
-    () => ranges.selection.map((page) => page * TAB_WIDTH),
-    [ranges.selection],
-  );
   const surfaceWidth = tabs.length * TAB_WIDTH + BAR_PADDING * 2;
   const overlayStyle = useAnimatedStyle(() => ({
     opacity: visibility.value,
@@ -124,8 +115,8 @@ export function AgentPagerTabs({
       {
         translateX: interpolate(
           progress.value,
-          ranges.input,
-          selectionOutput,
+          [0, tabs.length - 1],
+          [0, (tabs.length - 1) * TAB_WIDTH],
           Extrapolation.CLAMP,
         ),
       },
