@@ -12,7 +12,6 @@ import Animated, {
   cancelAnimation,
   useEvent,
   useSharedValue,
-  withSpring,
   withTiming,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -32,7 +31,7 @@ import { usePreferences } from "@/preferences/PreferencesProvider";
 
 const AnimatedPagerView = Animated.createAnimatedComponent(PagerView);
 const TAB_HIDE_DELAY_MS = 100;
-const TAB_HIDE_DURATION_MS = 220;
+const TAB_ANIMATION_DURATION_MS = 220;
 const TAP_MAX_TRAVEL = 8;
 const PAGE_TABS = {
   chat: {
@@ -100,11 +99,9 @@ function AgentPages() {
     clearHideTimer();
     setTabsInteractive(true);
     tabVisibility.set(
-      withSpring(1, {
-        damping: 22,
-        stiffness: 260,
-        mass: 0.8,
-        overshootClamping: true,
+      withTiming(1, {
+        duration: TAB_ANIMATION_DURATION_MS,
+        easing: Easing.out(Easing.cubic),
       }),
     );
   }, [clearHideTimer, tabVisibility]);
@@ -118,7 +115,7 @@ function AgentPages() {
       withTiming(
         0,
         {
-          duration: TAB_HIDE_DURATION_MS,
+          duration: TAB_ANIMATION_DURATION_MS,
           easing: Easing.in(Easing.cubic),
         },
         (finished) => {
