@@ -208,8 +208,8 @@ const styles = StyleSheet.create({
   error: { fontSize: 13, fontWeight: "600" },
   section: { gap: 8 },
   sectionTitle: {
-    fontSize: 17,
-    lineHeight: 22,
+    fontSize: 15,
+    lineHeight: 20,
     fontWeight: "500",
     letterSpacing: -0.2,
     paddingHorizontal: 16,
