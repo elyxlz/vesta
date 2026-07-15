@@ -5,14 +5,14 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, atomic::AtomicBool};
+use std::sync::{atomic::AtomicBool, Arc};
 
 use axum::{http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 
 use crate::settings::{load_settings, Settings};
-use crate::{agent_status, docker, update_check};
+use crate::{agent_status, docker, mobile_app, update_check};
 
 pub(crate) const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
 
@@ -76,7 +76,9 @@ fn load_refresh_live(config_dir: &Path) -> HashMap<String, RefreshFamily> {
 /// Persist the registry atomically (temp + rename). Best-effort: a write failure
 /// only means a restart re-auths, never a request failure.
 pub(crate) async fn persist_refresh_live(config_dir: &Path, map: &HashMap<String, RefreshFamily>) {
-    let Ok(json) = serde_json::to_vec(map) else { return };
+    let Ok(json) = serde_json::to_vec(map) else {
+        return;
+    };
     let path = refresh_store_path(config_dir);
     let tmp = path.with_extension("json.tmp");
     if tokio::fs::write(&tmp, json).await.is_ok() {
@@ -99,6 +101,7 @@ pub struct AppState {
     pub(crate) updating: AtomicBool,
     pub(crate) http_client: reqwest::Client,
     pub(crate) settings: RwLock<Settings>,
+    pub(crate) mobile_app: mobile_app::MobileApp,
     pub(crate) dev_mode: bool,
     pub(crate) agent_status_cache: Arc<agent_status::AgentStatusCache>,
     /// Agents whose container is mid-rebuild; shared with the boot reconcile and the
@@ -133,7 +136,7 @@ impl AppState {
         docker: bollard::Docker,
         tunnel_url: Option<String>,
         facts: GatewayFacts,
-    ) -> Self {
+    ) -> (Self, mobile_app::MobileAppWorker) {
         let GatewayFacts {
             dev_mode,
             https_port,
@@ -145,26 +148,33 @@ impl AppState {
         // so a restart/self-update doesn't log everyone out. Read before `env_config`
         // is moved into the struct below.
         let refresh_live = load_refresh_live(&env_config.config_dir);
-        Self {
-            api_key,
-            env_config,
-            docker,
-            auth_sessions: Mutex::new(HashMap::new()),
-            refresh_live: Mutex::new(refresh_live),
-            agent_locks: Mutex::new(HashMap::new()),
-            tunnel_url: Mutex::new(tunnel_url),
-            update_info: Mutex::new(None),
-            updating: AtomicBool::new(false),
-            http_client: reqwest::Client::new(),
-            settings: RwLock::new(settings),
-            dev_mode,
-            agent_status_cache: Arc::new(agent_status::AgentStatusCache::new()),
-            rebuilding: docker::RebuildTracker::default(),
-            https_port,
-            expose_lan,
-            lan_url,
-            build_phases: Arc::new(std::sync::Mutex::new(HashMap::new())),
-        }
+        let http_client = reqwest::Client::new();
+        let (mobile_app, mobile_app_worker) =
+            mobile_app::MobileApp::new(env_config.config_dir.clone(), http_client.clone());
+        (
+            Self {
+                api_key,
+                env_config,
+                docker,
+                auth_sessions: Mutex::new(HashMap::new()),
+                refresh_live: Mutex::new(refresh_live),
+                agent_locks: Mutex::new(HashMap::new()),
+                tunnel_url: Mutex::new(tunnel_url),
+                update_info: Mutex::new(None),
+                updating: AtomicBool::new(false),
+                http_client,
+                settings: RwLock::new(settings),
+                mobile_app,
+                dev_mode,
+                agent_status_cache: Arc::new(agent_status::AgentStatusCache::new()),
+                rebuilding: docker::RebuildTracker::default(),
+                https_port,
+                expose_lan,
+                lan_url,
+                build_phases: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            },
+            mobile_app_worker,
+        )
     }
 
     /// Record the current build phase for `name` (normalized). Lock poisoning is
@@ -222,7 +232,9 @@ pub fn err_response(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_js
 }
 
 pub(crate) fn map_docker_err(e: docker::DockerError) -> (StatusCode, Json<serde_json::Value>) {
-    use docker::DockerError::{NotFound, AlreadyExists, NotRunning, BrokenState, InvalidName, BuildRequired, Failed};
+    use docker::DockerError::{
+        AlreadyExists, BrokenState, BuildRequired, Failed, InvalidName, NotFound, NotRunning,
+    };
     let (status, message) = match e {
         NotFound(message) => (StatusCode::NOT_FOUND, message),
         AlreadyExists(message) => (StatusCode::CONFLICT, message),

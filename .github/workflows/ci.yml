@@ -76,6 +76,9 @@ jobs:
               - 'check.sh'
             app:
               - 'apps/**'
+              - 'design/**'
+              - 'scripts/sync-design-tokens.py'
+              - 'scripts/sync-dashboard.sh'
               - '.github/workflows/ci.yml'
               - 'check.sh'
             agent:
@@ -108,6 +111,8 @@ jobs:
           CLI=$(grep '^version = ' cli/Cargo.toml | head -1 | cut -d'"' -f2)
           TESTS=$(grep '^version = ' vestad/tests-integration/Cargo.toml | head -1 | cut -d'"' -f2)
           DESKTOP_PKG=$(python3 -c "import json; print(json.load(open('apps/desktop/package.json'))['version'])")
+          MOBILE_PKG=$(python3 -c "import json; print(json.load(open('apps/mobile/package.json'))['version'])")
+          MOBILE_APP=$(sed -n 's/^  version: "\([^"]*\)",/\1/p' apps/mobile/app.config.ts)
           APP=$(python3 -c "import json; print(json.load(open('apps/web/package.json'))['version'])")
 
           echo "agent:         $AGENT"
@@ -115,10 +120,12 @@ jobs:
           echo "cli:           $CLI"
           echo "tests:         $TESTS"
           echo "desktop pkg:   $DESKTOP_PKG"
+          echo "mobile pkg:    $MOBILE_PKG"
+          echo "mobile app:    $MOBILE_APP"
           echo "app:           $APP"
 
           FAIL=0
-          for name_val in "vestad:$VESTAD" "cli:$CLI" "tests:$TESTS" "desktop-pkg:$DESKTOP_PKG" "app:$APP"; do
+          for name_val in "vestad:$VESTAD" "cli:$CLI" "tests:$TESTS" "desktop-pkg:$DESKTOP_PKG" "mobile-pkg:$MOBILE_PKG" "mobile-app:$MOBILE_APP" "app:$APP"; do
             name="${name_val%%:*}"
             val="${name_val#*:}"
             if [ "$AGENT" != "$val" ]; then
@@ -197,7 +204,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.25'
+          go-version: "1.25"
 
       - name: Cache whisper.cpp static build
         uses: actions/cache@v6
@@ -262,8 +269,9 @@ jobs:
           node-version: 22
 
       - name: Install deps
-        working-directory: apps
-        run: npm ci
+        run: |
+          npm --prefix apps ci
+          npm --prefix apps/mobile ci
 
       - name: Run web checks
         run: ./check.sh web
@@ -963,7 +971,20 @@ jobs:
 
   # ── Upload artifacts to release and publish ──────────────────────────
   release:
-    needs: [build-vesta, build-vestad, test-frontend, test-integration, test-live, test-linux, build-windows, build-electron-macos, build-electron-linux, build-electron-windows, push-image]
+    needs:
+      [
+        build-vesta,
+        build-vestad,
+        test-frontend,
+        test-integration,
+        test-live,
+        test-linux,
+        build-windows,
+        build-electron-macos,
+        build-electron-linux,
+        build-electron-windows,
+        push-image,
+      ]
     if: ${{ !failure() && !cancelled() && github.event_name == 'release' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -1031,7 +1052,21 @@ jobs:
   # bumped version with no release, and the next ./release.sh skips to the next
   # patch). Reverting it lets a re-run retry the same version.
   revert-failed-release:
-    needs: [build-vesta, build-vestad, test-frontend, test-integration, test-live, test-linux, build-windows, build-electron-macos, build-electron-linux, build-electron-windows, push-image, release]
+    needs:
+      [
+        build-vesta,
+        build-vestad,
+        test-frontend,
+        test-integration,
+        test-live,
+        test-linux,
+        build-windows,
+        build-electron-macos,
+        build-electron-linux,
+        build-electron-windows,
+        push-image,
+        release,
+      ]
     if: ${{ failure() && github.event_name == 'release' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
