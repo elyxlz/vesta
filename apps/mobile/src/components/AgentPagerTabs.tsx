@@ -1,15 +1,10 @@
 import { useMemo, type ReactNode } from "react";
 import { Pressable, StyleSheet, View, type ViewStyle } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import {
-  GlassView,
-  isGlassEffectAPIAvailable,
-  type GlassViewProps,
-} from "expo-glass-effect";
+import { GlassView, isGlassEffectAPIAvailable } from "expo-glass-effect";
 import Animated, {
   Extrapolation,
   interpolate,
-  useAnimatedProps,
   useAnimatedStyle,
   type AnimatedStyle,
   type SharedValue,
@@ -20,7 +15,6 @@ import { radii } from "@/theme/layout";
 
 const BAR_PADDING = 4;
 const TAB_WIDTH = 48;
-const AnimatedGlassView = Animated.createAnimatedComponent(GlassView);
 
 export interface AgentPagerTab {
   key: string;
@@ -41,12 +35,12 @@ interface AgentPagerTabsProps {
 function TabSurface({
   children,
   selectionStyle,
-  glassAnimatedProps,
+  glassVisible,
   width,
 }: {
   children: ReactNode;
   selectionStyle: AnimatedStyle<ViewStyle>;
-  glassAnimatedProps: Partial<GlassViewProps>;
+  glassVisible: boolean;
   width: number;
 }) {
   const { colors, dark } = usePreferences();
@@ -68,14 +62,14 @@ function TabSurface({
 
   if (isGlassEffectAPIAvailable()) {
     return (
-      <AnimatedGlassView
-        animatedProps={glassAnimatedProps}
+      <GlassView
+        glassEffectStyle={glassVisible ? "regular" : "none"}
         colorScheme={dark ? "dark" : "light"}
         isInteractive
         style={[styles.surface, { width }]}
       >
         {content}
-      </AnimatedGlassView>
+      </GlassView>
     );
   }
 
@@ -143,18 +137,6 @@ export function AgentPagerTabs({
       },
     ],
   }));
-  const glassAnimatedProps = useAnimatedProps<GlassViewProps>(() => {
-    const visibility = interpolate(
-      progress.value,
-      ranges.input,
-      ranges.visibility,
-      Extrapolation.CLAMP,
-    );
-    return {
-      glassEffectStyle: visibility > 0.01 ? "regular" : "none",
-    };
-  });
-
   return (
     <Animated.View
       pointerEvents={interactive ? "box-none" : "none"}
@@ -162,7 +144,7 @@ export function AgentPagerTabs({
     >
       <TabSurface
         selectionStyle={selectionStyle}
-        glassAnimatedProps={glassAnimatedProps}
+        glassVisible={interactive}
         width={surfaceWidth}
       >
         {tabs.map((tab, index) => (
