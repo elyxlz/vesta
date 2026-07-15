@@ -7,7 +7,7 @@ export const designTokens = {
     light: {
       background: "#fffdfa",
       foreground: "#0c0a08",
-      card: "#fffdfa",
+      card: "#f4f1ed",
       "card-foreground": "#0c0a08",
       "card-ring": "rgba(12, 10, 8, 0.05)",
       popover: "#f4f1ed",
