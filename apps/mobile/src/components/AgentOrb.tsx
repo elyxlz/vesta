@@ -58,7 +58,6 @@ export function AgentOrb({
   useEffect(() => {
     if (!animated) {
       rotation.setValue(0);
-      pulse.setValue(1);
       return;
     }
 
@@ -70,6 +69,16 @@ export function AgentOrb({
         useNativeDriver: true,
       }),
     );
+    rotate.start();
+    return () => rotate.stop();
+  }, [activityState, animated, rotation]);
+
+  useEffect(() => {
+    if (!animated || status !== "alive") {
+      pulse.setValue(1);
+      return;
+    }
+
     const breathe = Animated.loop(
       Animated.sequence([
         Animated.timing(pulse, {
@@ -86,13 +95,9 @@ export function AgentOrb({
         }),
       ]),
     );
-    rotate.start();
     breathe.start();
-    return () => {
-      rotate.stop();
-      breathe.stop();
-    };
-  }, [activityState, animated, halfPulseDuration, maximumPulseScale, pulse, rotation]);
+    return () => breathe.stop();
+  }, [animated, halfPulseDuration, maximumPulseScale, pulse, status]);
 
   const rotate = rotation.interpolate({
     inputRange: [0, 1],
