@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { StyleSheet, View } from "react-native";
+import { StyleSheet, View, type GestureResponderEvent } from "react-native";
 import PagerView, {
   type PageScrollStateChangedNativeEvent,
   type PagerViewOnPageScrollEvent,
@@ -33,6 +33,7 @@ import { usePreferences } from "@/preferences/PreferencesProvider";
 const AnimatedPagerView = Animated.createAnimatedComponent(PagerView);
 const TAB_HIDE_DELAY_MS = 100;
 const TAB_HIDE_DURATION_MS = 220;
+const TAP_MAX_TRAVEL = 8;
 const PAGE_TABS = {
   chat: {
     key: "chat",
@@ -67,6 +68,7 @@ function AgentPages() {
   const pageProgress = useSharedValue(0);
   const tabVisibility = useSharedValue(0);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pageTouchStart = useRef<{ x: number; y: number } | null>(null);
   const hapticPageKey = useRef<AgentPageKey>("chat");
   const [activePageKey, setActivePageKey] = useState<AgentPageKey>("chat");
   const [tabsInteractive, setTabsInteractive] = useState(false);
@@ -110,6 +112,35 @@ function AgentPages() {
   const unmountTabSurface = useCallback(() => {
     setTabsInteractive(false);
   }, []);
+
+  const hideTabsImmediately = useCallback(() => {
+    clearHideTimer();
+    cancelAnimation(tabVisibility);
+    tabVisibility.set(0);
+    setTabsInteractive(false);
+  }, [clearHideTimer, tabVisibility]);
+
+  const onPageTouchStart = useCallback((event: GestureResponderEvent) => {
+    pageTouchStart.current = {
+      x: event.nativeEvent.pageX,
+      y: event.nativeEvent.pageY,
+    };
+  }, []);
+
+  const onPageTouchEnd = useCallback(
+    (event: GestureResponderEvent) => {
+      const start = pageTouchStart.current;
+      pageTouchStart.current = null;
+      if (
+        start &&
+        Math.abs(event.nativeEvent.pageX - start.x) <= TAP_MAX_TRAVEL &&
+        Math.abs(event.nativeEvent.pageY - start.y) <= TAP_MAX_TRAVEL
+      ) {
+        hideTabsImmediately();
+      }
+    },
+    [hideTabsImmediately],
+  );
 
   const hideTabs = useCallback(() => {
     clearHideTimer();
@@ -192,6 +223,11 @@ function AgentPages() {
         initialPage={activePage}
         orientation="horizontal"
         overdrag
+        onTouchStart={onPageTouchStart}
+        onTouchEnd={onPageTouchEnd}
+        onTouchCancel={() => {
+          pageTouchStart.current = null;
+        }}
         onPageScroll={
           onPageScroll as unknown as (event: PagerViewOnPageScrollEvent) => void
         }
