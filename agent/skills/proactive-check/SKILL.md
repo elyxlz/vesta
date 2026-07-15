@@ -9,7 +9,7 @@ This is your scheduled moment to think unprompted. No one asked; you're checking
 
 ## Preflight: daemon liveness (do this first, every tick)
 
-Before anything else, confirm your core daemons are actually alive: `screen -ls` and check that at least your messaging, mail, and `tasks` daemons are present and not `(Dead ...)`. Daemons can die SILENTLY without a `[System Restart]` banner (the container keeps running; only the daemon dies). A dead messaging daemon means you cannot reach the user at all, so this check is load-bearing. If any expected daemon is missing or dead, re-run the `restart` skill's guarded `running <name> ||` block immediately (it is idempotent, so running it when everything is already up is a safe no-op). Tell for `tasks`: an empty `tasks remind list` / `tasks list` is the sign its daemon is down.
+Before anything else, confirm your core daemons are alive: `screen -ls`, and check your messaging and mail daemons are present, not `(Dead ...)`. They can die silently (container up, daemon down), and a dead messaging daemon means you can't reach the user at all, so this is load-bearing. If any is missing or dead, re-run the `restart` skill's guarded `running <name> ||` block (idempotent, a safe no-op when everything's already up).
 
 ## Two questions, every time
 

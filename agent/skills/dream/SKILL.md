@@ -176,6 +176,8 @@ The user reviews this summary, so it's an accountability record, not a private l
 
 Cover the whole night, not just the fixes: record an outcome for **every** phase, in the order of operations, a no-op is a valid outcome worth stating ("nothing to prune", "no upstreamable finds") so tomorrow's you knows the phase actually ran and found nothing. Close with what's still unresolved and what tomorrow should pick up.
 
+**Message to future-you fires as a reminder, not a summary line.** If tonight surfaced something you want future-you to actually do at a moment (ask them a question, follow up on an event that's happening, re-check a blocker), set a reminder for yourself with the `tasks` skill on your own channel. The summary is read once at wake; a reminder fires at the right time, which is the difference between a follow-up that happens and one that quietly doesn't.
+
 ## Compaction on completion
 
 Your final two steps compact this conversation and restart into it, so you wake tomorrow with a clean but continuous context rather than a blind autocompact firing mid-day. Do them in order:
