@@ -148,7 +148,10 @@ function RecentGatewaysContent() {
               key={gateway.id}
               style={[
                 styles.gateway,
-                { backgroundColor: colors.input, borderColor: colors.border },
+                {
+                  backgroundColor: colors.elevated,
+                  borderColor: colors.border,
+                },
               ]}
             >
               <Pressable
