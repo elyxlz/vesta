@@ -85,6 +85,10 @@ def _user_phase(phase: str, msg: tp.Any, *, level: int = logging.INFO) -> None:
     _log(f"> [white][USER][/white] - [dim][{phase}][/dim] {msg}", level=level)
 
 
+def _notification_phase(phase: str, msg: tp.Any, *, level: int = logging.INFO) -> None:
+    _log(f"* [green][NOTIFICATION][/green] - [dim][{phase}][/dim] {msg}", level=level)
+
+
 # Category loggers
 def init(msg: tp.Any) -> None:
     _system_phase("INIT", msg)
@@ -131,6 +135,10 @@ def tool(msg: tp.Any) -> None:
 
 def system(msg: tp.Any) -> None:
     _system_phase("MESSAGE", msg)
+
+
+def notification(msg: tp.Any) -> None:
+    _notification_phase("MESSAGE", msg)
 
 
 def subagent(msg: tp.Any) -> None:
