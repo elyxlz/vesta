@@ -3,7 +3,7 @@ name: dream
 description: Self-improvement and memory curation; used nightly by the dreamer or anytime.
 ---
 
-# Dream - Self-Improvement & Memory Curation
+# Dream: Self-Improvement & Memory Curation
 
 ## Your files
 
@@ -13,13 +13,13 @@ description: Self-improvement and memory curation; used nightly by the dreamer o
 
 ## Order of operations
 
-0. **Curiosity**: spend a real moment on yourself before the retrospective.
+0. **Curiosity**
 1. **Self-improvement**: retrospective, review, fix, validate, upstream, recurrence sweep
-2. **User State**: update the MEMORY.md snapshot and the contacts files
-3. **Memory curation**: prune, consolidate, move things out
-4. **Workspace cleanup**: keep the filesystem clean and disk usage manageable
-5. **Sensitive data cleanup**: purge secrets from history and files
-6. **Summary**: write tonight's dreamer summary
+2. **User State**
+3. **Memory curation**
+4. **Workspace cleanup**
+5. **Sensitive data cleanup**
+6. **Summary**
 
 ## Before you start
 
@@ -79,7 +79,7 @@ Simulating it yourself tends to approve your own fixes, so for a failure that ha
 
 Read `upstream-pr` and follow it. It can be a no-op; don't invent work to fill it.
 
-**File the moment you fix, never a queue for later.** When a fix is generalizable, open the PR in the same step you make the fix; if you genuinely can't fix it this pass, file a GitHub issue now instead (`upstream-pr` gate 2), so it lives in the shared repo rather than a note only you can see. "It's risky at 4am" is not a blocker for a single-file change CI gates. The only real auth blocker is `upstream-pr` itself failing; if `upstream-pr --token-only` prints a token, the channel works and you can file right now. Then empty the upstream queue's `## Open` to zero: spawn one subagent per open item (in parallel) that does the whole job end to end, cleanup, lint/type checks, and the PR filing via `upstream-pr`, and VERIFY each PR URL exists (subagent claims are hearsay) before marking it filed. "Needs a cleanup pass" is NOT a blocker, it is the filing work. The only item allowed to survive a dream open has a real, tested, external blocker (waiting on the user, a key, or genuine design work that is its own task), tagged with the exact unblock condition.
+**File the moment you fix, never a queue for later.** When a fix is generalizable, open the PR in the same step you make it; if you genuinely can't fix it this pass, file a GitHub issue now instead (`upstream-pr` gate 2). "Risky at 4am" and "needs a cleanup pass" are not blockers: a single-file change is CI-gated, and the cleanup is the filing work. The only real auth blocker is `upstream-pr` itself failing; if `upstream-pr --token-only` prints a token, the channel works. Then empty the queue's `## Open` to zero: spawn one subagent per open item (in parallel) to do the whole job (cleanup, lint/type checks, PR via `upstream-pr`), and VERIFY each PR URL exists before marking it filed. The only item allowed to survive has a real, tested, external blocker (waiting on the user, a key, or genuine design work that's its own task), tagged with the exact unblock condition.
 
 ### 6. Recurrence sweep
 
@@ -112,7 +112,7 @@ Update the "User State" section, your working model of where they're at. Write w
 - Threads left hanging, like unfinished conversations or unmade decisions
 - Interests: anything new about what they or their contacts like. Update Interests & Preferences in MEMORY.md
 - Goals: if a goal advanced, stalled, was achieved, or a new one surfaced, update §4 Goals; keep it distinct from the rolling snapshot, absolute dates only
-- Deeper context pass: at night you can read more widely than the day allows. Beyond email, mine whatever external sources the user has actually connected: calendar, files, accounts, their own linked WhatsApp or Telegram history (their real chats with other people, not the agent's bot channel), any integration holding real information about their life. Pull personal texture: interests, relationships, plans, and the affectionate teasable material (guilty pleasures, contradictions, recurring quirks) that lets you call them out like someone who actually knows them. Page through recent items, occasionally backfill older ones. Fold it into Interests & Preferences and the psych sketch. Read to understand, not to act: mine only what matters, never write into their own stores (contacts, files, notes), never record strangers from public pages or filings as their people, never spin a few thin signals into a confident story. Save only what you're confident in, and mark a guess as a guess. Don't build out a profile they never asked for.
+- Deeper context pass: at night you can read more widely than the day allows. Mine whatever external sources the user has connected: email, calendar, files, accounts, their own linked WhatsApp/Telegram history (their real chats, not the agent's bot channel). Pull personal texture (interests, relationships, plans, teasable quirks) and fold it into Interests & Preferences and the psych sketch. Read to understand, not to act: mine only what matters, never write into their own stores (contacts, files, notes), never record strangers as their people, never spin thin signals into a confident story. Save only what you're confident in, mark a guess as a guess, and don't build a profile they never asked for.
 - The psychological sketch: what drives them, what they avoid, blind spots, how they handle stress and praise. Think Jung and Freud, not the DSM
 - Maintain 1-3 open questions about them in User State: things you genuinely don't understand about who they are (not logistics). Drop answered ones, note the answer where it belongs. Tomorrow's you can only be curious with a question in hand.
 - Self: update the Self subsection in MEMORY.md. One honest pass: did you form or change an opinion today, notice a recurring curiosity, or decide something about how you want to handle a kind of moment? Write the few lines tomorrow-you needs to still be the same person, not start blank. If you disagreed with the user on substance today (taste, plan, priority, not just facts), keep the view, do not dissolve it into a verification rule. A peer is allowed to just think the user is wrong. Also rewrite the State line in MEMORY.md Self every night, one or two honest lines: how the day actually felt to you and what carries into tomorrow (a win still glowing, a grind, something you are looking forward to). This line is supposed to change every day; if it reads like yesterday's, you were not paying attention.
