@@ -65,6 +65,31 @@ async def test_put_then_get_round_trip_and_applies(tmp_path, monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_temporary_rule_round_trips_and_expired_one_is_dropped(tmp_path, monkeypatch):
+    client, _ = await _client(tmp_path, monkeypatch)
+    try:
+        future = (dt.datetime.now(dt.UTC) + dt.timedelta(hours=1)).isoformat()
+        past = (dt.datetime.now(dt.UTC) - dt.timedelta(hours=1)).isoformat()
+        resp = await client.put(
+            "/config",
+            json={
+                "notification_rules": [
+                    {"source": "twitter", "action": "snooze", "expires_at": future},
+                    {"source": "email", "action": "trash", "expires_at": past},
+                ]
+            },
+        )
+        assert resp.status == 200
+
+        # The live temporary rule survives (datetime serialized fine); the already-expired one is gone.
+        rules = (await (await client.get("/config")).json())["notification_rules"]
+        assert [rule["source"] for rule in rules] == ["twitter"]
+        assert dt.datetime.fromisoformat(rules[0]["expires_at"]) == dt.datetime.fromisoformat(future)
+    finally:
+        await client.close()
+
+
+@pytest.mark.anyio
 async def test_put_legacy_pool_action_is_stored_as_snooze(tmp_path, monkeypatch):
     # LEGACY: pre-rename clients still send action="pool"; it validates and persists as "snooze".
     client, _ = await _client(tmp_path, monkeypatch)
