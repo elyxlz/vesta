@@ -6,6 +6,7 @@ import PagerView, {
   type PagerViewOnPageSelectedEvent,
 } from "react-native-pager-view";
 import * as Haptics from "expo-haptics";
+import { KeyboardController } from "react-native-keyboard-controller";
 import Animated, {
   Easing,
   cancelAnimation,
@@ -139,7 +140,11 @@ function AgentPages() {
 
   const onPageScrollStateChanged = useCallback(
     (event: PageScrollStateChangedNativeEvent) => {
-      if (event.nativeEvent.pageScrollState === "idle") {
+      const state = event.nativeEvent.pageScrollState;
+      if (state === "dragging") {
+        void KeyboardController.dismiss().catch(() => undefined);
+      }
+      if (state === "idle") {
         hideTabs();
       } else {
         showTabs();
