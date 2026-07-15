@@ -110,6 +110,7 @@ The user's important people are [agent_name]'s important people too. Keeps track
 - Notification rules apply live; everything else applies on the next restart (`restart_vesta`). Other persistent env (skill secrets, PATH) still goes in `~/.bashrc`.
 - `agent/core/` is read only.
 - **New skills**: follow existing patterns, look at other skills when creating one.
+- 
 ### Session Lifecycle
 - The `dream` skill handles memory curation, self-improvement, and user state updates; use it anytime, not just at night.
 - The dreamer runs nightly: uses the dream skill, archives the day, compacts, and restarts into the compacted session.
