@@ -116,7 +116,9 @@ function ActivityContent() {
       {tab === "notifications" ? (
         <FlatList
           data={notificationItems}
-          keyExtractor={(event) => event.notif_id ?? `${event.ts}-${event.source}`}
+          keyExtractor={(event, index) =>
+            `${event.notif_id ?? `${event.ts}-${event.source}`}-${index}`
+          }
           renderItem={({ item }) => (
             <NotificationRow
               event={item}
