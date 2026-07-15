@@ -68,9 +68,12 @@ function AgentPages() {
   const pageProgress = useSharedValue(0);
   const tabVisibility = useSharedValue(0);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tabTransitionId = useRef(0);
+  const tabsShouldShow = useRef(false);
   const pageTouchStart = useRef<{ x: number; y: number } | null>(null);
   const hapticPageKey = useRef<AgentPageKey>("chat");
   const [activePageKey, setActivePageKey] = useState<AgentPageKey>("chat");
+  const [tabsMounted, setTabsMounted] = useState(false);
   const [tabsInteractive, setTabsInteractive] = useState(false);
   const pages = useMemo(
     () => getAgentPageKeys({ showNotificationsPage, showLogsPage }),
@@ -107,19 +110,25 @@ function AgentPages() {
 
   const showTabs = useCallback(() => {
     clearHideTimer();
-    if (tabsInteractive) {
+    tabsShouldShow.current = true;
+    tabTransitionId.current += 1;
+    setTabsInteractive(true);
+    if (tabsMounted) {
       animateTabsIn();
       return;
     }
     tabVisibility.set(TAB_MOUNT_VISIBILITY);
-    setTabsInteractive(true);
-  }, [animateTabsIn, clearHideTimer, tabVisibility, tabsInteractive]);
+    setTabsMounted(true);
+  }, [animateTabsIn, clearHideTimer, tabVisibility, tabsMounted]);
 
-  const disableTabs = useCallback(() => {
+  const disableTabs = useCallback((transitionId: number) => {
+    if (transitionId !== tabTransitionId.current) return;
     setTabsInteractive(false);
   }, []);
 
   const animateTabsOut = useCallback(() => {
+    tabsShouldShow.current = false;
+    const transitionId = ++tabTransitionId.current;
     tabVisibility.set(
       withTiming(
         0,
@@ -128,7 +137,7 @@ function AgentPages() {
           easing: Easing.in(Easing.cubic),
         },
         (finished) => {
-          if (finished) scheduleOnRN(disableTabs);
+          if (finished) scheduleOnRN(disableTabs, transitionId);
         },
       ),
     );
@@ -170,8 +179,8 @@ function AgentPages() {
   }, [animateTabsOut, clearHideTimer]);
 
   useEffect(() => {
-    if (tabsInteractive) animateTabsIn();
-  }, [animateTabsIn, tabsInteractive]);
+    if (tabsMounted && tabsShouldShow.current) animateTabsIn();
+  }, [animateTabsIn, tabsMounted]);
 
   useEffect(
     () => () => {
@@ -260,6 +269,7 @@ function AgentPages() {
         bottom={insets.bottom + 40}
         progress={pageProgress}
         visibility={tabVisibility}
+        mounted={tabsMounted}
         interactive={tabsInteractive}
         tabs={tabs}
         onSelect={selectPage}

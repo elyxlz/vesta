@@ -27,6 +27,7 @@ interface AgentPagerTabsProps {
   bottom: number;
   progress: SharedValue<number>;
   visibility: SharedValue<number>;
+  mounted: boolean;
   interactive: boolean;
   tabs: readonly AgentPagerTab[];
   onSelect: (page: number) => void;
@@ -94,6 +95,7 @@ export function AgentPagerTabs({
   bottom,
   progress,
   visibility,
+  mounted,
   interactive,
   tabs,
   onSelect,
@@ -133,7 +135,7 @@ export function AgentPagerTabs({
     >
       <TabSurface
         selectionStyle={selectionStyle}
-        glassVisible={interactive}
+        glassVisible={mounted}
         width={surfaceWidth}
       >
         {tabs.map((tab, index) => (
