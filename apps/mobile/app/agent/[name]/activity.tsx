@@ -92,11 +92,12 @@ function ActivityContent() {
       abort.signal,
       (event: LogEvent) => {
         if (event.kind === "Line") {
+          const id = nextLogId.current;
+          nextLogId.current += 1;
           setLogs((current) => [
             ...current,
-            { id: nextLogId.current, text: stripAnsi(event.text) },
+            { id, text: stripAnsi(event.text) },
           ].slice(-5000));
-          nextLogId.current += 1;
         } else if (event.kind === "Error") {
           setLogError(event.message);
         }
