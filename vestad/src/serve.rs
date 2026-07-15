@@ -1522,13 +1522,32 @@ fn allocate_service_port(registry: &HashMap<String, HashMap<String, ServiceEntry
     scan(safe_min).or_else(|| scan(SERVICE_PORT_MIN))
 }
 
-/// Bindable = reusable. A port that merely has a listener isn't enough:
-/// callers always bind the returned port themselves, so a squatter would
-/// trap them in a crash loop. See #371 and #433.
+/// A cached service port is reusable when it's the service's own live server
+/// (TCP connect succeeds) or genuinely free (bind succeeds). Only a port that is
+/// neither — a zombie/TIME_WAIT corpse left by a crashed startup (#371) — is
+/// dropped so the caller gets a fresh one.
+///
+/// The bind-only probe this replaced (#436) assumed every caller binds the
+/// returned port, so any listener meant a squatter that would crash the caller.
+/// That no longer holds: resolvers (whatsapp's `resolveVoiceBaseURL`, voice's own
+/// status/stop/restart) POST here purely to *find* the live port, and treating
+/// their own live server as a squatter reallocated the port out from under a
+/// resident service — every later lookup then resolved a fresh, dead port. The
+/// one caller that binds (voice `start`) guards with `port_alive` first, so it
+/// never binds a live port.
 async fn is_cached_port_reusable(port: u16) -> bool {
-    tokio::net::TcpListener::bind(("127.0.0.1", port))
-        .await
-        .is_ok()
+    use std::net::Ipv4Addr;
+    use std::time::Duration;
+    let alive = tokio::time::timeout(
+        Duration::from_millis(200),
+        tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port)),
+    )
+    .await
+    .is_ok_and(|r| r.is_ok());
+    alive
+        || tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port))
+            .await
+            .is_ok()
 }
 
 async fn register_service_handler(
@@ -2852,7 +2871,9 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
-    use super::{ensure_not_rebuilding, is_cached_port_reusable, spawn_pipeline_sse};
+    use super::{
+        allocate_service_port, ensure_not_rebuilding, is_cached_port_reusable, spawn_pipeline_sse,
+    };
 
     #[test]
     fn mutating_agent_ops_conflict_while_rebuilding() {
@@ -3074,14 +3095,64 @@ mod tests {
         );
     }
 
-    // Regression for #433.
+    // A live listener is the service's own resident server (voice-server, a
+    // dashboard, etc.): reuse must return its port so register stays idempotent
+    // and lookups keep resolving the live port. Reallocating here moved the port
+    // out from under resident services (vesta#1254).
     #[tokio::test]
-    async fn cached_port_is_not_reusable_when_squatted() {
-        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    async fn cached_port_is_reusable_when_listening() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
         let port = listener.local_addr().unwrap().port();
         assert!(
-            !is_cached_port_reusable(port).await,
-            "a port held by another listener must not be reported reusable",
+            is_cached_port_reusable(port).await,
+            "a port with a live listener must be reported reusable",
+        );
+    }
+
+    // Reproduction of vesta#1254. A resident service (voice-server) stays bound
+    // to its registered port; re-registration -- which is also how consumers
+    // resolve the port, e.g. whatsapp's resolveVoiceBaseURL and voice's own
+    // status/stop/restart -- must return that same live port. This replays the
+    // exact choice register_service_handler makes (reuse the cached port when
+    // reusable, else allocate a fresh one) against a real live listener, using
+    // the same allocate_service_port + is_cached_port_reusable it calls. Under
+    // the old bind-only probe the live listener made reuse fail and the port
+    // drifted to a fresh, dead one; the fix keeps it sticky.
+    #[tokio::test]
+    async fn resident_service_keeps_its_port_across_reregistration() {
+        use std::collections::HashMap;
+
+        // First registration: a fresh port for "voice", recorded in the registry.
+        let mut registry: HashMap<String, HashMap<String, ServiceEntry>> = HashMap::new();
+        let p1 = allocate_service_port(&registry).expect("a port should be free");
+        registry.entry("agent".into()).or_default().insert(
+            "voice".into(),
+            ServiceEntry {
+                port: p1,
+                public: false,
+            },
+        );
+
+        // The service is now resident: voice-server is listening on p1.
+        let _server = tokio::net::TcpListener::bind(("127.0.0.1", p1))
+            .await
+            .unwrap();
+
+        // Re-registration, replaying register_service_handler's port decision.
+        let cached = registry
+            .get("agent")
+            .and_then(|s| s.get("voice"))
+            .map(|e| e.port);
+        let resolved = match cached {
+            Some(p) if is_cached_port_reusable(p).await => p,
+            _ => allocate_service_port(&registry).expect("a port should be free"),
+        };
+
+        assert_eq!(
+            resolved, p1,
+            "a resident service must resolve to its live port {p1}, not a fresh dead one ({resolved})",
         );
     }
 

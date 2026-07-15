@@ -23,6 +23,7 @@ export function ChatHeaderActions({
       <ButtonGroup>
         <Button
           variant="outline"
+          size="icon-sm"
           className="text-muted-foreground"
           onClick={() => navigate(`/agent/${agentName}/chat`)}
         >
@@ -30,6 +31,7 @@ export function ChatHeaderActions({
         </Button>
         <Button
           variant="outline"
+          size="icon-sm"
           className="text-muted-foreground"
           onClick={onCollapse}
         >

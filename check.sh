@@ -10,14 +10,15 @@ usage() {
 Usage: ./check.sh <suite> [<suite> ...]
 
 Suites:
-  agent          ruff check + ruff format --check + ty check + pytest
+  agent          ty check + pytest (ruff runs repo-wide in guards)
                  (cc_sdk transport tests need tmux; they skip locally without it)
   cli            cargo clippy -D warnings + cargo test
   vestad         cargo clippy -p vestad -D warnings + cargo test -p vestad
   vestad-docker  vestad #[ignore] Docker tests (needs Docker + an agent image:
                  set VESTAD_AGENT_IMAGE or docker pull ghcr.io/elyxlz/vesta:latest)
-  web            eslint + prettier --check + tsc + vitest
-  guards         skills index, uv.lock, and dashboard-sync freshness + the vite base check
+  web            eslint + prettier --check + tsc + vitest (web) and eslint + tsc (desktop)
+  guards         repo-wide ruff check + format, skills index, uv.lock, and
+                 dashboard-sync freshness + the vite base check
   whatsapp       gofmt + go vet + go build + go test for the whatsapp skill CLI
                  (builds whisper.cpp static libs to ~/.cache/vesta-whisper on first run)
   integration    vestad integration tests (needs Docker)
@@ -31,7 +32,7 @@ Suites:
                  target is this build, push your branch first (else the agent's migration sync
                  can't fetch it). The release gate builds in release mode and uses the version
                  tag, so it needs no push.
-  all            agent + cli + vestad + web
+  all            guards + agent + cli + vestad + web
 
 Environment:
   TARGET=<triple>  cross-compilation target for cargo suites, e.g.
@@ -46,10 +47,8 @@ check_agent() {
   (
     cd agent
     # The engine project lives at core/ (published to boxes); dev-tool configs
-    # (ruff.toml, pytest.ini, ty.toml) live here and are never published.
+    # (pytest.ini, ty.toml) live here. Ruff runs repo-wide in the guards suite.
     export UV_PROJECT_ENVIRONMENT="$PWD/.venv"
-    uv run --project core ruff check
-    uv run --project core ruff format --check
     uv sync --project core
     for tool in skills/*/cli/; do
       if [ -f "$tool/pyproject.toml" ]; then
@@ -107,14 +106,24 @@ check_web() {
     npm -w @vesta/web run format:check
     npm -w @vesta/web run check
     npm -w @vesta/web run test
+    npm -w @vesta/desktop run lint
+    npm -w @vesta/desktop run check
   )
 }
 
 check_guards() {
   # Fast repo-hygiene checks ci.yml otherwise runs as raw steps outside this
-  # entry point: skills index, uv.lock, and dashboard-sync freshness, plus the
-  # vite base path check. All run from the repo root; none need Docker.
+  # entry point: repo-wide ruff, skills index, uv.lock, and dashboard-sync
+  # freshness, plus the vite base path check. All run from the repo root; none
+  # need Docker.
   local failed=0
+
+  # Repo-wide with the pinned ruff: every .py in the repo, not just agent/
+  # (config: root ruff.toml, which extends agent/ruff.toml). Lives here rather
+  # than in the agent suite because guards runs on every PR unfiltered, so a
+  # Python file landing outside agent/ still gets linted.
+  uv run --project agent/core ruff check . || failed=1
+  uv run --project agent/core ruff format --check . || failed=1
 
   uv run python agent/skills/generate-index.py
   git diff --exit-code agent/skills/index.json || {
@@ -223,7 +232,7 @@ for suite in "$@"; do
     whatsapp) check_whatsapp ;;
     integration) check_integration ;;
     live) check_live ;;
-    all) check_agent && check_cli && check_vestad && check_web ;;
+    all) check_guards && check_agent && check_cli && check_vestad && check_web ;;
     *)
       echo "error: unknown suite '$suite'" >&2
       usage

@@ -1,0 +1,34 @@
+appId: com.vestarun.app
+productName: Vesta
+artifactName: "Vesta_${version}_${arch}.${ext}"
+directories:
+  output: dist
+files:
+  - dist-electron/**
+  - package.json
+extraResources:
+  - from: ../web/dist
+    to: web
+mac:
+  category: public.app-category.productivity
+  target:
+    - target: dmg
+      arch: [universal]
+    - target: zip
+      arch: [universal]
+  hardenedRuntime: true
+  notarize: true
+  extendInfo:
+    NSMicrophoneUsageDescription: Vesta uses your microphone for voice input to your agent.
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+linux:
+  category: Utility
+  target:
+    - deb
+    - rpm
+publish:
+  provider: generic
+  url: "https://github.com/elyxlz/vesta/releases/download/v${version}"

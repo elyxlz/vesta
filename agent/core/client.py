@@ -116,17 +116,27 @@ async def attempt_interrupt(state: vm.State, *, config: cfg.VestaConfig, reason:
 
 
 async def send_preempt(prompt: str, *, state: vm.State, config: cfg.VestaConfig) -> bool:
-    """Preempt the running turn by delivering `prompt` as a priority:"now" user message (the
-    envelope and its protocol story live in sdk_parsing.build_priority_now_message). A foreground
-    tool call already executing is not cut short: the abort latches and applies when the tool
+    """Deliver `prompt` into the live session as a priority:"now" user message (the envelope
+    and its protocol story live in sdk_parsing.build_priority_now_message). A foreground tool
+    call already executing is not cut short: the abort latches and applies when the tool
     returns, so the preempt is delayed by at most that tool's remaining runtime, never lost.
+
+    A True return is the end of the prompt's lifecycle. The CLI persists the message into the
+    session on receipt (a crash-restart resumes with it in context) and its output streams
+    through the session's single consumer, but it guarantees no per-prompt ResultMessage: it
+    merges rapid queued prompts into one turn, starts turns of its own (background task
+    notifications), and its results carry no prompt identity. Counting-based turn pairing on
+    top of that wedged a turn on a merged-away result and crashed the agent (incident
+    2026-07-14, agent luna), so the caller consumes the item at delivery and never opens a
+    Vesta turn for it. The open turn is marked `preempted` for reply-completeness consumers
+    (the dash correction).
 
     Returns False without sending when there is nothing to preempt (no client, no open turn),
     when preemption is barred (boot turn, compaction in flight, unauthenticated provider), or
-    on a failed write — the caller then queues the prompt plain, and the processor's
-    queue-watcher retries the pre-send if the item lands while a later turn is running."""
+    on a failed write; the caller then queues the prompt as an ordinary turn."""
     client = state.client
-    if not client or state.turn is None or state.noninterruptible_turn_active or state.compacting:
+    turn = state.turn
+    if not client or turn is None or state.noninterruptible_turn_active or state.compacting:
         return False
     if is_unauthenticated(state.provider_status):
         # Same deferral as the processor's gate: don't hand prompts to a dead token; the
@@ -139,15 +149,15 @@ async def send_preempt(prompt: str, *, state: vm.State, config: cfg.VestaConfig)
         yield message
 
     try:
-        # A single stdin write: bound it like an interrupt, not like a query — on timeout the
+        # A single stdin write: bound it like an interrupt, not like a query. On timeout the
         # caller queues plain and nothing is lost.
         await asyncio.wait_for(client.query(_one()), timeout=config.interrupt_timeout)
-        state.preempt_outstanding += 1
+        turn.preempted = True
         logger.debug("Preempt sent (priority=now)")
         return True
     except Exception as e:
         # Like attempt_interrupt: best-effort, broad catch. A failed preempt must never abort
-        # the notification/message that asked for it — the prompt still queues and runs.
+        # the notification/message that asked for it; the prompt still queues and runs.
         logger.error(f"Preempt send failed: {e} | {diagnostics.format_hang_diagnostics(state)}")
         return False
 
@@ -194,13 +204,21 @@ def _emit_thinking(block: ThinkingBlock, *, state: vm.State) -> None:
 
 async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaConfig) -> None:
     """Handle one SDK stream message: emit content, persist session ids, detect auth loss, and
-    close the open turn on its ResultMessage. Messages with no open turn (a self-initiated
-    continuation turn, or an interrupted turn's wind-down) still emit — nothing is ever lost —
-    and their ResultMessage is dropped."""
+    close the open turn on its ResultMessage. Messages with no open turn (a delivered preempt
+    running as its own turn, a CLI-initiated continuation, or an interrupted turn's wind-down)
+    still emit, nothing is ever lost, and their ResultMessage is dropped."""
     diagnostics.touch_activity(state, "sdk_message")
     turn = state.turn
     if turn:
         turn.last_message_at = time.monotonic()
+    else:
+        # Turnless CLI activity (a delivered preempt running as its own turn, or a
+        # CLI-initiated turn such as a background task notification): keep the activity state
+        # honest, since it drives the snoozed-batch flush and the proactive-check gate.
+        if isinstance(msg, AssistantMessage):
+            state.event_bus.set_state("thinking")
+        elif isinstance(msg, ResultMessage):
+            state.event_bus.set_state("idle")
     if isinstance(msg, AssistantMessage):
         state.compacting = False
     # The CLI ticks a thinking counter while the model reasons; diagnostics turns it into the
@@ -259,14 +277,7 @@ async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaC
         if turn and not turn.done.is_set():
             turn.done.set()
         elif isinstance(msg, ResultMessage):
-            if state.preempt_outstanding > 0:
-                # A pre-sent turn ran to its result before the processor opened a Vesta turn
-                # for it (fast preempt). Bank it so converse(pre_sent=True) completes at open
-                # instead of waiting out the silence timeout on a turn nothing will close.
-                state.preempt_orphaned_results += 1
-                logger.debug("ResultMessage with no open turn while a preempt is outstanding; banked for the pre-sent turn")
-            else:
-                logger.debug("ResultMessage with no open turn (continuation or interrupted-turn wind-down); dropped")
+            logger.debug("ResultMessage with no open turn (continuation or CLI-initiated turn); dropped")
 
 
 async def consume_stream(*, state: vm.State, config: cfg.VestaConfig) -> None:
@@ -353,37 +364,31 @@ class QueryNotDelivered(Exception):
     deletion stays correct because the session already contains it."""
 
 
-async def converse(prompt: str, *, state: vm.State, config: cfg.VestaConfig, show_output: bool, pre_sent: bool = False) -> list[str]:
-    """Drive one turn: send the query (skipped for a pre-sent preempt — see send_preempt) and
-    wait for the turn's result. A later preempt needs no handling here: the CLI-side abort ends
-    this turn as an ordinary ResultMessage."""
+async def converse(prompt: str, *, state: vm.State, config: cfg.VestaConfig, show_output: bool) -> vm.TurnSignals:
+    """Drive one plain turn: send the query and wait for the result that closes it. Sound
+    because plain turns are self-serializing (one query in flight, then wait). Delivered
+    preempts never come through here; send_preempt's True return is their whole lifecycle.
+    A preempt landing mid-turn needs no handling: the CLI-side abort ends this turn as an
+    ordinary ResultMessage."""
     assert state.client is not None
     client = state.client
 
     diagnostics.touch_activity(state, "query_start")
     state.active_tools.clear()
     turn = _open_turn(state, show_output=show_output)
-    if pre_sent:
-        state.preempt_outstanding -= 1
-        if state.preempt_orphaned_results > 0:
-            # The pre-sent turn already ran to its result before this open (banked by the
-            # consumer); its output was emitted live, so complete immediately with no texts.
-            state.preempt_orphaned_results -= 1
-            turn.done.set()
-    else:
-        query = sdk_parsing.build_query(prompt, timestamp=dt.datetime.now())
-        try:
-            await asyncio.wait_for(client.query(query), timeout=config.query_timeout)
-        except TimeoutError:
-            _close_turn(state, turn)
-            await attempt_interrupt(state, config=config, reason="Query timeout")
-            raise QueryNotDelivered("query timed out before the CLI received it") from None
-        except Exception as e:
-            # query() surfaces SDK/transport failures across a wide, loosely typed error surface
-            # (see attempt_interrupt above) — catch broadly, like a send timeout this means the CLI
-            # never got the prompt.
-            _close_turn(state, turn)
-            raise QueryNotDelivered(str(e) or type(e).__name__) from e
+    query = sdk_parsing.build_query(prompt, timestamp=dt.datetime.now())
+    try:
+        await asyncio.wait_for(client.query(query), timeout=config.query_timeout)
+    except TimeoutError:
+        _close_turn(state, turn)
+        await attempt_interrupt(state, config=config, reason="Query timeout")
+        raise QueryNotDelivered("query timed out before the CLI received it") from None
+    except Exception as e:
+        # query() surfaces SDK/transport failures across a wide, loosely typed error surface
+        # (see attempt_interrupt above): catch broadly; like a send timeout this means the CLI
+        # never got the prompt.
+        _close_turn(state, turn)
+        raise QueryNotDelivered(str(e) or type(e).__name__) from e
     diagnostics.touch_activity(state, "query_sent")
 
     done_task = asyncio.create_task(turn.done.wait())
@@ -412,7 +417,7 @@ async def converse(prompt: str, *, state: vm.State, config: cfg.VestaConfig, sho
         _close_turn(state, turn)
         await cancel_task(done_task)
 
-    return turn.texts
+    return turn
 
 
 _EM_DASH = "—"
@@ -428,18 +433,15 @@ def _contains_dashes(texts: list[str]) -> bool:
     return any(_EM_DASH in t or _EN_DASH in t or " - " in t for t in texts)
 
 
-async def process_message(
-    msg: str, *, state: vm.State, config: cfg.VestaConfig, is_user: bool, pre_sent: bool = False
-) -> tuple[list[str], vm.State]:
-    responses = await converse(msg, state=state, config=config, show_output=True, pre_sent=pre_sent)
-    if config.block_dashes and responses and _contains_dashes(responses) and state.preempt_outstanding == 0:
-        # With a preempt outstanding the correction query would land behind the queued preempt
-        # CLI-side while its Vesta turn opened first, crossing turn attribution — skip it; the
-        # preempted reply was cut short anyway.
+async def process_message(msg: str, *, state: vm.State, config: cfg.VestaConfig, is_user: bool) -> tuple[list[str], vm.State]:
+    turn = await converse(msg, state=state, config=config, show_output=True)
+    if config.block_dashes and turn.texts and _contains_dashes(turn.texts) and not turn.preempted:
+        # A preempted turn's reply was cut short at a step boundary; correcting a truncated
+        # reply would re-send it after the preempting prompt's work, so skip it.
         logger.warning("Em/en dash detected in response, sending correction")
         await converse(_DASH_WARNING, state=state, config=config, show_output=True)
     await diagnostics.log_context_usage(state)
-    return responses, state
+    return turn.texts, state
 
 
 async def _approve_all_tools(tool_name: str, tool_input: dict[str, tp.Any], context: ToolPermissionContext) -> PermissionResultAllow:

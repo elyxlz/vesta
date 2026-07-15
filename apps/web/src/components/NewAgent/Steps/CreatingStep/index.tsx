@@ -92,7 +92,7 @@ export function CreatingStep({
       {done && (
         <Button
           className="mt-2 w-full"
-          onClick={() => navigate(`/agent/${agentName}`)}
+          onClick={() => navigate(`/agent/${agentName}/chat`)}
         >
           say hi
         </Button>

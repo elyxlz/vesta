@@ -27,7 +27,7 @@ import (
 // A bubble is "a few words to one line, rarely two" (personality SKILL.md).
 const (
 	bubbleMaxChars     = 220 // a genuinely long single bubble
-	bubbleMaxSentences = 2   // 3+ sentence-enders in one send = a paragraph, split it
+	bubbleMaxSentences = 1   // 2+ sentence-enders in one send = a paragraph, split it
 )
 
 var (

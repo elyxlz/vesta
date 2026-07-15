@@ -509,6 +509,9 @@ func (ms *MessageStore) SaveManualContact(name, phone string) (Contact, error) {
 	if trimmedName == "" {
 		return Contact{}, fmt.Errorf("contact name cannot be empty")
 	}
+	if err := errIfGroupIDDigits(normalizedDigits); err != nil {
+		return Contact{}, err
+	}
 	jid := fmt.Sprintf("%s@%s", normalizedDigits, types.DefaultUserServer)
 	_, err = ms.db.Exec(`
 		INSERT INTO contacts (jid, phone_number, name, added_at, updated_at)

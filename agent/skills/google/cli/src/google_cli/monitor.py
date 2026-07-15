@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 
 from googleapiclient.errors import HttpError
 
-from . import api, calendar, google_health, notifications
+from . import api, calendar, notifications
 from .context import GoogleContext
 from .gmail import _get_header
 
@@ -18,9 +18,27 @@ _WHITESPACE_RUN = re.compile(r"\s+")
 # replays weeks of unread email and past calendar events as notifications.
 MAX_CATCHUP_LOOKBACK = timedelta(hours=24)
 
+# One-shot markers for terminal failures the user must act on: notify the agent
+# once, then stay quiet until the failure clears (success removes the marker,
+# re-arming the notification for a future failure).
+AUTH_BROKEN_MARKER = "auth_broken.notified"
+CALENDAR_BROKEN_MARKER = "calendar_broken.notified"
+
 
 def clamp_catchup_start(last_check_dt: datetime, now: datetime) -> datetime:
     return max(last_check_dt, now - MAX_CATCHUP_LOOKBACK)
+
+
+def notify_broken_once(ctx: GoogleContext, marker_name: str, notif_type: str, error: Exception) -> None:
+    marker = ctx.monitor_base_dir / marker_name
+    if marker.exists():
+        return
+    notifications.write_notification(ctx.notif_dir, notif_type, interrupt=True, error=str(error))
+    marker.write_text(datetime.now(UTC).isoformat())
+
+
+def clear_broken_marker(ctx: GoogleContext, marker_name: str) -> None:
+    (ctx.monitor_base_dir / marker_name).unlink(missing_ok=True)
 
 
 def clean_preview(text: str) -> str:
@@ -100,18 +118,20 @@ def run(ctx: GoogleContext):
 
             logger.info(f"Checking for updates since {query_since.isoformat()}")
 
-            # Low-frequency (≤ once/day) OAuth client health probe + automatic
-            # self-heal ladder. Silent when it can swap in a fresh Thunderbird
-            # client; only ever reaches the user as a last resort. Isolated in its
-            # own try so a probe error never disrupts mail/calendar polling.
-            try:
-                google_health.maybe_run_daily_probe(config, ctx.notif_dir, log=logger.info)
-            except Exception as e:
-                logger.error(f"Error in google-health probe: {e}")
-
             try:
                 gmail = api.gmail_service(config)
+            except ValueError as e:
+                # Terminal auth failure (no token, dead refresh): every poll would
+                # fail, so tell the agent once and keep polling without advancing
+                # the state file; recovery replays the gap (clamped above).
+                logger.error(f"Google auth is broken: {e}")
+                notify_broken_once(ctx, AUTH_BROKEN_MARKER, "auth_broken", e)
+                if ctx.monitor_stop_event.wait(45):
+                    break
+                continue
+            clear_broken_marker(ctx, AUTH_BROKEN_MARKER)
 
+            try:
                 epoch_seconds = int(query_since.timestamp())
                 query = f"after:{epoch_seconds}"
                 results = gmail.users().messages().list(userId="me", q=query, labelIds=["INBOX"], maxResults=50).execute()
@@ -153,9 +173,6 @@ def run(ctx: GoogleContext):
                 max_threshold = max(config.get_calendar_notify_thresholds())
                 window_end = new_check_time + timedelta(minutes=max_threshold + 60)
 
-                # Calendar runs on CalDAV now (the REST API is disabled for the
-                # reused Thunderbird client). list_events_between returns the same
-                # REST-shaped event dicts this loop already consumes.
                 events = calendar.list_events_between(
                     config,
                     calendar_id="primary",
@@ -200,10 +217,17 @@ def run(ctx: GoogleContext):
                             missed=(catching_up and event_time < new_check_time) or None,
                         )
 
-            except Exception as e:
-                # CalDAV surfaces its own error type, not HttpError; a calendar
-                # failure must not sink the whole poll cycle (Gmail still ran).
+            except calendar.CalendarAuthError as e:
+                # Calendar is terminally refused (e.g. a token minted under the old
+                # shared client, whose project has the Calendar API disabled) while
+                # Gmail still works: tell the agent once, keep polling mail.
                 logger.error(f"Error fetching calendar: {e}")
+                notify_broken_once(ctx, CALENDAR_BROKEN_MARKER, "calendar_auth_broken", e)
+            except Exception as e:
+                # A calendar failure must not sink the whole poll cycle (Gmail still ran).
+                logger.error(f"Error fetching calendar: {e}")
+            else:
+                clear_broken_marker(ctx, CALENDAR_BROKEN_MARKER)
 
             tmp = ctx.monitor_state_file.with_suffix(".tmp")
             tmp.write_text(new_check_time.isoformat())

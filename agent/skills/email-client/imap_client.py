@@ -217,7 +217,7 @@ def account_profile(account: str) -> tuple[str, dict]:
         _, profile = resolve_provider(dict(os.environ))
         profile = dict(profile)
     # Layer per-account config overrides, then env overrides, on top.
-    for key in ("imap_host", "smtp_host", "smtp_port", "oauth_client_id", "oauth_authority"):
+    for key in ("imap_host", "smtp_host", "smtp_port", "oauth_client_id", "oauth_authority", "caldav_url"):
         if cfg.get(key):
             profile[key] = cfg[key]
     if cfg.get("oauth_scopes"):
@@ -1071,7 +1071,7 @@ def main():
     pd_restart.add_argument("--interval", type=int, default=None)
     dsub.add_parser("status", help="daemon process state plus per-account auth health, in one JSON blob")
 
-    # Google Calendar (Gmail accounts only). Imported lazily because
+    # Calendar over CalDAV (see calendar_client.py). Imported lazily because
     # calendar_client imports this module; a top-level import would be circular.
     import calendar_client  # noqa: E402
 

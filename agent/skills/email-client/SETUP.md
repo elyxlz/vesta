@@ -15,7 +15,7 @@ Both OAuth flows reuse Mozilla Thunderbird's published public client IDs (Micros
 
 The Google desktop client is public but Google's token endpoint still requires the published `client_secret` in the authorization-code and refresh exchanges, so the skill sends it. (An earlier Google client id shipped here, `...t1glqf`, was retired by Google and now returns `invalid_client`; the live client is `...t1hgqj`, verified against Thunderbird's current source.)
 
-**Google Calendar in the same sign-in.** The `...t1hgqj` client is registered under Mozilla's verified Google Cloud project (number `406964657835`), whose consent screen already grants mail, calendar, and contacts together. So one Gmail consent also grants `https://www.googleapis.com/auth/calendar`, and the `calendar` commands (see SKILL.md) work with no own Google app, no verification, and no CASA (`auth/calendar` is a "sensitive", not "restricted", scope, so it needs no annual security assessment). Existing Gmail accounts authed before this change must re-auth once to pick up the calendar scope and the corrected client id: `email-client auth add --account <name> --provider gmail --reauth`.
+**Google Calendar in the same sign-in.** The `...t1hgqj` client is registered under Mozilla's verified Google Cloud project (number `406964657835`), whose consent screen already grants mail, calendar, and contacts together. So one Gmail consent also grants `https://www.googleapis.com/auth/calendar`, and the `calendar` commands (see SKILL.md) work with no own Google app, no verification, and no CASA (`auth/calendar` is a "sensitive", not "restricted", scope, so it needs no annual security assessment). The commands talk **CalDAV** (`apidata.googleusercontent.com/caldav/v2`), not the Calendar REST API: the REST API is disabled on Mozilla's Cloud project (every `calendar/v3` call 403s with `accessNotConfigured`, and we cannot enable it on a project we don't own), while CalDAV needs only the scope. Existing Gmail accounts authed before this change must re-auth once to pick up the calendar scope and the corrected client id: `email-client auth add --account <name> --provider gmail --reauth`.
 
 This is why both OAuth consent screens say "Mozilla Thunderbird". That is expected, not a misconfiguration.
 
@@ -31,6 +31,9 @@ ln -sf ~/agent/skills/email-client/smtp_send.py ~/.email-client/smtp_send.py
 ln -sf ~/agent/skills/email-client/poll_daemon.py ~/.email-client/poll_daemon.py
 ln -sf ~/agent/skills/email-client/providers.py ~/.email-client/providers.py
 ln -sf ~/agent/skills/email-client/auth.py ~/.email-client/auth.py
+ln -sf ~/agent/skills/email-client/thunderbird_client.py ~/.email-client/thunderbird_client.py
+ln -sf ~/agent/skills/email-client/calendar_client.py ~/.email-client/calendar_client.py
+ln -sf ~/agent/skills/email-client/google_health.py ~/.email-client/google_health.py
 sudo cp ~/agent/skills/email-client/bin/email-client /usr/local/bin/email-client 2>/dev/null || cp ~/agent/skills/email-client/bin/email-client /usr/local/bin/email-client
 sudo cp ~/agent/skills/email-client/bin/email-client-send /usr/local/bin/email-client-send 2>/dev/null || cp ~/agent/skills/email-client/bin/email-client-send /usr/local/bin/email-client-send
 chmod +x /usr/local/bin/email-client /usr/local/bin/email-client-send
@@ -127,9 +130,9 @@ email-client delete --uid <uid> --hard   # permanent
 
 If these work, repeat steps 2-3 for each additional account.
 
-### Calendar (Gmail accounts only)
+### Calendar (CalDAV)
 
-A Gmail account authed after this change also has Google Calendar in the same token. Smoke-test it:
+Calendar reuses the account's mail credential over CalDAV: the OAuth token for Gmail, the app password for iCloud and Fastmail. Nothing extra to install or auth. Smoke-test it on any of those accounts:
 
 ```bash
 email-client calendar list-calendars --account personal
@@ -139,7 +142,7 @@ email-client calendar get --account personal --id <eventId-from-create>
 email-client calendar delete --account personal --id <eventId-from-create>
 ```
 
-If `list-calendars` returns `Google Calendar refused the request` or a scope error, the account was authed before calendar support: re-auth once with `email-client auth add --account personal --provider gmail --reauth`. Calendar commands only work on Google accounts; on any other provider they exit with a clear "only supported for Google accounts" message. See SKILL.md "Calendar" for the full command set and the invite-sending caveat.
+If a Gmail `list-calendars` reports a refused request or a scope error, the account was authed before calendar support: re-auth once with `email-client auth add --account personal --provider gmail --reauth`. For a Fastmail account, make sure the app password's scope includes CalDAV. A generic IMAP account whose provider also runs a CalDAV server works too: set `"caldav_url"` in `accounts/<name>/config.json` to the server's CalDAV root. Microsoft accounts have no CalDAV; calendar commands on them point at the `microsoft` skill. See SKILL.md "Calendar" for the full command set and the invite-sending caveat.
 
 ## 4. Start the poll daemon
 
@@ -215,7 +218,7 @@ Repeat for each connected account. Don't rush this. Go through many hundreds of 
 - **`acquire_token_by_refresh_token` errors after weeks**: Microsoft refresh token expired. Run `email-client auth add --account <name> --reauth`.
 - **Gmail `invalid_grant` on refresh**: access revoked or the refresh token aged out. Run `email-client auth add --account <name> --provider gmail --reauth`.
 - **Gmail `invalid_client` "The OAuth client was not found"**: the token was minted against the retired `...t1glqf` client id. Update the skill and re-auth (`email-client auth add --account <name> --provider gmail --reauth`); the current client id is `...t1hgqj`.
-- **`calendar` command says "only supported for Google accounts"**: calendar is Google-specific; select or add a Gmail account. On a Gmail account, a scope error instead means an old mail-only auth: re-auth with `--reauth`.
+- **`calendar` command says "no CalDAV calendar for this provider"**: Microsoft has no CalDAV; use the `microsoft` skill for Outlook/M365 calendars. A "has no CalDAV endpoint" error on a generic provider means no `caldav_url` is set in the account's `config.json`. On a Gmail account, a scope error means an old mail-only auth: re-auth with `--reauth`.
 - **Yahoo / iCloud `LOGIN failed`**: app password rotated or wrong. Generate a new one and `--reauth`.
 - **Loopback OAuth `bind: Address already in use`**: another process grabbed the port between probe and bind. Re-run; the CLI picks a fresh random port each time.
 - **Notifications don't appear**: confirm `~/agent/notifications/` is the agent's path (it's the standard one) and `email-client daemon status` shows `"running": true`. A `daemon_died` notification with a `reason` field means it crashed or was killed outside the CLI; restart with `email-client daemon start`.
@@ -232,7 +235,7 @@ $EMAIL_CLIENT_DIR/                # default ~/.email-client
   accounts.json                   # {"accounts": ["personal","work"], "default": "personal"}
   accounts/
     personal/
-      config.json                 # {"user", "provider", optional host overrides, "notify_folders"}
+      config.json                 # {"user", "provider", optional host overrides incl. "caldav_url", "notify_folders"}
       token.json                  # OAuth token or {"app_password": "..."} (mode 600)
       high_uid.txt                # INBOX watermark
       high_uid_Archive.txt        # per-folder watermark (one per extra watched folder)

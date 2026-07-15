@@ -186,12 +186,6 @@ def test_batch_multiple():
     assert "<notifications>" not in formatted
 
 
-def test_batch_with_suffix():
-    notif = Notification(timestamp=dt.datetime(2025, 1, 1), source="test", type="message")
-    formatted = format_notification_batch([notif], suffix="Check later")
-    assert "Check later" in formatted
-
-
 def test_notification_format_for_display():
     notif = Notification.model_validate({"timestamp": "2025-01-01T00:00:00", "source": "email", "type": "message", "sender": "alice"})
     display = notif.format_for_display()
@@ -257,57 +251,7 @@ def test_format_for_display_strips_timestamp_microseconds():
     assert 'timestamp="2025-01-01T12:34:56+00:00"' in display
 
 
-@pytest.mark.parametrize(
-    "payload,expected_substr",
-    [
-        (
-            {"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "message", "contact_name": "Alice", "message": "hi"},
-            "Reply using the `whatsapp` skill",
-        ),
-        (
-            {
-                "timestamp": "2025-01-01T00:00:00",
-                "source": "whatsapp",
-                "type": "message",
-                "chat_name": "Group",
-                "sender": "bob",
-                "message": "hi",
-            },
-            "Reply using the `whatsapp` skill",
-        ),
-        (
-            {"timestamp": "2025-01-01T00:00:00", "source": "telegram", "type": "message", "contact_name": "Carol", "message": "hi"},
-            "Reply using the `telegram` skill",
-        ),
-        (
-            {"timestamp": "2025-01-01T00:00:00", "source": "app-chat", "type": "message", "message": "hi"},
-            "Reply using the `app-chat` skill",
-        ),
-    ],
-    ids=["whatsapp-direct", "whatsapp-group", "telegram-direct", "app-chat"],
-)
-def test_batch_includes_reply_hint(payload, expected_substr):
-    notif = Notification.model_validate(payload)
-    formatted = format_notification_batch([notif])
-    assert "Reply using" in formatted
-    assert expected_substr in formatted
-
-
-def test_batch_no_hint_for_unknown_source():
-    notif = Notification.model_validate({"timestamp": "2025-01-01T00:00:00", "source": "email", "type": "message", "sender": "alice"})
-    formatted = format_notification_batch([notif])
-    assert "Reply using" not in formatted
-
-
-def test_batch_no_hint_for_non_message_type():
-    notif = Notification.model_validate(
-        {"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "reaction", "contact_name": "Alice", "emoji": "👍"}
-    )
-    formatted = format_notification_batch([notif])
-    assert "Reply using" not in formatted
-
-
-def test_group_message_flagged_maybe_not_for_you():
+def test_batch_reply_guidance_appears_only_in_producer_reply_hint():
     notif = Notification.model_validate(
         {
             "timestamp": "2025-01-01T00:00:00",
@@ -316,19 +260,14 @@ def test_group_message_flagged_maybe_not_for_you():
             "chat_name": "Bride squad",
             "sender": "bob",
             "message": "hi",
+            "reply_hint": "reply with `whatsapp send`; this is a group chat, so it may not be expecting a reply from you",
         }
     )
     formatted = format_notification_batch([notif])
-    assert "from a group chat" in formatted
-    assert "chip in or stay out" in formatted
-
-
-def test_direct_message_not_flagged_as_group():
-    notif = Notification.model_validate(
-        {"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "message", "contact_name": "Alice", "message": "hi"}
-    )
-    formatted = format_notification_batch([notif])
-    assert "from a group chat" not in formatted
+    assert formatted.count("group chat") == 1
+    assert formatted.count("whatsapp send") == 1
+    assert "[Reply using" not in formatted
+    assert "chip in or stay out" not in formatted
 
 
 # --- process_batch ---
@@ -348,7 +287,7 @@ async def test_process_batch_queues_prompt(tmp_path):
         await process_batch([notif], queue=queue, config=config)
 
     assert not queue.empty()
-    prompt, is_user, file_paths, _, _ = await queue.get()
+    prompt, is_user, file_paths, _ = await queue.get()
     assert '<channel source="test" type="message"' in prompt
     assert is_user is False
 
@@ -378,7 +317,7 @@ async def test_process_batch_keeps_files_until_processing(tmp_path):
         await process_batch([notif], queue=queue, config=config)
 
     assert f.exists(), "notification file must stay on disk until the queued message is processed"
-    _, _, file_paths, _, _ = await queue.get()
+    _, _, file_paths, _ = await queue.get()
     assert str(f) in file_paths, "file path is carried in the queue item for deferred deletion"
 
 
@@ -461,7 +400,7 @@ async def test_monitor_loop_interrupt_queued_while_not_idle(tmp_path, monkeypatc
         _write_notif(config.notifications_dir, "urgent")
         await wait_for_condition(lambda: not queue.empty(), message="interrupt notification was never queued")
 
-        prompt, is_user, file_paths, _, _ = await queue.get()
+        prompt, is_user, file_paths, _ = await queue.get()
         assert '<channel source="test" type="message"' in prompt
         assert is_user is False
         assert state.event_bus.state == "thinking", "interrupt routing must not depend on idle state"
@@ -493,7 +432,7 @@ async def test_monitor_loop_passive_held_until_idle_then_flushed_once(tmp_path, 
         state.event_bus.set_state("idle")
         await wait_for_condition(lambda: not queue.empty(), message="passive batch never flushed after idle")
 
-        prompt, is_user, file_paths, _, _ = await queue.get()
+        prompt, is_user, file_paths, _ = await queue.get()
         assert '<channel source="test" type="message"' in prompt
         assert is_user is False
 
@@ -749,7 +688,7 @@ async def test_policy_interrupts_a_notification(tmp_path, monkeypatch):
     try:
         _write_notif(config.notifications_dir, "now-urgent")
         await wait_for_condition(lambda: not queue.empty(), message="interrupt rule did not queue the notif while busy")
-        prompt, is_user, _, _, _ = await queue.get()
+        prompt, is_user, _, _ = await queue.get()
         assert '<channel source="test" type="message"' in prompt
         assert is_user is False
     finally:
@@ -780,19 +719,6 @@ async def test_policy_changes_take_effect_live_on_next_tick(tmp_path, monkeypatc
         await wait_for_condition(lambda: not queue.empty(), message="live rule change did not apply on the next tick")
     finally:
         await runner.aclose()
-
-
-@pytest.mark.anyio
-async def test_process_batch_defaults_to_notification_suffix(tmp_path):
-    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
-    config.notifications_dir.mkdir(parents=True, exist_ok=True)
-    queue: asyncio.Queue = asyncio.Queue()
-    notif = Notification(timestamp=dt.datetime(2025, 1, 1), source="twitter", type="tweet", body="hi")
-
-    with patch("core.loops.load_prompt", side_effect=lambda name, config: f"SUFFIX:{name}"):
-        await process_batch([notif], queue=queue, config=config)
-    prompt, _, _, _, _ = await queue.get()
-    assert "SUFFIX:notification_suffix" in prompt
 
 
 @pytest.mark.anyio

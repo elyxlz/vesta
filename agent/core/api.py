@@ -120,7 +120,14 @@ def _write_app_chat_notification(config: VestaConfig, text: str) -> None:
     # text, matching what the app-chat sidecar used to write. model_validate takes the dict so the
     # extra passes the type checker.
     notif = Notification.model_validate(
-        {"timestamp": dt.datetime.now(), "source": "app-chat", "type": "message", "message": text, "interrupt": True}
+        {
+            "timestamp": dt.datetime.now(),
+            "source": "app-chat",
+            "type": "message",
+            "message": text,
+            "interrupt": True,
+            "reply_hint": "reply with `app-chat send`, and think about how you can best show your personality",
+        }
     )
     path = directory / f"{time.time_ns()}-app-chat-message.json"
     atomic_write_text(path, notif.model_dump_json())

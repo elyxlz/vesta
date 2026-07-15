@@ -50,7 +50,7 @@ async def test_message_processor_sets_busy_flag_during_turn(config, state):
     processing_started = asyncio.Event()
     busy_during_turn = False
 
-    async def slow_side_effect(msg, *, state, config, is_user, pre_sent=False):
+    async def slow_side_effect(msg, *, state, config, is_user):
         nonlocal busy_during_turn
         busy_during_turn = state.processor_busy
         processing_started.set()
@@ -96,7 +96,7 @@ async def test_run_messages_with_preempts_cancels_process_task(config, state):
     task_started = asyncio.Event()
     task_cancelled = False
 
-    async def hanging_process(msg, *, state, config, is_user, pre_sent=False):
+    async def hanging_process(msg, *, state, config, is_user):
         nonlocal task_cancelled
         task_started.set()
         try:
@@ -130,7 +130,7 @@ async def test_query_not_delivered_keeps_notification_file(config, state, tmp_pa
     notif_path = tmp_path / "notif.json"
     notif_path.write_text("{}")
 
-    async def failing_process(msg, *, state, config, is_user, pre_sent=False):
+    async def failing_process(msg, *, state, config, is_user):
         raise QueryNotDelivered("query timed out before the CLI received it")
 
     with patch("core.loops.process_message", failing_process):
@@ -151,7 +151,7 @@ async def test_response_timeout_deletes_notification_file(config, state, tmp_pat
     notif_path = tmp_path / "notif.json"
     notif_path.write_text("{}")
 
-    async def failing_process(msg, *, state, config, is_user, pre_sent=False):
+    async def failing_process(msg, *, state, config, is_user):
         raise TimeoutError
 
     with patch("core.loops.process_message", failing_process):
@@ -171,7 +171,7 @@ async def test_non_interruptible_boot_turn_is_not_preempted(config, state):
     boot_started = asyncio.Event()
     release_boot = asyncio.Event()
 
-    async def fake_process(msg, *, state, config, is_user, pre_sent=False):
+    async def fake_process(msg, *, state, config, is_user):
         processed.append(msg)
         if msg == "boot":
             boot_started.set()
@@ -338,7 +338,7 @@ async def test_converse_collects_texts_and_ends_on_result():
         await message_queue.put(assistant_msg([TextBlock("one")]))
         await message_queue.put(assistant_msg([TextBlock("two")]))
         await message_queue.put(result_msg())
-        responses = await converse("test prompt", state=state, config=config, show_output=True)
+        responses = (await converse("test prompt", state=state, config=config, show_output=True)).texts
 
     assert responses == ["one", "two"]
     assert [t for t, _ in emitted] == ["one", "two"]
@@ -433,7 +433,7 @@ async def test_late_result_after_timeout_does_not_wedge_later_turns():
             await message_queue.put(result_msg())
 
         feeder = asyncio.create_task(feed_turn3())
-        responses3 = await converse("turn three", state=state, config=config, show_output=True)
+        responses3 = (await converse("turn three", state=state, config=config, show_output=True)).texts
         await feeder
 
     assert responses3 == ["turn three answer"], f"stream did not self-heal: {responses3}"
@@ -464,7 +464,7 @@ async def test_result_with_no_open_turn_is_dropped():
             await message_queue.put(result_msg())
 
         feeder = asyncio.create_task(feed())
-        responses = await converse("real question", state=state, config=config, show_output=True)
+        responses = (await converse("real question", state=state, config=config, show_output=True)).texts
         await feeder
 
     assert responses == ["real answer"], f"continuation result leaked into the next turn: {responses}"

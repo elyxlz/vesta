@@ -3,9 +3,6 @@ from . import auth
 
 
 def authenticate_account(config: Config) -> dict:
-    # Zero-BYO by default: no credentials.json needed - we reuse Thunderbird's
-    # published public client. If credentials.json IS present it transparently
-    # takes over (advanced own-app path); its absence is not an error.
     flow_data = auth.start_auth_flow(config.credentials_file, config.scopes)
     return {
         "status": "authentication_required",
@@ -19,8 +16,6 @@ def authenticate_account(config: Config) -> dict:
 
 
 def run_local_auth(config: Config) -> dict:
-    # See authenticate_account: credentials.json is optional (Thunderbird client
-    # is the default); no error if it is absent.
     try:
         creds = auth.run_local_server_flow(config.credentials_file, config.scopes, config.token_file)
         email = auth.get_user_email(creds)

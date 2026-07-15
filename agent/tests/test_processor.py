@@ -43,7 +43,7 @@ async def _run_processor_test(
 
     original_side_effect = message_side_effect
 
-    async def tracking_process_message(msg, *, state, config, is_user, pre_sent=False):
+    async def tracking_process_message(msg, *, state, config, is_user):
         processed_messages.append(msg)
         return await original_side_effect(msg, state=state, config=config, is_user=is_user)
 
@@ -91,7 +91,7 @@ async def _run_processor_test(
 
 @pytest.mark.anyio
 async def test_restarts_on_error(tmp_path):
-    async def side_effect(msg, *, state, config, is_user, pre_sent=False):
+    async def side_effect(msg, *, state, config, is_user):
         raise RuntimeError("Simulated SDK buffer overflow")
 
     state, session_count, messages = await _run_processor_test(
@@ -110,7 +110,7 @@ async def test_error_path_emits_error_event_and_resets_state_idle(tmp_path):
     state = vm.State()
     subscriber = state.event_bus.subscribe()
 
-    async def side_effect(msg, *, state, config, is_user, pre_sent=False):
+    async def side_effect(msg, *, state, config, is_user):
         raise RuntimeError("kaboom in the SDK")
 
     state, _, _ = await _run_processor_test(
@@ -138,7 +138,7 @@ async def test_restarts_on_timeout(tmp_path):
     on-failure policy restarts the container — under on-failure a clean exit 0 would leave the agent
     hung-then-permanently-down."""
 
-    async def side_effect(msg, *, state, config, is_user, pre_sent=False):
+    async def side_effect(msg, *, state, config, is_user):
         raise TimeoutError()
 
     state, session_count, messages = await _run_processor_test(
@@ -313,7 +313,7 @@ async def test_notification_dropped_before_intentional_restart(tmp_path):
     state = vm.State()
     subscriber = state.event_bus.subscribe()
 
-    async def side_effect(msg, *, state, config, is_user, pre_sent=False):
+    async def side_effect(msg, *, state, config, is_user):
         # Mid-turn: the loop has exposed the in-flight notification; the agent handles it and
         # asks to restart. The restart tool must drop the file here, not leave it for the loop's
         # post-turn cleanup that the SIGTERM would beat.
@@ -349,11 +349,11 @@ async def test_process_message_sends_correction_on_em_dash(tmp_path):
     state = vm.State()
     converse_calls: list[str] = []
 
-    async def mock_converse(prompt, *, state, config, show_output, pre_sent=False):
+    async def mock_converse(prompt, *, state, config, show_output):
         converse_calls.append(prompt)
         if len(converse_calls) == 1:
-            return ["something \u2014 with an em dash"]
-        return ["corrected response"]
+            return vm.TurnSignals(texts=["something \u2014 with an em dash"])
+        return vm.TurnSignals(texts=["corrected response"])
 
     with patch("core.client.converse", side_effect=mock_converse):
         responses, _ = await process_message("hello", state=state, config=config, is_user=True)
@@ -375,9 +375,9 @@ async def test_process_message_no_correction(tmp_path, response):
     state = vm.State()
     converse_calls: list[str] = []
 
-    async def mock_converse(prompt, *, state, config, show_output, pre_sent=False):
+    async def mock_converse(prompt, *, state, config, show_output):
         converse_calls.append(prompt)
-        return response
+        return vm.TurnSignals(texts=response)
 
     with patch("core.client.converse", side_effect=mock_converse):
         await process_message("hello", state=state, config=config, is_user=True)
@@ -392,9 +392,9 @@ async def test_process_message_no_correction_when_block_dashes_off(tmp_path):
     state = vm.State()
     converse_calls: list[str] = []
 
-    async def mock_converse(prompt, *, state, config, show_output, pre_sent=False):
+    async def mock_converse(prompt, *, state, config, show_output):
         converse_calls.append(prompt)
-        return ["something — with an em dash"]
+        return vm.TurnSignals(texts=["something — with an em dash"])
 
     with patch("core.client.converse", side_effect=mock_converse):
         responses, _ = await process_message("hello", state=state, config=config, is_user=True)
@@ -534,7 +534,7 @@ async def test_cancellation_triggers_restart(tmp_path):
     state = vm.State()
     queue: asyncio.Queue = asyncio.Queue()
 
-    async def cancel_side_effect(msg, *, state, config, is_user, pre_sent=False):
+    async def cancel_side_effect(msg, *, state, config, is_user):
         raise asyncio.CancelledError
 
     with patch("core.loops.process_message", side_effect=cancel_side_effect):
@@ -560,7 +560,7 @@ async def test_cancellation_during_shutdown_is_silent(tmp_path):
 
     processing_started = asyncio.Event()
 
-    async def hang(msg, *, state, config, is_user, pre_sent=False):
+    async def hang(msg, *, state, config, is_user):
         processing_started.set()
         await asyncio.sleep(60)
 
