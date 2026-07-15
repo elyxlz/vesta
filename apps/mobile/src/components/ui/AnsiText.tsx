@@ -2,6 +2,7 @@ import { memo, useMemo } from "react";
 import type { TextProps, TextStyle } from "react-native";
 import { parseAnsi, resolveAnsiColor, type AnsiStyle } from "@/lib/ansi";
 import { usePreferences } from "@/preferences/PreferencesProvider";
+import { designTokens } from "@/theme/generated";
 import { Text } from "./Typography";
 
 interface AnsiTextProps extends Omit<TextProps, "children"> {
@@ -22,27 +23,29 @@ export const AnsiText = memo(function AnsiText({
 }: AnsiTextProps) {
   const { colors, dark } = usePreferences();
   const spans = useMemo(() => parseAnsi(value), [value]);
-  const palette = useMemo(
-    () => [
-      colors.text,
-      colors.danger,
-      colors.success,
-      colors.warning,
-      dark ? "#60a5fa" : "#2563eb",
-      dark ? "#d8a4ff" : "#9333ea",
-      dark ? "#67e8f9" : "#087e8b",
-      colors.secondaryText,
-      colors.tertiaryText,
-      dark ? "#ff8a8c" : "#c0000a",
-      dark ? "#6ee77b" : "#1f7a2c",
-      dark ? "#ffd45c" : "#9a4d00",
-      dark ? "#93c5fd" : "#1d4ed8",
-      dark ? "#e9a8ff" : "#7e22ce",
-      dark ? "#a5f3fc" : "#0e7490",
-      colors.text,
-    ],
-    [colors, dark],
-  );
+  const palette = useMemo(() => {
+    const terminal = dark
+      ? designTokens.colors.dark
+      : designTokens.colors.light;
+    return [
+      terminal["ansi-black"],
+      terminal["ansi-red"],
+      terminal["ansi-green"],
+      terminal["ansi-yellow"],
+      terminal["ansi-blue"],
+      terminal["ansi-magenta"],
+      terminal["ansi-cyan"],
+      terminal["ansi-white"],
+      terminal["ansi-bright-black"],
+      terminal["ansi-bright-red"],
+      terminal["ansi-bright-green"],
+      terminal["ansi-bright-yellow"],
+      terminal["ansi-bright-blue"],
+      terminal["ansi-bright-magenta"],
+      terminal["ansi-bright-cyan"],
+      terminal["ansi-bright-white"],
+    ];
+  }, [dark]);
 
   return (
     <Text
