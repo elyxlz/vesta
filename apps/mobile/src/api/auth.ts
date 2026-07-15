@@ -6,6 +6,7 @@ const CONTROL_APEX = "https://vesta.run";
 const NATIVE_CLIENT_ID = "vesta-app";
 const UNIVERSAL_REDIRECT = "https://vesta.run/mobile/oauth/callback";
 const DEVELOPMENT_REDIRECT = "vesta://oauth/callback";
+const GATEWAY_CONNECT_TIMEOUT_MS = 8_000;
 
 function base64Url(value: string): string {
   return value.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
@@ -95,9 +96,8 @@ export async function connectWithKey(
   url: string,
   apiKey: string,
 ): Promise<ConnectionConfig> {
-  const health = await fetch(`${url}/health`).catch(() => null);
-  if (!health?.ok) throw new Error("Could not reach this Vesta gateway.");
-  const response = await fetch(`${url}/auth/session`, {
+  await assertGatewayReachable(url);
+  const response = await fetchGateway(`${url}/auth/session`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ api_key: apiKey }),
@@ -121,4 +121,27 @@ export async function connectWithKey(
     expiresAt: Date.now() + session.expires_in * 1000,
     hosted: false,
   };
+}
+
+export async function assertGatewayReachable(url: string): Promise<void> {
+  const health = await fetchGateway(`${url}/health`);
+  if (!health.ok) throw new Error("Could not reach this Vesta gateway.");
+}
+
+async function fetchGateway(
+  url: string,
+  init?: RequestInit,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    GATEWAY_CONNECT_TIMEOUT_MS,
+  );
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch {
+    throw new Error("Could not reach this Vesta gateway.");
+  } finally {
+    clearTimeout(timeout);
+  }
 }

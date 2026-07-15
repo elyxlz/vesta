@@ -9,7 +9,11 @@ import {
 } from "react";
 import { AppState } from "react-native";
 import Constants from "expo-constants";
-import { connectWithKey, signInWithVestaAccount } from "@/api/auth";
+import {
+  assertGatewayReachable,
+  connectWithKey,
+  signInWithVestaAccount,
+} from "@/api/auth";
 import { createApiClient, type ApiClient } from "@/api/client";
 import { parseConnectLink } from "@/api/connection-link";
 import type {
@@ -203,13 +207,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         setRecentGateways(await forgetStoredRecentGateway(id));
         throw new Error("This saved gateway is no longer available.");
       }
-      const next =
-        credential.connectKey && !credential.connection.hosted
-          ? await connectWithKey(
-              credential.connection.url,
-              credential.connectKey,
-            )
-          : credential.connection;
+      let next = credential.connection;
+      if (credential.connectKey && !credential.connection.hosted) {
+        next = await connectWithKey(
+          credential.connection.url,
+          credential.connectKey,
+        );
+      } else {
+        await assertGatewayReachable(credential.connection.url);
+      }
       await commitConnection(next, {
         connectKey: credential.connectKey,
         touchRecent: true,
