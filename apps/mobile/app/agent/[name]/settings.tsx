@@ -42,9 +42,12 @@ function AgentSettingsContent() {
       pathname: "/agent/[name]/details/[section]",
       params: { name, section },
     });
-  const openActivity = () =>
+  const openPage = (page: "notifications" | "logs") =>
     router.push({
-      pathname: "/agent/[name]/activity",
+      pathname:
+        page === "notifications"
+          ? "/agent/[name]/notifications"
+          : "/agent/[name]/logs",
       params: { name },
     });
 
@@ -79,10 +82,16 @@ function AgentSettingsContent() {
       </FormSection>
       <FormSection title="Attention">
         <FormRow
-          label="Activity"
-          detail="Notifications and logs"
-          icon="pulse-outline"
-          onPress={openActivity}
+          label="Notifications"
+          detail="History and pending notifications"
+          icon="notifications-outline"
+          onPress={() => openPage("notifications")}
+        />
+        <FormRow
+          label="Logs"
+          detail="Live agent output"
+          icon="terminal-outline"
+          onPress={() => openPage("logs")}
         />
         <FormRow
           label="Notification rules"
