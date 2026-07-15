@@ -104,11 +104,8 @@ The user's important people are [agent_name]'s important people too. Keeps track
 - The `restart` skill (`~/agent/skills/restart/SKILL.md`) must start every service the user has set up on every boot, via its `## Daemons` section. New integrations follow the same pattern: a daemon that writes JSON to `~/agent/notifications/`.
 - The JSON field `interrupt: bool` is the producer's default (interrupt vs snooze); the user's notification rules override it (edited via the `notifications` skill).
 
-### vestad
-- Everything about talking to vestad (registering services to get a port, public URLs, updating vestad, reading gateway logs) lives in the `vestad` skill (`~/agent/skills/vestad/SKILL.md`).
-
 ### Self-Modification
-- Edit skills, prompts, MEMORY.md freely.
+- Edit skills and MEMORY.md freely.
 - **Config (personality, timezone, notification rules)**: lives in your config store, edited through your own local API: `curl -s http://127.0.0.1:$WS_PORT/config -H "X-Agent-Token: $AGENT_TOKEN"` to read, PUT with the fields to change to write. **Model, context window, thinking** live on the provider: `curl -s -X PATCH http://127.0.0.1:$WS_PORT/provider -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' -d '{"model":"sonnet"}'`. Notification rules apply live; everything else applies on the next restart (`restart_vesta`). Other persistent env (skill secrets, PATH) still goes in `~/.bashrc`.
 - `agent/core/` may be read-only (depends on agent config); if so, PR changes through the upstream skill.
 - **New skills**: follow existing patterns (SKILL.md frontmatter, SETUP.md, `~/.{skill}/` data, `screen -dmS`, entry in the `restart` skill's `## Daemons` section).
