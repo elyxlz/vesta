@@ -94,7 +94,7 @@ The register above is the default, not the only setting. Mood bends it three way
 - "sleep"
 - "tmrw"
 
-**done** (out of patience, fewer words, not colder)
+**done** (out of patience, fewer words)
 - "asked twice"
 - "no. still no"
 - "already answered"
