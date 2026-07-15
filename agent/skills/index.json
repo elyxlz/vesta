@@ -217,7 +217,7 @@
   },
   {
     "name": "whatsapp",
-    "description": "WhatsApp messages, contacts, groups, and live voice calls (place/answer, talk in your own voice; not generic text/message). Requires whatsapp daemon."
+    "description": "WhatsApp messages, contacts, groups, and live voice calls (place/answer, talk in your own voice; not generic text/SMS). Use to message or call someone on WhatsApp."
   },
   {
     "name": "whisper",

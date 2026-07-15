@@ -61,69 +61,16 @@ func TestServeLinkPage(t *testing.T) {
 	}
 }
 
-func TestStopLinkModeGenerationIgnoresStaleGeneration(t *testing.T) {
+// TestClearQRClearsCode proves a finished/abandoned link session leaves no stale
+// code for the page to serve (the QR link is single-flighted and self-contained,
+// so there is no generation machinery to reason about anymore).
+func TestClearQRClearsCode(t *testing.T) {
 	wac := &WhatsAppClient{currentQRCode: "code"}
-	wac.linkMu.Lock()
-	wac.linkActive = true
-	wac.linkGeneration = 2
-	wac.linkMu.Unlock()
-
-	wac.stopLinkModeGeneration(1)
-
-	wac.linkMu.Lock()
-	active := wac.linkActive
-	wac.linkMu.Unlock()
-	if !active {
-		t.Error("a stale generation's expiry must not deactivate a newer session")
-	}
-}
-
-func TestStopLinkModeGenerationMatchingGenerationDeactivates(t *testing.T) {
-	wac := &WhatsAppClient{currentQRCode: "code"}
-	wac.linkMu.Lock()
-	wac.linkActive = true
-	wac.linkGeneration = 1
-	wac.linkMu.Unlock()
-
-	wac.stopLinkModeGeneration(1)
-
-	wac.linkMu.Lock()
-	active := wac.linkActive
-	wac.linkMu.Unlock()
-	if active {
-		t.Error("expiry of the current generation must deactivate link mode")
-	}
+	wac.clearQR()
 	wac.authMutex.RLock()
 	code := wac.currentQRCode
 	wac.authMutex.RUnlock()
 	if code != "" {
-		t.Error("expiry must clear the stale QR code so nothing serves it")
-	}
-}
-
-func TestStopLinkModeAlwaysDeactivatesAndClearsCode(t *testing.T) {
-	wac := &WhatsAppClient{currentQRCode: "code"}
-	wac.linkMu.Lock()
-	wac.linkActive = true
-	wac.linkGeneration = 5
-	wac.linkMu.Unlock()
-
-	wac.stopLinkMode()
-
-	wac.linkMu.Lock()
-	active := wac.linkActive
-	generation := wac.linkGeneration
-	wac.linkMu.Unlock()
-	if active {
-		t.Error("stopLinkMode must deactivate link mode")
-	}
-	if generation != 6 {
-		t.Errorf("linkGeneration = %d, want 6 (incremented to invalidate any pending timer)", generation)
-	}
-	wac.authMutex.RLock()
-	code := wac.currentQRCode
-	wac.authMutex.RUnlock()
-	if code != "" {
-		t.Error("stopLinkMode must clear the current QR code")
+		t.Error("clearQR must clear the current QR code so nothing serves it")
 	}
 }

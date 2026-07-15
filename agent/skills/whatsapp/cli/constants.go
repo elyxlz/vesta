@@ -13,6 +13,12 @@ const (
 	ConnectRetryAttempts = 10
 	ConnectRetryDelay    = 1 * time.Second
 
+	// ManagedLinkTimeout bounds the wait for whatsmeow to register the companion
+	// link after the control plane has accepted the pairing code (POST /pair is
+	// synchronous, so this is just the PairSuccess round-trip). Well inside
+	// SocketTimeout so a synchronous `provision` never outlives its socket call.
+	ManagedLinkTimeout = 60 * time.Second
+
 	// KeepAliveRestartThreshold is the consecutive keep-alive failure count at
 	// which the socket is treated as dead. Below it, whatsmeow is still
 	// retrying and will emit KeepAliveRestored on recovery, so we wait.
@@ -51,6 +57,17 @@ const (
 
 	SocketTimeout     = 5 * time.Minute
 	SocketDialTimeout = 2 * time.Second
+
+	// The blocking pairing commands run the whole handshake in one socket call, so
+	// their socket deadline must exceed the WORST-CASE pairing window. LinkSocketTimeout
+	// clears LinkSessionTimeout (10m). ProvisionSocketTimeout must clear the full
+	// managed stack: claim-poll (provisionPollMax*provisionPollInterval ~180s) + the
+	// server-synchronous /pair (controlHTTPTimeout 180s) + the link wait
+	// (ManagedLinkTimeout 60s) ~= 420s; 9m leaves margin so a slow-but-valid provision
+	// is never cut off with a spurious "daemon not answering". Both bound a single
+	// command's connection, not the daemon.
+	LinkSocketTimeout      = LinkSessionTimeout + time.Minute
+	ProvisionSocketTimeout = 9 * time.Minute
 
 	DeliveryStatusSent        = "sent"
 	DeliveryStatusDelivered   = "delivered"

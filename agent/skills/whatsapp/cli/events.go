@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"go.mau.fi/whatsmeow/types"
@@ -21,13 +22,16 @@ func (wac *WhatsAppClient) eventHandler(evt any) {
 		wac.handleReceipt(v)
 	case *events.HistorySync:
 		wac.handleHistorySync(v)
+	case *events.PairSuccess:
+		// A phone-code pairing finished (the user entered the code). QR pairing
+		// instead completes through consumeQRChannel, so this is the phone-code path.
+		wac.logger.Infof("Pairing succeeded")
+		wac.onLinked()
 	case *events.Connected:
 		wac.logger.Infof("Connected to WhatsApp")
-		wac.presenceMutex.Lock()
-		wac.presenceActive = false
-		wac.presenceMutex.Unlock()
-	case *events.Disconnected:
-		wac.logger.Warnf("Disconnected from WhatsApp")
+		// A successful connect clears any stale logout/yield reason so `status` does
+		// not keep reporting an old failure after the daemon has recovered.
+		wac.clearExit()
 		wac.presenceMutex.Lock()
 		wac.presenceActive = false
 		wac.presenceMutex.Unlock()
@@ -36,19 +40,129 @@ func (wac *WhatsAppClient) eventHandler(evt any) {
 		if v.ErrorCount >= KeepAliveRestartThreshold {
 			go wac.recoverOrRestart(fmt.Sprintf("keepalive_timeout:error_count=%d", v.ErrorCount))
 		}
-	case *events.StreamReplaced:
-		wac.logger.Warnf("WhatsApp stream replaced; another connection took over this session")
-		go wac.recoverOrRestart("stream_replaced")
 	case *events.StreamError:
 		wac.logger.Errorf("WhatsApp stream error: code=%s", v.Code)
 		go wac.recoverOrRestart("stream_error:" + v.Code)
+	case *events.Disconnected:
+		wac.applyConnAction(classifyConnEvent(v), "")
+	case *events.StreamReplaced:
+		wac.applyConnAction(classifyConnEvent(v), "another connection took over this device session")
 	case *events.LoggedOut:
-		wac.logger.Warnf("Device logged out from WhatsApp - initiating re-authentication")
-		wac.writeAuthStatusFile(map[string]string{
-			"status": "logged_out",
-			"note":   "WhatsApp logged this device out (account under review, or unlinked from the phone). Re-linking needs the user's explicit go-ahead, do NOT retry-loop pairing.",
+		wac.applyConnAction(classifyConnEvent(v), loggedOutReason(v))
+	}
+}
+
+// connEventAction is what the daemon does in response to a connection-lifecycle
+// event. The mapping lives in classifyConnEvent (the single owner); applyConnAction
+// executes each action.
+type connEventAction int
+
+const (
+	// connIgnore: a transient disconnect. whatsmeow auto-reconnects, so the
+	// daemon does nothing but reset presence; it must NOT stop or re-pair.
+	connIgnore connEventAction = iota
+	// connYield: another connection took over this device session (the conflict
+	// signal). whatsmeow has already disabled auto-reconnect; park (stay up, do not
+	// reconnect, do not exit) so an auto-restarted daemon can't steal the session
+	// back and ping-pong with the other holder.
+	connYield
+	// connNeedsProvision: a genuine logout (the phone unlinked the device). Clear
+	// the dead device and exit, so the next command restarts into a fresh device
+	// for a deliberate `whatsapp provision`; never re-pair automatically.
+	connNeedsProvision
+)
+
+// classifyConnEvent maps a whatsmeow connection-lifecycle event to the daemon's
+// response. It is the single source of truth for how a disconnect, a stream
+// replacement, and a logout are treated differently.
+func classifyConnEvent(evt any) connEventAction {
+	switch evt.(type) {
+	case *events.Disconnected:
+		return connIgnore
+	case *events.StreamReplaced:
+		return connYield
+	case *events.LoggedOut:
+		return connNeedsProvision
+	}
+	return connIgnore
+}
+
+// loggedOutReason renders a human-readable reason for a LoggedOut event, using
+// whatsmeow's connect-failure reason when the logout arrived on connect.
+func loggedOutReason(evt *events.LoggedOut) string {
+	if evt.OnConnect {
+		return "logged out on connect: " + evt.Reason.String()
+	}
+	return "unlinked from the phone (stream:error logout)"
+}
+
+// recordExit persists why the device session ended, so status can surface it after
+// the daemon has gone quiescent.
+func (wac *WhatsAppClient) recordExit(status, reason string) {
+	wac.state.update(func(s *daemonState) {
+		s.ExitStatus, s.ExitReason, s.ExitTime = status, reason, time.Now().UTC()
+	})
+}
+
+// clearExit drops a stale exit reason once the daemon has reconnected, so status
+// stops reporting an old failure.
+func (wac *WhatsAppClient) clearExit() {
+	wac.state.update(func(s *daemonState) {
+		s.ExitStatus, s.ExitReason, s.ExitTime = "", "", time.Time{}
+	})
+}
+
+func (wac *WhatsAppClient) applyConnAction(action connEventAction, reason string) {
+	switch action {
+	case connIgnore:
+		wac.logger.Warnf("Disconnected from WhatsApp (transient); whatsmeow will auto-reconnect")
+		wac.presenceMutex.Lock()
+		wac.presenceActive = false
+		wac.presenceMutex.Unlock()
+	case connYield:
+		// Another connection owns this session and whatsmeow already stopped
+		// reconnecting. Park (connParked): record the reason and stay up WITHOUT
+		// reconnecting or exiting. The park mode is what every reconnect path
+		// (EnsureConnected, recoverOrRestart) reads to refuse reconnecting, so the
+		// next auto-started daemon can't steal the session back and ping-pong.
+		wac.logger.Warnf("Yielding: %s. Parking (no reconnect, no exit).", reason)
+		wac.setConnMode(connParked)
+		wac.recordExit("stream_replaced", reason)
+		wac.presenceMutex.Lock()
+		wac.presenceActive = false
+		wac.presenceMutex.Unlock()
+	case connNeedsProvision:
+		// A genuine logout: clear the dead device and EXIT so the next command
+		// restarts into a fresh device for a deliberate `whatsapp provision`. Parking
+		// with the deleted store instead would leave the in-memory client poisoned
+		// (ErrDeviceDeleted) and every later provision would fail on it.
+		wac.logger.Warnf("Device logged out (%s). Clearing dead device and exiting; run `whatsapp provision` to re-link.", reason)
+		wac.state.update(func(s *daemonState) {
+			s.ExitStatus, s.ExitReason, s.ExitTime = "logged_out", reason, time.Now().UTC()
+			s.AuthStatus = "logged_out"
+			s.AuthNote = "WhatsApp logged this device out. Re-linking is a deliberate `whatsapp provision`, never an automatic retry loop."
+			// Keep MSISDN so the next `whatsapp provision` re-links the SAME number
+			// (reauth), no re-claim.
 		})
-		wac.initiateReauth()
+		if wac.notificationsDir != "" {
+			if err := WriteLoggedOutNotification(wac.notificationsDir, wac.instance, reason); err != nil {
+				wac.logger.Warnf("Failed to write logged_out notification: %v", err)
+			}
+		}
+		wac.dropDeadDevice()
+		os.Exit(0)
+	}
+}
+
+// dropDeadDevice clears the logged-out device store so the next daemon start
+// builds a fresh device that a deliberate `whatsapp provision` can pair. The
+// caller EXITS immediately after (which closes the socket), so this does not
+// Disconnect from inside the event-handler goroutine; and Store.Delete poisons the
+// in-memory client (ErrDeviceDeleted), which is why this must never be used on a
+// daemon that keeps running.
+func (wac *WhatsAppClient) dropDeadDevice() {
+	if err := wac.client.Store.Delete(context.Background()); err != nil {
+		wac.logger.Warnf("Failed to clear logged-out device store: %v", err)
 	}
 }
 
@@ -272,8 +386,8 @@ func (wac *WhatsAppClient) handleHistorySync(evt *events.HistorySync) {
 	// History backfill can outlast the fixed post-link window; slide the window
 	// while batches are still arriving so stop/restart stay refused mid-sync.
 	// An expired window is never re-armed: routine syncs outside it are ignored.
-	if syncWindowRemaining(wac.dataDir, time.Now()) > 0 {
-		recordLinkedAt(wac.dataDir, time.Now())
+	if syncWindowRemaining(wac.state.snapshot().LinkedAt, time.Now()) > 0 {
+		wac.markLinkedNow()
 	}
 
 	wac.logger.Infof("Processing history sync with %d conversations", len(evt.Data.Conversations))

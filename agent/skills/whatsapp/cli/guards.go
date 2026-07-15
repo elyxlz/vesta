@@ -1,11 +1,7 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -13,28 +9,17 @@ import (
 // auto-flagged and put under review, so pairing is hard rate-limited and the
 // fragile post-link history-sync window blocks daemon restarts (restarting
 // inside it makes WhatsApp log the device out).
+//
+// These are the pure decision functions over the pairing-attempt window and the
+// sync window; the state they read/write lives in the state store (state.go).
 const (
 	MaxPairAttempts    = 2
 	PairAttemptWindow  = time.Hour
 	SyncWindowDuration = 5 * time.Minute
 	LinkSessionTimeout = 10 * time.Minute
-
-	pairAttemptsFile = "pairing-attempts.json"
-	linkedAtFile     = "linked-at"
 )
 
-func loadPairAttempts(dataDir string) []time.Time {
-	data, err := os.ReadFile(filepath.Join(dataDir, pairAttemptsFile))
-	if err != nil {
-		return nil
-	}
-	var attempts []time.Time
-	if err := json.Unmarshal(data, &attempts); err != nil {
-		return nil
-	}
-	return attempts
-}
-
+// liveAttempts returns the attempts still inside the rate-limit window.
 func liveAttempts(attempts []time.Time, now time.Time) []time.Time {
 	var live []time.Time
 	for _, attempt := range attempts {
@@ -45,13 +30,17 @@ func liveAttempts(attempts []time.Time, now time.Time) []time.Time {
 	return live
 }
 
-func pairAttemptsInWindow(dataDir string, now time.Time) int {
-	return len(liveAttempts(loadPairAttempts(dataDir), now))
+// pairAttemptsInWindow counts the live attempts.
+func pairAttemptsInWindow(attempts []time.Time, now time.Time) int {
+	return len(liveAttempts(attempts, now))
 }
 
-// guardPairAttempt enforces the pairing rate limit, then records the attempt.
-func guardPairAttempt(dataDir string, now time.Time, acknowledged bool) error {
-	live := liveAttempts(loadPairAttempts(dataDir), now)
+// checkPairAttempt reports whether another pairing attempt is allowed under the
+// rate limit, given the already-filtered live attempts. It records nothing: callers
+// that can fail before a code is really produced (phone-code pairing, where
+// whatsmeow rejects PairPhone until the websocket is up) check first and record
+// only on success, so a transient pre-connection failure never burns a slot.
+func checkPairAttempt(live []time.Time, now time.Time, acknowledged bool) error {
 	if len(live) >= MaxPairAttempts && !acknowledged {
 		oldest := live[0]
 		for _, attempt := range live {
@@ -64,28 +53,13 @@ func guardPairAttempt(dataDir string, now time.Time, acknowledged bool) error {
 			"pairing blocked for %s: %d pairing attempts in the last hour. Repeated pairing attempts get WhatsApp numbers flagged and banned. Wait out the cooldown and only retry with the user's explicit go-ahead; pass --acknowledge-ban-risk to override",
 			cooldown, len(live))
 	}
-	live = append(live, now)
-	data, err := json.Marshal(live)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(dataDir, pairAttemptsFile), data, 0644)
+	return nil
 }
 
-func recordLinkedAt(dataDir string, now time.Time) {
-	if err := os.WriteFile(filepath.Join(dataDir, linkedAtFile), []byte(now.UTC().Format(time.RFC3339)), 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to record link time: %v\n", err)
-	}
-}
-
-// syncWindowRemaining reports how much of the post-link sync window is left.
-func syncWindowRemaining(dataDir string, now time.Time) time.Duration {
-	data, err := os.ReadFile(filepath.Join(dataDir, linkedAtFile))
-	if err != nil {
-		return 0
-	}
-	linkedAt, err := time.Parse(time.RFC3339, strings.TrimSpace(string(data)))
-	if err != nil {
+// syncWindowRemaining reports how much of the post-link sync window is left, given
+// when the device last linked (zero time = never linked).
+func syncWindowRemaining(linkedAt, now time.Time) time.Duration {
+	if linkedAt.IsZero() {
 		return 0
 	}
 	remaining := SyncWindowDuration - now.Sub(linkedAt)

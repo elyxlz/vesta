@@ -11,10 +11,7 @@ import (
 	"time"
 )
 
-const (
-	vestadRequestTimeout = 10 * time.Second
-	linkPollInterval     = 2 * time.Second
-)
+const vestadRequestTimeout = 10 * time.Second
 
 // linkServiceName is the vestad service (and tunnel path segment) for the link
 // page: the shared "wa-link" for the default instance, suffixed per named
@@ -73,17 +70,6 @@ func registerVestadService(name string) (int, error) {
 	return payload.Port, nil
 }
 
-func socketResultField(output []byte, field string) string {
-	var result map[string]any
-	if err := json.Unmarshal(output, &result); err != nil {
-		return ""
-	}
-	if value, ok := result[field].(string); ok {
-		return value
-	}
-	return ""
-}
-
 // parsePortFlag parses a port flag value and returns an error if it is invalid.
 func parsePortFlag(value string) (int, error) {
 	if value == "" {
@@ -137,16 +123,8 @@ func runLink() {
 		port = registeredPort
 	}
 
-	startArgs := []string{"--port", fmt.Sprintf("%d", port)}
-	if hasBareFlag("acknowledge-ban-risk") {
-		startArgs = append(startArgs, "--acknowledge-ban-risk")
-	}
-	output, exitCode, connected := trySocketCommand(getSocketPath(), "link-start", startArgs)
-	if !connected || exitCode != 0 {
-		fmt.Println(string(output))
-		os.Exit(1)
-	}
-
+	// Surface the scan URL to the user FIRST, then make the one blocking `link`
+	// call: it serves the page, waits for the scan, and returns a terminal result.
 	pageURL := linkPageURL(os.Getenv("VESTAD_TUNNEL"), os.Getenv("AGENT_NAME"), linkServiceName(), port)
 	printJSON(map[string]any{
 		"status":       "linking",
@@ -154,23 +132,22 @@ func runLink() {
 		"instructions": "Send the user this URL. On their phone: WhatsApp > Settings > Linked Devices > Link a Device, then scan the code on the page. The page keeps itself current; there is no rush.",
 	})
 
-	deadline := time.Now().Add(LinkSessionTimeout)
-	for time.Now().Before(deadline) {
-		time.Sleep(linkPollInterval)
-		statusOutput, _, statusConnected := trySocketCommand(getSocketPath(), "link-status", nil)
-		if !statusConnected {
-			failJSON("daemon stopped answering during linking; check 'whatsapp daemon status'")
-		}
-		if socketResultField(statusOutput, "status") == string(AuthStatusAuthenticated) {
-			printJSON(map[string]any{
-				"status": "linked",
-				"note":   fmt.Sprintf("History sync is settling: daemon stop/restart are locked for %s. Log lines like 'can't send presence' or a brief websocket EOF in this window are NORMAL. Do not restart anything.", SyncWindowDuration),
-			})
-			return
-		}
+	linkArgs := []string{"--port", fmt.Sprintf("%d", port)}
+	if hasBareFlag("acknowledge-ban-risk") {
+		linkArgs = append(linkArgs, "--acknowledge-ban-risk")
 	}
-	trySocketCommand(getSocketPath(), "link-stop", nil)
-	failJSON("no device linked within %s; link mode stopped. Retry with 'whatsapp link' when the user is ready (attempts are rate-limited)", LinkSessionTimeout)
+	output, exitCode, connected := trySocketCommand(getSocketPath(), "link", linkArgs)
+	if !connected {
+		failJSON("daemon stopped answering during linking; check 'whatsapp daemon status'")
+	}
+	if exitCode != 0 {
+		fmt.Println(string(output))
+		os.Exit(1)
+	}
+	printJSON(map[string]any{
+		"status": "linked",
+		"note":   fmt.Sprintf("History sync is settling: daemon stop/restart are locked for %s. Log lines like 'can't send presence' or a brief websocket EOF in this window are NORMAL. Do not restart anything.", SyncWindowDuration),
+	})
 }
 
 func runLinkPhone(phone string) {

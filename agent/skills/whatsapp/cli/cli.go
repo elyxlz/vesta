@@ -12,8 +12,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-
-	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
 // These parse os.Args directly rather than using flag.FlagSet because they are
@@ -122,34 +120,49 @@ func writeDeathNotification(notifDir string, sig string) {
 	os.WriteFile(filepath.Join(notifDir, filename), data, 0644)
 }
 
-func readAuthStatus(dataDir string) map[string]string {
-	statusPath := filepath.Join(dataDir, "auth-status.json")
-	data, err := os.ReadFile(statusPath)
-	if err != nil {
-		return map[string]string{"status": "not_started"}
+// liveAuthStatus maps a running daemon's daemon-status response to the
+// authenticate verdict. The live connection is the truth: a fresh (re)link
+// reports authenticated even when the on-disk auth-status.json still holds a
+// stale logged_out that a later reconnect never cleared.
+func liveAuthStatus(daemonStatus map[string]any, dataDir string) map[string]string {
+	if loggedIn, ok := daemonStatus["logged_in"].(bool); ok && loggedIn {
+		return map[string]string{"status": string(AuthStatusAuthenticated)}
 	}
-	var status map[string]string
-	if err := json.Unmarshal(data, &status); err != nil {
-		return map[string]string{"status": "not_started"}
+	// Daemon up but not logged in: surface its own auth_status (e.g. qr_ready).
+	if authStatus, ok := daemonStatus["auth_status"].(string); ok && authStatus != "" {
+		result := map[string]string{"status": authStatus}
+		if authStatus == string(AuthStatusQRReady) {
+			result["qr_image"] = "file://" + filepath.Join(dataDir, "qr-code.png")
+		}
+		return result
 	}
-	if status["status"] == string(AuthStatusQRReady) {
-		status["qr_image"] = "file://" + filepath.Join(dataDir, "qr-code.png")
+	return map[string]string{"status": string(AuthStatusNotAuthenticated)}
+}
+
+// authStatusResult reports the live daemon's connection state when a daemon is
+// answering on the socket, falling back to the cached auth-status.json only when
+// no daemon is running (the cache can lag the real session across a reconnect).
+func authStatusResult(sockPath, dataDir string) map[string]string {
+	if output, exitCode, connected := trySocketCommand(sockPath, "daemon-status", nil); connected && exitCode == 0 {
+		var live map[string]any
+		if err := json.Unmarshal(output, &live); err == nil {
+			return liveAuthStatus(live, dataDir)
+		}
 	}
-	return status
+	return authStatusMap(loadStateFromDisk(dataDir), dataDir)
 }
 
 func runAuthenticate() {
 	dataDir := stateDataDir()
-	var err error
-	dataDir, err = resolveDir(dataDir)
+	resolved, err := resolveDir(dataDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	printJSON(readAuthStatus(dataDir))
+	printJSON(authStatusResult(getSocketPath(), resolved))
 }
 
-func runServe(logger waLog.Logger) {
+func runServe() {
 	dataDir := stateDataDir()
 
 	notifDir := extractNotificationsDir()
@@ -164,7 +177,33 @@ func runServe(logger waLog.Logger) {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	writeDaemonInfo(dataDir, os.Args[1:])
+
+	// A stop-requested marker present at boot is stale: daemonStop only writes it
+	// against a live daemon, so this fresh boot can't own it. Clearing it means a
+	// marker leaked by a previous daemon (killed before it consumed it) can't
+	// suppress THIS boot's genuine death notification.
+	os.Remove(stopRequestedPath(dataDir))
+
+	// Single-instance guard: take the exclusive device-store lock BEFORE opening
+	// the whatsmeow store, so two daemons can never connect with the same device
+	// identity (the device-session conflict). A held lock means another daemon is
+	// already serving this store, so exit without connecting.
+	lock, ok, err := acquireDaemonLock(dataDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error acquiring daemon lock: %v\n", err)
+		os.Exit(1)
+	}
+	if !ok {
+		printJSON(map[string]string{"status": "already_running"})
+		os.Exit(0)
+	}
+	serveDaemonLock = lock
+
+	logger, logCloser := serveLogger(dataDir)
+	if logCloser != nil {
+		defer logCloser.Close()
+	}
+
 	if notifDir != "" {
 		notifDir, err = resolveDir(notifDir)
 		if err != nil {
@@ -178,6 +217,11 @@ func runServe(logger waLog.Logger) {
 		fmt.Fprintf(os.Stderr, "Failed to initialize WhatsApp client: %v\n", err)
 		os.Exit(1)
 	}
+	// Record this run's serve flags so `daemon restart` can bring the daemon back
+	// faithfully (survives stops and crashes via the persisted state).
+	wac.state.update(func(s *daemonState) {
+		s.Args, s.PID, s.StartedAt = os.Args[1:], os.Getpid(), time.Now().UTC()
+	})
 
 	if err := wac.Connect(); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to connect: %v\n", err)
@@ -263,13 +307,15 @@ func stripGlobalFlags(args []string) []string {
 
 func runOneShot(command string) {
 	sockPath := getSocketPath()
+	// Self-bootstrap the background daemon (idempotent no-op when it is already
+	// answering) so every agent command works cold, without the agent ever starting
+	// anything by hand.
+	if err := startDaemonProcess(linkServeArgs()); err != nil {
+		failJSON("could not start the whatsapp daemon: %v; run `whatsapp status`", err)
+	}
 	output, exitCode, connected := trySocketCommand(sockPath, command, stripGlobalFlags(os.Args[1:]))
 	if !connected {
-		hint := "daemon not running. Start with: whatsapp daemon start"
-		if instance := extractInstance(); instance != "" {
-			hint += " --instance " + instance
-		}
-		failJSON("%s", hint)
+		failJSON("whatsapp daemon is not answering; run `whatsapp status`")
 	}
 	fmt.Println(string(output))
 	os.Exit(exitCode)
@@ -277,13 +323,25 @@ func runOneShot(command string) {
 
 // command describes one socket subcommand in a single place: its canonical name,
 // short aliases, the leading positional args main rewrites into flags, whether it
-// mutates state (blocked in read-only mode), and its handler.
+// mutates state (blocked in read-only mode), an optional non-default socket
+// deadline (for the long, blocking pairing commands), and its handler.
 type command struct {
 	name        string
 	aliases     []string
 	positionals []string
 	write       bool
+	timeout     time.Duration // 0 = SocketTimeout; longer for blocking pairing commands
 	run         func([]string, *WhatsAppClient) (any, error)
+}
+
+// commandTimeout is the socket deadline for a command: its own override, or the
+// default SocketTimeout. Both the daemon (handleSocketConn) and the client
+// (trySocketCommand) read it so a blocking `link` is not cut off mid-scan.
+func commandTimeout(name string) time.Duration {
+	if cmd, ok := lookupCommand(name); ok && cmd.timeout > 0 {
+		return cmd.timeout
+	}
+	return SocketTimeout
 }
 
 var commands = []command{
@@ -306,9 +364,12 @@ var commands = []command{
 	{name: "rename-group", aliases: []string{"rename"}, positionals: []string{"group", "name"}, write: true, run: cmdRenameGroup},
 	{name: "set-group-photo", write: true, run: cmdSetGroupPhoto},
 	{name: "set-group-description", positionals: []string{"group", "description"}, write: true, run: cmdSetGroupDescription},
+	{name: "set-profile-photo", positionals: []string{"file"}, write: true, run: cmdSetProfilePhoto},
+	{name: "set-profile-name", positionals: []string{"name"}, write: true, run: cmdSetProfileName},
 	{name: "get-group-invite-link", run: cmdGetGroupInviteLink},
 	{name: "check-delivery", aliases: []string{"delivery"}, positionals: []string{"message-id"}, run: cmdCheckDelivery},
 	{name: "pair-phone", run: cmdPairPhone},
+	{name: "provision", timeout: ProvisionSocketTimeout, run: cmdProvisionManaged},
 	{name: "list-received-contacts", run: cmdListReceivedContacts},
 	{name: "archive-chat", positionals: []string{"to"}, write: true, run: cmdArchiveChat},
 	{name: "archive-all-chats", write: true, run: cmdArchiveAllChats},
@@ -319,55 +380,57 @@ var commands = []command{
 	{name: "hangup", write: true, run: cmdHangup},
 	{name: "call-status", run: cmdCallStatus},
 	{name: "daemon-status", run: cmdDaemonStatus},
-	{name: "link-start", run: cmdLinkStart},
-	{name: "link-status", run: cmdLinkStatus},
-	{name: "link-stop", run: cmdLinkStop},
+	{name: "link", timeout: LinkSocketTimeout, run: cmdLink},
 }
 
-func cmdLinkStart(args []string, wac *WhatsAppClient) (any, error) {
+// cmdLink runs the whole self-hosted QR pairing synchronously in one socket call:
+// serve the scan page on --port (when set), then block until the user scans or the
+// window elapses, returning a terminal status. Single-flighted with every other
+// pairing op, so a link during an in-flight provision is refused (never burns a
+// rate-limit slot or serves a blank QR). Replaces the old link-start/status/stop
+// trio and the client-side poll loop.
+func cmdLink(args []string, wac *WhatsAppClient) (any, error) {
 	var port int
 	var acknowledged bool
-	fs := flag.NewFlagSet("link-start", flag.ContinueOnError)
+	fs := flag.NewFlagSet("link", flag.ContinueOnError)
 	fs.IntVar(&port, "port", 0, "Serve the QR link page on this port (0 = no page)")
 	fs.BoolVar(&acknowledged, "acknowledge-ban-risk", false, "Override the pairing rate limit")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
-	if wac.IsAuthenticated() {
+	// Gate on the linked FACT (Store.ID), not transient connection status.
+	if wac.client.Store.ID != nil {
 		return nil, fmt.Errorf("already linked; to pair a different account the user must first unlink this device from their phone (Linked Devices)")
 	}
-	wac.pairGuardMu.Lock()
-	guardErr := guardPairAttempt(wac.dataDir, time.Now(), acknowledged)
-	wac.pairGuardMu.Unlock()
-	if guardErr != nil {
-		return nil, guardErr
+	release, ok := wac.beginPairing()
+	if !ok {
+		return nil, errPairingInProgress
 	}
-	wac.startLinkMode(port)
-	return map[string]any{"status": "linking", "page_port": port, "expires_in_seconds": int(LinkSessionTimeout.Seconds())}, nil
-}
-
-func cmdLinkStatus(_ []string, wac *WhatsAppClient) (any, error) {
-	status := wac.GetAuthStatus()
-	return map[string]any{"status": string(status), "link_active": wac.linkModeActive()}, nil
-}
-
-func cmdLinkStop(_ []string, wac *WhatsAppClient) (any, error) {
-	wac.stopLinkMode()
-	return map[string]any{"status": "link_stopped"}, nil
+	defer release()
+	if err := wac.state.tryRecordPairAttempt(time.Now(), acknowledged); err != nil {
+		return nil, err
+	}
+	if _, err := wac.linker.linkQR(wac, port); err != nil {
+		return nil, err
+	}
+	return map[string]any{"status": string(AuthStatusAuthenticated)}, nil
 }
 
 func cmdDaemonStatus(_ []string, wac *WhatsAppClient) (any, error) {
 	status := wac.GetAuthStatus()
-	info, _ := readDaemonInfo(wac.dataDir)
+	st := wac.state.snapshot()
 	now := time.Now()
 	result := map[string]any{
 		"connected":                wac.client.IsConnected(),
 		"logged_in":                wac.client.IsLoggedIn(),
 		"auth_status":              string(status),
-		"started_at":               info.StartedAt,
-		"serve_args":               info.Args,
-		"sync_window_seconds_left": int(syncWindowRemaining(wac.dataDir, now).Seconds()),
-		"pair_attempts_last_hour":  pairAttemptsInWindow(wac.dataDir, now),
+		"started_at":               st.StartedAt,
+		"serve_args":               st.Args,
+		"sync_window_seconds_left": int(syncWindowRemaining(st.LinkedAt, now).Seconds()),
+		"pair_attempts_last_hour":  pairAttemptsInWindow(st.PairAttempts, now),
+	}
+	if wac.client.Store.ID != nil {
+		result["number"] = "+" + wac.client.Store.ID.User
 	}
 	if build, ok := debug.ReadBuildInfo(); ok {
 		for _, dep := range build.Deps {
@@ -793,6 +856,42 @@ func cmdSetGroupDescription(args []string, wac *WhatsAppClient) (any, error) {
 	return successResult(success, msg), nil
 }
 
+func cmdSetProfilePhoto(args []string, wac *WhatsAppClient) (any, error) {
+	var filePath string
+	fs := flag.NewFlagSet("set-profile-photo", flag.ContinueOnError)
+	fs.StringVar(&filePath, "file", "", "Path to profile image (JPEG; PNG is converted to JPEG)")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	if filePath == "" {
+		return nil, fmt.Errorf("an image path is required (positional or --file)")
+	}
+	imageBytes, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read image file: %w", err)
+	}
+	if err := wac.SetProfilePhoto(imageBytes); err != nil {
+		return nil, err
+	}
+	return map[string]any{"status": "updated"}, nil
+}
+
+func cmdSetProfileName(args []string, wac *WhatsAppClient) (any, error) {
+	var name string
+	fs := flag.NewFlagSet("set-profile-name", flag.ContinueOnError)
+	fs.StringVar(&name, "name", "", "New display name (push name)")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	if name == "" {
+		return nil, fmt.Errorf("a name is required (positional or --name)")
+	}
+	if err := wac.SetProfileName(name); err != nil {
+		return nil, err
+	}
+	return map[string]any{"status": "updated"}, nil
+}
+
 func cmdGetGroupInviteLink(args []string, wac *WhatsAppClient) (any, error) {
 	var group string
 	fs := flag.NewFlagSet("get-group-invite-link", flag.ContinueOnError)
@@ -851,6 +950,44 @@ func cmdCheckDelivery(args []string, wac *WhatsAppClient) (any, error) {
 	return result, nil
 }
 
+// cmdProvisionManaged claims this account's one managed WhatsApp number and links
+// the companion, synchronously: it blocks through the whole claim -> pair -> link
+// handshake and returns the linked number or a terminal error. Idempotent on the
+// linked FACT (Store.ID): an already-linked device returns its number without
+// re-entering pairing, even in a not-yet-connected window. Single-flighted with
+// every other pairing op. The top-level `whatsapp provision` (runProvision)
+// cold-starts the daemon before dispatching this, so the agent runs one command
+// and never orchestrates the steps itself.
+func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
+	if wac.client.Store.ID != nil {
+		// Already linked. If a takeover parked it, an explicit provision means
+		// "reclaim the session": clear the park and reconnect (a plain send never
+		// does this, so it can't ping-pong). If the other holder is still live it
+		// simply re-parks. Otherwise it's already connected and this is a no-op.
+		if wac.connModeIs(connParked) {
+			wac.setConnMode(connNormal)
+			if err := wac.EnsureConnected(); err != nil {
+				return nil, fmt.Errorf("reconnect the parked session: %w", err)
+			}
+		}
+		return map[string]any{"status": "linked", "msisdn": wac.state.snapshot().MSISDN}, nil
+	}
+	release, ok := wac.beginPairing()
+	if !ok {
+		return nil, errPairingInProgress
+	}
+	defer release()
+	res, err := wac.linker.provision(wac)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"status": "linked",
+		"msisdn": res.MSISDN,
+		"note":   "Linked. Surface this number to the user with a wa.me link so they message you FIRST (reply-first, never cold-initiate).",
+	}, nil
+}
+
 func cmdPairPhone(args []string, wac *WhatsAppClient) (any, error) {
 	var phone string
 	var acknowledged bool
@@ -863,19 +1000,27 @@ func cmdPairPhone(args []string, wac *WhatsAppClient) (any, error) {
 	if phone == "" {
 		return nil, fmt.Errorf("--phone is required (E.164 format, e.g. +393481234567)")
 	}
-	if wac.IsAuthenticated() {
+	if wac.client.Store.ID != nil {
 		return nil, fmt.Errorf("already linked; to pair a different account the user must first unlink this device from their phone (Linked Devices)")
 	}
-	wac.pairGuardMu.Lock()
-	guardErr := guardPairAttempt(wac.dataDir, time.Now(), acknowledged)
-	wac.pairGuardMu.Unlock()
-	if guardErr != nil {
-		return nil, guardErr
+	release, ok := wac.beginPairing()
+	if !ok {
+		return nil, errPairingInProgress
 	}
-	code, err := wac.PairPhone(phone)
+	defer release()
+	// Check the ban guard first, but record the attempt only once a code is
+	// actually generated: pairing fails cheaply when the websocket is not up yet
+	// (fresh daemon still recompiling), and such a failure must not burn a slot.
+	// The single-flight (beginPairing) means no concurrent caller can double-spend.
+	now := time.Now()
+	if err := checkPairAttempt(liveAttempts(wac.state.snapshot().PairAttempts, now), now, acknowledged); err != nil {
+		return nil, err
+	}
+	code, err := wac.linker.pairCode(wac, phone)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate pairing code: %v", err)
 	}
+	wac.state.recordPairAttempt(time.Now())
 	return map[string]any{
 		"pairing_code": code,
 		"phone":        phone,

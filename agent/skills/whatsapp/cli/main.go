@@ -6,8 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
 func isHelpArg(arg string) bool {
@@ -16,11 +14,16 @@ func isHelpArg(arg string) bool {
 
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage: whatsapp <command> [args] [flags]")
-	fmt.Fprintln(w, "Lifecycle:")
-	fmt.Fprintln(w, "  daemon <start|stop|restart|status>   manage the background daemon")
+	fmt.Fprintln(w, "Setup / health:")
+	fmt.Fprintln(w, "  provision                            hosted box: claim + link the agent's own managed number (one blocking call)")
+	fmt.Fprintln(w, "  start                                bring the daemon up (idempotent); the restart skill runs this at boot")
+	fmt.Fprintln(w, "  status                               simple health check: linked, number, connected")
 	fmt.Fprintln(w, "  link [--phone +E.164]                link a WhatsApp account (QR page, or pairing code with --phone)")
+	fmt.Fprintln(w, "Internal (the CLI self-manages its daemon; agents never call these):")
+	fmt.Fprintln(w, "  daemon <start|stop|restart|status>   manage the background daemon")
 	fmt.Fprintln(w, "  serve                                run the daemon in the foreground")
-	fmt.Fprintln(w, "  authenticate                         print auth status")
+	fmt.Fprintln(w, "  authenticate                         print auth status (alias of status, kept for back-compat)")
+	fmt.Fprintln(w, "  update-deps                          bump the pinned whatsmeow to latest (do this deliberately, not mid-session)")
 	fmt.Fprintln(w, "Commands (short aliases in parentheses):")
 	fmt.Fprintln(w, "  send-message (send) [to] [message]   send-file (file) [to] [path]")
 	fmt.Fprintln(w, "  list-messages (messages) [to]        send-reaction (react) [to] [id] [emoji]")
@@ -81,18 +84,57 @@ func main() {
 		}
 	}
 
-	logger := waLog.Stdout("WhatsApp", "WARN", true)
-
 	switch command {
 	case "serve":
-		runServe(logger)
+		runServe()
+	case "start":
+		// Bring the daemon up and wait until it answers, so inbound notifications
+		// are already flowing before the caller (the restart skill at boot, or the
+		// agent) does anything else. Idempotent: an already-running daemon is a
+		// no-op. Reuses the daemon-lifecycle start; any trailing serve flags
+		// (e.g. --instance) pass through.
+		daemonStart(os.Args[1:])
+	case "status":
+		runStatus()
+	case "profile":
+		runProfile()
 	case "authenticate":
 		runAuthenticate()
 	case "daemon":
 		runDaemon()
 	case "link":
 		runLink()
+	case "provision":
+		runProvision()
 	default:
 		runOneShot(command)
 	}
+}
+
+// profileCommand maps a friendly `whatsapp profile <sub>` to the canonical
+// set-profile-* socket command and the flag its value fills.
+func profileCommand(sub string) (command string, flag string, ok bool) {
+	switch sub {
+	case "name":
+		return "set-profile-name", "name", true
+	case "photo":
+		return "set-profile-photo", "file", true
+	}
+	return "", "", false
+}
+
+// runProfile is the friendly `whatsapp profile name <name>` /
+// `whatsapp profile photo <file>` surface. It rewrites into the canonical
+// set-profile-name / set-profile-photo socket command (both still usable
+// directly), preserving any trailing flags like --instance.
+func runProfile() {
+	if len(os.Args) < 3 {
+		failJSON("usage: whatsapp profile name <name> | whatsapp profile photo <file>")
+	}
+	command, flag, ok := profileCommand(os.Args[1])
+	if !ok {
+		failJSON("unknown profile subcommand %q (use: whatsapp profile name <name> | whatsapp profile photo <file>)", os.Args[1])
+	}
+	os.Args = append([]string{os.Args[0], "--" + flag, os.Args[2]}, os.Args[3:]...)
+	runOneShot(command)
 }

@@ -60,6 +60,10 @@ func handleSocketConn(conn net.Conn, wac *WhatsAppClient) {
 		return
 	}
 
+	// Blocking pairing commands run their whole handshake in this one call, so
+	// extend the deadline past the default before dispatching.
+	conn.SetDeadline(time.Now().Add(commandTimeout(req.Command)))
+
 	result, err := executeCommand(req.Command, req.Args, wac)
 
 	var resp SocketResponse
@@ -81,7 +85,9 @@ func trySocketCommand(sockPath string, command string, args []string) ([]byte, i
 	}
 	defer conn.Close()
 
-	conn.SetDeadline(time.Now().Add(SocketTimeout))
+	// Match the daemon's per-command deadline so a blocking `link` is not cut off
+	// mid-scan by the default.
+	conn.SetDeadline(time.Now().Add(commandTimeout(command)))
 
 	if err := json.NewEncoder(conn).Encode(SocketRequest{Command: command, Args: args}); err != nil {
 		return nil, 0, false

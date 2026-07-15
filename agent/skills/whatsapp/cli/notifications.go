@@ -162,3 +162,22 @@ func WriteUnpairedNotification(notifDir, instance string) error {
 	}
 	return writeNotificationFile(notifDir, n, "unpaired")
 }
+
+// WriteLoggedOutNotification tells the agent WhatsApp logged this device out.
+// Re-linking is deliberate (`whatsapp provision`), never an automatic loop, so
+// this notifies once and stops rather than re-pairing.
+func WriteLoggedOutNotification(notifDir, instance, reason string) error {
+	message := "WhatsApp logged this device out"
+	if reason != "" {
+		message += " (" + reason + ")"
+	}
+	message += ". This is NOT re-linked automatically. When the user is ready, run `whatsapp provision` to re-link. Do not retry-loop pairing."
+	n := authNotif{
+		Source:    "whatsapp",
+		Type:      "logged_out",
+		Instance:  instance,
+		Message:   message,
+		Timestamp: time.Now().Format(time.RFC3339),
+	}
+	return writeNotificationFile(notifDir, n, "logged_out")
+}

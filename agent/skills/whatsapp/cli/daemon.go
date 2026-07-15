@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	// A cold-cache daemon start compiles the CLI and pulls whatsmeow first,
-	// which can take minutes; a warm start answers on the socket in seconds.
+	// A cold-cache daemon start compiles the CLI first, which can take minutes;
+	// a warm start reuses the cached binary and answers on the socket in seconds.
 	DaemonStartTimeout = 5 * time.Minute
 	DaemonStopTimeout  = 15 * time.Second
 	DaemonPollInterval = time.Second
@@ -86,8 +86,8 @@ func runDaemon() {
 }
 
 // startDaemonProcess launches `whatsapp serve` under screen (via the launcher
-// on PATH so the on-invocation compile and whatsmeow float still apply) and
-// waits for the socket. Idempotent: an already-answering daemon is a no-op.
+// on PATH so the cached-build check still applies) and waits for the socket.
+// Idempotent: an already-answering daemon is a no-op.
 func startDaemonProcess(serveArgs []string) error {
 	sockPath := getSocketPath()
 	if daemonAlive(sockPath) {
@@ -131,7 +131,7 @@ func daemonStop() {
 		printJSON(map[string]any{"status": "already_stopped", "session": sessionName()})
 		return
 	}
-	if msg := stopRefusal(syncWindowRemaining(dataDir, time.Now()), hasBareFlag("force")); msg != "" {
+	if msg := stopRefusal(syncWindowRemaining(loadStateFromDisk(dataDir).LinkedAt, time.Now()), hasBareFlag("force")); msg != "" {
 		failJSON("%s", msg)
 	}
 	// Mark the stop intentional so serve's shutdown skips the daemon_died
@@ -162,13 +162,14 @@ func daemonStop() {
 
 func daemonRestart() {
 	dataDir := stateDataDir()
-	info, err := readDaemonInfo(dataDir)
+	st := loadStateFromDisk(dataDir)
+	recorded := !st.StartedAt.IsZero()
 	running := daemonAlive(getSocketPath())
-	if err != nil && running {
-		// LEGACY(remove-when: fleet daemons have all restarted once under the lifecycle commands): pre-lifecycle daemons have no daemon-info.json, so a faithful restart is impossible.
-		failJSON("running daemon has no daemon-info.json (started before the lifecycle commands): stop it and start it explicitly with the right flags: whatsapp daemon stop, then whatsapp daemon start [flags]")
+	if !recorded && running {
+		// LEGACY(remove-when: fleet daemons have all restarted once under the lifecycle commands): pre-lifecycle daemons recorded no serve args, so a faithful restart is impossible.
+		failJSON("running daemon recorded no serve args (started before the lifecycle commands): stop it and start it explicitly with the right flags: whatsapp daemon stop, then whatsapp daemon start [flags]")
 	}
-	serveArgs, note := restartServeArgs(info, err)
+	serveArgs, note := restartServeArgs(st.Args, recorded)
 	if running {
 		daemonStop()
 	}
@@ -183,25 +184,26 @@ func daemonRestart() {
 }
 
 // restartServeArgs picks the flags a restart brings the daemon back with: the
-// last run's flags recorded in daemon-info.json (which survives stops and
-// crashes, so e.g. --read-only is never silently dropped), falling back to
-// the instance flag alone when no info was ever recorded.
-func restartServeArgs(info daemonInfo, infoReadErr error) (serveArgs []string, note string) {
-	if infoReadErr != nil {
-		return linkServeArgs(), "daemon was not running and left no daemon-info.json; started fresh with instance args only"
+// last run's flags recorded in state.json (which survives stops and crashes, so
+// e.g. --read-only is never silently dropped), falling back to the instance flag
+// alone when no run was ever recorded.
+func restartServeArgs(recordedArgs []string, recorded bool) (serveArgs []string, note string) {
+	if !recorded {
+		return linkServeArgs(), "daemon was not running and recorded no serve args; started fresh with instance args only"
 	}
-	return info.Args, ""
+	return recordedArgs, ""
 }
 
 func daemonStatus() {
 	dataDir := stateDataDir()
 	now := time.Now()
+	st := loadStateFromDisk(dataDir)
 	result := map[string]any{
 		"running":                  daemonAlive(getSocketPath()),
 		"session":                  sessionName(),
-		"auth":                     readAuthStatus(dataDir),
-		"sync_window_seconds_left": int(syncWindowRemaining(dataDir, now).Seconds()),
-		"pair_attempts_last_hour":  pairAttemptsInWindow(dataDir, now),
+		"auth":                     authStatusMap(st, dataDir),
+		"sync_window_seconds_left": int(syncWindowRemaining(st.LinkedAt, now).Seconds()),
+		"pair_attempts_last_hour":  pairAttemptsInWindow(st.PairAttempts, now),
 	}
 	if output, exitCode, connected := trySocketCommand(getSocketPath(), "daemon-status", nil); connected && exitCode == 0 {
 		var connState any
