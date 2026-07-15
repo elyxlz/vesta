@@ -44,6 +44,8 @@ function TabSurface({
   width: number;
 }) {
   const { colors, dark } = usePreferences();
+  if (!glassVisible) return null;
+
   const content = (
     <>
       <Animated.View
@@ -63,7 +65,7 @@ function TabSurface({
   if (isGlassEffectAPIAvailable()) {
     return (
       <GlassView
-        glassEffectStyle={glassVisible ? "regular" : "none"}
+        glassEffectStyle="regular"
         colorScheme={dark ? "dark" : "light"}
         isInteractive
         style={[styles.surface, { width }]}

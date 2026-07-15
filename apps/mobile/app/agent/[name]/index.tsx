@@ -15,6 +15,7 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { scheduleOnRN } from "react-native-worklets";
 import { AgentProvider } from "@/agent/AgentProvider";
 import ChatPage from "@/agent/ChatPage";
 import DashboardPage from "@/agent/DashboardPage";
@@ -105,21 +106,28 @@ function AgentPages() {
     );
   }, [clearHideTimer, tabVisibility]);
 
+  const unmountTabSurface = useCallback(() => {
+    setTabsInteractive(false);
+  }, []);
+
   const hideTabs = useCallback(() => {
     clearHideTimer();
     hideTimer.current = setTimeout(() => {
+      hideTimer.current = null;
       tabVisibility.set(
-        withTiming(0, {
-          duration: TAB_HIDE_DURATION_MS,
-          easing: Easing.in(Easing.cubic),
-        }),
+        withTiming(
+          0,
+          {
+            duration: TAB_HIDE_DURATION_MS,
+            easing: Easing.in(Easing.cubic),
+          },
+          (finished) => {
+            if (finished) scheduleOnRN(unmountTabSurface);
+          },
+        ),
       );
-      hideTimer.current = setTimeout(() => {
-        setTabsInteractive(false);
-        hideTimer.current = null;
-      }, TAB_HIDE_DURATION_MS);
     }, TAB_HIDE_DELAY_MS);
-  }, [clearHideTimer, tabVisibility]);
+  }, [clearHideTimer, tabVisibility, unmountTabSurface]);
 
   useEffect(
     () => () => {
