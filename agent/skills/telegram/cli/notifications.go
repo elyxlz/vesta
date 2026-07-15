@@ -120,11 +120,11 @@ func WriteNotification(
 		Timestamp:      time.Now().Format(time.RFC3339),
 		MessageID:      messageID,
 		ContactUnknown: !contactSaved,
-		ReplyHint:      "reply with a short message, and think about how you can best show your personality",
+		ReplyHint:      "reply with a short message, and think about how you can best show your personality; use `telegram send` to reply",
 	}
 	if !isDirectChat {
 		notif.ChatName = chatName
-		notif.ReplyHint = "reply with a short message, and think about how you can best show your personality; this is a group chat, so it may not be expecting a reply from you"
+		notif.ReplyHint = "reply with a short message, and think about how you can best show your personality; this is a group chat and may not be for you, so decide whether to chip in or stay out; use `telegram send` to reply"
 		if sender != chatName {
 			notif.Sender = sender
 		}

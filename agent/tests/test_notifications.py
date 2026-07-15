@@ -251,57 +251,36 @@ def test_format_for_display_strips_timestamp_microseconds():
     assert 'timestamp="2025-01-01T12:34:56+00:00"' in display
 
 
-@pytest.mark.parametrize(
-    "payload,expected_substr",
-    [
-        (
-            {"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "message", "contact_name": "Alice", "message": "hi"},
-            "Reply using the `whatsapp` skill",
-        ),
-        (
-            {
-                "timestamp": "2025-01-01T00:00:00",
-                "source": "whatsapp",
-                "type": "message",
-                "chat_name": "Group",
-                "sender": "bob",
-                "message": "hi",
-            },
-            "Reply using the `whatsapp` skill",
-        ),
-        (
-            {"timestamp": "2025-01-01T00:00:00", "source": "telegram", "type": "message", "contact_name": "Carol", "message": "hi"},
-            "Reply using the `telegram` skill",
-        ),
-        (
-            {"timestamp": "2025-01-01T00:00:00", "source": "app-chat", "type": "message", "message": "hi"},
-            "Reply using the `app-chat` skill",
-        ),
-    ],
-    ids=["whatsapp-direct", "whatsapp-group", "telegram-direct", "app-chat"],
-)
-def test_batch_includes_reply_hint(payload, expected_substr):
-    notif = Notification.model_validate(payload)
-    formatted = format_notification_batch([notif])
-    assert "Reply using" in formatted
-    assert expected_substr in formatted
-
-
-def test_batch_no_hint_for_unknown_source():
-    notif = Notification.model_validate({"timestamp": "2025-01-01T00:00:00", "source": "email", "type": "message", "sender": "alice"})
-    formatted = format_notification_batch([notif])
-    assert "Reply using" not in formatted
-
-
-def test_batch_no_hint_for_non_message_type():
+def test_batch_passes_through_producer_reply_hint():
+    """Core does not inject any hint lines; the producer-owned reply_hint attribute is passed
+    through verbatim by format_for_display() and format_notification_batch appends nothing."""
     notif = Notification.model_validate(
-        {"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "reaction", "contact_name": "Alice", "emoji": "👍"}
+        {
+            "timestamp": "2025-01-01T00:00:00",
+            "source": "whatsapp",
+            "type": "message",
+            "contact_name": "Alice",
+            "message": "hi",
+            "reply_hint": "reply with a short message, and think about how you can best show your personality; use `whatsapp send` to reply",
+        }
     )
     formatted = format_notification_batch([notif])
+    assert "whatsapp send" in formatted
     assert "Reply using" not in formatted
 
 
-def test_group_message_flagged_maybe_not_for_you():
+def test_batch_no_core_injected_hints():
+    """Core must not inject bracket hints for any source, even chat channels."""
+    for source in ("whatsapp", "telegram", "app-chat", "email"):
+        notif = Notification.model_validate({"timestamp": "2025-01-01T00:00:00", "source": source, "type": "message", "message": "hi"})
+        formatted = format_notification_batch([notif])
+        assert "[Reply using" not in formatted
+        assert "[This message is from a group chat" not in formatted
+
+
+def test_batch_group_hint_is_producer_owned():
+    """A group-chat notification carries the group-chat guidance in its own reply_hint;
+    core does not add a separate bracket line."""
     notif = Notification.model_validate(
         {
             "timestamp": "2025-01-01T00:00:00",
@@ -310,19 +289,28 @@ def test_group_message_flagged_maybe_not_for_you():
             "chat_name": "Bride squad",
             "sender": "bob",
             "message": "hi",
+            "reply_hint": "reply with a short message, and think about how you can best show your personality; this is a group chat and may not be for you, so decide whether to chip in or stay out; use `whatsapp send` to reply",
         }
     )
     formatted = format_notification_batch([notif])
-    assert "from a group chat" in formatted
     assert "chip in or stay out" in formatted
+    assert "whatsapp send" in formatted
+    assert "[This message is from a group chat" not in formatted
 
 
-def test_direct_message_not_flagged_as_group():
+def test_direct_message_no_group_hint():
     notif = Notification.model_validate(
-        {"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "message", "contact_name": "Alice", "message": "hi"}
+        {
+            "timestamp": "2025-01-01T00:00:00",
+            "source": "whatsapp",
+            "type": "message",
+            "contact_name": "Alice",
+            "message": "hi",
+            "reply_hint": "reply with a short message, and think about how you can best show your personality; use `whatsapp send` to reply",
+        }
     )
     formatted = format_notification_batch([notif])
-    assert "from a group chat" not in formatted
+    assert "group chat" not in formatted
 
 
 # --- process_batch ---

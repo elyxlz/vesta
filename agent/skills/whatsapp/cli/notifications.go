@@ -105,11 +105,11 @@ func WriteNotification(
 		Timestamp:       time.Now().Format(time.RFC3339),
 		MessageID:       messageID,
 		ContactUnknown:  !ctx.ContactSaved,
-		ReplyHint:       "reply with a short message, and think about how you can best show your personality",
+		ReplyHint:       "reply with a short message, and think about how you can best show your personality; use `whatsapp send` to reply",
 	}
 	if !ctx.IsDirectChat {
 		n.ChatName = ctx.ChatName
-		n.ReplyHint = "reply with a short message, and think about how you can best show your personality; this is a group chat, so it may not be expecting a reply from you"
+		n.ReplyHint = "reply with a short message, and think about how you can best show your personality; this is a group chat and may not be for you, so decide whether to chip in or stay out; use `whatsapp send` to reply"
 		// Drop Sender when it's just the same JID as the chat (happens for unsaved group participants).
 		if ctx.Sender != ctx.ChatName {
 			n.Sender = ctx.Sender
