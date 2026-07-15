@@ -386,6 +386,24 @@ async def test_process_message_no_correction(tmp_path, response):
 
 
 @pytest.mark.anyio
+async def test_process_message_no_correction_when_block_dashes_off(tmp_path):
+    """With block_dashes disabled, a dashed reply is left as-is: no correction turn."""
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent", block_dashes=False)
+    state = vm.State()
+    converse_calls: list[str] = []
+
+    async def mock_converse(prompt, *, state, config, show_output, pre_sent=False):
+        converse_calls.append(prompt)
+        return ["something — with an em dash"]
+
+    with patch("core.client.converse", side_effect=mock_converse):
+        responses, _ = await process_message("hello", state=state, config=config, is_user=True)
+
+    assert len(converse_calls) == 1
+    assert responses == ["something — with an em dash"]
+
+
+@pytest.mark.anyio
 async def test_unauthenticated_agent_idles_without_building_client(tmp_path):
     """A boot with no authenticated provider must NOT build an SDK client (which requires a provider) —
     it idles until sign-in restarts the process. Regression: build_client_options was called eagerly at

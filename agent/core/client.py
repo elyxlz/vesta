@@ -432,7 +432,7 @@ async def process_message(
     msg: str, *, state: vm.State, config: cfg.VestaConfig, is_user: bool, pre_sent: bool = False
 ) -> tuple[list[str], vm.State]:
     responses = await converse(msg, state=state, config=config, show_output=True, pre_sent=pre_sent)
-    if responses and _contains_dashes(responses) and state.preempt_outstanding == 0:
+    if config.block_dashes and responses and _contains_dashes(responses) and state.preempt_outstanding == 0:
         # With a preempt outstanding the correction query would land behind the queued preempt
         # CLI-side while its Vesta turn opened first, crossing turn attribution — skip it; the
         # preempted reply was cut short anyway.

@@ -277,6 +277,9 @@ class VestaConfig(pyd_settings.BaseSettings):
     # Ordered interrupt ruleset (first match wins; no match -> interrupt). Edited live via PUT /config
     # and the notifications skill; monitor_loop reads it from the store each tick (see load_notification_rules).
     notification_rules: list[NotificationInterruptRule] = pyd.Field(default_factory=list)
+    # When True, a reply containing an em dash, en dash, or ' - ' separator triggers a resend-without-them
+    # correction turn (see client.process_message). Off lets the model use dashes freely.
+    block_dashes: bool = True
 
     ephemeral: bool = False
     log_level: tp.Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
