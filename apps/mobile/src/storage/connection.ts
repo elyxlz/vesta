@@ -4,7 +4,7 @@ import type { ConnectionConfig } from "@/api/types";
 
 const CONNECTION_KEY = "vesta.connection.v1";
 
-const connectionSchema = z.object({
+export const connectionSchema = z.object({
   url: z.string().url(),
   accessToken: z.string().min(1),
   refreshToken: z.string(),

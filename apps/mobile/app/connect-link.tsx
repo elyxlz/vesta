@@ -8,8 +8,8 @@ import {
   View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { GlassView, isGlassEffectAPIAvailable } from "expo-glass-effect";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { GatewayCloseButton } from "@/components/GatewayCloseButton";
 import { Button } from "@/components/ui/Button";
 import { Field } from "@/components/ui/Form";
 import { Text } from "@/components/ui/Typography";
@@ -60,7 +60,7 @@ function ConnectLinkContent({
   scanId: string;
 }) {
   const router = useRouter();
-  const { connectLink } = useSession();
+  const { connectLink, recentGateways, recentGatewaysReady } = useSession();
   const { colors } = usePreferences();
   const handledScan = useRef("");
   const [link, setLink] = useState(initialLink);
@@ -183,55 +183,44 @@ function ConnectLinkContent({
               <Ionicons name="qr-code-outline" size={21} color={colors.text} />
             </Pressable>
           </View>
+          {recentGatewaysReady && recentGateways.length > 0 ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => router.push("/recent-gateways")}
+              style={({ pressed }) => [
+                styles.recentGateways,
+                {
+                  backgroundColor: colors.input,
+                  opacity: pressed ? 0.72 : 1,
+                },
+              ]}
+            >
+              <Ionicons name="time-outline" size={20} color={colors.text} />
+              <View style={styles.recentGatewaysCopy}>
+                <Text
+                  style={[styles.recentGatewaysLabel, { color: colors.text }]}
+                >
+                  Recent gateways
+                </Text>
+                <Text
+                  style={[
+                    styles.recentGatewaysDetail,
+                    { color: colors.secondaryText },
+                  ]}
+                >
+                  {recentGateways.length} saved
+                </Text>
+              </View>
+              <Ionicons
+                name="chevron-forward"
+                size={17}
+                color={colors.tertiaryText}
+              />
+            </Pressable>
+          ) : null}
         </View>
       )}
     </KeyboardAvoidingView>
-  );
-}
-
-function GatewayCloseButton({
-  color,
-  fallbackColor,
-  onPress,
-}: {
-  color: string;
-  fallbackColor: string;
-  onPress: () => void;
-}) {
-  const content = (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel="Close"
-      hitSlop={12}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.closeContent,
-        { opacity: pressed ? 0.72 : 1 },
-      ]}
-    >
-      <Ionicons name="close" size={21} color={color} />
-    </Pressable>
-  );
-
-  if (isGlassEffectAPIAvailable()) {
-    return (
-      <GlassView
-        glassEffectStyle="regular"
-        colorScheme="light"
-        isInteractive
-        style={styles.close}
-      >
-        {content}
-      </GlassView>
-    );
-  }
-
-  return (
-    <View
-      style={[styles.close, { backgroundColor: fallbackColor }]}
-    >
-      {content}
-    </View>
   );
 }
 
@@ -259,18 +248,17 @@ const styles = StyleSheet.create({
     letterSpacing: -0.7,
   },
   subtitle: { fontSize: 14, lineHeight: 20 },
-  close: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    overflow: "hidden",
-    transform: [{ translateY: 1 }],
-  },
-  closeContent: {
-    flex: 1,
+  recentGateways: {
+    minHeight: 52,
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+    gap: 12,
   },
+  recentGatewaysCopy: { flex: 1, gap: 1 },
+  recentGatewaysLabel: { fontSize: 15, fontWeight: "600" },
+  recentGatewaysDetail: { fontSize: 12 },
   connecting: {
     flexDirection: "row",
     alignItems: "center",

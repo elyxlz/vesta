@@ -59,6 +59,7 @@ function SessionNavigation() {
   const isConnectRoute =
     segments[0] === "connect" ||
     segments[0] === "connect-link" ||
+    segments[0] === "recent-gateways" ||
     segments[0] === "scan";
   const isHomeRoute = !segments[0];
   const routeNeedsAgents = isHomeRoute || segments[0] === "agent";
@@ -173,6 +174,15 @@ function SessionNavigation() {
             />
             <Stack.Screen
               name="connect-link"
+              options={{
+                headerShown: false,
+                presentation: "formSheet",
+                sheetAllowedDetents: "fitToContents",
+                sheetGrabberVisible: true,
+              }}
+            />
+            <Stack.Screen
+              name="recent-gateways"
               options={{
                 headerShown: false,
                 presentation: "formSheet",

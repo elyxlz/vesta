@@ -23,6 +23,14 @@ import {
   readConnection,
   writeConnection,
 } from "@/storage/connection";
+import type { RecentGateway } from "@/storage/recent-gateway-model";
+import {
+  clearRecentGateways as clearStoredRecentGateways,
+  forgetRecentGateway as forgetStoredRecentGateway,
+  readRecentGatewayCredential,
+  readRecentGateways,
+  saveRecentGateway,
+} from "@/storage/recent-gateways";
 
 const RECONNECT_MAX_MS = 30_000;
 const INITIAL_RECONNECT_MS = 750;
@@ -45,12 +53,22 @@ interface SessionValue {
   managed: boolean;
   version: GatewayVersionInfo | null;
   compatibility: CompatibilityState | null;
+  recentGateways: RecentGateway[];
+  recentGatewaysReady: boolean;
   connectLink: (link: string) => Promise<void>;
+  connectRecentGateway: (id: string) => Promise<void>;
+  forgetRecentGateway: (id: string) => Promise<void>;
+  clearRecentGateways: () => Promise<void>;
   signIn: () => Promise<void>;
   disconnect: () => Promise<void>;
 }
 
 const SessionContext = createContext<SessionValue | null>(null);
+
+interface CommitConnectionOptions {
+  connectKey?: string;
+  touchRecent?: boolean;
+}
 
 class ConnectionStore {
   private connection: ConnectionConfig | null = null;
@@ -75,10 +93,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [compatibility, setCompatibility] = useState<CompatibilityState | null>(
     null,
   );
+  const [recentGateways, setRecentGateways] = useState<RecentGateway[]>([]);
+  const [recentGatewaysReady, setRecentGatewaysReady] = useState(false);
   const [connectionStore] = useState(() => new ConnectionStore());
 
   const commitConnection = useCallback(
-    async (next: ConnectionConfig): Promise<void> => {
+    async (
+      next: ConnectionConfig,
+      options: CommitConnectionOptions = {},
+    ): Promise<void> => {
       const current = connectionStore.read();
       if (
         !current ||
@@ -92,6 +115,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       setConnection(next);
       setStatus("connected");
       await writeConnection(next);
+      try {
+        const recent = await saveRecentGateway(next, {
+          connectKey: options.connectKey,
+          touch: options.touchRecent ?? false,
+        });
+        setRecentGateways(recent);
+      } catch (cause) {
+        console.warn("Could not save recent gateway:", cause);
+      }
     },
     [connectionStore],
   );
@@ -121,12 +153,33 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let active = true;
-    void readConnection().then((stored) => {
-      if (!active) return;
-      connectionStore.write(stored);
-      setConnection(stored);
-      setStatus(stored ? "connected" : "disconnected");
-    });
+    const loadRecent = async (stored: ConnectionConfig | null) => {
+      try {
+        const recent = stored
+          ? await saveRecentGateway(stored, { touch: false })
+          : await readRecentGateways();
+        if (active) setRecentGateways(recent);
+      } catch (cause) {
+        console.warn("Could not load recent gateways:", cause);
+      } finally {
+        if (active) setRecentGatewaysReady(true);
+      }
+    };
+
+    void readConnection()
+      .then((stored) => {
+        if (!active) return;
+        connectionStore.write(stored);
+        setConnection(stored);
+        setStatus(stored ? "connected" : "disconnected");
+        void loadRecent(stored);
+      })
+      .catch((cause: unknown) => {
+        console.warn("Could not load the active gateway:", cause);
+        if (!active) return;
+        setStatus("disconnected");
+        void loadRecent(null);
+      });
     return () => {
       active = false;
     };
@@ -136,13 +189,49 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     async (link: string): Promise<void> => {
       const parsed = parseConnectLink(link);
       if (!parsed.ok) throw new Error(parsed.message);
-      await commitConnection(await connectWithKey(parsed.url, parsed.key));
+      await commitConnection(await connectWithKey(parsed.url, parsed.key), {
+        connectKey: parsed.key,
+        touchRecent: true,
+      });
     },
     [commitConnection],
   );
 
+  const connectRecentGateway = useCallback(
+    async (id: string): Promise<void> => {
+      const credential = await readRecentGatewayCredential(id);
+      if (!credential) {
+        setRecentGateways(await forgetStoredRecentGateway(id));
+        throw new Error("This saved gateway is no longer available.");
+      }
+      const next =
+        credential.connectKey && !credential.connection.hosted
+          ? await connectWithKey(
+              credential.connection.url,
+              credential.connectKey,
+            )
+          : credential.connection;
+      await commitConnection(next, {
+        connectKey: credential.connectKey,
+        touchRecent: true,
+      });
+    },
+    [commitConnection],
+  );
+
+  const forgetRecentGateway = useCallback(async (id: string): Promise<void> => {
+    setRecentGateways(await forgetStoredRecentGateway(id));
+  }, []);
+
+  const clearRecentGateways = useCallback(async (): Promise<void> => {
+    await clearStoredRecentGateways();
+    setRecentGateways([]);
+  }, []);
+
   const signIn = useCallback(async (): Promise<void> => {
-    await commitConnection(await signInWithVestaAccount());
+    await commitConnection(await signInWithVestaAccount(), {
+      touchRecent: true,
+    });
   }, [commitConnection]);
 
   useEffect(() => {
@@ -264,7 +353,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       managed,
       version,
       compatibility,
+      recentGateways,
+      recentGatewaysReady,
       connectLink,
+      connectRecentGateway,
+      forgetRecentGateway,
+      clearRecentGateways,
       signIn,
       disconnect,
     }),
@@ -278,7 +372,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       managed,
       version,
       compatibility,
+      recentGateways,
+      recentGatewaysReady,
       connectLink,
+      connectRecentGateway,
+      forgetRecentGateway,
+      clearRecentGateways,
       signIn,
       disconnect,
     ],
