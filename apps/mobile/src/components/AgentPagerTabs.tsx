@@ -106,7 +106,7 @@ export function AgentPagerTabs({
         translateY: interpolate(
           visibility.value,
           [0, 1],
-          [10, 0],
+          [6, 0],
           Extrapolation.CLAMP,
         ),
       },

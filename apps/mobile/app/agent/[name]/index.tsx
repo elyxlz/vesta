@@ -30,7 +30,7 @@ import {
 import { usePreferences } from "@/preferences/PreferencesProvider";
 
 const AnimatedPagerView = Animated.createAnimatedComponent(PagerView);
-const TAB_HIDE_DELAY_MS = 50;
+const TAB_HIDE_DELAY_MS = 100;
 const TAB_HIDE_DURATION_MS = 220;
 const PAGE_TABS = {
   chat: {
