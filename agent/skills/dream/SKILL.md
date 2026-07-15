@@ -105,13 +105,15 @@ Update the "User State" section, your working model of where they're at. Write w
 
 **Never use relative dates or timing in the User State.** No "tonight", "tomorrow", "yesterday", "this weekend", "next week". Always use absolute dates (e.g., "Mar 19" not "yesterday", "Mar 22 5:15pm" not "tomorrow evening"). Relative references become wrong the moment a new day starts, causing cascading confusion.
 
+**Sentinel sweep.** If any identity slot is still `[Unknown]` (Name/Location/Timezone in §4, Primary Channel in §2) and you now know it, fill it; a slot still empty past onboarding is a birth that half-finished, so close it or flag it to the user.
+
 - What they're working on right now
 - What's going well and what isn't, reading between the lines
 - What's coming that they might need help with
 - How the day felt. One word is enough
 - Threads left hanging, like unfinished conversations or unmade decisions
 - Interests: anything new about what they or their contacts like. Update Interests & Preferences in MEMORY.md
-- Goals: if a goal advanced, stalled, was achieved, or a new one surfaced, update §4 Goals; keep it distinct from the rolling snapshot
+- Goals: if a goal advanced, stalled, was achieved, or a new one surfaced, update §4 Goals; keep it distinct from the rolling snapshot, evolve it slowly (never rewrite it on one afternoon), absolute dates only
 - Deeper context pass: at night you can read more widely than the day allows. Beyond email, mine whatever external sources the user has actually connected: calendar, files, accounts, their own linked WhatsApp or Telegram history (their real chats with other people, not the agent's bot channel), any integration holding real information about their life. Pull personal texture: interests, relationships, plans, and the affectionate teasable material (guilty pleasures, contradictions, recurring quirks) that lets you call them out like someone who actually knows them. Page through recent items, occasionally backfill older ones. Fold it into Interests & Preferences and the psych sketch. Read to understand, not to act: mine only what matters, never write into their own stores (contacts, files, notes), never record strangers from public pages or filings as their people, never spin a few thin signals into a confident story. Save only what you're confident in, and mark a guess as a guess. Don't build out a profile they never asked for.
 - The psychological sketch: what drives them, what they avoid, blind spots, how they handle stress and praise. Think Jung and Freud, not the DSM. Let this evolve slowly and don't rewrite it based on one bad afternoon
 - Maintain 1-3 open questions about them in User State: things you genuinely don't understand about who they are (not logistics). Drop answered ones, note the answer where it belongs. Tomorrow's you can only be curious with a question in hand.
@@ -123,7 +125,7 @@ Replace rather than append. It's a snapshot, not a log. Be honest but not dramat
 
 ## Memory Curation
 
-MEMORY.md has a **hard limit of 30,000 characters**. It's injected into every system prompt. Run `~/agent/skills/dream/scripts/memory_size.sh` to check usage. Things needed at all times live here permanently. Anything large or situational lives elsewhere and MEMORY.md points to it. When you hit the cap, consolidate. Don't let it overflow.
+MEMORY.md has a **hard limit of 50,000 characters**. It's injected into every system prompt. Run `~/agent/skills/dream/scripts/memory_size.sh` to check usage. Things needed at all times live here permanently. Anything large or situational lives elsewhere and MEMORY.md points to it. When you hit the cap, consolidate. Don't let it overflow.
 
 **Cut:**
 - Full documents, email bodies, transcripts, task-specific junk
