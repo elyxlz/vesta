@@ -47,7 +47,12 @@ everything else: your installed skills (`agent/skills`, `agent/core/skills`),
 From the `--stat`, carve your divergence into coherent areas: each installed skill under
 `agent/skills` and `agent/core/skills` is its own area, `agent/MEMORY.md` is one, and
 group whatever else remains. Spawn a subagent per area, as many as it takes to cover
-everything, and run them in parallel. Give each subagent one instruction: read the full
+everything, and run them in parallel.
+
+Prioritize the default skills. The names in `agent/core/default-skills.txt` are the core
+set every agent ships with; they change the most upstream and matter the most, so review
+them first and most carefully (a subagent each), then sweep everything else. Nothing is
+skipped, but the defaults get the deepest attention. Give each subagent one instruction: read the full
 patch for its paths, hunk by hunk, understand every change, and report back a precise
 list of what to absorb (which stock improvements you are missing) versus what is your own
 deliberate personalization to keep, with exact file paths and the reasoning per hunk.
