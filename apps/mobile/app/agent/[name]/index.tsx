@@ -196,7 +196,7 @@ function AgentPages() {
       </AnimatedPagerView>
       <AgentPagerTabs
         activePage={activePage}
-        bottom={insets.bottom + 68}
+        bottom={insets.bottom + 40}
         progress={pageProgress}
         visibility={tabVisibility}
         interactive={tabsInteractive}
