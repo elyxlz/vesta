@@ -79,7 +79,7 @@ export function AgentHeaderTitle({
         <AgentOrb
           status={status}
           activityState={activityState}
-          size={30}
+          size={24}
         />
       </BootTransitionTarget>
       <Text
