@@ -50,6 +50,7 @@ function SessionNavigation() {
   const { status, agents, agentsReady, disconnect } = useSession();
   const { colors, dark } = usePreferences();
   const segments = useSegments();
+  const currentSegment = segments[0];
   const router = useRouter();
   const [bootSplashVisible, setBootSplashVisible] = useState(true);
   const [bootPageRevealed, setBootPageRevealed] = useState(false);
@@ -125,9 +126,10 @@ function SessionNavigation() {
     if (status === "disconnected" && !isConnectRoute) {
       router.replace("/connect");
     } else if (status === "connected" && isConnectRoute) {
-      router.replace("/");
+      if (currentSegment === "recent-gateways") router.dismissAll();
+      else router.replace("/");
     }
-  }, [isConnectRoute, router, status]);
+  }, [currentSegment, isConnectRoute, router, status]);
 
   return (
     <BootTransitionProvider

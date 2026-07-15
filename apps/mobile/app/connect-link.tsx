@@ -188,34 +188,18 @@ function ConnectLinkContent({
               accessibilityRole="button"
               onPress={() => router.push("/recent-gateways")}
               style={({ pressed }) => [
-                styles.recentGateways,
-                {
-                  backgroundColor: colors.input,
-                  opacity: pressed ? 0.72 : 1,
-                },
+                styles.recentGatewaysLink,
+                { opacity: pressed ? 0.55 : 1 },
               ]}
             >
-              <Ionicons name="time-outline" size={20} color={colors.text} />
-              <View style={styles.recentGatewaysCopy}>
-                <Text
-                  style={[styles.recentGatewaysLabel, { color: colors.text }]}
-                >
-                  Recent gateways
-                </Text>
-                <Text
-                  style={[
-                    styles.recentGatewaysDetail,
-                    { color: colors.secondaryText },
-                  ]}
-                >
-                  {recentGateways.length} saved
-                </Text>
-              </View>
-              <Ionicons
-                name="chevron-forward"
-                size={17}
-                color={colors.tertiaryText}
-              />
+              <Text
+                style={[
+                  styles.recentGatewaysLabel,
+                  { color: colors.secondaryText },
+                ]}
+              >
+                Recent gateways
+              </Text>
             </Pressable>
           ) : null}
         </View>
@@ -248,17 +232,8 @@ const styles = StyleSheet.create({
     letterSpacing: -0.7,
   },
   subtitle: { fontSize: 14, lineHeight: 20 },
-  recentGateways: {
-    minHeight: 52,
-    borderRadius: 18,
-    paddingHorizontal: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  recentGatewaysCopy: { flex: 1, gap: 1 },
-  recentGatewaysLabel: { fontSize: 15, fontWeight: "600" },
-  recentGatewaysDetail: { fontSize: 12 },
+  recentGatewaysLink: { alignSelf: "center", padding: 3 },
+  recentGatewaysLabel: { fontSize: 13, fontWeight: "500" },
   connecting: {
     flexDirection: "row",
     alignItems: "center",

@@ -113,7 +113,12 @@ function RecentGatewaysContent() {
   };
 
   return (
-    <View style={[styles.sheet, { backgroundColor: colors.background }]}>
+    <ScrollView
+      style={[styles.sheet, { backgroundColor: colors.background }]}
+      contentContainerStyle={styles.content}
+      contentInsetAdjustmentBehavior="never"
+      showsVerticalScrollIndicator={false}
+    >
       <View style={styles.header}>
         <View style={styles.titleRow}>
           <Text family="heading" style={[styles.title, { color: colors.text }]}>
@@ -137,11 +142,7 @@ function RecentGatewaysContent() {
           No saved gateways.
         </Text>
       ) : (
-        <ScrollView
-          style={styles.list}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
-        >
+        <View style={styles.listContent}>
           {recentGateways.map((gateway) => (
             <View
               key={gateway.id}
@@ -217,7 +218,7 @@ function RecentGatewaysContent() {
               </Pressable>
             </View>
           ))}
-        </ScrollView>
+        </View>
       )}
 
       {error ? (
@@ -244,13 +245,13 @@ function RecentGatewaysContent() {
           </Text>
         </Pressable>
       ) : null}
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  sheet: {
-    flex: 1,
+  sheet: { flex: 1 },
+  content: {
     paddingHorizontal: 24,
     paddingTop: 36,
     paddingBottom: 28,
@@ -273,7 +274,6 @@ const styles = StyleSheet.create({
   subtitle: { fontSize: 14, lineHeight: 20 },
   loading: { paddingVertical: 30 },
   empty: { textAlign: "center", paddingVertical: 30, fontSize: 14 },
-  list: { maxHeight: 430 },
   listContent: { gap: 10 },
   gateway: {
     minHeight: 64,
