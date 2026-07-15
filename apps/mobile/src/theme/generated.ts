@@ -10,7 +10,7 @@ export const designTokens = {
       card: "#fffdfa",
       "card-foreground": "#0c0a08",
       "card-ring": "rgba(12, 10, 8, 0.05)",
-      popover: "#fffdfa",
+      popover: "#f7f5f1",
       "popover-foreground": "#0c0a08",
       primary: "#d5b993",
       "primary-foreground": "#26211a",
