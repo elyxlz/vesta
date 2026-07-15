@@ -43,6 +43,7 @@ import {
   type BootTargetFrame,
 } from "@/components/BootTransition";
 import { lightColors } from "@/theme/colors";
+import { fontNames } from "@/theme/typography";
 
 WebBrowser.maybeCompleteAuthSession();
 void SplashScreen.preventAutoHideAsync();
@@ -51,6 +52,7 @@ function SessionNavigation() {
   const { status, agents, agentsReady, reachable, disconnect } = useSession();
   const { colors, dark } = usePreferences();
   const segments = useSegments();
+  const activeRoute = segments[0];
   const router = useRouter();
   const [bootSplashVisible, setBootSplashVisible] = useState(true);
   const [bootPageRevealed, setBootPageRevealed] = useState(false);
@@ -58,12 +60,12 @@ function SessionNavigation() {
     Partial<Record<BootDestination, BootTargetFrame>>
   >({});
   const isConnectRoute =
-    segments[0] === "connect" ||
-    segments[0] === "connect-link" ||
-    segments[0] === "recent-gateways" ||
-    segments[0] === "scan";
-  const isHomeRoute = !segments[0];
-  const routeNeedsAgents = isHomeRoute || segments[0] === "agent";
+    activeRoute === "connect" ||
+    activeRoute === "connect-link" ||
+    activeRoute === "recent-gateways" ||
+    activeRoute === "scan";
+  const isHomeRoute = !activeRoute;
+  const routeNeedsAgents = isHomeRoute || activeRoute === "agent";
   const activeColors = isConnectRoute ? lightColors : colors;
   const navigationDark = !isConnectRoute && dark;
   const navigationTheme = useMemo(() => {
@@ -91,7 +93,7 @@ function SessionNavigation() {
     status === "disconnected"
       ? "connect"
       : status === "connected"
-        ? segments[0] === "agent"
+        ? activeRoute === "agent"
           ? "agent"
           : "home"
         : null;
@@ -129,7 +131,7 @@ function SessionNavigation() {
       if (router.canDismiss()) router.dismissAll();
       else router.replace("/");
     }
-  }, [isConnectRoute, router, status]);
+  }, [activeRoute, isConnectRoute, router, status]);
 
   return (
     <BootTransitionProvider
@@ -158,6 +160,15 @@ function SessionNavigation() {
               headerTransparent: true,
               headerStyle: { backgroundColor: "transparent" },
               headerTintColor: activeColors.text,
+              headerTitleStyle: {
+                fontFamily: fontNames.heading.native["500"],
+                fontSize: 24,
+                fontWeight: "500",
+              },
+              headerLargeTitleStyle: {
+                fontFamily: fontNames.heading.native["500"],
+                fontWeight: "500",
+              },
               headerShadowVisible: false,
               headerBackButtonDisplayMode: "minimal",
             }}
@@ -218,10 +229,7 @@ function SessionNavigation() {
                 headerTitle: () => (
                   <Text
                     family="heading"
-                    style={[
-                      styles.settingsTitle,
-                      { color: activeColors.text },
-                    ]}
+                    style={[styles.settingsTitle, { color: activeColors.text }]}
                   >
                     Settings
                   </Text>
@@ -234,6 +242,7 @@ function SessionNavigation() {
           <GatewayConnectionBanner
             visible={
               status === "connected" &&
+              agentsReady &&
               !reachable &&
               !isConnectRoute &&
               !bootSplashVisible
@@ -258,8 +267,8 @@ function SessionNavigation() {
 const styles = StyleSheet.create({
   appSurface: { flex: 1 },
   settingsTitle: {
-    fontSize: 28,
-    lineHeight: 34,
+    fontSize: 24,
+    lineHeight: 30,
     fontWeight: "500",
     letterSpacing: -0.7,
   },

@@ -23,6 +23,8 @@ import { pushRegistrationDecision } from "./registration-policy";
 const PUSH_TOKEN_KEY = "vesta.expo-push-token.v1";
 const PUSH_INSTALLATION_ID_KEY = "vesta.push-installation-id.v1";
 const PENDING_NOTIFICATION_KEY = "vesta.pending-notification.v1";
+const PUSH_NOTIFICATIONS_ENABLED =
+  Constants.expoConfig?.extra?.pushNotificationsEnabled !== false;
 
 Notifications.setNotificationHandler({
   handleNotification: async (notification) => {
@@ -65,7 +67,7 @@ async function removeStoredRegistration(api: ApiClient): Promise<void> {
   await AsyncStorage.removeItem(PUSH_TOKEN_KEY);
 }
 
-export function PushCoordinator() {
+function EnabledPushCoordinator() {
   const router = useRouter();
   const pathname = usePathname();
   const session = useSession();
@@ -259,6 +261,11 @@ export function PushCoordinator() {
   ]);
 
   return null;
+}
+
+export function PushCoordinator() {
+  if (!PUSH_NOTIFICATIONS_ENABLED) return null;
+  return <EnabledPushCoordinator />;
 }
 
 export async function unregisterCurrentMobileDevice(

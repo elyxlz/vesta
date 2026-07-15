@@ -28,7 +28,7 @@ async function pkcePair(): Promise<{
   return { verifier, challenge: base64Url(digest) };
 }
 
-export async function signInWithVestaAccount(): Promise<ConnectionConfig> {
+export async function signInWithVestaAccount(): Promise<ConnectionConfig | null> {
   const redirectUri = __DEV__ ? DEVELOPMENT_REDIRECT : UNIVERSAL_REDIRECT;
   const state = Crypto.randomUUID();
   const { verifier, challenge } = await pkcePair();
@@ -44,9 +44,8 @@ export async function signInWithVestaAccount(): Promise<ConnectionConfig> {
     `${CONTROL_APEX}/api/authorize?${parameters.toString()}`,
     redirectUri,
   );
-  if (result.type !== "success") {
-    throw new Error(result.type === "cancel" ? "Sign-in was cancelled." : "Could not complete sign-in.");
-  }
+  if (result.type === "cancel" || result.type === "dismiss") return null;
+  if (result.type !== "success") throw new Error("Could not complete sign-in.");
 
   const callback = new URL(result.url);
   const code = callback.searchParams.get("code");
@@ -120,6 +119,43 @@ export async function connectWithKey(
     refreshToken: session.refresh_token,
     expiresAt: Date.now() + session.expires_in * 1000,
     hosted: false,
+  };
+}
+
+export async function resumeGatewaySession(
+  connection: ConnectionConfig,
+): Promise<ConnectionConfig> {
+  if (!connection.refreshToken) {
+    throw new Error(
+      "This saved gateway session has expired. Connect to it again.",
+    );
+  }
+  const response = await fetchGateway(`${connection.url}/auth/refresh`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refresh_token: connection.refreshToken }),
+  });
+  if (response.status === 401) {
+    throw new Error(
+      "This saved gateway session has expired. Connect to it again.",
+    );
+  }
+  if (!response.ok) {
+    throw new Error("Could not restore this saved gateway session.");
+  }
+  const session: {
+    access_token?: string;
+    refresh_token?: string;
+    expires_in?: number;
+  } = await response.json();
+  if (!session.access_token || !session.refresh_token) {
+    throw new Error("Could not restore this saved gateway session.");
+  }
+  return {
+    ...connection,
+    accessToken: session.access_token,
+    refreshToken: session.refresh_token,
+    expiresAt: Date.now() + (session.expires_in ?? 3600) * 1000,
   };
 }
 

@@ -8,6 +8,7 @@ import {
 import {
   AccessibilityInfo,
   Animated,
+  Easing,
   FlatList,
   Pressable,
   StyleSheet,
@@ -107,10 +108,7 @@ export default function HomeScreen() {
     return () => cancelAnimationFrame(frame);
   }, [agents, restoreRequest, scrollX, width]);
 
-  if (
-    status === "booting" ||
-    (status === "connected" && !agentsReady)
-  ) {
+  if (status === "booting" || (status === "connected" && !agentsReady)) {
     return <HomeSkeleton />;
   }
 
@@ -157,7 +155,7 @@ export default function HomeScreen() {
               label: "Settings",
               accessibilityLabel: "Settings",
               icon: { type: "sfSymbol", name: "gearshape" },
-              tintColor: colors.accent,
+              tintColor: colors.text,
               identifier: "home-settings",
               onPress: () => router.push("/settings"),
             },
@@ -168,7 +166,7 @@ export default function HomeScreen() {
               label: "Create agent",
               accessibilityLabel: "Create agent",
               icon: { type: "sfSymbol", name: "plus" },
-              tintColor: colors.accent,
+              tintColor: colors.text,
               identifier: "home-create-agent",
               onPress: () => router.push("/new-agent"),
             },
@@ -309,6 +307,18 @@ function AgentCarouselItem({
 }) {
   const { colors } = usePreferences();
   const [orbScale] = useState(() => new Animated.Value(1));
+  const [orbReveal] = useState(() => new Animated.Value(0));
+
+  useEffect(() => {
+    const reveal = Animated.timing(orbReveal, {
+      toValue: 1,
+      duration: 320,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    });
+    reveal.start();
+    return () => reveal.stop();
+  }, [orbReveal]);
 
   const animateOrb = (toValue: number, released: boolean) => {
     orbScale.stopAnimation();
@@ -335,19 +345,41 @@ function AgentCarouselItem({
       onPressOut={() => animateOrb(1, true)}
       style={[styles.agentPage, { width }]}
     >
-      <Animated.View style={{ transform: [{ scale: orbScale }] }}>
-        <BootTransitionTarget
-          destination="home"
-          enabled={bootTarget}
-          status={agent.status}
-          activityState={agent.activityState}
+      <Animated.View
+        style={[styles.orbHandoff, { transform: [{ scale: orbScale }] }]}
+      >
+        <Animated.View
+          style={[StyleSheet.absoluteFill, { opacity: orbReveal }]}
         >
-          <AgentOrb
+          <BootTransitionTarget
+            destination="home"
+            enabled={bootTarget}
             status={agent.status}
             activityState={agent.activityState}
-            size={HOME_AGENT_ORB_SIZE}
+          >
+            <AgentOrb
+              status={agent.status}
+              activityState={agent.activityState}
+              size={HOME_AGENT_ORB_SIZE}
+            />
+          </BootTransitionTarget>
+        </Animated.View>
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            StyleSheet.absoluteFill,
+            {
+              opacity: orbReveal.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0.62, 0],
+              }),
+            },
+          ]}
+        >
+          <View
+            style={[styles.skeletonOrb, { backgroundColor: colors.input }]}
           />
-        </BootTransitionTarget>
+        </Animated.View>
       </Animated.View>
       <View style={styles.agentDetails}>
         <AgentStatusBadge status={agent.status} centered />
@@ -424,7 +456,7 @@ function HomeSkeleton() {
               label: "Settings",
               accessibilityLabel: "Settings",
               icon: { type: "sfSymbol", name: "gearshape" },
-              tintColor: colors.accent,
+              tintColor: colors.text,
               identifier: "home-settings",
               onPress: () => router.push("/settings"),
             },
@@ -503,7 +535,7 @@ function HomeHeaderButton({
         { opacity: pressed ? 0.68 : 1 },
       ]}
     >
-      <Ionicons name={icon} size={iconSize} color={colors.accent} />
+      <Ionicons name={icon} size={iconSize} color={colors.text} />
     </Pressable>
   );
 
@@ -526,6 +558,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 28,
   },
   agentDetails: { alignItems: "center", gap: 6 },
+  orbHandoff: {
+    width: HOME_AGENT_ORB_SIZE,
+    height: HOME_AGENT_ORB_SIZE,
+  },
   agentName: { fontSize: 38, fontWeight: "500", letterSpacing: -1 },
   indicators: {
     position: "absolute",

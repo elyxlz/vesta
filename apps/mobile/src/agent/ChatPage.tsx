@@ -2,13 +2,16 @@ import {
   forwardRef,
   memo,
   useCallback,
+  useEffect,
   useMemo,
-  useRef,
   useState,
   type ComponentRef,
   type ReactNode,
 } from "react";
 import {
+  ActivityIndicator,
+  Animated,
+  Easing,
   FlatList,
   Pressable,
   StyleSheet,
@@ -31,6 +34,7 @@ import Markdown, {
 import { Ionicons } from "@expo/vector-icons";
 import { GlassView, isGlassEffectAPIAvailable } from "expo-glass-effect";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Svg, { Path } from "react-native-svg";
 import type { VestaEvent } from "@/api/types";
 import { fetchVoiceStatus } from "@/api/endpoints";
 import { useAgent } from "@/agent/AgentProvider";
@@ -40,16 +44,14 @@ import { useSession } from "@/session/SessionProvider";
 import { fontNames } from "@/theme/typography";
 import { radii } from "@/theme/layout";
 import { useLiveVoice, useSpeechPlayer } from "@/voice/useLiveVoice";
-
-interface ChatRow {
-  key: string;
-  event: VestaEvent;
-  startsNewBubbleGroup: boolean;
-  endsBubbleGroup: boolean;
-}
+import {
+  createInvertedChatRows,
+  type ChatRow,
+} from "@/agent/chat-list-model";
 
 const INPUT_HEIGHT = 42;
 const COMPOSER_MARGIN = 8;
+const BUBBLE_TAIL_WIDTH = 6;
 
 type ChatScrollViewRef = ComponentRef<typeof KeyboardChatScrollView>;
 
@@ -58,6 +60,7 @@ const NativeChatScrollView = forwardRef<
   ScrollViewProps & KeyboardChatScrollViewProps
 >(({ inverted, ...props }, ref) => {
   const { bottom } = useSafeAreaInsets();
+
   return (
     <KeyboardChatScrollView
       ref={ref}
@@ -87,50 +90,107 @@ function isFinalMarkdownNode(
   return parentNodes[parentNodes.length - 1]?.type === "body";
 }
 
-function chatRows(events: VestaEvent[], showToolCalls: boolean): ChatRow[] {
-  const visible = events.filter(
-    (event) =>
-      event.type === "user" ||
-      event.type === "chat" ||
-      event.type === "error" ||
-      event.type === "rate_limited" ||
-      (showToolCalls &&
-        event.type === "tool_start" &&
-        !(event.tool === "Bash" && event.input.includes("app-chat"))),
-  );
-  const seen = new Map<string, number>();
-  let previousBubbleType: "user" | "chat" | null = null;
-  const rows = visible.map((event) => {
-    const base = `${event.ts ?? "live"}-${event.type}`;
-    const count = seen.get(base) ?? 0;
-    seen.set(base, count + 1);
-    const bubbleType =
-      event.type === "user" || event.type === "chat" ? event.type : null;
-    const startsNewBubbleGroup = Boolean(
-      bubbleType && previousBubbleType && bubbleType !== previousBubbleType,
-    );
-    if (bubbleType) previousBubbleType = bubbleType;
-    return {
-      key: count === 0 ? base : `${base}#${count}`,
-      event,
-      startsNewBubbleGroup,
-      endsBubbleGroup: false,
-    };
-  });
-  let nextBubbleType: "user" | "chat" | null = null;
-  for (let index = rows.length - 1; index >= 0; index -= 1) {
-    const row = rows[index];
-    if (!row) continue;
-    const bubbleType =
-      row.event.type === "user" || row.event.type === "chat"
-        ? row.event.type
-        : null;
-    if (!bubbleType) continue;
-    row.endsBubbleGroup =
-      nextBubbleType === null || bubbleType !== nextBubbleType;
-    nextBubbleType = bubbleType;
+function bubblePath(
+  width: number,
+  height: number,
+  user: boolean,
+  withTail: boolean,
+): string {
+  const tail = withTail ? BUBBLE_TAIL_WIDTH : 0;
+  const left = withTail && !user ? tail - 5 : 0;
+  const right = withTail
+    ? user
+      ? width + 5
+      : tail + width
+    : width;
+  const radius = Math.min(radii.bubble, width / 2, height / 2);
+
+  if (!withTail) {
+    return [
+      `M ${left + radius} 0`,
+      `H ${right - radius}`,
+      `Q ${right} 0 ${right} ${radius}`,
+      `V ${height - radius}`,
+      `Q ${right} ${height} ${right - radius} ${height}`,
+      `H ${left + radius}`,
+      `Q ${left} ${height} ${left} ${height - radius}`,
+      `V ${radius}`,
+      `Q ${left} 0 ${left + radius} 0`,
+      "Z",
+    ].join(" ");
   }
-  return rows;
+
+  if (user) {
+    return [
+      `M ${right - 20} ${height}`,
+      `H 15`,
+      `C 8 ${height} 0 ${height - 8} 0 ${height - 15}`,
+      "V 15",
+      "C 0 8 8 0 15 0",
+      `H ${right - 20}`,
+      `C ${right - 12} 0 ${right - 5} 8 ${right - 5} 15`,
+      `V ${height - 12}`,
+      `C ${right - 5} ${height - 1} ${right} ${height} ${right} ${height}`,
+      `H ${right + 1}`,
+      `C ${right - 4} ${height + 1} ${right - 8} ${height - 1} ${right - 12} ${height - 4}`,
+      `C ${right - 15} ${height} ${right - 20} ${height} ${right - 20} ${height}`,
+      "Z",
+    ].join(" ");
+  }
+
+  return [
+    `M ${left + 20} ${height}`,
+    `H ${right - 15}`,
+    `C ${right - 8} ${height} ${right} ${height - 8} ${right} ${height - 15}`,
+    "V 15",
+    `C ${right} 8 ${right - 8} 0 ${right - 15} 0`,
+    `H ${left + 20}`,
+    `C ${left + 12} 0 ${left + 5} 8 ${left + 5} 15`,
+    `V ${height - 10}`,
+    `C ${left + 5} ${height - 1} ${left} ${height} ${left} ${height}`,
+    `H ${left - 1}`,
+    `C ${left + 4} ${height + 1} ${left + 8} ${height - 1} ${left + 12} ${height - 4}`,
+    `C ${left + 15} ${height} ${left + 20} ${height} ${left + 20} ${height}`,
+    "Z",
+  ].join(" ");
+}
+
+function BubbleShape({
+  width,
+  height,
+  user,
+  withTail,
+  fill,
+  stroke,
+}: {
+  width: number;
+  height: number;
+  user: boolean;
+  withTail: boolean;
+  fill: string;
+  stroke: string;
+}) {
+  if (width <= 0 || height <= 0) return null;
+  const tail = withTail ? BUBBLE_TAIL_WIDTH : 0;
+
+  return (
+    <Svg
+      pointerEvents="none"
+      width={width + tail}
+      height={height}
+      viewBox={`0 0 ${width + tail} ${height}`}
+      style={[styles.bubbleShape, { left: user ? 0 : -tail }]}
+    >
+      <Path
+        d={bubblePath(width, height, user, withTail)}
+        fill={fill}
+        stroke={user ? "none" : stroke}
+        strokeWidth={StyleSheet.hairlineWidth}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+    </Svg>
+  );
 }
 
 const ChatEvent = memo(function ChatEvent({
@@ -143,6 +203,7 @@ const ChatEvent = memo(function ChatEvent({
   endsBubbleGroup: boolean;
 }) {
   const { colors } = usePreferences();
+  const [bubbleSize, setBubbleSize] = useState({ width: 0, height: 0 });
   const timestamp = event.ts
     ? new Date(event.ts).toLocaleTimeString([], {
         hour: "2-digit",
@@ -181,6 +242,14 @@ const ChatEvent = memo(function ChatEvent({
     }),
     [timestamp],
   );
+  const handleBubbleLayout = useCallback((event: LayoutChangeEvent) => {
+    const { width, height } = event.nativeEvent.layout;
+    setBubbleSize((current) =>
+      current.width === width && current.height === height
+        ? current
+        : { width, height },
+    );
+  }, []);
   if (event.type === "error" || event.type === "rate_limited") {
     const text = event.type === "rate_limited" ? "Rate limited. Vesta will be back soon." : "This message may not have gone through.";
     return <Text style={[styles.systemMessage, { color: colors.tertiaryText }]}>{text}</Text>;
@@ -195,6 +264,7 @@ const ChatEvent = memo(function ChatEvent({
   }
   if (event.type !== "user" && event.type !== "chat") return null;
   const user = event.type === "user";
+  const bubbleColor = user ? colors.accent : colors.card;
   return (
     <View
       style={[
@@ -203,20 +273,15 @@ const ChatEvent = memo(function ChatEvent({
         user ? styles.userRow : styles.agentRow,
       ]}
     >
-      <View
-        style={[
-          styles.bubble,
-          endsBubbleGroup
-            ? user
-              ? styles.userBubbleEnd
-              : styles.agentBubbleEnd
-            : null,
-          {
-            backgroundColor: user ? colors.accent : colors.card,
-            borderColor: user ? "transparent" : colors.border,
-          },
-        ]}
-      >
+      <View onLayout={handleBubbleLayout} style={styles.bubble}>
+        <BubbleShape
+          width={bubbleSize.width}
+          height={bubbleSize.height}
+          user={user}
+          withTail={endsBubbleGroup}
+          fill={bubbleColor}
+          stroke={colors.border}
+        />
         {user ? (
           <Text style={[styles.userText, { color: colors.accentText }]}>
             {event.text}
@@ -273,6 +338,96 @@ const ChatEvent = memo(function ChatEvent({
   );
 });
 
+const TypingIndicator = memo(function TypingIndicator({
+  agentName,
+  startsNewBubbleGroup,
+}: {
+  agentName: string;
+  startsNewBubbleGroup: boolean;
+}) {
+  const { colors } = usePreferences();
+  const [dots] = useState(() => [
+    new Animated.Value(0),
+    new Animated.Value(0),
+    new Animated.Value(0),
+  ]);
+
+  useEffect(() => {
+    const animations = dots.map((dot, index) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.delay(index * 150),
+          Animated.timing(dot, {
+            toValue: 1,
+            duration: 200,
+            easing: Easing.out(Easing.quad),
+            useNativeDriver: true,
+          }),
+          Animated.timing(dot, {
+            toValue: 0,
+            duration: 200,
+            easing: Easing.in(Easing.quad),
+            useNativeDriver: true,
+          }),
+          Animated.delay(600 - index * 150),
+        ]),
+      ),
+    );
+    for (const animation of animations) animation.start();
+    return () => {
+      for (const animation of animations) animation.stop();
+    };
+  }, [dots]);
+
+  return (
+    <View
+      accessible
+      accessibilityLabel={`${agentName} is typing`}
+      style={[
+        styles.messageRow,
+        startsNewBubbleGroup ? styles.newBubbleGroup : null,
+        styles.agentRow,
+      ]}
+    >
+      <View style={styles.typingBubble}>
+        <BubbleShape
+          width={56}
+          height={36}
+          user={false}
+          withTail
+          fill={colors.card}
+          stroke={colors.border}
+        />
+        <View style={styles.typingDots}>
+          {dots.map((dot, index) => (
+            <Animated.View
+              key={index}
+              style={[
+                styles.typingDot,
+                {
+                  backgroundColor: colors.secondaryText,
+                  opacity: dot.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0.35, 0.8],
+                  }),
+                  transform: [
+                    {
+                      translateY: dot.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0, -3],
+                      }),
+                    },
+                  ],
+                },
+              ]}
+            />
+          ))}
+        </View>
+      </View>
+    </View>
+  );
+});
+
 function ComposerSurface({ children }: { children: ReactNode }) {
   const { colors, dark } = usePreferences();
   if (isGlassEffectAPIAvailable()) {
@@ -301,7 +456,6 @@ function ComposerSurface({ children }: { children: ReactNode }) {
 }
 
 export default function ChatPage() {
-  const list = useRef<FlatList<ChatRow>>(null);
   const insets = useSafeAreaInsets();
   const { agent, socket, name } = useAgent();
   const { api } = useSession();
@@ -311,9 +465,15 @@ export default function ChatPage() {
   const [voiceError, setVoiceError] = useState("");
   const extraContentPadding = useSharedValue(0);
   const rows = useMemo(
-    () => chatRows(socket.events, showToolCalls).reverse(),
-    [showToolCalls, socket.events],
+    () =>
+      createInvertedChatRows(
+        socket.events,
+        showToolCalls,
+        socket.isTyping,
+      ),
+    [showToolCalls, socket.events, socket.isTyping],
   );
+
   const renderScrollComponent = useCallback(
     (props: ScrollViewProps) => (
       <NativeChatScrollView
@@ -324,14 +484,20 @@ export default function ChatPage() {
     [extraContentPadding],
   );
   const renderChatEvent = useCallback<ListRenderItem<ChatRow>>(
-    ({ item }) => (
-      <ChatEvent
-        event={item.event}
-        startsNewBubbleGroup={item.startsNewBubbleGroup}
-        endsBubbleGroup={item.endsBubbleGroup}
-      />
-    ),
-    [],
+    ({ item }) =>
+      item.kind === "typing" ? (
+        <TypingIndicator
+          agentName={name}
+          startsNewBubbleGroup={item.startsNewBubbleGroup}
+        />
+      ) : (
+        <ChatEvent
+          event={item.event}
+          startsNewBubbleGroup={item.startsNewBubbleGroup}
+          endsBubbleGroup={item.endsBubbleGroup}
+        />
+      ),
+    [name],
   );
   const handleInputLayout = useCallback(
     (event: LayoutChangeEvent) => {
@@ -362,14 +528,16 @@ export default function ChatPage() {
   });
   const canSend = socket.connected && agent?.status === "alive";
 
+  const loadEarlier = () => {
+    if (!socket.hasMore || socket.loadingMore) return;
+    void socket.loadMore();
+  };
+
   const send = () => {
     const text = input.trim();
     if (!text || !canSend) return;
     if (socket.send(text)) {
       setInput("");
-      requestAnimationFrame(() =>
-        list.current?.scrollToOffset({ animated: true, offset: 0 }),
-      );
     }
   };
 
@@ -388,23 +556,23 @@ export default function ChatPage() {
   return (
     <View style={styles.screen}>
       <FlatList
-        ref={list}
         data={rows}
         inverted
         keyExtractor={(row) => row.key}
         renderItem={renderChatEvent}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[
+          styles.listContent,
+          { paddingBottom: insets.top + 104 },
+        ]}
         keyboardShouldPersistTaps="handled"
-        maintainVisibleContentPosition={{
-          minIndexForVisible: 0,
-          autoscrollToTopThreshold: 80,
-        }}
         renderScrollComponent={renderScrollComponent}
+        onEndReached={loadEarlier}
+        onEndReachedThreshold={0.1}
         ListFooterComponent={
-          socket.hasMore ? (
-            <Pressable disabled={socket.loadingMore} onPress={() => void socket.loadMore()}>
-              <Text style={[styles.loadMore, { color: colors.interactive }]}>{socket.loadingMore ? "Loading…" : "Load earlier messages"}</Text>
-            </Pressable>
+          socket.loadingMore ? (
+            <View style={styles.loadingMore}>
+              <ActivityIndicator color={colors.interactive} />
+            </View>
           ) : null
         }
         ListEmptyComponent={
@@ -478,22 +646,38 @@ export default function ChatPage() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  listContent: { paddingHorizontal: 12, paddingTop: 104, paddingBottom: 12 },
-  messageRow: { width: "100%", marginVertical: 4 },
-  newBubbleGroup: { marginTop: 12 },
+  listContent: { paddingHorizontal: 12, paddingTop: 104 },
+  messageRow: { width: "100%", marginVertical: 3 },
+  newBubbleGroup: { marginTop: 13 },
   userRow: { alignItems: "flex-end" },
   agentRow: { alignItems: "flex-start" },
-  bubble: { position: "relative", maxWidth: "88%", borderRadius: radii.bubble, paddingHorizontal: 13, paddingVertical: 9, borderWidth: StyleSheet.hairlineWidth },
-  userBubbleEnd: { borderBottomRightRadius: 7 },
-  agentBubbleEnd: { borderBottomLeftRadius: 7 },
+  bubble: { position: "relative", maxWidth: "88%", paddingHorizontal: 12, paddingVertical: 8 },
+  bubbleShape: {
+    position: "absolute",
+    top: 0,
+    overflow: "visible",
+  },
+  typingBubble: {
+    position: "relative",
+    width: 56,
+    height: 36,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  typingDots: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  typingDot: { width: 6, height: 6, borderRadius: 3 },
   userText: { fontSize: 16, lineHeight: 22 },
-  timestampSpacer: { fontSize: 9, opacity: 0 },
-  bubbleTimestamp: { position: "absolute", right: 13, bottom: 11, fontSize: 9 },
+  timestampSpacer: { fontSize: 12, opacity: 0 },
+  bubbleTimestamp: { position: "absolute", right: 12, bottom: 10, fontSize: 12 },
   finalMarkdownParagraph: { marginBottom: 0 },
   systemMessage: { textAlign: "center", fontSize: 12, marginVertical: 10 },
   tool: { alignSelf: "center", flexDirection: "row", alignItems: "center", maxWidth: "90%", borderRadius: 12, paddingHorizontal: 10, paddingVertical: 7, gap: 6, marginVertical: 3 },
   toolText: { flexShrink: 1, fontSize: 12 },
-  loadMore: { textAlign: "center", fontSize: 13, fontWeight: "700", padding: 14 },
+  loadingMore: { height: 44, alignItems: "center", justifyContent: "center" },
   empty: { minHeight: 300, justifyContent: "center", alignItems: "center", gap: 7, padding: 30 },
   emptyTitle: { fontSize: 21, fontWeight: "500" },
   emptyDetail: { fontSize: 14, textAlign: "center" },

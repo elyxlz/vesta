@@ -7,6 +7,7 @@ import {
   fetchGatewaySettings,
   updateGateway,
 } from "@/api/endpoints";
+import { AgentPagesSettingsSection } from "@/components/AgentPagesSettingsSection";
 import { Screen } from "@/components/layout/Screen";
 import { FormRow, FormSection, SwitchRow } from "@/components/ui/Form";
 import { unregisterCurrentMobileDevice } from "@/notifications/PushCoordinator";
@@ -84,26 +85,7 @@ export default function SettingsScreen() {
         />
       </FormSection>
 
-      <FormSection title="Agent pages">
-        <SwitchRow
-          label="Notifications page"
-          detail="Add notification history to the agent swipe pages."
-          icon="notifications-outline"
-          value={preferences.showNotificationsPage}
-          onValueChange={(value) =>
-            void preferences.update({ showNotificationsPage: value })
-          }
-        />
-        <SwitchRow
-          label="Logs page"
-          detail="Add live output to the agent swipe pages."
-          icon="terminal-outline"
-          value={preferences.showLogsPage}
-          onValueChange={(value) =>
-            void preferences.update({ showLogsPage: value })
-          }
-        />
-      </FormSection>
+      <AgentPagesSettingsSection />
 
       <FormSection title="Notifications">
         <SwitchRow

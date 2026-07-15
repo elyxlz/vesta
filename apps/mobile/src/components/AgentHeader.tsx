@@ -1,23 +1,26 @@
 import { Pressable, StyleSheet, View } from "react-native";
 import { Stack, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { GlassView, isGlassEffectAPIAvailable } from "expo-glass-effect";
 import type { AgentActivityState, AgentStatus } from "@/api/types";
 import { useAgent } from "@/agent/AgentProvider";
 import { AgentOrb } from "@/components/AgentOrb";
 import { BootTransitionTarget } from "@/components/BootTransition";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
+import { radii } from "@/theme/layout";
 
 export function AgentStackHeader({ hidden = false }: { hidden?: boolean }) {
   const router = useRouter();
   const { name, agent, socket } = useAgent();
-  const { colors } = usePreferences();
+  const { colors, dark } = usePreferences();
   const status = agent?.status ?? "not_found";
   const openSettings = () =>
     router.push({
       pathname: "/agent/[name]/settings",
       params: { name },
     });
+  const goHome = () => router.dismissTo("/");
 
   return (
     <Stack.Screen
@@ -34,6 +37,10 @@ export function AgentStackHeader({ hidden = false }: { hidden?: boolean }) {
             status={status}
             activityState={socket.agentState}
             color={colors.text}
+            dark={dark}
+            fallbackColor={colors.elevated}
+            borderColor={colors.border}
+            onPress={goHome}
           />
         ),
         unstable_headerRightItems: () => [
@@ -42,14 +49,14 @@ export function AgentStackHeader({ hidden = false }: { hidden?: boolean }) {
             label: "Settings",
             accessibilityLabel: "Agent settings",
             icon: { type: "sfSymbol", name: "gearshape" },
-            tintColor: colors.accent,
+            tintColor: colors.text,
             identifier: "agent-settings",
             onPress: openSettings,
           },
         ],
         headerRight: () => (
           <AgentSettingsHeaderButton
-            color={colors.accent}
+            color={colors.text}
             onPress={openSettings}
           />
         ),
@@ -63,32 +70,65 @@ export function AgentHeaderTitle({
   status,
   activityState,
   color,
+  dark,
+  fallbackColor,
+  borderColor,
+  onPress,
 }: {
   name: string;
   status: AgentStatus;
   activityState: AgentActivityState;
   color: string;
+  dark: boolean;
+  fallbackColor: string;
+  borderColor: string;
+  onPress: () => void;
 }) {
-  return (
-    <View style={styles.title}>
+  const content = (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel="Back to agents"
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.titleContent,
+        { opacity: pressed ? 0.72 : 1 },
+      ]}
+    >
       <BootTransitionTarget
         destination="agent"
         status={status}
         activityState={activityState}
       >
-        <AgentOrb
-          status={status}
-          activityState={activityState}
-          size={24}
-        />
+        <AgentOrb status={status} activityState={activityState} size={24} />
       </BootTransitionTarget>
-      <Text
-        family="heading"
-        numberOfLines={1}
-        style={[styles.name, { color }]}
-      >
+      <Text family="heading" numberOfLines={1} style={[styles.name, { color }]}>
         {name}
       </Text>
+    </Pressable>
+  );
+
+  if (isGlassEffectAPIAvailable()) {
+    return (
+      <GlassView
+        glassEffectStyle="regular"
+        colorScheme={dark ? "dark" : "light"}
+        isInteractive
+        style={styles.titlePill}
+      >
+        {content}
+      </GlassView>
+    );
+  }
+
+  return (
+    <View
+      style={[
+        styles.titlePill,
+        styles.titleFallback,
+        { backgroundColor: fallbackColor, borderColor },
+      ]}
+    >
+      {content}
     </View>
   );
 }
@@ -106,10 +146,7 @@ export function AgentSettingsHeaderButton({
       accessibilityLabel="Agent settings"
       hitSlop={10}
       onPress={onPress}
-      style={({ pressed }) => [
-        styles.button,
-        { opacity: pressed ? 0.72 : 1 },
-      ]}
+      style={({ pressed }) => [styles.button, { opacity: pressed ? 0.72 : 1 }]}
     >
       <Ionicons name="settings-outline" size={22} color={color} />
     </Pressable>
@@ -117,12 +154,22 @@ export function AgentSettingsHeaderButton({
 }
 
 const styles = StyleSheet.create({
-  title: {
+  titlePill: {
     maxWidth: 220,
+    borderRadius: radii.pill,
+    overflow: "hidden",
+  },
+  titleFallback: {
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  titleContent: {
+    minHeight: 42,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
   },
   name: { flexShrink: 1, fontSize: 18, fontWeight: "500" },
   button: {

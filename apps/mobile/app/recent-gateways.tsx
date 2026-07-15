@@ -2,14 +2,16 @@ import { useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   Pressable,
-  ScrollView,
   StyleSheet,
   View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import { GatewayCloseButton } from "@/components/GatewayCloseButton";
+import { NativeDeleteRow } from "@/components/NativeDeleteRow";
 import { Text } from "@/components/ui/Typography";
 import {
   ThemeOverrideProvider,
@@ -49,16 +51,26 @@ function RecentGatewaysContent() {
   } = useSession();
   const { colors } = usePreferences();
   const [connectingId, setConnectingId] = useState("");
+  const [connectionError, setConnectionError] = useState<{
+    gatewayId: string;
+    message: string;
+  } | null>(null);
   const [error, setError] = useState("");
+  const [scrollY] = useState(() => new Animated.Value(0));
 
   const connect = async (gateway: RecentGateway) => {
     if (connectingId) return;
     setConnectingId(gateway.id);
+    setConnectionError(null);
     setError("");
     try {
       await connectRecentGateway(gateway.id);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Connection failed.");
+      setConnectionError({
+        gatewayId: gateway.id,
+        message: cause instanceof Error ? cause.message : "Connection failed.",
+      });
+    } finally {
       setConnectingId("");
     }
   };
@@ -112,26 +124,57 @@ function RecentGatewaysContent() {
   };
 
   return (
-    <ScrollView
-      style={[styles.sheet, { backgroundColor: colors.background }]}
+    <Animated.ScrollView
+      style={{ backgroundColor: colors.background }}
       contentContainerStyle={styles.content}
       contentInsetAdjustmentBehavior="never"
+      onScroll={Animated.event(
+        [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+        { useNativeDriver: true },
+      )}
+      scrollEventThrottle={16}
       showsVerticalScrollIndicator={false}
+      stickyHeaderIndices={[0]}
     >
       <View style={styles.header}>
-        <View style={styles.titleRow}>
-          <Text family="heading" style={[styles.title, { color: colors.text }]}>
-            Recent gateways
+        <View
+          style={[styles.headerSurface, { backgroundColor: colors.background }]}
+        >
+          <View style={styles.titleRow}>
+            <Text
+              family="heading"
+              style={[styles.title, { color: colors.text }]}
+            >
+              Recent gateways
+            </Text>
+            <GatewayCloseButton
+              color={colors.text}
+              fallbackColor={colors.input}
+              onPress={() => router.back()}
+            />
+          </View>
+          <Text style={[styles.subtitle, { color: colors.secondaryText }]}>
+            Reconnect to a gateway previously used on this device.
           </Text>
-          <GatewayCloseButton
-            color={colors.text}
-            fallbackColor={colors.input}
-            onPress={() => router.back()}
-          />
         </View>
-        <Text style={[styles.subtitle, { color: colors.secondaryText }]}>
-          Reconnect to a gateway previously used on this device.
-        </Text>
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.scrollFade,
+            {
+              opacity: scrollY.interpolate({
+                inputRange: [0, 10],
+                outputRange: [0, 1],
+                extrapolate: "clamp",
+              }),
+            },
+          ]}
+        >
+          <LinearGradient
+            colors={[colors.background, `${colors.background}00`]}
+            style={StyleSheet.absoluteFill}
+          />
+        </Animated.View>
       </View>
 
       {recentGateways === null ? (
@@ -143,15 +186,19 @@ function RecentGatewaysContent() {
       ) : (
         <View style={styles.listContent}>
           {recentGateways.map((gateway) => (
-            <View
+            <NativeDeleteRow
               key={gateway.id}
-              style={[
+              containerStyle={[
                 styles.gateway,
                 {
                   backgroundColor: colors.elevated,
                   borderColor: colors.border,
                 },
               ]}
+              deleteAccessibilityLabel={`Forget ${gatewayName(gateway)}`}
+              dangerColor={colors.danger}
+              disabled={Boolean(connectingId)}
+              onDelete={() => confirmForget(gateway)}
             >
               <Pressable
                 accessibilityRole="button"
@@ -183,12 +230,25 @@ function RecentGatewaysContent() {
                     {gatewayName(gateway)}
                   </Text>
                   <Text
+                    accessibilityRole={
+                      connectionError?.gatewayId === gateway.id
+                        ? "alert"
+                        : undefined
+                    }
+                    numberOfLines={1}
                     style={[
                       styles.gatewayDetail,
-                      { color: colors.secondaryText },
+                      {
+                        color:
+                          connectionError?.gatewayId === gateway.id
+                            ? colors.danger
+                            : colors.secondaryText,
+                      },
                     ]}
                   >
-                    Last connected {lastConnectedLabel(gateway.lastConnectedAt)}
+                    {connectionError?.gatewayId === gateway.id
+                      ? connectionError.message
+                      : `Last connected ${lastConnectedLabel(gateway.lastConnectedAt)}`}
                   </Text>
                 </View>
                 {connectingId === gateway.id ? (
@@ -201,24 +261,7 @@ function RecentGatewaysContent() {
                   />
                 )}
               </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Forget ${gatewayName(gateway)}`}
-                disabled={Boolean(connectingId)}
-                hitSlop={8}
-                onPress={() => confirmForget(gateway)}
-                style={({ pressed }) => [
-                  styles.forget,
-                  { opacity: pressed ? 0.55 : 1 },
-                ]}
-              >
-                <Ionicons
-                  name="trash-outline"
-                  size={18}
-                  color={colors.danger}
-                />
-              </Pressable>
-            </View>
+            </NativeDeleteRow>
           ))}
         </View>
       )}
@@ -247,19 +290,22 @@ function RecentGatewaysContent() {
           </Text>
         </Pressable>
       ) : null}
-    </ScrollView>
+    </Animated.ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  sheet: { flex: 1 },
   content: {
     paddingHorizontal: 24,
-    paddingTop: 36,
-    paddingBottom: 28,
-    gap: 16,
+    paddingBottom: 24,
   },
-  header: { gap: 12 },
+  header: { marginHorizontal: -24 },
+  headerSurface: {
+    gap: 0,
+    paddingHorizontal: 24,
+    paddingTop: 36,
+  },
+  scrollFade: { height: 16 },
   titleRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -273,7 +319,7 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     letterSpacing: -0.7,
   },
-  subtitle: { fontSize: 14, lineHeight: 20 },
+  subtitle: { maxWidth: "80%", fontSize: 14, lineHeight: 20 },
   loading: { paddingVertical: 30 },
   empty: { textAlign: "center", paddingVertical: 30, fontSize: 14 },
   listContent: { gap: 10 },
@@ -292,6 +338,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 11,
     paddingLeft: 12,
+    paddingRight: 14,
     paddingVertical: 9,
   },
   gatewayIcon: {
@@ -304,13 +351,17 @@ const styles = StyleSheet.create({
   gatewayCopy: { flex: 1, gap: 2 },
   gatewayName: { fontSize: 15, fontWeight: "600" },
   gatewayDetail: { fontSize: 11, lineHeight: 15 },
-  forget: {
-    width: 48,
-    height: 48,
+  error: {
+    marginTop: 16,
+    fontSize: 13,
+    lineHeight: 18,
+    textAlign: "center",
+  },
+  clear: {
+    minHeight: 40,
+    marginTop: 16,
     alignItems: "center",
     justifyContent: "center",
   },
-  error: { fontSize: 13, lineHeight: 18, textAlign: "center" },
-  clear: { minHeight: 40, alignItems: "center", justifyContent: "center" },
-  clearText: { fontSize: 14, fontWeight: "600" },
+  clearText: { fontSize: 14, fontWeight: "500" },
 });

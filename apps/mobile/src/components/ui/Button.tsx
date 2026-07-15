@@ -30,6 +30,12 @@ interface ButtonProps {
   accessibilityLabel?: string;
 }
 
+interface TextButtonProps {
+  children: ReactNode;
+  onPress: () => void;
+  accessibilityLabel?: string;
+}
+
 export function Button({
   children,
   onPress,
@@ -76,8 +82,7 @@ export function Button({
             variant === "danger" && pressed
               ? withAlpha(colors.danger, 0.8)
               : backgroundColor,
-          opacity:
-            disabled ? 0.45 : pressed && variant !== "danger" ? 0.72 : 1,
+          opacity: disabled ? 0.45 : pressed && variant !== "danger" ? 0.72 : 1,
         },
       ]}
     >
@@ -101,6 +106,31 @@ export function Button({
   );
 }
 
+export function TextButton({
+  children,
+  onPress,
+  accessibilityLabel,
+}: TextButtonProps) {
+  const { colors } = usePreferences();
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      hitSlop={4}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.textButton,
+        { opacity: pressed ? 0.55 : 1 },
+      ]}
+    >
+      <Text style={[styles.textButtonLabel, { color: colors.secondaryText }]}>
+        {children}
+      </Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   button: {
     minHeight: 48,
@@ -114,4 +144,6 @@ const styles = StyleSheet.create({
   content: { flexDirection: "row", alignItems: "center", gap: 8 },
   label: { fontSize: 16, fontWeight: "700" },
   smallLabel: { fontSize: 14, fontWeight: "600" },
+  textButton: { alignSelf: "center", padding: 4 },
+  textButtonLabel: { fontSize: 13, fontWeight: "500" },
 });

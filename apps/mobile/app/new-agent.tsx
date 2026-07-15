@@ -16,16 +16,11 @@ export default function NewAgentScreen() {
 
   return (
     <Screen scroll={false} contentStyle={styles.screen}>
-      <View
-        style={[styles.icon, { backgroundColor: colors.accentSoft }]}
-      >
+      <View style={[styles.icon, { backgroundColor: colors.accentSoft }]}>
         <Ionicons name="desktop-outline" size={28} color={colors.accent} />
       </View>
       <View style={styles.copy}>
-        <Text
-          family="heading"
-          style={[styles.title, { color: colors.text }]}
-        >
+        <Text family="heading" style={[styles.title, { color: colors.text }]}>
           Coming soon
         </Text>
         <Text style={[styles.detail, { color: colors.secondaryText }]}>
@@ -55,8 +50,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 24,
-    paddingHorizontal: 28,
-    paddingVertical: 36,
+    paddingHorizontal: 24,
+    paddingTop: 36,
+    paddingBottom: 24,
   },
   icon: {
     width: 58,

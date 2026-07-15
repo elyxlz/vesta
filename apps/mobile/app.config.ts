@@ -5,6 +5,18 @@ const easProjectId =
   process.env.EXPO_PUBLIC_EAS_PROJECT_ID ??
   process.env.EAS_PROJECT_ID ??
   "4efcaf3d-c813-457a-a656-5f27b5975834";
+const localIosNoPush = process.env.VESTA_LOCAL_IOS_NO_PUSH === "1";
+const notificationPlugins = localIosNoPush
+  ? []
+  : ([
+      [
+        "expo-notifications",
+        {
+          color: nativeConfigTokens.primary,
+          defaultChannel: "vesta",
+        },
+      ],
+    ] satisfies NonNullable<ExpoConfig["plugins"]>);
 
 const config: ExpoConfig = {
   name: "Vesta",
@@ -12,7 +24,7 @@ const config: ExpoConfig = {
   slug: "vesta",
   version: "0.1.176",
   scheme: "vesta",
-  orientation: "default",
+  orientation: "portrait",
   icon: "../web/app-icon.png",
   userInterfaceStyle: "automatic",
   newArchEnabled: true,
@@ -26,7 +38,9 @@ const config: ExpoConfig = {
     bundleIdentifier: "com.vestarun.mobile",
     buildNumber: "1",
     supportsTablet: false,
-    associatedDomains: ["applinks:vesta.run"],
+    ...(localIosNoPush
+      ? { appleTeamId: "H78XNVF428" }
+      : { associatedDomains: ["applinks:vesta.run"] }),
     infoPlist: {
       ITSAppUsesNonExemptEncryption: false,
       NSCameraUsageDescription: "Scan a Vesta connection QR code.",
@@ -71,13 +85,7 @@ const config: ExpoConfig = {
         microphonePermission: "Talk to your Vesta agent.",
       },
     ],
-    [
-      "expo-notifications",
-      {
-        color: nativeConfigTokens.primary,
-        defaultChannel: "vesta",
-      },
-    ],
+    ...notificationPlugins,
     [
       "./plugins/with-blank-launch-screen",
       { backgroundColor: nativeConfigTokens.splashBackground },
@@ -88,12 +96,15 @@ const config: ExpoConfig = {
         backgroundColor: nativeConfigTokens.splashBackground,
       },
     ],
+    ...(localIosNoPush ? ["./plugins/with-local-ios-no-push"] : []),
   ],
   experiments: {
     typedRoutes: true,
+    reactCompiler: true,
   },
   extra: {
     apiCompat: "0.2",
+    pushNotificationsEnabled: !localIosNoPush,
     ...(easProjectId ? { eas: { projectId: easProjectId } } : {}),
   },
 };

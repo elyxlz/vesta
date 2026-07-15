@@ -1,10 +1,15 @@
 import type { ReactNode } from "react";
 import { Pressable, StyleSheet, View, type ViewStyle } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { GlassView, isGlassEffectAPIAvailable } from "expo-glass-effect";
+import {
+  GlassView,
+  isGlassEffectAPIAvailable,
+  type GlassViewProps,
+} from "expo-glass-effect";
 import Animated, {
   Extrapolation,
   interpolate,
+  useAnimatedProps,
   useAnimatedStyle,
   type AnimatedStyle,
   type SharedValue,
@@ -13,7 +18,10 @@ import { usePreferences } from "@/preferences/PreferencesProvider";
 import { radii } from "@/theme/layout";
 
 const BAR_PADDING = 4;
-const TAB_WIDTH = 48;
+const TAB_WIDTH = 52;
+const TAB_HEIGHT = 40;
+const SURFACE_HEIGHT = TAB_HEIGHT + BAR_PADDING * 2;
+const AnimatedGlassView = Animated.createAnimatedComponent(GlassView);
 
 export interface AgentPagerTab {
   key: string;
@@ -37,14 +45,19 @@ function TabSurface({
   children,
   selectionStyle,
   glassVisible,
+  visibility,
   width,
 }: {
   children: ReactNode;
   selectionStyle: AnimatedStyle<ViewStyle>;
   glassVisible: boolean;
+  visibility: SharedValue<number>;
   width: number;
 }) {
   const { colors, dark } = usePreferences();
+  const glassAnimatedProps = useAnimatedProps<GlassViewProps>(() => ({
+    glassEffectStyle: visibility.value > 0.01 ? "regular" : "none",
+  }));
   if (!glassVisible) return null;
 
   const content = (
@@ -65,14 +78,14 @@ function TabSurface({
 
   if (isGlassEffectAPIAvailable()) {
     return (
-      <GlassView
-        glassEffectStyle="regular"
+      <AnimatedGlassView
+        animatedProps={glassAnimatedProps}
         colorScheme={dark ? "dark" : "light"}
         isInteractive
         style={[styles.surface, { width }]}
       >
         {content}
-      </GlassView>
+      </AnimatedGlassView>
     );
   }
 
@@ -136,6 +149,7 @@ export function AgentPagerTabs({
       <TabSurface
         selectionStyle={selectionStyle}
         glassVisible={mounted}
+        visibility={visibility}
         width={surfaceWidth}
       >
         {tabs.map((tab, index) => (
@@ -177,7 +191,7 @@ function Tab({
       onPress={onPress}
       style={styles.tab}
     >
-      <Ionicons name={selected ? selectedIcon : icon} size={18} color={color} />
+      <Ionicons name={selected ? selectedIcon : icon} size={19} color={color} />
     </Pressable>
   );
 }
@@ -191,7 +205,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   surface: {
-    height: 44,
+    height: SURFACE_HEIGHT,
     borderRadius: radii.pill,
   },
   surfaceFallback: { borderWidth: StyleSheet.hairlineWidth },
@@ -200,7 +214,7 @@ const styles = StyleSheet.create({
     top: BAR_PADDING,
     left: BAR_PADDING,
     width: TAB_WIDTH,
-    height: 36,
+    height: TAB_HEIGHT,
     borderRadius: radii.pill,
   },
   tabs: {
@@ -214,7 +228,7 @@ const styles = StyleSheet.create({
   },
   tab: {
     width: TAB_WIDTH,
-    height: 36,
+    height: TAB_HEIGHT,
     alignItems: "center",
     justifyContent: "center",
   },

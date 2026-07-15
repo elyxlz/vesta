@@ -10,9 +10,22 @@ import { useSession } from "@/session/SessionProvider";
 
 const MAX_EVENTS = 5000;
 const RECONNECT_MAX_MS = 30_000;
+const TYPING_DELAY_PER_CHARACTER_MS = 25;
+const TYPING_DELAY_MIN_MS = 1500;
+const TYPING_DELAY_MAX_MS = 6000;
+const TYPING_DELAY_VARIANCE = 0.2;
 
 function capped(events: VestaEvent[]): VestaEvent[] {
   return events.length > MAX_EVENTS ? events.slice(-MAX_EVENTS) : events;
+}
+
+function typingDelay(characterCount: number): number {
+  const base = Math.min(
+    TYPING_DELAY_MIN_MS + TYPING_DELAY_PER_CHARACTER_MS * characterCount,
+    TYPING_DELAY_MAX_MS,
+  );
+  const variance = Math.floor(base * TYPING_DELAY_VARIANCE);
+  return base + Math.floor(Math.random() * variance * 2) - variance;
 }
 
 export function useAgentSocket(name: string, active: boolean) {
@@ -20,32 +33,99 @@ export function useAgentSocket(name: string, active: boolean) {
   const { naturalChatPacing } = usePreferences();
   const [events, setEvents] = useState<VestaEvent[]>([]);
   const [agentState, setAgentState] = useState<AgentActivityState>("idle");
+  const [isTyping, setIsTyping] = useState(false);
   const [connected, setConnected] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [pendingNotifications, setPendingNotifications] = useState<string[]>([]);
+  const [snapshotRevision, setSnapshotRevision] = useState(0);
   const [latestLiveChat, setLatestLiveChat] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [cursor, setCursor] = useState<number | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const pendingEchoesRef = useRef<string[]>([]);
-  const pacingTimersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+  const chatQueueRef = useRef<VestaEvent[]>([]);
+  const drainingChatQueueRef = useRef(false);
+  const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const naturalChatPacingRef = useRef(naturalChatPacing);
+  naturalChatPacingRef.current = naturalChatPacing;
 
   const append = useCallback((event: VestaEvent) => {
     setEvents((current) => capped([...current, event]));
   }, []);
 
+  const clearTypingTimer = useCallback(() => {
+    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+    typingTimerRef.current = null;
+  }, []);
+
+  const resetTyping = useCallback(() => {
+    clearTypingTimer();
+    chatQueueRef.current = [];
+    drainingChatQueueRef.current = false;
+    setIsTyping(false);
+  }, [clearTypingTimer]);
+
+  const flushChatQueue = useCallback(() => {
+    clearTypingTimer();
+    const queued = chatQueueRef.current;
+    chatQueueRef.current = [];
+    drainingChatQueueRef.current = false;
+    for (const event of queued) {
+      append(event);
+      if (event.type === "chat") setLatestLiveChat(event.text);
+    }
+    setIsTyping(false);
+  }, [append, clearTypingTimer]);
+
+  const drainChatQueue = useCallback(function drainChatQueue() {
+    if (drainingChatQueueRef.current) return;
+    const queue = chatQueueRef.current;
+    if (queue.length === 0) {
+      setIsTyping(false);
+      return;
+    }
+    if (queue.length > 3 || !naturalChatPacingRef.current) {
+      flushChatQueue();
+      return;
+    }
+
+    const next = queue[0];
+    if (!next) return;
+    drainingChatQueueRef.current = true;
+    setIsTyping(true);
+    const delay = typingDelay(next.type === "chat" ? next.text.length : 0);
+    typingTimerRef.current = setTimeout(() => {
+      typingTimerRef.current = null;
+      queue.shift();
+      append(next);
+      if (next.type === "chat") setLatestLiveChat(next.text);
+      drainingChatQueueRef.current = false;
+      drainChatQueue();
+    }, delay);
+  }, [append, flushChatQueue]);
+
+  const enqueueChatMessage = useCallback(
+    (event: VestaEvent) => {
+      chatQueueRef.current.push(event);
+      drainChatQueue();
+    },
+    [drainChatQueue],
+  );
+
   useEffect(() => {
-    if (!active) return;
+    if (!naturalChatPacing) flushChatQueue();
+  }, [flushChatQueue, naturalChatPacing]);
+
+  useEffect(() => {
+    if (!active) {
+      resetTyping();
+      return;
+    }
     let mounted = true;
     let socket: WebSocket | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let reconnectDelay = 750;
     let appActive = AppState.currentState === "active";
-
-    const clearPacing = () => {
-      for (const timer of pacingTimersRef.current) clearTimeout(timer);
-      pacingTimersRef.current.clear();
-    };
 
     const close = () => {
       if (reconnectTimer) clearTimeout(reconnectTimer);
@@ -67,9 +147,11 @@ export function useAgentSocket(name: string, active: boolean) {
 
     const handleEvent = (event: VestaEvent) => {
       if (event.type === "snapshot") {
+        resetTyping();
         setEvents(capped(event.chat.events));
         setAgentState(event.state);
         setPendingNotifications(event.notifications.pending);
+        setSnapshotRevision((current) => current + 1);
         setCursor(event.chat.cursor);
         pendingEchoesRef.current = [];
         setHistoryLoaded(true);
@@ -88,19 +170,13 @@ export function useAgentSocket(name: string, active: boolean) {
           current.filter((identifier) => identifier !== event.notif_id),
         );
       }
-      if (event.type === "chat" && naturalChatPacing) {
-        const delay = Math.min(450 + event.text.length * 12, 2200);
-        const timer = setTimeout(() => {
-          pacingTimersRef.current.delete(timer);
-          if (mounted) {
-            append(event);
-            setLatestLiveChat(event.text);
-          }
-        }, delay);
-        pacingTimersRef.current.add(timer);
+      if (event.type === "chat") {
+        enqueueChatMessage(event);
       } else {
         append(event);
-        if (event.type === "chat") setLatestLiveChat(event.text);
+        if (event.type === "error" || event.type === "rate_limited") {
+          resetTyping();
+        }
       }
     };
 
@@ -131,6 +207,7 @@ export function useAgentSocket(name: string, active: boolean) {
         if (socketRef.current === next) socketRef.current = null;
         setConnected(false);
         setAgentState("idle");
+        resetTyping();
         scheduleReconnect();
       };
     };
@@ -145,10 +222,10 @@ export function useAgentSocket(name: string, active: boolean) {
     return () => {
       mounted = false;
       appStateSubscription.remove();
-      clearPacing();
+      resetTyping();
       close();
     };
-  }, [active, api, append, name, naturalChatPacing]);
+  }, [active, api, append, enqueueChatMessage, name, resetTyping]);
 
   const sendEvent = useCallback((event: Record<string, unknown>): boolean => {
     const socket = socketRef.current;
@@ -198,9 +275,11 @@ export function useAgentSocket(name: string, active: boolean) {
   return {
     events,
     agentState,
+    isTyping,
     connected,
     historyLoaded,
     pendingNotifications,
+    snapshotRevision,
     latestLiveChat,
     hasMore: cursor !== null,
     loadingMore,

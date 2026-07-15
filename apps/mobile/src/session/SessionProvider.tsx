@@ -10,8 +10,8 @@ import {
 import { AppState } from "react-native";
 import Constants from "expo-constants";
 import {
-  assertGatewayReachable,
   connectWithKey,
+  resumeGatewaySession,
   signInWithVestaAccount,
 } from "@/api/auth";
 import { createApiClient, type ApiClient } from "@/api/client";
@@ -62,7 +62,7 @@ interface SessionValue {
   connectRecentGateway: (id: string) => Promise<void>;
   forgetRecentGateway: (id: string) => Promise<void>;
   clearRecentGateways: () => Promise<void>;
-  signIn: () => Promise<void>;
+  signIn: () => Promise<boolean>;
   disconnect: () => Promise<void>;
 }
 
@@ -115,19 +115,18 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         setAgents([]);
         setAgentsReady(false);
       }
+      await writeConnection(next);
       connectionStore.write(next);
       setConnection(next);
       setStatus("connected");
-      await writeConnection(next);
-      try {
-        const recent = await saveRecentGateway(next, {
-          connectKey: options.connectKey,
-          touch: options.touchRecent ?? false,
-        });
-        setRecentGateways(recent);
-      } catch (cause) {
-        console.warn("Could not save recent gateway:", cause);
-      }
+      void saveRecentGateway(next, {
+        connectKey: options.connectKey,
+        touch: options.touchRecent ?? false,
+      })
+        .then(setRecentGateways)
+        .catch((cause: unknown) =>
+          console.warn("Could not save recent gateway:", cause),
+        );
     },
     [connectionStore],
   );
@@ -214,7 +213,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           credential.connectKey,
         );
       } else {
-        await assertGatewayReachable(credential.connection.url);
+        next = await resumeGatewaySession(credential.connection);
       }
       await commitConnection(next, {
         connectKey: credential.connectKey,
@@ -233,10 +232,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setRecentGateways([]);
   }, []);
 
-  const signIn = useCallback(async (): Promise<void> => {
-    await commitConnection(await signInWithVestaAccount(), {
+  const signIn = useCallback(async (): Promise<boolean> => {
+    const connection = await signInWithVestaAccount();
+    if (!connection) return false;
+    await commitConnection(connection, {
       touchRecent: true,
     });
+    return true;
   }, [commitConnection]);
 
   useEffect(() => {

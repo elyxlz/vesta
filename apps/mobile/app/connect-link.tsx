@@ -10,7 +10,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { GatewayCloseButton } from "@/components/GatewayCloseButton";
-import { Button } from "@/components/ui/Button";
+import { Button, TextButton } from "@/components/ui/Button";
 import { Field } from "@/components/ui/Form";
 import { Text } from "@/components/ui/Typography";
 import {
@@ -117,9 +117,7 @@ function ConnectLinkContent({
             onPress={() => router.back()}
           />
         </View>
-        <Text
-          style={[styles.subtitle, { color: colors.secondaryText }]}
-        >
+        <Text style={[styles.subtitle, { color: colors.secondaryText }]}>
           Enter the connection link provided by your Vesta gateway.
         </Text>
       </View>
@@ -184,23 +182,9 @@ function ConnectLinkContent({
             </Pressable>
           </View>
           {recentGateways?.length ? (
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => router.push("/recent-gateways")}
-              style={({ pressed }) => [
-                styles.recentGatewaysLink,
-                { opacity: pressed ? 0.55 : 1 },
-              ]}
-            >
-              <Text
-                style={[
-                  styles.recentGatewaysLabel,
-                  { color: colors.secondaryText },
-                ]}
-              >
-                Recent gateways
-              </Text>
-            </Pressable>
+            <TextButton onPress={() => router.push("/recent-gateways")}>
+              Recent gateways
+            </TextButton>
           ) : null}
         </View>
       )}
@@ -210,13 +194,11 @@ function ConnectLinkContent({
 
 const styles = StyleSheet.create({
   sheet: {
-    flex: 1,
-    paddingHorizontal: 24,
+    padding: 24,
     paddingTop: 36,
-    paddingBottom: 28,
   },
   header: {
-    gap: 16,
+    gap: 0,
   },
   titleRow: {
     flexDirection: "row",
@@ -231,9 +213,7 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     letterSpacing: -0.7,
   },
-  subtitle: { fontSize: 14, lineHeight: 20 },
-  recentGatewaysLink: { alignSelf: "center", padding: 3 },
-  recentGatewaysLabel: { fontSize: 13, fontWeight: "500" },
+  subtitle: { maxWidth: "80%", fontSize: 14, lineHeight: 20 },
   connecting: {
     flexDirection: "row",
     alignItems: "center",

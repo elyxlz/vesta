@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Pressable, StyleSheet, View } from "react-native";
+import { AppState, Linking, Pressable, StyleSheet, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { GlassView, isGlassEffectAPIAvailable } from "expo-glass-effect";
@@ -25,7 +25,8 @@ function ScanContent() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors } = usePreferences();
-  const [permission, requestPermission] = useCameraPermissions();
+  const [permission, requestPermission, getPermission] =
+    useCameraPermissions();
   const [scanned, setScanned] = useState(false);
 
   useEffect(() => {
@@ -34,9 +35,17 @@ function ScanContent() {
     }
   }, [permission, requestPermission]);
 
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") void getPermission();
+    });
+    return () => subscription.remove();
+  }, [getPermission]);
+
   const backButton = (
     <ScannerBackButton
       top={Math.max(insets.top, 12) + 8}
+      color={colors.text}
       onPress={() => router.back()}
     />
   );
@@ -59,8 +68,18 @@ function ScanContent() {
           Vesta uses the camera only to scan your connection QR code.
         </Text>
         {permission.canAskAgain ? (
-          <Button onPress={() => void requestPermission()}>Allow camera</Button>
-        ) : null}
+          <Button pill onPress={() => void requestPermission()}>
+            Allow camera
+          </Button>
+        ) : (
+          <Button
+            pill
+            icon="settings-outline"
+            onPress={() => void Linking.openSettings()}
+          >
+            Open Settings
+          </Button>
+        )}
         {backButton}
       </View>
     );
@@ -89,7 +108,7 @@ function ScanContent() {
       />
       <View style={styles.overlay} pointerEvents="none">
         <View style={styles.finder} />
-        <Text family="heading" style={styles.hint}>
+        <Text style={styles.hint}>
           Center the gateway QR code
         </Text>
       </View>
@@ -100,9 +119,11 @@ function ScanContent() {
 
 function ScannerBackButton({
   top,
+  color,
   onPress,
 }: {
   top: number;
+  color: string;
   onPress: () => void;
 }) {
   const button = (
@@ -116,7 +137,7 @@ function ScannerBackButton({
         { opacity: pressed ? 0.72 : 1 },
       ]}
     >
-      <Ionicons name="chevron-back" size={26} color="white" />
+      <Ionicons name="chevron-back" size={26} color={color} />
     </Pressable>
   );
 
@@ -124,7 +145,7 @@ function ScannerBackButton({
     return (
       <GlassView
         glassEffectStyle="regular"
-        colorScheme="dark"
+        colorScheme="light"
         isInteractive
         style={[styles.backButton, { top }]}
       >
@@ -153,7 +174,7 @@ const styles = StyleSheet.create({
   hint: {
     color: "white",
     fontSize: 16,
-    fontWeight: "700",
+    fontWeight: "500",
     textShadowColor: "black",
     textShadowRadius: 6,
   },
@@ -172,7 +193,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   backButtonFallback: {
-    backgroundColor: "rgba(10, 10, 10, 0.48)",
+    backgroundColor: "rgba(255, 255, 255, 0.72)",
   },
   state: {
     flex: 1,

@@ -53,7 +53,7 @@ export function AgentOrb({
   const maximumPulseScale =
     pulseScale ?? (activityState === "thinking" ? 1.1 : 1.04);
   const halfPulseDuration =
-    pulseDuration ?? (activityState === "thinking" ? 650 : 1800);
+    pulseDuration ?? (activityState === "thinking" ? 1200 : 1800);
 
   useEffect(() => {
     if (!animated) {

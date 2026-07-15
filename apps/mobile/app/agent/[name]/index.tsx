@@ -30,7 +30,7 @@ import {
 import { usePreferences } from "@/preferences/PreferencesProvider";
 
 const AnimatedPagerView = Animated.createAnimatedComponent(PagerView);
-const TAB_HIDE_DELAY_MS = 100;
+const TAB_HIDE_DELAY_MS = 50;
 const TAB_ANIMATION_DURATION_MS = 220;
 const TAB_MOUNT_VISIBILITY = 0.01;
 const TAP_MAX_TRAVEL = 8;

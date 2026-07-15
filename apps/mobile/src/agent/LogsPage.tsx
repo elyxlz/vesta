@@ -1,21 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import { FlatList, StyleSheet, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { streamLogs, type LogEvent } from "@/api/log-stream";
 import { useAgent } from "@/agent/AgentProvider";
+import { addLatestLogLine, type LogLine } from "@/agent/log-list-model";
 import { AnsiText } from "@/components/ui/AnsiText";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
 
-interface LogLine {
-  id: number;
-  text: string;
-}
-
 export default function LogsPage() {
   const { api } = useSession();
   const { name } = useAgent();
   const { colors } = usePreferences();
+  const insets = useSafeAreaInsets();
   const [logs, setLogs] = useState<LogLine[]>([]);
   const nextLogId = useRef(0);
   const [logError, setLogError] = useState("");
@@ -32,7 +30,7 @@ export default function LogsPage() {
           const id = nextLogId.current;
           nextLogId.current += 1;
           setLogs((current) =>
-            [...current, { id, text: event.text }].slice(-5000),
+            addLatestLogLine(current, { id, text: event.text }),
           );
         } else if (event.kind === "Error") {
           setLogError(event.message);
@@ -47,12 +45,20 @@ export default function LogsPage() {
       <FlatList
         style={styles.list}
         data={logs}
+        inverted
         keyExtractor={(line) => String(line.id)}
         renderItem={({ item }) => (
           <AnsiText value={item.text} selectable style={styles.logLine} />
         )}
-        contentInsetAdjustmentBehavior="automatic"
-        contentContainerStyle={styles.listContent}
+        automaticallyAdjustContentInsets={false}
+        contentInsetAdjustmentBehavior="never"
+        contentContainerStyle={[
+          styles.listContent,
+          {
+            paddingTop: insets.bottom,
+            paddingBottom: insets.top + 104,
+          },
+        ]}
         ListHeaderComponent={
           logError ? (
             <Text style={[styles.logError, { color: colors.warning }]}>
@@ -73,8 +79,8 @@ export default function LogsPage() {
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   list: { flex: 1 },
-  listContent: { paddingHorizontal: 12, paddingBottom: 88 },
-  logLine: { fontSize: 11, lineHeight: 16 },
+  listContent: { paddingHorizontal: 12 },
+  logLine: { fontSize: 13, lineHeight: 18 },
   logError: { paddingBottom: 8, paddingHorizontal: 2, fontSize: 12 },
   empty: { textAlign: "center", padding: 40, fontSize: 14 },
 });

@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Pressable, StyleSheet, View } from "react-native";
+import { StyleSheet, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AgentOrb } from "@/components/AgentOrb";
 import { BootTransitionTarget } from "@/components/BootTransition";
-import { Button } from "@/components/ui/Button";
+import { Button, TextButton } from "@/components/ui/Button";
 import { Text } from "@/components/ui/Typography";
 import {
   ThemeOverrideProvider,
@@ -48,7 +48,8 @@ function ConnectContent() {
     setBusy(true);
     setError("");
     try {
-      await signIn();
+      const connected = await signIn();
+      if (!connected) setBusy(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Connection failed.");
       setBusy(false);
@@ -86,11 +87,9 @@ function ConnectContent() {
         >
           Connect with Vesta Cloud
         </Button>
-        <Pressable onPress={() => router.push("/connect-link")}>
-          <Text style={[styles.link, { color: colors.interactive }]}>
-            Self-hosting? Connect your gateway
-          </Text>
-        </Pressable>
+        <TextButton onPress={() => router.push("/connect-link")}>
+          Self-hosting? Connect your gateway
+        </TextButton>
         {error ? (
           <Text
             accessibilityRole="alert"
@@ -117,6 +116,5 @@ const styles = StyleSheet.create({
   title: { fontSize: 40, fontWeight: "500", letterSpacing: -1.5 },
   tagline: { maxWidth: 330, textAlign: "center", fontSize: 15, lineHeight: 22 },
   actionPanel: { gap: 10 },
-  link: { textAlign: "center", fontSize: 14, fontWeight: "500", padding: 4 },
   error: { fontSize: 13, textAlign: "center", fontWeight: "600" },
 });

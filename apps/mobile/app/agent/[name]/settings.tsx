@@ -1,6 +1,6 @@
 import { Alert, StyleSheet } from "react-native";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "expo-router";
+import { Stack, useRouter } from "expo-router";
 import {
   createBackup,
   deleteAgent,
@@ -9,6 +9,7 @@ import {
   stopAgent,
 } from "@/api/endpoints";
 import { AgentProvider, useAgent } from "@/agent/AgentProvider";
+import { AgentPagesSettingsSection } from "@/components/AgentPagesSettingsSection";
 import { Screen } from "@/components/layout/Screen";
 import { FormRow, FormSection } from "@/components/ui/Form";
 import { Text } from "@/components/ui/Typography";
@@ -53,6 +54,7 @@ function AgentSettingsContent() {
 
   return (
     <Screen contentStyle={styles.content}>
+      <Stack.Screen options={{ title: `${name}’s Settings` }} />
       {action.error ? (
         <Text accessibilityRole="alert" style={{ color: colors.danger }}>
           {action.error instanceof Error
@@ -80,6 +82,7 @@ function AgentSettingsContent() {
           onPress={() => open("voice")}
         />
       </FormSection>
+      <AgentPagesSettingsSection />
       <FormSection title="Attention">
         <FormRow
           label="Notifications"
