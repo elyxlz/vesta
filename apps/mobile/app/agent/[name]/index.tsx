@@ -32,6 +32,7 @@ import { usePreferences } from "@/preferences/PreferencesProvider";
 const AnimatedPagerView = Animated.createAnimatedComponent(PagerView);
 const TAB_HIDE_DELAY_MS = 100;
 const TAB_ANIMATION_DURATION_MS = 220;
+const TAB_MOUNT_VISIBILITY = 0.01;
 const TAP_MAX_TRAVEL = 8;
 const PAGE_TABS = {
   chat: {
@@ -95,16 +96,24 @@ function AgentPages() {
     hideTimer.current = null;
   }, []);
 
-  const showTabs = useCallback(() => {
-    clearHideTimer();
-    setTabsInteractive(true);
+  const animateTabsIn = useCallback(() => {
     tabVisibility.set(
       withTiming(1, {
         duration: TAB_ANIMATION_DURATION_MS,
         easing: Easing.out(Easing.cubic),
       }),
     );
-  }, [clearHideTimer, tabVisibility]);
+  }, [tabVisibility]);
+
+  const showTabs = useCallback(() => {
+    clearHideTimer();
+    if (tabsInteractive) {
+      animateTabsIn();
+      return;
+    }
+    tabVisibility.set(TAB_MOUNT_VISIBILITY);
+    setTabsInteractive(true);
+  }, [animateTabsIn, clearHideTimer, tabVisibility, tabsInteractive]);
 
   const disableTabs = useCallback(() => {
     setTabsInteractive(false);
@@ -159,6 +168,10 @@ function AgentPages() {
       animateTabsOut();
     }, TAB_HIDE_DELAY_MS);
   }, [animateTabsOut, clearHideTimer]);
+
+  useEffect(() => {
+    if (tabsInteractive) animateTabsIn();
+  }, [animateTabsIn, tabsInteractive]);
 
   useEffect(
     () => () => {

@@ -35,13 +35,16 @@ interface AgentPagerTabsProps {
 function TabSurface({
   children,
   selectionStyle,
+  glassVisible,
   width,
 }: {
   children: ReactNode;
   selectionStyle: AnimatedStyle<ViewStyle>;
+  glassVisible: boolean;
   width: number;
 }) {
   const { colors, dark } = usePreferences();
+  if (!glassVisible) return null;
 
   const content = (
     <>
@@ -128,7 +131,11 @@ export function AgentPagerTabs({
       importantForAccessibility={interactive ? "auto" : "no-hide-descendants"}
       style={[styles.overlay, { bottom }, overlayStyle]}
     >
-      <TabSurface selectionStyle={selectionStyle} width={surfaceWidth}>
+      <TabSurface
+        selectionStyle={selectionStyle}
+        glassVisible={interactive}
+        width={surfaceWidth}
+      >
         {tabs.map((tab, index) => (
           <Tab
             key={tab.key}
