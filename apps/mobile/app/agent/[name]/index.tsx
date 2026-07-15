@@ -113,12 +113,25 @@ function AgentPages() {
     setTabsInteractive(false);
   }, []);
 
+  const animateTabsOut = useCallback(() => {
+    tabVisibility.set(
+      withTiming(
+        0,
+        {
+          duration: TAB_HIDE_DURATION_MS,
+          easing: Easing.in(Easing.cubic),
+        },
+        (finished) => {
+          if (finished) scheduleOnRN(unmountTabSurface);
+        },
+      ),
+    );
+  }, [tabVisibility, unmountTabSurface]);
+
   const hideTabsImmediately = useCallback(() => {
     clearHideTimer();
-    cancelAnimation(tabVisibility);
-    tabVisibility.set(0);
-    setTabsInteractive(false);
-  }, [clearHideTimer, tabVisibility]);
+    animateTabsOut();
+  }, [animateTabsOut, clearHideTimer]);
 
   const onPageTouchStart = useCallback((event: GestureResponderEvent) => {
     pageTouchStart.current = {
@@ -146,20 +159,9 @@ function AgentPages() {
     clearHideTimer();
     hideTimer.current = setTimeout(() => {
       hideTimer.current = null;
-      tabVisibility.set(
-        withTiming(
-          0,
-          {
-            duration: TAB_HIDE_DURATION_MS,
-            easing: Easing.in(Easing.cubic),
-          },
-          (finished) => {
-            if (finished) scheduleOnRN(unmountTabSurface);
-          },
-        ),
-      );
+      animateTabsOut();
     }, TAB_HIDE_DELAY_MS);
-  }, [clearHideTimer, tabVisibility, unmountTabSurface]);
+  }, [animateTabsOut, clearHideTimer]);
 
   useEffect(
     () => () => {
