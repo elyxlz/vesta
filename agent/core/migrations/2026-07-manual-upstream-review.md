@@ -3,11 +3,19 @@ doesn't collide with a line you touched lands silently: you end up running the n
 skills, prompts, and memory structure without ever having read the improvements. Worse,
 edits you (or the user) committed long ago can sit on top of a file stock has since
 improved, so the improvement never fully reached you and no diff ever put it in front
-of you. This is a one-time, deliberate read: look at the FULL difference between your
-current state and the stock snapshot of the version you run, by hand, and consciously
-absorb anything good you have been missing. Do NOT rebase or run the sync scripts to
-"catch up" here: the whole point is that you read and decide, not that a tool merges
-silently again.
+of you. This is a one-time, deliberate, deep review: look at the FULL difference between
+your current state and the stock snapshot of the version you run, by hand, and
+consciously absorb anything good you have been missing. Do NOT rebase or run the sync
+scripts to "catch up" here: the whole point is that you read and decide, not that a tool
+merges silently again.
+
+Treat this as a serious block of work, not a quick chore. Dedicate real time to it and
+go deep: every skill, every prompt, every hunk gets read and understood, not skimmed.
+Because the divergence is broad, do not try to hold all of it in one context: fan out
+with subagents. Spawn many of them, one per skill or per coherent area, so each reads
+its slice of the diff thoroughly and in parallel, then bring their findings back and
+apply the absorptions. Err on the side of more subagents and more depth: this migration
+exists precisely because the fast pass the first time around missed things.
 
 ### 1. Get the stock snapshot for your version
 
@@ -34,18 +42,25 @@ edit and it already matches stock, so ignore any lines under it. What matters is
 everything else: your installed skills (`agent/skills`, `agent/core/skills`),
 `agent/MEMORY.md`, and any other file you or a past sync left changed.
 
-### 3. Read the full diff and absorb, file by file
+### 3. Fan out and read the full diff in depth
 
-Go through the actual patch, not just the stat, one area at a time, e.g.:
+From the `--stat`, carve your divergence into coherent areas: each installed skill under
+`agent/skills` and `agent/core/skills` is its own area, `agent/MEMORY.md` is one, and
+group whatever else remains. Spawn a subagent per area, as many as it takes to cover
+everything, and run them in parallel. Give each subagent one instruction: read the full
+patch for its paths, hunk by hunk, understand every change, and report back a precise
+list of what to absorb (which stock improvements you are missing) versus what is your own
+deliberate personalization to keep, with exact file paths and the reasoning per hunk.
+
+Each subagent reads its slice like this (never just the stat):
 
 ```bash
-git diff HEAD "agent-v$VERSION" -- agent/skills agent/core/skills
-git diff HEAD "agent-v$VERSION" -- agent/MEMORY.md
+git diff HEAD "agent-v$VERSION" -- <its paths>
 ```
 
 Read this direction carefully: the patch transforms YOUR state into STOCK, so the `-`
 lines are what you currently have and the `+` lines are stock's current version. For
-every hunk, decide honestly which it is:
+every hunk, the subagent decides honestly which it is:
 
 - **Stock improved this and you were sitting on an old copy** (a better script, a
   clearer instruction, a fixed command, a renamed file): take stock's version. Adopt the
@@ -55,16 +70,18 @@ every hunk, decide honestly which it is:
 - **A mix** (stock rewrote a file you had also personalized): take stock's new form and
   re-apply your specifics on top, so both survive. Never blanket-pick one side.
 
-Do the absorbing by editing the files directly. To lift stock's whole version of a file
-you have no personal stake in:
+Once the subagents report back, do the absorbing yourself so the changes are applied from
+one place, by editing the files directly. To lift stock's whole version of a file you
+have no personal stake in:
 
 ```bash
 git checkout "agent-v$VERSION" -- <path>    # stock still ships it: take stock's copy
 git rm -r <path>                            # stock deleted it: drop yours too
 ```
 
-Take your time and read every hunk. The reason this migration exists is that a fast skim
-misses exactly the improvements you never consciously saw the first time.
+Every hunk must be read and understood by some subagent: leave nothing skimmed. The
+reason this migration exists is that a fast pass misses exactly the improvements you never
+consciously saw the first time.
 
 ### 4. Commit and load
 
