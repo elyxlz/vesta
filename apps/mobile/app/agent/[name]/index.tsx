@@ -1,11 +1,18 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { StyleSheet, View } from "react-native";
 import PagerView, {
   type PageScrollStateChangedNativeEvent,
   type PagerViewOnPageScrollEvent,
   type PagerViewOnPageSelectedEvent,
 } from "react-native-pager-view";
-import Animated, { useEvent, useSharedValue } from "react-native-reanimated";
+import Animated, {
+  Easing,
+  cancelAnimation,
+  useEvent,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AgentProvider } from "@/agent/AgentProvider";
 import ChatPage from "@/agent/ChatPage";
@@ -21,6 +28,8 @@ import {
 import { usePreferences } from "@/preferences/PreferencesProvider";
 
 const AnimatedPagerView = Animated.createAnimatedComponent(PagerView);
+const TAB_HIDE_DELAY_MS = 650;
+const TAB_HIDE_DURATION_MS = 220;
 const PAGE_TABS = {
   chat: {
     key: "chat",
@@ -53,6 +62,8 @@ function AgentPages() {
   const { showNotificationsPage, showLogsPage } = usePreferences();
   const pager = useRef<PagerView>(null);
   const pageProgress = useSharedValue(0);
+  const tabVisibility = useSharedValue(0);
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [activePageKey, setActivePageKey] = useState<AgentPageKey>("chat");
   const [tabsInteractive, setTabsInteractive] = useState(false);
   const pages = useMemo(
@@ -73,10 +84,58 @@ function AgentPages() {
     ["onPageScroll"],
   );
 
+  const clearHideTimer = useCallback(() => {
+    if (!hideTimer.current) return;
+    clearTimeout(hideTimer.current);
+    hideTimer.current = null;
+  }, []);
+
+  const showTabs = useCallback(() => {
+    clearHideTimer();
+    setTabsInteractive(true);
+    tabVisibility.set(
+      withSpring(1, {
+        damping: 22,
+        stiffness: 260,
+        mass: 0.8,
+        overshootClamping: true,
+      }),
+    );
+  }, [clearHideTimer, tabVisibility]);
+
+  const hideTabs = useCallback(() => {
+    clearHideTimer();
+    hideTimer.current = setTimeout(() => {
+      tabVisibility.set(
+        withTiming(0, {
+          duration: TAB_HIDE_DURATION_MS,
+          easing: Easing.in(Easing.cubic),
+        }),
+      );
+      hideTimer.current = setTimeout(() => {
+        setTabsInteractive(false);
+        hideTimer.current = null;
+      }, TAB_HIDE_DURATION_MS);
+    }, TAB_HIDE_DELAY_MS);
+  }, [clearHideTimer, tabVisibility]);
+
+  useEffect(
+    () => () => {
+      clearHideTimer();
+      cancelAnimation(tabVisibility);
+    },
+    [clearHideTimer, tabVisibility],
+  );
+
   const onPageScrollStateChanged = useCallback(
-    (event: PageScrollStateChangedNativeEvent) =>
-      setTabsInteractive(event.nativeEvent.pageScrollState !== "idle"),
-    [],
+    (event: PageScrollStateChangedNativeEvent) => {
+      if (event.nativeEvent.pageScrollState === "idle") {
+        hideTabs();
+      } else {
+        showTabs();
+      }
+    },
+    [hideTabs, showTabs],
   );
 
   const onPageSelected = useCallback(
@@ -89,9 +148,13 @@ function AgentPages() {
     [pageProgress, pages],
   );
 
-  const selectPage = useCallback((page: number) => {
-    pager.current?.setPage(page);
-  }, []);
+  const selectPage = useCallback(
+    (page: number) => {
+      showTabs();
+      pager.current?.setPage(page);
+    },
+    [showTabs],
+  );
 
   return (
     <View style={styles.screen}>
@@ -122,6 +185,7 @@ function AgentPages() {
         activePage={activePage}
         top={insets.top + 52}
         progress={pageProgress}
+        visibility={tabVisibility}
         interactive={tabsInteractive}
         tabs={tabs}
         onSelect={selectPage}

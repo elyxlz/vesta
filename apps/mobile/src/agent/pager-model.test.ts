@@ -21,7 +21,6 @@ describe("agent pager", () => {
     expect(getPagerAnimationRanges(4)).toEqual({
       input: [0, 0.16, 0.84, 1, 1.16, 1.84, 2, 2.16, 2.84, 3],
       selection: [0, 0, 1, 1, 1, 2, 2, 2, 3, 3],
-      visibility: [0, 1, 1, 0, 1, 1, 0, 1, 1, 0],
     });
   });
 });

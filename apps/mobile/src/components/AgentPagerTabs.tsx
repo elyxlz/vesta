@@ -27,6 +27,7 @@ interface AgentPagerTabsProps {
   activePage: number;
   top: number;
   progress: SharedValue<number>;
+  visibility: SharedValue<number>;
   interactive: boolean;
   tabs: readonly AgentPagerTab[];
   onSelect: (page: number) => void;
@@ -91,6 +92,7 @@ export function AgentPagerTabs({
   activePage,
   top,
   progress,
+  visibility,
   interactive,
   tabs,
   onSelect,
@@ -104,27 +106,19 @@ export function AgentPagerTabs({
     [ranges.selection],
   );
   const surfaceWidth = tabs.length * TAB_WIDTH + BAR_PADDING * 2;
-  const overlayStyle = useAnimatedStyle(() => {
-    const visibility = interpolate(
-      progress.value,
-      ranges.input,
-      ranges.visibility,
-      Extrapolation.CLAMP,
-    );
-    return {
-      opacity: visibility,
-      transform: [
-        {
-          translateY: interpolate(
-            visibility,
-            [0, 1],
-            [-10, 0],
-            Extrapolation.CLAMP,
-          ),
-        },
-      ],
-    };
-  });
+  const overlayStyle = useAnimatedStyle(() => ({
+    opacity: visibility.value,
+    transform: [
+      {
+        translateY: interpolate(
+          visibility.value,
+          [0, 1],
+          [-10, 0],
+          Extrapolation.CLAMP,
+        ),
+      },
+    ],
+  }));
   const selectionStyle = useAnimatedStyle(() => ({
     transform: [
       {
