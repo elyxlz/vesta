@@ -106,15 +106,41 @@ function ActivityContent() {
   }, [api, name, tab]);
 
   const notificationItems = notifications.data?.notifications ?? [];
+  const tabs = (
+    <View
+      style={[
+        styles.tabsHeader,
+        { backgroundColor: colors.background },
+      ]}
+    >
+      <View style={[styles.segments, { backgroundColor: colors.input }]}>
+        <Segment
+          value="Notifications"
+          selected={tab === "notifications"}
+          onPress={() => setTab("notifications")}
+        />
+        <Segment
+          value="Logs"
+          selected={tab === "logs"}
+          onPress={() => {
+            setLogError("");
+            setTab("logs");
+          }}
+        />
+      </View>
+      {tab === "logs" && logError ? (
+        <Text style={[styles.logError, { color: colors.warning }]}>
+          {logError}
+        </Text>
+      ) : null}
+    </View>
+  );
   return (
     <View style={styles.screen}>
       <Stack.Screen options={{ title: "Activity" }} />
-      <View style={[styles.segments, { backgroundColor: colors.input }]}>
-        <Segment value="Notifications" selected={tab === "notifications"} onPress={() => setTab("notifications")} />
-        <Segment value="Logs" selected={tab === "logs"} onPress={() => { setLogError(""); setTab("logs"); }} />
-      </View>
       {tab === "notifications" ? (
         <FlatList
+          style={styles.list}
           data={notificationItems}
           keyExtractor={(event, index) =>
             `${event.notif_id ?? `${event.ts}-${event.source}`}-${index}`
@@ -125,21 +151,25 @@ function ActivityContent() {
               pending={Boolean(item.notif_id && socket.pendingNotifications.includes(item.notif_id))}
             />
           )}
-          contentContainerStyle={styles.list}
+          contentInsetAdjustmentBehavior="automatic"
+          contentContainerStyle={styles.listContent}
+          ListHeaderComponent={tabs}
+          stickyHeaderIndices={[0]}
           refreshControl={<RefreshControl refreshing={notifications.isFetching} onRefresh={() => void notifications.refetch()} tintColor={colors.accent} />}
           ListEmptyComponent={<Text style={[styles.empty, { color: colors.secondaryText }]}>No notifications yet.</Text>}
         />
       ) : (
-        <View style={styles.logsShell}>
-          {logError ? <Text style={[styles.logError, { color: colors.warning }]}>{logError}</Text> : null}
-          <FlatList
-            data={logs}
-            keyExtractor={(line) => String(line.id)}
-            renderItem={({ item }) => <Text family="mono" selectable style={[styles.logLine, { color: colors.secondaryText }]}>{item.text}</Text>}
-            contentContainerStyle={styles.logs}
-            ListEmptyComponent={<Text style={[styles.empty, { color: colors.secondaryText }]}>Waiting for logs…</Text>}
-          />
-        </View>
+        <FlatList
+          style={styles.list}
+          data={logs}
+          keyExtractor={(line) => String(line.id)}
+          renderItem={({ item }) => <Text family="mono" selectable style={[styles.logLine, { color: colors.secondaryText }]}>{item.text}</Text>}
+          contentInsetAdjustmentBehavior="automatic"
+          contentContainerStyle={styles.listContent}
+          ListHeaderComponent={tabs}
+          stickyHeaderIndices={[0]}
+          ListEmptyComponent={<Text style={[styles.empty, { color: colors.secondaryText }]}>Waiting for logs…</Text>}
+        />
       )}
     </View>
   );
@@ -155,10 +185,12 @@ export default function ActivityScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  segments: { flexDirection: "row", padding: 3, borderRadius: 11, marginHorizontal: 12, marginBottom: 8 },
+  tabsHeader: { paddingTop: 12, paddingBottom: 8 },
+  segments: { flexDirection: "row", padding: 3, borderRadius: 11 },
   segment: { flex: 1, minHeight: 34, justifyContent: "center", alignItems: "center", borderRadius: 9 },
   segmentLabel: { fontSize: 13, fontWeight: "700" },
-  list: { padding: 12, paddingBottom: 88 },
+  list: { flex: 1 },
+  listContent: { paddingHorizontal: 12, paddingBottom: 88 },
   notification: { borderRadius: 17, borderWidth: StyleSheet.hairlineWidth, padding: 13, gap: 5, marginBottom: 9 },
   notificationTop: { flexDirection: "row", alignItems: "center", gap: 6 },
   sourceDot: { width: 7, height: 7, borderRadius: 4 },
@@ -168,8 +200,6 @@ const styles = StyleSheet.create({
   sender: { fontSize: 15, fontWeight: "700" },
   summary: { fontSize: 14, lineHeight: 19 },
   empty: { textAlign: "center", padding: 40, fontSize: 14 },
-  logsShell: { flex: 1 },
-  logs: { paddingHorizontal: 12, paddingBottom: 88 },
   logLine: { fontSize: 11, lineHeight: 16 },
-  logError: { paddingHorizontal: 14, paddingVertical: 6, fontSize: 12 },
+  logError: { paddingTop: 8, paddingHorizontal: 2, fontSize: 12 },
 });
