@@ -2,6 +2,23 @@
 members = [".", "tests-integration"]
 resolver = "2"
 
+
+# Lint escapes (#[allow]/#[expect]) are banned repo-wide; tune rules here instead.
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# API-doc ceremony and display-only casts: not worth the churn for an internal binary.
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+module_name_repetitions = "allow"
+too_many_lines = "allow"
+cast_precision_loss = "allow"
+unwrap_used = "deny"
+allow_attributes = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+
 [package]
 name = "vestad"
 version = "0.1.177"
@@ -10,6 +27,9 @@ repository = "https://github.com/elyxlz/vesta"
 authors = ["elyxlz"]
 edition = "2021"
 description = "Vesta API server daemon (Linux only)"
+
+[lints]
+workspace = true
 
 [[bin]]
 name = "vestad"
