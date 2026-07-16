@@ -48,8 +48,9 @@ type reactionNotif struct {
 
 // WhatsApp delivers an edit and a delete-for-everyone as a ProtocolMessage pointing at
 // the original message rather than as new text, so both carry the target's ID plus the
-// content as the agent last saw it. `edit` also carries the replacement text; `revoke`
-// carries none, because the message is gone.
+// content as the agent last saw it. `edit` carries the current text in message (the same
+// body field a plain message uses), so it reads like a normal message; `revoke` carries
+// none, because the message is gone.
 type editNotif struct {
 	Source          string `json:"source"`
 	Type            string `json:"type"`
@@ -59,7 +60,7 @@ type editNotif struct {
 	ChatName        string `json:"chat_name,omitempty"`
 	ContactPhone    string `json:"contact_phone,omitempty"`
 	OldText         string `json:"old_text,omitempty"`
-	NewText         string `json:"new_text,omitempty"`
+	Message         string `json:"message,omitempty"`
 	Timestamp       string `json:"timestamp"`
 	TargetMessageID string `json:"target_message_id"`
 	ContactUnknown  bool   `json:"contact_unknown,omitempty"`
@@ -183,7 +184,7 @@ func WriteEditNotification(ctx NotifContext, targetMessageID, oldText, newText s
 		ContactName:     ctx.ContactName,
 		ContactPhone:    ctx.ContactPhone,
 		OldText:         oldText,
-		NewText:         newText,
+		Message:         newText,
 		Timestamp:       time.Now().Format(time.RFC3339),
 		TargetMessageID: targetMessageID,
 		ContactUnknown:  !ctx.ContactSaved,

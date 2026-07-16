@@ -136,8 +136,8 @@ func TestEditNotifiesWithBothTheOldAndTheNewText(t *testing.T) {
 	if got.OldText != "let's meet at 6" {
 		t.Errorf("old_text = %q, want the pre-edit text", got.OldText)
 	}
-	if got.NewText != "let's meet at 9" {
-		t.Errorf("new_text = %q, want the replacement text", got.NewText)
+	if got.Message != "let's meet at 9" {
+		t.Errorf("message = %q, want the replacement text", got.Message)
 	}
 	if got.TargetMessageID != testTargetID {
 		t.Errorf("target_message_id = %q, want the edited message's id, not the protocol stanza's", got.TargetMessageID)
@@ -221,8 +221,8 @@ func TestRevokeNotifiesWithTheDeletedText(t *testing.T) {
 	if got.OldText != "forget i said that" {
 		t.Errorf("old_text = %q, want the deleted text", got.OldText)
 	}
-	if got.NewText != "" {
-		t.Errorf("new_text = %q, want empty (a deleted message has no replacement)", got.NewText)
+	if got.Message != "" {
+		t.Errorf("message = %q, want empty (a deleted message has no replacement)", got.Message)
 	}
 	if got.TargetMessageID != testTargetID {
 		t.Errorf("target_message_id = %q, want the deleted message's id", got.TargetMessageID)
@@ -248,8 +248,8 @@ func TestEditOfAMessageWeNeverStoredStillReportsTheNewText(t *testing.T) {
 	wac.eventHandler(editEvent("let's meet at 9"))
 
 	got := soleNotif(t, notifDir)
-	if got.NewText != "let's meet at 9" {
-		t.Errorf("new_text = %q, want the replacement text", got.NewText)
+	if got.Message != "let's meet at 9" {
+		t.Errorf("message = %q, want the replacement text", got.Message)
 	}
 	if got.OldText != "" {
 		t.Errorf("old_text = %q, want empty when the original was never stored", got.OldText)
