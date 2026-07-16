@@ -43,9 +43,9 @@ async def _run_processor_test(
 
     original_side_effect = message_side_effect
 
-    async def tracking_process_message(msg, *, state, config, is_user):
+    async def tracking_process_message(msg, *, state, config):
         processed_messages.append(msg)
-        return await original_side_effect(msg, state=state, config=config, is_user=is_user)
+        return await original_side_effect(msg, state=state, config=config)
 
     mock_client = MagicMock()
     mock_client.return_value = mock_client
@@ -77,7 +77,7 @@ async def _run_processor_test(
     if extra_patches:
         patches.update(extra_patches)
 
-    ctx_managers = [patch(k, v if not callable(v) or isinstance(v, MagicMock) else v) for k, v in patches.items()]
+    ctx_managers = [patch(k, v) for k, v in patches.items()]
     with contextlib.ExitStack() as stack:
         for cm in ctx_managers:
             stack.enter_context(cm)
@@ -91,7 +91,7 @@ async def _run_processor_test(
 
 @pytest.mark.anyio
 async def test_restarts_on_error(tmp_path):
-    async def side_effect(msg, *, state, config, is_user):
+    async def side_effect(msg, *, state, config):
         raise RuntimeError("Simulated SDK buffer overflow")
 
     state, _session_count, _messages = await _run_processor_test(
@@ -110,7 +110,7 @@ async def test_error_path_emits_error_event_and_resets_state_idle(tmp_path):
     state = vm.State()
     subscriber = state.event_bus.subscribe()
 
-    async def side_effect(msg, *, state, config, is_user):
+    async def side_effect(msg, *, state, config):
         raise RuntimeError("kaboom in the SDK")
 
     state, _, _ = await _run_processor_test(
@@ -138,7 +138,7 @@ async def test_restarts_on_timeout(tmp_path):
     on-failure policy restarts the container — under on-failure a clean exit 0 would leave the agent
     hung-then-permanently-down."""
 
-    async def side_effect(msg, *, state, config, is_user):
+    async def side_effect(msg, *, state, config):
         raise TimeoutError()
 
     state, _session_count, _messages = await _run_processor_test(
@@ -313,7 +313,7 @@ async def test_notification_dropped_before_intentional_restart(tmp_path):
     state = vm.State()
     subscriber = state.event_bus.subscribe()
 
-    async def side_effect(msg, *, state, config, is_user):
+    async def side_effect(msg, *, state, config):
         # Mid-turn: the loop has exposed the in-flight notification; the agent handles it and
         # asks to restart. The restart tool must drop the file here, not leave it for the loop's
         # post-turn cleanup that the SIGTERM would beat.
@@ -356,7 +356,7 @@ async def test_process_message_sends_correction_on_em_dash(tmp_path):
         return vm.TurnSignals(texts=["corrected response"])
 
     with patch("core.client.converse", side_effect=mock_converse):
-        responses, _ = await process_message("hello", state=state, config=config, is_user=True)
+        responses, _ = await process_message("hello", state=state, config=config)
 
     assert len(converse_calls) == 2
     assert "em dash" in converse_calls[1].lower()
@@ -380,7 +380,7 @@ async def test_process_message_no_correction(tmp_path, response):
         return vm.TurnSignals(texts=response)
 
     with patch("core.client.converse", side_effect=mock_converse):
-        await process_message("hello", state=state, config=config, is_user=True)
+        await process_message("hello", state=state, config=config)
 
     assert len(converse_calls) == 1
 
@@ -516,7 +516,7 @@ async def test_cancellation_triggers_restart(tmp_path):
     state = vm.State()
     queue: asyncio.Queue = asyncio.Queue()
 
-    async def cancel_side_effect(msg, *, state, config, is_user):
+    async def cancel_side_effect(msg, *, state, config):
         raise asyncio.CancelledError
 
     with patch("core.loops.process_message", side_effect=cancel_side_effect), pytest.raises(asyncio.CancelledError):
@@ -528,7 +528,8 @@ async def test_cancellation_triggers_restart(tmp_path):
 
 @pytest.mark.anyio
 async def test_cancellation_during_shutdown_is_silent(tmp_path):
-    """When the cancel arrives mid-process *while* shutdown is in progress, the inner handler must NOT log 'cancelled unexpectedly' or override restart_reason.
+    """When the cancel arrives mid-process *while* shutdown is in progress, the inner handler must
+    NOT log 'cancelled unexpectedly' or override restart_reason.
 
     Regression for a silent-death bug where shutdown-driven cancels were treated as crashes."""
     from core.loops import _run_messages_with_preempts
@@ -541,7 +542,7 @@ async def test_cancellation_during_shutdown_is_silent(tmp_path):
 
     processing_started = asyncio.Event()
 
-    async def hang(msg, *, state, config, is_user):
+    async def hang(msg, *, state, config):
         processing_started.set()
         await asyncio.sleep(60)
 

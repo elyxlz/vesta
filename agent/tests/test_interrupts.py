@@ -50,7 +50,7 @@ async def test_message_processor_sets_busy_flag_during_turn(config, state):
     processing_started = asyncio.Event()
     busy_during_turn = False
 
-    async def slow_side_effect(msg, *, state, config, is_user):
+    async def slow_side_effect(msg, *, state, config):
         nonlocal busy_during_turn
         busy_during_turn = state.processor_busy
         processing_started.set()
@@ -96,7 +96,7 @@ async def test_run_messages_with_preempts_cancels_process_task(config, state):
     task_started = asyncio.Event()
     task_cancelled = False
 
-    async def hanging_process(msg, *, state, config, is_user):
+    async def hanging_process(msg, *, state, config):
         nonlocal task_cancelled
         task_started.set()
         try:
@@ -123,15 +123,15 @@ async def test_query_not_delivered_keeps_notification_file(config, state, tmp_pa
     """A turn whose query never reached the CLI (send timeout, or client.query() raised on a dead
     transport) must not delete its notification file: the resumed session never saw the message,
     so it must re-run on the next boot rather than being silently lost."""
-    from core.client import QueryNotDelivered
+    from core.client import QueryNotDeliveredError
     from core.loops import _run_messages_with_preempts
 
     queue: asyncio.Queue = asyncio.Queue()
     notif_path = tmp_path / "notif.json"
     notif_path.write_text("{}")
 
-    async def failing_process(msg, *, state, config, is_user):
-        raise QueryNotDelivered("query timed out before the CLI received it")
+    async def failing_process(msg, *, state, config):
+        raise QueryNotDeliveredError("query timed out before the CLI received it")
 
     with patch("core.loops.process_message", failing_process):
         await _run_messages_with_preempts(vm.QueuedTurn("hello", True, [str(notif_path)]), queue=queue, state=state, config=config)
@@ -151,7 +151,7 @@ async def test_response_timeout_deletes_notification_file(config, state, tmp_pat
     notif_path = tmp_path / "notif.json"
     notif_path.write_text("{}")
 
-    async def failing_process(msg, *, state, config, is_user):
+    async def failing_process(msg, *, state, config):
         raise TimeoutError
 
     with patch("core.loops.process_message", failing_process):
@@ -171,7 +171,7 @@ async def test_non_interruptible_boot_turn_is_not_preempted(config, state):
     boot_started = asyncio.Event()
     release_boot = asyncio.Event()
 
-    async def fake_process(msg, *, state, config, is_user):
+    async def fake_process(msg, *, state, config):
         processed.append(msg)
         if msg == "boot":
             boot_started.set()
@@ -512,9 +512,9 @@ async def test_converse_times_out_on_stream_silence():
 
 @pytest.mark.anyio
 async def test_converse_raises_query_not_delivered_on_send_timeout():
-    """A query send that never completes within query_timeout raises QueryNotDelivered, not a bare
+    """A query send that never completes within query_timeout raises QueryNotDeliveredError, not a bare
     TimeoutError, so the caller can tell a pre-delivery failure from a post-delivery one."""
-    from core.client import QueryNotDelivered, converse
+    from core.client import QueryNotDeliveredError, converse
 
     state, config, mock_client, _emitted, _message_queue, _consumed = make_stream_harness()
     config.query_timeout = 1
@@ -525,21 +525,21 @@ async def test_converse_raises_query_not_delivered_on_send_timeout():
     mock_client.query = AsyncMock(side_effect=slow_query)
 
     async with consuming(state, config):
-        with pytest.raises(QueryNotDelivered):
+        with pytest.raises(QueryNotDeliveredError):
             await asyncio.wait_for(converse("test", state=state, config=config, show_output=True), timeout=5.0)
 
 
 @pytest.mark.anyio
 async def test_converse_raises_query_not_delivered_on_dead_transport():
     """client.query() raising on a dead transport (no send timeout involved) is also surfaced as
-    QueryNotDelivered: the CLI never received the prompt either way."""
-    from core.client import QueryNotDelivered, converse
+    QueryNotDeliveredError: the CLI never received the prompt either way."""
+    from core.client import QueryNotDeliveredError, converse
 
     state, config, mock_client, _emitted, _message_queue, _consumed = make_stream_harness()
     mock_client.query = AsyncMock(side_effect=RuntimeError("transport closed"))
 
     async with consuming(state, config):
-        with pytest.raises(QueryNotDelivered):
+        with pytest.raises(QueryNotDeliveredError):
             await asyncio.wait_for(converse("test", state=state, config=config, show_output=True), timeout=5.0)
 
 

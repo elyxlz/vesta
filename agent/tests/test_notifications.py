@@ -285,7 +285,7 @@ async def test_process_batch_queues_prompt(tmp_path):
     notif = Notification(timestamp=dt.datetime(2025, 1, 1), source="test", type="message", file_path=str(f))
 
     with patch("core.loops.load_prompt", return_value=""):
-        await process_batch([notif], queue=queue, config=config)
+        await process_batch([notif], queue=queue)
 
     assert not queue.empty()
     prompt, is_user, _file_paths, _ = await queue.get()
@@ -295,10 +295,9 @@ async def test_process_batch_queues_prompt(tmp_path):
 
 @pytest.mark.anyio
 async def test_process_batch_empty_is_noop():
-    config = cfg.VestaConfig()
     queue: asyncio.Queue = asyncio.Queue()
 
-    await process_batch([], queue=queue, config=config)
+    await process_batch([], queue=queue)
     assert queue.empty()
 
 
@@ -315,7 +314,7 @@ async def test_process_batch_keeps_files_until_processing(tmp_path):
     notif = Notification(timestamp=dt.datetime(2025, 1, 1), source="t", type="m", file_path=str(f))
 
     with patch("core.loops.load_prompt", return_value=""):
-        await process_batch([notif], queue=queue, config=config)
+        await process_batch([notif], queue=queue)
 
     assert f.exists(), "notification file must stay on disk until the queued message is processed"
     _, _, file_paths, _ = await queue.get()

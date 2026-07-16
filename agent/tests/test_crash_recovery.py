@@ -5,7 +5,7 @@ import collections
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from claude_agent_sdk import ClaudeSDKError
+from claude_agent_sdk import ClaudeSDKError, ProcessError
 from conftest import idle_message_stream
 from wait_util import wait_for_condition
 
@@ -16,16 +16,10 @@ from core.diagnostics import format_crash_detail
 # --- format_crash_detail ---
 
 
-class FakeProcessError(ClaudeSDKError):
-    def __init__(self, msg: str, exit_code: int):
-        super().__init__(msg)
-        self.exit_code = exit_code
-
-
 @pytest.mark.parametrize(
     "exc,lines,kwargs,expected_exit,expected_tail",
     [
-        (FakeProcessError("CLI died", exit_code=1), ["line1", "line2"], {}, 1, "line1\nline2"),
+        (ProcessError("CLI died", exit_code=1), ["line1", "line2"], {}, 1, "line1\nline2"),
         (RuntimeError("generic error"), ["some stderr"], {}, None, "some stderr"),
         (RuntimeError("boom"), [], {}, None, "(no stderr captured)"),  # empty buffer -> default fallback
         (RuntimeError("boom"), [], {"fallback": ""}, None, ""),  # custom fallback overrides

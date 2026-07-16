@@ -36,6 +36,7 @@ from core.cc_sdk.messages import (
     ThinkingBlock,
     ToolUseBlock,
 )
+from core.cc_sdk.types import HookEvent as CcHookEvent
 
 _TMUX_MISSING = shutil.which("tmux") is None
 if _TMUX_MISSING and "CI" in os.environ:
@@ -72,10 +73,7 @@ def sandbox(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> Sandbox:
 
 
 async def collect_response(client: ClaudeSDKClient) -> list[tp.Any]:
-    messages = []
-    async for message in client.receive_response():
-        messages.append(message)
-    return messages
+    return [message async for message in client.receive_response()]
 
 
 async def collect_with_timeout(client: ClaudeSDKClient) -> list[tp.Any]:
@@ -380,7 +378,7 @@ async def test_startup_failure_cleans_up_all_resources(sandbox: Sandbox, monkeyp
     assert "startup failure requested" in str(exc_info.value), "stderr tail must be included"
 
     assert not client._workdir.exists(), "temp workdir leaked"
-    assert not pathlib.Path(client._sock_path).exists(), "bridge socket leaked"
+    assert not await asyncio.to_thread(pathlib.Path(client._sock_path).exists), "bridge socket leaked"
     assert not await cc_tmux.has_session(client._tmux_socket, client._tmux_session), "tmux server leaked"
 
 
@@ -428,7 +426,7 @@ async def test_cli_args_carry_options(sandbox: Sandbox) -> None:
         assert argv[argv.index("--setting-sources") + 1] == "user,project"
         assert argv[argv.index("--betas") + 1] == "context-1m-2025-08-07"
         sysprompt_file = pathlib.Path(argv[argv.index("--system-prompt-file") + 1])
-        assert sysprompt_file.read_text() == "THE SYSTEM PROMPT"
+        assert await asyncio.to_thread(sysprompt_file.read_text) == "THE SYSTEM PROMPT"
         assert argv[argv.index("--session-id") + 1] == client.session_id
 
 
@@ -466,8 +464,10 @@ async def test_all_core_hook_events_reach_bridge(sandbox: Sandbox) -> None:
         return HookMatcher(matcher="*", hooks=[cb])
 
     # core.sdk_parsing is typed against the official claude_agent_sdk HookEvent set (a superset of
-    # cc_sdk's), so feeding its event keys into cc_sdk's ClaudeAgentOptions is a type-only seam.
-    options = ClaudeAgentOptions(cwd=str(sandbox.cwd), hooks={event: [matcher_for(event)] for event in core_events})  # ty: ignore[invalid-argument-type]
+    # cc_sdk's), so feeding its event keys into cc_sdk's ClaudeAgentOptions is a type-only seam:
+    # narrow the keys to cc_sdk's HookEvent literal via the cast below.
+    hooks = tp.cast("dict[CcHookEvent, list[HookMatcher]]", {event: [matcher_for(event)] for event in core_events})
+    options = ClaudeAgentOptions(cwd=str(sandbox.cwd), hooks=hooks)
     # Representative payloads for the fields core's callbacks actually read.
     extras = {
         "PostToolUseFailure": {"tool_name": "Bash", "error": "boom"},

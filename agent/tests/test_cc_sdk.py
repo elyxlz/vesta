@@ -18,7 +18,7 @@ from core.cc_sdk.transcript import assistant_message_from, read_new_objects
 def test_forward_helper_runs_standalone_by_path():
     """_forward.py is stdlib-only and is launched by absolute path with PYTHONSAFEPATH=1;
     cc_sdk/types.py must not shadow stdlib `types`. With <2 args it prints {} and exits 0."""
-    proc = subprocess.run([sys.executable, str(_FORWARD)], env={"PYTHONSAFEPATH": "1"}, capture_output=True, text=True, timeout=20)
+    proc = subprocess.run([sys.executable, str(_FORWARD)], env={"PYTHONSAFEPATH": "1"}, capture_output=True, text=True, timeout=20, check=False)
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout == "{}"
     assert "Traceback" not in proc.stderr
@@ -34,6 +34,7 @@ def test_mcp_stdio_helper_initializes_by_path():
         capture_output=True,
         text=True,
         timeout=20,
+        check=False,
     )
     assert proc.returncode == 0, proc.stderr
     reply = json.loads(proc.stdout.splitlines()[0])

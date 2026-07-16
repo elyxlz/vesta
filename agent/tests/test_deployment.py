@@ -123,7 +123,8 @@ def test_no_em_or_en_dashes_in_prompt_and_skill_files():
 
 
 def test_no_space_dash_space_separator_in_prose():
-    """Prose lines must not use ' - ' as a separator (em-dash substitute). Allowed in code blocks, headings, CLI comments, and markdown tables."""
+    """Prose lines must not use ' - ' as a separator (em-dash substitute). Allowed in code blocks,
+    headings, CLI comments, and markdown tables."""
     agent_root = Path(__file__).resolve().parent.parent
 
     md_globs = [

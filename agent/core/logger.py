@@ -6,6 +6,7 @@ import pathlib as pl
 import re
 import sys
 import typing as tp
+from logging.handlers import RotatingFileHandler
 
 from rich.console import Console
 from rich.logging import RichHandler
@@ -31,12 +32,14 @@ _console_handler.setFormatter(logging.Formatter("%(message)s"))
 _console_handler.setLevel(logging.INFO)
 _logger.addHandler(_console_handler)
 
-_file_handler: logging.Handler | None = None
+
+def _file_handlers() -> list[RotatingFileHandler]:
+    # The file handler's one owner is _logger.handlers (where setup registers it); deriving it
+    # avoids a second, module-level copy of the same state.
+    return [handler for handler in _logger.handlers if isinstance(handler, RotatingFileHandler)]
 
 
 def setup(logs_dir: pl.Path, *, log_level: str = "INFO") -> None:
-    global _file_handler
-
     logs_dir.mkdir(parents=True, exist_ok=True)
     log_file = logs_dir / "vesta.log"
 
@@ -45,16 +48,14 @@ def setup(logs_dir: pl.Path, *, log_level: str = "INFO") -> None:
     _logger.setLevel(level)
     _console_handler.setLevel(level)
 
-    if _file_handler:
-        _logger.removeHandler(_file_handler)
-        _file_handler.close()
+    for stale in _file_handlers():
+        _logger.removeHandler(stale)
+        stale.close()
 
-    from logging.handlers import RotatingFileHandler
-
-    _file_handler = RotatingFileHandler(log_file, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8")
-    _file_handler.setLevel(logging.DEBUG)
-    _file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
-    _logger.addHandler(_file_handler)
+    file_handler = RotatingFileHandler(log_file, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+    _logger.addHandler(file_handler)
 
 
 def _strip_markup(msg: str) -> str:
@@ -67,9 +68,9 @@ def _log(msg: str, *, level: int = logging.INFO) -> None:
     with contextlib.suppress(BlockingIOError):
         sys.stdout.flush()
 
-    if _file_handler:
+    for file_handler in _file_handlers():
         clean_record = _logger.makeRecord(_logger.name, level, "", 0, _strip_markup(msg), (), None)
-        _file_handler.emit(clean_record)
+        file_handler.emit(clean_record)
 
 
 def _system_phase(phase: str, msg: tp.Any, *, level: int = logging.INFO) -> None:

@@ -18,7 +18,6 @@ session_id / async context manager) matches what core/ already calls.
 import asyncio
 import contextlib
 import json
-import os
 import pathlib as pl
 import shlex
 import shutil
@@ -55,7 +54,7 @@ _ALWAYS_EVENTS = ("SessionStart", "Stop", "PreCompact")
 
 def _preseed_config(cwd: str) -> None:
     """Make a fresh interactive session skip onboarding and the workspace trust dialog."""
-    path = pl.Path(os.path.expanduser("~/.claude.json"))
+    path = pl.Path("~/.claude.json").expanduser()
     data: dict[str, tp.Any] = {}
     if path.exists():
         try:
@@ -123,7 +122,7 @@ class ClaudeSDKClient:
         self._options = options
         self._session_id = options.resume or str(uuid.uuid4())
         self._resuming = bool(options.resume)
-        self._cwd = str(pl.Path(options.cwd).expanduser().resolve()) if options.cwd else os.getcwd()
+        self._cwd = str(pl.Path(options.cwd).expanduser().resolve()) if options.cwd else str(pl.Path.cwd())
         suffix = self._session_id.replace("-", "")[:12]
         self._tmux_socket = f"ccsdk_{suffix}"
         self._tmux_session = f"cc_{suffix}"
@@ -206,7 +205,7 @@ class ClaudeSDKClient:
             self._workdir.rmdir()
 
     def _find_transcript(self) -> pl.Path | None:
-        base = pl.Path(os.path.expanduser("~/.claude/projects"))
+        base = pl.Path("~/.claude/projects").expanduser()
         matches = sorted(base.glob(f"*/{self._session_id}.jsonl"))
         return matches[0] if matches else None
 
@@ -328,13 +327,13 @@ class ClaudeSDKClient:
                 self._transcript_path = pl.Path(payload["transcript_path"])
             self._ready.set()
 
-        async def on_stop(payload: dict[str, tp.Any]) -> None:
+        async def on_stop(_payload: dict[str, tp.Any]) -> None:
             # Clamp to turn_index: interrupt() already credits stops_received up to turn_index
             # when it fires, so a late Stop that arrives in the 50-200ms window after interrupt()
             # must not increment past the current turn's threshold and pre-satisfy the next turn.
             self._stops_received = min(self._stops_received + 1, self._turn_index)
 
-        async def on_precompact(payload: dict[str, tp.Any]) -> None:
+        async def on_precompact(_payload: dict[str, tp.Any]) -> None:
             self._compaction_started.set()
 
         self._bridge.on("SessionStart", on_session_start)

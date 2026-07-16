@@ -371,7 +371,7 @@ async def start_cache_proxy(config: VestaConfig, state: State) -> None:
                 models.append(OPENROUTER_SMALL_FAST_MODEL)
             # Probe models concurrently so boot isn't serialized across them.
             resolved = await asyncio.gather(*(_resolve_provider(client, model, key) for model in models))
-            providers = dict(zip(models, resolved))
+            providers = dict(zip(models, resolved, strict=True))
 
         app = web.Application()
         app["providers"] = providers

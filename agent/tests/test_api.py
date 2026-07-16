@@ -294,7 +294,8 @@ async def test_memory_put_writes_atomically(tmp_path):
     config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
 
     class _Req:
-        app = {"config": config}
+        def __init__(self) -> None:
+            self.app = {"config": config}
 
         async def json(self):
             return {"content": "remember me"}
@@ -431,7 +432,8 @@ async def test_config_put_rejects_a_provider_key(config):
     from core.api import _config_put_handler
 
     class _Req:
-        app = {"config": config}
+        def __init__(self) -> None:
+            self.app = {"config": config}
 
         async def json(self):
             return {"provider": {"model": "opus"}}
@@ -450,13 +452,14 @@ async def test_provider_put_signs_in_then_delete_signs_out(config, monkeypatch):
     signed_in = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
     signed_out = ProviderStatus(state=ProviderAuthState.NOT_AUTHENTICATED, kind="none", model=None)
     monkeypatch.setattr(api_mod, "set_claude", lambda creds, model, ctx, *, config: signed_in)
-    monkeypatch.setattr(api_mod, "clear_provider", lambda *, config: signed_out)
+    monkeypatch.setattr(api_mod, "clear_provider", lambda: signed_out)
 
     state = vm.State()
     state.provider_status = signed_out
 
     class _PutReq:
-        app = {"state": state, "config": config}
+        def __init__(self) -> None:
+            self.app = {"state": state, "config": config}
 
         async def json(self):
             return {"kind": "claude", "model": "opus", "credentials": "{}"}
@@ -466,7 +469,8 @@ async def test_provider_put_signs_in_then_delete_signs_out(config, monkeypatch):
     assert state.provider_status is signed_in
 
     class _DelReq:
-        app = {"state": state, "config": config}
+        def __init__(self) -> None:
+            self.app = {"state": state, "config": config}
 
     del_resp = await api_mod._provider_delete_handler(typing.cast("web.Request", _DelReq()))
     assert del_resp.status == 200
@@ -489,7 +493,8 @@ async def test_status_reports_readiness_separate_from_provider(config):
     state.persisted.first_start_done = True
 
     class _Req:
-        app = {"state": state, "config": config}
+        def __init__(self) -> None:
+            self.app = {"state": state, "config": config}
 
     status_resp = await api_mod._status_handler(typing.cast("web.Request", _Req()))
     assert json.loads(typing.cast("str", status_resp.text)) == {"authed": True, "provider_configured": True, "setup_complete": True}
@@ -514,7 +519,8 @@ async def test_provider_get_surfaces_claude_plan_tier():
     state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
 
     class _Req:
-        app = {"state": state, "config": config}
+        def __init__(self) -> None:
+            self.app = {"state": state, "config": config}
 
     resp = await api_mod._provider_get_handler(typing.cast("web.Request", _Req()))
     body = json.loads(typing.cast("str", resp.text))
@@ -532,7 +538,8 @@ async def test_status_reports_unprovisioned_distinct_from_unauthenticated(config
     state.provider_status = ProviderStatus(state=ProviderAuthState.NOT_AUTHENTICATED, kind="none", model=None)
 
     class _Req:
-        app = {"state": state, "config": config}
+        def __init__(self) -> None:
+            self.app = {"state": state, "config": config}
 
     status_resp = await api_mod._status_handler(typing.cast("web.Request", _Req()))
     assert json.loads(typing.cast("str", status_resp.text)) == {"authed": False, "provider_configured": False, "setup_complete": False}

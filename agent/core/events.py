@@ -8,6 +8,8 @@ import pathlib as pl
 import sqlite3
 import typing as tp
 
+from . import logger as vesta_logger
+
 logger = logging.getLogger("vesta.events")
 
 EVENTS_DB_FILENAME = "events.db"
@@ -230,8 +232,6 @@ _MIGRATIONS: tuple[tuple[int, tp.Callable[[sqlite3.Connection], None]], ...] = (
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
-    from . import logger
-
     current = conn.execute("PRAGMA user_version").fetchone()[0]
     for version, step in _MIGRATIONS:
         if current >= version:
@@ -239,7 +239,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         step(conn)
         conn.execute(f"PRAGMA user_version = {version}")
         conn.commit()
-        logger.startup(f"events.db migrated to schema version {version}")
+        vesta_logger.startup(f"events.db migrated to schema version {version}")
         current = version
 
 
@@ -276,8 +276,6 @@ class EventBus:
         self._conn: sqlite3.Connection | None = None
         self._db_path: pl.Path | None = None
         if data_dir:
-            from . import logger
-
             data_dir.mkdir(parents=True, exist_ok=True)
             self._db_path = data_dir / EVENTS_DB_FILENAME
             try:
@@ -290,7 +288,7 @@ class EventBus:
                     raise
                 # A corrupt db must not crash-loop the container: quarantine it and boot with
                 # empty history rather than burning Docker's on-failure restarts.
-                logger.error(f"events.db corrupt ({e}), quarantining and starting fresh")
+                vesta_logger.error(f"events.db corrupt ({e}), quarantining and starting fresh")
                 _quarantine(self._db_path)
                 self._conn = _open(self._db_path)
 
@@ -357,9 +355,7 @@ class EventBus:
         if state == self._state:
             return
         self._state = state
-        from . import logger
-
-        logger.system(f"state → {state}")
+        vesta_logger.system(f"state → {state}")
         self.emit(StatusEvent(type="status", state=state))
 
     def _page(self, conditions: tuple[str, ...], params: tuple[object, ...], limit: int) -> tuple[list[StreamEvent], int | None]:

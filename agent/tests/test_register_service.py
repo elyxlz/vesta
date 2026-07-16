@@ -56,7 +56,7 @@ def _run(port, tmp_path, wait="2"):
         "REGISTER_SERVICE_WAIT": wait,
         "HOME": str(tmp_path),
     }
-    return subprocess.run(["bash", str(SCRIPT), "tasks"], env=env, capture_output=True, text=True, timeout=30)
+    return subprocess.run(["bash", str(SCRIPT), "tasks"], env=env, capture_output=True, text=True, timeout=30, check=False)
 
 
 class _PortHandler(http.server.BaseHTTPRequestHandler):
@@ -72,7 +72,7 @@ class _PortHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, format, *args):
+    def log_message(self, *_args: object, **_kwargs: object) -> None:
         pass
 
 
@@ -126,5 +126,6 @@ def test_caller_and_chain_short_circuits_on_failure(tmp_path):
         capture_output=True,
         text=True,
         timeout=30,
+        check=False,
     )
     assert "STARTED" not in result.stdout

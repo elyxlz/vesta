@@ -1,6 +1,5 @@
 """Tests for EventBus: emit, persist, pagination, search, lifecycle, schema migration."""
 
-import os
 import sqlite3
 import typing as tp
 
@@ -380,14 +379,14 @@ def test_transient_open_error_propagates_without_quarantine(tmp_path):
     bus.close()
     original_bytes = db_path.read_bytes()
 
-    os.chmod(db_path, 0o444)
-    os.chmod(tmp_path, 0o555)
+    db_path.chmod(0o444)
+    tmp_path.chmod(0o555)
     try:
         with pytest.raises(sqlite3.OperationalError):
             EventBus(data_dir=tmp_path)
     finally:
-        os.chmod(tmp_path, 0o755)
-        os.chmod(db_path, 0o644)
+        tmp_path.chmod(0o755)
+        db_path.chmod(0o644)
 
     assert db_path.read_bytes() == original_bytes
     assert list(tmp_path.glob("events.db.corrupt-*")) == []

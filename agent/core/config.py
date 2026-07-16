@@ -8,7 +8,7 @@ import uuid
 
 import pydantic as pyd
 import pydantic_settings as pyd_settings
-from claude_agent_sdk.types import ThinkingConfigAdaptive, ThinkingConfigDisabled, ThinkingConfigEnabled
+from claude_agent_sdk.types import SdkBeta, ThinkingConfigAdaptive, ThinkingConfigDisabled, ThinkingConfigEnabled
 
 from core import logger
 
@@ -65,7 +65,7 @@ _DEFAULT_CLAUDE_MODEL = _manifest_default("providers", "claude", "default_model"
 DEFAULT_CONTEXT_WINDOW = 200_000
 
 # The 1M-context beta. build_client_options enables it when the chosen window exceeds the 200k default.
-CONTEXT_1M_BETA = "context-1m-2025-08-07"
+CONTEXT_1M_BETA: SdkBeta = "context-1m-2025-08-07"
 
 # Per-provider context bounds enforced by the Field constraints (the catalog's presets live in the manifest).
 _CTX_MIN = 1_000
@@ -113,7 +113,7 @@ def atomic_write_text(path: pl.Path, text: str) -> None:
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(tmp_name, path)
+        pl.Path(tmp_name).replace(path)
     finally:
         pl.Path(tmp_name).unlink(missing_ok=True)  # no-op after a successful replace; removes the orphan on failure
     dir_fd = os.open(path.parent, os.O_RDONLY)
@@ -169,17 +169,18 @@ def load_notification_rules() -> list[NotificationInterruptRule]:
 
 
 class ClaudeOAuth(pyd.BaseModel):
-    """Mirrors the `claudeAiOauth` blob in the SDK credentials file. Tolerates extra keys: the `claude`
-    CLI owns the file and adds fields we don't model. Loaded at boot, never persisted to the store."""
+    """Mirrors the `claudeAiOauth` blob in the SDK credentials file (aliases carry the on-disk
+    camelCase). Tolerates extra keys: the `claude` CLI owns the file and adds fields we don't model.
+    Loaded at boot, never persisted to the store."""
 
-    model_config = pyd.ConfigDict(extra="allow")
+    model_config = pyd.ConfigDict(extra="allow", populate_by_name=True, serialize_by_alias=True)
 
-    accessToken: str | None = None  # noqa: N815  (mirrors the on-disk camelCase verbatim)
-    refreshToken: str | None = None  # noqa: N815
-    expiresAt: int | None = None  # noqa: N815
+    access_token: str | None = pyd.Field(default=None, alias="accessToken")
+    refresh_token: str | None = pyd.Field(default=None, alias="refreshToken")
+    expires_at: int | None = pyd.Field(default=None, alias="expiresAt")
     # The plan tier ("free" | "pro" | "max"); drives the context-window presets the picker offers,
     # since the 1M-context beta is a Max-only entitlement.
-    subscriptionType: str | None = None  # noqa: N815
+    subscription_type: str | None = pyd.Field(default=None, alias="subscriptionType")
 
 
 def read_claude_oauth() -> "ClaudeOAuth | None":
