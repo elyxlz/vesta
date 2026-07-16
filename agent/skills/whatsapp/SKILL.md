@@ -23,6 +23,13 @@ whatsapp send --to 'Name' --message 'reply text' --reply-to '<message_id>'
 ```
 The `--reply-to` flag quotes the referenced message in WhatsApp's native reply UI. The message ID can be found in incoming notification payloads (`message_id` field) or `list-messages` output.
 
+## Edited and deleted messages
+
+People change their minds after they hit send, so a message you already read can change or vanish:
+
+- **An edit** arrives as an `edit` notification naming the message that changed (`target_message_id`), the text you last saw (`old_text`), and what it says now (`new_text`). The stored message is rewritten, so `list-messages` and search show only the new text. Answer again only if the edit asks something new: a fixed typo needs nothing from you.
+- **A deletion** (delete-for-everyone) arrives as a `revoke` notification with the text you last saw in `old_text`. They took it back, so treat it as unsaid and do not quote it at them.
+
 ## Voice calls
 
 You can hold a live voice call over WhatsApp, in your own voice (the `voice` skill's TTS), and hear the other person (the same skill's STT):

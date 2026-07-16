@@ -46,6 +46,26 @@ type reactionNotif struct {
 	ContactUnknown  bool   `json:"contact_unknown,omitempty"`
 }
 
+// WhatsApp delivers an edit and a delete-for-everyone as a ProtocolMessage pointing at
+// the original message rather than as new text, so both carry the target's ID plus the
+// content as the agent last saw it. `edit` also carries the replacement text; `revoke`
+// carries none, because the message is gone.
+type editNotif struct {
+	Source          string `json:"source"`
+	Type            string `json:"type"`
+	Instance        string `json:"instance,omitempty"`
+	ContactName     string `json:"contact_name,omitempty"`
+	Sender          string `json:"sender,omitempty"`
+	ChatName        string `json:"chat_name,omitempty"`
+	ContactPhone    string `json:"contact_phone,omitempty"`
+	OldText         string `json:"old_text,omitempty"`
+	NewText         string `json:"new_text,omitempty"`
+	Timestamp       string `json:"timestamp"`
+	TargetMessageID string `json:"target_message_id"`
+	ContactUnknown  bool   `json:"contact_unknown,omitempty"`
+	ReplyHint       string `json:"reply_hint,omitempty"`
+}
+
 type authNotif struct {
 	Source    string `json:"source"`
 	Type      string `json:"type"`
@@ -141,6 +161,53 @@ func WriteReactionNotification(
 		}
 	}
 	return writeNotificationFile(ctx.NotifDir, n, "reaction")
+}
+
+// applyChatContext mirrors the group-chat handling the message and reaction writers do:
+// name the chat, and name the sender unless it is just the chat's own JID.
+func (n *editNotif) applyChatContext(ctx NotifContext) {
+	if ctx.IsDirectChat {
+		return
+	}
+	n.ChatName = ctx.ChatName
+	if ctx.Sender != ctx.ChatName {
+		n.Sender = ctx.Sender
+	}
+}
+
+func WriteEditNotification(ctx NotifContext, targetMessageID, oldText, newText string) error {
+	n := editNotif{
+		Source:          "whatsapp",
+		Type:            "edit",
+		Instance:        ctx.Instance,
+		ContactName:     ctx.ContactName,
+		ContactPhone:    ctx.ContactPhone,
+		OldText:         oldText,
+		NewText:         newText,
+		Timestamp:       time.Now().Format(time.RFC3339),
+		TargetMessageID: targetMessageID,
+		ContactUnknown:  !ctx.ContactSaved,
+		ReplyHint:       "they changed a message you may have already answered; reply with `whatsapp send` only if the change asks something new",
+	}
+	n.applyChatContext(ctx)
+	return writeNotificationFile(ctx.NotifDir, n, "edit")
+}
+
+func WriteRevokeNotification(ctx NotifContext, targetMessageID, oldText string) error {
+	n := editNotif{
+		Source:          "whatsapp",
+		Type:            "revoke",
+		Instance:        ctx.Instance,
+		ContactName:     ctx.ContactName,
+		ContactPhone:    ctx.ContactPhone,
+		OldText:         oldText,
+		Timestamp:       time.Now().Format(time.RFC3339),
+		TargetMessageID: targetMessageID,
+		ContactUnknown:  !ctx.ContactSaved,
+		ReplyHint:       "they deleted this message, so treat it as unsaid and do not quote it back to them",
+	}
+	n.applyChatContext(ctx)
+	return writeNotificationFile(ctx.NotifDir, n, "revoke")
 }
 
 func writeCallNotification(notifDir, instance string, n callNotif) error {
