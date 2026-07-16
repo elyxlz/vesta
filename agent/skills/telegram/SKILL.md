@@ -23,6 +23,10 @@ telegram send-file --to "<contact_name>" --file-path /path/to/document.pdf
 telegram send-voice --to "<contact_name>" --file-path /path/to/note.ogg
 ```
 
+## Edited messages
+
+People change their minds after they hit send, so a message you already read can change. An edit arrives as an `edit` notification naming the message that changed (`target_message_id`), the text you last saw (`old_text`), and what it says now (`new_text`). The stored message is rewritten, so `list-messages` and search show only the new text. Answer again only if the edit asks something new: a fixed typo needs nothing from you. Deletions are invisible here, Telegram never tells a bot that a message was deleted.
+
 ## Interactive UI (inline buttons + callbacks)
 
 Send tappable buttons, get notified when the owner taps, then answer the tap and/or edit the
