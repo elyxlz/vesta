@@ -95,6 +95,17 @@ type callNotif struct {
 	Timestamp    string `json:"timestamp"`
 }
 
+// notifPhone is the number to name in a notification, and only an unsaved contact gets one.
+// For a saved contact the name is what `whatsapp send --to` takes, so carrying the number too
+// just restates the name on every notification; when a name is ambiguous, send's own error
+// lists the candidates with their numbers.
+func notifPhone(ctx NotifContext) string {
+	if ctx.ContactSaved {
+		return ""
+	}
+	return ctx.ContactPhone
+}
+
 func writeNotificationFile(notifDir string, data any, notifType string) error {
 	if notifDir == "" {
 		return nil
@@ -121,7 +132,7 @@ func WriteNotification(
 		Instance:        ctx.Instance,
 		ContactName:     ctx.ContactName,
 		Message:         content,
-		ContactPhone:    ctx.ContactPhone,
+		ContactPhone:    notifPhone(ctx),
 		MediaType:       mediaType,
 		IsForwarded:     isForwarded,
 		QuotedMessageID: quotedMessageID,
@@ -152,7 +163,7 @@ func WriteReactionNotification(
 		Instance:        ctx.Instance,
 		ContactName:     ctx.ContactName,
 		Emoji:           emoji,
-		ContactPhone:    ctx.ContactPhone,
+		ContactPhone:    notifPhone(ctx),
 		IsRemoved:       isRemoved,
 		Timestamp:       time.Now().Format(time.RFC3339),
 		TargetMessageID: targetMessageID,
