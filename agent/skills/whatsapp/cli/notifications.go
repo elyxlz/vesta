@@ -54,16 +54,13 @@ type authNotif struct {
 	Timestamp string `json:"timestamp"`
 }
 
-// A live voice call surfaces to the agent as whatsapp notifications, so it reaches the model
-// through the same interrupt-driven flow as a text message. `call_started` wakes the model on an
-// inbound call it should greet; `call_utterance` delivers each thing the caller says (it drives
-// the back-and-forth, and interrupts like any whatsapp message so the model answers live);
-// `call_ended` closes the loop; `call_missed` reports a call that could not be answered.
-//
-// What the caller said goes in `message`, the same key a text message uses, so core renders it as
-// the notification's body rather than as one more attribute: spoken words are the content of a
-// call_utterance exactly as typed words are the content of a message. `type` already says it
-// arrived as speech.
+// A live voice call surfaces to the agent as whatsapp notifications, reaching the model through the
+// same interrupt-driven flow as a text message. `call_started` wakes the model on an inbound call it
+// should greet; `call_utterance` delivers each thing the caller says (interrupting live like any
+// whatsapp message); `call_ended` closes the loop; `call_missed` reports an unanswered call.
+// What the caller said goes in `message`, the same key a text message uses, so core renders it as the
+// notification's body rather than one more attribute: spoken words are the content of a call_utterance
+// exactly as typed words are the content of a message. `type` already says it arrived as speech.
 type callNotif struct {
 	Source       string `json:"source"`
 	Type         string `json:"type"`
