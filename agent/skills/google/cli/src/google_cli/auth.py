@@ -65,7 +65,7 @@ def run_local_server_flow(credentials_file: Path, scopes: list[str], token_file:
     return creds
 
 
-def get_credentials(token_file: Path, credentials_file: Path, scopes: list[str]) -> Credentials:
+def get_credentials(token_file: Path, scopes: list[str]) -> Credentials:
     if not token_file.exists():
         raise ValueError("Not authenticated. Run 'google auth login' first.")
 
@@ -78,7 +78,7 @@ def get_credentials(token_file: Path, credentials_file: Path, scopes: list[str])
         try:
             creds.refresh(Request())
         except RefreshError as e:
-            raise ValueError(f"{REFRESH_FAILED_MESSAGE} (details: {e})")
+            raise ValueError(f"{REFRESH_FAILED_MESSAGE} (details: {e})") from e
         _save_token(token_file, creds)
         return creds
 
@@ -125,7 +125,7 @@ def _load_token(token_file: Path, scopes: list[str]) -> Credentials:
     )
     # Restore expiry so creds.expired / creds.valid reflect reality. google-auth
     # uses a naive UTC datetime here.
-    expiry = data.get("expiry")
+    expiry = data["expiry"] if "expiry" in data else None
     if expiry:
         try:
             dt = datetime.fromisoformat(expiry)

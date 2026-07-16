@@ -12,20 +12,18 @@ invalidate on navigation exactly as the CDP backend-node ids did.
 
 from __future__ import annotations
 
+import functools
 import json
 from pathlib import Path
 
 from .admin import send
 
 _BUNDLE_PATH = Path(__file__).parent / "vendor" / "snapshot_accname.js"
-_bundle_src = ""
 
 
+@functools.cache
 def _bundle() -> str:
-    global _bundle_src
-    if not _bundle_src:
-        _bundle_src = _BUNDLE_PATH.read_text()
-    return _bundle_src
+    return _BUNDLE_PATH.read_text()
 
 
 def _eval_json(expression: str):
@@ -51,7 +49,6 @@ def _current_context() -> str:
 
 def snapshot(
     interactive_only: bool = False,
-    compact: bool = False,
     max_depth: int = 50,
 ) -> dict:
     """Take a new accessibility snapshot. Returns {text, refs, target_id, url, title}."""

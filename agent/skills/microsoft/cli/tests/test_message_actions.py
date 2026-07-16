@@ -3,6 +3,7 @@
 import pytest
 from microsoft_cli import email
 from microsoft_cli.config import Config
+from microsoft_cli.payloads import MailDraft
 
 _FOLDERS_PAGE = {
     "value": [
@@ -18,7 +19,7 @@ def patched(monkeypatch):
     def fake_account_id(account_email, cache_file):
         return "acct-1"
 
-    def fake_request(client, cache_file, scopes, base_url, method, path, account_id=None, **kwargs):
+    def fake_request(conn, method, path, account_id=None, **kwargs):
         calls.append({"method": method, "path": path, "json": kwargs["json"] if "json" in kwargs else None})
         if method == "GET" and path == "/me/mailFolders":
             return _FOLDERS_PAGE
@@ -34,7 +35,7 @@ def patched(monkeypatch):
 
 
 def test_forward_plain_uses_forward_action(patched):
-    result = email.forward_email(Config(), None, account_email="me@example.com", email_id="m1", to=["bob@x.com"], body="fyi")
+    result = email.forward_email(Config(), None, account_email="me@example.com", email_id="m1", mail=MailDraft(to=["bob@x.com"], body="fyi"))
     assert result == {"status": "sent"}
     assert len(patched) == 1
     assert patched[0]["path"] == "/me/messages/m1/forward"
@@ -42,7 +43,9 @@ def test_forward_plain_uses_forward_action(patched):
 
 
 def test_forward_with_cc_uses_draft_path(patched):
-    result = email.forward_email(Config(), None, account_email="me@example.com", email_id="m1", to=["bob@x.com"], body="fyi", cc=["cc@x.com"])
+    result = email.forward_email(
+        Config(), None, account_email="me@example.com", email_id="m1", mail=MailDraft(to=["bob@x.com"], body="fyi", cc=["cc@x.com"])
+    )
     assert result == {"status": "sent"}
     paths = [c["path"] for c in patched]
     assert paths == ["/me/messages/m1/createForward", "/me/messages/draft-1", "/me/messages/draft-1/send"]
@@ -53,7 +56,7 @@ def test_forward_with_cc_uses_draft_path(patched):
 
 def test_forward_requires_to(patched):
     with pytest.raises(ValueError, match="--to is required"):
-        email.forward_email(Config(), None, account_email="me@example.com", email_id="m1", to=[])
+        email.forward_email(Config(), None, account_email="me@example.com", email_id="m1", mail=MailDraft(to=[]))
 
 
 def test_move_to_wellknown_folder(patched):

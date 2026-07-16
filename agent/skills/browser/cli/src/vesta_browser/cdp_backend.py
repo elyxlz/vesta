@@ -17,6 +17,7 @@ explicitly handed over, so enabling the CDP domains is fine.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 
 import websockets
@@ -149,15 +150,14 @@ class CdpBackend:
         try:
             attach = await self._cdp.send("Target.attachToTarget", {"targetId": target_id, "flatten": True})
         except BidiError as e:
-            raise BidiError("no such frame", e.message)
+            raise BidiError("no such frame", e.message) from e
         session_id = attach["sessionId"]
         self._sessions[target_id] = session_id
         self._session_targets[session_id] = target_id
         for domain in _DOMAINS:
-            try:
+            # A domain a given target lacks must not abort the attach.
+            with contextlib.suppress(BidiError):
                 await self._cdp.send(f"{domain}.enable", {}, session_id)
-            except BidiError:
-                pass  # a domain a given target lacks must not abort the attach
         return session_id
 
     # ── BiDi -> CDP command translation ───────────────────────
@@ -169,13 +169,13 @@ class CdpBackend:
             raise BidiError("unsupported operation", f"{method} is not supported over the CDP backend")
         return await handler(self, params)
 
-    async def _op_session_new(self, params: dict) -> dict:
+    async def _op_session_new(self, _params: dict) -> dict:
         return {"sessionId": "cdp", "capabilities": {"browserName": "chrome"}}
 
-    async def _op_subscribe(self, params: dict) -> dict:
+    async def _op_subscribe(self, _params: dict) -> dict:
         return {}  # domains are enabled per target on attach
 
-    async def _op_get_tree(self, params: dict) -> dict:
+    async def _op_get_tree(self, _params: dict) -> dict:
         targets = (await self._cdp.send("Target.getTargets"))["targetInfos"]
         contexts = [{"context": t["targetId"], "url": t["url"] if "url" in t else "", "children": []} for t in targets if t["type"] == "page"]
         return {"contexts": contexts}
@@ -203,7 +203,7 @@ class CdpBackend:
             await self._cdp.send("Page.navigateToHistoryEntry", {"entryId": entries[index]["id"]}, session_id)
         return {}
 
-    async def _op_create(self, params: dict) -> dict:
+    async def _op_create(self, _params: dict) -> dict:
         created = await self._cdp.send("Target.createTarget", {"url": "about:blank"})
         return {"context": created["targetId"]}
 

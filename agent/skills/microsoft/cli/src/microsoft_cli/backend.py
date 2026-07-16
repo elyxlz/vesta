@@ -29,13 +29,13 @@ AUTO, GRAPH, OWA_REST = "auto", "graph", "owa-rest"
 _PERMISSION_STATUSES = (401, 402, 403)
 
 
-class GraphUnavailable(Exception):
+class GraphUnavailableError(Exception):
     """Raised when a Graph token cannot be acquired, signalling the dispatcher to
     fall back to the OWA REST path."""
 
 
 def _is_permission_failure(exc: Exception) -> bool:
-    if isinstance(exc, (PermissionError, GraphUnavailable)):
+    if isinstance(exc, (PermissionError, GraphUnavailableError)):
         return True
     return bool(isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in _PERMISSION_STATUSES)
 

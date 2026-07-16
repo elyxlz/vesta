@@ -26,8 +26,7 @@ def _flatten(raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for folder in raw:
         out.append(_project(folder))
-        for child in folder["childFolders"] if "childFolders" in folder else []:
-            out.append(_project(child))
+        out.extend(_project(child) for child in (folder["childFolders"] if "childFolders" in folder else []))
     return out
 
 
@@ -39,10 +38,7 @@ def fetch_folders(
     account_id: str,
 ) -> list[dict[str, Any]]:
     result = graph.request(
-        client,
-        cache_file,
-        scopes,
-        base_url,
+        graph.GraphConn(client, cache_file, scopes, base_url),
         "GET",
         "/me/mailFolders",
         account_id,

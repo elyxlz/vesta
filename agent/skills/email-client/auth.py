@@ -28,6 +28,7 @@ import getpass
 import http.server
 import json
 import os
+import pathlib
 import secrets
 import socket
 import sys
@@ -36,7 +37,7 @@ import time
 import urllib.parse
 import urllib.request
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from imap_client import (
     _env,
     _token_path,
@@ -108,7 +109,7 @@ class _RedirectHandler(http.server.BaseHTTPRequestHandler):
         )
         self.wfile.write(body.encode())
 
-    def log_message(self, *a, **kw):  # silence default access log
+    def log_message(self, *_a, **_kw):  # silence default access log
         return
 
 
@@ -216,7 +217,7 @@ def auth_app_password(provider: str, profile: dict, user: str) -> dict:
     }
 
 
-def _resolve_user(provider: str | None, user: str | None) -> str:
+def _resolve_user(user: str | None) -> str:
     if user:
         return user
     env_user = _env("EMAIL_CLIENT_USER")
@@ -253,7 +254,7 @@ def run_add(
     the top-level ``accounts.json`` index.
     """
     account_dir(account)
-    user = _resolve_user(provider, user)
+    user = _resolve_user(user)
     name, profile = _resolve_named_provider(provider, user)
 
     token_path = _token_path(account)

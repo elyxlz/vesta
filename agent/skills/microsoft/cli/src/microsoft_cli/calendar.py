@@ -8,13 +8,14 @@ import httpx
 
 from . import auth, graph
 from .config import Config
+from .payloads import EventFields, EventPatch
 
 
 def _validate_timezone(timezone: str) -> None:
     try:
         ZoneInfo(timezone)
-    except (ZoneInfoNotFoundError, KeyError):
-        raise ValueError(f"Invalid timezone: '{timezone}'. Use IANA names like 'Europe/London' or 'America/New_York'.")
+    except (ZoneInfoNotFoundError, KeyError) as e:
+        raise ValueError(f"Invalid timezone: '{timezone}'. Use IANA names like 'Europe/London' or 'America/New_York'.") from e
 
 
 def _get_calendar_day_range(
@@ -131,37 +132,49 @@ def get_event(
     return result
 
 
-def create_event(
-    config: Config,
-    client: httpx.Client,
-    *,
-    account_email: str,
-    subject: str,
-    start: str,
-    end: str | None = None,
-    location: str | None = None,
-    body: str | None = None,
-    attendees: list[str] | None = None,
-    timezone: str,
-    calendar_name: str | None = None,
-    is_all_day: bool = False,
-    recurrence: str | None = None,
-    recurrence_end_date: str | None = None,
-) -> dict[str, Any]:
-    _validate_timezone(timezone)
+def _build_recurrence(recurrence: str, start_date: str, recurrence_end_date: str | None) -> dict[str, Any]:
+    parsed_date = dt.date.fromisoformat(start_date)
+
+    pattern: dict[str, Any] = {"interval": 1}
+    if recurrence == "daily":
+        pattern["type"] = "daily"
+    elif recurrence == "weekly":
+        pattern["type"] = "weekly"
+        pattern["daysOfWeek"] = [parsed_date.strftime("%A").lower()]
+    elif recurrence == "monthly":
+        pattern["type"] = "absoluteMonthly"
+        pattern["dayOfMonth"] = parsed_date.day
+    elif recurrence == "yearly":
+        pattern["type"] = "absoluteYearly"
+        pattern["dayOfMonth"] = parsed_date.day
+        pattern["month"] = parsed_date.month
+
+    recurrence_range: dict[str, Any] = {"startDate": start_date}
+    if recurrence_end_date:
+        recurrence_range["type"] = "endDate"
+        recurrence_range["endDate"] = recurrence_end_date
+    else:
+        recurrence_range["type"] = "noEnd"
+
+    return {"pattern": pattern, "range": recurrence_range}
+
+
+def create_event(config: Config, client: httpx.Client, *, account_email: str, event: EventFields) -> dict[str, Any]:
+    _validate_timezone(event.timezone)
     account_id = auth.get_account_id_by_email(account_email, config.cache_file)
 
-    calendar_id = _get_calendar_id_by_name(config, client, account_id, calendar_name) if calendar_name else None
+    calendar_id = _get_calendar_id_by_name(config, client, account_id, event.calendar_name) if event.calendar_name else None
 
+    start, end, timezone = event.start, event.end, event.timezone
     start_date = start.split("T", maxsplit=1)[0] if "T" in start else start
 
-    if is_all_day:
+    if event.is_all_day:
         end_date = end.split("T")[0] if end and "T" in end else (end or start_date)
         if end_date == start_date:
             end_dt = dt.date.fromisoformat(start_date) + dt.timedelta(days=1)
             end_date = end_dt.isoformat()
-        event: dict[str, Any] = {
-            "subject": subject,
+        payload: dict[str, Any] = {
+            "subject": event.subject,
             "isAllDay": True,
             "start": {"dateTime": start_date, "timeZone": timezone},
             "end": {"dateTime": end_date, "timeZone": timezone},
@@ -169,71 +182,35 @@ def create_event(
     else:
         if not end:
             raise ValueError("end is required for non-all-day events")
-        event = {
-            "subject": subject,
+        payload = {
+            "subject": event.subject,
             "start": {"dateTime": start, "timeZone": timezone},
             "end": {"dateTime": end, "timeZone": timezone},
         }
 
-    if location:
-        event["location"] = {"displayName": location}
+    if event.location:
+        payload["location"] = {"displayName": event.location}
 
-    if body:
-        event["body"] = {"contentType": "Text", "content": body}
+    if event.body:
+        payload["body"] = {"contentType": "Text", "content": event.body}
 
-    if attendees:
-        event["attendees"] = [{"emailAddress": {"address": a}, "type": "required"} for a in attendees]
+    if event.attendees:
+        payload["attendees"] = [{"emailAddress": {"address": a}, "type": "required"} for a in event.attendees]
 
-    if recurrence:
-        parsed_date = dt.date.fromisoformat(start_date)
-
-        pattern: dict[str, Any] = {"interval": 1}
-        if recurrence == "daily":
-            pattern["type"] = "daily"
-        elif recurrence == "weekly":
-            pattern["type"] = "weekly"
-            pattern["daysOfWeek"] = [parsed_date.strftime("%A").lower()]
-        elif recurrence == "monthly":
-            pattern["type"] = "absoluteMonthly"
-            pattern["dayOfMonth"] = parsed_date.day
-        elif recurrence == "yearly":
-            pattern["type"] = "absoluteYearly"
-            pattern["dayOfMonth"] = parsed_date.day
-            pattern["month"] = parsed_date.month
-
-        recurrence_range: dict[str, Any] = {"startDate": start_date}
-        if recurrence_end_date:
-            recurrence_range["type"] = "endDate"
-            recurrence_range["endDate"] = recurrence_end_date
-        else:
-            recurrence_range["type"] = "noEnd"
-
-        event["recurrence"] = {"pattern": pattern, "range": recurrence_range}
+    if event.recurrence:
+        payload["recurrence"] = _build_recurrence(event.recurrence, start_date, event.recurrence_end_date)
 
     endpoint = f"/me/calendars/{calendar_id}/events" if calendar_id else "/me/events"
 
-    result = graph.request_cfg(config, client, "POST", endpoint, account_id, json=event)
+    result = graph.request_cfg(config, client, "POST", endpoint, account_id, json=payload)
     if not result:
         raise ValueError("Failed to create event")
     return result
 
 
-def update_event(
-    config: Config,
-    client: httpx.Client,
-    *,
-    account_email: str,
-    event_id: str,
-    subject: str | None = None,
-    start: str | None = None,
-    end: str | None = None,
-    location: str | None = None,
-    body: str | None = None,
-    timezone: str | None = None,
-    reminder_on: bool | None = None,
-    reminder_minutes: int | None = None,
-) -> dict[str, Any]:
-    if (start is not None or end is not None) and timezone is None:
+def update_event(config: Config, client: httpx.Client, *, account_email: str, event_id: str, patch: EventPatch) -> dict[str, Any]:
+    timezone = patch.timezone
+    if (patch.start is not None or patch.end is not None) and timezone is None:
         raise ValueError("timezone is required when updating start or end")
     if timezone is not None:
         _validate_timezone(timezone)
@@ -241,20 +218,20 @@ def update_event(
     account_id = auth.get_account_id_by_email(account_email, config.cache_file)
     formatted_updates: dict[str, Any] = {}
 
-    if subject is not None:
-        formatted_updates["subject"] = subject
-    if start is not None:
-        formatted_updates["start"] = {"dateTime": start, "timeZone": timezone}
-    if end is not None:
-        formatted_updates["end"] = {"dateTime": end, "timeZone": timezone}
-    if location is not None:
-        formatted_updates["location"] = {"displayName": location}
-    if body is not None:
-        formatted_updates["body"] = {"contentType": "Text", "content": body}
-    if reminder_on is not None:
-        formatted_updates["isReminderOn"] = reminder_on
-    if reminder_minutes is not None:
-        formatted_updates["reminderMinutesBeforeStart"] = reminder_minutes
+    if patch.subject is not None:
+        formatted_updates["subject"] = patch.subject
+    if patch.start is not None:
+        formatted_updates["start"] = {"dateTime": patch.start, "timeZone": timezone}
+    if patch.end is not None:
+        formatted_updates["end"] = {"dateTime": patch.end, "timeZone": timezone}
+    if patch.location is not None:
+        formatted_updates["location"] = {"displayName": patch.location}
+    if patch.body is not None:
+        formatted_updates["body"] = {"contentType": "Text", "content": patch.body}
+    if patch.reminder_on is not None:
+        formatted_updates["isReminderOn"] = patch.reminder_on
+    if patch.reminder_minutes is not None:
+        formatted_updates["reminderMinutesBeforeStart"] = patch.reminder_minutes
 
     if not formatted_updates:
         raise ValueError("Must specify at least one field to update")

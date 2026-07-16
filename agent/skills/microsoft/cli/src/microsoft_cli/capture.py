@@ -89,7 +89,7 @@ def _run(args: list[str], *, session: str | None = None, timeout: float = 120.0)
     if session:
         env["BROWSER_SESSION"] = session
     try:
-        result = subprocess.run(["browser", *args], capture_output=True, text=True, env=env, timeout=timeout)
+        result = subprocess.run(["browser", *args], capture_output=True, text=True, env=env, timeout=timeout, check=False)
     except FileNotFoundError as exc:
         raise CaptureError("the `browser` skill is not installed; cannot capture Microsoft tokens on a locked tenant") from exc
     except subprocess.TimeoutExpired:
@@ -128,7 +128,7 @@ def begin_interactive(config, account_email: str) -> str:
     return data["user_url"]
 
 
-def _harvest(config, account_email: str) -> dict[str, dict[str, float | str]]:
+def _harvest() -> dict[str, dict[str, float | str]]:
     """From the running (signed-in) handover session, lift the mail and Teams tokens. Skips a token
     that never appears (e.g. Teams not provisioned) rather than failing the whole capture."""
     captured: dict[str, dict[str, float | str]] = {}
@@ -146,12 +146,12 @@ def _harvest(config, account_email: str) -> dict[str, dict[str, float | str]]:
     return captured
 
 
-def finish_interactive(config, account_email: str) -> dict[str, dict[str, float | str]]:
+def finish_interactive(_config, _account_email: str) -> dict[str, dict[str, float | str]]:
     """After the user has signed in, lift both tokens, then tear the browser down."""
     if _run(["snapshot"], session=_HANDOVER_SESSION, timeout=30) == "":
         raise CaptureError("no signed-in browser session; run the sign-in step first")
     try:
-        return _harvest(config, account_email)
+        return _harvest()
     finally:
         stop()
 
@@ -169,7 +169,7 @@ def refresh(config, account_email: str) -> dict[str, dict[str, float | str]]:
     if not out.startswith("{"):
         raise CaptureError(f"could not start the refresh browser: {out or 'no output'}")
     try:
-        captured = _harvest(config, account_email)
+        captured = _harvest()
     finally:
         stop()
     if not captured:

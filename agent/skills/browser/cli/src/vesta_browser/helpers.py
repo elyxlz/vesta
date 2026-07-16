@@ -246,13 +246,10 @@ def press_key(key: str, modifiers: int | list[str] = 0) -> None:
     else:
         mods = [m for m in modifiers if m in MODIFIER_KEYS]
     value = SPECIAL_KEYS[key] if key in SPECIAL_KEYS else key
-    actions: list[dict] = []
-    for m in mods:
-        actions.append({"type": "keyDown", "value": MODIFIER_KEYS[m]})
+    actions: list[dict] = [{"type": "keyDown", "value": MODIFIER_KEYS[m]} for m in mods]
     actions.append({"type": "keyDown", "value": value})
     actions.append({"type": "keyUp", "value": value})
-    for m in reversed(mods):
-        actions.append({"type": "keyUp", "value": MODIFIER_KEYS[m]})
+    actions.extend({"type": "keyUp", "value": MODIFIER_KEYS[m]} for m in reversed(mods))
     _perform([{"type": "key", "id": "kbd", "actions": actions}])
 
 
@@ -325,17 +322,17 @@ _FMT_MIME = {"png": "image/png", "jpeg": "image/jpeg", "webp": "image/jpeg"}
 def screenshot(
     path: str = "/tmp/screenshot.png",
     full_page: bool = False,
-    format: str = "png",
+    image_format: str = "png",
     region: tuple[float, float, float, float] | None = None,
     quality: int | None = None,
 ) -> str:
-    """Capture a screenshot via BiDi. `format` accepts 'png', 'jpeg', or 'webp' (webp
-    is captured as jpeg). `region` is (x, y, width, height) for a clip rectangle.
+    """Capture a screenshot via BiDi. `image_format` accepts 'png', 'jpeg', or 'webp'
+    (webp is captured as jpeg). `region` is (x, y, width, height) for a clip rectangle.
     `quality` (0-100) applies to jpeg/webp."""
-    if format not in ("png", "jpeg", "webp"):
-        raise ValueError(f"screenshot format must be png/jpeg/webp, got {format!r}")
-    fmt: dict = {"type": _FMT_MIME[format]}
-    if quality is not None and format in ("jpeg", "webp"):
+    if image_format not in ("png", "jpeg", "webp"):
+        raise ValueError(f"screenshot format must be png/jpeg/webp, got {image_format!r}")
+    fmt: dict = {"type": _FMT_MIME[image_format]}
+    if quality is not None and image_format in ("jpeg", "webp"):
         fmt["quality"] = max(0.0, min(1.0, quality / 100.0))
     params: dict = {"origin": "document" if full_page else "viewport", "format": fmt}
     if region is not None:

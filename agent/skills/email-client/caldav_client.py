@@ -217,6 +217,34 @@ def _child_href(prop: ET.Element, name: str) -> str | None:
     return href.text if href is not None else None
 
 
+def _apply_props(record: DavResource, prop: ET.Element) -> None:
+    """Fold one 200-status ``prop`` block's values into the record."""
+    etag = prop.find("d:getetag", NS)
+    if etag is not None and etag.text:
+        record.etag = etag.text
+    calendar_data = prop.find("c:calendar-data", NS)
+    if calendar_data is not None and calendar_data.text:
+        record.calendar_data = calendar_data.text
+    displayname = prop.find("d:displayname", NS)
+    if displayname is not None and displayname.text:
+        record.displayname = displayname.text
+    resourcetype = prop.find("d:resourcetype", NS)
+    if resourcetype is not None:
+        record.resourcetypes.update(child.tag for child in resourcetype)
+    comp_set = prop.find("c:supported-calendar-component-set", NS)
+    if comp_set is not None:
+        record.components.update(comp.attrib["name"] for comp in comp_set.findall("c:comp", NS) if "name" in comp.attrib)
+    principal = _child_href(prop, "d:current-user-principal")
+    if principal:
+        record.principal_href = principal
+    home = _child_href(prop, "c:calendar-home-set")
+    if home:
+        record.home_href = home
+    schedule_default = _child_href(prop, "c:schedule-default-calendar-URL")
+    if schedule_default:
+        record.schedule_default_href = schedule_default
+
+
 def parse_multistatus(text: str) -> list[DavResource]:
     """Parse a multistatus body into per-resource records.
 
@@ -236,32 +264,8 @@ def parse_multistatus(text: str) -> list[DavResource]:
             if status_el is not None and status_el.text and " 200 " not in status_el.text:
                 continue
             prop = propstat.find("d:prop", NS)
-            if prop is None:
-                continue
-            etag = prop.find("d:getetag", NS)
-            if etag is not None and etag.text:
-                record.etag = etag.text
-            calendar_data = prop.find("c:calendar-data", NS)
-            if calendar_data is not None and calendar_data.text:
-                record.calendar_data = calendar_data.text
-            displayname = prop.find("d:displayname", NS)
-            if displayname is not None and displayname.text:
-                record.displayname = displayname.text
-            resourcetype = prop.find("d:resourcetype", NS)
-            if resourcetype is not None:
-                record.resourcetypes.update(child.tag for child in resourcetype)
-            comp_set = prop.find("c:supported-calendar-component-set", NS)
-            if comp_set is not None:
-                record.components.update(comp.attrib["name"] for comp in comp_set.findall("c:comp", NS) if "name" in comp.attrib)
-            principal = _child_href(prop, "d:current-user-principal")
-            if principal:
-                record.principal_href = principal
-            home = _child_href(prop, "c:calendar-home-set")
-            if home:
-                record.home_href = home
-            schedule_default = _child_href(prop, "c:schedule-default-calendar-URL")
-            if schedule_default:
-                record.schedule_default_href = schedule_default
+            if prop is not None:
+                _apply_props(record, prop)
         out.append(record)
     return out
 

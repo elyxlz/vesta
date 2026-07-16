@@ -12,7 +12,7 @@ def patched(monkeypatch):
     def fake_account_id(account_email, cache_file):
         return "acct-123"
 
-    def fake_request(client, cache_file, scopes, base_url, method, path, account_id=None, **kwargs):
+    def fake_request(conn, method, path, account_id=None, **kwargs):
         calls.append({"method": method, "path": path, "json": kwargs["json"] if "json" in kwargs else None})
         if method == "GET":
             return {"value": calls_state["messages"]}

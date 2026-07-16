@@ -8,12 +8,12 @@ from .config import Config
 
 
 def gmail_service(config: Config):
-    creds = auth.get_credentials(config.token_file, config.credentials_file, config.scopes)
+    creds = auth.get_credentials(config.token_file, config.scopes)
     return build("gmail", "v1", credentials=creds)
 
 
 def calendar_service(config: Config):
-    creds = auth.get_credentials(config.token_file, config.credentials_file, config.scopes)
+    creds = auth.get_credentials(config.token_file, config.scopes)
     return build("calendar", "v3", credentials=creds)
 
 

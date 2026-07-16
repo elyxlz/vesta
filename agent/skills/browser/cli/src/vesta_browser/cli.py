@@ -21,7 +21,7 @@ SESSION_ENV = "BROWSER_SESSION"
 def _snapshot_banner(interactive_only: bool = False) -> str:
     """Take a snapshot and format it. Called after every mutating action."""
     try:
-        snap = snapshot.snapshot(interactive_only=interactive_only, compact=False)
+        snap = snapshot.snapshot(interactive_only=interactive_only)
     except (RuntimeError, OSError) as e:
         return f"(snapshot failed: {e})"
     header = f"# {snap['title'] or '(no title)'}\n# {snap['url']}\n# {snap['ref_count']} interactive refs"
@@ -150,17 +150,17 @@ def cmd_connect(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_stop(args: argparse.Namespace) -> int:
+def cmd_stop(_args: argparse.Namespace) -> int:
     admin.shutdown()
     return 0
 
 
-def cmd_stop_all(args: argparse.Namespace) -> int:
+def cmd_stop_all(_args: argparse.Namespace) -> int:
     admin.stop_all()
     return 0
 
 
-def cmd_sessions(args: argparse.Namespace) -> int:
+def cmd_sessions(_args: argparse.Namespace) -> int:
     print(json.dumps(admin.list_sessions(), indent=2))
     return 0
 
@@ -199,15 +199,15 @@ def cmd_navigate(args: argparse.Namespace) -> int:
     return _navigate(lambda: helpers.goto(args.url))
 
 
-def cmd_reload(args: argparse.Namespace) -> int:
+def cmd_reload(_args: argparse.Namespace) -> int:
     return _navigate(helpers.reload)
 
 
-def cmd_back(args: argparse.Namespace) -> int:
+def cmd_back(_args: argparse.Namespace) -> int:
     return _navigate(helpers.back)
 
 
-def cmd_forward(args: argparse.Namespace) -> int:
+def cmd_forward(_args: argparse.Namespace) -> int:
     return _navigate(helpers.forward)
 
 
@@ -236,7 +236,7 @@ def cmd_screenshot(args: argparse.Namespace) -> int:
             raise ValueError(f"--region expects 'x,y,w,h', got {args.region!r}")
         region = (float(parts[0]), float(parts[1]), float(parts[2]), float(parts[3]))
     path = args.path or f"/tmp/screenshot.{_SCREENSHOT_EXT[fmt]}"
-    print(helpers.screenshot(path=path, full_page=args.full_page, format=fmt, region=region, quality=args.quality))
+    print(helpers.screenshot(path=path, full_page=args.full_page, image_format=fmt, region=region, quality=args.quality))
     return 0
 
 
@@ -349,7 +349,7 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_doctor(args: argparse.Namespace) -> int:
+def cmd_doctor(_args: argparse.Namespace) -> int:
     import platform
 
     from .launcher import CAMOUFOX_RELEASE_TAG, _asset_for_arch, camoufox_home, camoufox_installed
@@ -375,7 +375,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_tabs(args: argparse.Namespace) -> int:
+def cmd_tabs(_args: argparse.Namespace) -> int:
     admin.ensure_daemon()
     print(json.dumps(helpers.list_tabs(), indent=2))
     return 0
@@ -400,7 +400,7 @@ def cmd_resize(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_stdin(args: argparse.Namespace) -> int:
+def cmd_stdin(_args: argparse.Namespace) -> int:
     """Run multi-line Python from stdin with helpers pre-imported, browser-harness style."""
     admin.ensure_daemon()
     if sys.stdin.isatty():
@@ -419,11 +419,7 @@ def cmd_stdin(args: argparse.Namespace) -> int:
 # ── Argparse wiring ───────────────────────────────────────────
 
 
-def _build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="browser", description="Vesta browser CLI.")
-    sub = p.add_subparsers(dest="cmd")
-
-    # Session lifecycle
+def _add_lifecycle_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     lp = sub.add_parser("launch", help="Launch Camoufox for this session.")
     lp.add_argument("--headless", action="store_true")
     lp.add_argument("--stealth", action="store_true")
@@ -457,7 +453,8 @@ def _build_parser() -> argparse.ArgumentParser:
     hv.add_argument("--user-data-dir", default=None, help="Profile dir; its cookies persist for later reuse.")
     hv.set_defaults(func=cmd_handover)
 
-    # Navigation
+
+def _add_navigation_and_read_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     op = sub.add_parser("open", help="Open a URL in a new tab.")
     op.add_argument("url")
     op.set_defaults(func=cmd_open)
@@ -470,7 +467,6 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("back").set_defaults(func=cmd_back)
     sub.add_parser("forward").set_defaults(func=cmd_forward)
 
-    # Reads
     sp = sub.add_parser("snapshot", help="Accessibility snapshot with refs.")
     sp.add_argument("--interactive", action="store_true")
     sp.set_defaults(func=cmd_snapshot)
@@ -489,7 +485,8 @@ def _build_parser() -> argparse.ArgumentParser:
     pp.add_argument("--path", default="/tmp/page.pdf")
     pp.set_defaults(func=cmd_pdf)
 
-    # Actions
+
+def _add_action_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     clp = sub.add_parser("click", help="Click a ref (e1) or --at X Y.")
     clp.add_argument("ref", nargs="?")
     clp.add_argument("--at", nargs=2, type=float, metavar=("X", "Y"))
@@ -527,6 +524,8 @@ def _build_parser() -> argparse.ArgumentParser:
     wp.add_argument("--timeout", type=float, default=20.0)
     wp.set_defaults(func=cmd_wait)
 
+
+def _add_misc_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     ep = sub.add_parser("evaluate", aliases=["js"])
     ep.add_argument("expression")
     ep.set_defaults(func=cmd_evaluate)
@@ -560,6 +559,14 @@ def _build_parser() -> argparse.ArgumentParser:
     rp.add_argument("height", type=int)
     rp.set_defaults(func=cmd_resize)
 
+
+def _build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="browser", description="Vesta browser CLI.")
+    sub = p.add_subparsers(dest="cmd")
+    _add_lifecycle_parsers(sub)
+    _add_navigation_and_read_parsers(sub)
+    _add_action_parsers(sub)
+    _add_misc_parsers(sub)
     return p
 
 

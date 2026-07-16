@@ -22,7 +22,7 @@ def _install_stubs():
     if "imap_tools" not in sys.modules:
         it = types.ModuleType("imap_tools")
 
-        def AND(*a, **k):  # noqa: N802 - mirrors imap_tools API name
+        def _and(*_a, **_k):
             return None
 
         class MailMessageFlags:
@@ -30,7 +30,8 @@ def _install_stubs():
             SEEN = "\\Seen"
             ANSWERED = "\\Answered"
 
-        it.AND = AND
+        # The attribute mirrors the imap_tools API name.
+        it.AND = _and
         it.MailMessageFlags = MailMessageFlags
         sys.modules["imap_tools"] = it
 
@@ -59,7 +60,7 @@ import smtp_send
 def _run(monkeypatch, argv, env):
     """Run smtp_send.main() with a patched send() recorder and given argv/env."""
     calls = []
-    monkeypatch.setattr(smtp_send, "send", lambda *a, **k: calls.append((a, k)))
+    monkeypatch.setattr(smtp_send, "send", calls.append)
     if env is None:
         monkeypatch.delenv("EMAIL_DRAFT_ONLY", raising=False)
     else:
@@ -99,14 +100,14 @@ def test_draft_still_works_in_draft_only(monkeypatch):
     smtp_send.main()
     # send() was reached with draft=True.
     assert len(calls) == 1
-    assert calls[0][1]["draft"] is True
+    assert calls[0].draft is True
 
 
 def test_dry_run_preview_allowed_in_draft_only(monkeypatch):
     calls = _run(monkeypatch, [*SEND, "--dry-run"], env="1")
     smtp_send.main()
     assert len(calls) == 1
-    assert calls[0][1]["dry_run"] is True
+    assert calls[0].dry_run is True
 
 
 @pytest.mark.parametrize("argv", [SEND, REPLY, FORWARD], ids=["send", "reply", "forward"])
@@ -114,4 +115,4 @@ def test_send_reaches_send_when_env_unset(monkeypatch, argv):
     calls = _run(monkeypatch, argv, env=None)
     smtp_send.main()
     assert len(calls) == 1
-    assert calls[0][1]["draft"] is False
+    assert calls[0].draft is False

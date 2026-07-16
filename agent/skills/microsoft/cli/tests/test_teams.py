@@ -1,6 +1,6 @@
 """Unit tests for the Teams-over-Graph backend.
 
-Covers token markers (device + browser), token resolution and GraphUnavailable fallback signalling,
+Covers token markers (device + browser), token resolution and GraphUnavailableError fallback signalling,
 the Graph transport shaping (chats/messages/send/start/channels/presence), the CLI dispatcher's
 two-source routing via backend.run, and the monitor's new-chat notification emit.
 """
@@ -98,7 +98,7 @@ def test_graph_token_raises_graph_unavailable_when_account_unknown(tmp_path, mon
         raise ValueError("no account")
 
     monkeypatch.setattr(teams.auth, "get_account_id_by_email", _raise)
-    with pytest.raises(backend.GraphUnavailable):
+    with pytest.raises(backend.GraphUnavailableError):
         teams.graph_token(cfg, "user@example.com")
 
 
@@ -106,7 +106,7 @@ def test_graph_token_raises_graph_unavailable_when_no_silent_token(tmp_path, mon
     cfg = Config(data_dir=tmp_path)
     monkeypatch.setattr(teams.auth, "get_account_id_by_email", lambda *a, **k: "acct-1")
     monkeypatch.setattr(teams.auth, "get_token_silent", lambda *a, **k: None)
-    with pytest.raises(backend.GraphUnavailable):
+    with pytest.raises(backend.GraphUnavailableError):
         teams.graph_token(cfg, "user@example.com")
 
 
@@ -125,14 +125,14 @@ def test_captured_token_returns_browser_token(tmp_path):
 
 
 def test_captured_token_raises_when_missing(tmp_path):
-    with pytest.raises(teams.TeamsNoToken, match="teams-capture"):
+    with pytest.raises(teams.TeamsNoTokenError, match="teams-capture"):
         teams.captured_token(Config(data_dir=tmp_path), "user@example.com")
 
 
 def test_captured_token_raises_when_device_source(tmp_path):
     cfg = Config(data_dir=tmp_path)
     teams.mark_device_account("user@example.com", cfg)
-    with pytest.raises(teams.TeamsNoToken):
+    with pytest.raises(teams.TeamsNoTokenError):
         teams.captured_token(cfg, "user@example.com")
 
 
@@ -144,7 +144,7 @@ def test_resolve_token_prefers_device(tmp_path, monkeypatch):
 
 
 def test_teams_no_token_is_runtime_error():
-    assert isinstance(teams.TeamsNoToken("x"), RuntimeError)
+    assert isinstance(teams.TeamsNoTokenError("x"), RuntimeError)
 
 
 # ---------------------------------------------------------------------------
@@ -302,7 +302,7 @@ def test_dispatch_auto_falls_back_to_captured_when_graph_unavailable(monkeypatch
     seen = {}
 
     def _unavail(cfg, acct):
-        raise backend.GraphUnavailable("no teams token")
+        raise backend.GraphUnavailableError("no teams token")
 
     monkeypatch.setattr(cli.teams, "graph_token", _unavail)
     monkeypatch.setattr(cli.teams, "captured_token", lambda cfg, acct: "CTOK")

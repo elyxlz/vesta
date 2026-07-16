@@ -18,6 +18,7 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 from microsoft_cli import backend, owa_rest
+from microsoft_cli.payloads import MailDraft
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -149,7 +150,7 @@ def test_has_valid_token_returns_true_for_fresh_token(tmp_path):
 
 def test_load_token_raises_when_missing(tmp_path):
     cfg = _FakeConfig(tmp_path)
-    with pytest.raises(owa_rest.OwaRestNoToken, match="owa-login"):
+    with pytest.raises(owa_rest.OwaRestNoTokenError, match="owa-login"):
         owa_rest.load_token("user@example.com", cfg)
 
 
@@ -157,7 +158,7 @@ def test_load_token_raises_when_expired(tmp_path):
     cfg = _FakeConfig(tmp_path)
     expired = time.time() - 3600
     owa_rest.save_token("user@example.com", cfg, token="tok", expires_at=expired)
-    with pytest.raises(owa_rest.OwaRestNoToken, match="expired"):
+    with pytest.raises(owa_rest.OwaRestNoTokenError, match="expired"):
         owa_rest.load_token("user@example.com", cfg)
 
 
@@ -279,7 +280,7 @@ def test_send_message_posts_pascal_cased_body(tmp_path):
     client = MagicMock(spec=httpx.Client)
     client.post.return_value = resp
 
-    result = owa_rest.send_message(client, "user@example.com", cfg, to=["b@c.com"], subject="Hi", body="Hello")
+    result = owa_rest.send_message(client, "user@example.com", cfg, mail=MailDraft(to=["b@c.com"], subject="Hi", body="Hello"))
     assert result == {"status": "sent"}
 
     call_kwargs = client.post.call_args[1]
@@ -385,12 +386,12 @@ def test_owa_rest_constant_value():
 
 
 # ---------------------------------------------------------------------------
-# OwaRestNoToken is a RuntimeError subclass (dispatcher-compatible)
+# OwaRestNoTokenError is a RuntimeError subclass (dispatcher-compatible)
 # ---------------------------------------------------------------------------
 
 
 def test_owa_rest_no_token_is_runtime_error():
-    err = owa_rest.OwaRestNoToken("needs login")
+    err = owa_rest.OwaRestNoTokenError("needs login")
     assert isinstance(err, RuntimeError)
 
 
@@ -446,7 +447,7 @@ def test_move_message_posts_destination(tmp_path):
 def test_forward_plain_uses_forward_action(tmp_path):
     cfg = _patched_token(tmp_path)
     client = _mock_client({})
-    result = owa_rest.forward_message(client, "user@example.com", cfg, item_id="m1", to=["b@x.com"], body="fyi")
+    result = owa_rest.forward_message(client, "user@example.com", cfg, item_id="m1", mail=MailDraft(to=["b@x.com"], body="fyi"))
     assert result == {"status": "sent"}
     url = client.post.call_args.args[0]
     body = client.post.call_args.kwargs["json"]
@@ -458,7 +459,7 @@ def test_forward_plain_uses_forward_action(tmp_path):
 def test_forward_with_cc_uses_draft_path(tmp_path):
     cfg = _patched_token(tmp_path)
     client = _mock_client({"Id": "d1"})
-    result = owa_rest.forward_message(client, "user@example.com", cfg, item_id="m1", to=["b@x.com"], body="fyi", cc=["c@x.com"])
+    result = owa_rest.forward_message(client, "user@example.com", cfg, item_id="m1", mail=MailDraft(to=["b@x.com"], body="fyi", cc=["c@x.com"]))
     assert result == {"status": "sent"}
     posted = [c.args[0] for c in client.post.call_args_list]
     assert posted[0].endswith("/me/messages/m1/createforward")
@@ -485,7 +486,7 @@ def test_update_message_unflagged(tmp_path):
 def test_create_draft_reply_is_threaded(tmp_path):
     cfg = _patched_token(tmp_path)
     client = _mock_client({"Id": "draft-1"})
-    result = owa_rest.create_draft(client, "user@example.com", cfg, to=None, subject=None, body="thanks", reply_to_id="orig-1")
+    result = owa_rest.create_draft(client, "user@example.com", cfg, mail=MailDraft(body="thanks", reply_to_id="orig-1"))
     assert result == {"status": "drafted", "id": "draft-1", "source_id": "orig-1"}
     posted = [c.args[0] for c in client.post.call_args_list]
     assert posted[0].endswith("/me/messages/orig-1/createreply")
@@ -495,7 +496,7 @@ def test_create_draft_reply_is_threaded(tmp_path):
 def test_create_draft_forward_sets_recipients(tmp_path):
     cfg = _patched_token(tmp_path)
     client = _mock_client({"Id": "draft-2"})
-    owa_rest.create_draft(client, "user@example.com", cfg, to=["b@x.com"], subject=None, body="fyi", forward_id="orig-2")
+    owa_rest.create_draft(client, "user@example.com", cfg, mail=MailDraft(to=["b@x.com"], body="fyi", forward_id="orig-2"))
     assert client.post.call_args_list[0].args[0].endswith("/me/messages/orig-2/createforward")
     assert client.patch.call_args.kwargs["json"]["ToRecipients"] == [{"EmailAddress": {"Address": "b@x.com"}}]
 
@@ -548,7 +549,9 @@ def test_send_message_with_attachments_inlines_them(tmp_path):
     f = tmp_path / "report.pdf"
     f.write_bytes(b"pdf-bytes")
     client = _mock_client({})
-    owa_rest.send_message(client, "user@example.com", cfg, to=["b@x.com"], subject="Hi", body="see attached", attachments=[str(f)])
+    owa_rest.send_message(
+        client, "user@example.com", cfg, mail=MailDraft(to=["b@x.com"], subject="Hi", body="see attached", attachments=[str(f)])
+    )
     body = client.post.call_args.kwargs["json"]
     attachments = body["Message"]["Attachments"]
     assert attachments[0]["Name"] == "report.pdf"
@@ -611,7 +614,7 @@ def test_load_token_device_expired_raises(tmp_path, monkeypatch):
     owa_rest.mark_device_account("user@example.com", cfg)
     monkeypatch.setattr(owa_rest.auth, "get_account_id_by_email", lambda *a, **k: "acct-1")
     monkeypatch.setattr(owa_rest.auth, "get_token_silent", lambda *a, **k: None)
-    with pytest.raises(owa_rest.OwaRestNoToken, match="owa-login"):
+    with pytest.raises(owa_rest.OwaRestNoTokenError, match="owa-login"):
         owa_rest.load_token("user@example.com", cfg)
 
 
@@ -631,7 +634,7 @@ def test_owa_login_browser_captures_token(tmp_path, monkeypatch):
         def __init__(self, out):
             self.stdout = out
 
-    def fake_run(args, capture_output, text, env):
+    def fake_run(args, capture_output, text, env, check):
         return _Res(fresh if args[1] == "evaluate" else "ok")
 
     monkeypatch.setattr(auth_commands.subprocess, "run", fake_run)

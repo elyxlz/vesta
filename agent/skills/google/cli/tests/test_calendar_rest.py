@@ -35,8 +35,13 @@ class _FakeService:
     def events(self):
         return _FakeResource(self, "events")
 
-    def calendarList(self):  # noqa: N802 (mirrors the googleapiclient API name)
+    def _calendar_list(self):
         return _FakeResource(self, "calendarList")
+
+
+# googleapiclient's resource method is camelCase; alias it outside the class body
+# so the definition itself keeps a pep8 name.
+_FakeService.calendarList = _FakeService._calendar_list
 
 
 class _FakeResource:

@@ -110,8 +110,8 @@ def authenticate_account(config: Config) -> dict[str, str]:
 def complete_authentication(config: Config, *, flow_cache: str) -> dict[str, str]:
     try:
         flow = json.loads(flow_cache)
-    except (json.JSONDecodeError, TypeError):
-        raise ValueError("Invalid flow cache data")
+    except (json.JSONDecodeError, TypeError) as e:
+        raise ValueError("Invalid flow cache data") from e
 
     app = auth.get_app(config.cache_file)
     result = app.acquire_token_by_device_flow(flow)
@@ -213,8 +213,8 @@ def owa_login(config: Config, *, account_email: str, use_device: bool = False, t
 def owa_complete(config: Config, *, account_email: str, flow_cache: str) -> dict[str, str]:
     try:
         flow = json.loads(flow_cache)
-    except (json.JSONDecodeError, TypeError):
-        raise ValueError("Invalid flow cache data")
+    except (json.JSONDecodeError, TypeError) as e:
+        raise ValueError("Invalid flow cache data") from e
 
     app = auth.get_app(config.cache_file, OWA_REST_CLIENT_ID)
     result = app.acquire_token_by_device_flow(flow)
@@ -246,7 +246,10 @@ def _owa_login_paste(config: Config, *, account_email: str, token: str) -> dict[
     except Exception:
         return {
             "status": "error",
-            "message": "That does not look like an OWA access token (its expiry could not be decoded). Re-copy the value the snippet put on the clipboard.",
+            "message": (
+                "That does not look like an OWA access token (its expiry could not be decoded). "
+                "Re-copy the value the snippet put on the clipboard."
+            ),
         }
     owa_rest.save_token(account_email, config, token=token, expires_at=expires_at, source="browser")
     return {
@@ -270,7 +273,7 @@ def _owa_login_browser(config: Config, *, account_email: str) -> dict[str, str]:
         env["DISPLAY"] = ":99"
 
     def _run(*args: str) -> str:
-        result = subprocess.run(["browser", *args], capture_output=True, text=True, env=env)
+        result = subprocess.run(["browser", *args], capture_output=True, text=True, env=env, check=False)
         return result.stdout.strip()
 
     _run("launch", "--stealth")
@@ -336,8 +339,8 @@ def teams_login(config: Config) -> dict[str, str]:
 def teams_complete(config: Config, *, flow_cache: str) -> dict[str, str]:
     try:
         flow = json.loads(flow_cache)
-    except (json.JSONDecodeError, TypeError):
-        raise ValueError("Invalid flow cache data")
+    except (json.JSONDecodeError, TypeError) as e:
+        raise ValueError("Invalid flow cache data") from e
 
     app = auth.get_app(config.cache_file, DEFAULT_CLIENT_ID)
     result = app.acquire_token_by_device_flow(flow)
@@ -351,7 +354,8 @@ def teams_complete(config: Config, *, flow_cache: str) -> dict[str, str]:
                 "status": "admin_consent_required",
                 "message": (
                     "This is a locked work/school tenant: device-code Teams sign-in needs an admin. Capture a token from Teams "
-                    "on the web instead (no admin consent needed): `microsoft auth teams-capture --account <email>`, then use `--backend owa-rest`."
+                    "on the web instead (no admin consent needed): `microsoft auth teams-capture --account <email>`, "
+                    "then use `--backend owa-rest`."
                 ),
                 "detail": error_msg,
             }
@@ -393,7 +397,10 @@ def _teams_capture_paste(config: Config, *, account_email: str, token: str) -> d
     except Exception:
         return {
             "status": "error",
-            "message": "That does not look like a Teams access token (its expiry could not be decoded). Re-copy the value the snippet put on the clipboard.",
+            "message": (
+                "That does not look like a Teams access token (its expiry could not be decoded). "
+                "Re-copy the value the snippet put on the clipboard."
+            ),
         }
     teams.save_token(account_email, config, token=token, expires_at=expires_at, source="browser")
     return {
@@ -411,7 +418,7 @@ def _teams_capture_browser(config: Config, *, account_email: str) -> dict[str, s
         env["DISPLAY"] = ":99"
 
     def _run(*args: str) -> str:
-        result = subprocess.run(["browser", *args], capture_output=True, text=True, env=env)
+        result = subprocess.run(["browser", *args], capture_output=True, text=True, env=env, check=False)
         return result.stdout.strip()
 
     _run("launch", "--stealth")
@@ -495,6 +502,35 @@ def _setup_begin_browser(config: Config, *, account_email: str) -> dict[str, str
     }
 
 
+def _setup_finish_device(config: Config, *, account_email: str, flow_cache: str) -> dict[str, str]:
+    """Finish a device-code `auth setup`; on a consent wall, pivot to the browser capture."""
+    try:
+        flow = json.loads(flow_cache)
+    except (json.JSONDecodeError, TypeError) as e:
+        raise ValueError("Invalid flow cache data") from e
+    app = auth.get_app(config.cache_file, DEFAULT_CLIENT_ID)
+    result = app.acquire_token_by_device_flow(flow)
+    if "error" in result:
+        error_msg = result["error_description"] if "error_description" in result else result["error"]
+        if "authorization_pending" in error_msg:
+            return {"status": "pending", "message": "Sign-in is still pending; finish the code entry, then retry."}
+        if _is_consent_wall(error_msg):
+            # Locked tenant: device code is blocked, pivot to the browser capture with no extra ask.
+            return _setup_begin_browser(config, account_email=account_email)
+        raise Exception(f"Sign-in failed: {error_msg}")
+    cache = app.token_cache
+    if isinstance(cache, auth.msal.SerializableTokenCache) and cache.has_state_changed:
+        auth._write_cache(config.cache_file, content=cache.serialize())
+    teams.mark_device_account(account_email, config)
+    return {
+        "status": "success",
+        "account": account_email,
+        "provisioned": "mail/calendar, Teams",
+        "backend": "graph",
+        "message": f"{account_email} is set up over Graph (mail, calendar, Teams). Tokens auto-refresh; no re-auth needed.",
+    }
+
+
 def auth_setup(
     config: Config,
     *,
@@ -521,31 +557,7 @@ def auth_setup(
         return _setup_begin_browser(config, account_email=account_email)
 
     if flow_cache is not None:
-        try:
-            flow = json.loads(flow_cache)
-        except (json.JSONDecodeError, TypeError):
-            raise ValueError("Invalid flow cache data")
-        app = auth.get_app(config.cache_file, DEFAULT_CLIENT_ID)
-        result = app.acquire_token_by_device_flow(flow)
-        if "error" in result:
-            error_msg = result["error_description"] if "error_description" in result else result["error"]
-            if "authorization_pending" in error_msg:
-                return {"status": "pending", "message": "Sign-in is still pending; finish the code entry, then retry."}
-            if _is_consent_wall(error_msg):
-                # Locked tenant: device code is blocked, pivot to the browser capture with no extra ask.
-                return _setup_begin_browser(config, account_email=account_email)
-            raise Exception(f"Sign-in failed: {error_msg}")
-        cache = app.token_cache
-        if isinstance(cache, auth.msal.SerializableTokenCache) and cache.has_state_changed:
-            auth._write_cache(config.cache_file, content=cache.serialize())
-        teams.mark_device_account(account_email, config)
-        return {
-            "status": "success",
-            "account": account_email,
-            "provisioned": "mail/calendar, Teams",
-            "backend": "graph",
-            "message": f"{account_email} is set up over Graph (mail, calendar, Teams). Tokens auto-refresh; no re-auth needed.",
-        }
+        return _setup_finish_device(config, account_email=account_email, flow_cache=flow_cache)
 
     if not force_device and not _is_personal_ms_account(account_email):
         # Work/school (custom domain): the tenant almost always blocks the public client, so skip the
