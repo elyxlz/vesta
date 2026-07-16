@@ -273,6 +273,24 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # The integration suite exports multi-GB agent containers, streams them into
+      # restic, and re-imports them, up to 8 tests in parallel (--test-threads=8). On a
+      # stock ubuntu runner (~14 GB free on /) that exhausts the disk: docker
+      # export/import, restic, and the mounted-repo git fetch fail with "no space left
+      # on device", and the backup/rename tests stall until the step times out.
+      # Reclaim the tens of GB of preinstalled toolchains this job never uses, and prune
+      # the runner's seeded Docker images. This runs before the agent image is built, so
+      # nothing the tests need is removed. Best-effort: cleanup never fails the job.
+      - name: Free runner disk space
+        run: |
+          echo "Disk before cleanup:"
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/share/swift || true
+          docker system prune --all --force || true
+          echo "Disk after cleanup:"
+          df -h /
+
       - name: Install Rust
         uses: ./.github/actions/install-rust
 
