@@ -307,7 +307,7 @@ func (cm *CallManager) startBridge(ac *activeCall) {
 					Direction:    ac.direction,
 					ContactName:  ac.contactName,
 					ContactPhone: ac.contactPhone,
-					Transcript:   turn.transcript,
+					Message:      turn.transcript,
 				})
 			}
 		}

@@ -59,6 +59,11 @@ type authNotif struct {
 // inbound call it should greet; `call_utterance` delivers each thing the caller says (it drives
 // the back-and-forth, and interrupts like any whatsapp message so the model answers live);
 // `call_ended` closes the loop; `call_missed` reports a call that could not be answered.
+//
+// What the caller said goes in `message`, the same key a text message uses, so core renders it as
+// the notification's body rather than as one more attribute: spoken words are the content of a
+// call_utterance exactly as typed words are the content of a message. `type` already says it
+// arrived as speech.
 type callNotif struct {
 	Source       string `json:"source"`
 	Type         string `json:"type"`
@@ -66,8 +71,8 @@ type callNotif struct {
 	Direction    string `json:"direction,omitempty"` // "inbound" | "outbound"
 	ContactName  string `json:"contact_name,omitempty"`
 	ContactPhone string `json:"contact_phone,omitempty"`
-	Transcript   string `json:"transcript,omitempty"` // what the caller said (call_utterance)
-	Reason       string `json:"reason,omitempty"`     // why a call ended or was missed
+	Message      string `json:"message,omitempty"` // what the caller said (call_utterance)
+	Reason       string `json:"reason,omitempty"`  // why a call ended or was missed
 	Timestamp    string `json:"timestamp"`
 }
 
