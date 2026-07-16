@@ -44,9 +44,10 @@ type reactionNotif struct {
 	ContactUnknown  bool   `json:"contact_unknown,omitempty"`
 }
 
-// editNotif is emitted when a sender edits a message the agent has already seen. It names the
-// message that changed plus both texts, so the agent can tell a fixed typo (nothing to do) from
-// a changed question (worth answering again) instead of reading the edit as a brand new message.
+// editNotif is emitted when a sender edits a message the agent has already seen. It carries the
+// current text in message (the same body field a plain message uses) plus old_text, so the agent
+// can tell a fixed typo (nothing to do) from a changed question (worth answering again) instead of
+// reading the edit as a brand new message.
 type editNotif struct {
 	Source          string `json:"source"`
 	Type            string `json:"type"`
@@ -56,7 +57,7 @@ type editNotif struct {
 	ChatName        string `json:"chat_name,omitempty"`
 	Username        string `json:"username,omitempty"`
 	OldText         string `json:"old_text,omitempty"`
-	Text            string `json:"text"`
+	Message         string `json:"message"`
 	Timestamp       string `json:"timestamp"`
 	TargetMessageID int64  `json:"target_message_id"`
 	ContactUnknown  bool   `json:"contact_unknown,omitempty"`
@@ -133,7 +134,7 @@ func WriteEditNotification(
 		ContactName:     contactName,
 		Username:        username,
 		OldText:         oldText,
-		Text:            newText,
+		Message:         newText,
 		Timestamp:       time.Now().Format(time.RFC3339),
 		TargetMessageID: targetMessageID,
 		ContactUnknown:  !contactSaved,
