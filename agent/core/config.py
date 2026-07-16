@@ -1,4 +1,5 @@
 import copy
+import datetime as dt
 import json
 import os
 import pathlib as pl
@@ -11,7 +12,7 @@ import pydantic_settings as pyd_settings
 from core import logger
 from claude_agent_sdk.types import ThinkingConfigAdaptive, ThinkingConfigDisabled, ThinkingConfigEnabled
 
-from .notification_interrupt_policy import NotificationInterruptRule
+from .notification_interrupt_policy import NotificationInterruptRule, drop_expired
 
 
 _DEFAULT_AGENT_DIR = pl.Path.home() / "agent"
@@ -165,7 +166,7 @@ def load_notification_rules() -> list[NotificationInterruptRule]:
             rules.append(NotificationInterruptRule.model_validate(item))
         except pyd.ValidationError as exc:
             logger.error(f"dropping invalid notification rule {item} — keeping the rest ({exc})")
-    return rules
+    return drop_expired(rules, dt.datetime.now(dt.UTC))
 
 
 class ClaudeOAuth(pyd.BaseModel):
@@ -419,7 +420,7 @@ def validate_config_updates(config: "VestaConfig", data: object) -> dict[str, py
         for rule in validated.notification_rules:
             if not rule.id:
                 rule.id = uuid.uuid4().hex
-        updates["notification_rules"] = [rule.model_dump() for rule in validated.notification_rules]
+        updates["notification_rules"] = [rule.model_dump(mode="json") for rule in validated.notification_rules]
     return updates
 
 

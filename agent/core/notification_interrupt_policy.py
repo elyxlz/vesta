@@ -87,6 +87,17 @@ class NotificationInterruptRule(pyd.BaseModel):
     type: str | None = None
     match: list[FieldPredicate] = []
     action: tp.Literal["interrupt", "snooze", "trash"]
+    # When set, the rule stops applying once this instant passes (a temporary silence/trash), so
+    # notifications flow by their default again with no one having to remember to remove it. Filtered
+    # out of the live ruleset by drop_expired at the load boundary, then pruned on the next rule write.
+    expires_at: dt.datetime | None = None
+
+    def is_expired(self, now: dt.datetime) -> bool:
+        if self.expires_at is None:
+            return False
+        # A naive stored value (older write, hand edit) is read as UTC so the comparison never raises.
+        expiry = self.expires_at if self.expires_at.tzinfo is not None else self.expires_at.replace(tzinfo=dt.UTC)
+        return now >= expiry
 
     @pyd.model_validator(mode="before")
     @classmethod
@@ -226,6 +237,13 @@ def _matches(rule: NotificationInterruptRule, notif: Notification) -> bool:
     if rule.type is not None and rule.type.lower() != notif.type.lower():
         return False
     return all(_predicate_matches(predicate, notif) for predicate in rule.match)
+
+
+def drop_expired(rules: list[NotificationInterruptRule], now: dt.datetime) -> list[NotificationInterruptRule]:
+    """The live subset of a ruleset: temporary rules whose `expires_at` has passed are gone. Applied at
+    the load boundary (load_notification_rules) so matching, the GET /config view, and the skill's `list`
+    all see only active rules, and an expired rule is pruned the next time the ruleset is written."""
+    return [rule for rule in rules if not rule.is_expired(now)]
 
 
 def notif_disposition(notif: Notification, rules: list[NotificationInterruptRule]) -> tp.Literal["interrupt", "snooze", "trash"]:
