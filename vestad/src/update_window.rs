@@ -17,20 +17,13 @@ const SCAN_STEP_MINUTES: i64 = 15;
 /// local zone when the agent reported none (pre-upstream-sync fleet) or the name doesn't parse.
 /// Degrading to host-local keeps the update flowing rather than stalling on a missing timezone.
 pub fn resolve_zone(name: Option<&str>) -> TimeZone {
-    match name {
-        Some(name) => TimeZone::get(name).unwrap_or_else(|_| TimeZone::system()),
-        None => TimeZone::system(),
-    }
+    name.and_then(|name| TimeZone::get(name).ok()).unwrap_or_else(TimeZone::system)
 }
 
 /// Whether `at` falls inside the `[3:00, 5:00)` local window for `zone`.
 fn in_window(zone: &TimeZone, at: Timestamp) -> bool {
     let hour = at.to_zoned(zone.clone()).hour();
     (WINDOW_START_HOUR..WINDOW_END_HOUR).contains(&hour)
-}
-
-fn count_in_window(zones: &[TimeZone], at: Timestamp) -> usize {
-    zones.iter().filter(|zone| in_window(zone, at)).count()
 }
 
 /// How long to wait from `now` before applying the update so it lands in the upcoming 3-5am
@@ -46,7 +39,8 @@ pub fn wait_until_best_window(zones: &[TimeZone], now: Timestamp) -> SignedDurat
     let mut best_offset_mins = 0;
     for step in 0..=steps {
         let offset_mins = step * SCAN_STEP_MINUTES;
-        let count = count_in_window(zones, now + SignedDuration::from_mins(offset_mins));
+        let at = now + SignedDuration::from_mins(offset_mins);
+        let count = zones.iter().filter(|zone| in_window(zone, at)).count();
         // Strictly-greater keeps the earliest instant of the daily maximum (later equal-count
         // steps within the same window never overwrite it), so we apply as soon as coverage peaks.
         if count > best_count {
