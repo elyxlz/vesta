@@ -11,10 +11,10 @@ pub enum UpdateError {
 impl fmt::Display for UpdateError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnsupportedArch(arch) => write!(f, "unsupported architecture: {}", arch),
-            Self::Download(msg) => write!(f, "failed to download update: {}", msg),
-            Self::Extract(msg) => write!(f, "failed to extract update: {}", msg),
-            Self::Replace(msg) => write!(f, "failed to replace binary: {}", msg),
+            Self::UnsupportedArch(arch) => write!(f, "unsupported architecture: {arch}"),
+            Self::Download(msg) => write!(f, "failed to download update: {msg}"),
+            Self::Extract(msg) => write!(f, "failed to extract update: {msg}"),
+            Self::Replace(msg) => write!(f, "failed to replace binary: {msg}"),
         }
     }
 }
@@ -83,20 +83,19 @@ fn update_binary(tag: &str) -> Result<(), UpdateError> {
         other => return Err(UpdateError::UnsupportedArch(other.to_string())),
     };
 
-    let archive = format!("vestad-{}.tar.gz", target);
+    let archive = format!("vestad-{target}.tar.gz");
     // Download from the resolved tag's release, not the `/latest/` alias: beta tags
     // are prereleases that `/latest/` never points at, and a pinned tag also avoids
     // racing a concurrent release that moves `latest`.
     let url = format!(
-        "https://github.com/elyxlz/vesta/releases/download/v{}/{}",
-        tag, archive
+        "https://github.com/elyxlz/vesta/releases/download/v{tag}/{archive}"
     );
     let tmp = format!("/tmp/vestad-update-{}", std::process::id());
     std::fs::create_dir_all(&tmp).ok();
 
     tracing::info!(tag = %tag, "downloading vestad binary");
     let status = std::process::Command::new("curl")
-        .args(["-fsSL", "-o", &format!("{}/{}", tmp, archive), &url])
+        .args(["-fsSL", "-o", &format!("{tmp}/{archive}"), &url])
         .status();
     if !status.map(|s| s.success()).unwrap_or(false) {
         std::fs::remove_dir_all(&tmp).ok();
@@ -104,14 +103,14 @@ fn update_binary(tag: &str) -> Result<(), UpdateError> {
     }
 
     let status = std::process::Command::new("tar")
-        .args(["-xzf", &format!("{}/{}", tmp, archive), "-C", &tmp])
+        .args(["-xzf", &format!("{tmp}/{archive}"), "-C", &tmp])
         .status();
     if !status.map(|s| s.success()).unwrap_or(false) {
         std::fs::remove_dir_all(&tmp).ok();
         return Err(UpdateError::Extract("tar failed".into()));
     }
 
-    let new_binary = format!("{}/vestad", tmp);
+    let new_binary = format!("{tmp}/vestad");
     self_replace::self_replace(&new_binary).map_err(|e| UpdateError::Replace(e.to_string()))?;
 
     std::fs::remove_dir_all(&tmp).ok();

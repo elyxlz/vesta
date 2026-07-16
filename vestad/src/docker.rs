@@ -31,7 +31,7 @@ impl std::fmt::Display for DockerError {
             | Self::BrokenState(s)
             | Self::InvalidName(s)
             | Self::BuildRequired(s)
-            | Self::Failed(s) => write!(f, "{}", s),
+            | Self::Failed(s) => write!(f, "{s}"),
         }
     }
 }
@@ -95,14 +95,13 @@ const CORE_MOUNT_DEST: &str = "/root/agent/core";
 pub(crate) const CONSTITUTION_MOUNT_DEST: &str = "/root/agent/constitution.md";
 /// vestad's per-host upstream snapshot repo, bind-mounted read-only so boxes `git fetch`
 /// stock content locally (no network, no auth). Lives under /run, so the /root/agent/
-/// git-noise INVARIANT below does not apply (same as ENV_MOUNT_DEST).
+/// git-noise INVARIANT below does not apply (same as `ENV_MOUNT_DEST`).
 pub(crate) const UPSTREAM_MOUNT_DEST: &str = "/run/vesta-upstream";
 // INVARIANT for any mount destination UNDER /root/agent/: the box's $HOME is a git
 // checkout of the upstream snapshot, and a mount puts a file/dir on disk that the
-// snapshot does not contain -- so git reports it as untracked ("?? path") noise on every
-// box unless it is kept out of git status one of two ways:
-//   - a directory: never listed in the sparse cone (agent/core), so it stays out of cone.
-//   - a file: gitignored in agent/.gitignore (agent/constitution.md -> `/constitution.md`).
+// snapshot does not contain, so git reports it as untracked noise on every box unless
+// it is kept out of git status: a directory stays out of the sparse cone (agent/core),
+// a file is gitignored in agent/.gitignore (agent/constitution.md -> `/constitution.md`).
 // Adding a new /root/agent/ mount without doing this dirties every box's tree. The
 // upstream attach integration test (vestad/tests/server/upstream.rs) asserts a clean
 // tree after attach and fails if you forget. (ENV_MOUNT_DEST is under /run, so exempt.)
@@ -121,18 +120,14 @@ pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
         "export UV_PROJECT_ENVIRONMENT=/root/agent/.venv".into(),
         ". /run/vestad-env".into(),
         ". ~/.bashrc || true".into(),
-        // LEGACY(remove-when: fleet converged to vestad-served workspaces — the workspace
-        // branch never tracks .claude, so migrated workspaces cannot hit this):
-        // The agent's $HOME is a sparse git checkout of the vesta repo, which tracks dev tooling
-        // under .claude/ -- but ~/.claude is ALSO the agent's runtime dir (credentials, sessions).
-        // If the git workspace tracks .claude, a `git sparse-checkout reapply` (run by skills-install
-        // and by migrations) sparsifies the out-of-cone .claude/ and, on the image's git (2.39),
-        // deletes the untracked ~/.claude/.credentials.json with it, de-authing the agent. Self-heal
-        // at boot, before the agent runs anything that could reapply: drop .claude from the index and
-        // exclude it locally, so .claude is untracked and no reapply can touch it on ANY git version.
-        // Same rationale as tmux above -- this is the one place the fix reliably reaches already-
-        // snapshotted agents, since the skill scripts only update on a sync (itself a dangerous
-        // reapply). No-op outside a git repo (fresh agents before init); `|| true` never aborts boot.
+        // LEGACY(remove-when: fleet converged to vestad-served workspaces, whose branch never
+        // tracks .claude): $HOME is a sparse git checkout of the vesta repo, which tracks dev
+        // tooling under .claude/, but ~/.claude is ALSO the agent's runtime dir (credentials,
+        // sessions). If the workspace tracks .claude, a `git sparse-checkout reapply` (run by
+        // skills-install and migrations) sparsifies the out-of-cone .claude/ and, on git 2.39,
+        // deletes the untracked credentials, de-authing the agent. Self-heal at boot (the one
+        // place reaching already-snapshotted agents): untrack .claude and exclude it locally so
+        // no reapply can touch it. No-op outside a git repo; `|| true` never aborts boot.
         "if gd=$(git -C ~ rev-parse --absolute-git-dir 2>/dev/null); then git -C ~ ls-files -z -- .claude | xargs -0r git -C ~ update-index --force-remove; grep -qxF '/.claude/' \"$gd/info/exclude\" 2>/dev/null || printf '/.claude/\\n' >> \"$gd/info/exclude\"; fi || true".into(),
         // tmux is a hard runtime dependency of cc_sdk (it drives the real claude TUI in a
         // private tmux server). Fresh images bake it in via the Dockerfile, but `rebuild`
@@ -162,7 +157,7 @@ const CONTAINER_STOP_TIMEOUT_SECS: i32 = 10;
 const CONTAINER_RESTART_TIMEOUT_SECS: i32 = 10;
 /// `docker rm --force` can return before the container name is actually released, and a transient
 /// daemon error can leave it present; poll-and-retry until it's gone so a follow-up create under the
-/// same name (rebuild_agent) can't collide. Bounded so a genuinely stuck removal fails loudly.
+/// same name (`rebuild_agent`) can't collide. Bounded so a genuinely stuck removal fails loudly.
 const CONTAINER_REMOVE_MAX_ATTEMPTS: u32 = 5;
 const CONTAINER_REMOVE_POLL_MS: u64 = 200;
 /// Free space the Docker storage filesystem must have before vestad will rebuild or
@@ -207,7 +202,7 @@ pub enum AgentStatus {
 
 impl AgentStatus {
     /// Human-readable form for terminal surfaces (the status banner): the
-    /// snake_case wire name with spaces.
+    /// `snake_case` wire name with spaces.
     pub fn human_text(self) -> &'static str {
         match self {
             AgentStatus::Alive => "alive",
@@ -233,7 +228,7 @@ pub struct RebuildTracker(std::sync::Arc<std::sync::Mutex<HashMap<String, u32>>>
 
 impl RebuildTracker {
     pub fn mark(&self, name: &str) -> RebuildMark {
-        let mut counts = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let mut counts = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         *counts.entry(name.to_string()).or_insert(0) += 1;
         RebuildMark {
             tracker: self.clone(),
@@ -244,14 +239,14 @@ impl RebuildTracker {
     pub fn is_rebuilding(&self, name: &str) -> bool {
         self.0
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .contains_key(name)
     }
 
     pub fn names(&self) -> Vec<String> {
         self.0
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .keys()
             .cloned()
             .collect()
@@ -268,7 +263,7 @@ pub struct RebuildMark {
 
 impl Drop for RebuildMark {
     fn drop(&mut self) {
-        let mut counts = self.tracker.0.lock().unwrap_or_else(|e| e.into_inner());
+        let mut counts = self.tracker.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(count) = counts.get_mut(&self.name) {
             *count -= 1;
             if *count == 0 {
@@ -516,9 +511,9 @@ pub struct ContainerInfo {
 // The Go zero time Docker reports for a container that has never started; not a real boot.
 const NEVER_STARTED_AT: &str = "0001-01-01T00:00:00Z";
 
-/// Read a value from a per-agent env file by key (e.g. "WS_PORT").
+/// Read a value from a per-agent env file by key (e.g. "`WS_PORT`").
 pub fn read_env_value(agents_dir: &std::path::Path, agent_name: &str, key: &str) -> Option<String> {
-    let env_path = agents_dir.join(format!("{}.env", agent_name));
+    let env_path = agents_dir.join(format!("{agent_name}.env"));
     let content = std::fs::read_to_string(&env_path).ok()?;
     let prefix = format!("{key}=");
     content
@@ -536,16 +531,14 @@ pub(crate) fn container_info_from(
         .state
         .as_ref()
         .and_then(|s| s.status)
-        .map(|s| {
-            let status_str = format!("{:?}", s).to_lowercase();
+        .map_or(ContainerStatus::Stopped, |s| {
+            let status_str = format!("{s:?}").to_lowercase();
             match status_str.as_str() {
                 "running" | "restarting" | "paused" => ContainerStatus::Running,
-                "exited" | "created" => ContainerStatus::Stopped,
                 "dead" | "removing" => ContainerStatus::Dead,
                 _ => ContainerStatus::Stopped,
             }
-        })
-        .unwrap_or(ContainerStatus::Stopped);
+        });
     let id = info
         .id
         .as_ref()
@@ -603,11 +596,10 @@ pub(crate) fn guard_alive(
 ) -> Result<ContainerStatus, DockerError> {
     match status {
         ContainerStatus::NotFound => {
-            Err(DockerError::NotFound(format!("agent '{}' not found", name)))
+            Err(DockerError::NotFound(format!("agent '{name}' not found")))
         }
         ContainerStatus::Dead => Err(DockerError::BrokenState(format!(
-            "agent '{}' is in a broken state",
-            name
+            "agent '{name}' is in a broken state"
         ))),
         live => Ok(live),
     }
@@ -638,7 +630,7 @@ pub async fn ensure_running(docker: &Docker, cname: &str) -> Result<(), DockerEr
 pub async fn read_container_env(docker: &Docker, cname: &str, key: &str) -> Option<String> {
     let info = docker.inspect_container(cname, None).await.ok()?;
     let envs = info.config?.env?;
-    let prefix = format!("{}=", key);
+    let prefix = format!("{key}=");
     envs.iter()
         .find(|e| e.starts_with(&prefix))
         .map(|e| e[prefix.len()..].to_string())
@@ -678,12 +670,6 @@ pub fn find_dockerfile() -> Result<std::path::PathBuf, DockerError> {
 /// Respects `.dockerignore` if present. Uses `sparse(false)` to avoid GNU sparse
 /// headers (type 83) which Docker's daemon cannot parse.
 fn build_context_tar(context: &std::path::Path) -> Result<bytes::Bytes, DockerError> {
-    let mut builder = tar::Builder::new(Vec::new());
-    builder.sparse(false);
-    builder.follow_symlinks(true);
-
-    let ignore_patterns = load_dockerignore(context)?;
-
     fn visit_dir(
         builder: &mut tar::Builder<Vec<u8>>,
         base: &std::path::Path,
@@ -719,6 +705,12 @@ fn build_context_tar(context: &std::path::Path) -> Result<bytes::Bytes, DockerEr
         Ok(())
     }
 
+    let mut builder = tar::Builder::new(Vec::new());
+    builder.sparse(false);
+    builder.follow_symlinks(true);
+
+    let ignore_patterns = load_dockerignore(context)?;
+
     visit_dir(&mut builder, context, context, &ignore_patterns)?;
 
     let tar_bytes = builder
@@ -738,10 +730,10 @@ struct Dockerignore {
 /// next to the Dockerfile (Docker 20.10+ convention); falls back to a
 /// `.dockerignore` at the build context root.
 fn load_dockerignore(context: &std::path::Path) -> Result<Dockerignore, DockerError> {
-    let content = std::fs::read_to_string(context.join(format!("{DOCKERFILE_REL}.dockerignore")))
+    let text = std::fs::read_to_string(context.join(format!("{DOCKERFILE_REL}.dockerignore")))
         .or_else(|_| std::fs::read_to_string(context.join(".dockerignore")))
         .unwrap_or_default();
-    let patterns: Vec<&str> = content
+    let patterns: Vec<&str> = text
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
@@ -897,7 +889,7 @@ pub(crate) fn env_file_names(agents_dir: &std::path::Path) -> Vec<String> {
                 return None;
             }
             let name = entry.file_name().to_str()?.to_string();
-            name.strip_suffix(".env").map(|s| s.to_string())
+            name.strip_suffix(".env").map(std::string::ToString::to_string)
         })
         .collect()
 }
@@ -926,7 +918,7 @@ pub fn read_agent_port_and_token(
     agent_name: &str,
     agents_dir: &std::path::Path,
 ) -> (Option<u16>, Option<String>) {
-    let env_path = agents_dir.join(format!("{}.env", agent_name));
+    let env_path = agents_dir.join(format!("{agent_name}.env"));
     let Ok(content) = std::fs::read_to_string(&env_path) else {
         return (None, None);
     };
@@ -944,9 +936,7 @@ pub fn read_agent_port_and_token(
 }
 
 pub fn generate_agent_token() -> String {
-    (0..AGENT_TOKEN_BYTES)
-        .map(|_| format!("{:02x}", rand::random::<u8>()))
-        .collect()
+    hex::encode(rand::random::<[u8; AGENT_TOKEN_BYTES]>())
 }
 
 // --- Per-agent env file ---
@@ -1012,7 +1002,7 @@ pub fn write_agent_env_file(
 ) -> Result<std::path::PathBuf, DockerError> {
     std::fs::create_dir_all(&env_config.agents_dir)
         .map_err(|e| DockerError::Failed(format!("failed to create agents dir: {e}")))?;
-    let env_path = env_config.agents_dir.join(format!("{}.env", agent_name));
+    let env_path = env_config.agents_dir.join(format!("{agent_name}.env"));
     let mut content = format!(
         "export WS_PORT={ws_port}\n\
          export AGENT_NAME={agent_name}\n\
@@ -1023,7 +1013,8 @@ pub fn write_agent_env_file(
     );
     let mut append_optional = |key: &str, value: Option<&str>| {
         if let Some(v) = value {
-            content.push_str(&format!("export {key}={v}\n"));
+            use std::fmt::Write;
+            let _ = writeln!(content, "export {key}={v}");
         }
     };
     append_optional("VESTAD_TUNNEL", env_config.vestad_tunnel.as_deref());
@@ -1054,7 +1045,7 @@ pub fn write_agent_env_file(
 }
 
 fn delete_agent_env_file(agents_dir: &std::path::Path, agent_name: &str) {
-    let env_path = agents_dir.join(format!("{}.env", agent_name));
+    let env_path = agents_dir.join(format!("{agent_name}.env"));
     std::fs::remove_file(&env_path).ok();
 }
 
@@ -1064,7 +1055,7 @@ pub fn constitution_host_path(
     agents_dir: &std::path::Path,
     agent_name: &str,
 ) -> std::path::PathBuf {
-    agents_dir.join(format!("{}.constitution.md", agent_name))
+    agents_dir.join(format!("{agent_name}.constitution.md"))
 }
 
 /// Ensure the constitution file exists (empty by default) so it can be bind-mounted as a
@@ -1115,7 +1106,7 @@ fn delete_constitution_file(agents_dir: &std::path::Path, agent_name: &str) {
     std::fs::remove_file(constitution_host_path(agents_dir, agent_name)).ok();
 }
 
-/// Update VESTAD_PORT and VESTAD_TUNNEL in all existing per-agent env files.
+/// Update `VESTAD_PORT` and `VESTAD_TUNNEL` in all existing per-agent env files.
 /// Called at vestad startup so running containers pick up the new values on restart.
 pub fn update_all_agent_env_files(
     agents_dir: &std::path::Path,
@@ -1177,9 +1168,8 @@ pub async fn list_managed_agents(docker: &Docker) -> Vec<ManagedAgent> {
         ..Default::default()
     };
 
-    let containers = match docker.list_containers(Some(opts)).await {
-        Ok(c) => c,
-        Err(_) => return Vec::new(),
+    let Ok(containers) = docker.list_containers(Some(opts)).await else {
+        return Vec::new();
     };
 
     let user = crate::paths::current_user();
@@ -1229,8 +1219,7 @@ async fn gpu_available(docker: &Docker) -> GpuStatus {
         .await
         .ok()
         .and_then(|info| info.runtimes)
-        .map(|runtimes| runtimes.contains_key("nvidia"))
-        .unwrap_or(false);
+        .is_some_and(|runtimes| runtimes.contains_key("nvidia"));
 
     if has_runtime {
         GpuStatus::Ready
@@ -1330,7 +1319,7 @@ async fn remove_replaced_snapshot(docker: &Docker, prev: Option<&str>, keep: &st
     match remove_image(docker, prev).await {
         Ok(()) => tracing::info!(image = %prev, "removed replaced snapshot image"),
         Err(e) => {
-            tracing::warn!(image = %prev, error = %e, "could not remove replaced snapshot image")
+            tracing::warn!(image = %prev, error = %e, "could not remove replaced snapshot image");
         }
     }
 }
@@ -1410,7 +1399,7 @@ pub async fn import_image_gzip(
         .map_err(|e| DockerError::Failed(format!("failed to open input file: {e}")))?;
     let byte_stream =
         tokio_util::codec::FramedRead::new(file, tokio_util::codec::BytesCodec::new())
-            .map(|r| r.map(|b| b.freeze()));
+            .map(|r| r.map(bytes::BytesMut::freeze));
 
     let opts = ImportImageOptions {
         ..Default::default()
@@ -1439,7 +1428,7 @@ pub async fn container_size_rw(docker: &Docker, cname: &str) -> Option<u64> {
         .inspect_container(cname, Some(InspectContainerOptions { size: true }))
         .await
         .ok()?;
-    info.size_rw.map(|s| s as u64)
+    info.size_rw.and_then(|size| u64::try_from(size).ok())
 }
 
 /// Total size of the container's root filesystem (image layers + writable layer).
@@ -1450,7 +1439,7 @@ pub async fn container_size_root_fs(docker: &Docker, cname: &str) -> Option<u64>
         .inspect_container(cname, Some(InspectContainerOptions { size: true }))
         .await
         .ok()?;
-    info.size_root_fs.map(|s| s as u64)
+    info.size_root_fs.and_then(|size| u64::try_from(size).ok())
 }
 
 pub async fn container_created(docker: &Docker, cname: &str) -> Option<String> {
@@ -1473,7 +1462,7 @@ pub async fn remove_container_force(docker: &Docker, cname: &str) -> Result<(), 
 }
 
 /// Force-remove a container and confirm it is actually gone before returning. Needed when the name
-/// is reused immediately after (rebuild_agent recreates under the same name): a bare force-remove
+/// is reused immediately after (`rebuild_agent` recreates under the same name): a bare force-remove
 /// can return before the name frees, and a transient daemon error can leave the container present —
 /// either makes the follow-up create collide on the name and silently leaves the agent down. Retry
 /// the remove and poll until docker no longer reports it; error out loudly if it never disappears
@@ -1549,7 +1538,7 @@ pub async fn snapshot_container(
 ) -> Result<(), DockerError> {
     let cname = cname.to_string();
     let tag = tag.to_string();
-    let changes: Vec<String> = changes.iter().map(|s| s.to_string()).collect();
+    let changes: Vec<String> = changes.iter().map(std::string::ToString::to_string).collect();
 
     tokio::time::timeout(
         std::time::Duration::from_secs(SNAPSHOT_TIMEOUT_SECS),
@@ -1629,17 +1618,30 @@ fn assemble_binds(
     binds
 }
 
-#[allow(clippy::too_many_arguments)]
+/// What identifies one container to create, beyond the daemon-wide docker handle
+/// and env config: its names, image, port, and per-agent mount choices.
+pub struct ContainerSpec<'a> {
+    pub cname: &'a str,
+    pub image: &'a str,
+    pub port: u16,
+    pub agent_name: &'a str,
+    pub manage_core_code: bool,
+    pub user_mounts: &'a [crate::mounts::HostMount],
+}
+
 pub async fn create_container(
     docker: &Docker,
-    cname: &str,
-    image: &str,
-    port: u16,
-    agent_name: &str,
     env_config: &AgentEnvConfig,
-    manage_core_code: bool,
-    user_mounts: &[crate::mounts::HostMount],
+    spec: ContainerSpec<'_>,
 ) -> Result<(), DockerError> {
+    let ContainerSpec {
+        cname,
+        image,
+        port,
+        agent_name,
+        manage_core_code,
+        user_mounts,
+    } = spec;
     let agent_token = generate_agent_token();
     let env_path = write_agent_env_file(env_config, agent_name, port, &agent_token)?;
     let env_mount = format!("{}:{}:ro,z", env_path.display(), ENV_MOUNT_DEST);
@@ -1809,7 +1811,6 @@ impl std::fmt::Debug for BuildProgress {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn create_agent(
     docker: &Docker,
     name: &str,
@@ -1832,8 +1833,7 @@ pub async fn create_agent(
 
     if container_status(docker, &cname).await != ContainerStatus::NotFound {
         return Err(DockerError::AlreadyExists(format!(
-            "agent '{}' already exists",
-            name
+            "agent '{name}' already exists"
         )));
     }
 
@@ -1850,13 +1850,15 @@ pub async fn create_agent(
     let port = allocate_port(&env_config.agents_dir)?;
     create_container(
         docker,
-        &cname,
-        &image,
-        port,
-        name,
         env_config,
-        manage_core_code,
-        &[],
+        ContainerSpec {
+            cname: &cname,
+            image: &image,
+            port,
+            agent_name: name,
+            manage_core_code,
+            user_mounts: &[],
+        },
     )
     .await?;
 
@@ -1870,7 +1872,7 @@ pub async fn start_agent(docker: &Docker, name: &str) -> Result<(), DockerError>
         return Ok(());
     }
     if !start_container(docker, &cname).await {
-        return Err(DockerError::Failed(format!("failed to start '{}'", name)));
+        return Err(DockerError::Failed(format!("failed to start '{name}'")));
     }
     Ok(())
 }
@@ -2029,6 +2031,19 @@ pub async fn reconcile_containers(
     mounts_for: &(dyn Fn(&str) -> Vec<crate::mounts::HostMount> + Send + Sync),
     rebuilding: &RebuildTracker,
 ) {
+    struct PendingRebuild<'a> {
+        name: &'a str,
+        cname: &'a str,
+        raw: bollard::models::ContainerInspectResponse,
+        desired_mounts: Vec<crate::mounts::HostMount>,
+        has_core_mounts: bool,
+        // Held for the agent's place in the queue; a rebuilt agent's mark is kept until
+        // reconcile ends (phase 3 has started it), so it never dips back to `Stopped`
+        // while a later agent's rebuild runs. Dropped early only when the batch is
+        // abandoned, clearing the never-rebuilt agents' `Rebuilding` status truthfully.
+        mark: RebuildMark,
+    }
+
     let agents = list_managed_agents(docker).await;
     if agents.is_empty() {
         return;
@@ -2087,18 +2102,6 @@ pub async fn reconcile_containers(
     // can't redirect the rebuild into wiping bind-mounted core code. The whole batch is determined
     // and marked as rebuilding up front: rebuilds run serially and take minutes each, so agents
     // waiting their turn must already report `Rebuilding`, not `Stopped`.
-    struct PendingRebuild<'a> {
-        name: &'a str,
-        cname: &'a str,
-        raw: bollard::models::ContainerInspectResponse,
-        desired_mounts: Vec<crate::mounts::HostMount>,
-        has_core_mounts: bool,
-        // Held for the agent's place in the queue; a rebuilt agent's mark is kept until
-        // reconcile ends (phase 3 has started it), so it never dips back to `Stopped`
-        // while a later agent's rebuild runs. Dropped early only when the batch is
-        // abandoned, clearing the never-rebuilt agents' `Rebuilding` status truthfully.
-        mark: RebuildMark,
-    }
     let mut pending = Vec::new();
     for ManagedAgent {
         cname,
@@ -2193,8 +2196,7 @@ pub async fn reconcile_containers(
             .unwrap_or(false);
         let has_core_mount = raw
             .as_ref()
-            .map(|r| mounts_have_core_code(r.mounts.as_deref().unwrap_or(&[])))
-            .unwrap_or(false);
+            .is_some_and(|r| mounts_have_core_code(r.mounts.as_deref().unwrap_or(&[])));
         if wants_running(name) {
             if !running {
                 tracing::info!(agent = %name, "starting (desired running)");
@@ -2275,7 +2277,7 @@ fn mounts_have_core_code(mounts: &[bollard::models::MountPoint]) -> bool {
         .any(|m| m.destination.as_deref() == Some(CORE_MOUNT_DEST))
 }
 
-/// Check if a container's config diverges from what create_container would produce.
+/// Check if a container's config diverges from what `create_container` would produce.
 /// Operates on a pre-fetched inspect response so callers can do one Docker round-trip
 /// even when they also need other fields (mount topology, port, status). Mount
 /// divergence is intentionally NOT a trigger here: it's reported by reconcile as a
@@ -2341,11 +2343,10 @@ fn needs_rebuild(
     let cmd = info.config.as_ref().and_then(|c| c.cmd.as_ref());
     let expected_cmd = agent_container_entrypoint_cmd();
     let cmd_ok = cmd
-        .map(|actual| {
+        .is_some_and(|actual| {
             actual.len() == expected_cmd.len()
                 && actual.iter().zip(expected_cmd.iter()).all(|(a, e)| a == e)
-        })
-        .unwrap_or(false);
+        });
     if !cmd_ok {
         tracing::info!(container = %cname, actual = ?cmd, expected = ?expected_cmd, "rebuild needed: command mismatch");
         return true;
@@ -2397,7 +2398,7 @@ fn needs_rebuild(
 }
 
 /// Resolve an existing agent's WS port for a snapshot-and-recreate: prefer the env-file
-/// port, fall back to the container's baked-in WS_PORT, then allocate a fresh one.
+/// port, fall back to the container's baked-in `WS_PORT`, then allocate a fresh one.
 async fn resolve_existing_port(
     docker: &Docker,
     cname: &str,
@@ -2408,12 +2409,9 @@ async fn resolve_existing_port(
     let baked = read_container_env(docker, cname, "WS_PORT")
         .await
         .and_then(|v| v.parse::<u16>().ok());
-    match info.port.or(baked) {
-        Some(port) => Ok(port),
-        None => {
-            tracing::warn!(agent = %name, "no port found in env file or container, allocating new port");
-            allocate_port(agents_dir)
-        }
+    if let Some(port) = info.port.or(baked) { Ok(port) } else {
+        tracing::warn!(agent = %name, "no port found in env file or container, allocating new port");
+        allocate_port(agents_dir)
     }
 }
 
@@ -2448,7 +2446,7 @@ pub async fn rebuild_agent(
     let port = resolve_existing_port(docker, &cname, &info, name, &env_config.agents_dir).await?;
 
     let ts = crate::time_utils::now_epoch_secs();
-    let backup_tag = format!("vesta-rebuild:{}_{}", name, ts);
+    let backup_tag = format!("vesta-rebuild:{name}_{ts}");
 
     // Stop cleanly so the snapshot captures a quiesced filesystem (SQLite mid-write would
     // be the main concern). Best-effort — snapshot will still proceed if stop fails.
@@ -2471,13 +2469,15 @@ pub async fn rebuild_agent(
     tracing::info!(agent = %name, "[4/4] creating container with new config...");
     create_container(
         docker,
-        &cname,
-        &backup_tag,
-        port,
-        name,
         env_config,
-        manage_core_code,
-        user_mounts,
+        ContainerSpec {
+            cname: &cname,
+            image: &backup_tag,
+            port,
+            agent_name: name,
+            manage_core_code,
+            user_mounts,
+        },
     )
     .await?;
 
@@ -2489,8 +2489,8 @@ pub async fn rebuild_agent(
 
 /// Rename an agent: snapshot the existing container, destroy it, then create a fresh
 /// container from the snapshot under the new name. Preserves the in-container filesystem
-/// (events.db, session_id, prompts, ~/.claude auth) but rewrites the env file with the
-/// new AGENT_NAME and a fresh AGENT_TOKEN. Caller updates settings.json keys and starts
+/// (events.db, `session_id`, prompts, ~/.claude auth) but rewrites the env file with the
+/// new `AGENT_NAME` and a fresh `AGENT_TOKEN`. Caller updates settings.json keys and starts
 /// the new container.
 pub async fn rename_agent(
     docker: &Docker,
@@ -2512,60 +2512,57 @@ pub async fn rename_agent(
         ));
     }
 
-    let old_cname = container_name(old_name);
-    let new_cname = container_name(new_name);
+    let old_container = container_name(old_name);
+    let new_container = container_name(new_name);
 
-    if container_status(docker, &old_cname).await == ContainerStatus::NotFound {
+    if container_status(docker, &old_container).await == ContainerStatus::NotFound {
         return Err(DockerError::NotFound(format!(
-            "agent '{}' not found",
-            old_name
+            "agent '{old_name}' not found"
         )));
     }
-    if container_status(docker, &new_cname).await != ContainerStatus::NotFound {
+    if container_status(docker, &new_container).await != ContainerStatus::NotFound {
         return Err(DockerError::AlreadyExists(format!(
-            "agent '{}' already exists",
-            new_name
+            "agent '{new_name}' already exists"
         )));
     }
 
     let raw = docker
-        .inspect_container(&old_cname, None)
+        .inspect_container(&old_container, None)
         .await
         .map_err(DockerError::from)?;
-    let info = container_info_from(&old_cname, &raw, Some(&env_config.agents_dir));
+    let info = container_info_from(&old_container, &raw, Some(&env_config.agents_dir));
     let prev_image = raw.config.as_ref().and_then(|c| c.image.clone());
     if info.status == ContainerStatus::Dead {
         return Err(DockerError::BrokenState(format!(
-            "agent '{}' is in a broken state",
-            old_name
+            "agent '{old_name}' is in a broken state"
         )));
     }
 
     let manage_core_code = mounts_have_core_code(raw.mounts.as_deref().unwrap_or(&[]));
 
     let port =
-        resolve_existing_port(docker, &old_cname, &info, old_name, &env_config.agents_dir).await?;
+        resolve_existing_port(docker, &old_container, &info, old_name, &env_config.agents_dir).await?;
 
     // Stop cleanly so the snapshot captures a quiesced filesystem (SQLite mid-write would
     // be the main concern). Best-effort — snapshot will still proceed if stop fails.
     if info.status == ContainerStatus::Running {
         tracing::info!(agent = %old_name, "[1/4] stopping container...");
-        stop_container_with_timeout(docker, &old_cname, CONTAINER_STOP_TIMEOUT_SECS)
+        stop_container_with_timeout(docker, &old_container, CONTAINER_STOP_TIMEOUT_SECS)
             .await
             .ok();
     }
 
     let ts = crate::time_utils::now_epoch_secs();
-    let snapshot_tag = format!("vesta-rename:{}-to-{}_{}", old_name, new_name, ts);
+    let snapshot_tag = format!("vesta-rename:{old_name}-to-{new_name}_{ts}");
 
     tracing::info!(old = %old_name, new = %new_name, "[2/4] snapshotting container...");
-    snapshot_container(docker, &old_cname, &snapshot_tag, &[]).await?;
+    snapshot_container(docker, &old_container, &snapshot_tag, &[]).await?;
 
     tracing::info!(agent = %old_name, "[3/4] removing old container and env file...");
     // Confirm it's actually gone (don't swallow): the snapshot is safely captured and the env
     // file and constitution are still untouched, so failing here leaves the old agent fully
     // intact instead of leaving a live container squatting on the WS port under the old name.
-    ensure_container_removed(docker, &old_cname).await?;
+    ensure_container_removed(docker, &old_container).await?;
     // Carry the constitution across the rename before the new container is created, so its
     // bind mount resolves to the existing content rather than a fresh empty file.
     let old_constitution = read_constitution(&env_config.agents_dir, old_name).unwrap_or_default();
@@ -2578,13 +2575,15 @@ pub async fn rename_agent(
     tracing::info!(new = %new_name, "[4/4] creating renamed container from snapshot...");
     create_container(
         docker,
-        &new_cname,
-        &snapshot_tag,
-        port,
-        new_name,
         env_config,
-        manage_core_code,
-        user_mounts,
+        ContainerSpec {
+            cname: &new_container,
+            image: &snapshot_tag,
+            port,
+            agent_name: new_name,
+            manage_core_code,
+            user_mounts,
+        },
     )
     .await?;
 

@@ -69,20 +69,20 @@ struct Cli {
     command: Option<Command>,
 }
 
-/// Flags shared by `setup` and `create` for running an agent on OpenRouter instead of a Claude account.
+/// Flags shared by `setup` and `create` for running an agent on `OpenRouter` instead of a Claude account.
 #[derive(clap::Args)]
 struct OpenRouterFlags {
-    /// Run on OpenRouter with this API key instead of a Claude account (requires --openrouter-model)
+    /// Run on `OpenRouter` with this API key instead of a Claude account (requires --openrouter-model)
     #[arg(long)]
     openrouter_key: Option<String>,
-    /// OpenRouter model slug, e.g. "anthropic/claude-sonnet-4-6"
+    /// `OpenRouter` model slug, e.g. "anthropic/claude-sonnet-4-6"
     #[arg(long)]
     openrouter_model: Option<String>,
 }
 
 #[derive(Subcommand)]
 enum Command {
-    /// Create agent, start it, and authenticate (prompts for Claude vs OpenRouter)
+    /// Create agent, start it, and authenticate (prompts for Claude vs `OpenRouter`)
     Setup {
         /// Skip prompts: assume yes, and default to a Claude account unless --openrouter-key is given
         #[arg(long, short)]
@@ -94,7 +94,7 @@ enum Command {
         #[arg(long)]
         no_manage_core_code: bool,
         /// Claude OAuth credentials JSON, to provision Claude without the interactive
-        /// login (the non-interactive counterpart to the OpenRouter flags). Get it
+        /// login (the non-interactive counterpart to the `OpenRouter` flags). Get it
         /// from `vesta auth` or an existing agent.
         #[arg(long)]
         claude_token: Option<String>,
@@ -178,11 +178,11 @@ enum Command {
         cmd: MountCommand,
     },
     /// View or change agent settings. With no flags, prints model + context window
-    /// (manage_agent_code is fixed at create time and read-only here).
+    /// (`manage_agent_code` is fixed at create time and read-only here).
     Settings {
         /// Agent name
         name: String,
-        /// Change the model: opus | sonnet | haiku (Claude), or an OpenRouter slug
+        /// Change the model: opus | sonnet | haiku (Claude), or an `OpenRouter` slug
         #[arg(long)]
         model: Option<String>,
         /// Change the context window in tokens, e.g. 200000 / 500000 / 1000000
@@ -239,7 +239,7 @@ enum Command {
     },
     /// Connect to a remote server (paste the connect link vestad printed)
     Connect {
-        /// The connect link vestad printed, e.g. https://host/app#k=key
+        /// The connect link vestad printed, e.g. <https://host/app#k=key>
         link: String,
     },
     /// Update vesta to the latest version
@@ -430,7 +430,11 @@ fn new_rule_id() -> String {
     use ring::rand::SecureRandom;
     let mut bytes = [0u8; 16];
     ring::rand::SystemRandom::new().fill(&mut bytes).expect("system CSPRNG");
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    bytes.iter().fold(String::new(), |mut hex, byte| {
+        use std::fmt::Write;
+        let _ = write!(hex, "{byte:02x}");
+        hex
+    })
 }
 
 /// Build a new interrupt rule from the match flags + action, stamped with a client-side id. Unset
@@ -568,7 +572,7 @@ struct ClaudeOptions {
 
 /// How `vesta setup` will provision the agent once it's created.
 enum ProvisionPlan {
-    /// Run on OpenRouter (key already validated).
+    /// Run on `OpenRouter` (key already validated).
     OpenRouter(client::OpenRouterArgs),
     /// Provision Claude from credentials supplied up front (non-interactive).
     ClaudeCredentials { credentials: String, opts: ClaudeOptions },
@@ -578,11 +582,10 @@ enum ProvisionPlan {
 
 /// Resolve how `vesta setup` should provision the agent. Every interactive prompt
 /// has a non-interactive flag equivalent:
-/// - `--openrouter-key` (+ `--openrouter-model`) -> OpenRouter, no prompts
+/// - `--openrouter-key` (+ `--openrouter-model`) -> `OpenRouter`, no prompts
 /// - `--claude-token` -> Claude from supplied credentials, no prompts
 /// - `--yes` with neither -> defaults to Claude (OAuth dance still runs)
 /// - otherwise -> prompt for the provider (and key/model, or OAuth)
-#[allow(clippy::too_many_arguments)]
 fn resolve_setup_provider(c: &client::Client, flags: OpenRouterFlags, claude_token: Option<String>, claude_model: Option<String>, context_window: Option<u64>, yes: bool) -> ProvisionPlan {
     if flags.openrouter_key.is_some() && claude_token.is_some() {
         die("--openrouter-key and --claude-token are mutually exclusive");
@@ -617,7 +620,7 @@ fn resolve_claude_options(c: &client::Client, model_flag: Option<String>, ctx_fl
 
 /// Show a numbered list and return the chosen 0-based index. Empty input picks
 /// `default_idx`; an out-of-range number reprompts. Used by the fixed-list pickers
-/// (Claude model, context window); the OpenRouter picker is richer (search + custom
+/// (Claude model, context window); the `OpenRouter` picker is richer (search + custom
 /// slug) and stays separate.
 fn prompt_indexed_choice(labels: &[String], default_idx: usize) -> usize {
     for (idx, label) in labels.iter().enumerate() {
@@ -665,7 +668,7 @@ fn prompt_context_window(c: &client::Client) -> Option<u64> {
 }
 
 /// Ask the user which provider to run the agent on. Defaults to a Claude
-/// account (empty input or "1"). Returns true if the user picked OpenRouter.
+/// account (empty input or "1"). Returns true if the user picked `OpenRouter`.
 fn prompt_use_openrouter() -> bool {
     eprintln!("how should this agent authenticate?");
     eprintln!("  1) claude account: log in with your claude subscription (default)");
@@ -679,7 +682,7 @@ fn prompt_use_openrouter() -> bool {
     }
 }
 
-/// Interactively collect an OpenRouter key (validated, with retry) and a model
+/// Interactively collect an `OpenRouter` key (validated, with retry) and a model
 /// slug. A model passed via `--openrouter-model` is reused without prompting.
 fn prompt_openrouter_interactive(c: &client::Client, preset_model: Option<String>) -> client::OpenRouterArgs {
     let key = loop {
@@ -695,7 +698,7 @@ fn prompt_openrouter_interactive(c: &client::Client, preset_model: Option<String
 }
 
 /// Format a model's input/output/cache-read price (USD per million tokens) for the
-/// picker list, or None when OpenRouter doesn't report pricing. Cache read is shown
+/// picker list, or None when `OpenRouter` doesn't report pricing. Cache read is shown
 /// only when present and non-zero.
 fn fmt_model_price(input: Option<f64>, output: Option<f64>, cache_read: Option<f64>) -> Option<String> {
     let (input, output) = (input?, output?);
@@ -704,7 +707,8 @@ fn fmt_model_price(input: Option<f64>, output: Option<f64>, cache_read: Option<f
     }
     let mut price = format!("{} in / {} out", fmt_usd(input), fmt_usd(output));
     if let Some(cache) = cache_read.filter(|c| *c > 0.0) {
-        price.push_str(&format!(" / {} cache read", fmt_usd(cache)));
+        use std::fmt::Write;
+        let _ = write!(price, " / {} cache read", fmt_usd(cache));
     }
     price.push_str(" per Mtok");
     Some(price)
@@ -725,7 +729,7 @@ fn fmt_usd(price: f64) -> String {
     }
 }
 
-/// Prompt for an OpenRouter model. Shows the top-weekly models as a numbered
+/// Prompt for an `OpenRouter` model. Shows the top-weekly models as a numbered
 /// list (pick by number) and always accepts a custom `provider/model` slug.
 /// Falls back to a free-text prompt if the model list can't be fetched.
 fn prompt_openrouter_model(c: &client::Client) -> String {
@@ -744,13 +748,9 @@ fn prompt_openrouter_model(c: &client::Client) -> String {
     loop {
         let input = prompt("model (number or slug)");
         if let Ok(choice) = input.parse::<usize>() {
-            match models.get(choice.wrapping_sub(1)) {
-                Some(model) => return model.slug.clone(),
-                None => {
-                    eprintln!("  pick a number between 1 and {}", models.len());
-                    continue;
-                }
-            }
+            if let Some(model) = models.get(choice.wrapping_sub(1)) { return model.slug.clone() }
+            eprintln!("  pick a number between 1 and {}", models.len());
+            continue;
         }
         return input;
     }
@@ -839,9 +839,8 @@ fn classify_version_gate(cli: &str, gateway: &str) -> VersionGate {
 /// mismatch exits non-zero; an unreachable or pre-version gateway is left alone so
 /// the command can surface its own error.
 fn enforce_version_match(client: &client::Client) {
-    let gateway = match client.gateway_version() {
-        Ok(version) => version,
-        Err(_) => return,
+    let Ok(gateway) = client.gateway_version() else {
+        return;
     };
     let cli = env!("CARGO_PKG_VERSION");
     match classify_version_gate(cli, &gateway) {
@@ -1110,9 +1109,7 @@ fn run(cli: Cli) {
         Command::Setup { yes, name, no_manage_core_code, claude_token, claude_model, context_window, openrouter } => {
             let c = get_client(host_ref, token_ref);
 
-            let name = name
-                .map(|name| name.trim().to_string())
-                .unwrap_or_else(prompt_name);
+            let name = name.map_or_else(prompt_name, |name| name.trim().to_string());
 
             // Choose the provider before creating anything: with no flags this
             // prompts interactively (Claude vs OpenRouter). The OpenRouter key
@@ -1198,9 +1195,7 @@ fn run(cli: Cli) {
 
         Command::Create { name, no_manage_core_code, openrouter } => {
             let c = get_client(host_ref, token_ref);
-            let name = name
-                .map(|name| name.trim().to_string())
-                .unwrap_or_else(prompt_name);
+            let name = name.map_or_else(prompt_name, |name| name.trim().to_string());
             let openrouter = build_openrouter_args(openrouter);
             let timezone = detect_timezone();
 
@@ -1248,22 +1243,22 @@ fn run(cli: Cli) {
                 // Only report model/context when a provider is actually configured; a signed-out
                 // agent (kind "none") has a stored default model but no active provider.
                 if let Ok(provider) = c.get_provider(&name) {
-                    if provider["authed"].as_bool() != Some(true) {
-                        eprintln!("provider = not configured (run 'vesta auth {name}')");
-                    } else {
+                    if provider["authed"].as_bool() == Some(true) {
                         if let Some(m) = provider["model"].as_str() {
                             eprintln!("model = {m}");
                         }
                         match provider["max_context_tokens"].as_u64() {
                             Some(ctx) => eprintln!("context_window = {ctx}"),
                             None if provider["kind"].as_str() == Some("openrouter") => {
-                                eprintln!("context_window = default (model window, capped at 200K)")
+                                eprintln!("context_window = default (model window, capped at 200K)");
                             }
                             None if provider["kind"].as_str() == Some("claude") => {
-                                eprintln!("context_window = default (1M for Claude)")
+                                eprintln!("context_window = default (1M for Claude)");
                             }
                             None => eprintln!("context_window = default"),
                         }
+                    } else {
+                        eprintln!("provider = not configured (run 'vesta auth {name}')");
                     }
                 }
             }
@@ -1339,31 +1334,28 @@ fn run(cli: Cli) {
 
         Command::Start { name } => {
             let c = get_client(host_ref, token_ref);
-            match name {
-                Some(name) => {
-                    c.start_agent(&name).or_die();
-                    c.wait_until_alive(&name, START_READY_TIMEOUT)
-                        .or_die();
-                    eprintln!("{name}: ready");
-                }
-                None => {
-                    let results = c.start_all().or_die();
-                    if results.is_empty() {
-                        eprintln!("no agents yet. create one with: vesta setup");
-                    } else {
-                        for r in &results {
-                            if !r.ok {
-                                eprintln!(
-                                    "{}: {}",
-                                    r.name,
-                                    r.error.as_deref().unwrap_or("failed")
-                                );
-                                continue;
-                            }
-                            match c.wait_until_alive(&r.name, START_READY_TIMEOUT) {
-                                Ok(()) => eprintln!("{}: ready", r.name),
-                                Err(e) => eprintln!("{}: {}", r.name, e),
-                            }
+            if let Some(name) = name {
+                c.start_agent(&name).or_die();
+                c.wait_until_alive(&name, START_READY_TIMEOUT)
+                    .or_die();
+                eprintln!("{name}: ready");
+            } else {
+                let results = c.start_all().or_die();
+                if results.is_empty() {
+                    eprintln!("no agents yet. create one with: vesta setup");
+                } else {
+                    for r in &results {
+                        if !r.ok {
+                            eprintln!(
+                                "{}: {}",
+                                r.name,
+                                r.error.as_deref().unwrap_or("failed")
+                            );
+                            continue;
+                        }
+                        match c.wait_until_alive(&r.name, START_READY_TIMEOUT) {
+                            Ok(()) => eprintln!("{}: ready", r.name),
+                            Err(e) => eprintln!("{}: {}", r.name, e),
                         }
                     }
                 }
@@ -1537,18 +1529,15 @@ fn run(cli: Cli) {
                         .or_die();
                     eprintln!("backup deleted: {backup_id}");
                 }
-                BackupAction::AutoBackup { toggle } => match toggle {
-                    Some(toggle) => {
-                        let enabled = matches!(toggle, Toggle::On);
-                        c.set_auto_backup_settings(&serde_json::json!({"enabled": enabled}))
-                            .or_die();
-                        eprintln!("auto-backup: {}", if enabled { "enabled" } else { "disabled" });
-                    }
-                    None => {
-                        let settings = c.get_auto_backup_settings().or_die();
-                        let enabled = settings["enabled"].as_bool().unwrap_or(true);
-                        eprintln!("auto-backup: {}", if enabled { "enabled" } else { "disabled" });
-                    }
+                BackupAction::AutoBackup { toggle } => if let Some(toggle) = toggle {
+                    let enabled = matches!(toggle, Toggle::On);
+                    c.set_auto_backup_settings(&serde_json::json!({"enabled": enabled}))
+                        .or_die();
+                    eprintln!("auto-backup: {}", if enabled { "enabled" } else { "disabled" });
+                } else {
+                    let settings = c.get_auto_backup_settings().or_die();
+                    let enabled = settings["enabled"].as_bool().unwrap_or(true);
+                    eprintln!("auto-backup: {}", if enabled { "enabled" } else { "disabled" });
                 },
                 BackupAction::Retention { daily, weekly, monthly } => {
                     if daily.is_none() && weekly.is_none() && monthly.is_none() {
@@ -1713,31 +1702,25 @@ fn run(cli: Cli) {
 
         Command::Channel { channel } => {
             let c = get_client(host_ref, token_ref);
-            match channel {
-                Some(channel) => {
-                    let set = c.set_channel(&channel).or_die();
-                    eprintln!("release channel set to '{set}' on vestad");
-                    eprintln!("run 'vesta update' to move the daemon onto the {set} channel");
-                }
-                None => {
-                    let current = c.get_channel().or_die();
-                    println!("{current}");
-                }
+            if let Some(channel) = channel {
+                let set = c.set_channel(&channel).or_die();
+                eprintln!("release channel set to '{set}' on vestad");
+                eprintln!("run 'vesta update' to move the daemon onto the {set} channel");
+            } else {
+                let current = c.get_channel().or_die();
+                println!("{current}");
             }
         }
 
         Command::AutoUpdate { toggle } => {
             let c = get_client(host_ref, token_ref);
-            match toggle {
-                Some(toggle) => {
-                    let enabled = matches!(toggle, Toggle::On);
-                    let set = c.set_auto_update(enabled).or_die();
-                    eprintln!("auto-update: {}", if set { "enabled" } else { "disabled" });
-                }
-                None => {
-                    let enabled = c.get_auto_update().or_die();
-                    eprintln!("auto-update: {}", if enabled { "enabled" } else { "disabled" });
-                }
+            if let Some(toggle) = toggle {
+                let enabled = matches!(toggle, Toggle::On);
+                let set = c.set_auto_update(enabled).or_die();
+                eprintln!("auto-update: {}", if set { "enabled" } else { "disabled" });
+            } else {
+                let enabled = c.get_auto_update().or_die();
+                eprintln!("auto-update: {}", if enabled { "enabled" } else { "disabled" });
             }
         }
     }

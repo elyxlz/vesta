@@ -9,7 +9,7 @@ use crate::common::{
 };
 
 const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-/// Bounds time-to-headers only (recv_response); SSE streams and long bodies stay unbounded.
+/// Bounds time-to-headers only (`recv_response`); SSE streams and long bodies stay unbounded.
 const HTTP_RESPONSE_TIMEOUT: Duration = Duration::from_secs(300);
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -164,7 +164,7 @@ pub fn claude_auth(credentials: &str) -> serde_json::Value {
     serde_json::json!({ "kind": "claude", "credentials": credentials })
 }
 
-/// The OpenRouter sign-in body for `update_settings` (PUT /provider): a full provider with the key.
+/// The `OpenRouter` sign-in body for `update_settings` (PUT /provider): a full provider with the key.
 pub fn openrouter_auth(args: &OpenRouterArgs) -> serde_json::Value {
     serde_json::json!({ "kind": "openrouter", "model": args.model, "key": args.key })
 }
@@ -193,7 +193,7 @@ fn map_error(host: &str, e: ureq::Error) -> String {
 
 fn extract_server_error(body: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(body).ok()?;
-    v["error"].as_str().map(|s| s.to_string())
+    v["error"].as_str().map(std::string::ToString::to_string)
 }
 
 fn extract_latest_version(value: &serde_json::Value) -> Option<String> {
@@ -233,7 +233,7 @@ fn read_sse_result(resp: Response<Body>) -> Result<String, String> {
                             v["error"]["message"]
                                 .as_str()
                                 .or(v["error"].as_str())
-                                .map(|s| s.to_string())
+                                .map(std::string::ToString::to_string)
                         })
                         .unwrap_or(data);
                     return Err(msg);
@@ -255,20 +255,20 @@ pub struct Client {
     cert_fingerprint: Option<String>,
 }
 
-/// OpenRouter creation args, set when an agent runs on an OpenRouter API key instead of a Claude account.
+/// `OpenRouter` creation args, set when an agent runs on an `OpenRouter` API key instead of a Claude account.
 pub struct OpenRouterArgs {
     pub key: String,
     pub model: String,
 }
 
-/// A model entry from OpenRouter's top-weekly list, used to populate the
+/// A model entry from `OpenRouter`'s top-weekly list, used to populate the
 /// interactive model picker in `vesta setup`.
 #[derive(serde::Deserialize)]
 pub struct OpenRouterModel {
     pub slug: String,
     pub label: String,
     pub author: String,
-    /// USD per million prompt/completion/cache-read tokens, when OpenRouter reports it.
+    /// USD per million prompt/completion/cache-read tokens, when `OpenRouter` reports it.
     #[serde(default)]
     pub input_price: Option<f64>,
     #[serde(default)]
@@ -291,12 +291,33 @@ pub struct ProviderContext {
 }
 
 /// A provider's model catalog: explicit slugs (claude) or "live" (openrouter, fetched separately).
-#[derive(serde::Deserialize)]
-#[serde(untagged)]
 pub enum ModelCatalog {
     Static(Vec<String>),
     /// The "live" sentinel (openrouter); the CLI fetches that catalog from its own endpoint instead.
-    Live(#[allow(dead_code)] String),
+    Live,
+}
+
+impl<'de> serde::Deserialize<'de> for ModelCatalog {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct CatalogVisitor;
+        impl<'de> serde::de::Visitor<'de> for CatalogVisitor {
+            type Value = ModelCatalog;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a list of model slugs or the \"live\" sentinel string")
+            }
+
+            fn visit_str<E: serde::de::Error>(self, _sentinel: &str) -> Result<Self::Value, E> {
+                Ok(ModelCatalog::Live)
+            }
+
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, seq: A) -> Result<Self::Value, A::Error> {
+                serde::Deserialize::deserialize(serde::de::value::SeqAccessDeserializer::new(seq))
+                    .map(ModelCatalog::Static)
+            }
+        }
+        deserializer.deserialize_any(CatalogVisitor)
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -524,7 +545,7 @@ impl Client {
     }
 
     /// Sign out: clear the agent's provider credentials (`DELETE /provider`), then restart so it
-    /// boots not_authenticated.
+    /// boots `not_authenticated`.
     pub fn logout(&self, name: &str) -> Result<(), String> {
         self.delete_req(&format!("/agents/{name}/provider"))?;
         self.restart_agent(name)
@@ -579,7 +600,7 @@ impl Client {
     }
 
     /// Poll `/agents/{name}` until `status == "alive"` or the deadline passes.
-    /// Terminal non-alive states (not_found, dead, stopped, not_authenticated)
+    /// Terminal non-alive states (`not_found`, dead, stopped, `not_authenticated`)
     /// surface as immediate errors; the agent cannot become ready from those.
     pub fn wait_until_alive(&self, name: &str, timeout: Duration) -> Result<(), String> {
         self.wait_until_alive_with_progress(name, timeout, |_| {})
@@ -620,7 +641,7 @@ impl Client {
                 Ok(status) => {
                     if status.status != last {
                         on_change(&status.status);
-                        last = status.status.clone();
+                        last.clone_from(&status.status);
                     }
                     if ready.contains(&status.status.as_str()) {
                         return Ok(());
@@ -755,7 +776,7 @@ impl Client {
         Ok(config["notification_rules"].as_array().cloned().unwrap_or_default())
     }
 
-    /// Replace the agent's notification rules (PUT /config with {notification_rules}); the server assigns
+    /// Replace the agent's notification rules (PUT /config with {`notification_rules`}); the server assigns
     /// ids to any missing one and stores rules canonically. Live — applied on the agent's next monitor
     /// tick, no restart. Ignores the `{ok: true}` body.
     pub fn set_notification_rules(&self, name: &str, rules: &[serde_json::Value]) -> Result<(), String> {
@@ -985,13 +1006,12 @@ pub fn chat(client: &Client, name: &str) -> Result<(), String> {
         loop {
             line.clear();
             match stdin.lock().read_line(&mut line) {
-                Ok(0) => break,
+                Ok(0) | Err(_) => break,
                 Ok(_) => {
                     if tx.send(line.trim().to_string()).is_err() {
                         break;
                     }
                 }
-                Err(_) => break,
             }
         }
     });

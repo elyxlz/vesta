@@ -112,7 +112,7 @@ pub async fn agent_proxy_handler(
     };
     let (target_port, stripped_path, service) = match resolved {
         Some(entry) => (entry.port, service_subpath.to_string(), Some(entry)),
-        None => (agent_port, format!("/{}", path), None),
+        None => (agent_port, format!("/{path}"), None),
     };
 
     // Public services are fully open; everything else requires auth.
@@ -133,8 +133,7 @@ pub async fn agent_proxy_handler(
     let is_ws_upgrade = request
         .headers()
         .get("upgrade")
-        .map(|v| v.as_bytes().eq_ignore_ascii_case(b"websocket"))
-        .unwrap_or(false);
+        .is_some_and(|v| v.as_bytes().eq_ignore_ascii_case(b"websocket"));
 
     // Only wait for registered services — the raw agent port is already running
     // by the time ensure_running() returns, so a wait there would just mask dead agents.
@@ -147,7 +146,7 @@ pub async fn agent_proxy_handler(
             Err(e) => {
                 return Err(err_response(
                     StatusCode::BAD_REQUEST,
-                    &format!("invalid ws upgrade: {}", e),
+                    &format!("invalid ws upgrade: {e}"),
                 ));
             }
         };
@@ -193,11 +192,10 @@ async fn ws_proxy(
     let url = if let Some(token) = agent_token {
         let sep = if path.contains('?') { "&" } else { "?" };
         format!(
-            "ws://localhost:{}{}{}agent_token={}",
-            agent_port, path, sep, token
+            "ws://localhost:{agent_port}{path}{sep}agent_token={token}"
         )
     } else {
-        format!("ws://localhost:{}{}", agent_port, path)
+        format!("ws://localhost:{agent_port}{path}")
     };
     let agent_ws = match tokio_tungstenite::connect_async(&url).await {
         Ok((ws, _)) => ws,
@@ -236,8 +234,8 @@ async fn ws_proxy(
 
     let keepalive = Duration::from_secs(WS_KEEPALIVE_INTERVAL_SECS);
     tokio::select! {
-        _ = client_to_agent => {},
-        _ = pump_agent_to_client(client_tx, agent_rx, keepalive) => {},
+        () = client_to_agent => {},
+        () = pump_agent_to_client(client_tx, agent_rx, keepalive) => {},
     }
 
     tracing::info!(port = agent_port, "client websocket disconnected");
@@ -274,14 +272,14 @@ async fn pump_agent_to_client<ClientSink, AgentStream, AgentErr>(
                     TungMsg::Ping(p) => AxumMsg::Ping(p),
                     TungMsg::Pong(p) => AxumMsg::Pong(p),
                     TungMsg::Close(_) => break,
-                    _ => continue,
+                    TungMsg::Frame(_) => continue,
                 };
                 if client_tx.send(axum_msg).await.is_err() {
                     break;
                 }
             }
             _ = ticker.tick() => {
-                if client_tx.send(AxumMsg::Ping(Default::default())).await.is_err() {
+                if client_tx.send(AxumMsg::Ping(bytes::Bytes::new())).await.is_err() {
                     break;
                 }
             }
@@ -297,17 +295,17 @@ async fn forward_http_to_container(
     agent_token: Option<&str>,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     let (parts, body) = request.into_parts();
-    let url = format!("http://localhost:{}{}", port, target_path);
+    let url = format!("http://localhost:{port}{target_path}");
 
     let method = reqwest::Method::from_bytes(parts.method.as_str().as_bytes())
-        .map_err(|e| err_response(StatusCode::BAD_REQUEST, &format!("bad method: {}", e)))?;
+        .map_err(|e| err_response(StatusCode::BAD_REQUEST, &format!("bad method: {e}")))?;
 
     let body_bytes = axum::body::to_bytes(body, PROXY_MAX_BODY_BYTES)
         .await
-        .map_err(|e| err_response(StatusCode::BAD_REQUEST, &format!("read body: {}", e)))?;
+        .map_err(|e| err_response(StatusCode::BAD_REQUEST, &format!("read body: {e}")))?;
 
     let mut req_builder = client.request(method, &url);
-    for (name, value) in parts.headers.iter() {
+    for (name, value) in &parts.headers {
         let n = name.as_str().to_ascii_lowercase();
         if matches!(
             n.as_str(),
@@ -328,8 +326,7 @@ async fn forward_http_to_container(
         err_response(
             StatusCode::BAD_GATEWAY,
             &format!(
-                "container unreachable on port {} ({}): {} — is the service running?",
-                port, target_path, e
+                "container unreachable on port {port} ({target_path}): {e} — is the service running?"
             ),
         )
     })?;
@@ -337,7 +334,7 @@ async fn forward_http_to_container(
     let status =
         StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
     let mut builder = Response::builder().status(status);
-    for (name, value) in upstream.headers().iter() {
+    for (name, value) in upstream.headers() {
         let n = name.as_str().to_ascii_lowercase();
         if matches!(
             n.as_str(),
@@ -353,7 +350,7 @@ async fn forward_http_to_container(
     builder.body(body).map_err(|e| {
         err_response(
             StatusCode::INTERNAL_SERVER_ERROR,
-            &format!("build response: {}", e),
+            &format!("build response: {e}"),
         )
     })
 }
