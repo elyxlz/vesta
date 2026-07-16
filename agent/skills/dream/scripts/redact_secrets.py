@@ -22,11 +22,17 @@ PATTERNS = [
     r"gh[posr]_[A-Za-z0-9]{36,}",
     r"github_pat_[A-Za-z0-9_]{20,}",
     r"glpat-[A-Za-z0-9_-]{20,}",
-    r"AKIA[0-9A-Z]{16}",
+    r"(?-i:AKIA[0-9A-Z]{16})",  # case-sensitive: real AWS keys are uppercase. Under the outer
+    # IGNORECASE, a plain AKIA matches "akia...." runs inside base64 blobs (reasoning-block
+    # signatures, media keys), a recurring false positive that buries the real matches.
     r"PMAK-[A-Za-z0-9-]{20,}",
     r"eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}",
     r"BEGIN [A-Z ]+ PRIVATE KEY",
-    r"(?:password|secret|api[_-]?key)[\"': =]+[^ \"']{4,}",
+    # A real separator char (: = or a quote) is mandatory, so benign prose like "password reuse"
+    # (bare space between word and value) never matches; spaces around it are tolerated so
+    # space-padded assignments still hit (password = "x", YAML password: "x"). The \\? bits absorb
+    # the backslash JSON puts before an escaped quote, since the scan runs over the JSON `data` blob.
+    r"(?:password|secret|api[_-]?key)[ ]*\\?[\"':=]+[ ]*\\?[\"']?[^ \"'\\]{4,}",
     r"(?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql|redis)://[^ \"']+",
 ]
 REGEX = re.compile("|".join(PATTERNS), re.IGNORECASE)

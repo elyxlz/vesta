@@ -15,7 +15,10 @@ use std::sync::Arc;
 
 use crate::settings::{load_settings, save_settings, AgentBackupOverride, BackupGlobalSettings, ServiceEntry, Settings, UserDesired};
 use crate::state::{err_response, map_docker_err, ok_json, AppState, SharedState};
-use crate::{agent_provider, agent_proxy, agent_status, auth, backup, control_ws, docker, self_update, systemd, update_check};
+use crate::{
+    agent_provider, agent_proxy, agent_status, auth, backup, control_ws, docker, self_update, systemd, update_check,
+    update_window,
+};
 
 const GATEWAY_RESTART_DELAY_MS: u64 = 200;
 
@@ -2609,47 +2612,94 @@ fn spawn_auto_backup_task(state: SharedState) {
 
 // --- Update-check background task ---
 
+// Detection cadence with no update pending -- also the UpdatePill's refresh rate. While an update
+// waits for the fleet's quiet window we re-poll this often instead, so update_info, the release
+// channel and the fleet's timezones all stay fresh and a transient apply failure retries within the
+// window rather than a night later.
+const WINDOW_POLL_SECS: u64 = 15 * 60;
+
+// Give the agent WS snapshots that carry each agent's timezone time to arrive before the first
+// auto-apply decision, so an update already pending at startup targets the fleet's real windows
+// instead of resolving a still-empty cache to host-local.
+const STARTUP_SETTLE_SECS: u64 = 60;
+
+/// The local timezone of every alive agent, falling back to host-local for any agent that hasn't
+/// reported one (pre-upstream-sync fleet). Drives which 3-5am window the auto-update targets.
+fn running_agent_zones(state: &SharedState) -> Vec<jiff::tz::TimeZone> {
+    let timezones = state.agent_status_cache.timezones();
+    state
+        .agent_status_cache
+        .agents()
+        .iter()
+        .filter(|entry| entry.status == docker::AgentStatus::Alive)
+        .map(|entry| update_window::resolve_zone(timezones.get(&entry.name).map(String::as_str)))
+        .collect()
+}
+
 fn spawn_update_check_task(state: SharedState) {
     tokio::spawn(async move {
+        // Settle first so the timezone cache is populated before any startup-pending update applies.
+        tokio::time::sleep(tokio::time::Duration::from_secs(STARTUP_SETTLE_SECS)).await;
         loop {
             let channel = effective_channel(&state).await;
-            match tokio::task::spawn_blocking(move || update_check::check_once(channel)).await {
+            let update_available = match tokio::task::spawn_blocking(move || update_check::check_once(channel)).await {
                 Ok(Ok(info)) => {
-                    let update_available = info.update_available;
+                    let available = info.update_available;
                     *state.update_info.lock().await = Some(info);
-                    // Auto-apply when enabled (the default) and a newer release exists
-                    // on the active channel. `perform_update` no-ops if already current
-                    // and restarts the systemd service on success — replacing this
-                    // process — so control may never return past this call.
-                    if update_available && state.settings.read().await.auto_update {
-                        tracing::info!(
-                            channel = channel.as_str(),
-                            "auto-update: newer release available, applying"
-                        );
-                        match tokio::task::spawn_blocking(move || {
-                            self_update::perform_update(channel)
-                        })
-                        .await
-                        {
-                            Ok(Ok(outcome)) => tracing::info!(
-                                updated = outcome.updated,
-                                restarted = outcome.restarted,
-                                current = %outcome.current,
-                                latest = %outcome.latest,
-                                "auto-update finished",
-                            ),
-                            Ok(Err(e)) => tracing::warn!("auto-update failed: {}", e),
-                            Err(e) => tracing::error!("auto-update task panicked: {}", e),
+                    available
+                }
+                Ok(Err(e)) => {
+                    tracing::warn!("update check failed: {}", e);
+                    false
+                }
+                Err(e) => {
+                    tracing::error!("update check task failed: {}", e);
+                    false
+                }
+            };
+
+            // Apply a pending update only once the fleet is in the 3-5am window covering the most
+            // agents (see update_window); until then keep polling fast so we notice the window open,
+            // a channel switch, a pulled release, or a cleared auto_update. perform_update restarts
+            // this process on success, so control usually never returns from the apply branch.
+            let mut awaiting_window = false;
+            if update_available && state.settings.read().await.auto_update {
+                let zones = running_agent_zones(&state);
+                if update_window::wait_until_best_window(&zones, jiff::Timestamp::now()).is_zero() {
+                    tracing::info!(
+                        channel = channel.as_str(),
+                        agents = zones.len(),
+                        "auto-update: agent quiet window reached, applying"
+                    );
+                    match tokio::task::spawn_blocking(move || self_update::perform_update(channel)).await {
+                        Ok(Ok(outcome)) => tracing::info!(
+                            updated = outcome.updated,
+                            restarted = outcome.restarted,
+                            current = %outcome.current,
+                            latest = %outcome.latest,
+                            "auto-update finished",
+                        ),
+                        // Retry within the window on the fast cadence rather than the next night.
+                        Ok(Err(e)) => {
+                            tracing::warn!("auto-update failed: {}", e);
+                            awaiting_window = true;
+                        }
+                        Err(e) => {
+                            tracing::error!("auto-update task panicked: {}", e);
+                            awaiting_window = true;
                         }
                     }
+                } else {
+                    awaiting_window = true;
                 }
-                Ok(Err(e)) => tracing::warn!("update check failed: {}", e),
-                Err(e) => tracing::error!("update check task failed: {}", e),
             }
-            tokio::time::sleep(tokio::time::Duration::from_secs(
-                update_check::CHECK_INTERVAL_SECS,
-            ))
-            .await;
+
+            let interval = if awaiting_window {
+                WINDOW_POLL_SECS
+            } else {
+                update_check::CHECK_INTERVAL_SECS
+            };
+            tokio::time::sleep(tokio::time::Duration::from_secs(interval)).await;
         }
     });
 }

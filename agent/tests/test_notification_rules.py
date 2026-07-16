@@ -289,6 +289,48 @@ def test_load_round_trips_a_written_store(tmp_path, monkeypatch):
     assert npn.notif_disposition(_notif(), loaded) == "snooze"
 
 
+# --- temporary rules: expires_at / drop_expired ---
+
+
+def test_rule_without_expiry_never_expires():
+    assert _rule(source="twitter", action="snooze").is_expired(dt.datetime(2026, 1, 1, tzinfo=dt.UTC)) is False
+
+
+def test_rule_is_expired_only_after_its_instant():
+    expiry = dt.datetime(2026, 1, 1, 12, tzinfo=dt.UTC)
+    rule = _rule(source="twitter", action="snooze", expires_at=expiry)
+    assert rule.is_expired(dt.datetime(2026, 1, 1, 11, tzinfo=dt.UTC)) is False
+    assert rule.is_expired(dt.datetime(2026, 1, 1, 13, tzinfo=dt.UTC)) is True
+
+
+def test_naive_expiry_is_read_as_utc():
+    rule = _rule(source="twitter", action="snooze", expires_at=dt.datetime(2026, 1, 1, 12))
+    assert rule.is_expired(dt.datetime(2026, 1, 1, 13, tzinfo=dt.UTC)) is True
+
+
+def test_drop_expired_keeps_only_live_rules():
+    now = dt.datetime(2026, 1, 1, 12, tzinfo=dt.UTC)
+    live = _rule(id="live", source="a", action="snooze", expires_at=now + dt.timedelta(hours=1))
+    dead = _rule(id="dead", source="b", action="snooze", expires_at=now - dt.timedelta(hours=1))
+    forever = _rule(id="forever", source="c", action="snooze")
+    assert [rule.id for rule in npn.drop_expired([live, dead, forever], now)] == ["live", "forever"]
+
+
+def test_load_drops_expired_rule(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENT_DIR", str(tmp_path / "agent"))
+    config = cfg.VestaConfig()
+    past = (dt.datetime.now(dt.UTC) - dt.timedelta(hours=1)).isoformat()
+    future = (dt.datetime.now(dt.UTC) + dt.timedelta(hours=1)).isoformat()
+    _write_rules_store(
+        config,
+        [
+            {"id": "expired", "source": "twitter", "action": "snooze", "expires_at": past},
+            {"id": "live", "source": "whatsapp", "action": "snooze", "expires_at": future},
+        ],
+    )
+    assert [rule.id for rule in cfg.load_notification_rules()] == ["live"]
+
+
 # --- core routing via loops._notif_disposition ---
 
 

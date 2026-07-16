@@ -152,11 +152,16 @@ class SnapshotNotifications(tp.TypedDict):
     pending: list[str]  # notification file stems still on disk (received but not yet processed)
 
 
+class SnapshotConfig(tp.TypedDict):
+    timezone: str  # IANA name; vestad reads it to schedule auto-updates in the agent's local 3-5am window
+
+
 class SnapshotEvent(tp.TypedDict):
     type: tp.Literal["snapshot"]
     state: AgentState
     chat: SnapshotChat
     notifications: SnapshotNotifications
+    config: SnapshotConfig
 
 
 # Bus-internal: the single item left in an evicted subscriber's queue (see EventBus._offer).

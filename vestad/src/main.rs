@@ -31,6 +31,7 @@ mod time_utils;
 mod tunnel;
 mod types;
 mod update_check;
+mod update_window;
 mod upstream;
 mod vendored_bin;
 

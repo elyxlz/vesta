@@ -90,7 +90,15 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
             events, cursor = await asyncio.to_thread(event_bus.recent, channel="app-chat")
             chat = SnapshotChat(events=events, cursor=cursor)
         pending = await asyncio.to_thread(_pending_notification_ids, config)
-        await ws.send_json(SnapshotEvent(type="snapshot", state=event_bus.state, chat=chat, notifications={"pending": pending}))
+        await ws.send_json(
+            SnapshotEvent(
+                type="snapshot",
+                state=event_bus.state,
+                chat=chat,
+                notifications={"pending": pending},
+                config={"timezone": config.timezone},
+            )
+        )
         recv_task = asyncio.create_task(_recv_loop(ws, event_bus, config))
         send_task = asyncio.create_task(_send_loop(ws, sub))
         await asyncio.wait([recv_task, send_task], return_when=asyncio.FIRST_COMPLETED)
@@ -257,7 +265,7 @@ async def _config_get_handler(request: web.Request) -> web.Response:
     config: VestaConfig = request.app["config"]
     data = stored_config(config)
     data.pop("provider", None)
-    data["notification_rules"] = [rule.model_dump() for rule in load_notification_rules()]
+    data["notification_rules"] = [rule.model_dump(mode="json") for rule in load_notification_rules()]
     return web.json_response(data)
 
 

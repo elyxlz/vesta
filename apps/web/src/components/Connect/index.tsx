@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
+import { Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Field, FieldLabel, FieldDescription } from "@/components/ui/field";
@@ -108,6 +109,7 @@ export function Connect() {
   const [value, setValue] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [revealed, setRevealed] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   // In the desktop app (and any vesta-account surface) we lead with "continue
   // with vesta account"; `selfHost` flips to the connect-link form for people
@@ -244,20 +246,35 @@ export function Connect() {
             <FieldLabel htmlFor="connect-link" className="sr-only">
               Connect link
             </FieldLabel>
-            <Input
-              ref={inputRef}
-              id="connect-link"
-              type="text"
-              placeholder="paste your connect link"
-              autoComplete="off"
-              autoFocus
-              value={value}
-              onChange={(e) => {
-                setValue(e.target.value);
-                setError("");
-              }}
-              className="text-center"
-            />
+            <div className="relative">
+              <Input
+                ref={inputRef}
+                id="connect-link"
+                name="connect-link"
+                type={revealed ? "text" : "password"}
+                placeholder="paste your connect link"
+                autoComplete="current-password"
+                autoFocus
+                value={value}
+                onChange={(e) => {
+                  setValue(e.target.value);
+                  setError("");
+                }}
+                className="px-9 text-center"
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => setRevealed((shown) => !shown)}
+                aria-label={
+                  revealed ? "hide connect link" : "show connect link"
+                }
+                className="absolute inset-y-0 right-0.5 my-auto text-muted-foreground hover:bg-transparent hover:text-foreground"
+              >
+                {revealed ? <EyeOff /> : <Eye />}
+              </Button>
+            </div>
           </Field>
 
           <Button

@@ -139,6 +139,10 @@ pub struct AgentStatusCache {
     agents_rx: watch::Receiver<Vec<ListEntry>>,
     activity_tx: watch::Sender<HashMap<String, String>>,
     activity_rx: watch::Receiver<HashMap<String, String>>,
+    /// Per-agent IANA timezone (agent name -> zone), reported on each agent's connect snapshot.
+    /// The auto-update scheduler reads it to aim the fleet restart at each agent's local quiet window.
+    timezones_tx: watch::Sender<HashMap<String, String>>,
+    timezones_rx: watch::Receiver<HashMap<String, String>>,
     services_tx: watch::Sender<HashMap<String, HashMap<String, ServiceEntry>>>,
     services_rx: watch::Receiver<HashMap<String, HashMap<String, ServiceEntry>>>,
     /// Notification-only channel -- wakes WS loops when any invalidation occurs.
@@ -153,6 +157,7 @@ impl AgentStatusCache {
     pub fn new() -> Self {
         let (agents_tx, agents_rx) = watch::channel(Vec::new());
         let (activity_tx, activity_rx) = watch::channel(HashMap::new());
+        let (timezones_tx, timezones_rx) = watch::channel(HashMap::new());
         let (services_tx, services_rx) = watch::channel(HashMap::new());
         let (invalidations_tx, invalidations_rx) = watch::channel(());
         Self {
@@ -160,6 +165,8 @@ impl AgentStatusCache {
             agents_rx,
             activity_tx,
             activity_rx,
+            timezones_tx,
+            timezones_rx,
             services_tx,
             services_rx,
             invalidations_tx,
@@ -172,8 +179,18 @@ impl AgentStatusCache {
         self.agents_rx.clone()
     }
 
+    /// Snapshot of the current agent listing (name, status, port).
+    pub fn agents(&self) -> Vec<ListEntry> {
+        self.agents_rx.borrow().clone()
+    }
+
     pub fn subscribe_activity(&self) -> watch::Receiver<HashMap<String, String>> {
         self.activity_rx.clone()
+    }
+
+    /// Snapshot of each alive agent's IANA timezone, as last reported on its connect snapshot.
+    pub fn timezones(&self) -> HashMap<String, String> {
+        self.timezones_rx.borrow().clone()
     }
 
     pub fn subscribe_services(
@@ -230,7 +247,7 @@ pub fn spawn_agent_status_task(
     tokio::spawn(async move {
         let mut agent_ws_handles: HashMap<String, AgentWsHandle> = HashMap::new();
         let (activity_event_tx, mut activity_event_rx) =
-            tokio::sync::mpsc::channel::<(String, String)>(64);
+            tokio::sync::mpsc::channel::<(String, AgentUpdate)>(64);
 
         loop {
             // Poll agent list via async bollard
@@ -261,9 +278,12 @@ pub fn spawn_agent_status_task(
                     true
                 } else {
                     handle.abort_handle.abort();
-                    // Clear activity state for dead agents
+                    // Clear activity + timezone state for dead agents
                     cache.activity_tx.send_modify(|states| {
                         states.remove(name);
+                    });
+                    cache.timezones_tx.send_modify(|zones| {
+                        zones.remove(name);
                     });
                     false
                 }
@@ -291,20 +311,16 @@ pub fn spawn_agent_status_task(
                 );
             }
 
-            // Drain any pending activity events before sleeping
-            while let Ok((name, state)) = activity_event_rx.try_recv() {
-                cache.activity_tx.send_modify(|states| {
-                    states.insert(name, state);
-                });
+            // Drain any pending agent updates before sleeping
+            while let Ok((name, update)) = activity_event_rx.try_recv() {
+                apply_agent_update(&cache, name, update);
             }
 
-            // Wait for next poll interval OR an activity event
+            // Wait for next poll interval OR an agent update
             tokio::select! {
                 () = tokio::time::sleep(std::time::Duration::from_secs(POLL_INTERVAL_SECS)) => {}
-                Some((name, state)) = activity_event_rx.recv() => {
-                    cache.activity_tx.send_modify(|states| {
-                        states.insert(name, state);
-                    });
+                Some((name, update)) = activity_event_rx.recv() => {
+                    apply_agent_update(&cache, name, update);
                 }
             }
         }
@@ -315,13 +331,31 @@ struct AgentWsHandle {
     abort_handle: tokio::task::AbortHandle,
 }
 
+/// A change relayed from an agent's WS: its live activity state, or its IANA timezone (sent once
+/// per connect on the snapshot). Multiplexed over one channel so the listener needs no second wire.
+enum AgentUpdate {
+    Activity(String),
+    Timezone(String),
+}
+
+fn apply_agent_update(cache: &AgentStatusCache, name: String, update: AgentUpdate) {
+    match update {
+        AgentUpdate::Activity(state) => cache.activity_tx.send_modify(|states| {
+            states.insert(name, state);
+        }),
+        AgentUpdate::Timezone(zone) => cache.timezones_tx.send_modify(|zones| {
+            zones.insert(name, zone);
+        }),
+    }
+}
+
 /// Connects to a single agent's WebSocket and relays activity state changes
 /// back through the mpsc channel. Reconnects on failure.
 async fn agent_activity_listener(
     name: String,
     ws_port: u16,
     agents_dir: PathBuf,
-    tx: tokio::sync::mpsc::Sender<(String, String)>,
+    tx: tokio::sync::mpsc::Sender<(String, AgentUpdate)>,
 ) {
     const RECONNECT_BASE_MS: u64 = 1000;
     const RECONNECT_MAX_MS: u64 = 15000;
@@ -362,14 +396,24 @@ async fn agent_activity_listener(
                     // `state` is top-level on both the live `status` event and the connect `snapshot`.
                     if msg_type == "status" || msg_type == "snapshot" {
                         if let Some(state) = parsed.get("state").and_then(|v| v.as_str()) {
-                            let _ = tx.send((name.clone(), state.to_string())).await;
+                            let _ = tx.send((name.clone(), AgentUpdate::Activity(state.to_string()))).await;
+                        }
+                    }
+                    // The agent's IANA timezone rides the connect snapshot under `config`.
+                    if msg_type == "snapshot" {
+                        if let Some(zone) = parsed
+                            .get("config")
+                            .and_then(|config| config.get("timezone"))
+                            .and_then(|value| value.as_str())
+                        {
+                            let _ = tx.send((name.clone(), AgentUpdate::Timezone(zone.to_string()))).await;
                         }
                     }
                 }
 
                 // Connection lost -- reset to idle so the frontend doesn't
                 // stay stuck on the last activity state (e.g. "thinking").
-                let _ = tx.send((name.clone(), "idle".into())).await;
+                let _ = tx.send((name.clone(), AgentUpdate::Activity("idle".into()))).await;
             }
             Err(err) => {
                 tracing::debug!(agent = %name, port = ws_port, error = %err, "agent activity ws connect failed");

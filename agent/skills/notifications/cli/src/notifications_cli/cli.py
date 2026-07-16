@@ -9,6 +9,7 @@ notification history (events.db) directly to show what values you can target.
 """
 
 import argparse
+import datetime as dt
 import json
 import os
 import pathlib
@@ -68,6 +69,28 @@ def _predicate(field: str, op: str, value: str, negate: bool = False) -> dict[st
     """The canonical match-predicate shape core's FieldPredicate accepts. One builder so the sender/text
     alias predicates and parsed --match predicates can't drift in shape."""
     return {"field": field, "op": op, "value": value, "negate": negate}
+
+
+_DURATION_GRAMMAR = re.compile(r"(\d+)\s*([smhd])", re.IGNORECASE)
+_DURATION_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+
+
+def _utcnow() -> dt.datetime:
+    return dt.datetime.now(dt.UTC)
+
+
+def _parse_duration(spec: str) -> dt.timedelta:
+    """Parse a duration like '2h', '30m', '1h30m', '45s', '1d' into a timedelta, summing each
+    <int><unit> chunk (s/m/h/d). Rejects a spec with no chunk or any leftover text, so a typo like
+    '2x' fails loudly instead of silently expiring immediately."""
+    chunks = list(_DURATION_GRAMMAR.finditer(spec))
+    stripped = re.sub(r"\s+", "", spec)
+    if not chunks or "".join(chunk.group(0) for chunk in chunks).replace(" ", "") != stripped:
+        raise ValueError(f"--for must be a duration like 2h, 30m, 1h30m, 1d: {spec!r}")
+    seconds = sum(int(chunk.group(1)) * _DURATION_UNIT_SECONDS[chunk.group(2).lower()] for chunk in chunks)
+    if seconds <= 0:
+        raise ValueError(f"--for must be a positive duration: {spec!r}")
+    return dt.timedelta(seconds=seconds)
 
 
 _MATCH_GRAMMAR = re.compile(r"^(?P<field>[^=!~]+)(?P<op>!?~?=)(?P<value>.*)$", re.DOTALL)
@@ -171,6 +194,12 @@ def cmd_add(args: argparse.Namespace) -> int:
             print(f"error: {e}", file=sys.stderr)
             return 1
     rule: dict[str, object] = {"id": uuid.uuid4().hex, "source": args.source, "type": args.type, "match": predicates, "action": args.action}
+    if args.for_duration is not None:
+        try:
+            rule["expires_at"] = (_utcnow() + _parse_duration(args.for_duration)).isoformat()
+        except ValueError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 1
     rules = get_rules()
     try:
         index = _placement_index(rules, rule, args.before, args.after)
@@ -180,7 +209,8 @@ def cmd_add(args: argparse.Namespace) -> int:
     rules.insert(index, rule)
     put_rules(rules)
     where = "" if index == len(rules) - 1 else f" at position {index + 1} of {len(rules)}"
-    print(f"Added rule {rule['id']}: {_describe_scope(rule)} -> {args.action}{where}. Now {len(rules)} rule(s); applies next tick.")
+    expiry = f" (expires in {args.for_duration}, then auto-removed)" if args.for_duration is not None else ""
+    print(f"Added rule {rule['id']}: {_describe_scope(rule)} -> {args.action}{expiry}{where}. Now {len(rules)} rule(s); applies next tick.")
     return 0
 
 
@@ -300,6 +330,15 @@ def main() -> int:
         help="Match ANY notification field (run `facets` to see them). Ops: '=' substring, '~=' regex, "
         "'!=' not, '!~=' not-regex. Repeatable (all must match). e.g. --match 'chat_name=Bride squad', "
         "--match 'chat_type!=group', --match 'chat_name~=^proj-'. Case-insensitive.",
+    )
+    add.add_argument(
+        "--for",
+        dest="for_duration",
+        metavar="DURATION",
+        help="Make the rule temporary: it auto-expires (and is then removed) after this long, so "
+        "notifications flow normally again with nothing to remember. Works with any --action, e.g. a "
+        "temporary silence (--action snooze --for 2h) or temporary trash (--action trash --for 1d). "
+        "Duration is s/m/h/d chunks: 30m, 2h, 1h30m, 1d.",
     )
     add_pos = add.add_mutually_exclusive_group()
     add_pos.add_argument("--before", metavar="ID", help="Place the new rule directly above this rule id (higher priority).")

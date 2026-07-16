@@ -89,6 +89,7 @@ export type VestaEvent =
       state: AgentActivityState;
       chat: { events: VestaEvent[]; cursor: number | null };
       notifications: { pending: string[] };
+      config: { timezone: string };
     });
 
 export type LogEvent =
