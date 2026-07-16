@@ -222,6 +222,29 @@ def test_format_for_display_drops_empty_and_false_fields():
     assert "tags" not in display
 
 
+def test_spoken_words_on_a_call_read_like_a_text_message():
+    """A call_utterance's words are its content, so they render as the body exactly as a typed
+    message's do. The type, not the field name, is what says it arrived as speech."""
+    spoken = Notification.model_validate(
+        {
+            "timestamp": "2025-01-01T00:00:00",
+            "source": "whatsapp",
+            "type": "call_utterance",
+            "direction": "inbound",
+            "contact_name": "Alice",
+            "message": "are you there",
+        }
+    )
+    typed = Notification.model_validate(
+        {"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "message", "contact_name": "Alice", "message": "are you there"}
+    )
+    spoken_display = spoken.format_for_display()
+    assert ">are you there</channel>" in spoken_display
+    assert "transcript" not in spoken_display
+    # Same words, same shape: only source/type/direction distinguish the two.
+    assert spoken_display.replace(' type="call_utterance"', ' type="message"').replace(' direction="inbound"', "") == typed.format_for_display()
+
+
 def test_format_for_display_keeps_integer_zero():
     """Integer 0 is falsey but meaningful (e.g. minutes_until=0 for a reminder firing now)."""
     notif = Notification.model_validate(
