@@ -22,7 +22,7 @@ const config: ExpoConfig = {
   name: "Vesta",
   owner: "vesta-cloud",
   slug: "vesta",
-  version: "0.1.176",
+  version: "0.1.177",
   scheme: "vesta",
   orientation: "portrait",
   icon: "../web/app-icon.png",

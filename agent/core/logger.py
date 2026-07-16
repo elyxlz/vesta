@@ -101,28 +101,30 @@ class _RichFileFormatter(logging.Formatter):
     _MESSAGE_PLACEHOLDER = "\0VESTA_LOG_MESSAGE\0"
 
     def format(self, record: logging.LogRecord) -> str:
-        had_level = hasattr(record, "vesta_level")
-        original_level = getattr(record, "vesta_level", None)
+        record_dict = record.__dict__
+        had_level = "vesta_level" in record_dict
+        original_level = record_dict["vesta_level"] if had_level else None
         record.vesta_level = "" if record.levelno == logging.INFO else f"[{record.levelname}] "
 
         try:
             return self._format(record)
         finally:
             if had_level:
-                record.vesta_level = original_level
+                record_dict["vesta_level"] = original_level
             else:
-                del record.vesta_level
+                del record_dict["vesta_level"]
 
     def _format(self, record: logging.LogRecord) -> str:
-        line_style = getattr(record, "vesta_line_style", None)
+        record_dict = record.__dict__
+        line_style = record_dict["vesta_line_style"] if "vesta_line_style" in record_dict else None
         if not line_style:
             return super().format(record)
 
         message = record.getMessage()
         original_msg = record.msg
         original_args = record.args
-        had_message = hasattr(record, "message")
-        original_message = getattr(record, "message", None)
+        had_message = "message" in record_dict
+        original_message = record_dict["message"] if had_message else None
 
         try:
             record.msg = self._MESSAGE_PLACEHOLDER
@@ -132,9 +134,9 @@ class _RichFileFormatter(logging.Formatter):
             record.msg = original_msg
             record.args = original_args
             if had_message:
-                record.message = original_message
+                record_dict["message"] = original_message
             else:
-                del record.message
+                del record_dict["message"]
 
         prefix, suffix = formatted.split(self._MESSAGE_PLACEHOLDER, maxsplit=1)
         markup = f"[{line_style}]{escape(prefix)}{escape(message)}{escape(suffix)}[/{line_style}]"
