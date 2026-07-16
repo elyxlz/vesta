@@ -26,3 +26,6 @@ max-complexity = 15
 "**/conftest.py" = ["ARG", "PLC0415"]
 # Skill CLIs lazy-import heavy deps so cold CLI startup stays fast.
 "**/skills/**" = ["PLC0415"]
+# qBittorrent nova plugin contract: the class must be named like the file (lowercase)
+# and prettyPrinter is the engine's hook name.
+"**/skills/torrents/plugins/**" = ["N801", "N802"]

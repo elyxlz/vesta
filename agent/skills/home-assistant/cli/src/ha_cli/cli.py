@@ -50,19 +50,22 @@ def main():
 
 
 def _dispatch(args, config: Config):
-    if args.command == "state":
-        return commands.get_state(config, args.entity_id, full=args.full)
-    if args.command == "states":
-        return commands.list_states(config, domain=args.domain, search=args.search)
-    if args.command == "weather":
-        return commands.weather(config)
-    if args.command == "service":
-        data = json.loads(args.data) if args.data else None
-        return commands.call_service(config, args.domain, args.service_name, entity_id=args.entity_id, data=data)
-    if args.command == "history":
-        return commands.get_history(config, args.entity_id, hours=args.hours)
-    if args.command == "ping":
-        return commands.check_api(config)
+    handlers = {
+        "state": lambda: commands.get_state(config, args.entity_id, full=args.full),
+        "states": lambda: commands.list_states(config, domain=args.domain, search=args.search),
+        "weather": lambda: commands.weather(config),
+        "service": lambda: commands.call_service(
+            config,
+            args.domain,
+            args.service_name,
+            entity_id=args.entity_id,
+            data=json.loads(args.data) if args.data else None,
+        ),
+        "history": lambda: commands.get_history(config, args.entity_id, hours=args.hours),
+        "ping": lambda: commands.check_api(config),
+    }
+    if args.command in handlers:
+        return handlers[args.command]()
     return None
 
 

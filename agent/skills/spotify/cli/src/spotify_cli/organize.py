@@ -181,7 +181,7 @@ DEFAULT_GENRE_RULES = [
 def _load_config() -> dict:
     """Load organize config, creating defaults if missing."""
     if ORGANIZE_CONFIG.exists():
-        with open(ORGANIZE_CONFIG) as f:
+        with ORGANIZE_CONFIG.open() as f:
             return json.load(f)
     return {"skip_playlists": DEFAULT_SKIP, "genre_rules": DEFAULT_GENRE_RULES}
 
@@ -189,7 +189,7 @@ def _load_config() -> dict:
 def _write_json(path: Path, data: dict) -> None:
     """Write data as pretty JSON, creating parent dirs."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
+    with path.open("w") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 
@@ -275,7 +275,7 @@ def _match_genre(genres: list[str], rules: list[dict]) -> str | None:
 def _load_watch_state() -> dict:
     """Load the watch daemon state file."""
     if WATCH_STATE_FILE.exists():
-        with open(WATCH_STATE_FILE) as f:
+        with WATCH_STATE_FILE.open() as f:
             return json.load(f)
     return {"known_liked_ids": [], "last_poll": None}
 
@@ -301,7 +301,7 @@ def _log(msg: str) -> None:
 # ── Public commands ──────────────────────────────────────────────────────────
 
 
-def init_config(config: Config) -> dict:
+def init_config(_config: Config) -> dict:
     """Initialize organize config with defaults."""
     cfg = {"skip_playlists": DEFAULT_SKIP, "genre_rules": DEFAULT_GENRE_RULES}
     _write_json(ORGANIZE_CONFIG, cfg)
@@ -313,7 +313,7 @@ def init_config(config: Config) -> dict:
     }
 
 
-def show_config(config: Config) -> dict:
+def show_config(_config: Config) -> dict:
     """Show current organize config."""
     cfg = _load_config()
     return {
@@ -369,6 +369,38 @@ def sync_likes(config: Config, dry_run: bool = False) -> dict:
     }
 
 
+def _match_orphans(
+    orphan_ids: list,
+    liked_info: dict,
+    artist_genres: dict,
+    rules: list[dict],
+    name_to_id: dict[str, str],
+    playlist_existing: dict,
+) -> tuple[dict, list]:
+    """Match orphans to target playlists. Returns (additions, unmatched)."""
+    additions = {}  # playlist_name → [(track_id, track_uri, track_name)]
+    unmatched = []
+
+    for tid in orphan_ids:
+        turi, tname, artist_ids = liked_info[tid]
+        genres = []
+        for aid in artist_ids:
+            genres.extend(artist_genres.get(aid, []))
+
+        match = _match_genre(genres, rules)
+        if not match or match not in name_to_id:
+            unmatched.append({"name": tname, "genres": genres[:5]})
+            continue
+
+        pid = name_to_id[match]
+        if tid in playlist_existing.get(pid, set()):
+            continue
+
+        additions.setdefault(match, []).append((tid, turi, tname))
+
+    return additions, unmatched
+
+
 def sort_orphans(config: Config, dry_run: bool = False) -> dict:
     """Sort orphan liked songs into playlists based on genre rules."""
     sp = get_client(config)
@@ -419,26 +451,7 @@ def sort_orphans(config: Config, dry_run: bool = False) -> dict:
                 artist_genres[a["id"]] = a.get("genres", [])
         time.sleep(0.2)
 
-    # Match orphans to playlists
-    additions = {}  # playlist_name → [(track_id, track_uri, track_name)]
-    unmatched = []
-
-    for tid in orphan_ids:
-        turi, tname, artist_ids = liked_info[tid]
-        genres = []
-        for aid in artist_ids:
-            genres.extend(artist_genres.get(aid, []))
-
-        match = _match_genre(genres, rules)
-        if not match or match not in name_to_id:
-            unmatched.append({"name": tname, "genres": genres[:5]})
-            continue
-
-        pid = name_to_id[match]
-        if tid in playlist_existing.get(pid, set()):
-            continue
-
-        additions.setdefault(match, []).append((tid, turi, tname))
+    additions, unmatched = _match_orphans(orphan_ids, liked_info, artist_genres, rules, name_to_id, playlist_existing)
 
     if dry_run:
         return {

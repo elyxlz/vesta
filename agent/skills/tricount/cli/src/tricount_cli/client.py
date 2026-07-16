@@ -82,6 +82,20 @@ class Transaction:
 
 
 @dataclass
+class SplitSpec:
+    """How to divide an expense among members; at most one field is set.
+
+    split_uuids:   [uuid, ...]            equal split among listed members
+    amount_splits: {uuid -> fixed_amount} exact per-member values
+    ratio_splits:  {uuid -> shares}       proportional shares
+    """
+
+    split_uuids: list[str] | None = None
+    amount_splits: dict[str, float] | None = None
+    ratio_splits: dict[str, float] | None = None
+
+
+@dataclass
 class Tricount:
     id: int
     uuid: str
@@ -452,9 +466,7 @@ class TricountClient:
         description: str | None = None,
         amount: float | None = None,
         payer_uuid: str | None = None,
-        split_uuids: list[str] | None = None,
-        amount_splits: dict[str, float] | None = None,
-        ratio_splits: dict[str, float] | None = None,
+        split: SplitSpec | None = None,
         date: str | None = None,
     ) -> dict:
         """Edit an existing expense (PUT).
@@ -471,15 +483,16 @@ class TricountClient:
         new_amount = amount if amount is not None else existing.amount.abs_float
         new_payer_uuid = payer_uuid if payer_uuid is not None else existing.payer_uuid
         new_date = date if date is not None else existing.date
+        split = split if split is not None else SplitSpec()
 
         # Build allocations
         allocations: list[dict[str, Any]]
-        if amount_splits:
-            allocations = self._build_fixed_allocations(amount_splits, tricount.currency)
-        elif ratio_splits:
-            allocations = self._build_ratio_allocations(ratio_splits, new_amount, tricount.currency)
-        elif split_uuids:
-            allocations = self._build_equal_allocations(split_uuids, new_amount, tricount.currency)
+        if split.amount_splits:
+            allocations = self._build_fixed_allocations(split.amount_splits, tricount.currency)
+        elif split.ratio_splits:
+            allocations = self._build_ratio_allocations(split.ratio_splits, new_amount, tricount.currency)
+        elif split.split_uuids:
+            allocations = self._build_equal_allocations(split.split_uuids, new_amount, tricount.currency)
         # Reuse existing allocations (with updated amount if changed)
         elif amount is not None:
             # Recompute proportionally from existing split

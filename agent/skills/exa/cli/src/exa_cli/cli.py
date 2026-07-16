@@ -57,6 +57,7 @@ def _load_key_from_keeper() -> str | None:
             capture_output=True,
             text=True,
             timeout=10,
+            check=False,
         )
         if result.returncode != 0:
             return None
@@ -322,7 +323,7 @@ def build_parser() -> argparse.ArgumentParser:
     auth_setup_p = auth_sub.add_parser("setup", help="Save API key to ~/.exa/config.json")
     auth_setup_p.add_argument("--api-key", required=True)
     auth_setup_p.set_defaults(func=lambda args: auth_setup(args.api_key))
-    auth_sub.add_parser("status", help="Show auth status").set_defaults(func=lambda args: auth_status())
+    auth_sub.add_parser("status", help="Show auth status").set_defaults(func=lambda _args: auth_status())
 
     # search
     s = sub.add_parser("search", help="Search the web")

@@ -49,7 +49,7 @@ def _passthrough(args: list[str]) -> None:
             err=True,
         )
         sys.exit(127)
-    os.execv(str(NPM_CLI_BIN), [str(NPM_CLI_BIN)] + args)
+    os.execv(str(NPM_CLI_BIN), [str(NPM_CLI_BIN), *args])
 
 
 def main() -> None:

@@ -216,7 +216,7 @@ def cmd_daemon_status(_args: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd")
 
@@ -279,6 +279,11 @@ def main(argv: list[str] | None = None) -> int:
     daemon_sub.add_parser("restart", help="Stop then start voice-server").set_defaults(func=cmd_daemon_restart)
     daemon_sub.add_parser("status", help="Report daemon + provider auth state").set_defaults(func=cmd_daemon_status)
 
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = _build_parser()
     args = parser.parse_args(argv)
     if args.cmd is None:
         parser.print_help()

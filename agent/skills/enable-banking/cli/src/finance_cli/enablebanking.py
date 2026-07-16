@@ -237,15 +237,14 @@ def aggregate_by_category(transactions: list[dict]) -> dict:
         totals[category] = totals.get(category, 0.0) + amount
         counts[category] = counts.get(category, 0) + 1
 
-    summary = []
-    for cat in sorted(totals, key=lambda c: totals[c], reverse=True):
-        summary.append(
-            {
-                "category": cat,
-                "total": round(totals[cat], 2),
-                "count": counts[cat],
-            }
-        )
+    summary = [
+        {
+            "category": cat,
+            "total": round(totals[cat], 2),
+            "count": counts[cat],
+        }
+        for cat in sorted(totals, key=lambda c: totals[c], reverse=True)
+    ]
 
     return {
         "categories": summary,
@@ -313,19 +312,17 @@ def _generate_self_signed_cert() -> tuple[str, str]:
         .sign(key, hashes.SHA256())
     )
 
-    cert_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pem")
-    cert_file.write(cert.public_bytes(serialization.Encoding.PEM))
-    cert_file.close()
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pem") as cert_file:
+        cert_file.write(cert.public_bytes(serialization.Encoding.PEM))
 
-    key_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pem")
-    key_file.write(
-        key.private_bytes(
-            serialization.Encoding.PEM,
-            serialization.PrivateFormat.TraditionalOpenSSL,
-            serialization.NoEncryption(),
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pem") as key_file:
+        key_file.write(
+            key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.TraditionalOpenSSL,
+                serialization.NoEncryption(),
+            )
         )
-    )
-    key_file.close()
 
     return cert_file.name, key_file.name
 
@@ -375,7 +372,7 @@ def wait_for_callback(port: int = CALLBACK_PORT) -> str:
                 b"<html><body><h2>Authorization successful!</h2><p>You can close this tab and return to the terminal.</p></body></html>"
             )
 
-        def log_message(self, format, *args):  # noqa: A002
+        def log_message(self, fmt, *args):
             # Suppress default request logging
             pass
 
@@ -388,8 +385,8 @@ def wait_for_callback(port: int = CALLBACK_PORT) -> str:
         server.handle_request()  # blocks until one request is received
         server.server_close()
     finally:
-        os.unlink(cert_path)
-        os.unlink(key_path)
+        Path(cert_path).unlink()
+        Path(key_path).unlink()
 
     if not received_code:
         print(json.dumps({"error": "No authorization code received"}), file=sys.stderr)

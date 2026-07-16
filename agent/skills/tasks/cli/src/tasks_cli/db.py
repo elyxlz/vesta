@@ -78,7 +78,7 @@ def _migrate_metadata_to_files(data_dir: Path, conn: sqlite3.Connection):
     conn.execute("ALTER TABLE tasks_new RENAME TO tasks")
 
 
-def _migrate_v1_to_v2(data_dir: Path, conn: sqlite3.Connection):
+def _migrate_v1_to_v2(conn: sqlite3.Connection):
     """v1 -> v2: Create reminders table, drop notified_thresholds, import old reminders."""
 
     # Create reminders table
@@ -147,11 +147,11 @@ def _migrate_v1_to_v2(data_dir: Path, conn: sqlite3.Connection):
                     )
                     imported += 1
                 except (KeyError, sqlite3.Error) as e:
-                    logger.warning(f"Skipped importing reminder {row['id']}: {e}")
+                    logger.warning("Skipped importing reminder %s: %s", row["id"], e)
             old_conn.close()
-            logger.info(f"Imported {imported} reminders from old reminder CLI")
+            logger.info("Imported %s reminders from old reminder CLI", imported)
         except Exception as e:
-            logger.warning(f"Failed to import old reminders: {e}")
+            logger.warning("Failed to import old reminders: %s", e)
 
     # Create auto-generated reminders for all pending tasks with due dates
     _create_auto_reminders_for_existing(conn)
@@ -182,7 +182,7 @@ def _migrate_v2_to_v3(conn: sqlite3.Connection):
         conn.execute("UPDATE reminders SET trigger_data = ? WHERE id = ?", (json.dumps(new_data), row["id"]))
         migrated += 1
     if migrated:
-        logger.info(f"Migrated {migrated} legacy cron reminders to tz-aware form")
+        logger.info("Migrated %s legacy cron reminders to tz-aware form", migrated)
     logger.info("Migrated schema v2 -> v3")
 
 
@@ -260,7 +260,7 @@ def _create_auto_reminders_for_existing(conn: sqlite3.Connection):
         create_auto_reminders(conn, task["id"], task["title"], task["due_date"])
         created += 1
     if created:
-        logger.info(f"Created auto-generated reminders for {created} tasks")
+        logger.info("Created auto-generated reminders for %s tasks", created)
 
 
 def _migrate_v3_to_v4(conn: sqlite3.Connection):
@@ -317,7 +317,7 @@ def init_db(data_dir: Path):
             version = 1
 
         if version < 2:
-            _migrate_v1_to_v2(data_dir, conn)
+            _migrate_v1_to_v2(conn)
             conn.execute("UPDATE schema_version SET version = 2")
             version = 2
 

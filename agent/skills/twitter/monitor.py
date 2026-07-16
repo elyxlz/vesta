@@ -11,7 +11,6 @@ Usage:
 import argparse
 import json
 import logging
-import os
 import re
 import time
 import xml.etree.ElementTree as ET
@@ -60,7 +59,7 @@ def _load_config() -> dict:
         try:
             return json.loads(CONFIG_FILE.read_text())
         except (json.JSONDecodeError, OSError) as e:
-            logger.warning(f"Failed to load config: {e}")
+            logger.warning("Failed to load config: %s", e)
     return {"handles": []}
 
 
@@ -81,7 +80,7 @@ def _load_state() -> dict:
         try:
             return json.loads(STATE_FILE.read_text())
         except (json.JSONDecodeError, OSError) as e:
-            logger.warning(f"Failed to load state: {e}")
+            logger.warning("Failed to load state: %s", e)
     return {"seen_guids": [], "last_check": None}
 
 
@@ -109,16 +108,16 @@ def _fetch_rss(handle: str) -> list[dict]:
         try:
             resp = httpx.get(url, headers=HEADERS, timeout=15, follow_redirects=True)
             if resp.status_code != 200:
-                logger.debug(f"{base}: HTTP {resp.status_code} for {handle}")
+                logger.debug("%s: HTTP %s for %s", base, resp.status_code, handle)
                 continue
             if "<item>" not in resp.text:
-                logger.debug(f"{base}: no items in response for {handle}")
+                logger.debug("%s: no items in response for %s", base, handle)
                 continue
             return _parse_rss(resp.text, handle)
         except Exception as e:
-            logger.debug(f"{base}: error fetching {handle}: {e}")
+            logger.debug("%s: error fetching %s: %s", base, handle, e)
             continue
-    logger.warning(f"All nitter instances failed for {handle}")
+    logger.warning("All nitter instances failed for %s", handle)
     return []
 
 
@@ -127,7 +126,7 @@ def _parse_rss(xml_text: str, handle: str) -> list[dict]:
     try:
         root = ET.fromstring(xml_text)
     except ET.ParseError as e:
-        logger.warning(f"XML parse error for {handle}: {e}")
+        logger.warning("XML parse error for %s: %s", handle, e)
         return []
 
     channel = root.find("channel")
@@ -189,7 +188,7 @@ def _write_notification(notif_dir: Path, tweet: dict) -> None:
     filename = f"{ts_us}-twitter-tweet.json"
     tmp = notif_dir / f"{filename}.tmp"
     tmp.write_text(json.dumps(notif, indent=2))
-    os.replace(tmp, notif_dir / filename)
+    tmp.replace(notif_dir / filename)
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +208,7 @@ def _parse_pub_date(pub_date: str) -> "datetime | None":
             parsed = parsed.replace(tzinfo=UTC)
         return parsed
     except (ValueError, TypeError) as e:
-        logger.debug(f"Failed to parse pubDate '{pub_date}': {e}")
+        logger.debug("Failed to parse pubDate '%s': %s", pub_date, e)
         return None
 
 
@@ -230,7 +229,7 @@ def _poll_once(handles: list[str], notif_dir: Path, state: dict, seed_only: bool
             # Add buffer: notify if published within POLL_INTERVAL + 30min before last check
             min_pub_dt = last_check_dt - timedelta(seconds=POLL_INTERVAL + 1800)
         except ValueError as e:
-            logger.debug(f"Failed to parse last_check: {e}")
+            logger.debug("Failed to parse last_check: %s", e)
             min_pub_dt = None
     else:
         min_pub_dt = None
@@ -249,17 +248,17 @@ def _poll_once(handles: list[str], notif_dir: Path, state: dict, seed_only: bool
                 if not seed_only and min_pub_dt is not None:
                     pub_dt = _parse_pub_date(tweet.get("published", ""))
                     if pub_dt is not None and pub_dt < min_pub_dt:
-                        logger.debug(f"Skipping old tweet from {handle} ({tweet['published']}): {tweet['text'][:60]}")
+                        logger.debug("Skipping old tweet from %s (%s): %s", handle, tweet["published"], tweet["text"][:60])
                         continue
 
                 new_count += 1
                 if not seed_only:
                     _write_notification(notif_dir, tweet)
-                    logger.info(f"New tweet from {handle}: {tweet['text'][:80]}")
+                    logger.info("New tweet from %s: %s", handle, tweet["text"][:80])
             if tweets:
-                logger.debug(f"{handle}: fetched {len(tweets)} tweets")
+                logger.debug("%s: fetched %s tweets", handle, len(tweets))
         except Exception as e:
-            logger.error(f"Error polling {handle}: {e}")
+            logger.error("Error polling %s: %s", handle, e)
 
         # Small delay between handles to be polite
         time.sleep(0.5)
@@ -270,7 +269,7 @@ def _poll_once(handles: list[str], notif_dir: Path, state: dict, seed_only: bool
 
 def serve(notif_dir: Path) -> None:
     """Main monitor loop."""
-    logger.info(f"Twitter monitor starting. Poll interval: {POLL_INTERVAL}s")
+    logger.info("Twitter monitor starting. Poll interval: %ss", POLL_INTERVAL)
     first_run = True
 
     while True:
@@ -283,14 +282,14 @@ def serve(notif_dir: Path) -> None:
             state = _load_state()
 
             if first_run:
-                logger.info(f"First run — seeding {len(handles)} handles without notifying")
+                logger.info("First run, seeding %s handles without notifying", len(handles))
                 _poll_once(handles, notif_dir, state, seed_only=True)
                 first_run = False
-                logger.info(f"Seeded {len(state.get('seen_guids', []))} tweet GUIDs")
+                logger.info("Seeded %s tweet GUIDs", len(state.get("seen_guids", [])))
             else:
-                logger.info(f"Polling {len(handles)} handles...")
+                logger.info("Polling %s handles...", len(handles))
                 count = _poll_once(handles, notif_dir, state)
-                logger.info(f"Poll complete: {count} new tweets")
+                logger.info("Poll complete: %s new tweets", count)
 
             state["last_check"] = datetime.now(UTC).isoformat()
             _save_state(state)
@@ -329,7 +328,7 @@ def cmd_unfollow(args: argparse.Namespace) -> None:
     print(f"Unfollowed {handle} ({len(new_handles)} remaining)")
 
 
-def cmd_list(args: argparse.Namespace) -> None:
+def cmd_list(_args: argparse.Namespace) -> None:
     config = _load_config()
     handles = config.get("handles", [])
     if not handles:

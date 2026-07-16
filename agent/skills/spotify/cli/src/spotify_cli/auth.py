@@ -121,7 +121,7 @@ class _CallbackHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(f"<html><body><h2>error: {error}</h2></body></html>".encode())
 
-    def log_message(self, format, *args):
+    def log_message(self, fmt, *args):
         pass  # suppress logs
 
 

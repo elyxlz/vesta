@@ -6,6 +6,8 @@ import typing as tp
 import aiohttp
 from aiohttp import web
 
+from .base import SettingDef
+
 logger = logging.getLogger("voice.elevenlabs")
 
 ELEVENLABS_API = "https://api.elevenlabs.io"
@@ -141,7 +143,7 @@ PREMADE_VOICES: list[dict[str, str]] = [
 class ElevenLabsTts:
     name = "elevenlabs"
 
-    def settings_schema(self) -> list[dict]:
+    def settings_schema(self) -> list[SettingDef]:
         return [
             {
                 "key": "selected_voice_id",
@@ -183,7 +185,7 @@ class ElevenLabsTts:
             )
         except (TimeoutError, aiohttp.ClientError) as e:
             await session.close()
-            logger.error(f"elevenlabs request failed: {e}")
+            logger.error("elevenlabs request failed: %s", e)
             return web.json_response({"error": f"elevenlabs request failed: {e}"}, status=502)
 
         if upstream.status != 200:

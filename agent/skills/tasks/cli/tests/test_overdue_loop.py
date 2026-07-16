@@ -20,7 +20,7 @@ def _auto_reminders(config: Config, task_id: str) -> list[dict]:
 
 def _add_task_due_in(config: Config, title: str, delta: timedelta) -> dict:
     due = (datetime.now(UTC) + delta).strftime("%Y-%m-%dT%H:%M:%S")
-    return commands.add_task(config, title=title, due_datetime=due, timezone="UTC")
+    return commands.add_task(config, title=title, due=commands.DueSpec(due_datetime=due, timezone="UTC"))
 
 
 def _force_due_date(config: Config, task_id: str, due: datetime):
@@ -114,7 +114,7 @@ def test_postpone_requires_timing(tmp_config: Config):
 
 
 def test_snooze_moves_a_pending_one_shot(tmp_config: Config):
-    reminder = commands.remind_set(tmp_config, message="one shot", in_hours=1)
+    reminder = commands.remind_set(tmp_config, commands.ReminderSpec(message="one shot", in_hours=1))
     result = commands.remind_snooze(tmp_config, reminder_id=reminder["id"], in_hours=4)
 
     new_run = db.parse_datetime(result["next_run"])
@@ -126,7 +126,7 @@ def test_snooze_moves_a_pending_one_shot(tmp_config: Config):
 
 
 def test_snooze_reactivates_a_fired_reminder(tmp_config: Config):
-    reminder = commands.remind_set(tmp_config, message="already fired", in_hours=1)
+    reminder = commands.remind_set(tmp_config, commands.ReminderSpec(message="already fired", in_hours=1))
     with closing(db.get_db(tmp_config.data_dir)) as conn:
         conn.execute("UPDATE reminders SET completed = 1 WHERE id = ?", (reminder["id"],))
         conn.commit()
@@ -139,13 +139,15 @@ def test_snooze_reactivates_a_fired_reminder(tmp_config: Config):
 
 
 def test_snooze_rejects_recurring(tmp_config: Config):
-    reminder = commands.remind_set(tmp_config, message="daily", scheduled_datetime="2026-04-26T10:30:00", tz="UTC", recurring="daily")
+    reminder = commands.remind_set(
+        tmp_config, commands.ReminderSpec(message="daily", scheduled_datetime="2026-04-26T10:30:00", tz="UTC", recurring="daily")
+    )
     with pytest.raises(ValueError, match="one-shot"):
         commands.remind_snooze(tmp_config, reminder_id=reminder["id"], in_hours=1)
 
 
 def test_snooze_requires_timing(tmp_config: Config):
-    reminder = commands.remind_set(tmp_config, message="one shot", in_hours=1)
+    reminder = commands.remind_set(tmp_config, commands.ReminderSpec(message="one shot", in_hours=1))
     with pytest.raises(ValueError, match="Say when"):
         commands.remind_snooze(tmp_config, reminder_id=reminder["id"])
 
@@ -154,7 +156,7 @@ def test_stale_fire_after_snooze_is_skipped_not_completed(tmp_config: Config, tm
     """A job armed before a snooze must not fire against the snoozed row (the snooze-race guard)."""
     notif_dir = tmp_path / "notifications"
     notif_dir.mkdir()
-    reminder = commands.remind_set(tmp_config, message="imminent", in_minutes=1)
+    reminder = commands.remind_set(tmp_config, commands.ReminderSpec(message="imminent", in_minutes=1))
     commands.remind_snooze(tmp_config, reminder_id=reminder["id"], in_hours=4)
 
     commands.send_reminder_job(reminder["id"], message="imminent", data_dir=str(tmp_config.data_dir), notif_dir=str(notif_dir))
@@ -170,7 +172,7 @@ def test_just_fired_one_shot_is_not_replayed_as_missed(tmp_config: Config, tmp_p
     notif_dir = tmp_path / "notifications"
     notif_dir.mkdir()
     scheduler = create_scheduler()
-    reminder = commands.remind_set(tmp_config, message="racing", in_minutes=1)
+    reminder = commands.remind_set(tmp_config, commands.ReminderSpec(message="racing", in_minutes=1))
 
     def rewind_run_date(seconds_ago: int):
         run_date = (datetime.now(UTC) - timedelta(seconds=seconds_ago)).isoformat()

@@ -11,17 +11,17 @@ def list_playlists(config: Config, limit: int = 50) -> dict:
 
     playlists = []
     while results:
-        for item in results["items"]:
-            playlists.append(
-                {
-                    "id": item["id"],
-                    "name": item["name"],
-                    "tracks": item["tracks"]["total"],
-                    "public": item["public"],
-                    "owner": item["owner"]["display_name"],
-                    "uri": item["uri"],
-                }
-            )
+        playlists.extend(
+            {
+                "id": item["id"],
+                "name": item["name"],
+                "tracks": item["tracks"]["total"],
+                "public": item["public"],
+                "owner": item["owner"]["display_name"],
+                "uri": item["uri"],
+            }
+            for item in results["items"]
+        )
         results = sp.next(results) if results.get("next") else None
 
     return {"playlists": playlists, "total": len(playlists)}

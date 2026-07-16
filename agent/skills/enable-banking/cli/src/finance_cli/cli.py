@@ -111,7 +111,7 @@ def cmd_config_set(args) -> dict:
     }
 
 
-def cmd_config_show(args) -> dict:
+def cmd_config_show(_args) -> dict:
     conf = cfg.load()
     return {
         "app_id": conf.get("app_id", ""),
@@ -123,7 +123,7 @@ def cmd_config_show(args) -> dict:
     }
 
 
-def cmd_auth_login(args) -> dict:
+def cmd_auth_login(_args) -> dict:
     conf = cfg.load()
     cfg.require_credentials(conf)
 
@@ -138,7 +138,9 @@ def cmd_auth_login(args) -> dict:
                 "message": "Open this URL in your browser to authorise bank access:",
                 "url": auth_url,
                 "waiting": f"Listening on https://localhost:{eb.CALLBACK_PORT}{eb.CALLBACK_PATH} for the callback...",
-                "fallback": "If the browser shows an SSL error, copy the full URL from the address bar and run: finance auth callback --url '<url>'",
+                "fallback": (
+                    "If the browser shows an SSL error, copy the full URL from the address bar and run: finance auth callback --url '<url>'"
+                ),
             }
         ),
         flush=True,
@@ -174,7 +176,7 @@ def cmd_auth_callback(args) -> dict:
     return _persist_session(conf, session_data)
 
 
-def cmd_auth_status(args) -> dict:
+def cmd_auth_status(_args) -> dict:
     conf = cfg.load()
     has_creds = bool(conf.get("app_id") and conf.get("key_path"))
     has_session = bool(conf.get("session_id"))
@@ -198,7 +200,7 @@ def cmd_auth_status(args) -> dict:
     return result
 
 
-def cmd_auth_revoke(args) -> dict:
+def cmd_auth_revoke(_args) -> dict:
     conf = cfg.load()
     cfg.require_session(conf)
 
@@ -211,13 +213,13 @@ def cmd_auth_revoke(args) -> dict:
     return {"status": "revoked", "message": "Session deleted and local credentials cleared."}
 
 
-def cmd_accounts(args) -> list:
+def cmd_accounts(_args) -> list:
     conf = cfg.load()
     cfg.require_session(conf)
     return conf.get("accounts", [])
 
 
-def cmd_balances(args) -> list:
+def cmd_balances(_args) -> list:
     conf = cfg.load()
     cfg.require_session(conf)
 

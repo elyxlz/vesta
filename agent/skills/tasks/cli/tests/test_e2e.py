@@ -31,6 +31,7 @@ def tasks_cli(home: Path, *args: str, timeout: float = 10) -> subprocess.Complet
         text=True,
         timeout=timeout,
         env=_env(home),
+        check=False,
     )
 
 

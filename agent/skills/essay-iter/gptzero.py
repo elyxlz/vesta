@@ -129,7 +129,7 @@ def _load_cache() -> dict | None:
 def _save_cache(d: dict) -> None:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     CACHE_FILE.write_text(json.dumps(d, indent=2))
-    os.chmod(CACHE_FILE, 0o600)
+    CACHE_FILE.chmod(0o600)
 
 
 def _decode_jwt_exp(token: str) -> int | None:
@@ -222,8 +222,8 @@ def _fetch_free_proxies(timeout: float = 8) -> list[str]:
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 body = r.read().decode("utf-8", "replace")
-            for line in body.splitlines():
-                line = line.strip()
+            for raw_line in body.splitlines():
+                line = raw_line.strip()
                 if not line or ":" not in line:
                     continue
                 # accept "host:port" and full URLs
@@ -231,7 +231,8 @@ def _fetch_free_proxies(timeout: float = 8) -> list[str]:
                     out.append(line)
                 else:
                     out.append(f"http://{line}")
-        except Exception:
+        except Exception as e:
+            sys.stderr.write(f"[gptzero] free-proxy source {url} failed: {e}\n")
             continue
         if len(out) > 200:
             break
@@ -299,7 +300,7 @@ def _mark_proxy_bad(p: str | None, reason: str) -> None:
 
 
 def _x_display_reachable(disp: str) -> bool:
-    return subprocess.run(["xdpyinfo", "-display", disp], capture_output=True).returncode == 0
+    return subprocess.run(["xdpyinfo", "-display", disp], capture_output=True, check=False).returncode == 0
 
 
 def _ensure_display() -> str:
@@ -362,20 +363,78 @@ def _refresh_session(refresh_token: str, proxy: str | None = None) -> dict:
     }
 
 
-def _bootstrap_from_existing_cdp(port: int = 9222, timeout: int = 60) -> dict | None:
-    """If a Chromium with --remote-debugging-port is already running (e.g. the
-    user's general browser on 9222), reuse it: open a new tab on
-    app.gptzero.me, wait for the Supabase JWT to land in localStorage, also
-    grab all api.gptzero.me cookies (csrf, anonymousUserId, etc), and return.
-    Returns None on failure so the caller can fall through to launching its
-    own Chromium.
+def _make_cdp_caller(ws, *, raise_on_error: bool = False):
+    """Return a `call(method, **params)` closure that issues one CDP command over
+    `ws` and blocks for its matching reply. Raises on a CDP error only when
+    `raise_on_error` is set (the existing-browser path tolerates errors)."""
+    mid = 0
 
-    NOTE: gptzero.me itself does NOT mint a JWT on load (no localStorage entry
-    until the user types a check). app.gptzero.me does, immediately. Use the
-    app subdomain.
-    """
+    def call(method, **params):
+        nonlocal mid
+        mid += 1
+        ws.send(json.dumps({"id": mid, "method": method, "params": params}))
+        while True:
+            d = json.loads(ws.recv())
+            if d.get("id") == mid:
+                if raise_on_error and "error" in d:
+                    raise RuntimeError(f"{method}: {d['error']}")
+                return d.get("result", {})
+
+    return call
+
+
+def _poll_for_jwt(call, attempts: int) -> dict | None:
+    """Poll localStorage over CDP until the Supabase auth token appears. Returns
+    the parsed token dict (with access_token) or None if it never lands."""
+    for _ in range(attempts):
+        time.sleep(1.0)
+        r = call(
+            "Runtime.evaluate",
+            expression="localStorage.getItem('sb-lydqhgdzhvsqlcobdfxi-auth-token')",
+            returnByValue=True,
+        )
+        res = r.get("result", {})
+        if res.get("subtype") == "error":
+            continue
+        v = res.get("value")
+        if v:
+            try:
+                parsed = json.loads(v)
+                if parsed.get("access_token"):
+                    return parsed
+            except (json.JSONDecodeError, AttributeError, TypeError):
+                pass
+    return None
+
+
+def _grab_gptzero_cookies(call) -> dict:
+    """Pull all api/app/root gptzero.me cookies (csrf, anonymousUserId, etc) via CDP."""
+    cookies_resp = call(
+        "Network.getCookies",
+        urls=[
+            "https://api.gptzero.me/",
+            "https://app.gptzero.me/",
+            "https://gptzero.me/",
+        ],
+    )
+    return {c["name"]: c["value"] for c in cookies_resp.get("cookies", [])}
+
+
+def _token_result(token: dict, cookies: dict) -> dict:
+    """Assemble the cached-session dict returned by the bootstrap paths."""
+    return {
+        "access_token": token["access_token"],
+        "refresh_token": token["refresh_token"],
+        "expires_at": token.get("expires_at", int(time.time()) + 3600),
+        "cookies": cookies,
+    }
+
+
+def _open_gptzero_tab_ws(port: int):
+    """Open an app.gptzero.me tab on an already-running CDP browser and attach a
+    websocket to it. Returns (ws, tab_data) or None if any step fails."""
     try:
-        import websocket  # type: ignore
+        import websocket
     except ImportError:
         return None
     try:
@@ -399,59 +458,34 @@ def _bootstrap_from_existing_cdp(port: int = 9222, timeout: int = 60) -> dict | 
     except Exception as e:
         sys.stderr.write(f"[gptzero] could not attach to existing browser: {e}\n")
         return None
-    mid = 0
+    return ws, data
 
-    def call(method, **params):
-        nonlocal mid
-        mid += 1
-        ws.send(json.dumps({"id": mid, "method": method, "params": params}))
-        while True:
-            d = json.loads(ws.recv())
-            if d.get("id") == mid:
-                return d.get("result", {})
 
+def _bootstrap_from_existing_cdp(port: int = 9222, timeout: int = 60) -> dict | None:
+    """If a Chromium with --remote-debugging-port is already running (e.g. the
+    user's general browser on 9222), reuse it: open a new tab on
+    app.gptzero.me, wait for the Supabase JWT to land in localStorage, also
+    grab all api.gptzero.me cookies (csrf, anonymousUserId, etc), and return.
+    Returns None on failure so the caller can fall through to launching its
+    own Chromium.
+
+    NOTE: gptzero.me itself does NOT mint a JWT on load (no localStorage entry
+    until the user types a check). app.gptzero.me does, immediately. Use the
+    app subdomain.
+    """
+    opened = _open_gptzero_tab_ws(port)
+    if opened is None:
+        return None
+    ws, data = opened
+    call = _make_cdp_caller(ws)
     try:
         call("Network.enable")
         call("Page.enable")
         call("Runtime.enable")
-        token = None
-        for _ in range(timeout):
-            time.sleep(1.0)
-            r = call(
-                "Runtime.evaluate",
-                expression="localStorage.getItem('sb-lydqhgdzhvsqlcobdfxi-auth-token')",
-                returnByValue=True,
-            )
-            res = r.get("result", {})
-            if res.get("subtype") == "error":
-                continue
-            v = res.get("value")
-            if v:
-                try:
-                    parsed = json.loads(v)
-                    if parsed.get("access_token"):
-                        token = parsed
-                        break
-                except Exception:
-                    pass
+        token = _poll_for_jwt(call, timeout)
         if not token:
             return None
-        # Pull all api.gptzero.me cookies too
-        cookies_resp = call(
-            "Network.getCookies",
-            urls=[
-                "https://api.gptzero.me/",
-                "https://app.gptzero.me/",
-                "https://gptzero.me/",
-            ],
-        )
-        cookies = {c["name"]: c["value"] for c in cookies_resp.get("cookies", [])}
-        return {
-            "access_token": token["access_token"],
-            "refresh_token": token["refresh_token"],
-            "expires_at": token.get("expires_at", int(time.time()) + 3600),
-            "cookies": cookies,
-        }
+        return _token_result(token, _grab_gptzero_cookies(call))
     finally:
         with contextlib.suppress(Exception):
             ws.close()
@@ -459,35 +493,16 @@ def _bootstrap_from_existing_cdp(port: int = 9222, timeout: int = 60) -> dict | 
             urllib.request.urlopen(f"http://127.0.0.1:{port}/json/close/{data['id']}", timeout=3)
 
 
-def _bootstrap_via_browser(proxy: str | None = None) -> dict:
-    """Drive Chromium via CDP to load app.gptzero.me, scrape JWT from
-    localStorage. Tries an existing browser first (port 9222), then launches
-    its own."""
-    # 1. fast path: reuse an existing browser with CDP exposed
-    if proxy is None:  # only reuse direct-IP browser if no proxy requested
-        for port in (9222, 9221, 9223):
-            cached = _bootstrap_from_existing_cdp(port=port, timeout=30)
-            if cached:
-                sys.stderr.write(f"[gptzero] bootstrapped via existing browser at :{port}\n")
-                return cached
-
-    try:
-        import websocket  # type: ignore
-    except ImportError as e:
-        raise RuntimeError("Bootstrap requires `websocket-client`. Install with `pip install websocket-client`.") from e
-
-    chromium = None
+def _find_chromium() -> str:
+    """Return the first available Chromium/Chrome binary name, or raise."""
     for c in ("chromium", "chromium-browser", "google-chrome"):
-        if subprocess.run(["which", c], capture_output=True).returncode == 0:
-            chromium = c
-            break
-    if chromium is None:
-        raise RuntimeError("No Chromium binary found. Install with `apt install chromium`.")
+        if subprocess.run(["which", c], capture_output=True, check=False).returncode == 0:
+            return c
+    raise RuntimeError("No Chromium binary found. Install with `apt install chromium`.")
 
-    display = _ensure_display()
 
-    # clean stale sentinel files that block fresh user-data-dirs sometimes
-    port = 9237
+def _launch_chromium(chromium: str, port: int, proxy: str | None, display: str) -> subprocess.Popen:
+    """Launch a headless-friendly Chromium with CDP on `port`, isolated user-data-dir."""
     profile = f"/tmp/gptzero-cdp-{os.getpid()}-{int(time.time())}"
     args = [
         chromium,
@@ -504,91 +519,69 @@ def _bootstrap_via_browser(proxy: str | None = None) -> dict:
     if proxy:
         args.append(f"--proxy-server={proxy}")
     args.append("about:blank")
-
     env = os.environ.copy()
     env["DISPLAY"] = display
+    return subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
 
-    proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
+
+def _wait_for_cdp(proc: subprocess.Popen, port: int, display: str, proxy: str | None) -> None:
+    """Block until Chromium's CDP endpoint answers, or raise (chromium is slow on first launch)."""
+    last_err = None
+    for _ in range(60):
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=1)
+            return
+        except Exception as e:
+            last_err = e
+            if proc.poll() is not None:
+                raise RuntimeError(f"Chromium exited early (rc={proc.returncode}). DISPLAY={display}, proxy={proxy}") from e
+            time.sleep(0.5)
+    raise RuntimeError(f"Chromium did not become CDP-reachable at 127.0.0.1:{port} (DISPLAY={display}, last error: {last_err})")
+
+
+def _bootstrap_via_browser(proxy: str | None = None) -> dict:
+    """Drive Chromium via CDP to load app.gptzero.me, scrape JWT from
+    localStorage. Tries an existing browser first (port 9222), then launches
+    its own."""
+    # 1. fast path: reuse an existing browser with CDP exposed
+    if proxy is None:  # only reuse direct-IP browser if no proxy requested
+        for existing_port in (9222, 9221, 9223):
+            cached = _bootstrap_from_existing_cdp(port=existing_port, timeout=30)
+            if cached:
+                sys.stderr.write(f"[gptzero] bootstrapped via existing browser at :{existing_port}\n")
+                return cached
+
     try:
-        # wait for CDP (longer window: chromium is slow on first launch)
-        ok = False
-        last_err = None
-        for _ in range(60):
-            try:
-                urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=1)
-                ok = True
-                break
-            except Exception as e:
-                last_err = e
-                # if process died early, abort
-                if proc.poll() is not None:
-                    raise RuntimeError(f"Chromium exited early (rc={proc.returncode}). DISPLAY={display}, proxy={proxy}") from e
-                time.sleep(0.5)
-        if not ok:
-            raise RuntimeError(f"Chromium did not become CDP-reachable at 127.0.0.1:{port} (DISPLAY={display}, last error: {last_err})")
+        import websocket
+    except ImportError as e:
+        raise RuntimeError("Bootstrap requires `websocket-client`. Install with `pip install websocket-client`.") from e
 
+    chromium = _find_chromium()
+    display = _ensure_display()
+    port = 9237
+    proc = _launch_chromium(chromium, port, proxy, display)
+    try:
+        _wait_for_cdp(proc, port, display, proxy)
         targets = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/json").read())
         page = next(t for t in targets if t.get("type") == "page")
-        # Connect directly to the page's debugger WS. No Target.attachToTarget
-        # needed -- on this WS we're already on the page session, no sessionId.
+        # Connect directly to the page's debugger WS; on this WS we're already on
+        # the page session, so no Target.attachToTarget / sessionId is needed.
         ws = websocket.create_connection(page["webSocketDebuggerUrl"], timeout=120)
-        mid = 0
-
-        def call(method, **params):
-            nonlocal mid
-            mid += 1
-            msg = {"id": mid, "method": method, "params": params}
-            ws.send(json.dumps(msg))
-            while True:
-                d = json.loads(ws.recv())
-                if d.get("id") == mid:
-                    if "error" in d:
-                        raise RuntimeError(f"{method}: {d['error']}")
-                    return d.get("result", {})
-
+        call = _make_cdp_caller(ws, raise_on_error=True)
         call("Page.enable")
         call("Runtime.enable")
         call("Page.navigate", url="https://app.gptzero.me/")
 
-        token = None
-        for _ in range(90):
-            time.sleep(1.0)
-            r = call(
-                "Runtime.evaluate",
-                expression="localStorage.getItem('sb-lydqhgdzhvsqlcobdfxi-auth-token')",
-                returnByValue=True,
-            )
-            v = r.get("result", {}).get("value")
-            if v:
-                try:
-                    parsed = json.loads(v)
-                    if parsed.get("access_token"):
-                        token = parsed
-                        break
-                except Exception:
-                    pass
+        token = _poll_for_jwt(call, 90)
         if not token:
             raise RuntimeError("Browser bootstrap timed out without finding a JWT.")
-        # also grab cookies (for api.gptzero.me csrf etc)
         try:
             call("Network.enable")
-            cookies_resp = call(
-                "Network.getCookies",
-                urls=[
-                    "https://api.gptzero.me/",
-                    "https://app.gptzero.me/",
-                    "https://gptzero.me/",
-                ],
-            )
-            cookies = {c["name"]: c["value"] for c in cookies_resp.get("cookies", [])}
-        except Exception:
+            cookies = _grab_gptzero_cookies(call)
+        except Exception as e:
+            sys.stderr.write(f"[gptzero] cookie grab failed: {e}\n")
             cookies = {}
-        return {
-            "access_token": token["access_token"],
-            "refresh_token": token["refresh_token"],
-            "expires_at": token.get("expires_at", int(time.time()) + 3600),
-            "cookies": cookies,
-        }
+        return _token_result(token, cookies)
     finally:
         with contextlib.suppress(Exception):
             proc.terminate()
@@ -628,7 +621,7 @@ class GPTZeroError(RuntimeError):
     pass
 
 
-class GPTZeroRateLimited(GPTZeroError):
+class GPTZeroRateLimitedError(GPTZeroError):
     pass
 
 
@@ -640,7 +633,7 @@ def _request_with_proxies(
 ) -> tuple[Any, str | None]:
     """Try `fn(proxy)` against each proxy until one succeeds.
 
-    `fn` should raise GPTZeroRateLimited on 429, requests.HTTPError or any
+    `fn` should raise GPTZeroRateLimitedError on 429, requests.HTTPError or any
     other exception on transient failure. Returns (result, proxy_used).
     """
     last_err: Exception | None = None
@@ -650,7 +643,7 @@ def _request_with_proxies(
             res = fn(p)
             _mark_proxy_good(p)
             return res, p
-        except GPTZeroRateLimited as e:
+        except GPTZeroRateLimitedError as e:
             last_err = e
             _mark_proxy_bad(p, "429")
             # if Tor, ask for a new circuit before bailing out of this proxy
@@ -699,7 +692,7 @@ def _new_scan_one(access_token: str, proxy: str | None, cookies: dict | None = N
     if r.status_code == 401:
         raise GPTZeroError("auth")
     if r.status_code == 429:
-        raise GPTZeroRateLimited(f"429 on /v3/scan: {r.text[:200]}")
+        raise GPTZeroRateLimitedError(f"429 on /v3/scan: {r.text[:200]}")
     r.raise_for_status()
     # capture any new cookies the server sets (e.g. anonymousUserId, csrf)
     if cookies is not None:
@@ -735,8 +728,8 @@ def _predict_one(
         body = r.text[:300]
         if "guest_user_quota_exceeded" in body or "AI scans per day" in body:
             reset = r.headers.get("ratelimit-reset", "?")
-            raise GPTZeroRateLimited(f"guest quota exhausted (7 AI scans / 24h). Resets in ~{reset}s. Need a different IP+session pair.")
-        raise GPTZeroRateLimited(f"429 on /v3/ai/text: {body}")
+            raise GPTZeroRateLimitedError(f"guest quota exhausted (7 AI scans / 24h). Resets in ~{reset}s. Need a different IP+session pair.")
+        raise GPTZeroRateLimitedError(f"429 on /v3/ai/text: {body}")
     r.raise_for_status()
     return r.json()
 
@@ -769,7 +762,8 @@ def score(
                 try:
                     token = _get_access_token(force_refresh=force_refresh, proxy=p)
                     break
-                except Exception:
+                except Exception as proxy_err:
+                    sys.stderr.write(f"[gptzero] token fetch via {p or 'DIRECT'} failed: {proxy_err}\n")
                     continue
             if token is None:
                 raise
@@ -782,13 +776,13 @@ def score(
 
         try:
             scan_id, used_proxy = _request_with_proxies(
-                lambda p: _new_scan_one(token, p, cookies),
+                lambda p, token=token, cookies=cookies: _new_scan_one(token, p, cookies),
                 proxies,
                 label="scan-create",
             )
             ordered = [used_proxy] + [p for p in proxies if p != used_proxy]
             result, _ = _request_with_proxies(
-                lambda p: _predict_one(token, scan_id, text, multilingual, p, cookies),
+                lambda p, token=token, scan_id=scan_id, cookies=cookies: _predict_one(token, scan_id, text, multilingual, p, cookies),
                 ordered,
                 label="ai/text",
             )
@@ -834,27 +828,9 @@ def _find_offsets(haystack: str, needle: str, start: int = 0) -> tuple[int, int]
     return None
 
 
-def top_offenders(
-    result: dict,
-    n: int = 10,
-    by: str = "sentence",
-    source_text: str | None = None,
-) -> dict:
-    """Pick the top-N most AI-like sentences (or paragraphs) from a `score()` result.
-
-    Parameters
-    ----------
-    result : the full GPTZero JSON
-    n      : how many entries to return
-    by     : "sentence" (default) or "paragraph"
-    source_text : the original document; used to compute character offsets. If
-                  omitted, offsets are best-effort.
-    """
-    if by not in ("sentence", "paragraph"):
-        raise ValueError("by must be 'sentence' or 'paragraph'")
-    doc = result.get("documents", [{}])[0]
-    cp = doc.get("class_probabilities", {}) or {}
-    summary = {
+def _build_summary(doc: dict, cp: dict) -> dict:
+    """Headline probabilities + predicted class for a `score()` document."""
+    return {
         "ai_likelihood_overall": cp.get("ai"),
         "human": cp.get("human"),
         "mixed": cp.get("mixed"),
@@ -864,48 +840,60 @@ def top_offenders(
         "average_generated_prob": doc.get("average_generated_prob"),
     }
 
-    sentences = doc.get("sentences") or []
-    paragraphs = doc.get("paragraphs") or []
 
-    # Build sentence -> paragraph_index map by walking through paragraphs and
-    # checking sentence ranges. GPTZero's paragraph items vary in shape; we look
-    # for a sentence-index range or fall back to text containment.
+def _explicit_sentence_indexes(p: dict) -> range | list[int] | None:
+    """Extract a paragraph's explicit sentence-index range, or None if it has none."""
+    si = p.get("start_sentence_index")
+    num = p.get("num_sentences")
+    ei = p.get("end_sentence_index")
+    if si is not None and num is not None:
+        return range(si, si + num)
+    if si is not None and ei is not None:
+        return range(si, ei + 1)
+    if "sentence_indexes" in p:
+        return p.get("sentence_indexes") or []
+    return None
+
+
+def _map_by_containment(sentences: list, paragraphs: list, para_for_sent: list[int]) -> None:
+    """Assign still-unmapped sentences to a paragraph by substring containment (in place)."""
+    for pi, p in enumerate(paragraphs):
+        ptext = (p.get("text") or p.get("paragraph") or "").strip()
+        if not ptext:
+            continue
+        for i, s in enumerate(sentences):
+            if para_for_sent[i] != -1:
+                continue
+            stext = (s.get("sentence") or "").strip()
+            if stext and stext in ptext:
+                para_for_sent[i] = pi
+
+
+def _map_sentences_to_paragraphs(sentences: list, paragraphs: list) -> list[int]:
+    """Map each sentence index to its paragraph index (-1 if none). GPTZero's
+    paragraph items vary in shape: use an explicit sentence-index range when
+    present, else fall back to text containment."""
     para_for_sent: list[int] = [-1] * len(sentences)
-    if paragraphs and sentences:
-        used_explicit = False
-        for pi, p in enumerate(paragraphs):
-            # GPTZero paragraph shape: {start_sentence_index, num_sentences, ...}
-            si = p.get("start_sentence_index")
-            num = p.get("num_sentences")
-            ei = p.get("end_sentence_index")
-            if si is not None and num is not None:
-                for i in range(si, si + num):
-                    if 0 <= i < len(para_for_sent):
-                        para_for_sent[i] = pi
-                used_explicit = True
-            elif si is not None and ei is not None:
-                for i in range(si, ei + 1):
-                    if 0 <= i < len(para_for_sent):
-                        para_for_sent[i] = pi
-                used_explicit = True
-            elif "sentence_indexes" in p:
-                for i in p.get("sentence_indexes") or []:
-                    if 0 <= i < len(para_for_sent):
-                        para_for_sent[i] = pi
-                used_explicit = True
-        if not used_explicit:
-            # Fallback: text containment
-            for pi, p in enumerate(paragraphs):
-                ptext = (p.get("text") or p.get("paragraph") or "").strip()
-                if not ptext:
-                    continue
-                for i, s in enumerate(sentences):
-                    if para_for_sent[i] != -1:
-                        continue
-                    stext = (s.get("sentence") or "").strip()
-                    if stext and stext in ptext:
-                        para_for_sent[i] = pi
+    if not (paragraphs and sentences):
+        return para_for_sent
 
+    used_explicit = False
+    for pi, p in enumerate(paragraphs):
+        indexes = _explicit_sentence_indexes(p)
+        if indexes is None:
+            continue
+        for i in indexes:
+            if 0 <= i < len(para_for_sent):
+                para_for_sent[i] = pi
+        used_explicit = True
+
+    if not used_explicit:
+        _map_by_containment(sentences, paragraphs, para_for_sent)
+    return para_for_sent
+
+
+def _enrich_sentences(sentences: list, para_for_sent: list[int], source_text: str | None) -> list[dict]:
+    """Attach generated_prob, offsets, and paragraph index to each scored sentence."""
     cursor = 0
     enriched: list[dict] = []
     for i, s in enumerate(sentences):
@@ -929,14 +917,11 @@ def top_offenders(
                 "paragraph_index": para_for_sent[i] if i < len(para_for_sent) else -1,
             }
         )
+    return enriched
 
-    if by == "sentence":
-        ranked = sorted(enriched, key=lambda x: x["generated_prob"], reverse=True)[:n]
-        for rank, item in enumerate(ranked, start=1):
-            item["rank"] = rank
-        return {"summary": summary, "by": "sentence", "top_offenders": ranked}
 
-    # paragraph mode: aggregate generated_prob per paragraph
+def _paragraph_rows(enriched: list[dict], paragraphs: list, source_text: str | None) -> list[dict]:
+    """Aggregate enriched sentences into per-paragraph rows (avg/peak prob, offsets)."""
     buckets: dict[int, list[dict]] = {}
     for item in enriched:
         pi = item["paragraph_index"]
@@ -944,33 +929,66 @@ def top_offenders(
             continue
         buckets.setdefault(pi, []).append(item)
 
-    paragraph_rows: list[dict] = []
+    rows: list[dict] = []
     for pi, items in buckets.items():
         probs = [it["generated_prob"] for it in items]
-        avg = sum(probs) / len(probs)
-        peak = max(probs)
         ptext = ""
         if pi < len(paragraphs):
             ptext = paragraphs[pi].get("text") or paragraphs[pi].get("paragraph") or " ".join(it["text"] for it in items)
-        offsets = None
-        if source_text and ptext:
-            offsets = _find_offsets(source_text, ptext.strip())
-        paragraph_rows.append(
+        offsets = _find_offsets(source_text, ptext.strip()) if source_text and ptext else None
+        rows.append(
             {
                 "paragraph_index": pi,
                 "text": ptext.strip(),
-                "avg_generated_prob": avg,
-                "peak_generated_prob": peak,
+                "avg_generated_prob": sum(probs) / len(probs),
+                "peak_generated_prob": max(probs),
                 "n_sentences": len(items),
                 "position_chars": list(offsets) if offsets else None,
                 "sentences": items,  # keep child sentences for context
             }
         )
-    paragraph_rows.sort(key=lambda x: x["avg_generated_prob"], reverse=True)
-    paragraph_rows = paragraph_rows[:n]
-    for rank, item in enumerate(paragraph_rows, start=1):
+    return rows
+
+
+def top_offenders(
+    result: dict,
+    n: int = 10,
+    by: str = "sentence",
+    source_text: str | None = None,
+) -> dict:
+    """Pick the top-N most AI-like sentences (or paragraphs) from a `score()` result.
+
+    Parameters
+    ----------
+    result : the full GPTZero JSON
+    n      : how many entries to return
+    by     : "sentence" (default) or "paragraph"
+    source_text : the original document; used to compute character offsets. If
+                  omitted, offsets are best-effort.
+    """
+    if by not in ("sentence", "paragraph"):
+        raise ValueError("by must be 'sentence' or 'paragraph'")
+    doc = result.get("documents", [{}])[0]
+    cp = doc.get("class_probabilities", {}) or {}
+    summary = _build_summary(doc, cp)
+
+    sentences = doc.get("sentences") or []
+    paragraphs = doc.get("paragraphs") or []
+    para_for_sent = _map_sentences_to_paragraphs(sentences, paragraphs)
+    enriched = _enrich_sentences(sentences, para_for_sent, source_text)
+
+    if by == "sentence":
+        ranked = sorted(enriched, key=lambda x: x["generated_prob"], reverse=True)[:n]
+        for rank, item in enumerate(ranked, start=1):
+            item["rank"] = rank
+        return {"summary": summary, "by": "sentence", "top_offenders": ranked}
+
+    rows = _paragraph_rows(enriched, paragraphs, source_text)
+    rows.sort(key=lambda x: x["avg_generated_prob"], reverse=True)
+    rows = rows[:n]
+    for rank, item in enumerate(rows, start=1):
         item["rank"] = rank
-    return {"summary": summary, "by": "paragraph", "top_offenders": paragraph_rows}
+    return {"summary": summary, "by": "paragraph", "top_offenders": rows}
 
 
 # ---------------------------------------------------------------------------
@@ -1081,29 +1099,11 @@ if __name__ == "__main__":
     main()
 
 
-# Response schema reference
-# -------------------------
-#
-# Top-level keys returned by /v3/ai/text:
-#
-#   meta              {pagesCount: int}
-#   version           model release date string e.g. "2026-03-30-base"
-#   neatVersion       short model version e.g. "4.4b"
-#   scanId            UUID of this scan
-#   documents[]       one entry per document (we only send one)
-#     class_probabilities                {human: 0..1, ai: 0..1, mixed: 0..1}  HEADLINE
-#     completely_generated_prob          0..1, "is the WHOLE doc AI?"
-#     average_generated_prob             mean per-sentence AI prob
-#     predicted_class                    "human" | "ai" | "mixed"
-#     confidence_score                   0..1 confidence in predicted_class
-#     confidence_category                "low" | "medium" | "high"
-#     overall_burstiness                 burstiness metric
-#     paragraphs[]                       paragraph-level breakdown
-#     sentences[]                        per-sentence detail:
-#       sentence                         the text
-#       generated_prob                   0..1 AI prob for THIS sentence
-#       class_probabilities              {human, ai, paraphrased}
-#       perplexity                       (often 0; legacy field)
-#       highlight_sentence_for_ai        bool, frontend rendering hint
-#     subclass                           which AI sub-class (chatgpt, claude, ...)
-#     writing_stats                      empty unless requested
+# /v3/ai/text response fields the code reads, under documents[0]:
+#   class_probabilities        {human, ai, mixed} in 0..1 (the headline)
+#   completely_generated_prob  0..1, "is the WHOLE doc AI?"
+#   average_generated_prob     mean per-sentence AI prob
+#   predicted_class            "human" | "ai" | "mixed"; confidence_category low|medium|high
+#   paragraphs[]               paragraph-level breakdown
+#   sentences[]                per-sentence {sentence, generated_prob 0..1,
+#                              class_probabilities, highlight_sentence_for_ai}

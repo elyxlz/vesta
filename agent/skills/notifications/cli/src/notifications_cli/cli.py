@@ -290,7 +290,8 @@ def main() -> int:
     add.add_argument("--sender", help="Shortcut: substring match (case-insensitive) on the sender/contact across identity fields.")
     add.add_argument(
         "--keyword",
-        help="Shortcut: case-insensitive regex (re.search) on the notification body/message, e.g. 'invoice|payment' or '^ALERT'. A plain word still works as a substring.",
+        help="Shortcut: case-insensitive regex (re.search) on the notification body/message, e.g. 'invoice|payment' "
+        "or '^ALERT'. A plain word still works as a substring.",
     )
     add.add_argument(
         "--match",
