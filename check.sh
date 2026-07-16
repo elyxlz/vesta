@@ -21,6 +21,7 @@ Suites:
                  dashboard-sync freshness + the vite base check
   whatsapp       gofmt + go vet + go build + go test for the whatsapp skill CLI
                  (builds whisper.cpp static libs to ~/.cache/vesta-whisper on first run)
+  telegram       gofmt + go vet + go build + go test for the telegram skill CLI
   integration    vestad integration tests (needs Docker)
   live           live agent e2e tests, incl. the upgrade gate (needs Docker + ~/.claude/.credentials.json; real Claude)
   upgrade        just the upgrade e2e: create an agent on the previous release, update in place
@@ -173,6 +174,22 @@ check_whatsapp() {
   )
 }
 
+check_telegram() {
+  (
+    cd agent/skills/telegram/cli
+    . ./cgo-env.sh
+    UNFORMATTED=$(gofmt -l .)
+    if [ -n "$UNFORMATTED" ]; then
+      echo "error: unformatted Go files:" >&2
+      echo "$UNFORMATTED" >&2
+      exit 1
+    fi
+    go vet -tags fts5 ./...
+    go build -tags fts5 -o /tmp/telegram-check-build .
+    go test -tags fts5 ./...
+  )
+}
+
 check_integration() {
   (
     cd vestad
@@ -230,6 +247,7 @@ for suite in "$@"; do
     web) check_web ;;
     guards) check_guards ;;
     whatsapp) check_whatsapp ;;
+    telegram) check_telegram ;;
     integration) check_integration ;;
     live) check_live ;;
     all) check_guards && check_agent && check_cli && check_vestad && check_web ;;

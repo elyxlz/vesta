@@ -84,6 +84,7 @@ jobs:
               - 'check.sh'
             go:
               - 'agent/skills/whatsapp/cli/**'
+              - 'agent/skills/telegram/cli/**'
               - '.github/workflows/ci.yml'
               - 'check.sh'
 
@@ -184,7 +185,7 @@ jobs:
       - name: Run agent checks
         run: ./check.sh agent
 
-  # ── Go checks (whatsapp CLI) ──────────────────────────────────────────
+  # ── Go checks (whatsapp + telegram CLIs) ──────────────────────────────
   go-checks:
     needs: detect-changes
     if: github.event_name != 'pull_request' || needs.detect-changes.outputs.go == 'true'
@@ -206,6 +207,9 @@ jobs:
 
       - name: Run whatsapp checks
         run: ./check.sh whatsapp
+
+      - name: Run telegram checks
+        run: ./check.sh telegram
 
   # ── Windows install script guard ──────────────────────────────────────
   install-script-check:

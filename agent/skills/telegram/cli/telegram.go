@@ -93,7 +93,7 @@ func (tc *TelegramClient) StartPolling() {
 		case update.Message != nil:
 			tc.handleMessage(update.Message)
 		case update.EditedMessage != nil:
-			tc.handleMessage(update.EditedMessage)
+			tc.handleEditedMessage(update.EditedMessage)
 		case update.CallbackQuery != nil:
 			tc.handleCallbackQuery(update.CallbackQuery)
 		}
@@ -131,6 +131,104 @@ func (tc *TelegramClient) handleCallbackQuery(cb *tgbotapi.CallbackQuery) {
 func (tc *TelegramClient) Stop() {
 	tc.bot.StopReceivingUpdates()
 	tc.store.Close()
+}
+
+// notifContext is who an inbound message is from, resolved identically for a new message and
+// for an edit of one.
+type notifContext struct {
+	chatName     string
+	contactName  string
+	username     string
+	sender       string
+	contactSaved bool
+	isDirectChat bool
+}
+
+func chatNameOf(msg *tgbotapi.Message) string {
+	if msg.Chat.Title != "" {
+		return msg.Chat.Title
+	}
+	if msg.Chat.FirstName != "" {
+		return strings.TrimSpace(msg.Chat.FirstName + " " + msg.Chat.LastName)
+	}
+	return ""
+}
+
+// notifContextFor resolves who to name in a notification about msg, and reports false when
+// nothing should be written for it at all: our own message, notifications off, or a skipped
+// sender. Shared so an edit stays exactly as quiet as the message it refers to.
+func (tc *TelegramClient) notifContextFor(msg *tgbotapi.Message) (notifContext, bool) {
+	isFromMe := msg.From != nil && int64(msg.From.ID) == tc.botUserID
+	if tc.notificationsDir == "" || isFromMe {
+		return notifContext{}, false
+	}
+
+	username := ""
+	senderID := ""
+	if msg.From != nil {
+		username = msg.From.UserName
+		senderID = strconv.FormatInt(int64(msg.From.ID), 10)
+	}
+	if tc.skipSenders[senderID] || tc.skipSenders[username] {
+		return notifContext{}, false
+	}
+
+	senderName := formatSenderName(msg.From)
+	contactName := ""
+	contactSaved := false
+	if contact, _ := tc.store.GetManualContact(msg.Chat.ID); contact != nil {
+		contactName = contact.Name
+		contactSaved = true
+	}
+	if contactName == "" {
+		contactName = senderName
+	}
+
+	return notifContext{
+		chatName:     chatNameOf(msg),
+		contactName:  contactName,
+		username:     username,
+		sender:       senderName,
+		contactSaved: contactSaved,
+		isDirectChat: msg.Chat.Type == "private",
+	}, true
+}
+
+// handleEditedMessage reports that a message the agent already read now says something else.
+// Telegram delivers the edit as a whole message carrying the new text under the original's ID,
+// so routing it through handleMessage would store it correctly but announce it as a brand new
+// message, and the agent would answer the same question twice.
+func (tc *TelegramClient) handleEditedMessage(msg *tgbotapi.Message) {
+	newText := msg.Text
+	if newText == "" {
+		newText = msg.Caption
+	}
+	if newText == "" {
+		return
+	}
+
+	// Read the old text before the update overwrites it: it is the whole point of the
+	// notification, and an edit to a message we never stored just reads as empty.
+	oldText, err := tc.store.GetMessageContent(int64(msg.MessageID))
+	if err != nil {
+		log.Printf("Failed to look up edited message %d: %v", msg.MessageID, err)
+	}
+	if err := tc.store.UpdateMessageContent(int64(msg.MessageID), msg.Chat.ID, newText); err != nil {
+		log.Printf("Failed to apply edit to message %d: %v", msg.MessageID, err)
+	}
+	if oldText == newText {
+		return
+	}
+
+	if ctx, ok := tc.notifContextFor(msg); ok {
+		if err := WriteEditNotification(
+			tc.notificationsDir, int64(msg.MessageID), ctx.chatName, ctx.contactName,
+			ctx.username, tc.instance, ctx.contactSaved, ctx.isDirectChat,
+			ctx.sender, oldText, newText,
+		); err != nil {
+			log.Printf("Failed to write edit notification for %d: %v", msg.MessageID, err)
+		}
+	}
 }
 
 func (tc *TelegramClient) handleMessage(msg *tgbotapi.Message) {
@@ -186,19 +284,9 @@ func (tc *TelegramClient) handleMessage(msg *tgbotapi.Message) {
 	}
 
 	senderName := formatSenderName(msg.From)
-	username := ""
-	if msg.From != nil {
-		username = msg.From.UserName
-	}
-
-	chatName := msg.Chat.Title
-	if chatName == "" && msg.Chat.FirstName != "" {
-		chatName = strings.TrimSpace(msg.Chat.FirstName + " " + msg.Chat.LastName)
-	}
-
+	chatName := chatNameOf(msg)
 	chatType := string(msg.Chat.Type)
 	isFromMe := msg.From != nil && int64(msg.From.ID) == tc.botUserID
-	isDirectChat := msg.Chat.Type == "private"
 	timestamp := msg.Time()
 
 	var replyToID int64
@@ -220,38 +308,21 @@ func (tc *TelegramClient) handleMessage(msg *tgbotapi.Message) {
 	}
 
 	// Write notification for incoming messages
-	if tc.notificationsDir != "" && !isFromMe {
-		contactName := ""
-		contactSaved := false
-		if contact, _ := tc.store.GetManualContact(msg.Chat.ID); contact != nil {
-			contactName = contact.Name
-			contactSaved = true
-		}
-		if contactName == "" {
-			contactName = senderName
-		}
-
-		senderPhone := ""
-		if msg.From != nil {
-			senderPhone = strconv.FormatInt(int64(msg.From.ID), 10)
-		}
-
-		if !tc.skipSenders[senderPhone] && !tc.skipSenders[username] {
-			WriteNotification(
-				tc.notificationsDir,
-				int64(msg.MessageID),
-				chatName,
-				contactName,
-				username,
-				tc.instance,
-				contactSaved,
-				isDirectChat,
-				senderName,
-				content,
-				mediaType,
-				replyToID,
-			)
-		}
+	if ctx, ok := tc.notifContextFor(msg); ok {
+		WriteNotification(
+			tc.notificationsDir,
+			int64(msg.MessageID),
+			ctx.chatName,
+			ctx.contactName,
+			ctx.username,
+			tc.instance,
+			ctx.contactSaved,
+			ctx.isDirectChat,
+			ctx.sender,
+			content,
+			mediaType,
+			replyToID,
+		)
 	}
 }
 
