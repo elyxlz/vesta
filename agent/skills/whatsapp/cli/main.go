@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,9 +15,7 @@ func isHelpArg(arg string) bool {
 	return arg == "--help" || arg == "-h" || arg == "help"
 }
 
-// printUsage lists every command straight from the registry, so a command cannot ship without
-// appearing here. The hand-written list this replaced had drifted 15 commands behind, the whole
-// voice-calling feature among them, leaving the agent to discover them by guesswork.
+// printUsage lists every command in the registry, so a command cannot ship without appearing here.
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage: whatsapp <command> [args] [flags]")
 	// The lifecycle commands run in the client, not the daemon, so they are not in the registry.
@@ -27,8 +26,31 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  authenticate                         print auth status")
 	fmt.Fprintln(w, "Commands (short aliases in parentheses; `whatsapp <command> --help` for its flags):")
 	for _, cmd := range commands {
+		// The link-* and daemon-status commands exist for the `link` and `daemon` wrappers to
+		// drive; reaching for them directly skips those wrappers' rate-limit and QR-page handling.
+		if cmd.internal {
+			continue
+		}
 		fmt.Fprintln(w, "  "+commandSignature(cmd))
 	}
+}
+
+// printCommandUsage answers `whatsapp <command> --help` from the command's own flags. Every
+// handler declares its FlagSet and parses before it touches the client, so passing no client
+// reports the flags without a daemon, without the socket, and without reaching any command body.
+func printCommandUsage(w io.Writer, name string) {
+	cmd, ok := lookupCommand(name)
+	if !ok {
+		// A lifecycle command (serve, link, daemon, authenticate): the general usage documents it.
+		printUsage(w)
+		return
+	}
+	var help *helpRequest
+	if _, err := cmd.run([]string{"--help"}, nil); errors.As(err, &help) {
+		fmt.Fprintln(w, help.usage)
+		return
+	}
+	fmt.Fprintln(w, commandSignature(cmd))
 }
 
 // commandSignature renders one registry entry as `name (alias) <positional>`.
@@ -68,6 +90,14 @@ func main() {
 	// The bash execution environment escapes special chars — undo in all args
 	for i := range os.Args {
 		os.Args[i] = shellEscapeReplacer.Replace(os.Args[i])
+	}
+
+	// Asking what a command takes is a question, so answer it here: no daemon, no socket, and no
+	// command body, which is what keeps `clear-all-chats --help` from running clear-all-chats.
+	// Only the first argument counts, so a message whose own text is `-h` stays a message.
+	if len(os.Args) > 1 && isHelpArg(os.Args[1]) {
+		printCommandUsage(os.Stdout, command)
+		os.Exit(0)
 	}
 
 	// Resolve the alias to its canonical name and rewrite the command's leading

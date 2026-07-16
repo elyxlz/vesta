@@ -9,91 +9,81 @@ import (
 	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
-// newHelpTestClient builds a client with a real store and no whatsmeow connection. Answering
-// `--help` must never reach the connection, so a nil client here is the point: any command that
-// runs its body instead of reporting its flags fails loudly rather than quietly passing.
-func newHelpTestClient(t *testing.T) *WhatsAppClient {
+func helpFor(t *testing.T, name string) string {
 	t.Helper()
+	var out bytes.Buffer
+	printCommandUsage(&out, name)
+	return strings.TrimSpace(out.String())
+}
+
+// Help is answered from the command's own flags with no client at all, which is what keeps it
+// working with the daemon down and keeps it away from every command body. Driving the real
+// registry means a command cannot be added without inheriting that.
+func TestEveryCommandReportsItsFlagsWithoutAClient(t *testing.T) {
+	for _, cmd := range commands {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("%s --help panicked, so it reaches for the client before parsing: %v", cmd.name, r)
+				}
+			}()
+			if usage := helpFor(t, cmd.name); usage == "" {
+				t.Errorf("%s --help printed nothing, want its usage", cmd.name)
+			}
+		}()
+	}
+}
+
+// Discovering what a command takes must never destroy anything: clear-all-chats deletes every
+// chat, so its help path must not reach the body.
+func TestHelpNeverReachesADestructiveBody(t *testing.T) {
 	store, err := NewMessageStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to open store: %v", err)
 	}
 	t.Cleanup(func() { store.Close() })
-	return &WhatsAppClient{
-		store:          store,
-		logger:         waLog.Noop,
-		skipSenders:    map[string]bool{},
-		messageSenders: map[string]string{},
-	}
-}
-
-func helpFor(t *testing.T, wac *WhatsAppClient, name string) string {
-	t.Helper()
-	result, err := executeCommand(name, []string{"--help"}, wac)
-	if err != nil {
-		t.Fatalf("%s --help returned error %v, want its usage", name, err)
-	}
-	usage, ok := result.(map[string]string)
-	if !ok {
-		t.Fatalf("%s --help returned %#v, want a usage map", name, result)
-	}
-	return usage["usage"]
-}
-
-// The whole point of the fix: asking any command what it takes is answered, not executed and not
-// turned into "flag: help requested". Driving the real registry means a new command cannot be
-// added without inheriting this.
-func TestEveryCommandAnswersHelpRatherThanRunning(t *testing.T) {
-	wac := newHelpTestClient(t)
-	for _, cmd := range commands {
-		result, err := executeCommand(cmd.name, []string{"--help"}, wac)
-		if err != nil {
-			t.Errorf("%s --help returned error %v, want its usage", cmd.name, err)
-			continue
-		}
-		usage, ok := result.(map[string]string)
-		if !ok || strings.TrimSpace(usage["usage"]) == "" {
-			t.Errorf("%s --help returned %#v, want a non-empty usage string", cmd.name, result)
-		}
-	}
-}
-
-// clear-all-chats ignored its args, so `--help` fell straight through to the body and deleted
-// every chat. Discovering what a command takes must never destroy anything.
-func TestHelpOnClearAllChatsLeavesTheMessagesAlone(t *testing.T) {
-	wac := newHelpTestClient(t)
 	const chatJID = "15551234567@s.whatsapp.net"
-	if err := wac.store.StoreChat(chatJID, "Ana", time.Now()); err != nil {
+	if err := store.StoreChat(chatJID, "Ana", time.Now()); err != nil {
 		t.Fatalf("failed to store chat: %v", err)
 	}
-	if err := wac.store.StoreMessage(StoreMessageParams{
+	if err := store.StoreMessage(StoreMessageParams{
 		ID: "MSG1", ChatJID: chatJID, Sender: "Ana", Content: "keep me", Timestamp: time.Now(),
 	}); err != nil {
 		t.Fatalf("failed to store message: %v", err)
 	}
 
-	if usage := helpFor(t, wac, "clear-all-chats"); usage == "" {
-		t.Fatal("clear-all-chats --help gave no usage")
+	// printCommandUsage passes no client, so a body that ran would panic rather than pass quietly.
+	if usage := helpFor(t, "clear-all-chats"); usage == "" {
+		t.Fatal("clear-all-chats --help printed nothing")
 	}
 
-	content, err := wac.store.GetMessageContent("MSG1")
+	content, err := store.GetMessageContent("MSG1")
 	if err != nil {
 		t.Fatalf("failed to read content: %v", err)
 	}
 	if content != "keep me" {
-		t.Errorf("the message is gone after clear-all-chats --help; asking for help wiped the database")
+		t.Error("the message is gone after clear-all-chats --help; asking for help wiped the database")
+	}
+}
+
+// main routes `--help`, `-h` and a bare `help` to the usage path, so every spelling the CLI
+// accepts stops short of the command body rather than only the two flag-shaped ones.
+func TestEveryHelpSpellingIsRecognised(t *testing.T) {
+	for _, spelling := range []string{"--help", "-h", "help"} {
+		if !isHelpArg(spelling) {
+			t.Errorf("isHelpArg(%q) = false; that spelling would reach the command body", spelling)
+		}
 	}
 }
 
 func TestHelpListsTheFlagsACommandActuallyTakes(t *testing.T) {
-	wac := newHelpTestClient(t)
 	for _, tc := range []struct{ command, flag string }{
 		{"call", "-to"},
 		{"say", "-text"},
 		{"send-message", "-to"},
 		{"list-messages", "-limit"},
 	} {
-		if usage := helpFor(t, wac, tc.command); !strings.Contains(usage, tc.flag) {
+		if usage := helpFor(t, tc.command); !strings.Contains(usage, tc.flag) {
 			t.Errorf("%s --help does not mention %s:\n%s", tc.command, tc.flag, usage)
 		}
 	}
@@ -101,18 +91,38 @@ func TestHelpListsTheFlagsACommandActuallyTakes(t *testing.T) {
 
 // A bare "Usage of hangup:" with nothing under it reads like the answer went missing.
 func TestCommandsThatTakeNoFlagsSaySo(t *testing.T) {
-	wac := newHelpTestClient(t)
-	for _, name := range []string{"hangup", "call-status", "clear-all-chats", "archive-all-chats", "daemon-status"} {
-		usage := helpFor(t, wac, name)
-		if !strings.Contains(usage, "takes no flags") {
+	for _, name := range []string{"hangup", "call-status", "clear-all-chats", "archive-all-chats"} {
+		if usage := helpFor(t, name); !strings.Contains(usage, "takes no flags") {
 			t.Errorf("%s --help = %q, want it to say it takes no flags", name, usage)
 		}
 	}
 }
 
-// These commands used to ignore their args entirely, so a typo'd flag ran the command anyway.
+// A lifecycle command is dispatched outside the registry, so without its own help path
+// `whatsapp link --help` would start a real, rate-limited pairing attempt.
+func TestLifecycleCommandsAnswerHelpRatherThanRunning(t *testing.T) {
+	for _, name := range []string{"link", "serve", "daemon", "authenticate"} {
+		usage := helpFor(t, name)
+		if !strings.Contains(usage, "Usage: whatsapp") {
+			t.Errorf("%s --help = %q, want the usage text", name, usage)
+		}
+	}
+}
+
+// An argument whose own text is `-h` is not a question. It must fail loudly: reporting usage and
+// succeeding would tell the agent a message was sent when nothing was.
+func TestAnArgumentThatLooksLikeHelpIsNotTreatedAsHelp(t *testing.T) {
+	wac := &WhatsAppClient{logger: waLog.Noop, skipSenders: map[string]bool{}}
+	result, err := executeCommand("send-message", []string{"--to", "Bob", "-h"}, wac)
+	if err == nil {
+		t.Fatalf("send-message --to Bob -h returned %#v with no error; the message was never sent", result)
+	}
+}
+
+// A command declaring no flags must still reject one it does not know, rather than ignore its
+// arguments and run regardless.
 func TestAnUnknownFlagIsRejectedRatherThanIgnored(t *testing.T) {
-	wac := newHelpTestClient(t)
+	wac := &WhatsAppClient{logger: waLog.Noop, skipSenders: map[string]bool{}}
 	for _, name := range []string{"hangup", "clear-all-chats", "archive-all-chats"} {
 		if _, err := executeCommand(name, []string{"--bogus"}, wac); err == nil {
 			t.Errorf("%s --bogus was accepted, want an error rather than the command running", name)
@@ -120,15 +130,42 @@ func TestAnUnknownFlagIsRejectedRatherThanIgnored(t *testing.T) {
 	}
 }
 
-// The hand-written usage list drifted 15 commands behind the registry, the whole voice-calling
-// feature included, so `whatsapp --help | grep call` found nothing and the agent fell back to
-// guessing. Generating it from the registry makes that impossible; this pins it.
-func TestUsageListsEveryCommandTheCLIAccepts(t *testing.T) {
+// A rejected flag is answered by the list of flags the command does take.
+func TestARejectedFlagReportsWhatTheCommandAccepts(t *testing.T) {
+	wac := &WhatsAppClient{logger: waLog.Noop, skipSenders: map[string]bool{}}
+	_, err := executeCommand("call", []string{"--nonexistent-flag", "x"}, wac)
+	if err == nil {
+		t.Fatal("call --nonexistent-flag was accepted, want an error")
+	}
+	if !strings.Contains(err.Error(), "-to") {
+		t.Errorf("the rejection does not list the flags call takes: %v", err)
+	}
+}
+
+// The usage list is generated from the registry, so a command cannot ship undiscoverable.
+func TestUsageListsEveryCommandOfferedToTheAgent(t *testing.T) {
 	var usage bytes.Buffer
 	printUsage(&usage)
 	for _, cmd := range commands {
+		if cmd.internal {
+			continue
+		}
 		if !strings.Contains(usage.String(), cmd.name) {
 			t.Errorf("`whatsapp --help` does not list %q, so there is no way to discover it", cmd.name)
+		}
+	}
+}
+
+// The link-* and daemon-status commands are for the `link` and `daemon` wrappers to drive:
+// offering them directly routes around the rate-limit and QR-page handling those wrappers own.
+func TestUsageDoesNotOfferWrapperDrivenCommands(t *testing.T) {
+	var usage bytes.Buffer
+	printUsage(&usage)
+	for _, name := range []string{"link-start", "link-status", "link-stop", "daemon-status"} {
+		for _, line := range strings.Split(usage.String(), "\n") {
+			if strings.TrimSpace(line) == name || strings.HasPrefix(strings.TrimSpace(line), name+" ") {
+				t.Errorf("`whatsapp --help` offers %q, which the wrappers own", name)
+			}
 		}
 	}
 }
@@ -146,17 +183,5 @@ func TestUsageShowsAliasesAndPositionals(t *testing.T) {
 		if !strings.Contains(usage.String(), want) {
 			t.Errorf("`whatsapp --help` is missing %q:\n%s", want, usage.String())
 		}
-	}
-}
-
-// A real mistake still reads as a failure, not as help.
-func TestAGenuineParseErrorIsStillAnError(t *testing.T) {
-	wac := newHelpTestClient(t)
-	result, err := executeCommand("call", []string{"--nonexistent-flag", "x"}, wac)
-	if err == nil {
-		t.Fatalf("call --nonexistent-flag returned %#v, want an error", result)
-	}
-	if strings.Contains(err.Error(), "takes no flags") {
-		t.Errorf("a parse error was reported as help: %v", err)
 	}
 }

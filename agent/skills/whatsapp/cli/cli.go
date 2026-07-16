@@ -277,29 +277,31 @@ func runOneShot(command string) {
 	os.Exit(exitCode)
 }
 
-// helpRequest carries a command's own usage text back out of its handler. Every command runs
-// in the daemon, so `--help` arrives as just another flag: the flag package would print the
-// usage to the daemon's stderr, where no caller can see it, and hand back a bare
-// "flag: help requested". executeCommand turns this into the command's result instead.
+// helpRequest carries a command's usage text out of its handler, so main can report the flags
+// without running the command. A FlagSet writes its usage to an io.Writer and reports ErrHelp,
+// which on its own says nothing about what the command accepts.
 type helpRequest struct{ usage string }
 
 func (h *helpRequest) Error() string { return h.usage }
 
-// parseFlags parses a command's flags. It exists so `--help` reaches the caller as the usage
-// text the FlagSet already knows how to write, rather than being lost to the daemon's stderr.
-// A genuine parse error is returned untouched.
+// parseFlags parses a command's flags, capturing what the FlagSet writes so the text reaches the
+// caller instead of the daemon's stderr, where nothing can read it.
 func parseFlags(fs *flag.FlagSet, args []string) error {
-	var usage bytes.Buffer
-	fs.SetOutput(&usage)
+	var written bytes.Buffer
+	fs.SetOutput(&written)
 	err := fs.Parse(args)
+	text := strings.TrimSpace(written.String())
 	if errors.Is(err, flag.ErrHelp) {
-		text := strings.TrimSpace(usage.String())
 		if !declaresFlags(fs) {
 			// The FlagSet prints a bare "Usage of x:" header with nothing under it, which reads
 			// like the answer went missing rather than like there is nothing to say.
 			text = fs.Name() + " takes no flags"
 		}
 		return &helpRequest{usage: text}
+	}
+	if err != nil && text != "" {
+		// The buffer holds the rejection plus the full flag list, which answers the mistake.
+		return errors.New(text)
 	}
 	return err
 }
@@ -310,9 +312,8 @@ func declaresFlags(fs *flag.FlagSet) bool {
 	return declared
 }
 
-// parseNoFlags is how a command that takes no flags still answers `--help`, and still rejects a
-// flag it does not know. Without it these commands ignore their args and simply run, so asking
-// clear-all-chats what it takes wipes the message database.
+// parseNoFlags gives a command that takes no flags a FlagSet anyway, so it reports that fact for
+// `--help` and rejects a flag it does not know instead of ignoring its arguments and running.
 func parseNoFlags(name string, args []string) error {
 	return parseFlags(flag.NewFlagSet(name, flag.ContinueOnError), args)
 }
@@ -324,8 +325,11 @@ type command struct {
 	name        string
 	aliases     []string
 	positionals []string
-	write       bool
-	run         func([]string, *WhatsAppClient) (any, error)
+	// internal marks a command the `link` and `daemon` wrappers drive; it works if called
+	// directly but skips their rate-limit and QR-page handling, so usage does not offer it.
+	internal bool
+	write    bool
+	run      func([]string, *WhatsAppClient) (any, error)
 }
 
 var commands = []command{
@@ -360,10 +364,10 @@ var commands = []command{
 	{name: "say", positionals: []string{"text"}, write: true, run: cmdSay},
 	{name: "hangup", write: true, run: cmdHangup},
 	{name: "call-status", run: cmdCallStatus},
-	{name: "daemon-status", run: cmdDaemonStatus},
-	{name: "link-start", run: cmdLinkStart},
-	{name: "link-status", run: cmdLinkStatus},
-	{name: "link-stop", run: cmdLinkStop},
+	{name: "daemon-status", internal: true, run: cmdDaemonStatus},
+	{name: "link-start", internal: true, run: cmdLinkStart},
+	{name: "link-status", internal: true, run: cmdLinkStatus},
+	{name: "link-stop", internal: true, run: cmdLinkStop},
 }
 
 func cmdLinkStart(args []string, wac *WhatsAppClient) (any, error) {
@@ -453,13 +457,10 @@ func executeCommand(name string, args []string, wac *WhatsAppClient) (any, error
 	if wac.readOnly && cmd.write {
 		return nil, fmt.Errorf("command %q blocked: instance is read-only", name)
 	}
-	result, err := cmd.run(args, wac)
-	// Asking what a command takes is a question, not a failure.
-	var help *helpRequest
-	if errors.As(err, &help) {
-		return map[string]string{"usage": help.usage}, nil
-	}
-	return result, err
+	// main answers help before dispatch, so a helpRequest here means an argument's own text looks
+	// like `-h`. It surfaces as a failure carrying the usage: succeeding would report a message sent
+	// that never was.
+	return cmd.run(args, wac)
 }
 
 func cmdListContacts(args []string, wac *WhatsAppClient) (any, error) {
