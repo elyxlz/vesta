@@ -435,7 +435,7 @@ def _contains_dashes(texts: list[str]) -> bool:
 
 async def process_message(msg: str, *, state: vm.State, config: cfg.VestaConfig, is_user: bool) -> tuple[list[str], vm.State]:
     turn = await converse(msg, state=state, config=config, show_output=True)
-    if turn.texts and _contains_dashes(turn.texts) and not turn.preempted:
+    if config.block_dashes and turn.texts and _contains_dashes(turn.texts) and not turn.preempted:
         # A preempted turn's reply was cut short at a step boundary; correcting a truncated
         # reply would re-send it after the preempting prompt's work, so skip it.
         logger.warning("Em/en dash detected in response, sending correction")
