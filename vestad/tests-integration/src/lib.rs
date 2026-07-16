@@ -242,7 +242,7 @@ impl TestServer {
         let config_dir = home.join(".config/vesta/vestad");
         let port_path = config_dir.join("port");
 
-        let startup_timeout = Duration::from_secs(60);
+        let startup_timeout = Duration::from_mins(1);
         let deadline = std::time::Instant::now() + startup_timeout;
         let port = loop {
             if let Ok(content) = std::fs::read_to_string(&port_path) {

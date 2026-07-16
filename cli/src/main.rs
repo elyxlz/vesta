@@ -10,7 +10,7 @@ use common::{fetch_latest_release_tag, version_less_than};
 const VERSION_CACHE_TTL_SECS: u64 = 3600;
 const UPDATE_CHECK_TIMEOUT_MS: u64 = 100;
 // Pads for first-start setup (git fetch, npm install, vite build, etc.).
-const START_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(900);
+const START_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_mins(15);
 // One bad paste (typo, stale code) shouldn't strand a just-created agent unauthenticated.
 const OAUTH_CODE_MAX_ATTEMPTS: u32 = 3;
 

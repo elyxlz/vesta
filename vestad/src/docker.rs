@@ -1029,8 +1029,7 @@ pub fn write_agent_env_file(
     // The env carries only identity; the agent owns model/provider/personality, timezone, and provider
     // auth in its config store (preferences) and .credentials.json (Claude OAuth blob).
     if std::fs::read_to_string(&env_path)
-        .map(|prev| prev == content)
-        .unwrap_or(false)
+        .is_ok_and(|prev| prev == content)
     {
         return Ok(env_path);
     }

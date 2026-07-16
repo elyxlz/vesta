@@ -10,7 +10,7 @@ use crate::common::{
 
 const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Bounds time-to-headers only (`recv_response`); SSE streams and long bodies stay unbounded.
-const HTTP_RESPONSE_TIMEOUT: Duration = Duration::from_secs(300);
+const HTTP_RESPONSE_TIMEOUT: Duration = Duration::from_mins(5);
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct MountsBody {
@@ -829,8 +829,7 @@ fn time_from_ts(ts: &str) -> String {
 fn time_now_utc() -> String {
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_secs());
     format!("{:02}:{:02}", (secs / 3600) % 24, (secs / 60) % 60)
 }
 

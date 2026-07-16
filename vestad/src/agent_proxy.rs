@@ -418,7 +418,7 @@ mod tests {
         let agent_rx = stream::iter([Ok::<_, Infallible>(TungMsg::Close(None))]);
 
         // A long keepalive guarantees the pump returns because of the Close, not a tick.
-        pump_agent_to_client(sink, agent_rx, Duration::from_secs(3600)).await;
+        pump_agent_to_client(sink, agent_rx, Duration::from_hours(1)).await;
 
         // The Close is consumed (not forwarded) and the pump has returned, so the channel is empty/closed.
         assert!(
@@ -432,7 +432,7 @@ mod tests {
         let (sink, mut rx) = recording_client_sink();
         let agent_rx = stream::iter([Ok::<_, Infallible>(TungMsg::Text("hello".into()))]);
 
-        pump_agent_to_client(sink, agent_rx, Duration::from_secs(3600)).await;
+        pump_agent_to_client(sink, agent_rx, Duration::from_hours(1)).await;
 
         let forwarded = rx.try_recv().expect("text frame forwarded");
         assert!(
