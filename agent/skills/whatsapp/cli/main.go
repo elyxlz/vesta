@@ -14,25 +14,34 @@ func isHelpArg(arg string) bool {
 	return arg == "--help" || arg == "-h" || arg == "help"
 }
 
+// printUsage lists every command straight from the registry, so a command cannot ship without
+// appearing here. The hand-written list this replaced had drifted 15 commands behind, the whole
+// voice-calling feature among them, leaving the agent to discover them by guesswork.
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage: whatsapp <command> [args] [flags]")
+	// The lifecycle commands run in the client, not the daemon, so they are not in the registry.
 	fmt.Fprintln(w, "Lifecycle:")
 	fmt.Fprintln(w, "  daemon <start|stop|restart|status>   manage the background daemon")
 	fmt.Fprintln(w, "  link [--phone +E.164]                link a WhatsApp account (QR page, or pairing code with --phone)")
 	fmt.Fprintln(w, "  serve                                run the daemon in the foreground")
 	fmt.Fprintln(w, "  authenticate                         print auth status")
-	fmt.Fprintln(w, "Commands (short aliases in parentheses):")
-	fmt.Fprintln(w, "  send-message (send) [to] [message]   send-file (file) [to] [path]")
-	fmt.Fprintln(w, "  list-messages (messages) [to]        send-reaction (react) [to] [id] [emoji]")
-	fmt.Fprintln(w, "  list-chats (chats)                   list-contacts (contacts)")
-	fmt.Fprintln(w, "  list-groups (groups)                 add-contact [name] [phone]")
-	fmt.Fprintln(w, "  remove-contact [identifier]          leave-group [group]")
-	fmt.Fprintln(w, "  backfill [to]                        rename-group (rename) [group] [name]")
-	fmt.Fprintln(w, "  check-delivery (delivery) [msg-id]   download-media [msg-id]")
-	fmt.Fprintln(w, "  delete-chat [to]                     archive-chat [to]")
-	fmt.Fprintln(w, "  clear-all-chats                      update-group-participants")
-	fmt.Fprintln(w, "  serve  authenticate  create-group    search-contacts")
-	fmt.Fprintln(w, "  update-group-participants            set-group-description [group] [desc]")
+	fmt.Fprintln(w, "Commands (short aliases in parentheses; `whatsapp <command> --help` for its flags):")
+	for _, cmd := range commands {
+		fmt.Fprintln(w, "  "+commandSignature(cmd))
+	}
+}
+
+// commandSignature renders one registry entry as `name (alias) <positional>`.
+func commandSignature(cmd command) string {
+	var sig strings.Builder
+	sig.WriteString(cmd.name)
+	if len(cmd.aliases) > 0 {
+		sig.WriteString(" (" + strings.Join(cmd.aliases, ", ") + ")")
+	}
+	for _, positional := range cmd.positionals {
+		sig.WriteString(" <" + positional + ">")
+	}
+	return sig.String()
 }
 
 func resolveDir(path string) (string, error) {

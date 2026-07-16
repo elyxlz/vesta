@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 	"time"
@@ -115,6 +116,35 @@ func TestAnUnknownFlagIsRejectedRatherThanIgnored(t *testing.T) {
 	for _, name := range []string{"hangup", "clear-all-chats", "archive-all-chats"} {
 		if _, err := executeCommand(name, []string{"--bogus"}, wac); err == nil {
 			t.Errorf("%s --bogus was accepted, want an error rather than the command running", name)
+		}
+	}
+}
+
+// The hand-written usage list drifted 15 commands behind the registry, the whole voice-calling
+// feature included, so `whatsapp --help | grep call` found nothing and the agent fell back to
+// guessing. Generating it from the registry makes that impossible; this pins it.
+func TestUsageListsEveryCommandTheCLIAccepts(t *testing.T) {
+	var usage bytes.Buffer
+	printUsage(&usage)
+	for _, cmd := range commands {
+		if !strings.Contains(usage.String(), cmd.name) {
+			t.Errorf("`whatsapp --help` does not list %q, so there is no way to discover it", cmd.name)
+		}
+	}
+}
+
+func TestUsageShowsAliasesAndPositionals(t *testing.T) {
+	var usage bytes.Buffer
+	printUsage(&usage)
+	for _, want := range []string{
+		"send-message (send) <to> <message>",
+		"call <to>",
+		"say <text>",
+		"hangup",
+		"list-contacts (contacts, search-contacts)",
+	} {
+		if !strings.Contains(usage.String(), want) {
+			t.Errorf("`whatsapp --help` is missing %q:\n%s", want, usage.String())
 		}
 	}
 }
