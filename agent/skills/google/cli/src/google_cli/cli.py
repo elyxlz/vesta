@@ -8,7 +8,7 @@ import threading
 from pathlib import Path
 
 from .config import Config
-from . import auth_commands, gmail, calendar, meet, monitor, notifications
+from . import auth_commands, gmail, calendar, monitor, notifications
 from .context import GoogleContext
 
 
@@ -23,13 +23,13 @@ def _remove_pid(config):
 def _require_daemon(config):
     pid_file = config.data_dir / "serve.pid"
     if not pid_file.exists():
-        print(json.dumps({"error": "daemon not running — start with: screen -dmS google google serve"}), file=sys.stderr)
+        print(json.dumps({"error": "daemon not running - start with: screen -dmS google google serve"}), file=sys.stderr)
         sys.exit(1)
     try:
         os.kill(int(pid_file.read_text().strip()), 0)
     except (ValueError, ProcessLookupError, OSError):
         pid_file.unlink(missing_ok=True)
-        print(json.dumps({"error": "daemon not running (stale pid file) — start with: screen -dmS google google serve"}), file=sys.stderr)
+        print(json.dumps({"error": "daemon not running (stale pid file) - start with: screen -dmS google google serve"}), file=sys.stderr)
         sys.exit(1)
 
 
@@ -106,6 +106,7 @@ def main():
     p_list_events.add_argument("--calendar", default="primary")
     p_list_events.add_argument("--days-ahead", type=int, default=7)
     p_list_events.add_argument("--days-back", type=int, default=0)
+    p_list_events.add_argument("--limit", type=int, default=None)
     p_list_events.add_argument("--no-details", action="store_true")
     p_list_events.add_argument("--user-timezone", default=None)
 
@@ -127,7 +128,6 @@ def main():
     p_create_event.add_argument("--all-day", action="store_true")
     p_create_event.add_argument("--recurrence", choices=["daily", "weekly", "monthly", "yearly"], default=None)
     p_create_event.add_argument("--recurrence-end-date", default=None)
-    p_create_event.add_argument("--meet-link", action="store_true")
 
     p_update_event = cal_sub.add_parser("update")
     p_update_event.add_argument("--id", required=True, dest="event_id")
@@ -150,11 +150,6 @@ def main():
     p_respond.add_argument("--response", choices=["accept", "decline", "tentative"], default="accept")
     p_respond.add_argument("--message", default=None)
 
-    # meet
-    meet_parser = group.add_parser("meet")
-    meet_sub = meet_parser.add_subparsers(dest="command", required=True)
-    meet_sub.add_parser("create")
-
     args = parser.parse_args()
     config = Config()
 
@@ -166,14 +161,13 @@ def main():
             _run_serve(config, Path(args.notifications_dir))
             return
 
-        if args.group not in ("auth", "meet"):
+        if args.group != "auth":
             _require_daemon(config)
 
         dispatchers = {
             "auth": _dispatch_auth,
             "email": _dispatch_email,
             "calendar": _dispatch_calendar,
-            "meet": _dispatch_meet,
         }
         result = dispatchers[args.group](args, config)
         print(json.dumps(result, indent=2))
@@ -193,7 +187,17 @@ def _dispatch_auth(args, config):
         return auth_commands.complete_authentication(config, code=args.code)
 
 
+_TRANSMIT_EMAIL_COMMANDS = {"send", "reply", "forward"}
+
+
+def _draft_only_enabled():
+    """True when EMAIL_DRAFT_ONLY is set to a truthy value (1/true/yes, case-insensitive)."""
+    return os.environ.get("EMAIL_DRAFT_ONLY", "").strip().lower() in {"1", "true", "yes"}
+
+
 def _dispatch_email(args, config):
+    if args.command in _TRANSMIT_EMAIL_COMMANDS and _draft_only_enabled():
+        raise RuntimeError("draft-only mode (EMAIL_DRAFT_ONLY): sending is disabled. Create a draft instead (email draft ...).")
     if args.command == "list":
         return gmail.list_emails(config, label=args.label, limit=args.limit)
     elif args.command == "get":
@@ -221,6 +225,7 @@ def _dispatch_calendar(args, config):
             days_back=args.days_back,
             include_details=not args.no_details,
             user_timezone=args.user_timezone,
+            limit=args.limit,
         )
     elif args.command == "calendars":
         return calendar.list_calendars(config)
@@ -240,7 +245,6 @@ def _dispatch_calendar(args, config):
             all_day=args.all_day,
             recurrence=args.recurrence,
             recurrence_end_date=args.recurrence_end_date,
-            meet_link=args.meet_link,
         )
     elif args.command == "update":
         return calendar.update_event(
@@ -269,11 +273,6 @@ def _dispatch_calendar(args, config):
             response=args.response,
             message=args.message,
         )
-
-
-def _dispatch_meet(args, config):
-    if args.command == "create":
-        return meet.create_space(config)
 
 
 def _run_serve(config: Config, notif_dir: Path):

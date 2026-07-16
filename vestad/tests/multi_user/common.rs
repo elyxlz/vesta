@@ -1,6 +1,6 @@
 use std::sync::LazyLock;
 
-use vesta_tests::{TestServer, TestServerBuilder, unique_user};
+use vesta_tests::{unique_user, TestServer, TestServerBuilder};
 
 /// Two long-lived `vestad serve` processes (one per simulated user) shared
 /// across every multi_user test. Booting fresh pairs per-test was the bulk of
@@ -18,7 +18,12 @@ pub static SHARED_PAIR: LazyLock<SharedPair> = LazyLock::new(|| {
         .user(&bob_user)
         .start()
         .expect("failed to start bob's server");
-    SharedPair { alice, bob, alice_user, bob_user }
+    SharedPair {
+        alice,
+        bob,
+        alice_user,
+        bob_user,
+    }
 });
 
 pub struct SharedPair {
@@ -28,7 +33,12 @@ pub struct SharedPair {
     pub bob_user: String,
 }
 
-pub fn start_pair() -> (&'static TestServer, &'static TestServer, &'static str, &'static str) {
+pub fn start_pair() -> (
+    &'static TestServer,
+    &'static TestServer,
+    &'static str,
+    &'static str,
+) {
     (
         &SHARED_PAIR.alice,
         &SHARED_PAIR.bob,

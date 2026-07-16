@@ -6,6 +6,17 @@ import type { VestaEvent } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ToolCallLabel } from "../ToolCallLabel";
 
+// Coarse relative countdown to a rate-limit reset (unix seconds); minutes/hours/days is
+// plenty of precision for "come back later" copy.
+function formatResetTime(resetsAt: number): string {
+  const minutes = Math.round((resetsAt * 1000 - Date.now()) / 60_000);
+  if (minutes <= 1) return "in a minute";
+  if (minutes < 60) return `in ${minutes}m`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `in ${hours}h`;
+  return `in ${Math.round(hours / 24)}d`;
+}
+
 export const ChatBubble = memo(function ChatBubble({
   event,
   className,
@@ -34,6 +45,22 @@ export const ChatBubble = memo(function ChatBubble({
         input={event.input}
         className={className}
       />
+    );
+  }
+
+  if (event.type === "error" || event.type === "rate_limited") {
+    const text =
+      event.type === "rate_limited"
+        ? event.resets_at
+          ? `rate limited, back ${formatResetTime(event.resets_at)}`
+          : "rate limited, retrying later"
+        : "hit a snag, this may not have gone through";
+    return (
+      <div className={cn("flex justify-center", className)}>
+        <span className="text-[11px] text-muted-foreground/60 select-none">
+          {text}
+        </span>
+      </div>
     );
   }
 

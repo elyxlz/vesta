@@ -21,22 +21,9 @@ only. The `api_key` itself never reaches you.
 So:
 
 - **Reading the plan is free.** `vesta-cloud-account plan` just works on a hosted box.
-- **Changes are facilitated, never automatic.** You cannot upgrade, cancel, or
-  move money yourself. `vesta-cloud-account manage` returns a **Stripe-hosted link**; the
-  owner opens it and confirms the change in Stripe's own UI. You *initiate*, the
-  human *authorizes*.
-
-This is deliberate. You are an AI, so you must never be able to silently change
-someone's bill or cancel their account. The worst you can do is hand over a link.
-
-## Trigger
-
-Invoke when the **owner** asks about *their own* hosting:
-
-- "what plan am I on", "how much am I paying", "when does it renew", "is my
-  subscription active".
-- "upgrade my plan", "cancel my account", "change my card", "manage my billing",
-  "take me to my account".
+- **Changes are facilitated, never automatic.** `vesta-cloud-account manage` returns a
+  **Stripe-hosted link**; the owner opens it and confirms the change in Stripe's
+  own UI.
 
 ## Skip
 
@@ -45,10 +32,10 @@ Self-hosted boxes have no plan (`vesta-cloud-account plan` says so). Buying a ve
 ## Commands
 
 ```
-vesta-cloud-account plan          # this box's plan, price, status, renewal date (a read)
+vesta-cloud-account plan          # this box's plan, price, status, renewal date
 vesta-cloud-account manage        # a secure Stripe link to upgrade / cancel / change payment
 vesta-cloud-account referral      # this box's referral code, credit earned, invites completed
-vesta-cloud-account set-referral  # set/clear the code the onboard skill uses
+vesta-cloud-account set-referral  # set/clear the stored code
 ```
 
 Output is always JSON on stdout. Exit codes: 0 success, 2 surfaced `{error}`
@@ -62,8 +49,7 @@ unreachable, 1 unexpected.
   (`renews_at`). Do not read raw JSON at them; summarize.
 - **Any change (upgrade, cancel, card):** run `vesta-cloud-account manage`, give them the
   `url`, and say something like "here is your billing page, you can upgrade,
-  change your card, or cancel from there." Then stop. **Do not claim** you
-  upgraded or cancelled anything; you did not. They confirm it on that page.
+  change your card, or cancel from there." Then stop.
 - If `vesta-cloud-account plan` returns an error that this is not a hosted box, tell them
   they are self-hosted and there is no Vesta plan to manage.
 

@@ -17,11 +17,6 @@ def calendar_service(config: Config):
     return build("calendar", "v3", credentials=creds)
 
 
-def meet_service(config: Config):
-    creds = auth.get_credentials(config.token_file, config.credentials_file, config.scopes)
-    return build("meet", "v2", credentials=creds)
-
-
 def retry(func, *, max_retries: int = 3):
     for attempt in range(max_retries + 1):
         try:

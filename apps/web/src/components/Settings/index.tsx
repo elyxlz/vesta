@@ -17,7 +17,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useTheme } from "@/providers/ThemeProvider";
 type Theme = "dark" | "light" | "system";
 import { useAuth } from "@/providers/AuthProvider";
-import { useTauri } from "@/providers/TauriProvider";
+import { useRuntime } from "@/providers/RuntimeProvider";
 import { useGateway } from "@/providers/GatewayProvider";
 import { connectionHostname } from "@/lib/connection";
 import { StatusPill } from "@/components/StatusPill";
@@ -44,7 +44,7 @@ const ACCOUNT_URL = "https://vesta.run/account";
 // box concerns only — per-agent config lives at /agent/:name/settings.
 export function AppSettings() {
   const { theme, setTheme } = useTheme();
-  const { isTauri } = useTauri();
+  const { isDesktopApp } = useRuntime();
   const { disconnect } = useAuth();
   const { reachable, managed, gatewayVersion, gatewayBranch } = useGateway();
   const naturalPacing = useChatPacing((s) => s.natural);
@@ -59,7 +59,7 @@ export function AppSettings() {
     <div className="mx-auto mt-4 grid w-full max-w-5xl grid-cols-1 gap-4 pb-6 md:auto-rows-min md:grid-cols-2">
       <Card size="sm">
         <CardContent>
-          <MenuSection title="Appearance">
+          <MenuSection title="appearance">
             <ToggleGroup
               type="single"
               value={theme}
@@ -69,16 +69,16 @@ export function AppSettings() {
               variant="outline"
               spacing={2}
             >
-              {!isTauri && (
+              {!isDesktopApp && (
                 <ToggleGroupItem value="system">
-                  <Monitor /> System
+                  <Monitor /> system
                 </ToggleGroupItem>
               )}
               <ToggleGroupItem value="light">
-                <Sun /> Light
+                <Sun /> light
               </ToggleGroupItem>
               <ToggleGroupItem value="dark">
-                <Moon /> Dark
+                <Moon /> dark
               </ToggleGroupItem>
             </ToggleGroup>
           </MenuSection>
@@ -87,7 +87,7 @@ export function AppSettings() {
 
       <Card size="sm">
         <CardContent>
-          <MenuSection title="Chat">
+          <MenuSection title="chat">
             <Field
               orientation="horizontal"
               className="items-center justify-between"
@@ -109,7 +109,7 @@ export function AppSettings() {
 
       <Card size="sm">
         <CardContent>
-          <MenuSection title="App">
+          <MenuSection title="app">
             <Field
               orientation="horizontal"
               className="items-center justify-between"
@@ -143,7 +143,7 @@ export function AppSettings() {
       <Card size="sm" className="md:col-span-2">
         <CardContent>
           <MenuSection
-            title="Gateway"
+            title="gateway"
             trailing={
               (gatewayVersion || gatewayBranch) && (
                 <span className="shrink-0 text-xs font-medium text-muted-foreground">
@@ -159,7 +159,7 @@ export function AppSettings() {
                 <StatusPill showHostname={false} />
                 <span className="flex min-w-0 flex-1 items-baseline gap-1">
                   <span className="shrink-0 text-muted-foreground">
-                    {reachable ? "Connected to" : "Cannot reach"}
+                    {reachable ? "connected to" : "can't reach"}
                   </span>
                   <span className="min-w-0 truncate font-medium text-foreground">
                     {hostname}
@@ -173,7 +173,7 @@ export function AppSettings() {
                   onClick={() => setShowLogs(true)}
                 >
                   <ScrollText data-icon="inline-start" />
-                  View logs
+                  view logs
                 </Button>
               )}
               <Button
@@ -182,7 +182,7 @@ export function AppSettings() {
                 onClick={() => disconnect()}
               >
                 <LogOut data-icon="inline-start" />
-                Disconnect
+                disconnect
               </Button>
             </div>
             <ConnectionControls />
@@ -217,7 +217,7 @@ export function AppSettings() {
                     </FieldDescription>
                   </FieldContent>
                   <span className="min-w-0 shrink-0 truncate text-sm text-muted-foreground">
-                    {gatewaySetup.info.tunnel_url ?? "—"}
+                    {gatewaySetup.info.tunnel_url ?? "not set"}
                   </span>
                 </Field>
                 <Field
@@ -247,14 +247,14 @@ export function AppSettings() {
       {reachable && managed && (
         <Card size="sm">
           <CardContent>
-            <MenuSection title="Account">
+            <MenuSection title="account">
               <Button
                 variant="outline"
                 className="w-full justify-start"
                 onClick={() => openExternalUrl(ACCOUNT_URL)}
               >
                 <CreditCard data-icon="inline-start" />
-                Manage account &amp; billing
+                manage account &amp; billing
                 <ExternalLink data-icon="inline-end" className="ml-auto" />
               </Button>
             </MenuSection>

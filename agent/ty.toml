@@ -2,4 +2,4 @@
 include = ["core", "tests"]
 
 [environment]
-extra-paths = ["skills", "core/skills/app-chat/cli/src"]
+extra-paths = ["skills", "core/skills/app-chat/cli/src", "skills/voice/cli/src"]

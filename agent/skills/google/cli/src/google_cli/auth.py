@@ -1,7 +1,9 @@
 import json
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -10,9 +12,28 @@ LOOPBACK_PORT = 8097
 REDIRECT_URI = f"http://127.0.0.1:{LOOPBACK_PORT}"
 VERIFIER_FILE = Path(tempfile.gettempdir()) / "google_auth_verifier.txt"
 
+MISSING_CREDENTIALS_MESSAGE = (
+    "Missing {path}: this skill requires your own Google Cloud OAuth client (Desktop app type). "
+    "Create one, download its client JSON to that path, then run 'google auth login'. "
+    "See SETUP.md in the google skill for the walkthrough. For everyday Gmail mail and "
+    "calendar without a Google Cloud project, use the email-client skill instead."
+)
+
+REFRESH_FAILED_MESSAGE = (
+    "Token refresh failed. If credentials.json changed (a different OAuth client), tokens minted "
+    "under the old client cannot refresh; run 'google auth login' to sign in again."
+)
+
+
+def _make_flow(credentials_file: Path, scopes: list[str]) -> InstalledAppFlow:
+    """Build the OAuth flow from the user's own client at ``credentials_file``."""
+    if not credentials_file.exists():
+        raise ValueError(MISSING_CREDENTIALS_MESSAGE.format(path=credentials_file))
+    return InstalledAppFlow.from_client_secrets_file(str(credentials_file), scopes)
+
 
 def start_auth_flow(credentials_file: Path, scopes: list[str]) -> dict:
-    flow = InstalledAppFlow.from_client_secrets_file(str(credentials_file), scopes)
+    flow = _make_flow(credentials_file, scopes)
     flow.redirect_uri = REDIRECT_URI
     auth_url, state = flow.authorization_url(prompt="consent", access_type="offline")
     # Save code_verifier so complete_auth_flow can use it
@@ -22,7 +43,7 @@ def start_auth_flow(credentials_file: Path, scopes: list[str]) -> dict:
 
 
 def complete_auth_flow(credentials_file: Path, scopes: list[str], code: str, token_file: Path) -> Credentials:
-    flow = InstalledAppFlow.from_client_secrets_file(str(credentials_file), scopes)
+    flow = _make_flow(credentials_file, scopes)
     flow.redirect_uri = REDIRECT_URI
     # Restore code_verifier if available
     if VERIFIER_FILE.exists():
@@ -35,7 +56,10 @@ def complete_auth_flow(credentials_file: Path, scopes: list[str], code: str, tok
 
 
 def run_local_server_flow(credentials_file: Path, scopes: list[str], token_file: Path) -> Credentials:
-    flow = InstalledAppFlow.from_client_secrets_file(str(credentials_file), scopes)
+    # open_browser=False: sign-in happens in a separately-driven handover browser,
+    # not a browser on this (often headless) host. run_local_server prints the
+    # consent URL and runs a 127.0.0.1 loopback listener for the redirect.
+    flow = _make_flow(credentials_file, scopes)
     creds = flow.run_local_server(port=LOOPBACK_PORT, open_browser=False)
     _save_token(token_file, creds)
     return creds
@@ -47,12 +71,18 @@ def get_credentials(token_file: Path, credentials_file: Path, scopes: list[str])
 
     creds = _load_token(token_file, scopes)
 
-    if creds.valid:
+    # Refresh when the token is expired OR when we cannot prove it is still valid
+    # (expiry unknown, e.g. a token saved before expiry was persisted). Relying on
+    # creds.valid alone silently reuses a stale token whose expiry is None.
+    if creds.refresh_token and (creds.expiry is None or not creds.valid):
+        try:
+            creds.refresh(Request())
+        except RefreshError as e:
+            raise ValueError(f"{REFRESH_FAILED_MESSAGE} (details: {e})")
+        _save_token(token_file, creds)
         return creds
 
-    if creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-        _save_token(token_file, creds)
+    if creds.valid:
         return creds
 
     raise ValueError("Token expired and cannot be refreshed. Run 'google auth login' again.")
@@ -75,13 +105,17 @@ def _save_token(token_file: Path, creds: Credentials) -> None:
         "client_id": creds.client_id,
         "client_secret": creds.client_secret,
         "scopes": list(creds.scopes) if creds.scopes else [],
+        # Persist expiry so a reloaded Credentials object can tell it is expired
+        # and refresh. Without this, expiry is None -> creds.valid is always True
+        # -> the stale access token is reused until Google 401s every call ~1h in.
+        "expiry": creds.expiry.isoformat() if creds.expiry else None,
     }
     token_file.write_text(json.dumps(token_data, indent=2))
 
 
 def _load_token(token_file: Path, scopes: list[str]) -> Credentials:
     data = json.loads(token_file.read_text())
-    return Credentials(
+    creds = Credentials(
         token=data["token"],
         refresh_token=data["refresh_token"] if "refresh_token" in data else None,
         token_uri=data["token_uri"] if "token_uri" in data else "https://oauth2.googleapis.com/token",
@@ -89,3 +123,13 @@ def _load_token(token_file: Path, scopes: list[str]) -> Credentials:
         client_secret=data["client_secret"] if "client_secret" in data else None,
         scopes=scopes,
     )
+    # Restore expiry so creds.expired / creds.valid reflect reality. google-auth
+    # uses a naive UTC datetime here.
+    expiry = data.get("expiry")
+    if expiry:
+        try:
+            dt = datetime.fromisoformat(expiry)
+            creds.expiry = dt.replace(tzinfo=None) if dt.tzinfo else dt
+        except ValueError:
+            creds.expiry = None
+    return creds

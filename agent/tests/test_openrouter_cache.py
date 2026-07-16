@@ -5,7 +5,7 @@ import json
 
 from aiohttp import web
 
-import core.models as vm
+import core.config as cfg
 from core.client import build_client_options
 from core.openrouter_cache import (
     _CACHE_LOG_EVERY,
@@ -180,7 +180,7 @@ def test_usage_int_parses_safely():
 
 
 def _config_with_memory(tmp_path, **overrides):
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent", **overrides)
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent", **overrides)
     config.agent_dir.mkdir(parents=True, exist_ok=True)
     (config.agent_dir / "MEMORY.md").write_text("test memory")
     return config

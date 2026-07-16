@@ -1,8 +1,10 @@
-use vesta_tests::{SERVER, SHARED_RO_AGENT, exec_in_container};
+use vesta_tests::{exec_in_container, SERVER, SHARED_RO_AGENT};
 
 fn container_id(agent_name: &str) -> String {
     let status = SERVER.client().agent_status(agent_name).unwrap();
-    status.id.unwrap_or_else(|| panic!("agent {agent_name} has no container id"))
+    status
+        .id
+        .unwrap_or_else(|| panic!("agent {agent_name} has no container id"))
 }
 
 const ENTRYPOINT_POLL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
@@ -36,8 +38,8 @@ fn fresh_agent_has_expected_directory_structure() {
 
     // Root-level directories created by entrypoint / image COPY. Git state
     // (/root/.git, branch, sparse-checkout, .gitignore) is not asserted here:
-    // the workspace attaches lazily (first skills-install or workspace sync),
-    // which needs the workspace bundle from vestad (outside this test's scope).
+    // the workspace attaches lazily (first skills-install or upstream sync),
+    // which fetches from the mounted upstream repo (outside this test's scope).
     for dir in ["/root/.claude", "/root/agent"] {
         wait_for_path(&cid, 'd', dir);
     }
@@ -47,7 +49,7 @@ fn fresh_agent_has_expected_directory_structure() {
     // is pruned at image build time to default-skills.txt; pick a couple of
     // entries we know are shipped.
     wait_for_path(&cid, 'd', "/root/.claude/skills");
-    for skill in ["personality", "app-chat", "tasks", "workspace-sync"] {
+    for skill in ["personality", "app-chat", "tasks", "upstream-sync"] {
         let path = format!("/root/.claude/skills/{skill}");
         exec_in_container(&cid, &format!("test -L {path}"))
             .unwrap_or_else(|_| panic!("{path} should be a symlink"));
@@ -75,7 +77,17 @@ fn fresh_agent_has_expected_directory_structure() {
     let root_entries = exec_in_container(&cid, "ls -1 /root").unwrap();
     for entry in root_entries.lines() {
         assert!(
-            matches!(entry, "agent" | ".claude" | ".git" | ".gitignore" | ".bashrc" | ".local" | ".cache" | ".config"),
+            matches!(
+                entry,
+                "agent"
+                    | ".claude"
+                    | ".git"
+                    | ".gitignore"
+                    | ".bashrc"
+                    | ".local"
+                    | ".cache"
+                    | ".config"
+            ),
             "unexpected entry at /root: {entry}"
         );
     }

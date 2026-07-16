@@ -83,7 +83,7 @@ class Bridge:
                     await handler(payload)
                 except Exception as exc:  # internal bookkeeping must never break the turn
                     self._warn(f"internal hook {event} failed: {exc}")
-        matchers = self.hooks[tp.cast(HookEvent, event)] if event in self.hooks else []
+        matchers = self.hooks[event] if event in self.hooks else []
         tool_use_id = payload["tool_use_id"] if "tool_use_id" in payload else None
         for matcher in matchers:
             for callback in matcher.hooks:

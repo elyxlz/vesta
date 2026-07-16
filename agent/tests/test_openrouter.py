@@ -1,39 +1,39 @@
 """Tests for OpenRouter provider mode: nested provider config and SDK option gating."""
 
-import core.models as vm
+import core.config as cfg
 from core.client import build_client_options
 from core.config import ClaudeConfig, OpenRouterConfig
 
 
 def test_config_accepts_openrouter_provider(tmp_path):
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent", provider=OpenRouterConfig.model_validate({"model": "x/y", "key": "sk-test"}))
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent", provider=OpenRouterConfig.model_validate({"model": "x/y", "key": "sk-test"}))
     assert isinstance(config.provider, OpenRouterConfig)
     assert config.provider.kind == "openrouter"
 
 
 def test_config_defaults_to_no_provider(tmp_path):
     # A fresh agent has no provider chosen yet (distinct from a chosen-but-unauthenticated provider).
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     assert config.provider is None
 
 
 def test_config_max_context_tokens_defaults_to_unset(tmp_path):
     """Unset (None) by default on a chosen provider: Claude runs at its model default (1M via beta) and
     OpenRouter falls back to a 200k working cap. A chosen value overrides both."""
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent", provider=ClaudeConfig(model="opus"))
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent", provider=ClaudeConfig(model="opus"))
     assert isinstance(config.provider, ClaudeConfig)
     assert config.provider.max_context_tokens is None
 
 
 def test_config_provider_carries_max_context_tokens(tmp_path):
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent", provider=ClaudeConfig(model="opus", max_context_tokens=400_000))
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent", provider=ClaudeConfig(model="opus", max_context_tokens=400_000))
     assert isinstance(config.provider, ClaudeConfig)
     assert config.provider.max_context_tokens == 400_000
 
 
 def _config_with_memory(tmp_path, *, provider=None):
     # build_client_options requires a chosen provider; default to Claude when a test doesn't pin one.
-    config = vm.VestaConfig(
+    config = cfg.VestaConfig(
         agent_dir=tmp_path / "agent",
         provider=provider if provider is not None else ClaudeConfig(),
     )

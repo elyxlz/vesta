@@ -1,6 +1,6 @@
-use vesta_tests::{find_vestad, SERVER};
 use vesta_tests::client::Client;
 use vesta_tests::types::ServerConfig;
+use vesta_tests::{find_vestad, SERVER};
 
 #[test]
 fn health() {
@@ -11,7 +11,9 @@ fn health() {
 fn health_includes_user() {
     let body = SERVER.client().health_json().unwrap();
     assert!(body["ok"].as_bool().unwrap());
-    let user = body["user"].as_str().expect("health should include 'user' field");
+    let user = body["user"]
+        .as_str()
+        .expect("health should include 'user' field");
     assert!(!user.is_empty());
 }
 
@@ -34,7 +36,10 @@ fn port_file_contains_server_port() {
         .trim()
         .parse::<u16>()
         .expect("port file should contain a valid u16");
-    assert_eq!(stored, SERVER.port, "port file should match the running server port");
+    assert_eq!(
+        stored, SERVER.port,
+        "port file should match the running server port"
+    );
 }
 
 #[test]
@@ -56,7 +61,10 @@ fn second_vestad_same_home_rejected() {
     let output = std::process::Command::new(&vestad)
         .args(["serve", "--standalone", "--no-tunnel"])
         .env("HOME", SERVER._tmpdir_path())
-        .env("DOCKER_CONFIG", format!("{}/.docker", std::env::var("HOME").unwrap_or_default()))
+        .env(
+            "DOCKER_CONFIG",
+            format!("{}/.docker", std::env::var("HOME").unwrap_or_default()),
+        )
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
         .output()

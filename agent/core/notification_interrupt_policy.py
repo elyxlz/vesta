@@ -1,10 +1,10 @@
 """Arrival-time notification interrupt policy.
 
 An ordered ruleset decides an incoming notification's disposition: preempt the agent's current turn
-(`interrupt`), wait in the passive pool until the agent is idle (`pool`), or drop without ever reaching
+(`interrupt`), snooze until the agent is idle (`snooze`), or drop without ever reaching
 the agent (`trash`). First matching rule wins; with no match the decision falls back to the
 notification's own `interrupt` flag — the default the producing skill ships for its own notifications
-(whatsapp/chat interrupt, email/finance pool), so a fresh agent with no rules already behaves sensibly.
+(whatsapp/chat interrupt, email/finance snooze), so a fresh agent with no rules already behaves sensibly.
 A notification is never trashed by default, only by an explicit user rule. The user's rules exist to
 override those defaults.
 The ruleset lives on the agent config
@@ -24,12 +24,7 @@ import typing as tp
 
 import pydantic as pyd
 
-if tp.TYPE_CHECKING:
-    from . import models as vm
-
-# The source string for internal control-flow notifications. Owned here (the module that defines the
-# core exemption); models.py re-exports it so `vm.CORE_SOURCE` keeps working.
-CORE_SOURCE = "core"
+from .notification import CORE_SOURCE, Notification
 
 # A predicate's `field` is the notification key it reads. Concrete keys (chat_name, chat_type, …) read
 # that exact field; an alias here expands to a set of per-source synonyms and matches if ANY of them
@@ -91,7 +86,20 @@ class NotificationInterruptRule(pyd.BaseModel):
     source: str | None = None
     type: str | None = None
     match: list[FieldPredicate] = []
-    action: tp.Literal["interrupt", "pool", "trash"]
+    action: tp.Literal["interrupt", "snooze", "trash"]
+
+    @pyd.model_validator(mode="before")
+    @classmethod
+    def _coerce_legacy_pool_action(cls, data: object) -> object:
+        # LEGACY(remove-when: no stored rule still carries action="pool" — every agent rewrites its
+        # rules in canonical shape on its next rule edit): the snooze action was previously named
+        # "pool"; coerce stored rules on read so fleet rulesets keep validating.
+        if not isinstance(data, dict) or "action" not in data:
+            return data
+        data = dict(data)
+        if data["action"] == "pool":
+            data["action"] = "snooze"
+        return data
 
     @pyd.model_validator(mode="before")
     @classmethod
@@ -140,7 +148,7 @@ def _coerce(value: object) -> str | None:
     return str(value)
 
 
-def _field_raw(notif: "vm.Notification", field: str) -> object | None:
+def _field_raw(notif: Notification, field: str) -> object | None:
     """The raw value of one notification field (declared or extra), or None if absent. Declared fields
     the matcher can target (`timestamp` str-coerced; `file_path` is internal and omitted) are read
     explicitly, then the open `model_extra` keys."""
@@ -153,14 +161,14 @@ def _field_raw(notif: "vm.Notification", field: str) -> object | None:
     return None
 
 
-def _field_values(notif: "vm.Notification", field: str) -> list[str]:
+def _field_values(notif: Notification, field: str) -> list[str]:
     """The notification's value(s) for a predicate field: one value for a concrete key, or every
     present synonym for an alias. Coerced to strings; absent fields contribute nothing."""
     fields = _FIELD_ALIASES[field] if field in _FIELD_ALIASES else (field,)
     return [v for f in fields if (v := _coerce(_field_raw(notif, f))) is not None]
 
 
-def _predicate_matches(predicate: FieldPredicate, notif: "vm.Notification") -> bool:
+def _predicate_matches(predicate: FieldPredicate, notif: Notification) -> bool:
     values = _field_values(notif, predicate.field)
     if predicate.op == "contains":
         needle = predicate.value.lower()
@@ -181,7 +189,7 @@ _FACET_EXCLUDE = frozenset({*_IDENTITY_FIELDS, *_BODY_FIELDS, "file_path"})
 FACET_VALUE_MAXLEN = 80
 
 
-def notif_facet_fields(notif: "vm.Notification") -> dict[str, str]:
+def notif_facet_fields(notif: Notification) -> dict[str, str]:
     """The notification's targetable structured extras, as {field: value} — what the rule editor and the
     skill's `facets` surface so an author can discover fields like `chat_name` to match on. Scalars only,
     string-coerced; identity/text/internal keys are excluded (see `_FACET_EXCLUDE`)."""
@@ -202,7 +210,7 @@ def notif_facet_fields(notif: "vm.Notification") -> dict[str, str]:
     return fields
 
 
-def notif_sender(notif: "vm.Notification") -> str | None:
+def notif_sender(notif: Notification) -> str | None:
     """The notification's sender, normalized across the per-source identity fields.
 
     Sender is not one field: each source attaches its own (`contact_name`, `handle`, ...), which is
@@ -212,7 +220,7 @@ def notif_sender(notif: "vm.Notification") -> str | None:
     return next(iter(_field_values(notif, "sender")), None)
 
 
-def _matches(rule: NotificationInterruptRule, notif: "vm.Notification") -> bool:
+def _matches(rule: NotificationInterruptRule, notif: Notification) -> bool:
     if rule.source is not None and rule.source.lower() != notif.source.lower():
         return False
     if rule.type is not None and rule.type.lower() != notif.type.lower():
@@ -220,15 +228,16 @@ def _matches(rule: NotificationInterruptRule, notif: "vm.Notification") -> bool:
     return all(_predicate_matches(predicate, notif) for predicate in rule.match)
 
 
-def notif_disposition(notif: "vm.Notification", rules: list[NotificationInterruptRule]) -> tp.Literal["interrupt", "pool", "trash"]:
+def notif_disposition(notif: Notification, rules: list[NotificationInterruptRule]) -> tp.Literal["interrupt", "snooze", "trash"]:
     """The effective disposition for an arriving notification: `interrupt` (preempt the current turn now),
-    `pool` (wait for the idle triage pass), or `trash` (drop without ever reaching the agent).
+    `snooze` (wait until the agent has been idle a little while), or `trash` (drop without ever reaching
+    the agent).
 
     First matching rule wins and supplies its action; with no match the notification's own `interrupt`
-    flag (the producing skill's default) decides interrupt-vs-pool. A notification is never trashed by
+    flag (the producing skill's default) decides interrupt-vs-snooze. A notification is never trashed by
     default, only by an explicit user rule. Core notifications never reach here: loops.py decides their
     disposition from the type."""
     for rule in rules:
         if _matches(rule, notif):
             return rule.action
-    return "interrupt" if notif.interrupt else "pool"
+    return "interrupt" if notif.interrupt else "snooze"

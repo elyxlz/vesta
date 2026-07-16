@@ -5,6 +5,7 @@ contacts
 dashboard
 dream
 email-client
+microsoft
 nap
 notifications
 onboard
@@ -12,7 +13,7 @@ personality
 proactive-check
 recall
 restart
-service
+vestad
 skills-registry
 tasks
 timezone

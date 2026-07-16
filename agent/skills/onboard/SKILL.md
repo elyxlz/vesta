@@ -13,14 +13,6 @@ then, once you have, you make them *want* it by showing how their own vesta gets
 toward the life they're reaching for. The velvet rope builds the desire; the goal-anchored
 sell closes it.
 
-Played right, this makes people want it *more* (we want what's withheld), makes
-them value it once they have it (they earned it), and lets you price to how badly
-they want in. Played wrong (desperate, pushy, instant yes), it's just another SaaS
-signup. So: be a little reluctant. Make them lean in.
-
-If your vesta is a paid (hosted) account, a completed invite earns you **50% of the
-new member's first month**, so the better you price, the more you make.
-
 ## Trigger
 
 Invoke when someone **who doesn't already have a vesta**:
@@ -168,11 +160,9 @@ onboard presets                                        # personalities + skills 
 onboard links                                          # marketing + app install URLs
 ```
 
-All commands print **JSON** to stdout. `checkout` returns `{ "url": "https://checkout.stripe.com/..." }`.
-Send that URL as a Markdown link where the channel renders one (`[Complete your
-payment](<url>)`), otherwise on its own line, and stop. Never alter the url; its
-session id must arrive byte for byte. (There is no `--subdomain` or `--plan`: the
-subdomain is auto-assigned and there is one plan, defaulted for you.)
+All commands print **JSON** to stdout. (There is no
+`--subdomain` or `--plan`: the subdomain is auto-assigned and there is one plan,
+defaulted for you.)
 
 ### Examples
 
@@ -188,7 +178,7 @@ onboard checkout --email ada@example.com
 
 # A whale who fought to get in, anchor high (uncapped):
 onboard checkout --email vc@example.com --price 2000
-# { "url": "https://...", "subdomain": "vc" }   ($2,000/mo; you earn 50% of month 1 = $1,000)
+# { "url": "https://...", "subdomain": "vc" }   ($2,000/mo)
 
 # Below the floor is rejected (the server enforces it too):
 onboard checkout --email x@example.com --price 5
@@ -209,7 +199,7 @@ onboard claude-finish --email ada@example.com --code <pasted-from-the-auth-page>
 
 ### Handling errors
 
-Every command prints JSON. On a failure it is
+On a failure the output is
 `{ "error": "<short code>", "message": "<what went wrong and what to do next>" }`
 (some add a hint, e.g. `floor_usd`). The **`message` is written for you**: read it,
 do what it says, then relay a friendly version to the person and keep the flow
@@ -240,8 +230,8 @@ for byte identical and still fails is it not the link.
 
 ## Referral attribution
 
-A completed invite only credits this account (you earn 50% of their first month)
-if `onboard verify-send` sends a referral code with it. That code is not yours to
+A completed invite only credits this account if `onboard verify-send` sends a
+referral code with it. That code is not yours to
 know or store; it lives with the `vesta-cloud-account` skill, which is the source of truth
 for it (the control plane issues it, not this box). So:
 
@@ -253,31 +243,16 @@ for it (the control plane issues it, not this box). So:
    `{"error": "not_hosted", ...}`. Ask the owner whether they have a referral code
    of their own (an admin-issued one, say). If they do, `set-referral` it. If they
    don't, just onboard without one; it still works, there is simply no reward.
-3. **If a signup ever fails with `invalid referral code`** (see **Handling
-   errors**), the code was reissued or expired. Re-run `vesta-cloud-account
-   referral` to fetch the current one, `set-referral` it, retry the signup, and
-   tell the owner their referral code changed.
-
-Only ever set a code the owner (or `vesta-cloud-account referral`) actually gave
-you; never invent one.
+3. **If a signup ever fails with `invalid referral code`**, the code was reissued
+   or expired: recover as described under **Handling errors**.
 
 ## Caveats
 
-- **Never collect or relay card details.** Stripe handles payment on their device.
-- **The codes are theirs: relay, don't keep.** Pass each straight to the CLI and
-  move on, never store or reuse them. The Claude auth *link* is safe to send.
-- **Paid Claude required (BYOK).** Confirm it *before* the Stripe link: their vesta
-  runs on their own Claude account; without one, nothing works. Don't take money first.
-- **Order matters, and one person at a time.** Verify → checkout → (paid) → status
-  active → create-agent → claude-start → claude-finish. Don't run parallel onboards
-  or skip ahead (`create-agent`/`claude-*` need the box `active`).
 - **Sell the person, not a feature list.** Once they've leaned in, sell hard, but
   tailored to them (see *The turn*): a vivid picture of what *their* vesta would do.
   A generic capability dump recited cold does the opposite, it breaks the frame. Link
   the marketing page (`onboard links`) for the broad overview; your job is the pitch
   made of their own life.
-- The control-plane base URL defaults to `https://vesta.run/api`; override with
-  `VESTA_CLOUD_CONTROL_URL` (the control plane injects it into managed boxes).
 
 ## Preference
 
@@ -292,3 +267,6 @@ The CLI is bundled; install it once (the agent does this on first use):
 ```bash
 uv tool install --editable ~/agent/skills/onboard/cli
 ```
+
+The control-plane base URL defaults to `https://vesta.run/api`; override with
+`VESTA_CLOUD_CONTROL_URL` (the control plane injects it into managed boxes).

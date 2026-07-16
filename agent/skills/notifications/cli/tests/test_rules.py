@@ -35,10 +35,10 @@ def test_parse_match_rejects_bad_regex():
 
 def test_add_builds_match_predicates_from_shortcuts(monkeypatch, capsys):
     store = _store(monkeypatch)
-    rc = cli.cmd_add(_args(action="pool", source="whatsapp", sender="wife", keyword="urgent"))
+    rc = cli.cmd_add(_args(action="snooze", source="whatsapp", sender="wife", keyword="urgent"))
     assert rc == 0
     rule = store[0]
-    assert rule["source"] == "whatsapp" and rule["action"] == "pool" and rule["id"]
+    assert rule["source"] == "whatsapp" and rule["action"] == "snooze" and rule["id"]
     assert rule["match"] == [
         {"field": "sender", "op": "contains", "value": "wife", "negate": False},
         {"field": "text", "op": "regex", "value": "urgent", "negate": False},
@@ -58,21 +58,21 @@ def test_add_builds_trash_rule(monkeypatch, capsys):
 
 def test_add_rejects_core_source(monkeypatch, capsys):
     _store(monkeypatch)
-    assert cli.cmd_add(_args(action="pool", source="core")) == 1
+    assert cli.cmd_add(_args(action="snooze", source="core")) == 1
     assert "core notifications" in capsys.readouterr().err
 
 
 def test_add_auto_places_specific_rule_above_broader(monkeypatch):
     store = _store(monkeypatch)
-    cli.cmd_add(_args(action="pool", source="whatsapp"))  # broad
+    cli.cmd_add(_args(action="snooze", source="whatsapp"))  # broad
     cli.cmd_add(_args(action="interrupt", source="whatsapp", sender="wife"))  # narrower -> above
-    assert [r["action"] for r in store] == ["interrupt", "pool"]
+    assert [r["action"] for r in store] == ["interrupt", "snooze"]
 
 
 def test_move_to_top(monkeypatch):
     store = _store(monkeypatch)
-    cli.cmd_add(_args(action="pool", source="a"))
-    cli.cmd_add(_args(action="pool", source="b"))
+    cli.cmd_add(_args(action="snooze", source="a"))
+    cli.cmd_add(_args(action="snooze", source="b"))
     bottom_id = store[1]["id"]
     assert cli.cmd_move(argparse.Namespace(id=bottom_id, before=None, after=None, to_top=True, to_bottom=False)) == 0
     assert store[0]["id"] == bottom_id
@@ -86,11 +86,11 @@ def test_remove_missing_reports_error(monkeypatch, capsys):
 
 def test_remove_and_clear(monkeypatch):
     store = _store(monkeypatch)
-    cli.cmd_add(_args(action="pool", source="a"))
+    cli.cmd_add(_args(action="snooze", source="a"))
     rid = store[0]["id"]
     assert cli.cmd_remove(_args(id=rid)) == 0
     assert store == []
-    cli.cmd_add(_args(action="pool", source="b"))
+    cli.cmd_add(_args(action="snooze", source="b"))
     assert cli.cmd_clear(_args()) == 0
     assert store == []
 

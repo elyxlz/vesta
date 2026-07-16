@@ -45,7 +45,7 @@ func loadWhisperModel() (whisper.Model, error) {
 		modelPath := getModelPath()
 		whisperModel, whisperModelErr = whisper.New(modelPath)
 		if whisperModelErr != nil {
-			whisperModelErr = fmt.Errorf("failed to load whisper model at %s: %w", modelPath, whisperModelErr)
+			whisperModelErr = fmt.Errorf("failed to load whisper model at %s (run ~/agent/skills/whatsapp/setup.sh to download it): %w", modelPath, whisperModelErr)
 		}
 	})
 	return whisperModel, whisperModelErr

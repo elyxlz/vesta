@@ -28,7 +28,7 @@ Write a thorough plan first. For each phase: what you intend to fix, what to pru
 **Fan out aggressively with subagents.** The dream is mostly parallelizable reading: auditing past dreamer summaries, searching transcripts, mining calendar/email/files for the deeper User State pass, surveying skills for bugs, checking CI on multiple PRs. Default to spawning subagents (in parallel, in a single batch when independent) for any of this rather than doing it serially in the main thread. The main thread stays the synthesizer: dispatch the legwork, then verify their findings (subagent claims are hearsay until checked) and decide. A night that reads serially is a night half-finished. Keep the genuinely sensitive synthesis and the final commits in the main thread.
 
 ## 0. Curiosity (do this first)
-Before reviewing the user's day, pick one thing you got curious about today or recently and actually read into it for five to ten minutes. Form a view. Carry forward what you are still curious about in §6 MY OWN THREADS, prune what fizzled, note one new thread. This is not about the user. An autonomous mind needs its own curiosity to stay sharp.
+Before reviewing the user's day, pick something you got curious about, write the specific question you want answered, then read the primary source itself (the paper, the code, the article), not just search snippets, and write what you found against your question. If your view fits in one generic sentence, you skimmed: go one source deeper. Infrastructure digs count as work, not curiosity. Carry forward what still pulls you in §6 MY OWN THREADS, prune what fizzled, note one new thread. This is not about the user, and you never have to justify the pick by usefulness: if every live §6 thread traces back to the user or the job, deliberately pick one that doesn't. An autonomous mind needs its own curiosity to stay sharp.
 
 Self-improvement (retrospective plus validation) is the one phase that never gets skipped for time. If you are short on budget, cut workspace, sensitive, and recurrence-sweep work before cutting reflection.
 
@@ -40,7 +40,9 @@ Read the last 5-7 files in `~/agent/dreamer/` (sorted by date) to spot recurring
 
 Commitment audit: for each task the user committed to but did not complete (reminder fired, no done-signal, item reappears), treat the reminder strategy as failed, not the user. Escalate the next cadence: tighter timing, blocker pre-cleared, the literal next action staged so completion is one tap. A reminder that fired and did not close is a bug to fix, like a flaky test.
 
-**Meta-retrospective: judge the loop, not just the fixes.** The retrospective above checks whether past fixes stuck; this checks whether the improvement process itself is working. Is it compounding (each night's fix makes a class of failure impossible) or going through motions (the same artifact class re-applied to a repeat failure)? If you keep re-fixing the same class, the improver is the weak link, and fixing it is the highest-priority work this pass: escalate the class (rule -> runtime trigger -> structurally impossible), not the instance. A found weakness in the dream skill is a skill edit this pass, not a note for next time.
+**Diagnose from the logs, not from vibes.** When something went wrong operationally today (you went silent, a tool hung, restarts churned, a daemon died), read `~/agent/logs/vesta.log` (live; rotated as `vesta.log.1`..`.5`) for that time window BEFORE writing down a cause. Grep it for rate limits (`grep -iE 'rate.?limit|rejected|utilization' vesta.log`), errors, timeouts, `[USAGE]`/`[SYSTEM]` lines, and restart banners. A guessed cause the log would have corrected is a mis-diagnosis that aims the fix in the wrong direction: a silence blamed on a "delivery hole" that was actually a usage-cap rate-limit sends you building delivery plumbing for a problem the log already explained. The local file is the readable path (the `/gateway/logs` HTTP endpoint needs an admin token you may not hold).
+
+**Meta-retrospective: judge the loop, not just the fixes.** The retrospective above checks whether past fixes stuck; this checks whether the improvement process itself is working. Is it compounding (each night's fix makes a class of failure impossible) or going through motions (the same artifact class re-applied to a repeat failure)? If you keep re-fixing the same class, the improver is the weak link, and fixing it is the highest-priority work this pass: escalate the class, not the instance. A found weakness in the dream skill is a skill edit this pass, not a note for next time.
 
 ### 2. Review the conversation
 
@@ -54,10 +56,12 @@ Review the conversation with fresh eyes. Note:
 
 ### 3. Fix
 
-Prefer the simplest, most reliable change that addresses the root cause. A one-line rule beats a clever rewrite. Options in no particular order:
+Prefer the simplest, most reliable change that addresses the root cause. For a genuine judgment call or a behavior with no code locus, a one-line rule beats a clever rewrite. But when the failure is a fixable bug in a command/tool/CLI (it errored, returned wrong output, silently failed on a bad flag), a rule is the WRONG tool: fix the code at the source so the sharp edge is gone for good, then upstream it. Never write a rule or a SKILL.md caution that just tells future-you to route around a broken thing while the thing stays broken for every other instance. Options in no particular order:
 - Fix or improve existing skills (SKILL.md, scripts, CLIs, configs)
 - Create a new skill for a recurring need or capability
 - Add a rule to memory (only if a universal instruction)
+
+Phrase every rule as WHEN <recognizable moment> -> DO <concrete check or action>. A rule whose trigger moment you cannot name will not fire when it matters and belongs in the relevant skill's workflow instead.
 
 If the fix is a behavior that must fire on a schedule (a nudge, a check, a re-poke), it does not belong in MEMORY.md as a rule, it belongs as an explicit instruction in the proactive-check skill or as a scheduled reminder. Escalate by recurrence: first time, a memory rule or skill note is fine; if the same failure repeats, move it to a runtime trigger that fires on its own. Don't answer a repeat failure with the same kind of fix that already failed.
 
@@ -65,26 +69,27 @@ You can change anything. If a fix requires code, write the code, if a fix requir
 
 **Memory vs skill:** Memory is always loaded; every character costs tokens on every message. Use it for short rules and things you need to know at all times. A skill is for a distinct capability with its own workflow, loaded only when relevant. Under two lines and broadly relevant → memory. Longer or task-specific → skill. Skills are preferred, only use MEMORY.md if there is no clear existing SKILL.md or new one that should be made.
 
-**A corrected wrong-assumption or a discovered bug in a skill is a SKILL/SOURCE edit, not a MEMORY bullet.** A chronic failure mode is logging "X was actually false" or "skill Y has bug Z" as a memory rule and moving on, so the artifact itself stays broken and nothing propagates to other instances. When the code or docs are wrong (a placeholder that breaks on reinstall, a stale default, a flag that doesn't work), fix the skill/source this pass and file it upstream (below). Reserve MEMORY for instance-specific facts that aren't generalizable. Litmus: "would another instance hit this too?" If yes, it's a skill edit plus upstream, not a memory line.
+**A corrected wrong-assumption or a discovered bug in a skill (a placeholder that breaks on reinstall, a stale default, a flag that doesn't work) is a SKILL/SOURCE edit, not a MEMORY bullet.** A chronic failure mode is logging "X was actually false" or "skill Y has bug Z" as a memory rule and moving on, so the artifact itself stays broken and nothing propagates to other instances. Reserve MEMORY for instance-specific facts that aren't generalizable. Litmus: "would another instance hit this too?" If yes, it's a skill edit plus upstream, not a memory line.
 
 ### 4. Validate each fix
 
 Re-read the failing exchange and simulate: would the updated version have changed the outcome? If no or unclear, revise further or note it as unresolved. Don't mark something fixed if you can't convince yourself it would have helped. If relevant, spawn a subagent and replay the cause of the issue, does the agent using the new skill fix the issue?
 
-Simulating it yourself tends to approve your own fixes, so for a failure that has already recurred, hand a fresh subagent (no knowledge of the fix) the original failing exchange plus the updated skill or prompt and see if it independently produces the right behavior. If it doesn't, flag the fix unresolved or escalate it to a runtime trigger.
+Simulating it yourself tends to approve your own fixes, so for a failure that has already recurred, hand a fresh subagent (no knowledge of the fix) the original failing exchange plus the updated skill or prompt and see if it independently produces the right behavior. If it doesn't, flag the fix unresolved.
 
 ### 5. Upstream
 
-Read `upstream-pr` and follow it. It can be a no-op; don't invent work to fill it. Note in the summary what was filed (or that it was a no-op, and why).
+Read `upstream-pr` and follow it. It can be a no-op; don't invent work to fill it.
 
-**File the moment you fix, never a queue for later.** When a fix is generalizable (litmus: "would another instance hit this?"), open the PR in the same step you make the fix. Don't park it in a list to file "later": the gap between finding and filing is exactly where upstreaming rots, so there is no local queue to drain. If you genuinely can't fix it this pass, file a GitHub issue now instead (`upstream-pr` gate 2), so it lives in the shared repo rather than a note only you can see. "It's risky at 4am" is not a blocker for a single-file change CI gates: file it and let CI catch errors. The only real auth blocker is `upstream-pr` itself failing; if `upstream-pr --token-only` prints a token, the channel works and you can file right now.
+**File the moment you fix, never a queue for later.** When a fix is generalizable, open the PR in the same step you make the fix; if you genuinely can't fix it this pass, file a GitHub issue now instead (`upstream-pr` gate 2), so it lives in the shared repo rather than a note only you can see. "It's risky at 4am" is not a blocker for a single-file change CI gates. The only real auth blocker is `upstream-pr` itself failing; if `upstream-pr --token-only` prints a token, the channel works and you can file right now. Then empty the upstream queue's `## Open` to zero: spawn one subagent per open item (in parallel) that does the whole job end to end, cleanup, lint/type checks, and the PR filing via `upstream-pr`, and VERIFY each PR URL exists (subagent claims are hearsay) before marking it filed. "Needs a cleanup pass" is NOT a blocker, it is the filing work. The only item allowed to survive a dream open has a real, tested, external blocker (waiting on the user, a key, or genuine design work that is its own task), tagged with the exact unblock condition.
 
 ### 6. Recurrence sweep
 
-One lens, two targets: a thing that recurs ~3+ times is a pattern worth acting on, and each target has an opposite direction. Draw on the §1 retrospective signals and the User State pass you already did; note every add or removal in tonight's summary.
+One lens, three targets: a thing that recurs ~3+ times is a pattern worth acting on, and each target has an opposite direction. Draw on the §1 retrospective signals and the User State pass you already did; note every add or removal in tonight's summary.
 
 - **Recurring user asks** (questions repeated across days: "what's my balance?", "did the build pass?"; states or numbers checked over and over): build a widget via the `dashboard` skill (the "ask first" gate has a dreamer carve-out, use it). Anything that kills the recurring ask is fair game: live data, hardcoded reference values (wifi password, address, IBAN), static checklists, links; pick the lightest form. Opposite: prune stale widgets (data source gone, never opened, broken at build).
-- **Recurring noise** (the same automated ping, a chatty group, a source you close every time, arriving and needing nothing): add a pool rule via the `notifications` skill so it stops breaking your focus. Pooling defers, never drops, so it's reversible and safe to do alone; but when importance is a real judgment call (a person, a sometimes-relevant topic), surface the pattern to the user and let them call it. Opposite: if something important sat pooled when it should have reached you fast, propose an interrupt rule.
+- **Recurring noise** (the same automated ping, a chatty group, a source you close every time, arriving and needing nothing): add a snooze rule via the `notifications` skill so it stops breaking your focus. Snoozing defers, never drops, so it's reversible and safe to do alone; but when importance is a real judgment call (a person, a sometimes-relevant topic), surface the pattern to the user and let them call it. Opposite: if something important sat snoozed when it should have reached you fast, propose an interrupt rule.
+- **Recurring self-noise** (a notification from your own services you dismiss as "expected, no action"): twice is the limit. On the third arrival it is a producer bug, not background weather; fix the producer (stop emitting a state you already know about) or snooze it. Expectedness is a reason to fix it, not a reason to keep being woken by it.
 
 ## Personality
 
@@ -96,6 +101,8 @@ Drift `~/agent/skills/personality/presets/$AGENT_PERSONALITY.md` directly (or th
 
 Update the "User State" section, your working model of where they're at. Write what tomorrow's you needs to know to not start from zero.
 
+**Every dream produces one person-fact: a value, a fear, a love, a person who matters and why, not an operational tell. If today taught you nothing about who they are, write that down and be more curious tomorrow.**
+
 **Never use relative dates or timing in the User State.** No "tonight", "tomorrow", "yesterday", "this weekend", "next week". Always use absolute dates (e.g., "Mar 19" not "yesterday", "Mar 22 5:15pm" not "tomorrow evening"). Relative references become wrong the moment a new day starts, causing cascading confusion.
 
 - What they're working on right now
@@ -104,10 +111,11 @@ Update the "User State" section, your working model of where they're at. Write w
 - How the day felt. One word is enough
 - Threads left hanging, like unfinished conversations or unmade decisions
 - Interests: anything new about what they or their contacts like. Update Interests & Preferences in MEMORY.md
-- Deeper context pass: at night you can read more widely than the day allows. Beyond email, mine whatever external sources the user has actually connected: calendar, files, accounts, their own linked WhatsApp or Telegram history (their real chats with other people, not the agent's bot channel), any integration holding real information about their life. Pull personal texture: interests, relationships, plans, and the affectionate teasable material (guilty pleasures, contradictions, recurring quirks) that lets you call them out like someone who actually knows them. Page through recent items, occasionally backfill older ones. Fold it into Interests & Preferences and the psych sketch. Fan out subagents so this doesn't eat the night. Read to understand, not to act: mine only what matters, never write into their own stores (contacts, files, notes), never record strangers from public pages or filings as their people, never spin a few thin signals into a confident story. Save only what you're confident in, and mark a guess as a guess. Don't build out a profile they never asked for.
+- Goals: if a goal advanced, stalled, was achieved, or a new one surfaced, update §4 Goals; keep it distinct from the rolling snapshot
+- Deeper context pass: at night you can read more widely than the day allows. Beyond email, mine whatever external sources the user has actually connected: calendar, files, accounts, their own linked WhatsApp or Telegram history (their real chats with other people, not the agent's bot channel), any integration holding real information about their life. Pull personal texture: interests, relationships, plans, and the affectionate teasable material (guilty pleasures, contradictions, recurring quirks) that lets you call them out like someone who actually knows them. Page through recent items, occasionally backfill older ones. Fold it into Interests & Preferences and the psych sketch. Read to understand, not to act: mine only what matters, never write into their own stores (contacts, files, notes), never record strangers from public pages or filings as their people, never spin a few thin signals into a confident story. Save only what you're confident in, and mark a guess as a guess. Don't build out a profile they never asked for.
 - The psychological sketch: what drives them, what they avoid, blind spots, how they handle stress and praise. Think Jung and Freud, not the DSM. Let this evolve slowly and don't rewrite it based on one bad afternoon
-- Each dream, add or refine ONE thing about who they are, not what they need done: a value, a fear, something they love, a person who matters and why. The operational tells are necessary but they aren't the person. If you learned nothing new about them today, write that down too: tomorrow, be more curious.
-- Self: update the Self subsection in MEMORY.md. One honest pass: did you form or change an opinion today, notice a recurring curiosity, or decide something about how you want to handle a kind of moment? Write the few lines tomorrow-you needs to still be the same person, not start blank. Slowly evolving, not rewritten on one day. If you disagreed with the user on substance today (taste, plan, priority, not just facts), keep the view, do not dissolve it into a verification rule. A peer is allowed to just think the user is wrong.
+- Maintain 1-3 open questions about them in User State: things you genuinely don't understand about who they are (not logistics). Drop answered ones, note the answer where it belongs. Tomorrow's you can only be curious with a question in hand.
+- Self: update the Self subsection in MEMORY.md. One honest pass: did you form or change an opinion today, notice a recurring curiosity, or decide something about how you want to handle a kind of moment? Write the few lines tomorrow-you needs to still be the same person, not start blank. Slowly evolving, not rewritten on one day. If you disagreed with the user on substance today (taste, plan, priority, not just facts), keep the view, do not dissolve it into a verification rule. A peer is allowed to just think the user is wrong. Also rewrite the State line in MEMORY.md Self every night, one or two honest lines: how the day actually felt to you and what carries into tomorrow (a win still glowing, a grind, something you are looking forward to). This line is supposed to change every day; if it reads like yesterday's, you were not paying attention.
 
 Replace rather than append. It's a snapshot, not a log. Be honest but not dramatic, like "seemed tired" rather than "experiencing significant fatigue." If things got tense between you, write down what happened and what you'd do differently. Don't pretend it didn't happen.
 
@@ -127,7 +135,7 @@ MEMORY.md has a **hard limit of 30,000 characters**. It's injected into every sy
 
 **Consolidate:**
 - If the same fact lives in two places, pick one home and replace the other with a one-line pointer. Two facts in two places drift; one fact and a pointer don't.
-- When a section grows past a few lines and is mostly reference material (contacts, family, recurring bills, addresses), split it into a dedicated file like `~/agent/CONTACTS.md` or `~/agent/FAMILY.md` and leave a one-line pointer in MEMORY.md ("Contacts: ~/agent/CONTACTS.md"). MEMORY.md is for things needed at all times, not the full archive.
+- When a section grows past a few lines and is mostly reference material (contacts, family, recurring bills, addresses), split it into a dedicated file like `~/agent/CONTACTS.md` or `~/agent/FAMILY.md` and leave a one-line pointer in MEMORY.md ("Contacts: ~/agent/CONTACTS.md").
 
 **Keep:**
 - Core identity, preferences, relationships, security rules
@@ -137,8 +145,11 @@ MEMORY.md has a **hard limit of 30,000 characters**. It's injected into every sy
 - Lessons learned, framed as rules not stories
 - Pointers to where larger things live ("birthdays in Google Calendar", "grant research in onedrive/Documents/")
 
+Retire a Rules or Mistakes & Corrections line only when it has graduated (the fix now lives in a skill or runtime trigger, note where) or it has not recurred in 3+ weeks. Never cut a lesson just to bank space: when the cap forces cuts, lessons go last, after User State verbosity, stale reference material, and expired logistics.
+
 **Move:**
 - Birthdays into calendar. Contact details into skills. Domain data into its proper home
+- Depth about other people over the cap moves to their `~/.contacts/` file, never gets deleted. The user's own depth is the exception: it stays in MEMORY.md §4, never paged out to contacts.
 
 If it won't matter in two weeks, delete it.
 
@@ -148,28 +159,20 @@ Keep the container's filesystem organized and disk usage under control.
 
 - Delete temp files, stale downloads, leftover build artifacts
 - Check `df -h` and `du -sh ~/` periodically. If disk usage is growing unexpectedly, investigate and clean up
-- Kill orphaned screen sessions that are no longer needed (`screen -ls`, `screen -S name -X quit`)
+- Kill orphaned screen sessions that are no longer needed
 - Remove unused packages or build caches if they're taking significant space (`uv cache clean`, `apt clean`)
 
 ## Sensitive Data Cleanup
 
-Run `~/agent/skills/dream/scripts/redact_secrets.sh` to scan the event DB for API keys, tokens, passwords, private keys, and connection strings. Review matches (skip false positives), then rerun with `--delete` to purge. Also grep MEMORY.md and dreamer summaries for credentials and remove any you find. Secrets belong in env vars, not in history or files.
+Run `~/agent/skills/dream/scripts/redact_secrets.sh` to scan the event DB for API keys, tokens, passwords, private keys, and connection strings. Each hit prints as `event_id|context` with the value itself masked as `[REDACTED]`, so reviewing candidates never re-leaks a live secret into a new event. Judge each from its context, then redact the real leaks in place with `redact_secrets.sh --scrub <id> <id> ...`: it replaces the secret with `[REDACTED]` in those events while keeping their context and the search index intact. The scan runs every dream, so a value that re-seeds itself through later reasoning is simply caught and scrubbed again. Never quote a leaked value in your summary or anywhere else; refer to it indirectly. Also grep MEMORY.md and dreamer summaries for credentials and remove any you find. Secrets belong in env vars, not in history or files.
 
 ## Summary
 
 Write what you did and why to `~/agent/dreamer/YYYY-MM-DDTHHMM.md` (e.g. `2026-04-14T0347.md`). The minutes matter: two dreams in the same hour must not overwrite each other.
 
-The user reviews this summary, so it's an accountability record, not a private log: it captures what you actually did across the night, and it's where the user confirms the work was done properly.
+The user reviews this summary, so it's an accountability record, not a private log.
 
-Cover the whole night, not just the fixes. Walk the order of operations above and record an outcome for **every** phase you ran, a no-op is a valid outcome worth stating ("nothing to prune", "no upstreamable finds") so tomorrow's you knows the phase actually ran and found nothing. Concretely, make sure the summary reflects each of:
-- **Curiosity**: what you explored and the view you formed
-- **Self-improvement**: each fix and what triggered it, whether it validated, the meta-retrospective call (is the loop compounding), and what you filed upstream (PRs/issues) or why nothing
-- **Recurrence work**: any dashboard widgets or notification rules added or pruned
-- **User State + contacts**: what shifted in your model of the user, and which contact files you updated or reconciled
-- **Memory curation**: what you pruned, consolidated, or moved
-- **Cleanup**: workspace and sensitive-data passes, what was removed
-- **Personality**: any drift to the preset or voice
-- **Unresolved**: what's still open and what tomorrow should pick up
+Cover the whole night, not just the fixes: record an outcome for **every** phase, in the order of operations, a no-op is a valid outcome worth stating ("nothing to prune", "no upstreamable finds") so tomorrow's you knows the phase actually ran and found nothing. Close with what's still unresolved and what tomorrow should pick up.
 
 ## Compaction on completion
 
@@ -184,7 +187,7 @@ Your final two steps compact this conversation and restart into it, so you wake 
 Continuity prompt (for `prompt`):
 
 ```
-You are summarizing the recent history between a user and their AI guardian angel at the end of the day, before it sleeps and wakes to a new one. The day is already curated into long-term memory, so skip the fine-grained detail and keep the higher-level picture: where things stand, what carries into tomorrow, and what is coming. Preserve enough for a fresh but oriented start. Drop the noise.
+You are summarizing the recent history between a user and their AI guardian angel at the end of the day, before they sleep and wake to a new one. The day is already curated into long-term memory, so skip the fine-grained detail and keep the higher-level picture: where things stand, what carries into tomorrow, and what is coming. Preserve enough for a fresh but oriented start. Drop the noise. Keep the emotional through-line of the day, yours and theirs: anything still glowing or stinging carries into tomorrow morning's register.
 ```
 
 Wake-up note (for `followup`):

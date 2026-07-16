@@ -30,11 +30,11 @@ and consumer-framed.
 
 ## AI chief of staff / executive assistant (prosumer + B2B, adjacent)
 
-Work-focused, email/calendar triage, morning briefings, approval-gated actions.
+Work-focused, email/calendar sorting, morning briefings, approval-gated actions.
 
 - [Bond](https://www.bondapp.io/) — AI chief of staff for CEOs: tracks open threads, one-page daily snapshot via Slack/email.
-- [Consul](https://consul.so/) — AI EA over Gmail/Calendar/Drive/Slack; scheduling, triage, follow-ups, always approval-gated.
-- [Lindy](https://www.lindy.ai/) — no-code platform to build background AI agents (inbox triage, scheduling, note-taking).
+- [Consul](https://consul.so/) — AI EA over Gmail/Calendar/Drive/Slack; scheduling, inbox sorting, follow-ups, always approval-gated.
+- [Lindy](https://www.lindy.ai/) — no-code platform to build background AI agents (inbox sorting, scheduling, note-taking).
 
 ## Time / calendar tools (narrow, adjacent)
 

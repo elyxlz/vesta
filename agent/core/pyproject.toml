@@ -1,7 +1,7 @@
 [project]
 name = "vesta"
-version = "0.1.173"
-description = "Personal assistant agent that works autonomously on your behalf"
+version = "0.1.177"
+description = "AI guardian angel that works autonomously on your behalf"
 license = "MIT"
 authors = [
     { name = "elyxlz" }
@@ -9,7 +9,7 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.14.1",
-    "claude-agent-sdk>=0.2.110",
+    "claude-agent-sdk>=0.2.116",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.2",
     "rich>=15.0.0",
@@ -22,9 +22,9 @@ Repository = "https://github.com/elyxlz/vesta"
 
 [dependency-groups]
 dev = [
-    "ruff>=0.15.20",
+    "ruff>=0.15.21",
     "pytest>=9.1.1",
     "pytest-timeout>=2.4.0",
-    "hypothesis>=6.156.1",
-    "ty>=0.0.56",
+    "hypothesis>=6.156.6",
+    "ty>=0.0.59",
 ]

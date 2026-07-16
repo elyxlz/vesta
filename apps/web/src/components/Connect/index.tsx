@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
+import { Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Field, FieldLabel, FieldDescription } from "@/components/ui/field";
@@ -9,15 +10,17 @@ import { ProgressBar } from "@/components/ProgressBar";
 import { fade } from "@/lib/motion";
 import { errorMessage } from "@/lib/utils";
 import { startHostedLogin } from "@/lib/pkce";
-import { isTauri } from "@/lib/env";
+import { native } from "@/lib/native";
 import { parseConnectLink } from "@/lib/connection";
 import { useAuth } from "@/providers/AuthProvider";
 
 // VITE_VESTAD_HOSTED=true means the SPA was bundled by vestad itself, so
 // window.location.origin already points at the right vestad instance.
-// Anything else (tauri, vite dev, or self-hosted on a non-vestad server) needs
-// the user to enter the vestad host explicitly.
+// Anything else (the desktop app, vite dev, or self-hosted on a non-vestad
+// server) needs the user to enter the vestad host explicitly.
 const needHostInput = import.meta.env.VITE_VESTAD_HOSTED !== "true";
+
+const isDesktopApp = native.runtime === "electron";
 
 // A soft rise-and-fade so the connect card settles in rather than snapping on.
 const connectEntrance = {
@@ -42,11 +45,12 @@ export function Connect() {
   const [value, setValue] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [revealed, setRevealed] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  // In the native app (and any vesta-account surface) we lead with "continue
+  // In the desktop app (and any vesta-account surface) we lead with "continue
   // with vesta account"; `selfHost` flips to the connect-link form for people
-  // running their own agent. Only ever set on Tauri (the web bundles know which
-  // form they need from `managed`).
+  // running their own agent. Only ever set in the desktop app (the web bundles
+  // know which form they need from `managed`).
   const [selfHost, setSelfHost] = useState(false);
   // On a vestad-served bundle we don't yet know if this is a hosted (vesta.run)
   // instance. Probe /info.managed: managed instances log in via the vesta.run
@@ -85,6 +89,9 @@ export function Connect() {
     if (busy) return;
     const link = parseConnectLink(value);
     if (!link) {
+      setError(
+        "that doesn't look like a connect link. paste the whole link vestad printed.",
+      );
       inputRef.current?.focus();
       return;
     }
@@ -140,7 +147,7 @@ export function Connect() {
   // Hosted (vesta.run): the user never has an api_key, so log in through the
   // control plane. Lead with the vesta account on a managed instance (web) and
   // in the native app, unless the native user chose self-hosting.
-  if ((managed || isTauri) && !selfHost) {
+  if ((managed || isDesktopApp) && !selfHost) {
     return (
       <div className="flex h-full flex-col p-page">
         <div className="flex flex-1 items-center justify-center">
@@ -161,7 +168,7 @@ export function Connect() {
               className="max-w-full px-6"
             >
               {busy
-                ? isTauri
+                ? isDesktopApp
                   ? "waiting for browser..."
                   : "redirecting..."
                 : "continue with vesta account"}
@@ -177,7 +184,7 @@ export function Connect() {
                 </motion.p>
               )}
             </AnimatePresence>
-            {isTauri && (
+            {isDesktopApp && (
               <button
                 type="button"
                 onClick={() => {
@@ -214,17 +221,35 @@ export function Connect() {
             <FieldLabel htmlFor="connect-link" className="sr-only">
               Connect link
             </FieldLabel>
-            <Input
-              ref={inputRef}
-              id="connect-link"
-              type="text"
-              placeholder="paste your gateway connect link"
-              autoComplete="off"
-              autoFocus
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              className="text-center"
-            />
+            <div className="relative">
+              <Input
+                ref={inputRef}
+                id="connect-link"
+                name="connect-link"
+                type={revealed ? "text" : "password"}
+                placeholder="paste your connect link"
+                autoComplete="current-password"
+                autoFocus
+                value={value}
+                onChange={(e) => {
+                  setValue(e.target.value);
+                  setError("");
+                }}
+                className="px-9 text-center"
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => setRevealed((shown) => !shown)}
+                aria-label={
+                  revealed ? "hide connect link" : "show connect link"
+                }
+                className="absolute inset-y-0 right-0.5 my-auto text-muted-foreground hover:bg-transparent hover:text-foreground"
+              >
+                {revealed ? <EyeOff /> : <Eye />}
+              </Button>
+            </div>
           </Field>
 
           <Button
@@ -235,7 +260,7 @@ export function Connect() {
             {busy ? "connecting..." : "connect"}
           </Button>
 
-          {isTauri && selfHost && (
+          {isDesktopApp && selfHost && (
             <button
               type="button"
               onClick={() => {

@@ -280,13 +280,8 @@ export const useVoice = create<VoiceState>((set, get) => {
     refreshVoiceStatus: () => {
       const { agentName } = get();
       if (!agentName) return;
-      const ctrl = new AbortController();
-      Promise.all([
-        fetchSttStatus(agentName, ctrl.signal),
-        fetchTtsStatus(agentName, ctrl.signal),
-      ])
+      Promise.all([fetchSttStatus(agentName), fetchTtsStatus(agentName)])
         .then(([stt, tts]) => {
-          if (ctrl.signal.aborted) return;
           set({
             sttStatus: stt,
             ttsStatus: tts,

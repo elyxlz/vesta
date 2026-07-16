@@ -2,9 +2,13 @@ import re
 from datetime import datetime, timedelta, UTC
 from typing import TypedDict, NotRequired
 from zoneinfo import ZoneInfo
-from . import graph, auth, notifications, notify, folders, owa_rest
+import time
+
+from . import graph, auth, notifications, notify, folders, owa_rest, teams, capture
 from .config import Config
 from .context import MicrosoftContext
+
+_HTML_TAG = re.compile(r"<[^>]+>")
 
 
 # Zero-width and bidi / formatting characters that marketing emails use to pad previews with
@@ -208,11 +212,152 @@ def _poll_owa_rest_account(
         logger.error(f"Error fetching OWA REST calendar for {account_email}: {e}")
 
 
+def _poll_teams_account(ctx: MicrosoftContext, config: Config, account_email: str, last_dt: datetime, catching_up: bool) -> None:
+    """Emit a notification per chat whose latest message arrived since last_dt (excluding the user's
+    own messages). One /me/chats request per cycle carries every chat's last-message preview."""
+    logger = ctx.monitor_logger
+    try:
+        token = teams.resolve_token(config, account_email)
+    except teams.TeamsError as e:
+        logger.info(f"Teams token unavailable for {account_email}: {e}")
+        return
+    try:
+        my_id = teams._my_id(ctx.http_client, token)
+        chats = teams.list_chats(ctx.http_client, token, limit=50)
+    except Exception as e:
+        logger.error(f"Error fetching Teams chats for {account_email}: {e}")
+        return
+
+    for chat in chats:
+        preview = chat["lastMessagePreview"] if "lastMessagePreview" in chat else None
+        if not preview or "createdDateTime" not in preview:
+            continue
+        try:
+            created = datetime.fromisoformat(preview["createdDateTime"].replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if created <= last_dt:
+            continue
+        sender = preview["from"] if "from" in preview else None
+        sender_user = (sender["user"] if sender and "user" in sender else None) or {}
+        if "id" in sender_user and sender_user["id"] == my_id:
+            continue  # our own outgoing message
+        sender_name = sender_user["displayName"] if "displayName" in sender_user else "Someone"
+        members = ", ".join(m["displayName"] for m in (chat["members"] if "members" in chat else []) if "displayName" in m)
+        topic = (chat["topic"] if "topic" in chat else None) or members or None
+        body = preview["body"] if "body" in preview else {}
+        text = clean_preview(_HTML_TAG.sub(" ", body["content"] if "content" in body else ""))[:200]
+        logger.info(f"Writing Teams notification from {sender_name} in chat {chat['id']}")
+        notifications.write_notification(
+            ctx.notif_dir,
+            "teams",
+            interrupt=True,
+            sender=sender_name,
+            topic=topic,
+            preview=text,
+            chat_id=chat["id"],
+            account=account_email,
+            missed=catching_up or None,
+        )
+
+
+def _poll_teams_channels_account(ctx: MicrosoftContext, config: Config, account_email: str, last_dt: datetime, catching_up: bool) -> None:
+    """Emit a non-interrupting notification per Teams CHANNEL message since last_dt (excluding the
+    user's own). Channels are broadcast, so a message per channel would be noisy — hence interrupt=False,
+    unlike chats which stay interrupt=True.
+
+    GRACEFUL DEGRADE: reading channel messages needs the admin-only ChannelMessage.Read.All scope plus
+    Graph access that many accounts (browser-capture / OWA-REST-only) do NOT have. If enumerating teams
+    fails for ANY reason (permission 403/401, GraphUnavailable, TeamsError, ...), log once at info and
+    return — the account silently keeps working with chats only. A failure on a single team/channel is
+    logged at debug and skipped, never fatal."""
+    logger = ctx.monitor_logger
+    try:
+        token = teams.resolve_token(config, account_email)
+    except teams.TeamsError as e:
+        logger.info(f"Teams token unavailable for {account_email}: {e}")
+        return
+    try:
+        my_id = teams._my_id(ctx.http_client, token)
+        teams_list = teams.list_teams(ctx.http_client, token)
+    except Exception as e:
+        # No channel access (missing ChannelMessage.Read.All / no Graph): degrade to chats-only.
+        logger.info(f"Teams channel messages unavailable for {account_email}, keeping chats-only: {e}")
+        return
+
+    for team in teams_list:
+        team_id = team["id"] if "id" in team else None
+        if not team_id:
+            continue
+        team_name = (team["displayName"] if "displayName" in team else None) or "Team"
+        try:
+            channels = teams.list_channels(ctx.http_client, token, team_id=team_id)
+        except Exception as e:
+            logger.debug(f"Skipping Teams channels for team {team_name} ({account_email}): {e}")
+            continue
+        for channel in channels:
+            channel_id = channel["id"] if "id" in channel else None
+            if not channel_id:
+                continue
+            channel_name = (channel["displayName"] if "displayName" in channel else None) or "Channel"
+            try:
+                messages = teams.list_channel_messages(ctx.http_client, token, team_id=team_id, channel_id=channel_id, limit=20)
+            except Exception as e:
+                logger.debug(f"Skipping Teams channel {team_name} / {channel_name} ({account_email}): {e}")
+                continue
+            for msg in messages:
+                if "createdDateTime" not in msg:
+                    continue
+                try:
+                    created = datetime.fromisoformat(msg["createdDateTime"].replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+                if created <= last_dt:
+                    continue
+                sender = msg["from"] if "from" in msg else None
+                sender_user = (sender["user"] if sender and "user" in sender else None) or {}
+                if "id" in sender_user and sender_user["id"] == my_id:
+                    continue  # our own channel post
+                sender_name = sender_user["displayName"] if "displayName" in sender_user else "Someone"
+                body = msg["body"] if "body" in msg else {}
+                text = clean_preview(_HTML_TAG.sub(" ", body["content"] if "content" in body else ""))[:200]
+                logger.info(f"Writing Teams channel notification from {sender_name} in {team_name} / {channel_name}")
+                notifications.write_notification(
+                    ctx.notif_dir,
+                    "teams",
+                    interrupt=False,
+                    sender=sender_name,
+                    topic=f"{team_name} / {channel_name}",
+                    preview=text,
+                    team_id=team_id,
+                    channel_id=channel_id,
+                    account=account_email,
+                    missed=catching_up or None,
+                )
+
+
+def _refresh_captured_tokens(ctx: MicrosoftContext, config: Config, gave_up: set[str]) -> None:
+    """Silently re-mint browser-captured tokens before they expire, so the user signs in only once.
+    On a lapsed sign-in, notify once and stop retrying that account until the daemon restarts."""
+    logger = ctx.monitor_logger
+    for account in capture.due_accounts(config, time.time()):
+        if account in gave_up:
+            continue
+        try:
+            saved = capture.refresh_and_save(config, account)
+            logger.info(f"Refreshed Microsoft tokens for {account}: {', '.join(saved)}")
+        except capture.CaptureError as e:
+            logger.warning(f"Token refresh failed for {account}: {e}")
+            gave_up.add(account)
+            notifications.write_notification(ctx.notif_dir, "auth_needed", interrupt=False, account=account, message=str(e))
+
+
 def run(ctx: MicrosoftContext):
     logger = ctx.monitor_logger
     logger.info("Monitor thread started")
     first_run = True
     catching_up = False
+    refresh_gave_up: set[str] = set()
 
     while not ctx.monitor_stop_event.is_set():
         try:
@@ -311,6 +456,17 @@ def run(ctx: MicrosoftContext):
                 logger.info(f"Checking OWA REST account: {account_email}")
                 watch_folders = notify.get_notify_folders(ctx.notify_file, account_email) if ctx.notify_file else ["inbox"]
                 _poll_owa_rest_account(ctx, config, account_email, watch_folders, last_dt, new_check_time, catching_up)
+
+            # Teams chats: poll every account that has authorized Teams (device or captured token).
+            # Channel messages are polled right after with the same cutoff; they degrade to a no-op
+            # for accounts that lack channel-read access (default-on where the capability exists).
+            for account_email in teams.list_accounts(config):
+                logger.info(f"Checking Teams account: {account_email}")
+                _poll_teams_account(ctx, config, account_email, last_dt, catching_up)
+                _poll_teams_channels_account(ctx, config, account_email, last_dt, catching_up)
+
+            # Keep browser-captured tokens fresh so the user's one sign-in lasts the SSO session.
+            _refresh_captured_tokens(ctx, config, refresh_gave_up)
 
             tmp = ctx.monitor_state_file.with_suffix(".tmp")
             tmp.write_text(new_check_time.isoformat())

@@ -116,6 +116,14 @@ def filter_tool_lines(text: str) -> str:
     return "\n".join(s for line in text.split("\n") if (s := line.strip()) and not s.startswith("[TOOL]") and not s.startswith("[TASK]"))
 
 
+def _is_cli_error_text(text: str) -> bool:
+    """CLI-synthesized error strings arrive as assistant text blocks (an 'API Error:' prefix or the
+    bare 'Prompt is too long'); they are operational noise, not Vesta's speech, so parse routes them
+    to the error channel instead of published texts (same principle as rate_limit_notice replacing
+    the CLI's raw text)."""
+    return text.startswith("API Error:") or text == "Prompt is too long"
+
+
 def _parse_agent_input(input_data: object) -> tuple[str, str]:
     if isinstance(input_data, dict):
         data = tp.cast(dict[str, tp.Any], input_data)
@@ -127,10 +135,12 @@ def _parse_agent_input(input_data: object) -> tuple[str, str]:
     return agent_type, description
 
 
-def parse_sdk_message(msg: Message) -> tuple[list[str], list[ThinkingBlock], str | None]:
+def parse_sdk_message(msg: Message) -> tuple[list[str], list[ThinkingBlock], str | None, list[str]]:
     """Extract assistant text + thinking blocks (and a session_id from a ResultMessage) from one SDK
-    message. Tool-use blocks carry no output here: tool/subagent activity is surfaced via the native
-    hooks in make_hooks, so they are ignored. Non-assistant messages just log and return empties."""
+    message. CLI-synthesized error text (_is_cli_error_text) is kept out of the speech texts and
+    returned in the final element so the caller surfaces it through the error channel. Tool-use
+    blocks carry no output here: tool/subagent activity is surfaced via the native hooks in
+    make_hooks, so they are ignored. Non-assistant messages just log and return empties."""
     if isinstance(msg, ResultMessage):
         usage_data = msg.usage or {}
         parts = []
@@ -144,13 +154,13 @@ def parse_sdk_message(msg: Message) -> tuple[list[str], list[ThinkingBlock], str
             parts.append(f"cost=${msg.total_cost_usd:.4f}")
         parts.append(f"duration={msg.duration_ms / 1000:.1f}s")
         logger.usage(" | ".join(parts))
-        return [], [], msg.session_id
+        return [], [], msg.session_id, []
 
     if isinstance(msg, RateLimitEvent):
         info = msg.rate_limit_info
         log_fn = logger.debug if info.status == "allowed" else logger.warning
         log_fn(f"Rate limit {info.status} (utilization={info.utilization}, type={info.rate_limit_type})")
-        return [], [], None
+        return [], [], None, []
 
     if isinstance(msg, SystemMessage):
         if msg.subtype == "init":
@@ -160,30 +170,35 @@ def parse_sdk_message(msg: Message) -> tuple[list[str], list[ThinkingBlock], str
             init_sid = msg.data["session_id"] if isinstance(msg.data, dict) and "session_id" in msg.data else None
             if init_sid:
                 logger.debug(f"[init] session_id={init_sid[:16]}")
-            return [], [], init_sid
+            return [], [], init_sid, []
         # thinking_tokens is a per-delta streaming counter the SDK emits dozens of times per turn; it
         # floods the log with no signal here (thinking_tokens_estimate exposes it for liveness notes).
         if msg.subtype == "thinking_tokens":
-            return [], [], None
+            return [], [], None, []
         if msg.subtype == "compact_boundary":
             logger.client("Compaction boundary reached")
-            return [], [], None
+            return [], [], None, []
         raw = json.dumps(msg.data, default=str)
         logger.system(f"[{msg.subtype}] {raw[:2000]}")
-        return [], [], None
+        return [], [], None, []
 
     if not isinstance(msg, AssistantMessage):
-        return [], [], None
+        return [], [], None, []
 
     texts = []
     thinking_blocks = []
+    error_texts = []
     for block in msg.content:
         if isinstance(block, TextBlock):
+            if _is_cli_error_text(block.text):
+                logger.warning(f"Suppressed CLI-synthesized error text from assistant output: {block.text[:500]}")
+                error_texts.append(block.text)
+                continue
             texts.append(block.text)
         elif isinstance(block, ThinkingBlock):
             thinking_blocks.append(block)
 
-    return texts, thinking_blocks, None
+    return texts, thinking_blocks, None, error_texts
 
 
 def _tool_summary(name: str, tool_input: dict[str, tp.Any]) -> str:
@@ -253,7 +268,7 @@ def make_hooks(state: vm.State) -> dict[HookEvent, list[HookMatcher]]:
         return tp.cast(HookJSONOutput, {})
 
     async def log_compact(input_data: PreCompactHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
-        trigger = input_data["trigger"]
+        trigger = input_data["trigger"] if "trigger" in input_data else "unknown"
         state.compacting = True
         logger.client(f"Context compaction starting (trigger={trigger})")
         return tp.cast(HookJSONOutput, {})

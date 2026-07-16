@@ -30,13 +30,13 @@ export function DisconnectedOverlay() {
           <Spinner className="size-6" />
           <EmptyTitle>disconnected from gateway</EmptyTitle>
           <EmptyDescription>
-            attempting to reconnect to {hostname}…
+            attempting to reconnect to {hostname}...
           </EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
-          <Button variant="destructive" onClick={() => disconnect()}>
+          <Button variant="outline" onClick={() => disconnect()}>
             <LogOut data-icon="inline-start" />
-            Disconnect
+            disconnect
           </Button>
         </EmptyContent>
       </Empty>

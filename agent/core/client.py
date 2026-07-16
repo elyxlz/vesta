@@ -1,6 +1,7 @@
 """Conversation loop: builds queries, drives the SDK client, handles preemption and dash-correction."""
 
 import asyncio
+import contextlib
 import datetime as dt
 import json
 import os
@@ -13,6 +14,8 @@ import aiohttp
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
+    ClaudeSDKClient,
+    ClaudeSDKError,
     Message,
     RateLimitEvent,
     ResultMessage,
@@ -30,6 +33,7 @@ from .provider import (
     is_unauthenticated,
     observed_provider_failure,
 )
+from . import config as cfg
 from .config import CONTEXT_1M_BETA, DEFAULT_CONTEXT_WINDOW
 from . import diagnostics
 from . import sdk_parsing
@@ -38,15 +42,20 @@ from .tools import build_vesta_tools_server
 
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 
+# The error surface of a dead or wedged CLI subprocess, caught by every consumer of the SDK seam
+# (the session open below, loops.py's turn and compaction error handlers). Owned here so loops.py
+# never imports claude_agent_sdk itself.
+SDK_ERRORS: tuple[type[Exception], ...] = (ClaudeSDKError, OSError, RuntimeError)
 
-async def resolve_openrouter_max_tokens(config: vm.VestaConfig) -> int | None:
+
+async def resolve_openrouter_max_tokens(config: cfg.VestaConfig) -> int | None:
     """Look up the OpenRouter model's real context window. claude-code assumes a
     200k window for non-Anthropic models (claude-code#46416), so the value passed
     via CLAUDE_CODE_MAX_CONTEXT_TOKENS must reflect what the model actually supports.
     The caller caps this at config.provider.max_context_tokens before passing it to the SDK
     (cache-read cost scales with context size). Returns None on any failure, so
     claude-code falls back to its default, same behavior as before."""
-    if not isinstance(config.provider, vm.OpenRouterConfig):
+    if not isinstance(config.provider, cfg.OpenRouterConfig):
         return None
     try:
         async with aiohttp.ClientSession() as session:
@@ -70,13 +79,12 @@ async def resolve_openrouter_max_tokens(config: vm.VestaConfig) -> int | None:
     return None
 
 
-async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: str) -> bool:
+async def attempt_interrupt(state: vm.State, *, config: cfg.VestaConfig, reason: str) -> bool:
     """Hard-abort the current turn via the SDK's interrupt control request.
 
     In headless mode the CLI's handler for this request also kills every running backgrounded
-    subagent/workflow task (issue #982), so routine preemption defaults to send_preempt instead;
-    this fires only on failure paths (silence/query timeout, provider auth lost) and in
-    preempt_mode="interrupt", which trades that teardown for immediate mid-tool preemption."""
+    subagent/workflow task (issue #982), so routine preemption is send_preempt instead; this
+    fires only on failure paths (silence/query timeout, provider auth lost)."""
     client = state.client
     if not client:
         return False
@@ -107,18 +115,28 @@ async def attempt_interrupt(state: vm.State, *, config: vm.VestaConfig, reason: 
         return False
 
 
-async def send_preempt(prompt: str, *, state: vm.State, config: vm.VestaConfig) -> bool:
-    """Preempt the running turn by delivering `prompt` as a priority:"now" user message (the
-    envelope and its protocol story live in sdk_parsing.build_priority_now_message). A foreground
-    tool call already executing is not cut short: the abort latches and applies when the tool
+async def send_preempt(prompt: str, *, state: vm.State, config: cfg.VestaConfig) -> bool:
+    """Deliver `prompt` into the live session as a priority:"now" user message (the envelope
+    and its protocol story live in sdk_parsing.build_priority_now_message). A foreground tool
+    call already executing is not cut short: the abort latches and applies when the tool
     returns, so the preempt is delayed by at most that tool's remaining runtime, never lost.
+
+    A True return is the end of the prompt's lifecycle. The CLI persists the message into the
+    session on receipt (a crash-restart resumes with it in context) and its output streams
+    through the session's single consumer, but it guarantees no per-prompt ResultMessage: it
+    merges rapid queued prompts into one turn, starts turns of its own (background task
+    notifications), and its results carry no prompt identity. Counting-based turn pairing on
+    top of that wedged a turn on a merged-away result and crashed the agent (incident
+    2026-07-14, agent luna), so the caller consumes the item at delivery and never opens a
+    Vesta turn for it. The open turn is marked `preempted` for reply-completeness consumers
+    (the dash correction).
 
     Returns False without sending when there is nothing to preempt (no client, no open turn),
     when preemption is barred (boot turn, compaction in flight, unauthenticated provider), or
-    on a failed write — the caller then queues the prompt plain, and the processor's
-    queue-watcher retries the pre-send if the item lands while a later turn is running."""
+    on a failed write; the caller then queues the prompt as an ordinary turn."""
     client = state.client
-    if not client or state.turn is None or state.noninterruptible_turn_active or state.compacting:
+    turn = state.turn
+    if not client or turn is None or state.noninterruptible_turn_active or state.compacting:
         return False
     if is_unauthenticated(state.provider_status):
         # Same deferral as the processor's gate: don't hand prompts to a dead token; the
@@ -131,35 +149,29 @@ async def send_preempt(prompt: str, *, state: vm.State, config: vm.VestaConfig) 
         yield message
 
     try:
-        # A single stdin write: bound it like an interrupt, not like a query — on timeout the
+        # A single stdin write: bound it like an interrupt, not like a query. On timeout the
         # caller queues plain and nothing is lost.
         await asyncio.wait_for(client.query(_one()), timeout=config.interrupt_timeout)
-        state.preempt_outstanding += 1
+        turn.preempted = True
         logger.debug("Preempt sent (priority=now)")
         return True
     except Exception as e:
         # Like attempt_interrupt: best-effort, broad catch. A failed preempt must never abort
-        # the notification/message that asked for it — the prompt still queues and runs.
+        # the notification/message that asked for it; the prompt still queues and runs.
         logger.error(f"Preempt send failed: {e} | {diagnostics.format_hang_diagnostics(state)}")
         return False
 
 
-def persist_session_id(session_id: str, *, state: vm.State, config: vm.VestaConfig) -> None:
+async def persist_session_id(session_id: str, *, state: vm.State, config: cfg.VestaConfig) -> None:
     state.persisted.session_id = session_id
-    state_store.save_state(state.persisted, config)
+    await state_store.save_state_async(state.persisted, config)
     logger.debug(f"Captured session_id: {session_id[:16]}...")
 
 
 _SILENCE_POLL_S = 10.0  # wake the turn's wait loop during quiet stretches to log liveness notes
 
-# preempt_mode="interrupt" only: post-interrupt wait for the interrupted turn's
-# ResultMessage. Purely a labeling nicety so the next turn usually opens against a clean stream;
-# when the CLI's wind-down outlives it, the consumer still receives everything and the late
-# result is dropped as advisory (issue #958).
-_INTERRUPT_TURN_END_GRACE_S = 5.0
 
-
-async def _cancel_task(task: asyncio.Task[tp.Any]) -> None:
+async def cancel_task(task: asyncio.Task[tp.Any]) -> None:
     task.cancel()
     try:
         await task
@@ -190,15 +202,23 @@ def _emit_thinking(block: ThinkingBlock, *, state: vm.State) -> None:
     state.event_bus.emit({"type": "thinking", "text": block.thinking, "signature": block.signature})
 
 
-async def _dispatch_message(msg: Message, *, state: vm.State, config: vm.VestaConfig) -> None:
+async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaConfig) -> None:
     """Handle one SDK stream message: emit content, persist session ids, detect auth loss, and
-    close the open turn on its ResultMessage. Messages with no open turn (a self-initiated
-    continuation turn, or an interrupted turn's wind-down) still emit — nothing is ever lost —
-    and their ResultMessage is dropped."""
+    close the open turn on its ResultMessage. Messages with no open turn (a delivered preempt
+    running as its own turn, a CLI-initiated continuation, or an interrupted turn's wind-down)
+    still emit, nothing is ever lost, and their ResultMessage is dropped."""
     diagnostics.touch_activity(state, "sdk_message")
     turn = state.turn
     if turn:
         turn.last_message_at = time.monotonic()
+    else:
+        # Turnless CLI activity (a delivered preempt running as its own turn, or a
+        # CLI-initiated turn such as a background task notification): keep the activity state
+        # honest, since it drives the snoozed-batch flush and the proactive-check gate.
+        if isinstance(msg, AssistantMessage):
+            state.event_bus.set_state("thinking")
+        elif isinstance(msg, ResultMessage):
+            state.event_bus.set_state("idle")
     if isinstance(msg, AssistantMessage):
         state.compacting = False
     # The CLI ticks a thinking counter while the model reasons; diagnostics turns it into the
@@ -206,11 +226,11 @@ async def _dispatch_message(msg: Message, *, state: vm.State, config: vm.VestaCo
     thinking_estimate = sdk_parsing.thinking_tokens_estimate(msg)
     if turn and thinking_estimate is not None:
         diagnostics.note_thinking_tick(turn, tokens=thinking_estimate)
-    texts, thinking_blocks, session_id = sdk_parsing.parse_sdk_message(msg)
+    texts, thinking_blocks, session_id, error_texts = sdk_parsing.parse_sdk_message(msg)
     if session_id and session_id != state.persisted.session_id:
         if state.persisted.session_id:
             logger.warning(f"Session ID changed: {state.persisted.session_id[:16]} -> {session_id[:16]} (resume may have failed)")
-        persist_session_id(session_id, state=state, config=config)
+        await persist_session_id(session_id, state=state, config=config)
     show = turn.show_output if turn else True
     if show:
         for block in thinking_blocks:
@@ -225,6 +245,10 @@ async def _dispatch_message(msg: Message, *, state: vm.State, config: vm.VestaCo
             filtered = sdk_parsing.filter_tool_lines(text)
             if filtered:
                 _emit_text(filtered, state=state)
+    for error_text in error_texts:
+        # CLI-synthesized error text is kept out of Vesta's speech by parse_sdk_message; surface
+        # the failure through the error channel instead so a failed turn is never silent in the app.
+        state.event_bus.emit({"type": "error", "text": f"Turn failed upstream: {error_text[:500]}"})
     if isinstance(msg, RateLimitEvent):
         # Surface the rejection from the structured classification: the CLI's synthesized text
         # for the same event misnames the window (issue #1071), so this event is what consumers
@@ -253,17 +277,10 @@ async def _dispatch_message(msg: Message, *, state: vm.State, config: vm.VestaCo
         if turn and not turn.done.is_set():
             turn.done.set()
         elif isinstance(msg, ResultMessage):
-            if state.preempt_outstanding > 0:
-                # A pre-sent turn ran to its result before the processor opened a Vesta turn
-                # for it (fast preempt). Bank it so converse(pre_sent=True) completes at open
-                # instead of waiting out the silence timeout on a turn nothing will close.
-                state.preempt_orphaned_results += 1
-                logger.debug("ResultMessage with no open turn while a preempt is outstanding; banked for the pre-sent turn")
-            else:
-                logger.debug("ResultMessage with no open turn (continuation or interrupted-turn wind-down); dropped")
+            logger.debug("ResultMessage with no open turn (continuation or CLI-initiated turn); dropped")
 
 
-async def consume_stream(*, state: vm.State, config: vm.VestaConfig) -> None:
+async def consume_stream(*, state: vm.State, config: cfg.VestaConfig) -> None:
     """Single long-lived consumer of the SDK stream — one per client session, connect to disconnect.
 
     Reading continuously is the fix for issue #958: with per-turn readers, messages left unconsumed
@@ -294,42 +311,87 @@ async def consume_stream(*, state: vm.State, config: vm.VestaConfig) -> None:
     _fail_open_turn(RuntimeError("SDK stream ended"))
 
 
-async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show_output: bool, pre_sent: bool = False) -> list[str]:
-    """Drive one turn: send the query (skipped for a pre-sent preempt — see send_preempt) and
-    wait for the turn's result. A later preempt needs no handling here: the CLI-side abort ends
-    this turn as an ordinary ResultMessage. preempt_mode="interrupt" only: the
-    queue-watcher sets `state.interrupt_event` and this loop fires the SDK interrupt itself."""
+@contextlib.asynccontextmanager
+async def client_session(*, state: vm.State, config: cfg.VestaConfig) -> tp.AsyncIterator[ClaudeSDKClient]:
+    """The SDK session lifecycle, owned end to end: build options, open the client, spawn the single
+    stream consumer for the session, and on exit cancel the consumer and reset the session fields.
+
+    A failed open with a persisted session_id is retried once on a fresh session (the CLI errors at
+    startup when the resumed session file is gone); the second failure, or any failure with nothing
+    to resume, propagates to the caller."""
+    options = build_client_options(config, state)
+    retried = False
+    while True:
+        opened = False
+        try:
+            async with ClaudeSDKClient(options=options) as client:
+                opened = True
+                state.client = client
+                # The one consumer of the SDK stream for this whole session (see consume_stream);
+                # turn drivers only wait on state.turn signals, they never read the stream.
+                consumer_task = asyncio.create_task(consume_stream(state=state, config=config))
+                logger.client("Client session started")
+                try:
+                    yield client
+                finally:
+                    await cancel_task(consumer_task)
+                    state.client = None
+                    state.compacting = False
+                    state.turn = None
+                    logger.client("Client session closed")
+            return
+        except SDK_ERRORS as exc:
+            if opened or retried or not state.persisted.session_id:
+                raise
+            await asyncio.sleep(0.05)  # give stderr handler time to drain buffered subprocess output
+            exit_code, stderr_tail = diagnostics.format_crash_detail(exc, state.stderr_buffer)
+            logger.warning(
+                f"Session resume failed ({state.persisted.session_id[:16]}...): {type(exc).__name__}: {exc}"
+                f" | exit_code={exit_code}"
+                f", starting fresh\nRecent stderr:\n{stderr_tail}"
+            )
+            state.persisted.session_id = None
+            await state_store.save_state_async(state.persisted, config)
+            state.stderr_buffer.clear()
+            options = build_client_options(config, state)
+            retried = True
+
+
+class QueryNotDelivered(Exception):
+    """The query never reached the CLI: the send timed out, or client.query() raised on a dead
+    transport. The caller must keep the notification file that fed this turn (the resumed session
+    never saw the message), unlike a post-delivery failure (response timeout, stream death) where
+    deletion stays correct because the session already contains it."""
+
+
+async def converse(prompt: str, *, state: vm.State, config: cfg.VestaConfig, show_output: bool) -> vm.TurnSignals:
+    """Drive one plain turn: send the query and wait for the result that closes it. Sound
+    because plain turns are self-serializing (one query in flight, then wait). Delivered
+    preempts never come through here; send_preempt's True return is their whole lifecycle.
+    A preempt landing mid-turn needs no handling: the CLI-side abort ends this turn as an
+    ordinary ResultMessage."""
     assert state.client is not None
     client = state.client
 
     diagnostics.touch_activity(state, "query_start")
     state.active_tools.clear()
     turn = _open_turn(state, show_output=show_output)
-    if pre_sent:
-        state.preempt_outstanding -= 1
-        if state.preempt_orphaned_results > 0:
-            # The pre-sent turn already ran to its result before this open (banked by the
-            # consumer); its output was emitted live, so complete immediately with no texts.
-            state.preempt_orphaned_results -= 1
-            turn.done.set()
-    else:
-        query = sdk_parsing.build_query(prompt, timestamp=dt.datetime.now())
-        try:
-            await asyncio.wait_for(client.query(query), timeout=config.query_timeout)
-        except TimeoutError:
-            _close_turn(state, turn)
-            await attempt_interrupt(state, config=config, reason="Query timeout")
-            raise
+    query = sdk_parsing.build_query(prompt, timestamp=dt.datetime.now())
+    try:
+        await asyncio.wait_for(client.query(query), timeout=config.query_timeout)
+    except TimeoutError:
+        _close_turn(state, turn)
+        await attempt_interrupt(state, config=config, reason="Query timeout")
+        raise QueryNotDelivered("query timed out before the CLI received it") from None
+    except Exception as e:
+        # query() surfaces SDK/transport failures across a wide, loosely typed error surface
+        # (see attempt_interrupt above): catch broadly; like a send timeout this means the CLI
+        # never got the prompt.
+        _close_turn(state, turn)
+        raise QueryNotDelivered(str(e) or type(e).__name__) from e
     diagnostics.touch_activity(state, "query_sent")
 
-    interrupt_task: asyncio.Task[tp.Any] | None = None
-    if state.interrupt_event and not state.interrupt_event.is_set():
-        interrupt_task = asyncio.create_task(state.interrupt_event.wait())
-
     done_task = asyncio.create_task(turn.done.wait())
-    waitables: set[asyncio.Task[tp.Any]] = {done_task}
-    if interrupt_task:
-        waitables.add(interrupt_task)
 
     try:
         while True:
@@ -338,7 +400,7 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
             # Wake at least every _SILENCE_POLL_S so long thinking gets liveness notes.
             silence_budget = config.response_timeout - (time.monotonic() - turn.last_message_at)
             wait_timeout = max(min(silence_budget, _SILENCE_POLL_S), 0)
-            done, _ = await asyncio.wait(waitables, return_when=asyncio.FIRST_COMPLETED, timeout=wait_timeout)
+            done, _ = await asyncio.wait({done_task}, timeout=wait_timeout)
 
             if not done:
                 if time.monotonic() - turn.last_message_at >= config.response_timeout:
@@ -347,28 +409,15 @@ async def converse(prompt: str, *, state: vm.State, config: vm.VestaConfig, show
                 diagnostics.note_turn_liveness(state, turn=turn)
                 continue
 
-            if done_task in done:
-                if turn.error is not None:
-                    raise turn.error
-                break
-
-            await attempt_interrupt(state, config=config, reason="New message interrupt")
-            # Give the wind-down a bounded window to deliver its ResultMessage so the next turn
-            # usually opens clean; on expiry the consumer still receives everything (emitted live,
-            # late result dropped), so nothing jams or leaks — the issue #958 failure mode.
-            try:
-                await asyncio.wait_for(turn.done.wait(), timeout=_INTERRUPT_TURN_END_GRACE_S)
-            except TimeoutError:
-                pass
+            if turn.error is not None:
+                raise turn.error
             break
     finally:
         state.compacting = False
         _close_turn(state, turn)
-        await _cancel_task(done_task)
-        if interrupt_task and not interrupt_task.done():
-            await _cancel_task(interrupt_task)
+        await cancel_task(done_task)
 
-    return turn.texts
+    return turn
 
 
 _EM_DASH = "—"
@@ -384,18 +433,15 @@ def _contains_dashes(texts: list[str]) -> bool:
     return any(_EM_DASH in t or _EN_DASH in t or " - " in t for t in texts)
 
 
-async def process_message(
-    msg: str, *, state: vm.State, config: vm.VestaConfig, is_user: bool, pre_sent: bool = False
-) -> tuple[list[str], vm.State]:
-    responses = await converse(msg, state=state, config=config, show_output=True, pre_sent=pre_sent)
-    if responses and _contains_dashes(responses) and state.preempt_outstanding == 0:
-        # With a preempt outstanding the correction query would land behind the queued preempt
-        # CLI-side while its Vesta turn opened first, crossing turn attribution — skip it; the
-        # preempted reply was cut short anyway.
+async def process_message(msg: str, *, state: vm.State, config: cfg.VestaConfig, is_user: bool) -> tuple[list[str], vm.State]:
+    turn = await converse(msg, state=state, config=config, show_output=True)
+    if turn.texts and _contains_dashes(turn.texts) and not turn.preempted:
+        # A preempted turn's reply was cut short at a step boundary; correcting a truncated
+        # reply would re-send it after the preempting prompt's work, so skip it.
         logger.warning("Em/en dash detected in response, sending correction")
         await converse(_DASH_WARNING, state=state, config=config, show_output=True)
     await diagnostics.log_context_usage(state)
-    return responses, state
+    return turn.texts, state
 
 
 async def _approve_all_tools(tool_name: str, tool_input: dict[str, tp.Any], context: ToolPermissionContext) -> PermissionResultAllow:
@@ -433,7 +479,7 @@ def _read_compaction_summary(session_id: str) -> str | None:
         return None
 
 
-async def compact_session(*, state: vm.State, prompt: str | None = None) -> None:
+async def compact_session(*, state: vm.State, config: cfg.VestaConfig, prompt: str | None = None) -> None:
     """Compact the live conversation in place and block until it finishes.
 
     The official Claude Agent SDK has no compact() method; the documented path is to send the
@@ -450,8 +496,10 @@ async def compact_session(*, state: vm.State, prompt: str | None = None) -> None
     try:
         # A slash command is a single line: collapse whitespace so multi-line guidance (e.g. an
         # appended draft) reaches the summarizer intact instead of being truncated at the first newline.
+        # The send is a stdin write to the CLI subprocess: bound it like every other query so a wedged
+        # CLI fails the compaction instead of wedging the message processor.
         query = "/compact" if prompt is None else f"/compact {' '.join(prompt.split())}"
-        await client.query(query)
+        await asyncio.wait_for(client.query(query), timeout=config.query_timeout)
         await asyncio.wait_for(turn.done.wait(), timeout=_COMPACT_TIMEOUT_S)
         if turn.error is not None:
             raise turn.error
@@ -465,7 +513,7 @@ async def compact_session(*, state: vm.State, prompt: str | None = None) -> None
         _close_turn(state, turn)
 
 
-def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgentOptions:
+def build_client_options(config: cfg.VestaConfig, state: vm.State) -> ClaudeAgentOptions:
     memory_path = get_memory_path(config)
     if not memory_path.exists():
         raise FileNotFoundError(f"MEMORY.md not found at {memory_path}, cannot start agent without it")
@@ -506,7 +554,7 @@ def build_client_options(config: vm.VestaConfig, state: vm.State) -> ClaudeAgent
     betas: list[str] = []
     # 1M-context beta and thinking are Anthropic-only; openrouter forces thinking disabled.
     thinking_config = ThinkingConfigDisabled(type="disabled")
-    if isinstance(provider, vm.OpenRouterConfig):
+    if isinstance(provider, cfg.OpenRouterConfig):
         # The SDK always routes through the local caching proxy, never OpenRouter
         # directly. start_cache_proxy runs first in message_processor, so the URL is set.
         if not state.openrouter_proxy_url:
