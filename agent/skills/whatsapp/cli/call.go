@@ -347,7 +347,7 @@ func cmdCall(args []string, wac *WhatsAppClient) (any, error) {
 	var to string
 	fs := flag.NewFlagSet("call", flag.ContinueOnError)
 	fs.StringVar(&to, "to", "", "Who to call (contact name, phone, or JID)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if to == "" {
@@ -365,7 +365,7 @@ func cmdSay(args []string, wac *WhatsAppClient) (any, error) {
 	fs := flag.NewFlagSet("say", flag.ContinueOnError)
 	fs.StringVar(&text, "text", "", "What to speak into the call (use '-' to read from stdin)")
 	fs.StringVar(&textFile, "text-file", "", "Path to a file with the text to speak (use '-' for stdin). Preferred for lines with apostrophes or quotes.")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if (text == "") == (textFile == "") {
@@ -392,7 +392,10 @@ func cmdSay(args []string, wac *WhatsAppClient) (any, error) {
 	return cm.Say(text)
 }
 
-func cmdHangup(_ []string, wac *WhatsAppClient) (any, error) {
+func cmdHangup(args []string, wac *WhatsAppClient) (any, error) {
+	if err := parseNoFlags("hangup", args); err != nil {
+		return nil, err
+	}
 	cm, err := requireCallMgr(wac)
 	if err != nil {
 		return nil, err
@@ -400,7 +403,10 @@ func cmdHangup(_ []string, wac *WhatsAppClient) (any, error) {
 	return cm.Hangup()
 }
 
-func cmdCallStatus(_ []string, wac *WhatsAppClient) (any, error) {
+func cmdCallStatus(args []string, wac *WhatsAppClient) (any, error) {
+	if err := parseNoFlags("call-status", args); err != nil {
+		return nil, err
+	}
 	cm, err := requireCallMgr(wac)
 	if err != nil {
 		return nil, err

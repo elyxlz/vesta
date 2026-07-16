@@ -38,6 +38,13 @@ You can hold a live voice call over WhatsApp, in your own voice (the `voice` ski
 - **Inbound calls** are answered automatically (you get a `call_started`, then their utterances). A call you cannot take (already on another call, or `voice` not set up) becomes a `call_missed` notification instead. `call_ended` closes the loop.
 - **Requires the `voice` skill** configured with both input (STT) and output (TTS). Without it, calls are declined and you are told to set voice up.
 
+```bash
+whatsapp call --to '+447700900000'      # blocks until they answer, decline, or it times out
+whatsapp say --text 'hey, it is me'     # speaks into the call you are already on
+whatsapp hangup
+```
+Only `call` takes a target. Once you are on a call there is only one, so `say`, `hangup` and `call-status` act on it and take none.
+
 **Calling the user when it is urgent.** A call is your loudest, most interrupting reach, so it is rare and reserved for the genuinely time-critical. If something truly needs the user now (a real deadline about to pass, a safety or money issue, something they explicitly asked to be called about) and they have not responded to your messages within a window that fits how urgent it is, `whatsapp call` them and say why in one line. Do not call for anything that can wait for a text, and respect anything the constitution says about calling.
 
 ## Commands
