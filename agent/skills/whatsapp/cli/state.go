@@ -45,6 +45,13 @@ type daemonState struct {
 
 	// Start of the post-link history-sync window (stop/restart locked while open).
 	LinkedAt time.Time `json:"linked_at,omitempty"`
+
+	// Device-preservation reconnect (see preserve.go). RestorePending is set when a
+	// preserve-reconnect is in flight and read at boot to restore the last-good
+	// device before opening the store; PreserveRetryAt is when the last
+	// preserve-reconnect was attempted (the single-retry guard).
+	RestorePending  bool      `json:"restore_pending,omitempty"`
+	PreserveRetryAt time.Time `json:"preserve_retry_at,omitempty"`
 }
 
 func statePath(dataDir string) string { return filepath.Join(dataDir, stateFile) }
@@ -111,11 +118,10 @@ func (s *stateStore) persistLocked() error { return atomicWriteJSON(s.path, s.st
 func (s *stateStore) tryRecordPairAttempt(now time.Time, acknowledged bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	live := liveAttempts(s.st.PairAttempts, now)
-	if err := checkPairAttempt(live, now, acknowledged); err != nil {
+	if err := checkPairAttempt(s.st.PairAttempts, now, acknowledged); err != nil {
 		return err
 	}
-	s.st.PairAttempts = append(live, now)
+	s.st.PairAttempts = append(attemptsWithin(s.st.PairAttempts, now, PairRetentionWindow), now)
 	return s.persistLocked()
 }
 
@@ -123,7 +129,7 @@ func (s *stateStore) tryRecordPairAttempt(now time.Time, acknowledged bool) erro
 // only on a generated code, so a transient pre-connection failure never burns a slot.
 func (s *stateStore) recordPairAttempt(now time.Time) {
 	s.update(func(st *daemonState) {
-		st.PairAttempts = append(liveAttempts(st.PairAttempts, now), now)
+		st.PairAttempts = append(attemptsWithin(st.PairAttempts, now, PairRetentionWindow), now)
 	})
 }
 

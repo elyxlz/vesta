@@ -13,13 +13,17 @@ import (
 func (wac *WhatsAppClient) eventHandler(evt any) {
 	switch v := evt.(type) {
 	case *events.Message:
-		if v.Message.GetReactionMessage() != nil {
-			wac.handleReaction(v)
-		} else {
-			wac.handleMessage(v)
-		}
+		// Data-plane: offload so a slow store write never stalls whatsmeow's serial
+		// node loop. The reaction-vs-message split runs on the worker, in FIFO order.
+		wac.enqueueWork(func() {
+			if v.Message.GetReactionMessage() != nil {
+				wac.handleReaction(v)
+			} else {
+				wac.handleMessage(v)
+			}
+		})
 	case *events.Receipt:
-		wac.handleReceipt(v)
+		wac.enqueueWork(func() { wac.handleReceipt(v) })
 	case *events.HistorySync:
 		wac.handleHistorySync(v)
 	case *events.PairSuccess:
@@ -35,6 +39,11 @@ func (wac *WhatsAppClient) eventHandler(evt any) {
 		wac.presenceMutex.Lock()
 		wac.presenceActive = false
 		wac.presenceMutex.Unlock()
+		// Refresh the last-good device snapshot (throttled) and (re)arm the
+		// stability timer that clears the preserve single-retry guard once the
+		// connection has held for StableConnDuration.
+		wac.maybeSnapshotGoodDevice()
+		wac.armStableTimer()
 	case *events.KeepAliveTimeout:
 		wac.logger.Warnf("WhatsApp keep-alive timeout: error_count=%d, last_success=%s", v.ErrorCount, v.LastSuccess.Format(time.RFC3339))
 		if v.ErrorCount >= KeepAliveRestartThreshold {
@@ -113,6 +122,9 @@ func (wac *WhatsAppClient) clearExit() {
 }
 
 func (wac *WhatsAppClient) applyConnAction(action connEventAction, reason string) {
+	// Any Disconnected/StreamReplaced/LoggedOut cancels the stability timer, so a
+	// brief connect that drops before StableConnDuration keeps PreserveRetryAt fresh.
+	wac.stopStableTimer()
 	switch action {
 	case connIgnore:
 		wac.logger.Warnf("Disconnected from WhatsApp (transient); whatsmeow will auto-reconnect")
@@ -132,15 +144,35 @@ func (wac *WhatsAppClient) applyConnAction(action connEventAction, reason string
 		wac.presenceActive = false
 		wac.presenceMutex.Unlock()
 	case connNeedsProvision:
-		// A genuine logout: clear the dead device and EXIT so the next command
-		// restarts into a fresh device for a deliberate `whatsapp provision`. Parking
-		// with the deleted store instead would leave the in-memory client poisoned
-		// (ErrDeviceDeleted) and every later provision would fail on it.
+		// A device removal (mid-session or on-connect). Try device preservation
+		// first (restore last-good + reconnect once); fall back to today's exact
+		// clear-and-exit when preservation is not available or a retry just failed.
+		wac.handleDeviceRemoved(reason)
+	}
+}
+
+// handleDeviceRemoved responds to a whatsmeow device removal. When a last-good
+// snapshot exists and the single-retry guard is clear, it restores the snapshot
+// and reconnects once (NOT a re-pair, so no ban risk). Otherwise it falls back to
+// today's exact park+provision give-up: record the logout, notify, drop the dead
+// device, and exit for a deliberate `whatsapp provision`.
+func (wac *WhatsAppClient) handleDeviceRemoved(reason string) {
+	st := wac.state.snapshot()
+	switch decidePreserve(hasGoodDevice(wac.dataDir), st.PreserveRetryAt, time.Now()) {
+	case preserveReconnect:
+		wac.logger.Warnf("Device removed (%s). Restoring last-good device and reconnecting once to avoid a re-pair.", reason)
+		wac.state.update(func(s *daemonState) {
+			s.RestorePending = true
+			s.PreserveRetryAt = time.Now().UTC()
+		})
+		wac.reExecDaemon() // does not return
+	default: // preserveGiveUp — today's exact behavior (unchanged)
 		wac.logger.Warnf("Device logged out (%s). Clearing dead device and exiting; run `whatsapp provision` to re-link.", reason)
 		wac.state.update(func(s *daemonState) {
 			s.ExitStatus, s.ExitReason, s.ExitTime = "logged_out", reason, time.Now().UTC()
 			s.AuthStatus = "logged_out"
 			s.AuthNote = "WhatsApp logged this device out. Re-linking is a deliberate `whatsapp provision`, never an automatic retry loop."
+			s.PreserveRetryAt = time.Time{} // episode closed
 			// Keep MSISDN so the next `whatsapp provision` re-links the SAME number
 			// (reauth), no re-claim.
 		})

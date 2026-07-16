@@ -88,6 +88,15 @@ type WhatsAppClient struct {
 	readQueueMu       sync.Mutex
 	readQueue         map[string]*chatReadBatch // keyed by chatJID|senderJID; coalesces read receipts in order
 	callMgr           *CallManager              // live voice calling; set in serve after Connect, nil for one-shot clients
+	// Data-plane offload (see enqueueWork): message/receipt handling runs on one
+	// FIFO worker so a slow store write never stalls whatsmeow's serial node loop.
+	msgWork    chan func()
+	workerDone chan struct{}
+	// Device preservation (see preserve.go): the good-device snapshot throttle and
+	// the connection-stability timer that clears the single-retry guard.
+	preserveMu   sync.Mutex
+	lastSnapshot time.Time
+	stableTimer  *time.Timer
 }
 
 func NewWhatsAppClient(dataDir, notificationsDir, instance string, readOnly bool, noNotify bool, skipSenders map[string]bool, logger waLog.Logger) (*WhatsAppClient, error) {
@@ -152,11 +161,39 @@ func NewWhatsAppClient(dataDir, notificationsDir, instance string, readOnly bool
 		authStatus:       AuthStatusNotAuthenticated,
 		transcribeSem:    make(chan struct{}, MaxConcurrentTranscriptions),
 		readQueue:        make(map[string]*chatReadBatch),
+		msgWork:          make(chan func(), MsgWorkBuffer),
+		workerDone:       make(chan struct{}),
 	}
 
 	client.AddEventHandler(wac.eventHandler)
+	go wac.runMsgWorker()
 
 	return wac, nil
+}
+
+// runMsgWorker drains the data-plane work queue on a single goroutine, so
+// message/receipt handlers keep per-chat FIFO order while running off
+// whatsmeow's serial node-handler loop. Stopped by Disconnect via workerDone.
+func (wac *WhatsAppClient) runMsgWorker() {
+	for {
+		select {
+		case <-wac.workerDone:
+			return
+		case fn := <-wac.msgWork:
+			fn()
+		}
+	}
+}
+
+// enqueueWork hands a data-plane handler to the worker, falling back to running
+// it inline when the queue is full (bounded memory; backpressure only under a
+// sustained flood).
+func (wac *WhatsAppClient) enqueueWork(fn func()) {
+	select {
+	case wac.msgWork <- fn:
+	default:
+		fn()
+	}
 }
 
 // Connect is the daemon's boot connection step. Its whole job is to maintain a
@@ -239,6 +276,7 @@ func (wac *WhatsAppClient) Disconnect() {
 	wac.presenceActive = false
 	wac.presenceMutex.Unlock()
 
+	close(wac.workerDone)
 	wac.client.Disconnect()
 	wac.store.Close()
 }

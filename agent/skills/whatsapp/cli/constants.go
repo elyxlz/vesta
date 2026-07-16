@@ -30,6 +30,11 @@ const (
 	MaxSenderCacheSize    = 10_000
 	SenderCacheEvictBatch = 2_000
 
+	// MsgWorkBuffer bounds the data-plane work queue that keeps message/receipt
+	// handling off whatsmeow's serial node loop. A full queue falls back to inline
+	// handling (bounded memory, backpressure only under a sustained flood).
+	MsgWorkBuffer = 512
+
 	QRCodeSize                  = 256
 	MaxConcurrentTranscriptions = 3
 

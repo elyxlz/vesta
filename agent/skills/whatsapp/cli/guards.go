@@ -13,45 +13,88 @@ import (
 // These are the pure decision functions over the pairing-attempt window and the
 // sync window; the state they read/write lives in the state store (state.go).
 const (
-	MaxPairAttempts    = 2
-	PairAttemptWindow  = time.Hour
+	// Hourly cap: soft (override-able with --acknowledge-ban-risk) for a legitimate
+	// retry a minute later. The daily/weekly caps below are HARD and structurally
+	// bound the re-pair rate no acknowledgement can bypass, so nothing can burn a
+	// number by re-pairing in a loop.
+	MaxPairAttempts   = 2
+	PairAttemptWindow = time.Hour
+
+	MaxPairPerDay = 3
+	PairDayWindow = 24 * time.Hour
+
+	MaxPairPer7d   = 6
+	PairWeekWindow = 7 * 24 * time.Hour
+
+	// PairRetentionWindow is how long attempts are kept, so the weekly cap can see
+	// them all.
+	PairRetentionWindow = 7 * 24 * time.Hour
+
 	SyncWindowDuration = 5 * time.Minute
 	LinkSessionTimeout = 10 * time.Minute
 )
 
-// liveAttempts returns the attempts still inside the rate-limit window.
-func liveAttempts(attempts []time.Time, now time.Time) []time.Time {
-	var live []time.Time
+// attemptsWithin returns the attempts that fall inside the given window ending now.
+func attemptsWithin(attempts []time.Time, now time.Time, window time.Duration) []time.Time {
+	var within []time.Time
 	for _, attempt := range attempts {
-		if now.Sub(attempt) < PairAttemptWindow {
-			live = append(live, attempt)
+		if now.Sub(attempt) < window {
+			within = append(within, attempt)
 		}
 	}
-	return live
+	return within
 }
 
-// pairAttemptsInWindow counts the live attempts.
+// liveAttempts returns the attempts still inside the hourly rate-limit window.
+func liveAttempts(attempts []time.Time, now time.Time) []time.Time {
+	return attemptsWithin(attempts, now, PairAttemptWindow)
+}
+
+// pairAttemptsInWindow counts the live (hourly) attempts.
 func pairAttemptsInWindow(attempts []time.Time, now time.Time) int {
 	return len(liveAttempts(attempts, now))
 }
 
-// checkPairAttempt reports whether another pairing attempt is allowed under the
-// rate limit, given the already-filtered live attempts. It records nothing: callers
-// that can fail before a code is really produced (phone-code pairing, where
-// whatsmeow rejects PairPhone until the websocket is up) check first and record
-// only on success, so a transient pre-connection failure never burns a slot.
-func checkPairAttempt(live []time.Time, now time.Time, acknowledged bool) error {
-	if len(live) >= MaxPairAttempts && !acknowledged {
-		oldest := live[0]
-		for _, attempt := range live {
-			if attempt.Before(oldest) {
-				oldest = attempt
-			}
+// oldestAttempt returns the earliest attempt in a non-empty slice.
+func oldestAttempt(attempts []time.Time) time.Time {
+	oldest := attempts[0]
+	for _, attempt := range attempts {
+		if attempt.Before(oldest) {
+			oldest = attempt
 		}
-		cooldown := (PairAttemptWindow - now.Sub(oldest)).Round(time.Minute)
+	}
+	return oldest
+}
+
+// checkPairAttempt reports whether another pairing attempt is allowed under the
+// ban-avoidance rate limit, given the RAW attempt history (it filters each window
+// itself). It records nothing: callers that can fail before a code is really
+// produced (phone-code pairing, where whatsmeow rejects PairPhone until the
+// websocket is up) check first and record only on success, so a transient
+// pre-connection failure never burns a slot.
+//
+// The caps are enforced widest-first: the weekly and daily caps are HARD (an
+// --acknowledge-ban-risk acknowledgement does NOT bypass them), so re-pairing is
+// structurally incapable of exceeding a safe rate; only the hourly cap is
+// override-able for a legitimate immediate retry.
+func checkPairAttempt(attempts []time.Time, now time.Time, acknowledged bool) error {
+	if weekly := attemptsWithin(attempts, now, PairWeekWindow); len(weekly) >= MaxPairPer7d {
+		cooldown := (PairWeekWindow - now.Sub(oldestAttempt(weekly))).Round(time.Minute)
+		return fmt.Errorf(
+			"pairing blocked for %s: %d pairing attempts in the last 7 days (hard cap %d). Repeated pairing is exactly what gets WhatsApp numbers banned; this 7-day cap is NOT override-able. Wait for the oldest attempt to age out before retrying",
+			cooldown, len(weekly), MaxPairPer7d)
+	}
+	if daily := attemptsWithin(attempts, now, PairDayWindow); len(daily) >= MaxPairPerDay {
+		cooldown := (PairDayWindow - now.Sub(oldestAttempt(daily))).Round(time.Minute)
+		return fmt.Errorf(
+			"pairing blocked for %s: %d pairing attempts in the last 24 hours (hard cap %d). Repeated pairing gets WhatsApp numbers banned; this daily cap is NOT override-able. Wait out the cooldown before retrying",
+			cooldown, len(daily), MaxPairPerDay)
+	}
+	if hourly := attemptsWithin(attempts, now, PairAttemptWindow); len(hourly) >= MaxPairAttempts && !acknowledged {
+		cooldown := (PairAttemptWindow - now.Sub(oldestAttempt(hourly))).Round(time.Minute)
 		return fmt.Errorf(
 			"pairing blocked for %s: %d pairing attempts in the last hour. Repeated pairing attempts get WhatsApp numbers flagged and banned. Wait out the cooldown and only retry with the user's explicit go-ahead; pass --acknowledge-ban-risk to override",
-			cooldown, len(live))
+			cooldown, len(hourly))
 	}
 	return nil
 }

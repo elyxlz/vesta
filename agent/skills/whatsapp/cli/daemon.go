@@ -204,6 +204,8 @@ func daemonStatus() {
 		"auth":                     authStatusMap(st, dataDir),
 		"sync_window_seconds_left": int(syncWindowRemaining(st.LinkedAt, now).Seconds()),
 		"pair_attempts_last_hour":  pairAttemptsInWindow(st.PairAttempts, now),
+		"pair_attempts_last_day":   len(attemptsWithin(st.PairAttempts, now, PairDayWindow)),
+		"pair_attempts_last_7d":    len(attemptsWithin(st.PairAttempts, now, PairWeekWindow)),
 	}
 	if output, exitCode, connected := trySocketCommand(getSocketPath(), "daemon-status", nil); connected && exitCode == 0 {
 		var connState any

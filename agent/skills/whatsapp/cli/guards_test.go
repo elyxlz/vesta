@@ -90,6 +90,69 @@ func TestPairAttemptAcknowledgeOverrides(t *testing.T) {
 	}
 }
 
+// TestWeeklyCapNotOverridable proves the 7-day hard cap blocks even with
+// --acknowledge-ban-risk: nothing can re-pair a number past the weekly budget.
+func TestWeeklyCapNotOverridable(t *testing.T) {
+	base := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	// MaxPairPer7d attempts spread over the week (each > 24h apart so the daily cap
+	// does not trip first), all inside PairWeekWindow.
+	var attempts []time.Time
+	for i := 0; i < MaxPairPer7d; i++ {
+		attempts = append(attempts, base.Add(time.Duration(i)*26*time.Hour))
+	}
+	now := base.Add(time.Duration(MaxPairPer7d) * 26 * time.Hour) // still < 7d from base
+	err := checkPairAttempt(attempts, now, true)
+	if err == nil {
+		t.Fatal("weekly cap must block even when acknowledged")
+	}
+	if !strings.Contains(err.Error(), "7 days") {
+		t.Errorf("weekly refusal must cite the 7-day cap, got: %v", err)
+	}
+}
+
+// TestDailyCapNotOverridable proves the 24h hard cap blocks even with
+// --acknowledge-ban-risk, while staying under the weekly cap.
+func TestDailyCapNotOverridable(t *testing.T) {
+	now := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
+	var attempts []time.Time
+	for i := 0; i < MaxPairPerDay; i++ {
+		attempts = append(attempts, now.Add(-time.Duration(i+1)*time.Hour))
+	}
+	err := checkPairAttempt(attempts, now, true)
+	if err == nil {
+		t.Fatal("daily cap must block even when acknowledged")
+	}
+	if !strings.Contains(err.Error(), "24 hours") {
+		t.Errorf("daily refusal must cite the 24-hour cap, got: %v", err)
+	}
+}
+
+// TestHourlyCapOverridable proves the hourly cap blocks unacknowledged but is
+// bypassed by --acknowledge-ban-risk when under the daily and weekly caps.
+func TestHourlyCapOverridable(t *testing.T) {
+	now := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
+	attempts := []time.Time{now.Add(-2 * time.Minute), now.Add(-time.Minute)}
+	if err := checkPairAttempt(attempts, now, false); err == nil {
+		t.Fatal("hourly cap must block an unacknowledged attempt")
+	}
+	if err := checkPairAttempt(attempts, now, true); err != nil {
+		t.Fatalf("hourly cap must be override-able when under daily/weekly: %v", err)
+	}
+}
+
+// TestPairAttemptsOutsideWindowIgnored proves attempts older than the widest
+// window do not count toward any cap.
+func TestPairAttemptsOutsideWindowIgnored(t *testing.T) {
+	now := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
+	var attempts []time.Time
+	for i := 0; i < MaxPairPer7d+3; i++ {
+		attempts = append(attempts, now.Add(-PairWeekWindow-time.Duration(i+1)*time.Hour))
+	}
+	if err := checkPairAttempt(attempts, now, false); err != nil {
+		t.Fatalf("aged-out attempts must not count: %v", err)
+	}
+}
+
 func TestSyncWindow(t *testing.T) {
 	now := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
 	if rem := syncWindowRemaining(time.Time{}, now); rem != 0 {

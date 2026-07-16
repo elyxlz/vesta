@@ -204,6 +204,15 @@ func runServe() {
 		defer logCloser.Close()
 	}
 
+	// Device preservation: a preserve-reconnect set RestorePending before re-exec.
+	// Restore the last-good device store BEFORE opening it (NewWhatsAppClient), so
+	// SQLite cannot replay the removal that lives in the WAL.
+	if loadStateFromDisk(dataDir).RestorePending {
+		if err := restoreGoodDevice(dataDir, logger); err != nil {
+			logger.Warnf("restore of last-good device failed: %v", err)
+		}
+	}
+
 	if notifDir != "" {
 		notifDir, err = resolveDir(notifDir)
 		if err != nil {
@@ -217,6 +226,9 @@ func runServe() {
 		fmt.Fprintf(os.Stderr, "Failed to initialize WhatsApp client: %v\n", err)
 		os.Exit(1)
 	}
+	// The restore (if any) is done and the store is open; clear the flag so a
+	// later ordinary boot does not restore a now-stale snapshot.
+	wac.state.update(func(s *daemonState) { s.RestorePending = false })
 	// Record this run's serve flags so `daemon restart` can bring the daemon back
 	// faithfully (survives stops and crashes via the persisted state).
 	wac.state.update(func(s *daemonState) {
@@ -428,6 +440,8 @@ func cmdDaemonStatus(_ []string, wac *WhatsAppClient) (any, error) {
 		"serve_args":               st.Args,
 		"sync_window_seconds_left": int(syncWindowRemaining(st.LinkedAt, now).Seconds()),
 		"pair_attempts_last_hour":  pairAttemptsInWindow(st.PairAttempts, now),
+		"pair_attempts_last_day":   len(attemptsWithin(st.PairAttempts, now, PairDayWindow)),
+		"pair_attempts_last_7d":    len(attemptsWithin(st.PairAttempts, now, PairWeekWindow)),
 	}
 	if wac.client.Store.ID != nil {
 		result["number"] = "+" + wac.client.Store.ID.User
@@ -1013,7 +1027,7 @@ func cmdPairPhone(args []string, wac *WhatsAppClient) (any, error) {
 	// (fresh daemon still recompiling), and such a failure must not burn a slot.
 	// The single-flight (beginPairing) means no concurrent caller can double-spend.
 	now := time.Now()
-	if err := checkPairAttempt(liveAttempts(wac.state.snapshot().PairAttempts, now), now, acknowledged); err != nil {
+	if err := checkPairAttempt(wac.state.snapshot().PairAttempts, now, acknowledged); err != nil {
 		return nil, err
 	}
 	code, err := wac.linker.pairCode(wac, phone)
