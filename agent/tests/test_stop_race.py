@@ -14,6 +14,7 @@ import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
+
 from core.cc_sdk.client import ClaudeSDKClient
 from core.cc_sdk.messages import AssistantMessage, ClaudeAgentOptions
 

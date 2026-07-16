@@ -5,10 +5,8 @@ from datetime import datetime, timedelta
 
 import pytest
 from google.auth.exceptions import RefreshError
-
 from google_cli import auth
 from google_cli.config import CALENDAR_SCOPES, GMAIL_SCOPES, SCOPES
-
 
 # -- the default scope set -----------------------------------------------
 
@@ -119,7 +117,7 @@ def _patch_refresh(monkeypatch):
         self.expiry = datetime.now() + timedelta(hours=1)
 
     monkeypatch.setattr(auth.Credentials, "refresh", fake_refresh, raising=True)
-    monkeypatch.setattr(auth, "Request", lambda: object())
+    monkeypatch.setattr(auth, "Request", object)
     return calls
 
 
@@ -155,6 +153,6 @@ def test_refresh_failure_tells_user_to_sign_in_again(tmp_path, monkeypatch):
         raise RefreshError("invalid_grant: Token has been expired or revoked.")
 
     monkeypatch.setattr(auth.Credentials, "refresh", failing_refresh, raising=True)
-    monkeypatch.setattr(auth, "Request", lambda: object())
+    monkeypatch.setattr(auth, "Request", object)
     with pytest.raises(ValueError, match="google auth login"):
         auth.get_credentials(tok, tmp_path / "credentials.json", ["https://mail.google.com/"])

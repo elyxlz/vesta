@@ -9,7 +9,6 @@ from __future__ import annotations
 import socket
 
 import pytest
-
 from vesta_browser import handover
 
 

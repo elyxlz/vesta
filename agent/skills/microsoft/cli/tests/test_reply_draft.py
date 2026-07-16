@@ -3,8 +3,7 @@
 from types import SimpleNamespace
 
 import pytest
-
-from microsoft_cli import cli, email, backend
+from microsoft_cli import backend, cli, email
 from microsoft_cli.config import Config
 
 QUOTED = "<div>quoted original</div>"
@@ -99,4 +98,11 @@ def test_reply_draft_parser_and_dispatch(monkeypatch):
     )
     # Graph-only: even with --backend owa-rest the reply-draft path runs the Graph function.
     assert cli._dispatch_email(dispatch_args, Config(), client=None) == "drafted"
-    assert seen == dict(account_email="me@example.com", email_id="m-1", body="hi", attachments=None, reply_all=True, replace_draft="old-1")
+    assert seen == {
+        "account_email": "me@example.com",
+        "email_id": "m-1",
+        "body": "hi",
+        "attachments": None,
+        "reply_all": True,
+        "replace_draft": "old-1",
+    }

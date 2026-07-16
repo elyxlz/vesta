@@ -16,6 +16,7 @@ session_id / async context manager) matches what core/ already calls.
 """
 
 import asyncio
+import contextlib
 import json
 import os
 import pathlib as pl
@@ -27,12 +28,11 @@ import time
 import typing as tp
 import uuid
 
-from . import transcript
-from . import tmux
+from . import tmux, transcript
 from ._claude_bin import ensure_claude
 from .bridge import Bridge
-from .messages import ClaudeAgentOptions, ClaudeSDKError, ResultMessage
 from .mcp import McpServer
+from .messages import ClaudeAgentOptions, ClaudeSDKError, ResultMessage
 
 _PKG_DIR = pl.Path(__file__).resolve().parent
 _FORWARD = _PKG_DIR / "_forward.py"
@@ -121,7 +121,7 @@ def _claude_args(
 class ClaudeSDKClient:
     def __init__(self, *, options: ClaudeAgentOptions) -> None:
         self._options = options
-        self._session_id = options.resume if options.resume else str(uuid.uuid4())
+        self._session_id = options.resume or str(uuid.uuid4())
         self._resuming = bool(options.resume)
         self._cwd = str(pl.Path(options.cwd).expanduser().resolve()) if options.cwd else os.getcwd()
         suffix = self._session_id.replace("-", "")[:12]
@@ -195,19 +195,15 @@ class ClaudeSDKClient:
     async def _cleanup(self) -> None:
         if self._monitor_task is not None:
             self._monitor_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._monitor_task
-            except asyncio.CancelledError:
-                pass
             self._monitor_task = None
         await tmux.kill_server(self._tmux_socket)
         await self._bridge.stop()
         for child in self._workdir.glob("*"):
             child.unlink(missing_ok=True)
-        try:
+        with contextlib.suppress(OSError):
             self._workdir.rmdir()
-        except OSError:
-            pass
 
     def _find_transcript(self) -> pl.Path | None:
         base = pl.Path(os.path.expanduser("~/.claude/projects"))

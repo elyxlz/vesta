@@ -17,9 +17,7 @@ from unittest.mock import MagicMock
 
 import httpx
 import pytest
-
 from microsoft_cli import backend, owa_rest
-
 
 # ---------------------------------------------------------------------------
 # Helpers

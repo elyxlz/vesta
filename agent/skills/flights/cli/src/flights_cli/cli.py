@@ -17,7 +17,6 @@ import json
 import sys
 from datetime import datetime, timedelta
 
-
 # Configure these to match your user's home airports.
 # Example: London airports. Replace with your own.
 HOME_AIRPORTS = ["LHR", "LGW", "STN", "LTN", "LCY"]
@@ -79,8 +78,8 @@ def _search_flights(
     max_results: int = 10,
 ) -> list[dict]:
     """Run a flight search for a single origin and return list of result dicts."""
+    from fli.core import build_flight_segments, parse_cabin_class, parse_max_stops, parse_sort_by, resolve_airport
     from fli.models import FlightSearchFilters, PassengerInfo
-    from fli.core import build_flight_segments, resolve_airport, parse_max_stops, parse_cabin_class, parse_sort_by
     from fli.search import SearchFlights
 
     try:
@@ -134,8 +133,8 @@ def _search_dates(
     max_results: int = 20,
 ) -> list[dict]:
     """Search cheapest dates for a single origin."""
+    from fli.core import build_date_search_segments, parse_cabin_class, parse_max_stops, resolve_airport
     from fli.models import DateSearchFilters, PassengerInfo
-    from fli.core import build_date_search_segments, resolve_airport, parse_max_stops, parse_cabin_class
     from fli.search import SearchDates
 
     try:

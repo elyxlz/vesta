@@ -9,7 +9,6 @@ import asyncio
 
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
-
 from voice.providers.elevenlabs import AUDIO_FORMATS, ElevenLabsTts
 
 

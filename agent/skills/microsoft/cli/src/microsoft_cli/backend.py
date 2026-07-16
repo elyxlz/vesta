@@ -37,9 +37,7 @@ class GraphUnavailable(Exception):
 def _is_permission_failure(exc: Exception) -> bool:
     if isinstance(exc, (PermissionError, GraphUnavailable)):
         return True
-    if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in _PERMISSION_STATUSES:
-        return True
-    return False
+    return bool(isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in _PERMISSION_STATUSES)
 
 
 def run(choice: str, graph_fn, rest_fn):
@@ -56,7 +54,7 @@ def run(choice: str, graph_fn, rest_fn):
     # AUTO: try Graph, fall back to OWA REST on permission failures only.
     try:
         return graph_fn()
-    except Exception as exc:  # noqa: BLE001 - we re-raise non-permission errors below
+    except Exception as exc:
         if _is_permission_failure(exc):
             logger.warning("Graph path unavailable (%s: %s); falling back to OWA REST", type(exc).__name__, exc)
             return rest_fn()

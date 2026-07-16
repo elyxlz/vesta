@@ -5,11 +5,12 @@ import contextlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import core.models as vm
-import core.config as cfg
 from conftest import idle_message_stream
-from core.client import process_message
 from wait_util import wait_for_condition
+
+import core.config as cfg
+import core.models as vm
+from core.client import process_message
 
 
 async def _run_processor_test(
@@ -22,7 +23,6 @@ async def _run_processor_test(
 ):
     """Shared helper for message_processor tests."""
     from core.loops import message_processor
-
     from core.provider import ProviderAuthState, ProviderStatus
 
     config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
@@ -94,7 +94,7 @@ async def test_restarts_on_error(tmp_path):
     async def side_effect(msg, *, state, config, is_user):
         raise RuntimeError("Simulated SDK buffer overflow")
 
-    state, session_count, messages = await _run_processor_test(
+    state, _session_count, _messages = await _run_processor_test(
         tmp_path, message_side_effect=side_effect, initial_queue=[vm.QueuedTurn("first message - will fail", True, [])]
     )
     assert state.graceful_shutdown.is_set()
@@ -141,7 +141,7 @@ async def test_restarts_on_timeout(tmp_path):
     async def side_effect(msg, *, state, config, is_user):
         raise TimeoutError()
 
-    state, session_count, messages = await _run_processor_test(
+    state, _session_count, _messages = await _run_processor_test(
         tmp_path, message_side_effect=side_effect, initial_queue=[vm.QueuedTurn("slow request", True, [])]
     )
     assert state.graceful_shutdown.is_set()
@@ -519,9 +519,8 @@ async def test_cancellation_triggers_restart(tmp_path):
     async def cancel_side_effect(msg, *, state, config, is_user):
         raise asyncio.CancelledError
 
-    with patch("core.loops.process_message", side_effect=cancel_side_effect):
-        with pytest.raises(asyncio.CancelledError):
-            await _run_messages_with_preempts(vm.QueuedTurn("msg", True, []), queue=queue, state=state, config=config)
+    with patch("core.loops.process_message", side_effect=cancel_side_effect), pytest.raises(asyncio.CancelledError):
+        await _run_messages_with_preempts(vm.QueuedTurn("msg", True, []), queue=queue, state=state, config=config)
 
     assert state.graceful_shutdown.is_set()
     assert state.persisted.last_restart_reason == "error: a turn was cancelled unexpectedly"

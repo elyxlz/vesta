@@ -194,7 +194,7 @@ def iframe_target(url_substring: str) -> str | None:
             url = node["url"] if "url" in node else ""
             if depth > 0 and url_substring in url:
                 return node["context"]
-            children = node["children"] if "children" in node and node["children"] else []
+            children = node["children"] if node.get("children") else []
             found = walk(children, depth + 1)
             if found:
                 return found

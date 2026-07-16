@@ -1,5 +1,5 @@
-from .config import Config
 from . import auth
+from .config import Config
 
 
 def authenticate_account(config: Config) -> dict:

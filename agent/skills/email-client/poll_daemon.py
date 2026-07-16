@@ -39,7 +39,10 @@ from imap_tools import AND
 # Reuse imap_client helpers. realpath (not abspath) so this resolves through the
 # ~/.email-client/poll_daemon.py symlink back to the skill's real directory.
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from imap_client import (  # noqa: E402
+import contextlib
+
+import daemon_lifecycle
+from imap_client import (
     _env,
     _from_full,
     _state_dir,
@@ -49,7 +52,6 @@ from imap_client import (  # noqa: E402
     list_accounts,
     notify_folders,
 )
-import daemon_lifecycle  # noqa: E402
 
 NOTIF_DIR = pathlib.Path.home() / "agent" / "notifications"
 # Bounded wait for worker threads to notice a stop_event and exit, so shutdown
@@ -200,10 +202,8 @@ def folder_worker(account: str, folder: str, interval: int, log, stop_event: thr
             stop_event.wait(RETRY_DELAY_SECS)
         finally:
             if mb is not None:
-                try:
+                with contextlib.suppress(Exception):
                     mb.logout()
-                except Exception:
-                    pass
     log(f"[{account}:{folder}] worker stopped")
 
 

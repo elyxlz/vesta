@@ -44,13 +44,13 @@ from imap_tools import AND, MailBox, MailMessageFlags
 # SETUP.md creates back to the skill's real directory: new sibling modules (e.g.
 # daemon_lifecycle) become importable without adding a new symlink for each one.
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from providers import (  # noqa: E402
+import daemon_lifecycle
+from providers import (
     apply_env_overrides,
     detect_provider,
     get_profile,
     resolve_provider,
 )
-import daemon_lifecycle  # noqa: E402
 
 
 def _env(name: str, default: str | None = None, *, required: bool = False) -> str:
@@ -524,10 +524,7 @@ def cmd_attachments(args):
         print(json.dumps({"saved": [], "uid": args.uid}, indent=2))
         return
 
-    if args.out_dir:
-        out_dir = pathlib.Path(args.out_dir).expanduser()
-    else:
-        out_dir = _state_dir() / "attachments" / str(args.uid)
+    out_dir = pathlib.Path(args.out_dir).expanduser() if args.out_dir else _state_dir() / "attachments" / str(args.uid)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     saved: list[dict] = []
@@ -539,10 +536,7 @@ def cmd_attachments(args):
         n = 1
         while candidate in used or (out_dir / candidate).exists():
             stem, _, ext = name.rpartition(".")
-            if ext and stem:
-                candidate = f"{stem}.{n}.{ext}"
-            else:
-                candidate = f"{name}.{n}"
+            candidate = f"{stem}.{n}.{ext}" if ext and stem else f"{name}.{n}"
             n += 1
         used.add(candidate)
         target = out_dir / candidate
@@ -1073,7 +1067,7 @@ def main():
 
     # Calendar over CalDAV (see calendar_client.py). Imported lazily because
     # calendar_client imports this module; a top-level import would be circular.
-    import calendar_client  # noqa: E402
+    import calendar_client
 
     calendar_client.build_parser(sub)
 

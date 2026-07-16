@@ -12,6 +12,7 @@ file the detached process can always write to and tail it for the URL.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import platform
 import re
@@ -201,10 +202,8 @@ def _ensure_xvfb(display: str, screen: str = "1920x1080x24") -> bool:
             return True
         # Safe to remove now: we just confirmed nothing is listening on :n.
         for stale in (f"/tmp/.X{n}-lock", f"/tmp/.X11-unix/X{n}"):
-            try:
+            with contextlib.suppress(OSError):
                 os.remove(stale)
-            except OSError:
-                pass
         subprocess.Popen(
             [xvfb, display, "-screen", "0", screen, "-nolisten", "tcp"],
             stdout=subprocess.DEVNULL,
@@ -316,10 +315,8 @@ def launch(
     try:
         ws_url = _read_ws_url(proc, stderr_log, READY_TIMEOUT_S)
     except Exception:
-        try:
+        with contextlib.suppress(ProcessLookupError):
             proc.kill()
-        except ProcessLookupError:
-            pass
         raise
 
     return RunningCamoufox(
@@ -344,7 +341,5 @@ def stop(running: RunningCamoufox, timeout_s: float = 5.0) -> None:
         if proc.poll() is not None:
             return
         time.sleep(0.1)
-    try:
+    with contextlib.suppress(ProcessLookupError):
         proc.kill()
-    except ProcessLookupError:
-        pass

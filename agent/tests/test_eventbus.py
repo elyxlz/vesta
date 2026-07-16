@@ -18,7 +18,6 @@ from core.events import (
     UserEvent,
 )
 
-
 # --- Emit & persist ---
 
 

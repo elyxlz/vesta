@@ -48,11 +48,11 @@ def _install_stubs():
 
 
 _install_stubs()
-import caldav_client  # noqa: E402
-import calendar_client  # noqa: E402
-import ics  # noqa: E402
-import imap_client  # noqa: E402
-import providers  # noqa: E402
+import caldav_client
+import calendar_client
+import ics
+import imap_client
+import providers
 
 GOOGLE_BASE = "https://apidata.googleusercontent.com/caldav/v2"
 

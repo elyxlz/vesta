@@ -37,7 +37,7 @@ import urllib.parse
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from imap_client import (  # noqa: E402
+from imap_client import (
     _env,
     _token_path,
     account_dir,
@@ -47,13 +47,12 @@ from imap_client import (  # noqa: E402
     save_config,
     save_token,
 )
-from providers import (  # noqa: E402
+from providers import (
     apply_env_overrides,
     detect_provider,
     get_profile,
     resolve_provider,
 )
-
 
 # -- device flow (Microsoft) ----------------------------------------
 
@@ -85,7 +84,7 @@ class _RedirectHandler(http.server.BaseHTTPRequestHandler):
 
     captured: dict | None = None
 
-    def do_GET(self):  # noqa: N802
+    def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         params = urllib.parse.parse_qs(parsed.query)
         # Ignore unrelated requests (e.g. the browser's /favicon.ico) so they

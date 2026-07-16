@@ -133,10 +133,7 @@ class CdpBackend:
     async def new_session(self) -> str:
         targets = (await self._cdp.send("Target.getTargets"))["targetInfos"]
         pages = [t for t in targets if t["type"] == "page" and not (t["url"] if "url" in t else "").startswith(_INTERNAL_PREFIXES)]
-        if pages:
-            target_id = pages[0]["targetId"]
-        else:
-            target_id = (await self._cdp.send("Target.createTarget", {"url": "about:blank"}))["targetId"]
+        target_id = pages[0]["targetId"] if pages else (await self._cdp.send("Target.createTarget", {"url": "about:blank"}))["targetId"]
         await self._session_for(target_id)
         self._context = target_id
         return target_id

@@ -25,7 +25,6 @@ from agentmail_bridge.config import (
     webhook_secret,
 )
 
-
 app = FastAPI(title="agentmail")
 
 

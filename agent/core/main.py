@@ -10,19 +10,18 @@ import typing as tp
 
 from rich import print_json
 
-from . import models as vm
 from . import config as cfg
-from . import logger
-from . import state_store
+from . import logger, state_store
+from . import models as vm
 from .api import start_ws_server
+from .default_skills import default_skill_sync_turn
 from .diagnostics import format_crash_detail
+from .events import EventBus
 from .loops import (
     greeting_turn,
     message_processor,
     monitor_loop,
 )
-from .default_skills import default_skill_sync_turn
-from .events import EventBus
 from .migrations import pending_migration_turns
 from .provider import derive_status
 from .upstream_sync import upstream_sync_turn, vesta_version

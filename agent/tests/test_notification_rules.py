@@ -7,10 +7,10 @@ import json
 import pydantic as pyd
 import pytest
 
-from core.notification import CORE_SOURCE, Notification, TYPE_PROACTIVE_CHECK
 from core import config as cfg
 from core import loops
 from core import notification_interrupt_policy as npn
+from core.notification import CORE_SOURCE, TYPE_PROACTIVE_CHECK, Notification
 
 
 def _notif(**fields) -> Notification:

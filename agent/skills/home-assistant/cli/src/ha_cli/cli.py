@@ -2,8 +2,8 @@ import argparse
 import json
 import sys
 
-from .config import Config
 from . import commands
+from .config import Config
 
 
 def main():
@@ -52,17 +52,18 @@ def main():
 def _dispatch(args, config: Config):
     if args.command == "state":
         return commands.get_state(config, args.entity_id, full=args.full)
-    elif args.command == "states":
+    if args.command == "states":
         return commands.list_states(config, domain=args.domain, search=args.search)
-    elif args.command == "weather":
+    if args.command == "weather":
         return commands.weather(config)
-    elif args.command == "service":
+    if args.command == "service":
         data = json.loads(args.data) if args.data else None
         return commands.call_service(config, args.domain, args.service_name, entity_id=args.entity_id, data=data)
-    elif args.command == "history":
+    if args.command == "history":
         return commands.get_history(config, args.entity_id, hours=args.hours)
-    elif args.command == "ping":
+    if args.command == "ping":
         return commands.check_api(config)
+    return None
 
 
 if __name__ == "__main__":

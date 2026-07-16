@@ -4,7 +4,7 @@ import json
 import os
 import sys
 import uuid
-from datetime import datetime, UTC, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -286,10 +286,11 @@ def _extract_category(tx: dict) -> str:
 def _generate_self_signed_cert() -> tuple[str, str]:
     """Generate a temporary self-signed cert for the localhost callback server."""
     import tempfile
+
     from cryptography import x509
-    from cryptography.x509.oid import NameOID
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
 
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     subject = issuer = x509.Name(

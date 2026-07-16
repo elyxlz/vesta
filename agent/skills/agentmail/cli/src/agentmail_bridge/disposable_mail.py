@@ -26,7 +26,6 @@ import time
 
 import httpx
 
-
 BASE = "https://api.mail.tm"
 DEFAULT_OTP_TIMEOUT_SECONDS = 180
 

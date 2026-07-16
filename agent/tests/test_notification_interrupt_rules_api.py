@@ -6,10 +6,10 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-from core.notification import Notification
 from core import config as cfg
 from core import notification_interrupt_policy as npn
 from core.api import _config_get_handler, _config_put_handler
+from core.notification import Notification
 
 
 async def _client(tmp_path, monkeypatch):
@@ -45,7 +45,7 @@ async def test_get_returns_empty_rules_when_unset(tmp_path, monkeypatch):
 
 @pytest.mark.anyio
 async def test_put_then_get_round_trip_and_applies(tmp_path, monkeypatch):
-    client, config = await _client(tmp_path, monkeypatch)
+    client, _config = await _client(tmp_path, monkeypatch)
     try:
         resp = await client.put("/config", json={"notification_rules": [{"source": "twitter", "action": "snooze"}]})
         assert resp.status == 200
@@ -78,7 +78,7 @@ async def test_put_legacy_pool_action_is_stored_as_snooze(tmp_path, monkeypatch)
 
 @pytest.mark.anyio
 async def test_put_invalid_action_is_400(tmp_path, monkeypatch):
-    client, config = await _client(tmp_path, monkeypatch)
+    client, _config = await _client(tmp_path, monkeypatch)
     try:
         resp = await client.put("/config", json={"notification_rules": [{"source": "x", "action": "nope"}]})
         assert resp.status == 400
@@ -89,7 +89,7 @@ async def test_put_invalid_action_is_400(tmp_path, monkeypatch):
 
 @pytest.mark.anyio
 async def test_put_rejects_core_source(tmp_path, monkeypatch):
-    client, config = await _client(tmp_path, monkeypatch)
+    client, _config = await _client(tmp_path, monkeypatch)
     try:
         resp = await client.put("/config", json={"notification_rules": [{"source": "core", "action": "snooze"}]})
         assert resp.status == 400
@@ -100,7 +100,7 @@ async def test_put_rejects_core_source(tmp_path, monkeypatch):
 
 @pytest.mark.anyio
 async def test_put_invalid_regex_predicate_is_400(tmp_path, monkeypatch):
-    client, config = await _client(tmp_path, monkeypatch)
+    client, _config = await _client(tmp_path, monkeypatch)
     try:
         rule = {"match": [{"field": "x", "op": "regex", "value": "(unclosed"}], "action": "snooze"}
         resp = await client.put("/config", json={"notification_rules": [rule]})
@@ -112,7 +112,7 @@ async def test_put_invalid_regex_predicate_is_400(tmp_path, monkeypatch):
 
 @pytest.mark.anyio
 async def test_rules_put_after_prefs_put_keeps_both(tmp_path, monkeypatch):
-    client, config = await _client(tmp_path, monkeypatch)
+    client, _config = await _client(tmp_path, monkeypatch)
     try:
         resp = await client.put("/config", json={"agent_personality": "warm"})
         assert resp.status == 200

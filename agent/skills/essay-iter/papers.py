@@ -273,7 +273,7 @@ def _annas_resolve_pdf(scidb_url: str) -> str | None:
         r'href="(https?://[^"]+?\.pdf)"',
         r'href="(https?://[^"]+?ipfs[^"]+?)"',
     ):
-        m = re.findall(pat, html, flags=re.I)
+        m = re.findall(pat, html, flags=re.IGNORECASE)
         if m:
             return m[0]
     return None

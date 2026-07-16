@@ -43,7 +43,7 @@ def read_new_objects(path: pl.Path, offset: int) -> tuple[list[dict[str, tp.Any]
 def _is_main_assistant(obj: dict[str, tp.Any]) -> bool:
     if "type" not in obj or obj["type"] != "assistant":
         return False
-    return not ("isSidechain" in obj and obj["isSidechain"])
+    return not (obj.get("isSidechain"))
 
 
 def assistant_message_from(obj: dict[str, tp.Any]) -> AssistantMessage | None:

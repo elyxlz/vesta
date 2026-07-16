@@ -3,7 +3,7 @@ import logging
 import sqlite3
 import uuid
 from contextlib import closing
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TypedDict
 
@@ -203,7 +203,7 @@ DUE_NOW_MESSAGE = (
 
 
 def parse_datetime(s: str) -> datetime:
-    parsed = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    parsed = datetime.fromisoformat(s)
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 

@@ -160,7 +160,7 @@ def test_no_space_dash_space_separator_in_prose():
             if " - " not in stripped:
                 continue
             # Skip markdown headings and table rows
-            if stripped.startswith("#") or stripped.startswith("|"):
+            if stripped.startswith(("#", "|")):
                 continue
             # Skip lines that quote the literal pattern (e.g. the ban rule itself)
             if '" - "' in stripped or "' - '" in stripped:

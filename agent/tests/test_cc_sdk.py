@@ -8,10 +8,9 @@ import pytest
 
 from core import cc_sdk
 from core.cc_sdk import tmux as cc_tmux
-from core.cc_sdk.client import ClaudeSDKClient, _FORWARD, _MCP_STDIO
+from core.cc_sdk.client import _FORWARD, _MCP_STDIO, ClaudeSDKClient
 from core.cc_sdk.messages import ClaudeAgentOptions
 from core.cc_sdk.transcript import assistant_message_from, read_new_objects
-
 
 # --- Helper scripts import cleanly when run by path (regression for the stdlib `types` shadow) ---
 
@@ -344,8 +343,9 @@ def test_every_core_hook_event_is_wired(tmp_path):
     """Guards against the transport silently dropping an event core depends on: each event
     core.sdk_parsing.make_hooks registers must get a forward command in settings.json, and
     SessionStart/Stop are always wired even if core didn't ask for them."""
-    import core.sdk_parsing as sp
     from unittest.mock import MagicMock
+
+    import core.sdk_parsing as sp
 
     core_events = set(sp.make_hooks(MagicMock()))
     assert "PreToolUse" in core_events and "Stop" in core_events  # sanity: make_hooks returned real events

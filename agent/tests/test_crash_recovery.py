@@ -6,13 +6,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from claude_agent_sdk import ClaudeSDKError
-
-import core.models as vm
-import core.config as cfg
 from conftest import idle_message_stream
-from core.diagnostics import format_crash_detail
 from wait_util import wait_for_condition
 
+import core.config as cfg
+import core.models as vm
+from core.diagnostics import format_crash_detail
 
 # --- format_crash_detail ---
 
@@ -125,9 +124,9 @@ async def test_resume_fallback_raises_when_enter_always_fails(tmp_path, session_
     with (
         patch("core.client.ClaudeSDKClient", _mock_client(mock_enter)),
         patch("core.client.build_client_options", return_value=MagicMock()),
+        pytest.raises(ClaudeSDKError, match=error),
     ):
-        with pytest.raises(ClaudeSDKError, match=error):
-            await message_processor(queue, state=state, config=config)
+        await message_processor(queue, state=state, config=config)
 
 
 # --- Processor done callback ---

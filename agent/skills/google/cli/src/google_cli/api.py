@@ -3,8 +3,8 @@ import time
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-from .config import Config
 from . import auth
+from .config import Config
 
 
 def gmail_service(config: Config):
@@ -31,3 +31,4 @@ def retry(func, *, max_retries: int = 3):
                 time.sleep(2**attempt)
             else:
                 raise
+    return None

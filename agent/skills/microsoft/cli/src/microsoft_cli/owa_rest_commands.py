@@ -15,8 +15,8 @@ import datetime as dt
 import pathlib as pl
 from zoneinfo import ZoneInfo
 
-from . import owa_rest
 from . import email as email_mod
+from . import owa_rest
 from .config import Config
 
 
@@ -287,7 +287,7 @@ def create_event(
     if recurrence:
         raise NotImplementedError("recurring events are not yet supported on the OWA REST path; use the Graph path")
     if is_all_day:
-        start_date = start.split("T")[0]
+        start_date = start.split("T", maxsplit=1)[0]
         end_date = end.split("T")[0] if end else start_date
         su = f"{start_date}T00:00:00Z"
         eu = (

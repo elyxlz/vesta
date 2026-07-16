@@ -18,10 +18,9 @@ they still queue when the user updates.
 
 import pathlib as pl
 
-from . import logger
-from . import models as vm
 from . import config as cfg
-from . import state_store
+from . import logger, state_store
+from . import models as vm
 
 
 def _migrations_dir(config: cfg.VestaConfig) -> pl.Path:

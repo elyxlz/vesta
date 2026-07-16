@@ -53,8 +53,7 @@ def _detect_platform() -> str:
 
 def _cache_dir() -> pl.Path:
     override = os.environ.get("CC_SDK_CACHE_DIR")
-    base = pl.Path(override) if override else pl.Path(os.path.expanduser("~/.cache/cc-sdk"))
-    return base
+    return pl.Path(override) if override else pl.Path(os.path.expanduser("~/.cache/cc-sdk"))
 
 
 def _fetch(url: str) -> bytes:

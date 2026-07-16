@@ -3,12 +3,11 @@
 import json
 import sys
 import time
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from pathlib import Path
 
-from .config import Config
 from .auth import get_client
-
+from .config import Config
 
 ORGANIZE_CONFIG = Path.home() / ".spotify" / "organize.json"
 WATCH_STATE_FILE = Path.home() / ".spotify" / "watch_state.json"

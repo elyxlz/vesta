@@ -6,11 +6,12 @@ import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
-import core.models as vm
+from wait_util import wait_for_condition
+
 import core.config as cfg
+import core.models as vm
 from core.events import EventBus
 from core.helpers import clear_notifications
-from core.notification import Notification
 from core.loops import (
     _is_new_json,
     _load_notification_files,
@@ -21,8 +22,8 @@ from core.loops import (
     monitor_loop,
     process_batch,
 )
+from core.notification import Notification
 from core.provider import ProviderAuthState, ProviderStatus
-from wait_util import wait_for_condition
 
 
 @pytest.mark.parametrize("kind", ["openrouter", "claude", "none"])
@@ -287,7 +288,7 @@ async def test_process_batch_queues_prompt(tmp_path):
         await process_batch([notif], queue=queue, config=config)
 
     assert not queue.empty()
-    prompt, is_user, file_paths, _ = await queue.get()
+    prompt, is_user, _file_paths, _ = await queue.get()
     assert '<channel source="test" type="message"' in prompt
     assert is_user is False
 
@@ -400,7 +401,7 @@ async def test_monitor_loop_interrupt_queued_while_not_idle(tmp_path, monkeypatc
         _write_notif(config.notifications_dir, "urgent")
         await wait_for_condition(lambda: not queue.empty(), message="interrupt notification was never queued")
 
-        prompt, is_user, file_paths, _ = await queue.get()
+        prompt, is_user, _file_paths, _ = await queue.get()
         assert '<channel source="test" type="message"' in prompt
         assert is_user is False
         assert state.event_bus.state == "thinking", "interrupt routing must not depend on idle state"
@@ -432,7 +433,7 @@ async def test_monitor_loop_passive_held_until_idle_then_flushed_once(tmp_path, 
         state.event_bus.set_state("idle")
         await wait_for_condition(lambda: not queue.empty(), message="passive batch never flushed after idle")
 
-        prompt, is_user, file_paths, _ = await queue.get()
+        prompt, is_user, _file_paths, _ = await queue.get()
         assert '<channel source="test" type="message"' in prompt
         assert is_user is False
 

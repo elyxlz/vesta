@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
-from . import graph, auth
+from . import auth, graph
 from .config import Config
 
 
@@ -93,9 +93,7 @@ def list_events(
             }
             endpoint = "/me/calendarView"
 
-        events = list(graph.paginate_cfg(config, client, endpoint, account_id, params=params, extra_prefer=extra_prefer))
-
-        return events
+        return list(graph.paginate_cfg(config, client, endpoint, account_id, params=params, extra_prefer=extra_prefer))
 
     except Exception as e:
         raise ValueError(f"Failed to list calendar events for {account_email}: {e}") from e
@@ -109,8 +107,7 @@ def list_calendars(
 ) -> list[dict[str, Any]]:
     account_id = auth.get_account_id_by_email(account_email, config.cache_file)
 
-    calendars = list(graph.paginate_cfg(config, client, "/me/calendars", account_id, params={"$select": "id,name,color,isDefaultCalendar"}))
-    return calendars
+    return list(graph.paginate_cfg(config, client, "/me/calendars", account_id, params={"$select": "id,name,color,isDefaultCalendar"}))
 
 
 def get_event(
@@ -156,7 +153,7 @@ def create_event(
 
     calendar_id = _get_calendar_id_by_name(config, client, account_id, calendar_name) if calendar_name else None
 
-    start_date = start.split("T")[0] if "T" in start else start
+    start_date = start.split("T", maxsplit=1)[0] if "T" in start else start
 
     if is_all_day:
         end_date = end.split("T")[0] if end and "T" in end else (end or start_date)

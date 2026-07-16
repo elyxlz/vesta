@@ -10,7 +10,7 @@ from typing import Any
 
 import httpx
 
-from . import graph, auth
+from . import auth, graph
 from .config import Config
 
 _FOLDER_FIELDS = ("id", "displayName", "parentFolderId", "totalItemCount", "unreadItemCount")

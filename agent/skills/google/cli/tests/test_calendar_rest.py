@@ -13,11 +13,9 @@ from types import SimpleNamespace
 
 import httplib2
 import pytest
-from googleapiclient.errors import HttpError
-
 from google_cli import calendar, cli
 from google_cli.config import Config
-
+from googleapiclient.errors import HttpError
 
 # -- harness -------------------------------------------------------------
 
@@ -83,34 +81,50 @@ def _http_error(code, payload):
 
 
 def _list_args(**over):
-    base = dict(command="list", calendar="primary", days_ahead=7, days_back=0, limit=None, no_details=False, user_timezone=None)
+    base = {
+        "command": "list",
+        "calendar": "primary",
+        "days_ahead": 7,
+        "days_back": 0,
+        "limit": None,
+        "no_details": False,
+        "user_timezone": None,
+    }
     base.update(over)
     return SimpleNamespace(**base)
 
 
 def _create_args(**over):
-    base = dict(
-        command="create",
-        calendar="primary",
-        subject="Sync",
-        start="2026-07-20T15:00:00",
-        end=None,
-        location=None,
-        body=None,
-        attendees=None,
-        timezone="Europe/London",
-        all_day=False,
-        recurrence=None,
-        recurrence_end_date=None,
-    )
+    base = {
+        "command": "create",
+        "calendar": "primary",
+        "subject": "Sync",
+        "start": "2026-07-20T15:00:00",
+        "end": None,
+        "location": None,
+        "body": None,
+        "attendees": None,
+        "timezone": "Europe/London",
+        "all_day": False,
+        "recurrence": None,
+        "recurrence_end_date": None,
+    }
     base.update(over)
     return SimpleNamespace(**base)
 
 
 def _update_args(**over):
-    base = dict(
-        command="update", calendar="primary", event_id="evt1", subject=None, start=None, end=None, location=None, body=None, timezone=None
-    )
+    base = {
+        "command": "update",
+        "calendar": "primary",
+        "event_id": "evt1",
+        "subject": None,
+        "start": None,
+        "end": None,
+        "location": None,
+        "body": None,
+        "timezone": None,
+    }
     base.update(over)
     return SimpleNamespace(**base)
 
@@ -359,7 +373,7 @@ def test_delete_occurrence_id_resolves_to_series_master(svc):
 
 
 def _respond_args(**over):
-    base = dict(command="respond", calendar="primary", event_id="evt5", response="accept", message=None)
+    base = {"command": "respond", "calendar": "primary", "event_id": "evt5", "response": "accept", "message": None}
     base.update(over)
     return SimpleNamespace(**base)
 
@@ -380,7 +394,7 @@ def test_respond_sets_self_attendee_status_without_guest_fanout(svc):
     assert patch["method"] == "events.patch"
     # An RSVP must not email the guest list.
     assert patch["kwargs"]["sendUpdates"] == "none"
-    me = [a for a in patch["kwargs"]["body"]["attendees"] if "self" in a][0]
+    me = next(a for a in patch["kwargs"]["body"]["attendees"] if "self" in a)
     assert me["responseStatus"] == "accepted"
     assert me["comment"] == "see you there"
     assert result == {"status": "accepted", "event_id": "evt5"}

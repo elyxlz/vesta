@@ -4,7 +4,7 @@ import json
 import os
 import sys
 import time
-from datetime import datetime, UTC, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 SEEN_FILE = Path.home() / ".finance" / "seen_transactions.json"

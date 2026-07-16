@@ -1,6 +1,7 @@
 """Background processing loops and notification handling."""
 
 import asyncio
+import contextlib
 import datetime as dt
 import json
 import pathlib as pl
@@ -8,28 +9,25 @@ import time
 import typing as tp
 
 import pydantic
-from watchfiles import awatch, Change
+from watchfiles import Change, awatch
 
-from . import models as vm
-from . import logger
 from . import config as cfg
-from . import notification_interrupt_policy
-from . import state_store
-from . import vestad_client
-from .config import DEFAULT_CONTEXT_WINDOW
+from . import logger, notification_interrupt_policy, state_store, vestad_client
+from . import models as vm
 from .client import (
     SDK_ERRORS,
-    process_message,
-    send_preempt,
-    resolve_openrouter_max_tokens,
-    compact_session,
-    client_session,
-    cancel_task,
     QueryNotDelivered,
+    cancel_task,
+    client_session,
+    compact_session,
+    process_message,
+    resolve_openrouter_max_tokens,
+    send_preempt,
 )
+from .config import DEFAULT_CONTEXT_WINDOW
 from .diagnostics import format_crash_detail
-from .helpers import load_prompt, build_restart_context, clear_notifications
-from .notification import CORE_SNOOZE_TYPES, CORE_SOURCE, Notification, TYPE_COMPACTION_FOLLOWUP, TYPE_NIGHTLY_DREAM, TYPE_PROACTIVE_CHECK
+from .helpers import build_restart_context, clear_notifications, load_prompt
+from .notification import CORE_SNOOZE_TYPES, CORE_SOURCE, TYPE_COMPACTION_FOLLOWUP, TYPE_NIGHTLY_DREAM, TYPE_PROACTIVE_CHECK, Notification
 from .openrouter_cache import start_cache_proxy
 from .provider import ProviderAuthState, is_unauthenticated
 
@@ -491,10 +489,8 @@ async def monitor_loop(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, 
     try:
         while not state.shutdown_event.is_set():
             # Wait for either a file change or the periodic tick
-            try:
+            with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(notify.wait(), timeout=config.monitor_tick_interval)
-            except TimeoutError:
-                pass
             notify.clear()
 
             if state.shutdown_event.is_set():

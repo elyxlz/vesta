@@ -280,7 +280,7 @@ def create_event(
     all_day = all_day or "T" not in start
 
     if all_day:
-        start_date = date.fromisoformat(start.split("T")[0])
+        start_date = date.fromisoformat(start.split("T", maxsplit=1)[0])
         end_date = date.fromisoformat(end.split("T")[0]) if end else start_date + timedelta(days=1)
         # The Calendar API's all-day end date is exclusive; bump a same-day end.
         if end_date <= start_date:
@@ -402,7 +402,7 @@ def respond_event(
     # The API stamps self=True on the authenticated user's own attendee entry.
     found = False
     for a in attendees:
-        if "self" in a and a["self"]:
+        if a.get("self"):
             a["responseStatus"] = status
             if message:
                 a["comment"] = message

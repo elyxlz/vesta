@@ -3,7 +3,6 @@
 import base64
 
 import pytest
-
 from microsoft_cli import email
 from microsoft_cli.config import Config
 

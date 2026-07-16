@@ -35,7 +35,7 @@ def _make_flow(credentials_file: Path, scopes: list[str]) -> InstalledAppFlow:
 def start_auth_flow(credentials_file: Path, scopes: list[str]) -> dict:
     flow = _make_flow(credentials_file, scopes)
     flow.redirect_uri = REDIRECT_URI
-    auth_url, state = flow.authorization_url(prompt="consent", access_type="offline")
+    auth_url, _state = flow.authorization_url(prompt="consent", access_type="offline")
     # Save code_verifier so complete_auth_flow can use it
     if flow.code_verifier:
         VERIFIER_FILE.write_text(flow.code_verifier)

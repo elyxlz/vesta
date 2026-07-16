@@ -1,5 +1,6 @@
 """Vesta logger - import and use directly: logger.info(), logger.dreamer(), etc."""
 
+import contextlib
 import logging
 import pathlib as pl
 import re
@@ -63,10 +64,8 @@ def _strip_markup(msg: str) -> str:
 def _log(msg: str, *, level: int = logging.INFO) -> None:
     record = _logger.makeRecord(_logger.name, level, "", 0, msg, (), None)
     _console_handler.emit(record)
-    try:
+    with contextlib.suppress(BlockingIOError):
         sys.stdout.flush()
-    except BlockingIOError:
-        pass
 
     if _file_handler:
         clean_record = _logger.makeRecord(_logger.name, level, "", 0, _strip_markup(msg), (), None)

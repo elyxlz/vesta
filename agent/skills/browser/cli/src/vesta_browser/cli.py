@@ -15,7 +15,6 @@ from pathlib import Path
 
 from . import admin, handover, helpers, snapshot
 
-
 SESSION_ENV = "BROWSER_SESSION"
 
 
@@ -309,7 +308,7 @@ def cmd_wait(args: argparse.Namespace) -> int:
         ok = helpers.wait_for_text(args.text, timeout=args.timeout)
     elif args.url:
         ok = helpers.wait_for_url(args.url, timeout=args.timeout)
-    elif args.load_state == "networkidle" or args.load_state == "load":
+    elif args.load_state in {"networkidle", "load"}:
         ok = helpers.wait_for_load(timeout=args.timeout)
     elif args.time is not None:
         helpers.wait(args.time / 1000.0)

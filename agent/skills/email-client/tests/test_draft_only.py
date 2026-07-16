@@ -7,9 +7,9 @@ smtp_send imports imap_client (which needs imap_tools/msal from the on-box runti
 We stub those modules so the guard can be exercised without the runtime venv.
 """
 
+import pathlib
 import sys
 import types
-import pathlib
 
 import pytest
 
@@ -53,7 +53,7 @@ def _install_stubs():
 
 
 _install_stubs()
-import smtp_send  # noqa: E402
+import smtp_send
 
 
 def _run(monkeypatch, argv, env):

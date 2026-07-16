@@ -240,37 +240,41 @@ class DeepgramStt:
         return await _get_json(url, {"Authorization": f"Token {api_key}"})
 
     async def validate(self, api_key: str) -> tuple[bool, str | None]:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
+        async with (
+            aiohttp.ClientSession() as session,
+            session.get(
                 f"{DEEPGRAM_API}/v1/projects",
                 headers={"Authorization": f"Token {api_key}"},
                 timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status == 401:
-                    return False, "invalid api key"
-                if resp.status != 200:
-                    return False, f"deepgram returned {resp.status}"
-                body = await resp.json()
-                if not body.get("projects"):
-                    return False, "no projects on this account"
+            ) as resp,
+        ):
+            if resp.status == 401:
+                return False, "invalid api key"
+            if resp.status != 200:
+                return False, f"deepgram returned {resp.status}"
+            body = await resp.json()
+            if not body.get("projects"):
+                return False, "no projects on this account"
         return True, None
 
 
 async def _project_id(api_key: str) -> str | None:
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
+        async with (
+            aiohttp.ClientSession() as session,
+            session.get(
                 f"{DEEPGRAM_API}/v1/projects",
                 headers={"Authorization": f"Token {api_key}"},
                 timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status != 200:
-                    return None
-                body = await resp.json()
-                projects = body.get("projects") or []
-                if not projects:
-                    return None
-                return projects[0].get("project_id")
+            ) as resp,
+        ):
+            if resp.status != 200:
+                return None
+            body = await resp.json()
+            projects = body.get("projects") or []
+            if not projects:
+                return None
+            return projects[0].get("project_id")
     except (TimeoutError, aiohttp.ClientError):
         return None
 

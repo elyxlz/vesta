@@ -550,14 +550,14 @@ def _find_album(api: Any, key: str) -> Any:
     """Find an album in shared_streams or owned albums by id or name."""
     try:
         for album in api.photos.shared_streams:
-            if album.id == key or album.name == key:
+            if key in (album.id, album.name):
                 return album
     except Exception:
         pass
     try:
         for album in api.photos.albums:
             aname = getattr(album, "name", None) or getattr(album, "title", None)
-            if album.id == key or aname == key:
+            if key in (album.id, aname):
                 return album
     except Exception:
         pass
@@ -621,7 +621,7 @@ def _download_one(
         local_size = dest.stat().st_size
         expected = version.get("size") or 0
         # Shared streams report size=0; treat any non-empty existing file as "done".
-        if local_size > 0 and (expected == 0 or local_size == expected):
+        if local_size > 0 and (expected in (0, local_size)):
             return False, "exists"
 
     # Stream download
@@ -668,11 +668,10 @@ def cmd_download(args: argparse.Namespace) -> None:
             ok, msg = False, f"err {type(e).__name__}:{e}"
         if ok:
             downloaded += 1
+        elif msg.startswith("err"):
+            failed.append(f"{photo.filename}: {msg}")
         else:
-            if msg.startswith("err"):
-                failed.append(f"{photo.filename}: {msg}")
-            else:
-                skipped += 1
+            skipped += 1
         if i % 10 == 0 or i == total:
             elapsed = time.time() - started
             rate = i / elapsed if elapsed else 0

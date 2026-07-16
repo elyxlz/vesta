@@ -6,8 +6,9 @@ import typing as tp
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-import core.models as vm
+
 import core.config as cfg
+import core.models as vm
 from core.events import EventBus
 
 os.environ.pop("CLAUDECODE", None)
@@ -115,7 +116,7 @@ def make_stream_harness(response_timeout: int | None = None):
             # `msg` — i.e. its dispatch (emit/turn bookkeeping) has fully completed.
             consumed.append(msg)
 
-    mock_client.receive_messages = MagicMock(side_effect=lambda: _receive_messages())
+    mock_client.receive_messages = MagicMock(side_effect=_receive_messages)
 
     return state, config, mock_client, emitted, message_queue, consumed
 

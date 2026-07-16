@@ -1,10 +1,10 @@
 import re
-from datetime import datetime, timedelta, UTC
-from typing import TypedDict, NotRequired
-from zoneinfo import ZoneInfo
 import time
+from datetime import UTC, datetime, timedelta
+from typing import NotRequired, TypedDict
+from zoneinfo import ZoneInfo
 
-from . import graph, auth, notifications, notify, folders, owa_rest, teams, capture
+from . import auth, capture, folders, graph, notifications, notify, owa_rest, teams
 from .config import Config
 from .context import MicrosoftContext
 
@@ -69,7 +69,7 @@ def _parse_event_time(event: CalendarEvent) -> datetime:
     # Check for timezone info: Z, +HH:MM, or -HH:MM
     has_tz = start_dt.endswith("Z") or "+" in start_dt or (start_dt.count("-") > 2)
     if has_tz:
-        return datetime.fromisoformat(start_dt.replace("Z", "+00:00"))
+        return datetime.fromisoformat(start_dt)
 
     # Local time without timezone - use the event's timeZone field
     if not start_tz:
@@ -185,7 +185,7 @@ def _poll_owa_rest_account(
                 if "receivedDateTime" not in message:
                     continue
                 try:
-                    received = datetime.fromisoformat(message["receivedDateTime"].replace("Z", "+00:00"))
+                    received = datetime.fromisoformat(message["receivedDateTime"])
                 except ValueError:
                     continue
                 if received > last_dt:
@@ -233,7 +233,7 @@ def _poll_teams_account(ctx: MicrosoftContext, config: Config, account_email: st
         if not preview or "createdDateTime" not in preview:
             continue
         try:
-            created = datetime.fromisoformat(preview["createdDateTime"].replace("Z", "+00:00"))
+            created = datetime.fromisoformat(preview["createdDateTime"])
         except ValueError:
             continue
         if created <= last_dt:
@@ -309,7 +309,7 @@ def _poll_teams_channels_account(ctx: MicrosoftContext, config: Config, account_
                 if "createdDateTime" not in msg:
                     continue
                 try:
-                    created = datetime.fromisoformat(msg["createdDateTime"].replace("Z", "+00:00"))
+                    created = datetime.fromisoformat(msg["createdDateTime"])
                 except ValueError:
                     continue
                 if created <= last_dt:
@@ -369,7 +369,7 @@ def run(ctx: MicrosoftContext):
             catching_up = False
 
             if first_run:
-                last_check_dt = datetime.fromisoformat(last_check.replace("Z", "+00:00"))
+                last_check_dt = datetime.fromisoformat(last_check)
                 gap_seconds = (datetime.now(UTC) - last_check_dt).total_seconds()
                 if gap_seconds > 90:
                     logger.info(f"Detected offline period of {gap_seconds:.0f}s, catching up from {last_check}")
@@ -377,7 +377,7 @@ def run(ctx: MicrosoftContext):
             first_run = False
 
             logger.info(f"Checking for updates since {last_check}")
-            last_dt = datetime.fromisoformat(last_check.replace("Z", "+00:00"))
+            last_dt = datetime.fromisoformat(last_check)
 
             new_check_time = datetime.now(UTC)
 

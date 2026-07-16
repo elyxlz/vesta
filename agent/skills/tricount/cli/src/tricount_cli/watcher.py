@@ -21,11 +21,11 @@ import json
 import os
 import sys
 import time
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from pathlib import Path
 
 from . import config
-from .client import TricountClient, Tricount, Transaction
+from .client import Transaction, Tricount, TricountClient
 
 STATE_FILE = config.CONFIG_DIR / "watch-state.json"
 
@@ -326,6 +326,6 @@ def serve(notif_dir: Path, interval: int = DEFAULT_INTERVAL) -> None:
         try:
             state = poll_once(client, notif_dir, state)
             save_state(state)
-        except Exception as e:  # noqa: BLE001 - loop must survive any transient error
+        except Exception as e:
             _log(f"poll failed ({type(e).__name__}: {e}); continuing")
         time.sleep(interval)

@@ -182,10 +182,8 @@ def _load_proxy_state() -> dict:
 
 def _save_proxy_state(state: dict) -> None:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    try:
+    with contextlib.suppress(Exception):
         PROXY_STATE_FILE.write_text(json.dumps(state, indent=2))
-    except Exception:
-        pass
 
 
 def _tor_reachable(host: str = "127.0.0.1", port: int = 9050) -> bool:
@@ -222,14 +220,14 @@ def _fetch_free_proxies(timeout: float = 8) -> list[str]:
     for url in sources:
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
+            with urllib.request.urlopen(req, timeout=timeout) as r:
                 body = r.read().decode("utf-8", "replace")
             for line in body.splitlines():
                 line = line.strip()
                 if not line or ":" not in line:
                     continue
                 # accept "host:port" and full URLs
-                if line.startswith("http://") or line.startswith("https://") or line.startswith("socks"):
+                if line.startswith(("http://", "https://", "socks")):
                     out.append(line)
                 else:
                     out.append(f"http://{line}")
@@ -381,9 +379,7 @@ def _bootstrap_from_existing_cdp(port: int = 9222, timeout: int = 60) -> dict | 
     except ImportError:
         return None
     try:
-        urllib.request.urlopen(  # noqa: S310
-            f"http://127.0.0.1:{port}/json/version", timeout=2
-        )
+        urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=2)
     except Exception:
         return None
     try:
@@ -391,7 +387,7 @@ def _bootstrap_from_existing_cdp(port: int = 9222, timeout: int = 60) -> dict | 
             f"http://127.0.0.1:{port}/json/new?https://app.gptzero.me/",
             method="PUT",
         )
-        data = json.loads(urllib.request.urlopen(req, timeout=5).read())  # noqa: S310
+        data = json.loads(urllib.request.urlopen(req, timeout=5).read())
     except Exception as e:
         sys.stderr.write(f"[gptzero] could not open tab on port {port}: {e}\n")
         return None
@@ -460,9 +456,7 @@ def _bootstrap_from_existing_cdp(port: int = 9222, timeout: int = 60) -> dict | 
         with contextlib.suppress(Exception):
             ws.close()
         with contextlib.suppress(Exception):
-            urllib.request.urlopen(  # noqa: S310
-                f"http://127.0.0.1:{port}/json/close/{data['id']}", timeout=3
-            )
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/json/close/{data['id']}", timeout=3)
 
 
 def _bootstrap_via_browser(proxy: str | None = None) -> dict:
@@ -521,9 +515,7 @@ def _bootstrap_via_browser(proxy: str | None = None) -> dict:
         last_err = None
         for _ in range(60):
             try:
-                urllib.request.urlopen(  # noqa: S310
-                    f"http://127.0.0.1:{port}/json/version", timeout=1
-                )
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=1)
                 ok = True
                 break
             except Exception as e:
@@ -535,9 +527,7 @@ def _bootstrap_via_browser(proxy: str | None = None) -> dict:
         if not ok:
             raise RuntimeError(f"Chromium did not become CDP-reachable at 127.0.0.1:{port} (DISPLAY={display}, last error: {last_err})")
 
-        targets = json.loads(
-            urllib.request.urlopen(f"http://127.0.0.1:{port}/json").read()  # noqa: S310
-        )
+        targets = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/json").read())
         page = next(t for t in targets if t.get("type") == "page")
         # Connect directly to the page's debugger WS. No Target.attachToTarget
         # needed -- on this WS we're already on the page session, no sessionId.
@@ -812,6 +802,7 @@ def score(
             if msg.startswith("auth") and auth_attempt == 0:
                 continue
             raise
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -1061,10 +1052,7 @@ def main(argv=None):
     if not args.file:
         p.error("provide a file (or '-' for stdin), --smoke, or --refresh")
 
-    if args.file == "-":
-        text = sys.stdin.read()
-    else:
-        text = Path(args.file).read_text()
+    text = sys.stdin.read() if args.file == "-" else Path(args.file).read_text()
 
     res = score(
         text,

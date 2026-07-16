@@ -10,12 +10,13 @@
 # Or copy to the nova3 engines directory:
 #   cp torrentleech.py ~/.local/share/qBittorrent/nova3/engines/
 
+import contextlib
+import http.cookiejar
 import json
 import os
 import tempfile
 import urllib.parse
 import urllib.request
-import http.cookiejar
 
 # Try importing qBittorrent's novaprinter (works when run as plugin)
 try:
@@ -100,10 +101,8 @@ class torrentleech:
         ]
 
         # Try loading saved cookies
-        try:
+        with contextlib.suppress(FileNotFoundError, OSError):
             self.cj.load(ignore_discard=True, ignore_expires=True)
-        except (FileNotFoundError, OSError):
-            pass
 
     def _login(self):
         """Authenticate with TorrentLeech"""

@@ -13,12 +13,12 @@ from pathlib import Path
 import pydantic as pyd
 import pytest
 from aiohttp import ClientSession, WSMsgType, web
-
-import core.models as vm
-import core.config as cfg
-from core.api import _ws_handler, _write_app_chat_notification, start_ws_server
-from core.events import ChatEvent, NotificationEvent, UserEvent
 from wait_util import wait_for_condition
+
+import core.config as cfg
+import core.models as vm
+from core.api import _write_app_chat_notification, _ws_handler, start_ws_server
+from core.events import ChatEvent, NotificationEvent, UserEvent
 
 
 def _pick_port() -> int:
@@ -63,12 +63,11 @@ async def test_ws_sends_snapshot_by_default(event_bus):
     event_bus.emit(ChatEvent(type="chat", text="hello"))
     runner, base = await _start_server(event_bus)
     try:
-        async with ClientSession() as session:
-            async with session.ws_connect(f"{base}/ws") as ws:
-                msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
-                data = json.loads(msg.data)
-                assert data["type"] == "snapshot"
-                assert any(e["type"] == "chat" and e["text"] == "hello" for e in data["chat"]["events"])
+        async with ClientSession() as session, session.ws_connect(f"{base}/ws") as ws:
+            msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
+            data = json.loads(msg.data)
+            assert data["type"] == "snapshot"
+            assert any(e["type"] == "chat" and e["text"] == "hello" for e in data["chat"]["events"])
     finally:
         await runner.cleanup()
 
@@ -79,14 +78,13 @@ async def test_ws_sends_empty_snapshot_when_no_events(event_bus):
     can distinguish 'still loading' from 'no messages' instead of guessing."""
     runner, base = await _start_server(event_bus)
     try:
-        async with ClientSession() as session:
-            async with session.ws_connect(f"{base}/ws") as ws:
-                msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
-                data = json.loads(msg.data)
-                assert data["type"] == "snapshot"
-                assert data["chat"]["events"] == []
-                assert data["chat"]["cursor"] is None
-                assert data["notifications"]["pending"] == []
+        async with ClientSession() as session, session.ws_connect(f"{base}/ws") as ws:
+            msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
+            data = json.loads(msg.data)
+            assert data["type"] == "snapshot"
+            assert data["chat"]["events"] == []
+            assert data["chat"]["cursor"] is None
+            assert data["notifications"]["pending"] == []
     finally:
         await runner.cleanup()
 
@@ -98,18 +96,17 @@ async def test_ws_skip_history_sends_snapshot_without_chat(event_bus):
     event_bus.emit(ChatEvent(type="chat", text="stored"))
     runner, base = await _start_server(event_bus)
     try:
-        async with ClientSession() as session:
-            async with session.ws_connect(f"{base}/ws?skip_history=1") as ws:
-                msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
-                snapshot = json.loads(msg.data)
-                assert snapshot["type"] == "snapshot"
-                assert snapshot["chat"]["events"] == []  # "stored" backlog omitted
-                event_bus.emit(ChatEvent(type="chat", text="live"))
-                received = await _drain_until(
-                    ws,
-                    lambda r: any(e.get("type") == "chat" and e.get("text") == "live" for e in r),
-                )
-                assert any(e.get("type") == "chat" and e.get("text") == "live" for e in received)
+        async with ClientSession() as session, session.ws_connect(f"{base}/ws?skip_history=1") as ws:
+            msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
+            snapshot = json.loads(msg.data)
+            assert snapshot["type"] == "snapshot"
+            assert snapshot["chat"]["events"] == []  # "stored" backlog omitted
+            event_bus.emit(ChatEvent(type="chat", text="live"))
+            received = await _drain_until(
+                ws,
+                lambda r: any(e.get("type") == "chat" and e.get("text") == "live" for e in r),
+            )
+            assert any(e.get("type") == "chat" and e.get("text") == "live" for e in received)
     finally:
         await runner.cleanup()
 
@@ -125,14 +122,13 @@ async def test_ws_history_survives_notification_storm(event_bus):
         event_bus.emit(NotificationEvent(type="notification", source="core", summary=f"spam {i}"))
     runner, base = await _start_server(event_bus)
     try:
-        async with ClientSession() as session:
-            async with session.ws_connect(f"{base}/ws") as ws:
-                msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
-                data = json.loads(msg.data)
-                assert data["type"] == "snapshot"
-                history_types = {e["type"] for e in data["chat"]["events"]}
-                assert history_types == {"user", "chat"}
-                assert any(e["type"] == "chat" and e["text"] == "i am here" for e in data["chat"]["events"])
+        async with ClientSession() as session, session.ws_connect(f"{base}/ws") as ws:
+            msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
+            data = json.loads(msg.data)
+            assert data["type"] == "snapshot"
+            history_types = {e["type"] for e in data["chat"]["events"]}
+            assert history_types == {"user", "chat"}
+            assert any(e["type"] == "chat" and e["text"] == "i am here" for e in data["chat"]["events"])
     finally:
         await runner.cleanup()
 
@@ -160,15 +156,14 @@ async def test_ws_message_writes_app_chat_notification(event_bus, tmp_path):
     config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     runner, base = await _start_server_with_config(event_bus, config)
     try:
-        async with ClientSession() as session:
-            async with session.ws_connect(f"{base}/ws") as ws:
-                await asyncio.wait_for(ws.receive(), timeout=1.0)  # snapshot
-                await ws.send_json({"type": "chat", "text": "a reply, not intake"})
-                await ws.send_json({"type": "message", "text": "  deliver me  "})
-                await wait_for_condition(
-                    lambda: len(list(config.notifications_dir.glob("*.json"))) == 1,
-                    message="expected exactly one intake notification",
-                )
+        async with ClientSession() as session, session.ws_connect(f"{base}/ws") as ws:
+            await asyncio.wait_for(ws.receive(), timeout=1.0)  # snapshot
+            await ws.send_json({"type": "chat", "text": "a reply, not intake"})
+            await ws.send_json({"type": "message", "text": "  deliver me  "})
+            await wait_for_condition(
+                lambda: len(list(config.notifications_dir.glob("*.json"))) == 1,
+                message="expected exactly one intake notification",
+            )
         files = list(config.notifications_dir.glob("*-app-chat-message.json"))
         assert len(files) == 1
         notif = json.loads(files[0].read_text())
@@ -218,18 +213,17 @@ async def test_ws_survives_non_dict_json_frame(event_bus):
     killer: a later valid message on the same socket still comes through."""
     runner, base = await _start_server(event_bus)
     try:
-        async with ClientSession() as session:
-            async with session.ws_connect(f"{base}/ws?skip_history=1") as ws:
-                await asyncio.wait_for(ws.receive(), timeout=1.0)  # snapshot
-                await ws.send_str("123")
-                await ws.send_str("[]")
-                await ws.send_str("null")
-                await ws.send_json({"type": "chat", "text": "still alive"})
-                received = await _drain_until(
-                    ws,
-                    lambda r: any(e.get("type") == "chat" and e.get("text") == "still alive" for e in r),
-                )
-                assert any(e.get("type") == "chat" and e.get("text") == "still alive" for e in received)
+        async with ClientSession() as session, session.ws_connect(f"{base}/ws?skip_history=1") as ws:
+            await asyncio.wait_for(ws.receive(), timeout=1.0)  # snapshot
+            await ws.send_str("123")
+            await ws.send_str("[]")
+            await ws.send_str("null")
+            await ws.send_json({"type": "chat", "text": "still alive"})
+            received = await _drain_until(
+                ws,
+                lambda r: any(e.get("type") == "chat" and e.get("text") == "still alive" for e in r),
+            )
+            assert any(e.get("type") == "chat" and e.get("text") == "still alive" for e in received)
     finally:
         await runner.cleanup()
 
@@ -247,10 +241,9 @@ async def test_ws_snapshot_failure_cleans_up_subscription(event_bus, monkeypatch
     monkeypatch.setattr(api, "_pending_notification_ids", _boom)
     runner, base = await _start_server(event_bus)
     try:
-        async with ClientSession() as session:
-            async with session.ws_connect(f"{base}/ws") as ws:
-                msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
-                assert msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR)
+        async with ClientSession() as session, session.ws_connect(f"{base}/ws") as ws:
+            msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
+            assert msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR)
         await wait_for_condition(lambda: len(event_bus._subscribers) == 0, message="subscriber leaked after snapshot failure")
     finally:
         await runner.cleanup()
@@ -563,10 +556,9 @@ async def test_history_q_returns_matching_events_in_history_shape(event_bus):
     port = _pick_port()
     await web.TCPSite(runner, "127.0.0.1", port).start()
     try:
-        async with ClientSession() as session:
-            async with session.get(f"http://127.0.0.1:{port}/history?q=paris") as resp:
-                assert resp.status == 200
-                data = await resp.json()
+        async with ClientSession() as session, session.get(f"http://127.0.0.1:{port}/history?q=paris") as resp:
+            assert resp.status == 200
+            data = await resp.json()
         assert data["cursor"] is None
         texts = [e["text"] for e in data["events"]]
         assert "paris is lovely" in texts and "london is grey" not in texts
@@ -582,8 +574,7 @@ async def test_memory_put_rejects_non_dict_body(event_bus, tmp_path):
     auth = {"X-Agent-Token": "test-token"}
 
     try:
-        async with ClientSession() as session:
-            async with session.put(f"{base}/memory", json=42, headers=auth) as resp:
-                assert resp.status == 400
+        async with ClientSession() as session, session.put(f"{base}/memory", json=42, headers=auth) as resp:
+            assert resp.status == 400
     finally:
         await runner.cleanup()

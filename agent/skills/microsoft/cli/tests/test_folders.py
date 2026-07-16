@@ -1,7 +1,6 @@
 """Unit tests for microsoft_cli.folders (mocked Graph calls)."""
 
 import pytest
-
 from microsoft_cli import folders
 from microsoft_cli.config import Config
 
@@ -73,20 +72,20 @@ def test_folder_status(patched):
 
 def test_create_folder_root(patched):
     folders.create_folder(Config(), None, account_email="me@example.com", name="Projects")
-    post = [c for c in patched if c["method"] == "POST"][0]
+    post = next(c for c in patched if c["method"] == "POST")
     assert post["path"] == "/me/mailFolders"
     assert post["json"] == {"displayName": "Projects"}
 
 
 def test_create_folder_nested(patched):
     folders.create_folder(Config(), None, account_email="me@example.com", name="Child", parent_id="parent-id")
-    post = [c for c in patched if c["method"] == "POST"][0]
+    post = next(c for c in patched if c["method"] == "POST")
     assert post["path"] == "/me/mailFolders/parent-id/childFolders"
 
 
 def test_rename_folder(patched):
     folders.rename_folder(Config(), None, account_email="me@example.com", folder_id="fid", name="Renamed")
-    patch = [c for c in patched if c["method"] == "PATCH"][0]
+    patch = next(c for c in patched if c["method"] == "PATCH")
     assert patch["path"] == "/me/mailFolders/fid"
     assert patch["json"] == {"displayName": "Renamed"}
 
@@ -94,5 +93,5 @@ def test_rename_folder(patched):
 def test_delete_folder(patched):
     result = folders.delete_folder(Config(), None, account_email="me@example.com", folder_id="fid")
     assert result == {"status": "deleted", "id": "fid"}
-    delete = [c for c in patched if c["method"] == "DELETE"][0]
+    delete = next(c for c in patched if c["method"] == "DELETE")
     assert delete["path"] == "/me/mailFolders/fid"

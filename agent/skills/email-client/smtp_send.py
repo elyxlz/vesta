@@ -54,11 +54,11 @@ from __future__ import annotations
 
 import argparse
 import base64
+import datetime as _dt
 import mimetypes
 import os
 import pathlib
 import re as _re
-import datetime as _dt
 import smtplib
 import sys
 import time
@@ -72,7 +72,9 @@ from imap_tools import AND, MailMessageFlags
 MAX_ATTACH_TOTAL_BYTES = 25 * 1024 * 1024
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from imap_client import (  # noqa: E402
+import contextlib
+
+from imap_client import (
     _env,
     _from_full,
     _to_full,
@@ -84,7 +86,6 @@ from imap_client import (  # noqa: E402
     resolve_account,
     resolve_special_folder,
 )
-
 
 _DRAFT_ONLY_MESSAGE = "draft-only mode (EMAIL_DRAFT_ONLY): sending is disabled. Create a draft instead (--draft / the draft command)."
 
@@ -139,7 +140,7 @@ def _forward_block(orig: dict) -> str:
 
 def _strip_html(html: str) -> str:
     """Crude HTML to plain-text fallback for the alt part of an HTML-only send."""
-    s = _re.sub(r"<\s*(br|/p|/div|/li|/h[1-6])\s*/?\s*>", "\n", html or "", flags=_re.I)
+    s = _re.sub(r"<\s*(br|/p|/div|/li|/h[1-6])\s*/?\s*>", "\n", html or "", flags=_re.IGNORECASE)
     s = _re.sub(r"<[^>]+>", "", s)
     s = s.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"').replace("&#39;", "'")
     return _re.sub(r"\n{3,}", "\n\n", s).strip()
@@ -202,10 +203,8 @@ def _append_message(
         except Exception as e:
             return False, f"APPEND to {folder!r} failed: {e}"
     finally:
-        try:
+        with contextlib.suppress(Exception):
             mb.logout()
-        except Exception:
-            pass
 
 
 def _load_attachments(paths: list[str] | None) -> list[dict]:

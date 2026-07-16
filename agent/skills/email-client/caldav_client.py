@@ -116,7 +116,7 @@ def caldav_account(account: str | None) -> CalDavAccount:
     strategy = profile["auth_strategy"]
     if strategy == "device-flow":
         sys.exit("no CalDAV calendar for this provider; use the microsoft skill for Outlook / Microsoft 365 calendars")
-    base_url = str(profile["caldav_url"]).rstrip("/") if "caldav_url" in profile and profile["caldav_url"] else ""
+    base_url = str(profile["caldav_url"]).rstrip("/") if profile.get("caldav_url") else ""
     if not base_url:
         config_path = imap_client.account_dir(acc) / "config.json"
         sys.exit(f'provider {name!r} has no CalDAV endpoint; if it runs a CalDAV server, set "caldav_url" in {config_path}')

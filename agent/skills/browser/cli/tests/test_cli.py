@@ -63,7 +63,7 @@ def _minimal_args_for(cmd: str) -> list[str]:
         return ["browsingContext.getTree"]
     if cmd == "click":
         return ["e1"]
-    if cmd == "focus" or cmd == "close":
+    if cmd in {"focus", "close"}:
         return ["TARGET_XYZ"]
     if cmd == "resize":
         return ["1920", "1080"]

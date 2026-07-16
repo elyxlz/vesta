@@ -1,5 +1,5 @@
 import re
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from googleapiclient.errors import HttpError
@@ -7,7 +7,6 @@ from googleapiclient.errors import HttpError
 from . import api, calendar, notifications
 from .context import GoogleContext
 from .gmail import _get_header
-
 
 # Zero-width / bidi formatting characters that marketing emails use to pad previews.
 _INVISIBLE = re.compile(r"[​-‏‪-‮⁠⁦-⁩﻿]")
@@ -75,7 +74,7 @@ def _parse_event_time(event: dict) -> datetime:
     has_tz = date_str.endswith("Z") or "+" in date_str or (date_str.count("-") > 2)
 
     if has_tz:
-        return datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+        return datetime.fromisoformat(date_str)
 
     if tz_name:
         try:
@@ -101,7 +100,7 @@ def run(ctx: GoogleContext):
             else:
                 last_check_str = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
 
-            last_check_dt = datetime.fromisoformat(last_check_str.replace("Z", "+00:00"))
+            last_check_dt = datetime.fromisoformat(last_check_str)
             new_check_time = datetime.now(UTC)
 
             catching_up = False

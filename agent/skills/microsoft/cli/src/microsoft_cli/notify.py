@@ -11,7 +11,7 @@ from pathlib import Path
 
 import httpx
 
-from . import folders, auth
+from . import auth, folders
 from .config import Config
 
 DEFAULT_NOTIFY_FOLDERS = ["inbox"]

@@ -10,8 +10,7 @@ import aiohttp
 from aiohttp import web
 
 from . import config as voice_config
-from . import providers
-from . import tts_pending
+from . import providers, tts_pending
 
 logger = logging.getLogger("voice")
 
@@ -37,15 +36,17 @@ async def _notify_invalidation(scope: str) -> None:
     if _AGENT_TOKEN:
         headers["X-Agent-Token"] = _AGENT_TOKEN
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
+        async with (
+            aiohttp.ClientSession() as session,
+            session.post(
                 url,
                 json={"scope": scope},
                 headers=headers,
                 ssl=ssl_ctx,
                 timeout=aiohttp.ClientTimeout(total=5),
-            ):
-                pass
+            ),
+        ):
+            pass
     except Exception as exc:
         logger.debug("invalidation notify failed: %s", exc)
 

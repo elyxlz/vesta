@@ -1,12 +1,14 @@
-import httpx
-import os
-import time
 import logging
+import os
 import pathlib as pl
+import time
+from collections.abc import Iterator
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-from collections.abc import Iterator
+
+import httpx
+
 from .auth import get_token
 from .config import Config
 
@@ -47,7 +49,7 @@ def convert_utc_string_to_local(value: str, tz_name: str | None = None) -> str:
     except (ZoneInfoNotFoundError, KeyError):
         return value
     try:
-        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(value)
     except ValueError:
         return value
     if dt.tzinfo is None:
@@ -132,9 +134,7 @@ def request(
 
     prefer_values: list[str] = []
     if method == "GET":
-        if "$search" in (params or {}):
-            prefer_values.append('outlook.body-content-type="text"')
-        elif "body" in ((params or {})["$select"] if "$select" in (params or {}) else ""):
+        if "$search" in (params or {}) or "body" in ((params or {})["$select"] if "$select" in (params or {}) else ""):
             prefer_values.append('outlook.body-content-type="text"')
     else:
         headers["Content-Type"] = "application/json" if json else "application/octet-stream"

@@ -2,7 +2,6 @@
 
 import httpx
 import pytest
-
 from microsoft_cli import backend
 
 

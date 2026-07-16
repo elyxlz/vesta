@@ -35,8 +35,7 @@ from aiohttp import web
 from . import logger
 from .config import OpenRouterConfig, VestaConfig
 from .models import State
-from .provider import OPENROUTER_SMALL_FAST_MODEL
-from .provider import TERMINAL_PROVIDER_ERRORS, observed_provider_failure
+from .provider import OPENROUTER_SMALL_FAST_MODEL, TERMINAL_PROVIDER_ERRORS, observed_provider_failure
 
 OPENROUTER_API = "https://openrouter.ai/api"
 _ENDPOINTS_URL = "https://openrouter.ai/api/v1/models/{model}/endpoints"

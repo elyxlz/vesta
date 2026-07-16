@@ -7,11 +7,11 @@ Credentials (client_id, client_secret) stored in ~/.spotify/credentials.json.
 import json
 import sys
 from http.server import BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import parse_qs, urlparse
 
 import spotipy
-from spotipy.oauth2 import SpotifyOAuth
 from spotipy.cache_handler import CacheFileHandler
+from spotipy.oauth2 import SpotifyOAuth
 
 from .config import Config
 

@@ -28,7 +28,6 @@ from datetime import UTC, datetime
 
 import aiohttp
 
-
 RECONNECT_DELAY = 2.0
 SOCKET_TIMEOUT = 10.0
 SESSION_NAME = "app-chat"

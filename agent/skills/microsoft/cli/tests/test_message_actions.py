@@ -1,7 +1,6 @@
 """Unit tests for forward / move / archive / flag message actions (mocked Graph)."""
 
 import pytest
-
 from microsoft_cli import email
 from microsoft_cli.config import Config
 
@@ -60,33 +59,33 @@ def test_forward_requires_to(patched):
 def test_move_to_wellknown_folder(patched):
     result = email.move_email(Config(), None, account_email="me@example.com", email_id="m1", to_folder="Archive")
     assert result == {"status": "moved", "email_id": "m1", "to_folder": "Archive", "new_id": "moved-1"}
-    move = [c for c in patched if c["path"].endswith("/move")][0]
+    move = next(c for c in patched if c["path"].endswith("/move"))
     assert move["json"] == {"destinationId": "archive"}
 
 
 def test_move_to_named_folder_resolves_id(patched):
     email.move_email(Config(), None, account_email="me@example.com", email_id="m1", to_folder="Newsletters")
-    move = [c for c in patched if c["path"].endswith("/move")][0]
+    move = next(c for c in patched if c["path"].endswith("/move"))
     assert move["json"] == {"destinationId": "news-id"}
 
 
 def test_archive_moves_to_archive(patched):
     result = email.archive_email(Config(), None, account_email="me@example.com", email_id="m1")
     assert result["to_folder"] == "archive"
-    move = [c for c in patched if c["path"].endswith("/move")][0]
+    move = next(c for c in patched if c["path"].endswith("/move"))
     assert move["json"] == {"destinationId": "archive"}
 
 
 def test_update_flagged(patched):
     email.update_email(Config(), None, account_email="me@example.com", email_id="m1", flagged=True)
-    patch = [c for c in patched if c["method"] == "PATCH"][0]
+    patch = next(c for c in patched if c["method"] == "PATCH")
     assert patch["path"] == "/me/messages/m1"
     assert patch["json"] == {"flag": {"flagStatus": "flagged"}}
 
 
 def test_update_unflagged(patched):
     email.update_email(Config(), None, account_email="me@example.com", email_id="m1", flagged=False)
-    patch = [c for c in patched if c["method"] == "PATCH"][0]
+    patch = next(c for c in patched if c["method"] == "PATCH")
     assert patch["json"] == {"flag": {"flagStatus": "notFlagged"}}
 
 

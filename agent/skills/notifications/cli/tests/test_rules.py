@@ -3,7 +3,6 @@ import json
 import sqlite3
 
 import pytest
-
 from notifications_cli import cli
 
 

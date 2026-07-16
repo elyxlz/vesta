@@ -1,7 +1,7 @@
 """Playlist operations."""
 
-from .config import Config
 from .auth import get_client
+from .config import Config
 
 
 def list_playlists(config: Config, limit: int = 50) -> dict:

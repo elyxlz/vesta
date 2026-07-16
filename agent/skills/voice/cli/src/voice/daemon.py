@@ -55,10 +55,7 @@ def data_dir() -> pl.Path:
 def screen_output_has_live_session(screen_ls: str, name: str) -> bool:
     """A LIVE screen session with exactly this name (a "(Dead ???)" corpse does not count)."""
     pattern = re.compile(r"\d+\." + re.escape(name) + r"\s")
-    for line in screen_ls.splitlines():
-        if pattern.search(line) and "Dead" not in line:
-            return True
-    return False
+    return any(pattern.search(line) and "Dead" not in line for line in screen_ls.splitlines())
 
 
 def _screen_session_live(name: str) -> bool:

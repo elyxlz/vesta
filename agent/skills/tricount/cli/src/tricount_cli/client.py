@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -480,39 +480,29 @@ class TricountClient:
             allocations = self._build_ratio_allocations(ratio_splits, new_amount, tricount.currency)
         elif split_uuids:
             allocations = self._build_equal_allocations(split_uuids, new_amount, tricount.currency)
-        else:
-            # Reuse existing allocations (with updated amount if changed)
-            if amount is not None:
-                # Recompute proportionally from existing split
-                existing_total = sum(a.amount.abs_float for a in existing.allocations)
-                if existing_total > 0:
-                    allocations = [
-                        {
-                            "membership_uuid": a.membership_uuid,
-                            "amount": {
-                                "value": f"-{round(new_amount * a.amount.abs_float / existing_total, 2):.2f}",
-                                "currency": tricount.currency,
-                            },
-                            "type": "AMOUNT",
-                        }
-                        for a in existing.allocations
-                    ]
-                    # Fix rounding
-                    total_alloc = sum(float(a["amount"]["value"]) for a in allocations)
-                    diff = round(-new_amount - total_alloc, 2)
-                    if diff != 0:
-                        last = allocations[-1]
-                        cur = float(last["amount"]["value"])
-                        last["amount"]["value"] = f"{cur + diff:.2f}"
-                else:
-                    allocations = [
-                        {
-                            "membership_uuid": a.membership_uuid,
-                            "amount": {"value": a.amount.value, "currency": tricount.currency},
-                            "type": "AMOUNT",
-                        }
-                        for a in existing.allocations
-                    ]
+        # Reuse existing allocations (with updated amount if changed)
+        elif amount is not None:
+            # Recompute proportionally from existing split
+            existing_total = sum(a.amount.abs_float for a in existing.allocations)
+            if existing_total > 0:
+                allocations = [
+                    {
+                        "membership_uuid": a.membership_uuid,
+                        "amount": {
+                            "value": f"-{round(new_amount * a.amount.abs_float / existing_total, 2):.2f}",
+                            "currency": tricount.currency,
+                        },
+                        "type": "AMOUNT",
+                    }
+                    for a in existing.allocations
+                ]
+                # Fix rounding
+                total_alloc = sum(float(a["amount"]["value"]) for a in allocations)
+                diff = round(-new_amount - total_alloc, 2)
+                if diff != 0:
+                    last = allocations[-1]
+                    cur = float(last["amount"]["value"])
+                    last["amount"]["value"] = f"{cur + diff:.2f}"
             else:
                 allocations = [
                     {
@@ -522,6 +512,15 @@ class TricountClient:
                     }
                     for a in existing.allocations
                 ]
+        else:
+            allocations = [
+                {
+                    "membership_uuid": a.membership_uuid,
+                    "amount": {"value": a.amount.value, "currency": tricount.currency},
+                    "type": "AMOUNT",
+                }
+                for a in existing.allocations
+            ]
 
         body = {
             "description": new_description,

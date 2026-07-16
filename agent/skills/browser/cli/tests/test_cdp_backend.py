@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-
 from vesta_browser import cdp_backend
 from vesta_browser.bidi import BidiError
 from vesta_browser.cdp_backend import CdpBackend, _printable_key, _remote_to_bidi, _translate_event

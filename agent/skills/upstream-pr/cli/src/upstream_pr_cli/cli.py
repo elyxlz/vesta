@@ -159,7 +159,7 @@ def main():
         search = requests.get(
             f"{GITHUB_API}/repos/{UPSTREAM_REPO}/pulls",
             headers=headers,
-            params={"head": f"{UPSTREAM_REPO.split('/')[0]}:{branch}", "base": args.base, "state": "open"},
+            params={"head": f"{UPSTREAM_REPO.split('/', maxsplit=1)[0]}:{branch}", "base": args.base, "state": "open"},
             timeout=30,
         )
         if search.status_code == 200 and search.json():

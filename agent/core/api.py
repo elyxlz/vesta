@@ -23,16 +23,15 @@ import dataclasses as dc
 import datetime as dt
 import json
 import logging
-import typing as tp
 import sqlite3
 import time
+import typing as tp
 import weakref
 
 import aiohttp as _aiohttp
 import pydantic as pyd
 from aiohttp import web
 
-from .events import ChatEvent, EventBus, SnapshotChat, SnapshotEvent, UserEvent, VestaEvent
 from .config import (
     ClaudeConfig,
     VestaConfig,
@@ -42,11 +41,11 @@ from .config import (
     update_config_store,
     validate_config_updates,
 )
+from .events import ChatEvent, EventBus, SnapshotChat, SnapshotEvent, UserEvent, VestaEvent
 from .helpers import get_memory_path
 from .models import State
 from .notification import Notification
 from .provider import ProviderAuthState, UsageError, clear_provider, get_usage, set_claude, set_openrouter
-
 
 logger = logging.getLogger("vesta.api")
 

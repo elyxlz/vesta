@@ -10,7 +10,6 @@ import time
 import typing as tp
 
 import aiohttp
-
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
@@ -23,9 +22,11 @@ from claude_agent_sdk import (
 )
 from claude_agent_sdk.types import PermissionResultAllow, ThinkingConfigDisabled, ToolPermissionContext
 
-from . import logger
+from . import config as cfg
+from . import diagnostics, logger, sdk_parsing, state_store
 from . import models as vm
-from . import state_store
+from .config import CONTEXT_1M_BETA, DEFAULT_CONTEXT_WINDOW
+from .helpers import get_constitution_path, get_memory_path
 from .provider import (
     OPENROUTER_SMALL_FAST_MODEL,
     TERMINAL_PROVIDER_ERRORS,
@@ -33,11 +34,6 @@ from .provider import (
     is_unauthenticated,
     observed_provider_failure,
 )
-from . import config as cfg
-from .config import CONTEXT_1M_BETA, DEFAULT_CONTEXT_WINDOW
-from . import diagnostics
-from . import sdk_parsing
-from .helpers import get_constitution_path, get_memory_path
 from .tools import build_vesta_tools_server
 
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
@@ -58,15 +54,17 @@ async def resolve_openrouter_max_tokens(config: cfg.VestaConfig) -> int | None:
     if not isinstance(config.provider, cfg.OpenRouterConfig):
         return None
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
+        async with (
+            aiohttp.ClientSession() as session,
+            session.get(
                 OPENROUTER_MODELS_URL,
                 headers={"Authorization": f"Bearer {config.provider.key.get_secret_value()}"},
                 timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status != 200:
-                    return None
-                body = await resp.json()
+            ) as resp,
+        ):
+            if resp.status != 200:
+                return None
+            body = await resp.json()
     except (TimeoutError, aiohttp.ClientError, ValueError) as e:
         logger.warning(f"OpenRouter context-window lookup failed: {e}")
         return None
@@ -173,10 +171,8 @@ _SILENCE_POLL_S = 10.0  # wake the turn's wait loop during quiet stretches to lo
 
 async def cancel_task(task: asyncio.Task[tp.Any]) -> None:
     task.cancel()
-    try:
+    with contextlib.suppress(asyncio.CancelledError):
         await task
-    except asyncio.CancelledError:
-        pass
 
 
 def _open_turn(state: vm.State, *, show_output: bool) -> vm.TurnSignals:
@@ -211,14 +207,13 @@ async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaC
     turn = state.turn
     if turn:
         turn.last_message_at = time.monotonic()
-    else:
-        # Turnless CLI activity (a delivered preempt running as its own turn, or a
-        # CLI-initiated turn such as a background task notification): keep the activity state
-        # honest, since it drives the snoozed-batch flush and the proactive-check gate.
-        if isinstance(msg, AssistantMessage):
-            state.event_bus.set_state("thinking")
-        elif isinstance(msg, ResultMessage):
-            state.event_bus.set_state("idle")
+    # Turnless CLI activity (a delivered preempt running as its own turn, or a
+    # CLI-initiated turn such as a background task notification): keep the activity state
+    # honest, since it drives the snoozed-batch flush and the proactive-check gate.
+    elif isinstance(msg, AssistantMessage):
+        state.event_bus.set_state("thinking")
+    elif isinstance(msg, ResultMessage):
+        state.event_bus.set_state("idle")
     if isinstance(msg, AssistantMessage):
         state.compacting = False
     # The CLI ticks a thinking counter while the model reasons; diagnostics turns it into the
@@ -464,7 +459,7 @@ def _read_compaction_summary(session_id: str) -> str | None:
         text: str | None = None
         for line in matches[-1].read_text().splitlines():
             entry = json.loads(line)
-            if not ("isCompactSummary" in entry and entry["isCompactSummary"]):
+            if not (entry.get("isCompactSummary")):
                 continue
             if "message" not in entry or "content" not in entry["message"]:
                 continue

@@ -528,10 +528,7 @@ def parse_instant(value: str, params: dict[str, str], tzmap: TzMap | None = None
     time_of_day = dt.time(int(time_part[:2]), int(time_part[2:4]), int(time_part[4:6]))
     if zulu:
         return dt.datetime.combine(day, time_of_day, tzinfo=dt.UTC)
-    if "TZID" in params:
-        tz = resolve_zone(params["TZID"], tzmap) or dt.UTC
-    else:
-        tz = _local_tz()
+    tz = resolve_zone(params["TZID"], tzmap) or dt.UTC if "TZID" in params else _local_tz()
     return dt.datetime.combine(day, time_of_day, tzinfo=tz)
 
 
@@ -642,7 +639,7 @@ def _rrule_supported(rule: dict[str, str]) -> bool:
             if key in rule:
                 int(rule[key])
         for key in ("BYSETPOS", "BYMONTH", "BYMONTHDAY"):
-            if key in rule and rule[key]:
+            if rule.get(key):
                 _int_list(rule[key])
     except ValueError:
         return False
@@ -657,7 +654,7 @@ def _week_anchor(rule: dict[str, str], base: dt.datetime) -> tuple[dt.datetime, 
     """(start of DTSTART's week per WKST, sorted BYDAY offsets from that week start)."""
     wkst = WEEKDAY_CODES[rule["WKST"]] if "WKST" in rule and rule["WKST"] in WEEKDAY_CODES else 0
     week_start = base - dt.timedelta(days=(base.weekday() - wkst) % 7)
-    byday = rule["BYDAY"] if "BYDAY" in rule and rule["BYDAY"] else ""
+    byday = rule["BYDAY"] if rule.get("BYDAY") else ""
     offsets = sorted({(weekday - wkst) % 7 for _, weekday in _byday_specs(byday)}) if byday else []
     return week_start, offsets
 
@@ -665,7 +662,7 @@ def _week_anchor(rule: dict[str, str], base: dt.datetime) -> tuple[dt.datetime, 
 def _month_days(rule: dict[str, str], base: dt.datetime, year: int, month: int) -> list[int]:
     """Days of one month matching BYDAY / BYMONTHDAY (or DTSTART's day)."""
     limit = _days_in_month(year, month)
-    if "BYDAY" in rule and rule["BYDAY"]:
+    if rule.get("BYDAY"):
         days: set[int] = set()
         for ordinal, weekday in _byday_specs(rule["BYDAY"]):
             matching = [d for d in range(1, limit + 1) if dt.date(year, month, d).weekday() == weekday]
@@ -676,7 +673,7 @@ def _month_days(rule: dict[str, str], base: dt.datetime, year: int, month: int) 
             elif ordinal < 0 and -ordinal <= len(matching):
                 days.add(matching[ordinal])
         return sorted(days)
-    monthdays = _int_list(rule["BYMONTHDAY"]) if "BYMONTHDAY" in rule and rule["BYMONTHDAY"] else [base.day]
+    monthdays = _int_list(rule["BYMONTHDAY"]) if rule.get("BYMONTHDAY") else [base.day]
     resolved = {d if d > 0 else limit + 1 + d for d in monthdays}
     return sorted(d for d in resolved if 1 <= d <= limit)
 
@@ -709,7 +706,7 @@ def _period_candidates(rule: dict[str, str], base: dt.datetime, period: int) -> 
         candidates = [dt.datetime.combine(dt.date(year, month, day), base.time()) for day in _month_days(rule, base, year, month)]
     else:  # YEARLY
         year = base.year + period * interval
-        if "BYMONTH" in rule and rule["BYMONTH"]:
+        if rule.get("BYMONTH"):
             candidates = []
             for month in sorted(set(_int_list(rule["BYMONTH"]))):
                 if not 1 <= month <= 12:

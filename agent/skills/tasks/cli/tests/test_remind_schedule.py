@@ -3,13 +3,12 @@
 import json
 import sqlite3
 from contextlib import closing
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
 from apscheduler.triggers.cron import CronTrigger
-
 from tasks_cli import commands, db
 from tasks_cli.config import Config
 

@@ -14,10 +14,11 @@ import datetime as dt
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import core.models as vm
-from core.notification import Notification
 from conftest import assistant_msg, consuming, make_stream_harness, result_msg
 from wait_util import wait_for_condition
+
+import core.models as vm
+from core.notification import Notification
 
 
 async def _sent_messages(mock_client) -> list[dict]:
@@ -232,7 +233,7 @@ async def test_watcher_failed_delivery_queues_plain(config, state):
         task = asyncio.create_task(_run_messages_with_preempts(vm.QueuedTurn("first", True, []), queue=queue, state=state, config=config))
         await first_started.wait()
         await queue.put(vm.QueuedTurn("urgent", False, []))
-        await wait_for_condition(lambda: queue.empty(), message="watcher never collected the item")
+        await wait_for_condition(queue.empty, message="watcher never collected the item")
         release_first.set()
         await task
 

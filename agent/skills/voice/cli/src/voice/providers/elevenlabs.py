@@ -1,11 +1,10 @@
 """ElevenLabs TTS provider — HTTP streaming."""
 
+import logging
 import typing as tp
 
 import aiohttp
 from aiohttp import web
-
-import logging
 
 logger = logging.getLogger("voice.elevenlabs")
 
@@ -223,15 +222,17 @@ class ElevenLabsTts:
 
 async def _fetch_subscription(api_key: str) -> dict:
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
+        async with (
+            aiohttp.ClientSession() as session,
+            session.get(
                 f"{ELEVENLABS_API}/v1/user/subscription",
                 headers={"xi-api-key": api_key},
                 timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                body: tp.Any = await resp.json()
-                if resp.status != 200:
-                    return {"error": f"status {resp.status}", "body": body}
-                return body
+            ) as resp,
+        ):
+            body: tp.Any = await resp.json()
+            if resp.status != 200:
+                return {"error": f"status {resp.status}", "body": body}
+            return body
     except (TimeoutError, aiohttp.ClientError) as e:
         return {"error": str(e)}

@@ -7,6 +7,7 @@ The correct behavior is that the bad entry is skipped and an empty list is retur
 """
 
 import pytest
+
 import core.config as cfg
 from core.loops import load_notifications
 

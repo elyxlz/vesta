@@ -1,7 +1,6 @@
 """Unit tests for microsoft_cli.email.create_email_draft (mocked Graph calls)."""
 
 import pytest
-
 from microsoft_cli import email
 from microsoft_cli.config import Config
 

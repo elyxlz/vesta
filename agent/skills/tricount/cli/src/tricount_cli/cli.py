@@ -370,10 +370,10 @@ def cmd_edit_expense(args: argparse.Namespace, client: TricountClient) -> dict:
     out = {
         "status": "updated",
         "id": entry_id,
-        "description": args.description if args.description else existing.description,
+        "description": args.description or existing.description,
         "amount": args.amount if args.amount is not None else existing.amount.abs_float,
         "currency": t.currency,
-        "payer": payer_name if payer_name else member_by_uuid.get(existing.payer_uuid, existing.payer_uuid),
+        "payer": payer_name or member_by_uuid.get(existing.payer_uuid, existing.payer_uuid),
     }
     if split_desc:
         out["split"] = split_desc

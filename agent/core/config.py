@@ -8,11 +8,11 @@ import uuid
 
 import pydantic as pyd
 import pydantic_settings as pyd_settings
-from core import logger
 from claude_agent_sdk.types import ThinkingConfigAdaptive, ThinkingConfigDisabled, ThinkingConfigEnabled
 
-from .notification_interrupt_policy import NotificationInterruptRule
+from core import logger
 
+from .notification_interrupt_policy import NotificationInterruptRule
 
 _DEFAULT_AGENT_DIR = pl.Path.home() / "agent"
 _THINKING_ENABLED_BUDGET_TOKENS = 10000
@@ -77,7 +77,7 @@ ADAPTIVE_THINKING = ThinkingConfigAdaptive(type="adaptive", display="summarized"
 
 def _resolve_agent_dir() -> pl.Path:
     # Mirrors the agent_dir field, but resolved from env before the config exists so the store path can be located.
-    if "AGENT_DIR" in os.environ and os.environ["AGENT_DIR"]:
+    if os.environ.get("AGENT_DIR"):
         return pl.Path(os.environ["AGENT_DIR"]).expanduser().resolve()
     return _DEFAULT_AGENT_DIR
 
@@ -466,7 +466,7 @@ def load_config() -> tuple[VestaConfig, list[str]]:
                 # rather than crash-loop. model_construct skips validators, so build provider by hand
                 # and preserve the agent token from env so the HTTP/WS API stays authenticated.
                 issues.append(f"configuration could not be validated, using all defaults: {exc}")
-                token = os.environ["AGENT_TOKEN"] if "AGENT_TOKEN" in os.environ and os.environ["AGENT_TOKEN"] else None
+                token = os.environ["AGENT_TOKEN"] if os.environ.get("AGENT_TOKEN") else None
                 return (
                     VestaConfig.model_construct(
                         provider=ClaudeConfig(oauth=read_claude_oauth()),

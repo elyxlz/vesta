@@ -20,6 +20,7 @@ import sys
 import time
 import typing as tp
 
+import fake_claude
 import pytest
 
 from core import cc_sdk
@@ -35,8 +36,6 @@ from core.cc_sdk.messages import (
     ThinkingBlock,
     ToolUseBlock,
 )
-
-import fake_claude
 
 _TMUX_MISSING = shutil.which("tmux") is None
 if _TMUX_MISSING and "CI" in os.environ:
@@ -452,8 +451,9 @@ async def test_all_core_hook_events_reach_bridge(sandbox: Sandbox) -> None:
     PostToolUseFailure, SubagentStart/Stop, PreCompact, Notification, Stop, SessionStart).
     Only PreToolUse was covered before; this drives EVERY event core registers end to end
     (native command hook -> _forward.py -> bridge -> HookMatcher) so dropping any one is caught."""
-    import core.sdk_parsing as sp
     from unittest.mock import MagicMock
+
+    import core.sdk_parsing as sp
 
     core_events = [e for e in sp.make_hooks(MagicMock()) if e != "Stop"]  # Stop fires on every turn end
     received: dict[str, dict[str, tp.Any]] = {}

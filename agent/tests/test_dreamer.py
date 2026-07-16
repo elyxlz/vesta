@@ -7,13 +7,13 @@ import typing as tp
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-import core.models as vm
-import core.config as cfg
-from core.notification import Notification, TYPE_COMPACTION_FOLLOWUP
-from conftest import consuming
 from claude_agent_sdk import ClaudeSDKClient, ClaudeSDKError, ResultMessage, SystemMessage
+from conftest import consuming
 from wait_util import wait_for_condition
+
+import core.config as cfg
+import core.models as vm
+from core.notification import TYPE_COMPACTION_FOLLOWUP, Notification
 
 
 def _setup(tmp_path, *, dreamer_hour=4):
@@ -214,7 +214,7 @@ async def _run_with_compaction_stream(state, config, action, *, pre_tokens):
         )
         await asyncio.Event().wait()
 
-    client.receive_messages = MagicMock(side_effect=lambda: stream())
+    client.receive_messages = MagicMock(side_effect=stream)
     state.client = tp.cast(ClaudeSDKClient, client)
     async with consuming(state, config):
         await asyncio.wait_for(action(), timeout=5.0)
@@ -323,7 +323,7 @@ async def test_notification_file_deleted_before_processing_is_lost_on_restart(tm
     run_vesta cancels all tasks and the in-memory asyncio.Queue is dropped with the process.
     A restarted process finds an empty notifications dir and the message is gone with no trace.
     """
-    from core.loops import process_batch, drain_compaction_request, load_notifications
+    from core.loops import drain_compaction_request, load_notifications, process_batch
 
     config = _setup(tmp_path)
     state = vm.State()
@@ -380,9 +380,9 @@ async def test_processor_drains_turnless_compaction_on_idle_tick():
     bus state tracks turnless work), never mid-stream. Regression: the drain used to fire only
     after queue items, stranding exactly this request (v0.1.177 release, live dreamer test)."""
     from claude_agent_sdk import TextBlock
+    from conftest import assistant_msg, make_stream_harness, result_msg
 
     from core.loops import message_processor
-    from conftest import assistant_msg, make_stream_harness, result_msg
 
     state, config, mock_client, _, message_queue, _ = make_stream_harness()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)

@@ -16,7 +16,6 @@ import click
 from agentmail_bridge import serve, setup, status, teardown
 from agentmail_bridge.config import NPM_CLI_BIN
 
-
 VESTA_VERBS = {"setup", "serve", "status", "teardown", "--help", "-h"}
 
 

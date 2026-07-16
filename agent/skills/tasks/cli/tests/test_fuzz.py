@@ -1,11 +1,10 @@
 """Unit tests for fuzzed recurring reminders: deterministic sampling, window bounds, restart safety."""
 
-from datetime import datetime, timedelta, UTC
-import pytest
+from datetime import UTC, datetime, timedelta
 
+import pytest
 from tasks_cli import commands, db
 from tasks_cli.config import Config
-
 
 DAILY_1030 = {"type": "cron", "expr": "30 10 * * *", "tz": "UTC", "fuzz_minutes": 60}
 

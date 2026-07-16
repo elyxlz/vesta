@@ -46,7 +46,7 @@ def _eval_json(expression: str):
 
 def _current_context() -> str:
     resp = send({"meta": "context"})
-    return resp["context"] if "context" in resp and resp["context"] else ""
+    return resp["context"] if resp.get("context") else ""
 
 
 def snapshot(

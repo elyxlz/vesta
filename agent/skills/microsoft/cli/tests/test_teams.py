@@ -15,7 +15,6 @@ from unittest.mock import MagicMock
 
 import httpx
 import pytest
-
 from microsoft_cli import backend, teams
 from microsoft_cli.config import Config
 
@@ -391,8 +390,9 @@ def test_complete_authentication_returns_pivot_on_admin_wall(tmp_path, monkeypat
 
 
 def _teams_ctx(tmp_path, monkeypatch, chats):
-    from microsoft_cli.context import MicrosoftContext
     import logging
+
+    from microsoft_cli.context import MicrosoftContext
 
     monkeypatch.setattr(teams, "resolve_token", lambda cfg, acct: "tok")
     monkeypatch.setattr(teams, "_my_id", lambda client, token: "me-guid")
@@ -415,7 +415,8 @@ def _teams_ctx(tmp_path, monkeypatch, chats):
 
 
 def test_poll_teams_emits_for_new_incoming_message(tmp_path, monkeypatch):
-    from datetime import datetime, UTC
+    from datetime import UTC, datetime
+
     from microsoft_cli import monitor
 
     chats = [
@@ -444,7 +445,8 @@ def test_poll_teams_emits_for_new_incoming_message(tmp_path, monkeypatch):
 
 
 def test_poll_teams_skips_own_message(tmp_path, monkeypatch):
-    from datetime import datetime, UTC
+    from datetime import UTC, datetime
+
     from microsoft_cli import monitor
 
     chats = [
@@ -471,8 +473,9 @@ def test_poll_teams_skips_own_message(tmp_path, monkeypatch):
 def _teams_channels_ctx(tmp_path, monkeypatch, *, teams_list, channels=None, messages=None, list_teams_exc=None):
     """Wire a MicrosoftContext with the channel Graph calls mocked. Pass list_teams_exc to make
     team enumeration raise (the graceful-degrade path)."""
-    from microsoft_cli.context import MicrosoftContext
     import logging
+
+    from microsoft_cli.context import MicrosoftContext
 
     monkeypatch.setattr(teams, "resolve_token", lambda cfg, acct: "tok")
     monkeypatch.setattr(teams, "_my_id", lambda client, token: "me-guid")
@@ -504,7 +507,8 @@ def _teams_channels_ctx(tmp_path, monkeypatch, *, teams_list, channels=None, mes
 
 
 def test_poll_teams_channels_emits_non_interrupt_notification(tmp_path, monkeypatch):
-    from datetime import datetime, UTC
+    from datetime import UTC, datetime
+
     from microsoft_cli import monitor
 
     teams_list = [{"id": "team-1", "displayName": "Engineering"}]
@@ -535,7 +539,8 @@ def test_poll_teams_channels_emits_non_interrupt_notification(tmp_path, monkeypa
 
 
 def test_poll_teams_channels_skips_own_message(tmp_path, monkeypatch):
-    from datetime import datetime, UTC
+    from datetime import UTC, datetime
+
     from microsoft_cli import monitor
 
     teams_list = [{"id": "team-1", "displayName": "Engineering"}]
@@ -555,7 +560,8 @@ def test_poll_teams_channels_skips_own_message(tmp_path, monkeypatch):
 
 
 def test_poll_teams_channels_skips_old_message(tmp_path, monkeypatch):
-    from datetime import datetime, UTC
+    from datetime import UTC, datetime
+
     from microsoft_cli import monitor
 
     teams_list = [{"id": "team-1", "displayName": "Engineering"}]
@@ -577,7 +583,8 @@ def test_poll_teams_channels_skips_old_message(tmp_path, monkeypatch):
 def test_poll_teams_channels_degrades_gracefully_on_permission_error(tmp_path, monkeypatch):
     """When the account lacks channel access (403 / TeamsError), the poller returns cleanly with no
     notification and no exception, leaving chats-only behaviour intact."""
-    from datetime import datetime, UTC
+    from datetime import UTC, datetime
+
     from microsoft_cli import monitor
 
     ctx = _teams_channels_ctx(tmp_path, monkeypatch, teams_list=[], list_teams_exc=_http_error(403))
@@ -593,7 +600,8 @@ def test_poll_teams_channels_degrades_gracefully_on_permission_error(tmp_path, m
 
 
 def test_poll_teams_skips_old_message(tmp_path, monkeypatch):
-    from datetime import datetime, UTC
+    from datetime import UTC, datetime
+
     from microsoft_cli import monitor
 
     chats = [

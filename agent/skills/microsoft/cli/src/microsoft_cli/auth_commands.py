@@ -4,8 +4,8 @@ import json
 import subprocess
 
 from . import auth, capture, owa_rest, teams
-from .config import Config, OWA_REST_SCOPES, DEFAULT_CLIENT_SCOPES
-from .settings import OWA_REST_CLIENT_ID, DEFAULT_CLIENT_ID
+from .config import DEFAULT_CLIENT_SCOPES, OWA_REST_SCOPES, Config
+from .settings import DEFAULT_CLIENT_ID, OWA_REST_CLIENT_ID
 
 # JS that extracts the OWA access token from the browser's MSAL storage.
 # Returns the token secret (a JWT) or the string 'NONE'.

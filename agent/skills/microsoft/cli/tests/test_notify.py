@@ -3,8 +3,7 @@
 import json
 
 import pytest
-
-from microsoft_cli import notify, folders
+from microsoft_cli import folders, notify
 from microsoft_cli.config import Config
 
 _FOLDERS_PAGE = {

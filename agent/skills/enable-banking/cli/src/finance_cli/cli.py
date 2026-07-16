@@ -19,11 +19,10 @@ Commands:
 import argparse
 import json
 import sys
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 
 from . import config as cfg
 from . import enablebanking as eb
-
 
 # ---------------------------------------------------------------------------
 # Date helpers
@@ -38,10 +37,7 @@ def _month_range(month_str: str) -> tuple[datetime, datetime]:
     """Return (start, end) datetimes for a YYYY-MM month string."""
     dt = datetime.strptime(month_str, "%Y-%m").replace(tzinfo=UTC)
     from_dt = dt
-    if dt.month == 12:
-        to_dt = dt.replace(year=dt.year + 1, month=1)
-    else:
-        to_dt = dt.replace(month=dt.month + 1)
+    to_dt = dt.replace(year=dt.year + 1, month=1) if dt.month == 12 else dt.replace(month=dt.month + 1)
     return from_dt, to_dt
 
 
@@ -55,10 +51,7 @@ def _resolve_date_range(args, default_days: int = 30) -> tuple[datetime, datetim
     else:
         from_dt = now - timedelta(days=default_days)
 
-    if hasattr(args, "to_date") and args.to_date:
-        to_dt = _parse_date(args.to_date)
-    else:
-        to_dt = now
+    to_dt = _parse_date(args.to_date) if hasattr(args, "to_date") and args.to_date else now
 
     return from_dt, to_dt
 
@@ -136,7 +129,7 @@ def cmd_auth_login(args) -> dict:
 
     print(json.dumps({"status": "initiating", "message": "Contacting Enable Banking..."}), flush=True)
 
-    auth_url, state = eb.initiate_auth(conf)
+    auth_url, _state = eb.initiate_auth(conf)
 
     print(
         json.dumps(

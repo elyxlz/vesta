@@ -239,7 +239,7 @@ def _installable_skills() -> list[str]:
         try:
             if p.exists():
                 data = json.loads(p.read_text())
-                return sorted(s["name"] for s in data if "name" in s and s["name"])
+                return sorted(s["name"] for s in data if s.get("name"))
         except (OSError, ValueError):
             continue
     return []

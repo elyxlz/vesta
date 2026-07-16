@@ -5,11 +5,12 @@ import os
 import signal
 import sys
 import time
-from contextlib import closing
+from contextlib import closing, suppress
 from pathlib import Path
 
+from . import commands, db
+from . import format as fmt
 from .config import Config
-from . import commands, db, format as fmt
 from .scheduler import create_scheduler, write_notification
 
 
@@ -25,10 +26,8 @@ def _write_pid(config):
 
 
 def _remove_pid(config):
-    try:
+    with suppress(FileNotFoundError):
         (config.data_dir / "serve.pid").unlink()
-    except FileNotFoundError:
-        pass
 
 
 def _fail_daemon_not_running(detail: str):
@@ -181,7 +180,7 @@ def main():
     try:
         if args.command == "serve":
             _run_serve(config, Path(args.notifications_dir), port=args.port)
-            return
+            return None
 
         _require_daemon(config)
         _handle_task(args, config)
@@ -200,7 +199,7 @@ def _main_remind():
 
     remind_args = sys.argv[2:]
 
-    if not remind_args or remind_args == ["-h"] or remind_args == ["--help"]:
+    if not remind_args or remind_args in (["-h"], ["--help"]):
         _print_remind_help()
         return
 
@@ -225,7 +224,7 @@ def _main_remind():
             args = p.parse_args(remind_args[1:])
             _print_list(args, commands.remind_list(config, task_id=args.task_id, limit=args.limit), fmt.format_reminder_list)
             return
-        elif subcmd == "delete":
+        if subcmd == "delete":
             p = argparse.ArgumentParser(prog="tasks remind delete", add_help=False)
             p.add_argument("id_pos", nargs="?", default=None, metavar="id")
             p.add_argument("--id", default=None, dest="reminder_id")
@@ -345,10 +344,10 @@ def _handle_task(args, config: Config):
         )
         print(json.dumps(result, indent=2))
         return
-    elif args.command == "list":
+    if args.command == "list":
         _print_list(args, commands.list_tasks(config, show_completed=args.show_completed), fmt.format_task_list)
         return
-    elif args.command == "get":
+    if args.command == "get":
         task_id = _require_arg(args.id_pos or args.task_id, "id", "tasks get <id> or tasks get --id <id>")
         if args.field:
             fields = list(args.field)
@@ -400,9 +399,9 @@ def _handle_task(args, config: Config):
 def _print_list(args, result: list, formatter) -> None:
     """Dispatch a list-style command result to --json-pretty / --json / compact formatter."""
     attrs = vars(args)
-    if "json_pretty" in attrs and attrs["json_pretty"]:
+    if attrs.get("json_pretty"):
         print(json.dumps(result, indent=2))
-    elif "json" in attrs and attrs["json"]:
+    elif attrs.get("json"):
         print(json.dumps(result))
     else:
         print(formatter(result))

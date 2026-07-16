@@ -1,20 +1,20 @@
-from datetime import datetime, timedelta, UTC
-from contextlib import closing
-from pathlib import Path
-from typing import Any, TypedDict
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import json
 import logging
 import random
 import uuid
+from contextlib import closing
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any, TypedDict
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from apscheduler.triggers.date import DateTrigger
-from apscheduler.triggers.cron import CronTrigger
-from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
-from .config import Config
 from . import db
+from .config import Config
 from .format import PRIORITY_LABEL, rel_delta
 from .scheduler import write_notification, write_reminder_notification
 
@@ -175,7 +175,7 @@ def _parse_local_dt(datetime_str: str, timezone_str: str) -> datetime:
     except (ZoneInfoNotFoundError, KeyError):
         raise ValueError(f"Invalid timezone: '{timezone_str}'. Use IANA names like 'Europe/London' or 'America/New_York'.")
 
-    parsed = datetime.fromisoformat(datetime_str.replace("Z", "+00:00"))
+    parsed = datetime.fromisoformat(datetime_str)
     if parsed.tzinfo is not None:
         return parsed.astimezone(local_tz)
     return parsed.replace(tzinfo=local_tz)
@@ -665,18 +665,18 @@ def _restore_row(scheduler: BackgroundScheduler, row, now: datetime, notif_dir: 
             logger.warning(f"Reminder {reminder_id}: unknown trigger type '{trigger_type}', skipping")
             return False
 
-        add_job_kwargs: dict = dict(
-            func=send_reminder_job,
-            trigger=trigger,
-            args=[reminder_id],
-            kwargs={
+        add_job_kwargs: dict = {
+            "func": send_reminder_job,
+            "trigger": trigger,
+            "args": [reminder_id],
+            "kwargs": {
                 "message": row["message"],
                 "data_dir": str(config.data_dir),
                 "notif_dir": str(notif_dir) if notif_dir else "",
             },
-            id=reminder_id,
-            replace_existing=True,
-        )
+            "id": reminder_id,
+            "replace_existing": True,
+        }
         if trigger_type in ("cron", "interval"):
             add_job_kwargs["misfire_grace_time"] = 3600
             add_job_kwargs["coalesce"] = True

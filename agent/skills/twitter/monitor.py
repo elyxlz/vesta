@@ -15,7 +15,7 @@ import os
 import re
 import time
 import xml.etree.ElementTree as ET
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx

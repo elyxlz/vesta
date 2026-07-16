@@ -24,7 +24,6 @@ from typing import Any
 
 import httpx
 
-
 API_BASE = "https://api.exa.ai"
 CONFIG_DIR = Path.home() / ".exa"
 CONFIG_FILE = CONFIG_DIR / "config.json"
@@ -182,7 +181,7 @@ def _build_contents(args: argparse.Namespace) -> dict[str, Any] | None:
     if getattr(args, "highlights", False):
         contents["highlights"] = True
     if getattr(args, "summary", None) is not None:
-        summary = getattr(args, "summary")
+        summary = args.summary
         if summary == "" or summary is True:
             contents["summary"] = True
         else:

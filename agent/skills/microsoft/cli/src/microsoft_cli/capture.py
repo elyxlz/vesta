@@ -15,9 +15,9 @@ from __future__ import annotations
 
 import json
 import os
+import pathlib as pl
 import subprocess
 import time
-import pathlib as pl
 
 from . import owa_rest, teams
 

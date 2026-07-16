@@ -5,11 +5,9 @@ import typing as tp
 
 from claude_agent_sdk import create_sdk_mcp_server, tool
 
-from . import logger
-from . import models as vm
 from . import config as cfg
-from . import state_store
-from . import vestad_client
+from . import logger, state_store, vestad_client
+from . import models as vm
 from .api import start_ws_server
 from .helpers import clear_notifications
 from .upstream_sync import vesta_version

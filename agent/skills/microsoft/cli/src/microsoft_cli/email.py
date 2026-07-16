@@ -3,12 +3,12 @@
 import base64
 import html
 import pathlib as pl
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
 
-from . import graph, auth, folders
+from . import auth, folders, graph
 from .config import Config
 
 EMAIL_SAVE_SUBDIR = "emails"
@@ -59,7 +59,7 @@ def _attach_files(config: Config, client: httpx.Client, message_id: str, attachm
 
 
 def _remove_attachment_bytes(result: dict[str, Any]) -> None:
-    if "attachments" in result and result["attachments"]:
+    if result.get("attachments"):
         for attachment in result["attachments"]:
             if "contentBytes" in attachment:
                 del attachment["contentBytes"]
@@ -101,8 +101,7 @@ def _extract_addresses(recipients: list[dict[str, Any]]) -> str:
 
 
 def _scrub_email_snapshot(record: dict[str, Any]) -> None:
-    if "body" in record:
-        del record["body"]
+    record.pop("body", None)
     if "bodyPreview" in record:
         record.setdefault("preview", record.pop("bodyPreview"))
 
@@ -392,7 +391,7 @@ def send_email(
         message["attachments"] = [_file_attachment(att["name"], att["content_bytes"]) for att in processed_attachments]
         graph.request_cfg(config, client, "POST", "/me/sendMail", account_id, json={"message": message})
         return {"status": "sent"}
-    elif has_large_attachments:
+    if has_large_attachments:
         result = graph.request_cfg(config, client, "POST", "/me/messages", account_id, json=message)
         if not result:
             raise ValueError("Failed to create email draft")
@@ -416,9 +415,8 @@ def send_email(
 
         graph.request_cfg(config, client, "POST", f"/me/messages/{message_id}/send", account_id)
         return {"status": "sent"}
-    else:
-        graph.request_cfg(config, client, "POST", "/me/sendMail", account_id, json={"message": message})
-        return {"status": "sent"}
+    graph.request_cfg(config, client, "POST", "/me/sendMail", account_id, json={"message": message})
+    return {"status": "sent"}
 
 
 def reply_to_email(
@@ -456,11 +454,10 @@ def reply_to_email(
 
         graph.request_cfg(config, client, "POST", f"/me/messages/{draft_id}/send", account_id)
         return {"status": "sent"}
-    else:
-        endpoint = f"/me/messages/{email_id}/{reply_endpoint}"
-        payload = {"message": {"body": {"contentType": "HTML" if html else "Text", "content": body}}}
-        graph.request_cfg(config, client, "POST", endpoint, account_id, json=payload)
-        return {"status": "sent"}
+    endpoint = f"/me/messages/{email_id}/{reply_endpoint}"
+    payload = {"message": {"body": {"contentType": "HTML" if html else "Text", "content": body}}}
+    graph.request_cfg(config, client, "POST", endpoint, account_id, json=payload)
+    return {"status": "sent"}
 
 
 def _reply_body_to_html(raw: str) -> str:

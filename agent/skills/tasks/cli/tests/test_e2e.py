@@ -5,7 +5,7 @@ import socket
 import sqlite3
 import subprocess
 import time
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -951,8 +951,8 @@ class TestRecurringNextRun:
 
     def test_nonexistent_reminder_no_crash(self, test_home):
         """Firing a reminder ID that doesn't exist in the DB should not crash."""
-        from tasks_cli.commands import send_reminder_job
         from tasks_cli import db as tasks_db
+        from tasks_cli.commands import send_reminder_job
 
         home, notif_dir = test_home
         data_dir = home / ".tasks"
@@ -1038,7 +1038,7 @@ class TestRecurringNextRun:
         """Empty string notif_dir should skip all processing."""
         from tasks_cli.commands import send_reminder_job
 
-        home, notif_dir = test_home
+        home, _notif_dir = test_home
         conn = self._setup_db(home)
         original_time = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
         conn.execute(

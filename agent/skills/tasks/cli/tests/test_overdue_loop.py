@@ -3,11 +3,10 @@ postpone/snooze verbs, the daily digest, and overdue ordering."""
 
 import json
 from contextlib import closing
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-
 from tasks_cli import commands, db
 from tasks_cli.config import Config
 from tasks_cli.scheduler import create_scheduler
