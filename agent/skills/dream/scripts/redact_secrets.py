@@ -22,11 +22,16 @@ PATTERNS = [
     r"gh[posr]_[A-Za-z0-9]{36,}",
     r"github_pat_[A-Za-z0-9_]{20,}",
     r"glpat-[A-Za-z0-9_-]{20,}",
-    r"AKIA[0-9A-Z]{16}",
+    r"(?-i:AKIA[0-9A-Z]{16})",  # case-sensitive: real AWS keys are uppercase. Under the outer
+    # IGNORECASE, a plain AKIA matches "akia...." runs inside base64 blobs (reasoning-block
+    # signatures, media keys), a recurring false positive that buries the real matches.
     r"PMAK-[A-Za-z0-9-]{20,}",
     r"eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}",
     r"BEGIN [A-Z ]+ PRIVATE KEY",
-    r"(?:password|secret|api[_-]?key)[\"': =]+[^ \"']{4,}",
+    # Separator excludes a bare space on purpose: real leaks are password=x / "password":"x" /
+    # password:x, never "password reuse". Including a space matched all English prose about
+    # passwords/secrets/api keys, burying real hits under dozens of false positives.
+    r"(?:password|secret|api[_-]?key)[\"':=]+[^ \"']{4,}",
     r"(?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql|redis)://[^ \"']+",
 ]
 REGEX = re.compile("|".join(PATTERNS), re.IGNORECASE)
