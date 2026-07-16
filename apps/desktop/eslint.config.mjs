@@ -22,11 +22,16 @@ export default defineConfig([
       },
     },
     rules: {
-      // Escape hatches are banned repo-wide: no eslint-disable comments, no ts-comment directives.
+      // Escape hatches are banned repo-wide: no lint-suppressing comments, no ts-comment directives.
       "@eslint-community/eslint-comments/no-use": "error",
       "@typescript-eslint/ban-ts-comment": [
         "error",
-        { "ts-expect-error": true, "ts-ignore": true, "ts-nocheck": true, "ts-check": false },
+        {
+          "ts-expect-error": true,
+          "ts-ignore": true,
+          "ts-nocheck": true,
+          "ts-check": false,
+        },
       ],
       // Code-smell ceilings.
       complexity: ["error", 15],

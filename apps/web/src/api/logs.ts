@@ -33,10 +33,11 @@ export function streamLogs(
   });
 }
 
-export async function stopLogs(name: string): Promise<void> {
+export function stopLogs(name: string): Promise<void> {
   const es = logSources.get(name);
   if (es) {
     es.close();
     logSources.delete(name);
   }
+  return Promise.resolve();
 }

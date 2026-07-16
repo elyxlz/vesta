@@ -22,8 +22,6 @@ import {
   setTtsEnabled,
   setVoiceSetting,
   type SettingDef,
-  type SttStatus,
-  type TtsStatus,
   type SttUsage,
   type TtsUsage,
 } from "@/lib/voice";
@@ -40,6 +38,15 @@ function formatBalance(b: { amount?: number; units?: string }): string {
   if (units === "usd") return `$${amount.toFixed(2)}`;
   if (units === "hour" || units === "hours") return `${amount.toFixed(2)} h`;
   return `${amount.toFixed(2)} ${b.units ?? ""}`;
+}
+
+// Combined hours + balance line, or a placeholder dash until both halves have loaded.
+function sttUsageSummary(usageData: SttUsage | null): string {
+  const results = usageData?.usage?.results;
+  const balance = usageData?.balance?.balances?.[0];
+  if (!results || !balance) return "—";
+  const hours = results.reduce((acc, r) => acc + (r.hours ?? 0), 0);
+  return `${hours.toFixed(2)} h used · ${formatBalance(balance)} left`;
 }
 
 // --- Exported cards ---
@@ -64,13 +71,6 @@ export function SttCard() {
     if (agentName)
       fetchSttUsage(agentName).then(setUsageData).catch(console.warn);
   };
-  const hours = usageData?.usage?.results
-    ? usageData.usage.results.reduce((acc, r) => acc + (r.hours ?? 0), 0)
-    : null;
-  const balanceStr = usageData?.balance?.balances?.[0]
-    ? formatBalance(usageData.balance.balances[0])
-    : null;
-
   return (
     <DomainSection
       icon={<Mic className="size-4 text-muted-foreground" />}
@@ -82,17 +82,13 @@ export function SttCard() {
       settings={sttStatus?.settings}
       domain="stt"
       agentName={agentName}
-      onSettingChange={(settings) =>
-        patchStt({ settings } as Partial<SttStatus>)
-      }
+      onSettingChange={(settings) => patchStt({ settings })}
       usageContent={
         <UsageCollapsible onOpen={loadUsage}>
           <div className="flex items-center justify-between text-xs px-6 pt-2">
             <span className="text-muted-foreground">hours this month</span>
             <span className="text-foreground tabular-nums">
-              {hours !== null && balanceStr !== null
-                ? `${hours.toFixed(2)} h used · ${balanceStr} left`
-                : "—"}
+              {sttUsageSummary(usageData)}
             </span>
           </div>
         </UsageCollapsible>
@@ -175,9 +171,7 @@ export function TtsCard() {
       settings={ttsStatus?.settings}
       domain="tts"
       agentName={agentName}
-      onSettingChange={(settings) =>
-        patchTts({ settings } as Partial<TtsStatus>)
-      }
+      onSettingChange={(settings) => patchTts({ settings })}
       usageContent={
         <UsageCollapsible onOpen={loadUsage}>
           <div className="flex items-center justify-between text-xs px-6 pt-2">
@@ -328,9 +322,11 @@ function DynamicSettings({
 }) {
   const updateSetting = (key: string, value: unknown) => {
     if (agentName) {
-      setVoiceSetting(agentName, domain, key, value).then((status) => {
-        if (status.settings) onSettingChange(status.settings);
-      });
+      setVoiceSetting(agentName, domain, key, value)
+        .then((status) => {
+          if (status.settings) onSettingChange(status.settings);
+        })
+        .catch(console.warn);
     }
   };
 
@@ -413,8 +409,8 @@ function BoolSetting({
   updateSetting: (key: string, value: unknown) => void;
 }) {
   const [value, toggle] = useOptimisticToggle(
-    setting.value as boolean | undefined,
-    (setting.default as boolean) ?? false,
+    typeof setting.value === "boolean" ? setting.value : undefined,
+    typeof setting.default === "boolean" ? setting.default : false,
     (v) => updateSetting(setting.key, v),
   );
   return (
@@ -437,13 +433,14 @@ function NumberSetting({
   setting: SettingDef;
   updateSetting: (key: string, value: unknown) => void;
 }) {
-  const [localValue, setLocalValue] = useState(
-    (setting.value as number) ?? (setting.default as number) ?? 0,
-  );
+  const [localValue, setLocalValue] = useState(() => {
+    if (typeof setting.value === "number") return setting.value;
+    return typeof setting.default === "number" ? setting.default : 0;
+  });
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (setting.value !== undefined) setLocalValue(setting.value as number);
+    if (typeof setting.value === "number") setLocalValue(setting.value);
   }, [setting.value]);
 
   useEffect(() => {
@@ -479,7 +476,9 @@ function NumberSetting({
         max={setting.max ?? 1}
         step={setting.step ?? 0.01}
         value={[localValue]}
-        onValueChange={([v]) => handleChange(v)}
+        onValueChange={([v]) => {
+          if (v !== undefined) handleChange(v);
+        }}
       />
       {setting.description && (
         <p className="text-xs text-muted-foreground">{setting.description}</p>
@@ -548,7 +547,7 @@ function VoicePicker({
     };
   }, []);
 
-  const selectedId = (setting.value as string) ?? null;
+  const selectedId = typeof setting.value === "string" ? setting.value : null;
   const selectedOption = options.find((o) => o.value === selectedId);
 
   const select = (opt: { value: string }) => {

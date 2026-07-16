@@ -14,7 +14,7 @@ export function startLoopback(onUrl: (url: string) => void): Promise<number> {
       res.writeHead(200, { "Content-Type": "text/html" });
       res.end(CALLBACK_PAGE);
       const { port } = server.address() as AddressInfo;
-      onUrl(`http://127.0.0.1:${port}${req.url ?? "/"}`);
+      onUrl(`http://127.0.0.1:${String(port)}${req.url ?? "/"}`);
     });
     server.on("error", reject);
     server.listen(0, "127.0.0.1", () => {

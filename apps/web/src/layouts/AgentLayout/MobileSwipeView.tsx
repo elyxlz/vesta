@@ -15,15 +15,14 @@ export function MobileSwipeView({ scrollRef, onScroll }: MobileSwipeViewProps) {
   const { name } = useParams<{ name: string }>();
   const location = useLocation();
   const isChat =
-    location.pathname === `/agent/${encodeURIComponent(name!)}/chat`;
+    location.pathname === `/agent/${encodeURIComponent(name ?? "")}/chat`;
   const isChatRef = useRef(isChat);
   isChatRef.current = isChat;
   const mountedRef = useRef(false);
 
   const mountRef = useCallback(
     (node: HTMLDivElement | null) => {
-      (scrollRef as React.MutableRefObject<HTMLDivElement | null>).current =
-        node;
+      scrollRef.current = node;
       if (node && !mountedRef.current) {
         mountedRef.current = true;
         if (isChatRef.current) {
@@ -45,7 +44,7 @@ export function MobileSwipeView({ scrollRef, onScroll }: MobileSwipeViewProps) {
         className="w-full shrink-0 snap-center flex flex-col px-1"
         style={{
           paddingTop: navbarHeight,
-          paddingBottom: `calc(${bottomBarHeight}px + 0rem)`,
+          paddingBottom: `calc(${String(bottomBarHeight)}px + 0rem)`,
         }}
       >
         <Dashboard />
@@ -53,7 +52,7 @@ export function MobileSwipeView({ scrollRef, onScroll }: MobileSwipeViewProps) {
       <div
         className="w-full shrink-0 snap-center flex flex-col"
         style={{
-          paddingBottom: `calc(${bottomBarHeight}px + 0.25rem)`,
+          paddingBottom: `calc(${String(bottomBarHeight)}px + 0.25rem)`,
         }}
       >
         <Chat fullscreen />

@@ -13,7 +13,9 @@ export function useManifest(): Manifest | undefined {
       .then((m) => {
         if (!cancelled) setManifest(m);
       })
-      .catch(() => {});
+      .catch(() => {
+        /* noop: consumers keep rendering their loading state */
+      });
     return () => {
       cancelled = true;
     };

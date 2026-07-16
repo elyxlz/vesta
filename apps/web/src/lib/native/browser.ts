@@ -27,31 +27,40 @@ export function createBrowserBridge(): NativeBridge {
     runtime: "browser",
     platform: detectPlatform(),
     connectionStore: {
-      async read() {
+      read() {
         const raw = localStorage.getItem(STORAGE_KEY);
-        return raw ? parseConnection(raw) : null;
+        return Promise.resolve(raw ? parseConnection(raw) : null);
       },
-      async write(config) {
+      write(config) {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+        return Promise.resolve();
       },
-      async clear() {
+      clear() {
         localStorage.removeItem(STORAGE_KEY);
+        return Promise.resolve();
       },
     },
-    async openExternal(url) {
+    openExternal(url) {
       window.open(url, "_blank");
+      return Promise.resolve();
     },
-    async focusWindow() {
+    focusWindow() {
       window.focus();
+      return Promise.resolve();
     },
-    setNativeTheme() {},
+    setNativeTheme() {
+      /* noop: the browser follows the OS theme */
+    },
     onWindowFocusChange() {
-      return () => {};
+      return () => {
+        /* noop: nothing to unsubscribe */
+      };
     },
     oauthLoopback: null,
     windowControls: null,
-    async installAppUpdate() {
+    installAppUpdate() {
       window.location.reload();
+      return Promise.resolve();
     },
   };
 }

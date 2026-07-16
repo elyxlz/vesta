@@ -28,6 +28,70 @@ const connectEntrance = {
   transition: { duration: 0.3, ease: "easeOut" },
 } as const;
 
+function HostedSignInCard({
+  sessionExpired,
+  busy,
+  error,
+  onSignIn,
+  onSelfHost,
+}: {
+  sessionExpired: boolean;
+  busy: boolean;
+  error: string;
+  onSignIn: () => void;
+  onSelfHost: () => void;
+}) {
+  return (
+    <div className="flex h-full flex-col p-page">
+      <div className="flex flex-1 items-center justify-center">
+        <motion.div
+          {...connectEntrance}
+          className="flex w-[360px] max-w-full flex-col items-center gap-4 px-4 text-center"
+        >
+          <ConnectHeader />
+          {sessionExpired && (
+            <FieldDescription className="text-center">
+              your session expired, sign in again
+            </FieldDescription>
+          )}
+          <Button
+            type="button"
+            onClick={onSignIn}
+            disabled={busy}
+            className="max-w-full px-6"
+          >
+            {busy
+              ? isDesktopApp
+                ? "waiting for browser..."
+                : "redirecting..."
+              : "continue with vesta account"}
+          </Button>
+          <AnimatePresence>
+            {error && (
+              <motion.p
+                {...fade}
+                role="alert"
+                className="text-xs text-destructive"
+              >
+                {error}
+              </motion.p>
+            )}
+          </AnimatePresence>
+          {isDesktopApp && (
+            <button
+              type="button"
+              onClick={onSelfHost}
+              className="px-3 py-3 -my-3 text-xs text-muted-foreground underline-offset-4 hover:underline"
+            >
+              self-hosting? connect with a link
+            </button>
+          )}
+        </motion.div>
+      </div>
+    </div>
+  );
+}
+
 function ConnectHeader() {
   return (
     <div className="flex flex-col items-center gap-1.5">
@@ -61,17 +125,18 @@ export function Connect() {
   useEffect(() => {
     if (managed !== null) return;
     let cancelled = false;
-    void (async () => {
+    const probe = async () => {
       try {
         const resp = await fetch(`${window.location.origin}/info`, {
           signal: AbortSignal.timeout(5000),
         });
-        const data = await resp.json();
-        if (!cancelled) setManaged(data?.managed === true);
+        const data = (await resp.json()) as { managed?: boolean };
+        if (!cancelled) setManaged(data.managed === true);
       } catch {
         if (!cancelled) setManaged(false);
       }
-    })();
+    };
+    void probe();
     return () => {
       cancelled = true;
     };
@@ -105,9 +170,9 @@ export function Connect() {
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = (e: React.SubmitEvent) => {
     e.preventDefault();
-    handleConnect();
+    void handleConnect();
   };
 
   const handleHostedSignIn = () => {
@@ -147,56 +212,16 @@ export function Connect() {
   // in the native app, unless the native user chose self-hosting.
   if ((managed || isDesktopApp) && !selfHost) {
     return (
-      <div className="flex h-full flex-col p-page">
-        <div className="flex flex-1 items-center justify-center">
-          <motion.div
-            {...connectEntrance}
-            className="flex w-[360px] max-w-full flex-col items-center gap-4 px-4 text-center"
-          >
-            <ConnectHeader />
-            {sessionExpired && (
-              <FieldDescription className="text-center">
-                your session expired, sign in again
-              </FieldDescription>
-            )}
-            <Button
-              type="button"
-              onClick={handleHostedSignIn}
-              disabled={busy}
-              className="max-w-full px-6"
-            >
-              {busy
-                ? isDesktopApp
-                  ? "waiting for browser..."
-                  : "redirecting..."
-                : "continue with vesta account"}
-            </Button>
-            <AnimatePresence>
-              {error && (
-                <motion.p
-                  {...fade}
-                  role="alert"
-                  className="text-xs text-destructive"
-                >
-                  {error}
-                </motion.p>
-              )}
-            </AnimatePresence>
-            {isDesktopApp && (
-              <button
-                type="button"
-                onClick={() => {
-                  setError("");
-                  setSelfHost(true);
-                }}
-                className="px-3 py-3 -my-3 text-xs text-muted-foreground underline-offset-4 hover:underline"
-              >
-                self-hosting? connect with a link
-              </button>
-            )}
-          </motion.div>
-        </div>
-      </div>
+      <HostedSignInCard
+        sessionExpired={sessionExpired}
+        busy={busy}
+        error={error}
+        onSignIn={handleHostedSignIn}
+        onSelfHost={() => {
+          setError("");
+          setSelfHost(true);
+        }}
+      />
     );
   }
 

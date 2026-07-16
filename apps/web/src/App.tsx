@@ -12,6 +12,10 @@ import { router } from "@/router";
 import { useIsMobile } from "./hooks/use-mobile";
 import { useRuntime } from "@/providers/RuntimeProvider";
 
+function openAgent(agentName: string): void {
+  void router.navigate(`/agent/${encodeURIComponent(agentName)}`);
+}
+
 function AppContent() {
   const { loading, initialized, setLoading } = useAuth();
   const { versionChecked } = useGateway();
@@ -52,7 +56,7 @@ export default function App() {
           <TooltipProvider delayDuration={300}>
             <AuthProvider>
               <GatewayProvider>
-                <NotificationProvider>
+                <NotificationProvider onOpenAgent={openAgent}>
                   <AppContent />
                 </NotificationProvider>
               </GatewayProvider>

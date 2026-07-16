@@ -34,7 +34,8 @@ import {
   friendlyLabel,
   isSimpleAllowed,
 } from "./paths";
-import { buildTree } from "./tree";
+import { buildTree, type TreeNode } from "./tree";
+import type { AppMode } from "@/stores/use-app-mode";
 
 type SaveStatus =
   | { kind: "idle" }
@@ -160,7 +161,7 @@ function FileEditorSkeleton() {
         <Skeleton
           key={i}
           className="h-3.5 shrink-0 rounded"
-          style={{ width: `${width}%` }}
+          style={{ width: `${String(width)}%` }}
         />
       ))}
     </div>
@@ -170,9 +171,194 @@ function FileEditorSkeleton() {
 // The Tabs container's pb-6 sits below the panel on mobile; reserve it.
 const MOBILE_BOTTOM_GAP = 24;
 
+function SaveControls({
+  loadedFile,
+  status,
+  dirty,
+  onSave,
+}: {
+  loadedFile: FileReadResponse | null;
+  status: SaveStatus;
+  dirty: boolean;
+  onSave: () => Promise<void>;
+}) {
+  return (
+    <>
+      {loadedFile?.readonly && (
+        <Badge variant="outline" className="text-[10px]">
+          read-only
+        </Badge>
+      )}
+      {(status.kind !== "idle" || dirty) && (
+        <span className={cn("text-[10px]", statusClass(status))}>
+          {statusText(status, dirty)}
+        </span>
+      )}
+      <Button
+        size="xs"
+        disabled={
+          !dirty || status.kind === "saving" || (loadedFile?.readonly ?? false)
+        }
+        onClick={() => {
+          void onSave();
+        }}
+      >
+        save
+      </Button>
+    </>
+  );
+}
+
+function TreePanel({
+  mode,
+  entries,
+  treeError,
+  root,
+  agentName,
+  selectedPath,
+  dreamsActive,
+  onSelect,
+  onShowDreams,
+}: {
+  mode: AppMode;
+  entries: FileTreeEntry[] | null;
+  treeError: string | null;
+  root: TreeNode | null;
+  agentName: string;
+  selectedPath: string | null;
+  dreamsActive: boolean;
+  onSelect: (path: string) => void;
+  onShowDreams: () => void;
+}) {
+  return (
+    <div className="flex flex-1 min-h-0 flex-col">
+      {treeError ? (
+        <p className="px-1 py-2 text-xs text-destructive">
+          failed to load: {treeError}
+        </p>
+      ) : !entries ? (
+        mode === "simple" ? (
+          <SimpleSkeleton agentName={agentName} />
+        ) : (
+          <AdvancedSkeleton />
+        )
+      ) : mode === "simple" ? (
+        <SimpleView
+          entries={entries}
+          selected={selectedPath}
+          dreamsActive={dreamsActive}
+          agentName={agentName}
+          onSelect={onSelect}
+          onShowDreams={onShowDreams}
+        />
+      ) : root ? (
+        <Card size="sm" className="!py-0 !gap-0 flex flex-1 min-h-0 flex-col">
+          <CardHeader className="shrink-0 !flex !flex-row !items-center !gap-2.5 !px-5 !py-2.5">
+            <FolderTree className="size-4 text-muted-foreground" />
+            <CardTitle>/root</CardTitle>
+          </CardHeader>
+          <CardContent className="flex-1 min-h-0 overflow-auto !px-2 !py-2">
+            <FileTree root={root} selected={selectedPath} onSelect={onSelect} />
+          </CardContent>
+        </Card>
+      ) : null}
+    </div>
+  );
+}
+
+function EditorBody({
+  entries,
+  treeError,
+  dreamsActive,
+  agentName,
+  dreamPaths,
+  loadError,
+  selectedPath,
+  loadedFile,
+  onChange,
+}: {
+  entries: FileTreeEntry[] | null;
+  treeError: string | null;
+  dreamsActive: boolean;
+  agentName: string;
+  dreamPaths: string[];
+  loadError: string | null;
+  selectedPath: string | null;
+  loadedFile: FileReadResponse | null;
+  onChange: (content: string) => void;
+}) {
+  return (
+    <CardContent className="flex-1 min-h-0 !px-0">
+      {!entries && !treeError ? (
+        <FileEditorSkeleton />
+      ) : dreamsActive && agentName ? (
+        <DreamsViewer agent={agentName} dreamPaths={dreamPaths} />
+      ) : loadError ? (
+        <div className="flex h-full items-center justify-center bg-muted/40 text-sm text-destructive">
+          {loadError}
+        </div>
+      ) : !selectedPath ? (
+        <div className="flex h-full items-center justify-center bg-muted/40 text-sm text-muted-foreground">
+          select a file to view or edit
+        </div>
+      ) : !loadedFile ? (
+        <FileEditorSkeleton />
+      ) : (
+        <FileEditor
+          key={loadedFile.path}
+          initialContent={loadedFile.content}
+          readonly={loadedFile.readonly}
+          encoding={loadedFile.encoding}
+          onChange={onChange}
+          placeholder={
+            loadedFile.path === CONSTITUTION_PATH
+              ? "empty — set principles, boundaries, or facts the agent must always honor"
+              : undefined
+          }
+        />
+      )}
+    </CardContent>
+  );
+}
+
+// Wrapper for the one-panel-at-a-time layout: mobile fills the screen; desktop
+// bounds the detail view so it scrolls internally and lets the hub flow.
+function DrillInContainer({
+  isMobile,
+  inDetail,
+  fillRef,
+  fillHeight,
+  children,
+}: {
+  isMobile: boolean;
+  inDetail: boolean;
+  fillRef: (node: HTMLDivElement | null) => void;
+  fillHeight: number;
+  children: React.ReactNode;
+}) {
+  if (isMobile) {
+    return (
+      <div
+        ref={fillRef}
+        style={{ height: fillHeight }}
+        className={cn("flex min-h-0 flex-col", !inDetail && "overflow-y-auto")}
+      >
+        {children}
+      </div>
+    );
+  }
+  return inDetail ? (
+    <div className="mx-auto flex h-[70vh] w-full max-w-2xl min-h-0 flex-col">
+      {children}
+    </div>
+  ) : (
+    <div className="mx-auto w-full max-w-4xl">{children}</div>
+  );
+}
+
 export function FilesTab() {
   const { name: agentName, agent } = useSelectedAgent();
-  const isAlive = agent?.status === "alive";
+  const isAlive = agent.status === "alive";
   const isMobile = useIsMobile();
   // Mobile uses a drill-in (tree, then editor): the active panel fills the space
   // down to the viewport bottom.
@@ -237,9 +423,9 @@ export function FilesTab() {
         if (cancelled) return;
         setEntries(entries);
       })
-      .catch((e: Error) => {
+      .catch((e: unknown) => {
         if (cancelled) return;
-        setTreeError(e.message);
+        setTreeError(errorMessage(e, "failed to load files"));
       });
     return () => {
       cancelled = true;
@@ -258,9 +444,9 @@ export function FilesTab() {
         setLoadedFile(file);
         setEditorContent(file.content);
       })
-      .catch((e: Error) => {
+      .catch((e: unknown) => {
         if (cancelled) return;
-        setLoadError(e.message);
+        setLoadError(errorMessage(e, "failed to load file"));
       });
     return () => {
       cancelled = true;
@@ -306,99 +492,40 @@ export function FilesTab() {
   }
 
   const saveControls = (
-    <>
-      {loadedFile?.readonly && (
-        <Badge variant="outline" className="text-[10px]">
-          read-only
-        </Badge>
-      )}
-      {(status.kind !== "idle" || dirty) && (
-        <span className={cn("text-[10px]", statusClass(status))}>
-          {statusText(status, dirty)}
-        </span>
-      )}
-      <Button
-        size="xs"
-        disabled={
-          !dirty || status.kind === "saving" || (loadedFile?.readonly ?? false)
-        }
-        onClick={onSave}
-      >
-        save
-      </Button>
-    </>
+    <SaveControls
+      loadedFile={loadedFile}
+      status={status}
+      dirty={dirty}
+      onSave={onSave}
+    />
   );
 
   const treeInner = (
-    <div className="flex flex-1 min-h-0 flex-col">
-      {treeError ? (
-        <p className="px-1 py-2 text-xs text-destructive">
-          failed to load: {treeError}
-        </p>
-      ) : !entries ? (
-        mode === "simple" ? (
-          <SimpleSkeleton agentName={agentName} />
-        ) : (
-          <AdvancedSkeleton />
-        )
-      ) : mode === "simple" ? (
-        <SimpleView
-          entries={entries}
-          selected={selectedPath}
-          dreamsActive={dreamsActive}
-          agentName={agentName}
-          onSelect={selectFile}
-          onShowDreams={showDreams}
-        />
-      ) : root ? (
-        <Card size="sm" className="!py-0 !gap-0 flex flex-1 min-h-0 flex-col">
-          <CardHeader className="shrink-0 !flex !flex-row !items-center !gap-2.5 !px-5 !py-2.5">
-            <FolderTree className="size-4 text-muted-foreground" />
-            <CardTitle>/root</CardTitle>
-          </CardHeader>
-          <CardContent className="flex-1 min-h-0 overflow-auto !px-2 !py-2">
-            <FileTree
-              root={root}
-              selected={selectedPath}
-              onSelect={selectFile}
-            />
-          </CardContent>
-        </Card>
-      ) : null}
-    </div>
+    <TreePanel
+      mode={mode}
+      entries={entries}
+      treeError={treeError}
+      root={root}
+      agentName={agentName}
+      selectedPath={selectedPath}
+      dreamsActive={dreamsActive}
+      onSelect={selectFile}
+      onShowDreams={showDreams}
+    />
   );
 
   const editorBody = (
-    <CardContent className="flex-1 min-h-0 !px-0">
-      {!entries && !treeError ? (
-        <FileEditorSkeleton />
-      ) : dreamsActive && agentName ? (
-        <DreamsViewer agent={agentName} dreamPaths={dreamPaths} />
-      ) : loadError ? (
-        <div className="flex h-full items-center justify-center bg-muted/40 text-sm text-destructive">
-          {loadError}
-        </div>
-      ) : !selectedPath ? (
-        <div className="flex h-full items-center justify-center bg-muted/40 text-sm text-muted-foreground">
-          select a file to view or edit
-        </div>
-      ) : !loadedFile ? (
-        <FileEditorSkeleton />
-      ) : (
-        <FileEditor
-          key={loadedFile.path}
-          initialContent={loadedFile.content}
-          readonly={loadedFile.readonly}
-          encoding={loadedFile.encoding}
-          onChange={setEditorContent}
-          placeholder={
-            loadedFile.path === CONSTITUTION_PATH
-              ? "empty — set principles, boundaries, or facts the agent must always honor"
-              : undefined
-          }
-        />
-      )}
-    </CardContent>
+    <EditorBody
+      entries={entries}
+      treeError={treeError}
+      dreamsActive={dreamsActive}
+      agentName={agentName}
+      dreamPaths={dreamPaths}
+      loadError={loadError}
+      selectedPath={selectedPath}
+      loadedFile={loadedFile}
+      onChange={setEditorContent}
+    />
   );
 
   // Drill-in layout: a hub, then the editor/dreams detail with a back button,
@@ -429,28 +556,15 @@ export function FilesTab() {
       treeInner
     );
 
-    // The detail view (editor/dreams) is bounded so it scrolls internally; the
-    // hub flows naturally and scrolls with the page. Mobile fills the screen.
-    if (isMobile) {
-      return (
-        <div
-          ref={fillRef}
-          style={{ height: fillHeight }}
-          className={cn(
-            "flex min-h-0 flex-col",
-            !inDetail && "overflow-y-auto",
-          )}
-        >
-          {panel}
-        </div>
-      );
-    }
-    return inDetail ? (
-      <div className="mx-auto flex h-[70vh] w-full max-w-2xl min-h-0 flex-col">
+    return (
+      <DrillInContainer
+        isMobile={isMobile}
+        inDetail={inDetail}
+        fillRef={fillRef}
+        fillHeight={fillHeight}
+      >
         {panel}
-      </div>
-    ) : (
-      <div className="mx-auto w-full max-w-4xl">{panel}</div>
+      </DrillInContainer>
     );
   }
 

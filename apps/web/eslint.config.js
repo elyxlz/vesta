@@ -44,11 +44,16 @@ export default defineConfig([
           destructuredArrayIgnorePattern: "^_",
         },
       ],
-      // Escape hatches are banned repo-wide: no eslint-disable comments, no ts-comment directives.
+      // Escape hatches are banned repo-wide: no lint-suppressing comments, no ts-comment directives.
       "@eslint-community/eslint-comments/no-use": "error",
       "@typescript-eslint/ban-ts-comment": [
         "error",
-        { "ts-expect-error": true, "ts-ignore": true, "ts-nocheck": true, "ts-check": false },
+        {
+          "ts-expect-error": true,
+          "ts-ignore": true,
+          "ts-nocheck": true,
+          "ts-check": false,
+        },
       ],
       // Code-smell ceilings.
       complexity: ["error", 15],
@@ -56,7 +61,10 @@ export default defineConfig([
       "max-depth": ["error", 4],
       "import-x/no-cycle": "error",
       // Arrow shorthand passing a void return through is idiomatic for event handlers.
-      "@typescript-eslint/no-confusing-void-expression": ["error", { ignoreArrowShorthand: true }],
+      "@typescript-eslint/no-confusing-void-expression": [
+        "error",
+        { ignoreArrowShorthand: true },
+      ],
       // React compiler rules (new in react-hooks v7) — too strict for our codebase
       "react-hooks/refs": "warn",
       "react-hooks/set-state-in-effect": "warn",

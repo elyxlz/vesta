@@ -11,10 +11,29 @@ import { ToolCallLabel } from "../ToolCallLabel";
 function formatResetTime(resetsAt: number): string {
   const minutes = Math.round((resetsAt * 1000 - Date.now()) / 60_000);
   if (minutes <= 1) return "in a minute";
-  if (minutes < 60) return `in ${minutes}m`;
+  if (minutes < 60) return `in ${String(minutes)}m`;
   const hours = Math.round(minutes / 60);
-  if (hours < 24) return `in ${hours}h`;
-  return `in ${Math.round(hours / 24)}d`;
+  if (hours < 24) return `in ${String(hours)}h`;
+  return `in ${String(Math.round(hours / 24))}d`;
+}
+
+function formatBubbleTime(ts: string | undefined): string {
+  if (!ts) return "";
+  return new Date(ts).toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
+function statusLineText(
+  event: Extract<VestaEvent, { type: "error" | "rate_limited" }>,
+): string {
+  if (event.type === "error")
+    return "hit a snag, this may not have gone through";
+  return event.resets_at
+    ? `rate limited, back ${formatResetTime(event.resets_at)}`
+    : "rate limited, retrying later";
 }
 
 export const ChatBubble = memo(function ChatBubble({
@@ -30,14 +49,6 @@ export const ChatBubble = memo(function ChatBubble({
 }) {
   if (event.type === "status") return null;
 
-  const ts = event.ts
-    ? new Date(event.ts).toLocaleTimeString("en-US", {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-      })
-    : "";
-
   if (event.type === "tool_start") {
     return (
       <ToolCallLabel
@@ -49,16 +60,10 @@ export const ChatBubble = memo(function ChatBubble({
   }
 
   if (event.type === "error" || event.type === "rate_limited") {
-    const text =
-      event.type === "rate_limited"
-        ? event.resets_at
-          ? `rate limited, back ${formatResetTime(event.resets_at)}`
-          : "rate limited, retrying later"
-        : "hit a snag, this may not have gone through";
     return (
       <div className={cn("flex justify-center", className)}>
         <span className="text-[11px] text-muted-foreground/60 select-none">
-          {text}
+          {statusLineText(event)}
         </span>
       </div>
     );
@@ -66,13 +71,33 @@ export const ChatBubble = memo(function ChatBubble({
 
   if (event.type !== "user" && event.type !== "chat") return null;
 
-  const isUser = event.type === "user";
-  const text = event.text;
+  return (
+    <MessageBubble
+      isUser={event.type === "user"}
+      text={event.text}
+      ts={formatBubbleTime(event.ts)}
+      className={className}
+      mobileCard={Boolean(fullscreen && isMobile)}
+    />
+  );
+});
+
+function MessageBubble({
+  isUser,
+  text,
+  ts,
+  className,
+  mobileCard,
+}: {
+  isUser: boolean;
+  text: string;
+  ts: string;
+  className?: string;
   // Mobile fullscreen lifts the agent bubble onto a card surface with a ring/shadow; the
   // bg override goes through the same `*:data-[slot=bubble-content]` channel the variant uses
   // so twMerge drops the variant's bg-secondary cleanly.
-  const mobileCard = fullscreen && isMobile;
-
+  mobileCard: boolean;
+}) {
   return (
     <Message align={isUser ? "end" : "start"} className={className}>
       <Bubble
@@ -110,4 +135,4 @@ export const ChatBubble = memo(function ChatBubble({
       </Bubble>
     </Message>
   );
-});
+}
