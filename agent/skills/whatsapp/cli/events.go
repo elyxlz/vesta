@@ -181,6 +181,20 @@ func (wac *WhatsAppClient) handleDeviceRemoved(reason string) {
 				wac.logger.Warnf("Failed to write logged_out notification: %v", err)
 			}
 		}
+		// Tell the pool this managed account was logged out (a device_removed is the
+		// authoritative unlink/ban signal), so it marks the account dead and self-heals
+		// onto a fresh number. Best-effort and time-bounded: a dead network must not
+		// delay the exit. A no-op for self-hosted (qrLinker.reportLogout returns nil).
+		reported := make(chan error, 1)
+		go func() { reported <- wac.linker.reportLogout() }()
+		select {
+		case err := <-reported:
+			if err != nil {
+				wac.logger.Warnf("Failed to report logout to pool: %v", err)
+			}
+		case <-time.After(ReportLogoutTimeout):
+			wac.logger.Warnf("Reporting logout to pool timed out; exiting anyway")
+		}
 		wac.dropDeadDevice()
 		os.Exit(0)
 	}

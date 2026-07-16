@@ -154,6 +154,27 @@ func TestProvision_directKeyHitsHomeBoxNatively(t *testing.T) {
 	}
 }
 
+func TestReportLogout_postsToPool(t *testing.T) {
+	var logoutPath, gotMethod string
+	box := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/logout" {
+			logoutPath, gotMethod = r.URL.Path, r.Method
+			_ = json.NewEncoder(w).Encode(map[string]string{"state": "failed"})
+			return
+		}
+		http.Error(w, "no", http.StatusNotFound)
+	}))
+	t.Cleanup(box.Close)
+	m := newManagedAuth(managedConfig{directURL: box.URL, directKey: "wak_test"})
+
+	if err := m.reportLogout(); err != nil {
+		t.Fatalf("reportLogout: %v", err)
+	}
+	if logoutPath != "/logout" || gotMethod != http.MethodPost {
+		t.Fatalf("reportLogout must POST /logout, got %s %q", gotMethod, logoutPath)
+	}
+}
+
 func TestReauth_postsFreshCode(t *testing.T) {
 	var gotCode string
 	m := managedFor(t, func(w http.ResponseWriter, r *http.Request) {

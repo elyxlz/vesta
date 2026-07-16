@@ -31,6 +31,10 @@ type linker interface {
 	linkQR(wac *WhatsAppClient, port int) (linkResult, error)
 	// pairCode generates one pairing code for the user's phone to enter.
 	pairCode(wac *WhatsAppClient, phone string) (string, error)
+	// reportLogout tells the pool this managed account was logged out (device_removed):
+	// the authoritative unlink/ban signal, so the pool can mark it dead and self-heal
+	// onto a fresh account. A no-op for self-hosted (no pool).
+	reportLogout() error
 }
 
 // chooseLinker makes the one construction-time paradigm decision. It first
@@ -73,6 +77,9 @@ func (qrLinker) pairCode(wac *WhatsAppClient, phone string) (string, error) {
 	return wac.generatePairCode(phone)
 }
 
+// reportLogout is a no-op for a self-hosted box: there is no pool to notify.
+func (qrLinker) reportLogout() error { return nil }
+
 // managedLinker links the agent's own pooled number (managed paradigm). It holds
 // the managedAuth HTTP client (which hides the 3-credential selection) and the
 // state store (which owns the persisted number).
@@ -90,6 +97,10 @@ func (*managedLinker) linkQR(*WhatsAppClient, int) (linkResult, error) {
 func (*managedLinker) pairCode(*WhatsAppClient, string) (string, error) {
 	return "", fmt.Errorf("this managed (vesta.run) box links its own pooled number; run `whatsapp provision`, not a phone pairing code")
 }
+
+// reportLogout forwards a device_removed logout to the pool so it marks the account
+// dead and self-heals onto a fresh number on the next provision.
+func (l *managedLinker) reportLogout() error { return l.auth.reportLogout() }
 
 // provision claims (or re-links) this box's managed number and links the companion,
 // synchronously. It leaves the client CLEAN (disconnected) on every failure path so

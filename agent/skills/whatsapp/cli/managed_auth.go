@@ -240,6 +240,14 @@ func (m *managedAuth) claim() (managedState, error) {
 // reauth mints a fresh pairing code for the account's number and posts it,
 // re-linking the same companion. The skill calls this on a dropped session — no
 // new number, no OTP, no user action.
+// reportLogout tells the pool this managed account was logged out (device_removed),
+// so it marks the account dead and re-binds a fresh one on the next provision. Fire
+// and forget from the caller's side: a failure just leaves the pool to discover the
+// dead account at the next provision attempt.
+func (m *managedAuth) reportLogout() error {
+	return m.call(http.MethodPost, "/logout", nil, nil)
+}
+
 func (m *managedAuth) reauth(st managedState, pairPhone func(msisdn string) (string, error)) error {
 	code, err := pairPhone(st.MSISDN)
 	if err != nil {
