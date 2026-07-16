@@ -44,6 +44,7 @@ describe("VestaEvent contract", () => {
       state: "idle",
       chat: { events: [{ type: "user", text: "hello" }], cursor: null },
       notifications: { pending: ["email-123"] },
+      config: { timezone: "America/New_York" },
     },
   ])("$type satisfies the VestaEvent shape", (event) => {
     expect(event.type).toBeTruthy();

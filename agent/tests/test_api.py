@@ -74,6 +74,31 @@ async def test_ws_sends_snapshot_by_default(event_bus):
 
 
 @pytest.mark.anyio
+async def test_ws_snapshot_carries_agent_timezone(event_bus):
+    """vestad reads the agent's IANA timezone off the connect snapshot to schedule
+    auto-updates in the agent's local quiet window."""
+    app = web.Application()
+    app["event_bus"] = event_bus
+    app["config"] = cfg.VestaConfig(agent_dir=Path(tempfile.mkdtemp()) / "agent", timezone="America/New_York")
+    app["websockets"] = weakref.WeakSet()
+    app.router.add_get("/ws", _ws_handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = _pick_port()
+    site = web.TCPSite(runner, "127.0.0.1", port)
+    await site.start()
+    try:
+        async with ClientSession() as session:
+            async with session.ws_connect(f"http://127.0.0.1:{port}/ws") as ws:
+                msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
+                data = json.loads(msg.data)
+                assert data["type"] == "snapshot"
+                assert data["config"]["timezone"] == "America/New_York"
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.anyio
 async def test_ws_sends_empty_snapshot_when_no_events(event_bus):
     """The snapshot is always sent on connect, even with no events, so the client
     can distinguish 'still loading' from 'no messages' instead of guessing."""
