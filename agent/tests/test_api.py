@@ -87,12 +87,11 @@ async def test_ws_snapshot_carries_agent_timezone(event_bus):
     site = web.TCPSite(runner, "127.0.0.1", port)
     await site.start()
     try:
-        async with ClientSession() as session:
-            async with session.ws_connect(f"http://127.0.0.1:{port}/ws") as ws:
-                msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
-                data = json.loads(msg.data)
-                assert data["type"] == "snapshot"
-                assert data["config"]["timezone"] == "America/New_York"
+        async with ClientSession() as session, session.ws_connect(f"http://127.0.0.1:{port}/ws") as ws:
+            msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
+            data = json.loads(msg.data)
+            assert data["type"] == "snapshot"
+            assert data["config"]["timezone"] == "America/New_York"
     finally:
         await runner.cleanup()
 

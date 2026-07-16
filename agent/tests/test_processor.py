@@ -397,7 +397,7 @@ async def test_process_message_no_correction_when_block_dashes_off(tmp_path):
         return vm.TurnSignals(texts=["something — with an em dash"])
 
     with patch("core.client.converse", side_effect=mock_converse):
-        responses, _ = await process_message("hello", state=state, config=config, is_user=True)
+        responses, _ = await process_message("hello", state=state, config=config)
 
     assert len(converse_calls) == 1
     assert responses == ["something — with an em dash"]
