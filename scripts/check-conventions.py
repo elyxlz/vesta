@@ -105,7 +105,7 @@ def find_cycle(graph: dict[str, set[str]], module: str, state: dict[str, int], s
     stack.append(module)
     for dep in sorted(graph[module]):
         if state.setdefault(dep, 0) == 1:
-            return stack[stack.index(dep) :] + [dep]
+            return [*stack[stack.index(dep) :], dep]
         if state[dep] == 0:
             cycle = find_cycle(graph, dep, state, stack)
             if cycle:
@@ -127,7 +127,9 @@ def check_import_cycles() -> list[str]:
             if state.setdefault(module, 0) == 0:
                 cycle = find_cycle(graph, module, state, [])
                 if cycle:
+                    # One report per package: a found cycle leaves traversal state dirty.
                     errors.append(f"{package}: import cycle: {' -> '.join(cycle)}")
+                    break
     return errors
 
 
