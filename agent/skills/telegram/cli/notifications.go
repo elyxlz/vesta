@@ -56,7 +56,7 @@ type editNotif struct {
 	ChatName        string `json:"chat_name,omitempty"`
 	Username        string `json:"username,omitempty"`
 	OldText         string `json:"old_text,omitempty"`
-	NewText         string `json:"new_text"`
+	Text            string `json:"text"`
 	Timestamp       string `json:"timestamp"`
 	TargetMessageID int64  `json:"target_message_id"`
 	ContactUnknown  bool   `json:"contact_unknown,omitempty"`
@@ -133,7 +133,7 @@ func WriteEditNotification(
 		ContactName:     contactName,
 		Username:        username,
 		OldText:         oldText,
-		NewText:         newText,
+		Text:            newText,
 		Timestamp:       time.Now().Format(time.RFC3339),
 		TargetMessageID: targetMessageID,
 		ContactUnknown:  !contactSaved,

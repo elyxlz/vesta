@@ -183,6 +183,9 @@ def test_match_text_alias_searches_body_and_message():
     rule = _rule(match=[{"field": "text", "op": "regex", "value": "taxes"}], action="snooze")
     assert npn.notif_disposition(_wa(message="ping about taxes"), [rule]) == "snooze"
     assert npn.notif_disposition(_notif(body="taxes due"), [rule]) == "snooze"
+    # A telegram edit carries its current text under `text`, so the text alias must reach it too,
+    # matching the edit's new content the same way it matches a plain message's `message`.
+    assert npn.notif_disposition(_notif(source="telegram", type="edit", text="taxes are due"), [rule]) == "snooze"
 
 
 def test_match_invalid_regex_predicate_is_rejected():

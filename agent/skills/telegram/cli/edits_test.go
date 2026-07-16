@@ -103,8 +103,8 @@ func TestEditNotifiesWithBothTheOldAndTheNewText(t *testing.T) {
 	if got.OldText != "let's meet at 6" {
 		t.Errorf("old_text = %q, want the pre-edit text", got.OldText)
 	}
-	if got.NewText != "let's meet at 9" {
-		t.Errorf("new_text = %q, want the replacement text", got.NewText)
+	if got.Text != "let's meet at 9" {
+		t.Errorf("text = %q, want the replacement text", got.Text)
 	}
 	if got.TargetMessageID != testMessageID {
 		t.Errorf("target_message_id = %d, want the edited message's id", got.TargetMessageID)
@@ -171,8 +171,8 @@ func TestEditOfAMessageWeNeverStoredStillReportsTheNewText(t *testing.T) {
 	tc.handleEditedMessage(editedMessage("let's meet at 9"))
 
 	got := soleNotif(t, notifDir)
-	if got.NewText != "let's meet at 9" {
-		t.Errorf("new_text = %q, want the replacement text", got.NewText)
+	if got.Text != "let's meet at 9" {
+		t.Errorf("text = %q, want the replacement text", got.Text)
 	}
 	if got.OldText != "" {
 		t.Errorf("old_text = %q, want empty when the original was never stored", got.OldText)
@@ -225,7 +225,7 @@ func TestEditOfAMediaCaptionIsReported(t *testing.T) {
 	tc.handleEditedMessage(msg)
 
 	got := soleNotif(t, notifDir)
-	if got.NewText != "new caption" || got.OldText != "old caption" {
-		t.Errorf("caption edit not reported: old=%q new=%q", got.OldText, got.NewText)
+	if got.Text != "new caption" || got.OldText != "old caption" {
+		t.Errorf("caption edit not reported: old=%q new=%q", got.OldText, got.Text)
 	}
 }
