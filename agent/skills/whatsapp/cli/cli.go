@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -275,6 +277,46 @@ func runOneShot(command string) {
 	os.Exit(exitCode)
 }
 
+// helpRequest carries a command's own usage text back out of its handler. Every command runs
+// in the daemon, so `--help` arrives as just another flag: the flag package would print the
+// usage to the daemon's stderr, where no caller can see it, and hand back a bare
+// "flag: help requested". executeCommand turns this into the command's result instead.
+type helpRequest struct{ usage string }
+
+func (h *helpRequest) Error() string { return h.usage }
+
+// parseFlags parses a command's flags. It exists so `--help` reaches the caller as the usage
+// text the FlagSet already knows how to write, rather than being lost to the daemon's stderr.
+// A genuine parse error is returned untouched.
+func parseFlags(fs *flag.FlagSet, args []string) error {
+	var usage bytes.Buffer
+	fs.SetOutput(&usage)
+	err := fs.Parse(args)
+	if errors.Is(err, flag.ErrHelp) {
+		text := strings.TrimSpace(usage.String())
+		if !declaresFlags(fs) {
+			// The FlagSet prints a bare "Usage of x:" header with nothing under it, which reads
+			// like the answer went missing rather than like there is nothing to say.
+			text = fs.Name() + " takes no flags"
+		}
+		return &helpRequest{usage: text}
+	}
+	return err
+}
+
+func declaresFlags(fs *flag.FlagSet) bool {
+	declared := false
+	fs.VisitAll(func(*flag.Flag) { declared = true })
+	return declared
+}
+
+// parseNoFlags is how a command that takes no flags still answers `--help`, and still rejects a
+// flag it does not know. Without it these commands ignore their args and simply run, so asking
+// clear-all-chats what it takes wipes the message database.
+func parseNoFlags(name string, args []string) error {
+	return parseFlags(flag.NewFlagSet(name, flag.ContinueOnError), args)
+}
+
 // command describes one socket subcommand in a single place: its canonical name,
 // short aliases, the leading positional args main rewrites into flags, whether it
 // mutates state (blocked in read-only mode), and its handler.
@@ -330,7 +372,7 @@ func cmdLinkStart(args []string, wac *WhatsAppClient) (any, error) {
 	fs := flag.NewFlagSet("link-start", flag.ContinueOnError)
 	fs.IntVar(&port, "port", 0, "Serve the QR link page on this port (0 = no page)")
 	fs.BoolVar(&acknowledged, "acknowledge-ban-risk", false, "Override the pairing rate limit")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if wac.IsAuthenticated() {
@@ -346,17 +388,26 @@ func cmdLinkStart(args []string, wac *WhatsAppClient) (any, error) {
 	return map[string]any{"status": "linking", "page_port": port, "expires_in_seconds": int(LinkSessionTimeout.Seconds())}, nil
 }
 
-func cmdLinkStatus(_ []string, wac *WhatsAppClient) (any, error) {
+func cmdLinkStatus(args []string, wac *WhatsAppClient) (any, error) {
+	if err := parseNoFlags("link-status", args); err != nil {
+		return nil, err
+	}
 	status := wac.GetAuthStatus()
 	return map[string]any{"status": string(status), "link_active": wac.linkModeActive()}, nil
 }
 
-func cmdLinkStop(_ []string, wac *WhatsAppClient) (any, error) {
+func cmdLinkStop(args []string, wac *WhatsAppClient) (any, error) {
+	if err := parseNoFlags("link-stop", args); err != nil {
+		return nil, err
+	}
 	wac.stopLinkMode()
 	return map[string]any{"status": "link_stopped"}, nil
 }
 
-func cmdDaemonStatus(_ []string, wac *WhatsAppClient) (any, error) {
+func cmdDaemonStatus(args []string, wac *WhatsAppClient) (any, error) {
+	if err := parseNoFlags("daemon-status", args); err != nil {
+		return nil, err
+	}
 	status := wac.GetAuthStatus()
 	info, _ := readDaemonInfo(wac.dataDir)
 	now := time.Now()
@@ -402,7 +453,13 @@ func executeCommand(name string, args []string, wac *WhatsAppClient) (any, error
 	if wac.readOnly && cmd.write {
 		return nil, fmt.Errorf("command %q blocked: instance is read-only", name)
 	}
-	return cmd.run(args, wac)
+	result, err := cmd.run(args, wac)
+	// Asking what a command takes is a question, not a failure.
+	var help *helpRequest
+	if errors.As(err, &help) {
+		return map[string]string{"usage": help.usage}, nil
+	}
+	return result, err
 }
 
 func cmdListContacts(args []string, wac *WhatsAppClient) (any, error) {
@@ -411,7 +468,7 @@ func cmdListContacts(args []string, wac *WhatsAppClient) (any, error) {
 	fs := flag.NewFlagSet("list-contacts", flag.ContinueOnError)
 	fs.StringVar(&query, "query", "", "Optional search query")
 	fs.IntVar(&limit, "limit", 50, "Max results")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	contacts, err := wac.store.SearchContacts(query, limit)
@@ -426,7 +483,7 @@ func cmdAddContact(args []string, wac *WhatsAppClient) (any, error) {
 	fs := flag.NewFlagSet("add-contact", flag.ContinueOnError)
 	fs.StringVar(&name, "name", "", "Contact name")
 	fs.StringVar(&phone, "phone", "", "Phone number (E.164)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if name == "" || phone == "" {
@@ -443,7 +500,7 @@ func cmdRemoveContact(args []string, wac *WhatsAppClient) (any, error) {
 	var identifier string
 	fs := flag.NewFlagSet("remove-contact", flag.ContinueOnError)
 	fs.StringVar(&identifier, "identifier", "", "Contact name or phone")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if identifier == "" {
@@ -466,7 +523,7 @@ func cmdListMessages(args []string, wac *WhatsAppClient) (any, error) {
 	fs.StringVar(&query, "query", "", "Search query")
 	fs.IntVar(&limit, "limit", 50, "Max results")
 	fs.IntVar(&page, "page", 0, "Page number")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 
@@ -516,7 +573,7 @@ func cmdListChats(args []string, wac *WhatsAppClient) (any, error) {
 	fs.IntVar(&page, "page", 0, "Page number")
 	fs.BoolVar(&includeLastMessage, "include-last-message", false, "Include last message")
 	fs.StringVar(&sortBy, "sort-by", "last_active", "Sort by (last_active or name)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	chats, err := wac.store.ListChats(query, limit, page*limit, includeLastMessage, sortBy)
@@ -535,7 +592,7 @@ func cmdSendMessage(args []string, wac *WhatsAppClient) (any, error) {
 	fs.StringVar(&messageFile, "message-file", "", "Path to a file containing the message body (use '-' for stdin). Preferred for multi-line text or content with apostrophes / quotes that complicate shell escaping.")
 	fs.StringVar(&replyTo, "reply-to", "", "Message ID to reply/quote (optional)")
 	fs.BoolVar(&longform, "longform", false, "Bypass the short-bubble lint for genuine reference material (a brief, a code block, a list they asked for).")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if to == "" {
@@ -597,7 +654,7 @@ func cmdSendFile(args []string, wac *WhatsAppClient) (any, error) {
 	fs.StringVar(&filePath, "file-path", "", "Path to file")
 	fs.StringVar(&caption, "caption", "", "Optional caption")
 	fs.StringVar(&displayName, "display-name", "", "Override filename shown to recipient")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if to == "" || filePath == "" {
@@ -612,7 +669,7 @@ func cmdSendAudio(args []string, wac *WhatsAppClient) (any, error) {
 	fs := flag.NewFlagSet("send-audio", flag.ContinueOnError)
 	fs.StringVar(&to, "to", "", "Recipient")
 	fs.StringVar(&filePath, "file-path", "", "Path to audio file")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if to == "" || filePath == "" {
@@ -628,7 +685,7 @@ func cmdDownloadMedia(args []string, wac *WhatsAppClient) (any, error) {
 	fs.StringVar(&messageID, "message-id", "", "Message ID")
 	fs.StringVar(&to, "to", "", "Chat")
 	fs.StringVar(&downloadPath, "download-path", "", "Save path")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if messageID == "" {
@@ -647,7 +704,7 @@ func cmdSendReaction(args []string, wac *WhatsAppClient) (any, error) {
 	fs.StringVar(&messageID, "message-id", "", "Message ID")
 	fs.StringVar(&emoji, "emoji", "", "Emoji")
 	fs.StringVar(&to, "to", "", "Chat")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if messageID == "" || emoji == "" || to == "" {
@@ -662,7 +719,7 @@ func cmdRevokeMessage(args []string, wac *WhatsAppClient) (any, error) {
 	fs := flag.NewFlagSet("revoke-message", flag.ContinueOnError)
 	fs.StringVar(&messageID, "message-id", "", "Message ID to revoke")
 	fs.StringVar(&to, "to", "", "Chat")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if messageID == "" || to == "" {
@@ -676,7 +733,7 @@ func cmdCreateGroup(args []string, wac *WhatsAppClient) (any, error) {
 	var groupName string
 	fs := flag.NewFlagSet("create-group", flag.ContinueOnError)
 	fs.StringVar(&groupName, "name", "", "Group name")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	participants := fs.Args()
@@ -691,7 +748,7 @@ func cmdLeaveGroup(args []string, wac *WhatsAppClient) (any, error) {
 	var group string
 	fs := flag.NewFlagSet("leave-group", flag.ContinueOnError)
 	fs.StringVar(&group, "group", "", "Group name")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if group == "" {
@@ -706,7 +763,7 @@ func cmdListGroups(args []string, wac *WhatsAppClient) (any, error) {
 	fs := flag.NewFlagSet("list-groups", flag.ContinueOnError)
 	fs.IntVar(&limit, "limit", 50, "Max results")
 	fs.IntVar(&page, "page", 0, "Page number")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	groups, err := wac.store.ListGroups(limit, page*limit)
@@ -721,7 +778,7 @@ func cmdUpdateGroupParticipants(args []string, wac *WhatsAppClient) (any, error)
 	fs := flag.NewFlagSet("update-group-participants", flag.ContinueOnError)
 	fs.StringVar(&group, "group", "", "Group name")
 	fs.StringVar(&action, "action", "", "add or remove")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	participants := fs.Args()
@@ -738,7 +795,7 @@ func cmdBackfill(args []string, wac *WhatsAppClient) (any, error) {
 	fs := flag.NewFlagSet("backfill", flag.ContinueOnError)
 	fs.StringVar(&to, "to", "", "Chat to backfill")
 	fs.IntVar(&count, "count", 50, "Number of messages")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if to == "" {
@@ -753,7 +810,7 @@ func cmdRenameGroup(args []string, wac *WhatsAppClient) (any, error) {
 	fs := flag.NewFlagSet("rename-group", flag.ContinueOnError)
 	fs.StringVar(&group, "group", "", "Group name or JID")
 	fs.StringVar(&name, "name", "", "New group name")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if group == "" || name == "" {
@@ -768,7 +825,7 @@ func cmdSetGroupPhoto(args []string, wac *WhatsAppClient) (any, error) {
 	fs := flag.NewFlagSet("set-group-photo", flag.ContinueOnError)
 	fs.StringVar(&group, "group", "", "Group name or JID")
 	fs.StringVar(&filePath, "file-path", "", "Path to image file")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if group == "" || filePath == "" {
@@ -783,7 +840,7 @@ func cmdSetGroupDescription(args []string, wac *WhatsAppClient) (any, error) {
 	fs := flag.NewFlagSet("set-group-description", flag.ContinueOnError)
 	fs.StringVar(&group, "group", "", "Group name or JID")
 	fs.StringVar(&description, "description", "", "New group description")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if group == "" || description == "" {
@@ -797,7 +854,7 @@ func cmdGetGroupInviteLink(args []string, wac *WhatsAppClient) (any, error) {
 	var group string
 	fs := flag.NewFlagSet("get-group-invite-link", flag.ContinueOnError)
 	fs.StringVar(&group, "group", "", "Group name or JID")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if group == "" {
@@ -816,7 +873,7 @@ func cmdCheckDelivery(args []string, wac *WhatsAppClient) (any, error) {
 	fs.StringVar(&to, "to", "", "Chat filter")
 	fs.IntVar(&limit, "limit", 10, "Recent messages to show")
 	fs.BoolVar(&recent, "recent", false, "Show recent outgoing statuses")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 
@@ -857,7 +914,7 @@ func cmdPairPhone(args []string, wac *WhatsAppClient) (any, error) {
 	fs := flag.NewFlagSet("pair-phone", flag.ContinueOnError)
 	fs.StringVar(&phone, "phone", "", "Phone number (E.164 format)")
 	fs.BoolVar(&acknowledged, "acknowledge-ban-risk", false, "Override the pairing rate limit")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if phone == "" {
@@ -890,7 +947,7 @@ func cmdListReceivedContacts(args []string, wac *WhatsAppClient) (any, error) {
 	fs := flag.NewFlagSet("list-received-contacts", flag.ContinueOnError)
 	fs.StringVar(&to, "to", "", "Filter by chat")
 	fs.IntVar(&limit, "limit", 50, "Max results")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	var chatJID string
@@ -914,7 +971,7 @@ func cmdChatTarget(name, usage string, args []string, action func(string) (bool,
 	var to string
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.StringVar(&to, "to", "", usage)
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if to == "" && len(fs.Args()) > 0 {
@@ -931,7 +988,10 @@ func cmdArchiveChat(args []string, wac *WhatsAppClient) (any, error) {
 	return cmdChatTarget("archive-chat", "Chat to archive (contact name, phone, group, or JID)", args, wac.ArchiveChat)
 }
 
-func cmdArchiveAllChats(_ []string, wac *WhatsAppClient) (any, error) {
+func cmdArchiveAllChats(args []string, wac *WhatsAppClient) (any, error) {
+	if err := parseNoFlags("archive-all-chats", args); err != nil {
+		return nil, err
+	}
 	archived, errs, err := wac.ArchiveAllChats()
 	if err != nil {
 		return nil, err
@@ -947,7 +1007,10 @@ func cmdDeleteChat(args []string, wac *WhatsAppClient) (any, error) {
 	return cmdChatTarget("delete-chat", "Chat to delete", args, wac.DeleteChat)
 }
 
-func cmdClearAllChats(_ []string, wac *WhatsAppClient) (any, error) {
+func cmdClearAllChats(args []string, wac *WhatsAppClient) (any, error) {
+	if err := parseNoFlags("clear-all-chats", args); err != nil {
+		return nil, err
+	}
 	jids, err := wac.store.ListAllChatJIDs()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list chats: %v", err)
