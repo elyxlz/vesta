@@ -97,7 +97,7 @@ fn update_binary(tag: &str) -> Result<(), UpdateError> {
     let status = std::process::Command::new("curl")
         .args(["-fsSL", "-o", &format!("{tmp}/{archive}"), &url])
         .status();
-    if !status.map(|s| s.success()).unwrap_or(false) {
+    if !status.is_ok_and(|s| s.success()) {
         std::fs::remove_dir_all(&tmp).ok();
         return Err(UpdateError::Download("curl failed".into()));
     }
@@ -105,7 +105,7 @@ fn update_binary(tag: &str) -> Result<(), UpdateError> {
     let status = std::process::Command::new("tar")
         .args(["-xzf", &format!("{tmp}/{archive}"), "-C", &tmp])
         .status();
-    if !status.map(|s| s.success()).unwrap_or(false) {
+    if !status.is_ok_and(|s| s.success()) {
         std::fs::remove_dir_all(&tmp).ok();
         return Err(UpdateError::Extract("tar failed".into()));
     }

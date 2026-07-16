@@ -1206,8 +1206,7 @@ async fn gpu_available(docker: &Docker) -> GpuStatus {
         .stderr(std::process::Stdio::null())
         .status()
         .await
-        .map(|s| s.success())
-        .unwrap_or(false);
+        .is_ok_and(|s| s.success());
 
     if !has_gpu {
         return GpuStatus::NoGpu;

@@ -703,12 +703,11 @@ fn main() {
             let config = config_dir();
             let binary_path = std::env::current_exe().map_or_else(|_| "<unknown>".into(), |p| p.display().to_string());
             let agent_count = std::fs::read_dir(config.join("agents"))
-                .map(|rd| {
+                .map_or(0, |rd| {
                     rd.filter_map(Result::ok)
                         .filter(|e| e.file_name().to_string_lossy().ends_with(".env"))
                         .count()
-                })
-                .unwrap_or(0);
+                });
 
             eprintln!();
             eprintln!(

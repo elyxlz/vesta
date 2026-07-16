@@ -88,8 +88,7 @@ pub fn is_active() -> bool {
         .stdout(process::Stdio::null())
         .stderr(process::Stdio::null())
         .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+        .is_ok_and(|s| s.success())
 }
 
 pub fn start() -> Result<(), String> {
