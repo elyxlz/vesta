@@ -4,12 +4,12 @@ Usage: redact_secrets.py            # scan, printing each hit with the value mas
        redact_secrets.py --scrub ID [ID ...]   # redact every secret in those events
 """
 
-import os
 import re
 import sqlite3
 import sys
+from pathlib import Path
 
-DB = os.path.expanduser("~/agent/data/events.db")
+DB = Path("~/agent/data/events.db").expanduser()
 REDACTED = "[REDACTED]"
 # Event types indexed by events_fts (mirrors the triggers in core/events.py). The schema has
 # insert/delete triggers only, so an in-place UPDATE must resync the index itself: otherwise the
@@ -22,11 +22,17 @@ PATTERNS = [
     r"gh[posr]_[A-Za-z0-9]{36,}",
     r"github_pat_[A-Za-z0-9_]{20,}",
     r"glpat-[A-Za-z0-9_-]{20,}",
-    r"AKIA[0-9A-Z]{16}",
+    r"(?-i:AKIA[0-9A-Z]{16})",  # case-sensitive: real AWS keys are uppercase. Under the outer
+    # IGNORECASE, a plain AKIA matches "akia...." runs inside base64 blobs (reasoning-block
+    # signatures, media keys), a recurring false positive that buries the real matches.
     r"PMAK-[A-Za-z0-9-]{20,}",
     r"eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}",
     r"BEGIN [A-Z ]+ PRIVATE KEY",
-    r"(?:password|secret|api[_-]?key)[\"': =]+[^ \"']{4,}",
+    # A real separator char (: = or a quote) is mandatory, so benign prose like "password reuse"
+    # (bare space between word and value) never matches; spaces around it are tolerated so
+    # space-padded assignments still hit (password = "x", YAML password: "x"). The \\? bits absorb
+    # the backslash JSON puts before an escaped quote, since the scan runs over the JSON `data` blob.
+    r"(?:password|secret|api[_-]?key)[ ]*\\?[\"':=]+[ ]*\\?[\"']?[^ \"'\\]{4,}",
     r"(?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql|redis)://[^ \"']+",
 ]
 REGEX = re.compile("|".join(PATTERNS), re.IGNORECASE)
@@ -90,7 +96,7 @@ def scrub(conn: sqlite3.Connection, ids: list[int]) -> int:
 
 
 def main() -> int:
-    if not os.path.isfile(DB):
+    if not DB.is_file():
         print(f"No database at {DB}")
         return 1
 

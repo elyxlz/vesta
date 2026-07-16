@@ -7,11 +7,11 @@ Credentials (client_id, client_secret) stored in ~/.spotify/credentials.json.
 import json
 import sys
 from http.server import BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import parse_qs, urlparse
 
 import spotipy
-from spotipy.oauth2 import SpotifyOAuth
 from spotipy.cache_handler import CacheFileHandler
+from spotipy.oauth2 import SpotifyOAuth
 
 from .config import Config
 
@@ -121,7 +121,7 @@ class _CallbackHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(f"<html><body><h2>error: {error}</h2></body></html>".encode())
 
-    def log_message(self, format, *args):
+    def log_message(self, fmt, *args):
         pass  # suppress logs
 
 

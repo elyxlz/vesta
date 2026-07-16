@@ -7,45 +7,44 @@ gmail send/reply/forward are refused before any API call. Drafting stays allowed
 from types import SimpleNamespace
 
 import pytest
-
 from google_cli import cli, gmail
 from google_cli.config import Config
 
 
 def _send_args(**over):
-    base = dict(
-        command="send",
-        to=["bob@example.com"],
-        subject="Hi",
-        body="body",
-        cc=None,
-        attachments=None,
-    )
+    base = {
+        "command": "send",
+        "to": ["bob@example.com"],
+        "subject": "Hi",
+        "body": "body",
+        "cc": None,
+        "attachments": None,
+    }
     base.update(over)
     return SimpleNamespace(**base)
 
 
 def _reply_args(**over):
-    base = dict(
-        command="reply",
-        message_id="orig-1",
-        body="thanks",
-        attachments=None,
-        reply_all=False,
-    )
+    base = {
+        "command": "reply",
+        "message_id": "orig-1",
+        "body": "thanks",
+        "attachments": None,
+        "reply_all": False,
+    }
     base.update(over)
     return SimpleNamespace(**base)
 
 
 def _draft_args(**over):
-    base = dict(
-        command="draft",
-        to=["bob@example.com"],
-        subject="Hi",
-        body="body",
-        cc=None,
-        attachments=None,
-    )
+    base = {
+        "command": "draft",
+        "to": ["bob@example.com"],
+        "subject": "Hi",
+        "body": "body",
+        "cc": None,
+        "attachments": None,
+    }
     base.update(over)
     return SimpleNamespace(**base)
 

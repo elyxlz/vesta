@@ -50,35 +50,37 @@ describe("connectReconnectingWs", () => {
     });
     expect(FakeSocket.instances).toHaveLength(1);
     const socket = FakeSocket.instances[0];
-    socket.open();
-    socket.emit("hello");
-    socket.emit(new ArrayBuffer(4));
-    socket.emit("world");
+    socket?.open();
+    socket?.emit("hello");
+    socket?.emit(new ArrayBuffer(4));
+    socket?.emit("world");
     expect(messages).toEqual(["hello", "world"]);
   });
 
   it("reconnects on close with exponential backoff that resets on open", () => {
     connectReconnectingWs({
       url: () => "ws://host/a",
-      onMessage: () => {},
+      onMessage: () => {
+        /* unused */
+      },
       baseDelayMs: 1000,
       maxDelayMs: 30000,
     });
-    FakeSocket.instances[0].drop();
+    FakeSocket.instances[0]?.drop();
     // first retry after the base delay
     vi.advanceTimersByTime(999);
     expect(FakeSocket.instances).toHaveLength(1);
     vi.advanceTimersByTime(1);
     expect(FakeSocket.instances).toHaveLength(2);
     // second consecutive drop doubles the delay to 2000ms
-    FakeSocket.instances[1].drop();
+    FakeSocket.instances[1]?.drop();
     vi.advanceTimersByTime(1999);
     expect(FakeSocket.instances).toHaveLength(2);
     vi.advanceTimersByTime(1);
     expect(FakeSocket.instances).toHaveLength(3);
     // a successful open resets the backoff to the base delay again
-    FakeSocket.instances[2].open();
-    FakeSocket.instances[2].drop();
+    FakeSocket.instances[2]?.open();
+    FakeSocket.instances[2]?.drop();
     vi.advanceTimersByTime(1000);
     expect(FakeSocket.instances).toHaveLength(4);
   });
@@ -90,7 +92,9 @@ describe("connectReconnectingWs", () => {
         if (!ready) throw new Error("not ready");
         return "ws://host/a";
       },
-      onMessage: () => {},
+      onMessage: () => {
+        /* unused */
+      },
       baseDelayMs: 1000,
     });
     expect(FakeSocket.instances).toHaveLength(0);
@@ -104,7 +108,9 @@ describe("connectReconnectingWs", () => {
     const handle = connectReconnectingWs({
       beforeConnect: () => Promise.resolve(proceed ? "open" : "stop"),
       url: () => "ws://host/a",
-      onMessage: () => {},
+      onMessage: () => {
+        /* unused */
+      },
     });
     await vi.runAllTimersAsync();
     expect(FakeSocket.instances).toHaveLength(0);
@@ -119,7 +125,9 @@ describe("connectReconnectingWs", () => {
     connectReconnectingWs({
       beforeConnect: () => Promise.resolve("open"),
       url: () => "ws://host/a",
-      onMessage: () => {},
+      onMessage: () => {
+        /* unused */
+      },
     });
     await vi.runAllTimersAsync();
     expect(FakeSocket.instances).toHaveLength(1);
@@ -128,12 +136,14 @@ describe("connectReconnectingWs", () => {
   it("close() tears down the socket and stops the reconnect loop", () => {
     const handle = connectReconnectingWs({
       url: () => "ws://host/a",
-      onMessage: () => {},
+      onMessage: () => {
+        /* unused */
+      },
     });
     const socket = FakeSocket.instances[0];
     handle.close();
-    expect(socket.closed).toBe(true);
-    expect(socket.onclose).toBeNull();
+    expect(socket?.closed).toBe(true);
+    expect(socket?.onclose).toBeNull();
     expect(handle.current()).toBeNull();
     // a late close after teardown must not schedule a reconnect
     vi.advanceTimersByTime(60000);

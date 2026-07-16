@@ -105,7 +105,7 @@ func TestWriteCallNotificationShapesFileForTheModel(t *testing.T) {
 		Direction:    "inbound",
 		ContactName:  "Alice",
 		ContactPhone: "+15551234567",
-		Transcript:   "are you there",
+		Message:      "are you there",
 	})
 	if err != nil {
 		t.Fatalf("write failed: %v", err)
@@ -126,7 +126,7 @@ func TestWriteCallNotificationShapesFileForTheModel(t *testing.T) {
 	if got.Source != "whatsapp" {
 		t.Errorf("source = %q, want whatsapp (so it reaches the model through the whatsapp flow)", got.Source)
 	}
-	if got.Type != "call_utterance" || got.Transcript != "are you there" || got.ContactName != "Alice" {
+	if got.Type != "call_utterance" || got.Message != "are you there" || got.ContactName != "Alice" {
 		t.Errorf("notification fields not preserved: %+v", got)
 	}
 	if got.Instance != "personal" {
@@ -134,5 +134,62 @@ func TestWriteCallNotificationShapesFileForTheModel(t *testing.T) {
 	}
 	if got.Timestamp == "" {
 		t.Error("timestamp not stamped")
+	}
+}
+
+// Core promotes `message` to the notification's body and renders every other key as an
+// attribute, so the key name is what decides whether the caller's words read like a text
+// message or like metadata hung off one.
+func TestCallUtteranceCarriesSpokenWordsUnderTheMessageKey(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeCallNotification(dir, "personal", callNotif{
+		Type: "call_utterance", Direction: "inbound", ContactName: "Alice", Message: "are you there",
+	}); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("expected one notification file, got %d (%v)", len(entries), err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, entries[0].Name()))
+	if err != nil {
+		t.Fatalf("read failed: %v", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatalf("notification is not valid json: %v", err)
+	}
+
+	var message string
+	if err := json.Unmarshal(fields["message"], &message); err != nil || message != "are you there" {
+		t.Errorf("message = %q, want the spoken words under the same key a text message uses", message)
+	}
+	if _, present := fields["transcript"]; present {
+		t.Errorf("transcript key is present; it would render as an attribute instead of the body")
+	}
+}
+
+// The other three call types say nothing, so they carry no body at all.
+func TestCallNotificationsWithNothingSpokenCarryNoMessage(t *testing.T) {
+	for _, notifType := range []string{"call_started", "call_ended", "call_missed"} {
+		dir := t.TempDir()
+		if err := writeCallNotification(dir, "personal", callNotif{
+			Type: notifType, Direction: "inbound", ContactName: "Alice", Reason: "no answer",
+		}); err != nil {
+			t.Fatalf("write failed: %v", err)
+		}
+		entries, _ := os.ReadDir(dir)
+		raw, err := os.ReadFile(filepath.Join(dir, entries[0].Name()))
+		if err != nil {
+			t.Fatalf("read failed: %v", err)
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			t.Fatalf("notification is not valid json: %v", err)
+		}
+		if _, present := fields["message"]; present {
+			t.Errorf("%s carries a message key, want it absent: nothing was said", notifType)
+		}
 	}
 }

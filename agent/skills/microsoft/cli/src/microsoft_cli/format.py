@@ -122,7 +122,4 @@ def format_calendar_name_list(calendars: list[dict[str, Any]]) -> str:
     """One line per calendar: default-marker  name  id."""
     if not calendars:
         return "(no calendars)"
-    return "\n".join(
-        f"{'*' if ('isDefaultCalendar' in c and c['isDefaultCalendar']) else ' '}\t{_trunc(_pick(c, 'name'), 40)}\t{_pick(c, 'id')}"
-        for c in calendars
-    )
+    return "\n".join(f"{'*' if (c.get('isDefaultCalendar')) else ' '}\t{_trunc(_pick(c, 'name'), 40)}\t{_pick(c, 'id')}" for c in calendars)

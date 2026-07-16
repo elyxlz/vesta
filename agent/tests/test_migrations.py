@@ -2,8 +2,8 @@
 
 import pytest
 
-import core.models as vm
 import core.config as cfg
+import core.models as vm
 from core.migrations import list_pending, pending_migration_turns
 
 

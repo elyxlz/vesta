@@ -251,7 +251,7 @@ _PRESENT_APPOSITIVE_RE = re.compile(
 )
 
 # Em-dash + en-dash + " - " separator: convert to comma/period.
-_DASH_SEP_RE = re.compile(r"\s+[—–]\s+|\s-\s")
+_DASH_SEP_RE = re.compile(r"\s+[\u2014\u2013]\s+|\s-\s")
 
 
 def fight_detector(
@@ -272,8 +272,7 @@ def fight_detector(
     """
     log: list[dict] = []
     rewritten, swaps = ban_replace(text, banned=banned, register="academic")
-    for s in swaps:
-        log.append({"kind": "ban-replace", **s})
+    log.extend({"kind": "ban-replace", **s} for s in swaps)
 
     def dash_sub(m: re.Match) -> str:
         log.append({"kind": "dash-collapsed", "at": m.start(), "was": m.group(0)})
@@ -281,15 +280,15 @@ def fight_detector(
 
     rewritten = _DASH_SEP_RE.sub(dash_sub, rewritten)
 
-    for m in _PRESENT_APPOSITIVE_RE.finditer(rewritten):
-        log.append(
-            {
-                "kind": "present-appositive-flagged",
-                "at": m.start(),
-                "phrase": m.group(0),
-                "fix": "restructure as a finite clause (e.g. ', which X' -> '. This X')",
-            }
-        )
+    log.extend(
+        {
+            "kind": "present-appositive-flagged",
+            "at": m.start(),
+            "phrase": m.group(0),
+            "fix": "restructure as a finite clause (e.g. ', which X' -> '. This X')",
+        }
+        for m in _PRESENT_APPOSITIVE_RE.finditer(rewritten)
+    )
 
     return rewritten, log
 

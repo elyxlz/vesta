@@ -18,8 +18,12 @@ export const NotificationContext =
 export function useNotifications(): NotificationContextValue {
   return (
     useContext(NotificationContext) ?? {
-      notifyAssistant: () => {},
-      setChattingAgent: () => {},
+      notifyAssistant: () => {
+        /* noop */
+      },
+      setChattingAgent: () => {
+        /* noop */
+      },
     }
   );
 }

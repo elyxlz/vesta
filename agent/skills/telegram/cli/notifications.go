@@ -44,6 +44,26 @@ type reactionNotif struct {
 	ContactUnknown  bool   `json:"contact_unknown,omitempty"`
 }
 
+// editNotif is emitted when a sender edits a message the agent has already seen. It carries the
+// current text in message (the same body field a plain message uses) plus old_text, so the agent
+// can tell a fixed typo (nothing to do) from a changed question (worth answering again) instead of
+// reading the edit as a brand new message.
+type editNotif struct {
+	Source          string `json:"source"`
+	Type            string `json:"type"`
+	Instance        string `json:"instance,omitempty"`
+	ContactName     string `json:"contact_name,omitempty"`
+	Sender          string `json:"sender,omitempty"`
+	ChatName        string `json:"chat_name,omitempty"`
+	Username        string `json:"username,omitempty"`
+	OldText         string `json:"old_text,omitempty"`
+	Message         string `json:"message"`
+	Timestamp       string `json:"timestamp"`
+	TargetMessageID int64  `json:"target_message_id"`
+	ContactUnknown  bool   `json:"contact_unknown,omitempty"`
+	ReplyHint       string `json:"reply_hint,omitempty"`
+}
+
 // callbackNotif is emitted when the owner taps an inline-keyboard button. CallbackID is needed to
 // answer the tap (telegram answer-callback --callback-id ...); ChatID+MessageID locate the message
 // to edit in place if updating the UI.
@@ -92,6 +112,47 @@ func WriteCallbackNotification(
 	}
 	filename := fmt.Sprintf("%s-telegram-callback.json", uuid.New().String())
 	return os.WriteFile(filepath.Join(notifDir, filename), out, 0644)
+}
+
+func WriteEditNotification(
+	notifDir string, targetMessageID int64, chatName, contactName, username, instance string,
+	contactSaved, isDirectChat bool,
+	sender, oldText, newText string,
+) error {
+	if notifDir == "" {
+		return nil
+	}
+
+	if err := os.MkdirAll(notifDir, 0755); err != nil {
+		return fmt.Errorf("failed to create notifications dir: %v", err)
+	}
+
+	notif := editNotif{
+		Source:          "telegram",
+		Type:            "edit",
+		Instance:        instance,
+		ContactName:     contactName,
+		Username:        username,
+		OldText:         oldText,
+		Message:         newText,
+		Timestamp:       time.Now().Format(time.RFC3339),
+		TargetMessageID: targetMessageID,
+		ContactUnknown:  !contactSaved,
+		ReplyHint:       "they changed a message you may have already answered; reply with `telegram send` only if the change asks something new",
+	}
+	if !isDirectChat {
+		notif.ChatName = chatName
+		if sender != chatName {
+			notif.Sender = sender
+		}
+	}
+
+	data, err := json.MarshalIndent(notif, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal edit notification: %v", err)
+	}
+	filename := fmt.Sprintf("%s-telegram-edit.json", uuid.New().String())
+	return os.WriteFile(filepath.Join(notifDir, filename), data, 0644)
 }
 
 func WriteNotification(

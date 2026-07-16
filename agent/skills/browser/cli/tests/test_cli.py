@@ -39,35 +39,31 @@ def test_parser_accepts_all_documented_subcommands():
         "close",
         "resize",
     ):
-        ns = parser.parse_args([cmd] + _minimal_args_for(cmd))
+        ns = parser.parse_args([cmd, *_minimal_args_for(cmd)])
         assert ns.cmd == cmd
 
 
+_URL_ARGS = ["https://example.com"]
+_MINIMAL_ARGS = {
+    "open": _URL_ARGS,
+    "navigate": _URL_ARGS,
+    "connect": _URL_ARGS,
+    "http-get": _URL_ARGS,
+    "fetch": _URL_ARGS,
+    "type": ["e1", "hello"],
+    "hover": ["e1"],
+    "click": ["e1"],
+    "press": ["Enter"],
+    "evaluate": ["document.title"],
+    "bidi": ["browsingContext.getTree"],
+    "focus": ["TARGET_XYZ"],
+    "close": ["TARGET_XYZ"],
+    "resize": ["1920", "1080"],
+}
+
+
 def _minimal_args_for(cmd: str) -> list[str]:
-    need_url = {"open", "navigate", "connect", "http-get", "fetch"}
-    need_ref = {"type", "hover"}
-    need_key = {"press"}
-    need_expression = {"evaluate"}
-    need_bidi_method = {"bidi"}
-    if cmd in need_url:
-        return ["https://example.com"]
-    if cmd in need_ref:
-        if cmd == "type":
-            return ["e1", "hello"]
-        return ["e1"]
-    if cmd in need_key:
-        return ["Enter"]
-    if cmd in need_expression:
-        return ["document.title"]
-    if cmd in need_bidi_method:
-        return ["browsingContext.getTree"]
-    if cmd == "click":
-        return ["e1"]
-    if cmd == "focus" or cmd == "close":
-        return ["TARGET_XYZ"]
-    if cmd == "resize":
-        return ["1920", "1080"]
-    return []
+    return _MINIMAL_ARGS[cmd] if cmd in _MINIMAL_ARGS else []
 
 
 def test_parser_launch_flags_compat():
@@ -221,7 +217,7 @@ def test_main_prints_help_when_no_command(monkeypatch, capsys):
 
 
 def test_snapshot_banner_format(monkeypatch):
-    def fake_snapshot(interactive_only: bool = False, compact: bool = False):
+    def fake_snapshot(interactive_only: bool = False):
         return {
             "target_id": "T1",
             "url": "https://unknown.example/",
@@ -250,14 +246,14 @@ def test_snapshot_banner_handles_snapshot_failure(monkeypatch):
 
 
 def test_cmd_screenshot_plumbs_webp_and_region(monkeypatch):
-    """--webp + --region flow through as format='webp' + region tuple; path default follows format."""
+    """--webp + --region flow through as image_format='webp' + region tuple; path default follows the format."""
     captured: dict = {}
     monkeypatch.setattr(cli.admin, "ensure_daemon", lambda *a, **kw: None)
     monkeypatch.setattr(cli.helpers, "screenshot", lambda **kw: (captured.update(kw), kw["path"])[1])
 
     args = argparse.Namespace(path="/tmp/shot.webp", full_page=False, webp=True, jpeg=False, region="10,20,300,200", quality=75)
     assert cli.cmd_screenshot(args) == 0
-    assert captured["format"] == "webp"
+    assert captured["image_format"] == "webp"
     assert captured["region"] == (10.0, 20.0, 300.0, 200.0)
     assert captured["quality"] == 75
 
@@ -271,7 +267,7 @@ def test_cmd_screenshot_infers_format_from_path_suffix(monkeypatch):
     monkeypatch.setattr(cli.admin, "ensure_daemon", lambda *a, **kw: None)
     monkeypatch.setattr(cli.helpers, "screenshot", lambda **kw: (captured.update(kw), kw["path"])[1])
     cli.cmd_screenshot(argparse.Namespace(path="/tmp/x.jpg", full_page=False, webp=False, jpeg=False, region=None, quality=None))
-    assert captured["format"] == "jpeg"
+    assert captured["image_format"] == "jpeg"
 
 
 def test_cmd_screenshot_rejects_malformed_region(monkeypatch):

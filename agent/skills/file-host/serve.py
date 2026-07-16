@@ -15,17 +15,17 @@ Usage:
 
 import argparse
 import http.server
-import os
 import socketserver
+from pathlib import Path
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--dir", default=os.path.expanduser("~/.file-host"))
+parser.add_argument("--dir", default=str(Path("~/.file-host").expanduser()))
 parser.add_argument("--port", type=int, default=8770)
 parser.add_argument("--no-cache", action="store_true")
 args = parser.parse_args()
 
-serve_dir = os.path.abspath(os.path.expanduser(args.dir))
-os.makedirs(serve_dir, exist_ok=True)
+serve_dir = str(Path(args.dir).expanduser().resolve())
+Path(serve_dir).mkdir(parents=True, exist_ok=True)
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):

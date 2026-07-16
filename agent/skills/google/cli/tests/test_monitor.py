@@ -3,7 +3,7 @@
 import json
 import logging
 import threading
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 
 from google_cli import calendar, monitor
 from google_cli.config import Config
@@ -29,7 +29,7 @@ def test_stale_last_check_is_clamped_to_the_lookback_bound():
 
 
 def test_clamp_bound_is_24_hours():
-    assert monitor.MAX_CATCHUP_LOOKBACK == timedelta(hours=24)
+    assert timedelta(hours=24) == monitor.MAX_CATCHUP_LOOKBACK
 
 
 # -- one-shot surfacing of terminal failures --------------------------------

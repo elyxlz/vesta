@@ -33,7 +33,7 @@ import { errorMessage } from "@/lib/utils";
 
 function folderName(path: string): string {
   const segments = path.split("/").filter(Boolean);
-  return segments.length > 0 ? segments[segments.length - 1] : path;
+  return segments.at(-1) ?? path;
 }
 
 // Host filesystem grants: the shared folders are listed inline as cells (with a per-folder
@@ -247,8 +247,8 @@ export function HostAccessCard() {
           <DialogHeader>
             <DialogTitle>add a folder</DialogTitle>
             <DialogDescription>
-              choose a folder on this computer for {agentName || "the agent"} to
-              open.
+              choose a folder on {agentName || "the agent"}'s host computer for
+              them to open.
             </DialogDescription>
           </DialogHeader>
 
@@ -281,7 +281,7 @@ export function HostAccessCard() {
               value={hostPath}
               onChange={(e) => setHostPath(e.target.value)}
               placeholder="/mnt/media"
-              aria-label="folder path on this computer"
+              aria-label={`folder path on ${agentName || "the agent"}'s host computer`}
               className="h-8 text-xs"
             />
             {showContainerPath ? (

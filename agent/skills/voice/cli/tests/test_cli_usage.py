@@ -1,6 +1,5 @@
 import pytest
-
-import voice.voice_keys as voice_keys
+from voice import voice_keys
 
 
 def test_bare_invocation_prints_usage_and_exits_zero(capsys: pytest.CaptureFixture[str]) -> None:

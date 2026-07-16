@@ -4,14 +4,14 @@ Authenticate Microsoft accounts for use with the Microsoft CLI.
 Run this script to sign in to one or more Microsoft accounts.
 """
 
-import sys
 import argparse
+import sys
 from pathlib import Path
 
 # Add src to path so we can import our modules
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from dotenv import load_dotenv, find_dotenv
+from dotenv import find_dotenv, load_dotenv
 from microsoft_cli import auth
 from microsoft_cli.settings import get_settings
 

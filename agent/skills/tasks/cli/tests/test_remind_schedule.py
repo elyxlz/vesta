@@ -3,13 +3,12 @@
 import json
 import sqlite3
 from contextlib import closing
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
 from apscheduler.triggers.cron import CronTrigger
-
 from tasks_cli import commands, db
 from tasks_cli.config import Config
 
@@ -38,7 +37,9 @@ def _fire_days(expr: str, tz: str, start: str, count: int) -> list[str]:
 
 
 def test_daily_stores_local_cron_expr_and_tz(tmp_config: Config):
-    result = commands.remind_set(tmp_config, message="standup", scheduled_datetime="2026-04-26T10:30:00", tz="Europe/London", recurring="daily")
+    result = commands.remind_set(
+        tmp_config, commands.ReminderSpec(message="standup", scheduled_datetime="2026-04-26T10:30:00", tz="Europe/London", recurring="daily")
+    )
     assert result["schedule"] == "daily at 10:30 Europe/London"
     assert _trigger_data(tmp_config, result["id"]) == {"type": "cron", "expr": "30 10 * * *", "tz": "Europe/London"}
 
@@ -46,7 +47,7 @@ def test_daily_stores_local_cron_expr_and_tz(tmp_config: Config):
 def test_weekly_uses_local_day_of_week(tmp_config: Config):
     # 2026-04-26 23:30 New York is a Sunday locally (03:30 UTC Monday), so the weekly reminder must fire Sunday.
     result = commands.remind_set(
-        tmp_config, message="review", scheduled_datetime="2026-04-26T23:30:00", tz="America/New_York", recurring="weekly"
+        tmp_config, commands.ReminderSpec(message="review", scheduled_datetime="2026-04-26T23:30:00", tz="America/New_York", recurring="weekly")
     )
     assert result["schedule"] == "weekly on sun at 23:30 America/New_York"
     assert _trigger_data(tmp_config, result["id"]) == {"type": "cron", "expr": "30 23 * * sun", "tz": "America/New_York"}
@@ -54,7 +55,7 @@ def test_weekly_uses_local_day_of_week(tmp_config: Config):
 
 def test_monthly_uses_local_day(tmp_config: Config):
     result = commands.remind_set(
-        tmp_config, message="bills", scheduled_datetime="2026-04-15T23:30:00", tz="America/New_York", recurring="monthly"
+        tmp_config, commands.ReminderSpec(message="bills", scheduled_datetime="2026-04-15T23:30:00", tz="America/New_York", recurring="monthly")
     )
     assert result["schedule"] == "monthly on day 15 at 23:30 America/New_York"
     assert _trigger_data(tmp_config, result["id"]) == {"type": "cron", "expr": "30 23 15 * *", "tz": "America/New_York"}
@@ -62,14 +63,15 @@ def test_monthly_uses_local_day(tmp_config: Config):
 
 def test_yearly_uses_local_month_and_day(tmp_config: Config):
     result = commands.remind_set(
-        tmp_config, message="birthday", scheduled_datetime="2026-12-31T23:30:00", tz="America/New_York", recurring="yearly"
+        tmp_config,
+        commands.ReminderSpec(message="birthday", scheduled_datetime="2026-12-31T23:30:00", tz="America/New_York", recurring="yearly"),
     )
     assert result["schedule"] == "yearly on 12/31 at 23:30 America/New_York"
     assert _trigger_data(tmp_config, result["id"]) == {"type": "cron", "expr": "30 23 31 12 *", "tz": "America/New_York"}
 
 
 def test_hourly_stays_interval(tmp_config: Config):
-    result = commands.remind_set(tmp_config, message="ping", recurring="hourly")
+    result = commands.remind_set(tmp_config, commands.ReminderSpec(message="ping", recurring="hourly"))
     assert result["schedule"] == "hourly"
     assert _trigger_data(tmp_config, result["id"]) == {"type": "interval", "hours": 1}
 
@@ -82,7 +84,9 @@ def test_hourly_stays_interval(tmp_config: Config):
 def test_daily_preset_holds_wall_clock_across_dst(tmp_config: Config):
     """A 09:00 Europe/London daily reminder must fire at 09:00 local in both winter (UTC+0)
     and summer (UTC+1) — i.e. it must NOT drift by the DST offset."""
-    result = commands.remind_set(tmp_config, message="standup", scheduled_datetime="2026-06-15T09:00:00", tz="Europe/London", recurring="daily")
+    result = commands.remind_set(
+        tmp_config, commands.ReminderSpec(message="standup", scheduled_datetime="2026-06-15T09:00:00", tz="Europe/London", recurring="daily")
+    )
     data = _trigger_data(tmp_config, result["id"])
     trigger = CronTrigger.from_crontab(data["expr"], timezone=ZoneInfo(data["tz"]))
     london = ZoneInfo("Europe/London")
@@ -151,7 +155,7 @@ def test_normalize_cron_expr_rejects_bad(expr: str):
 
 def test_cron_weekdays_use_standard_numbering(tmp_config: Config):
     """`1-5` must mean Mon-Fri (standard cron), not Tue-Sat (raw APScheduler numbering)."""
-    result = commands.remind_set(tmp_config, message="weekday standup", cron="0 9 * * 1-5", tz="America/New_York")
+    result = commands.remind_set(tmp_config, commands.ReminderSpec(message="weekday standup", cron="0 9 * * 1-5", tz="America/New_York"))
     data = _trigger_data(tmp_config, result["id"])
     assert data == {"type": "cron", "expr": "0 9 * * mon,tue,wed,thu,fri", "tz": "America/New_York"}
     assert result["schedule"] == "cron: 0 9 * * 1-5 (America/New_York)"
@@ -162,7 +166,7 @@ def test_cron_weekdays_use_standard_numbering(tmp_config: Config):
 
 
 def test_cron_step_expression(tmp_config: Config):
-    result = commands.remind_set(tmp_config, message="quarter-hourly", cron="*/15 9-17 * * *", tz="UTC")
+    result = commands.remind_set(tmp_config, commands.ReminderSpec(message="quarter-hourly", cron="*/15 9-17 * * *", tz="UTC"))
     data = _trigger_data(tmp_config, result["id"])
     assert data == {"type": "cron", "expr": "*/15 9-17 * * *", "tz": "UTC"}
     trigger = CronTrigger.from_crontab(data["expr"], timezone=ZoneInfo("UTC"))
@@ -172,7 +176,7 @@ def test_cron_step_expression(tmp_config: Config):
 
 def test_cron_requires_tz(tmp_config: Config):
     with pytest.raises(ValueError, match="tz is required"):
-        commands.remind_set(tmp_config, message="x", cron="0 9 * * *")
+        commands.remind_set(tmp_config, commands.ReminderSpec(message="x", cron="0 9 * * *"))
 
 
 @pytest.mark.parametrize(
@@ -185,18 +189,18 @@ def test_cron_requires_tz(tmp_config: Config):
 )
 def test_cron_conflicts_with_other_modes(tmp_config: Config, kwargs: dict):
     with pytest.raises(ValueError, match="cannot be combined"):
-        commands.remind_set(tmp_config, message="x", cron="0 9 * * *", tz="UTC", **kwargs)
+        commands.remind_set(tmp_config, commands.ReminderSpec(message="x", cron="0 9 * * *", tz="UTC", **kwargs))
 
 
 def test_cron_invalid_expression_rejected(tmp_config: Config):
     with pytest.raises(ValueError):
-        commands.remind_set(tmp_config, message="x", cron="99 9 * * *", tz="UTC")
+        commands.remind_set(tmp_config, commands.ReminderSpec(message="x", cron="99 9 * * *", tz="UTC"))
 
 
 def test_cron_reminder_restores_into_scheduler(tmp_config: Config):
     from tasks_cli.scheduler import create_scheduler
 
-    result = commands.remind_set(tmp_config, message="weekday standup", cron="0 9 * * 1-5", tz="America/New_York")
+    result = commands.remind_set(tmp_config, commands.ReminderSpec(message="weekday standup", cron="0 9 * * 1-5", tz="America/New_York"))
     scheduler = create_scheduler()
     commands.restore_all_jobs(tmp_config, scheduler, notif_dir=None)
     assert {job.id for job in scheduler.get_jobs()} == {result["id"]}

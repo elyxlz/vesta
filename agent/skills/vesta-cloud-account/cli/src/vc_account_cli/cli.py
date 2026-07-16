@@ -30,7 +30,7 @@ def _print(payload: dict[str, Any]) -> None:
     print(json.dumps(payload, indent=2, ensure_ascii=False))
 
 
-def _cmd_plan(args: argparse.Namespace, client: Client, cfg: Config) -> int:
+def _cmd_plan(_args: argparse.Namespace, client: Client, _cfg: Config) -> int:
     token = client.mint_token()
     summary = client.plan(token)
     if "error" in summary:
@@ -46,7 +46,7 @@ def _cmd_plan(args: argparse.Namespace, client: Client, cfg: Config) -> int:
     return 0
 
 
-def _cmd_manage(args: argparse.Namespace, client: Client, cfg: Config) -> int:
+def _cmd_manage(_args: argparse.Namespace, client: Client, _cfg: Config) -> int:
     token = client.mint_token()
     result = client.portal(token)
     if "url" not in result:
@@ -62,7 +62,7 @@ def _cmd_manage(args: argparse.Namespace, client: Client, cfg: Config) -> int:
     return 0
 
 
-def _cmd_referral(args: argparse.Namespace, client: Client, cfg: Config) -> int:
+def _cmd_referral(_args: argparse.Namespace, client: Client, _cfg: Config) -> int:
     try:
         token = client.mint_token()
     except AccountError:
@@ -93,7 +93,7 @@ def _cmd_referral(args: argparse.Namespace, client: Client, cfg: Config) -> int:
     return 0
 
 
-def _cmd_set_referral(args: argparse.Namespace, client: Client, cfg: Config) -> int:
+def _cmd_set_referral(args: argparse.Namespace, _client: Client, _cfg: Config) -> int:
     if args.clear:
         referral_store.clear_referral_code()
         _print({"ok": True, "referral_code": None})

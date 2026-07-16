@@ -80,8 +80,7 @@ git tag -f "$TAG" "refs/heads/$BRANCH" >/dev/null
 git update-ref "refs/heads/$LEGACY_BRANCH" "refs/heads/$BRANCH"
 
 # Regenerate atomically: boxes may be mid-download of the old bundle; rename is safe.
-TAG_REFS="$(git tag -l 'agent-v*' | sed 's|^|refs/tags/|')"
-# shellcheck disable=SC2086
-git bundle create "$BUNDLE.tmp" "refs/heads/$BRANCH" "refs/heads/$LEGACY_BRANCH" $TAG_REFS 2>/dev/null
+mapfile -t TAG_REFS < <(git tag -l 'agent-v*' | sed 's|^|refs/tags/|')
+git bundle create "$BUNDLE.tmp" "refs/heads/$BRANCH" "refs/heads/$LEGACY_BRANCH" "${TAG_REFS[@]}" 2>/dev/null
 mv "$BUNDLE.tmp" "$BUNDLE"
 echo "upstream: $BRANCH at $TAG ($(git rev-parse --short "refs/heads/$BRANCH"))"

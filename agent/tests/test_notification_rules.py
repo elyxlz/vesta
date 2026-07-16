@@ -7,10 +7,10 @@ import json
 import pydantic as pyd
 import pytest
 
-from core.notification import CORE_SOURCE, Notification, TYPE_PROACTIVE_CHECK
 from core import config as cfg
 from core import loops
 from core import notification_interrupt_policy as npn
+from core.notification import CORE_SOURCE, TYPE_PROACTIVE_CHECK, Notification
 
 
 def _notif(**fields) -> Notification:
@@ -183,6 +183,9 @@ def test_match_text_alias_searches_body_and_message():
     rule = _rule(match=[{"field": "text", "op": "regex", "value": "taxes"}], action="snooze")
     assert npn.notif_disposition(_wa(message="ping about taxes"), [rule]) == "snooze"
     assert npn.notif_disposition(_notif(body="taxes due"), [rule]) == "snooze"
+    # A telegram edit carries its current text in `message`, the same body field a plain message
+    # uses, so a content rule matches an edited message the same way it matches a new one.
+    assert npn.notif_disposition(_notif(source="telegram", type="edit", message="taxes are due"), [rule]) == "snooze"
 
 
 def test_match_invalid_regex_predicate_is_rejected():
@@ -287,6 +290,48 @@ def test_load_round_trips_a_written_store(tmp_path, monkeypatch):
     assert loaded[0].action == "snooze"
     # And the loaded rule drives the decision.
     assert npn.notif_disposition(_notif(), loaded) == "snooze"
+
+
+# --- temporary rules: expires_at / drop_expired ---
+
+
+def test_rule_without_expiry_never_expires():
+    assert _rule(source="twitter", action="snooze").is_expired(dt.datetime(2026, 1, 1, tzinfo=dt.UTC)) is False
+
+
+def test_rule_is_expired_only_after_its_instant():
+    expiry = dt.datetime(2026, 1, 1, 12, tzinfo=dt.UTC)
+    rule = _rule(source="twitter", action="snooze", expires_at=expiry)
+    assert rule.is_expired(dt.datetime(2026, 1, 1, 11, tzinfo=dt.UTC)) is False
+    assert rule.is_expired(dt.datetime(2026, 1, 1, 13, tzinfo=dt.UTC)) is True
+
+
+def test_naive_expiry_is_read_as_utc():
+    rule = _rule(source="twitter", action="snooze", expires_at=dt.datetime(2026, 1, 1, 12))
+    assert rule.is_expired(dt.datetime(2026, 1, 1, 13, tzinfo=dt.UTC)) is True
+
+
+def test_drop_expired_keeps_only_live_rules():
+    now = dt.datetime(2026, 1, 1, 12, tzinfo=dt.UTC)
+    live = _rule(id="live", source="a", action="snooze", expires_at=now + dt.timedelta(hours=1))
+    dead = _rule(id="dead", source="b", action="snooze", expires_at=now - dt.timedelta(hours=1))
+    forever = _rule(id="forever", source="c", action="snooze")
+    assert [rule.id for rule in npn.drop_expired([live, dead, forever], now)] == ["live", "forever"]
+
+
+def test_load_drops_expired_rule(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENT_DIR", str(tmp_path / "agent"))
+    config = cfg.VestaConfig()
+    past = (dt.datetime.now(dt.UTC) - dt.timedelta(hours=1)).isoformat()
+    future = (dt.datetime.now(dt.UTC) + dt.timedelta(hours=1)).isoformat()
+    _write_rules_store(
+        config,
+        [
+            {"id": "expired", "source": "twitter", "action": "snooze", "expires_at": past},
+            {"id": "live", "source": "whatsapp", "action": "snooze", "expires_at": future},
+        ],
+    )
+    assert [rule.id for rule in cfg.load_notification_rules()] == ["live"]
 
 
 # --- core routing via loops._notif_disposition ---

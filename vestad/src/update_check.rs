@@ -1,6 +1,8 @@
-// Poll GitHub for new releases 4 times a day (every 6 hours). The desktop app
-// can force an immediate check via POST /version/check.
-pub const CHECK_INTERVAL_SECS: u64 = 6 * 60 * 60;
+// Poll GitHub for new releases every 5 hours: often enough that the UpdatePill and a
+// power user's manual update see a release promptly. This only governs detection; an
+// auto-update is applied later, in the fleet's 3-5am quiet window (see serve.rs
+// apply_in_best_window). The desktop app can force an immediate check via POST /version/check.
+pub const CHECK_INTERVAL_SECS: u64 = 5 * 60 * 60;
 const FETCH_TIMEOUT_SECS: u64 = 10;
 const ERROR_SNIPPET_MAX_LEN: usize = 300;
 const HTTP_STATUS_SENTINEL: &str = "\n__VESTA_HTTP_STATUS__:";
@@ -54,7 +56,7 @@ fn cache_path(channel: Channel) -> Option<std::path::PathBuf> {
     // ETags, so they must not share a conditional-request cache.
     let file = match channel {
         Channel::Stable => CACHE_FILE_NAME.to_string(),
-        Channel::Beta => format!("{}.beta", CACHE_FILE_NAME),
+        Channel::Beta => format!("{CACHE_FILE_NAME}.beta"),
     };
     crate::paths::config_dir().map(|dir| dir.join(file))
 }
@@ -135,9 +137,7 @@ fn fetch_latest_release_tag(timeout_secs: Option<u64>, channel: Channel) -> Resu
     if !output.status.success() {
         let code = output
             .status
-            .code()
-            .map(|c| c.to_string())
-            .unwrap_or_else(|| "signal".into());
+            .code().map_or_else(|| "signal".into(), |c| c.to_string());
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!(
             "curl failed (exit {code}): {}",
