@@ -277,33 +277,27 @@ func runOneShot(command string) {
 	os.Exit(exitCode)
 }
 
-// helpRequest carries a command's usage text out of its handler, so main can report the flags
-// without running the command. A FlagSet writes its usage to an io.Writer and reports ErrHelp,
-// which on its own says nothing about what the command accepts.
-type helpRequest struct{ usage string }
-
-func (h *helpRequest) Error() string { return h.usage }
-
-// parseFlags parses a command's flags, capturing what the FlagSet writes so the text reaches the
-// caller instead of the daemon's stderr, where nothing can read it.
+// parseFlags parses a command's flags, returning what the FlagSet wrote about the problem: the
+// usage for `--help`, or the rejection plus the flag list for anything it does not accept. The
+// FlagSet writes that text to an io.Writer and returns an error that on its own says nothing,
+// so without capturing it the text lands on the daemon's stderr where nothing can read it.
 func parseFlags(fs *flag.FlagSet, args []string) error {
 	var written bytes.Buffer
 	fs.SetOutput(&written)
 	err := fs.Parse(args)
+	if err == nil {
+		return nil
+	}
 	text := strings.TrimSpace(written.String())
-	if errors.Is(err, flag.ErrHelp) {
-		if !declaresFlags(fs) {
-			// The FlagSet prints a bare "Usage of x:" header with nothing under it, which reads
-			// like the answer went missing rather than like there is nothing to say.
-			text = fs.Name() + " takes no flags"
-		}
-		return &helpRequest{usage: text}
+	if errors.Is(err, flag.ErrHelp) && !declaresFlags(fs) {
+		// A FlagSet with nothing to list prints a bare "Usage of x:" header, which reads like the
+		// answer went missing rather than like there is nothing to say.
+		text = fs.Name() + " takes no flags"
 	}
-	if err != nil && text != "" {
-		// The buffer holds the rejection plus the full flag list, which answers the mistake.
-		return errors.New(text)
+	if text == "" {
+		return err
 	}
-	return err
+	return errors.New(text)
 }
 
 func declaresFlags(fs *flag.FlagSet) bool {
@@ -325,11 +319,12 @@ type command struct {
 	name        string
 	aliases     []string
 	positionals []string
-	// internal marks a command the `link` and `daemon` wrappers drive; it works if called
-	// directly but skips their rate-limit and QR-page handling, so usage does not offer it.
-	internal bool
-	write    bool
-	run      func([]string, *WhatsAppClient) (any, error)
+	// hidden keeps a command out of the usage list. It stays callable, but it exists for the
+	// `link` and `daemon` wrappers to drive, and reaching for it directly serves no QR page and
+	// polls nothing, so offering it to the agent only invites a half-done link.
+	hidden bool
+	write  bool
+	run    func([]string, *WhatsAppClient) (any, error)
 }
 
 var commands = []command{
@@ -364,10 +359,10 @@ var commands = []command{
 	{name: "say", positionals: []string{"text"}, write: true, run: cmdSay},
 	{name: "hangup", write: true, run: cmdHangup},
 	{name: "call-status", run: cmdCallStatus},
-	{name: "daemon-status", internal: true, run: cmdDaemonStatus},
-	{name: "link-start", internal: true, run: cmdLinkStart},
-	{name: "link-status", internal: true, run: cmdLinkStatus},
-	{name: "link-stop", internal: true, run: cmdLinkStop},
+	{name: "daemon-status", hidden: true, run: cmdDaemonStatus},
+	{name: "link-start", hidden: true, run: cmdLinkStart},
+	{name: "link-status", hidden: true, run: cmdLinkStatus},
+	{name: "link-stop", hidden: true, run: cmdLinkStop},
 }
 
 func cmdLinkStart(args []string, wac *WhatsAppClient) (any, error) {
@@ -457,9 +452,6 @@ func executeCommand(name string, args []string, wac *WhatsAppClient) (any, error
 	if wac.readOnly && cmd.write {
 		return nil, fmt.Errorf("command %q blocked: instance is read-only", name)
 	}
-	// main answers help before dispatch, so a helpRequest here means an argument's own text looks
-	// like `-h`. It surfaces as a failure carrying the usage: succeeding would report a message sent
-	// that never was.
 	return cmd.run(args, wac)
 }
 

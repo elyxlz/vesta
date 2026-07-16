@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -26,9 +25,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  authenticate                         print auth status")
 	fmt.Fprintln(w, "Commands (short aliases in parentheses; `whatsapp <command> --help` for its flags):")
 	for _, cmd := range commands {
-		// The link-* and daemon-status commands exist for the `link` and `daemon` wrappers to
-		// drive; reaching for them directly skips those wrappers' rate-limit and QR-page handling.
-		if cmd.internal {
+		if cmd.hidden {
 			continue
 		}
 		fmt.Fprintln(w, "  "+commandSignature(cmd))
@@ -45,12 +42,8 @@ func printCommandUsage(w io.Writer, name string) {
 		printUsage(w)
 		return
 	}
-	var help *helpRequest
-	if _, err := cmd.run([]string{"--help"}, nil); errors.As(err, &help) {
-		fmt.Fprintln(w, help.usage)
-		return
-	}
-	fmt.Fprintln(w, commandSignature(cmd))
+	_, err := cmd.run([]string{"--help"}, nil)
+	fmt.Fprintln(w, err)
 }
 
 // commandSignature renders one registry entry as `name (alias) <positional>`.
@@ -92,9 +85,9 @@ func main() {
 		os.Args[i] = shellEscapeReplacer.Replace(os.Args[i])
 	}
 
-	// Asking what a command takes is a question, so answer it here: no daemon, no socket, and no
-	// command body, which is what keeps `clear-all-chats --help` from running clear-all-chats.
-	// Only the first argument counts, so a message whose own text is `-h` stays a message.
+	// Answer it here so no daemon, no socket, and no command body is involved, which is what keeps
+	// `clear-all-chats --help` from running clear-all-chats. Only the first argument is read as
+	// help, so `send <to> -h` still sends the text `-h`.
 	if len(os.Args) > 1 && isHelpArg(os.Args[1]) {
 		printCommandUsage(os.Stdout, command)
 		os.Exit(0)

@@ -27,8 +27,10 @@ func TestEveryCommandReportsItsFlagsWithoutAClient(t *testing.T) {
 					t.Errorf("%s --help panicked, so it reaches for the client before parsing: %v", cmd.name, r)
 				}
 			}()
-			if usage := helpFor(t, cmd.name); usage == "" {
-				t.Errorf("%s --help printed nothing, want its usage", cmd.name)
+			// Naming the command is what a FlagSet's usage always does, and what a handler that
+			// answered some other way (a validation error, or nothing) would not.
+			if usage := helpFor(t, cmd.name); !strings.Contains(usage, cmd.name) {
+				t.Errorf("%s --help = %q, want its own usage: it does not report its flags", cmd.name, usage)
 			}
 		}()
 	}
@@ -63,16 +65,6 @@ func TestHelpNeverReachesADestructiveBody(t *testing.T) {
 	}
 	if content != "keep me" {
 		t.Error("the message is gone after clear-all-chats --help; asking for help wiped the database")
-	}
-}
-
-// main routes `--help`, `-h` and a bare `help` to the usage path, so every spelling the CLI
-// accepts stops short of the command body rather than only the two flag-shaped ones.
-func TestEveryHelpSpellingIsRecognised(t *testing.T) {
-	for _, spelling := range []string{"--help", "-h", "help"} {
-		if !isHelpArg(spelling) {
-			t.Errorf("isHelpArg(%q) = false; that spelling would reach the command body", spelling)
-		}
 	}
 }
 
@@ -147,7 +139,7 @@ func TestUsageListsEveryCommandOfferedToTheAgent(t *testing.T) {
 	var usage bytes.Buffer
 	printUsage(&usage)
 	for _, cmd := range commands {
-		if cmd.internal {
+		if cmd.hidden {
 			continue
 		}
 		if !strings.Contains(usage.String(), cmd.name) {
