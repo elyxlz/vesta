@@ -27,9 +27,10 @@ screen -wipe >/dev/null 2>&1 || true
 # on empty input, which would report every daemon as live on a cold boot.
 running() { test -n "$(screen -ls 2>/dev/null | grep -E "[0-9]+\.$1[[:space:]]" | grep -v "Dead")"; }
 # IMPORTANT: copy this definition verbatim from this file; never type it from
-# memory or a system-reminder cache. A stale cached form without $1 makes
-# running() match every session name and always return true, silently defeating
-# every guard (duplicate daemons on every guarded restart line).
+# memory or a system-reminder cache. A stale cached grep form matches nothing
+# against a real session name, so running() returns false for a live session
+# and `false || spawn` re-spawns on every guarded restart line, silently
+# stacking duplicate daemons.
 
 # Skills append guarded startup lines below, e.g.:
 #   running foo || { screen -dmS foo foo serve --notifications-dir ~/agent/notifications; sleep 1; }
