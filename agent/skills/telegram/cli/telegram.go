@@ -328,16 +328,12 @@ func (tc *TelegramClient) handleMessage(msg *tgbotapi.Message) {
 
 // --- Telegram MarkdownV2 rendering -----------------------------------------
 //
-// Outbound messages are sent as MarkdownV2. Telegram's legacy "Markdown" mode
-// silently drops the underscores in a matched pair like `cs_live_...` (it reads
-// them as italics), which corrupted the Stripe Checkout links handed to users
-// -> a dead pay page. MarkdownV2 has the same hazard, so we ESCAPE every
-// reserved character in literal text. Explicit `[label](url)` links are kept
-// intact (label escaped; url only needs `)`/`\` escaped) so the onboard skill
-// can hand out a real, clickable pay link whose Stripe session id survives
-// byte-for-byte. Text that isn't a recognised link is still escaped, so a bare
-// URL survives verbatim (Telegram auto-links it) -- worst case a link renders
-// unlabelled, never corrupted.
+// Outbound messages are sent as MarkdownV2 with every reserved character in
+// literal text escaped: an unescaped underscore pair (as in `cs_live_...`)
+// reads as italics, silently corrupting a Stripe Checkout link into a dead pay
+// page. Explicit `[label](url)` links stay intact (label escaped; url needs
+// only `)`/`\` escaped) so a clickable pay link's session id survives
+// byte-for-byte. A bare URL is escaped as plain text and survives verbatim.
 
 // mdV2Escaper backslash-escapes every MarkdownV2 reserved character in a run of
 // literal text. Backslash is listed first so we never double-escape our own

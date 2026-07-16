@@ -3,7 +3,6 @@ import sys
 import typing as tp
 
 import pytest
-
 from recall_cli import cli
 
 Add = tp.Callable[[str, str, str], None]

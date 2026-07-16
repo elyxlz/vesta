@@ -20,10 +20,10 @@ const LOG_LINE_RE = /^(\S+)\s+(TRACE|DEBUG|INFO|WARN|ERROR)\s+([\s\S]*)$/;
 
 function LogLine({ text }: { text: string }) {
   const match = LOG_LINE_RE.exec(text);
-  if (!match) {
+  const [, timestamp, level, rest] = match ?? [];
+  if (timestamp === undefined || level === undefined || rest === undefined) {
     return <div style={styles.line}>{text || " "}</div>;
   }
-  const [, timestamp, level, rest] = match;
   return (
     <div style={styles.line}>
       <span style={styles.timestamp}>{timestamp}</span>{" "}
@@ -76,7 +76,9 @@ export function GatewayLogsViewer({
       }
     };
 
-    streamGatewayLogs(follow, handleEvent).catch(() => {});
+    streamGatewayLogs(follow, handleEvent).catch(() => {
+      /* noop: rejects only when disconnected; stream errors arrive as Error events */
+    });
 
     return () => {
       active = false;

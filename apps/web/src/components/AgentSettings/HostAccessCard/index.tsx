@@ -33,7 +33,7 @@ import { errorMessage } from "@/lib/utils";
 
 function folderName(path: string): string {
   const segments = path.split("/").filter(Boolean);
-  return segments.length > 0 ? segments[segments.length - 1] : path;
+  return segments.at(-1) ?? path;
 }
 
 // Host filesystem grants: the shared folders are listed inline as cells (with a per-folder

@@ -205,7 +205,7 @@ impl AgentStatusCache {
             if *current == *all_services {
                 return false;
             }
-            *current = all_services.clone();
+            current.clone_from(all_services);
             true
         });
     }
@@ -217,7 +217,7 @@ impl AgentStatusCache {
     /// Bump the monotonic revision for a service, signalling clients to refetch it.
     pub fn invalidate_service(&self, agent: &str, service: &str) {
         {
-            let mut revs = self.revs.lock().unwrap_or_else(|e| e.into_inner());
+            let mut revs = self.revs.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             *revs
                 .entry(agent.to_string())
                 .or_default()
@@ -230,7 +230,7 @@ impl AgentStatusCache {
 
     /// Current revision for each agent+service.
     pub fn service_revs(&self) -> HashMap<String, HashMap<String, u64>> {
-        self.revs.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.revs.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
     }
 }
 
@@ -258,7 +258,7 @@ pub fn spawn_agent_status_task(
                 if *current == agents {
                     return false;
                 }
-                *current = agents.clone();
+                current.clone_from(&agents);
                 true
             });
             if changed {
@@ -318,7 +318,7 @@ pub fn spawn_agent_status_task(
 
             // Wait for next poll interval OR an agent update
             tokio::select! {
-                _ = tokio::time::sleep(std::time::Duration::from_secs(POLL_INTERVAL_SECS)) => {}
+                () = tokio::time::sleep(std::time::Duration::from_secs(POLL_INTERVAL_SECS)) => {}
                 Some((name, update)) = activity_event_rx.recv() => {
                     apply_agent_update(&cache, name, update);
                 }
@@ -374,8 +374,8 @@ async fn agent_activity_listener(
         .flatten();
 
         let url = match &token {
-            Some(t) => format!("ws://localhost:{}/ws?agent_token={}", ws_port, t),
-            None => format!("ws://localhost:{}/ws", ws_port),
+            Some(t) => format!("ws://localhost:{ws_port}/ws?agent_token={t}"),
+            None => format!("ws://localhost:{ws_port}/ws"),
         };
 
         match tokio_tungstenite::connect_async(&url).await {

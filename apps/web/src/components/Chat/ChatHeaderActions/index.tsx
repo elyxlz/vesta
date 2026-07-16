@@ -25,7 +25,9 @@ export function ChatHeaderActions({
           variant="outline"
           size="icon-sm"
           className="text-muted-foreground"
-          onClick={() => navigate(`/agent/${agentName}/chat`)}
+          onClick={() => {
+            void navigate(`/agent/${agentName}/chat`);
+          }}
         >
           <Maximize2 />
         </Button>

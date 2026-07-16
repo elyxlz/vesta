@@ -117,7 +117,7 @@ CI runs these exact subcommands, so passing locally means passing CI:
 
 ```bash
 ./check.sh agent          # ty check + pytest (incl. cc_sdk transport tests; needs tmux)
-./check.sh guards         # repo-wide ruff check + format, skills index, uv.lock, dashboard-sync freshness
+./check.sh guards         # repo-wide ruff + format, convention guards (lint escapes, comment length, import cycles), shellcheck, skills index, uv.lock, dashboard-sync freshness
 ./check.sh cli            # cargo clippy -D warnings + cargo test
 ./check.sh vestad         # cargo clippy -p vestad -D warnings + cargo test -p vestad
 ./check.sh vestad-docker  # vestad #[ignore] Docker tests (needs Docker + agent image)
@@ -167,6 +167,14 @@ Run locally on master. Bumps versions, updates lockfiles, commits, pushes, and c
 - **Positioning (the single source of truth for Vesta's copy).** Vesta is an **AI guardian angel**. Not a "personal AI", not an "assistant", not a friend or companion. The canonical one-liner, used verbatim wherever a tagline is needed: **"an AI guardian angel that gives you back time and helps you achieve your goals."** Every user-facing surface (README, landing, app strings, prompts, emails, CLI output) draws its positioning from here; never reintroduce "personal AI"/"personal assistant" framing.
 - **Never use a pronoun for Vesta.** In all copy and prose, refer to the agent as **"Vesta"**, or **"they/them/their"** where a pronoun is unavoidable. Never "she/her" or "it/its". This holds across every surface: README, app/notification strings, agent prompts and skills, and the vesta-cloud site and emails. The product is a relationship, not a gadget; one consistent voice keeps each new email or prompt from re-litigating it. (This does not apply to pronouns for other nouns: the daemon, a container, the user, a config object.)
 - **No dashes as separators in prose.** In prose and copy (this file, SKILL.md bodies, prompts, app strings, PR descriptions, emails), never use spaced-hyphen or em-dash separators; use commas, periods, or colons instead.
+
+### Lint enforcement (all languages)
+CI (`./check.sh guards` + the per-suite checks) enforces the conventions below; a finding is fixed by changing the code, never silenced.
+- **Inline lint/type-checker escapes are BANNED repo-wide**: no `# noqa`, `# type: ignore`/`# ty: ignore`, `eslint-disable`, `@ts-ignore`/`@ts-expect-error`/`@ts-nocheck`, `prettier-ignore`, `#[allow(...)]`/`#[expect(...)]`, `//nolint`, or `# shellcheck disable` (guarded by `scripts/check-conventions.py`). When a rule is genuinely wrong for this codebase, tune it once at config level (`agent/ruff.toml` ignore/per-file-ignores, `[lints]` in the crate's `Cargo.toml`, the eslint config) with a one-line justification; never at the call site.
+- **Comment blocks are capped at 8 lines** (a file-leading header block is exempt). A longer comment means the code needs simplifying, not more prose.
+- **Import cycles are enforced**: `scripts/check-conventions.py` keeps `agent/core`'s module graph a DAG; `import-x/no-cycle` covers the web app.
+- **Code-smell ceilings**: max 8 args and cyclomatic complexity 15 per function in Python (`PLR0913`/`C90`); max 5 params, complexity 15, nesting depth 4 in TypeScript; clippy pedantic (with `unwrap_used` denied) in Rust. Past the ceiling, restructure (group args into a model/struct, extract functions).
+- **Ruff runs a wide rule set** (bugbear, simplify, pathlib, pylint, perf, async, isort, and more; see `agent/ruff.toml`) and **eslint runs `strictTypeChecked` + `stylisticTypeChecked`** with type-aware rules in both apps. Shell scripts pass `shellcheck -S warning`.
 
 ### Python (agent/)
 - **Always `uv run`**, never bare `python`

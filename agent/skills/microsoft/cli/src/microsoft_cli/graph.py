@@ -1,16 +1,31 @@
-import httpx
-import os
-import time
+import dataclasses
 import logging
+import os
 import pathlib as pl
+import time
+from collections.abc import Iterator
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-from collections.abc import Iterator
+
+import httpx
+
 from .auth import get_token
 from .config import Config
 
 logger = logging.getLogger(__name__)
+
+_MAX_RETRIES = 3
+
+
+@dataclasses.dataclass(frozen=True)
+class GraphConn:
+    """Connection primitives for Graph calls: the http client plus token-cache/scope/base-url wiring."""
+
+    client: httpx.Client
+    cache_file: pl.Path
+    scopes: list[str]
+    base_url: str
 
 
 def get_default_iana_timezone() -> str:
@@ -22,9 +37,9 @@ def get_default_iana_timezone() -> str:
         return tz
     localtime = pl.Path("/etc/localtime")
     if localtime.is_symlink():
-        target = os.readlink(localtime)
+        target = str(localtime.readlink())
         if "/zoneinfo/" in target:
-            return target.split("/zoneinfo/")[-1]
+            return target.rsplit("/zoneinfo/", 1)[-1]
     tz_file = pl.Path("/etc/timezone")
     if tz_file.exists():
         return tz_file.read_text().strip()
@@ -47,7 +62,7 @@ def convert_utc_string_to_local(value: str, tz_name: str | None = None) -> str:
     except (ZoneInfoNotFoundError, KeyError):
         return value
     try:
-        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(value)
     except ValueError:
         return value
     if dt.tzinfo is None:
@@ -113,28 +128,22 @@ def _retry_http_call(call_func, max_retries: int = 3):
 
 
 def request(
-    client: httpx.Client,
-    cache_file: pl.Path,
-    scopes: list[str],
-    base_url: str,
+    conn: GraphConn,
     method: str,
     path: str,
     account_id: str | None = None,
     params: dict[str, Any] | None = None,
     json: dict[str, Any] | None = None,
     data: bytes | None = None,
-    max_retries: int = 3,
     extra_prefer: list[str] | None = None,
 ) -> dict[str, Any] | None:
     headers = {
-        "Authorization": f"Bearer {get_token(cache_file, scopes, account_id=account_id)}",
+        "Authorization": f"Bearer {get_token(conn.cache_file, conn.scopes, account_id=account_id)}",
     }
 
     prefer_values: list[str] = []
     if method == "GET":
-        if "$search" in (params or {}):
-            prefer_values.append('outlook.body-content-type="text"')
-        elif "body" in ((params or {})["$select"] if "$select" in (params or {}) else ""):
+        if "$search" in (params or {}) or "body" in ((params or {})["$select"] if "$select" in (params or {}) else ""):
             prefer_values.append('outlook.body-content-type="text"')
     else:
         headers["Content-Type"] = "application/json" if json else "application/octet-stream"
@@ -149,11 +158,11 @@ def request(
         headers["ConsistencyLevel"] = "eventual"
         params.setdefault("$count", "true")
 
-    url = f"{base_url}{path}"
-    logger.debug(f"Graph API {method} {url} params={params}")
+    url = f"{conn.base_url}{path}"
+    logger.debug("Graph API %s %s params=%s", method, url, params)
 
     response = _retry_http_call(
-        lambda: client.request(
+        lambda: conn.client.request(
             method=method,
             url=url,
             headers=headers,
@@ -161,23 +170,20 @@ def request(
             json=json,
             content=data,
         ),
-        max_retries,
+        _MAX_RETRIES,
     )
 
     if response and response.content:
         result = response.json()
-        logger.debug(f"Graph API {method} {url} returned {response.status_code}")
+        logger.debug("Graph API %s %s returned %s", method, url, response.status_code)
         return result
 
-    logger.warning(f"Graph API {method} {url} returned empty response")
+    logger.warning("Graph API %s %s returned empty response", method, url)
     return None
 
 
 def request_paginated(
-    client: httpx.Client,
-    cache_file: pl.Path,
-    scopes: list[str],
-    base_url: str,
+    conn: GraphConn,
     path: str,
     account_id: str | None = None,
     params: dict[str, Any] | None = None,
@@ -189,28 +195,22 @@ def request_paginated(
     next_link = None
     page_num = 1
 
-    logger.debug(f"Starting paginated request for {path} with params {params}")
+    logger.debug("Starting paginated request for %s with params %s", path, params)
 
     while True:
         if next_link:
-            logger.debug(f"Fetching page {page_num} via nextLink")
+            logger.debug("Fetching page %d via nextLink", page_num)
             result = request(
-                client,
-                cache_file,
-                scopes,
-                base_url,
+                conn,
                 "GET",
-                next_link.replace(base_url, ""),
+                next_link.replace(conn.base_url, ""),
                 account_id,
                 extra_prefer=extra_prefer,
             )
         else:
-            logger.debug(f"Fetching page {page_num} for {path}")
+            logger.debug("Fetching page %d for %s", page_num, path)
             result = request(
-                client,
-                cache_file,
-                scopes,
-                base_url,
+                conn,
                 "GET",
                 path,
                 account_id,
@@ -219,26 +219,26 @@ def request_paginated(
             )
 
         if not result:
-            logger.error(f"API request failed for path '{path}' with params {params}")
+            logger.error("API request failed for path '%s' with params %s", path, params)
             raise ValueError(f"API request failed for path '{path}' with params {params}")
 
         if "value" not in result:
-            logger.error(f"Invalid API response for path '{path}': missing 'value' field. Response keys: {list(result.keys())}")
+            logger.error("Invalid API response for path '%s': missing 'value' field. Response keys: %s", path, list(result.keys()))
             raise ValueError(f"Invalid API response for path '{path}': missing 'value' field. Response: {result}")
 
         page_size = len(result["value"])
-        logger.debug(f"Page {page_num} returned {page_size} items")
+        logger.debug("Page %d returned %d items", page_num, page_size)
 
         for item in result["value"]:
             if limit and items_returned >= limit:
-                logger.debug(f"Reached limit of {limit} items")
+                logger.debug("Reached limit of %d items", limit)
                 return
             yield item
             items_returned += 1
 
         next_link = result["@odata.nextLink"] if "@odata.nextLink" in result else None
         if not next_link:
-            logger.debug(f"Pagination complete: {items_returned} total items across {page_num} pages")
+            logger.debug("Pagination complete: %d total items across %d pages", items_returned, page_num)
             break
 
         page_num += 1
@@ -263,7 +263,9 @@ def _do_chunked_upload(
         chunk_headers["Content-Length"] = str(len(chunk))
         chunk_headers["Content-Range"] = f"bytes {chunk_start}-{chunk_end - 1}/{file_size}"
 
-        response = _retry_http_call(lambda: client.put(upload_url, content=chunk, headers=chunk_headers), 3)
+        response = _retry_http_call(
+            lambda chunk=chunk, chunk_headers=chunk_headers: client.put(upload_url, content=chunk, headers=chunk_headers), _MAX_RETRIES
+        )
         if response:
             if response.status_code in (200, 201):
                 return response.json()
@@ -273,20 +275,14 @@ def _do_chunked_upload(
 
 
 def create_mail_upload_session(
-    client: httpx.Client,
-    cache_file: pl.Path,
-    scopes: list[str],
-    base_url: str,
+    conn: GraphConn,
     message_id: str,
     attachment_item: dict[str, Any],
     account_id: str | None = None,
 ) -> dict[str, Any]:
     """Create an upload session for large mail attachments"""
     result = request(
-        client,
-        cache_file,
-        scopes,
-        base_url,
+        conn,
         "POST",
         f"/me/messages/{message_id}/attachments/createUploadSession",
         account_id,
@@ -298,10 +294,7 @@ def create_mail_upload_session(
 
 
 def upload_large_mail_attachment(
-    client: httpx.Client,
-    cache_file: pl.Path,
-    scopes: list[str],
-    base_url: str,
+    conn: GraphConn,
     upload_chunk_size: int,
     message_id: str,
     name: str,
@@ -319,15 +312,19 @@ def upload_large_mail_attachment(
         "contentType": content_type,
     }
 
-    session = create_mail_upload_session(client, cache_file, scopes, base_url, message_id, attachment_item, account_id)
+    session = create_mail_upload_session(conn, message_id, attachment_item, account_id)
     upload_url = session["uploadUrl"]
 
-    headers = {"Authorization": f"Bearer {get_token(cache_file, scopes, account_id=account_id)}"}
-    return _do_chunked_upload(client, upload_url, data, headers, upload_chunk_size)
+    headers = {"Authorization": f"Bearer {get_token(conn.cache_file, conn.scopes, account_id=account_id)}"}
+    return _do_chunked_upload(conn.client, upload_url, data, headers, upload_chunk_size)
 
 
 # Config-bound convenience wrappers: the command modules always source cache_file,
 # scopes, base_url (and upload_chunk_size) from a Config, so these fill them in.
+
+
+def conn_cfg(config: Config, client: httpx.Client) -> GraphConn:
+    return GraphConn(client, config.cache_file, config.scopes, config.base_url)
 
 
 def request_cfg(
@@ -338,7 +335,7 @@ def request_cfg(
     account_id: str | None = None,
     **kwargs: Any,
 ) -> dict[str, Any] | None:
-    return request(client, config.cache_file, config.scopes, config.base_url, method, path, account_id, **kwargs)
+    return request(conn_cfg(config, client), method, path, account_id, **kwargs)
 
 
 def paginate_cfg(
@@ -348,7 +345,7 @@ def paginate_cfg(
     account_id: str | None = None,
     **kwargs: Any,
 ) -> Iterator[dict[str, Any]]:
-    return request_paginated(client, config.cache_file, config.scopes, config.base_url, path, account_id, **kwargs)
+    return request_paginated(conn_cfg(config, client), path, account_id, **kwargs)
 
 
 def upload_mail_attachment_cfg(
@@ -361,10 +358,7 @@ def upload_mail_attachment_cfg(
     content_type: str = "application/octet-stream",
 ) -> dict[str, Any]:
     return upload_large_mail_attachment(
-        client,
-        config.cache_file,
-        config.scopes,
-        config.base_url,
+        conn_cfg(config, client),
         config.upload_chunk_size,
         message_id,
         name,

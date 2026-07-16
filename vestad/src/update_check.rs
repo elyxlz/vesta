@@ -56,7 +56,7 @@ fn cache_path(channel: Channel) -> Option<std::path::PathBuf> {
     // ETags, so they must not share a conditional-request cache.
     let file = match channel {
         Channel::Stable => CACHE_FILE_NAME.to_string(),
-        Channel::Beta => format!("{}.beta", CACHE_FILE_NAME),
+        Channel::Beta => format!("{CACHE_FILE_NAME}.beta"),
     };
     crate::paths::config_dir().map(|dir| dir.join(file))
 }
@@ -137,9 +137,7 @@ fn fetch_latest_release_tag(timeout_secs: Option<u64>, channel: Channel) -> Resu
     if !output.status.success() {
         let code = output
             .status
-            .code()
-            .map(|c| c.to_string())
-            .unwrap_or_else(|| "signal".into());
+            .code().map_or_else(|| "signal".into(), |c| c.to_string());
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!(
             "curl failed (exit {code}): {}",

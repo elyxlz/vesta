@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 
-
 # mail.google.com is the full-Gmail scope (a superset the Gmail REST API accepts,
 # covering everything gmail.modify + gmail.send did), so one sign-in grants both
 # mail and calendar in a single consent screen.

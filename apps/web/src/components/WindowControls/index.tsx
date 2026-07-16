@@ -27,14 +27,18 @@ export function WindowControls() {
     <div className="ml-1.5 flex items-center gap-1">
       <button
         aria-label="minimize"
-        onClick={() => controls.minimize()}
+        onClick={() => {
+          void controls.minimize();
+        }}
         className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
       >
         <Minus className="size-4" />
       </button>
       <button
         aria-label={maximized ? "restore" : "maximize"}
-        onClick={() => controls.toggleMaximize()}
+        onClick={() => {
+          void controls.toggleMaximize();
+        }}
         className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
       >
         {maximized ? (
@@ -45,7 +49,9 @@ export function WindowControls() {
       </button>
       <button
         aria-label="close"
-        onClick={() => controls.close()}
+        onClick={() => {
+          void controls.close();
+        }}
         className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive hover:text-white"
       >
         <X className="size-4" />

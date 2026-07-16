@@ -18,6 +18,7 @@ Commands:
 
 import argparse
 import asyncio
+import contextlib
 import json
 import os
 import pathlib as pl
@@ -26,8 +27,7 @@ import sys
 import urllib.request
 
 from . import config as vc
-from . import daemon
-from . import providers
+from . import daemon, providers
 
 
 def _notify_invalidation(scope: str) -> None:
@@ -46,10 +46,8 @@ def _notify_invalidation(scope: str) -> None:
         headers["X-Agent-Token"] = agent_token
     data = json.dumps({"scope": scope}).encode()
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-    try:
+    with contextlib.suppress(Exception):
         urllib.request.urlopen(req, context=ctx, timeout=5)
-    except Exception:
-        pass
 
 
 def _data_dir() -> pl.Path:
@@ -66,10 +64,7 @@ def cmd_status(_args: argparse.Namespace) -> int:
 
 
 async def _validate(provider_name: str, api_key: str) -> tuple[bool, str | None]:
-    if provider_name in ("deepgram",):
-        p = providers.get_stt(provider_name)
-    else:
-        p = providers.get_tts(provider_name)
+    p = providers.get_stt(provider_name) if provider_name == "deepgram" else providers.get_tts(provider_name)
     if p is None:
         return False, f"unknown provider: {provider_name}"
     return await p.validate(api_key)
@@ -221,7 +216,7 @@ def cmd_daemon_status(_args: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd")
 
@@ -284,6 +279,11 @@ def main(argv: list[str] | None = None) -> int:
     daemon_sub.add_parser("restart", help="Stop then start voice-server").set_defaults(func=cmd_daemon_restart)
     daemon_sub.add_parser("status", help="Report daemon + provider auth state").set_defaults(func=cmd_daemon_status)
 
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = _build_parser()
     args = parser.parse_args(argv)
     if args.cmd is None:
         parser.print_help()

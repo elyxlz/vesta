@@ -85,7 +85,7 @@ rm -f "$BORE_LOG"
 screen -dmS "$BORE_SCREEN" bash -c "$BORE_BIN local $SSHD_PORT --to bore.pub > $BORE_LOG 2>&1"
 
 PORT=""
-for i in $(seq 1 20); do
+for _ in $(seq 1 20); do
     PORT=$(grep -oP 'bore\.pub:\K[0-9]+' "$BORE_LOG" 2>/dev/null || true)
     [ -n "$PORT" ] && break
     sleep 0.5

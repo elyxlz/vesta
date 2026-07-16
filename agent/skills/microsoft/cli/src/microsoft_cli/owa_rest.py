@@ -13,7 +13,7 @@ responses look like Graph so the rest of the CLI (``email.py``, ``calendar.py``)
 unchanged.  Request bodies and ``$select`` field lists are converted the other way.
 
 Token lifetime is ~24 h.  ``has_valid_token`` lets callers probe availability
-without a network round-trip; ``load_token`` raises ``OwaRestNoToken`` (a
+without a network round-trip; ``load_token`` raises ``OwaRestNoTokenError`` (a
 RuntimeError subclass) when the token is absent or expired.
 """
 
@@ -29,6 +29,7 @@ import httpx
 
 from . import auth
 from .config import OWA_REST_SCOPES
+from .payloads import EventFields, EventPatch, MailDraft
 from .settings import OWA_REST_CLIENT_ID
 
 OWA_REST_BASE = "https://outlook.office.com/api/v2.0"
@@ -42,7 +43,7 @@ class OwaRestError(RuntimeError):
     """An OWA REST API call returned an unexpected error."""
 
 
-class OwaRestNoToken(OwaRestError):
+class OwaRestNoTokenError(OwaRestError):
     """No valid browser-captured token is on disk; the user must run owa-login."""
 
 
@@ -134,21 +135,23 @@ def has_valid_token(account_email: str, config) -> bool:
 
 
 def load_token(account_email: str, config) -> str:
-    """Return a usable OWA REST access token or raise OwaRestNoToken.
+    """Return a usable OWA REST access token or raise OwaRestNoTokenError.
 
     Device-flow accounts mint a fresh token silently via MSAL (auto-refresh, no browser).
     Browser-captured accounts return the stored token until it expires."""
     marker = _read_marker(account_email, config)
     if marker is None:
-        raise OwaRestNoToken(f"No OWA REST token for {account_email}. Run: microsoft auth owa-login --account {account_email}")
+        raise OwaRestNoTokenError(f"No OWA REST token for {account_email}. Run: microsoft auth owa-login --account {account_email}")
     if _source(marker) == "device":
         account_id = auth.get_account_id_by_email(account_email, config.cache_file)
         token = auth.get_token_silent(config.cache_file, OWA_REST_SCOPES, account_id=account_id, client_id=OWA_REST_CLIENT_ID)
         if not token:
-            raise OwaRestNoToken(f"OWA REST sign-in expired for {account_email}. Run: microsoft auth owa-login --account {account_email}")
+            raise OwaRestNoTokenError(f"OWA REST sign-in expired for {account_email}. Run: microsoft auth owa-login --account {account_email}")
         return token
     if float(marker["expires_at"]) <= time.time() + _TOKEN_EXPIRY_MARGIN:
-        raise OwaRestNoToken(f"OWA REST token expired for {account_email}. Run: microsoft auth owa-login --account {account_email} --browser")
+        raise OwaRestNoTokenError(
+            f"OWA REST token expired for {account_email}. Run: microsoft auth owa-login --account {account_email} --browser"
+        )
     return marker["token"]
 
 
@@ -350,64 +353,39 @@ def _message_body(subject: str, body: str, to: list[str] | None, cc: list[str] |
     return msg
 
 
-def send_message(
-    client: httpx.Client,
-    account_email: str,
-    config,
-    *,
-    to: list[str] | None,
-    subject: str,
-    body: str,
-    cc: list[str] | None = None,
-    bcc: list[str] | None = None,
-    attachments: list[str] | None = None,
-    html: bool = False,
-) -> dict:
+def send_message(client: httpx.Client, account_email: str, config, *, mail: MailDraft) -> dict:
     token = load_token(account_email, config)
-    message = _message_body(subject, body, to, cc, bcc, html)
-    if attachments:
-        message["attachments"] = [_file_attachment(*_read_attachment(p)) for p in attachments]
+    message = _message_body(mail.subject or "", mail.body, mail.to, mail.cc, mail.bcc, mail.html)
+    if mail.attachments:
+        message["attachments"] = [_file_attachment(*_read_attachment(p)) for p in mail.attachments]
     _post(client, token, "/me/sendmail", {"message": message, "saveToSentItems": True})
     return {"status": "sent"}
 
 
-def create_draft(
-    client: httpx.Client,
-    account_email: str,
-    config,
-    *,
-    to: list[str] | None,
-    subject: str | None,
-    body: str,
-    cc: list[str] | None = None,
-    bcc: list[str] | None = None,
-    attachments: list[str] | None = None,
-    reply_to_id: str | None = None,
-    forward_id: str | None = None,
-) -> dict:
+def create_draft(client: httpx.Client, account_email: str, config, *, mail: MailDraft) -> dict:
     token = load_token(account_email, config)
 
-    if reply_to_id or forward_id:
-        source_id = reply_to_id or forward_id
-        endpoint = "createreply" if reply_to_id else "createforward"
+    if mail.reply_to_id or mail.forward_id:
+        source_id = mail.reply_to_id or mail.forward_id
+        endpoint = "createreply" if mail.reply_to_id else "createforward"
         draft = _post(client, token, f"/me/messages/{source_id}/{endpoint}")
         draft_id = draft.get("id")
-        patch: dict[str, Any] = {"body": {"contentType": "Text", "content": body}}
-        if subject:
-            patch["subject"] = subject
-        if to:
-            patch["toRecipients"] = [_recipient(a) for a in to]
-        if cc:
-            patch["ccRecipients"] = [_recipient(a) for a in cc]
-        if bcc:
-            patch["bccRecipients"] = [_recipient(a) for a in bcc]
+        patch: dict[str, Any] = {"body": {"contentType": "Text", "content": mail.body}}
+        if mail.subject:
+            patch["subject"] = mail.subject
+        if mail.to:
+            patch["toRecipients"] = [_recipient(a) for a in mail.to]
+        if mail.cc:
+            patch["ccRecipients"] = [_recipient(a) for a in mail.cc]
+        if mail.bcc:
+            patch["bccRecipients"] = [_recipient(a) for a in mail.bcc]
         _patch(client, token, f"/me/messages/{draft_id}", patch)
-        _attach_files(client, token, draft_id, attachments)
+        _attach_files(client, token, draft_id, mail.attachments)
         return {"status": "drafted", "id": draft_id, "source_id": source_id}
 
-    result = _post(client, token, "/me/messages", _message_body(subject or "", body, to, cc, bcc, False))
+    result = _post(client, token, "/me/messages", _message_body(mail.subject or "", mail.body, mail.to, mail.cc, mail.bcc, False))
     draft_id = result.get("id")
-    _attach_files(client, token, draft_id, attachments)
+    _attach_files(client, token, draft_id, mail.attachments)
     return {"status": "drafted", "id": draft_id}
 
 
@@ -436,31 +414,20 @@ def reply_message(
     return {"status": "sent"}
 
 
-def forward_message(
-    client: httpx.Client,
-    account_email: str,
-    config,
-    *,
-    item_id: str,
-    to: list[str],
-    body: str = "",
-    cc: list[str] | None = None,
-    attachments: list[str] | None = None,
-    html: bool = False,
-) -> dict:
+def forward_message(client: httpx.Client, account_email: str, config, *, item_id: str, mail: MailDraft) -> dict:
     token = load_token(account_email, config)
-    to_recipients = [_recipient(a) for a in to]
-    if attachments or cc or html:
+    to_recipients = [_recipient(a) for a in mail.to or []]
+    if mail.attachments or mail.cc or mail.html:
         draft = _post(client, token, f"/me/messages/{item_id}/createforward")
         draft_id = draft.get("id")
-        patch: dict[str, Any] = {"body": {"contentType": "HTML" if html else "Text", "content": body}, "toRecipients": to_recipients}
-        if cc:
-            patch["ccRecipients"] = [_recipient(a) for a in cc]
+        patch: dict[str, Any] = {"body": {"contentType": "HTML" if mail.html else "Text", "content": mail.body}, "toRecipients": to_recipients}
+        if mail.cc:
+            patch["ccRecipients"] = [_recipient(a) for a in mail.cc]
         _patch(client, token, f"/me/messages/{draft_id}", patch)
-        _attach_files(client, token, draft_id, attachments)
+        _attach_files(client, token, draft_id, mail.attachments)
         _post(client, token, f"/me/messages/{draft_id}/send")
         return {"status": "sent"}
-    _post(client, token, f"/me/messages/{item_id}/forward", {"comment": body, "toRecipients": to_recipients})
+    _post(client, token, f"/me/messages/{item_id}/forward", {"comment": mail.body, "toRecipients": to_recipients})
     return {"status": "sent"}
 
 
@@ -640,66 +607,41 @@ def get_event(client: httpx.Client, account_email: str, config, *, event_id: str
     return _get(client, token, f"/me/events/{event_id}", {"$select": _EVENT_SELECT})
 
 
-def create_event(
-    client: httpx.Client,
-    account_email: str,
-    config,
-    *,
-    subject: str,
-    start: str,
-    end: str,
-    timezone: str,
-    location: str | None = None,
-    body: str | None = None,
-    attendees: list[str] | None = None,
-    is_all_day: bool = False,
-) -> dict:
+def create_event(client: httpx.Client, account_email: str, config, *, event: EventFields) -> dict:
     token = load_token(account_email, config)
     payload: dict[str, Any] = {
-        "subject": subject,
-        "start": {"dateTime": start, "timeZone": timezone},
-        "end": {"dateTime": end, "timeZone": timezone},
-        "isAllDay": is_all_day,
+        "subject": event.subject,
+        "start": {"dateTime": event.start, "timeZone": event.timezone},
+        "end": {"dateTime": event.end, "timeZone": event.timezone},
+        "isAllDay": event.is_all_day,
     }
-    if body:
-        payload["body"] = {"contentType": "Text", "content": body}
-    if location:
-        payload["location"] = {"displayName": location}
-    if attendees:
-        payload["attendees"] = [{"emailAddress": {"address": a}, "type": "required"} for a in attendees]
+    if event.body:
+        payload["body"] = {"contentType": "Text", "content": event.body}
+    if event.location:
+        payload["location"] = {"displayName": event.location}
+    if event.attendees:
+        payload["attendees"] = [{"emailAddress": {"address": a}, "type": "required"} for a in event.attendees]
     result = _post(client, token, "/me/events", payload)
     return {"status": "created", "id": result.get("id")}
 
 
-def update_event(
-    client: httpx.Client,
-    account_email: str,
-    config,
-    *,
-    event_id: str,
-    subject: str | None = None,
-    start: str | None = None,
-    end: str | None = None,
-    location: str | None = None,
-    body: str | None = None,
-    timezone: str | None = None,
-) -> dict:
+def update_event(client: httpx.Client, account_email: str, config, *, event_id: str, patch: EventPatch) -> dict:
     token = load_token(account_email, config)
-    patch: dict[str, Any] = {}
-    tz = timezone or "UTC"
-    if subject is not None:
-        patch["subject"] = subject
-    if start is not None:
-        patch["start"] = {"dateTime": start, "timeZone": tz}
-    if end is not None:
-        patch["end"] = {"dateTime": end, "timeZone": tz}
-    if location is not None:
-        patch["location"] = {"displayName": location}
-    if body is not None:
-        patch["body"] = {"contentType": "Text", "content": body}
-    if not patch:
+    updates: dict[str, Any] = {}
+    tz = patch.timezone or "UTC"
+    if patch.subject is not None:
+        updates["subject"] = patch.subject
+    if patch.start is not None:
+        updates["start"] = {"dateTime": patch.start, "timeZone": tz}
+    if patch.end is not None:
+        updates["end"] = {"dateTime": patch.end, "timeZone": tz}
+    if patch.location is not None:
+        updates["location"] = {"displayName": patch.location}
+    if patch.body is not None:
+        updates["body"] = {"contentType": "Text", "content": patch.body}
+    if not updates:
         raise OwaRestError("nothing to update")
-    _patch(client, token, f"/me/events/{event_id}", patch)
+    _patch(client, token, f"/me/events/{event_id}", updates)
     return {"status": "updated", "id": event_id}
 
 
@@ -712,6 +654,13 @@ def delete_event(client: httpx.Client, account_email: str, config, *, event_id: 
     return {"status": "deleted", "event_id": event_id}
 
 
+_RESPONSE_ENDPOINTS = {
+    "accept": "accept",
+    "decline": "decline",
+    "tentativelyAccept": "tentativelyaccept",
+}
+
+
 def respond_event(
     client: httpx.Client,
     account_email: str,
@@ -721,11 +670,6 @@ def respond_event(
     response: str = "accept",
     message: str | None = None,
 ) -> dict:
-    _RESPONSE_ENDPOINTS = {
-        "accept": "accept",
-        "decline": "decline",
-        "tentativelyAccept": "tentativelyaccept",
-    }
     endpoint = _RESPONSE_ENDPOINTS.get(response)
     if endpoint is None:
         raise OwaRestError(f"unknown response: {response!r}; expected accept / decline / tentativelyAccept")

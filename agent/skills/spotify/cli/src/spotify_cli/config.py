@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-
 ALL_SCOPES = " ".join(
     [
         "playlist-read-private",

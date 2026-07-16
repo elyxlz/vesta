@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 
 import pytest
-
 from vc_account_cli import cli as cli_mod
 from vc_account_cli import referral_store
 from vc_account_cli.client import AccountError

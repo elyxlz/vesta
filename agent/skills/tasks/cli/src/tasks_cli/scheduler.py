@@ -1,9 +1,8 @@
 """APScheduler setup and notification writing for the unified tasks+reminders daemon."""
 
 import json
-import os
 import time
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from pathlib import Path
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -37,7 +36,7 @@ def write_notification(notif_dir: Path, type_: str, **fields: object) -> None:
     filename = f"{int(time.time() * 1e6)}-tasks-{type_}.json"
     tmp = notif_dir / f"{filename}.tmp"
     tmp.write_text(json.dumps(notif, indent=2))
-    os.replace(tmp, notif_dir / filename)
+    tmp.replace(notif_dir / filename)
 
 
 def write_reminder_notification(

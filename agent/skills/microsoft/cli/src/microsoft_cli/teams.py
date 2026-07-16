@@ -12,7 +12,7 @@ capture:
   Graph-audience token captured from a signed-in ``teams.microsoft.com`` session
   in the agent's own browser, for tenants that block the CLI's app registration.
 
-``graph_token`` raises :class:`backend.GraphUnavailable` when no device token is
+``graph_token`` raises :class:`backend.GraphUnavailableError` when no device token is
 available, so ``backend.run(AUTO, ...)`` falls through to the captured token
 exactly like the mail dispatcher.
 
@@ -64,7 +64,7 @@ class TeamsError(RuntimeError):
     """A Teams Graph call returned an unexpected error."""
 
 
-class TeamsNoToken(TeamsError):
+class TeamsNoTokenError(TeamsError):
     """No usable Teams token is on disk; the user must run auth teams-login/teams-capture."""
 
 
@@ -145,25 +145,27 @@ def has_token(account_email: str, config) -> bool:
 
 
 def graph_token(config, account_email: str) -> str:
-    """Mint a Teams Graph token from MSAL silently. Raise GraphUnavailable when none exists so
+    """Mint a Teams Graph token from MSAL silently. Raise GraphUnavailableError when none exists so
     the AUTO dispatcher falls back to the captured token."""
     try:
         account_id = auth.get_account_id_by_email(account_email, config.cache_file)
     except ValueError as exc:
-        raise backend.GraphUnavailable(str(exc)) from exc
+        raise backend.GraphUnavailableError(str(exc)) from exc
     token = auth.get_token_silent(config.cache_file, TEAMS_SCOPES, account_id=account_id, client_id=DEFAULT_CLIENT_ID)
     if not token:
-        raise backend.GraphUnavailable(f"No Teams token for {account_email}. Run: microsoft auth teams-login")
+        raise backend.GraphUnavailableError(f"No Teams token for {account_email}. Run: microsoft auth teams-login")
     return token
 
 
 def captured_token(config, account_email: str) -> str:
-    """Return the browser-captured Teams token or raise TeamsNoToken."""
+    """Return the browser-captured Teams token or raise TeamsNoTokenError."""
     marker = _read_marker(account_email, config)
     if marker is None or _source(marker) != "browser":
-        raise TeamsNoToken(f"No captured Teams token for {account_email}. Run: microsoft auth teams-capture --account {account_email}")
+        raise TeamsNoTokenError(f"No captured Teams token for {account_email}. Run: microsoft auth teams-capture --account {account_email}")
     if float(marker["expires_at"]) <= time.time() + _TOKEN_EXPIRY_MARGIN:
-        raise TeamsNoToken(f"Captured Teams token expired for {account_email}. Run: microsoft auth teams-capture --account {account_email}")
+        raise TeamsNoTokenError(
+            f"Captured Teams token expired for {account_email}. Run: microsoft auth teams-capture --account {account_email}"
+        )
     return marker["token"]
 
 
@@ -171,7 +173,7 @@ def resolve_token(config, account_email: str) -> str:
     """Return any usable Teams token (device first, then captured). Used by the monitor."""
     marker = _read_marker(account_email, config)
     if marker is None:
-        raise TeamsNoToken(f"No Teams token for {account_email}. Run: microsoft auth teams-login")
+        raise TeamsNoTokenError(f"No Teams token for {account_email}. Run: microsoft auth teams-login")
     if _source(marker) == "device":
         return graph_token(config, account_email)
     return captured_token(config, account_email)

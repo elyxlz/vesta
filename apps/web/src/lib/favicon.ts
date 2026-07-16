@@ -69,7 +69,7 @@ function render(): void {
   const link = getLink();
   if (!link) return;
 
-  const cacheKey = `${currentOrb ?? "default"}|${unseen ? 1 : 0}`;
+  const cacheKey = `${currentOrb ?? "default"}|${unseen ? "1" : "0"}`;
   const hit = cache.get(cacheKey);
   if (hit) {
     link.href = hit;

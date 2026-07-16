@@ -6,11 +6,12 @@ import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
-import core.models as vm
+from wait_util import wait_for_condition
+
 import core.config as cfg
+import core.models as vm
 from core.events import EventBus
 from core.helpers import clear_notifications
-from core.notification import Notification
 from core.loops import (
     _is_new_json,
     _load_notification_files,
@@ -21,8 +22,8 @@ from core.loops import (
     monitor_loop,
     process_batch,
 )
+from core.notification import Notification
 from core.provider import ProviderAuthState, ProviderStatus
-from wait_util import wait_for_condition
 
 
 @pytest.mark.parametrize("kind", ["openrouter", "claude", "none"])
@@ -307,20 +308,19 @@ async def test_process_batch_queues_prompt(tmp_path):
     notif = Notification(timestamp=dt.datetime(2025, 1, 1), source="test", type="message", file_path=str(f))
 
     with patch("core.loops.load_prompt", return_value=""):
-        await process_batch([notif], queue=queue, config=config)
+        await process_batch([notif], queue=queue)
 
     assert not queue.empty()
-    prompt, is_user, file_paths, _ = await queue.get()
+    prompt, is_user, _file_paths, _ = await queue.get()
     assert '<channel source="test" type="message"' in prompt
     assert is_user is False
 
 
 @pytest.mark.anyio
 async def test_process_batch_empty_is_noop():
-    config = cfg.VestaConfig()
     queue: asyncio.Queue = asyncio.Queue()
 
-    await process_batch([], queue=queue, config=config)
+    await process_batch([], queue=queue)
     assert queue.empty()
 
 
@@ -337,7 +337,7 @@ async def test_process_batch_keeps_files_until_processing(tmp_path):
     notif = Notification(timestamp=dt.datetime(2025, 1, 1), source="t", type="m", file_path=str(f))
 
     with patch("core.loops.load_prompt", return_value=""):
-        await process_batch([notif], queue=queue, config=config)
+        await process_batch([notif], queue=queue)
 
     assert f.exists(), "notification file must stay on disk until the queued message is processed"
     _, _, file_paths, _ = await queue.get()
@@ -423,7 +423,7 @@ async def test_monitor_loop_interrupt_queued_while_not_idle(tmp_path, monkeypatc
         _write_notif(config.notifications_dir, "urgent")
         await wait_for_condition(lambda: not queue.empty(), message="interrupt notification was never queued")
 
-        prompt, is_user, file_paths, _ = await queue.get()
+        prompt, is_user, _file_paths, _ = await queue.get()
         assert '<channel source="test" type="message"' in prompt
         assert is_user is False
         assert state.event_bus.state == "thinking", "interrupt routing must not depend on idle state"
@@ -455,7 +455,7 @@ async def test_monitor_loop_passive_held_until_idle_then_flushed_once(tmp_path, 
         state.event_bus.set_state("idle")
         await wait_for_condition(lambda: not queue.empty(), message="passive batch never flushed after idle")
 
-        prompt, is_user, file_paths, _ = await queue.get()
+        prompt, is_user, _file_paths, _ = await queue.get()
         assert '<channel source="test" type="message"' in prompt
         assert is_user is False
 

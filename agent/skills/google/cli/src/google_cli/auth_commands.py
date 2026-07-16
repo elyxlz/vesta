@@ -1,5 +1,5 @@
-from .config import Config
 from . import auth
+from .config import Config
 
 
 def authenticate_account(config: Config) -> dict:
@@ -38,7 +38,7 @@ def list_accounts(config: Config) -> list[dict]:
         return []
 
     try:
-        creds = auth.get_credentials(config.token_file, config.credentials_file, config.scopes)
+        creds = auth.get_credentials(config.token_file, config.scopes)
         email = auth.get_user_email(creds)
         return [{"email": email}]
     except Exception:

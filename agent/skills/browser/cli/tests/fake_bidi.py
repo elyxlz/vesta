@@ -65,7 +65,7 @@ class FakeBidiServer:
             result = self._evaluate(params)
         elif method == "input.performActions":
             result = {}
-        elif method in ("storage.getCookies",):
+        elif method == "storage.getCookies":
             result = {"cookies": []}
         else:
             await self._send(ws, {"type": "error", "id": command_id, "error": "unknown command", "message": method})

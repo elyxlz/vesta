@@ -36,9 +36,9 @@ export function AgentCard({ agent, enableTracking = false }: AgentCardProps) {
       <button
         type="button"
         aria-label={`open ${agent.name}`}
-        onClick={() =>
-          navigate(`/agent/${agent.name}${isMobile ? "/chat" : ""}`)
-        }
+        onClick={() => {
+          void navigate(`/agent/${agent.name}${isMobile ? "/chat" : ""}`);
+        }}
         className="flex h-full w-full items-center justify-center rounded-squircle-md border border-transparent [corner-shape:squircle] outline-none transition-all hover:bg-muted/40 active:scale-[0.99] focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30"
       >
         <CardContent className="flex flex-col items-center gap-3 px-5 pt-0 pb-0">

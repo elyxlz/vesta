@@ -11,7 +11,7 @@ export function useSwipeNavigation() {
   const programmaticScroll = useRef(false);
   const scrollEndTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const base = `/agent/${encodeURIComponent(name!)}`;
+  const base = `/agent/${encodeURIComponent(name ?? "")}`;
   const isDashboard = location.pathname === base;
   const isChat = location.pathname === `${base}/chat`;
   const isSubpage = !isDashboard && !isChat;
@@ -36,8 +36,9 @@ export function useSwipeNavigation() {
     const el = scrollRef.current;
     if (!el) return;
     const page = Math.round(el.scrollLeft / el.clientWidth);
-    if (page === 0 && !isDashboard) navigate(base, { replace: true });
-    else if (page === 1 && !isChat) navigate(`${base}/chat`, { replace: true });
+    if (page === 0 && !isDashboard) void navigate(base, { replace: true });
+    else if (page === 1 && !isChat)
+      void navigate(`${base}/chat`, { replace: true });
   }, [isDashboard, isChat, navigate, base]);
 
   const handleScroll = useCallback(() => {

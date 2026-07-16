@@ -43,7 +43,7 @@ def _config_request(method: str, body: dict[str, object] | None = None) -> dict[
     data = json.dumps(body).encode() if body is not None else None
     request = urllib.request.Request(f"http://127.0.0.1:{port}/config", data=data, method=method)
     request.add_header("Content-Type", "application/json")
-    if "AGENT_TOKEN" in os.environ and os.environ["AGENT_TOKEN"]:
+    if os.environ.get("AGENT_TOKEN"):
         request.add_header("X-Agent-Token", os.environ["AGENT_TOKEN"])
     try:
         with urllib.request.urlopen(request, timeout=_REQUEST_TIMEOUT_S) as response:
@@ -320,7 +320,8 @@ def main() -> int:
     add.add_argument("--sender", help="Shortcut: substring match (case-insensitive) on the sender/contact across identity fields.")
     add.add_argument(
         "--keyword",
-        help="Shortcut: case-insensitive regex (re.search) on the notification body/message, e.g. 'invoice|payment' or '^ALERT'. A plain word still works as a substring.",
+        help="Shortcut: case-insensitive regex (re.search) on the notification body/message, e.g. 'invoice|payment' "
+        "or '^ALERT'. A plain word still works as a substring.",
     )
     add.add_argument(
         "--match",

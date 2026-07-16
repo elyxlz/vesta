@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from microsoft_cli import cli, backend
+from microsoft_cli import backend, cli
 from microsoft_cli.config import Config
 
 
@@ -64,7 +64,7 @@ def test_auto_falls_back_to_rest_on_permission_error(monkeypatch):
 
 
 def _dispatch_args(**over):
-    base = dict(command="list", account="me@example.com", folder="inbox", limit=10, search=None, backend=backend.GRAPH)
+    base = {"command": "list", "account": "me@example.com", "folder": "inbox", "limit": 10, "search": None, "backend": backend.GRAPH}
     base.update(over)
     return SimpleNamespace(**base)
 
@@ -79,7 +79,7 @@ def test_email_list_with_search_dispatches_to_search(monkeypatch):
 
     assert result == "searched"
     # Same call shape as `email search --query`: query passed through, folder defaults to all.
-    assert seen == dict(account_email="me@example.com", query="cancellation", limit=10, folder=None)
+    assert seen == {"account_email": "me@example.com", "query": "cancellation", "limit": 10, "folder": None}
 
 
 def test_email_list_search_respects_explicit_folder(monkeypatch):

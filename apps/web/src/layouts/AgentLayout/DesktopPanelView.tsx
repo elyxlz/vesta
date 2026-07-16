@@ -22,7 +22,7 @@ export function DesktopPanelView({
   const { name } = useParams<{ name: string }>();
   const location = useLocation();
   const isChat =
-    location.pathname === `/agent/${encodeURIComponent(name!)}/chat`;
+    location.pathname === `/agent/${encodeURIComponent(name ?? "")}/chat`;
 
   if (isChat) {
     return <Chat fullscreen />;
@@ -35,7 +35,7 @@ export function DesktopPanelView({
         // navbarHeight includes the navbar's own bottom padding (the gap other
         // pages keep below the navbar); the agent cards drop most of it and sit
         // just 2px under the navbar row.
-        paddingTop: `calc(${navbarHeight}px - var(--navbar-pb) + 2px)`,
+        paddingTop: `calc(${String(navbarHeight)}px - var(--navbar-pb) + 2px)`,
       }}
     >
       <ResizablePanelGroup

@@ -6,8 +6,7 @@ import asyncio
 import json
 
 import pytest
-
-import app_chat_cli.daemon as daemon
+from app_chat_cli import daemon
 
 
 def test_default_notifications_dir_defaults_to_agent_notifications(monkeypatch, tmp_path):

@@ -68,8 +68,9 @@ export function NotificationsCard() {
         setCursor(page.cursor);
         seenRef.current = new Set(page.notifications.map(rowKey));
       })
-      .catch((e: Error) => {
-        if (currentAgent.current === name) setError(e.message);
+      .catch((e: unknown) => {
+        if (currentAgent.current === name)
+          setError(e instanceof Error ? e.message : String(e));
       });
   }, []);
 
@@ -145,7 +146,7 @@ export function NotificationsCard() {
             <ItemGroup>
               {items.map((event, i) => (
                 <NotificationRow
-                  key={event.notif_id ?? event.ts ?? `row-${i}`}
+                  key={event.notif_id ?? event.ts ?? `row-${String(i)}`}
                   event={event}
                   // Pending = received but not yet processed (still on disk per the live pending set).
                   isPending={!!event.notif_id && pendingIds.has(event.notif_id)}
@@ -158,7 +159,9 @@ export function NotificationsCard() {
                 variant="outline"
                 className="mt-1 self-center"
                 disabled={loadingMore}
-                onClick={loadMore}
+                onClick={() => {
+                  void loadMore();
+                }}
               >
                 {loadingMore ? "loading..." : "load older"}
               </Button>

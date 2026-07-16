@@ -1,10 +1,9 @@
 """Poll Enable Banking for new transactions and write notifications."""
 
 import json
-import os
 import sys
 import time
-from datetime import datetime, UTC, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 SEEN_FILE = Path.home() / ".finance" / "seen_transactions.json"
@@ -18,7 +17,7 @@ def atomic_write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(text)
-    os.replace(tmp, path)
+    tmp.replace(path)
 
 
 def load_seen() -> set[str]:

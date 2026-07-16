@@ -2,12 +2,13 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import basicSsl from "@vitejs/plugin-basic-ssl";
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig } from "vitest/config";
+import type { Plugin } from "vite";
 import path from "path";
 
 function resolveInNodeModules(pkgRelPath: string): string {
   let dir = __dirname;
-  while (true) {
+  for (;;) {
     const candidate = path.join(dir, "node_modules", pkgRelPath);
     if (existsSync(candidate)) return candidate;
     const parent = path.dirname(dir);
@@ -36,15 +37,16 @@ const cargoToml = readFileSync(
   path.resolve(__dirname, "..", "..", "vestad", "Cargo.toml"),
   "utf-8",
 );
-const versionMatch = cargoToml.match(
-  /\[package\][^[]*?\nversion\s*=\s*"([^"]+)"/,
+const versionMatch = /\[package\][^[]*?\nversion\s*=\s*"([^"]+)"/.exec(
+  cargoToml,
 );
-if (!versionMatch) {
+const versionCapture = versionMatch?.[1];
+if (versionCapture === undefined) {
   throw new Error(
     "could not read [package] version from ../../vestad/Cargo.toml",
   );
 }
-const version = versionMatch[1];
+const version: string = versionCapture;
 
 function installScriptsPlugin(): Plugin {
   return {
@@ -82,6 +84,25 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
       "motion-plus-dom": motionPlusDomEntry,
     },
+  },
+  test: {
+    projects: [
+      {
+        extends: true,
+        test: {
+          include: ["src/**/*.test.tsx"],
+          environment: "jsdom",
+          setupFiles: ["./src/vitest.setup.ts"],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          include: ["src/**/*.test.ts"],
+          environment: "node",
+        },
+      },
+    ],
   },
   clearScreen: false,
   server: {

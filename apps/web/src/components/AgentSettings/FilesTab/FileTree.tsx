@@ -53,7 +53,7 @@ function TreeItem({
 }: TreeItemProps) {
   const [open, setOpen] = useState(defaultOpen);
   const isSelected = selected === node.path;
-  const indent = { paddingLeft: `${depth * 12 + 4}px` };
+  const indent = { paddingLeft: `${String(depth * 12 + 4)}px` };
 
   if (node.isDir) {
     return (
