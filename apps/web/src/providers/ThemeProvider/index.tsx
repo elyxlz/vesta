@@ -9,12 +9,12 @@ import {
 
 export { useTheme } from "./context";
 
-type ThemeProviderProps = {
+interface ThemeProviderProps {
   children: React.ReactNode;
   defaultTheme?: Theme;
   storageKey?: string;
   disableTransitionOnChange?: boolean;
-};
+}
 
 const COLOR_SCHEME_QUERY = "(prefers-color-scheme: dark)";
 const THEME_VALUES: Theme[] = ["dark", "light", "system"];

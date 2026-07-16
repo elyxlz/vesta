@@ -103,13 +103,15 @@ export function createMainWindow(): BrowserWindow {
     if (!allowed) event.preventDefault();
   });
 
-  const sendFocus = (focused: boolean) => () =>
+  const sendFocus = (focused: boolean) => () => {
     window.webContents.send("window-focus", focused);
+  };
   window.on("focus", sendFocus(true));
   window.on("blur", sendFocus(false));
 
-  const sendMax = (maximized: boolean) => () =>
+  const sendMax = (maximized: boolean) => () => {
     window.webContents.send("window-maximized", maximized);
+  };
   window.on("maximize", sendMax(true));
   window.on("unmaximize", sendMax(false));
 

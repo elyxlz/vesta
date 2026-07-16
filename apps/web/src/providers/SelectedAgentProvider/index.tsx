@@ -99,7 +99,9 @@ export function SelectedAgentProvider({
       .then((fetched) => {
         if (!ignore) setBackups(fetched);
       })
-      .catch(() => {});
+      .catch(() => {
+        /* ignore */
+      });
     return () => {
       ignore = true;
     };
@@ -115,7 +117,7 @@ export function SelectedAgentProvider({
   );
 
   const restore = (backupId: string) => {
-    withOp(
+    void withOp(
       name,
       "restoring",
       async () => {
@@ -127,7 +129,7 @@ export function SelectedAgentProvider({
   };
 
   const removeBackup = (backupId: string) => {
-    withOp(
+    void withOp(
       name,
       "deleting",
       async () => {
@@ -163,10 +165,10 @@ export function SelectedAgentProvider({
     statusLabel,
     orbState,
     isBusy,
-    start,
-    stop,
+    start: () => void start(),
+    stop: () => void stop(),
     restart,
-    backup,
+    backup: () => void backup(),
     backups,
     refreshBackups,
     restore,

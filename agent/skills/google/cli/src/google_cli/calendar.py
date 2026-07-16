@@ -19,6 +19,7 @@ exception: an RSVP never fans out to the guest list.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -67,8 +68,8 @@ class CalendarAuthError(RuntimeError):
 def _validate_timezone(timezone: str) -> None:
     try:
         ZoneInfo(timezone)
-    except (ZoneInfoNotFoundError, KeyError, ValueError):
-        raise ValueError(f"Invalid timezone: '{timezone}'. Use IANA names like 'Europe/London' or 'America/New_York'.")
+    except (ZoneInfoNotFoundError, KeyError, ValueError) as e:
+        raise ValueError(f"Invalid timezone: '{timezone}'. Use IANA names like 'Europe/London' or 'America/New_York'.") from e
 
 
 # -- request execution (single choke point) --------------------------------
@@ -106,7 +107,7 @@ def _execute(request) -> dict:
         result = request.execute()
     except HttpError as e:
         detail = e.content.decode(errors="replace") if isinstance(e.content, bytes) else str(e.content)
-        raise _api_error(e.resp.status, detail)
+        raise _api_error(e.resp.status, detail) from e
     return result if isinstance(result, dict) else {}
 
 
@@ -259,57 +260,59 @@ def _build_rrule(recurrence: str, recurrence_end_date: str | None, *, all_day: b
     return rule
 
 
-def create_event(
-    config: Config,
-    *,
-    calendar_id: str = "primary",
-    subject: str,
-    start: str,
-    end: str | None = None,
-    location: str | None = None,
-    body: str | None = None,
-    attendees: list[str] | None = None,
-    timezone: str,
-    all_day: bool = False,
-    recurrence: str | None = None,
-    recurrence_end_date: str | None = None,
-) -> dict:
-    _validate_timezone(timezone)
+@dataclass
+class NewEvent:
+    """User-facing fields of an event to create; the API payload is derived from it."""
+
+    subject: str
+    start: str
+    timezone: str
+    end: str | None = None
+    location: str | None = None
+    body: str | None = None
+    attendees: list[str] | None = None
+    all_day: bool = False
+    recurrence: str | None = None
+    recurrence_end_date: str | None = None
+
+
+def create_event(config: Config, event: NewEvent, *, calendar_id: str = "primary") -> dict:
+    _validate_timezone(event.timezone)
     # A date-only start is an all-day event even without --all-day; a mixed
     # date/dateTime start-end pair would be rejected by the API.
-    all_day = all_day or "T" not in start
+    all_day = event.all_day or "T" not in event.start
 
     if all_day:
-        start_date = date.fromisoformat(start.split("T")[0])
-        end_date = date.fromisoformat(end.split("T")[0]) if end else start_date + timedelta(days=1)
+        start_date = date.fromisoformat(event.start.split("T", maxsplit=1)[0])
+        end_date = date.fromisoformat(event.end.split("T")[0]) if event.end else start_date + timedelta(days=1)
         # The Calendar API's all-day end date is exclusive; bump a same-day end.
         if end_date <= start_date:
             end_date = start_date + timedelta(days=1)
-        event: dict = {
-            "summary": subject,
+        payload: dict = {
+            "summary": event.subject,
             "start": {"date": start_date.isoformat()},
             "end": {"date": end_date.isoformat()},
         }
     else:
-        end_value = end
+        end_value = event.end
         if not end_value:
-            end_value = (datetime.fromisoformat(start) + timedelta(hours=1)).isoformat()
-        event = {
-            "summary": subject,
-            "start": _time_field(start, timezone),
-            "end": _time_field(end_value, timezone),
+            end_value = (datetime.fromisoformat(event.start) + timedelta(hours=1)).isoformat()
+        payload = {
+            "summary": event.subject,
+            "start": _time_field(event.start, event.timezone),
+            "end": _time_field(end_value, event.timezone),
         }
 
-    if location:
-        event["location"] = location
-    if body:
-        event["description"] = body
-    if attendees:
-        event["attendees"] = [{"email": a} for a in attendees]
-    if recurrence:
-        event["recurrence"] = [_build_rrule(recurrence, recurrence_end_date, all_day=all_day)]
+    if event.location:
+        payload["location"] = event.location
+    if event.body:
+        payload["description"] = event.body
+    if event.attendees:
+        payload["attendees"] = [{"email": a} for a in event.attendees]
+    if event.recurrence:
+        payload["recurrence"] = [_build_rrule(event.recurrence, event.recurrence_end_date, all_day=all_day)]
 
-    created = _execute(api.calendar_service(config).events().insert(calendarId=calendar_id, body=event, sendUpdates="all"))
+    created = _execute(api.calendar_service(config).events().insert(calendarId=calendar_id, body=payload, sendUpdates="all"))
     return {"status": "created", "id": created["id"] if "id" in created else None, "calendar": calendar_id}
 
 
@@ -325,45 +328,46 @@ def _resolve_series(service, calendar_id: str, event_id: str) -> tuple[str, dict
     return event_id, event
 
 
-def update_event(
-    config: Config,
-    *,
-    calendar_id: str = "primary",
-    event_id: str,
-    subject: str | None = None,
-    start: str | None = None,
-    end: str | None = None,
-    location: str | None = None,
-    body: str | None = None,
-    timezone: str | None = None,
-) -> dict:
-    if all(v is None for v in (subject, start, end, location, body)):
+@dataclass
+class EventPatch:
+    """Fields of an existing event to change; None means leave untouched."""
+
+    subject: str | None = None
+    start: str | None = None
+    end: str | None = None
+    location: str | None = None
+    body: str | None = None
+    timezone: str | None = None
+
+
+def update_event(config: Config, patch: EventPatch, *, calendar_id: str = "primary", event_id: str) -> dict:
+    if all(v is None for v in (patch.subject, patch.start, patch.end, patch.location, patch.body)):
         raise ValueError("Must specify at least one field to update")
 
     updates: dict = {}
-    if subject is not None:
-        updates["summary"] = subject
-    if location is not None:
-        updates["location"] = location
-    if body is not None:
-        updates["description"] = body
-    if start is not None or end is not None:
-        if timezone is None:
+    if patch.subject is not None:
+        updates["summary"] = patch.subject
+    if patch.location is not None:
+        updates["location"] = patch.location
+    if patch.body is not None:
+        updates["description"] = patch.body
+    if patch.start is not None or patch.end is not None:
+        if patch.timezone is None:
             raise ValueError("--timezone is required when updating start or end")
-        _validate_timezone(timezone)
-        if start is not None:
-            updates["start"] = _patch_time_field(start, timezone)
-        if end is not None:
-            updates["end"] = _patch_time_field(end, timezone)
+        _validate_timezone(patch.timezone)
+        if patch.start is not None:
+            updates["start"] = _patch_time_field(patch.start, patch.timezone)
+        if patch.end is not None:
+            updates["end"] = _patch_time_field(patch.end, patch.timezone)
 
     service = api.calendar_service(config)
     target_id, existing = _resolve_series(service, calendar_id, event_id)
 
     # Keep start/end value types matched: patching one side to a different type
     # than the other (date vs dateTime) is rejected by the API.
-    if (start is None) != (end is None):
-        provided = start if start is not None else end
-        other = existing["end"] if start is not None else existing["start"]
+    if (patch.start is None) != (patch.end is None):
+        provided = patch.start if patch.start is not None else patch.end
+        other = existing["end"] if patch.start is not None else existing["start"]
         if provided is not None and ("T" not in provided) != ("date" in other):
             raise ValueError("start and end must both be all-day dates or both be timed dateTimes; pass both --start and --end")
 
@@ -402,12 +406,13 @@ def respond_event(
     # The API stamps self=True on the authenticated user's own attendee entry.
     found = False
     for a in attendees:
-        if "self" in a and a["self"]:
-            a["responseStatus"] = status
-            if message:
-                a["comment"] = message
-            found = True
-            break
+        if "self" not in a or not a["self"]:
+            continue
+        a["responseStatus"] = status
+        if message:
+            a["comment"] = message
+        found = True
+        break
     if not found:
         raise ValueError("You are not an attendee of this event")
 

@@ -42,7 +42,9 @@ function run(
     let stderr = "";
     child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
     child.on("error", reject);
-    child.on("close", (code) => resolve({ code: code ?? 1, stderr }));
+    child.on("close", (code) => {
+      resolve({ code: code ?? 1, stderr });
+    });
   });
 }
 
@@ -66,7 +68,7 @@ async function findLinuxAsset(
 ): Promise<string> {
   const response = await fetch(`${API_BASE}/tags/v${version}`);
   if (!response.ok)
-    throw new Error(`release v${version} not found (${response.status})`);
+    throw new Error(`release v${version} not found (${String(response.status)})`);
   const release: unknown = await response.json();
   const assets =
     release !== null && typeof release === "object" && "assets" in release
@@ -101,7 +103,7 @@ async function installLinuxPackage(version: string): Promise<void> {
 
   const download = await fetch(url);
   if (!download.ok || !download.body)
-    throw new Error(`download failed (${download.status})`);
+    throw new Error(`download failed (${String(download.status)})`);
   await pipeline(Readable.fromWeb(download.body), createWriteStream(packagePath));
 
   // pkexec drives the GUI privilege-escalation prompt

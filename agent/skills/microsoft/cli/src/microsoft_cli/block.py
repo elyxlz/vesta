@@ -11,7 +11,7 @@ from typing import Any
 
 import httpx
 
-from . import graph, auth
+from . import auth, graph
 from .config import Config
 
 BLOCK_RULE_PREFIX = "Block "

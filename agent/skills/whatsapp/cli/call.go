@@ -11,15 +11,14 @@ import (
 	"go.mau.fi/whatsmeow/types"
 )
 
-// A live WhatsApp voice call is Vesta talking to someone on the phone with the same voice it uses
-// in the app. CallManager owns the one active call: it answers inbound calls and places outbound
+// A live WhatsApp voice call is Vesta talking to someone on the phone with the same voice as in
+// the app. CallManager owns the one active call: it answers inbound calls and places outbound
 // ones, streams the caller's speech to the voice backend for transcription (each finished turn
 // becomes a `call_utterance` whatsapp notification, so the model responds live through the normal
 // interrupt flow), and speaks the model's `whatsapp say` replies back into the call. Only one call
-// runs at a time; a second inbound call is rejected while one is active.
-//
-// meowcaller carries the VoIP signaling and media on top of the already-connected whatsmeow
-// client; this manager holds no audio codec or provider logic of its own.
+// runs at a time; a second inbound call is rejected while one is active. meowcaller carries the
+// VoIP signaling and media on top of the already-connected whatsmeow client; this manager holds
+// no audio codec or provider logic of its own.
 
 const (
 	// How long to wait for the far end to answer an outbound call before giving up.
@@ -307,7 +306,7 @@ func (cm *CallManager) startBridge(ac *activeCall) {
 					Direction:    ac.direction,
 					ContactName:  ac.contactName,
 					ContactPhone: ac.contactPhone,
-					Transcript:   turn.transcript,
+					Message:      turn.transcript,
 				})
 			}
 		}

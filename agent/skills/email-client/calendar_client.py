@@ -187,10 +187,7 @@ def _summary_json(occ: ics.Occurrence, tzmap: ics.TzMap) -> dict:
 
 def _attendee_json(prop: ics.Prop) -> dict:
     partstat = prop.params["PARTSTAT"].upper() if "PARTSTAT" in prop.params else ""
-    if partstat in PARTSTAT_TO_RESPONSE:
-        response = PARTSTAT_TO_RESPONSE[partstat]
-    else:
-        response = partstat.lower() or None
+    response = PARTSTAT_TO_RESPONSE[partstat] if partstat in PARTSTAT_TO_RESPONSE else partstat.lower() or None
     return {
         "email": _clean_addr(prop.value),
         "displayName": prop.params["CN"].strip('"') if "CN" in prop.params else None,

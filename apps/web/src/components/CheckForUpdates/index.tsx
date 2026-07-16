@@ -48,7 +48,9 @@ export function CheckForUpdates() {
       type="button"
       variant="ghost"
       size="xs"
-      onClick={onCheckForUpdate}
+      onClick={() => {
+        void onCheckForUpdate();
+      }}
       disabled={checking}
       className="text-muted-foreground"
     >

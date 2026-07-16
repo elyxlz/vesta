@@ -29,18 +29,11 @@ export function AuthFlow({
   const copyAuthUrl = async () => {
     try {
       await navigator.clipboard.writeText(authUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     } catch {
-      const ta = document.createElement("textarea");
-      ta.value = authUrl;
-      ta.style.position = "fixed";
-      ta.style.opacity = "0";
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand("copy");
-      document.body.removeChild(ta);
+      /* clipboard unavailable; the link stays visible for a manual copy */
     }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
   };
 
   const submitting = authState === "submitting";
@@ -83,7 +76,9 @@ export function AuthFlow({
                 className="shrink-0"
                 type="button"
                 aria-label={copied ? "copied" : "copy auth link"}
-                onClick={copyAuthUrl}
+                onClick={() => {
+                  void copyAuthUrl();
+                }}
               >
                 {copied ? <Check /> : <Copy />}
               </Button>
@@ -96,7 +91,9 @@ export function AuthFlow({
       }
       submitLabel={submitting ? "verifying code..." : "continue"}
       submitDisabled={!code.trim() || submitting}
-      onSubmit={submit}
+      onSubmit={() => {
+        void submit();
+      }}
       onCancel={onCancel}
       error={error || undefined}
     >

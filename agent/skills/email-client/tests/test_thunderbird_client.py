@@ -13,7 +13,7 @@ import pytest
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 
-import thunderbird_client as tc  # noqa: E402
+import thunderbird_client as tc
 
 # A representative slice of comm-central's OAuth2Providers.sys.mjs, including the
 # prettier line-wrap on the long clientId value.

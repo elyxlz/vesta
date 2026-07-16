@@ -153,7 +153,7 @@ def test_scan_catches_space_padded_credential_assignments(event_bus, db_conn, te
 def test_main_scan_then_scrub_end_to_end(tmp_path, event_bus, db_conn, monkeypatch, capsys):
     event_bus.emit(ChatEvent(type="chat", text=f"my key is {SECRET}"))
     event_bus.emit(UserEvent(type="user", text="just a normal message"))
-    monkeypatch.setattr(redact, "DB", str(tmp_path / "events.db"))
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
 
     monkeypatch.setattr("sys.argv", ["redact_secrets.py"])
     assert redact.main() == 0

@@ -10,26 +10,25 @@ import typing as tp
 
 from rich import print_json
 
-from . import models as vm
 from . import config as cfg
-from . import logger
-from . import state_store
+from . import logger, state_store
+from . import models as vm
 from .api import start_ws_server
+from .default_skills import default_skill_sync_turn
 from .diagnostics import format_crash_detail
+from .events import EventBus
 from .loops import (
     greeting_turn,
     message_processor,
     monitor_loop,
 )
-from .default_skills import default_skill_sync_turn
-from .events import EventBus
 from .migrations import pending_migration_turns
 from .provider import derive_status
 from .upstream_sync import upstream_sync_turn, vesta_version
 
 
 def _make_signal_handler(state: vm.State, *, allow_force_exit: bool = False) -> tp.Callable[[int, types.FrameType | None], None]:
-    def handler(signum: int, frame: types.FrameType | None) -> None:
+    def handler(signum: int, _frame: types.FrameType | None) -> None:
         sig_name = signal.Signals(signum).name
         state.shutdown_count += 1
         if state.shutdown_count == 1:
@@ -142,7 +141,7 @@ async def run_vesta(
     return crashed
 
 
-def config_issues_turn(issues: list[str], *, config: cfg.VestaConfig) -> str | None:
+def config_issues_turn(issues: list[str]) -> str | None:
     """Surface config vars that failed validation: log them and return a boot-turn body telling the
     agent to flag the bad values to the user (the agent ran with defaults), or None when clean."""
     if not issues:
@@ -182,7 +181,7 @@ def collect_boot_turns(
     skill_sync = default_skill_sync_turn(config=config, first_start=first_start)
     if skill_sync is not None:
         turns.append(skill_sync)
-    config_turn = config_issues_turn(config_issues, config=config)
+    config_turn = config_issues_turn(config_issues)
     if config_turn is not None:
         turns.append(config_turn)
     if turns:
@@ -194,7 +193,9 @@ def collect_boot_turns(
 
 
 def _consume_restart_reason(state: vm.State, config: cfg.VestaConfig, *, first_start: bool) -> str:
-    """Return the reason to log for this boot and clear it from persisted state. On a never-run agent the absence of a stored reason is innocent; report FIRST_START_REASON instead of a misleading crash label."""
+    """Return the reason to log for this boot and clear it from persisted state. On a never-run agent
+    the absence of a stored reason is innocent; report FIRST_START_REASON instead of a misleading
+    crash label."""
     # Drain the inbox on every boot, including first start: a file left behind would fire stale
     # on some later, unrelated boot.
     pending = state_store.take_pending_reason(config)

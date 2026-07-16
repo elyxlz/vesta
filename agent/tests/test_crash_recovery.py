@@ -5,28 +5,21 @@ import collections
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from claude_agent_sdk import ClaudeSDKError
-
-import core.models as vm
-import core.config as cfg
+from claude_agent_sdk import ClaudeSDKError, ProcessError
 from conftest import idle_message_stream
-from core.diagnostics import format_crash_detail
 from wait_util import wait_for_condition
 
+import core.config as cfg
+import core.models as vm
+from core.diagnostics import format_crash_detail
 
 # --- format_crash_detail ---
-
-
-class FakeProcessError(ClaudeSDKError):
-    def __init__(self, msg: str, exit_code: int):
-        super().__init__(msg)
-        self.exit_code = exit_code
 
 
 @pytest.mark.parametrize(
     "exc,lines,kwargs,expected_exit,expected_tail",
     [
-        (FakeProcessError("CLI died", exit_code=1), ["line1", "line2"], {}, 1, "line1\nline2"),
+        (ProcessError("CLI died", exit_code=1), ["line1", "line2"], {}, 1, "line1\nline2"),
         (RuntimeError("generic error"), ["some stderr"], {}, None, "some stderr"),
         (RuntimeError("boom"), [], {}, None, "(no stderr captured)"),  # empty buffer -> default fallback
         (RuntimeError("boom"), [], {"fallback": ""}, None, ""),  # custom fallback overrides
@@ -125,9 +118,9 @@ async def test_resume_fallback_raises_when_enter_always_fails(tmp_path, session_
     with (
         patch("core.client.ClaudeSDKClient", _mock_client(mock_enter)),
         patch("core.client.build_client_options", return_value=MagicMock()),
+        pytest.raises(ClaudeSDKError, match=error),
     ):
-        with pytest.raises(ClaudeSDKError, match=error):
-            await message_processor(queue, state=state, config=config)
+        await message_processor(queue, state=state, config=config)
 
 
 # --- Processor done callback ---

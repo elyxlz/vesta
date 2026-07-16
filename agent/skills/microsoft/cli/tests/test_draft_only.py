@@ -7,73 +7,72 @@ single check covers BOTH the Graph and OWA-REST transmit paths. Drafting stays a
 from types import SimpleNamespace
 
 import pytest
-
-from microsoft_cli import cli, backend, email, owa_rest_commands
+from microsoft_cli import backend, cli, email, owa_rest_commands
 from microsoft_cli.config import Config
 
 
 def _send_args(**over):
-    base = dict(
-        command="send",
-        account="me@example.com",
-        to=["bob@x.com"],
-        subject="Hi",
-        body="body",
-        cc=None,
-        bcc=None,
-        attachments=None,
-        html=False,
-        backend=backend.GRAPH,
-    )
+    base = {
+        "command": "send",
+        "account": "me@example.com",
+        "to": ["bob@x.com"],
+        "subject": "Hi",
+        "body": "body",
+        "cc": None,
+        "bcc": None,
+        "attachments": None,
+        "html": False,
+        "backend": backend.GRAPH,
+    }
     base.update(over)
     return SimpleNamespace(**base)
 
 
 def _reply_args(**over):
-    base = dict(
-        command="reply",
-        account="me@example.com",
-        email_id="orig-1",
-        body="thanks",
-        attachments=None,
-        reply_all=False,
-        html=False,
-        backend=backend.GRAPH,
-    )
+    base = {
+        "command": "reply",
+        "account": "me@example.com",
+        "email_id": "orig-1",
+        "body": "thanks",
+        "attachments": None,
+        "reply_all": False,
+        "html": False,
+        "backend": backend.GRAPH,
+    }
     base.update(over)
     return SimpleNamespace(**base)
 
 
 def _forward_args(**over):
-    base = dict(
-        command="forward",
-        account="me@example.com",
-        email_id="orig-1",
-        to=["bob@x.com"],
-        body="fyi",
-        cc=None,
-        attachments=None,
-        html=False,
-        backend=backend.GRAPH,
-    )
+    base = {
+        "command": "forward",
+        "account": "me@example.com",
+        "email_id": "orig-1",
+        "to": ["bob@x.com"],
+        "body": "fyi",
+        "cc": None,
+        "attachments": None,
+        "html": False,
+        "backend": backend.GRAPH,
+    }
     base.update(over)
     return SimpleNamespace(**base)
 
 
 def _draft_args(**over):
-    base = dict(
-        command="draft",
-        account="me@example.com",
-        to=["bob@x.com"],
-        subject="Hi",
-        body="body",
-        cc=None,
-        bcc=None,
-        attachments=None,
-        reply_to_id=None,
-        forward_id=None,
-        backend=backend.GRAPH,
-    )
+    base = {
+        "command": "draft",
+        "account": "me@example.com",
+        "to": ["bob@x.com"],
+        "subject": "Hi",
+        "body": "body",
+        "cc": None,
+        "bcc": None,
+        "attachments": None,
+        "reply_to_id": None,
+        "forward_id": None,
+        "backend": backend.GRAPH,
+    }
     base.update(over)
     return SimpleNamespace(**base)
 

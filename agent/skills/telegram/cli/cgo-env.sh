@@ -1,3 +1,4 @@
+#!/bin/bash
 # CGO build environment for the telegram CLI: one owner, sourced by the launcher
 # (and by any check script). Telegram uses mattn/go-sqlite3 with FTS5 for
 # full-text message search, which needs CGO and the FTS5 compile flag.

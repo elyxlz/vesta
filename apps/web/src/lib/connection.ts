@@ -1,5 +1,4 @@
 import { native } from "./native";
-import type { VestaEvent } from "@/lib/types";
 
 /** Parse the one-click connect key from a URL fragment like `#k=<key>`, which
  * `vestad status` embeds so opening the link connects without pasting the key.
@@ -154,14 +153,4 @@ export function wsUrl(name: string, opts: WsUrlOptions = {}): string {
   const params = new URLSearchParams({ token: conn.accessToken });
   if (opts.skipHistory) params.set("skip_history", "1");
   return `${base}/agents/${name}/ws?${params.toString()}`;
-}
-
-export async function fetchHistory(
-  name: string,
-  channel: "app-chat" | "internals",
-  cursor: number,
-): Promise<{ events: VestaEvent[]; cursor: number | null }> {
-  const { apiJson } = await import("@/api/client");
-  const params = new URLSearchParams({ channel, cursor: String(cursor) });
-  return apiJson(`/agents/${encodeURIComponent(name)}/history?${params}`);
 }
