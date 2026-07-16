@@ -228,6 +228,10 @@
     "description": "Weather, forecast, temperature, wind, humidity for any location via Windy."
   },
   {
+    "name": "wx",
+    "description": "Quick one-line weather for any location, no API key needed (open-meteo). Good default for a morning brief or a fast \"what's it doing outside\"."
+  },
+  {
     "name": "zoom",
     "description": "Zoom meetings: create, list, or delete."
   }
