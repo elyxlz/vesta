@@ -110,7 +110,7 @@ def test_get_email_overwrites_not_accumulates(tmp_path, monkeypatch):
     class _FakeMessages:
         def get(self, **kwargs):
             class _E:
-                def execute(self_inner):
+                def execute(self):
                     return message
 
             return _E()

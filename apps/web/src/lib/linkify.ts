@@ -1,4 +1,6 @@
+const NUL = "\x00";
 const URL_RE = /https?:\/\/[^\s<>"'`)\]},;*]+/g;
+const PLACEHOLDER_RE = new RegExp(`${NUL}URL(\\d+)${NUL}`, "g");
 const BOLD_RE = /\*\*(.+?)\*\*/g;
 const ITALIC_RE = /(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g;
 const CODE_RE = /`([^`]+)`/g;
@@ -15,13 +17,12 @@ export function linkify(text: string): string {
   const urls: string[] = [];
   const stripped = text.replace(URL_RE, (url) => {
     urls.push(url);
-    return `\x00URL${urls.length - 1}\x00`;
+    return `${NUL}URL${String(urls.length - 1)}${NUL}`;
   });
 
   let out = escapeHtml(stripped);
 
-  // eslint-disable-next-line no-control-regex
-  out = out.replace(/\x00URL(\d+)\x00/g, (match, i) => {
+  out = out.replace(PLACEHOLDER_RE, (match, i: string) => {
     const url = urls[Number(i)];
     // Input text can itself contain "\x00URL<n>\x00"; only replace our own placeholders.
     if (url === undefined) return match;
@@ -29,8 +30,8 @@ export function linkify(text: string): string {
     return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${display}</a>`;
   });
 
-  out = out.replace(CODE_RE, (_, code) => `<code>${code}</code>`);
-  out = out.replace(BOLD_RE, (_, inner) => `<strong>${inner}</strong>`);
-  out = out.replace(ITALIC_RE, (_, inner) => `<em>${inner}</em>`);
+  out = out.replace(CODE_RE, (_, code: string) => `<code>${code}</code>`);
+  out = out.replace(BOLD_RE, (_, inner: string) => `<strong>${inner}</strong>`);
+  out = out.replace(ITALIC_RE, (_, inner: string) => `<em>${inner}</em>`);
   return out;
 }

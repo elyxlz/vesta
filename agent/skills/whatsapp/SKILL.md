@@ -23,13 +23,27 @@ whatsapp send --to 'Name' --message 'reply text' --reply-to '<message_id>'
 ```
 The `--reply-to` flag quotes the referenced message in WhatsApp's native reply UI. The message ID can be found in incoming notification payloads (`message_id` field) or `list-messages` output.
 
+## Edited and deleted messages
+
+People change their minds after they hit send, so a message you already read can change or vanish:
+
+- **An edit** arrives as an `edit` notification whose body carries what the message says now, just like a plain message, naming the message that changed (`target_message_id`) and the text you last saw (`old_text`). The stored message is rewritten, so `list-messages` and search show only the new text. Answer again only if the edit asks something new: a fixed typo needs nothing from you.
+- **A deletion** (delete-for-everyone) arrives as a `revoke` notification with the text you last saw in `old_text`. They took it back, so treat it as unsaid and do not quote it at them.
+
 ## Voice calls
 
 You can hold a live voice call over WhatsApp, in your own voice (the `voice` skill's TTS), and hear the other person (the same skill's STT):
 
-- **Being on a call.** Everything the other person says arrives as a `call_utterance` notification with their transcript and who they are; it interrupts like any WhatsApp message, so you respond live. You reply by **speaking**, with `whatsapp say`, one short spoken line per call (the same short-bubble instinct as texting, not a monologue). `say` replaces whatever is still playing, so your newest line always wins, and the other person talking over you cuts your current line short. When you place a call, `whatsapp call` returns once they answer, that is your cue to greet them with `say`.
+- **Being on a call.** Everything the other person says arrives as a `call_utterance` notification carrying their words and who they are, reading just like a text message from them; it interrupts like any WhatsApp message, so you respond live. You reply by **speaking**, with `whatsapp say`, one short spoken line per call (the same short-bubble instinct as texting, not a monologue). `say` replaces whatever is still playing, so your newest line always wins, and the other person talking over you cuts your current line short. When you place a call, `whatsapp call` returns once they answer, that is your cue to greet them with `say`.
 - **Inbound calls** are answered automatically (you get a `call_started`, then their utterances). A call you cannot take (already on another call, or `voice` not set up) becomes a `call_missed` notification instead. `call_ended` closes the loop.
 - **Requires the `voice` skill** configured with both input (STT) and output (TTS). Without it, calls are declined and you are told to set voice up.
+
+```bash
+whatsapp call --to '+447700900000'      # blocks until they answer, decline, or it times out
+whatsapp say --text 'hey, it is me'     # speaks into the call you are already on
+whatsapp hangup
+```
+Only `call` takes a target. Once you are on a call there is only one, so `say`, `hangup` and `call-status` act on it and take none.
 
 **Calling the user when it is urgent.** A call is your loudest, most interrupting reach, so it is rare and reserved for the genuinely time-critical. If something truly needs the user now (a real deadline about to pass, a safety or money issue, something they explicitly asked to be called about) and they have not responded to your messages within a window that fits how urgent it is, `whatsapp call` them and say why in one line. Do not call for anything that can wait for a text, and respect anything the constitution says about calling.
 

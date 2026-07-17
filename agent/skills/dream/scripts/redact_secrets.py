@@ -4,12 +4,12 @@ Usage: redact_secrets.py            # scan, printing each hit with the value mas
        redact_secrets.py --scrub ID [ID ...]   # redact every secret in those events
 """
 
-import os
 import re
 import sqlite3
 import sys
+from pathlib import Path
 
-DB = os.path.expanduser("~/agent/data/events.db")
+DB = Path("~/agent/data/events.db").expanduser()
 REDACTED = "[REDACTED]"
 # Event types indexed by events_fts (mirrors the triggers in core/events.py). The schema has
 # insert/delete triggers only, so an in-place UPDATE must resync the index itself: otherwise the
@@ -96,7 +96,7 @@ def scrub(conn: sqlite3.Connection, ids: list[int]) -> int:
 
 
 def main() -> int:
-    if not os.path.isfile(DB):
+    if not DB.is_file():
         print(f"No database at {DB}")
         return 1
 

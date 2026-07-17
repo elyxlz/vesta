@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Input } from "@/components/ui/input";
 import { Field, FieldGroup } from "@/components/ui/field";
 import { openrouterProvider } from "@/api";
@@ -32,7 +32,7 @@ export function ModelStep({
 }) {
   const isFixed = models !== undefined;
   const [model, setModelInternal] = useState(
-    initialModel || models?.[0]?.slug || "",
+    initialModel || (models?.[0]?.slug ?? ""),
   );
   const [query, setQuery] = useState("");
   const [topModels, setTopModels] = useState<OpenRouterModelOption[] | null>(
@@ -40,7 +40,12 @@ export function ModelStep({
   );
   const [customMode, setCustomMode] = useState(false);
 
+  // Mirrors the model state so the one-shot fetch below can read the value
+  // current at resolve time without depending on it.
+  const modelRef = useRef(model);
+
   const setModel = (next: string) => {
+    modelRef.current = next;
     setModelInternal(next);
     onModelChange?.(next);
   };
@@ -53,9 +58,11 @@ export function ModelStep({
       .then((items) => {
         if (cancelled) return;
         setTopModels(items);
-        if (items.length > 0 && model === "") {
-          setModelInternal(items[0].slug);
-          onModelChange?.(items[0].slug);
+        const first = items[0];
+        if (first !== undefined && modelRef.current === "") {
+          modelRef.current = first.slug;
+          setModelInternal(first.slug);
+          onModelChange?.(first.slug);
         }
       })
       .catch(() => {
@@ -64,8 +71,7 @@ export function ModelStep({
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isFixed, onModelChange]);
 
   const filtered = useMemo(() => {
     if (!topModels) return [];
@@ -199,6 +205,11 @@ function ModelCard({
   active: boolean;
   onClick: () => void;
 }) {
+  const price = formatPrice(
+    model.input_price,
+    model.output_price,
+    model.cache_read_price,
+  );
   return (
     <button
       type="button"
@@ -213,21 +224,13 @@ function ModelCard({
       <div className="flex min-w-0 flex-col">
         <span className="truncate text-sm font-medium">{model.label}</span>
         <span className="truncate text-[11px] text-muted-foreground">
-          {model.note ? (
-            model.note
-          ) : (
+          {model.note ?? (
             <>
               {model.author}
               {model.context_length
                 ? ` · ${formatTokens(model.context_length)} ctx`
                 : ""}
-              {formatPrice(
-                model.input_price,
-                model.output_price,
-                model.cache_read_price,
-              )
-                ? ` · ${formatPrice(model.input_price, model.output_price, model.cache_read_price)}`
-                : ""}
+              {price ? ` · ${price}` : ""}
             </>
           )}
         </span>

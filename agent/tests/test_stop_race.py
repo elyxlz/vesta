@@ -14,6 +14,7 @@ import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
+
 from core.cc_sdk.client import ClaudeSDKClient
 from core.cc_sdk.messages import AssistantMessage, ClaudeAgentOptions
 
@@ -110,11 +111,10 @@ async def test_interrupt_racing_stop_swallows_next_turn_response(tmp_path):
         # The Stop hook for turn 2 arrives after the response is written.
         client._stops_received += 1
 
-    asyncio.create_task(write_response_after_delay())
+    writer_task = asyncio.create_task(write_response_after_delay())
 
-    collected: list[object] = []
-    async for msg in client.receive_response():
-        collected.append(msg)
+    collected: list[object] = [msg async for msg in client.receive_response()]
+    await writer_task
 
     content_messages = [m for m in collected if isinstance(m, AssistantMessage)]
 

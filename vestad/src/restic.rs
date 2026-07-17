@@ -52,7 +52,7 @@ pub fn remove_repo(name: &str) {
         match std::fs::remove_dir_all(&repo) {
             Ok(()) => tracing::info!(agent = %name, "removed restic backup repository"),
             Err(e) => {
-                tracing::warn!(agent = %name, error = %e, "failed to remove backup repository")
+                tracing::warn!(agent = %name, error = %e, "failed to remove backup repository");
             }
         }
     }
@@ -80,6 +80,9 @@ pub fn ensure_restic() -> Result<PathBuf, DockerError> {
 
 /// Generate the repo encryption passphrase once (32 random bytes, hex) at 0600.
 fn ensure_password() -> Result<PathBuf, DockerError> {
+    use std::io::Read;
+    use std::os::unix::fs::PermissionsExt;
+
     let path = password_path();
     if path.exists() {
         return Ok(path);
@@ -89,7 +92,6 @@ fn ensure_password() -> Result<PathBuf, DockerError> {
 
     // Read EXACTLY 32 bytes: /dev/urandom never returns EOF, so std::fs::read
     // (read_to_end) would loop forever growing a buffer until OOM.
-    use std::io::Read;
     let mut bytes = [0u8; 32];
     std::fs::File::open("/dev/urandom")
         .and_then(|mut f| f.read_exact(&mut bytes))
@@ -98,7 +100,6 @@ fn ensure_password() -> Result<PathBuf, DockerError> {
 
     std::fs::write(&path, &hex)
         .map_err(|e| DockerError::Failed(format!("failed to write restic password: {e}")))?;
-    use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
         .map_err(|e| DockerError::Failed(format!("failed to chmod restic password: {e}")))?;
     Ok(path)
@@ -140,18 +141,18 @@ struct KillSwitch(std::sync::Arc<std::sync::Mutex<Vec<u32>>>);
 
 impl KillSwitch {
     fn register(&self, pid: u32) {
-        self.0.lock().unwrap_or_else(|e| e.into_inner()).push(pid);
+        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(pid);
     }
 
     /// Forget every registered pid. Called once both children are reaped: the kernel
     /// may reassign a reaped pid, so a later `kill_all` must never target it.
     fn clear(&self) {
-        self.0.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
     }
 
     /// Best-effort SIGKILL every registered pid; a pid that already exited is a no-op.
     fn kill_all(&self) {
-        for pid in self.0.lock().unwrap_or_else(|e| e.into_inner()).drain(..) {
+        for pid in self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).drain(..) {
             std::process::Command::new("kill")
                 .args(["-9", &pid.to_string()])
                 .stdout(std::process::Stdio::null())
@@ -237,8 +238,7 @@ fn ensure_repo(name: &str) -> Result<(), DockerError> {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
+        .is_ok_and(|s| s.success());
     if exists {
         return Ok(());
     }
@@ -285,7 +285,7 @@ enum SnapshotOutcome {
     },
 }
 
-/// The final JSON line restic emits is the summary, carrying the new snapshot_id.
+/// The final JSON line restic emits is the summary, carrying the new `snapshot_id`.
 fn classify_snapshot_output(output: PipeOutput) -> Result<SnapshotOutcome, DockerError> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let summary = stdout
@@ -353,10 +353,10 @@ pub async fn snapshot(name: &str, backup_type: &BackupType) -> Result<BackupInfo
                 match run_restic_capture(&repo_name, "forget", &["forget", "--prune", &snapshot_id])
                 {
                     Ok(_) => {
-                        tracing::warn!(agent = %repo_name, snapshot_id = %snapshot_id, "pruned torn snapshot after docker export failed mid-stream")
+                        tracing::warn!(agent = %repo_name, snapshot_id = %snapshot_id, "pruned torn snapshot after docker export failed mid-stream");
                     }
                     Err(e) => {
-                        tracing::error!(agent = %repo_name, snapshot_id = %snapshot_id, error = %e, "failed to prune torn snapshot after docker export failed")
+                        tracing::error!(agent = %repo_name, snapshot_id = %snapshot_id, error = %e, "failed to prune torn snapshot after docker export failed");
                     }
                 }
                 Err(DockerError::Failed(format!(
@@ -367,16 +367,12 @@ pub async fn snapshot(name: &str, backup_type: &BackupType) -> Result<BackupInfo
     });
 
     let summary =
-        match tokio::time::timeout(std::time::Duration::from_secs(RESTIC_TIMEOUT_SECS), task).await
-        {
-            Ok(join_result) => join_result
-                .map_err(|e| DockerError::Failed(format!("backup task failed: {e}")))??,
-            Err(_) => {
-                kill_switch.kill_all();
-                return Err(DockerError::Failed(format!(
-                    "backup timed out after {RESTIC_TIMEOUT_SECS}s"
-                )));
-            }
+        if let Ok(join_result) = tokio::time::timeout(std::time::Duration::from_secs(RESTIC_TIMEOUT_SECS), task).await { join_result
+        .map_err(|e| DockerError::Failed(format!("backup task failed: {e}")))?? } else {
+            kill_switch.kill_all();
+            return Err(DockerError::Failed(format!(
+                "backup timed out after {RESTIC_TIMEOUT_SECS}s"
+            )));
         };
 
     let full_id = summary
@@ -397,7 +393,7 @@ fn short_id(full: &str) -> String {
     full.chars().take(8).collect()
 }
 
-/// A file-node line from `restic ls --json` (struct_type == "node").
+/// A file-node line from `restic ls --json` (`struct_type` == "node").
 #[derive(serde::Deserialize)]
 struct ResticLsNode {
     #[serde(default)]
@@ -419,7 +415,11 @@ fn snapshot_tar_path_for_id(repo_name: &str, backup_id: &str) -> Result<String, 
         let Ok(node) = serde_json::from_str::<ResticLsNode>(line) else {
             continue;
         };
-        if node.struct_type == "node" && node.name.ends_with(".tar") {
+        if node.struct_type == "node"
+            && std::path::Path::new(&node.name)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("tar"))
+        {
             return Ok(node.path);
         }
     }
@@ -457,7 +457,7 @@ fn snapshot_to_info(snap: ResticSnapshot) -> Option<BackupInfo> {
         agent_name,
         backup_type,
         created_at,
-        size: snap.summary.map(|s| s.total_bytes_processed).unwrap_or(0),
+        size: snap.summary.map_or(0, |s| s.total_bytes_processed),
     })
 }
 
@@ -525,16 +525,13 @@ pub async fn restore_to_image(name: &str, backup_id: &str) -> Result<String, Doc
         })
     });
 
-    match tokio::time::timeout(std::time::Duration::from_secs(RESTIC_TIMEOUT_SECS), task).await {
-        Ok(join_result) => {
-            join_result.map_err(|e| DockerError::Failed(format!("restore task failed: {e}")))??
-        }
-        Err(_) => {
-            kill_switch.kill_all();
-            return Err(DockerError::Failed(format!(
-                "restore timed out after {RESTIC_TIMEOUT_SECS}s"
-            )));
-        }
+    if let Ok(join_result) = tokio::time::timeout(std::time::Duration::from_secs(RESTIC_TIMEOUT_SECS), task).await {
+        join_result.map_err(|e| DockerError::Failed(format!("restore task failed: {e}")))??;
+    } else {
+        kill_switch.kill_all();
+        return Err(DockerError::Failed(format!(
+            "restore timed out after {RESTIC_TIMEOUT_SECS}s"
+        )));
     }
 
     Ok(image_ref)

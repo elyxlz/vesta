@@ -39,7 +39,14 @@ function resolveStatus(
 
   if (!agent) return { label: "", orbState: "off" };
 
-  switch (agent.status) {
+  return resolveAgentStatus(agent.status, activityState);
+}
+
+function resolveAgentStatus(
+  status: string,
+  activityState: AgentActivityState,
+): { label: string; orbState: OrbVisualState } {
+  switch (status) {
     case "alive":
       if (activityState === "thinking")
         return { label: "thinking", orbState: "thinking" };
@@ -64,7 +71,7 @@ function resolveStatus(
         orbState: "off",
       };
     default:
-      return { label: agent.status, orbState: "off" };
+      return { label: status, orbState: "off" };
   }
 }
 

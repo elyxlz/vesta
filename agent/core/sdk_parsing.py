@@ -32,8 +32,7 @@ from claude_agent_sdk.types import (
     SubagentStopHookInput,
 )
 
-from . import diagnostics
-from . import logger
+from . import diagnostics, logger
 from . import models as vm
 from .events import StreamEvent
 
@@ -135,56 +134,46 @@ def _parse_agent_input(input_data: object) -> tuple[str, str]:
     return agent_type, description
 
 
-def parse_sdk_message(msg: Message) -> tuple[list[str], list[ThinkingBlock], str | None, list[str]]:
-    """Extract assistant text + thinking blocks (and a session_id from a ResultMessage) from one SDK
-    message. CLI-synthesized error text (_is_cli_error_text) is kept out of the speech texts and
-    returned in the final element so the caller surfaces it through the error channel. Tool-use
-    blocks carry no output here: tool/subagent activity is surfaced via the native hooks in
-    make_hooks, so they are ignored. Non-assistant messages just log and return empties."""
-    if isinstance(msg, ResultMessage):
-        usage_data = msg.usage or {}
-        parts = []
-        if usage_data:
-            input_tok = usage_data["input_tokens"] if "input_tokens" in usage_data else 0
-            output_tok = usage_data["output_tokens"] if "output_tokens" in usage_data else 0
-            cache_read = usage_data["cache_read_input_tokens"] if "cache_read_input_tokens" in usage_data else 0
-            cache_create = usage_data["cache_creation_input_tokens"] if "cache_creation_input_tokens" in usage_data else 0
-            parts.append(f"in={input_tok} out={output_tok} cache_read={cache_read} cache_write={cache_create}")
-        if msg.total_cost_usd is not None:
-            parts.append(f"cost=${msg.total_cost_usd:.4f}")
-        parts.append(f"duration={msg.duration_ms / 1000:.1f}s")
-        logger.usage(" | ".join(parts))
-        return [], [], msg.session_id, []
+_ParsedMessage = tuple[list[str], list[ThinkingBlock], str | None, list[str]]
 
-    if isinstance(msg, RateLimitEvent):
-        info = msg.rate_limit_info
-        log_fn = logger.debug if info.status == "allowed" else logger.warning
-        log_fn(f"Rate limit {info.status} (utilization={info.utilization}, type={info.rate_limit_type})")
+
+def _log_result_usage(msg: ResultMessage) -> None:
+    usage_data = msg.usage or {}
+    parts = []
+    if usage_data:
+        input_tok = usage_data["input_tokens"] if "input_tokens" in usage_data else 0
+        output_tok = usage_data["output_tokens"] if "output_tokens" in usage_data else 0
+        cache_read = usage_data["cache_read_input_tokens"] if "cache_read_input_tokens" in usage_data else 0
+        cache_create = usage_data["cache_creation_input_tokens"] if "cache_creation_input_tokens" in usage_data else 0
+        parts.append(f"in={input_tok} out={output_tok} cache_read={cache_read} cache_write={cache_create}")
+    if msg.total_cost_usd is not None:
+        parts.append(f"cost=${msg.total_cost_usd:.4f}")
+    parts.append(f"duration={msg.duration_ms / 1000:.1f}s")
+    logger.usage(" | ".join(parts))
+
+
+def _parse_system_message(msg: SystemMessage) -> _ParsedMessage:
+    if msg.subtype == "init":
+        # The init message carries the session_id first, before any ResultMessage. Return it so
+        # the caller persists it immediately: a fresh turn that crashes before completing can
+        # still be resumed (the official client exposes no session_id attribute to fall back on).
+        init_sid = msg.data["session_id"] if isinstance(msg.data, dict) and "session_id" in msg.data else None
+        if init_sid:
+            logger.debug(f"[init] session_id={init_sid[:16]}")
+        return [], [], init_sid, []
+    # thinking_tokens is a per-delta streaming counter the SDK emits dozens of times per turn; it
+    # floods the log with no signal here (thinking_tokens_estimate exposes it for liveness notes).
+    if msg.subtype == "thinking_tokens":
         return [], [], None, []
-
-    if isinstance(msg, SystemMessage):
-        if msg.subtype == "init":
-            # The init message carries the session_id first, before any ResultMessage. Return it so
-            # the caller persists it immediately: a fresh turn that crashes before completing can
-            # still be resumed (the official client exposes no session_id attribute to fall back on).
-            init_sid = msg.data["session_id"] if isinstance(msg.data, dict) and "session_id" in msg.data else None
-            if init_sid:
-                logger.debug(f"[init] session_id={init_sid[:16]}")
-            return [], [], init_sid, []
-        # thinking_tokens is a per-delta streaming counter the SDK emits dozens of times per turn; it
-        # floods the log with no signal here (thinking_tokens_estimate exposes it for liveness notes).
-        if msg.subtype == "thinking_tokens":
-            return [], [], None, []
-        if msg.subtype == "compact_boundary":
-            logger.client("Compaction boundary reached")
-            return [], [], None, []
-        raw = json.dumps(msg.data, default=str)
-        logger.system(f"[{msg.subtype}] {raw[:2000]}")
+    if msg.subtype == "compact_boundary":
+        logger.client("Compaction boundary reached")
         return [], [], None, []
+    raw = json.dumps(msg.data, default=str)
+    logger.system(f"[{msg.subtype}] {raw[:2000]}")
+    return [], [], None, []
 
-    if not isinstance(msg, AssistantMessage):
-        return [], [], None, []
 
+def _parse_assistant_message(msg: AssistantMessage) -> _ParsedMessage:
     texts = []
     thinking_blocks = []
     error_texts = []
@@ -197,8 +186,28 @@ def parse_sdk_message(msg: Message) -> tuple[list[str], list[ThinkingBlock], str
             texts.append(block.text)
         elif isinstance(block, ThinkingBlock):
             thinking_blocks.append(block)
-
     return texts, thinking_blocks, None, error_texts
+
+
+def parse_sdk_message(msg: Message) -> _ParsedMessage:
+    """Extract assistant text + thinking blocks (and a session_id from a ResultMessage) from one SDK
+    message. CLI-synthesized error text (_is_cli_error_text) is kept out of the speech texts and
+    returned in the final element so the caller surfaces it through the error channel. Tool-use
+    blocks carry no output here: tool/subagent activity is surfaced via the native hooks in
+    make_hooks, so they are ignored. Non-assistant messages just log and return empties."""
+    if isinstance(msg, ResultMessage):
+        _log_result_usage(msg)
+        return [], [], msg.session_id, []
+    if isinstance(msg, RateLimitEvent):
+        info = msg.rate_limit_info
+        log_fn = logger.debug if info.status == "allowed" else logger.warning
+        log_fn(f"Rate limit {info.status} (utilization={info.utilization}, type={info.rate_limit_type})")
+        return [], [], None, []
+    if isinstance(msg, SystemMessage):
+        return _parse_system_message(msg)
+    if not isinstance(msg, AssistantMessage):
+        return [], [], None, []
+    return _parse_assistant_message(msg)
 
 
 def _tool_summary(name: str, tool_input: dict[str, tp.Any]) -> str:
@@ -212,7 +221,9 @@ def _tool_summary(name: str, tool_input: dict[str, tp.Any]) -> str:
 
 
 def _subagent_hook(state: vm.State, *, verb: str, event_type: str) -> HookCallback:
-    async def hook(input_data: SubagentStartHookInput | SubagentStopHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
+    async def hook(
+        input_data: SubagentStartHookInput | SubagentStopHookInput, _tool_use_id: str | None, _context: HookContext
+    ) -> HookJSONOutput:
         agent_id = input_data["agent_id"] if "agent_id" in input_data else "?"
         agent_type = input_data["agent_type"] if "agent_type" in input_data else "unknown"
         logger.subagent(f"{verb} [{agent_type}] id={agent_id}")
@@ -232,7 +243,7 @@ def _subagent_prefix(input_data: Mapping[str, object]) -> tuple[str, bool]:
 
 
 def make_hooks(state: vm.State) -> dict[HookEvent, list[HookMatcher]]:
-    async def log_tool_start(input_data: PreToolUseHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
+    async def log_tool_start(input_data: PreToolUseHookInput, tool_use_id: str | None, _context: HookContext) -> HookJSONOutput:
         name = input_data["tool_name"] if "tool_name" in input_data else "?"
         summary = _tool_summary(name, input_data["tool_input"] if "tool_input" in input_data else {})
         prefix, is_sub = _subagent_prefix(input_data)
@@ -243,7 +254,7 @@ def make_hooks(state: vm.State) -> dict[HookEvent, list[HookMatcher]]:
         state.active_tools[tool_id] = vm.ActiveTool(name=name, summary=summary, started_at=time.monotonic(), is_subagent=is_sub)
         return tp.cast(HookJSONOutput, {})
 
-    async def log_tool_finish(input_data: PostToolUseHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
+    async def log_tool_finish(input_data: PostToolUseHookInput, tool_use_id: str | None, _context: HookContext) -> HookJSONOutput:
         name = input_data["tool_name"] if "tool_name" in input_data else "?"
         prefix, is_sub = _subagent_prefix(input_data)
         tool_id = tool_use_id or name
@@ -257,7 +268,7 @@ def make_hooks(state: vm.State) -> dict[HookEvent, list[HookMatcher]]:
         diagnostics.touch_activity(state, f"tool_end:{name}")
         return tp.cast(HookJSONOutput, {})
 
-    async def log_tool_failure(input_data: PostToolUseFailureHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
+    async def log_tool_failure(input_data: PostToolUseFailureHookInput, tool_use_id: str | None, _context: HookContext) -> HookJSONOutput:
         name = input_data["tool_name"] if "tool_name" in input_data else "?"
         error = input_data["error"] if "error" in input_data else "(unknown error)"
         prefix, _ = _subagent_prefix(input_data)
@@ -267,13 +278,13 @@ def make_hooks(state: vm.State) -> dict[HookEvent, list[HookMatcher]]:
         diagnostics.touch_activity(state, f"tool_fail:{name}")
         return tp.cast(HookJSONOutput, {})
 
-    async def log_compact(input_data: PreCompactHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
+    async def log_compact(input_data: PreCompactHookInput, _tool_use_id: str | None, _context: HookContext) -> HookJSONOutput:
         trigger = input_data["trigger"] if "trigger" in input_data else "unknown"
         state.compacting = True
         logger.client(f"Context compaction starting (trigger={trigger})")
         return tp.cast(HookJSONOutput, {})
 
-    async def log_notification(input_data: NotificationHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
+    async def log_notification(input_data: NotificationHookInput, _tool_use_id: str | None, _context: HookContext) -> HookJSONOutput:
         title = input_data["title"] if "title" in input_data else None
         prefix = f"{title}: " if title else ""
         kind = input_data["notification_type"] if "notification_type" in input_data else "notification"
@@ -281,7 +292,7 @@ def make_hooks(state: vm.State) -> dict[HookEvent, list[HookMatcher]]:
         logger.system(f"[{kind}] {prefix}{message}")
         return tp.cast(HookJSONOutput, {})
 
-    async def log_stop(input_data: StopHookInput, tool_use_id: str | None, context: HookContext) -> HookJSONOutput:
+    async def log_stop(_input_data: StopHookInput, _tool_use_id: str | None, _context: HookContext) -> HookJSONOutput:
         logger.client("Agent execution stopped")
         return tp.cast(HookJSONOutput, {})
 

@@ -65,7 +65,12 @@ export function VersionMismatchScreen({
         </EmptyHeader>
         <EmptyContent className="relative">
           <div className="flex items-center gap-2">
-            <Button onClick={handleUpdateApp} disabled={updating}>
+            <Button
+              onClick={() => {
+                void handleUpdateApp();
+              }}
+              disabled={updating}
+            >
               {updating && <Spinner className="size-4" />}
               update app
             </Button>

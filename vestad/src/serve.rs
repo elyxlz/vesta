@@ -67,7 +67,7 @@ pub fn ensure_tls(config_dir: &std::path::Path) -> Result<(String, String, Strin
     params
         .subject_alt_names
         .push(rcgen::SanType::IpAddress(std::net::IpAddr::V4(
-            std::net::Ipv4Addr::new(127, 0, 0, 1),
+            std::net::Ipv4Addr::LOCALHOST,
         )));
     // Add all local IP addresses as SANs for remote connections
     if let Ok(output) = std::process::Command::new("hostname").arg("-I").output() {
@@ -98,7 +98,7 @@ pub fn ensure_tls(config_dir: &std::path::Path) -> Result<(String, String, Strin
         digest
             .as_ref()
             .iter()
-            .map(|b| format!("{:02X}", b))
+            .map(|b| format!("{b:02X}"))
             .collect::<Vec<_>>()
             .join(":")
     );
@@ -135,9 +135,7 @@ pub fn ensure_api_key(config_dir: &std::path::Path) -> Result<String, String> {
     std::fs::create_dir_all(config_dir)
         .map_err(|e| format!("failed to create {}: {e}", config_dir.display()))?;
 
-    let key: String = (0..API_KEY_BYTES)
-        .map(|_| format!("{:02x}", rand::random::<u8>()))
-        .collect();
+    let key = hex::encode(rand::random::<[u8; API_KEY_BYTES]>());
 
     std::fs::write(&key_path, &key)
         .map_err(|e| format!("failed to write {}: {e}", key_path.display()))?;
@@ -219,15 +217,13 @@ async fn info() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "managed": crate::is_cloud_managed() }))
 }
 
-/// `POST /agents/{name}/account-token` — mint a short-lived server-identity token
-/// for the on-box agent (issue #20).
-///
-/// Agent-token authenticated (the agent proves itself with its `X-Agent-Token`);
-/// vestad then signs `{ sub: VESTA_CLOUD_SERVER_ID, typ: "server-identity" }` with its
-/// `api_key` and hands it back. The agent carries this to the control plane's
-/// `/api/account/*` to read its plan or open a billing portal. vestad makes NO
-/// network call — it only signs locally; the agent does the talking. The
-/// `api_key` never enters the agent container, only this 10-minute token does.
+/// `POST /agents/{name}/account-token`: mint a short-lived server-identity token for
+/// the on-box agent (issue #20). Agent-token authenticated (the agent proves itself
+/// with its `X-Agent-Token`); vestad signs `{ sub: VESTA_CLOUD_SERVER_ID, typ:
+/// "server-identity" }` with its `api_key` and hands it back. The agent carries this
+/// to the control plane's `/api/account/*` to read its plan or open a billing portal.
+/// vestad makes NO network call, it only signs locally; the `api_key` never enters
+/// the agent container, only this 10-minute token does.
 async fn account_token_handler(State(state): State<SharedState>) -> axum::response::Response {
     if !crate::is_cloud_managed() {
         return err_response(StatusCode::NOT_FOUND, "not a cloud-managed server").into_response();
@@ -323,7 +319,7 @@ async fn gateway_logs_handler(
     Sse<impl futures_core::Stream<Item = Result<Event, std::io::Error>>>,
     (StatusCode, Json<serde_json::Value>),
 > {
-    let tail = query.tail.unwrap_or(DEFAULT_LOG_TAIL_LINES) as usize;
+    let tail = usize::try_from(query.tail.unwrap_or(DEFAULT_LOG_TAIL_LINES)).unwrap_or(usize::MAX);
 
     let log_dir = crate::paths::config_dir_or_relative();
     let log_file = crate::self_log::latest_log_file(&log_dir)
@@ -348,7 +344,7 @@ async fn gateway_logs_handler(
                 Ok(Some(line)) => yield Ok(Event::default().data(line)),
                 Ok(None) => break,
                 Err(e) => {
-                    yield Ok(Event::default().data(format!("error: {}", e)));
+                    yield Ok(Event::default().data(format!("error: {e}")));
                     break;
                 }
             }
@@ -773,7 +769,8 @@ fn rename_notification_payload(
     new_name: &str,
     epoch_secs: u64,
 ) -> Result<serde_json::Value, String> {
-    let timestamp = time::OffsetDateTime::from_unix_timestamp(epoch_secs as i64)
+    let epoch = i64::try_from(epoch_secs).map_err(|e| format!("epoch out of range: {e}"))?;
+    let timestamp = time::OffsetDateTime::from_unix_timestamp(epoch)
         .map_err(|e| format!("epoch out of range: {e}"))?
         .format(&time::format_description::well_known::Rfc3339)
         .map_err(|e| format!("format timestamp: {e}"))?;
@@ -835,7 +832,7 @@ enum AgentWrite {
 /// the caller applies them with one `POST /agents/{name}/restart` after its writes (so provisioning
 /// is several writes + a single restart, with nothing racing a restarting agent). Ensures the agent
 /// exists, takes the per-agent write lock, and auto-starts a stopped agent so it can receive the
-/// proxied call. The agent owns the file writes, format, and validation; a forward failure is BAD_GATEWAY.
+/// proxied call. The agent owns the file writes, format, and validation; a forward failure is `BAD_GATEWAY`.
 async fn write_to_agent(
     state: &SharedState,
     name: &str,
@@ -956,11 +953,11 @@ async fn logs_handler(
     if status == docker::ContainerStatus::NotFound {
         return Err(err_response(
             StatusCode::BAD_REQUEST,
-            &format!("agent '{}' not found", name),
+            &format!("agent '{name}' not found"),
         ));
     }
 
-    let tail_lines = query.tail.unwrap_or(DEFAULT_LOG_TAIL_LINES) as usize;
+    let tail_lines = usize::try_from(query.tail.unwrap_or(DEFAULT_LOG_TAIL_LINES)).unwrap_or(usize::MAX);
     let docker = state.docker.clone();
     let stream = async_stream::stream! {
         if status != docker::ContainerStatus::Running {
@@ -989,7 +986,7 @@ async fn logs_handler(
         }).await {
             Ok(e) => e,
             Err(e) => {
-                yield Ok(Event::default().data(format!("error: {}", e)));
+                yield Ok(Event::default().data(format!("error: {e}")));
                 return;
             }
         };
@@ -1001,7 +998,7 @@ async fn logs_handler(
                 return;
             }
             Err(e) => {
-                yield Ok(Event::default().data(format!("error: {}", e)));
+                yield Ok(Event::default().data(format!("error: {e}")));
                 return;
             }
         };
@@ -1020,7 +1017,7 @@ async fn logs_handler(
                     }
                 }
                 Err(e) => {
-                    yield Ok(Event::default().data(format!("error: {}", e)));
+                    yield Ok(Event::default().data(format!("error: {e}")));
                     break;
                 }
             }
@@ -1150,6 +1147,8 @@ async fn docker_exec_capture(
     cmd: Vec<String>,
     stdin: Option<Vec<u8>>,
 ) -> Result<ExecResult, String> {
+    use futures_util::StreamExt;
+
     let attach_stdin = stdin.is_some();
     let exec = docker
         .create_exec(
@@ -1185,14 +1184,13 @@ async fn docker_exec_capture(
         }
         drop(input);
 
-        use futures_util::StreamExt;
         while let Some(chunk) = output.next().await {
             match chunk.map_err(|e| e.to_string())? {
                 bollard::container::LogOutput::StdOut { message } => {
-                    stdout.extend_from_slice(&message)
+                    stdout.extend_from_slice(&message);
                 }
                 bollard::container::LogOutput::StdErr { message } => {
-                    stderr.push_str(&String::from_utf8_lossy(&message))
+                    stderr.push_str(&String::from_utf8_lossy(&message));
                 }
                 _ => {}
             }
@@ -1323,15 +1321,12 @@ async fn read_file_handler(
     }
 
     let readonly = is_readonly_path(&q.path) || (mode & 0o200) == 0;
-    let (content, encoding) = match std::str::from_utf8(&cat.stdout) {
-        Ok(s) => (s.to_string(), "utf-8"),
-        Err(_) => {
-            use base64::Engine;
-            (
-                base64::engine::general_purpose::STANDARD.encode(&cat.stdout),
-                "base64",
-            )
-        }
+    let (content, encoding) = if let Ok(s) = std::str::from_utf8(&cat.stdout) { (s.to_string(), "utf-8") } else {
+        use base64::Engine;
+        (
+            base64::engine::general_purpose::STANDARD.encode(&cat.stdout),
+            "base64",
+        )
     };
 
     Ok(Json(serde_json::json!({
@@ -1480,7 +1475,7 @@ fn all_registered_ports(registry: &HashMap<String, HashMap<String, ServiceEntry>
 /// Upper bound of the kernel's ephemeral source-port range
 /// (`net.ipv4.ip_local_port_range`). Service ports are allocated above this so
 /// the kernel never reuses a just-allocated service port as a transient
-/// outbound source port (which would make a later bind() of that port fail).
+/// outbound source port (which would make a later `bind()` of that port fail).
 fn ephemeral_port_high() -> u16 {
     std::fs::read_to_string("/proc/sys/net/ipv4/ip_local_port_range")
         .ok()
@@ -1501,14 +1496,12 @@ fn no_free_ports_err() -> (StatusCode, Json<serde_json::Value>) {
 
 /// Find a free port not used by any registered service or other process.
 ///
-/// Callers bind the returned port themselves, only later. The previous
-/// implementation asked the OS for a port via `bind(0)`, which hands back an
-/// *ephemeral* port; between allocation and the caller binding it, the kernel
-/// could reuse that same port as the source port of an outbound connection,
-/// producing a spurious `EADDRINUSE` (the port looks free to a LISTEN scan but
-/// bind() fails). To avoid that race we scan deterministically and prefer ports
-/// *above* the ephemeral range, which the kernel will not hand out as source
-/// ports.
+/// Callers bind the returned port themselves, only later. Asking the OS via `bind(0)`
+/// hands back an *ephemeral* port that the kernel can reuse as the source port of an
+/// outbound connection before the caller binds it, producing a spurious `EADDRINUSE`
+/// (the port looks free to a LISTEN scan but `bind()` fails). So scan
+/// deterministically and prefer ports *above* the ephemeral range, which the kernel
+/// will not hand out as source ports.
 fn allocate_service_port(registry: &HashMap<String, HashMap<String, ServiceEntry>>) -> Option<u16> {
     let used = all_registered_ports(registry);
     let scan = |lo: u16| {
@@ -1525,19 +1518,14 @@ fn allocate_service_port(registry: &HashMap<String, HashMap<String, ServiceEntry
     scan(safe_min).or_else(|| scan(SERVICE_PORT_MIN))
 }
 
-/// A cached service port is reusable when it's the service's own live server
-/// (TCP connect succeeds) or genuinely free (bind succeeds). Only a port that is
-/// neither — a zombie/TIME_WAIT corpse left by a crashed startup (#371) — is
-/// dropped so the caller gets a fresh one.
-///
-/// The bind-only probe this replaced (#436) assumed every caller binds the
-/// returned port, so any listener meant a squatter that would crash the caller.
-/// That no longer holds: resolvers (whatsapp's `resolveVoiceBaseURL`, voice's own
-/// status/stop/restart) POST here purely to *find* the live port, and treating
-/// their own live server as a squatter reallocated the port out from under a
-/// resident service — every later lookup then resolved a fresh, dead port. The
-/// one caller that binds (voice `start`) guards with `port_alive` first, so it
-/// never binds a live port.
+/// A cached service port is reusable when it's the service's own live server (TCP
+/// connect succeeds) or genuinely free (bind succeeds). Only a port that is neither,
+/// a `zombie/TIME_WAIT` corpse left by a crashed startup (#371), is dropped so the
+/// caller gets a fresh one. A bind-only probe (#436) treats every listener as a
+/// squatter, but resolvers (whatsapp's `resolveVoiceBaseURL`, voice's own
+/// status/stop/restart) POST here purely to *find* the live port, and reallocating a
+/// resident service's port leaves every later lookup on a fresh, dead port. The one
+/// caller that binds (voice `start`) guards with `port_alive` first.
 async fn is_cached_port_reusable(port: u16) -> bool {
     use std::net::Ipv4Addr;
     use std::time::Duration;
@@ -1574,7 +1562,7 @@ async fn register_service_handler(
     let exists = docker::container_status(&state.docker, &docker_name).await
         != docker::ContainerStatus::NotFound;
     if !exists {
-        return Err(err_response(StatusCode::NOT_FOUND, &format!("agent '{}' not found — is the container running? check with: docker ps | grep vesta", name)));
+        return Err(err_response(StatusCode::NOT_FOUND, &format!("agent '{name}' not found — is the container running? check with: docker ps | grep vesta")));
     }
 
     let mut settings = state.settings.write().await;
@@ -1846,7 +1834,7 @@ fn validate_retention(
             if v < MIN_RETENTION {
                 return Err(err_response(
                     StatusCode::BAD_REQUEST,
-                    &format!("retention.{} must be at least {}", name, MIN_RETENTION),
+                    &format!("retention.{name} must be at least {MIN_RETENTION}"),
                 ));
             }
         }
@@ -1928,11 +1916,11 @@ async fn put_gateway_settings_handler(
 // --- Read-only gateway info ---
 
 /// Read-only daemon reachability facts surfaced by GET /gateway/info. Pure so the
-/// wire shape is unit-testable without constructing AppState.
+/// wire shape is unit-testable without constructing `AppState`.
 fn gateway_info_json(
     expose_lan: bool,
-    lan_url: &Option<String>,
-    tunnel_url: &Option<String>,
+    lan_url: Option<&str>,
+    tunnel_url: Option<&str>,
     port: u16,
 ) -> serde_json::Value {
     serde_json::json!({
@@ -1946,8 +1934,8 @@ async fn gateway_info_handler(State(state): State<SharedState>) -> Json<serde_js
     let tunnel_url = state.tunnel_url.lock().await.clone();
     Json(gateway_info_json(
         state.expose_lan,
-        &state.lan_url,
-        &tunnel_url,
+        state.lan_url.as_deref(),
+        tunnel_url.as_deref(),
         state.https_port,
     ))
 }
@@ -2107,7 +2095,12 @@ async fn set_mounts_handler(
     })?;
     {
         let mut settings = state.settings.write().await;
-        settings.agents.entry(name.clone()).or_default().mounts = validated.clone();
+        settings
+            .agents
+            .entry(name.clone())
+            .or_default()
+            .mounts
+            .clone_from(&validated);
         save_settings(&settings);
     }
     tracing::info!(agent = %name, "agent mounts updated");
@@ -2118,7 +2111,7 @@ async fn set_mounts_handler(
 
 /// Suggest existing host folders the user might share, so they don't hand-type a path. Reads the
 /// host filesystem (common mount roots + home media folders), so it is API-key only — never the
-/// agent token; an agent must not enumerate the host. The scan is blocking std::fs (and a hung
+/// agent token; an agent must not enumerate the host. The scan is blocking `std::fs` (and a hung
 /// network mount under one of the roots can stall it), so it runs off the async worker.
 async fn host_folder_suggestions_handler(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
@@ -2177,14 +2170,14 @@ pub fn write_port_file(config_dir: &std::path::Path, port: u16) {
 pub fn acquire_pid_lock(config_dir: &std::path::Path) -> Result<std::fs::File, String> {
     let pid_path = config_dir.join("vestad.pid");
     std::fs::create_dir_all(config_dir)
-        .map_err(|e| format!("failed to create config dir: {}", e))?;
+        .map_err(|e| format!("failed to create config dir: {e}"))?;
 
     let file = std::fs::OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true)
         .open(&pid_path)
-        .map_err(|e| format!("failed to open pid file: {}", e))?;
+        .map_err(|e| format!("failed to open pid file: {e}"))?;
 
     #[cfg(unix)]
     {
@@ -2788,10 +2781,12 @@ pub async fn run_server(cfg: ServerConfig) {
         env_config,
         docker.clone(),
         tunnel_url,
-        dev_mode,
-        port,
-        expose_lan,
-        lan_url,
+        crate::state::GatewayFacts {
+            dev_mode,
+            https_port: port,
+            expose_lan,
+            lan_url,
+        },
     ));
     // Reconcile in the background so the API serves immediately: a rebuild (entrypoint/mount change)
     // snapshots each container's filesystem (minutes), and awaiting it would leave vestad unreachable.
@@ -2799,7 +2794,7 @@ pub async fn run_server(cfg: ServerConfig) {
     let reconcile_env = state.env_config.clone();
     let reconcile_rebuilding = state.rebuilding.clone();
     tokio::spawn(async move {
-        docker::reconcile_containers(
+        Box::pin(docker::reconcile_containers(
             &reconcile_docker,
             &reconcile_env,
             agent_code_changed,
@@ -2816,7 +2811,7 @@ pub async fn run_server(cfg: ServerConfig) {
             // (or via a later `vesta restart`) is reflected without needing a fresh vestad boot.
             &|name| load_settings().agent_mounts(name),
             &reconcile_rebuilding,
-        )
+        ))
         .await;
     });
     // Keep a docker handle for the shutdown hook: vestad stops every agent when it exits, so a
@@ -2845,17 +2840,14 @@ pub async fn run_server(cfg: ServerConfig) {
     .await
     .expect("failed to configure TLS");
 
-    // HTTP listener was bound atomically in main.rs before the runtime entered
-    // the async block, closing the TOCTOU race on the HTTP port. HTTPS binds
-    // inside axum_server::bind_rustls below; its window is short and a loss is
-    // loud (the task panics) rather than silent.
-    // Bind the HTTPS control API to loopback by default — every normal path
-    // reaches vestad via localhost (cloudflared dials https://localhost:{port}),
-    // so this keeps the API off the LAN and the public internet. `--expose-lan`
-    // opts into binding all interfaces so other devices on the LAN can connect
-    // (0.0.0.0 still includes loopback, so the tunnel keeps working); the API is
-    // then guarded only by the API key + fingerprint-pinned self-signed TLS. The
-    // plain HTTP server stays loopback-only regardless (see main.rs).
+    // The HTTP listener was bound atomically in main.rs before the runtime entered the
+    // async block, closing the TOCTOU race on the HTTP port; HTTPS binds inside
+    // axum_server::bind_rustls below, whose window is short and a loss is loud (the task
+    // panics). HTTPS binds loopback by default: every normal path reaches vestad via
+    // localhost (cloudflared dials https://localhost:{port}), keeping the API off the LAN
+    // and the public internet. `--expose-lan` opts into all interfaces so LAN devices can
+    // connect (0.0.0.0 still includes loopback, so the tunnel keeps working), guarded by
+    // the API key + fingerprint-pinned TLS; plain HTTP stays loopback-only (see main.rs).
     let https_bind_addr = if expose_lan {
         std::net::Ipv4Addr::UNSPECIFIED
     } else {
@@ -2876,7 +2868,7 @@ pub async fn run_server(cfg: ServerConfig) {
         .expect("http server failed");
     });
 
-    let https_handle = tokio::spawn(async move {
+    let tls_handle = tokio::spawn(async move {
         axum_server::bind_rustls(https_addr, rustls_config)
             .serve(app.into_make_service_with_connect_info::<std::net::SocketAddr>())
             .await
@@ -2885,8 +2877,8 @@ pub async fn run_server(cfg: ServerConfig) {
 
     tokio::select! {
         r = http_handle => r.expect("http task panicked"),
-        r = https_handle => r.expect("https task panicked"),
-        _ = shutdown_signal() => {
+        r = tls_handle => r.expect("https task panicked"),
+        () = shutdown_signal() => {
             tracing::info!("shutdown signal received, stopping all agents before exit");
             docker::stop_all_agents(&shutdown_docker).await;
         }
@@ -2914,8 +2906,8 @@ async fn shutdown_signal() {
     #[cfg(not(unix))]
     let terminate = std::future::pending::<()>();
     tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
+        () = ctrl_c => {},
+        () = terminate => {},
     }
 }
 
@@ -3161,15 +3153,14 @@ mod tests {
         );
     }
 
-    // Reproduction of vesta#1254. A resident service (voice-server) stays bound
-    // to its registered port; re-registration -- which is also how consumers
-    // resolve the port, e.g. whatsapp's resolveVoiceBaseURL and voice's own
-    // status/stop/restart -- must return that same live port. This replays the
-    // exact choice register_service_handler makes (reuse the cached port when
-    // reusable, else allocate a fresh one) against a real live listener, using
-    // the same allocate_service_port + is_cached_port_reusable it calls. Under
-    // the old bind-only probe the live listener made reuse fail and the port
-    // drifted to a fresh, dead one; the fix keeps it sticky.
+    // Reproduction of vesta#1254. A resident service (voice-server) stays bound to
+    // its registered port; re-registration, which is also how consumers resolve the
+    // port (whatsapp's resolveVoiceBaseURL, voice's own status/stop/restart), must
+    // return that same live port. This replays the exact choice
+    // register_service_handler makes (reuse the cached port when reusable, else
+    // allocate a fresh one) against a real live listener, using the same
+    // allocate_service_port + is_cached_port_reusable it calls; a bind-only probe
+    // makes reuse fail here and the port drifts to a fresh, dead one.
     #[tokio::test]
     async fn resident_service_keeps_its_port_across_reregistration() {
         use std::collections::HashMap;
@@ -3446,8 +3437,8 @@ mod gateway_settings_tests {
     fn info_json_reports_lan_tunnel_and_port() {
         let exposed = gateway_info_json(
             true,
-            &Some("https://192.168.1.4:7777".to_string()),
-            &Some("https://x.trycloudflare.com".to_string()),
+            Some("https://192.168.1.4:7777"),
+            Some("https://x.trycloudflare.com"),
             7777,
         );
         assert_eq!(exposed["lan"]["exposed"], serde_json::json!(true));
@@ -3461,7 +3452,7 @@ mod gateway_settings_tests {
         );
         assert_eq!(exposed["port"], serde_json::json!(7777));
 
-        let off = gateway_info_json(false, &None, &None, 7777);
+        let off = gateway_info_json(false, None, None, 7777);
         assert_eq!(off["lan"]["exposed"], serde_json::json!(false));
         assert_eq!(off["lan"]["url"], serde_json::Value::Null);
         assert_eq!(off["tunnel_url"], serde_json::Value::Null);

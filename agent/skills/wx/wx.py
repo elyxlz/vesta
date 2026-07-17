@@ -2,10 +2,10 @@
 """No-key weather via open-meteo (no API key required).
 Usage: wx [location]   (default London). Prints a one-line human summary."""
 
-import sys
 import json
-import urllib.request
+import sys
 import urllib.parse
+import urllib.request
 
 WMO = {
     0: "clear",

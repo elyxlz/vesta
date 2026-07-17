@@ -1,5 +1,5 @@
 import re
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from googleapiclient.errors import HttpError
@@ -8,9 +8,8 @@ from . import api, calendar, notifications
 from .context import GoogleContext
 from .gmail import _get_header
 
-
 # Zero-width / bidi formatting characters that marketing emails use to pad previews.
-_INVISIBLE = re.compile(r"[​-‏‪-‮⁠⁦-⁩﻿]")
+_INVISIBLE = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]")
 _WHITESPACE_RUN = re.compile(r"\s+")
 
 # Cap how far back a first-run catch-up reaches. A long offline gap (e.g. the
@@ -75,7 +74,7 @@ def _parse_event_time(event: dict) -> datetime:
     has_tz = date_str.endswith("Z") or "+" in date_str or (date_str.count("-") > 2)
 
     if has_tz:
-        return datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+        return datetime.fromisoformat(date_str)
 
     if tz_name:
         try:
@@ -87,12 +86,120 @@ def _parse_event_time(event: dict) -> datetime:
     return datetime.fromisoformat(date_str).replace(tzinfo=UTC)
 
 
+def _poll_gmail(ctx: GoogleContext, gmail, query_since: datetime, catching_up: bool) -> None:
+    logger = ctx.monitor_logger
+    try:
+        epoch_seconds = int(query_since.timestamp())
+        query = f"after:{epoch_seconds}"
+        results = gmail.users().messages().list(userId="me", q=query, labelIds=["INBOX"], maxResults=50).execute()
+        messages = results["messages"] if "messages" in results else []
+        logger.info("Found %d new emails", len(messages))
+
+        for msg_ref in messages:
+            try:
+                msg = (
+                    gmail.users()
+                    .messages()
+                    .get(userId="me", id=msg_ref["id"], format="metadata", metadataHeaders=["Subject", "From", "Date"])
+                    .execute()
+                )
+                msg_payload = msg["payload"] if "payload" in msg else {}
+                headers = msg_payload["headers"] if "headers" in msg_payload else []
+                sender = _get_header(headers, "From")
+                subject = _get_header(headers, "Subject")
+                snippet = msg["snippet"] if "snippet" in msg else ""
+
+                notifications.write_notification(
+                    ctx.notif_dir,
+                    "email",
+                    # Email pools by default (calendar reminders keep interrupting); the user adds
+                    # interrupt rules for the senders/keywords that should reach them right away.
+                    interrupt=False,
+                    sender=sender,
+                    subject=subject,
+                    preview=clean_preview(snippet)[:200],
+                    missed=catching_up or None,
+                )
+            except HttpError as e:
+                logger.error("Error processing email %s: %s", msg_ref["id"] if "id" in msg_ref else "?", e)
+
+    except HttpError as e:
+        logger.error("Error fetching Gmail: %s", e)
+
+
+def _notify_event_reminders(ctx: GoogleContext, event: dict, query_since: datetime, new_check_time: datetime, catching_up: bool) -> None:
+    logger = ctx.monitor_logger
+    try:
+        event_time = _parse_event_time(event)
+    except (KeyError, ValueError) as e:
+        logger.warning("Skipping event %s: %s", event["id"] if "id" in event else "?", e)
+        return
+
+    subject = event["summary"] if "summary" in event else "(No title)"
+    location = event["location"] if "location" in event else None
+    mins_until = int((event_time - new_check_time).total_seconds() / 60)
+
+    for threshold_mins in ctx.config.get_calendar_notify_thresholds():
+        trigger_time = event_time - timedelta(minutes=threshold_mins)
+        if not (query_since <= trigger_time < new_check_time):
+            continue
+
+        label = _format_threshold_label(threshold_mins)
+        logger.info("Writing %s reminder for: %s", label, subject)
+
+        start_info = event["start"] if "start" in event else {}
+        start_str = (start_info["dateTime"] if "dateTime" in start_info else None) or (start_info["date"] if "date" in start_info else "")
+
+        notifications.write_notification(
+            ctx.notif_dir,
+            "calendar",
+            subject=subject,
+            start_time=strip_fractional(start_str),
+            minutes_until=mins_until,
+            location=location,
+            missed=(catching_up and event_time < new_check_time) or None,
+        )
+
+
+def _poll_calendar(ctx: GoogleContext, query_since: datetime, new_check_time: datetime, catching_up: bool) -> None:
+    config = ctx.config
+    logger = ctx.monitor_logger
+    try:
+        max_threshold = max(config.get_calendar_notify_thresholds())
+        window_end = new_check_time + timedelta(minutes=max_threshold + 60)
+
+        events = calendar.list_events_between(
+            config,
+            calendar_id="primary",
+            start=query_since,
+            end=window_end,
+            include_details=False,
+            limit=50,
+        )
+        logger.info("Found %d upcoming calendar events", len(events))
+
+        for event in events:
+            _notify_event_reminders(ctx, event, query_since, new_check_time, catching_up)
+
+    except calendar.CalendarAuthError as e:
+        # Calendar is terminally refused (e.g. a token minted under the old
+        # shared client, whose project has the Calendar API disabled) while
+        # Gmail still works: tell the agent once, keep polling mail.
+        logger.error("Error fetching calendar: %s", e)
+        notify_broken_once(ctx, CALENDAR_BROKEN_MARKER, "calendar_auth_broken", e)
+        return
+    except Exception as e:
+        # A calendar failure must not sink the whole poll cycle (Gmail still ran).
+        logger.error("Error fetching calendar: %s", e)
+        return
+    clear_broken_marker(ctx, CALENDAR_BROKEN_MARKER)
+
+
 def run(ctx: GoogleContext):
     config = ctx.config
     logger = ctx.monitor_logger
     logger.info("Monitor thread started")
     first_run = True
-    catching_up = False
 
     while not ctx.monitor_stop_event.is_set():
         try:
@@ -101,22 +208,22 @@ def run(ctx: GoogleContext):
             else:
                 last_check_str = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
 
-            last_check_dt = datetime.fromisoformat(last_check_str.replace("Z", "+00:00"))
+            last_check_dt = datetime.fromisoformat(last_check_str)
             new_check_time = datetime.now(UTC)
 
             catching_up = False
             if first_run:
                 gap_seconds = (new_check_time - last_check_dt).total_seconds()
                 if gap_seconds > 90:
-                    logger.info(f"Detected offline period of {gap_seconds:.0f}s, catching up from {last_check_str}")
+                    logger.info("Detected offline period of %.0fs, catching up from %s", gap_seconds, last_check_str)
                     catching_up = True
             first_run = False
 
             query_since = clamp_catchup_start(last_check_dt, new_check_time)
             if query_since != last_check_dt:
-                logger.info(f"Clamping catch-up window from {last_check_str} to {query_since.isoformat()}")
+                logger.info("Clamping catch-up window from %s to %s", last_check_str, query_since.isoformat())
 
-            logger.info(f"Checking for updates since {query_since.isoformat()}")
+            logger.info("Checking for updates since %s", query_since.isoformat())
 
             try:
                 gmail = api.gmail_service(config)
@@ -124,110 +231,15 @@ def run(ctx: GoogleContext):
                 # Terminal auth failure (no token, dead refresh): every poll would
                 # fail, so tell the agent once and keep polling without advancing
                 # the state file; recovery replays the gap (clamped above).
-                logger.error(f"Google auth is broken: {e}")
+                logger.error("Google auth is broken: %s", e)
                 notify_broken_once(ctx, AUTH_BROKEN_MARKER, "auth_broken", e)
                 if ctx.monitor_stop_event.wait(45):
                     break
                 continue
             clear_broken_marker(ctx, AUTH_BROKEN_MARKER)
 
-            try:
-                epoch_seconds = int(query_since.timestamp())
-                query = f"after:{epoch_seconds}"
-                results = gmail.users().messages().list(userId="me", q=query, labelIds=["INBOX"], maxResults=50).execute()
-                messages = results["messages"] if "messages" in results else []
-                logger.info(f"Found {len(messages)} new emails")
-
-                for msg_ref in messages:
-                    try:
-                        msg = (
-                            gmail.users()
-                            .messages()
-                            .get(userId="me", id=msg_ref["id"], format="metadata", metadataHeaders=["Subject", "From", "Date"])
-                            .execute()
-                        )
-                        msg_payload = msg["payload"] if "payload" in msg else {}
-                        headers = msg_payload["headers"] if "headers" in msg_payload else []
-                        sender = _get_header(headers, "From")
-                        subject = _get_header(headers, "Subject")
-                        snippet = msg["snippet"] if "snippet" in msg else ""
-
-                        notifications.write_notification(
-                            ctx.notif_dir,
-                            "email",
-                            # Email pools by default (calendar reminders keep interrupting); the user adds
-                            # interrupt rules for the senders/keywords that should reach them right away.
-                            interrupt=False,
-                            sender=sender,
-                            subject=subject,
-                            preview=clean_preview(snippet)[:200],
-                            missed=catching_up or None,
-                        )
-                    except HttpError as e:
-                        logger.error(f"Error processing email {msg_ref['id'] if 'id' in msg_ref else '?'}: {e}")
-
-            except HttpError as e:
-                logger.error(f"Error fetching Gmail: {e}")
-
-            try:
-                max_threshold = max(config.get_calendar_notify_thresholds())
-                window_end = new_check_time + timedelta(minutes=max_threshold + 60)
-
-                events = calendar.list_events_between(
-                    config,
-                    calendar_id="primary",
-                    start=query_since,
-                    end=window_end,
-                    include_details=False,
-                    limit=50,
-                )
-                logger.info(f"Found {len(events)} upcoming calendar events")
-
-                for event in events:
-                    try:
-                        event_time = _parse_event_time(event)
-                    except (KeyError, ValueError) as e:
-                        logger.warning(f"Skipping event {event['id'] if 'id' in event else '?'}: {e}")
-                        continue
-
-                    subject = event["summary"] if "summary" in event else "(No title)"
-                    location = event["location"] if "location" in event else None
-                    mins_until = int((event_time - new_check_time).total_seconds() / 60)
-
-                    for threshold_mins in config.get_calendar_notify_thresholds():
-                        trigger_time = event_time - timedelta(minutes=threshold_mins)
-                        if not (query_since <= trigger_time < new_check_time):
-                            continue
-
-                        label = _format_threshold_label(threshold_mins)
-                        logger.info(f"Writing {label} reminder for: {subject}")
-
-                        start_info = event["start"] if "start" in event else {}
-                        start_str = (start_info["dateTime"] if "dateTime" in start_info else None) or (
-                            start_info["date"] if "date" in start_info else ""
-                        )
-
-                        notifications.write_notification(
-                            ctx.notif_dir,
-                            "calendar",
-                            subject=subject,
-                            start_time=strip_fractional(start_str),
-                            minutes_until=mins_until,
-                            location=location,
-                            missed=(catching_up and event_time < new_check_time) or None,
-                        )
-
-            except calendar.CalendarAuthError as e:
-                # Calendar is terminally refused (e.g. a token minted under the old
-                # shared client, whose project has the Calendar API disabled) while
-                # Gmail still works: tell the agent once, keep polling mail.
-                logger.error(f"Error fetching calendar: {e}")
-                notify_broken_once(ctx, CALENDAR_BROKEN_MARKER, "calendar_auth_broken", e)
-            except Exception as e:
-                # A calendar failure must not sink the whole poll cycle (Gmail still ran).
-                logger.error(f"Error fetching calendar: {e}")
-            else:
-                clear_broken_marker(ctx, CALENDAR_BROKEN_MARKER)
+            _poll_gmail(ctx, gmail, query_since, catching_up)
+            _poll_calendar(ctx, query_since, new_check_time, catching_up)
 
             tmp = ctx.monitor_state_file.with_suffix(".tmp")
             tmp.write_text(new_check_time.isoformat())
@@ -236,8 +248,8 @@ def run(ctx: GoogleContext):
             if ctx.monitor_stop_event.wait(45):
                 break
 
-        except Exception as e:
-            logger.error(f"Error in monitor loop: {e}", exc_info=True)
+        except Exception:
+            logger.exception("Error in monitor loop")
             if ctx.monitor_stop_event.wait(45):
                 break
 

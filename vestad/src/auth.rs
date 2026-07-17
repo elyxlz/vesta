@@ -243,9 +243,7 @@ pub struct RefreshRequest {
 
 /// 16 random bytes as hex — a refresh-token id or family id.
 fn rand_id() -> String {
-    (0..16)
-        .map(|_| format!("{:02x}", rand::random::<u8>()))
-        .collect()
+    hex::encode(rand::random::<[u8; 16]>())
 }
 
 /// Start a new family; returns `(jti, fam)` to mint the first refresh token with.
@@ -341,7 +339,7 @@ pub async fn create_session_handler(
 }
 
 /// `POST /auth/exchange` — runs behind `auth_middleware`, so the caller already
-/// proved a valid access token (or api_key). Used by the hosted (vesta.run) native
+/// proved a valid access token (or `api_key`). Used by the hosted (vesta.run) native
 /// apps: after the OAuth handoff they hold a control-plane-minted access token, and
 /// exchange it here for a REGISTERED rotating refresh token. vestad never mints a
 /// refresh token for an unauthenticated caller, and the control plane never mints a

@@ -1,7 +1,7 @@
 """Locks the single-owner settings accessor: env-derived, read once per process."""
 
-from microsoft_cli.settings import MicrosoftSettings, get_settings, DEFAULT_CLIENT_ID
-from microsoft_cli.config import resolve_scopes, DEFAULT_CLIENT_SCOPES, OWNED_APP_SCOPES
+from microsoft_cli.config import DEFAULT_CLIENT_SCOPES, OWNED_APP_SCOPES, resolve_scopes
+from microsoft_cli.settings import DEFAULT_CLIENT_ID, MicrosoftSettings, get_settings
 
 
 def test_get_settings_reads_env_and_is_memoized(monkeypatch):

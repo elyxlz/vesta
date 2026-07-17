@@ -40,8 +40,8 @@ export const disconnectedValue: GatewayContextValue = {
   agents: [],
   agentsFetched: false,
   send: () => false,
-  triggerGatewayUpdate: async () => false,
-  checkForUpdate: async () => {},
+  triggerGatewayUpdate: () => Promise.resolve(false),
+  checkForUpdate: () => Promise.resolve(),
 };
 
 export function useGateway() {

@@ -3,9 +3,8 @@ import pathlib
 import subprocess
 import threading
 
-import pytest
-
 import daemon_lifecycle as dl
+import pytest
 
 
 def test_pid_roundtrip(tmp_path: pathlib.Path):

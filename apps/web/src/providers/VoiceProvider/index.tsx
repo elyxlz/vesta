@@ -6,8 +6,8 @@ import { fetchSttStatus, fetchTtsStatus, preloadAudio } from "@/lib/voice";
 export function VoiceStoreEffects({ children }: { children: ReactNode }) {
   const { name: agentName, agent } = useSelectedAgent();
   const services = agent.services;
-  const voiceRev = agent.services?.voice?.rev;
-  const hasVoice = "voice" in (services ?? {});
+  const voiceRev = services.voice?.rev;
+  const hasVoice = "voice" in services;
 
   const _setAgentContext = useVoice((s) => s._setAgentContext);
   const _setSttStatus = useVoice((s) => s._setSttStatus);
@@ -18,7 +18,7 @@ export function VoiceStoreEffects({ children }: { children: ReactNode }) {
 
   // Sync agent context into store
   useEffect(() => {
-    _setAgentContext(agentName || null, services ?? {}, voiceRev);
+    _setAgentContext(agentName || null, services, voiceRev);
   }, [agentName, services, voiceRev, _setAgentContext]);
 
   // Fetch voice status when agent/services change
@@ -45,7 +45,9 @@ export function VoiceStoreEffects({ children }: { children: ReactNode }) {
         _setSttStatus(stt);
         _setTtsStatus(tts);
       })
-      .catch(() => {});
+      .catch(() => {
+        /* ignore */
+      });
 
     return () => ctrl.abort();
   }, [agentName, hasVoice, voiceRev, _setSttStatus, _setTtsStatus]);
@@ -53,7 +55,7 @@ export function VoiceStoreEffects({ children }: { children: ReactNode }) {
   // Preload worklet module when STT is available
   const sttAvailable = useVoice((s) => s.sttAvailable);
   useEffect(() => {
-    if (sttAvailable) preloadAudio();
+    if (sttAvailable) void preloadAudio();
   }, [sttAvailable]);
 
   // Auto-dismiss errors after 5s

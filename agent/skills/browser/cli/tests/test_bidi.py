@@ -8,7 +8,6 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-
 from vesta_browser.bidi import BidiClient, BidiError
 
 from .fake_bidi import FakeBidiServer

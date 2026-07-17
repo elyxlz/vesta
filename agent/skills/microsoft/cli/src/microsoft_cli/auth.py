@@ -1,6 +1,8 @@
-import msal
 import pathlib as pl
 from typing import NamedTuple
+
+import msal
+
 from .settings import get_settings
 
 
@@ -54,9 +56,7 @@ def get_app(cache_file: pl.Path, client_id: str | None = None) -> msal.PublicCli
     if cache_content:
         cache.deserialize(cache_content)
 
-    app = msal.PublicClientApplication(client_id or settings.microsoft_mcp_client_id, authority=authority, token_cache=cache)
-
-    return app
+    return msal.PublicClientApplication(client_id or settings.microsoft_mcp_client_id, authority=authority, token_cache=cache)
 
 
 def get_token_silent(cache_file: pl.Path, scopes: list[str], *, account_id: str | None = None, client_id: str | None = None) -> str | None:
@@ -130,8 +130,7 @@ def get_account_id_by_email(email: str, cache_file: pl.Path) -> str:
     if accounts:
         available = ", ".join([f"'{acc.username}'" for acc in accounts])
         raise ValueError(f"No account found with email '{email}'. Available accounts: {available}. Use list_accounts() to see all.")
-    else:
-        raise ValueError(f"No account found with email '{email}'. No accounts are authenticated. Use authenticate_account() to add an account.")
+    raise ValueError(f"No account found with email '{email}'. No accounts are authenticated. Use authenticate_account() to add an account.")
 
 
 def authenticate_new_account(cache_file: pl.Path, scopes: list[str]) -> Account | None:

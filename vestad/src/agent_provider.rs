@@ -17,11 +17,11 @@ const STATUS_TIMEOUT: Duration = Duration::from_secs(2);
 /// Longer timeout for config writes — the agent does file I/O.
 const SET_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// The agent's `GET /status`: the readiness slice vestad needs to gate Alive vs SettingUp vs
-/// NotAuthenticated. Distinct from the provider config it relays to the app via `GET /provider`.
+/// The agent's `GET /status`: the readiness slice vestad needs to gate Alive vs `SettingUp` vs
+/// `NotAuthenticated`. Distinct from the provider config it relays to the app via `GET /provider`.
 #[derive(Deserialize, Debug)]
 pub struct AgentStatusView {
-    /// Defaults to `true` so a response missing the field isn't mislabeled NotAuthenticated; a
+    /// Defaults to `true` so a response missing the field isn't mislabeled `NotAuthenticated`; a
     /// not-authenticated agent reports `authed: false` explicitly.
     #[serde(default = "default_true")]
     pub authed: bool,

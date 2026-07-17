@@ -2,6 +2,12 @@ import { describe, it } from "vitest";
 import fc from "fast-check";
 import { stripAnsi } from "./ansi";
 
+const ESC = "\x1b";
+const BEL = "\x07";
+const STRIPPABLE_RE = new RegExp(
+  `${ESC}(?:\\[[0-9;:]*[a-zA-Z]|\\].*?(?:${BEL}|${ESC}\\\\)|\\([A-Z0-9])`,
+);
+
 // Generator that concatenates escape-sequence fragments, partial sequences, and plain
 // text, producing both valid and adversarially nested/broken ANSI input.
 const ansiText = fc.string({
@@ -45,10 +51,7 @@ describe("stripAnsi properties", () => {
       fc.property(ansiText, (text) => {
         const out = stripAnsi(text);
         // Anything ESC + [ / ] / ( would have been matched by another pass.
-        // eslint-disable-next-line no-control-regex
-        return !/\x1b(?:\[[0-9;:]*[a-zA-Z]|\].*?(?:\x07|\x1b\\)|\([A-Z0-9])/.test(
-          out,
-        );
+        return !STRIPPABLE_RE.test(out);
       }),
     );
   });

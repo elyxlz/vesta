@@ -36,7 +36,9 @@ export function LogsTab() {
           size="icon"
           className="text-muted-foreground"
           aria-label="fullscreen logs"
-          onClick={() => navigate(`/agent/${encodeURIComponent(name)}/logs`)}
+          onClick={() => {
+            void navigate(`/agent/${encodeURIComponent(name)}/logs`);
+          }}
         >
           <Maximize2 />
         </Button>

@@ -31,9 +31,7 @@ pub async fn oauth_start_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<OAuthStartResponse>, (StatusCode, Json<serde_json::Value>)> {
     let (auth_url, code_verifier, auth_state) = start_auth_flow();
-    let session_id: String = (0..16)
-        .map(|_| format!("{:02x}", rand::random::<u8>()))
-        .collect();
+    let session_id = hex::encode(rand::random::<[u8; 16]>());
 
     state.clean_expired_sessions().await;
 
@@ -119,7 +117,7 @@ fn generate_state() -> String {
     base64url_encode(&state_bytes)
 }
 
-/// Start the OAuth PKCE flow. Returns (auth_url, code_verifier, state).
+/// Start the OAuth PKCE flow. Returns (`auth_url`, `code_verifier`, state).
 fn start_auth_flow() -> (String, String, String) {
     let (code_verifier, code_challenge) = generate_pkce();
     let state = generate_state();
@@ -184,7 +182,7 @@ async fn complete_auth_flow(
         .map_err(|e| format!("failed to read token response: {e}"))?;
 
     let token_data: serde_json::Value = serde_json::from_str(&response_str)
-        .map_err(|_| format!("token exchange failed: {}", response_str))?;
+        .map_err(|_| format!("token exchange failed: {response_str}"))?;
 
     if let Some(error) = token_data.get("error") {
         return Err(format!(
@@ -202,12 +200,12 @@ async fn complete_auth_flow(
         .as_u64()
         .unwrap_or(DEFAULT_TOKEN_EXPIRES_SECS);
 
-    let expires_at = crate::time_utils::now_epoch_millis() + (expires_in as u128) * 1000;
+    let expires_at = crate::time_utils::now_epoch_millis() + u128::from(expires_in) * 1000;
 
     let mut creds = serde_json::json!({
         "claudeAiOauth": {
             "accessToken": access_token,
-            "expiresAt": expires_at as u64,
+            "expiresAt": u64::try_from(expires_at).unwrap_or(u64::MAX),
         }
     });
     if let Some(rt) = refresh_token {

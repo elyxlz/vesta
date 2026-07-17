@@ -11,7 +11,7 @@ describe("useAgentOps.reconcile", () => {
     useAgentOps.getState().setOp("ada", "deleting");
     useAgentOps.getState().setOp("bob", "starting");
     useAgentOps.getState().reconcile([{ name: "bob" }]);
-    expect(useAgentOps.getState().states["ada"]).toBeUndefined();
+    expect(useAgentOps.getState().states.ada).toBeUndefined();
     expect(useAgentOps.getState().getOp("bob").operation).toBe("starting");
   });
 
