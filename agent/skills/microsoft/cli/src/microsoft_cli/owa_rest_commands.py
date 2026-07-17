@@ -189,16 +189,10 @@ def delete_folder(config: Config, client, *, account_email: str, folder_id: str)
 
 
 def _localize_event(event: dict, timezone: str) -> dict:
-    """Report a UTC-stored event's start/end as wall-clock time in ``timezone`` (IANA).
-
-    The OWA REST calendar endpoints always answer in UTC, so the Graph path's
-    ``Prefer: outlook.timezone`` equivalent is applied here on read. All-day boundaries
-    already read as local midnight, so they are relabelled without shifting; converting
-    them would move the event onto a neighbouring date.
-    """
+    """Report a UTC-stored event's start/end in ``timezone``. All-day boundaries are relabelled, not shifted: shifting moves the date."""
     localized = dict(event)
     for slot in ("start", "end"):
-        stored = dt.datetime.fromisoformat(localized[slot]["dateTime"].replace("Z", "")).replace(microsecond=0)
+        stored = dt.datetime.fromisoformat(event[slot]["dateTime"].replace("Z", "")).replace(microsecond=0)
         moment = stored if event["isAllDay"] else stored.replace(tzinfo=dt.UTC).astimezone(ZoneInfo(timezone)).replace(tzinfo=None)
         localized[slot] = {"dateTime": moment.isoformat(), "timeZone": timezone}
     return localized

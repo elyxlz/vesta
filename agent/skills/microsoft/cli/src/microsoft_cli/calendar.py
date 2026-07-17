@@ -19,7 +19,6 @@ def _validate_timezone(timezone: str) -> None:
 
 
 def resolve_timezone(user_timezone: str | None) -> str:
-    """Resolve the IANA timezone a calendar read reports its times in, defaulting to the local zone."""
     timezone = user_timezone if user_timezone is not None else graph.get_default_iana_timezone()
     _validate_timezone(timezone)
     return timezone
