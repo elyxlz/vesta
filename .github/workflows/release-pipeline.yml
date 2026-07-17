@@ -9,6 +9,9 @@ on:
 permissions:
   contents: read
   packages: read
+  # ci.yml (called below) requests pull-requests: read; a reusable workflow
+  # cannot request more than its caller grants, so grant it here too.
+  pull-requests: read
 
 concurrency:
   group: release-pipeline-${{ github.event.release.tag_name }}
