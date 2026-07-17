@@ -18,8 +18,8 @@ from .launcher import RunningCamoufox, launch
 SESSION_FILE_PREFIX = "/tmp/vesta-browser-"
 GRACEFUL_EXIT_POLLS = 25
 GRACEFUL_POLL_INTERVAL_S = 0.2
-# Above the daemon's own per-command bound, so its error (which names the method) wins the race.
-DAEMON_RESPONSE_TIMEOUT_S = 90.0
+# Above the daemon's largest per-command bound (the navigate wait), so its error (which names the method) wins the race.
+DAEMON_RESPONSE_TIMEOUT_S = 120.0
 
 
 def _session_name(name: str | None = None) -> str:

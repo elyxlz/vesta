@@ -66,6 +66,7 @@ def test_event_lands_on_queue():
 
 
 CREATE = "browsingContext.create"
+NAVIGATE = "browsingContext.navigate"
 TEST_TIMEOUT_S = 0.2
 HANG_GUARD_S = 5
 
@@ -109,6 +110,21 @@ def test_a_withheld_response_does_not_block_later_commands(monkeypatch):
         await client.new_session()
         with pytest.raises(BidiError):
             await _create_tab(client)
-        return await client.send("browsingContext.navigate", {"context": "ctx-1", "url": "https://a.test"})
+        return await client.send(NAVIGATE, {"context": "ctx-1", "url": "https://a.test"})
 
     assert asyncio.run(_with_client(body, withhold={CREATE}))["url"] == "https://a.test"
+
+
+def test_navigate_gets_the_longer_wait_for_load_bound(monkeypatch):
+    """A wait-for-load navigation is bounded by the navigate timeout, not the shorter generic one."""
+    monkeypatch.setattr(bidi_module, "BIDI_RESPONSE_TIMEOUT_S", 0.01)
+    monkeypatch.setattr(bidi_module, "NAVIGATE_RESPONSE_TIMEOUT_S", TEST_TIMEOUT_S)
+
+    async def body(_server, client):
+        await client.new_session()
+        return await asyncio.wait_for(client.send(NAVIGATE, {"url": "https://slow.test"}), timeout=HANG_GUARD_S)
+
+    with pytest.raises(BidiError) as excinfo:
+        asyncio.run(_with_client(body, withhold={NAVIGATE}))
+    assert excinfo.value.code == "timeout"
+    assert f"within {TEST_TIMEOUT_S}s" in excinfo.value.message
