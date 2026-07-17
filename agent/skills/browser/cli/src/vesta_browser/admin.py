@@ -18,8 +18,7 @@ from .launcher import RunningCamoufox, launch
 SESSION_FILE_PREFIX = "/tmp/vesta-browser-"
 GRACEFUL_EXIT_POLLS = 25
 GRACEFUL_POLL_INTERVAL_S = 0.2
-# Above the daemon's own per-command bound, so a withheld browser response surfaces as the
-# daemon's error naming the method rather than as a blunter socket timeout out here.
+# Above the daemon's own per-command bound, so its error (which names the method) wins the race.
 DAEMON_RESPONSE_TIMEOUT_S = 90.0
 
 
@@ -244,15 +243,6 @@ def ensure_daemon(wait_s: float = 30.0, name: str | None = None) -> None:
     raise RuntimeError(f"daemon {session!r} did not come up within {wait_s}s. Last log line: {tail or '(none)'}")
 
 
-def _req_label(req: dict) -> str:
-    """Name a request for error messages: its BiDi method, or its control meta."""
-    if "method" in req:
-        return repr(req["method"])
-    if "meta" in req:
-        return f"meta {req['meta']!r}"
-    return "request"
-
-
 def send(req: dict, name: str | None = None) -> dict:
     """Low-level sync request to the daemon. Raises on error."""
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -267,7 +257,8 @@ def send(req: dict, name: str | None = None) -> dict:
                 break
             data += chunk
     except TimeoutError:
-        raise RuntimeError(f"daemon did not respond to {_req_label(req)} within {DAEMON_RESPONSE_TIMEOUT_S}s") from None
+        label = req["method"] if "method" in req else req["meta"]
+        raise RuntimeError(f"daemon did not respond to {label!r} within {DAEMON_RESPONSE_TIMEOUT_S}s") from None
     finally:
         s.close()
     resp = json.loads(data)

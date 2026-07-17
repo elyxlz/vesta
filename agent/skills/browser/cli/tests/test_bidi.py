@@ -67,7 +67,6 @@ def test_event_lands_on_queue():
 
 CREATE = "browsingContext.create"
 TEST_TIMEOUT_S = 0.2
-# Bounds the send under test so an unbounded regression fails here rather than hanging CI.
 HANG_GUARD_S = 5
 
 
