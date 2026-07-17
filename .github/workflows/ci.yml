@@ -48,6 +48,7 @@ jobs:
   # the same SHA. Skip the push run for these commits so we don't pay for
   # two parallel CIs per release.
   detect-changes:
+    name: Scope · Detect changed components
     if: github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'Bump version to ')
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -67,7 +68,8 @@ jobs:
               - 'cli/**'
               - 'vestad/**'
               # vestad embeds the agent home (build.rs EMBED_DIRS/EMBED_FILES), so
-              # agent-only changes can break check-vesta and must trigger it on PRs.
+              # Agent-only changes can break the CLI or vestad and must trigger
+              # their checks on PRs.
               - 'agent/core/**'
               - 'agent/skills/**'
               - 'agent/MEMORY.md'
@@ -104,6 +106,7 @@ jobs:
   # of that cascade, so they must also gate on
   # `needs.detect-changes.result == 'success'` explicitly.
   version-check:
+    name: Repository · Verify version consistency
     if: github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'Bump version to ')
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -161,6 +164,7 @@ jobs:
 
   # ── Fast repo-hygiene guards (skills index, uv.lock, dashboard sync, vite base) ──
   guards:
+    name: Repository · Lint and guardrails
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -174,6 +178,7 @@ jobs:
 
   # ── Agent checks (lint, types, unit + transport tests) ────────────────
   agent-tests:
+    name: Agent · Typecheck and test
     needs: detect-changes
     if: github.event_name != 'pull_request' || needs.detect-changes.outputs.agent == 'true'
     runs-on: ubuntu-latest
@@ -200,6 +205,7 @@ jobs:
 
   # ── Go checks (whatsapp + telegram CLIs) ──────────────────────────────
   go-checks:
+    name: Messaging CLIs · Lint, build, and test
     needs: detect-changes
     if: github.event_name != 'pull_request' || needs.detect-changes.outputs.go == 'true'
     runs-on: ubuntu-latest
@@ -226,6 +232,7 @@ jobs:
 
   # ── Windows install script guard ──────────────────────────────────────
   install-script-check:
+    name: Windows installer · Verify PowerShell 5.1
     if: github.event_name == 'pull_request'
     runs-on: windows-latest
     timeout-minutes: 10
@@ -262,6 +269,7 @@ jobs:
 
   # ── Frontend unit tests ──────────────────────────────────────────────
   test-frontend:
+    name: Apps · Lint, typecheck, and test
     needs: detect-changes
     if: github.event_name != 'pull_request' || needs.detect-changes.outputs.app == 'true'
     runs-on: ubuntu-latest
@@ -286,6 +294,7 @@ jobs:
   # This is local schema validation only. It neither authenticates to Expo nor
   # queues a cloud build, so PRs cannot consume EAS quota or access EXPO_TOKEN.
   validate-mobile-eas:
+    name: Mobile · Validate EAS workflows
     needs: detect-changes
     if: github.event_name == 'pull_request' && needs.detect-changes.outputs.mobile == 'true'
     runs-on: ubuntu-latest
@@ -314,6 +323,7 @@ jobs:
 
   # ── Integration tests (real vestad + real client, Docker required) ─────
   test-integration:
+    name: vestad · Run end-to-end integration tests
     needs: [version-check, detect-changes]
     if: github.event_name != 'pull_request' || needs.detect-changes.outputs.cli == 'true' || needs.detect-changes.outputs.agent == 'true'
     runs-on: ubuntu-latest
@@ -401,6 +411,7 @@ jobs:
   # release (the `release` and `push-image` jobs depend on this one, so a live-test
   # failure blocks publishing artifacts and the image).
   test-live:
+    name: Agent · Run live end-to-end tests
     needs: [version-check]
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
@@ -469,20 +480,21 @@ jobs:
           shell: bash
           command: VESTAD_AGENT_IMAGE=vesta:local ./check.sh live
 
-  # ── Check vesta (clippy + tests) ──────────────────────────────────────
-  check-vesta:
+  # ── Check the vesta CLI on every platform it ships on ────────────────
+  check-cli:
+    name: CLI · Lint and test (${{ matrix.label }})
     needs: [version-check, detect-changes]
     if: github.event_name != 'pull_request' || needs.detect-changes.outputs.cli == 'true'
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-unknown-linux-gnu
+          - label: Linux x64
+            target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            run-vestad: true
-          - target: aarch64-apple-darwin
+          - label: macOS ARM64
+            target: aarch64-apple-darwin
             os: macos-latest
-            run-vestad: false
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
@@ -504,23 +516,40 @@ jobs:
             vestad
           key: ${{ matrix.target }}
 
-      # cli clippy + tests run on BOTH platforms: the CLI ships to macOS users, so its
-      # tests must run there too, not just be cross-compiled.
       - name: Check cli (clippy + tests)
         run: TARGET=${{ matrix.target }} ./check.sh cli
 
-      - name: Check vestad (clippy + tests, Linux only)
-        if: matrix.run-vestad
-        run: TARGET=${{ matrix.target }} ./check.sh vestad
+  # ── Check vestad (clippy, unit tests, and Docker tests) ───────────────
+  check-vestad:
+    name: vestad · Lint, unit, and Docker tests (Linux x64)
+    needs: [version-check, detect-changes]
+    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.cli == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: ./.github/actions/install-rust
+        with:
+          targets: x86_64-unknown-linux-gnu
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        continue-on-error: true
+        with:
+          workspaces: vestad
+          key: x86_64-unknown-linux-gnu
+
+      - name: Check vestad (clippy + unit tests)
+        run: TARGET=x86_64-unknown-linux-gnu ./check.sh vestad
 
       # Hermetic: the #[ignore] Docker tests run against an image built from this
       # checkout, not the released ghcr.io :latest.
       - name: Set up Docker Buildx
-        if: matrix.run-vestad
         uses: docker/setup-buildx-action@v4
 
       - name: Build agent image from checkout
-        if: matrix.run-vestad
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -531,30 +560,35 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Docker integration tests (vestad, Linux only)
-        if: matrix.run-vestad
         run: VESTAD_AGENT_IMAGE=vesta:local ./check.sh vestad-docker
 
   # ── Build vesta client (all unix targets) ─────────────────────────────
-  # Pure build job: clippy + tests live in check-vesta (and check-windows), which also
-  # run on non-PR events — duplicating them here just slowed releases down.
+  # Pure build job: clippy + tests live in check-cli, check-vestad, and
+  # check-windows, which also run on non-PR events. Duplicating them here
+  # would only slow releases down.
   build-vesta:
+    name: CLI · Build (${{ matrix.label }})
     needs: [version-check]
     if: github.event_name != 'pull_request'
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-unknown-linux-gnu
+          - label: Linux x64
+            target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             artifact: vesta-x86_64-unknown-linux-gnu
-          - target: aarch64-unknown-linux-gnu
+          - label: Linux ARM64
+            target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             artifact: vesta-aarch64-unknown-linux-gnu
             cross: true
-          - target: aarch64-apple-darwin
+          - label: macOS ARM64
+            target: aarch64-apple-darwin
             os: macos-latest
             artifact: vesta-aarch64-apple-darwin
-          - target: x86_64-apple-darwin
+          - label: macOS x64
+            target: x86_64-apple-darwin
             os: macos-latest
             artifact: vesta-x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
@@ -603,6 +637,7 @@ jobs:
 
   # ── Build vestad server (Linux only) ─────────────────────────────────
   build-vestad:
+    name: vestad · Build (${{ matrix.label }})
     needs: [version-check, detect-changes]
     if: needs.detect-changes.outputs.cli == 'true' || needs.detect-changes.outputs.app == 'true' || github.event_name != 'pull_request'
     strategy:
@@ -610,10 +645,12 @@ jobs:
       matrix:
         include:
           # musl targets for static binaries; build natively per arch
-          - target: x86_64-unknown-linux-musl
+          - label: Linux x64
+            target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             artifact: vestad-x86_64-unknown-linux-gnu
-          - target: aarch64-unknown-linux-musl
+          - label: Linux ARM64
+            target: aarch64-unknown-linux-musl
             os: ubuntu-24.04-arm
             artifact: vestad-aarch64-unknown-linux-gnu
     runs-on: ${{ matrix.os }}
@@ -660,6 +697,7 @@ jobs:
 
   # ── Test Linux (vestad HTTP API) ──────────────────────────────────────
   test-linux:
+    name: Release binaries · Run Linux smoke test
     needs: [build-vestad, build-vesta]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -681,6 +719,7 @@ jobs:
   # The CLI ships to Windows users; its tests must actually run on Windows,
   # not just be lint-checked there.
   check-windows:
+    name: CLI · Lint and test (Windows x64)
     needs: [version-check, detect-changes]
     if: >-
       github.event_name != 'pull_request' ||
@@ -710,6 +749,7 @@ jobs:
 
   # ── Build Windows CLI (native MSVC) ──────────────────────────────────
   build-windows:
+    name: CLI · Build (Windows x64)
     needs: [version-check, detect-changes]
     if: >-
       !failure() && !cancelled() &&
@@ -765,6 +805,7 @@ jobs:
 
   # ── Build Electron app (macOS, universal) ────────────────────────────
   build-electron-macos:
+    name: Desktop · Build (macOS universal)
     needs: [test-frontend, detect-changes]
     if: >-
       !failure() && !cancelled() &&
@@ -846,6 +887,7 @@ jobs:
 
   # ── Build Electron app (Linux) ────────────────────────────────────────
   build-electron-linux:
+    name: Desktop · Build (${{ matrix.label }})
     needs: [test-frontend, detect-changes]
     if: >-
       !failure() && !cancelled() &&
@@ -858,9 +900,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - label: Linux x64
+            os: ubuntu-latest
             arch: x64
-          - os: ubuntu-24.04-arm
+          - label: Linux ARM64
+            os: ubuntu-24.04-arm
             arch: arm64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
@@ -904,6 +948,7 @@ jobs:
 
   # ── Build Electron app (Windows) ──────────────────────────────────────
   build-electron-windows:
+    name: Desktop · Build (Windows x64)
     needs: [test-frontend, detect-changes]
     if: >-
       !failure() && !cancelled() &&
@@ -952,6 +997,9 @@ jobs:
 
   # ── Merge gate (single required check for branch protection) ─────────
   merge-gate-ci:
+    # Keep this check context stable: branch protection requires the job ID's
+    # existing `merge-gate-ci` name.
+    name: merge-gate-ci
     if: always()
     needs:
       - version-check
@@ -961,7 +1009,8 @@ jobs:
       - install-script-check
       - test-frontend
       - test-integration
-      - check-vesta
+      - check-cli
+      - check-vestad
       - build-vesta
       - build-vestad
       - test-linux
@@ -985,6 +1034,7 @@ jobs:
   # Gated on test-live: a live-test failure (via !failure() over needs) skips the
   # image push, so a broken agent is never published to :latest.
   push-image:
+    name: Agent image · Publish to GHCR
     needs: [test-linux, test-live]
     if: ${{ !failure() && !cancelled() && github.event_name == 'release' }}
     runs-on: ubuntu-latest
@@ -1024,6 +1074,7 @@ jobs:
   # per-release choice made by release.yml, keeping this release event and its
   # downstream CI deterministic without enabling public App Store delivery.
   mobile-testflight:
+    name: Mobile · Build and upload to TestFlight
     needs: [release]
     if: >-
       ${{ !failure() && !cancelled() && github.event_name == 'release' &&
@@ -1057,6 +1108,7 @@ jobs:
 
   # ── Upload artifacts to release and publish ──────────────────────────
   release:
+    name: Release · Upload artifacts
     needs:
       [
         build-vesta,
@@ -1140,6 +1192,7 @@ jobs:
   # bumped version with no release, and the next ./release.sh skips to the next
   # patch). Reverting it lets a re-run retry the same version.
   revert-failed-release:
+    name: Release · Revert failed release
     needs:
       [
         build-vesta,

@@ -40,6 +40,7 @@ env:
 
 jobs:
   test-live:
+    name: Agent · Run live end-to-end tests manually
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:

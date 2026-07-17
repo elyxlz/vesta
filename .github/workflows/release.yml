@@ -34,6 +34,7 @@ concurrency:
 
 jobs:
   release:
+    name: Release · Create prerelease
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
