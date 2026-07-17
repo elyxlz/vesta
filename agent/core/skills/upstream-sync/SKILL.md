@@ -22,19 +22,16 @@ The version you are running: `grep '^version = ' ~/agent/core/pyproject.toml`
 bash ~/agent/core/skills/upstream-sync/scripts/sync.sh
 ```
 
-That is the whole procedure: it checkpoints your work, fetches, fixes the cone, and rebases
-you onto the snapshot for the version you run. It is idempotent, and it exits 0 saying
-"already synced" when there is nothing to do. Exit 5 means the rebase stopped on a conflict
-and needs you; anything else it prints is the reason it could not proceed. Do not hand-run
-the porcelain instead: on a managed box the engine is a read-only mount, and the script is
-what keeps git from trying to rewrite it.
+The whole procedure, idempotent. Run it, never the porcelain by hand: it is what keeps git
+off the read-only engine mount. Exit 5 means it stopped on a conflict, which is yours:
 
 - Conflicts: ALWAYS resolve by hand, and the default is to keep BOTH sides, your change
   AND the stock change, not pick a winner. Do NOT reflexively `git checkout --ours/--theirs`
   or blanket-take one side: that silently drops real work. Even a file you upstreamed comes
   back genericized, so take stock's form and re-apply your local specifics on top rather
   than discarding either. Edit each conflicted file so both sides survive, `git add <file>`,
-  then `git rebase --continue`. `git rebase --abort` restores exactly the pre-sync state.
+  then `git rebase --continue` and re-run sync.sh to finish. `git rebase --abort` restores
+  exactly the pre-sync state.
 - Paused but `git diff --diff-filter=U` lists no files? Not a conflict: the rebase stopped
   on a commit that's now empty (its changes are already in the new stock) or mode-only.
   Run `git add -A` then `git rebase --continue`; if git says the commit is empty, run

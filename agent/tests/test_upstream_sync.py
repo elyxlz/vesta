@@ -99,14 +99,18 @@ def _write_content(content, version):
     _copy_sync_scripts(content / "core/skills")
 
 
-def _upstream_fixture(tmp_path, versions=("0.1.170",)):
+def _upstream_fixture(tmp_path, versions=("0.1.170",), new_dir=None):
     """Build an upstream repo with the REAL build-upstream.sh, one snapshot per version.
     Returns the bare repo path (what a box's fetch-upstream.sh consumes; on real boxes it
-    is bind-mounted at /run/vesta-upstream/upstream.git)."""
+    is bind-mounted at /run/vesta-upstream/upstream.git). new_dir models a release adding a
+    tracked dir under agent/: it lands in the last version's snapshot only."""
     content = tmp_path / "agent-code"
     ws = tmp_path / "upstream"
     for version in versions:
         _write_content(content, version)
+        if new_dir is not None and version == versions[-1]:
+            (content / new_dir).mkdir(parents=True, exist_ok=True)
+            (content / new_dir / "stock.md").write_text(f"{new_dir} at {version}\n")
         r = subprocess.run(
             ["bash", str(BUILD), str(content), str(ws), version], env=_env(tmp_path), capture_output=True, text=True, check=False
         )
@@ -144,12 +148,8 @@ def _fresh_box(tmp_path, version="0.1.170", skills=("tasks", "dream"), managed=T
 
 def _upgrade_core_mount(home, version):
     """vestad swapping a managed box's engine: the core mount now carries the new version,
-    still read-only. Inside the box an upgrade changes nothing else.
-
-    The read-only mount is modelled with chmod, so git's unlink fails EACCES where a real
-    bind mount gives EROFS. Both are the same "git cannot write the engine" failure, and
-    nothing here keys on the errno.
-    """
+    still read-only (modelled with chmod, so git's unlink fails EACCES where a real bind
+    mount gives EROFS; nothing under test keys on the errno)."""
     core = home / "agent/core"
     dirs = [core, *(p for p in core.rglob("*") if p.is_dir())]
     for d in dirs:
@@ -234,11 +234,11 @@ def test_sync_conflict_stops_and_continues(tmp_path):
     assert "both sides survive" in (home / "agent/skills/tasks/SKILL.md").read_text()
 
 
-def _legacy_managed_box(tmp_path):
+def _legacy_managed_box(tmp_path, new_dir=None):
     """A managed box in the shape issue #1280 reports: the engine is a read-only mount, but
     agent/core is in the cone and its own commits carry engine paths (how pre-mount boxes
     converged). Every later checkout then wants to rewrite the mount."""
-    source = _upstream_fixture(tmp_path, versions=("0.1.170", "0.1.171"))
+    source = _upstream_fixture(tmp_path, versions=("0.1.170", "0.1.171"), new_dir=new_dir)
     home = _fresh_box(tmp_path)
     env = _box_env(source)
     assert _attach(home, source).returncode == 0
@@ -261,15 +261,21 @@ def test_managed_sync_lands_when_history_carries_engine_paths(tmp_path):
     _source, home, env = _legacy_managed_box(tmp_path)
     r = _run(SYNC, home, extra_env=env)
     assert r.returncode == 0, r.stdout + r.stderr
-    # The authoritative check the boot turn keys on: unset before, true after.
-    synced = subprocess.run(["git", "merge-base", "--is-ancestor", "agent-v0.1.171", "HEAD"], cwd=str(home), env=_env(home, env), check=False)
-    assert synced.returncode == 0
+    _git(["merge-base", "--is-ancestor", "agent-v0.1.171", "HEAD"], home, env)  # what the boot turn re-fires on
     assert "my personal notes" in (home / "agent/MEMORY.md").read_text()  # my work survives
     assert "0.1.171" in (home / "agent/skills/tasks/SKILL.md").read_text()  # stock moved
     # The mount is untouched, and git now records stock's engine rather than the stale edit.
     assert (home / "agent/core/loops.py").read_text() == "# core at 0.1.171\n"
     tracked_engine = _git(["ls-tree", "-r", "HEAD", "--", "agent/core"], home, env)
     assert tracked_engine == _git(["ls-tree", "-r", "agent-v0.1.171", "--", "agent/core"], home, env)
+
+
+def test_managed_sync_materializes_a_dir_the_new_snapshot_adds(tmp_path):
+    """The cone is computed from HEAD, so set-cone.sh has to run after the rebase too: a dir
+    the upgrade adds is only coned in, and written to disk, once the rebase has landed it."""
+    _source, home, env = _legacy_managed_box(tmp_path, new_dir="prompts")
+    assert _run(SYNC, home, extra_env=env).returncode == 0
+    assert (home / "agent/prompts/stock.md").read_text() == "prompts at 0.1.171\n"
 
 
 def test_managed_sync_is_idempotent_once_synced(tmp_path):
