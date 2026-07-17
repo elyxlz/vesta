@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { useLocation, useParams } from "react-router-dom";
 import { useDefaultLayout } from "react-resizable-panels";
@@ -14,6 +13,9 @@ import { useLayout } from "@/stores/use-layout";
 const DASHBOARD_CHAT_LAYOUT_ID = "agent-dashboard-chat";
 const DASHBOARD_PANEL_ID = "dashboard";
 const CHAT_PANEL_ID = "chat";
+// The panel id set keys the stored layout, so collapsed and expanded persist separately.
+const COLLAPSED_PANEL_IDS = [DASHBOARD_PANEL_ID];
+const EXPANDED_PANEL_IDS = [DASHBOARD_PANEL_ID, CHAT_PANEL_ID];
 
 interface DesktopPanelViewProps {
   chatCollapsed: boolean;
@@ -30,16 +32,9 @@ export function DesktopPanelView({
   const isChat =
     location.pathname === `/agent/${encodeURIComponent(name ?? "")}/chat`;
 
-  const panelIds = useMemo(
-    () =>
-      chatCollapsed
-        ? [DASHBOARD_PANEL_ID]
-        : [DASHBOARD_PANEL_ID, CHAT_PANEL_ID],
-    [chatCollapsed],
-  );
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
     id: DASHBOARD_CHAT_LAYOUT_ID,
-    panelIds,
+    panelIds: chatCollapsed ? COLLAPSED_PANEL_IDS : EXPANDED_PANEL_IDS,
     onlySaveAfterUserInteractions: true,
   });
 
