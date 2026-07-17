@@ -16,8 +16,7 @@ _HTML_TAG = re.compile(r"<[^>]+>")
 
 _CATCHUP_GAP_SECONDS = 90
 _FRESH_START_LOOKBACK = timedelta(hours=1)
-# A unit that failed for a long stretch re-reads at most this much history once it heals, so a
-# long-dead account cannot flood the user on recovery.
+# Bounds how much history a long-dead unit re-reads once it heals, so recovery cannot flood the user.
 _MAX_CATCHUP = timedelta(days=7)
 
 
@@ -38,20 +37,16 @@ def strip_fractional(iso: str) -> str:
 
 
 class MonitorState(TypedDict):
-    """Watermarks the monitor resumes from.
-
-    last_cycle: when the monitor last finished a cycle; it seeds a unit polled for the first time.
-    units: poll unit ("mail:<account>", "calendar:<account>", "teams:<account>",
-    "channels:<account>") -> the end of the last window that unit read successfully.
-    """
+    """last_cycle seeds a unit polled for the first time; units maps "<kind>:<account>" to the end of
+    the last window that unit read successfully."""
 
     last_cycle: str
     units: dict[str, str]
 
 
 def _read_state(path: Path, now: datetime) -> MonitorState:
-    """Read the watermarks. A bare-timestamp file (the format before per-unit watermarks) reads as
-    a last_cycle with no units, so every unit resumes from where the old monitor left off."""
+    """A legacy bare-timestamp file reads as a last_cycle with no units, so every unit resumes from
+    where the old monitor left off."""
     raw = path.read_text().strip() if path.exists() else ""
     if not raw:
         return MonitorState(last_cycle=(now - _FRESH_START_LOOKBACK).isoformat(), units={})
@@ -73,9 +68,8 @@ def _write_state(path: Path, state: MonitorState) -> None:
 
 
 def _poll_unit(ctx: MicrosoftContext, state: MonitorState, unit: str, new_check_time: datetime, poll: Callable[[datetime, bool], bool]) -> None:
-    """Poll a unit over the window it still owes, then advance its watermark only if the poll read
-    that window. A failed poll parks it at the window it still owes, so the next healthy cycle re-reads
-    instead of skipping the mail it never fetched; _MAX_CATCHUP bounds how far a long-dead unit re-reads."""
+    """Advance the unit's watermark only across a window the poll actually read, so a failed poll
+    re-reads that window next cycle instead of skipping the mail it never fetched."""
     units = state["units"]
     last_dt = max(datetime.fromisoformat(units[unit] if unit in units else state["last_cycle"]), new_check_time - _MAX_CATCHUP)
     gap_seconds = (new_check_time - last_dt).total_seconds()
@@ -354,16 +348,12 @@ def _poll_teams_account(ctx: MicrosoftContext, config: Config, account_email: st
 
 def _poll_teams_channels_account(ctx: MicrosoftContext, config: Config, account_email: str, last_dt: datetime, catching_up: bool) -> bool:
     """Emit a non-interrupting notification per Teams CHANNEL message since last_dt (excluding the
-    user's own). Channels are broadcast, so a message per channel would be noisy — hence interrupt=False,
-    unlike chats which stay interrupt=True.
+    user's own), True when the window was read. Channels are broadcast, so a message per channel would
+    be noisy: interrupt=False, unlike chats.
 
-    GRACEFUL DEGRADE: reading channel messages needs the admin-only ChannelMessage.Read.All scope plus
-    Graph access that many accounts (browser-capture / OWA-REST-only) do NOT have. If enumerating teams
-    fails for ANY reason (permission 403/401, GraphUnavailableError, TeamsError, ...), log once at info and
-    report the window read — the account silently keeps working with chats only, and parking the watermark
-    would only flood it if access ever appeared. A failure on a single team/channel is logged at debug and
-    skipped, never fatal. Only a missing token, which loses messages the account can otherwise read,
-    reports the window unread."""
+    Enumerating teams needs channel-read access many accounts lack, so a failure there reports the
+    window read and degrades to chats-only; parking would flood them if access ever appeared. A single
+    team/channel failure is skipped, never fatal. Only a missing token reports the window unread."""
     logger = ctx.monitor_logger
     try:
         token = teams.resolve_token(config, account_email)
@@ -523,10 +513,8 @@ def run(ctx: MicrosoftContext):
                 _poll_unit(ctx, state, f"mail:{acc.username}", new_check_time, partial(_poll_graph_mail, ctx, acc))
                 _poll_unit(ctx, state, f"calendar:{acc.username}", new_check_time, partial(_poll_graph_calendar, ctx, acc, new_check_time))
 
-            # OWA REST accounts (locked tenants) are not in the MSAL cache, so poll them here over
-            # OWA REST for anything Graph did not already cover. The fetch runs through load_token,
-            # which silently re-mints an expiring token from the signed-in browser profile, so this
-            # also keeps the token warm in the background.
+            # OWA REST accounts (locked tenants) are not in the MSAL cache, so poll them separately
+            # for anything Graph did not already cover.
             msal_usernames = {acc.username.casefold() for acc in msal_accounts}
             for account_email in owa_rest.list_accounts(config):
                 if account_email.casefold() in msal_usernames:
@@ -544,9 +532,7 @@ def run(ctx: MicrosoftContext):
                     partial(_poll_owa_rest_calendar, ctx, config, account_email, new_check_time),
                 )
 
-            # Teams chats: poll every account that has authorized Teams (device or captured token).
-            # Channel messages are polled right after with their own cutoff; they degrade to a no-op
-            # for accounts that lack channel-read access (default-on where the capability exists).
+            # Teams chats: every account that has authorized Teams (device or captured token).
             for account_email in teams.list_accounts(config):
                 logger.info("Checking Teams account: %s", account_email)
                 _poll_unit(ctx, state, f"teams:{account_email}", new_check_time, partial(_poll_teams_account, ctx, config, account_email))

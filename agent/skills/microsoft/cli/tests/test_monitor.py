@@ -98,7 +98,6 @@ def test_poll_owa_rest_notifies_only_new_mail(tmp_path, monkeypatch):
 
 
 def test_poll_owa_rest_mail_reports_a_folder_it_could_not_read(tmp_path, monkeypatch):
-    monkeypatch.setattr(monitor.notifications, "write_notification", lambda *a, **k: None)
     monkeypatch.setattr(monitor.owa_rest, "list_messages", _raise(httpx.ConnectError("boom")))
     last_dt = datetime(2026, 7, 8, 12, 0, tzinfo=UTC)
     assert monitor._poll_owa_rest_mail(_fake_ctx(tmp_path), None, "me@x.com", ["inbox"], last_dt, False) is False
@@ -127,12 +126,6 @@ def test_poll_owa_rest_calendar_reports_a_calendar_it_could_not_read(tmp_path, m
     last_dt = datetime(2026, 7, 8, 11, 59, tzinfo=UTC)
     new_check = datetime(2026, 7, 8, 12, 0, 30, tzinfo=UTC)
     assert monitor._poll_owa_rest_calendar(_fake_ctx(tmp_path), None, "me@x.com", new_check, last_dt, False) is False
-
-
-# ---------------------------------------------------------------------------
-# The watermark only advances across a window that was actually read: a poll
-# that failed (dead token, network) must not skip the mail it never fetched.
-# ---------------------------------------------------------------------------
 
 
 def _run_ctx(tmp_path, cycles: int):
@@ -167,7 +160,6 @@ def _watermark(ctx, unit: str) -> datetime:
 
 
 def test_failed_poll_leaves_the_window_for_the_next_cycle_to_recover(tmp_path, monkeypatch):
-    """The bug: a cycle whose poll failed used to advance the watermark, dropping the mail forever."""
     calls = []
     monkeypatch.setattr(monitor.notifications, "write_notification", lambda *a, **k: calls.append(k))
     _single_owa_account(monkeypatch)
@@ -194,8 +186,8 @@ def test_failed_poll_leaves_the_window_for_the_next_cycle_to_recover(tmp_path, m
 
 
 def test_broken_account_does_not_make_a_healthy_one_renotify(tmp_path, monkeypatch):
-    """Per-account watermarks: a dead account parks its own window only, so the healthy account
-    keeps advancing instead of re-reading and re-notifying the same mail every cycle."""
+    """Guards the per-account granularity: one global watermark would re-notify every healthy
+    account's window each cycle until the broken one heals."""
     calls = []
     monkeypatch.setattr(monitor.notifications, "write_notification", lambda *a, **k: calls.append(k))
     _single_owa_account(monkeypatch)
@@ -222,7 +214,6 @@ def test_broken_account_does_not_make_a_healthy_one_renotify(tmp_path, monkeypat
 
 
 def test_recovery_reads_at_most_the_max_catchup_window(tmp_path, monkeypatch):
-    """A long-dead account cannot flood the user on recovery: only _MAX_CATCHUP of mail comes back."""
     calls = []
     monkeypatch.setattr(monitor.notifications, "write_notification", lambda *a, **k: calls.append(k))
     _single_owa_account(monkeypatch)
@@ -246,8 +237,6 @@ def test_recovery_reads_at_most_the_max_catchup_window(tmp_path, monkeypatch):
 
 
 def test_legacy_bare_timestamp_state_is_read_as_the_starting_watermark(tmp_path, monkeypatch):
-    """Boxes on the old format carry a bare ISO timestamp: it seeds every unit, so an update
-    neither re-notifies an hour of mail nor skips what arrived since that timestamp."""
     calls = []
     monkeypatch.setattr(monitor.notifications, "write_notification", lambda *a, **k: calls.append(k))
     _single_owa_account(monkeypatch)
