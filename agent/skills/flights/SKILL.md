@@ -5,10 +5,10 @@ description: Search flights, airfare, routes; book via Trip.com or Duffel.
 
 # Flights
 
-Search via Google Flights CLI. Book via **Trip.com** (primary) or **Duffel API** (fallback).
+Search via Google Flights CLI.
 
 **When to use which:**
-- **Trip.com** (primary): supports ALL airlines including Wizz Air and Ryanair. Browser automation via stealth Chromium. Use this by default.
+- **Trip.com** (primary): supports ALL airlines including Wizz Air and Ryanair. Browser automation via the browser skill's stealth Camoufox browser. Use this by default.
 - **Duffel** (fallback): API-based, faster and more reliable when the airline is supported. Does NOT support Wizz Air or Ryanair. Use for easyJet, Vueling, BA, and other GDS-connected airlines.
 
 ## User Preferences
@@ -49,7 +49,7 @@ flights dates JFK LAX --from 2026-05-01 --to 2026-07-01 --round-trip --duration 
 
 ### Find cheapest flights across multiple origins
 
-The `cheapest` command searches all London airports by default. Adapt the `LONDON_AIRPORTS` list in `cli.py` to your user's home airports:
+The `cheapest` command searches all London airports by default (see Setup to configure your home airports):
 
 ```bash
 flights cheapest LAX
@@ -58,8 +58,6 @@ flights cheapest LAX --round-trip --duration 4 --top 15
 ```
 
 ## Booking via Trip.com (Primary)
-
-Browser automation via stealth Chromium.
 
 Use a subagent for Trip.com booking. Browser work fills context fast, so launch a background subagent with all necessary details and let it run.
 
@@ -72,10 +70,9 @@ Store these in your password manager (e.g. Keeper):
 
 ### Trip.com Booking Flow (5 steps)
 
-**Pre-flight: Launch stealth browser**
+**Pre-flight: Launch browser**
 ```bash
-# Must use stealth mode for Cloudflare bypass
-browser launch --stealth
+browser launch   # Camoufox is stealth by default; handles Cloudflare
 ```
 
 **Step 1: Search**
@@ -131,14 +128,10 @@ Book flight on Trip.com:
 - Payment: [CARD] from Keeper or provided details
 - Trip.com login: [CREDENTIALS from Keeper or config]
 - Email verification codes: retrieve via email skill (inbox, Trip.com sender)
-- Use `browser launch --stealth` first
-- Follow the 5-step flow in the flights skill
-- After booking: report confirmation number, create calendar event, set check-in reminder
+- Follow the 5-step flow above, then the Post-Booking Checklist above
 ```
 
 ## Booking via Duffel API (Fallback)
-
-API-based booking. Faster and more reliable when the airline is supported.
 
 **Note**: Requires a funded Duffel balance before live bookings. Check balance before attempting.
 

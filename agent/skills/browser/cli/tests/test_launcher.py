@@ -6,7 +6,6 @@ import hashlib
 import zipfile
 
 import pytest
-
 from vesta_browser import launcher
 
 

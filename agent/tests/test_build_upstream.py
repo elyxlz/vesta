@@ -28,7 +28,7 @@ def _content(tmp_path, version="0.1.170"):
 
 def _build(tmp_path, content, version):
     ws = tmp_path / "upstream"
-    r = subprocess.run(["bash", str(BUILD), str(content), str(ws), version], env=_env(tmp_path), capture_output=True, text=True)
+    r = subprocess.run(["bash", str(BUILD), str(content), str(ws), version], env=_env(tmp_path), capture_output=True, text=True, check=False)
     return ws, r
 
 

@@ -10,7 +10,6 @@ $AGENTMAIL_WEBHOOK_SECRET. The handler rejects mismatches with 401.
 from __future__ import annotations
 
 import json
-import os
 import secrets as secrets_mod
 import time
 from datetime import UTC, datetime
@@ -24,7 +23,6 @@ from agentmail_bridge.config import (
     email_address,
     webhook_secret,
 )
-
 
 app = FastAPI(title="agentmail")
 
@@ -85,7 +83,7 @@ async def webhook(request: Request, secret: str = Query(default="")) -> dict:
     final = NOTIFICATIONS_DIR / fname
     tmp = NOTIFICATIONS_DIR / f"{fname}.tmp"
     tmp.write_text(json.dumps(notification, indent=2))
-    os.replace(tmp, final)
+    tmp.replace(final)
     return {"ok": True, "notification_path": str(final)}
 
 

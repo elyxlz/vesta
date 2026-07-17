@@ -17,7 +17,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useTheme } from "@/providers/ThemeProvider";
 type Theme = "dark" | "light" | "system";
 import { useAuth } from "@/providers/AuthProvider";
-import { useTauri } from "@/providers/TauriProvider";
+import { useRuntime } from "@/providers/RuntimeProvider";
 import { useGateway } from "@/providers/GatewayProvider";
 import { connectionHostname } from "@/lib/connection";
 import { StatusPill } from "@/components/StatusPill";
@@ -33,7 +33,10 @@ import { useAppMode, type AppMode } from "@/stores/use-app-mode";
 import { openExternalUrl } from "@/lib/open-external-url";
 import { KeybindsCard } from "@/components/Settings/KeybindsSection";
 import { ConnectionControls } from "@/components/ConnectionControls";
-import { useGatewaySetup } from "@/components/Settings/use-gateway-setup";
+import {
+  useGatewaySetup,
+  type GatewaySetup,
+} from "@/components/Settings/use-gateway-setup";
 import { GatewayLogsViewer } from "@/components/GatewayLogsViewer";
 
 // Hosted (managed) boxes are always under vesta.run; the account + billing page
@@ -44,7 +47,7 @@ const ACCOUNT_URL = "https://vesta.run/account";
 // box concerns only — per-agent config lives at /agent/:name/settings.
 export function AppSettings() {
   const { theme, setTheme } = useTheme();
-  const { isTauri } = useTauri();
+  const { isDesktopApp } = useRuntime();
   const { disconnect } = useAuth();
   const { reachable, managed, gatewayVersion, gatewayBranch } = useGateway();
   const naturalPacing = useChatPacing((s) => s.natural);
@@ -69,7 +72,7 @@ export function AppSettings() {
               variant="outline"
               spacing={2}
             >
-              {!isTauri && (
+              {!isDesktopApp && (
                 <ToggleGroupItem value="system">
                   <Monitor /> system
                 </ToggleGroupItem>
@@ -186,58 +189,7 @@ export function AppSettings() {
               </Button>
             </div>
             <ConnectionControls />
-            {gatewaySetup && (
-              <div className="mt-4 flex flex-col gap-3">
-                <Field
-                  orientation="horizontal"
-                  className="items-center justify-between"
-                >
-                  <FieldContent>
-                    <FieldLabel className="text-sm">lan access</FieldLabel>
-                    <FieldDescription>
-                      whether other devices on your network can reach this
-                      gateway
-                    </FieldDescription>
-                  </FieldContent>
-                  <span className="shrink-0 text-sm text-muted-foreground">
-                    {gatewaySetup.info.lan.exposed
-                      ? (gatewaySetup.info.lan.url ?? "enabled")
-                      : "disabled"}
-                  </span>
-                </Field>
-                <Field
-                  orientation="horizontal"
-                  className="items-center justify-between"
-                >
-                  <FieldContent>
-                    <FieldLabel className="text-sm">remote access</FieldLabel>
-                    <FieldDescription>
-                      secure tunnel address for reaching this gateway from
-                      anywhere
-                    </FieldDescription>
-                  </FieldContent>
-                  <span className="min-w-0 shrink-0 truncate text-sm text-muted-foreground">
-                    {gatewaySetup.info.tunnel_url ?? "not set"}
-                  </span>
-                </Field>
-                <Field
-                  orientation="horizontal"
-                  className="items-center justify-between"
-                >
-                  <FieldContent>
-                    <FieldLabel className="text-sm">backups</FieldLabel>
-                    <FieldDescription>
-                      automatic nightly snapshots of your agents
-                    </FieldDescription>
-                  </FieldContent>
-                  <span className="shrink-0 text-sm text-muted-foreground">
-                    {gatewaySetup.settings.auto_backup.enabled
-                      ? `daily at ${String(gatewaySetup.settings.auto_backup.hour).padStart(2, "0")}:00 server time`
-                      : "disabled"}
-                  </span>
-                </Field>
-              </div>
-            )}
+            {gatewaySetup && <GatewaySetupFields setup={gatewaySetup} />}
           </MenuSection>
         </CardContent>
       </Card>
@@ -251,7 +203,9 @@ export function AppSettings() {
               <Button
                 variant="outline"
                 className="w-full justify-start"
-                onClick={() => openExternalUrl(ACCOUNT_URL)}
+                onClick={() => {
+                  void openExternalUrl(ACCOUNT_URL);
+                }}
               >
                 <CreditCard data-icon="inline-start" />
                 manage account &amp; billing
@@ -265,6 +219,51 @@ export function AppSettings() {
   );
 }
 
+// The read-only daemon setup rows (lan, tunnel, backups) of the gateway card.
+function GatewaySetupFields({ setup }: { setup: GatewaySetup }) {
+  return (
+    <div className="mt-4 flex flex-col gap-3">
+      <Field orientation="horizontal" className="items-center justify-between">
+        <FieldContent>
+          <FieldLabel className="text-sm">lan access</FieldLabel>
+          <FieldDescription>
+            whether other devices on your network can reach this gateway
+          </FieldDescription>
+        </FieldContent>
+        <span className="shrink-0 text-sm text-muted-foreground">
+          {setup.info.lan.exposed
+            ? (setup.info.lan.url ?? "enabled")
+            : "disabled"}
+        </span>
+      </Field>
+      <Field orientation="horizontal" className="items-center justify-between">
+        <FieldContent>
+          <FieldLabel className="text-sm">remote access</FieldLabel>
+          <FieldDescription>
+            secure tunnel address for reaching this gateway from anywhere
+          </FieldDescription>
+        </FieldContent>
+        <span className="min-w-0 shrink-0 truncate text-sm text-muted-foreground">
+          {setup.info.tunnel_url ?? "not set"}
+        </span>
+      </Field>
+      <Field orientation="horizontal" className="items-center justify-between">
+        <FieldContent>
+          <FieldLabel className="text-sm">backups</FieldLabel>
+          <FieldDescription>
+            automatic nightly snapshots of your agents
+          </FieldDescription>
+        </FieldContent>
+        <span className="shrink-0 text-sm text-muted-foreground">
+          {setup.settings.auto_backup.enabled
+            ? `daily at ${String(setup.settings.auto_backup.hour).padStart(2, "0")}:00 server time`
+            : "disabled"}
+        </span>
+      </Field>
+    </div>
+  );
+}
+
 // The gear button. Navigates to the app settings page.
 export function SettingsButton() {
   const navigate = useNavigate();
@@ -274,7 +273,9 @@ export function SettingsButton() {
       variant="outline"
       size="icon-lg"
       aria-label="settings"
-      onClick={() => navigate("/settings")}
+      onClick={() => {
+        void navigate("/settings");
+      }}
     >
       <SettingsIcon />
     </Button>

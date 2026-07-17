@@ -13,6 +13,33 @@ export class ApiError extends Error {
   }
 }
 
+// Auth headers first, then the caller's own headers on top so an explicit
+// header in `init` wins.
+function requestHeaders(init?: RequestInit): Headers {
+  const headers = new Headers(authHeaders());
+  new Headers(init?.headers).forEach((value, key) => {
+    headers.set(key, value);
+  });
+  return headers;
+}
+
+function errorMessage(body: string): string {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (
+      parsed !== null &&
+      typeof parsed === "object" &&
+      "error" in parsed &&
+      typeof parsed.error === "string"
+    ) {
+      return parsed.error;
+    }
+    return body;
+  } catch {
+    return body;
+  }
+}
+
 export async function apiFetch(
   path: string,
   init?: RequestInit,
@@ -21,7 +48,7 @@ export async function apiFetch(
 
   let resp = await fetch(apiUrl(path), {
     ...init,
-    headers: { ...authHeaders(), ...init?.headers },
+    headers: requestHeaders(init),
   });
 
   // If 401, force a refresh then retry (the token was rejected even if the
@@ -31,27 +58,20 @@ export async function apiFetch(
     if (refreshed === "ok") {
       resp = await fetch(apiUrl(path), {
         ...init,
-        headers: { ...authHeaders(), ...init?.headers },
+        headers: requestHeaders(init),
       });
     }
   }
 
   if (!resp.ok) {
-    const body = await resp.text();
-    let msg: string;
-    try {
-      msg = JSON.parse(body).error ?? body;
-    } catch {
-      msg = body;
-    }
-    throw new ApiError(resp.status, msg);
+    throw new ApiError(resp.status, errorMessage(await resp.text()));
   }
   return resp;
 }
 
 export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   const resp = await apiFetch(path, init);
-  return resp.json();
+  return (await resp.json()) as T;
 }
 
 // The one place that owns the JSON request shape (method + Content-Type + serialized body),

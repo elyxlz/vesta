@@ -23,7 +23,7 @@ function Pagination() {
       {Array.from({ length: totalPages }, (_, i) => (
         <motion.button
           key={i}
-          aria-label={`page ${i + 1}`}
+          aria-label={`page ${String(i + 1)}`}
           className="grid size-10 place-items-center rounded-full"
           animate={{
             opacity: currentPage === i ? 1 : 0.3,
@@ -48,9 +48,11 @@ function CenterOnMount({ index }: { index: number }) {
   const centered = useRef(false);
 
   useEffect(() => {
-    if (centered.current || index <= 0 || itemPositions.length <= index) return;
+    if (centered.current || index <= 0) return;
+    const position = itemPositions[index];
+    if (!position) return;
     centered.current = true;
-    targetOffset.set(clampOffset(-itemPositions[index].start));
+    targetOffset.set(clampOffset(-position.start));
   }, [targetOffset, clampOffset, itemPositions, index]);
 
   return null;
@@ -75,7 +77,7 @@ function CarouselCard({ agent }: { agent: AgentInfo }) {
     <motion.div
       className="flex h-full items-center justify-center"
       style={{
-        width: `${AGENT_CAROUSEL_CARD_WIDTH}px`,
+        width: `${String(AGENT_CAROUSEL_CARD_WIDTH)}px`,
         aspectRatio: "1/1",
         scale,
       }}
@@ -108,7 +110,7 @@ export function AgentsCarousel({
       transition={{ type: "spring", stiffness: 500, damping: 40 }}
       style={{
         cursor: "grab",
-        paddingInline: `calc(50% - ${AGENT_CAROUSEL_CARD_WIDTH / 2}px)`,
+        paddingInline: `calc(50% - ${String(AGENT_CAROUSEL_CARD_WIDTH / 2)}px)`,
         touchAction: "pan-y",
         overscrollBehaviorX: "none",
       }}

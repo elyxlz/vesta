@@ -31,7 +31,7 @@ impl std::str::FromStr for BackupType {
             "weekly" => Ok(Self::Weekly),
             "monthly" => Ok(Self::Monthly),
             "pre-restore" => Ok(Self::PreRestore),
-            other => Err(format!("unknown backup type: {}", other)),
+            other => Err(format!("unknown backup type: {other}")),
         }
     }
 }

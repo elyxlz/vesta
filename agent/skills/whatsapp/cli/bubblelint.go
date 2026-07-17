@@ -1,20 +1,13 @@
 package main
 
 // Bubble lint: catch wall-of-text chat sends before they reach the recipient.
-//
-// Why this lives in the CLI: the "text in short bubbles, one thought per send"
-// rule lived only in the personality preset, a rule the agent had to remember to
-// enact on every message, and it kept regressing into one multi-sentence block
-// that reads like an assistant, not a person. A rule that must be remembered is
-// the weakest enforcement. Checking at send time, in the one place every send
-// passes through, makes it structural: a wall is rejected with the reason, so the
-// agent re-sends as several short calls and chooses its own break points (it
-// trains the behaviour rather than mechanically chunking the text).
-//
-// The single bypass is the `--longform` flag, for genuine reference material the
-// user asked for (a brief, a code block, a list). It is deliberately the only
-// escape hatch: routing a wall through `--message-file` is exactly the regression
-// this guards against, so file-sourced sends are linted too.
+// The "text in short bubbles, one thought per send" rule is enforced here at
+// send time rather than left to the personality preset: a rule the agent must
+// remember to apply is the weakest enforcement and regresses into blocks that
+// read like an assistant, not a person. Linting the one place every send passes
+// through makes it structural: a wall is rejected with the reason, so the agent
+// re-sends as several short calls with its own break points. The single bypass
+// is `--longform` (reference material the user asked for); `--message-file` sends are linted too.
 
 import (
 	"fmt"
@@ -27,7 +20,7 @@ import (
 // A bubble is "a few words to one line, rarely two" (personality SKILL.md).
 const (
 	bubbleMaxChars     = 220 // a genuinely long single bubble
-	bubbleMaxSentences = 2   // 3+ sentence-enders in one send = a paragraph, split it
+	bubbleMaxSentences = 1   // 2+ sentence-enders in one send = a paragraph, split it
 )
 
 var (

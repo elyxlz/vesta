@@ -20,7 +20,10 @@ interface DreamMeta {
 export function DreamsViewer({ agent, dreamPaths }: DreamsViewerProps) {
   const pathsKey = dreamPaths.join("|");
   const entries = useMemo<DreamMeta[]>(() => {
-    const metas = dreamPaths.map((path) => {
+    // Derive paths from the joined key so the memo recomputes only when the
+    // set of paths changes, not on every new array identity.
+    const paths = pathsKey === "" ? [] : pathsKey.split("|");
+    const metas = paths.map((path) => {
       const fname = path.slice(DREAMER_PREFIX.length);
       return { path, fname, date: parseDreamFilename(fname) };
     });
@@ -29,7 +32,6 @@ export function DreamsViewer({ agent, dreamPaths }: DreamsViewerProps) {
       return b.fname.localeCompare(a.fname);
     });
     return metas;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathsKey]);
 
   const [page, setPage] = useState(0);
@@ -53,8 +55,8 @@ export function DreamsViewer({ agent, dreamPaths }: DreamsViewerProps) {
         if (cancelled) return;
         setContent(r.encoding === "utf-8" ? r.content : "");
       })
-      .catch((e: Error) => {
-        if (!cancelled) setError(e.message);
+      .catch((e: unknown) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
       });
     return () => {
       cancelled = true;

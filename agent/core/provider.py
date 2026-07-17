@@ -124,7 +124,7 @@ def set_openrouter(key: str, model: str, max_context_tokens: int | None, *, conf
     return ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="openrouter", model=reported)
 
 
-def clear_provider(*, config: VestaConfig) -> ProviderStatus:
+def clear_provider() -> ProviderStatus:
     """Sign out: remove the Claude OAuth blob and clear the stored provider to None (no provider
     chosen), leaving the agent unprovisioned. General config (personality, timezone, ...) survives.
     Vestad restarts the agent."""
@@ -166,10 +166,10 @@ def _derive_kind_and_auth(config: VestaConfig) -> tuple[ProviderKind, bool]:
 def _check_claude_oauth(oauth: ClaudeOAuth) -> bool:
     """A refresh token lets the SDK mint a fresh access token on demand, so an expired expiresAt isn't
     a problem — the SDK refreshes transparently."""
-    if isinstance(oauth.refreshToken, str) and oauth.refreshToken:
+    if isinstance(oauth.refresh_token, str) and oauth.refresh_token:
         return True
-    if isinstance(oauth.expiresAt, int):
-        return oauth.expiresAt > int(time.time() * 1000)
+    if isinstance(oauth.expires_at, int):
+        return oauth.expires_at > int(time.time() * 1000)
     return False
 
 
@@ -264,7 +264,7 @@ async def _claude_usage() -> Usage:
                     resets_at=_as_str(bucket["resets_at"]) if "resets_at" in bucket else None,
                 )
             )
-    credits = None
+    usage_credits = None
     extra_raw = data["extra_usage"] if "extra_usage" in data else None
     extra = extra_raw if isinstance(extra_raw, dict) else None
     if extra is not None and "is_enabled" in extra and extra["is_enabled"]:
@@ -273,8 +273,8 @@ async def _claude_usage() -> Usage:
         monthly_limit = _as_float(extra["monthly_limit"]) if "monthly_limit" in extra else None
         used = used_credits / 100 if used_credits is not None else None
         limit = monthly_limit / 100 if monthly_limit is not None else None
-        credits = UsageCredits(used=used, limit=limit)
-    return Usage(meters=meters, credits=credits)
+        usage_credits = UsageCredits(used=used, limit=limit)
+    return Usage(meters=meters, credits=usage_credits)
 
 
 async def _openrouter_usage(config: VestaConfig) -> Usage:
@@ -292,13 +292,15 @@ async def _openrouter_usage(config: VestaConfig) -> Usage:
 
 async def _fetch_usage_json(url: str, *, headers: dict[str, str]) -> dict[str, pyd.JsonValue]:
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=_USAGE_TIMEOUT_S)) as resp:
-                if resp.status != 200:
-                    # Read as text first: an upstream error body may not be JSON, so resp.json() would
-                    # raise and mask the real status.
-                    body = await resp.text()
-                    raise UsageError(f"upstream returned {resp.status}: {body[:200]}")
-                return await resp.json()
+        async with (
+            aiohttp.ClientSession() as session,
+            session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=_USAGE_TIMEOUT_S)) as resp,
+        ):
+            if resp.status != 200:
+                # Read as text first: an upstream error body may not be JSON, so resp.json() would
+                # raise and mask the real status.
+                body = await resp.text()
+                raise UsageError(f"upstream returned {resp.status}: {body[:200]}")
+            return await resp.json()
     except (TimeoutError, aiohttp.ClientError) as e:
         raise UsageError(str(e)) from e

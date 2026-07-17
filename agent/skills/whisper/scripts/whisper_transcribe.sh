@@ -60,11 +60,14 @@ fi
 
 TMP_WAV=$(mktemp /tmp/whisper_XXXX.wav)
 TMP_OUT=$(mktemp /tmp/whisper_out_XXXX)
-trap "rm -f $TMP_WAV $TMP_OUT ${TMP_OUT}.srt ${TMP_OUT}.json" EXIT
+trap 'rm -f "$TMP_WAV" "$TMP_OUT" "${TMP_OUT}.srt" "${TMP_OUT}.json"' EXIT
 
 ffmpeg -i "$INPUT_FILE" -ar 16000 -ac 1 -c:a pcm_s16le "$TMP_WAV" -y 2>/dev/null
 
-ARGS=(-m "$WHISPER_MODEL" -f "$TMP_WAV" -l "$LANGUAGE" -t "$THREADS" $TRANSLATE)
+ARGS=(-m "$WHISPER_MODEL" -f "$TMP_WAV" -l "$LANGUAGE" -t "$THREADS")
+if [ -n "$TRANSLATE" ]; then
+    ARGS+=("$TRANSLATE")
+fi
 
 if [ -n "$OUTPUT_FORMAT" ]; then
     case "$OUTPUT_FORMAT" in

@@ -31,8 +31,6 @@ PROXY_URL=$(~/agent/skills/vpn/vpn proxy-url)
 curl --proxy "$PROXY_URL" https://example.com
 ```
 
-This is the canonical way for any skill that needs proxied traffic. Do not read `SOCKS5_*` directly in new code; the user might switch providers and expect everything to follow.
-
 ## Adding a provider
 
 Edit `~/.vpn/config.json` and add an entry under `providers`:
@@ -55,4 +53,4 @@ Make sure the named env vars are exported in your shell, then activate it: `vpn 
 
 **`vpn test` fails but `vpn status` says configured.** Proxy host or credentials are wrong, or the provider is down. Try `vpn providers` to confirm the active one, `vpn config` to inspect, then test against the provider's own status page.
 
-**Wrong region / want to switch.** `vpn providers` to list, `vpn set-provider <name>` to switch. Skills calling `vpn proxy-url` will pick up the new value on the next call.
+**Wrong region / want to switch.** Switch with `set-provider` (see CLI above); skills calling `vpn proxy-url` will pick up the new value on the next call.

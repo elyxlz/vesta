@@ -1,7 +1,4 @@
-import { isTauri } from "./env";
-import type { VestaEvent } from "@/lib/types";
-
-const STORAGE_KEY = "vesta-connection";
+import { native } from "./native";
 
 /** Parse the one-click connect key from a URL fragment like `#k=<key>`, which
  * `vestad status` embeds so opening the link connects without pasting the key.
@@ -43,74 +40,20 @@ export interface ConnectionConfig {
 }
 
 // ── Storage backend ────────────────────────────────────────────
-
-let storePromise: Promise<import("@tauri-apps/plugin-store").Store> | null =
-  null;
-
-function getStore() {
-  if (!storePromise) {
-    storePromise = import("@tauri-apps/plugin-store").then((m) =>
-      m.load("connection.json"),
-    );
-  }
-  return storePromise;
-}
-
-// Cache for sync access (authHeaders, apiUrl, wsUrl must be sync)
+// The bridge owns persistence (Electron: json in userData via the preload;
+// browser: localStorage). `cached` gives the sync accessors (authHeaders,
+// apiUrl, wsUrl) their value; AuthProvider awaits initConnection before
+// anything reads it.
 let cached: ConnectionConfig | null | undefined;
-
-async function readFromStore(): Promise<ConnectionConfig | null> {
-  const store = await getStore();
-  const val = await store.get<ConnectionConfig>(STORAGE_KEY);
-  if (val && val.url && val.accessToken && (val.refreshToken || val.hosted))
-    return val;
-  return null;
-}
-
-async function writeToStore(config: ConnectionConfig): Promise<void> {
-  const store = await getStore();
-  await store.set(STORAGE_KEY, config);
-  await store.save();
-}
-
-async function deleteFromStore(): Promise<void> {
-  const store = await getStore();
-  await store.delete(STORAGE_KEY);
-  await store.save();
-}
-
-function readFromLocalStorage(): ConnectionConfig | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (
-      parsed.url &&
-      parsed.accessToken &&
-      (parsed.refreshToken || parsed.hosted)
-    )
-      return parsed;
-    return null;
-  } catch {
-    return null;
-  }
-}
 
 // ── Public API ─────────────────────────────────────────────────
 
 export async function initConnection(): Promise<void> {
-  if (isTauri) {
-    cached = await readFromStore();
-  } else {
-    cached = readFromLocalStorage();
-  }
+  cached = await native.connectionStore.read();
 }
 
 export function getConnection(): ConnectionConfig | null {
-  if (cached === undefined) {
-    // Fallback for sync access before initConnection completes
-    cached = readFromLocalStorage();
-  }
+  if (cached === undefined) return null;
   return cached;
 }
 
@@ -141,12 +84,7 @@ export function setConnection(
     expiresAt,
   };
   cached = config;
-
-  if (isTauri) {
-    writeToStore(config);
-  }
-  // Always write to localStorage too (sync fallback)
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+  void native.connectionStore.write(config);
 }
 
 /**
@@ -168,10 +106,7 @@ export function setHostedConnection(
     hosted: true,
   };
   cached = config;
-  if (isTauri) {
-    writeToStore(config);
-  }
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+  void native.connectionStore.write(config);
 }
 
 export function updateTokens(
@@ -186,10 +121,7 @@ export function updateTokens(
 
 export function clearConnection(): void {
   cached = null;
-  localStorage.removeItem(STORAGE_KEY);
-  if (isTauri) {
-    deleteFromStore();
-  }
+  void native.connectionStore.clear();
 }
 
 export function isTokenExpiringSoon(): boolean {
@@ -221,14 +153,4 @@ export function wsUrl(name: string, opts: WsUrlOptions = {}): string {
   const params = new URLSearchParams({ token: conn.accessToken });
   if (opts.skipHistory) params.set("skip_history", "1");
   return `${base}/agents/${name}/ws?${params.toString()}`;
-}
-
-export async function fetchHistory(
-  name: string,
-  channel: "app-chat" | "internals",
-  cursor: number,
-): Promise<{ events: VestaEvent[]; cursor: number | null }> {
-  const { apiJson } = await import("@/api/client");
-  const params = new URLSearchParams({ channel, cursor: String(cursor) });
-  return apiJson(`/agents/${encodeURIComponent(name)}/history?${params}`);
 }

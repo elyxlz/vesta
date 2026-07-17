@@ -70,13 +70,13 @@ def fail_startup(message: str, code: int) -> typing.NoReturn:
 
 def check_preseed(settings: dict[str, typing.Any]) -> None:
     """The real TUI blocks on interactive dialogs when these are missing; exit fast instead."""
-    claude_json = pathlib.Path(os.path.expanduser("~/.claude.json"))
+    claude_json = pathlib.Path("~/.claude.json").expanduser()
     if not claude_json.exists():
         fail_startup("would block on the onboarding dialog (~/.claude.json missing)", 11)
     config = json.loads(claude_json.read_text())
     if "hasCompletedOnboarding" not in config or not config["hasCompletedOnboarding"]:
         fail_startup("would block on the onboarding dialog (hasCompletedOnboarding not set)", 11)
-    cwd = os.getcwd()
+    cwd = str(pathlib.Path.cwd())
     projects = config["projects"] if "projects" in config else {}
     entry = projects[cwd] if cwd in projects else {}
     if "hasTrustDialogAccepted" not in entry or not entry["hasTrustDialogAccepted"]:
@@ -95,14 +95,14 @@ def fire_hook(ctx: dict[str, typing.Any], event: str, extra: dict[str, typing.An
     payload: dict[str, typing.Any] = {
         "session_id": ctx["session_id"],
         "transcript_path": str(ctx["transcript"]),
-        "cwd": os.getcwd(),
+        "cwd": str(pathlib.Path.cwd()),
         "permission_mode": ctx["permission_mode"],
         "hook_event_name": event,
     }
     payload.update(extra)
     for matcher in hooks[event]:
         for hook in matcher["hooks"]:
-            subprocess.run(["sh", "-c", hook["command"]], input=json.dumps(payload).encode(), capture_output=True, timeout=30)
+            subprocess.run(["sh", "-c", hook["command"]], input=json.dumps(payload).encode(), capture_output=True, timeout=30, check=False)
 
 
 def write_line(ctx: dict[str, typing.Any], obj: dict[str, typing.Any]) -> None:
@@ -177,9 +177,8 @@ def submit(ctx: dict[str, typing.Any], prompt: str) -> None:
 
     if prompt == "silent":
         ctx["in_flight"] = True
-        return
 
-    if prompt.startswith("/compact"):
+    elif prompt.startswith("/compact"):
         # Manual /compact: fire PreCompact (trigger=manual), write the isCompactSummary line that
         # marks completion, and fire NO Stop hook — the exact contract cc_sdk.compact() waits on
         # (verified against real claude v2.1.16x: manual compaction never emits Stop and rewrites
@@ -196,9 +195,8 @@ def submit(ctx: dict[str, typing.Any], prompt: str) -> None:
             },
         )
         ctx["in_flight"] = False
-        return
 
-    if prompt.startswith("hook:"):
+    elif prompt.startswith("hook:"):
         # hook:<EventName>:<extra-json> — fire one native hook event with the given extra
         # payload, then end the turn. Lets tests drive any event (PostToolUseFailure,
         # PreCompact, Notification, Subagent*, ...) through the real _forward.py -> bridge path.
@@ -207,31 +205,27 @@ def submit(ctx: dict[str, typing.Any], prompt: str) -> None:
         fire_hook(ctx, event, extra)
         write_line(ctx, assistant_line(text_blocks(f"fired {event}")))
         finish_turn(ctx, f"fired {event}")
-        return
 
-    if prompt.startswith("stderr:"):
+    elif prompt.startswith("stderr:"):
         # Emit a line on stderr (which cc_sdk tails and routes to options.stderr) and finish.
         sys.stderr.write(prompt.split(":", 1)[1] + "\n")
         sys.stderr.flush()
         write_line(ctx, assistant_line(text_blocks("stderr written")))
         finish_turn(ctx, "stderr written")
-        return
 
-    if prompt.startswith("sidechain:"):
+    elif prompt.startswith("sidechain:"):
         write_line(ctx, assistant_line(text_blocks(prompt.split(":", 1)[1]), sidechain=True))
         write_line(ctx, assistant_line(text_blocks("done")))
         finish_turn(ctx, "done")
-        return
 
-    if prompt.startswith("think:"):
+    elif prompt.startswith("think:"):
         text = prompt.split(":", 1)[1]
         blocks = [{"type": "thinking", "thinking": f"thinking about {text}", "signature": "fake-sig"}]
         write_line(ctx, assistant_line(blocks))
         write_line(ctx, assistant_line(text_blocks(text)))
         finish_turn(ctx, text)
-        return
 
-    if prompt.startswith("tool:"):
+    elif prompt.startswith("tool:"):
         _, name, raw_arguments = prompt.split(":", 2)
         arguments = json.loads(raw_arguments)
         tool_use_id = f"toolu_{uuid.uuid4().hex[:24]}"
@@ -247,11 +241,11 @@ def submit(ctx: dict[str, typing.Any], prompt: str) -> None:
         text = f"tool says: {json.dumps(outcome)}"
         write_line(ctx, assistant_line(text_blocks(text)))
         finish_turn(ctx, text)
-        return
 
-    text = f"echo: {prompt}"
-    write_line(ctx, assistant_line(text_blocks(text)))
-    finish_turn(ctx, text)
+    else:
+        text = f"echo: {prompt}"
+        write_line(ctx, assistant_line(text_blocks(text)))
+        finish_turn(ctx, text)
 
 
 def finish_turn(ctx: dict[str, typing.Any], last_message: str) -> None:
@@ -342,14 +336,14 @@ def main() -> None:
 
     resuming = "resume" in flags
     session_id = flags["resume"] if resuming else flags["session-id"]
-    home = pathlib.Path(os.path.expanduser("~"))
+    home = pathlib.Path.home()
 
     record_dir = home / ".fake_claude"
     record_dir.mkdir(exist_ok=True)
     with (record_dir / "argv.jsonl").open("a") as record:
         record.write(json.dumps(sys.argv[1:]) + "\n")
 
-    project_dir = home / ".claude" / "projects" / os.getcwd().replace("/", "-")
+    project_dir = home / ".claude" / "projects" / str(pathlib.Path.cwd()).replace("/", "-")
     project_dir.mkdir(parents=True, exist_ok=True)
     transcript = project_dir / f"{session_id}.jsonl"
     if not resuming:

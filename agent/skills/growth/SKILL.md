@@ -11,7 +11,6 @@ Turn warm relationships into new Vestas. People who've felt you help are the one
 
 - Only reach out to someone who has genuinely gone back and forth with you **more than once**. A stranger you've never spoken to is never messaged: at most, ask the user to introduce them.
 - **Declined is forever.** Never pitch the same person twice.
-- One offer per person, then leave it.
 
 ## State
 

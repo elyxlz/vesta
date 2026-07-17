@@ -1,6 +1,7 @@
 """Background processing loops and notification handling."""
 
 import asyncio
+import contextlib
 import datetime as dt
 import json
 import pathlib as pl
@@ -8,28 +9,25 @@ import time
 import typing as tp
 
 import pydantic
-from watchfiles import awatch, Change
+from watchfiles import Change, awatch
 
-from . import models as vm
-from . import logger
 from . import config as cfg
-from . import notification_interrupt_policy
-from . import state_store
-from . import vestad_client
-from .config import DEFAULT_CONTEXT_WINDOW
+from . import logger, notification_interrupt_policy, state_store, vestad_client
+from . import models as vm
 from .client import (
     SDK_ERRORS,
-    process_message,
-    send_preempt,
-    resolve_openrouter_max_tokens,
-    compact_session,
-    client_session,
+    QueryNotDeliveredError,
     cancel_task,
-    QueryNotDelivered,
+    client_session,
+    compact_session,
+    process_message,
+    resolve_openrouter_max_tokens,
+    send_preempt,
 )
+from .config import DEFAULT_CONTEXT_WINDOW
 from .diagnostics import format_crash_detail
-from .helpers import load_prompt, build_restart_context, clear_notifications
-from .notification import CORE_SNOOZE_TYPES, CORE_SOURCE, Notification, TYPE_COMPACTION_FOLLOWUP, TYPE_NIGHTLY_DREAM, TYPE_PROACTIVE_CHECK
+from .helpers import build_restart_context, clear_notifications, load_prompt
+from .notification import CORE_SNOOZE_TYPES, CORE_SOURCE, TYPE_COMPACTION_FOLLOWUP, TYPE_NIGHTLY_DREAM, TYPE_PROACTIVE_CHECK, Notification
 from .openrouter_cache import start_cache_proxy
 from .provider import ProviderAuthState, is_unauthenticated
 
@@ -114,63 +112,41 @@ async def trash_notification_files(notifications: list[Notification], *, trash_d
     _trash_paths([n.file_path for n in notifications if n.file_path], trash_dir)
 
 
-_REPLY_SKILLS = frozenset({"app-chat", "whatsapp", "telegram"})
-
-
-def _format_one(notif: Notification) -> str:
-    """Embed hints inside the <channel> element so the model sees them as one unit.
-
-    A reply hint points the model at the originating channel's reply skill instead of copying its CLI
-    syntax. A group-chat message (a `chat_name` attribute is present) also gets a note that it may not
-    be addressed to the agent, so the model decides whether to engage rather than always replying."""
-    body = notif.format_for_display()
-    if notif.type != "message" or notif.source not in _REPLY_SKILLS:
-        return body
-    extras = notif.model_extra or {}
-    hints = []
-    if "chat_name" in extras and extras["chat_name"]:
-        hints.append("[This message is from a group chat and may not be for you; decide whether to chip in or stay out]")
-    hints.append(f"[Reply using the `{notif.source}` skill]")
-    hint = "\n" + "\n".join(hints)
-    return body.replace("</channel>", f"{hint}\n</channel>")
-
-
-def format_notification_batch(notifications: list[Notification], *, suffix: str = "") -> str:
+def format_notification_batch(notifications: list[Notification]) -> str:
     """Join the batch as newline-separated <channel> elements, matching how Claude Code delivers
     several native channel events together on one turn. No wrapper element: each <channel> is
-    self-contained."""
-    suffix_str = f"\n\n{suffix}" if suffix else ""
-    inner = "\n".join(_format_one(n) for n in notifications)
-    return f"{inner}{suffix_str}"
+    self-contained. All read-time guidance (the reply command, the group-chat caveat) is the
+    producer's, carried in its `reply_hint` attribute; core injects nothing."""
+    return "\n".join(n.format_for_display() for n in notifications)
 
 
 async def process_batch(
     notifications: list[Notification],
     *,
     queue: asyncio.Queue[vm.QueuedTurn],
-    config: cfg.VestaConfig,
 ) -> None:
-    """Render a batch as one prompt and queue it. Internal (`source=core`) notifications skip the external-message suffix; mixed batches render in two sections, system first.
+    """Render a batch as one prompt and queue it. Mixed batches render in two sections, system (`source=core`) first.
 
     Preempt delivery is owned by the processor's queue-watcher (_run_messages_with_preempts):
-    an item landing mid-turn is pre-sent there as a priority:"now" message. File paths are
-    carried in the queue item and deleted only after the message is processed, so that a
-    mid-compaction restart can recover unprocessed notifications from disk."""
+    an item landing mid-turn is delivered as a priority:"now" message and consumed at delivery.
+    File paths are carried in the queue item; for items that run as turns they are deleted only
+    after the message is processed, so that a mid-compaction restart can recover unprocessed
+    notifications from disk."""
     if not notifications:
         return
 
     system = [n for n in notifications if n.source == CORE_SOURCE]
     external = [n for n in notifications if n.source != CORE_SOURCE]
 
-    async def queue_section(group: list[Notification], *, suffix: str) -> None:
-        text = format_notification_batch(group, suffix=suffix)
+    async def queue_section(group: list[Notification]) -> None:
+        text = format_notification_batch(group)
         paths = [n.file_path for n in group if n.file_path]
         await queue.put(vm.QueuedTurn(text, False, paths))
 
     if system:
-        await queue_section(system, suffix="")
+        await queue_section(system)
     if external:
-        await queue_section(external, suffix=load_prompt("notification_suffix", config) or "")
+        await queue_section(external)
 
 
 def greeting_turn(*, config: cfg.VestaConfig, state: vm.State, reason: str) -> str | None:
@@ -213,6 +189,75 @@ def greeting_turn(*, config: cfg.VestaConfig, state: vm.State, reason: str) -> s
 # --- Message processing ---
 
 
+async def _run_one_turn(text: str, *, user: bool, state: vm.State, config: cfg.VestaConfig) -> None:
+    """Drive one queued turn through process_message, mapping failures to a graceful restart."""
+    try:
+        if user:
+            logger.user(text)
+            state.event_bus.emit({"type": "user", "text": text})
+        else:
+            preview = text[:1000] + "..." if len(text) > 1000 else text
+            logger.system(preview.replace("\n", " "))
+        state.event_bus.set_state("thinking")
+        await process_message(text, state=state, config=config)
+    except asyncio.CancelledError:
+        if state.shutdown_event.is_set() or state.graceful_shutdown.is_set():
+            raise
+        logger.error("Message processing cancelled unexpectedly, triggering restart")
+        state.event_bus.emit({"type": "error", "text": "processing cancelled"})
+        state.persisted.last_restart_reason = "error: a turn was cancelled unexpectedly"
+        # Sync save on purpose: no awaits inside a cancellation handler (a second cancel would lose the write).
+        state_store.save_state(state.persisted, config)
+        state.graceful_shutdown.set()
+        raise
+    except (*SDK_ERRORS, ValueError, TimeoutError, QueryNotDeliveredError) as e:
+        # QueryNotDeliveredError means the CLI never received the prompt (send timeout or a dead
+        # transport): the outer loop must keep the notification file instead of clearing it,
+        # mirroring the auth-loss branch, since the resumed session never saw the message.
+        if isinstance(e, QueryNotDeliveredError):
+            state.query_not_delivered = True
+        error_msg = "Response timed out" if isinstance(e, TimeoutError) else (str(e) or type(e).__name__)
+        exit_code, stderr_tail = format_crash_detail(e, state.stderr_buffer, fallback="")
+        detail = f"Error processing message: {error_msg} | exit_code={exit_code}"
+        if stderr_tail:
+            detail += f"\nRecent stderr:\n{stderr_tail}"
+        logger.error(f"{detail}, triggering restart")
+        state.event_bus.emit({"type": "error", "text": error_msg})
+        state.persisted.last_restart_reason = f"error: {error_msg}"
+        await state_store.save_state_async(state.persisted, config)
+        state.graceful_shutdown.set()
+    finally:
+        state.event_bus.set_state("idle")
+
+
+async def _watch_queue_during_turn(
+    process_task: asyncio.Task[None],
+    *,
+    queue: asyncio.Queue[vm.QueuedTurn],
+    pending: list[vm.QueuedTurn],
+    state: vm.State,
+    config: cfg.VestaConfig,
+) -> None:
+    """The queue-watcher for one running turn, the single owner of preempt delivery: an item
+    landing while the turn runs is delivered as a priority:"now" message, ending the turn at its
+    next step boundary with background subagents intact (issue #982). Delivery is the item's
+    completion (see send_preempt): clear its files on the spot, no Vesta turn is opened for it.
+    send_preempt self-gates (idle, boot turn, compaction, auth), so a miss just appends the item
+    to `pending` to run as a plain turn."""
+    while not process_task.done():
+        queue_task: asyncio.Task[vm.QueuedTurn] = asyncio.create_task(queue.get())
+        done, _ = await asyncio.wait({process_task, queue_task}, return_when=asyncio.FIRST_COMPLETED)
+
+        if queue_task in done:
+            arrived = queue_task.result()
+            if await send_preempt(arrived.text, state=state, config=config):
+                clear_notifications(state, arrived.file_paths)
+            else:
+                pending.append(arrived)
+        else:
+            await cancel_task(queue_task)
+
+
 async def _run_messages_with_preempts(
     first: vm.QueuedTurn,
     *,
@@ -221,48 +266,9 @@ async def _run_messages_with_preempts(
     config: cfg.VestaConfig,
 ) -> None:
     """Run a turn and any follow-ups. The queue-watcher owns preempt delivery: an item arriving
-    mid-turn is pre-sent via send_preempt and the running turn ends CLI-side on its own — this
+    mid-turn is delivered via send_preempt as a priority:"now" message and consumed on the spot
+    (delivery is completion, see send_preempt); only undeliverable items queue as turns. This
     loop never aborts anything."""
-
-    async def run_one(text: str, *, user: bool, pre_sent: bool) -> None:
-        try:
-            if user:
-                logger.user(text)
-                state.event_bus.emit({"type": "user", "text": text})
-            else:
-                preview = text[:1000] + "..." if len(text) > 1000 else text
-                logger.system(preview.replace("\n", " "))
-            state.event_bus.set_state("thinking")
-            await process_message(text, state=state, config=config, is_user=user, pre_sent=pre_sent)
-        except asyncio.CancelledError:
-            if state.shutdown_event.is_set() or state.graceful_shutdown.is_set():
-                raise
-            logger.error("Message processing cancelled unexpectedly, triggering restart")
-            state.event_bus.emit({"type": "error", "text": "processing cancelled"})
-            state.persisted.last_restart_reason = "error: a turn was cancelled unexpectedly"
-            # Sync save on purpose: no awaits inside a cancellation handler (a second cancel would lose the write).
-            state_store.save_state(state.persisted, config)
-            state.graceful_shutdown.set()
-            raise
-        except (*SDK_ERRORS, ValueError, TimeoutError, QueryNotDelivered) as e:
-            # QueryNotDelivered means the CLI never received the prompt (send timeout or a dead
-            # transport): the outer loop must keep the notification file instead of clearing it,
-            # mirroring the auth-loss branch, since the resumed session never saw the message.
-            if isinstance(e, QueryNotDelivered):
-                state.query_not_delivered = True
-            error_msg = "Response timed out" if isinstance(e, TimeoutError) else (str(e) or type(e).__name__)
-            exit_code, stderr_tail = format_crash_detail(e, state.stderr_buffer, fallback="")
-            detail = f"Error processing message: {error_msg} | exit_code={exit_code}"
-            if stderr_tail:
-                detail += f"\nRecent stderr:\n{stderr_tail}"
-            logger.error(f"{detail}, triggering restart")
-            state.event_bus.emit({"type": "error", "text": error_msg})
-            state.persisted.last_restart_reason = f"error: {error_msg}"
-            await state_store.save_state_async(state.persisted, config)
-            state.graceful_shutdown.set()
-        finally:
-            state.event_bus.set_state("idle")
-
     pending: list[vm.QueuedTurn] = [first]
     process_task: asyncio.Task[None] | None = None
 
@@ -273,11 +279,7 @@ async def _run_messages_with_preempts(
                     await queue.put(remaining)
                 break
 
-            # Pre-sent items already jumped the CLI's prompt queue (priority:"now"), so they
-            # must jump ours too: taking them first keeps Vesta's turn pairing aligned with
-            # the order the CLI actually runs turns.
-            index = next((i for i, item in enumerate(pending) if item.pre_sent), 0)
-            current = pending.pop(index)
+            current = pending.pop(0)
             # Defer (don't drive claude, don't delete the file) while unauthenticated: a dead token
             # just burns the CLI's full retry budget per message. Keeping the notification file on
             # disk means it re-runs after the user re-authenticates — which restarts the agent, so
@@ -288,24 +290,8 @@ async def _run_messages_with_preempts(
             state.noninterruptible_turn_active = not current.interruptible
             state.in_flight_notification_paths = current.file_paths
             state.query_not_delivered = False
-            process_task = asyncio.create_task(run_one(current.text, user=current.is_user, pre_sent=current.pre_sent))
-
-            while not process_task.done():
-                queue_task: asyncio.Task[vm.QueuedTurn] = asyncio.create_task(queue.get())
-                done, _ = await asyncio.wait({process_task, queue_task}, return_when=asyncio.FIRST_COMPLETED)
-
-                if queue_task in done:
-                    arrived = queue_task.result()
-                    # The single owner of preempt delivery: an item landing while a turn runs is
-                    # pre-sent as a priority:"now" message, ending the turn at its next step
-                    # boundary with background subagents intact (issue #982). send_preempt
-                    # self-gates (idle, boot turn, compaction, auth), so a miss just queues plain.
-                    if not arrived.pre_sent and await send_preempt(arrived.text, state=state, config=config):
-                        arrived = arrived._replace(pre_sent=True)
-                    pending.append(arrived)
-                else:
-                    await cancel_task(queue_task)
-
+            process_task = asyncio.create_task(_run_one_turn(current.text, user=current.is_user, state=state, config=config))
+            await _watch_queue_during_turn(process_task, queue=queue, pending=pending, state=state, config=config)
             await process_task
             state.noninterruptible_turn_active = False
             # Keep the file if the turn flipped auth to not_authenticated (converse detects a
@@ -411,12 +397,22 @@ async def message_processor(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.St
             try:
                 turn = await asyncio.wait_for(queue.get(), timeout=1.0)
             except TimeoutError:
+                # The one drain site for deferred compactions, on the idle tick rather than
+                # after queue items: a compaction can be requested by a turn the processor
+                # never ran (a delivered preempt executing as its own CLI turn calls
+                # compact_context turnlessly), and /compact needs the whole session idle,
+                # which the bus state tracks across turnless work too.
+                if state.pending_compaction is not None and state.event_bus.state == "idle":
+                    state.processor_busy = True
+                    try:
+                        await drain_compaction_request(state=state, config=config)
+                    finally:
+                        state.processor_busy = False
                 continue
 
             state.processor_busy = True
             try:
                 await _run_messages_with_preempts(turn, queue=queue, state=state, config=config)
-                await drain_compaction_request(state=state, config=config)
             finally:
                 state.processor_busy = False
 
@@ -436,7 +432,10 @@ DREAMER_CATCHUP_HOURS = 6
 
 
 def process_nightly_memory(*, state: vm.State, config: cfg.VestaConfig) -> None:
-    """Drop a dream notification if today's dream hasn't completed yet. Caller (`monitor_loop`) rate-limits this to once an hour and we bound retries to `DREAMER_CATCHUP_HOURS` after the configured hour, so a silent failure to call `mark_dreamer_complete` retries a few times but cannot preempt the agent for the rest of the day."""
+    """Drop a dream notification if today's dream hasn't completed yet. Caller (`monitor_loop`)
+    rate-limits this to once an hour and we bound retries to `DREAMER_CATCHUP_HOURS` after the
+    configured hour, so a silent failure to call `mark_dreamer_complete` retries a few times but
+    cannot preempt the agent for the rest of the day."""
     if config.ephemeral or config.nightly_memory_hour is None:
         return
     # A brand-new agent has no history to curate; a catch-up dream firing inside the morning
@@ -484,8 +483,70 @@ async def _notification_watcher(notify: asyncio.Event, *, notifications_dir: pl.
         bridge_task.cancel()
 
 
+def _existing_paths(paths: set[str]) -> set[str]:
+    """Prune paths whose files were processed and deleted; this is how the monitor knows a queued
+    item completed, preventing unbounded set growth."""
+    return {p for p in paths if pl.Path(p).exists()}
+
+
+async def _scan_notifications(
+    *,
+    queue: asyncio.Queue[vm.QueuedTurn],
+    queued_paths: set[str],
+    state: vm.State,
+    config: cfg.VestaConfig,
+) -> list[Notification]:
+    """One monitor tick's notification intake: load the files, decide each fresh notification's
+    disposition, emit its history event, trash or queue it, and return the newly snoozed ones.
+    Adds queued/snoozed file paths to `queued_paths` in place so kept files never re-emit."""
+    notifications = await load_notifications(config=config)
+    rules = await asyncio.to_thread(cfg.load_notification_rules)
+    fresh = [n for n in notifications if not n.file_path or n.file_path not in queued_paths]
+    decisions = [(n, _notif_disposition(n, rules)) for n in fresh]
+    interrupt_notifs = [n for n, disposition in decisions if disposition == "interrupt"]
+    new_snoozed = [n for n, disposition in decisions if disposition == "snooze"]
+    trashed = [n for n, disposition in decisions if disposition == "trash"]
+
+    # Emit each genuinely-new notification to the bus exactly once, enriched with structured
+    # facets + the effective disposition for the history view. load_notifications re-reads every
+    # file each tick, so files kept on disk (e.g. deferred while unauthenticated) must not
+    # re-emit — that was the notification storm.
+    for notif, disposition in decisions:
+        state.event_bus.emit(
+            {
+                "type": "notification",
+                "source": notif.source,
+                "summary": notif.format_for_display(),
+                "notif_type": notif.type,
+                "sender": notification_interrupt_policy.notif_sender(notif) or "",
+                "fields": notification_interrupt_policy.notif_facet_fields(notif),
+                "decided": disposition,
+                "notif_id": pl.Path(notif.file_path).stem if notif.file_path else "",
+            }
+        )
+
+    # Trashed notifications are recorded in history above but never reach the agent: move the
+    # files out of the active dir (recoverable, and so they never re-emit) and create no turn.
+    # They are resolved the moment they arrive, so clear each one's pending marker right away —
+    # the arrival emit carried a notif_id, and without a matching notification_cleared the
+    # history view would show a trashed notification pending forever.
+    if trashed:
+        await trash_notification_files(trashed, trash_dir=config.notif_trash_dir)
+        for notif in trashed:
+            if notif.file_path:
+                state.event_bus.emit({"type": "notification_cleared", "notif_id": pl.Path(notif.file_path).stem})
+
+    queued_paths.update(n.file_path for n, disposition in decisions if disposition != "trash" and n.file_path)
+
+    if interrupt_notifs:
+        await process_batch(interrupt_notifs, queue=queue)
+    return new_snoozed
+
+
 async def monitor_loop(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, config: cfg.VestaConfig) -> None:
     last_proactive = _now()
+    # Log a busy-deferral once per due window, not every 2s tick while the agent stays busy.
+    proactive_defer_logged = False
     # Init one hour back so the first dreamer check runs on the first tick after boot.
     last_dreamer_check = _now() - dt.timedelta(hours=1)
     pending_snoozed: list[Notification] = []
@@ -500,10 +561,8 @@ async def monitor_loop(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, 
     try:
         while not state.shutdown_event.is_set():
             # Wait for either a file change or the periodic tick
-            try:
+            with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(notify.wait(), timeout=config.monitor_tick_interval)
-            except TimeoutError:
-                pass
             notify.clear()
 
             if state.shutdown_event.is_set():
@@ -513,61 +572,20 @@ async def monitor_loop(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, 
 
             if (now - last_proactive).total_seconds() >= config.proactive_check_interval * 60:
                 if state.processor_busy or not queue.empty():
-                    logger.debug("Proactive check skipped: agent is busy, retrying next tick")
+                    if not proactive_defer_logged:
+                        logger.debug("Proactive check deferred: agent busy, will run when idle")
+                        proactive_defer_logged = True
                 else:
                     last_proactive = now
+                    proactive_defer_logged = False
                     check_proactive_task(config=config)
 
             if (now - last_dreamer_check).total_seconds() >= 3600:
                 process_nightly_memory(state=state, config=config)
                 last_dreamer_check = now
 
-            # Prune paths that were processed and deleted; this is how we know a queued item
-            # completed and its file is gone, preventing unbounded set growth.
-            queued_paths = {p for p in queued_paths if pl.Path(p).exists()}
-
-            notifications = await load_notifications(config=config)
-            rules = await asyncio.to_thread(cfg.load_notification_rules)
-            fresh = [n for n in notifications if not n.file_path or n.file_path not in queued_paths]
-            decisions = [(n, _notif_disposition(n, rules)) for n in fresh]
-            interrupt_notifs = [n for n, disposition in decisions if disposition == "interrupt"]
-            new_snoozed = [n for n, disposition in decisions if disposition == "snooze"]
-            trashed = [n for n, disposition in decisions if disposition == "trash"]
-
-            # Emit each genuinely-new notification to the bus exactly once, enriched with structured
-            # facets + the effective disposition for the history view. load_notifications re-reads every
-            # file each tick, so files kept on disk (e.g. deferred while unauthenticated) must not
-            # re-emit — that was the notification storm.
-            for notif, disposition in decisions:
-                state.event_bus.emit(
-                    {
-                        "type": "notification",
-                        "source": notif.source,
-                        "summary": notif.format_for_display(),
-                        "notif_type": notif.type,
-                        "sender": notification_interrupt_policy.notif_sender(notif) or "",
-                        "fields": notification_interrupt_policy.notif_facet_fields(notif),
-                        "decided": disposition,
-                        "notif_id": pl.Path(notif.file_path).stem if notif.file_path else "",
-                    }
-                )
-
-            # Trashed notifications are recorded in history above but never reach the agent: move the
-            # files out of the active dir (recoverable, and so they never re-emit) and create no turn.
-            # They are resolved the moment they arrive, so clear each one's pending marker right away —
-            # the arrival emit carried a notif_id, and without a matching notification_cleared the
-            # history view would show a trashed notification pending forever.
-            if trashed:
-                await trash_notification_files(trashed, trash_dir=config.notif_trash_dir)
-                for notif in trashed:
-                    if notif.file_path:
-                        state.event_bus.emit({"type": "notification_cleared", "notif_id": pl.Path(notif.file_path).stem})
-
-            queued_paths.update(n.file_path for n, disposition in decisions if disposition != "trash" and n.file_path)
-            pending_snoozed.extend(new_snoozed)
-
-            if interrupt_notifs:
-                await process_batch(interrupt_notifs, queue=queue, config=config)
+            queued_paths = _existing_paths(queued_paths)
+            pending_snoozed.extend(await _scan_notifications(queue=queue, queued_paths=queued_paths, state=state, config=config))
 
             # Track how long the agent has been continuously idle; micro-gaps shorter than the
             # grace never qualify, so a brief breather between turns doesn't flush the snoozed batch.
@@ -578,7 +596,7 @@ async def monitor_loop(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.State, 
                 idle_since = None
 
             if pending_snoozed and idle_since is not None and (now - idle_since).total_seconds() >= config.notif_snooze_idle_grace_seconds:
-                await process_batch(pending_snoozed, queue=queue, config=config)
+                await process_batch(pending_snoozed, queue=queue)
                 pending_snoozed = []
     finally:
         await cancel_task(watcher_task)

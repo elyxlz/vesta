@@ -16,7 +16,6 @@ import click
 from agentmail_bridge import serve, setup, status, teardown
 from agentmail_bridge.config import NPM_CLI_BIN
 
-
 VESTA_VERBS = {"setup", "serve", "status", "teardown", "--help", "-h"}
 
 
@@ -50,7 +49,7 @@ def _passthrough(args: list[str]) -> None:
             err=True,
         )
         sys.exit(127)
-    os.execv(str(NPM_CLI_BIN), [str(NPM_CLI_BIN)] + args)
+    os.execv(str(NPM_CLI_BIN), [str(NPM_CLI_BIN), *args])
 
 
 def main() -> None:

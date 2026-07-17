@@ -1,12 +1,20 @@
 #!/usr/bin/env python3
-"""Scan events DB for secrets. Usage: redact_secrets.py [--delete]"""
+"""Scan the events DB for secrets, then scrub the real leaks in place by event id.
+Usage: redact_secrets.py            # scan, printing each hit with the value masked
+       redact_secrets.py --scrub ID [ID ...]   # redact every secret in those events
+"""
 
-import os
 import re
 import sqlite3
 import sys
+from pathlib import Path
 
-DB = os.path.expanduser("~/agent/data/events.db")
+DB = Path("~/agent/data/events.db").expanduser()
+REDACTED = "[REDACTED]"
+# Event types indexed by events_fts (mirrors the triggers in core/events.py). The schema has
+# insert/delete triggers only, so an in-place UPDATE must resync the index itself: otherwise the
+# old text (with the secret) stays searchable and a later delete corrupts the external-content index.
+FTS_TYPES = ("user", "assistant", "chat")
 
 PATTERNS = [
     r"sk-[a-zA-Z0-9_-]{20,}",
@@ -14,60 +22,105 @@ PATTERNS = [
     r"gh[posr]_[A-Za-z0-9]{36,}",
     r"github_pat_[A-Za-z0-9_]{20,}",
     r"glpat-[A-Za-z0-9_-]{20,}",
-    r"AKIA[0-9A-Z]{16}",
+    r"(?-i:AKIA[0-9A-Z]{16})",  # case-sensitive: real AWS keys are uppercase. Under the outer
+    # IGNORECASE, a plain AKIA matches "akia...." runs inside base64 blobs (reasoning-block
+    # signatures, media keys), a recurring false positive that buries the real matches.
     r"PMAK-[A-Za-z0-9-]{20,}",
     r"eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}",
     r"BEGIN [A-Z ]+ PRIVATE KEY",
-    r"(?:password|secret|api[_-]?key)[\"': =]+[^ \"']{4,}",
+    # A real separator char (: = or a quote) is mandatory, so benign prose like "password reuse"
+    # (bare space between word and value) never matches; spaces around it are tolerated so
+    # space-padded assignments still hit (password = "x", YAML password: "x"). The \\? bits absorb
+    # the backslash JSON puts before an escaped quote, since the scan runs over the JSON `data` blob.
+    r"(?:password|secret|api[_-]?key)[ ]*\\?[\"':=]+[ ]*\\?[\"']?[^ \"'\\]{4,}",
     r"(?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql|redis)://[^ \"']+",
 ]
 REGEX = re.compile("|".join(PATTERNS), re.IGNORECASE)
 
 
+def mask(match: re.Match[str]) -> str:
+    """Replace a real hit with the placeholder; leave an already-scrubbed span untouched so the
+    scan and scrub are both idempotent (a re-run never re-flags or mangles `password=[REDACTED]`)."""
+    return match.group(0) if REDACTED in match.group(0) else REDACTED
+
+
+def scan(conn: sqlite3.Connection) -> list[tuple[int, str]]:
+    """Every pattern hit as (event id, masked context snippet). The secret itself is replaced with
+    [REDACTED] in the snippet, so reviewing candidates never re-leaks the value into a new event
+    (the old redaction loop's self-reseeding). Reports every match per event, not just the first,
+    so a benign first hit can't mask a real secret later on. Scans the FULL event: secrets often sit
+    deep inside long bash commands / tool payloads (an old PAT once survived weeks because
+    substr(data,1,200) never saw it)."""
+    matches = []
+    for row_id, data in conn.execute("SELECT id, data FROM events"):
+        if not data:
+            continue
+        for m in REGEX.finditer(data):
+            if REDACTED in m.group(0):
+                continue
+            window = data[max(0, m.start() - 40) : m.end() + 40]
+            matches.append((row_id, REGEX.sub(mask, window).replace("\n", " ")))
+    return matches
+
+
+def scrub(conn: sqlite3.Connection, ids: list[int]) -> int:
+    """Redact every pattern hit in the given events in place, keeping their context and events_fts.
+    Regex-driven and keyed by id, so the caller never has to pass (and thereby re-leak) the literal."""
+    changed: dict[int, str] = {}
+    for row_id in ids:
+        row = conn.execute("SELECT data FROM events WHERE id = ?", (row_id,)).fetchone()
+        if row is None or not row[0]:
+            continue
+        new_data = REGEX.sub(mask, row[0])
+        if new_data != row[0]:
+            changed[row_id] = new_data
+    if not changed:
+        return 0
+    changed_ids = list(changed)
+    id_marks = ",".join("?" * len(changed_ids))
+    type_marks = ",".join("?" * len(FTS_TYPES))
+    fts_where = f"id IN ({id_marks}) AND json_extract(data, '$.type') IN ({type_marks}) AND json_extract(data, '$.text') IS NOT NULL"
+    conn.execute(
+        "INSERT INTO events_fts(events_fts, rowid, text_content) "
+        f"SELECT 'delete', id, json_extract(data, '$.text') FROM events WHERE {fts_where}",
+        (*changed_ids, *FTS_TYPES),
+    )
+    for row_id, new_data in changed.items():
+        conn.execute("UPDATE events SET data = ? WHERE id = ?", (new_data, row_id))
+    conn.execute(
+        f"INSERT INTO events_fts(rowid, text_content) SELECT id, json_extract(data, '$.text') FROM events WHERE {fts_where}",
+        (*changed_ids, *FTS_TYPES),
+    )
+    conn.commit()
+    return len(changed)
+
+
 def main() -> int:
-    if not os.path.isfile(DB):
+    if not DB.is_file():
         print(f"No database at {DB}")
         return 1
 
-    delete = "--delete" in sys.argv[1:]
+    args = sys.argv[1:]
     conn = sqlite3.connect(DB)
     try:
-        # Scan the FULL event, not just the first 200 chars: secrets often sit
-        # deep inside long bash commands / tool payloads (an old PAT once survived
-        # weeks because substr(data,1,200) never saw it). Show a window around the hit.
-        cursor = conn.execute("SELECT id, data FROM events")
-        matches = []
-        for row_id, data in cursor:
-            if not data:
-                continue
-            m = REGEX.search(data)
-            if m:
-                start = max(0, m.start() - 40)
-                snippet = data[start : m.end() + 40].replace("\n", " ")
-                matches.append((row_id, snippet))
+        if args[:1] == ["--scrub"]:
+            scrubbed = scrub(conn, [int(arg) for arg in args[1:]])
+            print(f"Scrubbed secrets in {scrubbed} event(s) in place.")
+            return 0
+
+        matches = scan(conn)
+        if not matches:
+            print("No secrets found.")
+            return 0
+
+        ids = sorted({row_id for row_id, _ in matches})
+        print(f"Found {len(ids)} event(s) with potential secrets (value masked below).")
+        print("Review the context, then redact the real leaks: redact_secrets.sh --scrub <id> <id> ...")
+        for row_id, snippet in matches[:20]:
+            print(f"{row_id}|{snippet}")
+        return 0
     finally:
         conn.close()
-
-    if not matches:
-        print("No secrets found.")
-        return 0
-
-    ids = sorted({row_id for row_id, _ in matches})
-    print(f"Found {len(ids)} events with potential secrets:")
-    for row_id, snippet in matches[:20]:
-        print(f"{row_id}|{snippet}")
-
-    if delete:
-        conn = sqlite3.connect(DB)
-        try:
-            placeholders = ",".join("?" * len(ids))
-            conn.execute(f"DELETE FROM events WHERE id IN ({placeholders})", ids)
-            conn.commit()
-        finally:
-            conn.close()
-        print(f"Deleted {len(ids)} events.")
-
-    return 0
 
 
 if __name__ == "__main__":

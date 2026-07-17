@@ -123,7 +123,8 @@ def test_no_em_or_en_dashes_in_prompt_and_skill_files():
 
 
 def test_no_space_dash_space_separator_in_prose():
-    """Prose lines must not use ' - ' as a separator (em-dash substitute). Allowed in code blocks, headings, CLI comments, and markdown tables."""
+    """Prose lines must not use ' - ' as a separator (em-dash substitute). Allowed in code blocks,
+    headings, CLI comments, and markdown tables."""
     agent_root = Path(__file__).resolve().parent.parent
 
     md_globs = [
@@ -160,7 +161,7 @@ def test_no_space_dash_space_separator_in_prose():
             if " - " not in stripped:
                 continue
             # Skip markdown headings and table rows
-            if stripped.startswith("#") or stripped.startswith("|"):
+            if stripped.startswith(("#", "|")):
                 continue
             # Skip lines that quote the literal pattern (e.g. the ban rule itself)
             if '" - "' in stripped or "' - '" in stripped:

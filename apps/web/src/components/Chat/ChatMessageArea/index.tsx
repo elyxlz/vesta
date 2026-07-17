@@ -81,7 +81,7 @@ function ChatSkeleton() {
     <div className="pointer-events-none absolute inset-0 flex flex-col justify-end px-4 pb-4">
       {SKELETON_ROWS.map((row, i) => {
         const isUser = row.side === "user";
-        const sameAsPrev = i > 0 && SKELETON_ROWS[i - 1].side === row.side;
+        const sameAsPrev = i > 0 && SKELETON_ROWS[i - 1]?.side === row.side;
         return (
           <div
             key={i}
@@ -127,7 +127,7 @@ export function ChatMessageArea({
   const lastAgentText = useMemo(() => {
     for (let i = chatMessages.length - 1; i >= 0; i--) {
       const event = chatMessages[i];
-      if (event.type === "chat") return event.text;
+      if (event?.type === "chat") return event.text;
     }
     return "";
   }, [chatMessages]);
@@ -137,7 +137,7 @@ export function ChatMessageArea({
   const [atBottom, setAtBottom] = useState(true);
 
   const getItemKey = useCallback(
-    (index: number) => decorated[index].key,
+    (index: number) => decorated[index]?.key ?? String(index),
     [decorated],
   );
 
@@ -272,7 +272,7 @@ export function ChatMessageArea({
         onScroll={handleScroll}
         className="h-full overflow-y-auto overflow-x-hidden"
         style={{
-          maskImage: `linear-gradient(to bottom, transparent, black ${fullscreen ? navbarHeight : 48}px, black calc(100% - 20px), transparent)`,
+          maskImage: `linear-gradient(to bottom, transparent, black ${String(fullscreen ? navbarHeight : 48)}px, black calc(100% - 20px), transparent)`,
         }}
       >
         <div
@@ -281,6 +281,7 @@ export function ChatMessageArea({
         >
           {items.map((item) => {
             const row = decorated[item.index];
+            if (!row) return null;
             const isLast = item.index === count - 1;
             const isNewAppend =
               hadRowsRef.current && item.index > maxSeenIndexRef.current;
@@ -364,13 +365,13 @@ export function ChatMessageArea({
       {count > 0 && (
         <Button
           type="button"
-          variant="secondary"
+          variant="outline"
           size="icon-sm"
           aria-label="Scroll to latest message"
           data-active={!atBottom}
           onClick={() => virtualizer.scrollToEnd({ behavior: "smooth" })}
           className={cn(
-            "absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full border border-border bg-background text-foreground shadow-sm transition-all duration-200 hover:bg-muted hover:text-foreground",
+            "absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full shadow-sm transition-all duration-200",
             "data-[active=false]:pointer-events-none data-[active=false]:translate-y-full data-[active=false]:scale-95 data-[active=false]:opacity-0 data-[active=false]:duration-150 data-[active=false]:ease-[cubic-bezier(0.7,0,0.84,0)]",
             "data-[active=true]:translate-y-0 data-[active=true]:scale-100 data-[active=true]:opacity-100 data-[active=true]:ease-[cubic-bezier(0.23,1,0.32,1)]",
           )}

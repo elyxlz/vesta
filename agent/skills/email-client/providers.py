@@ -4,7 +4,9 @@
 Each provider profile describes how to talk IMAP/SMTP to one mail
 host: where to connect, which OAuth client to use (if any), which
 scopes to request, and which auth strategy the daemon and CLI should
-follow.
+follow. Providers that also run a CalDAV calendar server carry a
+``caldav_url``, reused by the ``calendar`` commands with the same
+credential as mail (see ``caldav_client.py``).
 
 Auth strategies:
 
@@ -106,7 +108,7 @@ PROVIDERS: dict[str, dict] = {
         "oauth_token_url": "https://oauth2.googleapis.com/token",
         # mail.google.com covers IMAP/SMTP. The calendar scope rides the same
         # verified Thunderbird consent screen, so one Gmail sign-in also grants
-        # Google Calendar (used by the `calendar` commands via Calendar REST v3).
+        # Google Calendar (used by the `calendar` commands over CalDAV).
         # calendar is a "sensitive" (not "restricted") scope, so no CASA.
         # Existing Gmail accounts authed before this scope was added must
         # re-run: email-client auth add --account <name> --provider gmail --reauth
@@ -114,6 +116,9 @@ PROVIDERS: dict[str, dict] = {
             "https://mail.google.com/",
             "https://www.googleapis.com/auth/calendar",
         ],
+        # CalDAV, not the Calendar REST API: Thunderbird's Cloud project has the
+        # REST API disabled, while CalDAV needs only the scope above.
+        "caldav_url": "https://apidata.googleusercontent.com/caldav/v2",
     },
     "yahoo-app-password": {
         "label": "Yahoo Mail (app password)",
@@ -134,6 +139,8 @@ PROVIDERS: dict[str, dict] = {
         "smtp_port": 587,
         "smtp_starttls": True,
         "sent_folder": "Sent Messages",
+        # Same app password as mail; iCloud redirects to per-user partition hosts.
+        "caldav_url": "https://caldav.icloud.com",
     },
     "fastmail-app-password": {
         "label": "Fastmail (app password)",
@@ -144,6 +151,8 @@ PROVIDERS: dict[str, dict] = {
         "smtp_port": 587,
         "smtp_starttls": True,
         "sent_folder": "Sent",
+        # Same app password as mail (scope it to include CalDAV when generating).
+        "caldav_url": "https://caldav.fastmail.com",
     },
     "generic": {
         "label": "Generic IMAP/SMTP (env-driven, no defaults)",

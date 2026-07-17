@@ -5,7 +5,7 @@ description: Recall past conversations from long-term memory. Use to look up spe
 
 # Recall
 
-Search every past conversation with full-text search (SQLite FTS5) over the whole event history, across all sessions and days, not just what is in context now. Reach for it whenever the user refers to something from before that you do not currently remember: a past decision, a name, a number, "what did we say about X".
+Search every past conversation with full-text search (SQLite FTS5) over the whole event history, across all sessions and days, not just what is in context now.
 
 ## Setup
 
@@ -18,9 +18,16 @@ uv tool install --editable ~/agent/skills/recall/cli
 ```bash
 recall "meeting notes"
 recall "sched*" --limit 5
+recall "wifi password" --snippet
+recall "wifi password" --snippet 10
 ```
 
 Results are ranked by relevance with a recency boost, so recent conversations surface higher.
+
+## Flags
+
+- `--limit N`: max results (default 20).
+- `--snippet [WORDS]`: return a windowed excerpt instead of the whole message, `WORDS` words on each side of the match (default 24). Use it to scan many hits cheaply when you just need to locate the right conversation, and pass a smaller `WORDS` to compress harder; omit the flag entirely when you need the full text. The window is centered on the first matched term and elided with `…` on either trimmed side.
 
 ## Query syntax (FTS5)
 

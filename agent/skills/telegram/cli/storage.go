@@ -84,6 +84,10 @@ func NewMessageStore(dataDir string) (*MessageStore, error) {
 			DELETE FROM messages_fts WHERE rowid = old.rowid;
 		END;
 
+		CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE OF content ON messages BEGIN
+			UPDATE messages_fts SET content = new.content WHERE rowid = new.rowid;
+		END;
+
 		CREATE TRIGGER IF NOT EXISTS chats_au AFTER UPDATE OF name ON chats BEGIN
 			DELETE FROM messages_fts WHERE rowid IN (
 				SELECT rowid FROM messages WHERE chat_id = new.id
@@ -168,6 +172,31 @@ func (ms *MessageStore) StoreMessage(
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, msgID, chatID, sender, content, timestamp, isFromMe,
 		mediaType, filename, fileID, replyToID)
+	return err
+}
+
+// GetMessageContent returns a message's text, or empty when it was never stored.
+func (ms *MessageStore) GetMessageContent(msgID int64) (string, error) {
+	var content sql.NullString
+	err := ms.db.QueryRow(`SELECT content FROM messages WHERE id = ? LIMIT 1`, msgID).Scan(&content)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return content.String, nil
+}
+
+// UpdateMessageContent rewrites a message's text in place after the sender edited it.
+// An edit changes only the text, so this writes only that and leaves the row's media,
+// reply and timestamp columns as the original message set them, rather than re-deriving
+// every one of them from the edit payload the way a full StoreMessage would.
+func (ms *MessageStore) UpdateMessageContent(msgID, chatID int64, content string) error {
+	_, err := ms.db.Exec(`
+		UPDATE messages SET content = ?
+		WHERE id = ? AND chat_id = ?
+	`, content, msgID, chatID)
 	return err
 }
 

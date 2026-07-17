@@ -1,3 +1,4 @@
+#!/bin/bash
 # CGO build environment for the whatsapp CLI: one owner, sourced by the
 # launcher and by check.sh. WHISPER_CPP_DIR overrides the whisper install
 # location (default /opt/whisper.cpp, where the agent image bakes it).

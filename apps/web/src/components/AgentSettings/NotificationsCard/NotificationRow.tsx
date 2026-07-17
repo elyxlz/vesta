@@ -73,7 +73,7 @@ function sourceColor(source: string): string {
   for (let i = 0; i < source.length; i++) {
     hash = (hash * 31 + source.charCodeAt(i)) | 0;
   }
-  return SOURCE_COLORS[Math.abs(hash) % SOURCE_COLORS.length];
+  return SOURCE_COLORS[Math.abs(hash) % SOURCE_COLORS.length] ?? "";
 }
 
 // The stored summary is `<notification source=… type=…>INNER</notification>` (see
@@ -92,11 +92,11 @@ function relativeTime(ts: string | undefined): string {
   if (Number.isNaN(then)) return "";
   const mins = Math.floor((Date.now() - then) / 60000);
   if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
+  if (mins < 60) return `${String(mins)}m ago`;
   const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
+  if (hours < 24) return `${String(hours)}h ago`;
   const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
+  if (days < 7) return `${String(days)}d ago`;
   return new Intl.DateTimeFormat(undefined, {
     month: "short",
     day: "numeric",
@@ -108,8 +108,8 @@ function relativeTime(ts: string | undefined): string {
 // a value isn't mistaken for a separator. Returns [] for plain (non key=value) text.
 function parseFields(content: string): { key: string; value: string }[] {
   return [...content.matchAll(/(\w+)=(.*?)(?=,\s*\w+=|$)/g)].map((m) => ({
-    key: m[1],
-    value: m[2].trim(),
+    key: m[1] ?? "",
+    value: m[2]?.trim() ?? "",
   }));
 }
 

@@ -5,6 +5,8 @@ import collections
 import time
 import typing as tp
 
+from claude_agent_sdk import ProcessError
+
 from . import logger
 from . import models as vm
 
@@ -34,10 +36,7 @@ def format_crash_detail(
     exc: BaseException, stderr_buffer: collections.deque[str], *, fallback: str = "(no stderr captured)"
 ) -> tuple[int | None, str]:
     """Extract exit_code and format stderr tail from an SDK exception."""
-    try:
-        exit_code: int | None = exc.exit_code  # ty: ignore[unresolved-attribute]
-    except AttributeError:
-        exit_code = None
+    exit_code = exc.exit_code if isinstance(exc, ProcessError) else None
     stderr_tail = "\n".join(stderr_buffer) if stderr_buffer else fallback
     return exit_code, stderr_tail
 

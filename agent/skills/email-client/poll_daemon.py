@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import pathlib
 import re
 import signal
@@ -36,10 +35,13 @@ import uuid
 
 from imap_tools import AND
 
-# Reuse imap_client helpers. realpath (not abspath) so this resolves through the
-# ~/.email-client/poll_daemon.py symlink back to the skill's real directory.
-sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from imap_client import (  # noqa: E402
+# Reuse imap_client helpers. resolve() follows the ~/.email-client/poll_daemon.py
+# symlink back to the skill's real directory.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import contextlib
+
+import daemon_lifecycle
+from imap_client import (
     _env,
     _from_full,
     _state_dir,
@@ -49,7 +51,6 @@ from imap_client import (  # noqa: E402
     list_accounts,
     notify_folders,
 )
-import daemon_lifecycle  # noqa: E402
 
 NOTIF_DIR = pathlib.Path.home() / "agent" / "notifications"
 # Bounded wait for worker threads to notice a stop_event and exit, so shutdown
@@ -111,7 +112,7 @@ def write_notification(account: str, folder: str, meta: dict) -> None:
     final = NOTIF_DIR / fname
     tmp = NOTIF_DIR / f"{fname}.tmp"
     tmp.write_text(json.dumps(notif, ensure_ascii=False, indent=2))
-    os.replace(tmp, final)
+    tmp.replace(final)
 
 
 def get_high_uid(path: pathlib.Path) -> int:
@@ -200,10 +201,8 @@ def folder_worker(account: str, folder: str, interval: int, log, stop_event: thr
             stop_event.wait(RETRY_DELAY_SECS)
         finally:
             if mb is not None:
-                try:
+                with contextlib.suppress(Exception):
                     mb.logout()
-                except Exception:
-                    pass
     log(f"[{account}:{folder}] worker stopped")
 
 
@@ -219,7 +218,7 @@ def write_daemon_died_notification(reason: str) -> None:
     final = NOTIF_DIR / fname
     tmp = NOTIF_DIR / f"{fname}.tmp"
     tmp.write_text(json.dumps(notif, ensure_ascii=False, indent=2))
-    os.replace(tmp, final)
+    tmp.replace(final)
 
 
 def desired_workers() -> set[tuple[str, str]]:
@@ -229,6 +228,52 @@ def desired_workers() -> set[tuple[str, str]]:
         for folder in notify_folders(account):
             wanted.add((account, folder))
     return wanted
+
+
+def _maybe_probe(state_dir: pathlib.Path, log) -> None:
+    """Low-frequency (once/day) Google OAuth client health-probe.
+
+    Runs off the supervisor thread so a dead upstream client is caught and
+    self-healed without any user interaction. Never allowed to crash the daemon.
+    """
+    try:
+        import google_health
+
+        google_health.maybe_run_daily_probe(state_dir, log)
+    except Exception as e:
+        log(f"[google-health] probe skipped: {e}")
+
+
+def _reconcile_workers(
+    workers: dict[tuple[str, str], tuple[threading.Thread, threading.Event]],
+    wanted: set[tuple[str, str]],
+    interval: int,
+    log,
+) -> None:
+    """Start/stop folder workers in place so the running set matches ``wanted``."""
+    for key in list(workers):
+        thread, _ = workers[key]
+        if not thread.is_alive():
+            workers.pop(key)
+            log(f"[{key[0]}:{key[1]}] worker died; restarting")
+    for key in wanted:
+        if key not in workers:
+            account, folder = key
+            stop_event = threading.Event()
+            thread = threading.Thread(
+                target=folder_worker,
+                args=(account, folder, interval, log, stop_event),
+                name=f"{account}:{folder}",
+                daemon=True,
+            )
+            workers[key] = (thread, stop_event)
+            thread.start()
+            log(f"[{account}:{folder}] worker started")
+    for key in list(workers):
+        if key not in wanted:
+            _, stop_event = workers.pop(key)
+            stop_event.set()
+            log(f"[{key[0]}:{key[1]}] worker stopping")
 
 
 def main():
@@ -252,7 +297,7 @@ def main():
     shutdown_event = threading.Event()
     shutdown_reason = "unknown"
 
-    def handle_signal(signum, frame):
+    def handle_signal(signum, _frame):
         nonlocal shutdown_reason
         shutdown_reason = signal.Signals(signum).name
         shutdown_event.set()
@@ -280,39 +325,8 @@ def main():
             if wanted != last_desired:
                 last_desired = wanted
                 log(f"watching: {sorted(wanted)}")
-            # Low-frequency (once/day) Google OAuth client health-probe. Runs off
-            # the supervisor thread so a dead upstream client is caught and
-            # self-healed without any user interaction. Never allowed to crash
-            # the daemon.
-            try:
-                import google_health
-
-                google_health.maybe_run_daily_probe(state_dir, log)
-            except Exception as e:
-                log(f"[google-health] probe skipped: {e}")
-            for key in list(workers):
-                thread, _ = workers[key]
-                if not thread.is_alive():
-                    workers.pop(key)
-                    log(f"[{key[0]}:{key[1]}] worker died; restarting")
-            for key in wanted:
-                if key not in workers:
-                    account, folder = key
-                    stop_event = threading.Event()
-                    thread = threading.Thread(
-                        target=folder_worker,
-                        args=(account, folder, args.interval, log, stop_event),
-                        name=f"{account}:{folder}",
-                        daemon=True,
-                    )
-                    workers[key] = (thread, stop_event)
-                    thread.start()
-                    log(f"[{account}:{folder}] worker started")
-            for key in list(workers):
-                if key not in wanted:
-                    _, stop_event = workers.pop(key)
-                    stop_event.set()
-                    log(f"[{key[0]}:{key[1]}] worker stopping")
+            _maybe_probe(state_dir, log)
+            _reconcile_workers(workers, wanted, args.interval, log)
             shutdown_event.wait(INDEX_CHECK_SECS)
     finally:
         for _, stop_event in workers.values():

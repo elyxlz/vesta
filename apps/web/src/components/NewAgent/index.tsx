@@ -9,6 +9,7 @@ import {
 } from "@/api/agents";
 import { stepTransition } from "@/lib/motion";
 import { errorMessage } from "@/lib/utils";
+import { useLayout } from "@/stores/use-layout";
 import {
   loadOnboarding,
   saveOnboarding,
@@ -27,6 +28,7 @@ const START_TIMEOUT_MS = 10 * 60 * 1000;
 export function NewAgent() {
   const step = useOnboarding((s) => s.step);
   const setStep = useOnboarding((s) => s.setStep);
+  const navbarHeight = useLayout((s) => s.navbarHeight);
   // Refreshing mid-onboarding restores the name and personality (never the credentials, which
   // stay in memory only); a resumed run re-collects the provider and skips whatever it already has.
   const [agentName, setAgentName] = useState(
@@ -60,10 +62,13 @@ export function NewAgent() {
   useEffect(() => {
     if (step !== "creating" || createError !== null) return;
     if (!agentName || !personality || !providerResult) return;
+    // Read through a call so each check re-reads the live flag: the cleanup flips it
+    // between awaits, which a narrowed local can't see.
     let cancelled = false;
+    const isCancelled = () => cancelled;
     attemptRef.current += 1;
     const firstAttempt = attemptRef.current === 1;
-    (async () => {
+    const run = async () => {
       try {
         // Phase 1: create the empty agent container.
         try {
@@ -74,7 +79,7 @@ export function NewAgent() {
             // A rejected name never counts as an attempt: resubmitting it
             // unchanged must not read the next 409 as "already created".
             attemptRef.current = 0;
-            if (!cancelled) {
+            if (!isCancelled()) {
               setCreateError(errorMessage(e, "creation failed"));
               setStep("name");
             }
@@ -82,11 +87,11 @@ export function NewAgent() {
           }
           if (failure === "retryable") throw e;
         }
-        if (cancelled) return;
+        if (isCancelled()) return;
 
         // Phase 2: wait for the agent's HTTP server to be reachable.
         await waitUntilRunning(agentName, START_TIMEOUT_MS);
-        if (cancelled) return;
+        if (isCancelled()) return;
 
         // Phase 3: set credentials + preferences (provider, personality, model, context, timezone).
         try {
@@ -98,7 +103,7 @@ export function NewAgent() {
           );
         } catch (e) {
           if (isCredentialRejection(e)) {
-            if (!cancelled) {
+            if (!isCancelled()) {
               setProviderResult(null);
               setCreateError(errorMessage(e, "provider setup failed"));
               setStep("provider");
@@ -107,20 +112,21 @@ export function NewAgent() {
           }
           throw e;
         }
-        if (cancelled) return;
+        if (isCancelled()) return;
 
         // Phase 4: wait for the provision-triggered restart to settle.
         await waitUntilAlive(agentName, START_TIMEOUT_MS);
-        if (cancelled) return;
+        if (isCancelled()) return;
 
         clearOnboarding();
         setStep("done");
       } catch (e) {
         // Transient failure: stay here with everything collected intact; the
         // retry button clears the error, which re-enters this pipeline.
-        if (!cancelled) setCreateError(errorMessage(e, "creation failed"));
+        if (!isCancelled()) setCreateError(errorMessage(e, "creation failed"));
       }
-    })();
+    };
+    void run();
     return () => {
       cancelled = true;
     };
@@ -194,14 +200,29 @@ export function NewAgent() {
   // the same Orb lerps busy -> alive instead of remounting cold.
   const contentKey = step === "done" ? "creating" : step;
 
+  // The step scrolls when it can't fit (a short screen + the tall personality
+  // grid) instead of clipping. m-auto centers the child when it fits and pins it
+  // to the top when it overflows, which justify-center can't (it clips the top in
+  // a scroll container). Top padding clears the absolute navbar; bottom padding
+  // clears the mobile home indicator.
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex-1 flex items-center justify-center">
-        <AnimatePresence mode="wait">
-          <motion.div key={contentKey} {...stepTransition}>
-            {content}
-          </motion.div>
-        </AnimatePresence>
+    <div className="flex h-full flex-col">
+      <div className="flex-1 overflow-y-auto overscroll-contain">
+        <div
+          className="flex min-h-full w-full flex-col"
+          style={{
+            paddingTop: `calc(${String(navbarHeight)}px + 1rem)`,
+            paddingBottom: "calc(env(safe-area-inset-bottom) + 1.5rem)",
+          }}
+        >
+          <div className="m-auto flex w-full justify-center">
+            <AnimatePresence mode="wait">
+              <motion.div key={contentKey} {...stepTransition}>
+                {content}
+              </motion.div>
+            </AnimatePresence>
+          </div>
+        </div>
       </div>
     </div>
   );

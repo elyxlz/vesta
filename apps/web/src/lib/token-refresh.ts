@@ -48,7 +48,11 @@ async function doRefresh(): Promise<RefreshResult> {
     });
     if (resp.status === 401) return "expired";
     if (!resp.ok) return "transient";
-    const data = await resp.json();
+    const data = (await resp.json()) as {
+      access_token: string;
+      refresh_token: string;
+      expires_in: number;
+    };
     updateTokens(data.access_token, data.refresh_token, data.expires_in);
     return "ok";
   } catch {

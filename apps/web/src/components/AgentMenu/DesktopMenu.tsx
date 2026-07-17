@@ -5,7 +5,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { buildActionSections } from "./AgentActions";
+import { buildActionSections } from "./action-sections";
 import type { MenuProps } from "./types";
 
 export function DesktopMenu({ state, open, onOpenChange, trigger }: MenuProps) {

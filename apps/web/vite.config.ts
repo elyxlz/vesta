@@ -2,12 +2,13 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import basicSsl from "@vitejs/plugin-basic-ssl";
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig } from "vitest/config";
+import type { Plugin } from "vite";
 import path from "path";
 
 function resolveInNodeModules(pkgRelPath: string): string {
   let dir = __dirname;
-  while (true) {
+  for (;;) {
     const candidate = path.join(dir, "node_modules", pkgRelPath);
     if (existsSync(candidate)) return candidate;
     const parent = path.dirname(dir);
@@ -23,28 +24,29 @@ const motionPlusDomEntry = resolveInNodeModules(
   "motion-plus-dom/dist/es/index.mjs",
 );
 
-const host = process.env.TAURI_DEV_HOST;
+// Set by apps/desktop/scripts/dev.mjs: plain http on a fixed port so the
+// Electron dev window can load it.
+const desktopDev = process.env.VESTA_DESKTOP_DEV === "1";
+const useHttps = !desktopDev && process.env.HTTPS !== "false";
 
-const isTauri = !!process.env.TAURI_ENV_PLATFORM;
-const useHttps = !isTauri && process.env.HTTPS !== "false";
-
-// vestad mounts the bundled SPA at /app/. Anything else (vite dev, tauri,
-// self-hosted) serves from the root.
+// vestad mounts the bundled SPA at /app/. Anything else (vite dev, the
+// desktop app, self-hosted) serves from the root.
 const vestadHosted = process.env.VITE_VESTAD_HOSTED === "true";
 
 const cargoToml = readFileSync(
   path.resolve(__dirname, "..", "..", "vestad", "Cargo.toml"),
   "utf-8",
 );
-const versionMatch = cargoToml.match(
-  /\[package\][^[]*?\nversion\s*=\s*"([^"]+)"/,
+const versionMatch = /\[package\][^[]*?\nversion\s*=\s*"([^"]+)"/.exec(
+  cargoToml,
 );
-if (!versionMatch) {
+const versionCapture = versionMatch?.[1];
+if (versionCapture === undefined) {
   throw new Error(
     "could not read [package] version from ../../vestad/Cargo.toml",
   );
 }
-const version = versionMatch[1];
+const version: string = versionCapture;
 
 function installScriptsPlugin(): Plugin {
   return {
@@ -70,8 +72,6 @@ export default defineConfig({
   base: vestadHosted ? "/app/" : "/",
   define: {
     __APP_VERSION__: JSON.stringify(version),
-    __TAURI__: JSON.stringify(isTauri),
-    __PLATFORM__: JSON.stringify(process.env.TAURI_ENV_PLATFORM || ""),
   },
   plugins: [
     react(),
@@ -85,13 +85,29 @@ export default defineConfig({
       "motion-plus-dom": motionPlusDomEntry,
     },
   },
+  test: {
+    projects: [
+      {
+        extends: true,
+        test: {
+          include: ["src/**/*.test.tsx"],
+          environment: "jsdom",
+          setupFiles: ["./src/vitest.setup.ts"],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          include: ["src/**/*.test.ts"],
+          environment: "node",
+        },
+      },
+    ],
+  },
   clearScreen: false,
   server: {
-    port: isTauri ? 1420 : 1430,
+    port: desktopDev ? 1420 : 1430,
     strictPort: true,
-    host: host || "0.0.0.0",
-    hmr: host
-      ? { protocol: "ws", host, port: isTauri ? 1421 : 1431 }
-      : undefined,
+    host: "0.0.0.0",
   },
 });

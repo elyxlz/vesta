@@ -8,7 +8,6 @@ import json
 import sys
 
 import pytest
-
 from finance_cli import cli
 
 

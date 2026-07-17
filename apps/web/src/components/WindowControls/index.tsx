@@ -1,33 +1,60 @@
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Minus, Square, X } from "lucide-react";
-import { useTauri } from "@/providers/TauriProvider";
+import { useEffect, useState } from "react";
+import { Copy, Minus, Square, X } from "lucide-react";
+import { native } from "@/lib/native";
 
+// Custom min/max/close for platforms where the app draws its own title-bar
+// controls (Windows); null on macOS (native traffic lights) and in the browser.
 export function WindowControls() {
-  const { isLinux, isTauri } = useTauri();
+  const controls = native.windowControls;
+  const [maximized, setMaximized] = useState(false);
 
-  if (!isTauri || !isLinux) return null;
+  useEffect(() => {
+    if (!controls) return;
+    let active = true;
+    void controls.isMaximized().then((m) => {
+      if (active) setMaximized(m);
+    });
+    const unsubscribe = controls.onMaximizedChange(setMaximized);
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [controls]);
 
-  const win = getCurrentWindow();
+  if (!controls) return null;
 
   return (
-    <div className="flex items-center gap-0.5 ml-2">
+    <div className="ml-1.5 flex items-center gap-1">
       <button
-        onClick={() => win.minimize()}
-        className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+        aria-label="minimize"
+        onClick={() => {
+          void controls.minimize();
+        }}
+        className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
       >
-        <Minus className="h-3.5 w-3.5" />
+        <Minus className="size-4" />
       </button>
       <button
-        onClick={() => win.toggleMaximize()}
-        className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+        aria-label={maximized ? "restore" : "maximize"}
+        onClick={() => {
+          void controls.toggleMaximize();
+        }}
+        className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
       >
-        <Square className="h-3 w-3" />
+        {maximized ? (
+          <Copy className="size-3.5" />
+        ) : (
+          <Square className="size-3.5" />
+        )}
       </button>
       <button
-        onClick={() => win.close()}
-        className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive hover:text-white transition-colors"
+        aria-label="close"
+        onClick={() => {
+          void controls.close();
+        }}
+        className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive hover:text-white"
       >
-        <X className="h-3.5 w-3.5" />
+        <X className="size-4" />
       </button>
     </div>
   );

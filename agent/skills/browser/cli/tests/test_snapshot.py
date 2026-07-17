@@ -6,7 +6,6 @@ from __future__ import annotations
 import json
 
 import pytest
-
 from vesta_browser import snapshot
 
 

@@ -13,6 +13,21 @@ func (wac *WhatsAppClient) AddContact(name, phone string) (Contact, error) {
 	return wac.store.SaveManualContact(name, phone)
 }
 
+// MaxPhoneDigits is the E.164 ceiling on phone-number length. A WhatsApp
+// group ID renders as a longer all-digit string; sending to one as a user JID
+// makes the server log the device out and destroys the pairing (#1169).
+const MaxPhoneDigits = 15
+
+func errIfGroupIDDigits(digits string) error {
+	if len(digits) <= MaxPhoneDigits {
+		return nil
+	}
+	return fmt.Errorf(
+		"'%s' looks like a WhatsApp group ID, not a phone number (%d digits; phone numbers have at most %d). To message a group, use its group name: send --to '<Group Name>'",
+		digits, len(digits), MaxPhoneDigits,
+	)
+}
+
 func (wac *WhatsAppClient) requireManualContact(jid types.JID) error {
 	if jid.Server != types.DefaultUserServer {
 		return nil
@@ -40,6 +55,19 @@ func (wac *WhatsAppClient) requireManualContact(jid types.JID) error {
 }
 
 func (wac *WhatsAppClient) ResolveRecipient(identifier string) (types.JID, error) {
+	jid, err := wac.resolveRecipientJID(identifier)
+	if err != nil {
+		return types.JID{}, err
+	}
+	if jid.Server == types.DefaultUserServer {
+		if err := errIfGroupIDDigits(jid.User); err != nil {
+			return types.JID{}, err
+		}
+	}
+	return jid, nil
+}
+
+func (wac *WhatsAppClient) resolveRecipientJID(identifier string) (types.JID, error) {
 	if identifier == "" {
 		return types.JID{}, fmt.Errorf("recipient identifier cannot be empty")
 	}

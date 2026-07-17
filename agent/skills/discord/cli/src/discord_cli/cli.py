@@ -75,12 +75,14 @@ def load_credentials() -> Credentials:
 
 
 async def api_request(token: str, method: str, path: str, body: pyd.JsonValue | None = None) -> pyd.JsonValue:
-    async with aiohttp.ClientSession(headers={"Authorization": f"Bot {token}"}) as session:
-        async with session.request(method, f"{API_BASE}{path}", json=body) as response:
-            if response.status >= 400:
-                detail = await response.text()
-                raise SystemExit(f"discord api error {response.status}: {detail}")
-            return await response.json()
+    async with (
+        aiohttp.ClientSession(headers={"Authorization": f"Bot {token}"}) as session,
+        session.request(method, f"{API_BASE}{path}", json=body) as response,
+    ):
+        if response.status >= 400:
+            detail = await response.text()
+            raise SystemExit(f"discord api error {response.status}: {detail}")
+        return await response.json()
 
 
 def extract_facts(message: discord.Message, *, self_id: int) -> MessageFacts:

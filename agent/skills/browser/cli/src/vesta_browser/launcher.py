@@ -12,6 +12,7 @@ file the detached process can always write to and tail it for the URL.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import platform
 import re
@@ -71,7 +72,7 @@ def camoufox_installed() -> bool:
 
 def _verify_sha256(path: Path, expected: str) -> None:
     digest = sha256()
-    with open(path, "rb") as f:
+    with path.open("rb") as f:
         for chunk in iter(lambda: f.read(DOWNLOAD_CHUNK), b""):
             digest.update(chunk)
     actual = digest.hexdigest()
@@ -81,7 +82,7 @@ def _verify_sha256(path: Path, expected: str) -> None:
 
 def _download(url: str, dest: Path) -> None:
     req = urllib.request.Request(url, headers={"User-Agent": "vesta-browser"})
-    with urllib.request.urlopen(req, timeout=DOWNLOAD_TIMEOUT_S) as r, open(dest, "wb") as f:
+    with urllib.request.urlopen(req, timeout=DOWNLOAD_TIMEOUT_S) as r, dest.open("wb") as f:
         shutil.copyfileobj(r, f, DOWNLOAD_CHUNK)
 
 
@@ -93,7 +94,7 @@ def _extract_preserving_mode(zip_path: Path, dest: Path) -> None:
             z.extract(info, dest)
             mode = info.external_attr >> 16
             if mode:
-                os.chmod(dest / info.filename, mode)
+                (dest / info.filename).chmod(mode)
 
 
 def ensure_camoufox(override: str | None = None) -> str:
@@ -125,7 +126,7 @@ def ensure_camoufox(override: str | None = None) -> str:
     if exe.is_file():
         shutil.rmtree(staging, ignore_errors=True)
     else:
-        os.replace(staging, home)
+        staging.replace(home)
     return str(exe)
 
 
@@ -155,6 +156,7 @@ def _x_display_reachable(display: str) -> bool:
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     timeout=5,
+                    check=False,
                 ).returncode
                 == 0
             )
@@ -164,7 +166,7 @@ def _x_display_reachable(display: str) -> bool:
     try:
         n = display.lstrip(":").split(".")[0]
         sock_path = f"/tmp/.X11-unix/X{n}"
-        if not os.path.exists(sock_path):
+        if not Path(sock_path).exists():
             return False
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         s.settimeout(2)
@@ -201,10 +203,8 @@ def _ensure_xvfb(display: str, screen: str = "1920x1080x24") -> bool:
             return True
         # Safe to remove now: we just confirmed nothing is listening on :n.
         for stale in (f"/tmp/.X{n}-lock", f"/tmp/.X11-unix/X{n}"):
-            try:
-                os.remove(stale)
-            except OSError:
-                pass
+            with contextlib.suppress(OSError):
+                Path(stale).unlink()
         subprocess.Popen(
             [xvfb, display, "-screen", "0", screen, "-nolisten", "tcp"],
             stdout=subprocess.DEVNULL,
@@ -299,8 +299,9 @@ def launch(
     env = _launch_env(profile_dir, use_headless, window_size)
 
     stderr_log = log_path or Path(f"/tmp/vesta-camoufox-{os.getpid()}.log")
-    log_handle = open(stderr_log, "w+b")
-    try:
+    # The child dups the fd; closing our copy after spawn lets this launch CLI exit
+    # cleanly while the detached browser keeps writing.
+    with stderr_log.open("w+b") as log_handle:
         proc = subprocess.Popen(
             args,
             stdout=subprocess.DEVNULL,
@@ -308,18 +309,12 @@ def launch(
             env=env,
             start_new_session=True,
         )
-    finally:
-        # The child dup'd the fd; our copy is no longer needed and closing it lets
-        # this launch CLI exit cleanly while the detached browser keeps writing.
-        log_handle.close()
 
     try:
         ws_url = _read_ws_url(proc, stderr_log, READY_TIMEOUT_S)
     except Exception:
-        try:
+        with contextlib.suppress(ProcessLookupError):
             proc.kill()
-        except ProcessLookupError:
-            pass
         raise
 
     return RunningCamoufox(
@@ -344,7 +339,5 @@ def stop(running: RunningCamoufox, timeout_s: float = 5.0) -> None:
         if proc.poll() is not None:
             return
         time.sleep(0.1)
-    try:
+    with contextlib.suppress(ProcessLookupError):
         proc.kill()
-    except ProcessLookupError:
-        pass

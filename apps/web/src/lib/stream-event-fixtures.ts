@@ -101,6 +101,9 @@ export const streamEventFixtures = {
       "pending": [
         "email-123"
       ]
+    },
+    "config": {
+      "timezone": "America/New_York"
     }
   }
 } as const;

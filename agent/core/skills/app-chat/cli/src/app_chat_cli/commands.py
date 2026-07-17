@@ -7,9 +7,9 @@ import os
 import pathlib as pl
 import sys
 import typing as tp
-import urllib.request
 import urllib.error
 import urllib.parse
+import urllib.request
 
 from app_chat_cli.bubblelint import bubble_lint_reason
 

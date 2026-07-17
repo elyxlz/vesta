@@ -7,12 +7,13 @@ calls run the registered tool handlers in this process so they see live State.
 """
 
 import asyncio
+import contextlib
 import dataclasses as dc
 import json
 import typing as tp
 
-from .messages import HookContext, HookMatcher
 from .mcp import ToolDef
+from .messages import HookContext, HookMatcher
 from .types import HookEvent
 
 InternalHook = tp.Callable[[dict[str, tp.Any]], tp.Awaitable[None]]
@@ -41,10 +42,8 @@ class Bridge:
     async def stop(self) -> None:
         if self._server is not None:
             self._server.close()
-            try:
+            with contextlib.suppress(OSError, RuntimeError):
                 await self._server.wait_closed()
-            except (OSError, RuntimeError):
-                pass
             self._server = None
 
     async def _handle_conn(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -83,7 +82,7 @@ class Bridge:
                     await handler(payload)
                 except Exception as exc:  # internal bookkeeping must never break the turn
                     self._warn(f"internal hook {event} failed: {exc}")
-        matchers = self.hooks[tp.cast(HookEvent, event)] if event in self.hooks else []
+        matchers = self.hooks[event] if event in self.hooks else []
         tool_use_id = payload["tool_use_id"] if "tool_use_id" in payload else None
         for matcher in matchers:
             for callback in matcher.hooks:

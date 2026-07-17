@@ -5,7 +5,9 @@ import { cn } from "@/lib/utils";
 // per-model author icons from openrouter.ai). One component per provider —
 // add the next provider's mark here and wire it into providers.ts.
 
-type LogoProps = { className?: string };
+interface LogoProps {
+  className?: string;
+}
 
 export function ClaudeLogo({ className }: LogoProps) {
   return (

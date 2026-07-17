@@ -11,7 +11,22 @@ export interface DecoratedRow {
 }
 
 export function rowKey(event: VestaEvent, idxFallback: number): string {
-  return event.ts ? `${event.ts}-${event.type}` : `i-${idxFallback}`;
+  return event.ts ? `${event.ts}-${event.type}` : `i-${String(idxFallback)}`;
+}
+
+function rowGap(
+  msg: VestaEvent,
+  prev: VestaEvent | undefined,
+  showDayStamp: boolean,
+  index: number,
+): string {
+  if (showDayStamp) return "mt-2";
+  if (index === 0) return "";
+  const isTool = msg.type === "tool_start";
+  const prevIsTool = prev?.type === "tool_start";
+  if (isTool && prevIsTool) return "mt-1";
+  if (isTool || prevIsTool) return "mt-2";
+  return prev?.type === msg.type ? "mt-1.5" : "mt-5";
 }
 
 export function buildDecorated(chatMessages: VestaEvent[]): DecoratedRow[] {
@@ -27,26 +42,14 @@ export function buildDecorated(chatMessages: VestaEvent[]): DecoratedRow[] {
       dayKey && (lastDayKey === null || dayKey !== lastDayKey),
     );
     if (dayKey) lastDayKey = dayKey;
-    const isTool = msg.type === "tool_start";
-    const prevIsTool = prev?.type === "tool_start";
-    const gap = showDayStamp
-      ? "mt-2"
-      : i === 0
-        ? ""
-        : isTool && prevIsTool
-          ? "mt-1"
-          : isTool || prevIsTool
-            ? "mt-2"
-            : prev && prev.type === msg.type
-              ? "mt-1.5"
-              : "mt-5";
+    const gap = rowGap(msg, prev, showDayStamp, i);
     const dayLabel =
       showDayStamp && msg.ts ? formatChatDayStampLabel(msg.ts) : "";
     const baseKey = rowKey(msg, i);
     const seen = seenKeys.get(baseKey) ?? 0;
     seenKeys.set(baseKey, seen + 1);
     return {
-      key: seen === 0 ? baseKey : `${baseKey}#${seen}`,
+      key: seen === 0 ? baseKey : `${baseKey}#${String(seen)}`,
       event: msg,
       gap,
       showDayStamp,

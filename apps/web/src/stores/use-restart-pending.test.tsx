@@ -18,9 +18,9 @@ beforeEach(() => {
 describe("useRestartPending", () => {
   it("captures the agent's boot time when a change is flagged", () => {
     useRestartPending.getState().markPending("ada", "files", BOOT_T0);
-    const entry = useRestartPending.getState().pending["ada"];
-    expect(entry.reasons).toEqual(["files"]);
-    expect(entry.since).toBe(BOOT_T0);
+    const entry = useRestartPending.getState().pending.ada;
+    expect(entry?.reasons).toEqual(["files"]);
+    expect(entry?.since).toBe(BOOT_T0);
   });
 
   it("clears the flag once the agent is observed booting with a newer start time", () => {
@@ -28,7 +28,7 @@ describe("useRestartPending", () => {
     useRestartPending
       .getState()
       .reconcile([{ name: "ada", startedAt: BOOT_T1 }]);
-    expect(useRestartPending.getState().pending["ada"]).toBeUndefined();
+    expect(useRestartPending.getState().pending.ada).toBeUndefined();
   });
 
   it("keeps the flag while the agent has not restarted", () => {
@@ -36,7 +36,7 @@ describe("useRestartPending", () => {
     useRestartPending
       .getState()
       .reconcile([{ name: "ada", startedAt: BOOT_T0 }]);
-    expect(useRestartPending.getState().pending["ada"].reasons).toEqual([
+    expect(useRestartPending.getState().pending.ada?.reasons).toEqual([
       "files",
     ]);
   });
@@ -50,17 +50,17 @@ describe("useRestartPending", () => {
       .getState()
       .reconcile([{ name: "ada", startedAt: BOOT_T0 }]);
     // First sighting only pins the baseline; the flag must survive.
-    expect(useRestartPending.getState().pending["ada"].since).toBe(BOOT_T0);
+    expect(useRestartPending.getState().pending.ada?.since).toBe(BOOT_T0);
     useRestartPending
       .getState()
       .reconcile([{ name: "ada", startedAt: BOOT_T1 }]);
-    expect(useRestartPending.getState().pending["ada"]).toBeUndefined();
+    expect(useRestartPending.getState().pending.ada).toBeUndefined();
   });
 
   it("ignores agents with no reported boot time", () => {
     useRestartPending.getState().markPending("ada", "files", BOOT_T0);
     useRestartPending.getState().reconcile([{ name: "ada" }]);
-    expect(useRestartPending.getState().pending["ada"].reasons).toEqual([
+    expect(useRestartPending.getState().pending.ada?.reasons).toEqual([
       "files",
     ]);
   });
@@ -69,15 +69,15 @@ describe("useRestartPending", () => {
     useRestartPending.getState().markPending("ada", "files", BOOT_T0);
     useRestartPending.getState().markPending("ada", "settings", BOOT_T0);
     useRestartPending.getState().clearReason("ada", "settings");
-    const entry = useRestartPending.getState().pending["ada"];
-    expect(entry.reasons).toEqual(["files"]);
-    expect(entry.since).toBe(BOOT_T0);
+    const entry = useRestartPending.getState().pending.ada;
+    expect(entry?.reasons).toEqual(["files"]);
+    expect(entry?.since).toBe(BOOT_T0);
   });
 
   it("keeps a known baseline when a later reason is flagged with no boot time", () => {
     useRestartPending.getState().markPending("ada", "files", BOOT_T0);
     useRestartPending.getState().markPending("ada", "settings", undefined);
-    expect(useRestartPending.getState().pending["ada"].since).toBe(BOOT_T0);
+    expect(useRestartPending.getState().pending.ada?.since).toBe(BOOT_T0);
   });
 
   it("keeps a host-access flag across a restart, since a mount needs a recreate", () => {
@@ -87,7 +87,7 @@ describe("useRestartPending", () => {
     useRestartPending
       .getState()
       .reconcile([{ name: "ada", startedAt: BOOT_T1 }]);
-    expect(useRestartPending.getState().pending["ada"].reasons).toEqual([
+    expect(useRestartPending.getState().pending.ada?.reasons).toEqual([
       "host-access",
     ]);
   });
@@ -98,7 +98,7 @@ describe("useRestartPending", () => {
     useRestartPending
       .getState()
       .reconcile([{ name: "ada", startedAt: BOOT_T1 }]);
-    expect(useRestartPending.getState().pending["ada"].reasons).toEqual([
+    expect(useRestartPending.getState().pending.ada?.reasons).toEqual([
       "host-access",
     ]);
   });
@@ -110,7 +110,7 @@ describe("migrateRestartPending", () => {
       { pending: { ada: ["files", "host-access"] } },
       1,
     );
-    expect(migrated.pending["ada"]).toEqual({
+    expect(migrated.pending.ada).toEqual({
       reasons: ["files", "host-access"],
       since: null,
     });
@@ -118,7 +118,7 @@ describe("migrateRestartPending", () => {
 
   it("carries a v0 boolean flag over as the generic reason", () => {
     const migrated = migrateRestartPending({ pending: { ada: true } }, 0);
-    expect(migrated.pending["ada"]).toEqual({
+    expect(migrated.pending.ada).toEqual({
       reasons: ["settings"],
       since: null,
     });
@@ -129,8 +129,8 @@ describe("migrateRestartPending", () => {
       { pending: { ada: "files", bob: ["files", "bogus"] } },
       1,
     );
-    expect(migrated.pending["ada"]).toBeUndefined();
-    expect(migrated.pending["bob"]).toEqual({
+    expect(migrated.pending.ada).toBeUndefined();
+    expect(migrated.pending.bob).toEqual({
       reasons: ["files"],
       since: null,
     });
