@@ -78,8 +78,8 @@ jiff = "0.2"
 [dev-dependencies]
 tempfile = "3"
 proptest = "1"
-# Builds the one socket shape std/tokio cannot (bound, never listened on): the crashed
-# service's port corpse the reuse probe must reallocate. Already in the tree via tokio.
+# The port-reuse tests' corpse socket: bound, never listened on, the one shape std/tokio
+# cannot build. Already in the tree via tokio.
 socket2 = "0.6"
 # Integration/live e2e tests live here (in vestad's own tests/) so `cargo test -p vestad
 # --test <name>` builds the vestad binary and exposes its path via CARGO_BIN_EXE_vestad —
