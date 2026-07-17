@@ -18,6 +18,8 @@ Suites:
                  set VESTAD_AGENT_IMAGE or docker pull ghcr.io/elyxlz/vesta:latest)
   web            eslint + prettier --check + tsc + vitest (web), eslint + tsc + vitest (desktop),
                  and Expo dependency validation + eslint + tsc + vitest (mobile)
+  mobile-ios     clean Expo prebuild + unsigned iOS simulator compile
+  mobile-android clean Expo prebuild + Android debug compile
   guards         repo-wide ruff check + format, convention guards (lint escapes,
                  comment length, import cycles), shellcheck, skills index, uv.lock,
                  and dashboard-sync freshness + the vite base check
@@ -234,8 +236,16 @@ check_live() {
     # every test starts and self-organizes onto its pool's mutex, so the two agents run in
     # parallel instead of serializing on one. The upgrade e2e (tests/live/upgrade.rs) is part of
     # this suite, so the release gate covers it alongside the other live tests.
-    cargo test -p vestad --test live -- --test-threads=8
+    local test_args=()
+    if [ -n "${LIVE_TEST_FILTER:-}" ]; then
+      test_args+=("$LIVE_TEST_FILTER")
+    fi
+    cargo test -p vestad --test live "${test_args[@]}" -- --test-threads=8
   )
+}
+
+check_mobile_native() {
+  scripts/check-mobile-native.sh "$1"
 }
 
 check_upgrade() {
@@ -273,6 +283,8 @@ for suite in "$@"; do
     vestad) check_vestad ;;
     vestad-docker) check_vestad_docker ;;
     web) check_web ;;
+    mobile-ios) check_mobile_native ios ;;
+    mobile-android) check_mobile_native android ;;
     guards) check_guards ;;
     whatsapp) check_whatsapp ;;
     telegram) check_telegram ;;

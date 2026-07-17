@@ -4,12 +4,14 @@ on:
   push:
     branches: [master]
   pull_request:
-  release:
-    # published only: gh release create fires created+published together, and two
-    # racing runs each execute test-live (double flake exposure and token spend) while
-    # either one failing deletes the release even when the other fully passed.
-    types: [published]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      release_artifacts:
+        description: Upload signed/package artifacts for the release pipeline
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -40,13 +42,9 @@ env:
 
 jobs:
   # ── Detect what changed (for smart PR filtering) ────────────────────────
-  # When release.yml dispatches, it (1) pushes a "Bump version to X" commit
-  # to master and (2) creates a release tag. Both fire CI: a `push` event for
-  # the commit and a `release` event for the tag, on different refs (so
-  # different concurrency groups). The release run produces the artifacts
-  # and is load-bearing; the push run is a redundant validation pass over
-  # the same SHA. Skip the push run for these commits so we don't pay for
-  # two parallel CIs per release.
+  # release.yml pushes a version-bump commit before creating a release. The
+  # release pipeline calls this workflow against the same SHA and produces
+  # the artifacts, so skip the redundant master-push validation run.
   detect-changes:
     name: Scope · Detect changed components
     if: github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'Bump version to ')
@@ -56,6 +54,7 @@ jobs:
       cli: ${{ steps.filter.outputs.cli }}
       app: ${{ steps.filter.outputs.app }}
       mobile: ${{ steps.filter.outputs.mobile }}
+      mobile_native: ${{ steps.filter.outputs.mobile_native }}
       agent: ${{ steps.filter.outputs.agent }}
       go: ${{ steps.filter.outputs.go }}
     steps:
@@ -89,6 +88,16 @@ jobs:
               - '.github/workflows/ci.yml'
               - '.github/workflows/mobile-build.yml'
               - 'check.sh'
+            mobile_native:
+              - 'apps/mobile/app.config.ts'
+              - 'apps/mobile/package.json'
+              - 'apps/mobile/package-lock.json'
+              - 'apps/mobile/assets/**'
+              - 'apps/mobile/modules/**'
+              - 'apps/mobile/plugins/**'
+              - 'scripts/check-mobile-native.sh'
+              - 'scripts/check-mobile-prebuild.sh'
+              - '.github/workflows/ci.yml'
             agent:
               - 'agent/**'
               - '.github/workflows/ci.yml'
@@ -175,6 +184,34 @@ jobs:
 
       - name: Run guard checks
         run: ./check.sh guards
+
+  # ── GitHub Actions syntax and expression validation ─────────────────
+  workflow-lint:
+    name: Workflows · Validate GitHub Actions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25"
+          cache: false
+
+      - name: Run actionlint
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
+  # ── Reject newly introduced vulnerable dependencies on PRs ──────────
+  dependency-review:
+    name: Dependencies · Review vulnerabilities
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/dependency-review-action@v4
 
   # ── Agent checks (lint, types, unit + transport tests) ────────────────
   agent-tests:
@@ -404,82 +441,6 @@ jobs:
             echo "Check the failed attempt's logs above — the retry masked a real race or Docker flake."
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # ── Live agent e2e (real Claude) — RELEASE ONLY ──────────
-  # Runs a real agent container talking to real Claude via the CLAUDE_CREDENTIALS
-  # OAuth secret. These are slow and spend real API tokens, so they do NOT
-  # run on PRs or master pushes — only on the release event, where they gate the
-  # release (the `release` and `push-image` jobs depend on this one, so a live-test
-  # failure blocks publishing artifacts and the image).
-  test-live:
-    name: Agent · Run live end-to-end tests
-    needs: [version-check]
-    if: github.event_name == 'release'
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install Rust
-        uses: ./.github/actions/install-rust
-
-      - uses: Swatinem/rust-cache@v2
-        # Caching is best-effort: a transient cache-service outage must not fail the
-        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
-        continue-on-error: true
-
-      # Live tests must exercise the image being released, not the PREVIOUS release's
-      # :latest — build it from this checkout (shares the GHA layer cache with
-      # test-integration and push-image).
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Build agent image from checkout
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: vestad/Dockerfile
-          load: true
-          tags: vesta:local
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      # The live suite authenticates to Claude with the CLAUDE_CREDENTIALS secret (an OAuth blob),
-      # written to ~/.claude/.credentials.json where the agent reads it. A MISSING secret (forks have
-      # no repo secrets) makes the tests skip themselves. The SDK refreshes the access token at runtime
-      # from the refresh token, so an expired access token is fine as long as the refresh token is live.
-      - name: Write Claude credentials
-        env:
-          CLAUDE_CREDENTIALS: ${{ secrets.CLAUDE_CREDENTIALS }}
-        run: |
-          if [ -z "$CLAUDE_CREDENTIALS" ]; then
-            echo "::warning::CLAUDE_CREDENTIALS not available (fork release?) — live e2e tests will skip"
-            exit 0
-          fi
-          ok=$(printf '%s' "$CLAUDE_CREDENTIALS" | python3 -c "
-          import sys, json
-          json.load(sys.stdin)['claudeAiOauth']['refreshToken']
-          print('ok')" 2>/dev/null || echo "invalid")
-          if [ "$ok" != "ok" ]; then
-            echo "::error::CLAUDE_CREDENTIALS is malformed or missing a refreshToken — re-seed from a fresh 'claude' login (~/.claude/.credentials.json)"
-            exit 1
-          fi
-          mkdir -p ~/.claude
-          printf '%s' "$CLAUDE_CREDENTIALS" > ~/.claude/.credentials.json
-          chmod 600 ~/.claude/.credentials.json
-
-      - name: Build vestad
-        working-directory: vestad
-        run: cargo build
-
-      - name: Run live e2e tests
-        uses: nick-fields/retry@v4
-        with:
-          timeout_minutes: 40
-          max_attempts: 2
-          retry_wait_seconds: 30
-          shell: bash
-          command: VESTAD_AGENT_IMAGE=vesta:local ./check.sh live
-
   # ── Check the vesta CLI on every platform it ships on ────────────────
   check-cli:
     name: CLI · Lint and test (${{ matrix.label }})
@@ -562,79 +523,6 @@ jobs:
       - name: Docker integration tests (vestad, Linux only)
         run: VESTAD_AGENT_IMAGE=vesta:local ./check.sh vestad-docker
 
-  # ── Build vesta client (all unix targets) ─────────────────────────────
-  # Pure build job: clippy + tests live in check-cli, check-vestad, and
-  # check-windows, which also run on non-PR events. Duplicating them here
-  # would only slow releases down.
-  build-vesta:
-    name: CLI · Build (${{ matrix.label }})
-    needs: [version-check]
-    if: github.event_name != 'pull_request'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - label: Linux x64
-            target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-            artifact: vesta-x86_64-unknown-linux-gnu
-          - label: Linux ARM64
-            target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            artifact: vesta-aarch64-unknown-linux-gnu
-            cross: true
-          - label: macOS ARM64
-            target: aarch64-apple-darwin
-            os: macos-latest
-            artifact: vesta-aarch64-apple-darwin
-          - label: macOS x64
-            target: x86_64-apple-darwin
-            os: macos-latest
-            artifact: vesta-x86_64-apple-darwin
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install Rust
-        uses: ./.github/actions/install-rust
-        with:
-          targets: ${{ matrix.target }}
-
-      - uses: Swatinem/rust-cache@v2
-        # Caching is best-effort: a transient cache-service outage must not fail the
-        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
-        continue-on-error: true
-        with:
-          workspaces: |
-            cli
-            vestad
-          key: ${{ matrix.target }}
-
-      - name: Install Linux cross-compile deps
-        if: matrix.cross
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          mkdir -p cli/.cargo
-          echo '[target.aarch64-unknown-linux-gnu]' >> cli/.cargo/config.toml
-          echo 'linker = "aarch64-linux-gnu-gcc"' >> cli/.cargo/config.toml
-
-      - name: Build vesta
-        working-directory: cli
-        run: cargo build --release --target ${{ matrix.target }}
-
-      - name: Package
-        run: |
-          mkdir staging
-          cp cli/target/${{ matrix.target }}/release/vesta staging/
-          tar -czf ${{ matrix.artifact }}.tar.gz -C staging .
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}.tar.gz
-
   # ── Build vestad server (Linux only) ─────────────────────────────────
   build-vestad:
     name: vestad · Build (${{ matrix.label }})
@@ -691,29 +579,10 @@ jobs:
           tar -czf ${{ matrix.artifact }}.tar.gz -C staging .
 
       - uses: actions/upload-artifact@v7
+        if: inputs.release_artifacts
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}.tar.gz
-
-  # ── Test Linux (vestad HTTP API) ──────────────────────────────────────
-  test-linux:
-    name: Release binaries · Run Linux smoke test
-    needs: [build-vestad, build-vesta]
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v8
-        with:
-          pattern: "{vestad-x86_64-unknown-linux-gnu,vesta-x86_64-unknown-linux-gnu}"
-          merge-multiple: true
-
-      - name: Smoke test release binaries
-        run: |
-          for f in *.tar.gz; do tar -xzf "$f"; done
-          chmod +x vestad vesta
-          ./vestad --version
-          ./vesta --version
 
   # ── Windows checks (clippy + tests, runs on PRs too) ─────────────────
   # The CLI ships to Windows users; its tests must actually run on Windows,
@@ -794,11 +663,13 @@ jobs:
           7z a vesta-x86_64-pc-windows-msvc.zip vesta-windows/
 
       - uses: actions/upload-artifact@v7
+        if: inputs.release_artifacts
         with:
           name: vesta-x86_64-pc-windows-msvc
           path: vesta-x86_64-pc-windows-msvc.zip
 
       - uses: actions/upload-artifact@v7
+        if: inputs.release_artifacts
         with:
           name: windows-cli-exe
           path: cli/target/x86_64-pc-windows-msvc/release/vesta.exe
@@ -873,14 +744,14 @@ jobs:
           fi
 
       - name: Collect artifacts
-        if: github.event_name != 'pull_request'
+        if: inputs.release_artifacts
         run: |
           mkdir -p electron-out
           cp apps/desktop/dist/*.dmg apps/desktop/dist/*.zip apps/desktop/dist/*.blockmap apps/desktop/dist/latest-mac.yml electron-out/
           [ "$(ls -A electron-out)" ] || { echo "No artifacts collected"; exit 1; }
 
       - uses: actions/upload-artifact@v7
-        if: github.event_name != 'pull_request'
+        if: inputs.release_artifacts
         with:
           name: electron-darwin-universal
           path: electron-out/*
@@ -934,14 +805,14 @@ jobs:
           npx electron-builder --linux deb rpm --${{ matrix.arch }} --publish never
 
       - name: Collect artifacts
-        if: github.event_name != 'pull_request'
+        if: inputs.release_artifacts
         run: |
           mkdir -p electron-out
           cp apps/desktop/dist/*.deb apps/desktop/dist/*.rpm electron-out/
           [ "$(ls -A electron-out)" ] || { echo "No artifacts collected"; exit 1; }
 
       - uses: actions/upload-artifact@v7
-        if: github.event_name != 'pull_request'
+        if: inputs.release_artifacts
         with:
           name: electron-linux-${{ matrix.arch }}
           path: electron-out/*
@@ -982,7 +853,7 @@ jobs:
           npx electron-builder --win nsis --x64 --publish never
 
       - name: Collect artifacts
-        if: github.event_name != 'pull_request'
+        if: inputs.release_artifacts
         shell: bash
         run: |
           mkdir -p electron-out
@@ -990,10 +861,51 @@ jobs:
           [ "$(ls -A electron-out)" ] || { echo "No artifacts collected"; exit 1; }
 
       - uses: actions/upload-artifact@v7
-        if: github.event_name != 'pull_request'
+        if: inputs.release_artifacts
         with:
           name: electron-win32-x64
           path: electron-out/*
+
+  # ── Compile generated native mobile projects without EAS quota ───────
+  mobile-native:
+    name: Mobile · Compile (${{ matrix.label }})
+    needs: detect-changes
+    if: >-
+      github.event_name != 'pull_request' ||
+      needs.detect-changes.outputs.mobile_native == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: iOS simulator
+            platform: ios
+            os: macos-latest
+          - label: Android debug
+            platform: android
+            os: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+
+      - name: Set up Java
+        if: matrix.platform == 'android'
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install mobile dependencies
+        run: npm --prefix apps/mobile ci
+
+      - name: Compile native project
+        run: ./check.sh mobile-${{ matrix.platform }}
 
   # ── Merge gate (single required check for branch protection) ─────────
   merge-gate-ci:
@@ -1002,8 +914,11 @@ jobs:
     name: merge-gate-ci
     if: always()
     needs:
+      - detect-changes
       - version-check
       - guards
+      - workflow-lint
+      - dependency-review
       - agent-tests
       - go-checks
       - install-script-check
@@ -1011,14 +926,13 @@ jobs:
       - test-integration
       - check-cli
       - check-vestad
-      - build-vesta
       - build-vestad
-      - test-linux
       - check-windows
       - build-windows
       - build-electron-macos
       - build-electron-linux
       - build-electron-windows
+      - mobile-native
       - validate-mobile-eas
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1028,219 +942,4 @@ jobs:
           if [[ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
             echo "One or more required jobs failed or were cancelled"
             exit 1
-          fi
-
-  # ── Push Docker image (release only) ─────────────────────────────────
-  # Gated on test-live: a live-test failure (via !failure() over needs) skips the
-  # image push, so a broken agent is never published to :latest.
-  push-image:
-    name: Agent image · Publish to GHCR
-    needs: [test-linux, test-live]
-    if: ${{ !failure() && !cancelled() && github.event_name == 'release' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Login to ghcr.io
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: vestad/Dockerfile
-          push: true
-          platforms: linux/amd64,linux/arm64
-          # Beta publish pushes only the version tag. `:latest` is moved onto this
-          # digest later by promote.yml, so stable agents (which pull `:vX.Y.Z`
-          # pinned to the vestad version) are unaffected until promotion.
-          tags: |
-            ghcr.io/${{ github.repository }}:${{ github.event.release.tag_name }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  # TestFlight is the mobile prerelease channel. The release body records the
-  # per-release choice made by release.yml, keeping this release event and its
-  # downstream CI deterministic without enabling public App Store delivery.
-  mobile-testflight:
-    name: Mobile · Build and upload to TestFlight
-    needs: [release]
-    if: >-
-      ${{ !failure() && !cancelled() && github.event_name == 'release' &&
-      contains(github.event.release.body, '<!-- mobile-delivery: testflight -->') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 22
-
-      - name: Set up EAS
-        uses: expo/expo-github-action@v8
-        with:
-          eas-version: latest
-          packager: npm
-          token: ${{ secrets.EXPO_TOKEN }}
-
-      - name: Build and deliver the tagged app to TestFlight
-        working-directory: apps/mobile
-        env:
-          RELEASE_BODY: ${{ github.event.release.body }}
-        run: |
-          CHANGELOG=$(printf '%s\n' "$RELEASE_BODY" | sed -n '/<!-- whats-new -->/,/<!-- \/whats-new -->/p' | sed '1d;$d')
-          jq -n --arg changelog "$CHANGELOG" '{changelog: $changelog}' | \
-            eas workflow:run .eas/workflows/testflight-prerelease.yml \
-              --non-interactive \
-              --wait
-
-  # ── Upload artifacts to release and publish ──────────────────────────
-  release:
-    name: Release · Upload artifacts
-    needs:
-      [
-        build-vesta,
-        build-vestad,
-        test-frontend,
-        test-integration,
-        test-live,
-        test-linux,
-        build-windows,
-        build-electron-macos,
-        build-electron-linux,
-        build-electron-windows,
-        push-image,
-      ]
-    if: ${{ !failure() && !cancelled() && github.event_name == 'release' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v8
-        with:
-          path: artifacts
-          pattern: "!*.dockerbuild"
-
-      - name: Verify install scripts exist at tagged version
-        run: |
-          VERSION="${{ github.event.release.tag_name }}"
-          REPO="elyxlz/vesta"
-          BASE="https://raw.githubusercontent.com/${REPO}/${VERSION}"
-          for script in install.sh install.ps1; do
-            STATUS=$(curl -sL -o /dev/null -w "%{http_code}" "${BASE}/${script}")
-            if [ "$STATUS" != "200" ]; then
-              echo "::error::${script} not found at ${BASE}/${script} (HTTP ${STATUS})"
-              exit 1
-            fi
-            echo "✓ ${script} exists at ${VERSION}"
-          done
-
-      - name: Collect release assets
-        run: |
-          mkdir release
-          # latest*.yml + *.blockmap are electron-updater's feed metadata and
-          # differential-download indexes; the app's exact-version feed reads
-          # them from the release's download URL.
-          find artifacts -type f \( \
-            -name '*.tar.gz' -o -name '*.zip' -o \
-            -name '*.deb' -o -name '*.rpm' -o -name '*.dmg' -o \
-            -name '*.exe' -o -name '*.blockmap' -o \
-            -name 'latest*.yml' \
-          \) -exec cp {} release/ \;
-          ls -lh release/
-
-      - name: Generate checksums
-        run: |
-          cd release
-          sha256sum $(ls | grep -v '\.yml$\|\.blockmap$') > checksums.txt
-
-      # Beta publish: upload assets to the release but leave it a prerelease. Only
-      # opted-in beta clients follow prereleases; stable stays put until promote.yml
-      # flips this release to latest. This is the canary window.
-      - name: Upload assets to prerelease
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          for f in release/*; do
-            gh release upload "${{ github.event.release.tag_name }}" "$f" --clobber
-          done
-          echo "Uploaded assets to prerelease ${{ github.event.release.tag_name }}."
-          echo "Run ./promote.sh ${{ github.event.release.tag_name }} to release it to stable."
-
-  # ── Revert a failed release ───────────────────────────────────────────
-  # release.sh creates the GitHub release BEFORE CI runs, so a failure (e.g.
-  # test-live) leaves a published-but-asset-less release. Updaters that follow
-  # prereleases then pick it up and 404 on the missing binary. Delete the
-  # release and its tag, AND revert the "Bump version to X" commit release.yml
-  # pushed to master — otherwise the version is stranded (master sits at the
-  # bumped version with no release, and the next ./release.sh skips to the next
-  # patch). Reverting it lets a re-run retry the same version.
-  revert-failed-release:
-    name: Release · Revert failed release
-    needs:
-      [
-        build-vesta,
-        build-vestad,
-        test-frontend,
-        test-integration,
-        test-live,
-        test-linux,
-        build-windows,
-        build-electron-macos,
-        build-electron-linux,
-        build-electron-windows,
-        push-image,
-        mobile-testflight,
-        release,
-      ]
-    if: ${{ failure() && github.event_name == 'release' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: master
-          fetch-depth: 0
-          token: ${{ secrets.RELEASE_PAT }}
-
-      - name: Configure git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-      - name: Delete the failed release and revert the bump
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
-        run: |
-          TAG="${{ github.event.release.tag_name }}"
-          echo "::warning::release CI failed for ${TAG} — deleting the release and its tag so updaters cannot pick up an asset-less release. Re-run ./release.sh after fixing to retry ${TAG}."
-          gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
-          # Undo the bump with a revert commit, not a force-push: branch protection
-          # forbids force-pushes to master (allow_force_pushes: false). Only revert
-          # when the bump is still the tip, so a commit that landed after it is safe.
-          git fetch origin master
-          if git log origin/master -1 --pretty=%s | grep -q "^Bump version to "; then
-            git reset --hard origin/master
-            git revert --no-edit HEAD
-            git push origin master
-          else
-            echo "::warning::master tip is not a 'Bump version to' commit — leaving it for manual cleanup."
           fi

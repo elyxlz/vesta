@@ -65,9 +65,11 @@ jobs:
             minor) NEW="${major}.$((minor + 1)).0" ;;
             major) NEW="$((major + 1)).0.0" ;;
           esac
-          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
-          echo "new=$NEW" >> "$GITHUB_OUTPUT"
-          echo "tag=v$NEW" >> "$GITHUB_OUTPUT"
+          {
+            echo "current=$CURRENT"
+            echo "new=$NEW"
+            echo "tag=v$NEW"
+          } >> "$GITHUB_OUTPUT"
           echo "Bumping $CURRENT -> $NEW"
 
       - name: Bump version in all sources

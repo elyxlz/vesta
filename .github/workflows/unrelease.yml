@@ -52,21 +52,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
           TAG: ${{ inputs.tag }}
-        run: |
-          set +e
-          PACKAGE_NAME="${GITHUB_REPOSITORY#*/}"
-          VERSION_ID=$(gh api "users/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE_NAME}/versions" \
-            --paginate --jq ".[] | select(.metadata.container.tags | index(\"${TAG}\")) | .id" | head -n 1)
-          if [ -z "$VERSION_ID" ]; then
-            echo "::warning::no ghcr image version tagged ${TAG} found, skipping image cleanup"
-            exit 0
-          fi
-          if gh api --method DELETE "users/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE_NAME}/versions/${VERSION_ID}"; then
-            echo "✓ deleted ghcr.io/${GITHUB_REPOSITORY}:${TAG} (package version ${VERSION_ID})"
-          else
-            echo "::warning::failed to delete ghcr image version ${VERSION_ID}; an orphaned image is harmless"
-          fi
-          exit 0
+        run: scripts/delete-ghcr-tag.sh "$TAG"
 
       - name: Delete release and git tag
         env:

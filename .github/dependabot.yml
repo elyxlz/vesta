@@ -32,6 +32,16 @@ updates:
       node-deps:
         patterns: ["*"]
 
+  # Mobile is deliberately not an npm workspace under /apps and owns a
+  # separate lockfile, so it needs its own update source.
+  - package-ecosystem: npm
+    directory: /apps/mobile
+    schedule:
+      interval: weekly
+    groups:
+      mobile-node-deps:
+        patterns: ["*"]
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
