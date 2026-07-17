@@ -197,7 +197,7 @@ async def _run_one_turn(text: str, *, user: bool, state: vm.State, config: cfg.V
             state.event_bus.emit({"type": "user", "text": text})
         else:
             preview = text[:1000] + "..." if len(text) > 1000 else text
-            logger.system(preview.replace("\n", " "))
+            logger.system(preview)
         state.event_bus.set_state("thinking")
         await process_message(text, state=state, config=config)
     except asyncio.CancelledError:
