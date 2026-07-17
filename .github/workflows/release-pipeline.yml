@@ -1,0 +1,312 @@
+name: Release pipeline
+
+on:
+  release:
+    # release.yml creates one published prerelease event. Keeping delivery in
+    # this workflow prevents release-only jobs from appearing as skipped PR checks.
+    types: [published]
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: release-pipeline-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_MULTIPLEXING: "false"
+
+jobs:
+  verify-release:
+    name: Release · Verify tag and version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Verify release tag matches the source version
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          TAG="${TAG#v}"
+          VERSION=$(grep '^version = ' agent/core/pyproject.toml | cut -d'"' -f2)
+          if [ "$TAG" != "$VERSION" ]; then
+            echo "::error::release tag v${TAG} does not match source version ${VERSION}"
+            exit 1
+          fi
+          echo "Release tag matches source version ${VERSION}"
+
+  # Reuse the same validation and platform builds as PR/master CI. Release
+  # mode additionally uploads the vestad, Windows CLI, and desktop artifacts
+  # for the publishing jobs below.
+  validate-and-build:
+    name: Release · Validate and build shared artifacts
+    needs: verify-release
+    uses: ./.github/workflows/ci.yml
+    with:
+      release_artifacts: true
+    secrets: inherit
+
+  build-vesta:
+    name: CLI · Build release (${{ matrix.label }})
+    needs: verify-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux x64
+            target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: vesta-x86_64-unknown-linux-gnu
+          - label: Linux ARM64
+            target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: vesta-aarch64-unknown-linux-gnu
+            cross: true
+          - label: macOS ARM64
+            target: aarch64-apple-darwin
+            os: macos-latest
+            artifact: vesta-aarch64-apple-darwin
+          - label: macOS x64
+            target: x86_64-apple-darwin
+            os: macos-latest
+            artifact: vesta-x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: ./.github/actions/install-rust
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        continue-on-error: true
+        with:
+          workspaces: |
+            cli
+            vestad
+          key: ${{ matrix.target }}
+
+      - name: Install Linux cross-compile dependencies
+        if: matrix.cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          mkdir -p cli/.cargo
+          echo '[target.aarch64-unknown-linux-gnu]' >> cli/.cargo/config.toml
+          echo 'linker = "aarch64-linux-gnu-gcc"' >> cli/.cargo/config.toml
+
+      - name: Build CLI
+        working-directory: cli
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package CLI
+        run: |
+          mkdir staging
+          cp cli/target/${{ matrix.target }}/release/vesta staging/
+          tar -czf ${{ matrix.artifact }}.tar.gz -C staging .
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.tar.gz
+
+  test-live:
+    name: Agent · Run live release gate
+    needs: verify-release
+    uses: ./.github/workflows/live-tests.yml
+    with:
+      ref: ${{ github.event.release.tag_name }}
+    secrets:
+      CLAUDE_CREDENTIALS: ${{ secrets.CLAUDE_CREDENTIALS }}
+
+  test-linux:
+    name: Release binaries · Run Linux smoke test
+    needs: [validate-and-build, build-vesta]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download Linux release artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: "{vestad-x86_64-unknown-linux-gnu,vesta-x86_64-unknown-linux-gnu}"
+          merge-multiple: true
+
+      - name: Smoke test release binaries
+        run: |
+          for archive in *.tar.gz; do tar -xzf "$archive"; done
+          chmod +x vestad vesta
+          ./vestad --version
+          ./vesta --version
+
+  push-image:
+    name: Agent image · Publish to GHCR
+    needs: [test-linux, test-live]
+    if: ${{ !failure() && !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish versioned agent image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: vestad/Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ghcr.io/${{ github.repository }}:${{ github.event.release.tag_name }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  publish-release:
+    name: Release · Upload artifacts
+    needs: [validate-and-build, build-vesta, test-live, test-linux, push-image]
+    if: ${{ !failure() && !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download all release artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          pattern: "!*.dockerbuild"
+
+      - name: Verify install scripts exist at the release tag
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          BASE="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${VERSION}"
+          for script in install.sh install.ps1; do
+            status=$(curl -sL -o /dev/null -w '%{http_code}' "${BASE}/${script}")
+            if [ "$status" != "200" ]; then
+              echo "::error::${script} is missing at ${BASE}/${script} (HTTP ${status})"
+              exit 1
+            fi
+          done
+
+      - name: Collect release assets
+        run: |
+          mkdir release
+          find artifacts -type f \( \
+            -name '*.tar.gz' -o -name '*.zip' -o \
+            -name '*.deb' -o -name '*.rpm' -o -name '*.dmg' -o \
+            -name '*.exe' -o -name '*.blockmap' -o \
+            -name 'latest*.yml' \
+          \) -exec cp {} release/ \;
+          [ "$(ls -A release)" ] || { echo "::error::no release assets found"; exit 1; }
+
+      - name: Generate checksums
+        run: |
+          cd release
+          find . -maxdepth 1 -type f \
+            ! -name '*.yml' ! -name '*.blockmap' \
+            -exec sha256sum {} + > checksums.txt
+
+      - name: Upload assets to prerelease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for asset in release/*; do
+            gh release upload "${{ github.event.release.tag_name }}" "$asset" --clobber
+          done
+
+  mobile-testflight:
+    name: Mobile · Build and upload to TestFlight
+    needs: publish-release
+    if: >-
+      ${{ !failure() && !cancelled() &&
+      contains(github.event.release.body, '<!-- mobile-delivery: testflight -->') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Set up EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          packager: npm
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Build and deliver the tagged app to TestFlight
+        working-directory: apps/mobile
+        env:
+          RELEASE_BODY: ${{ github.event.release.body }}
+        run: |
+          CHANGELOG=$(printf '%s\n' "$RELEASE_BODY" | sed -n '/<!-- whats-new -->/,/<!-- \/whats-new -->/p' | sed '1d;$d')
+          jq -n --arg changelog "$CHANGELOG" '{changelog: $changelog}' | \
+            eas workflow:run .eas/workflows/testflight-prerelease.yml \
+              --non-interactive \
+              --wait
+
+  revert-failed-release:
+    name: Release · Revert failed release
+    needs:
+      [
+        verify-release,
+        validate-and-build,
+        build-vesta,
+        test-live,
+        test-linux,
+        push-image,
+        publish-release,
+        mobile-testflight,
+      ]
+    if: ${{ failure() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: master
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PAT }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Delete failed release and revert version bump
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          scripts/delete-ghcr-tag.sh "$TAG"
+          gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+          git fetch origin master
+          if git log origin/master -1 --pretty=%s | grep -q '^Bump version to '; then
+            git reset --hard origin/master
+            git revert --no-edit HEAD
+            git push origin master
+          else
+            echo "::warning::master tip is not a version bump; leaving it for manual cleanup"
+          fi

@@ -45,16 +45,22 @@ INFO_PLIST="$MOBILE/ios/Vesta/Info.plist"
 EXPO_PLIST="$MOBILE/ios/Vesta/Supporting/Expo.plist"
 ENTITLEMENTS_PLIST="$MOBILE/ios/Vesta/Vesta.entitlements"
 ANDROID_MANIFEST="$MOBILE/android/app/src/main/AndroidManifest.xml"
+ANDROID_SPLASH="$MOBILE/android/app/src/main/res/drawable/splashscreen_logo.xml"
 
-for generated in "$STORYBOARD" "$INFO_PLIST" "$EXPO_PLIST" "$ENTITLEMENTS_PLIST" "$ANDROID_MANIFEST"; do
+for generated in "$STORYBOARD" "$INFO_PLIST" "$EXPO_PLIST" "$ENTITLEMENTS_PLIST" "$ANDROID_MANIFEST" "$ANDROID_SPLASH"; do
   if [ ! -f "$generated" ]; then
     echo "error: Expo prebuild did not generate ${generated#"$ROOT/"}" >&2
     exit 1
   fi
 done
 
-if rg -q 'imageView|SplashScreenLogo' "$STORYBOARD"; then
+if grep -Eq 'imageView|SplashScreenLogo' "$STORYBOARD"; then
   echo "error: generated iOS launch storyboard is not blank" >&2
+  exit 1
+fi
+
+if ! grep -q '@android:color/transparent' "$ANDROID_SPLASH"; then
+  echo "error: generated Android launch drawable is not blank" >&2
   exit 1
 fi
 

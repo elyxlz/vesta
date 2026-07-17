@@ -107,6 +107,12 @@ const config: ExpoConfig = {
       "expo-splash-screen",
       {
         backgroundColor: nativeConfigTokens.splashBackground,
+        android: {
+          // Expo's Android theme always references a splash drawable. Keep the
+          // native launch screen visually blank while still generating the
+          // resource required by Android's linker.
+          drawable: { icon: "./assets/blank-splash.xml" },
+        },
       },
     ],
     ...(localIosNoPush ? ["./plugins/with-local-ios-no-push"] : []),
