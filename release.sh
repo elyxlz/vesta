@@ -51,6 +51,42 @@ RUN_ID=$(gh run list --workflow=release.yml --limit=1 --json databaseId --jq '.[
 echo "Watching run ${RUN_ID}..."
 gh run watch "$RUN_ID" --exit-status
 
+# The prerelease is published; release-pipeline.yml now fires on that event to
+# build and deliver. It reverts its own runtime failures, but a run rejected at
+# validation never schedules jobs, so that in-pipeline revert can't fire and the
+# broken tag would linger. Watch the pipeline through startup and pull the beta
+# here if it never launches.
+TAG=$(gh release list --limit 1 --json tagName --jq '.[0].tagName')
+echo
+echo "Prerelease ${TAG} created. Confirming the delivery pipeline launches..."
+
+PIPELINE_ID=""
+for _ in $(seq 1 30); do
+  PIPELINE_ID=$(gh run list --workflow=release-pipeline.yml --event=release --limit 10 \
+    --json databaseId,displayTitle \
+    --jq "map(select(.displayTitle == \"${TAG}\")) | .[0].databaseId // empty")
+  [ -n "$PIPELINE_ID" ] && break
+  sleep 4
+done
+
+if [ -z "$PIPELINE_ID" ]; then
+  echo "Warning: no release-pipeline run found for ${TAG} yet; watch it in Actions."
+else
+  while true; do
+    read -r STATUS CONCLUSION <<<"$(gh run view "$PIPELINE_ID" --json status,conclusion --jq '"\(.status) \(.conclusion // "")"')"
+    if [ "$STATUS" = "completed" ] && [ "$CONCLUSION" = "startup_failure" ]; then
+      echo "The release pipeline for ${TAG} failed at startup, so its own cleanup never ran."
+      echo "Pulling the broken beta..."
+      gh workflow run unrelease.yml -f tag="$TAG"
+      echo "Fix the workflow, then re-run ./release.sh."
+      exit 1
+    fi
+    [ "$STATUS" = "queued" ] || break
+    sleep 5
+  done
+  echo "Pipeline launched for ${TAG}; it owns delivery and cleanup from here."
+fi
+
 cat <<'EOF'
 
 This ships a BETA (prerelease). Only opted-in beta clients receive it; stable users
