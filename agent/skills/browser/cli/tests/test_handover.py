@@ -158,28 +158,11 @@ def test_free_port_returns_a_bindable_port():
         s.close()
 
 
-def test_free_display_skips_existing_seats(tmp_path, monkeypatch):
+def test_free_display_skips_live_seats(monkeypatch):
     # A real desktop seat (:0/:1) already has a LIVE X server; handover must never pick it, else
-    # x11vnc grabs the live seat and noVNC hangs. Bind real listeners on :99 and :100; land on :101.
-    x11 = tmp_path / "x11"
-    x11.mkdir()
-    monkeypatch.setattr(handover, "_X11_UNIX_DIR", x11)
-    seats = []
-    for n in (99, 100):
-        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        s.bind(str(x11 / f"X{n}"))
-        s.listen(1)
-        seats.append(s)
-    try:
-        assert handover._free_display() == ":101"
-    finally:
-        for s in seats:
-            s.close()
-
-
-def test_free_display_returns_base_when_free(monkeypatch):
-    monkeypatch.setattr(handover.Path, "exists", lambda self: False)
-    assert handover._free_display() == ":99"
+    # x11vnc grabs the live seat and noVNC hangs. :99 and :100 answer; it must land on :101.
+    monkeypatch.setattr(handover.launcher, "_x_display_reachable", lambda disp: disp in {":99", ":100"})
+    assert handover._free_display() == ":101"
 
 
 def test_alive_false_for_none_and_dead_pid():
@@ -220,29 +203,9 @@ def test_status_all_false_when_idle():
 # ── display selection: liveness, not file existence ───────────
 
 
-def test_free_display_skips_live_but_reuses_stale_socket(tmp_path, monkeypatch):
-    """A leftover socket with no server behind it must not count as "in use".
-
-    Regression: _free_display used to treat any /tmp/.X11-unix/Xn FILE as taken, so Xvfb
-    corpses (crash or a container restart that leaves /tmp intact) accumulated until the whole
-    range read as full and every handover failed with "no free X display".
-    """
-    x11 = tmp_path / "x11"
-    x11.mkdir()
-    monkeypatch.setattr(handover, "_X11_UNIX_DIR", x11)
-
-    # :99 has a real listener -> in use; :100 is a stale leftover socket -> free.
-    live = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    live.bind(str(x11 / "X99"))
-    live.listen(1)
-    stale = x11 / "X100"
-    stale.touch()
-    try:
-        assert handover._display_in_use(99) is True
-        assert handover._display_in_use(100) is False
-        # the stale corpse is unlinked so it stops blocking the range
-        assert not stale.exists()
-        # first free display is the stale one, not blocked by its leftover file
-        assert handover._free_display(start=99) == ":100"
-    finally:
-        live.close()
+def test_free_display_reuses_a_dead_display(monkeypatch):
+    # Regression: _free_display judged a display taken by its /tmp/.X11-unix/Xn socket FILE, so a
+    # dead Xvfb's leftover socket (crash, or a restart that leaves /tmp intact) blocked the number
+    # and corpses eventually exhausted the range. Judging by liveness makes a dead display reusable.
+    monkeypatch.setattr(handover.launcher, "_x_display_reachable", lambda disp: False)
+    assert handover._free_display(start=99) == ":99"
