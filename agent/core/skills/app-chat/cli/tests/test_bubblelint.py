@@ -19,6 +19,11 @@ def test_bubble_lint_passes():
         "the W.A.S.T.E. system is down",
         "see https://example.com/a.b.c for the details",
         "call Dr. Smith back today",
+        "meet on Jan. 5",
+        "call Acme Inc. tomorrow",
+        "it's on Oxford Ave. somewhere",
+        "ask Jr. about it",
+        "see vol. 3 for that",
         "wait... what",
         "hmm... ok",
         "it's in main.py",
@@ -35,6 +40,11 @@ def test_bubble_lint_blocks():
         "hey! how are you?",
         "nice! on it",
         "wait... what. ok",
+        # An abbreviation that can end a thought would hide these walls, so none is protected.
+        "the answer is no. anyway i tried",
+        "eggs, milk, etc. also bread",
+        "one sec. i'll check",
+        "takes 20 min. i'll wait",
         (
             "so the thing about the deploy is that it kept timing out on the build step "
             "and i had to bump the worker memory and also tweak the cache config and re-run "

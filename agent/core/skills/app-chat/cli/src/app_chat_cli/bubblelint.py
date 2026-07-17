@@ -19,8 +19,14 @@ BUBBLE_MAX_CHARS = 220  # a genuinely long single bubble
 _URL_RE = re.compile(r"https?://\S+")  # urls
 _DECIMAL_RE = re.compile(r"\b\d+[.,]\d+\b")  # decimals: 8.6, 86,5
 _INITIALISM_RE = re.compile(r"\b(?:[A-Za-z]\.){2,}")  # initialisms: W.A.S.T.E., U.K.
+# Abbreviations, an allowlist, so an unlisted one reads as a full stop. Every entry is a word
+# that is always followed by more, never one that can end a thought: protecting "etc." or "min."
+# would blank the stop in "eggs, milk, etc. also bread" and let the wall through. Dotted forms
+# (e.g., a.m., U.K.) are absent because _INITIALISM_RE already covers them.
 _ABBR_RE = re.compile(
-    r"\b(?:mr|mrs|ms|dr|prof|st|vs|etc|e\.g|i\.e|a\.m|p\.m|u\.k|u\.s|approx|no|fig)\.",
+    r"\b(?:mr|mrs|ms|dr|prof|jr|sr|st|vs|approx|fig"
+    r"|jan|feb|mar|apr|jun|jul|aug|sept|sep|oct|nov|dec"
+    r"|inc|ltd|co|corp|ave|rd|blvd|vol|ch|pp)\.",
     re.IGNORECASE,
 )
 _ELLIPSIS_RE = re.compile(r"\.{3,}")  # ellipsis: a texting beat, not a full stop

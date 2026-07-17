@@ -19,6 +19,11 @@ func TestBubbleLintPasses(t *testing.T) {
 		"the W.A.S.T.E. system is down",                 // initialism protected
 		"see https://example.com/a.b.c for the details", // url protected
 		"call Dr. Smith back today",                     // abbreviation protected
+		"meet on Jan. 5",                                // month abbreviation protected
+		"call Acme Inc. tomorrow",                       // company abbreviation protected
+		"it's on Oxford Ave. somewhere",                 // street abbreviation protected
+		"ask Jr. about it",                              // name suffix protected
+		"see vol. 3 for that",                           // reference abbreviation protected
 		"wait... what",                                  // ellipsis is a beat, not a full stop
 		"hmm... ok",                                     // ellipsis is a beat, not a full stop
 		"it's in main.py",                               // no whitespace gap, so not a full stop
@@ -44,6 +49,11 @@ func TestBubbleLintBlocks(t *testing.T) {
 		{"text after a question mark", "hey! how are you?"},
 		{"text after an exclamation mark", "nice! on it"},
 		{"ellipsis does not license a later full stop", "wait... what. ok"},
+		// An abbreviation that can end a thought would hide these walls, so none is protected.
+		{"no. is not protected", "the answer is no. anyway i tried"},
+		{"etc. is not protected", "eggs, milk, etc. also bread"},
+		{"sec. is not protected", "one sec. i'll check"},
+		{"min. is not protected", "takes 20 min. i'll wait"},
 		{"long single sentence", "so the thing about the deploy is that it kept timing out on the build step and i had to bump the worker memory and also tweak the cache config and re-run it twice and then clear the layer cache before it finally went green for us this afternoon"},
 	}
 	for _, c := range cases {
