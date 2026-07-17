@@ -17,13 +17,10 @@ jobs:
       profile: production
       message: ${{ inputs.changelog }}
 
-  testflight:
-    name: Deliver to internal TestFlight
+  submit_ios:
+    name: Upload to TestFlight
     needs: [build_ios]
-    type: testflight
+    type: submit
     params:
       build_id: ${{ needs.build_ios.outputs.build_id }}
       profile: production
-      changelog: ${{ inputs.changelog }}
-      submit_beta_review: false
-      wait_processing_timeout_seconds: 3600
