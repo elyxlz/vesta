@@ -45,7 +45,10 @@ def mask(match: re.Match[str]) -> str:
     return match.group(0) if REDACTED in match.group(0) else REDACTED
 
 
-def redact_json(value):
+type JsonValue = str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
+
+
+def redact_json(value: JsonValue) -> JsonValue:
     """Recursively apply the mask regex to every string inside a parsed JSON value. Redacting the
     decoded structure (not the serialized blob) guarantees the re-serialized event is still valid
     JSON: a raw text .sub can splice `[REDACTED]` across a `\"`/escape boundary and corrupt the blob,
@@ -97,8 +100,9 @@ def scrub(conn: sqlite3.Connection, ids: list[int]) -> int:
         new_obj = redact_json(obj)
         if new_obj != obj:
             # Re-serialize only when a real redaction changed the structure, so events with no
-            # secret are never rewritten (a reformat-only diff would rewrite every event).
-            changed[row_id] = json.dumps(new_obj, ensure_ascii=False)
+            # secret are never rewritten (a reformat-only diff would rewrite every event). Match
+            # events.py's json.dumps(event) so a scrubbed blob keeps the fleet's byte representation.
+            changed[row_id] = json.dumps(new_obj)
     if not changed:
         return 0
     changed_ids = list(changed)
