@@ -28,9 +28,17 @@ x86_64, ~650 MB) from GitHub, verifies its sha256, and extracts it to
 No Chromium, no Xvfb, no display: Camoufox runs headless and fully fingerprint-spoofed. Check
 state with `browser doctor`.
 
-It does need GTK3, which the image installs (headless still runs GTK init). Without it Camoufox
-exits 255 before BiDi with `libgtk-3.so.0: cannot open shared object file`. On a non-vesta image
-install GTK3: `libgtk-3-0t64` on Debian trixie and later, `libgtk-3-0` on bookworm and earlier.
+## Shared library dependencies
+
+Headless Camoufox is still Gecko, so it dlopens GTK, X, dbus-glib and ALSA at startup. Missing any
+of them, `browser launch` exits 255 before BiDi with an XPCOMGlueLoad error (`libgtk-3.so.0: cannot
+open shared object file`). The Vesta image installs them at build time. `browser doctor` reports
+them under `shared_libs`, and on a box whose image predates that (or any non-vesta image) prints the
+line to fix it:
+
+```bash
+apt-get install -y libgtk-3-0 libgdk-pixbuf-2.0-0 libx11-xcb1 libdbus-glib-1-2 libxtst6 libasound2
+```
 
 ## Handover dependencies
 

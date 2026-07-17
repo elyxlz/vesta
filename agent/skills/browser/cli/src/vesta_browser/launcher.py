@@ -13,6 +13,7 @@ file the detached process can always write to and tail it for the URL.
 from __future__ import annotations
 
 import contextlib
+import ctypes
 import os
 import platform
 import re
@@ -68,6 +69,35 @@ def camoufox_home() -> Path:
 
 def camoufox_installed() -> bool:
     return (camoufox_home() / "camoufox").is_file()
+
+
+# Gecko dlopens these at startup even headless; one missing and Camoufox exits 255 before BiDi with
+# an XPCOMGlueLoad error. The Vesta image bakes them in, so this names the gap on a box whose image
+# predates that. The apt names are the ones that resolve on both bookworm and trixie.
+CAMOUFOX_SHARED_LIBS = (
+    "libgtk-3.so.0",
+    "libgdk_pixbuf-2.0.so.0",
+    "libX11-xcb.so.1",
+    "libdbus-glib-1.so.2",
+    "libXtst.so.6",
+    "libasound.so.2",
+)
+CAMOUFOX_LIBS_INSTALL = "apt-get install -y libgtk-3-0 libgdk-pixbuf-2.0-0 libx11-xcb1 libdbus-glib-1-2 libxtst6 libasound2"
+
+
+def libs_readiness() -> dict[str, bool | list[str] | str]:
+    """Report the Camoufox shared libs the dynamic loader cannot resolve, for `browser doctor` to
+    surface the gap by name rather than as an exit-255 launch failure to decode."""
+    missing: list[str] = []
+    for soname in CAMOUFOX_SHARED_LIBS:
+        try:
+            ctypes.CDLL(soname)
+        except OSError:
+            missing.append(soname)
+    report: dict[str, bool | list[str] | str] = {"ready": not missing, "missing": missing}
+    if missing:
+        report["install"] = CAMOUFOX_LIBS_INSTALL
+    return report
 
 
 def _verify_sha256(path: Path, expected: str) -> None:
