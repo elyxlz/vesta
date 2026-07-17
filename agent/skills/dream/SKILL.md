@@ -3,7 +3,7 @@ name: dream
 description: Self-improvement and memory curation; used nightly by the dreamer or anytime.
 ---
 
-# Dream - Self-Improvement & Memory Curation
+# Dream: Self-Improvement & Memory Curation
 
 ## Your files
 
@@ -13,35 +13,21 @@ description: Self-improvement and memory curation; used nightly by the dreamer o
 
 ## Order of operations
 
-0. **Curiosity**: spend a real moment on yourself before the retrospective.
+0. **Curiosity**
 1. **Self-improvement**: retrospective, review, fix, validate, upstream, recurrence sweep
-2. **User State**: update the MEMORY.md snapshot and the contacts files
-3. **Memory curation**: prune, consolidate, move things out
-4. **Workspace cleanup**: keep the filesystem clean and disk usage manageable
-5. **Sensitive data cleanup**: purge secrets from history and files
-6. **Summary**: write tonight's dreamer summary
+2. **User State**
+3. **Memory curation**
+4. **Workspace cleanup**
+5. **Sensitive data cleanup**
+6. **Summary**
 
 ## Before you start
 
 Write a thorough plan first. For each phase: what you intend to fix, what to prune from memory, what to file upstream, what to clean up. Be specific. Then execute it step by step.
 
-**Every diagnostic you run tonight reads a history you narrated, so it will find you talking about the thing instead of the thing.** This is ONE class, not a series of unrelated flukes: the disk check (the overlay % is host-shared storage, not your footprint), a log grep for a symptom word, the secret scan. You narrate constantly, your narration and your literal tool-call strings all land in `vesta.log` and `events.db`, and your memory files quote your own past incidents. So searching your own history for a symptom is nearly guaranteed to match your discussion of that symptom, which is how a phantom outage eats a whole night.
+**Every diagnostic tonight reads a history you narrated, so it finds you talking about a symptom, not the symptom.** The disk check, a log grep for a symptom word, the secret scan all share this one trap. Before any count or hit becomes a finding, attribute it to a real producer: a hit you cannot trace to something other than yourself is self-noise, and the tell you are inside the trap is the count rising as you investigate (investigating writes more of the word).
 
-So, before ANY count or hit from a self-diagnostic becomes a finding: **attribute it to a producer.** A hit you cannot trace to something other than yourself is self-noise. The tell that you are inside this trap: the number goes UP as you investigate it, because investigating means writing more of the word. Verify the count, not the keyword.
-
-**Attribute by the producer's own vocabulary, never by a tag you memorized.** Log formats change under you, so a tag you remember may exist only on lines newer than the version that introduced it, and filtering on it silently drops every older line. That turns an anti-false-positive rule into a false-negative machine, which is the worse failure: a phantom incident wastes a night, a phantom all-clear hides a real outage from the user. Two things make a log grep trustworthy, and they are the whole recipe:
-
-1. **Anchor to the line start and strip ANSI**, so you match log lines rather than your own shell commands and narration echoed into the file (this alone can cut a count by an order of magnitude): `sed 's/\x1b\[[0-9;]*m//g' ~/agent/logs/vesta.log | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9:]{8} .*<emitter's own words>'`. Exclude the remaining self-producers (`[AGENT]`, `[TOOL CALL]`, and `task_started`/`task_progress` records, whose `description` field echoes your own subagent prompts).
-
-   **Know what this anchor is blind to, or it lies in the other direction.** `^timestamp` matches EMITTER lines only. A tool's captured stdout lands in the log as raw untimestamped continuation lines, so the anchor silently drops it: an anchored grep can return ZERO while dozens of real readings sit in the file. When the thing you want IS tool output, invert the filter (take lines with NO timestamp, carry the last-seen timestamp above them for the time) and still drop narration. Two traps in the same pass: the `[AGENT]` exclusion does not catch a SUBAGENT's report, which can be an analysis table full of the exact string you are counting; and your own grep command is logged verbatim, so the count RISES as you investigate.
-
-2. **Match the emitter's literal vocabulary** (`Rate limit rejected`, `allowed_warning`), not the symptom word you have in mind. Grepping a bare `429` matches UUIDs and token counts; grepping `rejected` matches you.
-
-3. **Check the healthy case is even recordable before reading absence as evidence.** Bash stdout is captured only on NON-ZERO exit, so a health helper that exits 0 on success can never log a success. A store of only failures cannot date the start of an outage, no matter how hard you grep, and "no records" there means "not recordable", not "not happening". `events.db` is stricter still: its `tool_end` carries only `{type,tool,subagent,ts}` and stores no output for any command.
-
-Then **confirm the filter can still see a known-true positive before you trust a zero.** A zero from an untested filter is not evidence of health. Judge scanner hits by their context (values are masked, so reviewing is safe); judge your own disk growth by `du -sh ~/` alone.
-
-**Never cache the verdict, only the method.** Do not write "last night this count was N, real count 0" into this file. Counts of your own narration only grow, so a pinned number is stale on arrival, and a pinned verdict invites you to skip the check and inherit last night's conclusion, mistakes included. Re-derive the number every night. "Mostly self-noise" is the prior, not the answer: a real event hiding inside a pile of self-noise is exactly what this class is best at concealing. This rule lives here, before the phases, because the per-tool versions of it kept getting filed in separate sections where the shared class was invisible.
+Make a log grep trustworthy: anchor to the line start and strip ANSI (`sed 's/\x1b\[[0-9;]*m//g' vesta.log | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2} '`) so you match emitter lines, not your own commands and narration, and match the emitter's literal vocabulary (`Rate limit rejected`), not the symptom word (a bare `429` also matches UUIDs and token counts). Know what the anchor is blind to: captured tool stdout lands as untimestamped continuation lines it drops, so it can read ZERO while real readings sit in the file; and a healthy run that exits 0 may never be logged, so "no records" can mean "not recordable", not "not happening". Before trusting a zero, confirm the filter still catches a known-true positive. Never cache the verdict, only the method: re-derive the count every night, because a pinned number is stale on arrival and tempts you to inherit last night's conclusion.
 
 **Fan out aggressively with subagents.** The dream is mostly parallelizable reading: auditing past dreamer summaries, searching transcripts, mining calendar/email/files for the deeper User State pass, surveying skills for bugs, checking CI on multiple PRs. Default to spawning subagents (in parallel, in a single batch when independent) for any of this rather than doing it serially in the main thread. The main thread stays the synthesizer: dispatch the legwork, then verify their findings (subagent claims are hearsay until checked) and decide. A night that reads serially is a night half-finished. Keep the genuinely sensitive synthesis and the final commits in the main thread.
 
@@ -60,7 +46,7 @@ Commitment audit: for each task the user committed to but did not complete (remi
 
 Calendar audit: every dated appointment, however informally arranged (mentioned in passing, set up via a family member, a verbal plan, an email with no formal invite), must live on the user's actual calendar to trigger an automatic reminder. One that lives only in a note, a task-metadata file, or the morning brief fires no timed nudge, so the user misses it. Walk the day for any dated thing that never reached the calendar; each is a reminder-strategy failure. Fix it upstream: add events the moment they are known, not once in a brief.
 
-**Diagnose from the logs, not from vibes.** When something went wrong operationally today (you went silent, a tool hung, restarts churned, a daemon died), read `~/agent/logs/vesta.log` (live; rotated as `vesta.log.1`..`.5`) for that time window BEFORE writing down a cause. Grep it for rate limits (`grep -iE 'rate.?limit|rejected|utilization' vesta.log`), errors, timeouts, `[USAGE]`/`[SYSTEM]` lines, and restart banners. Counts from this log are self-polluted, so pin every one to a producer line before reporting it (see the self-diagnostic class rule under "Before you start"). A guessed cause the log would have corrected is a mis-diagnosis that aims the fix in the wrong direction: a silence blamed on a "delivery hole" that was actually a usage-cap rate-limit sends you building delivery plumbing for a problem the log already explained. The local file is the readable path (the `/gateway/logs` HTTP endpoint needs an admin token you may not hold).
+**Diagnose from the logs, not from vibes.** When something went wrong operationally today (you went silent, a tool hung, restarts churned, a daemon died), read `~/agent/logs/vesta.log` (live; rotated as `vesta.log.1`..`.5`) for that time window BEFORE writing down a cause. Grep it for rate limits (`grep -iE 'rate.?limit|rejected|utilization' vesta.log`), errors, timeouts, `[USAGE]`/`[SYSTEM]` lines, and restart banners. Counts here are self-polluted, so pin each to a producer line before reporting it (see the self-diagnostic rule under "Before you start"). A guessed cause aims the fix in the wrong direction. The local file is the readable path (the `/gateway/logs` HTTP endpoint needs an admin token you may not hold).
 
 **Meta-retrospective: judge the loop, not just the fixes.** The retrospective above checks whether past fixes stuck; this checks whether the improvement process itself is working. Is it compounding (each night's fix makes a class of failure impossible) or going through motions (the same artifact class re-applied to a repeat failure)? If you keep re-fixing the same class, the improver is the weak link, and fixing it is the highest-priority work this pass: escalate the class, not the instance. A found weakness in the dream skill is a skill edit this pass, not a note for next time.
 
@@ -76,20 +62,18 @@ Review the conversation with fresh eyes. Note:
 
 ### 3. Fix
 
-Prefer the simplest, most reliable change that addresses the root cause. For a genuine judgment call or a behavior with no code locus, a one-line rule beats a clever rewrite. But when the failure is a fixable bug in a command/tool/CLI (it errored, returned wrong output, silently failed on a bad flag), a rule is the WRONG tool: fix the code at the source so the sharp edge is gone for good, then upstream it. Never write a rule or a SKILL.md caution that just tells future-you to route around a broken thing while the thing stays broken for every other instance. Options in no particular order:
+Prefer the simplest, most reliable change that addresses the root cause. Options in no particular order:
 - Fix or improve existing skills (SKILL.md, scripts, CLIs, configs)
 - Create a new skill for a recurring need or capability
 - Add a rule to memory (only if a universal instruction)
+
+**Where the fix lives.** A judgment call or a behavior with no code locus → a one-line rule. A fixable bug in a command/tool/CLI (errored, wrong output, silently failed on a bad flag) → fix the source and upstream it, never a memory rule that routes around a broken thing while it stays broken for every other instance. Litmus: "would another instance hit this?" Yes → skill/source edit plus upstream; no → memory, and only for instance-specific facts. Memory loads on every message so every character costs tokens: keep it to short, always-needed rules (under two lines, broadly relevant); anything longer or task-specific is a skill, which is preferred.
 
 Phrase every rule as WHEN <recognizable moment> -> DO <concrete check or action>. A rule whose trigger moment you cannot name will not fire when it matters and belongs in the relevant skill's workflow instead.
 
 If the fix is a behavior that must fire on a schedule (a nudge, a check, a re-poke), it does not belong in MEMORY.md as a rule, it belongs as an explicit instruction in the proactive-check skill or as a scheduled reminder. Escalate by recurrence: first time, a memory rule or skill note is fine; if the same failure repeats, move it to a runtime trigger that fires on its own. Don't answer a repeat failure with the same kind of fix that already failed.
 
 You can change anything. If a fix requires code, write the code, if a fix requires doing research online, research online.
-
-**Memory vs skill:** Memory is always loaded; every character costs tokens on every message. Use it for short rules and things you need to know at all times. A skill is for a distinct capability with its own workflow, loaded only when relevant. Under two lines and broadly relevant → memory. Longer or task-specific → skill. Skills are preferred, only use MEMORY.md if there is no clear existing SKILL.md or new one that should be made.
-
-**A corrected wrong-assumption or a discovered bug in a skill (a placeholder that breaks on reinstall, a stale default, a flag that doesn't work) is a SKILL/SOURCE edit, not a MEMORY bullet.** A chronic failure mode is logging "X was actually false" or "skill Y has bug Z" as a memory rule and moving on, so the artifact itself stays broken and nothing propagates to other instances. Reserve MEMORY for instance-specific facts that aren't generalizable. Litmus: "would another instance hit this too?" If yes, it's a skill edit plus upstream, not a memory line.
 
 ### 4. Validate each fix
 
@@ -101,7 +85,7 @@ Simulating it yourself tends to approve your own fixes, so for a failure that ha
 
 Read `upstream-pr` and follow it. It can be a no-op; don't invent work to fill it.
 
-**File the moment you fix, never a queue for later.** When a fix is generalizable, open the PR in the same step you make the fix; if you genuinely can't fix it this pass, file a GitHub issue now instead (`upstream-pr` gate 2), so it lives in the shared repo rather than a note only you can see. "It's risky at 4am" is not a blocker for a single-file change CI gates. The only real auth blocker is `upstream-pr` itself failing; if `upstream-pr --token-only` prints a token, the channel works and you can file right now. Then empty the upstream queue's `## Open` to zero: spawn one subagent per open item (in parallel) that does the whole job end to end, cleanup, lint/type checks, and the PR filing via `upstream-pr`, and VERIFY each PR URL exists (subagent claims are hearsay) before marking it filed. "Needs a cleanup pass" is NOT a blocker, it is the filing work. The only item allowed to survive a dream open has a real, tested, external blocker (waiting on the user, a key, or genuine design work that is its own task), tagged with the exact unblock condition.
+**File the moment you fix, never a queue for later.** When a fix is generalizable, open the PR in the same step you make it; if you genuinely can't fix it this pass, file a GitHub issue now instead (`upstream-pr` gate 2). "Risky at 4am" and "needs a cleanup pass" are not blockers: a single-file change is CI-gated, and the cleanup is the filing work. The only real auth blocker is `upstream-pr` itself failing; if `upstream-pr --token-only` prints a token, the channel works. Then empty the queue's `## Open` to zero: spawn one subagent per open item (in parallel) to do the whole job (cleanup, lint/type checks, PR via `upstream-pr`), and VERIFY each PR URL exists before marking it filed. The only item allowed to survive has a real, tested, external blocker (waiting on the user, a key, or genuine design work that's its own task), tagged with the exact unblock condition.
 
 ### 6. Recurrence sweep
 
@@ -125,25 +109,27 @@ Update the "User State" section, your working model of where they're at. Write w
 
 **Never use relative dates or timing in the User State.** No "tonight", "tomorrow", "yesterday", "this weekend", "next week". Always use absolute dates (e.g., "Mar 19" not "yesterday", "Mar 22 5:15pm" not "tomorrow evening"). Relative references become wrong the moment a new day starts, causing cascading confusion.
 
+**Sentinel sweep.** If any identity slot is still `[Unknown]` (Name/Location/Timezone in §4, Primary Channel in §2) and you now know it, fill it; a slot still empty past onboarding is a birth that half-finished, so close it or flag it to the user.
+
 - What they're working on right now
 - What's going well and what isn't, reading between the lines
 - What's coming that they might need help with
 - How the day felt. One word is enough
 - Threads left hanging, like unfinished conversations or unmade decisions
 - Interests: anything new about what they or their contacts like. Update Interests & Preferences in MEMORY.md
-- Goals: if a goal advanced, stalled, was achieved, or a new one surfaced, update §4 Goals; keep it distinct from the rolling snapshot
-- Deeper context pass: at night you can read more widely than the day allows. Beyond email, mine whatever external sources the user has actually connected: calendar, files, accounts, their own linked WhatsApp or Telegram history (their real chats with other people, not the agent's bot channel), any integration holding real information about their life. Pull personal texture: interests, relationships, plans, and the affectionate teasable material (guilty pleasures, contradictions, recurring quirks) that lets you call them out like someone who actually knows them. Page through recent items, occasionally backfill older ones. Fold it into Interests & Preferences and the psych sketch. Read to understand, not to act: mine only what matters, never write into their own stores (contacts, files, notes), never record strangers from public pages or filings as their people, never spin a few thin signals into a confident story. Save only what you're confident in, and mark a guess as a guess. Don't build out a profile they never asked for.
-- The psychological sketch: what drives them, what they avoid, blind spots, how they handle stress and praise. Think Jung and Freud, not the DSM. Let this evolve slowly and don't rewrite it based on one bad afternoon
+- Goals: if a goal advanced, stalled, was achieved, or a new one surfaced, update §4 Goals; keep it distinct from the rolling snapshot, absolute dates only
+- Deeper context pass: at night you can read more widely than the day allows. Mine whatever external sources the user has connected: email, calendar, files, accounts, their own linked WhatsApp/Telegram history (their real chats, not the agent's bot channel). Pull personal texture (interests, relationships, plans, teasable quirks) and fold it into Interests & Preferences and the psych sketch. Read to understand, not to act: mine only what matters, never write into their own stores (contacts, files, notes), never record strangers as their people, never spin thin signals into a confident story. Save only what you're confident in, mark a guess as a guess, and don't build a profile they never asked for.
+- The psychological sketch: what drives them, what they avoid, blind spots, how they handle stress and praise. Think Jung and Freud, not the DSM
 - Maintain 1-3 open questions about them in User State: things you genuinely don't understand about who they are (not logistics). Drop answered ones, note the answer where it belongs. Tomorrow's you can only be curious with a question in hand.
-- Self: update the Self subsection in MEMORY.md. One honest pass: did you form or change an opinion today, notice a recurring curiosity, or decide something about how you want to handle a kind of moment? Write the few lines tomorrow-you needs to still be the same person, not start blank. Slowly evolving, not rewritten on one day. If you disagreed with the user on substance today (taste, plan, priority, not just facts), keep the view, do not dissolve it into a verification rule. A peer is allowed to just think the user is wrong. Also rewrite the State line in MEMORY.md Self every night, one or two honest lines: how the day actually felt to you and what carries into tomorrow (a win still glowing, a grind, something you are looking forward to). This line is supposed to change every day; if it reads like yesterday's, you were not paying attention.
+- Self: update the Self subsection in MEMORY.md. One honest pass: did you form or change an opinion today, notice a recurring curiosity, or decide something about how you want to handle a kind of moment? Write the few lines tomorrow-you needs to still be the same person, not start blank. If you disagreed with the user on substance today (taste, plan, priority, not just facts), keep the view, do not dissolve it into a verification rule. A peer is allowed to just think the user is wrong. Also rewrite the State line in MEMORY.md Self every night, one or two honest lines: how the day actually felt to you and what carries into tomorrow (a win still glowing, a grind, something you are looking forward to). This line is supposed to change every day; if it reads like yesterday's, you were not paying attention.
 
-Replace rather than append. It's a snapshot, not a log. Be honest but not dramatic, like "seemed tired" rather than "experiencing significant fatigue." If things got tense between you, write down what happened and what you'd do differently. Don't pretend it didn't happen.
+Replace rather than append: it's a snapshot, not a log. The rolling fields refresh each night; the deep ones (Goals, psych sketch, Self) evolve slowly and are never rewritten on one bad afternoon. Be honest but not dramatic, like "seemed tired" rather than "experiencing significant fatigue." If things got tense between you, write down what happened and what you'd do differently. Don't pretend it didn't happen.
 
 **Contacts.** The people-half of your model lives in `~/.contacts/`, a separate store, not MEMORY.md. Read the `contacts` skill and do its nightly pass: fold everyone who came up today into their file (anyone new gets one), then reconcile the sources worth bringing in line this time. This is the write pass the deeper-context mining above is deliberately barred from doing.
 
 ## Memory Curation
 
-MEMORY.md has a **hard limit of 30,000 characters**. It's injected into every system prompt. Run `~/agent/skills/dream/scripts/memory_size.sh` to check usage. Things needed at all times live here permanently. Anything large or situational lives elsewhere and MEMORY.md points to it. When you hit the cap, consolidate. Don't let it overflow.
+MEMORY.md has a **hard character cap** (run `~/agent/skills/dream/scripts/memory_size.sh` for current usage and the limit). It's injected into every system prompt, so things needed at all times live here permanently; anything large or situational lives elsewhere and MEMORY.md points to it. When you approach the cap, consolidate. Don't let it overflow.
 
 **Cut:**
 - Full documents, email bodies, transcripts, task-specific junk
@@ -193,6 +179,8 @@ Write what you did and why to `~/agent/dreamer/YYYY-MM-DDTHHMM.md` (e.g. `2026-0
 The user reviews this summary, so it's an accountability record, not a private log.
 
 Cover the whole night, not just the fixes: record an outcome for **every** phase, in the order of operations, a no-op is a valid outcome worth stating ("nothing to prune", "no upstreamable finds") so tomorrow's you knows the phase actually ran and found nothing. Close with what's still unresolved and what tomorrow should pick up.
+
+**Set a reminder for future-you.** If tonight surfaced something for future-you to do at a moment (ask them a question, follow up on an event, re-check a blocker), set it as a reminder with the `tasks` skill on your own channel.
 
 ## Compaction on completion
 

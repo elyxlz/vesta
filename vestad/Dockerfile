@@ -20,8 +20,11 @@ LABEL org.opencontainers.image.title="Vesta" \
       org.opencontainers.image.source="https://github.com/elyxlz/vesta" \
       org.opencontainers.image.licenses="MIT"
 
+# libgtk-3-0t64 is the browser skill's one OS dependency: headless Camoufox still runs GTK init,
+# so without it every `browser launch` exits 255 before BiDi with `libgtk-3.so.0: cannot open
+# shared object file`. The t64 name is trixie's time_t rename; plain libgtk-3-0 does not exist here.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl git ca-certificates tzdata gnupg screen tmux && \
+    curl git ca-certificates tzdata gnupg screen tmux libgtk-3-0t64 && \
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
     rm -rf /var/lib/apt/lists/*

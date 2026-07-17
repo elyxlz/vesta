@@ -116,12 +116,9 @@ def main() -> int:
         ids = sorted({row_id for row_id, _ in matches})
         print(f"Found {len(ids)} event(s) with potential secrets (value masked below).")
         print("Review the context, then redact the real leaks: redact_secrets.sh --scrub <id> <id> ...")
-        # Print every match: events arrive in rowid order, so truncating the list drops the newest
-        # hits, leaving a leak in a recent event permanently below the fold.
+        # Print every hit, not a capped slice: matches come in rowid order, so a cap hides leaks in the newest events.
         for row_id, snippet in matches:
             print(f"{row_id}|{snippet}")
-        if len(matches) > len(ids):
-            print(f"\n({len(matches)} total matches across {len(ids)} events.)")
         return 0
     finally:
         conn.close()
