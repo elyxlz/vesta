@@ -21,6 +21,8 @@ import os
 import shutil
 import socket
 import subprocess
+import time
+import typing as tp
 from pathlib import Path
 
 from . import admin, launcher
@@ -31,6 +33,9 @@ ASSETS_DIR = Path(__file__).parent / "assets" / "handover"
 FONTS_DIR = ASSETS_DIR / "fonts"
 VNC_PORT_START = 5900
 WEB_PORT_START = 6080
+X11VNC_READY_TIMEOUT_S = 10.0
+READY_POLL_S = 0.1
+PROC = Path("/proc")
 # WUXGA: a real monitor size, and the ceiling for a CPU-rendered framebuffer (Camoufox ships no
 # GPU/glxtest helper, so headed Gecko rasterizes through software WebRender). `fit_to_screen`
 # reports this verbatim as screen.width/height, so a geometry no real display has would itself be
@@ -130,15 +135,21 @@ def _free_display(start: int = 99) -> str:
 
 
 def _alive(pid: int | None) -> bool:
+    """True only for a process that is actually running.
+
+    A signal-0 probe also succeeds for a zombie: start() exits as soon as it has spawned these, so
+    they reparent to init and their pid lingers in the table until something reaps them. That is
+    how a dead x11vnc reported itself up while the page spun on "Waking". /proc's state code is the
+    one reading that tells a corpse from a live process; the comm field can hold spaces and
+    parens, so the state is read relative to its closing paren, not by splitting on whitespace.
+    """
     if pid is None:
         return False
     try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
+        stat = (PROC / str(pid) / "stat").read_text()
+    except (FileNotFoundError, ProcessLookupError, PermissionError):
         return False
-    except PermissionError:
-        return True
-    return True
+    return stat[stat.rfind(") ") + 2] != "Z"
 
 
 def _read_pid(suffix: str) -> int | None:
@@ -193,6 +204,39 @@ def _build_webroot() -> Path:
     return WEBROOT
 
 
+def _port_serving(port: int) -> bool:
+    with socket.socket() as probe:
+        probe.settimeout(0.2)
+        return probe.connect_ex(("127.0.0.1", port)) == 0
+
+
+def _start_x11vnc(*, display: str, vnc_port: int, log: tp.TextIO) -> subprocess.Popen[bytes]:
+    """Start x11vnc and return only once it is really serving `vnc_port`.
+
+    Shared memory makes its framebuffer reads ~25x faster (9000 vs 350 MB/sec measured), so shm is
+    always tried first and -noshm is the fallback, not the default: some hosts deny X_ShmAttach and
+    x11vnc dies on its first grab there. Waiting for the port is what makes either outcome knowable
+    here, instead of handing back a link to a page that spins on "Waking" forever.
+    """
+    # -cursor most + -cursorpos send the real X cursor shape (hand over links, caret over text)
+    # and its position, not a static dot. XDAMAGE (left on) means only changed regions are
+    # re-encoded, so typing on the framebuffer stays responsive instead of repolling the whole
+    # screen; -threads parallelises encoding for lower latency.
+    argv = ["x11vnc", "-display", display, "-localhost", "-rfbport", str(vnc_port)]
+    argv += ["-forever", "-shared", "-nopw", "-quiet", "-threads", "-cursor", "most", "-cursorpos"]
+    for shm_args in ((), ("-noshm",)):
+        proc = subprocess.Popen([*argv, *shm_args], stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+        deadline = time.monotonic() + X11VNC_READY_TIMEOUT_S
+        while time.monotonic() < deadline:
+            if _port_serving(vnc_port):
+                return proc
+            if proc.poll() is not None:
+                break
+            time.sleep(READY_POLL_S)
+        admin._terminate_pid(proc.pid)
+    raise RuntimeError(f"x11vnc never served port {vnc_port}, with or without shm. See {_session_file('handover-log')}")
+
+
 def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> dict[str, object]:
     """Bring up headed Camoufox + a window manager + x11vnc + websockify serving the branded page.
 
@@ -238,48 +282,31 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
     # connect while Camoufox is still booting: the user watches the browser appear instead of
     # waiting on a spinner, and a bridge that dies takes the log with it before the browser masks
     # the failure. openbox strips decorations and pins the window at the origin.
+    # Each pid lands in its session file the moment it exists, so a failure part-way through leaves
+    # nothing orphaned: stop() reaps whatever got as far as starting.
     xvfb_pid = launcher._ensure_xvfb(display, screen=f"{SCREEN_W}x{SCREEN_H}x24")
+    if xvfb_pid is not None:
+        _session_file("xvfb-pid").write_text(str(xvfb_pid))
     openbox_rc = _session_file("openbox-rc.xml")
     openbox_rc.write_text(OPENBOX_RC)
     openbox = subprocess.Popen(
         ["openbox", "--config-file", str(openbox_rc)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
     )
+    _session_file("openbox-pid").write_text(str(openbox.pid))
 
     vnc_port = _free_port(VNC_PORT_START)
     webroot = _build_webroot()
 
-    # -cursor most + -cursorpos send the real X cursor shape (hand over links, caret over text)
-    # and its position, not a static dot. XDAMAGE (left on) means only changed regions are
-    # re-encoded, so typing on the framebuffer stays responsive instead of repolling the whole
-    # screen; -threads parallelises encoding for lower latency.
     with _session_file("handover-log").open("w") as log:
-        x11vnc = subprocess.Popen(
-            [
-                "x11vnc",
-                "-display",
-                display,
-                "-localhost",
-                "-rfbport",
-                str(vnc_port),
-                "-forever",
-                "-shared",
-                "-nopw",
-                "-quiet",
-                "-threads",
-                "-cursor",
-                "most",
-                "-cursorpos",
-            ],
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
+        x11vnc = _start_x11vnc(display=display, vnc_port=vnc_port, log=log)
+        _session_file("x11vnc-pid").write_text(str(x11vnc.pid))
         websockify = subprocess.Popen(
             ["websockify", "--web", str(webroot), str(web_port), f"localhost:{vnc_port}"],
             stdout=log,
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
+        _session_file("websockify-pid").write_text(str(websockify.pid))
 
     # window_size refits the fingerprint's screen/window geometry so what the page reports to JS
     # matches the real framebuffer; the sign-in URL rides in as a trailing arg so it opens there.
@@ -291,11 +318,6 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
         window_size=(SCREEN_W, SCREEN_H),
     )
 
-    if xvfb_pid is not None:
-        _session_file("xvfb-pid").write_text(str(xvfb_pid))
-    _session_file("openbox-pid").write_text(str(openbox.pid))
-    _session_file("x11vnc-pid").write_text(str(x11vnc.pid))
-    _session_file("websockify-pid").write_text(str(websockify.pid))
     _session_file("web-port").write_text(str(web_port))
     _session_file("vnc-port").write_text(str(vnc_port))
     _session_file("profile").write_text(str(profile))
@@ -347,9 +369,11 @@ def status() -> dict[str, object]:
     return {
         "session": HANDOVER_SESSION,
         "browser": _alive(admin.read_session_browser_pid(HANDOVER_SESSION)),
+        "xvfb": _alive(_read_pid("xvfb-pid")),
         "openbox": _alive(_read_pid("openbox-pid")),
         "x11vnc": _alive(_read_pid("x11vnc-pid")),
         "websockify": _alive(_read_pid("websockify-pid")),
+        "serving": _port_serving(web_port) if web_port else False,
         "web_port": web_port,
         "page": "handover.html" if web_port else None,
     }
@@ -392,8 +416,14 @@ _PAGE_TEMPLATE = """<!doctype html>
     font-family: "Public Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased;
     overflow: hidden; display: flex; align-items: center; justify-content: center;
   }
-  /* the machine fills the viewport; container-type lets the chin engraving scale with it */
-  .macbook { container-type: inline-size; position: relative; width: min(100vw, calc(100vh * 1.6757)); aspect-ratio: 1240 / 740; }
+  /* The machine bleeds off the short axis rather than sitting in letterbox bars, so a 16:9 or 16:10
+     viewport fills edge to edge. The chin is deeper than the top bezel, so it is nudged down until
+     the SCREEN is centred rather than the frame. The caps stop the bleed while the machine still
+     reads as a machine: 178vh keeps the chin engraving clear of the bottom edge (it slides off
+     around 181vh, so this leaves slack for a taller line box), 131.1vw stops a narrow viewport
+     cropping the screen itself. Past them a little desk shows, which beats a decapitated laptop. */
+  .macbook { container-type: inline-size; position: relative; aspect-ratio: 1240 / 740;
+    width: min(max(100vw, 167.57vh), 178vh, 131.1vw); transform: translateY(2.838%); }
   /* the screen rectangle, measured from macbook.png: the live browser shows through the cut-out */
   #stage { position: absolute; left: 11.855%; top: 7.297%; width: 76.29%; height: 79.73%;
     overflow: hidden; background: var(--screen-bg); z-index: 0; }
@@ -431,7 +461,7 @@ _PAGE_TEMPLATE = """<!doctype html>
      screen fill the viewport edge to edge, so login fields are tap-sized instead of a letterboxed
      strip inside a shrunken laptop. Desktop keeps the frame (this block does not apply there). */
   @media (max-width: 820px), (pointer: coarse) {
-    .macbook { width: 100vw; height: 100vh; height: 100dvh; aspect-ratio: auto; }
+    .macbook { width: 100vw; height: 100vh; height: 100dvh; aspect-ratio: auto; transform: none; }
     .frame, .engraving { display: none; }
     #stage { left: 0; top: 0; width: 100%; height: 100%; }
     #kbd-button { display: flex; }

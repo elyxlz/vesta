@@ -6,10 +6,23 @@ websocket proxy) is exercised end-to-end in a real container, not here.
 
 from __future__ import annotations
 
+import os
 import socket
+import subprocess
+import time
 
 import pytest
 from vesta_browser import handover
+
+
+def wait_until(predicate, timeout_s=5.0):
+    """Poll `predicate` to a deadline. A process reaching zombie state is not an event we can await."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.02)
+    return predicate()
 
 
 @pytest.fixture(autouse=True)
@@ -158,6 +171,94 @@ def test_stop_is_idempotent_without_an_xvfb_pid(monkeypatch):
     killed = _record_kills(monkeypatch)
     assert handover.stop() == {"stopped": True}
     assert killed == []
+
+
+# ── liveness ──────────────────────────────────────────────────
+
+
+def test_alive_is_false_for_a_real_zombie():
+    # A genuine zombie, made the way handover makes them: Popen never reaps until wait(), so once
+    # `true` exits its pid lingers in the table. This is the exact state that had status() calling
+    # a dead x11vnc up while the page span on "Waking".
+    proc = subprocess.Popen(["true"])
+    try:
+        assert wait_until(lambda: not handover._alive(proc.pid)), "zombie still reported alive"
+        os.kill(proc.pid, 0)  # the old signal-0 probe still succeeds on the corpse: that was the bug
+    finally:
+        proc.wait()
+
+
+def test_alive_is_true_for_a_running_process():
+    proc = subprocess.Popen(["sleep", "30"])
+    try:
+        assert handover._alive(proc.pid) is True
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+def test_alive_is_false_for_an_absent_or_unknown_pid():
+    assert handover._alive(None) is False
+    assert handover._alive(999_999_999) is False
+
+
+# ── x11vnc bring-up ───────────────────────────────────────────
+
+
+def _stub_x11vnc(monkeypatch, *, serves_with):
+    """Stand in for x11vnc: it 'serves' only when launched with the arg set in `serves_with`."""
+    attempts: list[tuple[str, ...]] = []
+
+    class FakeProc:
+        def __init__(self, argv):
+            self.pid = 1000 + len(attempts)
+            self._ok = tuple(a for a in argv if a == "-noshm") == serves_with
+
+        def poll(self):
+            return None if self._ok else 1
+
+    def fake_popen(argv, **_kw):
+        attempts.append(tuple(a for a in argv if a == "-noshm"))
+        return FakeProc(argv)
+
+    monkeypatch.setattr(handover.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(handover, "_port_serving", lambda _p: attempts[-1] == serves_with)
+    monkeypatch.setattr(handover.admin, "_terminate_pid", lambda _pid: None)
+    return attempts
+
+
+def test_x11vnc_uses_shared_memory_when_the_host_allows_it(monkeypatch, isolated):
+    # shm reads the framebuffer ~25x faster, so it must not be given up pre-emptively.
+    attempts = _stub_x11vnc(monkeypatch, serves_with=())
+    with (isolated / "log").open("w") as log:
+        handover._start_x11vnc(display=":99", vnc_port=5900, log=log)
+    assert attempts == [()]  # first try, no -noshm, done
+
+
+def test_x11vnc_falls_back_to_noshm_when_the_host_denies_shm(monkeypatch, isolated):
+    # Some hosts deny X_ShmAttach and x11vnc dies on its first grab; that must self-heal rather
+    # than hand the user a link to a page that spins on "Waking" forever.
+    attempts = _stub_x11vnc(monkeypatch, serves_with=("-noshm",))
+    with (isolated / "log").open("w") as log:
+        handover._start_x11vnc(display=":99", vnc_port=5900, log=log)
+    assert attempts == [(), ("-noshm",)]
+
+
+def test_x11vnc_raises_when_neither_mode_serves(monkeypatch, isolated):
+    attempts = _stub_x11vnc(monkeypatch, serves_with=("never",))
+    monkeypatch.setattr(handover, "X11VNC_READY_TIMEOUT_S", 0.2)
+    with (isolated / "log").open("w") as log, pytest.raises(RuntimeError, match="never served port 5900"):
+        handover._start_x11vnc(display=":99", vnc_port=5900, log=log)
+    assert attempts == [(), ("-noshm",)]
+
+
+def test_alive_reads_the_state_past_a_comm_holding_spaces_and_parens(isolated, monkeypatch):
+    # /proc/<pid>/stat's comm field is unescaped, so splitting on whitespace misreads the state.
+    proc_root = isolated / "proc"
+    (proc_root / "42").mkdir(parents=True)
+    (proc_root / "42" / "stat").write_text("42 (odd ) name Z) R 1 1 0 0 -1 0 0 0")
+    monkeypatch.setattr(handover, "PROC", proc_root)
+    assert handover._alive(42) is True
 
 
 def test_readiness_reports_missing_binaries(monkeypatch):
