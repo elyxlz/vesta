@@ -39,8 +39,7 @@ def test_libs_readiness_is_ready_when_every_soname_loads(monkeypatch):
 
 def test_libs_readiness_names_the_missing_lib_and_how_to_install_it(monkeypatch):
     monkeypatch.setattr(launcher, "CAMOUFOX_SHARED_LIBS", ("libvesta-absent.so.9",))
-    report = launcher.libs_readiness()
-    assert report == {"ready": False, "missing": ["libvesta-absent.so.9"], "install": launcher.CAMOUFOX_LIBS_INSTALL}
+    assert launcher.libs_readiness() == {"ready": False, "missing": ["libvesta-absent.so.9"], "install": launcher.CAMOUFOX_LIBS_INSTALL}
 
 
 def test_camoufox_home_uses_release_tag():

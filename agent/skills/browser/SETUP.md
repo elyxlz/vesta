@@ -30,15 +30,9 @@ state with `browser doctor`.
 
 ## Shared library dependencies
 
-Headless Camoufox is still Gecko, so it dlopens GTK, X, dbus-glib and ALSA at startup. Missing any
-of them, `browser launch` exits 255 before BiDi with an XPCOMGlueLoad error (`libgtk-3.so.0: cannot
-open shared object file`). The Vesta image installs them at build time. `browser doctor` reports
-them under `shared_libs`, and on a box whose image predates that (or any non-vesta image) prints the
-line to fix it:
-
-```bash
-apt-get install -y libgtk-3-0 libgdk-pixbuf-2.0-0 libx11-xcb1 libdbus-glib-1-2 libxtst6 libasound2
-```
+Headless Camoufox is still Gecko, so it dlopens GTK, X, dbus-glib and ALSA at startup; without them
+`browser launch` exits 255 before BiDi. The Vesta image installs them at build time. Anywhere else,
+`browser doctor` reports them under `shared_libs` and prints the apt line for whatever is missing.
 
 ## Handover dependencies
 

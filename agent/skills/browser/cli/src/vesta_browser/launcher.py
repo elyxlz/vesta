@@ -71,9 +71,7 @@ def camoufox_installed() -> bool:
     return (camoufox_home() / "camoufox").is_file()
 
 
-# Gecko dlopens these at startup even headless; one missing and Camoufox exits 255 before BiDi with
-# an XPCOMGlueLoad error. The Vesta image bakes them in, so this names the gap on a box whose image
-# predates that. The apt names are the ones that resolve on both bookworm and trixie.
+# Gecko dlopens these at startup even headless; one missing and Camoufox exits 255 before BiDi.
 CAMOUFOX_SHARED_LIBS = (
     "libgtk-3.so.0",
     "libgdk_pixbuf-2.0.so.0",
@@ -86,8 +84,6 @@ CAMOUFOX_LIBS_INSTALL = "apt-get install -y libgtk-3-0 libgdk-pixbuf-2.0-0 libx1
 
 
 def libs_readiness() -> dict[str, bool | list[str] | str]:
-    """Report the Camoufox shared libs the dynamic loader cannot resolve, for `browser doctor` to
-    surface the gap by name rather than as an exit-255 launch failure to decode."""
     missing: list[str] = []
     for soname in CAMOUFOX_SHARED_LIBS:
         try:

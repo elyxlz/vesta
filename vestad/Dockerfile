@@ -20,10 +20,9 @@ LABEL org.opencontainers.image.title="Vesta" \
       org.opencontainers.image.source="https://github.com/elyxlz/vesta" \
       org.opencontainers.image.licenses="MIT"
 
-# The browser skill's OS dependencies: headless Camoufox is still Gecko, which dlopens GTK, X,
-# dbus-glib and ALSA at startup, so without them every `browser launch` exits 255 before BiDi with
-# `libgtk-3.so.0: cannot open shared object file`. The t64 names are trixie's time_t rename; GTK3
-# pulls gdk-pixbuf and the core X libs itself. `browser doctor` checks the matching sonames.
+# The browser skill's OS deps: headless Camoufox is still Gecko and dlopens these at startup, so
+# without them every `browser launch` exits 255 before BiDi. The t64 names are trixie's time_t
+# rename; gdk-pixbuf comes in via GTK3.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl git ca-certificates tzdata gnupg screen tmux \
     libgtk-3-0t64 libx11-xcb1 libdbus-glib-1-2 libxtst6 libasound2t64 && \
