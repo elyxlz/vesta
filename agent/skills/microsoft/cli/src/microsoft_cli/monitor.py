@@ -1,7 +1,9 @@
 import json
 import re
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from pathlib import Path
 from typing import NotRequired, TypedDict
 from zoneinfo import ZoneInfo
@@ -57,13 +59,11 @@ def _read_state(path: Path, now: datetime) -> MonitorState:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
         return MonitorState(last_cycle=raw, units={})
-    if not isinstance(parsed, dict) or "last_cycle" not in parsed or "units" not in parsed:
-        raise ValueError(f"Malformed monitor state in {path}: {raw[:100]}")
-    last_cycle = parsed["last_cycle"]
-    units = parsed["units"]
-    if not isinstance(last_cycle, str) or not isinstance(units, dict):
-        raise ValueError(f"Malformed monitor state in {path}: {raw[:100]}")
-    return MonitorState(last_cycle=last_cycle, units={str(unit): str(watermark) for unit, watermark in units.items()})
+    match parsed:
+        case {"last_cycle": str(last_cycle), "units": dict(units)}:
+            return MonitorState(last_cycle=last_cycle, units={str(unit): str(watermark) for unit, watermark in units.items()})
+        case _:
+            raise ValueError(f"Malformed monitor state in {path}: {raw[:100]}")
 
 
 def _write_state(path: Path, state: MonitorState) -> None:
@@ -72,22 +72,17 @@ def _write_state(path: Path, state: MonitorState) -> None:
     tmp.rename(path)
 
 
-def _unit_window(ctx: MicrosoftContext, state: MonitorState, unit: str, new_check_time: datetime) -> tuple[datetime, bool]:
-    """Start of the window this unit still has to read, and whether that window is a catch-up."""
+def _poll_unit(ctx: MicrosoftContext, state: MonitorState, unit: str, new_check_time: datetime, poll: Callable[[datetime, bool], bool]) -> None:
+    """Poll a unit over the window it still owes, then advance its watermark only if the poll read
+    that window. A failed poll parks it at the window it still owes, so the next healthy cycle re-reads
+    instead of skipping the mail it never fetched; _MAX_CATCHUP bounds how far a long-dead unit re-reads."""
     units = state["units"]
-    last_iso = units[unit] if unit in units else state["last_cycle"]
-    last_dt = max(datetime.fromisoformat(last_iso), new_check_time - _MAX_CATCHUP)
+    last_dt = max(datetime.fromisoformat(units[unit] if unit in units else state["last_cycle"]), new_check_time - _MAX_CATCHUP)
     gap_seconds = (new_check_time - last_dt).total_seconds()
     catching_up = gap_seconds > _CATCHUP_GAP_SECONDS
     if catching_up:
         ctx.monitor_logger.info("Catching up %s from %s, %.0fs behind", unit, last_dt.isoformat(), gap_seconds)
-    return last_dt, catching_up
-
-
-def _record_poll(state: MonitorState, unit: str, last_dt: datetime, new_check_time: datetime, polled: bool) -> None:
-    """Advance a unit's watermark only across a window it actually read. A failed poll parks it at
-    the window it still owes, so the next healthy cycle re-reads that window instead of skipping it."""
-    state["units"][unit] = new_check_time.isoformat() if polled else last_dt.isoformat()
+    units[unit] = new_check_time.isoformat() if poll(last_dt, catching_up) else last_dt.isoformat()
 
 
 class EmailAddress(TypedDict):
@@ -266,8 +261,8 @@ def _poll_owa_rest_calendar(
     ctx: MicrosoftContext,
     config: Config,
     account_email: str,
-    last_dt: datetime,
     new_check_time: datetime,
+    last_dt: datetime,
     catching_up: bool,
 ) -> bool:
     """Emit a locked-tenant OWA REST account's calendar reminders, True when the calendar was read."""
@@ -480,7 +475,7 @@ def _poll_graph_mail(ctx: MicrosoftContext, acc, last_dt: datetime, catching_up:
     return polled
 
 
-def _poll_graph_calendar(ctx: MicrosoftContext, acc, last_dt: datetime, new_check_time: datetime, catching_up: bool) -> bool:
+def _poll_graph_calendar(ctx: MicrosoftContext, acc, new_check_time: datetime, last_dt: datetime, catching_up: bool) -> bool:
     """Emit one MSAL (Graph) account's calendar reminders, True when the calendar was read."""
     logger = ctx.monitor_logger
     conn = graph.GraphConn(ctx.http_client, ctx.cache_file, ctx.scopes, ctx.base_url)
@@ -525,13 +520,8 @@ def run(ctx: MicrosoftContext):
             msal_accounts = auth.list_accounts(ctx.cache_file)
             for acc in msal_accounts:
                 logger.info("Checking account: %s", acc.username)
-                unit = f"mail:{acc.username}"
-                last_dt, catching_up = _unit_window(ctx, state, unit, new_check_time)
-                _record_poll(state, unit, last_dt, new_check_time, _poll_graph_mail(ctx, acc, last_dt, catching_up))
-
-                unit = f"calendar:{acc.username}"
-                last_dt, catching_up = _unit_window(ctx, state, unit, new_check_time)
-                _record_poll(state, unit, last_dt, new_check_time, _poll_graph_calendar(ctx, acc, last_dt, new_check_time, catching_up))
+                _poll_unit(ctx, state, f"mail:{acc.username}", new_check_time, partial(_poll_graph_mail, ctx, acc))
+                _poll_unit(ctx, state, f"calendar:{acc.username}", new_check_time, partial(_poll_graph_calendar, ctx, acc, new_check_time))
 
             # OWA REST accounts (locked tenants) are not in the MSAL cache, so poll them here over
             # OWA REST for anything Graph did not already cover. The fetch runs through load_token,
@@ -543,29 +533,26 @@ def run(ctx: MicrosoftContext):
                     continue
                 logger.info("Checking OWA REST account: %s", account_email)
                 watch_folders = notify.get_notify_folders(ctx.notify_file, account_email) if ctx.notify_file else ["inbox"]
-                unit = f"mail:{account_email}"
-                last_dt, catching_up = _unit_window(ctx, state, unit, new_check_time)
-                polled = _poll_owa_rest_mail(ctx, config, account_email, watch_folders, last_dt, catching_up)
-                _record_poll(state, unit, last_dt, new_check_time, polled)
-
-                unit = f"calendar:{account_email}"
-                last_dt, catching_up = _unit_window(ctx, state, unit, new_check_time)
-                polled = _poll_owa_rest_calendar(ctx, config, account_email, last_dt, new_check_time, catching_up)
-                _record_poll(state, unit, last_dt, new_check_time, polled)
+                _poll_unit(
+                    ctx, state, f"mail:{account_email}", new_check_time, partial(_poll_owa_rest_mail, ctx, config, account_email, watch_folders)
+                )
+                _poll_unit(
+                    ctx,
+                    state,
+                    f"calendar:{account_email}",
+                    new_check_time,
+                    partial(_poll_owa_rest_calendar, ctx, config, account_email, new_check_time),
+                )
 
             # Teams chats: poll every account that has authorized Teams (device or captured token).
             # Channel messages are polled right after with their own cutoff; they degrade to a no-op
             # for accounts that lack channel-read access (default-on where the capability exists).
             for account_email in teams.list_accounts(config):
                 logger.info("Checking Teams account: %s", account_email)
-                unit = f"teams:{account_email}"
-                last_dt, catching_up = _unit_window(ctx, state, unit, new_check_time)
-                _record_poll(state, unit, last_dt, new_check_time, _poll_teams_account(ctx, config, account_email, last_dt, catching_up))
-
-                unit = f"channels:{account_email}"
-                last_dt, catching_up = _unit_window(ctx, state, unit, new_check_time)
-                polled = _poll_teams_channels_account(ctx, config, account_email, last_dt, catching_up)
-                _record_poll(state, unit, last_dt, new_check_time, polled)
+                _poll_unit(ctx, state, f"teams:{account_email}", new_check_time, partial(_poll_teams_account, ctx, config, account_email))
+                _poll_unit(
+                    ctx, state, f"channels:{account_email}", new_check_time, partial(_poll_teams_channels_account, ctx, config, account_email)
+                )
 
             # Keep browser-captured tokens fresh so the user's one sign-in lasts the SSO session.
             _refresh_captured_tokens(ctx, config, refresh_gave_up)

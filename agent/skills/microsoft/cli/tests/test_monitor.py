@@ -117,7 +117,7 @@ def test_poll_owa_rest_fires_calendar_reminder(tmp_path, monkeypatch):
     # the 60-minute reminder (trigger 12:00) falls in this cycle's window
     last_dt = datetime(2026, 7, 8, 11, 59, tzinfo=UTC)
     new_check = datetime(2026, 7, 8, 12, 0, 30, tzinfo=UTC)
-    assert monitor._poll_owa_rest_calendar(_fake_ctx(tmp_path), None, "me@x.com", last_dt, new_check, False) is True
+    assert monitor._poll_owa_rest_calendar(_fake_ctx(tmp_path), None, "me@x.com", new_check, last_dt, False) is True
     assert len(calls) == 1
     assert calls[0]["subject"] == "Standup"
 
@@ -126,7 +126,7 @@ def test_poll_owa_rest_calendar_reports_a_calendar_it_could_not_read(tmp_path, m
     monkeypatch.setattr(monitor.owa_rest, "list_events", _raise(httpx.ConnectError("boom")))
     last_dt = datetime(2026, 7, 8, 11, 59, tzinfo=UTC)
     new_check = datetime(2026, 7, 8, 12, 0, 30, tzinfo=UTC)
-    assert monitor._poll_owa_rest_calendar(_fake_ctx(tmp_path), None, "me@x.com", last_dt, new_check, False) is False
+    assert monitor._poll_owa_rest_calendar(_fake_ctx(tmp_path), None, "me@x.com", new_check, last_dt, False) is False
 
 
 # ---------------------------------------------------------------------------
