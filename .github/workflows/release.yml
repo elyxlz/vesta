@@ -16,6 +16,14 @@ on:
         description: 'User-facing "What''s new" summary shown in the app and on the changelog'
         type: string
         required: true
+      mobile_delivery:
+        description: "Mobile delivery for this prerelease"
+        type: choice
+        required: true
+        default: testflight
+        options:
+          - testflight
+          - skip
 
 permissions:
   contents: write
@@ -99,12 +107,14 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
           TAG: ${{ steps.bump.outputs.tag }}
           MESSAGE: ${{ inputs.message }}
+          MOBILE_DELIVERY: ${{ inputs.mobile_delivery }}
         run: |
           BODY="<!-- whats-new -->
           ${MESSAGE}
-          <!-- /whats-new -->"
+          <!-- /whats-new -->
+          <!-- mobile-delivery: ${MOBILE_DELIVERY} -->"
           gh release create "$TAG" --title "$TAG" --notes "$BODY" --generate-notes --target master --prerelease
-          echo "Created prerelease $TAG"
+          echo "Created prerelease $TAG with mobile delivery: $MOBILE_DELIVERY"
 
       - name: Cleanup on failure
         if: failure()

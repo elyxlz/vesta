@@ -5,6 +5,9 @@ usage() {
   cat <<'EOF'
 Usage: ./release.sh [patch|minor|major] "<message>"
 
+Set MOBILE_DELIVERY=testflight (the default) or MOBILE_DELIVERY=skip to control
+whether this prerelease is delivered to internal TestFlight testers.
+
 The message is required: user-facing "What's new" copy shown in the app and on
 the changelog. Style:
 
@@ -34,8 +37,14 @@ esac
 
 [ -n "$MESSAGE" ] || usage
 
-echo "Triggering Release workflow (bump=${BUMP})..."
-gh workflow run release.yml -f bump="$BUMP" -f message="$MESSAGE"
+MOBILE_DELIVERY="${MOBILE_DELIVERY:-testflight}"
+case "$MOBILE_DELIVERY" in
+  testflight|skip) ;;
+  *) echo "MOBILE_DELIVERY must be testflight or skip"; exit 1 ;;
+esac
+
+echo "Triggering Release workflow (bump=${BUMP}, mobile=${MOBILE_DELIVERY})..."
+gh workflow run release.yml -f bump="$BUMP" -f message="$MESSAGE" -f mobile_delivery="$MOBILE_DELIVERY"
 
 sleep 3
 RUN_ID=$(gh run list --workflow=release.yml --limit=1 --json databaseId --jq '.[0].databaseId')
