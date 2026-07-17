@@ -1,4 +1,4 @@
-name: Security scanning
+name: CodeQL
 
 on:
   pull_request:
@@ -20,15 +20,15 @@ concurrency:
 
 jobs:
   codeql:
-    name: Security · CodeQL (${{ matrix.label }})
+    name: ${{ matrix.label }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - language: actions
-            label: GitHub Actions
+            label: Actions
           - language: javascript-typescript
-            label: JavaScript and TypeScript
+            label: JavaScript & TypeScript
           - language: python
             label: Python
           - language: rust

@@ -64,7 +64,12 @@ else
   CI=1 npx expo prebuild --clean --platform android
   (
     cd android
-    ./gradlew :app:assembleDebug --no-daemon
+    # One emulator ABI is enough to compile the generated project and native
+    # modules here. Production EAS builds still create the complete Android
+    # artifact; avoiding four local ABIs keeps the PR gate practical.
+    ./gradlew :app:assembleDebug \
+      -PreactNativeArchitectures=x86_64 \
+      --no-daemon
   )
 fi
 

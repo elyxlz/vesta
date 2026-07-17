@@ -54,12 +54,12 @@ for generated in "$STORYBOARD" "$INFO_PLIST" "$EXPO_PLIST" "$ENTITLEMENTS_PLIST"
   fi
 done
 
-if rg -q 'imageView|SplashScreenLogo' "$STORYBOARD"; then
+if grep -Eq 'imageView|SplashScreenLogo' "$STORYBOARD"; then
   echo "error: generated iOS launch storyboard is not blank" >&2
   exit 1
 fi
 
-if ! rg -q '@android:color/transparent' "$ANDROID_SPLASH"; then
+if ! grep -q '@android:color/transparent' "$ANDROID_SPLASH"; then
   echo "error: generated Android launch drawable is not blank" >&2
   exit 1
 fi

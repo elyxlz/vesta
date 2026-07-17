@@ -46,7 +46,7 @@ jobs:
   # release pipeline calls this workflow against the same SHA and produces
   # the artifacts, so skip the redundant master-push validation run.
   detect-changes:
-    name: Scope · Detect changed components
+    name: Detect changes
     if: github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'Bump version to ')
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -205,7 +205,7 @@ jobs:
 
   # ── Reject newly introduced vulnerable dependencies on PRs ──────────
   dependency-review:
-    name: Dependencies · Review vulnerabilities
+    name: Dependency review
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -590,11 +590,12 @@ jobs:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}.tar.gz
 
-  # ── Windows checks (clippy + tests, runs on PRs too) ─────────────────
-  # The CLI ships to Windows users; its tests must actually run on Windows,
-  # not just be lint-checked there.
+  # ── Windows CLI checks and release packaging ─────────────────────────
+  # PRs run the same lint/tests as Linux and macOS. The reusable release call
+  # additionally builds and uploads the optimized Windows package in this same
+  # job, avoiding a second Windows checkout/toolchain setup.
   check-windows:
-    name: Windows · Test CLI and install.ps1
+    name: CLI · Lint and test (Windows x64)
     needs: [version-check, detect-changes]
     if: >-
       github.event_name != 'pull_request' ||
@@ -641,39 +642,13 @@ jobs:
           }
           Write-Host "✅ install.ps1 is compatible with PowerShell 5.1"
 
-  # ── Build Windows CLI (native MSVC) ──────────────────────────────────
-  build-windows:
-    name: CLI · Build (Windows x64)
-    needs: [version-check, detect-changes]
-    if: >-
-      !failure() && !cancelled() &&
-      needs.detect-changes.result == 'success' && (
-      needs.detect-changes.outputs.cli == 'true' ||
-      github.event_name != 'pull_request'
-      )
-    runs-on: windows-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install Rust
-        uses: ./.github/actions/install-rust
-        with:
-          targets: x86_64-pc-windows-msvc
-
-      - uses: Swatinem/rust-cache@v2
-        # Caching is best-effort: a transient cache-service outage must not fail the
-        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
-        continue-on-error: true
-        with:
-          workspaces: cli
-          key: x86_64-pc-windows-msvc
-
-      - name: Build vesta
+      - name: Build release CLI
+        if: inputs.release_artifacts
         working-directory: cli
         run: cargo build --release --target x86_64-pc-windows-msvc
 
-      - name: Smoke test
+      - name: Smoke test release CLI
+        if: inputs.release_artifacts
         shell: bash
         run: |
           CLI="cli/target/x86_64-pc-windows-msvc/release/vesta.exe"
@@ -681,6 +656,7 @@ jobs:
           "$CLI" --help
 
       - name: Package Windows CLI zip
+        if: inputs.release_artifacts
         shell: bash
         run: |
           mkdir vesta-windows
@@ -952,7 +928,6 @@ jobs:
       - check-vestad
       - build-vestad
       - check-windows
-      - build-windows
       - build-electron-macos
       - build-electron-linux
       - build-electron-windows
