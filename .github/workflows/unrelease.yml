@@ -28,6 +28,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # The "Delete ghcr image tag" step runs scripts/delete-ghcr-tag.sh, so the
+      # repo must be checked out or that step exits 127 and aborts the cleanup.
+      - uses: actions/checkout@v7
+
       - name: Validate tag is an existing prerelease
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
