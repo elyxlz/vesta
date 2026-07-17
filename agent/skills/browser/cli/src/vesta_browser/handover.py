@@ -111,13 +111,15 @@ def _free_port(start: int) -> int:
 
 
 def _free_display(start: int = 99) -> str:
-    """A display number with no X server yet, so handover always provisions its OWN Xvfb.
+    """A display number with no live X server, so handover always provisions its OWN Xvfb.
 
     Reusing the ambient DISPLAY breaks on a real desktop seat: x11vnc cannot X_GetImage a live
-    Wayland/Xorg screen (it fails BadMatch), so noVNC hangs on connect. A dedicated Xvfb is always
-    grabbable, and on a headless box (the container) picking a free number lands on :99 as before."""
+    Wayland/Xorg screen (it fails BadMatch), so noVNC hangs on connect. Judge by liveness, not the
+    socket FILE existing: a dead Xvfb leaves its /tmp/.X11-unix socket behind and nothing cleans it,
+    so trusting file existence lets corpses exhaust the range. _ensure_xvfb clears a stale socket
+    before launching on the number returned here."""
     for n in range(start, start + 100):
-        if not Path(f"/tmp/.X11-unix/X{n}").exists():
+        if not launcher._x_display_reachable(f":{n}"):
             return f":{n}"
     raise RuntimeError(f"no free X display in range :{start}-:{start + 100}")
 

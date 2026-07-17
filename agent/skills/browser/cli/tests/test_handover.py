@@ -158,17 +158,11 @@ def test_free_port_returns_a_bindable_port():
         s.close()
 
 
-def test_free_display_skips_existing_seats(monkeypatch):
-    # A real desktop seat (:0/:1) already has an X socket; handover must never pick it, else x11vnc
-    # grabs the live seat and noVNC hangs. Pretend :99 and :100 are taken; it must land on :101.
-    taken = {"/tmp/.X11-unix/X99", "/tmp/.X11-unix/X100"}
-    monkeypatch.setattr(handover.Path, "exists", lambda self: str(self) in taken)
+def test_free_display_skips_live_seats(monkeypatch):
+    # A real desktop seat (:0/:1) already has a LIVE X server; handover must never pick it, else
+    # x11vnc grabs the live seat and noVNC hangs. :99 and :100 answer; it must land on :101.
+    monkeypatch.setattr(handover.launcher, "_x_display_reachable", lambda disp: disp in {":99", ":100"})
     assert handover._free_display() == ":101"
-
-
-def test_free_display_returns_base_when_free(monkeypatch):
-    monkeypatch.setattr(handover.Path, "exists", lambda self: False)
-    assert handover._free_display() == ":99"
 
 
 def test_alive_false_for_none_and_dead_pid():
@@ -204,3 +198,14 @@ def test_status_all_false_when_idle():
     assert st["websockify"] is False
     assert st["web_port"] is None
     assert st["page"] is None
+
+
+# ── display selection: liveness, not file existence ───────────
+
+
+def test_free_display_reuses_a_dead_display(monkeypatch):
+    # Regression: _free_display judged a display taken by its /tmp/.X11-unix/Xn socket FILE, so a
+    # dead Xvfb's leftover socket (crash, or a restart that leaves /tmp intact) blocked the number
+    # and corpses eventually exhausted the range. Judging by liveness makes a dead display reusable.
+    monkeypatch.setattr(handover.launcher, "_x_display_reachable", lambda disp: False)
+    assert handover._free_display(start=99) == ":99"
