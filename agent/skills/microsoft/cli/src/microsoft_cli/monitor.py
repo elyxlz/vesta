@@ -1,6 +1,8 @@
+import json
 import re
 import time
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import NotRequired, TypedDict
 from zoneinfo import ZoneInfo
 
@@ -9,6 +11,12 @@ from .config import Config
 from .context import MicrosoftContext
 
 _HTML_TAG = re.compile(r"<[^>]+>")
+
+_CATCHUP_GAP_SECONDS = 90
+_FRESH_START_LOOKBACK = timedelta(hours=1)
+# A unit that failed for a long stretch re-reads at most this much history once it heals, so a
+# long-dead account cannot flood the user on recovery.
+_MAX_CATCHUP = timedelta(days=7)
 
 
 # Zero-width and bidi / formatting characters that marketing emails use to pad previews with
@@ -25,6 +33,61 @@ def clean_preview(text: str) -> str:
 def strip_fractional(iso: str) -> str:
     """Remove fractional seconds from an ISO-8601 datetime string (Graph returns '.0000000')."""
     return re.sub(r"\.\d+", "", iso)
+
+
+class MonitorState(TypedDict):
+    """Watermarks the monitor resumes from.
+
+    last_cycle: when the monitor last finished a cycle; it seeds a unit polled for the first time.
+    units: poll unit ("mail:<account>", "calendar:<account>", "teams:<account>",
+    "channels:<account>") -> the end of the last window that unit read successfully.
+    """
+
+    last_cycle: str
+    units: dict[str, str]
+
+
+def _read_state(path: Path, now: datetime) -> MonitorState:
+    """Read the watermarks. A bare-timestamp file (the format before per-unit watermarks) reads as
+    a last_cycle with no units, so every unit resumes from where the old monitor left off."""
+    raw = path.read_text().strip() if path.exists() else ""
+    if not raw:
+        return MonitorState(last_cycle=(now - _FRESH_START_LOOKBACK).isoformat(), units={})
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return MonitorState(last_cycle=raw, units={})
+    if not isinstance(parsed, dict) or "last_cycle" not in parsed or "units" not in parsed:
+        raise ValueError(f"Malformed monitor state in {path}: {raw[:100]}")
+    last_cycle = parsed["last_cycle"]
+    units = parsed["units"]
+    if not isinstance(last_cycle, str) or not isinstance(units, dict):
+        raise ValueError(f"Malformed monitor state in {path}: {raw[:100]}")
+    return MonitorState(last_cycle=last_cycle, units={str(unit): str(watermark) for unit, watermark in units.items()})
+
+
+def _write_state(path: Path, state: MonitorState) -> None:
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state))
+    tmp.rename(path)
+
+
+def _unit_window(ctx: MicrosoftContext, state: MonitorState, unit: str, new_check_time: datetime) -> tuple[datetime, bool]:
+    """Start of the window this unit still has to read, and whether that window is a catch-up."""
+    units = state["units"]
+    last_iso = units[unit] if unit in units else state["last_cycle"]
+    last_dt = max(datetime.fromisoformat(last_iso), new_check_time - _MAX_CATCHUP)
+    gap_seconds = (new_check_time - last_dt).total_seconds()
+    catching_up = gap_seconds > _CATCHUP_GAP_SECONDS
+    if catching_up:
+        ctx.monitor_logger.info("Catching up %s from %s, %.0fs behind", unit, last_dt.isoformat(), gap_seconds)
+    return last_dt, catching_up
+
+
+def _record_poll(state: MonitorState, unit: str, last_dt: datetime, new_check_time: datetime, polled: bool) -> None:
+    """Advance a unit's watermark only across a window it actually read. A failed poll parks it at
+    the window it still owes, so the next healthy cycle re-reads that window instead of skipping it."""
+    state["units"][unit] = new_check_time.isoformat() if polled else last_dt.isoformat()
 
 
 class EmailAddress(TypedDict):
@@ -165,18 +228,18 @@ def _emit_calendar_reminders(
             )
 
 
-def _poll_owa_rest_account(
+def _poll_owa_rest_mail(
     ctx: MicrosoftContext,
     config: Config,
     account_email: str,
     watch_folders: list[str],
     last_dt: datetime,
-    new_check_time: datetime,
     catching_up: bool,
-) -> None:
-    """Poll a locked-tenant OWA REST account for new mail and calendar reminders. Fetching also
-    triggers the token auto-refresh in load_token, so this keeps the token warm in the background."""
+) -> bool:
+    """Poll a locked-tenant OWA REST account's watched folders for new mail, True when every folder
+    was read. Fetching runs through load_token, so this also keeps the token warm in the background."""
     logger = ctx.monitor_logger
+    polled = True
     for folder_token in watch_folders:
         try:
             messages = owa_rest.list_messages(ctx.http_client, account_email, config, folder=folder_token, limit=50)
@@ -195,7 +258,20 @@ def _poll_owa_rest_account(
                 _emit_email_notification(ctx, message, account_email, folder_token, catching_up)
         except Exception as e:
             logger.error("Error fetching OWA REST emails for %s folder %s: %s", account_email, folder_token, e)
+            polled = False
+    return polled
 
+
+def _poll_owa_rest_calendar(
+    ctx: MicrosoftContext,
+    config: Config,
+    account_email: str,
+    last_dt: datetime,
+    new_check_time: datetime,
+    catching_up: bool,
+) -> bool:
+    """Emit a locked-tenant OWA REST account's calendar reminders, True when the calendar was read."""
+    logger = ctx.monitor_logger
     try:
         max_threshold = max(ctx.get_calendar_notify_thresholds())
         window_end = new_check_time + timedelta(minutes=max_threshold + 60)
@@ -210,6 +286,8 @@ def _poll_owa_rest_account(
         _emit_calendar_reminders(ctx, events, account_email, last_dt, new_check_time, catching_up)
     except Exception as e:
         logger.error("Error fetching OWA REST calendar for %s: %s", account_email, e)
+        return False
+    return True
 
 
 def _teams_sender_name(message: dict, my_id: str) -> str | None:
@@ -237,21 +315,22 @@ def _arrived_since(message: dict, last_dt: datetime) -> bool:
     return created > last_dt
 
 
-def _poll_teams_account(ctx: MicrosoftContext, config: Config, account_email: str, last_dt: datetime, catching_up: bool) -> None:
+def _poll_teams_account(ctx: MicrosoftContext, config: Config, account_email: str, last_dt: datetime, catching_up: bool) -> bool:
     """Emit a notification per chat whose latest message arrived since last_dt (excluding the user's
-    own messages). One /me/chats request per cycle carries every chat's last-message preview."""
+    own messages), True when the chats were read. One /me/chats request per cycle carries every
+    chat's last-message preview."""
     logger = ctx.monitor_logger
     try:
         token = teams.resolve_token(config, account_email)
     except teams.TeamsError as e:
         logger.info("Teams token unavailable for %s: %s", account_email, e)
-        return
+        return False
     try:
         my_id = teams._my_id(ctx.http_client, token)
         chats = teams.list_chats(ctx.http_client, token, limit=50)
     except Exception as e:
         logger.error("Error fetching Teams chats for %s: %s", account_email, e)
-        return
+        return False
 
     for chat in chats:
         preview = chat["lastMessagePreview"] if "lastMessagePreview" in chat else None
@@ -275,9 +354,10 @@ def _poll_teams_account(ctx: MicrosoftContext, config: Config, account_email: st
             account=account_email,
             missed=catching_up or None,
         )
+    return True
 
 
-def _poll_teams_channels_account(ctx: MicrosoftContext, config: Config, account_email: str, last_dt: datetime, catching_up: bool) -> None:
+def _poll_teams_channels_account(ctx: MicrosoftContext, config: Config, account_email: str, last_dt: datetime, catching_up: bool) -> bool:
     """Emit a non-interrupting notification per Teams CHANNEL message since last_dt (excluding the
     user's own). Channels are broadcast, so a message per channel would be noisy — hence interrupt=False,
     unlike chats which stay interrupt=True.
@@ -285,21 +365,23 @@ def _poll_teams_channels_account(ctx: MicrosoftContext, config: Config, account_
     GRACEFUL DEGRADE: reading channel messages needs the admin-only ChannelMessage.Read.All scope plus
     Graph access that many accounts (browser-capture / OWA-REST-only) do NOT have. If enumerating teams
     fails for ANY reason (permission 403/401, GraphUnavailableError, TeamsError, ...), log once at info and
-    return — the account silently keeps working with chats only. A failure on a single team/channel is
-    logged at debug and skipped, never fatal."""
+    report the window read — the account silently keeps working with chats only, and parking the watermark
+    would only flood it if access ever appeared. A failure on a single team/channel is logged at debug and
+    skipped, never fatal. Only a missing token, which loses messages the account can otherwise read,
+    reports the window unread."""
     logger = ctx.monitor_logger
     try:
         token = teams.resolve_token(config, account_email)
     except teams.TeamsError as e:
         logger.info("Teams token unavailable for %s: %s", account_email, e)
-        return
+        return False
     try:
         my_id = teams._my_id(ctx.http_client, token)
         teams_list = teams.list_teams(ctx.http_client, token)
     except Exception as e:
         # No channel access (missing ChannelMessage.Read.All / no Graph): degrade to chats-only.
         logger.info("Teams channel messages unavailable for %s, keeping chats-only: %s", account_email, e)
-        return
+        return True
 
     for team in teams_list:
         team_id = team["id"] if "id" in team else None
@@ -341,6 +423,7 @@ def _poll_teams_channels_account(ctx: MicrosoftContext, config: Config, account_
                     account=account_email,
                     missed=catching_up or None,
                 )
+    return True
 
 
 def _refresh_captured_tokens(ctx: MicrosoftContext, config: Config, gave_up: set[str]) -> None:
@@ -359,11 +442,12 @@ def _refresh_captured_tokens(ctx: MicrosoftContext, config: Config, gave_up: set
             notifications.write_notification(ctx.notif_dir, "auth_needed", interrupt=False, account=account, message=str(e))
 
 
-def _poll_graph_account(ctx: MicrosoftContext, acc, last_check: str, last_dt: datetime, new_check_time: datetime, catching_up: bool) -> None:
-    """Poll one MSAL (Graph) account for new mail in its watched folders and upcoming calendar events."""
+def _poll_graph_mail(ctx: MicrosoftContext, acc, last_dt: datetime, catching_up: bool) -> bool:
+    """Poll one MSAL (Graph) account's watched folders for new mail, True when every folder was read."""
     logger = ctx.monitor_logger
     conn = graph.GraphConn(ctx.http_client, ctx.cache_file, ctx.scopes, ctx.base_url)
     watch_folders = notify.get_notify_folders(ctx.notify_file, acc.username) if ctx.notify_file else ["inbox"]
+    polled = True
     for folder_token in watch_folders:
         try:
             folder_id = folders.resolve_folder_id(
@@ -375,7 +459,7 @@ def _poll_graph_account(ctx: MicrosoftContext, acc, last_check: str, last_dt: da
                 f"/me/mailFolders/{folder_id}/messages",
                 acc.account_id,
                 params={
-                    "$filter": f"receivedDateTime gt {last_check}",
+                    "$filter": f"receivedDateTime gt {last_dt.isoformat()}",
                     "$select": "subject,from,bodyPreview,receivedDateTime",
                     "$top": 50,
                 },
@@ -383,6 +467,7 @@ def _poll_graph_account(ctx: MicrosoftContext, acc, last_check: str, last_dt: da
 
             if not result or "value" not in result:
                 logger.warning("Unexpected email API response: %s", result)
+                polled = False
                 continue
             emails = result["value"]
             logger.info("Found %d new emails for %s in %s", len(emails), acc.username, folder_token)
@@ -391,7 +476,14 @@ def _poll_graph_account(ctx: MicrosoftContext, acc, last_check: str, last_dt: da
                 _emit_email_notification(ctx, email, acc.username, folder_token, catching_up)
         except Exception as e:
             logger.error("Error fetching emails for %s folder %s: %s", acc.username, folder_token, e)
+            polled = False
+    return polled
 
+
+def _poll_graph_calendar(ctx: MicrosoftContext, acc, last_dt: datetime, new_check_time: datetime, catching_up: bool) -> bool:
+    """Emit one MSAL (Graph) account's calendar reminders, True when the calendar was read."""
+    logger = ctx.monitor_logger
+    conn = graph.GraphConn(ctx.http_client, ctx.cache_file, ctx.scopes, ctx.base_url)
     try:
         max_threshold = max(ctx.get_calendar_notify_thresholds())
         window_end = new_check_time + timedelta(minutes=max_threshold + 60)
@@ -409,75 +501,77 @@ def _poll_graph_account(ctx: MicrosoftContext, acc, last_check: str, last_dt: da
 
         if not cal_result or "value" not in cal_result:
             logger.warning("Unexpected calendar API response: %s", cal_result)
-            return
+            return False
         events = cal_result["value"]
         logger.info("Found %d upcoming calendar events for %s", len(events), acc.username)
         _emit_calendar_reminders(ctx, events, acc.username, last_dt, new_check_time, catching_up)
     except Exception as e:
         logger.error("Error fetching calendar for %s: %s", acc.username, e)
+        return False
+    return True
 
 
 def run(ctx: MicrosoftContext):
     logger = ctx.monitor_logger
     logger.info("Monitor thread started")
-    first_run = True
-    catching_up = False
     refresh_gave_up: set[str] = set()
 
     while not ctx.monitor_stop_event.is_set():
         try:
-            last_check = (
-                ctx.monitor_state_file.read_text().strip()
-                if ctx.monitor_state_file.exists()
-                else (datetime.now(UTC) - timedelta(hours=1)).isoformat()
-            )
-            catching_up = False
-
-            if first_run:
-                last_check_dt = datetime.fromisoformat(last_check)
-                gap_seconds = (datetime.now(UTC) - last_check_dt).total_seconds()
-                if gap_seconds > 90:
-                    logger.info("Detected offline period of %.0fs, catching up from %s", gap_seconds, last_check)
-                    catching_up = True
-            first_run = False
-
-            logger.info("Checking for updates since %s", last_check)
-            last_dt = datetime.fromisoformat(last_check)
-
             new_check_time = datetime.now(UTC)
+            state = _read_state(ctx.monitor_state_file, new_check_time)
+            config = Config(data_dir=ctx.cache_file.parent)
 
             msal_accounts = auth.list_accounts(ctx.cache_file)
             for acc in msal_accounts:
                 logger.info("Checking account: %s", acc.username)
-                _poll_graph_account(ctx, acc, last_check, last_dt, new_check_time, catching_up)
+                unit = f"mail:{acc.username}"
+                last_dt, catching_up = _unit_window(ctx, state, unit, new_check_time)
+                _record_poll(state, unit, last_dt, new_check_time, _poll_graph_mail(ctx, acc, last_dt, catching_up))
+
+                unit = f"calendar:{acc.username}"
+                last_dt, catching_up = _unit_window(ctx, state, unit, new_check_time)
+                _record_poll(state, unit, last_dt, new_check_time, _poll_graph_calendar(ctx, acc, last_dt, new_check_time, catching_up))
 
             # OWA REST accounts (locked tenants) are not in the MSAL cache, so poll them here over
             # OWA REST for anything Graph did not already cover. The fetch runs through load_token,
             # which silently re-mints an expiring token from the signed-in browser profile, so this
             # also keeps the token warm in the background.
-            config = Config(data_dir=ctx.cache_file.parent)
             msal_usernames = {acc.username.casefold() for acc in msal_accounts}
             for account_email in owa_rest.list_accounts(config):
                 if account_email.casefold() in msal_usernames:
                     continue
                 logger.info("Checking OWA REST account: %s", account_email)
                 watch_folders = notify.get_notify_folders(ctx.notify_file, account_email) if ctx.notify_file else ["inbox"]
-                _poll_owa_rest_account(ctx, config, account_email, watch_folders, last_dt, new_check_time, catching_up)
+                unit = f"mail:{account_email}"
+                last_dt, catching_up = _unit_window(ctx, state, unit, new_check_time)
+                polled = _poll_owa_rest_mail(ctx, config, account_email, watch_folders, last_dt, catching_up)
+                _record_poll(state, unit, last_dt, new_check_time, polled)
+
+                unit = f"calendar:{account_email}"
+                last_dt, catching_up = _unit_window(ctx, state, unit, new_check_time)
+                polled = _poll_owa_rest_calendar(ctx, config, account_email, last_dt, new_check_time, catching_up)
+                _record_poll(state, unit, last_dt, new_check_time, polled)
 
             # Teams chats: poll every account that has authorized Teams (device or captured token).
-            # Channel messages are polled right after with the same cutoff; they degrade to a no-op
+            # Channel messages are polled right after with their own cutoff; they degrade to a no-op
             # for accounts that lack channel-read access (default-on where the capability exists).
             for account_email in teams.list_accounts(config):
                 logger.info("Checking Teams account: %s", account_email)
-                _poll_teams_account(ctx, config, account_email, last_dt, catching_up)
-                _poll_teams_channels_account(ctx, config, account_email, last_dt, catching_up)
+                unit = f"teams:{account_email}"
+                last_dt, catching_up = _unit_window(ctx, state, unit, new_check_time)
+                _record_poll(state, unit, last_dt, new_check_time, _poll_teams_account(ctx, config, account_email, last_dt, catching_up))
+
+                unit = f"channels:{account_email}"
+                last_dt, catching_up = _unit_window(ctx, state, unit, new_check_time)
+                polled = _poll_teams_channels_account(ctx, config, account_email, last_dt, catching_up)
+                _record_poll(state, unit, last_dt, new_check_time, polled)
 
             # Keep browser-captured tokens fresh so the user's one sign-in lasts the SSO session.
             _refresh_captured_tokens(ctx, config, refresh_gave_up)
 
-            tmp = ctx.monitor_state_file.with_suffix(".tmp")
-            tmp.write_text(new_check_time.isoformat())
-            tmp.rename(ctx.monitor_state_file)
+            state["last_cycle"] = new_check_time.isoformat()
+            _write_state(ctx.monitor_state_file, state)
             logger.info("Completed check cycle, sleeping for 45 seconds")
             if ctx.monitor_stop_event.wait(45):
                 break
