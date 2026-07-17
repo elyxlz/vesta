@@ -373,6 +373,37 @@ def test_free_display_skips_live_seats(monkeypatch):
     assert handover._free_display() == ":101"
 
 
+def test_claim_own_display_returns_the_display_it_actually_won(monkeypatch):
+    monkeypatch.setattr(handover.launcher, "_x_display_reachable", lambda _disp: False)
+    monkeypatch.setattr(handover.launcher, "_ensure_xvfb", lambda display, screen: 4242)
+    assert handover._claim_own_display() == (":99", 4242)
+
+
+def test_claim_own_display_advances_when_a_race_is_lost(monkeypatch):
+    # Two handovers pick the same free number and race to bind its shared abstract socket; the loser
+    # sees _ensure_xvfb return None (its Xvfb died) and must move to the next number, not proceed
+    # against the winner's server. The winner then holds :99, so the next scan lands on :100.
+    held = {":99"}
+    monkeypatch.setattr(handover.launcher, "_x_display_reachable", lambda disp: disp in held)
+
+    def ensure(display, screen):
+        if display == ":99":  # lost the race for :99
+            return None
+        held.add(display)  # won this one
+        return 4243
+
+    monkeypatch.setattr(handover.launcher, "_ensure_xvfb", ensure)
+    assert handover._claim_own_display() == (":100", 4243)
+
+
+def test_claim_own_display_gives_up_after_the_attempt_cap(monkeypatch):
+    monkeypatch.setattr(handover.launcher, "_x_display_reachable", lambda _disp: False)
+    monkeypatch.setattr(handover.launcher, "_ensure_xvfb", lambda display, screen: None)  # always loses
+    monkeypatch.setattr(handover, "DISPLAY_CLAIM_ATTEMPTS", 3)
+    with pytest.raises(RuntimeError, match="could not claim a free X display"):
+        handover._claim_own_display()
+
+
 def test_alive_false_for_none_and_dead_pid():
     assert handover._alive(None) is False
     # PID 2**31-1 is not a running process on any sane system.

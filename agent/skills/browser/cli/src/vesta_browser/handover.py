@@ -37,6 +37,7 @@ WEB_PORT_START = 6080
 X11VNC_READY_TIMEOUT_S = 10.0
 X11VNC_SETTLE_S = 0.4
 X11VNC_TERMINATE_TIMEOUT_S = 5.0
+DISPLAY_CLAIM_ATTEMPTS = 10
 READY_POLL_S = 0.1
 PROC = Path("/proc")
 # The 13" MacBook's native resolution: a real monitor size, and the one the framed machine in the
@@ -136,6 +137,23 @@ def _free_display(start: int = 99) -> str:
         if not launcher._x_display_reachable(f":{n}"):
             return f":{n}"
     raise RuntimeError(f"no free X display in range :{start}-:{start + 100}")
+
+
+def _claim_own_display() -> tuple[str, int]:
+    """A display this container's OWN Xvfb holds, returned with its pid.
+
+    `_free_display` sees only who holds a number the instant it looks, and agent containers share
+    the host abstract-socket namespace, so two handovers can pick the same free number and race to
+    bind it: the loser's Xvfb dies while the winner's container answers on that number. So start
+    Xvfb and confirm we own it before trusting the display. A lost race just advances, the next scan
+    finds the winner holding that number and moves on.
+    """
+    for _ in range(DISPLAY_CLAIM_ATTEMPTS):
+        display = _free_display()
+        pid = launcher._ensure_xvfb(display, screen=f"{SCREEN_W}x{SCREEN_H}x24")
+        if pid is not None:
+            return display, pid
+    raise RuntimeError(f"could not claim a free X display after {DISPLAY_CLAIM_ATTEMPTS} attempts")
 
 
 def _alive(pid: int | None) -> bool:
@@ -297,8 +315,6 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
     # Wayland host x11vnc and Firefox both prefer the ambient Wayland session over our X11 display
     # (x11vnc 0.9.x exits outright when WAYLAND_DISPLAY is set), so drop it and force Firefox onto
     # X11 with MOZ_ENABLE_WAYLAND=0. Harmless where WAYLAND_DISPLAY is unset (e.g. the container).
-    display = _free_display()
-    os.environ["DISPLAY"] = display
     os.environ.pop("WAYLAND_DISPLAY", None)
     os.environ["MOZ_ENABLE_WAYLAND"] = "0"
 
@@ -309,9 +325,9 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
     # openbox strips decorations and pins the window at the origin. Every pid reaches its session
     # file the moment its process exists, so the stop() below reaps whatever a raise leaves behind.
     try:
-        xvfb_pid = launcher._ensure_xvfb(display, screen=f"{SCREEN_W}x{SCREEN_H}x24")
-        if xvfb_pid is not None:
-            _session_file("xvfb-pid").write_text(str(xvfb_pid))
+        display, xvfb_pid = _claim_own_display()
+        os.environ["DISPLAY"] = display
+        _session_file("xvfb-pid").write_text(str(xvfb_pid))
         openbox_rc = _session_file("openbox-rc.xml")
         openbox_rc.write_text(OPENBOX_RC)
         openbox = subprocess.Popen(
