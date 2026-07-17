@@ -61,7 +61,6 @@ interface ReleaseAsset {
   browser_download_url: string;
 }
 
-/** Pick an arch's .deb or .rpm out of a release's asset list by name. */
 export function selectLinuxAsset(
   assets: ReleaseAsset[],
   arch: string,

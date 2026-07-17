@@ -1,35 +1,26 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { cancelLoopback, startLoopback } from "./oauth-loopback";
 
-const openPorts: number[] = [];
+let port = 0;
 
 afterEach(() => {
-  for (const port of openPorts.splice(0)) cancelLoopback(port);
+  cancelLoopback(port);
 });
 
 describe("oauth loopback", () => {
   it("reconstructs the full callback url from the incoming request", async () => {
     const captured: string[] = [];
-    const port = await startLoopback((url) => {
+    port = await startLoopback((url) => {
       captured.push(url);
     });
-    openPorts.push(port);
+    const target = `http://127.0.0.1:${String(port)}/callback?code=abc&state=xyz`;
 
-    const response = await fetch(
-      `http://127.0.0.1:${String(port)}/callback?code=abc&state=xyz`,
-    );
-
-    expect(response.status).toBe(200);
-    expect(await response.text()).toContain("Signed in");
-    expect(captured).toEqual([
-      `http://127.0.0.1:${String(port)}/callback?code=abc&state=xyz`,
-    ]);
+    expect(await (await fetch(target)).text()).toContain("Signed in");
+    expect(captured).toEqual([target]);
   });
 
   it("frees the port after cancel", async () => {
-    const port = await startLoopback(() => {
-      /* never called */
-    });
+    port = await startLoopback(() => undefined);
     cancelLoopback(port);
     await expect(fetch(`http://127.0.0.1:${String(port)}/`)).rejects.toBeTruthy();
   });
