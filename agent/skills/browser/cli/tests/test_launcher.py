@@ -135,3 +135,35 @@ def test_ensure_headed_prefs_is_idempotent(tmp_path):
     launcher._ensure_headed_prefs(tmp_path)
     launcher._ensure_headed_prefs(tmp_path)
     assert (tmp_path / "user.js").read_text().count("gfx.webrender.software") == 1
+
+
+# ── display selection across containers ───────────────────────
+
+
+def test_display_held_only_on_the_abstract_socket_is_not_free():
+    """An X server in another container leaves our /tmp empty but owns the display number.
+
+    Agent containers share the host's network namespace, so they share one abstract socket
+    namespace. Judging by the filesystem socket alone hands our X clients to that container's
+    server: the shm attach then crosses IPC namespaces and the stream dies with BadAccess.
+    """
+    import socket as socket_module
+    from pathlib import Path
+
+    from vesta_browser.launcher import _x_display_reachable
+
+    display_number = 71
+    holder = socket_module.socket(socket_module.AF_UNIX, socket_module.SOCK_STREAM)
+    try:
+        holder.bind(f"\0/tmp/.X11-unix/X{display_number}")  # abstract only: nothing lands in /tmp
+        holder.listen(1)
+        assert not Path(f"/tmp/.X11-unix/X{display_number}").exists()  # the fs socket really is absent
+        assert _x_display_reachable(f":{display_number}") is True
+    finally:
+        holder.close()
+
+
+def test_display_with_neither_socket_is_free():
+    from vesta_browser.launcher import _x_display_reachable
+
+    assert _x_display_reachable(":73") is False

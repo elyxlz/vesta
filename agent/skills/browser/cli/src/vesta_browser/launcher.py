@@ -43,6 +43,7 @@ DOWNLOAD_TIMEOUT_S = 600.0
 DOWNLOAD_CHUNK = 1 << 20
 READY_TIMEOUT_S = 45.0
 READY_POLL_S = 0.2
+X_PROBE_TIMEOUT_S = 2
 BIDI_RE = re.compile(r"WebDriver BiDi listening on (ws://\S+)")
 
 
@@ -147,34 +148,26 @@ def _read_ws_url(proc: subprocess.Popen[bytes], log_path: Path, timeout_s: float
 
 
 def _x_display_reachable(display: str) -> bool:
-    """True iff an X server is actually accepting connections on `display`."""
-    if shutil.which("xdpyinfo"):
+    """True iff an X server anywhere in this network namespace is accepting connections on `display`.
+
+    An X server listens on two sockets: a filesystem one under /tmp, and an abstract one, which is
+    what Xlib connects to when both exist. The abstract namespace is scoped to the NETWORK
+    namespace, and agent containers share the host's, so another container's X server occupies a
+    display number here while leaving our own /tmp empty. Probing only the filesystem socket calls
+    such a display free, and our X clients then land on that container's server.
+    """
+    number = display.lstrip(":").split(".")[0]
+    for address in (f"\0/tmp/.X11-unix/X{number}", f"/tmp/.X11-unix/X{number}"):
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(X_PROBE_TIMEOUT_S)
         try:
-            return (
-                subprocess.run(
-                    ["xdpyinfo", "-display", display],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    timeout=5,
-                    check=False,
-                ).returncode
-                == 0
-            )
-        except Exception:
-            return False
-    # Fallback when xdpyinfo isn't installed: probe the X11 unix socket directly.
-    try:
-        n = display.lstrip(":").split(".")[0]
-        sock_path = f"/tmp/.X11-unix/X{n}"
-        if not Path(sock_path).exists():
-            return False
-        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        s.settimeout(2)
-        s.connect(sock_path)
-        s.close()
-        return True
-    except OSError:
-        return False
+            sock.connect(address)
+            return True
+        except OSError:
+            continue
+        finally:
+            sock.close()
+    return False
 
 
 def _ensure_xvfb(display: str, screen: str = "1920x1080x24") -> int | None:
