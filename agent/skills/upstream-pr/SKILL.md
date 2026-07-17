@@ -111,9 +111,13 @@ upstream-pr --title "..." --branch my-branch --base master
 upstream-pr --token-only
 ```
 
+## Running a skill's tests
+
+Each skill CLI is its own uv project, so run its tests from its own directory: `cd ~/agent/skills/<name>/cli && uv run pytest`. uv builds a local `.venv` there and leaves the engine venv at `~/agent/.venv` alone.
+
 ## Formatting Python before pushing
 
-Before pushing changed `.py`, format from `~/agent` so the pinned ruff and config match CI's `guards` ruff pass: `cd ~/agent && uv run --project core ruff format <path> && uv run --project core ruff check <path>`. Run `uv run --project core ruff` from that dir, never `uvx ruff` or another cwd: those ignore the lock (`agent/core/uv.lock`) and config (`agent/ruff.toml`) and can fail CI's `--check` on otherwise-correct code.
+Before pushing changed `.py`, format from `~/agent` so the pinned ruff and config match CI's `guards` ruff pass: `cd ~/agent && ruff format <path> && ruff check <path>`. Plain `ruff` from that dir is the engine venv's pinned ruff (its bin leads your PATH), never `uvx ruff` or another cwd: those ignore the lock (`agent/core/uv.lock`) and config (`agent/ruff.toml`) and can fail CI's `--check` on otherwise-correct code.
 
 ## No em/en dashes in markdown
 
