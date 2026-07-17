@@ -25,6 +25,34 @@ interface AnsiSpan {
   style: AnsiStyle;
 }
 
+type AnsiFlag =
+  | "bold"
+  | "dim"
+  | "italic"
+  | "underline"
+  | "strikethrough"
+  | "inverse"
+  | "hidden";
+
+const ENABLED_STYLE_FLAGS: Partial<Record<number, AnsiFlag>> = {
+  1: "bold",
+  2: "dim",
+  3: "italic",
+  4: "underline",
+  7: "inverse",
+  8: "hidden",
+  9: "strikethrough",
+  21: "underline",
+};
+
+const DISABLED_STYLE_FLAGS: Partial<Record<number, AnsiFlag>> = {
+  23: "italic",
+  24: "underline",
+  27: "inverse",
+  28: "hidden",
+  29: "strikethrough",
+};
+
 const ANSI_PALETTE = [
   "var(--ansi-black)",
   "var(--ansi-red)",
@@ -46,9 +74,10 @@ const ANSI_PALETTE = [
 
 // CSI, OSC, character-set, and two-byte escape sequences. SGR (`...m`) is
 // interpreted below; the other terminal controls are removed from display.
-const ANSI_CONTROL_RE =
-  // eslint-disable-next-line no-control-regex
-  /(?:\x1b\[|\u009b)([0-?]*)([ -/]*)([@-~])|\x1b\][\s\S]*?(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|\x1b[@-_]/g;
+const ANSI_CONTROL_RE = new RegExp(
+  `(?:${ESC}\\[|\\u009b)([0-?]*)([ -/]*)([@-~])|${ESC}\\][\\s\\S]*?(?:${BEL}|${ESC}\\\\)|${ESC}[()][A-Z0-9]|${ESC}[@-_]`,
+  "g",
+);
 
 export function stripAnsi(text: string): string {
   // Strip to a fixpoint: removing one escape sequence can expose another
@@ -75,6 +104,10 @@ function byte(value: number): number {
   return Math.max(0, Math.min(255, Math.round(value)));
 }
 
+function rgb(red: number, green: number, blue: number): string {
+  return `rgb(${[red, green, blue].join(", ")})`;
+}
+
 function extendedColor(
   parameters: number[],
   index: number,
@@ -87,16 +120,19 @@ function extendedColor(
       consumed: 2,
     };
   }
+  const red = parameters[index + 2];
+  const green = parameters[index + 3];
+  const blue = parameters[index + 4];
   if (
     mode === 2 &&
-    parameters[index + 2] !== undefined &&
-    parameters[index + 3] !== undefined &&
-    parameters[index + 4] !== undefined
+    red !== undefined &&
+    green !== undefined &&
+    blue !== undefined
   ) {
     return {
       color: {
         kind: "rgb",
-        value: `rgb(${byte(parameters[index + 2])}, ${byte(parameters[index + 3])}, ${byte(parameters[index + 4])})`,
+        value: rgb(byte(red), byte(green), byte(blue)),
       },
       consumed: 4,
     };
@@ -113,6 +149,18 @@ function sgrParameters(value: string): number[] {
     .filter(Number.isFinite);
 }
 
+function applyPaletteColor(style: AnsiStyle, code: number): void {
+  const paletteIndex = colorIndex(code);
+  if (paletteIndex === null) return;
+
+  const color: AnsiColor = { kind: "palette", index: paletteIndex };
+  if ((code >= 40 && code <= 47) || code >= 100) {
+    style.background = color;
+  } else {
+    style.foreground = color;
+  }
+}
+
 function applySgr(current: AnsiStyle, sequence: string): AnsiStyle {
   let style = { ...current };
   const parameters = sgrParameters(sequence);
@@ -121,55 +169,43 @@ function applySgr(current: AnsiStyle, sequence: string): AnsiStyle {
     if (code === undefined) continue;
     if (code === 0) {
       style = {};
-    } else if (code === 1) {
-      style.bold = true;
-    } else if (code === 2) {
-      style.dim = true;
-    } else if (code === 3) {
-      style.italic = true;
-    } else if (code === 4 || code === 21) {
-      style.underline = true;
-    } else if (code === 7) {
-      style.inverse = true;
-    } else if (code === 8) {
-      style.hidden = true;
-    } else if (code === 9) {
-      style.strikethrough = true;
-    } else if (code === 22) {
+      continue;
+    }
+
+    const enabledFlag = ENABLED_STYLE_FLAGS[code];
+    if (enabledFlag) {
+      style[enabledFlag] = true;
+      continue;
+    }
+    if (code === 22) {
       delete style.bold;
       delete style.dim;
-    } else if (code === 23) {
-      delete style.italic;
-    } else if (code === 24) {
-      delete style.underline;
-    } else if (code === 27) {
-      delete style.inverse;
-    } else if (code === 28) {
-      delete style.hidden;
-    } else if (code === 29) {
-      delete style.strikethrough;
-    } else if (code === 39) {
+      continue;
+    }
+
+    const disabledFlag = DISABLED_STYLE_FLAGS[code];
+    if (disabledFlag) {
+      style[disabledFlag] = false;
+      continue;
+    }
+    if (code === 39) {
       delete style.foreground;
-    } else if (code === 49) {
+      continue;
+    }
+    if (code === 49) {
       delete style.background;
-    } else if (code === 38 || code === 48) {
+      continue;
+    }
+    if (code === 38 || code === 48) {
       const result = extendedColor(parameters, index);
       if (result.color) {
         if (code === 38) style.foreground = result.color;
         else style.background = result.color;
       }
       index += result.consumed;
-    } else {
-      const paletteIndex = colorIndex(code);
-      if (paletteIndex !== null) {
-        const color: AnsiColor = { kind: "palette", index: paletteIndex };
-        if ((code >= 40 && code <= 47) || code >= 100) {
-          style.background = color;
-        } else {
-          style.foreground = color;
-        }
-      }
+      continue;
     }
+    applyPaletteColor(style, code);
   }
   return style;
 }
@@ -181,7 +217,7 @@ function parseAnsi(value: string): AnsiSpan[] {
   ANSI_CONTROL_RE.lastIndex = 0;
 
   for (const match of value.matchAll(ANSI_CONTROL_RE)) {
-    const start = match.index ?? 0;
+    const start = match.index;
     if (start > offset) {
       spans.push({ text: value.slice(offset, start), style: { ...style } });
     }
@@ -209,10 +245,10 @@ function resolveColor(color: AnsiColor): string {
     const red = values[Math.floor(index / 36)] ?? 0;
     const green = values[Math.floor((index % 36) / 6)] ?? 0;
     const blue = values[index % 6] ?? 0;
-    return `rgb(${red}, ${green}, ${blue})`;
+    return rgb(red, green, blue);
   }
   const gray = 8 + (color.index - 232) * 10;
-  return `rgb(${gray}, ${gray}, ${gray})`;
+  return rgb(gray, gray, gray);
 }
 
 function styleDeclarations(style: AnsiStyle): string[] {

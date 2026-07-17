@@ -468,8 +468,7 @@ fn message_for(
         "chat" => {
             let body = if device.previews {
                 text_field(event, "text")
-                    .map(truncate_preview)
-                    .unwrap_or_else(|| format!("{agent} sent a new message."))
+                    .map_or_else(|| format!("{agent} sent a new message."), truncate_preview)
             } else {
                 format!("{agent} sent a new message.")
             };
