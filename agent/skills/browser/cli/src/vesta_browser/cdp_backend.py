@@ -47,6 +47,7 @@ _KEY_MAP = {
 _CDP_BUTTON = {0: "left", 1: "middle", 2: "right"}
 _INTERNAL_PREFIXES = ("devtools://", "chrome://", "chrome-extension://")
 _LOAD_TIMEOUT_S = 30.0
+_CDP_RESPONSE_TIMEOUT_S = 60.0
 _DOMAINS = ("Page", "Runtime", "Log", "DOM")
 
 
@@ -104,7 +105,13 @@ class _CdpTransport:
         if session_id is not None:
             frame["sessionId"] = session_id
         await self._ws.send(json.dumps(frame))
-        return await future
+        try:
+            return await asyncio.wait_for(future, timeout=_CDP_RESPONSE_TIMEOUT_S)
+        except TimeoutError:
+            # BidiError, not TimeoutError: the latter is an OSError with an empty str(), which the daemon relays as {"error": ""}.
+            raise BidiError("timeout", f"no response to {method!r} within {_CDP_RESPONSE_TIMEOUT_S}s") from None
+        finally:
+            self._pending.pop(command_id, None)
 
     async def close(self) -> None:
         if self._reader is not None:
