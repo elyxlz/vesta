@@ -28,10 +28,9 @@ x86_64, ~650 MB) from GitHub, verifies its sha256, and extracts it to
 No Chromium, no Xvfb, no display: Camoufox runs headless and fully fingerprint-spoofed. Check
 state with `browser doctor`.
 
-It does need GTK3, which the image installs. Headless still runs GTK init, so without it Camoufox
-exits 255 before BiDi is ready, with `libgtk-3.so.0: cannot open shared object file` in the launch
-error. If you hit that on a non-vesta image, install GTK3: the package is `libgtk-3-0t64` on
-Debian trixie and later, `libgtk-3-0` on bookworm and earlier.
+It does need GTK3, which the image installs (headless still runs GTK init). Without it Camoufox
+exits 255 before BiDi with `libgtk-3.so.0: cannot open shared object file`. On a non-vesta image
+install GTK3: `libgtk-3-0t64` on Debian trixie and later, `libgtk-3-0` on bookworm and earlier.
 
 ## Handover dependencies
 
