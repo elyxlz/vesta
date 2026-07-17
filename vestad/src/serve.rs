@@ -3260,10 +3260,9 @@ mod tests {
         );
     }
 
-    // Reproduction of vesta#1323. `public` is as durable a choice as the port, and the
-    // caller re-registering is often a resolver that never chose it, so an omitted flag
-    // must inherit the cached one instead of revoking a publish. Drives the real
-    // resolve_public register_service_handler calls.
+    // Reproduction of vesta#1323: the caller re-registering is often a resolver that never
+    // chose the flag, so an omitted one must inherit the cached value instead of revoking a
+    // publish. Drives the real `resolve_public` that `register_service_handler` calls.
     #[test]
     fn public_flag_survives_a_reregistration_that_omits_it() {
         let published = Some(ServiceEntry {
