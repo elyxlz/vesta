@@ -4,3 +4,9 @@ dist/
 
 # Electron build artifacts
 desktop/dist-electron/
+
+# Expo mobile build artifacts
+mobile/.expo/
+mobile/ios/
+mobile/android/
+mobile/coverage/

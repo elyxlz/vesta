@@ -6,6 +6,17 @@ const _authReady = new Promise<void>((r) => { _resolveAuth = r; });
 let _fullscreen = false;
 const _layoutListeners: Set<(fullscreen: boolean) => void> = new Set();
 
+declare global {
+  interface Window {
+    ReactNativeWebView?: { postMessage: (message: string) => void };
+  }
+}
+
+function postToParent(message: { type: string }): void {
+  window.parent.postMessage(message, "*");
+  window.ReactNativeWebView?.postMessage(JSON.stringify(message));
+}
+
 export interface PlatformInfo {
   isDesktopApp: boolean;
   platform: string;
@@ -104,8 +115,8 @@ export function initParentBridge() {
     }
   });
 
-  window.parent.postMessage({ type: "vesta-theme-request" }, "*");
-  window.parent.postMessage({ type: "vesta-auth-request" }, "*");
-  window.parent.postMessage({ type: "vesta-layout-request" }, "*");
-  window.parent.postMessage({ type: "vesta-platform-request" }, "*");
+  postToParent({ type: "vesta-theme-request" });
+  postToParent({ type: "vesta-auth-request" });
+  postToParent({ type: "vesta-layout-request" });
+  postToParent({ type: "vesta-platform-request" });
 }

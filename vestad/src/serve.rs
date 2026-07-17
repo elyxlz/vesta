@@ -13,11 +13,14 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::settings::{load_settings, save_settings, AgentBackupOverride, BackupGlobalSettings, ServiceEntry, Settings, UserDesired};
+use crate::settings::{
+    load_settings, save_settings, AgentBackupOverride, BackupGlobalSettings, ServiceEntry,
+    Settings, UserDesired,
+};
 use crate::state::{err_response, map_docker_err, ok_json, AppState, SharedState};
 use crate::{
-    agent_provider, agent_proxy, agent_status, auth, backup, control_ws, docker, self_update, systemd, update_check,
-    update_window,
+    agent_provider, agent_proxy, agent_status, auth, backup, control_ws, docker, mobile_app,
+    self_update, systemd, update_check, update_window,
 };
 
 const GATEWAY_RESTART_DELAY_MS: u64 = 200;
@@ -35,8 +38,8 @@ const LONGRUN_REQUEST_TIMEOUT_SECS: u64 = 1800;
 const API_KEY_BYTES: usize = 32;
 
 const RESERVED_SERVICE_NAMES: &[&str] = &[
-    "start", "stop", "restart", "destroy", "auth", "logs", "tree", "file", "backups",
-    "settings", "services",
+    "start", "stop", "restart", "destroy", "auth", "logs", "tree", "file", "backups", "settings",
+    "services",
 ];
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
 const AUTO_BACKUP_CHECK_INTERVAL_SECS: u64 = 3600;
@@ -165,7 +168,9 @@ fn ensure_not_rebuilding(
     if rebuilding.is_rebuilding(name) {
         return Err(err_response(
             StatusCode::CONFLICT,
-            &format!("agent '{name}' is updating (container rebuild in progress); wait for it to finish"),
+            &format!(
+                "agent '{name}' is updating (container rebuild in progress); wait for it to finish"
+            ),
         ));
     }
     Ok(())
@@ -425,10 +430,14 @@ async fn gateway_update_handler(
     }
 }
 
-async fn list_agents_handler(
-    State(state): State<SharedState>,
-) -> impl IntoResponse {
-    let agents = agent_status::list_agents(&state.docker, &state.http_client, &state.env_config.agents_dir, &state.rebuilding).await;
+async fn list_agents_handler(State(state): State<SharedState>) -> impl IntoResponse {
+    let agents = agent_status::list_agents(
+        &state.docker,
+        &state.http_client,
+        &state.env_config.agents_dir,
+        &state.rebuilding,
+    )
+    .await;
     Json(agents)
 }
 
@@ -518,9 +527,15 @@ async fn agent_status_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Result<Json<docker::StatusJson>, (StatusCode, Json<serde_json::Value>)> {
-    let status = agent_status::get_status(&state.docker, &state.http_client, &name, &state.env_config.agents_dir, &state.rebuilding)
-        .await
-        .map_err(map_docker_err)?;
+    let status = agent_status::get_status(
+        &state.docker,
+        &state.http_client,
+        &name,
+        &state.env_config.agents_dir,
+        &state.rebuilding,
+    )
+    .await
+    .map_err(map_docker_err)?;
     Ok(Json(status))
 }
 
@@ -957,7 +972,8 @@ async fn logs_handler(
         ));
     }
 
-    let tail_lines = usize::try_from(query.tail.unwrap_or(DEFAULT_LOG_TAIL_LINES)).unwrap_or(usize::MAX);
+    let tail_lines =
+        usize::try_from(query.tail.unwrap_or(DEFAULT_LOG_TAIL_LINES)).unwrap_or(usize::MAX);
     let docker = state.docker.clone();
     let stream = async_stream::stream! {
         if status != docker::ContainerStatus::Running {
@@ -1321,7 +1337,9 @@ async fn read_file_handler(
     }
 
     let readonly = is_readonly_path(&q.path) || (mode & 0o200) == 0;
-    let (content, encoding) = if let Ok(s) = std::str::from_utf8(&cat.stdout) { (s.to_string(), "utf-8") } else {
+    let (content, encoding) = if let Ok(s) = std::str::from_utf8(&cat.stdout) {
+        (s.to_string(), "utf-8")
+    } else {
         use base64::Engine;
         (
             base64::engine::general_purpose::STANDARD.encode(&cat.stdout),
@@ -2176,8 +2194,7 @@ pub fn write_port_file(config_dir: &std::path::Path, port: u16) {
 
 pub fn acquire_pid_lock(config_dir: &std::path::Path) -> Result<std::fs::File, String> {
     let pid_path = config_dir.join("vestad.pid");
-    std::fs::create_dir_all(config_dir)
-        .map_err(|e| format!("failed to create config dir: {e}"))?;
+    std::fs::create_dir_all(config_dir).map_err(|e| format!("failed to create config dir: {e}"))?;
 
     let file = std::fs::OpenOptions::new()
         .create(true)
@@ -2313,6 +2330,10 @@ pub fn build_router(state: SharedState) -> Router {
         )
         .route("/agents/{name}/mounts", put(set_mounts_handler))
         .route("/host/folders", get(host_folder_suggestions_handler))
+        .route(
+            "/mobile/devices",
+            put(mobile_app::register_device_handler).delete(mobile_app::delete_device_handler),
+        )
         .route(
             "/gateway/settings",
             get(get_gateway_settings_handler).put(put_gateway_settings_handler),
@@ -2530,7 +2551,8 @@ fn spawn_auto_backup_task(state: SharedState) {
             let now_epoch = crate::time_utils::now_epoch_secs();
             let today_local = crate::time_utils::local_date_of_epoch(now_epoch);
             let seven_days_ago = crate::time_utils::now_timestamp_from_epoch(now_epoch - 7 * 86400);
-            let thirty_days_ago = crate::time_utils::now_timestamp_from_epoch(now_epoch - 30 * 86400);
+            let thirty_days_ago =
+                crate::time_utils::now_timestamp_from_epoch(now_epoch - 30 * 86400);
 
             for name in &agents {
                 // Resolve per-agent settings (override or global fallback)
@@ -2563,7 +2585,10 @@ fn spawn_auto_backup_task(state: SharedState) {
 
                 let has_daily_today = backups.iter().any(|b| {
                     b.backup_type == crate::types::BackupType::Daily
-                        && crate::time_utils::parse_compact_utc_epoch(&b.created_at).map(crate::time_utils::local_date_of_epoch).as_deref() == Some(today_local.as_str())
+                        && crate::time_utils::parse_compact_utc_epoch(&b.created_at)
+                            .map(crate::time_utils::local_date_of_epoch)
+                            .as_deref()
+                            == Some(today_local.as_str())
                 });
                 if !has_daily_today {
                     needed.push(crate::types::BackupType::Daily);
@@ -2649,7 +2674,11 @@ fn spawn_update_check_task(state: SharedState) {
         tokio::time::sleep(tokio::time::Duration::from_secs(STARTUP_SETTLE_SECS)).await;
         loop {
             let channel = effective_channel(&state).await;
-            let update_available = match tokio::task::spawn_blocking(move || update_check::check_once(channel)).await {
+            let update_available = match tokio::task::spawn_blocking(move || {
+                update_check::check_once(channel)
+            })
+            .await
+            {
                 Ok(Ok(info)) => {
                     let available = info.update_available;
                     *state.update_info.lock().await = Some(info);
@@ -2678,7 +2707,9 @@ fn spawn_update_check_task(state: SharedState) {
                         agents = zones.len(),
                         "auto-update: agent quiet window reached, applying"
                     );
-                    match tokio::task::spawn_blocking(move || self_update::perform_update(channel)).await {
+                    match tokio::task::spawn_blocking(move || self_update::perform_update(channel))
+                        .await
+                    {
                         Ok(Ok(outcome)) => tracing::info!(
                             updated = outcome.updated,
                             restarted = outcome.restarted,
@@ -2783,7 +2814,7 @@ pub async fn run_server(cfg: ServerConfig) {
         std::process::exit(1);
     }
     let agent_settings = load_settings().agents.clone();
-    let state = Arc::new(AppState::new(
+    let (app_state, mobile_app_worker) = AppState::new(
         api_key,
         env_config,
         docker.clone(),
@@ -2794,7 +2825,9 @@ pub async fn run_server(cfg: ServerConfig) {
             expose_lan,
             lan_url,
         },
-    ));
+    );
+    let state = Arc::new(app_state);
+    let mobile_app_handle = tokio::spawn(mobile_app_worker.run());
     // Reconcile in the background so the API serves immediately: a rebuild (entrypoint/mount change)
     // snapshots each container's filesystem (minutes), and awaiting it would leave vestad unreachable.
     let reconcile_docker = docker.clone();
@@ -2831,6 +2864,7 @@ pub async fn run_server(cfg: ServerConfig) {
         state.env_config.agents_dir.clone(),
         on_agents_changed,
         state.rebuilding.clone(),
+        state.mobile_app.clone(),
     );
     let app = build_router(state.clone());
     spawn_auto_backup_task(state.clone());
@@ -2885,6 +2919,10 @@ pub async fn run_server(cfg: ServerConfig) {
     tokio::select! {
         r = http_handle => r.expect("http task panicked"),
         r = tls_handle => r.expect("https task panicked"),
+        r = mobile_app_handle => match r {
+            Ok(()) => panic!("mobile app delivery worker exited unexpectedly"),
+            Err(error) => panic!("mobile app delivery worker failed: {error}"),
+        },
         () = shutdown_signal() => {
             tracing::info!("shutdown signal received, stopping all agents before exit");
             docker::stop_all_agents(&shutdown_docker).await;
@@ -2930,7 +2968,8 @@ mod tests {
         let rebuilding = crate::docker::RebuildTracker::default();
         assert!(ensure_not_rebuilding(&rebuilding, "apollo").is_ok());
         let _mark = rebuilding.mark("apollo");
-        let err = ensure_not_rebuilding(&rebuilding, "apollo").expect_err("expected 409 while rebuilding");
+        let err = ensure_not_rebuilding(&rebuilding, "apollo")
+            .expect_err("expected 409 while rebuilding");
         assert_eq!(err.0, axum::http::StatusCode::CONFLICT);
     }
 
@@ -3275,12 +3314,42 @@ mod tests {
             public: false,
         });
         let cases = [
-            (None, published, true, "omitting public keeps a published service public"),
-            (Some(false), published, false, "an explicit false still demotes a published service"),
-            (None, private, false, "omitting public keeps a private service private"),
-            (Some(true), private, true, "an explicit true still publishes a private service"),
-            (None, None, false, "a first registration with no flag defaults private"),
-            (Some(true), None, true, "a first registration honors an explicit true"),
+            (
+                None,
+                published,
+                true,
+                "omitting public keeps a published service public",
+            ),
+            (
+                Some(false),
+                published,
+                false,
+                "an explicit false still demotes a published service",
+            ),
+            (
+                None,
+                private,
+                false,
+                "omitting public keeps a private service private",
+            ),
+            (
+                Some(true),
+                private,
+                true,
+                "an explicit true still publishes a private service",
+            ),
+            (
+                None,
+                None,
+                false,
+                "a first registration with no flag defaults private",
+            ),
+            (
+                Some(true),
+                None,
+                true,
+                "a first registration honors an explicit true",
+            ),
         ];
         for (requested, cached, expected, reason) in cases {
             assert_eq!(resolve_public(requested, cached), expected, "{reason}");
