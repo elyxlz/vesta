@@ -1,5 +1,7 @@
+import { useMemo } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { useLocation, useParams } from "react-router-dom";
+import { useDefaultLayout } from "react-resizable-panels";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -8,6 +10,10 @@ import {
 import { Chat } from "@/components/Chat";
 import { Dashboard } from "@/components/Dashboard";
 import { useLayout } from "@/stores/use-layout";
+
+const DASHBOARD_CHAT_LAYOUT_ID = "agent-dashboard-chat";
+const DASHBOARD_PANEL_ID = "dashboard";
+const CHAT_PANEL_ID = "chat";
 
 interface DesktopPanelViewProps {
   chatCollapsed: boolean;
@@ -23,6 +29,19 @@ export function DesktopPanelView({
   const location = useLocation();
   const isChat =
     location.pathname === `/agent/${encodeURIComponent(name ?? "")}/chat`;
+
+  const panelIds = useMemo(
+    () =>
+      chatCollapsed
+        ? [DASHBOARD_PANEL_ID]
+        : [DASHBOARD_PANEL_ID, CHAT_PANEL_ID],
+    [chatCollapsed],
+  );
+  const { defaultLayout, onLayoutChanged } = useDefaultLayout({
+    id: DASHBOARD_CHAT_LAYOUT_ID,
+    panelIds,
+    onlySaveAfterUserInteractions: true,
+  });
 
   if (isChat) {
     return <Chat fullscreen />;
@@ -41,8 +60,14 @@ export function DesktopPanelView({
       <ResizablePanelGroup
         orientation="horizontal"
         className="flex h-full w-full gap-1"
+        defaultLayout={defaultLayout}
+        onLayoutChanged={onLayoutChanged}
       >
-        <ResizablePanel defaultSize="70%" minSize="300px">
+        <ResizablePanel
+          id={DASHBOARD_PANEL_ID}
+          defaultSize="33%"
+          minSize="300px"
+        >
           <div className="h-full">
             <Dashboard fullscreen={false} />
           </div>
@@ -51,7 +76,11 @@ export function DesktopPanelView({
         {!chatCollapsed && (
           <>
             <ResizableHandle withHandle />
-            <ResizablePanel defaultSize="30%" minSize="320px">
+            <ResizablePanel
+              id={CHAT_PANEL_ID}
+              defaultSize="67%"
+              minSize="320px"
+            >
               <div className="h-full p-2">
                 <Chat onCollapse={() => setChatCollapsed(true)} />
               </div>
