@@ -520,14 +520,9 @@ async def compact_session(*, state: vm.State, config: cfg.VestaConfig, prompt: s
 
 
 def _build_agents(config: cfg.VestaConfig) -> dict[str, AgentDefinition]:
-    """Named subagents the main agent dispatches. The dashboard skill designs the change and hands
-    a finished spec to the builder, so the token-heavy build churn (shadcn docs, large React files,
-    vite output) stays out of the main conversation and the builder starts primed on the dashboard
-    instead of rediscovering it every time.
-
-    Registered only when the dashboard skill is installed: the sparse cone leaves an uninstalled
-    skill off disk, and a preloaded name only resolves to a real ~/.claude/skills entry. Model and
-    effort are left to the session, so the builder runs on the user's chosen provider model."""
+    """Named subagents, dispatched by the skill of the same name. Gated on the skill being installed:
+    a preloaded name only resolves once the sparse cone puts the skill on disk. Model and effort stay
+    unset so each runs on the user's chosen provider model."""
     prompt = load_prompt("dashboard_builder", config)
     if prompt is None or not (config.skills_dir / "dashboard").exists():
         return {}
