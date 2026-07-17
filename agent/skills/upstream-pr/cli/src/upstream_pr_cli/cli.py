@@ -62,24 +62,15 @@ def run(cmd, env=None):
 
 
 def git_auth_env(token):
-    """Env that authenticates git over HTTPS without persisting the token anywhere.
-
-    The token must never reach the remote URL. `git remote set-url upstream
-    https://x-access-token:TOKEN@github.com/...` writes a live installation token into
-    .git/config, where it outlives the run and is printed verbatim by commands as routine
-    as `git remote -v` and `git config --list`. An agent that runs one of those lands its
-    own credential in its logs, and the config copy stays valid for the rest of the
-    token's lifetime. Passing the credential as an http.extraheader via GIT_CONFIG_*
-    keeps it in this process's environment only: not on disk, and not in argv where `ps`
-    would show it.
-    """
+    """Auth rides in this process's env only, never .git/config (which `git remote -v` and
+    `git config --list` print) nor argv (which `ps` shows). Scoped to github.com so a
+    cross-host redirect can't carry the header off."""
     basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
-    count = int(os.environ.get("GIT_CONFIG_COUNT") or 0)
     return {
         **os.environ,
-        f"GIT_CONFIG_KEY_{count}": "http.extraheader",
-        f"GIT_CONFIG_VALUE_{count}": f"AUTHORIZATION: Basic {basic}",
-        "GIT_CONFIG_COUNT": str(count + 1),
+        "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+        "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: Basic {basic}",
+        "GIT_CONFIG_COUNT": "1",
     }
 
 
@@ -172,8 +163,8 @@ def main():
     current_branch = result.stdout.strip()
     branch = args.branch or current_branch
 
-    # Configure upstream remote. The URL stays credential-free; auth rides in the env
-    # (see git_auth_env). set-url also scrubs a tokenized URL written by an older version.
+    # Credential-free URL: auth rides in git_auth_env, and set-url scrubs any tokenized
+    # URL an older version wrote to .git/config.
     remote_url = f"https://github.com/{UPSTREAM_REPO}.git"
     result = run(["git", "remote", "get-url", "upstream"])
     if result.returncode != 0:
