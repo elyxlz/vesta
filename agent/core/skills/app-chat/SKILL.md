@@ -39,6 +39,7 @@ app-chat history --limit 20
 
 ## Notes
 - Always reply to app messages using `app-chat send`, not through any other channel
+- `send` enforces short-bubble texting: a wall (over ~220 chars, or any text after a full stop) is rejected so you re-send as several short calls, one thought each. Don't use full stops at all: a `.`, `!` or `?` may only close a bubble, never carry text after it. Ellipses stay free, they're a beat rather than a stop. For genuine reference material the user asked for (a brief, a code block, a list), pass `--longform` to bypass
 - Send multiple short messages instead of one long one (like texting)
 - Lowercase, no bullets, keep messages tight — texting feel, not document feel
 - Messages render as markdown: use fenced ``` blocks for code/commands, `[label](url)` for links. Newlines work
