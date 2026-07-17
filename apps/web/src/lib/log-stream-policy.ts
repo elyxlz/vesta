@@ -34,3 +34,16 @@ const CONTAINER_DOWN_STATUSES: ReadonlySet<AgentStatus> = new Set<AgentStatus>([
 export function isAgentContainerUp(status: AgentStatus): boolean {
   return !CONTAINER_DOWN_STATUSES.has(status);
 }
+
+// How far back the viewer can scroll: the lines a fresh stream asks the server to
+// replay, and the lines the Console keeps before dropping the oldest. One number so
+// the two agree; a request deeper than the buffer would drop lines on arrival, a
+// buffer deeper than the request would reserve scrollback that never fills.
+export const LOG_SCROLLBACK_LINES = 5000;
+
+// The `tail` a stream requests: the full scrollback on a fresh connect, none on a
+// reconnect after a transport drop, where the replayed block is already on screen
+// and would re-append as duplicates.
+export function replayTailLines(replay: boolean): number {
+  return replay ? LOG_SCROLLBACK_LINES : 0;
+}
