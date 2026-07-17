@@ -66,6 +66,8 @@ jobs:
             cli:
               - 'cli/**'
               - 'vestad/**'
+              - 'install.sh'
+              - 'install.ps1'
               # vestad embeds the agent home (build.rs EMBED_DIRS/EMBED_FILES), so
               # Agent-only changes can break the CLI or vestad and must trigger
               # their checks on PRs.
@@ -211,7 +213,45 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/dependency-review-action@v4
+
+      # Dependency review is only available after a repository administrator
+      # enables GitHub's dependency graph. Probe the API so a repository that
+      # has not enabled it gets an actionable warning instead of a permanently
+      # broken merge gate; once enabled, vulnerable additions fail normally.
+      - name: Check dependency graph availability
+        id: dependency-graph
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          response="$RUNNER_TEMP/dependency-review.json"
+          status=$(curl --silent --show-error \
+            --output "$response" \
+            --write-out '%{http_code}' \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2026-03-10' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/dependency-graph/compare/${BASE_SHA}...${HEAD_SHA}")
+          case "$status" in
+            200)
+              echo "available=true" >> "$GITHUB_OUTPUT"
+              ;;
+            403|404)
+              echo "available=false" >> "$GITHUB_OUTPUT"
+              echo "::warning::Dependency graph is disabled; enable it in Settings > Advanced Security to activate dependency review"
+              echo "Dependency review is waiting for a repository administrator to enable the dependency graph." >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            *)
+              cat "$response"
+              echo "::error::Dependency graph probe returned HTTP $status"
+              exit 1
+              ;;
+          esac
+
+      - name: Review dependency changes
+        if: steps.dependency-graph.outputs.available == 'true'
+        uses: actions/dependency-review-action@v4
 
   # ── Agent checks (lint, types, unit + transport tests) ────────────────
   agent-tests:
@@ -242,7 +282,7 @@ jobs:
 
   # ── Go checks (whatsapp + telegram CLIs) ──────────────────────────────
   go-checks:
-    name: Messaging CLIs · Lint, build, and test
+    name: WhatsApp & Telegram · Lint, build, and test
     needs: detect-changes
     if: github.event_name != 'pull_request' || needs.detect-changes.outputs.go == 'true'
     runs-on: ubuntu-latest
@@ -254,6 +294,9 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: "1.25"
+          cache-dependency-path: |
+            agent/skills/whatsapp/cli/go.sum
+            agent/skills/telegram/cli/go.sum
 
       - name: Cache whisper.cpp static build
         uses: actions/cache@v6
@@ -266,43 +309,6 @@ jobs:
 
       - name: Run telegram checks
         run: ./check.sh telegram
-
-  # ── Windows install script guard ──────────────────────────────────────
-  install-script-check:
-    name: Windows installer · Verify PowerShell 5.1
-    if: github.event_name == 'pull_request'
-    runs-on: windows-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Syntax-check install.ps1 (PowerShell 5.1)
-        shell: powershell
-        run: |
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-            "$PWD\install.ps1", [ref]$null, [ref]$errors
-          )
-          if ($errors.Count -gt 0) {
-            $errors | ForEach-Object { Write-Host "❌ $_" }
-            exit 1
-          }
-          Write-Host "✅ install.ps1 has no syntax errors"
-
-      - name: Check for PowerShell 5.1 incompatibilities
-        shell: powershell
-        run: |
-          $content = Get-Content install.ps1 -Raw
-          $issues = @()
-          # Join-Path with 3+ args requires PowerShell 6+
-          if ($content -match 'Join-Path\s+\S+\s+"[^"]+"\s+"[^"]+"') {
-            $issues += "Join-Path with 3+ arguments is not supported in PowerShell 5.1"
-          }
-          if ($issues.Count -gt 0) {
-            $issues | ForEach-Object { Write-Host "❌ $_" }
-            exit 1
-          }
-          Write-Host "✅ No PowerShell 5.1 compatibility issues found"
 
   # ── Frontend unit tests ──────────────────────────────────────────────
   test-frontend:
@@ -588,7 +594,7 @@ jobs:
   # The CLI ships to Windows users; its tests must actually run on Windows,
   # not just be lint-checked there.
   check-windows:
-    name: CLI · Lint and test (Windows x64)
+    name: Windows · Test CLI and install.ps1
     needs: [version-check, detect-changes]
     if: >-
       github.event_name != 'pull_request' ||
@@ -615,6 +621,25 @@ jobs:
       - name: Check cli (clippy + tests)
         shell: bash
         run: TARGET=x86_64-pc-windows-msvc ./check.sh cli
+
+      - name: Verify install.ps1 with PowerShell 5.1
+        shell: powershell
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "$PWD\install.ps1", [ref]$null, [ref]$errors
+          )
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Host "❌ $_" }
+            exit 1
+          }
+
+          $content = Get-Content install.ps1 -Raw
+          if ($content -match 'Join-Path\s+\S+\s+"[^"]+"\s+"[^"]+"') {
+            Write-Host "❌ Join-Path with 3+ arguments requires PowerShell 6+"
+            exit 1
+          }
+          Write-Host "✅ install.ps1 is compatible with PowerShell 5.1"
 
   # ── Build Windows CLI (native MSVC) ──────────────────────────────────
   build-windows:
@@ -921,7 +946,6 @@ jobs:
       - dependency-review
       - agent-tests
       - go-checks
-      - install-script-check
       - test-frontend
       - test-integration
       - check-cli
