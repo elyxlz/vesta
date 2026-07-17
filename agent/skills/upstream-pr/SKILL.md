@@ -111,9 +111,20 @@ upstream-pr --title "..." --branch my-branch --base master
 upstream-pr --token-only
 ```
 
+## Running a skill's tests
+
+Each skill CLI is its own uv project, so run its tests from its own directory: `cd ~/agent/skills/<name>/cli && uv run pytest`. uv builds a `.venv` there (gitignored) and leaves the engine venv at `~/agent/.venv` alone.
+
+If uv ever prints `Removed virtual environment at: /root/agent/.venv`, it retargeted the engine venv instead (something exported `UV_PROJECT_ENVIRONMENT`). The running agent survives on already-imported modules, so nothing looks wrong until the next restart fails. Repair it before you restart, and re-run the tests with `uv run --isolated`:
+
+```bash
+UV_PROJECT_ENVIRONMENT=~/agent/.venv uv sync --frozen --project ~/agent/core
+cd ~/agent && .venv/bin/python3 -c "import core.main"   # verify the restart path
+```
+
 ## Formatting Python before pushing
 
-Before pushing changed `.py`, format from `~/agent` so the pinned ruff and config match CI's `guards` ruff pass: `cd ~/agent && uv run --project core ruff format <path> && uv run --project core ruff check <path>`. Run `uv run --project core ruff` from that dir, never `uvx ruff` or another cwd: those ignore the lock (`agent/core/uv.lock`) and config (`agent/ruff.toml`) and can fail CI's `--check` on otherwise-correct code.
+Before pushing changed `.py`, format from `~/agent` so the pinned ruff and config match CI's `guards` ruff pass: `cd ~/agent && ruff format <path> && ruff check <path>`. Plain `ruff` from that dir is the engine venv's pinned ruff (its bin leads your PATH), never `uvx ruff` or another cwd: those ignore the lock (`agent/core/uv.lock`) and config (`agent/ruff.toml`) and can fail CI's `--check` on otherwise-correct code.
 
 ## No em/en dashes in markdown
 
