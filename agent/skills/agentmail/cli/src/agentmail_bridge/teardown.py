@@ -35,7 +35,7 @@ def teardown_cmd(yes: bool) -> None:
 
     client = AgentMail(api_key=key)
 
-    if "webhook_id" in cfg and cfg["webhook_id"]:
+    if cfg.get("webhook_id"):
         click.echo(f"deleting webhook {cfg['webhook_id']}")
         try:
             client.webhooks.delete(webhook_id=cfg["webhook_id"])

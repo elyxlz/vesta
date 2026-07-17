@@ -72,16 +72,19 @@ impl TestServerBuilder {
 
     /// Set an explicit user name. Prefer `unique_user()` to avoid cross-test
     /// Docker container collisions.
+    #[must_use]
     pub fn user(mut self, user: &str) -> Self {
         self.user = Some(user.to_string());
         self
     }
 
+    #[must_use]
     pub fn home(mut self, home: PathBuf) -> Self {
         self.home = Some(home);
         self
     }
 
+    #[must_use]
     pub fn vestad_bin(mut self, vestad_bin: PathBuf) -> Self {
         self.vestad_bin = Some(vestad_bin);
         self
@@ -91,6 +94,7 @@ impl TestServerBuilder {
     /// clears `VESTAD_AGENT_IMAGE` for the OLD vestad so it falls back to its own released
     /// image (`ghcr.io/elyxlz/vesta:<tag>`), making the agent a faithful fleet member of that
     /// version rather than running on the checkout's image.
+    #[must_use]
     pub fn env_remove(mut self, key: &str) -> Self {
         self.env_remove.push(key.to_string());
         self
@@ -98,13 +102,13 @@ impl TestServerBuilder {
 
     pub fn start(self) -> Result<TestServer, String> {
         let user = self.user.unwrap_or_else(|| unique_user("test"));
-        TestServer::start_with_options(Some(user), self.home, self.vestad_bin, &self.env_remove)
+        TestServer::start_with_options(Some(&user), self.home, self.vestad_bin, &self.env_remove)
     }
 }
 
 /// Remove Docker containers left behind by previous test runs that crashed
-/// before TestAgent::drop could clean up. Targets containers from test users
-/// (unique_user generates names like "prefix-tPID-N") and e2e test containers.
+/// before `TestAgent::drop` could clean up. Targets containers from test users
+/// (`unique_user` generates names like "prefix-tPID-N") and e2e test containers.
 fn cleanup_orphan_test_containers() {
     let Ok(output) = Command::new("docker")
         .args([
@@ -188,7 +192,7 @@ impl TestServer {
     }
 
     fn start_with_options(
-        user: Option<String>,
+        user: Option<&str>,
         home: Option<PathBuf>,
         vestad_bin: Option<PathBuf>,
         env_remove: &[String],
@@ -197,21 +201,18 @@ impl TestServer {
             .install_default()
             .ok();
 
-        let (tmpdir, home) = match home {
-            Some(home) => {
-                std::fs::create_dir_all(&home).map_err(|e| format!("create home: {e}"))?;
-                (None, home)
-            }
-            None => {
-                let tmpdir = tempfile::TempDir::new().map_err(|e| format!("tmpdir: {e}"))?;
-                let home = tmpdir.path().to_path_buf();
-                (Some(tmpdir), home)
-            }
+        let (tmpdir, home) = if let Some(home) = home {
+            std::fs::create_dir_all(&home).map_err(|e| format!("create home: {e}"))?;
+            (None, home)
+        } else {
+            let tmpdir = tempfile::TempDir::new().map_err(|e| format!("tmpdir: {e}"))?;
+            let home = tmpdir.path().to_path_buf();
+            (Some(tmpdir), home)
         };
         let vestad = vestad_bin.unwrap_or(find_vestad()?);
 
         let real_home = std::env::var("HOME").unwrap_or_default();
-        let docker_config = format!("{}/.docker", real_home);
+        let docker_config = format!("{real_home}/.docker");
 
         let stderr_path = home.join("vestad-stderr.log");
         let stderr_file =
@@ -229,7 +230,7 @@ impl TestServer {
             .stdout(Stdio::from(stdout_file))
             .stderr(Stdio::from(stderr_file));
 
-        if let Some(ref user_name) = user {
+        if let Some(user_name) = user {
             cmd.env("USER", user_name);
         }
         for key in env_remove {
@@ -241,7 +242,7 @@ impl TestServer {
         let config_dir = home.join(".config/vesta/vestad");
         let port_path = config_dir.join("port");
 
-        let startup_timeout = Duration::from_secs(60);
+        let startup_timeout = Duration::from_mins(1);
         let deadline = std::time::Instant::now() + startup_timeout;
         let port = loop {
             if let Ok(content) = std::fs::read_to_string(&port_path) {
@@ -359,7 +360,7 @@ pub fn find_vestad() -> Result<PathBuf, String> {
     }
     let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .unwrap()
+        .expect("tests-integration lives inside the vestad crate dir")
         .to_path_buf();
     for profile in ["debug", "release"] {
         let p = workspace.join(format!("target/{profile}/vestad"));
@@ -386,11 +387,10 @@ pub fn inject_fake_token(_c: &Client, name: &str) {
 }
 
 /// Pre-mark first-start setup as done so the agent reports `alive` (not `setting_up`)
-/// on the next boot without waiting for the SDK to call `mark_setup_done`. Tests run
-/// with a fake token, so no real SDK session can drive that tool call.
-///
-/// Writing state.json while the agent is running isn't enough: the running agent
-/// holds `first_start_done=false` in memory and rewrites state.json on its graceful
+/// on the next boot without waiting for the SDK to call `mark_setup_done`; tests run
+/// with a fake token, so no real SDK session can drive that tool call. Writing
+/// state.json while the agent is running isn't enough: the running agent holds
+/// `first_start_done=false` in memory and rewrites state.json on its graceful
 /// shutdown, clobbering this write on the next restart. So write the flag, SIGKILL
 /// the agent (no graceful save), then start it fresh so the boot reads `true`; from
 /// then on the in-memory value survives normal restarts.
@@ -409,7 +409,7 @@ pub fn docker_cmd(args: &[&str]) -> Result<String, String> {
     let output = std::process::Command::new("docker")
         .args(args)
         .output()
-        .map_err(|e| format!("docker {:?}: {e}", args))?;
+        .map_err(|e| format!("docker {args:?}: {e}"))?;
     if !output.status.success() {
         return Err(format!(
             "docker {:?} failed: {}",
@@ -426,7 +426,7 @@ pub fn exec_in_container(container: &str, script: &str) -> Result<String, String
 
 pub fn agent_container_name(agent_name: &str) -> String {
     let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-    format!("vesta-{}-{}", user, agent_name)
+    format!("vesta-{user}-{agent_name}")
 }
 
 /// Print an agent container's state + logs to stderr. Called when a wait helper
@@ -439,9 +439,7 @@ pub fn dump_agent_diagnostics(agent_name: &str) {
     let cname = match docker_cmd(&["ps", "-a", "--format", "{{.Names}}"]) {
         Ok(list) => list
             .lines()
-            .find(|n| n.ends_with(&format!("-{agent_name}")) && n.starts_with("vesta-"))
-            .map(str::to_string)
-            .unwrap_or_else(|| agent_container_name(agent_name)),
+            .find(|n| n.ends_with(&format!("-{agent_name}")) && n.starts_with("vesta-")).map_or_else(|| agent_container_name(agent_name), str::to_string),
         Err(_) => agent_container_name(agent_name),
     };
     eprintln!("\n========== AGENT DIAGNOSTICS: {cname} ==========");
@@ -596,8 +594,7 @@ pub fn download_released_vestad(tag: &str) -> Result<ReleasedVestad, String> {
     };
     let artifact = format!("vestad-{rust_target}.tar.gz");
     let url = format!(
-        "https://github.com/elyxlz/vesta/releases/download/{}/{}",
-        tag, artifact
+        "https://github.com/elyxlz/vesta/releases/download/{tag}/{artifact}"
     );
 
     let tmpdir = tempfile::TempDir::new().map_err(|e| format!("tmpdir: {e}"))?;

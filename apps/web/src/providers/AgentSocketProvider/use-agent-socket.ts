@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { VestaEvent, AgentActivityState, InputMethod } from "@/lib/types";
-import { wsUrl, fetchHistory } from "@/lib/connection";
+import { wsUrl } from "@/lib/connection";
+import { fetchHistory } from "@/api/agents";
 import {
   connectReconnectingWs,
   type ReconnectingWsHandle,
@@ -81,7 +82,8 @@ export function useAgentSocketState({
   const drainQueue = useCallback(() => {
     if (drainingRef.current) return;
     const queue = chatQueueRef.current;
-    if (queue.length === 0) {
+    const next = queue[0];
+    if (next === undefined) {
       setIsTyping(false);
       return;
     }
@@ -89,7 +91,6 @@ export function useAgentSocketState({
       flushQueue();
       return;
     }
-    const next = queue[0];
     drainingRef.current = true;
     setIsTyping(true);
     const text = next.type === "chat" ? next.text : undefined;
@@ -190,7 +191,7 @@ export function useAgentSocketState({
 
   const sendEvent = useCallback((event: object): boolean => {
     const ws = wsRef.current?.current();
-    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+    if (ws?.readyState !== WebSocket.OPEN) return false;
     ws.send(JSON.stringify(event));
     return true;
   }, []);
@@ -226,8 +227,7 @@ export function useAgentSocketState({
     setLoadingMore(true);
     try {
       const result = await fetchHistory(name, "app-chat", cursor);
-      const events = result.events ?? [];
-      setMessages((prev) => [...events, ...prev]);
+      setMessages((prev) => [...result.events, ...prev]);
       cursorRef.current = result.cursor;
     } finally {
       loadingMoreRef.current = false;

@@ -46,7 +46,7 @@ def kelvin_to_c(k: float) -> float:
 def get_ha_location() -> tuple[float, float, str] | None:
     """Get current location from Home Assistant."""
     try:
-        result = subprocess.run(["ha", "location"], capture_output=True, text=True, timeout=10, env={**os.environ})
+        result = subprocess.run(["ha", "location"], capture_output=True, text=True, timeout=10, env={**os.environ}, check=False)
         if result.returncode != 0:
             return None
         data = json.loads(result.stdout)
@@ -99,13 +99,21 @@ def fetch_forecast(lat: float, lon: float) -> dict:
         return json.loads(resp.read())
 
 
-def format_forecast(data: dict, hours: int, tz_name: str, location_label: str) -> str:
-    """Format forecast data into a readable summary."""
-    try:
-        tz = zoneinfo.ZoneInfo(tz_name)
-    except KeyError:
-        tz = dt.UTC
+def _format_hour(local_ts: dt.datetime, temp_c: float | None, precip: float, ws: float, wd: str, rh: float | None) -> str:
+    """Render a single forecast hour into a one-line summary."""
+    parts = [local_ts.strftime("%H:%M")]
+    if temp_c is not None:
+        parts.append(f"{temp_c:.0f}°C")
+    if precip and precip > 0.1:
+        parts.append(f"rain {precip:.1f}mm")
+    parts.append(f"wind {ws:.0f}km/h {wd}")
+    if rh is not None:
+        parts.append(f"humidity {rh:.0f}%")
+    return "  ".join(parts)
 
+
+def _build_hourly(data: dict, hours: int, tz: dt.tzinfo) -> tuple[list[str], float, float, float]:
+    """Walk the forecast timesteps, returning (hourly_lines, rain_total, temp_min, temp_max)."""
     timestamps = data["ts"] if "ts" in data else []
     temps = data["temp-surface"] if "temp-surface" in data else []
     precips = data["past3hprecip-surface"] if "past3hprecip-surface" in data else []
@@ -114,14 +122,11 @@ def format_forecast(data: dict, hours: int, tz_name: str, location_label: str) -
     rhs = data["rh-surface"] if "rh-surface" in data else []
 
     now = dt.datetime.now(dt.UTC)
-    lines = [f"Weather forecast for {location_label}:"]
-    lines.append("")
-
     count = 0
     rain_total = 0.0
     temp_min = float("inf")
     temp_max = float("-inf")
-    hourly_lines = []
+    hourly_lines: list[str] = []
 
     for i, ts_ms in enumerate(timestamps):
         ts = dt.datetime.fromtimestamp(ts_ms / 1000, tz=dt.UTC)
@@ -130,40 +135,39 @@ def format_forecast(data: dict, hours: int, tz_name: str, location_label: str) -
         if count >= hours // 3 + 1:
             break
 
-        local_ts = ts.astimezone(tz)
         temp_c = kelvin_to_c(temps[i]) if i < len(temps) else None
         precip = precips[i] if i < len(precips) else 0
         wu = wind_us[i] if i < len(wind_us) else 0
         wv = wind_vs[i] if i < len(wind_vs) else 0
         rh = rhs[i] if i < len(rhs) else None
 
-        ws = wind_speed(wu, wv)
-        wd = wind_dir(wu, wv)
         rain_total += precip
-
         if temp_c is not None:
             temp_min = min(temp_min, temp_c)
             temp_max = max(temp_max, temp_c)
 
-        time_str = local_ts.strftime("%H:%M")
-        parts = [f"{time_str}"]
-        if temp_c is not None:
-            parts.append(f"{temp_c:.0f}°C")
-        if precip and precip > 0.1:
-            parts.append(f"rain {precip:.1f}mm")
-        parts.append(f"wind {ws:.0f}km/h {wd}")
-        if rh is not None:
-            parts.append(f"humidity {rh:.0f}%")
-
-        hourly_lines.append("  ".join(parts))
+        hourly_lines.append(_format_hour(ts.astimezone(tz), temp_c, precip, wind_speed(wu, wv), wind_dir(wu, wv), rh))
         count += 1
+
+    return hourly_lines, rain_total, temp_min, temp_max
+
+
+def format_forecast(data: dict, hours: int, tz_name: str, location_label: str) -> str:
+    """Format forecast data into a readable summary."""
+    try:
+        tz = zoneinfo.ZoneInfo(tz_name)
+    except KeyError:
+        tz = dt.UTC
+
+    lines = [f"Weather forecast for {location_label}:", ""]
+    hourly_lines, rain_total, temp_min, temp_max = _build_hourly(data, hours, tz)
 
     summary_parts = []
     if temp_min != float("inf"):
         if abs(temp_max - temp_min) < 1.5:
             summary_parts.append(f"~{temp_max:.0f}°C")
         else:
-            summary_parts.append(f"{temp_min:.0f}–{temp_max:.0f}°C")
+            summary_parts.append(f"{temp_min:.0f}-{temp_max:.0f}°C")
 
     if rain_total > 0.5:
         summary_parts.append(f"rain expected ({rain_total:.1f}mm total)")

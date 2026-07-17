@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import itertools
 import re
 import typing as tp
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -473,7 +474,7 @@ def build_vtimezone(zone: ZoneInfo, year: int) -> Component:
     samples = [dt.datetime(sample_year, month, 1, tzinfo=dt.UTC) for sample_year in (year, year + 1) for month in range(1, 13)]
     blocks: list[Component] = []
     seen: set[tuple[dt.timedelta, dt.timedelta]] = set()
-    for lower, upper in zip(samples, samples[1:]):
+    for lower, upper in itertools.pairwise(samples):
         offset_before = lower.astimezone(zone).utcoffset() or dt.timedelta()
         offset_after = upper.astimezone(zone).utcoffset() or dt.timedelta()
         if offset_before == offset_after or (offset_before, offset_after) in seen:
@@ -528,10 +529,7 @@ def parse_instant(value: str, params: dict[str, str], tzmap: TzMap | None = None
     time_of_day = dt.time(int(time_part[:2]), int(time_part[2:4]), int(time_part[4:6]))
     if zulu:
         return dt.datetime.combine(day, time_of_day, tzinfo=dt.UTC)
-    if "TZID" in params:
-        tz = resolve_zone(params["TZID"], tzmap) or dt.UTC
-    else:
-        tz = _local_tz()
+    tz = resolve_zone(params["TZID"], tzmap) or dt.UTC if "TZID" in params else _local_tz()
     return dt.datetime.combine(day, time_of_day, tzinfo=tz)
 
 
@@ -611,42 +609,43 @@ def _byday_specs(value: str) -> list[tuple[int | None, int]]:
     return specs
 
 
+def _byday_supported(byday: str, freq: str, has_bymonth: bool) -> bool:
+    if freq == "WEEKLY":
+        return all(code in WEEKDAY_CODES for code in byday.split(","))
+    if freq == "MONTHLY" or (freq == "YEARLY" and has_bymonth):
+        return all(_MONTHLY_BYDAY_RE.match(spec) for spec in byday.split(","))
+    return False
+
+
+def _numeric_rule_values_valid(rule: dict[str, str]) -> bool:
+    try:
+        for key in ("COUNT", "INTERVAL"):
+            if key in rule:
+                int(rule[key])
+        for key in ("BYSETPOS", "BYMONTH", "BYMONTHDAY"):
+            if rule.get(key):
+                _int_list(rule[key])
+    except ValueError:
+        return False
+    return True
+
+
 def _rrule_supported(rule: dict[str, str]) -> bool:
     if "FREQ" not in rule or not SUPPORTED_RRULE_KEYS.issuperset(rule):
         return False
     freq = rule["FREQ"].upper()
     if freq not in ("DAILY", "WEEKLY", "MONTHLY", "YEARLY"):
         return False
-    has_byday = "BYDAY" in rule and rule["BYDAY"]
-    has_bymonthday = "BYMONTHDAY" in rule and rule["BYMONTHDAY"]
-    has_bymonth = "BYMONTH" in rule and rule["BYMONTH"]
-    if has_bymonth and freq != "YEARLY":
+    has_byday = bool(rule.get("BYDAY"))
+    has_bymonthday = bool(rule.get("BYMONTHDAY"))
+    has_bymonth = bool(rule.get("BYMONTH"))
+    if (has_bymonth and freq != "YEARLY") or (has_byday and has_bymonthday):
         return False
-    if has_byday and has_bymonthday:
+    if has_byday and not _byday_supported(rule["BYDAY"], freq, has_bymonth):
         return False
-    if has_byday:
-        if freq == "WEEKLY":
-            if not all(code in WEEKDAY_CODES for code in rule["BYDAY"].split(",")):
-                return False
-        elif freq == "MONTHLY" or (freq == "YEARLY" and has_bymonth):
-            if not all(_MONTHLY_BYDAY_RE.match(spec) for spec in rule["BYDAY"].split(",")):
-                return False
-        else:
-            return False
-    if has_bymonthday and freq not in ("MONTHLY", "YEARLY"):
+    if has_bymonthday and (freq not in ("MONTHLY", "YEARLY") or (freq == "YEARLY" and not has_bymonth)):
         return False
-    if has_bymonthday and freq == "YEARLY" and not has_bymonth:
-        return False
-    try:
-        for key in ("COUNT", "INTERVAL"):
-            if key in rule:
-                int(rule[key])
-        for key in ("BYSETPOS", "BYMONTH", "BYMONTHDAY"):
-            if key in rule and rule[key]:
-                _int_list(rule[key])
-    except ValueError:
-        return False
-    return True
+    return _numeric_rule_values_valid(rule)
 
 
 def _rule_interval(rule: dict[str, str]) -> int:
@@ -657,7 +656,7 @@ def _week_anchor(rule: dict[str, str], base: dt.datetime) -> tuple[dt.datetime, 
     """(start of DTSTART's week per WKST, sorted BYDAY offsets from that week start)."""
     wkst = WEEKDAY_CODES[rule["WKST"]] if "WKST" in rule and rule["WKST"] in WEEKDAY_CODES else 0
     week_start = base - dt.timedelta(days=(base.weekday() - wkst) % 7)
-    byday = rule["BYDAY"] if "BYDAY" in rule and rule["BYDAY"] else ""
+    byday = rule["BYDAY"] if rule.get("BYDAY") else ""
     offsets = sorted({(weekday - wkst) % 7 for _, weekday in _byday_specs(byday)}) if byday else []
     return week_start, offsets
 
@@ -665,7 +664,7 @@ def _week_anchor(rule: dict[str, str], base: dt.datetime) -> tuple[dt.datetime, 
 def _month_days(rule: dict[str, str], base: dt.datetime, year: int, month: int) -> list[int]:
     """Days of one month matching BYDAY / BYMONTHDAY (or DTSTART's day)."""
     limit = _days_in_month(year, month)
-    if "BYDAY" in rule and rule["BYDAY"]:
+    if rule.get("BYDAY"):
         days: set[int] = set()
         for ordinal, weekday in _byday_specs(rule["BYDAY"]):
             matching = [d for d in range(1, limit + 1) if dt.date(year, month, d).weekday() == weekday]
@@ -676,7 +675,7 @@ def _month_days(rule: dict[str, str], base: dt.datetime, year: int, month: int) 
             elif ordinal < 0 and -ordinal <= len(matching):
                 days.add(matching[ordinal])
         return sorted(days)
-    monthdays = _int_list(rule["BYMONTHDAY"]) if "BYMONTHDAY" in rule and rule["BYMONTHDAY"] else [base.day]
+    monthdays = _int_list(rule["BYMONTHDAY"]) if rule.get("BYMONTHDAY") else [base.day]
     resolved = {d if d > 0 else limit + 1 + d for d in monthdays}
     return sorted(d for d in resolved if 1 <= d <= limit)
 
@@ -709,7 +708,7 @@ def _period_candidates(rule: dict[str, str], base: dt.datetime, period: int) -> 
         candidates = [dt.datetime.combine(dt.date(year, month, day), base.time()) for day in _month_days(rule, base, year, month)]
     else:  # YEARLY
         year = base.year + period * interval
-        if "BYMONTH" in rule and rule["BYMONTH"]:
+        if rule.get("BYMONTH"):
             candidates = []
             for month in sorted(set(_int_list(rule["BYMONTH"]))):
                 if not 1 <= month <= 12:
@@ -745,6 +744,46 @@ def _first_period_for(rule: dict[str, str], base: dt.datetime, floor_naive: dt.d
     return max(0, period - 1)
 
 
+def _collect_starts(
+    occurrences: tp.Iterator[Instant],
+    window_start: dt.datetime,
+    horizon: dt.datetime,
+    count: int | None,
+    until: dt.datetime | None,
+) -> list[Instant] | None:
+    """In-window starts (plus the last one before the window); None when the generator ran dry before completing."""
+    floor_utc = as_utc(window_start)
+    horizon_utc = as_utc(horizon)
+    starts: list[Instant] = []
+    last_before: Instant | None = None
+    generated = 0
+    completed = False
+    for occurrence in occurrences:
+        occurrence_utc = as_utc(occurrence)
+        if until is not None and occurrence_utc > until:
+            completed = True
+            break
+        generated += 1
+        if count is not None and generated > count:
+            completed = True
+            break
+        if occurrence_utc >= horizon_utc:
+            completed = True
+            break
+        if occurrence_utc < floor_utc:
+            last_before = occurrence
+            continue
+        starts.append(occurrence)
+        if len(starts) >= MAX_OCCURRENCES:
+            completed = True
+            break
+    if not completed and (count is None or generated < count):
+        return None
+    if last_before is not None:
+        starts.insert(0, last_before)
+    return starts
+
+
 def _rrule_starts(rule_text: str, dtstart: Instant, window_start: dt.datetime, horizon: dt.datetime) -> list[Instant] | None:
     """Expand an RRULE into concrete starts up to ``horizon``; None if unsupported.
 
@@ -778,7 +817,7 @@ def _rrule_starts(rule_text: str, dtstart: Instant, window_start: dt.datetime, h
 
     start_period = 0 if count is not None else _first_period_for(rule, base, floor_naive)
 
-    def candidates() -> tp.Iterator[dt.datetime]:
+    def occurrences() -> tp.Iterator[Instant]:
         # DTSTART always begins the recurrence set (RFC 5545), even when the
         # rule pattern skips it; it must count toward COUNT like any occurrence.
         emitted_any = False
@@ -787,40 +826,36 @@ def _rrule_starts(rule_text: str, dtstart: Instant, window_start: dt.datetime, h
                 if not emitted_any:
                     emitted_any = True
                     if naive != base:
-                        yield base
-                yield naive
+                        yield emit(base)
+                yield emit(naive)
 
-    floor_utc = as_utc(window_start)
-    horizon_utc = as_utc(horizon)
-    starts: list[Instant] = []
-    last_before: Instant | None = None
-    generated = 0
-    completed = False
-    for naive in candidates():
-        occurrence = emit(naive)
-        occurrence_utc = as_utc(occurrence)
-        if until is not None and occurrence_utc > until:
-            completed = True
-            break
-        generated += 1
-        if count is not None and generated > count:
-            completed = True
-            break
-        if occurrence_utc >= horizon_utc:
-            completed = True
-            break
-        if occurrence_utc < floor_utc:
-            last_before = occurrence
-            continue
-        starts.append(occurrence)
-        if len(starts) >= MAX_OCCURRENCES:
-            completed = True
-            break
-    if not completed and (count is None or generated < count):
+    starts = _collect_starts(occurrences(), window_start, horizon, count, until)
+    if starts is None:
         raise ValueError(f"recurrence too deep to expand (over {MAX_PERIODS} periods): {rule_text}")
-    if last_before is not None:
-        starts.insert(0, last_before)
     return starts
+
+
+def _rdate_starts(vevent: Component, tzmap: TzMap | None) -> tuple[list[Instant], dict[dt.datetime, Instant]]:
+    """RDATE starts plus per-start end overrides from VALUE=PERIOD entries."""
+    starts: list[Instant] = []
+    period_ends: dict[dt.datetime, Instant] = {}
+    for rdate in all_props(vevent, "RDATE"):
+        for raw_chunk in rdate.value.split(","):
+            chunk = raw_chunk.strip()
+            if not chunk:
+                continue
+            if "/" in chunk:
+                start_text, _, end_text = chunk.partition("/")
+                start_value = parse_instant(start_text, rdate.params, tzmap)
+                if end_text.lstrip("+-").startswith("P"):
+                    end_value: Instant = start_value + _parse_duration(end_text)
+                else:
+                    end_value = parse_instant(end_text, rdate.params, tzmap)
+                starts.append(start_value)
+                period_ends[as_utc(start_value)] = end_value
+            else:
+                starts.append(parse_instant(chunk, rdate.params, tzmap))
+    return starts, period_ends
 
 
 def _occurrence_starts(
@@ -844,23 +879,8 @@ def _occurrence_starts(
             unsupported = rrule_prop.value
         else:
             starts = expanded
-    period_ends: dict[dt.datetime, Instant] = {}
-    for rdate in all_props(vevent, "RDATE"):
-        for chunk in rdate.value.split(","):
-            chunk = chunk.strip()
-            if not chunk:
-                continue
-            if "/" in chunk:
-                start_text, _, end_text = chunk.partition("/")
-                start_value = parse_instant(start_text, rdate.params, tzmap)
-                if end_text.lstrip("+-").startswith("P"):
-                    end_value: Instant = start_value + _parse_duration(end_text)
-                else:
-                    end_value = parse_instant(end_text, rdate.params, tzmap)
-                starts.append(start_value)
-                period_ends[as_utc(start_value)] = end_value
-            else:
-                starts.append(parse_instant(chunk, rdate.params, tzmap))
+    rdate_values, period_ends = _rdate_starts(vevent, tzmap)
+    starts.extend(rdate_values)
     excluded: set[dt.datetime] = set()
     for exdate in all_props(vevent, "EXDATE"):
         for chunk in exdate.value.split(","):

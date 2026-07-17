@@ -13,23 +13,14 @@ import (
 	"time"
 )
 
-// Managed WhatsApp auth (the "token" strategy) — the agent side of the hosted
-// WhatsApp proxy. The agent reaches WhatsApp through the vesta.run control plane,
-// NOT the home phone box directly: it mints a short-lived server-identity token
-// from its own vestad (loopback, agent-token authed; vestad signs it locally
-// from the box api_key, so the agent never holds a standing credential) and
-// calls /api/whatsapp/* with that token as a Bearer.
-//
-// Every paid account is entitled to exactly ONE number. provision claims it
-// lazily (agent-initiated) and idempotently, then mints a whatsmeow pairing code
-// and posts it so the control plane drives the primary to accept the companion.
-// reauth re-posts a fresh code for the same account — no new number, no OTP, no
-// user step. vesta.run is a thin proxy: it authenticates the Vesta and forwards
-// with our upstream key + the account id; the home box owns all WhatsApp state
-// (number, session), keyed by that account. The agent holds only its token.
-//
-// This file is the HTTP client + on-disk state only; wiring into the daemon's
-// connect flow is described in MANAGED_AUTH.md.
+// Managed WhatsApp auth (the "token" strategy): the agent side of the hosted
+// vesta.run proxy. The agent reaches WhatsApp through the control plane, not the
+// home phone box directly, minting a short-lived server-identity token from its
+// own vestad (loopback, agent-token authed; no standing credential) and calling
+// /api/whatsapp/* with it as a Bearer. Every paid account is entitled to exactly
+// ONE number: provision claims it lazily and idempotently, reauth re-posts a
+// fresh pairing code for the same account (no new number, no OTP, no user step).
+// This file is the HTTP client + on-disk state; daemon wiring lives in MANAGED_AUTH.md.
 
 const (
 	managedHTTPTimeout = 30 * time.Second

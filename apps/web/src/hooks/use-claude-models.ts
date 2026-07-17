@@ -30,7 +30,7 @@ const CLAUDE_FALLBACK: OpenRouterModelOption[] = ["opus", "sonnet"].map(
 export function useClaudeModels(enabled = true): OpenRouterModelOption[] {
   const manifest = useManifest();
   if (!enabled) return CLAUDE_FALLBACK;
-  const models = manifest?.providers["claude"]?.models;
+  const models = manifest?.providers.claude?.models;
   if (!Array.isArray(models) || models.length === 0) return CLAUDE_FALLBACK;
   return models.map(claudeOption);
 }

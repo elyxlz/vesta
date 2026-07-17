@@ -13,8 +13,8 @@ Self-healing and stateless: nothing is marked applied. Once a skill is installed
 the next boot sees its `SKILL.md` and returns nothing, so re-running is always safe.
 """
 
-from . import logger
 from . import config as cfg
+from . import logger
 
 
 def _default_skill_names(config: cfg.VestaConfig) -> list[str]:

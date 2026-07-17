@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	waProto "go.mau.fi/whatsmeow/binary/proto"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 )
@@ -14,11 +15,14 @@ func (wac *WhatsAppClient) eventHandler(evt any) {
 	switch v := evt.(type) {
 	case *events.Message:
 		// Data-plane: offload so a slow store write never stalls whatsmeow's serial
-		// node loop. The reaction-vs-message split runs on the worker, in FIFO order.
+		// node loop. The reaction/protocol/message split runs on the worker, in FIFO order.
 		wac.enqueueWork(func() {
-			if v.Message.GetReactionMessage() != nil {
+			switch {
+			case v.Message.GetReactionMessage() != nil:
 				wac.handleReaction(v)
-			} else {
+			case v.Message.GetProtocolMessage() != nil:
+				wac.handleProtocolMessage(v)
+			default:
 				wac.handleMessage(v)
 			}
 		})
@@ -426,6 +430,91 @@ func (wac *WhatsAppClient) handleReaction(evt *events.Message) {
 		ctx := wac.buildNotifContext(chatName, senderDisplay, contactName, contactPhone, contactSaved, isDirectChat)
 		WriteReactionNotification(ctx, targetID, emoji, isRemoved)
 	}
+}
+
+// handleProtocolMessage surfaces the two ways a sender changes a message after the fact:
+// editing it and deleting it for everyone. Both arrive as a ProtocolMessage naming the
+// original message's key, which whatsmeow's UnwrapRaw leaves wrapped, so they never carry
+// text of their own and would otherwise die on handleMessage's empty-content return.
+//
+// Reached only when the event has a ProtocolMessage: GetType() reports REVOKE for a nil
+// one, so testing the type first would read every ordinary message as a deletion.
+func (wac *WhatsAppClient) handleProtocolMessage(evt *events.Message) {
+	protocol := evt.Message.GetProtocolMessage()
+	targetID := protocol.GetKey().GetID()
+	if targetID == "" {
+		return
+	}
+
+	switch protocol.GetType() {
+	case waProto.ProtocolMessage_MESSAGE_EDIT:
+		wac.handleEdit(evt, targetID, protocol.GetEditedMessage())
+	case waProto.ProtocolMessage_REVOKE:
+		wac.handleRevoke(evt, targetID)
+	}
+}
+
+func (wac *WhatsAppClient) handleEdit(evt *events.Message, targetID string, edited *waProto.Message) {
+	newText := wac.resolveMentionsInContent(extractTextContent(edited), edited)
+	if newText == "" {
+		return
+	}
+
+	// Read the old text before the update overwrites it: it is the whole point of the
+	// notification, and an edit to a message we never stored just reads as empty.
+	oldText := wac.storedContent(targetID)
+	if wac.store != nil {
+		if err := wac.store.UpdateMessageContent(targetID, evt.Info.Chat.String(), newText); err != nil {
+			wac.logger.Warnf("Failed to apply edit to message %s: %v", targetID, err)
+		}
+	}
+	if oldText == newText {
+		return
+	}
+
+	if ctx, ok := wac.notifContextFor(evt); ok {
+		if err := WriteEditNotification(ctx, targetID, oldText, newText); err != nil {
+			wac.logger.Warnf("Failed to write edit notification for %s: %v", targetID, err)
+		}
+	}
+}
+
+func (wac *WhatsAppClient) handleRevoke(evt *events.Message, targetID string) {
+	oldText := wac.storedContent(targetID)
+	if oldText == "" {
+		return
+	}
+
+	if ctx, ok := wac.notifContextFor(evt); ok {
+		if err := WriteRevokeNotification(ctx, targetID, oldText); err != nil {
+			wac.logger.Warnf("Failed to write revoke notification for %s: %v", targetID, err)
+		}
+	}
+}
+
+func (wac *WhatsAppClient) storedContent(messageID string) string {
+	if wac.store == nil {
+		return ""
+	}
+	content, err := wac.store.GetMessageContent(messageID)
+	if err != nil {
+		wac.logger.Warnf("Failed to look up message %s: %v", messageID, err)
+		return ""
+	}
+	return content
+}
+
+// notifContextFor applies the same suppressions handleMessage uses, so an edit or a
+// deletion stays as quiet as the message it refers to would have been.
+func (wac *WhatsAppClient) notifContextFor(evt *events.Message) (NotifContext, bool) {
+	if wac.notificationsDir == "" || wac.noNotify || evt.Info.IsFromMe {
+		return NotifContext{}, false
+	}
+	_, senderDisplay, contactName, contactPhone, contactSaved, isDirectChat := wac.prepareNotificationInfo(evt.Info.MessageSource)
+	if wac.skipSenders[contactPhone] {
+		return NotifContext{}, false
+	}
+	return wac.buildNotifContext(wac.getChatName(evt.Info.Chat), senderDisplay, contactName, contactPhone, contactSaved, isDirectChat), true
 }
 
 func (wac *WhatsAppClient) handleHistorySync(evt *events.HistorySync) {

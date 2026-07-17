@@ -28,11 +28,11 @@ def read_new_objects(path: pl.Path, offset: int) -> tuple[list[dict[str, tp.Any]
     complete = chunk[: last_nl + 1]
     objects: list[dict[str, tp.Any]] = []
     for raw in complete.split(b"\n"):
-        raw = raw.strip()
-        if not raw:
+        stripped = raw.strip()
+        if not stripped:
             continue
         try:
-            obj = json.loads(raw)
+            obj = json.loads(stripped)
         except json.JSONDecodeError:
             continue
         if isinstance(obj, dict):
@@ -43,7 +43,7 @@ def read_new_objects(path: pl.Path, offset: int) -> tuple[list[dict[str, tp.Any]
 def _is_main_assistant(obj: dict[str, tp.Any]) -> bool:
     if "type" not in obj or obj["type"] != "assistant":
         return False
-    return not ("isSidechain" in obj and obj["isSidechain"])
+    return not (obj.get("isSidechain"))
 
 
 def assistant_message_from(obj: dict[str, tp.Any]) -> AssistantMessage | None:

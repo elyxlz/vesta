@@ -17,10 +17,12 @@ Suites:
   vestad-docker  vestad #[ignore] Docker tests (needs Docker + an agent image:
                  set VESTAD_AGENT_IMAGE or docker pull ghcr.io/elyxlz/vesta:latest)
   web            eslint + prettier --check + tsc + vitest (web) and eslint + tsc (desktop)
-  guards         repo-wide ruff check + format, skills index, uv.lock, and
-                 dashboard-sync freshness + the vite base check
+  guards         repo-wide ruff check + format, convention guards (lint escapes,
+                 comment length, import cycles), shellcheck, skills index, uv.lock,
+                 and dashboard-sync freshness + the vite base check
   whatsapp       gofmt + go vet + go build + go test for the whatsapp skill CLI
                  (builds whisper.cpp static libs to ~/.cache/vesta-whisper on first run)
+  telegram       gofmt + go vet + go build + go test for the telegram skill CLI
   integration    vestad integration tests (needs Docker)
   live           live agent e2e tests, incl. the upgrade gate (needs Docker + ~/.claude/.credentials.json; real Claude)
   upgrade        just the upgrade e2e: create an agent on the previous release, update in place
@@ -125,6 +127,17 @@ check_guards() {
   uv run --project agent/core ruff check . || failed=1
   uv run --project agent/core ruff format --check . || failed=1
 
+  # Convention guards: no lint/type-ignore escape hatches, no oversized comment
+  # blocks, no import cycles (see scripts/check-conventions.py).
+  uv run --project agent/core python scripts/check-conventions.py || failed=1
+
+  if command -v shellcheck >/dev/null; then
+    git ls-files '*.sh' | xargs shellcheck -S warning || failed=1
+  else
+    echo "error: shellcheck is not installed (apt install shellcheck / brew install shellcheck)" >&2
+    failed=1
+  fi
+
   uv run python agent/skills/generate-index.py
   git diff --exit-code agent/skills/index.json || {
     echo "error: agent/skills/index.json is stale — run 'uv run python agent/skills/generate-index.py' and commit the result" >&2
@@ -169,6 +182,22 @@ check_whatsapp() {
     fi
     go vet -tags fts5 ./...
     go build -tags fts5 -o /tmp/whatsapp-check-build .
+    go test -tags fts5 ./...
+  )
+}
+
+check_telegram() {
+  (
+    cd agent/skills/telegram/cli
+    . ./cgo-env.sh
+    UNFORMATTED=$(gofmt -l .)
+    if [ -n "$UNFORMATTED" ]; then
+      echo "error: unformatted Go files:" >&2
+      echo "$UNFORMATTED" >&2
+      exit 1
+    fi
+    go vet -tags fts5 ./...
+    go build -tags fts5 -o /tmp/telegram-check-build .
     go test -tags fts5 ./...
   )
 }
@@ -230,6 +259,7 @@ for suite in "$@"; do
     web) check_web ;;
     guards) check_guards ;;
     whatsapp) check_whatsapp ;;
+    telegram) check_telegram ;;
     integration) check_integration ;;
     live) check_live ;;
     all) check_guards && check_agent && check_cli && check_vestad && check_web ;;

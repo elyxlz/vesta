@@ -107,17 +107,14 @@ fn interrupt_aborts_counting_and_runs_redirect_task() {
     assert_counting_is_dead(&container, &counting_file);
 }
 
-/// The other half of the preemption contract, and the #982 regression guard: when the main turn
-/// is preempted, an already-running BACKGROUND subagent must survive and run to completion.
-/// Preemption pre-sends the interrupting prompt as a priority:"now" message, which aborts only
-/// the turn; the old `interrupt()` control request (now fired only on failure paths) swept the
-/// CLI's task registry and killed every backgrounded subagent, so this
-/// test would fail under that mode — it pins the default behavior against a silent regression.
-///
-/// The main agent launches a background subagent that slowly counts to 10 in its own file, then
-/// counts in the foreground itself; an interrupting notification preempts the foreground turn.
-/// The foreground count must die (preempt landed) while the background subagent's file still
-/// reaches 10 (it was never swept).
+/// The other half of the preemption contract, and the #982 regression guard: when the main
+/// turn is preempted, an already-running BACKGROUND subagent must survive and run to
+/// completion. Preemption pre-sends the interrupting prompt as a priority:"now" message,
+/// which aborts only the turn; the `interrupt()` control request (fired only on failure
+/// paths) sweeps the CLI's task registry and kills every backgrounded subagent, so this test
+/// pins the default behavior against a silent regression. The main agent backgrounds a
+/// subagent slowly counting to 10 in its own file, then counts in the foreground; the preempt
+/// must kill the foreground count while the background file still reaches 10 (never swept).
 #[test]
 fn preempt_preserves_running_background_subagent() {
     let Some((_shared, container)) = lock_live_agent_a() else {

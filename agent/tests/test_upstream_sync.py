@@ -54,13 +54,13 @@ def _env(home, extra=None):
 
 
 def _git(args, cwd, extra_env=None):
-    r = subprocess.run(["git", *args], cwd=str(cwd), env=_env(cwd, extra_env), capture_output=True, text=True)
+    r = subprocess.run(["git", *args], cwd=str(cwd), env=_env(cwd, extra_env), capture_output=True, text=True, check=False)
     assert r.returncode == 0, f"git {' '.join(args)} failed:\n{r.stdout}\n{r.stderr}"
     return r.stdout
 
 
 def _run(script, home, args=(), extra_env=None):
-    return subprocess.run(["bash", str(script), *args], cwd=str(home), env=_env(home, extra_env), capture_output=True, text=True)
+    return subprocess.run(["bash", str(script), *args], cwd=str(home), env=_env(home, extra_env), capture_output=True, text=True, check=False)
 
 
 def _copy_sync_scripts(core_skills):
@@ -105,7 +105,9 @@ def _upstream_fixture(tmp_path, versions=("0.1.170",)):
     ws = tmp_path / "upstream"
     for version in versions:
         _write_content(content, version)
-        r = subprocess.run(["bash", str(BUILD), str(content), str(ws), version], env=_env(tmp_path), capture_output=True, text=True)
+        r = subprocess.run(
+            ["bash", str(BUILD), str(content), str(ws), version], env=_env(tmp_path), capture_output=True, text=True, check=False
+        )
         assert r.returncode == 0, r.stdout + r.stderr
     return ws / "upstream.git"
 
@@ -204,7 +206,7 @@ def test_sync_conflict_stops_and_continues(tmp_path):
     _git(["add", "-A"], home, env)
     _git(["commit", "-m", "checkpoint"], home, env)
     assert _run(FETCH, home, extra_env=env).returncode == 0
-    r = subprocess.run(["git", "rebase", "agent-v0.1.171"], cwd=str(home), env=_env(home, env), capture_output=True, text=True)
+    r = subprocess.run(["git", "rebase", "agent-v0.1.171"], cwd=str(home), env=_env(home, env), capture_output=True, text=True, check=False)
     assert r.returncode != 0  # conflict markers on disk now
     (home / "agent/skills/tasks/SKILL.md").write_text("both sides survive\n")
     _git(["add", "agent/skills/tasks/SKILL.md"], home, env)
@@ -498,6 +500,6 @@ def test_fetch_without_mount_falls_into_the_endpoint_fallback(tmp_path):
     home.mkdir()
     env = _env(home, {"AGENT_NAME": "testbox"})
     env.pop("VESTAD_PORT", None)
-    r = subprocess.run(["bash", str(FETCH)], cwd=str(home), env=env, capture_output=True, text=True)
+    r = subprocess.run(["bash", str(FETCH)], cwd=str(home), env=env, capture_output=True, text=True, check=False)
     assert r.returncode != 0
     assert "VESTAD_PORT" in r.stderr

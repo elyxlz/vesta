@@ -115,7 +115,10 @@ export async function completeHostedLogin(
     body: JSON.stringify({ code, code_verifier: verifier }),
   });
   if (!resp.ok) throw new Error("could not complete sign-in");
-  const data = await resp.json();
+  const data = (await resp.json()) as {
+    access_token?: string;
+    expires_in?: number;
+  };
   if (!data.access_token) throw new Error("no token returned");
   return { accessToken: data.access_token, expiresIn: data.expires_in ?? 600 };
 }
@@ -142,7 +145,7 @@ export async function startNativeLogin(): Promise<void> {
   const port = await loopback.start();
   const params = new URLSearchParams({
     client_id: NATIVE_CLIENT_ID,
-    redirect_uri: `http://127.0.0.1:${port}/cb`,
+    redirect_uri: `http://127.0.0.1:${String(port)}/cb`,
     code_challenge: await s256(verifier),
     code_challenge_method: "S256",
     state,
@@ -155,9 +158,13 @@ export async function startNativeLogin(): Promise<void> {
   // favicon/preflight hit before the real callback.
   await new Promise<void>((resolve, reject) => {
     let settled = false;
-    let unlisten = () => {};
+    let unlisten = () => {
+      /* replaced once the callback listener registers */
+    };
     const teardown = () => {
-      void loopback.cancel(port).catch(() => {});
+      void loopback.cancel(port).catch(() => {
+        /* the loopback is already gone */
+      });
       unlisten();
     };
 
@@ -211,7 +218,10 @@ async function completeNativeLogin(
     body: JSON.stringify({ code, code_verifier: verifier }),
   });
   if (!tokenResp.ok) throw new Error("could not complete sign-in");
-  const tok = await tokenResp.json();
+  const tok = (await tokenResp.json()) as {
+    access_token?: string;
+    url?: string;
+  };
   if (!tok.access_token || !tok.url) {
     throw new Error("sign-in response missing token or box url");
   }
@@ -227,7 +237,11 @@ async function completeNativeLogin(
   if (!exchangeResp.ok) {
     throw new Error("could not finish connecting to your vesta");
   }
-  const ex = await exchangeResp.json();
+  const ex = (await exchangeResp.json()) as {
+    access_token?: string;
+    refresh_token?: string;
+    expires_in?: number;
+  };
   if (!ex.access_token || !ex.refresh_token) {
     throw new Error("exchange returned no tokens");
   }

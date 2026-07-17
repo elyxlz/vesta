@@ -2,7 +2,6 @@
 
 import httpx
 import pytest
-
 from microsoft_cli import backend
 
 
@@ -43,7 +42,7 @@ def test_auto_falls_back_on_permission_error():
 
 def test_auto_falls_back_on_graph_unavailable():
     def graph_fn():
-        raise backend.GraphUnavailable("no token")
+        raise backend.GraphUnavailableError("no token")
 
     assert backend.run(backend.AUTO, graph_fn, lambda: "owa-result") == "owa-result"
 

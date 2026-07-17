@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 
 import pytest
-
 from onboard_cli import cli as cli_mod
 from onboard_cli import referral_store
 from onboard_cli import state as state_mod

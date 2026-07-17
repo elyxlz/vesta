@@ -68,15 +68,11 @@ func oldestAttempt(attempts []time.Time) time.Time {
 
 // checkPairAttempt reports whether another pairing attempt is allowed under the
 // ban-avoidance rate limit, given the RAW attempt history (it filters each window
-// itself). It records nothing: callers that can fail before a code is really
-// produced (phone-code pairing, where whatsmeow rejects PairPhone until the
-// websocket is up) check first and record only on success, so a transient
-// pre-connection failure never burns a slot.
-//
-// The caps are enforced widest-first: the weekly and daily caps are HARD (an
-// --acknowledge-ban-risk acknowledgement does NOT bypass them), so re-pairing is
-// structurally incapable of exceeding a safe rate; only the hourly cap is
-// override-able for a legitimate immediate retry.
+// itself) and records nothing, so callers that can fail before a code is produced
+// (phone-code pairing) check first and record only on success. Caps are enforced
+// widest-first: the weekly and daily caps are HARD (--acknowledge-ban-risk does
+// NOT bypass them), so re-pairing cannot exceed a safe rate; only the hourly cap
+// is override-able for a legitimate immediate retry.
 func checkPairAttempt(attempts []time.Time, now time.Time, acknowledged bool) error {
 	if weekly := attemptsWithin(attempts, now, PairWeekWindow); len(weekly) >= MaxPairPer7d {
 		cooldown := (PairWeekWindow - now.Sub(oldestAttempt(weekly))).Round(time.Minute)

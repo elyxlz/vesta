@@ -60,6 +60,13 @@ Change the agent's own WhatsApp name/picture from its own client (no phone, no Q
   contact keeps seeing the OLD name until you next message them, so message them once to refresh it.
 - `whatsapp profile photo ~/avatar.jpg` sets the picture. JPEG (PNG is auto-converted), roughly square (~640x640).
 
+## Edited and deleted messages
+
+People change their minds after they hit send, so a message you already read can change or vanish:
+
+- **An edit** arrives as an `edit` notification whose body carries what the message says now, just like a plain message, naming the message that changed (`target_message_id`) and the text you last saw (`old_text`). The stored message is rewritten, so `list-messages` and search show only the new text. Answer again only if the edit asks something new: a fixed typo needs nothing from you.
+- **A deletion** (delete-for-everyone) arrives as a `revoke` notification with the text you last saw in `old_text`. They took it back, so treat it as unsaid and do not quote it at them.
+
 ## Voice calls
 
 Hold a live call in your own voice (the `voice` skill's TTS) and hear the other person (its STT):

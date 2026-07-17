@@ -26,7 +26,6 @@ import time
 
 import httpx
 
-
 BASE = "https://api.mail.tm"
 DEFAULT_OTP_TIMEOUT_SECONDS = 180
 
@@ -113,7 +112,7 @@ def extract_otp(message: dict, *, length: int = 6) -> str:
     """Extract a numeric OTP from a parsed mail.tm message.
 
     Looks at `text` first, then `html`. Default length is 6 digits; many OTPs
-    are 6, but we try 4–8 if 6 doesn't match.
+    are 6, but we try 4-8 if 6 doesn't match.
     """
     candidates: list[str] = []
     if "text" in message and isinstance(message["text"], str):

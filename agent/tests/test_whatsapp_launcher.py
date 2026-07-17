@@ -37,7 +37,7 @@ def _run(tmp_path, args, whatsmeow_update=""):
         "RUN_LOG": str(tmp_path / "run.log"),
         "WHATSMEOW_UPDATE": whatsmeow_update,
     }
-    result = subprocess.run(["bash", str(LAUNCHER), *args], env=env, capture_output=True, text=True, cwd=tmp_path)
+    result = subprocess.run(["bash", str(LAUNCHER), *args], env=env, capture_output=True, text=True, cwd=tmp_path, check=False)
     go_log = (tmp_path / "go.log").read_text() if (tmp_path / "go.log").exists() else ""
     run_log = (tmp_path / "run.log").read_text() if (tmp_path / "run.log").exists() else ""
     return result, go_log, run_log

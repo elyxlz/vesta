@@ -31,7 +31,7 @@ pub struct ListEntry {
 }
 
 /// A single host filesystem grant, as returned by / sent to GET|PUT /agents/{name}/mounts.
-/// The server validates and canonicalizes host_path/container_path on PUT.
+/// The server validates and canonicalizes `host_path/container_path` on PUT.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct MountEntry {
     pub host_path: String,

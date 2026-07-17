@@ -21,11 +21,14 @@ This is Google-specific. No other provider's credentials are touched here.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import pathlib
 import re
 import time
 import urllib.request
+
+logger = logging.getLogger(__name__)
 
 # comm-central's canonical OAuth2 provider registry. This is the file Thunderbird
 # ships its published desktop-client ids/secrets in; the Google entry lives in the
@@ -115,7 +118,7 @@ def _write_cache(client_id: str, client_secret: str, now: float, url: str) -> No
     }
     tmp = p.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(payload, indent=2))
-    os.replace(tmp, p)
+    tmp.replace(p)
 
 
 def resolve_google_client(
@@ -126,8 +129,6 @@ def resolve_google_client(
     force_refresh: bool = False,
     max_age_days: int = DEFAULT_MAX_AGE_DAYS,
     now: float | None = None,
-    url: str = OAUTH2PROVIDERS_URL,
-    timeout: int = 15,
     fetcher=None,
 ) -> dict:
     """Resolve the Google OAuth client id/secret, self-healing from upstream.
@@ -160,17 +161,16 @@ def resolve_google_client(
 
     if allow_fetch:
         try:
-            client_id, client_secret = (fetcher or fetch_google_client)(url=url, timeout=timeout)
-            _write_cache(client_id, client_secret, now, url)
+            client_id, client_secret = (fetcher or fetch_google_client)()
+            _write_cache(client_id, client_secret, now, OAUTH2PROVIDERS_URL)
             return {
                 "client_id": client_id,
                 "client_secret": client_secret,
                 "source": "fetched",
                 "fetched_at": now,
             }
-        except Exception:
-            # Fall through to the best available fallback below.
-            pass
+        except Exception as err:
+            logger.warning("google client fetch failed, using best available fallback: %s", err)
 
     if cache and cache.get("client_id"):
         # A stale-but-real Thunderbird value beats the hardcoded constant: it was

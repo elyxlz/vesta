@@ -15,13 +15,13 @@ export function planFromCredentials(credentials: string): string | null {
       typeof parsed === "object" &&
       "claudeAiOauth" in parsed
     ) {
-      const oauth = (parsed as { claudeAiOauth: unknown }).claudeAiOauth;
+      const oauth = parsed.claudeAiOauth;
       if (
         oauth !== null &&
         typeof oauth === "object" &&
         "subscriptionType" in oauth
       ) {
-        const plan = (oauth as { subscriptionType: unknown }).subscriptionType;
+        const plan = oauth.subscriptionType;
         return typeof plan === "string" ? plan : null;
       }
     }

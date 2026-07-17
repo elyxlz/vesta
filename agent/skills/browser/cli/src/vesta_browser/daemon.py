@@ -26,6 +26,7 @@ to a single current-context id the daemon injects where the command shape needs 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import socket
@@ -106,7 +107,7 @@ def log_path(name: str | None = None) -> str:
 
 def _log(msg: str) -> None:
     try:
-        with open(log_path(), "a") as f:
+        with Path(log_path()).open("a") as f:
             f.write(f"{time.strftime('%H:%M:%S')} {msg}\n")
     except OSError:
         # Logging must never cascade. If the log file is unwritable we're already in trouble.
@@ -116,7 +117,7 @@ def _log(msg: str) -> None:
 def resolve_ws_url() -> str:
     """Resolve the BiDi websocket URL. Set by `browser launch` (recorded ws) or an
     explicit VESTA_BROWSER_BIDI_WS for an externally running Camoufox."""
-    if "VESTA_BROWSER_BIDI_WS" in os.environ and os.environ["VESTA_BROWSER_BIDI_WS"]:
+    if os.environ.get("VESTA_BROWSER_BIDI_WS"):
         return os.environ["VESTA_BROWSER_BIDI_WS"]
     raise RuntimeError("VESTA_BROWSER_BIDI_WS must be set. Run `browser launch` first.")
 
@@ -133,7 +134,7 @@ class Daemon:
 
     async def start(self) -> None:
         # CDP backend (a connected Chrome) if VESTA_BROWSER_CDP_WS is set, else native BiDi.
-        if "VESTA_BROWSER_CDP_WS" in os.environ and os.environ["VESTA_BROWSER_CDP_WS"]:
+        if os.environ.get("VESTA_BROWSER_CDP_WS"):
             from .cdp_backend import CdpBackend
 
             self.ws_url = os.environ["VESTA_BROWSER_CDP_WS"]
@@ -146,7 +147,7 @@ class Daemon:
         try:
             await self.bidi.connect(self.ws_url)
         except Exception as e:
-            raise RuntimeError(f"backend WS handshake failed: {e}")
+            raise RuntimeError(f"backend WS handshake failed: {e}") from e
         self.context = await self.bidi.new_session()
         _log(f"session ready, context={self.context}")
 
@@ -180,14 +181,12 @@ class Daemon:
         assert self.bidi is not None
         if "context" not in params:
             return
-        try:
+        # Tab-marking is cosmetic; never let it break event handling.
+        with contextlib.suppress(TimeoutError, BidiError):
             await asyncio.wait_for(
                 self.bidi.send("script.evaluate", {"expression": _MARK_JS, "target": {"context": params["context"]}, "awaitPromise": False}),
                 timeout=MARK_TIMEOUT_S,
             )
-        except (TimeoutError, BidiError):
-            # Tab-marking is cosmetic; never let it break event handling.
-            pass
 
     async def handle(self, req: dict) -> dict:
         assert self.bidi is not None
@@ -201,10 +200,9 @@ class Daemon:
             out = list(self.events)
             self.events.clear()
             return {"events": out}
-        if meta == "context":
-            return {"context": self.context}
-        if meta == "set_context":
-            self.context = req["context"] if "context" in req else None
+        if meta in ("context", "set_context"):
+            if meta == "set_context":
+                self.context = req["context"] if "context" in req else None
             return {"context": self.context}
         if meta == "pending_dialog":
             return {"dialog": self.dialog}
@@ -218,7 +216,7 @@ class Daemon:
     async def _handle_bidi(self, req: dict) -> dict:
         assert self.bidi is not None
         method = req["method"]
-        params = dict(req["params"]) if "params" in req and req["params"] else {}
+        params = dict(req["params"]) if req.get("params") else {}
         if method in _CTX_TOP and "context" not in params and self.context:
             params["context"] = self.context
         elif method in _CTX_TARGET and "target" not in params and self.context:
@@ -253,7 +251,6 @@ class Daemon:
 
 async def _serve(daemon: Daemon) -> None:
     sock = socket_path()
-    Path(sock).unlink(missing_ok=True)
 
     async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
@@ -274,7 +271,6 @@ async def _serve(daemon: Daemon) -> None:
             writer.close()
 
     server = await asyncio.start_unix_server(handler, path=sock)
-    os.chmod(sock, 0o600)
     _log(f"listening on {sock}")
     async with server:
         await daemon.stop.wait()
@@ -305,6 +301,8 @@ def run() -> int:
 
     Path(log_path()).write_text("")
     Path(pid_path()).write_text(str(os.getpid()))
+    Path(socket_path()).unlink(missing_ok=True)  # a crashed daemon may have left a stale socket
+    os.umask(0o177)  # the unix socket is created owner-only (0600)
 
     try:
         asyncio.run(_main())

@@ -323,12 +323,12 @@ func (wac *WhatsAppClient) EnsureConnected() error {
 }
 
 // recoverOrRestart handles connection-fatal events whatsmeow does not auto-recover
-// from (StreamError, high-count KeepAliveTimeout, send deadlock). It force-drops the
-// socket first, so a deadlocked-but-"connected" client actually reconnects instead
-// of short-circuiting on IsConnected, then tries one reconnect; on failure it writes
-// the daemon_died marker and exits for the supervisor. No-op while parked (would
-// steal the session back) or pairing (which owns the connection). Runs in its own
-// goroutine so it does not block the event dispatcher.
+// from (StreamReplaced, StreamError, high-count KeepAliveTimeout, send deadlock). It
+// force-drops the socket first, so a deadlocked-but-"connected" client actually
+// reconnects instead of short-circuiting on IsConnected, then tries one reconnect; on
+// failure it writes the daemon_died marker and exits for the supervisor. No-op while
+// parked (would steal the session back) or pairing (which owns the connection). Runs
+// in its own goroutine so it does not block the event dispatcher.
 func (wac *WhatsAppClient) recoverOrRestart(reason string) {
 	if wac.connModeIs(connParked) || wac.connModeIs(connPairing) {
 		wac.logger.Infof("Skipping recovery (%s): connection is parked or pairing", reason)

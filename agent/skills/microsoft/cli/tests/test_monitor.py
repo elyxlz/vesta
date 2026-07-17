@@ -2,7 +2,7 @@
 
 import logging
 import types
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 
 from microsoft_cli import monitor
 from microsoft_cli.monitor import clean_preview, strip_fractional

@@ -150,7 +150,7 @@ def test_clear_provider_removes_creds_and_resets_state(prov):
     set_claude(_CREDS, "opus", None, config=prov)
     assert provider_mod.CREDENTIALS_PATH.exists()
 
-    status = clear_provider(config=prov)
+    status = clear_provider()
     assert status.state == ProviderAuthState.NOT_AUTHENTICATED
     assert status.kind == "none"
     assert status.model is None

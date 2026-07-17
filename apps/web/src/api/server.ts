@@ -8,7 +8,7 @@ export async function connectToServer(
   const normalized = url.replace(/\/+$/, "");
 
   const healthResp = await fetch(`${normalized}/health`).catch(() => null);
-  if (!healthResp || !healthResp.ok) {
+  if (!healthResp?.ok) {
     throw new Error("could not reach server");
   }
 
@@ -23,7 +23,11 @@ export async function connectToServer(
     );
   }
 
-  const data = await resp.json();
+  const data = (await resp.json()) as {
+    access_token: string;
+    refresh_token: string;
+    expires_in: number;
+  };
   setConnection(
     normalized,
     data.access_token,
