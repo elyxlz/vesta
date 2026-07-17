@@ -279,8 +279,7 @@ def _oversized_window(now: datetime, count: int) -> list[dict]:
 
 
 def test_a_window_over_the_drain_limit_parks_the_watermark_at_the_last_message_read(tmp_path, monkeypatch):
-    """The cap and the watermark are one decision: a full-limit fetch cannot advance past the mail it
-    never fetched, which is what silently dropped everything older than the newest 50."""
+    """The cap and the watermark are one decision: a full-limit fetch cannot advance past mail it never fetched."""
     calls = []
     monkeypatch.setattr(monitor.notifications, "write_notification", lambda *a, **k: calls.append(k))
     _single_owa_account(monkeypatch)
@@ -312,12 +311,10 @@ def test_the_rest_of_an_oversized_window_is_drained_by_the_following_cycle(tmp_p
     monkeypatch.setattr(monitor.owa_rest, "list_messages_since", _mailbox(*mailbox))
     monitor.run(ctx)
 
-    # every message exactly once, in arrival order: nothing dropped, nothing re-notified
     assert [call["sender"] for call in calls] == [email["from"]["emailAddress"]["name"] for email in mailbox]
 
 
 def test_graph_mail_pages_a_bounded_window_and_parks_at_the_last_message_read(tmp_path, monkeypatch):
-    """The Graph path caps the same way, so it pages the window oldest-first under one bound."""
     calls = []
     monkeypatch.setattr(monitor.notifications, "write_notification", lambda *a, **k: calls.append(k))
     monkeypatch.setattr(monitor.folders, "resolve_folder_id", lambda *a, **k: "inbox-id")

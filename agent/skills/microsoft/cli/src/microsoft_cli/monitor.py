@@ -18,8 +18,7 @@ _CATCHUP_GAP_SECONDS = 90
 _FRESH_START_LOOKBACK = timedelta(hours=1)
 # Bounds how much history a long-dead unit re-reads once it heals, so recovery cannot flood the user.
 _MAX_CATCHUP = timedelta(days=7)
-# A cycle drains at most _MAX_WINDOW_MESSAGES per folder, in pages of _MAIL_PAGE_SIZE, so a huge
-# recovery window costs a bounded number of requests; later cycles drain the rest.
+# Bounds a cycle's drain per folder in volume as _MAX_CATCHUP bounds it in time; later cycles drain the rest.
 _MAIL_PAGE_SIZE = 50
 _MAX_WINDOW_MESSAGES = 500
 
@@ -99,9 +98,8 @@ def _earliest(left: datetime | None, right: datetime | None) -> datetime | None:
 
 
 def _window_read_through(messages: list[dict], new_check_time: datetime) -> datetime | None:
-    """How far a fetch honestly read its window: a full-limit response means the window holds more
-    than one cycle drains, so it read only as far as the last (newest) message it fetched. A
-    timestamp that cannot anchor a watermark reports the window unread rather than guessing past it."""
+    """How far a fetch honestly read its window: a full-limit response holds more than one cycle drains, so it
+    read only as far as the last message fetched. An unusable timestamp reports the window unread, not drained."""
     if len(messages) < _MAX_WINDOW_MESSAGES:
         return new_check_time
     newest = messages[-1]
@@ -479,7 +477,7 @@ def _poll_graph_mail(ctx: MicrosoftContext, acc, new_check_time: datetime, last_
                     acc.account_id,
                     params={
                         "$filter": f"receivedDateTime gt {last_dt.isoformat()}",
-                        "$orderby": "receivedDateTime asc",  # oldest first, matching arrival order
+                        "$orderby": "receivedDateTime asc",
                         "$select": "subject,from,bodyPreview,receivedDateTime",
                         "$top": _MAIL_PAGE_SIZE,
                     },

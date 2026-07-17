@@ -289,14 +289,13 @@ def list_messages(client: httpx.Client, account_email: str, config, *, folder: s
     params = {
         "$select": _MSG_SELECT,
         "$orderby": "ReceivedDateTime desc",
-        "$top": str(min(limit, 100)),
+        "$top": str(min(limit, _MAX_PAGE_SIZE)),
     }
     return _paginate(client, token, f"/me/mailfolders/{fid}/messages", params, limit)
 
 
 def list_messages_since(client: httpx.Client, account_email: str, config, *, folder: str, since_utc: str, limit: int) -> list[dict]:
-    """Messages received after ``since_utc``, oldest first, paged up to ``limit``. Ascending order
-    makes a truncated read a resumable prefix of the window rather than its newest slice."""
+    """Ascending order makes a truncated read a resumable prefix of the window, not its newest slice."""
     token = load_token(account_email, config)
     fid = _folder_id(folder)
     params = {
