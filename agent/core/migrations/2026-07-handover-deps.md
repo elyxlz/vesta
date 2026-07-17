@@ -29,9 +29,6 @@ browser doctor
 ```
 
 The `handover` block should read `"ready": true` with nothing under `missing`. If
-something is still listed, say so in your next message rather than marking this
-applied, and stop here.
-
-### 3. Mark this migration applied
-
-Call `mark_migration_applied` with `name="2026-07-handover-deps"`.
+something is still listed, mention it in your next message so your user knows
+handover is not available yet. Nothing is lost either way: `browser handover start`
+names the exact apt line to run whenever you next reach for it.

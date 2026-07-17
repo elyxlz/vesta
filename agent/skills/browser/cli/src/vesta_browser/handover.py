@@ -17,6 +17,7 @@ box (dev/tests) it falls back to a local port.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import socket
@@ -34,6 +35,8 @@ FONTS_DIR = ASSETS_DIR / "fonts"
 VNC_PORT_START = 5900
 WEB_PORT_START = 6080
 X11VNC_READY_TIMEOUT_S = 10.0
+X11VNC_SETTLE_S = 0.4
+X11VNC_TERMINATE_TIMEOUT_S = 5.0
 READY_POLL_S = 0.1
 PROC = Path("/proc")
 # The 13" MacBook's native resolution: a real monitor size, and the one the framed machine in the
@@ -138,19 +141,21 @@ def _free_display(start: int = 99) -> str:
 def _alive(pid: int | None) -> bool:
     """True only for a process that is actually running.
 
-    A signal-0 probe also succeeds for a zombie: start() exits as soon as it has spawned these, so
-    they reparent to init and their pid lingers in the table until something reaps them. That is
-    how a dead x11vnc reported itself up while the page spun on "Waking". /proc's state code is the
-    one reading that tells a corpse from a live process; the comm field can hold spaces and
-    parens, so the state is read relative to its closing paren, not by splitting on whitespace.
+    A signal-0 probe cannot answer this: start() exits once it has spawned these, so they reparent
+    to init and a dead one's pid lingers unreaped, answering the probe like a live process.
+    /proc's state code distinguishes the corpse; the comm field can hold spaces and parens, so the
+    state is read relative to its closing paren rather than by splitting on whitespace.
     """
     if pid is None:
         return False
     try:
         stat = (PROC / str(pid) / "stat").read_text()
-    except (FileNotFoundError, ProcessLookupError, PermissionError):
+    except (FileNotFoundError, ProcessLookupError, PermissionError, OSError):
         return False
-    return stat[stat.rfind(") ") + 2] != "Z"
+    comm_end = stat.rfind(") ")
+    if comm_end == -1:
+        return False
+    return stat[comm_end + 2] != "Z"
 
 
 def _read_pid(suffix: str) -> int | None:
@@ -227,15 +232,31 @@ def _start_x11vnc(*, display: str, vnc_port: int, log: tp.TextIO) -> subprocess.
     argv += ["-forever", "-shared", "-nopw", "-quiet", "-threads", "-cursor", "most", "-cursorpos"]
     for shm_args in ((), ("-noshm",)):
         proc = subprocess.Popen([*argv, *shm_args], stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
-        deadline = time.monotonic() + X11VNC_READY_TIMEOUT_S
-        while time.monotonic() < deadline:
-            if _port_serving(vnc_port):
-                return proc
-            if proc.poll() is not None:
-                break
-            time.sleep(READY_POLL_S)
-        admin._terminate_pid(proc.pid)
+        if _x11vnc_settles(proc, vnc_port):
+            return proc
+        # Popen no-ops terminate() once it has reaped, so this can never signal a recycled pid.
+        proc.terminate()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            proc.wait(timeout=X11VNC_TERMINATE_TIMEOUT_S)
     raise RuntimeError(f"x11vnc never served port {vnc_port}, with or without shm. See {_session_file('handover-log')}")
+
+
+def _x11vnc_settles(proc: subprocess.Popen[bytes], vnc_port: int) -> bool:
+    """Whether `proc` reaches a serving port and is still alive a beat later.
+
+    Binding is not survival: x11vnc grabs the framebuffer around the same time it opens the port,
+    so a host that refuses shm can kill it either side of the bind. Requiring it to still be up
+    after SETTLE keeps the -noshm retry reachable from both orders.
+    """
+    deadline = time.monotonic() + X11VNC_READY_TIMEOUT_S
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            return False
+        if _port_serving(vnc_port):
+            time.sleep(X11VNC_SETTLE_S)
+            return proc.poll() is None
+        time.sleep(READY_POLL_S)
+    return False
 
 
 def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> dict[str, object]:
@@ -262,7 +283,10 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
     # over time like a real user's. Camoufox (Firefox) single-instances a profile, so free the
     # lock by stopping the default session's browser and clearing its now-stale profile lock
     # before the headed handover takes the profile over.
+    # Recorded before the launch that writes the headed prefs into it, so stop() can always find
+    # the profile to strip them back out of, including when that launch is what failed.
     profile = Path(user_data_dir) if user_data_dir else launcher.PROFILE_ROOT
+    _session_file("profile").write_text(str(profile))
     admin.stop_browser("default")
     for lock in ("lock", ".parentlock"):
         (profile / lock).unlink(missing_ok=True)
@@ -281,47 +305,49 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
     # Display, then a window manager, then the VNC bridge, and only then the browser. x11vnc grabs
     # the display's root window and never needs Gecko, so bridging before the launch lets the page
     # connect while Camoufox is still booting: the user watches the browser appear instead of
-    # waiting on a spinner, and a bridge that dies takes the log with it before the browser masks
-    # the failure. openbox strips decorations and pins the window at the origin.
-    # Each pid lands in its session file the moment it exists, so a failure part-way through leaves
-    # nothing orphaned: stop() reaps whatever got as far as starting.
-    xvfb_pid = launcher._ensure_xvfb(display, screen=f"{SCREEN_W}x{SCREEN_H}x24")
-    if xvfb_pid is not None:
-        _session_file("xvfb-pid").write_text(str(xvfb_pid))
-    openbox_rc = _session_file("openbox-rc.xml")
-    openbox_rc.write_text(OPENBOX_RC)
-    openbox = subprocess.Popen(
-        ["openbox", "--config-file", str(openbox_rc)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
-    )
-    _session_file("openbox-pid").write_text(str(openbox.pid))
-
-    vnc_port = _free_port(VNC_PORT_START)
-    webroot = _build_webroot()
-
-    with _session_file("handover-log").open("w") as log:
-        x11vnc = _start_x11vnc(display=display, vnc_port=vnc_port, log=log)
-        _session_file("x11vnc-pid").write_text(str(x11vnc.pid))
-        websockify = subprocess.Popen(
-            ["websockify", "--web", str(webroot), str(web_port), f"localhost:{vnc_port}"],
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
+    # waiting on a spinner, and a bridge that dies writes its log before the browser masks it.
+    # openbox strips decorations and pins the window at the origin. Every pid reaches its session
+    # file the moment its process exists, so the stop() below reaps whatever a raise leaves behind.
+    try:
+        xvfb_pid = launcher._ensure_xvfb(display, screen=f"{SCREEN_W}x{SCREEN_H}x24")
+        if xvfb_pid is not None:
+            _session_file("xvfb-pid").write_text(str(xvfb_pid))
+        openbox_rc = _session_file("openbox-rc.xml")
+        openbox_rc.write_text(OPENBOX_RC)
+        openbox = subprocess.Popen(
+            ["openbox", "--config-file", str(openbox_rc)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
         )
-        _session_file("websockify-pid").write_text(str(websockify.pid))
+        _session_file("openbox-pid").write_text(str(openbox.pid))
 
-    # window_size refits the fingerprint's screen/window geometry so what the page reports to JS
-    # matches the real framebuffer; the sign-in URL rides in as a trailing arg so it opens there.
-    running = admin.launch_browser(
-        HANDOVER_SESSION,
-        headless=False,
-        user_data_dir=profile,
-        extra_args=[url] if url else None,
-        window_size=(SCREEN_W, SCREEN_H),
-    )
+        vnc_port = _free_port(VNC_PORT_START)
+        _session_file("vnc-port").write_text(str(vnc_port))
+        webroot = _build_webroot()
+
+        with _session_file("handover-log").open("w") as log:
+            x11vnc = _start_x11vnc(display=display, vnc_port=vnc_port, log=log)
+            _session_file("x11vnc-pid").write_text(str(x11vnc.pid))
+            websockify = subprocess.Popen(
+                ["websockify", "--web", str(webroot), str(web_port), f"localhost:{vnc_port}"],
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+            _session_file("websockify-pid").write_text(str(websockify.pid))
+
+        # window_size refits the fingerprint's screen/window geometry so what the page reports to
+        # JS matches the real framebuffer; the sign-in URL rides in as a trailing arg to open there.
+        running = admin.launch_browser(
+            HANDOVER_SESSION,
+            headless=False,
+            user_data_dir=profile,
+            extra_args=[url] if url else None,
+            window_size=(SCREEN_W, SCREEN_H),
+        )
+    except Exception:
+        stop()
+        raise
 
     _session_file("web-port").write_text(str(web_port))
-    _session_file("vnc-port").write_text(str(vnc_port))
-    _session_file("profile").write_text(str(profile))
 
     return {
         "session": HANDOVER_SESSION,
@@ -417,14 +443,14 @@ _PAGE_TEMPLATE = """<!doctype html>
     font-family: "Public Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased;
     overflow: hidden; display: flex; align-items: center; justify-content: center;
   }
-  /* The machine bleeds off the short axis rather than sitting in letterbox bars, so a 16:9 or 16:10
-     viewport fills edge to edge. The chin is deeper than the top bezel, so it is nudged down until
-     the SCREEN is centred rather than the frame. The caps stop the bleed while the machine still
-     reads as a machine: 178vh keeps the chin engraving clear of the bottom edge (it slides off
-     around 181vh, so this leaves slack for a taller line box), 131.1vw stops a narrow viewport
-     cropping the screen itself. Past them a little desk shows, which beats a decapitated laptop. */
+  /* The machine bleeds off the top and bottom rather than sitting in letterbox bars, so a viewport
+     up to ~16:9 fills edge to edge and a wider one keeps only a little desk at the sides, which
+     beats a decapitated laptop. The chin is deeper than the top bezel, so it is nudged down until
+     the SCREEN is centred rather than the frame. 178vh is where the chin engraving would slide off
+     the bottom, and it also happens to be just past the 177.7vh that covering the top costs once
+     nudged, so it is a single fixed height. 131.1vw stops a narrow viewport cropping the screen. */
   .macbook { container-type: inline-size; position: relative; aspect-ratio: 1240 / 740;
-    width: min(max(100vw, 167.57vh), 178vh, 131.1vw); transform: translateY(2.838%); }
+    width: min(178vh, 131.1vw); flex-shrink: 0; transform: translateY(2.838%); }
   /* the screen rectangle, measured from macbook.png: the live browser shows through the cut-out */
   #stage { position: absolute; left: 11.855%; top: 7.297%; width: 76.29%; height: 79.73%;
     overflow: hidden; background: var(--screen-bg); z-index: 0; }

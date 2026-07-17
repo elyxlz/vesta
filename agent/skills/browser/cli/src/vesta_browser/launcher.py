@@ -184,8 +184,9 @@ def _ensure_xvfb(display: str, screen: str = "1920x1080x24") -> int | None:
     browser to the user over VNC) needs this. Self-heals a dead/lock-stuck Xvfb in
     ~2s, serialised with an flock so concurrent launches don't stomp each other. Never
     raises; on failure the caller falls back to headless. `screen` is the Xvfb
-    `WxHxDEPTH` geometry. Returns the pid of the server this call started so the caller
-    can reap it, or None when one was already up (not ours to kill) or the launch failed.
+    `WxHxDEPTH` geometry. Returns the pid of whatever server this call spawned, ready or not, so
+    the caller owns it and can reap it; None only when one was already up (so it is not ours to
+    kill) or the spawn itself failed. A slow Xvfb that answers after the deadline is still ours.
     """
     if _x_display_reachable(display):
         return None
@@ -213,11 +214,9 @@ def _ensure_xvfb(display: str, screen: str = "1920x1080x24") -> int | None:
             start_new_session=True,
         )
         deadline = time.time() + 5
-        while time.time() < deadline:
-            if _x_display_reachable(display):
-                return proc.pid
+        while time.time() < deadline and not _x_display_reachable(display):
             time.sleep(0.2)
-        return proc.pid if _x_display_reachable(display) else None
+        return proc.pid
     except Exception:
         return None
     finally:

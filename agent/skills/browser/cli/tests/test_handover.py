@@ -205,17 +205,30 @@ def test_alive_is_false_for_an_absent_or_unknown_pid():
 # ── x11vnc bring-up ───────────────────────────────────────────
 
 
-def _stub_x11vnc(monkeypatch, *, serves_with):
-    """Stand in for x11vnc: it 'serves' only when launched with the arg set in `serves_with`."""
+def _stub_x11vnc(monkeypatch, *, serves_with, dies_when_refused=True):
+    """Stand in for x11vnc: it 'serves' only when launched with the arg set in `serves_with`.
+
+    `dies_when_refused=False` models the other failure shape: a process that stays up but never
+    opens the port, which only the readiness deadline can catch.
+    """
     attempts: list[tuple[str, ...]] = []
 
     class FakeProc:
         def __init__(self, argv):
             self.pid = 1000 + len(attempts)
             self._ok = tuple(a for a in argv if a == "-noshm") == serves_with
+            self.terminated = False
 
         def poll(self):
-            return None if self._ok else 1
+            if self._ok or not dies_when_refused:
+                return None
+            return 1
+
+        def terminate(self):
+            self.terminated = True
+
+        def wait(self, timeout=None):
+            return 0
 
     def fake_popen(argv, **_kw):
         attempts.append(tuple(a for a in argv if a == "-noshm"))
@@ -223,7 +236,7 @@ def _stub_x11vnc(monkeypatch, *, serves_with):
 
     monkeypatch.setattr(handover.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(handover, "_port_serving", lambda _p: attempts[-1] == serves_with)
-    monkeypatch.setattr(handover.admin, "_terminate_pid", lambda _pid: None)
+    monkeypatch.setattr(handover, "X11VNC_SETTLE_S", 0)
     return attempts
 
 
@@ -250,6 +263,51 @@ def test_x11vnc_raises_when_neither_mode_serves(monkeypatch, isolated):
     with (isolated / "log").open("w") as log, pytest.raises(RuntimeError, match="never served port 5900"):
         handover._start_x11vnc(display=":99", vnc_port=5900, log=log)
     assert attempts == [(), ("-noshm",)]
+
+
+def test_x11vnc_that_stays_up_but_never_serves_hits_the_deadline(monkeypatch, isolated):
+    # The hang this whole path exists to end: the process is alive, so polling poll() alone would
+    # wait forever. Only the readiness deadline ends it, and it must still try -noshm.
+    attempts = _stub_x11vnc(monkeypatch, serves_with=("never",), dies_when_refused=False)
+    monkeypatch.setattr(handover, "X11VNC_READY_TIMEOUT_S", 0.2)
+    with (isolated / "log").open("w") as log, pytest.raises(RuntimeError, match="never served port 5900"):
+        handover._start_x11vnc(display=":99", vnc_port=5900, log=log)
+    assert attempts == [(), ("-noshm",)]
+
+
+def test_x11vnc_that_binds_then_dies_is_not_taken_as_ready(monkeypatch, isolated):
+    # Binding is not survival: x11vnc grabs the framebuffer around the time it opens the port, so a
+    # host refusing shm can kill it just after the bind. Taking the port as proof would strand the
+    # user on a dead stream with the -noshm retry never fired.
+    attempts: list[tuple[str, ...]] = []
+
+    class BindsThenDies:
+        pid = 4242
+
+        def __init__(self):
+            self.polls = 0
+
+        def poll(self):
+            self.polls += 1
+            return None if self.polls <= 1 else 1  # alive at the port check, dead after the settle
+
+        def terminate(self):
+            pass
+
+        def wait(self, timeout=None):
+            return 1
+
+    def fake_popen(argv, **_kw):
+        attempts.append(tuple(a for a in argv if a == "-noshm"))
+        return BindsThenDies()
+
+    monkeypatch.setattr(handover.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(handover, "_port_serving", lambda _p: True)
+    monkeypatch.setattr(handover, "X11VNC_SETTLE_S", 0)
+    monkeypatch.setattr(handover, "X11VNC_READY_TIMEOUT_S", 0.2)
+    with (isolated / "log").open("w") as log, pytest.raises(RuntimeError, match="never served port 5900"):
+        handover._start_x11vnc(display=":99", vnc_port=5900, log=log)
+    assert attempts == [(), ("-noshm",)]  # the death after the bind still reached the fallback
 
 
 def test_alive_reads_the_state_past_a_comm_holding_spaces_and_parens(isolated, monkeypatch):
