@@ -16,7 +16,7 @@ Suites:
   vestad         cargo clippy -p vestad -D warnings + cargo test -p vestad
   vestad-docker  vestad #[ignore] Docker tests (needs Docker + an agent image:
                  set VESTAD_AGENT_IMAGE or docker pull ghcr.io/elyxlz/vesta:latest)
-  web            eslint + prettier --check + tsc + vitest (web) and eslint + tsc (desktop)
+  web            eslint + prettier --check + tsc + vitest (web) and eslint + tsc + vitest (desktop)
   guards         repo-wide ruff check + format, convention guards (lint escapes,
                  comment length, import cycles), shellcheck, skills index, uv.lock,
                  and dashboard-sync freshness + the vite base check
@@ -110,6 +110,7 @@ check_web() {
     npm -w @vesta/web run test
     npm -w @vesta/desktop run lint
     npm -w @vesta/desktop run check
+    npm -w @vesta/desktop run test
   )
 }
 
