@@ -20,7 +20,7 @@ Create a task per item and work them in order:
 2. **Clarify intent (only if needed)**: if the ask is ambiguous, ask the user one focused question at a time about what they want to see or do. Skip this when the ask is already clear.
 3. **Design the change**: decide the placement, widgets, layout, data source, and visual treatment yourself.
 4. **Write the spec**: a short brief the builder implements (template below).
-5. **Dispatch the dashboard-builder**: a general-purpose subagent, filling the template at [dashboard-builder.md](dashboard-builder.md) with your spec as `{SPEC}`. Give it a strong coding model.
+5. **Dispatch the dashboard-builder**: the named subagent, with your spec as its prompt. It already carries its own expertise and this skill, so send the spec and nothing else.
 6. **Verify and relay**: confirm the dashboard actually serves before you tell the user it is done, then summarize what changed in plain terms.
 
 **Exception, dreamer auto-builds.** During a dream pass you may add widgets without asking: compose the spec yourself and dispatch the builder. See the `dream` skill.

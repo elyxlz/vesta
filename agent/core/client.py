@@ -20,13 +20,13 @@ from claude_agent_sdk import (
     ResultMessage,
     ThinkingBlock,
 )
-from claude_agent_sdk.types import PermissionResultAllow, SdkBeta, ThinkingConfigDisabled, ToolPermissionContext
+from claude_agent_sdk.types import AgentDefinition, PermissionResultAllow, SdkBeta, ThinkingConfigDisabled, ToolPermissionContext
 
 from . import config as cfg
 from . import diagnostics, logger, sdk_parsing, state_store
 from . import models as vm
 from .config import CONTEXT_1M_BETA, DEFAULT_CONTEXT_WINDOW
-from .helpers import get_constitution_path, get_memory_path
+from .helpers import get_constitution_path, get_memory_path, load_prompt
 from .provider import (
     OPENROUTER_SMALL_FAST_MODEL,
     TERMINAL_PROVIDER_ERRORS,
@@ -519,6 +519,27 @@ async def compact_session(*, state: vm.State, config: cfg.VestaConfig, prompt: s
         _close_turn(state, turn)
 
 
+def _build_agents(config: cfg.VestaConfig) -> dict[str, AgentDefinition]:
+    """Named subagents the main agent dispatches. The dashboard skill designs the change and hands
+    a finished spec to the builder, so the token-heavy build churn (shadcn docs, large React files,
+    vite output) stays out of the main conversation and the builder starts primed on the dashboard
+    instead of rediscovering it every time.
+
+    Registered only when the dashboard skill is installed: the sparse cone leaves an uninstalled
+    skill off disk, and a preloaded name only resolves to a real ~/.claude/skills entry. Model and
+    effort are left to the session, so the builder runs on the user's chosen provider model."""
+    prompt = load_prompt("dashboard_builder", config)
+    if prompt is None or not (config.skills_dir / "dashboard").exists():
+        return {}
+    return {
+        "dashboard-builder": AgentDefinition(
+            description="Builds or edits the user's dashboard from a finished spec. Dispatch it with the spec as the prompt.",
+            prompt=prompt,
+            skills=["dashboard"],
+        )
+    }
+
+
 def build_client_options(config: cfg.VestaConfig, state: vm.State) -> ClaudeAgentOptions:
     memory_path = get_memory_path(config)
     if not memory_path.exists():
@@ -602,6 +623,7 @@ def build_client_options(config: cfg.VestaConfig, state: vm.State) -> ClaudeAgen
         # Skill tool on for every discovered skill (the single documented switch).
         setting_sources=["user", "project"],
         skills="all",
+        agents=_build_agents(config),
         add_dirs=[str(config.agent_dir), str(pl.Path.home())],
         thinking=thinking_config,
         max_buffer_size=10 * 1024 * 1024,
