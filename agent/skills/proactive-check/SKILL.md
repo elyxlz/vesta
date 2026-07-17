@@ -9,9 +9,7 @@ This is your scheduled moment to think unprompted. No one asked; you're checking
 
 ## Preflight: daemon liveness (do this first, every tick)
 
-Before anything else, confirm your core daemons are actually SERVING, not merely present. A daemon can die silently (container up, daemon down), and a live `screen` session or a live sqlite store only proves the session/file exists, not that the process still answers. A dead messaging daemon means you can't reach the user at all, so this is load-bearing.
-
-The daemon skills expose one uniform check that talks to the daemon over its own transport: `<skill> daemon status -q` exits 0 only when it truly serves, non-zero otherwise. Run it for each daemon in your `restart` skill's `## Daemons` block, e.g. `whatsapp daemon status -q`, `telegram daemon status -q`, `tasks daemon status -q`. Restart any that report down (non-zero) by re-running that skill's guarded `running <name> ||` block (idempotent, a safe no-op when everything's already up). For a daemon whose skill has no `daemon status` verb yet, fall back to `screen -ls` presence, knowing presence is the weaker signal.
+Confirm each core daemon is actually SERVING, not merely present: a live `screen` session or sqlite store doesn't prove the process answers. For each daemon in your `restart` skill's `## Daemons` block, run `<skill> daemon status -q` (exits 0 only when it truly serves; falls back to `screen -ls` presence for a skill with no `daemon status` verb yet). Restart any that report down by re-running that skill's guarded `running <name> ||` block.
 
 ## Two questions, every time
 
