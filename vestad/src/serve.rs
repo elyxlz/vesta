@@ -3153,50 +3153,36 @@ mod tests {
         );
     }
 
-    /// A crashed startup leaves its port *held but unserved* (#371, #433): connect is
-    /// refused, yet bind still fails, so nothing inside the container can recover it.
-    /// Model it with a raw socket bound without `SO_REUSEADDR` and never listened on,
-    /// the one shape std/tokio listeners cannot build (they always listen).
-    fn hold_port_unserved(port: u16) -> socket2::Socket {
+    /// A port a crashed startup left *held but unserved* (#371, #433), and the corpse
+    /// holding it: connect is refused, yet bind still fails. Only a raw socket bound
+    /// without `SO_REUSEADDR` and never listened on models that; std/tokio listeners
+    /// always listen. The port is OS-ephemeral rather than from `allocate_service_port`,
+    /// whose deterministic scan would hand the same port to a parallel test.
+    fn dead_port_with_corpse() -> (u16, socket2::Socket) {
+        let probe = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("an ephemeral port");
+        let port = probe.local_addr().expect("the probe's address").port();
+        drop(probe);
         let corpse = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None)
             .expect("a raw tcp socket");
         let addr = std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, port));
         corpse.bind(&addr.into()).expect("bind without listening");
-        corpse
+        (port, corpse)
     }
 
-    // The #371/#433 regression: the port corpse a crash leaves behind answers nothing
-    // but blocks bind, and it is the only condition that must NOT be reused. Reusing it
-    // hands the service a port it can never bind, the crash loop with no recovery path
-    // from inside the container that allocate_service_port exists to break.
     #[tokio::test]
     async fn cached_port_is_not_reusable_when_held_but_unserved() {
-        let probe = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        let port = probe.local_addr().unwrap().port();
-        drop(probe);
-        let _corpse = hold_port_unserved(port);
-
+        let (port, _corpse) = dead_port_with_corpse();
         assert!(
             !is_cached_port_reusable(port).await,
             "a port held by a crashed service's corpse must not be reused",
         );
     }
 
-    // The recovery half of #371/#433, at the same altitude as the resident-service test
-    // below: a crashed service re-registering must be moved off its dead port and onto
-    // one it can actually bind, without a container or host restart.
+    // The recovery half of #371/#433: a crashed service re-registering must land on a
+    // port it can actually bind, without a container or host restart.
     #[tokio::test]
     async fn crashed_service_is_reallocated_off_its_dead_port() {
-        use std::collections::HashMap;
-
-        // The registered port, now a corpse the crashed service left holding it. It comes
-        // from the OS rather than allocate_service_port, whose deterministic scan would
-        // hand a parallel test the same port for this one to hold hostage.
-        let probe = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        let dead_port = probe.local_addr().unwrap().port();
-        drop(probe);
-        let _corpse = hold_port_unserved(dead_port);
-
+        let (dead_port, _corpse) = dead_port_with_corpse();
         let mut registry: HashMap<String, HashMap<String, ServiceEntry>> = HashMap::new();
         registry.entry("agent".into()).or_default().insert(
             "dashboard".into(),
