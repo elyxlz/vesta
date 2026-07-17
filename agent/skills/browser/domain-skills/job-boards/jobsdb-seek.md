@@ -1,3 +1,7 @@
+---
+hosts: jobsdb.com, jobstreet.com, seek.com.au, seek.co.nz
+---
+
 # Job Boards: JobsDB (and the SEEK family)
 
 Covers: `hk.jobsdb.com`, `th.jobsdb.com`, `id.jobstreet.com`, `my.jobstreet.com`, `seek.com.au`, `seek.co.nz`

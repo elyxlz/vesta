@@ -1,3 +1,7 @@
+---
+hosts: indeed.com, glassdoor.com, stepstone.de
+---
+
 # Job Boards — Indeed, Glassdoor, Stepstone
 
 Covers: `indeed.com`, `glassdoor.com`, `stepstone.de`
@@ -219,9 +223,23 @@ jobs = js("""
 """)
 
 results = json.loads(jobs)
+
+# Drop decoys before doing anything else: filter honeypot keys (cheap), then dedupe by
+# title+company (the real defence, since every decoy shadows a genuine listing's title).
+seen = set()
+clean = []
 for r in results:
+    if is_honeypot_jk(r["jk"]):
+        continue
+    ident = (r["title"].lower(), r["company"].lower())
+    if ident in seen:
+        continue
+    seen.add(ident)
+    clean.append(r)
+
+for r in clean:
     print(r)
-# Typically returns 10–15 cards per page
+# Typically returns 10-15 cards per page
 ```
 
 ---
@@ -257,7 +275,7 @@ for page in range(3):   # 3 pages = up to ~30 results
         var c = cards[i];
         var jk = c.getAttribute('data-jk') || '';
         if (!jk) continue;
-        var titleEl = c.querySelector('h2.jobTitle span[title], h3.jobTitle span[title], [data-testid="job-title"]');
+        var titleEl = c.querySelector('h2.jobTitle span[title], h3.jobTitle span[title], h2.jobTitle span:not(.visually-hidden), h3.jobTitle span:not(.visually-hidden), [data-testid="job-title"]');
         var compEl  = c.querySelector('[data-testid="company-name"], .companyName');
         var locEl   = c.querySelector('[data-testid="text-location"], .companyLocation');
         var salEl   = c.querySelector('[data-testid="attribute_snippet_testid"], .salary-snippet-container');
@@ -964,7 +982,7 @@ def collect_indeed_jobs(query: str, location: str = "", max_results: int = 20,
     Waits between pages to avoid bot detection.
     """
     all_jobs = []
-    seen_jks = set()
+    seen = set()  # (title, company): dedupe by identity, which also drops decoy rows
     page = 0
 
     while len(all_jobs) < max_results:
@@ -989,7 +1007,7 @@ def collect_indeed_jobs(query: str, location: str = "", max_results: int = 20,
             var c = cards[i];
             var jk = c.getAttribute('data-jk') || '';
             if (!jk) continue;
-            var titleEl = c.querySelector('h2.jobTitle span[title], h3.jobTitle span[title], [data-testid="job-title"]');
+            var titleEl = c.querySelector('h2.jobTitle span[title], h3.jobTitle span[title], h2.jobTitle span:not(.visually-hidden), h3.jobTitle span:not(.visually-hidden), [data-testid="job-title"]');
             var compEl  = c.querySelector('[data-testid="company-name"], .companyName');
             var locEl   = c.querySelector('[data-testid="text-location"], .companyLocation');
             var salEl   = c.querySelector('[data-testid="attribute_snippet_testid"], .salary-snippet-container');
@@ -1012,8 +1030,8 @@ def collect_indeed_jobs(query: str, location: str = "", max_results: int = 20,
         if not batch:
             break  # no more results
 
-        new_jobs = [j for j in batch if j["jk"] not in seen_jks]
-        seen_jks.update(j["jk"] for j in new_jobs)
+        new_jobs = [j for j in batch if (j["title"].lower(), j["company"].lower()) not in seen]
+        seen.update((j["title"].lower(), j["company"].lower()) for j in new_jobs)
         all_jobs.extend(new_jobs)
         page += 1
 

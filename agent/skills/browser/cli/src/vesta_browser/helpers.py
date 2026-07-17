@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import gzip
 import json
+import re
 import time
 import urllib.request
 from collections.abc import Callable
@@ -454,6 +455,20 @@ def _skills_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
+def _declared_hosts(path: Path) -> set[str]:
+    """Hosts a recipe claims via a leading `hosts:` frontmatter line (comma/space separated).
+    Lets one recipe cover several domains (e.g. a job board on many country TLDs) that no single
+    directory name maps to."""
+    front = re.match(r"^---\n(.*?)\n---", path.read_text(encoding="utf-8", errors="ignore"), re.DOTALL)
+    if not front:
+        return set()
+    line = re.search(r"^hosts:\s*(.+)$", front.group(1), re.MULTILINE)
+    if not line:
+        return set()
+    raw = line.group(1).strip().strip("[]")
+    return {h.strip().strip("\"'").removeprefix("www.") for h in re.split(r"[,\s]+", raw) if h.strip()}
+
+
 def recipes_for(url: str) -> list[str]:
     """Matching domain-skill files for this URL. Returns relative paths."""
     host = (urlparse(url).hostname or "").lstrip(".").removeprefix("www.")
@@ -471,7 +486,9 @@ def recipes_for(url: str) -> list[str]:
         d = root / candidate
         if d.is_dir():
             return sorted(f"domain-skills/{candidate}/{p.name}" for p in d.rglob("*.md"))
-    return []
+    # No host-named directory: fall back to recipes that declare this host in frontmatter.
+    wanted = set(candidates)
+    return sorted(f"domain-skills/{p.relative_to(root)}" for p in root.rglob("*.md") if wanted & _declared_hosts(p))
 
 
 def recipe_banner(url: str) -> str:
