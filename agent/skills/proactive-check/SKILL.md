@@ -9,7 +9,15 @@ This is your scheduled moment to think unprompted. No one asked; you're checking
 
 ## Preflight: daemon liveness (do this first, every tick)
 
-Before anything else, confirm your core daemons are actually alive: `screen -ls` and check that at least your messaging, mail, and `tasks` daemons are present and not `(Dead ...)`. Daemons can die SILENTLY without a `[System Restart]` banner (the container keeps running; only the daemon dies). A dead messaging daemon means you cannot reach the user at all, so this check is load-bearing. If any expected daemon is missing or dead, re-run the `restart` skill's guarded `running <name> ||` block immediately (it is idempotent, so running it when everything is already up is a safe no-op). Tell for `tasks`: an empty `tasks remind list` / `tasks list` is the sign its daemon is down.
+Before anything else, confirm your core daemons are actually alive: `screen -ls` and check that at least your messaging, mail, and `tasks` daemons are present and not `(Dead ...)`. Daemons can die SILENTLY without a `[System Restart]` banner (the container keeps running; only the daemon dies). A dead messaging daemon means you cannot reach the user at all, so this check is load-bearing. If any expected daemon is missing or dead, re-run the `restart` skill's guarded `running <name> ||` block immediately (it is idempotent, so running it when everything is already up is a safe no-op).
+
+Tell for `tasks`: **not the CLI.** `tasks list` and `tasks remind list` read the sqlite store directly (the CLI makes no HTTP calls at all), so they print the same thing whether the daemon is up, dead, or was never started, and an empty list only ever means there are no tasks. The daemon owns the reminder loop and the HTTP API, so test that instead: take its port from vestad's `GET /services` (or from the `--port` in its `screen` command line) and
+
+```bash
+curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:<port>/tasks   # 200 alive, 000 refused
+```
+
+Same caution for any daemon: a live `screen` session means the session exists, not that the process still serves. Prefer a check whose failing case you can actually produce.
 
 ## Two questions, every time
 
