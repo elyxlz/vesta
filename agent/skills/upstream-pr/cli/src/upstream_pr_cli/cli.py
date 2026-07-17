@@ -1,6 +1,7 @@
 """Upstream PR tool — authenticates via GitHub App, pushes branch, creates PR."""
 
 import argparse
+import base64
 import os
 import subprocess
 import sys
@@ -53,11 +54,33 @@ def get_installation_token():
     return resp.json()["token"]
 
 
-def run(cmd):
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+def run(cmd, env=None):
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False, env=env)
     if result.returncode != 0 and result.stderr:
         print(result.stderr, file=sys.stderr)
     return result
+
+
+def git_auth_env(token):
+    """Env that authenticates git over HTTPS without persisting the token anywhere.
+
+    The token must never reach the remote URL. `git remote set-url upstream
+    https://x-access-token:TOKEN@github.com/...` writes a live installation token into
+    .git/config, where it outlives the run and is printed verbatim by commands as routine
+    as `git remote -v` and `git config --list`. An agent that runs one of those lands its
+    own credential in its logs, and the config copy stays valid for the rest of the
+    token's lifetime. Passing the credential as an http.extraheader via GIT_CONFIG_*
+    keeps it in this process's environment only: not on disk, and not in argv where `ps`
+    would show it.
+    """
+    basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    count = int(os.environ.get("GIT_CONFIG_COUNT") or 0)
+    return {
+        **os.environ,
+        f"GIT_CONFIG_KEY_{count}": "http.extraheader",
+        f"GIT_CONFIG_VALUE_{count}": f"AUTHORIZATION: Basic {basic}",
+        "GIT_CONFIG_COUNT": str(count + 1),
+    }
 
 
 def resolve_agent_identity():
@@ -73,13 +96,13 @@ def resolve_agent_identity():
     return agent_name, vesta_version
 
 
-def ensure_shared_history(base):
+def ensure_shared_history(base, env):
     """Guard: HEAD must share history with the base branch, else PR-create fails 422 with a
     cryptic "no history in common with master". This happens when upstream-pr is run from
     the workspace branch (~), whose base is a standalone stock snapshot tag with no ancestry
     to real GitHub master, so pushing it force-pushes an unrelated root. Catch it here with
     an actionable message BEFORE we amend the commit author or push anything."""
-    run(["git", "fetch", "--quiet", "upstream", base])
+    run(["git", "fetch", "--quiet", "upstream", base], env=env)
     merge_base = run(["git", "merge-base", "FETCH_HEAD", "HEAD"])
     if merge_base.returncode != 0 or not merge_base.stdout.strip():
         print(f"Error: HEAD shares no history with upstream/{base}.", file=sys.stderr)
@@ -149,15 +172,17 @@ def main():
     current_branch = result.stdout.strip()
     branch = args.branch or current_branch
 
-    # Configure upstream remote
-    remote_url = f"https://x-access-token:{token}@github.com/{UPSTREAM_REPO}.git"
+    # Configure upstream remote. The URL stays credential-free; auth rides in the env
+    # (see git_auth_env). set-url also scrubs a tokenized URL written by an older version.
+    remote_url = f"https://github.com/{UPSTREAM_REPO}.git"
     result = run(["git", "remote", "get-url", "upstream"])
     if result.returncode != 0:
         run(["git", "remote", "add", "upstream", remote_url])
     else:
         run(["git", "remote", "set-url", "upstream", remote_url])
 
-    ensure_shared_history(args.base)
+    auth_env = git_auth_env(token)
+    ensure_shared_history(args.base, auth_env)
 
     # Set commit author so pushes are attributed to this vesta instance
     run(["git", "config", "user.name", author_name])
@@ -168,7 +193,7 @@ def main():
 
     # Push
     print(f"Pushing {current_branch} -> upstream/{branch}...")
-    result = run(["git", "push", "upstream", f"{current_branch}:{branch}", "--force"])
+    result = run(["git", "push", "upstream", f"{current_branch}:{branch}", "--force"], env=auth_env)
     if result.returncode != 0:
         print("Push failed", file=sys.stderr)
         sys.exit(1)
