@@ -238,7 +238,7 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
     # connect while Camoufox is still booting: the user watches the browser appear instead of
     # waiting on a spinner, and a bridge that dies takes the log with it before the browser masks
     # the failure. openbox strips decorations and pins the window at the origin.
-    launcher._ensure_xvfb(display, screen=f"{SCREEN_W}x{SCREEN_H}x24")
+    xvfb_pid = launcher._ensure_xvfb(display, screen=f"{SCREEN_W}x{SCREEN_H}x24")
     openbox_rc = _session_file("openbox-rc.xml")
     openbox_rc.write_text(OPENBOX_RC)
     openbox = subprocess.Popen(
@@ -291,6 +291,8 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
         window_size=(SCREEN_W, SCREEN_H),
     )
 
+    if xvfb_pid is not None:
+        _session_file("xvfb-pid").write_text(str(xvfb_pid))
     _session_file("openbox-pid").write_text(str(openbox.pid))
     _session_file("x11vnc-pid").write_text(str(x11vnc.pid))
     _session_file("websockify-pid").write_text(str(websockify.pid))
@@ -311,13 +313,23 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
 
 
 def stop() -> dict[str, object]:
-    """Tear down the handover: websockify, x11vnc, the WM, headed Camoufox, and the web root. Idempotent."""
+    """Tear down the handover: websockify, x11vnc, the WM, headed Camoufox, Xvfb, and the web root. Idempotent.
+
+    Xvfb goes last: the bridge and the browser are its clients, so dropping the display first would
+    leave them thrashing against a server that vanished. Nothing else reaps it, and a live leftover
+    keeps answering on its display number, so `_free_display` skips past it and the next handover
+    climbs to the following one until the range runs dry.
+    """
     for suffix in ("websockify-pid", "x11vnc-pid", "openbox-pid"):
         pid = _read_pid(suffix)
         if pid is not None:
             admin._terminate_pid(pid)
         _session_file(suffix).unlink(missing_ok=True)
     admin.stop_browser(HANDOVER_SESSION)
+    xvfb_pid = _read_pid("xvfb-pid")
+    if xvfb_pid is not None:
+        admin._terminate_pid(xvfb_pid)
+    _session_file("xvfb-pid").unlink(missing_ok=True)
     # The headed software-render prefs are handover-only; drop them from whichever profile this
     # handover used so later headless launches don't inherit them.
     profile_file = _session_file("profile")
@@ -419,7 +431,6 @@ _PAGE_TEMPLATE = """<!doctype html>
      screen fill the viewport edge to edge, so login fields are tap-sized instead of a letterboxed
      strip inside a shrunken laptop. Desktop keeps the frame (this block does not apply there). */
   @media (max-width: 820px), (pointer: coarse) {
-    body { padding: 0; }
     .macbook { width: 100vw; height: 100vh; height: 100dvh; aspect-ratio: auto; }
     .frame, .engraving { display: none; }
     #stage { left: 0; top: 0; width: 100%; height: 100%; }

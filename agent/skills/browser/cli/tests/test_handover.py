@@ -106,9 +106,10 @@ def test_require_binaries_lists_missing(monkeypatch):
         handover._require_binaries()
 
 
-def test_missing_xvfb_alone_is_refused_not_hung(monkeypatch):
+def test_missing_xvfb_alone_is_refused_not_hung(monkeypatch, isolated):
     # _ensure_xvfb never raises, so an unguarded Xvfb leaves x11vnc with no display to open and
     # the page spinning on "Waking" forever. The gate has to catch it up front.
+    monkeypatch.setattr(handover, "NOVNC_DIRS", [_fake_novnc(isolated)])
     monkeypatch.setattr(handover.shutil, "which", lambda name: None if name == "Xvfb" else f"/usr/bin/{name}")
     with pytest.raises(RuntimeError, match="missing Xvfb"):
         handover._require_binaries()
@@ -130,6 +131,33 @@ def test_install_hint_covers_every_required_binary(monkeypatch):
 def test_require_binaries_ok_when_present(monkeypatch):
     monkeypatch.setattr(handover.shutil, "which", lambda name: f"/usr/bin/{name}")
     handover._require_binaries()  # does not raise
+
+
+# ── teardown ──────────────────────────────────────────────────
+
+
+def _record_kills(monkeypatch):
+    killed: list[int] = []
+    monkeypatch.setattr(handover.admin, "_terminate_pid", killed.append)
+    monkeypatch.setattr(handover.admin, "stop_browser", lambda _name: None)
+    return killed
+
+
+def test_stop_reaps_the_xvfb_it_started(monkeypatch):
+    # Nothing else reaps Xvfb, and a live leftover keeps answering on its display number, so
+    # _free_display climbs to the next one and the range runs dry after enough handovers.
+    killed = _record_kills(monkeypatch)
+    for suffix, pid in (("websockify-pid", 11), ("x11vnc-pid", 22), ("openbox-pid", 33), ("xvfb-pid", 44)):
+        handover._session_file(suffix).write_text(str(pid))
+    handover.stop()
+    assert killed == [11, 22, 33, 44]  # Xvfb last: the bridge and browser are its clients
+    assert not handover._session_file("xvfb-pid").exists()
+
+
+def test_stop_is_idempotent_without_an_xvfb_pid(monkeypatch):
+    killed = _record_kills(monkeypatch)
+    assert handover.stop() == {"stopped": True}
+    assert killed == []
 
 
 def test_readiness_reports_missing_binaries(monkeypatch):

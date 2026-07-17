@@ -177,20 +177,21 @@ def _x_display_reachable(display: str) -> bool:
         return False
 
 
-def _ensure_xvfb(display: str, screen: str = "1920x1080x24") -> bool:
+def _ensure_xvfb(display: str, screen: str = "1920x1080x24") -> int | None:
     """Best-effort: guarantee an X server is up on `display` before a headed browser.
 
     Camoufox runs headless by default, so only the handover flow (streaming a headed
     browser to the user over VNC) needs this. Self-heals a dead/lock-stuck Xvfb in
     ~2s, serialised with an flock so concurrent launches don't stomp each other. Never
     raises; on failure the caller falls back to headless. `screen` is the Xvfb
-    `WxHxDEPTH` geometry; handover uses a larger one so the stream stays crisp on HiDPI.
+    `WxHxDEPTH` geometry. Returns the pid of the server this call started so the caller
+    can reap it, or None when one was already up (not ours to kill) or the launch failed.
     """
     if _x_display_reachable(display):
-        return True
+        return None
     xvfb = shutil.which("Xvfb")
     if not xvfb:
-        return False
+        return None
     n = display.lstrip(":").split(".")[0]
     lock_fd = None
     try:
@@ -200,12 +201,12 @@ def _ensure_xvfb(display: str, screen: str = "1920x1080x24") -> bool:
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
         # Another launcher may have started it while we waited for the lock.
         if _x_display_reachable(display):
-            return True
+            return None
         # Safe to remove now: we just confirmed nothing is listening on :n.
         for stale in (f"/tmp/.X{n}-lock", f"/tmp/.X11-unix/X{n}"):
             with contextlib.suppress(OSError):
                 Path(stale).unlink()
-        subprocess.Popen(
+        proc = subprocess.Popen(
             [xvfb, display, "-screen", "0", screen, "-nolisten", "tcp"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -214,11 +215,11 @@ def _ensure_xvfb(display: str, screen: str = "1920x1080x24") -> bool:
         deadline = time.time() + 5
         while time.time() < deadline:
             if _x_display_reachable(display):
-                return True
+                return proc.pid
             time.sleep(0.2)
-        return _x_display_reachable(display)
+        return proc.pid if _x_display_reachable(display) else None
     except Exception:
-        return False
+        return None
     finally:
         if lock_fd is not None:
             try:
