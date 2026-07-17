@@ -40,7 +40,9 @@ A background process that needs no inbound port is just a daemon: it does not re
 it only goes in the restart skill's `## Daemons` section.
 
 Skills that run a service register it with vestad to get a port, then start it. The
-`register-service` helper does the curl and prints the port (idempotent: same port per name):
+`register-service` helper does the curl and prints the port (idempotent: same port per name,
+and re-registering without `--public` keeps the service's current exposure rather than
+revoking it, so a re-register that only wants the port is safe):
 
 ```bash
 # token-only service
