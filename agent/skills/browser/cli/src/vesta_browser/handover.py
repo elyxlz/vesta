@@ -36,12 +36,13 @@ WEB_PORT_START = 6080
 X11VNC_READY_TIMEOUT_S = 10.0
 READY_POLL_S = 0.1
 PROC = Path("/proc")
-# WUXGA: a real monitor size, and the ceiling for a CPU-rendered framebuffer (Camoufox ships no
-# GPU/glxtest helper, so headed Gecko rasterizes through software WebRender). `fit_to_screen`
-# reports this verbatim as screen.width/height, so a geometry no real display has would itself be
-# an automation tell on the account-trust sites handover exists for. 16:10 matches the MacBook
-# frame's cut-out in the page, so the browser fills it exactly.
-SCREEN_W, SCREEN_H = 1920, 1200
+# The 13" MacBook's native resolution: a real monitor size, and the one the framed machine in the
+# page actually has. `fit_to_screen` reports this verbatim as screen.width/height, so a geometry no
+# real display ships would itself be an automation tell on the account-trust sites handover exists
+# for. It is deliberately not larger: the page scales the stream down into the frame's cut-out, so
+# every extra pixel here shrinks the user's text. 1280 lands ~1:1 on a maximised 1080p viewport,
+# where 1920 rendered a 16px font at 11px. 16:10 keeps it filling the cut-out exactly.
+SCREEN_W, SCREEN_H = 1280, 800
 
 # Public vestad service name for the handover page. The tunnel routes it at
 # `$VESTAD_TUNNEL/agents/$AGENT_NAME/browser/handover.html` (no token).

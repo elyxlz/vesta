@@ -82,5 +82,5 @@ def test_handover_screen_is_a_real_monitor_geometry():
     # display ships is an automation tell. 16:10 also keeps the browser filling the page's cut-out.
     from vesta_browser.handover import SCREEN_H, SCREEN_W
 
-    assert (SCREEN_W, SCREEN_H) in {(1920, 1200), (1680, 1050), (1440, 900)}
+    assert (SCREEN_W, SCREEN_H) in {(1280, 800), (1440, 900), (1680, 1050), (1920, 1200)}
     assert SCREEN_W / SCREEN_H == 1.6
