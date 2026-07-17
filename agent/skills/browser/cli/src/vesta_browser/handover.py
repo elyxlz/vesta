@@ -110,6 +110,32 @@ def _free_port(start: int) -> int:
     raise RuntimeError(f"no free port in range {start}-{start + 200}")
 
 
+_X11_UNIX_DIR = Path("/tmp/.X11-unix")
+
+
+def _display_in_use(n: int) -> bool:
+    """True only if an X server is actually listening on display :n.
+
+    Judge by a live connection, not by the socket FILE existing. An Xvfb that dies (crash, or a
+    container restart that kills every process but leaves /tmp intact) leaves its socket behind,
+    and nothing cleans /tmp/.X11-unix. Trusting mere file existence means these corpses accumulate
+    and eventually exhaust the whole :start-:start+100 range, so every handover fails with
+    "no free X display" even though no server is running. A stale socket has nothing listening, so
+    connecting raises, and we unlink it to stop it blocking the range."""
+    path = _X11_UNIX_DIR / f"X{n}"
+    if not path.exists():
+        return False
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        s.connect(str(path))
+        return True
+    except OSError:
+        path.unlink(missing_ok=True)
+        return False
+    finally:
+        s.close()
+
+
 def _free_display(start: int = 99) -> str:
     """A display number with no X server yet, so handover always provisions its OWN Xvfb.
 
@@ -117,7 +143,7 @@ def _free_display(start: int = 99) -> str:
     Wayland/Xorg screen (it fails BadMatch), so noVNC hangs on connect. A dedicated Xvfb is always
     grabbable, and on a headless box (the container) picking a free number lands on :99 as before."""
     for n in range(start, start + 100):
-        if not Path(f"/tmp/.X11-unix/X{n}").exists():
+        if not _display_in_use(n):
             return f":{n}"
     raise RuntimeError(f"no free X display in range :{start}-:{start + 100}")
 

@@ -158,12 +158,23 @@ def test_free_port_returns_a_bindable_port():
         s.close()
 
 
-def test_free_display_skips_existing_seats(monkeypatch):
-    # A real desktop seat (:0/:1) already has an X socket; handover must never pick it, else x11vnc
-    # grabs the live seat and noVNC hangs. Pretend :99 and :100 are taken; it must land on :101.
-    taken = {"/tmp/.X11-unix/X99", "/tmp/.X11-unix/X100"}
-    monkeypatch.setattr(handover.Path, "exists", lambda self: str(self) in taken)
-    assert handover._free_display() == ":101"
+def test_free_display_skips_existing_seats(tmp_path, monkeypatch):
+    # A real desktop seat (:0/:1) already has a LIVE X server; handover must never pick it, else
+    # x11vnc grabs the live seat and noVNC hangs. Bind real listeners on :99 and :100; land on :101.
+    x11 = tmp_path / "x11"
+    x11.mkdir()
+    monkeypatch.setattr(handover, "_X11_UNIX_DIR", x11)
+    seats = []
+    for n in (99, 100):
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.bind(str(x11 / f"X{n}"))
+        s.listen(1)
+        seats.append(s)
+    try:
+        assert handover._free_display() == ":101"
+    finally:
+        for s in seats:
+            s.close()
 
 
 def test_free_display_returns_base_when_free(monkeypatch):
@@ -204,3 +215,34 @@ def test_status_all_false_when_idle():
     assert st["websockify"] is False
     assert st["web_port"] is None
     assert st["page"] is None
+
+
+# ── display selection: liveness, not file existence ───────────
+
+
+def test_free_display_skips_live_but_reuses_stale_socket(tmp_path, monkeypatch):
+    """A leftover socket with no server behind it must not count as "in use".
+
+    Regression: _free_display used to treat any /tmp/.X11-unix/Xn FILE as taken, so Xvfb
+    corpses (crash or a container restart that leaves /tmp intact) accumulated until the whole
+    range read as full and every handover failed with "no free X display".
+    """
+    x11 = tmp_path / "x11"
+    x11.mkdir()
+    monkeypatch.setattr(handover, "_X11_UNIX_DIR", x11)
+
+    # :99 has a real listener -> in use; :100 is a stale leftover socket -> free.
+    live = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    live.bind(str(x11 / "X99"))
+    live.listen(1)
+    stale = x11 / "X100"
+    stale.touch()
+    try:
+        assert handover._display_in_use(99) is True
+        assert handover._display_in_use(100) is False
+        # the stale corpse is unlinked so it stops blocking the range
+        assert not stale.exists()
+        # first free display is the stale one, not blocked by its leftover file
+        assert handover._free_display(start=99) == ":100"
+    finally:
+        live.close()
