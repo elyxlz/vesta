@@ -63,9 +63,8 @@ RUN for d in agent/skills/*/; do \
     done
 
 WORKDIR /root/agent
-# Scoped to this command, never a persistent ENV: an inherited UV_PROJECT_ENVIRONMENT retargets
-# every uv project, so `uv run` in a skill's cli/ would re-sync the engine venv out from under
-# the running agent. The entrypoint puts the venv on PATH instead.
+# Scoped, never a persistent ENV: an exported UV_PROJECT_ENVIRONMENT retargets every uv project,
+# so `uv run` in a skill's cli/ would re-sync the engine venv. The entrypoint puts it on PATH.
 RUN UV_PROJECT_ENVIRONMENT=/root/agent/.venv uv sync --frozen --no-install-project --project core
 
 # Install Claude Code on PATH. claude_agent_sdk would otherwise fall back to its own bundled CLI
