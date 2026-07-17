@@ -102,8 +102,29 @@ def test_find_novnc_dir_raises_with_install_hint(monkeypatch, tmp_path):
 
 def test_require_binaries_lists_missing(monkeypatch):
     monkeypatch.setattr(handover.shutil, "which", lambda _: None)
-    with pytest.raises(RuntimeError, match="x11vnc, websockify, openbox"):
+    with pytest.raises(RuntimeError, match="Xvfb, x11vnc, websockify, openbox"):
         handover._require_binaries()
+
+
+def test_missing_xvfb_alone_is_refused_not_hung(monkeypatch):
+    # _ensure_xvfb never raises, so an unguarded Xvfb leaves x11vnc with no display to open and
+    # the page spinning on "Waking" forever. The gate has to catch it up front.
+    monkeypatch.setattr(handover.shutil, "which", lambda name: None if name == "Xvfb" else f"/usr/bin/{name}")
+    with pytest.raises(RuntimeError, match="missing Xvfb"):
+        handover._require_binaries()
+    assert handover.readiness() == {"ready": False, "missing": ["Xvfb"]}
+
+
+def test_install_hint_covers_every_required_binary(monkeypatch):
+    # The hint is what an agent actually runs, so a package short of the gate strands it in a
+    # state doctor calls ready. xvfb ships Xvfb, novnc ships websockify.
+    monkeypatch.setattr(handover.shutil, "which", lambda _: None)
+    with pytest.raises(RuntimeError) as excinfo:
+        handover._require_binaries()
+    hint = str(excinfo.value)
+    assert handover.HANDOVER_APT_LINE in hint
+    for package in ("xvfb", "novnc", "x11vnc", "openbox"):
+        assert package in handover.HANDOVER_APT_LINE
 
 
 def test_require_binaries_ok_when_present(monkeypatch):

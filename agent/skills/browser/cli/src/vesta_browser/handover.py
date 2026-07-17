@@ -78,7 +78,11 @@ def _find_novnc_dir() -> Path:
     raise RuntimeError("noVNC not found (looked for core/rfb.js under /usr/share/novnc). Install it: apt-get install -y novnc x11vnc openbox")
 
 
-HANDOVER_BINARIES = ("x11vnc", "websockify", "openbox")
+# Xvfb belongs here even though `_ensure_xvfb` is the one that runs it: it never raises (the
+# headless path falls back), so a box missing only Xvfb would pass this gate and then hang the
+# page on "Waking" forever while x11vnc failed to open a display it never got.
+HANDOVER_BINARIES = ("Xvfb", "x11vnc", "websockify", "openbox")
+HANDOVER_APT_LINE = "apt-get install -y xvfb novnc x11vnc openbox"
 
 
 def readiness() -> dict[str, object]:
@@ -95,7 +99,7 @@ def readiness() -> dict[str, object]:
 def _require_binaries() -> None:
     missing = [b for b in HANDOVER_BINARIES if not shutil.which(b)]
     if missing:
-        raise RuntimeError(f"missing {', '.join(missing)}. Install: apt-get install -y novnc x11vnc openbox")
+        raise RuntimeError(f"missing {', '.join(missing)}. Install: {HANDOVER_APT_LINE}")
 
 
 def _free_port(start: int) -> int:
@@ -374,12 +378,12 @@ _PAGE_TEMPLATE = """<!doctype html>
   body {
     background: radial-gradient(135% 105% at 50% -25%, var(--desk-1), var(--desk-2));
     font-family: "Public Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased;
-    overflow: hidden; display: flex; align-items: center; justify-content: center; padding: 1.2vmin;
+    overflow: hidden; display: flex; align-items: center; justify-content: center;
   }
-  /* the machine fills most of the viewport; container-type lets the chin engraving scale with it */
-  .macbook { container-type: inline-size; position: relative; width: min(99vw, calc(97vh * 1.5725)); aspect-ratio: 1280 / 814; }
+  /* the machine fills the viewport; container-type lets the chin engraving scale with it */
+  .macbook { container-type: inline-size; position: relative; width: min(100vw, calc(100vh * 1.6757)); aspect-ratio: 1240 / 740; }
   /* the screen rectangle, measured from macbook.png: the live browser shows through the cut-out */
-  #stage { position: absolute; left: 13.05%; top: 13.64%; width: 73.91%; height: 72.73%;
+  #stage { position: absolute; left: 11.855%; top: 7.297%; width: 76.29%; height: 79.73%;
     overflow: hidden; background: var(--screen-bg); z-index: 0; }
   #screen { width: 100%; height: 100%; }
   .frame { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1;
@@ -392,8 +396,8 @@ _PAGE_TEMPLATE = """<!doctype html>
   #overlay p { margin: 14px 0 0; color: var(--label); font-size: 13px; }
   .overlay-inner { display: grid; justify-items: center; }
   /* "vesta" engraved on the chin in place of the removed "MacBook Pro"; scales with the machine */
-  .engraving { position: absolute; left: 0; right: 0; top: 88%; text-align: center; z-index: 2; pointer-events: none;
-    font-family: var(--serif); font-weight: 500; font-size: 2.15cqw; letter-spacing: 0.02em;
+  .engraving { position: absolute; left: 0; right: 0; top: 88.96%; text-align: center; z-index: 2; pointer-events: none;
+    font-family: var(--serif); font-weight: 500; font-size: 2.22cqw; letter-spacing: 0.02em;
     color: rgb(150, 150, 153); text-shadow: 0 1px 1px rgba(0, 0, 0, 0.55); }
   @media (prefers-reduced-motion: reduce) { .spinner, #overlay { animation: none !important; transition: none !important; } }
 
