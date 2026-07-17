@@ -279,18 +279,27 @@ def _poll_owa_rest_calendar(
     return True
 
 
-def _teams_sender_name(message: dict, my_id: str) -> str | None:
-    """Sender display name for a Teams message, or None when it is the user's own message."""
+class TeamsNotifiable(TypedDict):
+    """What a Teams notification says about a message: who sent it and its body preview."""
+
+    sender: str
+    text: str
+
+
+def _teams_notifiable(message: dict, my_id: str) -> TeamsNotifiable | None:
+    """Sender + body preview for a Teams message, or None when it must not notify: the user's own
+    message, or a system event carrying neither author nor body (member added, chat renamed, meeting
+    started). Graph gives those `from: null` and an empty body, leaving nothing to report."""
     sender = message["from"] if "from" in message else None
     sender_user = (sender["user"] if sender and "user" in sender else None) or {}
     if "id" in sender_user and sender_user["id"] == my_id:
         return None
-    return sender_user["displayName"] if "displayName" in sender_user else "Someone"
-
-
-def _teams_body_preview(message: dict) -> str:
     body = message["body"] if "body" in message else {}
-    return clean_preview(_HTML_TAG.sub(" ", body["content"] if "content" in body else ""))[:200]
+    text = clean_preview(_HTML_TAG.sub(" ", body["content"] if "content" in body else ""))[:200]
+    named = "displayName" in sender_user
+    if not named and not text:
+        return None
+    return {"sender": sender_user["displayName"] if named else "Someone", "text": text}
 
 
 def _arrived_since(message: dict, last_dt: datetime) -> bool:
@@ -325,20 +334,19 @@ def _poll_teams_account(ctx: MicrosoftContext, config: Config, account_email: st
         preview = chat["lastMessagePreview"] if "lastMessagePreview" in chat else None
         if not preview or not _arrived_since(preview, last_dt):
             continue
-        sender_name = _teams_sender_name(preview, my_id)
-        if sender_name is None:
-            continue  # our own outgoing message
+        notifiable = _teams_notifiable(preview, my_id)
+        if notifiable is None:
+            continue  # our own outgoing message, or a contentless system event
         members = ", ".join(m["displayName"] for m in (chat["members"] if "members" in chat else []) if "displayName" in m)
         topic = (chat["topic"] if "topic" in chat else None) or members or None
-        text = _teams_body_preview(preview)
-        logger.info("Writing Teams notification from %s in chat %s", sender_name, chat["id"])
+        logger.info("Writing Teams notification from %s in chat %s", notifiable["sender"], chat["id"])
         notifications.write_notification(
             ctx.notif_dir,
             "teams",
             interrupt=True,
-            sender=sender_name,
+            sender=notifiable["sender"],
             topic=topic,
-            preview=text,
+            preview=notifiable["text"],
             chat_id=chat["id"],
             account=account_email,
             missed=catching_up or None,
@@ -391,18 +399,17 @@ def _poll_teams_channels_account(ctx: MicrosoftContext, config: Config, account_
             for msg in messages:
                 if not _arrived_since(msg, last_dt):
                     continue
-                sender_name = _teams_sender_name(msg, my_id)
-                if sender_name is None:
-                    continue  # our own channel post
-                text = _teams_body_preview(msg)
-                logger.info("Writing Teams channel notification from %s in %s / %s", sender_name, team_name, channel_name)
+                notifiable = _teams_notifiable(msg, my_id)
+                if notifiable is None:
+                    continue  # our own channel post, or a contentless system event
+                logger.info("Writing Teams channel notification from %s in %s / %s", notifiable["sender"], team_name, channel_name)
                 notifications.write_notification(
                     ctx.notif_dir,
                     "teams",
                     interrupt=False,
-                    sender=sender_name,
+                    sender=notifiable["sender"],
                     topic=f"{team_name} / {channel_name}",
-                    preview=text,
+                    preview=notifiable["text"],
                     team_id=team_id,
                     channel_id=channel_id,
                     account=account_email,
