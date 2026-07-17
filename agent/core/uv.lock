@@ -1260,7 +1260,7 @@ wheels = [
 
 [[package]]
 name = "vesta"
-version = "0.1.179"
+version = "0.1.178"
 source = { virtual = "." }
 dependencies = [
     { name = "aiohttp" },

@@ -21,7 +21,7 @@ unimplemented = "deny"
 
 [package]
 name = "vestad"
-version = "0.1.179"
+version = "0.1.178"
 license = "MIT"
 repository = "https://github.com/elyxlz/vesta"
 authors = ["elyxlz"]
