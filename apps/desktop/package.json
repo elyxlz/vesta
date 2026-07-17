@@ -15,6 +15,7 @@
     "compile": "tsc",
     "check": "tsc --noEmit",
     "lint": "eslint src scripts",
+    "test": "vitest run",
     "build": "npm -w @vesta/web run build && tsc && electron-builder --publish never"
   },
   "dependencies": {
@@ -28,6 +29,7 @@
     "eslint": "^10.7.0",
     "globals": "^17.7.0",
     "typescript": "^7.0.2",
-    "typescript-eslint": "^8.64.0"
+    "typescript-eslint": "^8.64.0",
+    "vitest": "^4.1.10"
   }
 }
