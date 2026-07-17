@@ -31,11 +31,12 @@ ASSETS_DIR = Path(__file__).parent / "assets" / "handover"
 FONTS_DIR = ASSETS_DIR / "fonts"
 VNC_PORT_START = 5900
 WEB_PORT_START = 6080
-# A 16:10 screen. Camoufox renders headed through software WebRender (it ships no GPU/glxtest
-# helper), so a huge framebuffer would rasterize far too slowly on the CPU; 1600x1000 keeps the
-# stream responsive, and 16:10 matches the MacBook frame in the page so the browser fills the
-# screen cut-out.
-SCREEN_W, SCREEN_H = 1600, 1000
+# WUXGA: a real monitor size, and the ceiling for a CPU-rendered framebuffer (Camoufox ships no
+# GPU/glxtest helper, so headed Gecko rasterizes through software WebRender). `fit_to_screen`
+# reports this verbatim as screen.width/height, so a geometry no real display has would itself be
+# an automation tell on the account-trust sites handover exists for. 16:10 matches the MacBook
+# frame's cut-out in the page, so the browser fills it exactly.
+SCREEN_W, SCREEN_H = 1920, 1200
 
 # Public vestad service name for the handover page. The tunnel routes it at
 # `$VESTAD_TUNNEL/agents/$AGENT_NAME/browser/handover.html` (no token).
@@ -228,23 +229,16 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
     os.environ.pop("WAYLAND_DISPLAY", None)
     os.environ["MOZ_ENABLE_WAYLAND"] = "0"
 
-    # Bring the display up, then a window manager, then the headed browser. Two levers make the
-    # window fill the cut-out for complementary reasons: openbox strips decorations and pins the
-    # window at the origin (physical placement), while window_size refits the fingerprint's
-    # screen/window geometry so what the page reports to JS matches the real 1600x1000 (fingerprint
-    # coherence). The sign-in URL is passed as a trailing arg so it opens there.
+    # Display, then a window manager, then the VNC bridge, and only then the browser. x11vnc grabs
+    # the display's root window and never needs Gecko, so bridging before the launch lets the page
+    # connect while Camoufox is still booting: the user watches the browser appear instead of
+    # waiting on a spinner, and a bridge that dies takes the log with it before the browser masks
+    # the failure. openbox strips decorations and pins the window at the origin.
     launcher._ensure_xvfb(display, screen=f"{SCREEN_W}x{SCREEN_H}x24")
     openbox_rc = _session_file("openbox-rc.xml")
     openbox_rc.write_text(OPENBOX_RC)
     openbox = subprocess.Popen(
         ["openbox", "--config-file", str(openbox_rc)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
-    )
-    running = admin.launch_browser(
-        HANDOVER_SESSION,
-        headless=False,
-        user_data_dir=profile,
-        extra_args=[url] if url else None,
-        window_size=(SCREEN_W, SCREEN_H),
     )
 
     vnc_port = _free_port(VNC_PORT_START)
@@ -282,6 +276,16 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
+
+    # window_size refits the fingerprint's screen/window geometry so what the page reports to JS
+    # matches the real framebuffer; the sign-in URL rides in as a trailing arg so it opens there.
+    running = admin.launch_browser(
+        HANDOVER_SESSION,
+        headless=False,
+        user_data_dir=profile,
+        extra_args=[url] if url else None,
+        window_size=(SCREEN_W, SCREEN_H),
+    )
 
     _session_file("openbox-pid").write_text(str(openbox.pid))
     _session_file("x11vnc-pid").write_text(str(x11vnc.pid))

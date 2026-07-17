@@ -34,10 +34,10 @@ install GTK3: `libgtk-3-0t64` on Debian trixie and later, `libgtk-3-0` on bookwo
 
 ## Handover dependencies
 
-Install these only for `browser handover` (letting the user sign in on the agent's headed browser
-when account trust, not fingerprint, is the wall). `xvfb` is the headless X server the headed
-browser renders on; `novnc` provides `websockify` plus the noVNC client assets under
-`/usr/share/novnc`, which the branded page symlinks:
+`browser handover` (letting the user sign in on the agent's headed browser when account trust, not
+fingerprint, is the wall) needs four packages, which the image installs. `xvfb` is the headless X
+server the headed browser renders on; `novnc` provides `websockify` plus the noVNC client assets
+under `/usr/share/novnc`, which the branded page symlinks. On a non-vesta image:
 
 ```bash
 apt-get install -y xvfb novnc x11vnc openbox

@@ -29,6 +29,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     apt-get install -y --no-install-recommends nodejs && \
     rm -rf /var/lib/apt/lists/*
 
+# ── browser handover: stream a headed Camoufox to the user so they sign in by hand ──
+# The browser skill's primary fallback when a site gates on account trust. handover.py shells out
+# to Xvfb -> openbox -> x11vnc -> websockify and symlinks noVNC's assets, so without these a box
+# can only report the gap, never escalate. novnc pulls websockify in as a hard dependency. Baked in
+# rather than apt-installed on demand: a runtime install dies with the next container rebuild.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    xvfb x11vnc openbox novnc && \
+    rm -rf /var/lib/apt/lists/*
+
 # ── Go toolchain + CGO link deps for the whatsapp skill's on-box builds ───
 # The whatsapp launcher compiles the CLI from source on every invocation and
 # needs go + a C/C++ linker; whisper static libs come from the whisper-build
