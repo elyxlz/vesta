@@ -27,8 +27,8 @@ describe("buildDecorated", () => {
       userMsg("2026-06-08T00:30:00"),
     ]);
     expect(rows.map((r) => r.showDayStamp)).toEqual([true, false, true]);
-    expect(rows[0].dayLabel).not.toBe("");
-    expect(rows[1].dayLabel).toBe("");
+    expect(rows[0]?.dayLabel).not.toBe("");
+    expect(rows[1]?.dayLabel).toBe("");
   });
 
   it("produces unique keys when two events share a timestamp and type", () => {
@@ -57,6 +57,6 @@ describe("buildDecorated", () => {
         ts: "2026-06-08T10:00:01Z",
       },
     ]);
-    expect(rows[1].gap).toBe("mt-1");
+    expect(rows[1]?.gap).toBe("mt-1");
   });
 });

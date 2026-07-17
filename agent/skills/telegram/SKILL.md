@@ -6,7 +6,7 @@ description: Telegram: send/receive messages; reply to source=telegram notificat
 # Telegram - CLI: telegram
 
 **Setup**: See [SETUP.md](SETUP.md)
-**Daemon**: `telegram daemon start|stop|restart|status`. Start is idempotent (never stacks a duplicate) and defaults `--notifications-dir` to `~/agent/notifications`; stop/restart quit the watchdog first so it cannot race a manual restart into two daemons, then restart brings it back; status reports daemon, watchdog, and auth state in one place. Manage the daemon only through these commands, never raw `screen` or signals.
+**Daemon**: `telegram daemon start|stop|restart|status`. Start is idempotent; stop/restart quit the watchdog first so it cannot race a manual restart into two daemons. Manage the daemon only through these commands, never raw `screen`.
 
 ## Quick Reference
 ```bash
@@ -22,6 +22,10 @@ telegram react '<contact_name>' '<message_id>' '👍'
 telegram send-file --to "<contact_name>" --file-path /path/to/document.pdf
 telegram send-voice --to "<contact_name>" --file-path /path/to/note.ogg
 ```
+
+## Edited messages
+
+People change their minds after they hit send, so a message you already read can change. An edit arrives as an `edit` notification whose body carries what the message says now, just like a plain message, naming the message that changed (`target_message_id`) and the text you last saw (`old_text`). The stored message is rewritten, so `list-messages` and search show only the new text. Answer again only if the edit asks something new: a fixed typo needs nothing from you. Deletions are invisible here, Telegram never tells a bot that a message was deleted.
 
 ## Interactive UI (inline buttons + callbacks)
 
@@ -48,8 +52,7 @@ telegram edit-message 'Elio' '<message_id>' 'Approved ✓' [--buttons '...']
 
 ## Other commands
 ```bash
-telegram edit-message '<to>' '<message_id>' 'new text' [--buttons '...']  # edit in place
-telegram delete-message '<to>' '<message_id>'                              # unsend (alias: del)
+telegram delete-message '<to>' '<message_id>'                              # unsend
 telegram send-chat-action '<to>' typing                                   # transient "typing…" status
 telegram pin-message '<to>' '<message_id>' [--silent]
 telegram unpin-message '<to>' ['<message_id>']                            # omit id to unpin latest

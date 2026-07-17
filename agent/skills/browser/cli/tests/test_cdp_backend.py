@@ -9,10 +9,10 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-
+import websockets
 from vesta_browser import cdp_backend
 from vesta_browser.bidi import BidiError
-from vesta_browser.cdp_backend import CdpBackend, _printable_key, _remote_to_bidi, _translate_event
+from vesta_browser.cdp_backend import CdpBackend, _CdpTransport, _printable_key, _remote_to_bidi, _translate_event
 
 
 class FakeTransport:
@@ -224,3 +224,86 @@ def test_unsupported_method_raises_bidi_error():
     backend = _backend()
     with pytest.raises(BidiError, match="unsupported operation"):
         asyncio.run(backend.send("storage.getCookies", {}))
+
+
+# ── Transport-level request bounding ──────────────────────────
+
+CREATE_TARGET = "Target.createTarget"
+TEST_TIMEOUT_S = 0.2
+CANCEL_AFTER_S = 0.1
+HANG_GUARD_S = 5
+
+
+class SilentCdpServer:
+    """Accepts CDP commands and never answers them, as a wedged Chrome does."""
+
+    def __init__(self) -> None:
+        self._server: websockets.Server | None = None
+
+    async def start(self) -> str:
+        self._server = await websockets.serve(self._handle, "127.0.0.1", 0)
+        port = self._server.sockets[0].getsockname()[1]
+        return f"ws://127.0.0.1:{port}/devtools/browser/fake"
+
+    async def stop(self) -> None:
+        if self._server is not None:
+            self._server.close()
+            await self._server.wait_closed()
+
+    async def _handle(self, ws: websockets.ServerConnection) -> None:
+        async for _raw in ws:
+            pass
+
+
+async def _unused_event_cb(method: str, params: dict, session_id: str | None) -> None:
+    raise AssertionError(f"a silent server pushes no events, got {method!r}")
+
+
+async def _with_silent_transport(body):
+    server = SilentCdpServer()
+    url = await server.start()
+    transport = _CdpTransport()
+    await transport.connect(url, _unused_event_cb)
+    try:
+        return await asyncio.wait_for(body(transport), timeout=HANG_GUARD_S)
+    finally:
+        await transport.close()
+        await server.stop()
+
+
+def test_withheld_cdp_response_raises_timeout_naming_the_method(monkeypatch):
+    """A Chrome that accepts a command and never answers must error, not hang forever."""
+    monkeypatch.setattr(cdp_backend, "_CDP_RESPONSE_TIMEOUT_S", TEST_TIMEOUT_S)
+
+    async def body(transport):
+        with pytest.raises(BidiError) as excinfo:
+            await transport.send(CREATE_TARGET, {"url": "about:blank"})
+        return excinfo.value
+
+    error = asyncio.run(_with_silent_transport(body))
+    assert error.code == "timeout"
+    assert CREATE_TARGET in error.message
+
+
+def test_timed_out_cdp_request_is_dropped_from_pending(monkeypatch):
+    """The abandoned future is released, so a wedged Chrome cannot accumulate them."""
+    monkeypatch.setattr(cdp_backend, "_CDP_RESPONSE_TIMEOUT_S", TEST_TIMEOUT_S)
+
+    async def body(transport):
+        with pytest.raises(BidiError):
+            await transport.send(CREATE_TARGET, {"url": "about:blank"})
+        return dict(transport._pending)
+
+    assert asyncio.run(_with_silent_transport(body)) == {}
+
+
+def test_cancelled_cdp_request_is_dropped_from_pending():
+    """Cleanup rides a finally, so a caller cancelled while waiting leaks no pending entry either."""
+
+    async def body(transport):
+        # Cancelled from outside well inside the un-patched 60s bound, so only the finally can clear it.
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(transport.send(CREATE_TARGET, {"url": "about:blank"}), timeout=CANCEL_AFTER_S)
+        return dict(transport._pending)
+
+    assert asyncio.run(_with_silent_transport(body)) == {}

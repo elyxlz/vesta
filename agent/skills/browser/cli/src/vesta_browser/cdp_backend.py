@@ -17,6 +17,7 @@ explicitly handed over, so enabling the CDP domains is fine.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 
 import websockets
@@ -46,6 +47,7 @@ _KEY_MAP = {
 _CDP_BUTTON = {0: "left", 1: "middle", 2: "right"}
 _INTERNAL_PREFIXES = ("devtools://", "chrome://", "chrome-extension://")
 _LOAD_TIMEOUT_S = 30.0
+_CDP_RESPONSE_TIMEOUT_S = 60.0
 _DOMAINS = ("Page", "Runtime", "Log", "DOM")
 
 
@@ -103,7 +105,13 @@ class _CdpTransport:
         if session_id is not None:
             frame["sessionId"] = session_id
         await self._ws.send(json.dumps(frame))
-        return await future
+        try:
+            return await asyncio.wait_for(future, timeout=_CDP_RESPONSE_TIMEOUT_S)
+        except TimeoutError:
+            # BidiError, not TimeoutError: the latter is an OSError with an empty str(), which the daemon relays as {"error": ""}.
+            raise BidiError("timeout", f"no response to {method!r} within {_CDP_RESPONSE_TIMEOUT_S}s") from None
+        finally:
+            self._pending.pop(command_id, None)
 
     async def close(self) -> None:
         if self._reader is not None:
@@ -133,10 +141,7 @@ class CdpBackend:
     async def new_session(self) -> str:
         targets = (await self._cdp.send("Target.getTargets"))["targetInfos"]
         pages = [t for t in targets if t["type"] == "page" and not (t["url"] if "url" in t else "").startswith(_INTERNAL_PREFIXES)]
-        if pages:
-            target_id = pages[0]["targetId"]
-        else:
-            target_id = (await self._cdp.send("Target.createTarget", {"url": "about:blank"}))["targetId"]
+        target_id = pages[0]["targetId"] if pages else (await self._cdp.send("Target.createTarget", {"url": "about:blank"}))["targetId"]
         await self._session_for(target_id)
         self._context = target_id
         return target_id
@@ -152,15 +157,14 @@ class CdpBackend:
         try:
             attach = await self._cdp.send("Target.attachToTarget", {"targetId": target_id, "flatten": True})
         except BidiError as e:
-            raise BidiError("no such frame", e.message)
+            raise BidiError("no such frame", e.message) from e
         session_id = attach["sessionId"]
         self._sessions[target_id] = session_id
         self._session_targets[session_id] = target_id
         for domain in _DOMAINS:
-            try:
+            # A domain a given target lacks must not abort the attach.
+            with contextlib.suppress(BidiError):
                 await self._cdp.send(f"{domain}.enable", {}, session_id)
-            except BidiError:
-                pass  # a domain a given target lacks must not abort the attach
         return session_id
 
     # ── BiDi -> CDP command translation ───────────────────────
@@ -172,13 +176,13 @@ class CdpBackend:
             raise BidiError("unsupported operation", f"{method} is not supported over the CDP backend")
         return await handler(self, params)
 
-    async def _op_session_new(self, params: dict) -> dict:
+    async def _op_session_new(self, _params: dict) -> dict:
         return {"sessionId": "cdp", "capabilities": {"browserName": "chrome"}}
 
-    async def _op_subscribe(self, params: dict) -> dict:
+    async def _op_subscribe(self, _params: dict) -> dict:
         return {}  # domains are enabled per target on attach
 
-    async def _op_get_tree(self, params: dict) -> dict:
+    async def _op_get_tree(self, _params: dict) -> dict:
         targets = (await self._cdp.send("Target.getTargets"))["targetInfos"]
         contexts = [{"context": t["targetId"], "url": t["url"] if "url" in t else "", "children": []} for t in targets if t["type"] == "page"]
         return {"contexts": contexts}
@@ -206,7 +210,7 @@ class CdpBackend:
             await self._cdp.send("Page.navigateToHistoryEntry", {"entryId": entries[index]["id"]}, session_id)
         return {}
 
-    async def _op_create(self, params: dict) -> dict:
+    async def _op_create(self, _params: dict) -> dict:
         created = await self._cdp.send("Target.createTarget", {"url": "about:blank"})
         return {"context": created["targetId"]}
 

@@ -1,6 +1,6 @@
 """Unit tests for the Teams-over-Graph backend.
 
-Covers token markers (device + browser), token resolution and GraphUnavailable fallback signalling,
+Covers token markers (device + browser), token resolution and GraphUnavailableError fallback signalling,
 the Graph transport shaping (chats/messages/send/start/channels/presence), the CLI dispatcher's
 two-source routing via backend.run, and the monitor's new-chat notification emit.
 """
@@ -15,7 +15,6 @@ from unittest.mock import MagicMock
 
 import httpx
 import pytest
-
 from microsoft_cli import backend, teams
 from microsoft_cli.config import Config
 
@@ -99,7 +98,7 @@ def test_graph_token_raises_graph_unavailable_when_account_unknown(tmp_path, mon
         raise ValueError("no account")
 
     monkeypatch.setattr(teams.auth, "get_account_id_by_email", _raise)
-    with pytest.raises(backend.GraphUnavailable):
+    with pytest.raises(backend.GraphUnavailableError):
         teams.graph_token(cfg, "user@example.com")
 
 
@@ -107,7 +106,7 @@ def test_graph_token_raises_graph_unavailable_when_no_silent_token(tmp_path, mon
     cfg = Config(data_dir=tmp_path)
     monkeypatch.setattr(teams.auth, "get_account_id_by_email", lambda *a, **k: "acct-1")
     monkeypatch.setattr(teams.auth, "get_token_silent", lambda *a, **k: None)
-    with pytest.raises(backend.GraphUnavailable):
+    with pytest.raises(backend.GraphUnavailableError):
         teams.graph_token(cfg, "user@example.com")
 
 
@@ -126,14 +125,14 @@ def test_captured_token_returns_browser_token(tmp_path):
 
 
 def test_captured_token_raises_when_missing(tmp_path):
-    with pytest.raises(teams.TeamsNoToken, match="teams-capture"):
+    with pytest.raises(teams.TeamsNoTokenError, match="teams-capture"):
         teams.captured_token(Config(data_dir=tmp_path), "user@example.com")
 
 
 def test_captured_token_raises_when_device_source(tmp_path):
     cfg = Config(data_dir=tmp_path)
     teams.mark_device_account("user@example.com", cfg)
-    with pytest.raises(teams.TeamsNoToken):
+    with pytest.raises(teams.TeamsNoTokenError):
         teams.captured_token(cfg, "user@example.com")
 
 
@@ -145,7 +144,7 @@ def test_resolve_token_prefers_device(tmp_path, monkeypatch):
 
 
 def test_teams_no_token_is_runtime_error():
-    assert isinstance(teams.TeamsNoToken("x"), RuntimeError)
+    assert isinstance(teams.TeamsNoTokenError("x"), RuntimeError)
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +302,7 @@ def test_dispatch_auto_falls_back_to_captured_when_graph_unavailable(monkeypatch
     seen = {}
 
     def _unavail(cfg, acct):
-        raise backend.GraphUnavailable("no teams token")
+        raise backend.GraphUnavailableError("no teams token")
 
     monkeypatch.setattr(cli.teams, "graph_token", _unavail)
     monkeypatch.setattr(cli.teams, "captured_token", lambda cfg, acct: "CTOK")
@@ -391,8 +390,9 @@ def test_complete_authentication_returns_pivot_on_admin_wall(tmp_path, monkeypat
 
 
 def _teams_ctx(tmp_path, monkeypatch, chats):
-    from microsoft_cli.context import MicrosoftContext
     import logging
+
+    from microsoft_cli.context import MicrosoftContext
 
     monkeypatch.setattr(teams, "resolve_token", lambda cfg, acct: "tok")
     monkeypatch.setattr(teams, "_my_id", lambda client, token: "me-guid")
@@ -415,7 +415,8 @@ def _teams_ctx(tmp_path, monkeypatch, chats):
 
 
 def test_poll_teams_emits_for_new_incoming_message(tmp_path, monkeypatch):
-    from datetime import datetime, UTC
+    from datetime import UTC, datetime
+
     from microsoft_cli import monitor
 
     chats = [
@@ -444,7 +445,8 @@ def test_poll_teams_emits_for_new_incoming_message(tmp_path, monkeypatch):
 
 
 def test_poll_teams_skips_own_message(tmp_path, monkeypatch):
-    from datetime import datetime, UTC
+    from datetime import UTC, datetime
+
     from microsoft_cli import monitor
 
     chats = [
@@ -463,6 +465,89 @@ def test_poll_teams_skips_own_message(tmp_path, monkeypatch):
     assert list((tmp_path / "notif").glob("*.json")) == []
 
 
+def test_poll_teams_skips_authorless_bodyless_system_event(tmp_path, monkeypatch):
+    """Graph gives system messages (member added, chat renamed) `from: null` and an empty body.
+    They carry no sender and no text, so they must never reach the agent, least of all as an
+    interrupt the user's notification rules have no field to match on."""
+    from datetime import UTC, datetime
+
+    from microsoft_cli import monitor
+
+    chats = [
+        {
+            "id": "chat-1",
+            "topic": "IVF 2026",
+            "lastMessagePreview": {
+                "createdDateTime": "2026-07-10T12:00:00Z",
+                "from": None,
+                "body": {"content": ""},
+            },
+        }
+    ]
+    ctx = _teams_ctx(tmp_path, monkeypatch, chats)
+    last_dt = datetime(2026, 7, 10, 11, 0, tzinfo=UTC)
+    monitor._poll_teams_account(ctx, Config(data_dir=tmp_path), "me@x.com", last_dt, False)
+    assert list((tmp_path / "notif").glob("*.json")) == []
+
+
+def test_poll_teams_still_emits_for_authored_message_without_body(tmp_path, monkeypatch):
+    """An image-only post has a real author but strips to an empty preview. It is a real message
+    from a real person, so it still notifies rather than being swallowed with the system events."""
+    from datetime import UTC, datetime
+
+    from microsoft_cli import monitor
+
+    chats = [
+        {
+            "id": "chat-1",
+            "topic": "Standup",
+            "lastMessagePreview": {
+                "createdDateTime": "2026-07-10T12:00:00Z",
+                "from": {"user": {"id": "other-guid", "displayName": "Bob"}},
+                "body": {"content": '<img src="x.png">'},
+            },
+        }
+    ]
+    ctx = _teams_ctx(tmp_path, monkeypatch, chats)
+    last_dt = datetime(2026, 7, 10, 11, 0, tzinfo=UTC)
+    monitor._poll_teams_account(ctx, Config(data_dir=tmp_path), "me@x.com", last_dt, False)
+
+    files = list((tmp_path / "notif").glob("*.json"))
+    assert len(files) == 1
+    notif = json.loads(files[0].read_text())
+    assert notif["sender"] == "Bob"
+    assert notif["preview"] == ""
+
+
+def test_poll_teams_still_emits_for_app_message_with_body(tmp_path, monkeypatch):
+    """A bot/app post carries `from.application` rather than `from.user`, so no display name
+    resolves, but it has real text. Text is the signal: it notifies under the placeholder sender."""
+    from datetime import UTC, datetime
+
+    from microsoft_cli import monitor
+
+    chats = [
+        {
+            "id": "chat-1",
+            "topic": "Builds",
+            "lastMessagePreview": {
+                "createdDateTime": "2026-07-10T12:00:00Z",
+                "from": {"application": {"id": "app-guid", "displayName": "Jenkins"}},
+                "body": {"content": "<p>build 42 failed</p>"},
+            },
+        }
+    ]
+    ctx = _teams_ctx(tmp_path, monkeypatch, chats)
+    last_dt = datetime(2026, 7, 10, 11, 0, tzinfo=UTC)
+    monitor._poll_teams_account(ctx, Config(data_dir=tmp_path), "me@x.com", last_dt, False)
+
+    files = list((tmp_path / "notif").glob("*.json"))
+    assert len(files) == 1
+    notif = json.loads(files[0].read_text())
+    assert notif["sender"] == "Someone"
+    assert "build 42 failed" in notif["preview"]
+
+
 # ---------------------------------------------------------------------------
 # Monitor: Teams CHANNEL message notification emit + graceful degrade
 # ---------------------------------------------------------------------------
@@ -471,8 +556,9 @@ def test_poll_teams_skips_own_message(tmp_path, monkeypatch):
 def _teams_channels_ctx(tmp_path, monkeypatch, *, teams_list, channels=None, messages=None, list_teams_exc=None):
     """Wire a MicrosoftContext with the channel Graph calls mocked. Pass list_teams_exc to make
     team enumeration raise (the graceful-degrade path)."""
-    from microsoft_cli.context import MicrosoftContext
     import logging
+
+    from microsoft_cli.context import MicrosoftContext
 
     monkeypatch.setattr(teams, "resolve_token", lambda cfg, acct: "tok")
     monkeypatch.setattr(teams, "_my_id", lambda client, token: "me-guid")
@@ -504,7 +590,8 @@ def _teams_channels_ctx(tmp_path, monkeypatch, *, teams_list, channels=None, mes
 
 
 def test_poll_teams_channels_emits_non_interrupt_notification(tmp_path, monkeypatch):
-    from datetime import datetime, UTC
+    from datetime import UTC, datetime
+
     from microsoft_cli import monitor
 
     teams_list = [{"id": "team-1", "displayName": "Engineering"}]
@@ -535,7 +622,8 @@ def test_poll_teams_channels_emits_non_interrupt_notification(tmp_path, monkeypa
 
 
 def test_poll_teams_channels_skips_own_message(tmp_path, monkeypatch):
-    from datetime import datetime, UTC
+    from datetime import UTC, datetime
+
     from microsoft_cli import monitor
 
     teams_list = [{"id": "team-1", "displayName": "Engineering"}]
@@ -554,8 +642,31 @@ def test_poll_teams_channels_skips_own_message(tmp_path, monkeypatch):
     assert list((tmp_path / "notif").glob("*.json")) == []
 
 
+def test_poll_teams_channels_skips_authorless_bodyless_system_event(tmp_path, monkeypatch):
+    """The channel path shares the chat path's extraction, so it drops system events too."""
+    from datetime import UTC, datetime
+
+    from microsoft_cli import monitor
+
+    teams_list = [{"id": "team-1", "displayName": "Engineering"}]
+    channels = [{"id": "chan-1", "displayName": "General"}]
+    messages = [
+        {
+            "id": "msg-1",
+            "createdDateTime": "2026-07-10T12:00:00Z",
+            "from": None,
+            "body": {"content": ""},
+        }
+    ]
+    ctx = _teams_channels_ctx(tmp_path, monkeypatch, teams_list=teams_list, channels=channels, messages=messages)
+    last_dt = datetime(2026, 7, 10, 11, 0, tzinfo=UTC)
+    monitor._poll_teams_channels_account(ctx, Config(data_dir=tmp_path), "me@x.com", last_dt, False)
+    assert list((tmp_path / "notif").glob("*.json")) == []
+
+
 def test_poll_teams_channels_skips_old_message(tmp_path, monkeypatch):
-    from datetime import datetime, UTC
+    from datetime import UTC, datetime
+
     from microsoft_cli import monitor
 
     teams_list = [{"id": "team-1", "displayName": "Engineering"}]
@@ -577,7 +688,8 @@ def test_poll_teams_channels_skips_old_message(tmp_path, monkeypatch):
 def test_poll_teams_channels_degrades_gracefully_on_permission_error(tmp_path, monkeypatch):
     """When the account lacks channel access (403 / TeamsError), the poller returns cleanly with no
     notification and no exception, leaving chats-only behaviour intact."""
-    from datetime import datetime, UTC
+    from datetime import UTC, datetime
+
     from microsoft_cli import monitor
 
     ctx = _teams_channels_ctx(tmp_path, monkeypatch, teams_list=[], list_teams_exc=_http_error(403))
@@ -593,7 +705,8 @@ def test_poll_teams_channels_degrades_gracefully_on_permission_error(tmp_path, m
 
 
 def test_poll_teams_skips_old_message(tmp_path, monkeypatch):
-    from datetime import datetime, UTC
+    from datetime import UTC, datetime
+
     from microsoft_cli import monitor
 
     chats = [

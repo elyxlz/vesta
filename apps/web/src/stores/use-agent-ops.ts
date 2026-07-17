@@ -21,7 +21,7 @@ interface AgentOpsStore {
   setOp: (name: string, operation: AgentOperation, error?: string) => void;
   setError: (name: string, error: string) => void;
   clearOp: (name: string) => void;
-  removeAgent: (name: string) => void;
+  reconcile: (agents: { name: string }[]) => void;
   withOp: (
     name: string,
     op: AgentOperation,
@@ -55,10 +55,18 @@ export const useAgentOps = create<AgentOpsStore>((set, get) => ({
       states: { ...s.states, [name]: { operation: "idle", error: "" } },
     })),
 
-  removeAgent: (name) =>
+  // An op only lives as long as its agent: on each gateway agents push, drop op
+  // state for agents that are gone. This is what ends a delete's "deleting" orb,
+  // so the card never flashes back to idle while the deleted agent lingers.
+  reconcile: (agents) =>
     set((s) => {
-      const { [name]: _removed, ...rest } = s.states;
-      return { states: rest };
+      const alive = new Set(agents.map((a) => a.name));
+      const stale = Object.keys(s.states).filter((n) => !alive.has(n));
+      if (stale.length === 0) return s;
+      const states = Object.fromEntries(
+        Object.entries(s.states).filter(([name]) => alive.has(name)),
+      );
+      return { states };
     }),
 
   withOp: async (name, op, fn, fallback) => {

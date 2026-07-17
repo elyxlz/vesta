@@ -9,11 +9,14 @@ import { useLayout } from "@/stores/use-layout";
 import { streamLogs, stopLogs } from "@/api";
 import { stripAnsi } from "@/lib/ansi";
 import { linkify } from "@/lib/linkify";
-import { logStreamAction, isAgentContainerUp } from "@/lib/log-stream-policy";
+import {
+  logStreamAction,
+  isAgentContainerUp,
+  LOG_SCROLLBACK_LINES,
+} from "@/lib/log-stream-policy";
 import type { AgentStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-const MAX_LINES = 5000;
 const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 30000;
 // One mono line is ~19px; off-screen rows reserve this via contain-intrinsic-size.
@@ -74,24 +77,24 @@ const SUBFAMILY_COLOR_CLASS: Record<string, Record<string, string>> = {
 function extractTags(line: string): string[] {
   return [...line.matchAll(/\[([A-Z ]+)\]/g)]
     .map((match) => match[1])
-    .filter((tag) => !LOG_LEVEL_TAGS.has(tag));
+    .filter(
+      (tag): tag is string => tag !== undefined && !LOG_LEVEL_TAGS.has(tag),
+    );
 }
 
 function lineColorClass(line: string): string | null {
   const tags = extractTags(line);
   const familyIndex = tags.findIndex((tag) => FAMILY_TAGS.has(tag));
+  if (familyIndex === -1) return null;
 
-  if (familyIndex !== -1) {
-    const family = tags[familyIndex];
-    const subfamily = tags[familyIndex + 1];
-    return (
-      (subfamily && SUBFAMILY_COLOR_CLASS[family]?.[subfamily]) ||
-      FAMILY_COLOR_CLASS[family] ||
-      null
-    );
-  }
-
-  return null;
+  const family = tags[familyIndex];
+  if (family === undefined) return null;
+  const subfamily = tags[familyIndex + 1];
+  const subfamilyClass =
+    subfamily === undefined
+      ? undefined
+      : SUBFAMILY_COLOR_CLASS[family]?.[subfamily];
+  return subfamilyClass ?? FAMILY_COLOR_CLASS[family] ?? null;
 }
 
 interface LogLine {
@@ -164,7 +167,9 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
     const buffered = bufferRef.current;
     bufferRef.current = [];
     setLines(
-      buffered.length > MAX_LINES ? buffered.slice(-MAX_LINES) : buffered,
+      buffered.length > LOG_SCROLLBACK_LINES
+        ? buffered.slice(-LOG_SCROLLBACK_LINES)
+        : buffered,
     );
   }, []);
 
@@ -173,7 +178,7 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
   useEffect(() => {
     connect.current = (replay: boolean) => {
       if (!name || !activeRef.current) return;
-      stopLogs(name);
+      void stopLogs(name);
       setStreamState("live");
       // Only a fresh replay connect buffers a tail; a reconnect (tail=0) appends live.
       fillingRef.current = replay;
@@ -206,16 +211,17 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
                   flushBuffer,
                   INITIAL_FILL_QUIESCE_MS,
                 );
-                if (!capTimerRef.current)
-                  capTimerRef.current = setTimeout(
-                    flushBuffer,
-                    INITIAL_FILL_MAX_MS,
-                  );
+                capTimerRef.current ??= setTimeout(
+                  flushBuffer,
+                  INITIAL_FILL_MAX_MS,
+                );
                 break;
               }
               setLines((prev) => {
                 const next = [...prev, line];
-                return next.length > MAX_LINES ? next.slice(-MAX_LINES) : next;
+                return next.length > LOG_SCROLLBACK_LINES
+                  ? next.slice(-LOG_SCROLLBACK_LINES)
+                  : next;
               });
               break;
             }
@@ -245,7 +251,9 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
           }
         },
         { replay },
-      );
+      ).catch((err: unknown) => {
+        console.warn("[console] log stream failed:", err);
+      });
     };
   });
 
@@ -263,7 +271,7 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       if (quiesceTimerRef.current) clearTimeout(quiesceTimerRef.current);
       if (capTimerRef.current) clearTimeout(capTimerRef.current);
-      if (name) stopLogs(name);
+      if (name) void stopLogs(name);
     };
   }, [name]);
 
@@ -326,7 +334,7 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
           style={
             fullscreen
               ? {
-                  maskImage: `linear-gradient(to bottom, transparent, black ${navbarHeight * 2}px, black calc(100% - 15px), transparent)`,
+                  maskImage: `linear-gradient(to bottom, transparent, black ${String(navbarHeight * 2)}px, black calc(100% - 15px), transparent)`,
                 }
               : undefined
           }
@@ -338,7 +346,7 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
               {fullscreen ? (
                 <div
                   style={{
-                    height: `calc(${navbarHeight}px + var(--page-padding-x))`,
+                    height: `calc(${String(navbarHeight)}px + var(--page-padding-x))`,
                   }}
                 />
               ) : (
@@ -354,7 +362,7 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
                   )}
                   style={{
                     contentVisibility: "auto",
-                    containIntrinsicSize: `auto ${ESTIMATED_LINE_HEIGHT}px`,
+                    containIntrinsicSize: `auto ${String(ESTIMATED_LINE_HEIGHT)}px`,
                   }}
                   dangerouslySetInnerHTML={{ __html: line.html }}
                 />

@@ -28,7 +28,6 @@ from datetime import UTC, datetime
 
 import aiohttp
 
-
 RECONNECT_DELAY = 2.0
 SOCKET_TIMEOUT = 10.0
 SESSION_NAME = "app-chat"
@@ -152,7 +151,7 @@ async def _socket_server(state: DaemonState) -> None:
     state.sock_path.unlink(missing_ok=True)
 
     server = await asyncio.start_unix_server(functools.partial(_handle_socket_conn, state), path=str(state.sock_path))
-    os.chmod(str(state.sock_path), 0o600)
+    state.sock_path.chmod(0o600)
     _log(f"socket server: {state.sock_path}")
 
     try:

@@ -21,6 +21,8 @@ BUILD = REPO_ROOT / "vestad/scripts/build-upstream.sh"
 ATTACH = AGENT_ROOT / "core/skills/upstream-sync/scripts/attach.sh"
 FETCH = AGENT_ROOT / "core/skills/upstream-sync/scripts/fetch-upstream.sh"
 SET_CONE = AGENT_ROOT / "core/skills/upstream-sync/scripts/set-cone.sh"
+SYNC = AGENT_ROOT / "core/skills/upstream-sync/scripts/sync.sh"
+STATUS = AGENT_ROOT / "core/skills/upstream-sync/scripts/status.sh"
 SKILLS_INSTALL = AGENT_ROOT / "skills/skills-registry/scripts/skills-install"
 SKILLS_REMOVE = AGENT_ROOT / "skills/skills-registry/scripts/skills-remove"
 BRANCH = "agent-upstream"
@@ -54,13 +56,13 @@ def _env(home, extra=None):
 
 
 def _git(args, cwd, extra_env=None):
-    r = subprocess.run(["git", *args], cwd=str(cwd), env=_env(cwd, extra_env), capture_output=True, text=True)
+    r = subprocess.run(["git", *args], cwd=str(cwd), env=_env(cwd, extra_env), capture_output=True, text=True, check=False)
     assert r.returncode == 0, f"git {' '.join(args)} failed:\n{r.stdout}\n{r.stderr}"
     return r.stdout
 
 
 def _run(script, home, args=(), extra_env=None):
-    return subprocess.run(["bash", str(script), *args], cwd=str(home), env=_env(home, extra_env), capture_output=True, text=True)
+    return subprocess.run(["bash", str(script), *args], cwd=str(home), env=_env(home, extra_env), capture_output=True, text=True, check=False)
 
 
 def _copy_sync_scripts(core_skills):
@@ -68,7 +70,7 @@ def _copy_sync_scripts(core_skills):
     plus the forwarding workspace-sync shims at their old paths."""
     scripts = core_skills / "upstream-sync/scripts"
     scripts.mkdir(parents=True, exist_ok=True)
-    for script in (ATTACH, FETCH, SET_CONE):
+    for script in (ATTACH, FETCH, SET_CONE, SYNC, STATUS):
         shutil.copy(script, scripts / script.name)
     forwarding = core_skills / "workspace-sync/scripts"
     forwarding.mkdir(parents=True, exist_ok=True)
@@ -97,15 +99,21 @@ def _write_content(content, version):
     _copy_sync_scripts(content / "core/skills")
 
 
-def _upstream_fixture(tmp_path, versions=("0.1.170",)):
+def _upstream_fixture(tmp_path, versions=("0.1.170",), new_dir=None):
     """Build an upstream repo with the REAL build-upstream.sh, one snapshot per version.
     Returns the bare repo path (what a box's fetch-upstream.sh consumes; on real boxes it
-    is bind-mounted at /run/vesta-upstream/upstream.git)."""
+    is bind-mounted at /run/vesta-upstream/upstream.git). new_dir models a release adding a
+    tracked dir under agent/: it lands in the last version's snapshot only."""
     content = tmp_path / "agent-code"
     ws = tmp_path / "upstream"
     for version in versions:
         _write_content(content, version)
-        r = subprocess.run(["bash", str(BUILD), str(content), str(ws), version], env=_env(tmp_path), capture_output=True, text=True)
+        if new_dir is not None and version == versions[-1]:
+            (content / new_dir).mkdir(parents=True, exist_ok=True)
+            (content / new_dir / "stock.md").write_text(f"{new_dir} at {version}\n")
+        r = subprocess.run(
+            ["bash", str(BUILD), str(content), str(ws), version], env=_env(tmp_path), capture_output=True, text=True, check=False
+        )
         assert r.returncode == 0, r.stdout + r.stderr
     return ws / "upstream.git"
 
@@ -136,6 +144,20 @@ def _fresh_box(tmp_path, version="0.1.170", skills=("tasks", "dream"), managed=T
         for d in [core, *(p for p in core.rglob("*") if p.is_dir())]:
             d.chmod(0o555)
     return home
+
+
+def _upgrade_core_mount(home, version):
+    """vestad swapping a managed box's engine: the core mount now carries the new version,
+    still read-only (modelled with chmod, so git's unlink fails EACCES where a real bind
+    mount gives EROFS; nothing under test keys on the errno)."""
+    core = home / "agent/core"
+    dirs = [core, *(p for p in core.rglob("*") if p.is_dir())]
+    for d in dirs:
+        d.chmod(0o755)
+    (core / "pyproject.toml").write_text(f'[project]\nname = "vesta"\nversion = "{version}"\n')
+    (core / "loops.py").write_text(f"# core at {version}\n")
+    for d in dirs:
+        d.chmod(0o555)
 
 
 def _box_env(source):
@@ -204,12 +226,113 @@ def test_sync_conflict_stops_and_continues(tmp_path):
     _git(["add", "-A"], home, env)
     _git(["commit", "-m", "checkpoint"], home, env)
     assert _run(FETCH, home, extra_env=env).returncode == 0
-    r = subprocess.run(["git", "rebase", "agent-v0.1.171"], cwd=str(home), env=_env(home, env), capture_output=True, text=True)
+    r = subprocess.run(["git", "rebase", "agent-v0.1.171"], cwd=str(home), env=_env(home, env), capture_output=True, text=True, check=False)
     assert r.returncode != 0  # conflict markers on disk now
     (home / "agent/skills/tasks/SKILL.md").write_text("both sides survive\n")
     _git(["add", "agent/skills/tasks/SKILL.md"], home, env)
     _git(["rebase", "--continue"], home, env)
     assert "both sides survive" in (home / "agent/skills/tasks/SKILL.md").read_text()
+
+
+def _legacy_managed_box(tmp_path, new_dir=None):
+    """A managed box in the shape issue #1280 reports: the engine is a read-only mount, but
+    agent/core is in the cone and its own commits carry engine paths (how pre-mount boxes
+    converged). Every later checkout then wants to rewrite the mount."""
+    source = _upstream_fixture(tmp_path, versions=("0.1.170", "0.1.171"), new_dir=new_dir)
+    home = _fresh_box(tmp_path)
+    env = _box_env(source)
+    assert _attach(home, source).returncode == 0
+    _git(["sparse-checkout", "add", "agent/core"], home, env)
+    engine = home / "agent/core/loops.py"
+    engine.chmod(0o644)
+    engine.write_text("# core at 0.1.170\n# a stale engine edit my history carries\n")
+    memory = home / "agent/MEMORY.md"
+    memory.write_text(memory.read_text() + "my personal notes\n")
+    _git(["add", "-A"], home, env)
+    _git(["commit", "-m", "checkpoint"], home, env)
+    _upgrade_core_mount(home, "0.1.171")
+    return source, home, env
+
+
+def test_managed_sync_lands_when_history_carries_engine_paths(tmp_path):
+    """Issue #1280: rebasing engine paths onto the new snapshot fails because the core mount
+    is read-only, so the sync never completed and the boot turn re-fired forever. sync.sh
+    drops the mount-owned paths from the local delta, so the rebase lands."""
+    _source, home, env = _legacy_managed_box(tmp_path)
+    r = _run(SYNC, home, extra_env=env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    _git(["merge-base", "--is-ancestor", "agent-v0.1.171", "HEAD"], home, env)  # what the boot turn re-fires on
+    assert "my personal notes" in (home / "agent/MEMORY.md").read_text()  # my work survives
+    assert "0.1.171" in (home / "agent/skills/tasks/SKILL.md").read_text()  # stock moved
+    # The mount is untouched, and git now records stock's engine rather than the stale edit.
+    assert (home / "agent/core/loops.py").read_text() == "# core at 0.1.171\n"
+    tracked_engine = _git(["ls-tree", "-r", "HEAD", "--", "agent/core"], home, env)
+    assert tracked_engine == _git(["ls-tree", "-r", "agent-v0.1.171", "--", "agent/core"], home, env)
+
+
+def test_managed_sync_materializes_a_dir_the_new_snapshot_adds(tmp_path):
+    """The cone is computed from HEAD, so set-cone.sh has to run after the rebase too: a dir
+    the upgrade adds is only coned in, and written to disk, once the rebase has landed it."""
+    _source, home, env = _legacy_managed_box(tmp_path, new_dir="prompts")
+    assert _run(SYNC, home, extra_env=env).returncode == 0
+    assert (home / "agent/prompts/stock.md").read_text() == "prompts at 0.1.171\n"
+
+
+def test_managed_sync_is_idempotent_once_synced(tmp_path):
+    """The re-fire loop's cost was re-running a rebase that could not work. A second sync is
+    a no-op that reports the authoritative answer instead."""
+    _source, home, env = _legacy_managed_box(tmp_path)
+    assert _run(SYNC, home, extra_env=env).returncode == 0
+    head = _git(["rev-parse", "HEAD"], home, env)
+    r = _run(SYNC, home, extra_env=env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "already synced" in r.stdout
+    assert _git(["rev-parse", "HEAD"], home, env) == head
+
+
+def test_managed_cone_pins_engine_out_of_the_worktree(tmp_path):
+    """The mechanism: git cannot sparsify the engine (that means deleting read-only files),
+    so set-cone.sh sets skip-worktree straight in the index. Without it every checkout of a
+    new snapshot tries to rewrite the mount."""
+    _source, home, env = _legacy_managed_box(tmp_path)
+    assert _run(SET_CONE, home, extra_env=env).returncode == 0
+    flags = _git(["ls-files", "-v", "--", "agent/core"], home, env).splitlines()
+    assert flags and all(line.startswith("S ") for line in flags), flags
+    assert _git(["status", "--porcelain"], home, env) == ""  # mount drift is invisible to git
+
+
+def test_unmanaged_core_still_rebases_through_the_cone(tmp_path):
+    """--no-manage-core-code boxes own agent/core in the workspace and legitimately pull the
+    engine through the rebase: it must stay worktree-live, never pinned."""
+    source = _upstream_fixture(tmp_path, versions=("0.1.170", "0.1.171"))
+    home = _fresh_box(tmp_path, managed=False)
+    env = _box_env(source)
+    assert _attach(home, source).returncode == 0
+    _git(["sparse-checkout", "add", "agent/core"], home, env)  # SETUP.md: the one-time opt-in
+    assert _run(SET_CONE, home, extra_env=env).returncode == 0
+    flags = _git(["ls-files", "-v", "--", "agent/core"], home, env).splitlines()
+    assert flags and not any(line.startswith("S ") for line in flags), flags
+    memory = home / "agent/MEMORY.md"
+    memory.write_text(memory.read_text() + "my personal notes\n")
+    _git(["add", "-A"], home, env)
+    _git(["commit", "-m", "checkpoint"], home, env)
+    assert _run(FETCH, home, extra_env=env).returncode == 0
+    _git(["rebase", "agent-v0.1.171"], home, env)
+    assert (home / "agent/core/loops.py").read_text() == "# core at 0.1.171\n"  # engine advanced on disk
+    assert "my personal notes" in memory.read_text()
+
+
+def test_status_reports_the_authoritative_sync_answer(tmp_path):
+    """status.sh grouped commits under "my changes on top of <tag>" either way, which reads
+    like a finished sync when the rebase never landed (issue #1280)."""
+    _source, home, env = _legacy_managed_box(tmp_path)
+    r = _run(STATUS, home, extra_env=env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "NOT synced" in r.stdout
+    assert _run(SYNC, home, extra_env=env).returncode == 0
+    r = _run(STATUS, home, extra_env=env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "NOT synced" not in r.stdout and "== synced" in r.stdout
 
 
 def test_install_is_offline_and_remove_drops_dir(tmp_path):
@@ -498,6 +621,6 @@ def test_fetch_without_mount_falls_into_the_endpoint_fallback(tmp_path):
     home.mkdir()
     env = _env(home, {"AGENT_NAME": "testbox"})
     env.pop("VESTAD_PORT", None)
-    r = subprocess.run(["bash", str(FETCH)], cwd=str(home), env=env, capture_output=True, text=True)
+    r = subprocess.run(["bash", str(FETCH)], cwd=str(home), env=env, capture_output=True, text=True, check=False)
     assert r.returncode != 0
     assert "VESTAD_PORT" in r.stderr

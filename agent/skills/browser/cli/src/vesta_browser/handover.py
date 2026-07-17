@@ -111,13 +111,15 @@ def _free_port(start: int) -> int:
 
 
 def _free_display(start: int = 99) -> str:
-    """A display number with no X server yet, so handover always provisions its OWN Xvfb.
+    """A display number with no live X server, so handover always provisions its OWN Xvfb.
 
     Reusing the ambient DISPLAY breaks on a real desktop seat: x11vnc cannot X_GetImage a live
-    Wayland/Xorg screen (it fails BadMatch), so noVNC hangs on connect. A dedicated Xvfb is always
-    grabbable, and on a headless box (the container) picking a free number lands on :99 as before."""
+    Wayland/Xorg screen (it fails BadMatch), so noVNC hangs on connect. Judge by liveness, not the
+    socket FILE existing: a dead Xvfb leaves its /tmp/.X11-unix socket behind and nothing cleans it,
+    so trusting file existence lets corpses exhaust the range. _ensure_xvfb clears a stale socket
+    before launching on the number returned here."""
     for n in range(start, start + 100):
-        if not Path(f"/tmp/.X11-unix/X{n}").exists():
+        if not launcher._x_display_reachable(f":{n}"):
             return f":{n}"
     raise RuntimeError(f"no free X display in range :{start}-:{start + 100}")
 
@@ -157,6 +159,7 @@ def _register_public_service() -> tuple[int, str] | None:
         capture_output=True,
         text=True,
         timeout=SERVICE_REGISTER_TIMEOUT_S,
+        check=False,
     )
     if result.returncode != 0:
         return None
@@ -247,38 +250,38 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
     vnc_port = _free_port(VNC_PORT_START)
     webroot = _build_webroot()
 
-    log = open(_session_file("handover-log"), "w")
     # -cursor most + -cursorpos send the real X cursor shape (hand over links, caret over text)
     # and its position, not a static dot. XDAMAGE (left on) means only changed regions are
     # re-encoded, so typing on the framebuffer stays responsive instead of repolling the whole
     # screen; -threads parallelises encoding for lower latency.
-    x11vnc = subprocess.Popen(
-        [
-            "x11vnc",
-            "-display",
-            display,
-            "-localhost",
-            "-rfbport",
-            str(vnc_port),
-            "-forever",
-            "-shared",
-            "-nopw",
-            "-quiet",
-            "-threads",
-            "-cursor",
-            "most",
-            "-cursorpos",
-        ],
-        stdout=log,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
-    websockify = subprocess.Popen(
-        ["websockify", "--web", str(webroot), str(web_port), f"localhost:{vnc_port}"],
-        stdout=log,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
+    with _session_file("handover-log").open("w") as log:
+        x11vnc = subprocess.Popen(
+            [
+                "x11vnc",
+                "-display",
+                display,
+                "-localhost",
+                "-rfbport",
+                str(vnc_port),
+                "-forever",
+                "-shared",
+                "-nopw",
+                "-quiet",
+                "-threads",
+                "-cursor",
+                "most",
+                "-cursorpos",
+            ],
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        websockify = subprocess.Popen(
+            ["websockify", "--web", str(webroot), str(web_port), f"localhost:{vnc_port}"],
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
 
     _session_file("openbox-pid").write_text(str(openbox.pid))
     _session_file("x11vnc-pid").write_text(str(x11vnc.pid))
@@ -354,10 +357,13 @@ _PAGE_TEMPLATE = """<!doctype html>
     --label: oklch(0.46 0.012 70); --screen-bg: oklch(0.97 0.006 80); --ok: oklch(0.66 0.17 150);
   }
   @media (prefers-color-scheme: dark) {
-    :root { --desk-1: oklch(0.19 0.008 80); --desk-2: oklch(0.11 0.006 80); --label: oklch(0.72 0.02 80); --screen-bg: oklch(0.19 0.007 80); --ok: oklch(0.74 0.18 150); }
+    :root { --desk-1: oklch(0.19 0.008 80); --desk-2: oklch(0.11 0.006 80); --label: oklch(0.72 0.02 80);
+      --screen-bg: oklch(0.19 0.007 80); --ok: oklch(0.74 0.18 150); }
   }
-  :root[data-theme="light"]{color-scheme:light;--desk-1:oklch(0.95 0.008 80);--desk-2:oklch(0.88 0.014 75);--label:oklch(0.46 0.012 70);--screen-bg:oklch(0.97 0.006 80);--ok:oklch(0.66 0.17 150);}
-  :root[data-theme="dark"]{color-scheme:dark;--desk-1:oklch(0.19 0.008 80);--desk-2:oklch(0.11 0.006 80);--label:oklch(0.72 0.02 80);--screen-bg:oklch(0.19 0.007 80);--ok:oklch(0.74 0.18 150);}
+  :root[data-theme="light"]{color-scheme:light;--desk-1:oklch(0.95 0.008 80);--desk-2:oklch(0.88 0.014 75);
+    --label:oklch(0.46 0.012 70);--screen-bg:oklch(0.97 0.006 80);--ok:oklch(0.66 0.17 150);}
+  :root[data-theme="dark"]{color-scheme:dark;--desk-1:oklch(0.19 0.008 80);--desk-2:oklch(0.11 0.006 80);
+    --label:oklch(0.72 0.02 80);--screen-bg:oklch(0.19 0.007 80);--ok:oklch(0.74 0.18 150);}
 
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
@@ -369,18 +375,22 @@ _PAGE_TEMPLATE = """<!doctype html>
   /* the machine fills most of the viewport; container-type lets the chin engraving scale with it */
   .macbook { container-type: inline-size; position: relative; width: min(99vw, calc(97vh * 1.5725)); aspect-ratio: 1280 / 814; }
   /* the screen rectangle, measured from macbook.png: the live browser shows through the cut-out */
-  #stage { position: absolute; left: 13.05%; top: 13.64%; width: 73.91%; height: 72.73%; overflow: hidden; background: var(--screen-bg); z-index: 0; }
+  #stage { position: absolute; left: 13.05%; top: 13.64%; width: 73.91%; height: 72.73%;
+    overflow: hidden; background: var(--screen-bg); z-index: 0; }
   #screen { width: 100%; height: 100%; }
-  .frame { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none; -webkit-user-drag: none; user-select: none; }
+  .frame { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1;
+    pointer-events: none; -webkit-user-drag: none; user-select: none; }
   #overlay { position: absolute; inset: 0; display: grid; place-items: center; background: var(--screen-bg); transition: opacity .45s ease; }
   #overlay.hidden { opacity: 0; pointer-events: none; }
-  .spinner { width: 26px; height: 26px; border-radius: 50%; border: 2.5px solid oklch(0.5 0 0 / 0.2); border-top-color: var(--ok); animation: spin .8s linear infinite; }
+  .spinner { width: 26px; height: 26px; border-radius: 50%; border: 2.5px solid oklch(0.5 0 0 / 0.2);
+    border-top-color: var(--ok); animation: spin .8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   #overlay p { margin: 14px 0 0; color: var(--label); font-size: 13px; }
   .overlay-inner { display: grid; justify-items: center; }
   /* "vesta" engraved on the chin in place of the removed "MacBook Pro"; scales with the machine */
   .engraving { position: absolute; left: 0; right: 0; top: 88%; text-align: center; z-index: 2; pointer-events: none;
-    font-family: var(--serif); font-weight: 500; font-size: 2.15cqw; letter-spacing: 0.02em; color: rgb(150, 150, 153); text-shadow: 0 1px 1px rgba(0, 0, 0, 0.55); }
+    font-family: var(--serif); font-weight: 500; font-size: 2.15cqw; letter-spacing: 0.02em;
+    color: rgb(150, 150, 153); text-shadow: 0 1px 1px rgba(0, 0, 0, 0.55); }
   @media (prefers-reduced-motion: reduce) { .spinner, #overlay { animation: none !important; transition: none !important; } }
 
   /* Hidden textarea used only to summon the phone's soft keyboard: focusing it raises the
@@ -423,7 +433,8 @@ _PAGE_TEMPLATE = """<!doctype html>
     <img class="frame" src="./macbook.png" alt="" draggable="false">
     <div class="engraving">vesta</div>
   </div>
-  <textarea id="kbdinput" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" aria-hidden="true" tabindex="-1"></textarea>
+  <textarea id="kbdinput" autocapitalize="off" autocomplete="off" autocorrect="off"
+    spellcheck="false" aria-hidden="true" tabindex="-1"></textarea>
   <button id="kbd-button" type="button" aria-label="Show keyboard"><span class="glyph">⌨</span>Keyboard</button>
   <script type="module">
     import RFB from './core/rfb.js';

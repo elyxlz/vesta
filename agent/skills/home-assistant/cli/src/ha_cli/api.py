@@ -1,4 +1,5 @@
 import httpx
+
 from .config import Config
 
 
@@ -29,7 +30,7 @@ class HAClient:
         return r.json()
 
     def get_history(self, entity_id: str, hours: int = 24) -> list[list[dict]]:
-        from datetime import datetime, timedelta, UTC
+        from datetime import UTC, datetime, timedelta
 
         start = (datetime.now(UTC) - timedelta(hours=hours)).isoformat()
         r = self._client.get(

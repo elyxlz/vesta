@@ -41,13 +41,6 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
 
-      - name: Install Tauri system deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential pkg-config \
-            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev
-
       - name: Configure git
         run: |
           git config user.name "github-actions[bot]"
@@ -77,20 +70,13 @@ jobs:
           sed -i "0,/^version = \"${CURRENT}\"/s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" vestad/Cargo.toml
           sed -i "0,/^version = \"${CURRENT}\"/s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" vestad/tests-integration/Cargo.toml
           sed -i "0,/^version = \"${CURRENT}\"/s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" cli/Cargo.toml
-          sed -i "0,/^version = \"${CURRENT}\"/s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" apps/desktop/src-tauri/Cargo.toml
-          sed -i "0,/^version = \"${CURRENT}\"/s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" apps/mobile/src-tauri/Cargo.toml
-          sed -i "s|\"version\": \"${CURRENT}\"|\"version\": \"${NEW}\"|" apps/desktop/src-tauri/tauri.conf.json
-          sed -i "s|\"version\": \"${CURRENT}\"|\"version\": \"${NEW}\"|" apps/mobile/src-tauri/tauri.conf.json
           sed -i "s|\"version\": \"${CURRENT}\"|\"version\": \"${NEW}\"|" apps/web/package.json
           sed -i "s|\"version\": \"${CURRENT}\"|\"version\": \"${NEW}\"|" apps/desktop/package.json
-          sed -i "s|\"version\": \"${CURRENT}\"|\"version\": \"${NEW}\"|" apps/mobile/package.json
 
       - name: Refresh lockfiles
         run: |
           (cd vestad && cargo check --quiet) &
           (cd cli && cargo check --quiet) &
-          (cd apps/desktop/src-tauri && cargo check --quiet) &
-          (cd apps/mobile/src-tauri && cargo check --quiet) &
           (cd agent && uv lock --project core --quiet) &
           wait
 

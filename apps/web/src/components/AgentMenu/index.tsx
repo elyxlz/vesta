@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { MoreVertical } from "lucide-react";
 import {
   Dialog,
@@ -20,6 +20,13 @@ import { DesktopMenu } from "./DesktopMenu";
 
 export function AgentMenu() {
   const navigate = useNavigate();
+  const location = useLocation();
+  // Re-selecting the current page must not push a duplicate history entry:
+  // the navbar's back button pops one entry per press, and a duplicate makes
+  // the first press a visible no-op.
+  const goTo = (path: string) => {
+    if (location.pathname !== path) void navigate(path);
+  };
   const { name, agent, isBusy, start, stop, restart, backup } =
     useSelectedAgent();
   const { setDeleteDialogOpen, handleOpenAuth } = useModals();
@@ -32,30 +39,31 @@ export function AgentMenu() {
   const isMobile = useIsMobile();
 
   const isRunning =
-    agent?.status !== "stopped" &&
-    agent?.status !== "dead" &&
-    agent?.status !== "not_found";
+    agent.status !== "stopped" &&
+    agent.status !== "dead" &&
+    agent.status !== "not_found";
 
   const state: MenuState = {
     name,
     isRunning,
-    showAliveActions: agent?.status === "alive",
+    showAliveActions: agent.status === "alive",
     isBusy,
     showToolCalls,
-    onToggle: () => void (isRunning ? stop() : start()),
-    onLogs: () => navigate(`/agent/${encodeURIComponent(name)}/logs`),
+    onToggle: () => {
+      if (isRunning) stop();
+      else start();
+    },
+    onLogs: () => goTo(`/agent/${encodeURIComponent(name)}/logs`),
     onToolCalls: () => setShowToolCalls((v) => !v),
-    onAppSettings: () => navigate("/settings"),
-    onAgentSettings: () =>
-      navigate(`/agent/${encodeURIComponent(name)}/settings`),
+    onAppSettings: () => {
+      void navigate("/settings");
+    },
+    onAgentSettings: () => goTo(`/agent/${encodeURIComponent(name)}/settings`),
     onRestart: () => void restart(),
-    onBackup: () => void backup(),
+    onBackup: () => backup(),
     onAuthenticate: gateway.reachable ? () => handleOpenAuth() : undefined,
-    isAuthenticated: Boolean(
-      agent &&
-      agent.status !== "not_authenticated" &&
-      agent.status !== "unprovisioned",
-    ),
+    isAuthenticated:
+      agent.status !== "not_authenticated" && agent.status !== "unprovisioned",
     onDelete: () => setDeleteDialogOpen(true),
     onDebugInfo: appMode === "advanced" ? () => setDebugOpen(true) : undefined,
   };

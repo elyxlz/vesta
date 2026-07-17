@@ -1,7 +1,7 @@
 import pathlib as pl
 
-from . import models as vm
 from . import config as cfg
+from . import models as vm
 
 
 def clear_notifications(state: vm.State, file_paths: list[str]) -> None:

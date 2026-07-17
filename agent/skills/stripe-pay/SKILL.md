@@ -25,15 +25,10 @@ present in the container). Setup installs it globally so plain `link-cli` works.
 
 ## Trigger / Skip
 
-Use when the user asks Vesta to buy or pay for something at a merchant ("order me
-X", "renew my domain", "pay this invoice", "grab those tickets"). Not for P2P
-sends (Link for Agents is merchant-only) and not for read-only expense logging
-(use `enable-banking`). Paying an external invoice or third party is this skill;
-buying a vesta for someone else is `onboard`; this box's own hosting bill is
-`vesta-cloud-account`.
-
-If setup has not run, `link-cli auth status` reports unauthenticated: stop, point
-the user at SETUP.md, and do not attempt a spend.
+Not for P2P sends (Link for Agents is merchant-only) and not for read-only
+expense logging (use `enable-banking`). Paying an external invoice or third
+party is this skill; buying a vesta for someone else is `onboard`; this box's
+own hosting bill is `vesta-cloud-account`.
 
 ## Before spending: check auth
 
@@ -145,19 +140,11 @@ challenge string, `link-cli mpp decode --challenge '...'` extracts what you need
 
 ## Guardrails
 
-- **Never bypass approval.** Every spend goes through a Link-approved spend request.
-  There is no auto-approve and no way for Vesta to approve on the user's behalf,
-  and that is the point.
 - **One purchase, one spend request.** Do not fan out parallel spend requests for a
   single purchase; Link caps concurrent requests and it confuses the approval feed.
-- **Do not persist card numbers.** Use `--output-file` (0600), pass the card
-  straight to checkout, then delete it. Never write a card into memory, a task, or
-  a log.
 - **Caps live in Link, not here.** The user sets per-charge / daily / monthly caps
   in their Link app. A spend over a cap is refused by Stripe; surface that to the
   user rather than working around it. Per-request ceiling is $5,000.
-- **Amounts are minor units.** `--amount` is always cents (or the currency's
-  smallest unit). Re-read step 2 before every charge.
 
 ## Files
 

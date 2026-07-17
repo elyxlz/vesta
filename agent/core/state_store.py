@@ -13,8 +13,8 @@ import pathlib as pl
 
 import pydantic as pyd
 
-from . import logger
 from . import config as cfg
+from . import logger
 from .events import EVENTS_DB_FILENAME
 
 STATE_FILENAME = "state.json"

@@ -44,7 +44,7 @@ function isGithubRelease(value: unknown): value is GithubRelease {
 export function extractWhatsNew(body: string): string | null {
   const match = WHATS_NEW_BLOCK_RE.exec(body);
   if (!match) return null;
-  const message = match[1].trim();
+  const message = match[1]?.trim() ?? "";
   return message.length > 0 ? message : null;
 }
 

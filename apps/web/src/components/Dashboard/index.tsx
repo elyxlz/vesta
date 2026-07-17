@@ -9,7 +9,7 @@ import { LayoutDashboard, AlertCircle } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useTheme } from "@/providers/ThemeProvider";
-import { useTauri } from "@/providers/TauriProvider";
+import { useRuntime } from "@/providers/RuntimeProvider";
 import { getConnection } from "@/lib/connection";
 import { openExternalUrl } from "@/lib/open-external-url";
 import {
@@ -37,14 +37,15 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
   const { name, agent } = useSelectedAgent();
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const { resolvedTheme } = useTheme();
-  const { isTauri, platform, isDesktop, isMobile, vibrancy } = useTauri();
+  const { isDesktopApp, platform, isDesktop, isMobile, vibrancy } =
+    useRuntime();
   const [error, setError] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [iframeKey, setIframeKey] = useState(0);
   const handshakeRef = useRef(false);
   const handshakeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const dashboardService = agent.services?.dashboard;
+  const dashboardService = agent.services.dashboard;
   const hasDashboard = !!dashboardService;
 
   // Reset iframe when the dashboard service appears
@@ -94,7 +95,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
     frame.postMessage(
       {
         type: "vesta-platform",
-        isTauri,
+        isDesktopApp,
         platform,
         isDesktop,
         isMobile,
@@ -115,7 +116,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
   }, [
     resolvedTheme,
     fullscreen,
-    isTauri,
+    isDesktopApp,
     platform,
     isDesktop,
     isMobile,
@@ -126,20 +127,27 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
 
   useEffect(() => {
     const handler = (e: MessageEvent) => {
+      const data: unknown = e.data;
+      if (typeof data !== "object" || data === null || !("type" in data))
+        return;
       if (
-        e.data?.type === "vesta-theme-request" ||
-        e.data?.type === "vesta-auth-request" ||
-        e.data?.type === "vesta-layout-request" ||
-        e.data?.type === "vesta-platform-request"
+        data.type === "vesta-theme-request" ||
+        data.type === "vesta-auth-request" ||
+        data.type === "vesta-layout-request" ||
+        data.type === "vesta-platform-request"
       ) {
         handshakeRef.current = true;
         sendContext();
       }
-      // Dashboard widgets can't open external URLs themselves: <a target="_blank">
-      // inside an iframe is swallowed by Tauri's mobile WKWebView. Widgets post
+      // Dashboard widgets can't open external URLs themselves: the desktop
+      // app's window-open handler owns navigation. Widgets post
       // { type: "vesta-open-url", url } and we route through the platform opener.
-      if (e.data?.type === "vesta-open-url" && typeof e.data.url === "string") {
-        const url: string = e.data.url;
+      if (
+        data.type === "vesta-open-url" &&
+        "url" in data &&
+        typeof data.url === "string"
+      ) {
+        const url = data.url;
         if (
           /^https?:\/\//i.test(url) ||
           /^mailto:/i.test(url) ||
@@ -210,7 +218,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
       <iframe
         key={iframeKey}
         ref={iframeRef}
-        src={dashboardUrl!}
+        src={dashboardUrl ?? undefined}
         allow="microphone; camera; display-capture; autoplay; fullscreen; picture-in-picture; clipboard-read; clipboard-write; geolocation; screen-wake-lock; web-share; payment; publickey-credentials-get; publickey-credentials-create; encrypted-media; midi; gamepad; xr-spatial-tracking; hid; serial; usb; bluetooth; idle-detection; local-fonts; storage-access; compute-pressure; window-management"
         className={`w-full h-full bg-transparent transition-opacity duration-200 ${loaded ? "opacity-100" : "opacity-0"}`}
         onLoad={() => {

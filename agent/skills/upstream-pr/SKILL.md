@@ -5,7 +5,7 @@ description: Upstream elyxlz/vesta GitHub ops: branches, PRs, issues, CI, API.
 
 # Upstream PR
 
-Push contributions back to `elyxlz/vesta`. Authentication is handled by the `vesta-upstream` GitHub App, no personal tokens needed. PRs are always cut from upstream `master`, never from your workspace branch or local HEAD.
+Push contributions back to `elyxlz/vesta`. Authentication is handled by the `vesta-upstream` GitHub App, no personal tokens needed.
 
 ## Setup
 
@@ -24,7 +24,7 @@ git -C ~ diff --stat "agent-v$VER"..HEAD -- agent/ ':(exclude)agent/core/**'
 
 Walk the list and, for each changed/added file, decide with gate 1 below: generalizable → file it; user-specific → leave it local. Common finds: a hook, script, or SKILL.md improvement built for one task that any instance would want.
 
-**Go WITHIN each file, not just file-by-file.** The `--stat` view tempts you to sort at the whole-file level ("MEMORY.md is personal → skip", "a new skill → file"), but a file that is mostly user-specific almost always carries general improvements buried inside it: a restart SKILL.md that mixes a user-specific service list (local) with a hard-won "a migration prompt is a boot turn, restore daemons first" note (general); a skill doc where a *mechanism* is general but the specific names/addresses are personal. So for every changed file, `git -C ~ diff "agent-v$VER"..HEAD -- <file>` and read the actual hunks: split each into the general part (the rule, the mechanism, the fix) and the user-specific part (names, addresses, paths, one person's texting quirks). Upstream the general part with the personal part stripped or genericized; leave only the truly personal remainder local. The unit of contribution is the improvement, not the file. Skipping a whole file because it "looks personal" is how good general rules never reach anyone else.
+**Go WITHIN each file, not just file-by-file.** The `--stat` view tempts you to sort at the whole-file level ("MEMORY.md is personal → skip", "a new skill → file"), but a file that is mostly user-specific almost always carries general improvements buried inside it: a restart SKILL.md that mixes a user-specific service list (local) with a hard-won "a migration prompt is a boot turn, restore daemons first" note (general); a skill doc where a *mechanism* is general but the specific names/addresses are personal. So for every changed file, `git -C ~ diff "agent-v$VER"..HEAD -- <file>` and read the actual hunks: split each into the general part (the rule, the mechanism, the fix) and the user-specific part (names, addresses, paths, one person's texting quirks). Upstream the general part with the personal part stripped or genericized; leave only the truly personal remainder local. The unit of contribution is the improvement, not the file.
 
 Two gotchas learned the hard way:
 - **Diff against the `agent-vX.Y.Z` tag, NOT `upstream/master`.** Vesta serves the workspace as a *subset* of the full monorepo (no `core/`, `tests/`, frontend), so a raw diff against `upstream/master` is polluted with thousands of phantom "deletions" for files that aren't in your workspace at all. The tag is your exact stock baseline, so its diff is purely your real changes.
@@ -111,6 +111,14 @@ upstream-pr --title "..." --branch my-branch --base master
 upstream-pr --token-only
 ```
 
+## Running a skill's tests
+
+Each skill CLI is its own uv project, so run its tests from its own directory: `cd ~/agent/skills/<name>/cli && uv run pytest`. uv builds a local `.venv` there and leaves the engine venv at `~/agent/.venv` alone.
+
 ## Formatting Python before pushing
 
-Before pushing changed `.py`, format from `~/agent` so the pinned ruff and config match CI's `agent-tests`: `cd ~/agent && uv run --project core ruff format <path> && uv run --project core ruff check <path>`. Run `uv run --project core ruff` from that dir, never `uvx ruff` or another cwd: those ignore the lock (`agent/core/uv.lock`) and config (`agent/ruff.toml`) and can fail CI's `--check` on otherwise-correct code.
+Before pushing changed `.py`, format from `~/agent` so the pinned ruff and config match CI's `guards` ruff pass: `cd ~/agent && ruff format <path> && ruff check <path>`. Plain `ruff` from that dir is the engine venv's pinned ruff (its bin leads your PATH), never `uvx ruff` or another cwd: those ignore the lock (`agent/core/uv.lock`) and config (`agent/ruff.toml`) and can fail CI's `--check` on otherwise-correct code.
+
+## No em/en dashes in markdown
+
+Before pushing changed prompt or skill `.md`, check for em dashes (U+2014) and en dashes (U+2013): `grep -rnP '\x{2014}|\x{2013}' <paths>` must be empty. CI's `test_no_em_or_en_dashes_in_prompt_and_skill_files` (`agent-tests`) fails the build on either character in those files; use commas, colons, or hyphens instead. Watch this especially when a subagent did the editing: instruct it up front, since models reach for those dashes by default. (This note avoids the literal characters for the same reason.)

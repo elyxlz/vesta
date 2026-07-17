@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 // --- Banner rendering ---
 
-/// Whether to emit ANSI color: only when stderr is a real terminal and NO_COLOR
+/// Whether to emit ANSI color: only when stderr is a real terminal and `NO_COLOR`
 /// is unset. Without this, `vestad status > file` / piping captures raw escape
 /// codes.
 fn color_on() -> bool {
@@ -37,7 +37,7 @@ const BANNER_ART_W: usize = 46; // fixed width of every VESTA_ART line
 const STATUS_FRESH_WAIT_MS: u64 = 5000; // longest we wait for a post-start status.json write
 const STATUS_FRESH_POLL_INTERVAL_MS: u64 = 100;
 
-/// "VESTA" in an ANSI-shadow block font. Every line is exactly BANNER_ART_W wide
+/// "VESTA" in an ANSI-shadow block font. Every line is exactly `BANNER_ART_W` wide
 /// (a unit test enforces this, since the box geometry centers on that width).
 const VESTA_ART: [&str; 6] = [
     "██╗   ██╗ ███████╗ ███████╗ ████████╗  █████╗ ",
@@ -105,7 +105,7 @@ impl BoxRow {
             BoxRow::Raw(text) => vec![(text.clone(), text.clone())],
             BoxRow::Kv(label, value) => {
                 let label_w = label.chars().count().max(BANNER_LABEL_W);
-                let label_col = format!("{:<width$}", label, width = label_w);
+                let label_col = format!("{label:<label_w$}");
                 let value_width = inner.saturating_sub(label_w).max(1);
                 wrap_chars(value, value_width)
                     .into_iter()
@@ -129,7 +129,7 @@ impl BoxRow {
                 .map(|chunk| (chunk.clone(), paint(BANNER_ACCENT, &chunk)))
                 .collect(),
             BoxRow::Rule(label) => {
-                let prefix = format!("── {} ", label);
+                let prefix = format!("── {label} ");
                 let fill = inner.saturating_sub(prefix.chars().count());
                 let plain = format!("{}{}", prefix, "─".repeat(fill));
                 vec![(plain.clone(), paint(BANNER_DIM, &plain))]
@@ -274,14 +274,20 @@ fn agent_rows(agents: &[AgentEntry]) -> Vec<BoxRow> {
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
 pub enum TunnelStatus {
     Disabled,       // --no-tunnel
-    Active(String), // reachable https URL
+    Active(String), // reachable https URL, verified by the supervisor's edge probe
+    // supervisor still converging; identity URL from tunnel.json when one exists
+    Connecting(Option<String>),
     Failed(String), // wanted, but couldn't be established — concise reason
 }
 
 impl TunnelStatus {
-    pub fn url(&self) -> Option<&str> {
+    /// The URL worth advertising to a human: a verified Active URL, or the
+    /// identity URL of a tunnel the supervisor is still connecting (live within
+    /// seconds on a healthy network, so the banner shows it rather than hiding
+    /// the address).
+    pub fn advertised_url(&self) -> Option<&str> {
         match self {
-            TunnelStatus::Active(url) => Some(url),
+            TunnelStatus::Active(url) | TunnelStatus::Connecting(Some(url)) => Some(url),
             _ => None,
         }
     }
@@ -314,30 +320,6 @@ pub struct Status {
 }
 
 impl Status {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        version: String,
-        user: String,
-        port: u16,
-        dev_mode: bool,
-        expose_lan: bool,
-        lan_url: Option<String>,
-        tunnel: TunnelStatus,
-        agents: Vec<AgentEntry>,
-    ) -> Self {
-        Status {
-            version,
-            user,
-            port,
-            dev_mode,
-            expose_lan,
-            lan_url,
-            tunnel,
-            agents,
-            pid: std::process::id(),
-        }
-    }
-
     /// Sole owner of the `status.json` path.
     fn path(config: &Path) -> PathBuf {
         config.join("status.json")
@@ -400,12 +382,14 @@ impl Status {
     /// in rather than persisted, so the secret never lands in `status.json`.
     pub fn print_banner(&self, api_key: &str) {
         let local_url = format!("http://localhost:{}", self.port + 1);
-        let tunnel_url = self.tunnel.url();
+        let tunnel_url = self.tunnel.advertised_url();
 
-        // enabled = tunnel up; disabled = --no-tunnel; error: <reason> = a tunnel
-        // was wanted but couldn't be established (no creds, dead tunnel, API error).
+        // enabled = tunnel verified up; connecting… = supervisor converging;
+        // disabled = --no-tunnel; error: <reason> = a tunnel was wanted but
+        // couldn't be established (no creds, dead tunnel, API error).
         let tunnel_desc = match &self.tunnel {
             TunnelStatus::Active(_) => "enabled".to_string(),
+            TunnelStatus::Connecting(_) => "connecting…".to_string(),
             TunnelStatus::Disabled => "disabled".to_string(),
             TunnelStatus::Failed(reason) => format!("error: {}", first_line_truncated(reason, 100)),
         };
@@ -495,8 +479,11 @@ impl Status {
 /// without delivering a signal — enough to confirm a persisted `status.json`
 /// belongs to the currently-running daemon (both run as the same user).
 pub fn pid_is_live(pid: u32) -> bool {
+    let Ok(pid) = i32::try_from(pid) else {
+        return false;
+    };
     // SAFETY: signal 0 performs only existence/permission checks; nothing is sent.
-    unsafe { libc::kill(pid as i32, 0) == 0 }
+    unsafe { libc::kill(pid, 0) == 0 }
 }
 
 /// Render the banner from `status.json` for the `vestad status` / systemd-install
@@ -504,16 +491,13 @@ pub fn pid_is_live(pid: u32) -> bool {
 /// a stopped or previous daemon never shows a misleading box.
 pub fn print_status_banner(config: &Path, api_key: Option<&str>) {
     match Status::load(config) {
-        Some(status) if pid_is_live(status.pid) => match api_key {
-            Some(key) => status.print_banner(key),
-            None => {
-                eprintln!();
-                eprintln!(
-                    "  {}",
-                    paint(BANNER_DIM, "vestad is running (api key unavailable)")
-                );
-                eprintln!();
-            }
+        Some(status) if pid_is_live(status.pid) => if let Some(key) = api_key { status.print_banner(key) } else {
+            eprintln!();
+            eprintln!(
+                "  {}",
+                paint(BANNER_DIM, "vestad is running (api key unavailable)")
+            );
+            eprintln!();
         },
         _ => {
             eprintln!();
@@ -590,18 +574,21 @@ mod tests {
         for tunnel in [
             TunnelStatus::Disabled,
             TunnelStatus::Active("https://host.example/".into()),
+            TunnelStatus::Connecting(Some("https://host.example/".into())),
+            TunnelStatus::Connecting(None),
             TunnelStatus::Failed("invalid token".into()),
         ] {
-            let status = Status::new(
-                "0.1.0".into(),
-                "emi".into(),
-                8080,
-                true,
-                false,
-                None,
-                tunnel.clone(),
-                Vec::new(),
-            );
+            let status = Status {
+                version: "0.1.0".into(),
+                user: "emi".into(),
+                port: 8080,
+                dev_mode: true,
+                expose_lan: false,
+                lan_url: None,
+                tunnel: tunnel.clone(),
+                agents: Vec::new(),
+                pid: std::process::id(),
+            };
             let json = serde_json::to_string(&status).expect("serialize");
             let back: Status = serde_json::from_str(&json).expect("deserialize");
             assert!(back.tunnel == tunnel);
@@ -622,19 +609,39 @@ mod tests {
                 status: None,
             },
         ];
-        let status = Status::new(
-            "0.1.0".into(),
-            "emi".into(),
-            8080,
-            false,
-            false,
-            None,
-            TunnelStatus::Disabled,
-            agents.clone(),
-        );
+        let status = Status {
+            version: "0.1.0".into(),
+            user: "emi".into(),
+            port: 8080,
+            dev_mode: false,
+            expose_lan: false,
+            lan_url: None,
+            tunnel: TunnelStatus::Disabled,
+            agents: agents.clone(),
+            pid: std::process::id(),
+        };
         let json = serde_json::to_string(&status).expect("serialize");
         let back: Status = serde_json::from_str(&json).expect("deserialize");
         assert!(back.agents == agents);
+    }
+
+    #[test]
+    fn advertised_url_covers_active_and_connecting_with_url() {
+        let url = "https://fox.example";
+        assert_eq!(
+            TunnelStatus::Active(url.into()).advertised_url(),
+            Some(url)
+        );
+        assert_eq!(
+            TunnelStatus::Connecting(Some(url.into())).advertised_url(),
+            Some(url)
+        );
+        assert_eq!(TunnelStatus::Connecting(None).advertised_url(), None);
+        assert_eq!(TunnelStatus::Disabled.advertised_url(), None);
+        assert_eq!(
+            TunnelStatus::Failed("x".into()).advertised_url(),
+            None
+        );
     }
 
     #[test]

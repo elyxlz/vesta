@@ -20,9 +20,14 @@ import json
 
 import websockets
 
+BIDI_RESPONSE_TIMEOUT_S = 60.0
+# Navigate/reload with wait="complete" answer only once the page finishes loading, so a slow load needs more room than a generic command.
+NAVIGATE_RESPONSE_TIMEOUT_S = 90.0
+_WAIT_FOR_LOAD_METHODS = frozenset({"browsingContext.navigate", "browsingContext.reload"})
+
 
 class BidiError(Exception):
-    """A BiDi command returned {type: "error"}."""
+    """A BiDi command failed: the server errored or withheld its response."""
 
     def __init__(self, code: str, message: str) -> None:
         super().__init__(f"{code}: {message}")
@@ -92,7 +97,14 @@ class BidiClient:
         future: asyncio.Future[dict] = asyncio.get_running_loop().create_future()
         self._pending[command_id] = future
         await self._ws.send(json.dumps({"id": command_id, "method": method, "params": params or {}}))
-        return await future
+        timeout = NAVIGATE_RESPONSE_TIMEOUT_S if method in _WAIT_FOR_LOAD_METHODS else BIDI_RESPONSE_TIMEOUT_S
+        try:
+            return await asyncio.wait_for(future, timeout=timeout)
+        except TimeoutError:
+            # BidiError, not TimeoutError: the latter is an OSError with an empty str(), which the daemon relays as {"error": ""}.
+            raise BidiError("timeout", f"no response to {method!r} within {timeout}s") from None
+        finally:
+            self._pending.pop(command_id, None)
 
     async def new_session(self) -> str:
         """Open a session and return the first top-level browsing-context id."""

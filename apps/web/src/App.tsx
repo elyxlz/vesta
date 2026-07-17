@@ -8,11 +8,13 @@ import { GatewayProvider, useGateway } from "@/providers/GatewayProvider";
 import { NotificationProvider } from "@/providers/NotificationProvider";
 import { InsetFrame } from "@/components/InsetFrame";
 import { WhatsNewDialog } from "@/components/WhatsNew";
-import { isTauri } from "@/lib/env";
-import { cn } from "@/lib/utils";
 import { router } from "@/router";
 import { useIsMobile } from "./hooks/use-mobile";
-import { useTauri } from "@/providers/TauriProvider";
+import { useRuntime } from "@/providers/RuntimeProvider";
+
+function openAgent(agentName: string): void {
+  void router.navigate(`/agent/${encodeURIComponent(agentName)}`);
+}
 
 function AppContent() {
   const { loading, initialized, setLoading } = useAuth();
@@ -44,8 +46,8 @@ function AppContent() {
 
 export default function App() {
   const isMobile = useIsMobile();
-  const { isLinux } = useTauri();
-  const isFullscreen = isMobile || isTauri;
+  const { isDesktopApp } = useRuntime();
+  const isFullscreen = isMobile || isDesktopApp;
 
   const content = (
     <div className="relative flex min-h-0 flex-1 flex-col">
@@ -54,7 +56,7 @@ export default function App() {
           <TooltipProvider delayDuration={300}>
             <AuthProvider>
               <GatewayProvider>
-                <NotificationProvider>
+                <NotificationProvider onOpenAgent={openAgent}>
                   <AppContent />
                 </NotificationProvider>
               </GatewayProvider>
@@ -70,15 +72,10 @@ export default function App() {
     return <InsetFrame>{content}</InsetFrame>;
   }
 
-  // Mobile / Tauri: the OS window is the frame, so just the muted surface
-  // (plus Linux Tauri window-corner rounding) and safe-area insets.
+  // Mobile / desktop app: the OS window is the frame, so just the muted
+  // surface and safe-area insets.
   return (
-    <div
-      className={cn(
-        "flex min-h-0 flex-1 flex-col bg-muted",
-        isLinux && isTauri && "overflow-hidden rounded-xl",
-      )}
-    >
+    <div className="flex min-h-0 flex-1 flex-col bg-muted">
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)]">
         {content}
       </div>

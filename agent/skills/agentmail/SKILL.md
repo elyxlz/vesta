@@ -50,7 +50,7 @@ agentmail inboxes:messages send \
   --html "<p>HTML body</p>"
 ```
 
-Free tier caps: 3,000/month, 100/day. The CLI surfaces AgentMail's error
+The CLI surfaces AgentMail's error
 body verbatim on failure. Pass both `--text` and `--html` when you can -
 text-only sends score worse on spam filters; HTML-only breaks for clients
 that strip HTML.
@@ -69,24 +69,13 @@ agentmail inboxes:messages reply \
 
 AgentMail POSTs each inbound message to a webhook at
 `${VESTAD_TUNNEL}/agents/${AGENT_NAME}/agentmail/webhook?secret=…`. The
-local FastAPI service (`agentmail serve`) verifies the secret, writes a
-JSON file to `~/agent/notifications/`, and the agent's notification loop
-picks it up like any other source.
+local FastAPI service (`agentmail serve`) verifies the secret and writes a
+JSON file to `~/agent/notifications/`.
 
 ## Notification shape
 
-```json
-{
-  "source": "agentmail",
-  "from": "sender@example.com",
-  "subject": "...",
-  "thread_id": "2719807e-deeb-4edb-b65b-c52e250e6c1a",
-  "in_reply_to": "<parent-id@email.amazonses.com>"
-}
-```
-
-Also present: `type`, `message_id`, `to`, `body_text`, `body_html`,
-`references`, `labels`, `received_at`.
+Fields: `source` (`agentmail`), `type`, `from`, `to`, `subject`, `thread_id`,
+`in_reply_to`, `message_id`, `body_text`, `body_html`, `references`, `labels`, `received_at`.
 
 ## Configuration storage
 
@@ -96,9 +85,6 @@ Also present: `type`, `message_id`, `to`, `body_text`, `body_html`,
 | Webhook secret | env var `AGENTMAIL_WEBHOOK_SECRET`, persisted to `~/.bashrc` |
 | Inbox id, address, webhook id, username | `~/.agentmail/config.json` |
 | Official npm CLI | `~/.agentmail/node_modules/.bin/agentmail` |
-
-`~/.bashrc` is sourced by the agent process on container start, so secrets
-persist across restarts without any host-side mechanism.
 
 ## When to use this vs cloudflare-email
 

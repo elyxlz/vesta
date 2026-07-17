@@ -3,7 +3,6 @@
 from pathlib import Path
 
 import pytest
-
 from tasks_cli import commands, db
 from tasks_cli.config import Config
 

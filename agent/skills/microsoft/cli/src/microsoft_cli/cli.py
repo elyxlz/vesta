@@ -1,4 +1,5 @@
 import argparse
+import contextlib
 import json
 import logging
 import os
@@ -9,11 +10,11 @@ from pathlib import Path
 
 import httpx
 
+from . import auth_commands, backend, block, calendar, email, folders, monitor, notifications, notify, owa_rest, owa_rest_commands, teams
+from . import format as fmt
 from .config import Config
-from . import auth_commands, email, calendar, monitor, notifications, block, folders, notify, format as fmt
-from . import backend, owa_rest, owa_rest_commands, teams
 from .context import MicrosoftContext
-
+from .payloads import EventFields, EventPatch, MailDraft
 
 # Commands whose effect is to actually transmit mail. In draft-only mode these are
 # refused before any Graph/OWA-REST call; drafting (`email draft`) stays allowed.
@@ -31,10 +32,8 @@ def _write_pid(config):
 
 
 def _remove_pid(config):
-    try:
+    with contextlib.suppress(FileNotFoundError):
         (config.data_dir / "serve.pid").unlink()
-    except FileNotFoundError:
-        pass
 
 
 def _add_format_flags(parser: argparse.ArgumentParser) -> None:
@@ -61,11 +60,33 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="microsoft")
     group = parser.add_subparsers(dest="group", required=True)
 
-    # serve
     p_serve = group.add_parser("serve")
     p_serve.add_argument("--notifications-dir", required=True)
 
-    # auth
+    _add_auth_parsers(group)
+    email_sub = _add_email_parsers(group)
+    folder_sub = _add_folder_parsers(group)
+    _add_notify_parsers(group)
+    cal_sub = _add_calendar_parsers(group)
+    teams_sub = _add_teams_parsers(group)
+
+    # Backend selector on every email/calendar/folder subcommand.
+    # auto     - Graph first; on a permission failure fall back to OWA REST (if a captured token exists).
+    # graph    - force the official Graph API.
+    # owa-rest - force the OWA REST path (browser-captured token; requires: microsoft auth owa-login).
+    for sub in (email_sub, cal_sub, folder_sub, teams_sub):
+        for sp in sub.choices.values():
+            sp.add_argument(
+                "--backend",
+                choices=[backend.AUTO, backend.GRAPH, backend.OWA_REST],
+                default=backend.AUTO,
+                help="Path: auto (Graph then OWA-REST fallback), graph, or owa-rest (browser-captured token; requires auth owa-login).",
+            )
+
+    return parser
+
+
+def _add_auth_parsers(group) -> None:
     auth_parser = group.add_parser("auth")
     auth_sub = auth_parser.add_subparsers(dest="command", required=True)
     auth_sub.add_parser("login")
@@ -109,10 +130,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--token", default=None, help="Save a token the user extracted from their own signed-in Teams (creds never reach the agent)."
     )
 
-    # email
+
+def _add_email_parsers(group):
     email_parser = group.add_parser("email")
     email_sub = email_parser.add_subparsers(dest="command", required=True)
+    _add_email_read_parsers(email_sub)
+    _add_email_compose_parsers(email_sub)
+    _add_email_manage_parsers(email_sub)
+    return email_sub
 
+
+def _add_email_read_parsers(email_sub) -> None:
     p_list_emails = email_sub.add_parser("list")
     p_list_emails.add_argument("--account", required=True)
     p_list_emails.add_argument("--folder", default="inbox")
@@ -132,6 +160,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_get_email.add_argument("--no-attachments", action="store_true")
     p_get_email.add_argument("--save-to", default=None)
 
+    p_search = email_sub.add_parser("search")
+    p_search.add_argument("--account", required=True)
+    p_search.add_argument("--query", required=True)
+    p_search.add_argument("--limit", type=int, default=10)
+    p_search.add_argument("--folder", default=None)
+    _add_format_flags(p_search)
+
+    p_attachment = email_sub.add_parser("attachment")
+    p_attachment.add_argument("--account", required=True)
+    p_attachment.add_argument("--email-id", required=True)
+    p_attachment.add_argument("--attachment-id", default=None)
+    p_attachment.add_argument("--save-path", default=None)
+    p_attachment.add_argument("--list", action="store_true", dest="list_only", help="List attachment metadata only")
+    p_attachment.add_argument("--all", action="store_true", dest="download_all", help="Download every attachment to --out-dir")
+    p_attachment.add_argument("--out-dir", default=None, help="Directory for --all downloads (default ~/.microsoft/attachments/<email-id>)")
+
+
+def _add_email_compose_parsers(email_sub) -> None:
     p_send = email_sub.add_parser("send")
     p_send.add_argument("--account", required=True)
     p_send.add_argument("--to", nargs="+", default=None)
@@ -179,6 +225,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_forward.add_argument("--attachments", nargs="+", default=None)
     p_forward.add_argument("--html", action="store_true")
 
+
+def _add_email_manage_parsers(email_sub) -> None:
     p_move = email_sub.add_parser("move")
     p_move.add_argument("--account", required=True)
     p_move.add_argument("--id", required=True, dest="email_id")
@@ -187,22 +235,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_archive = email_sub.add_parser("archive")
     p_archive.add_argument("--account", required=True)
     p_archive.add_argument("--id", required=True, dest="email_id")
-
-    p_attachment = email_sub.add_parser("attachment")
-    p_attachment.add_argument("--account", required=True)
-    p_attachment.add_argument("--email-id", required=True)
-    p_attachment.add_argument("--attachment-id", default=None)
-    p_attachment.add_argument("--save-path", default=None)
-    p_attachment.add_argument("--list", action="store_true", dest="list_only", help="List attachment metadata only")
-    p_attachment.add_argument("--all", action="store_true", dest="download_all", help="Download every attachment to --out-dir")
-    p_attachment.add_argument("--out-dir", default=None, help="Directory for --all downloads (default ~/.microsoft/attachments/<email-id>)")
-
-    p_search = email_sub.add_parser("search")
-    p_search.add_argument("--account", required=True)
-    p_search.add_argument("--query", required=True)
-    p_search.add_argument("--limit", type=int, default=10)
-    p_search.add_argument("--folder", default=None)
-    _add_format_flags(p_search)
 
     p_update = email_sub.add_parser("update")
     p_update.add_argument("--account", required=True)
@@ -230,7 +262,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_unblock.add_argument("--account", required=True)
     p_unblock.add_argument("--sender", required=True, help="Email address of sender to unblock")
 
-    # folder
+
+def _add_folder_parsers(group):
     folder_parser = group.add_parser("folder")
     folder_sub = folder_parser.add_subparsers(dest="command", required=True)
 
@@ -256,7 +289,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_folder_delete.add_argument("--account", required=True)
     p_folder_delete.add_argument("--id", required=True, dest="folder_id")
 
-    # notify
+    return folder_sub
+
+
+def _add_notify_parsers(group) -> None:
     notify_parser = group.add_parser("notify")
     notify_sub = notify_parser.add_subparsers(dest="command", required=True)
 
@@ -273,7 +309,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_notify_remove.add_argument("--account", required=True)
     p_notify_remove.add_argument("--folder", required=True)
 
-    # calendar
+
+def _add_calendar_parsers(group):
     cal_parser = group.add_parser("calendar")
     cal_sub = cal_parser.add_subparsers(dest="command", required=True)
 
@@ -308,6 +345,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_create_event.add_argument("--recurrence", choices=["daily", "weekly", "monthly", "yearly"], default=None)
     p_create_event.add_argument("--recurrence-end-date", default=None)
 
+    _add_calendar_update_parser(cal_sub)
+
+    p_delete_event = cal_sub.add_parser("delete")
+    p_delete_event.add_argument("--account", required=True)
+    p_delete_event.add_argument("--id", required=True, dest="event_id")
+    p_delete_event.add_argument("--no-cancellation", action="store_true")
+
+    p_respond = cal_sub.add_parser("respond")
+    p_respond.add_argument("--account", required=True)
+    p_respond.add_argument("--id", required=True, dest="event_id")
+    p_respond.add_argument("--response", choices=["accept", "decline", "tentativelyAccept"], default="accept")
+    p_respond.add_argument("--message", default=None)
+
+    return cal_sub
+
+
+def _add_calendar_update_parser(cal_sub) -> None:
     p_update_event = cal_sub.add_parser("update")
     p_update_event.add_argument("--account", required=True)
     p_update_event.add_argument("--id", required=True, dest="event_id")
@@ -326,20 +380,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_update_event.add_argument("--reminder-minutes", type=int, default=None, help="Minutes before start to fire the reminder.")
 
-    p_delete_event = cal_sub.add_parser("delete")
-    p_delete_event.add_argument("--account", required=True)
-    p_delete_event.add_argument("--id", required=True, dest="event_id")
-    p_delete_event.add_argument("--no-cancellation", action="store_true")
 
-    p_respond = cal_sub.add_parser("respond")
-    p_respond.add_argument("--account", required=True)
-    p_respond.add_argument("--id", required=True, dest="event_id")
-    p_respond.add_argument("--response", choices=["accept", "decline", "tentativelyAccept"], default="accept")
-    p_respond.add_argument("--message", default=None)
-
-    # teams
+def _add_teams_parsers(group):
     teams_parser = group.add_parser("teams")
     teams_sub = teams_parser.add_subparsers(dest="command", required=True)
+    _add_teams_chat_parsers(teams_sub)
+    _add_teams_channel_parsers(teams_sub)
+    return teams_sub
+
+
+def _add_teams_chat_parsers(teams_sub) -> None:
 
     p_chats = teams_sub.add_parser("chats", help="List recent chats (most recent message first).")
     p_chats.add_argument("--account", required=True)
@@ -365,6 +415,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_chat_start.add_argument("--topic", default=None, help="Group chat topic (ignored for one-on-one).")
     p_chat_start.add_argument("--html", action="store_true")
 
+
+def _add_teams_channel_parsers(teams_sub) -> None:
     p_teams_list = teams_sub.add_parser("teams", help="List the teams you have joined.")
     p_teams_list.add_argument("--account", required=True)
     _add_format_flags(p_teams_list)
@@ -408,21 +460,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_clear_presence = teams_sub.add_parser("clear-presence", help="Clear your preferred presence.")
     p_clear_presence.add_argument("--account", required=True)
-
-    # Backend selector on every email/calendar/folder subcommand.
-    # auto     - Graph first; on a permission failure fall back to OWA REST (if a captured token exists).
-    # graph    - force the official Graph API.
-    # owa-rest - force the OWA REST path (browser-captured token; requires: microsoft auth owa-login).
-    for sub in (email_sub, cal_sub, folder_sub, teams_sub):
-        for sp in sub.choices.values():
-            sp.add_argument(
-                "--backend",
-                choices=[backend.AUTO, backend.GRAPH, backend.OWA_REST],
-                default=backend.AUTO,
-                help="Path: auto (Graph then OWA-REST fallback), graph, or owa-rest (browser-captured token; requires auth owa-login).",
-            )
-
-    return parser
 
 
 def main():
@@ -495,34 +532,29 @@ def _print_result(args, result) -> None:
     print(json.dumps(fmt.strip_odata(result), indent=2))
 
 
+_AUTH_HANDLERS = {
+    "list": lambda _args, config: auth_commands.list_accounts(config),
+    "setup": lambda args, config: auth_commands.auth_setup(
+        config,
+        account_email=args.account,
+        use_browser=args.browser,
+        flow_cache=args.flow_cache,
+        do_capture=args.capture,
+        force_device=args.device,
+    ),
+    "login": lambda _args, config: auth_commands.authenticate_account(config),
+    "complete": lambda args, config: auth_commands.complete_authentication(config, flow_cache=args.flow_cache),
+    "remove": lambda args, config: auth_commands.remove_account(config, account_email=args.account),
+    "owa-login": lambda args, config: auth_commands.owa_login(config, account_email=args.account, use_device=args.device, token=args.token),
+    "owa-complete": lambda args, config: auth_commands.owa_complete(config, account_email=args.account, flow_cache=args.flow_cache),
+    "teams-login": lambda _args, config: auth_commands.teams_login(config),
+    "teams-complete": lambda args, config: auth_commands.teams_complete(config, flow_cache=args.flow_cache),
+    "teams-capture": lambda args, config: auth_commands.teams_capture(config, account_email=args.account, token=args.token),
+}
+
+
 def _dispatch_auth(args, config):
-    if args.command == "list":
-        return auth_commands.list_accounts(config)
-    elif args.command == "setup":
-        return auth_commands.auth_setup(
-            config,
-            account_email=args.account,
-            use_browser=args.browser,
-            flow_cache=args.flow_cache,
-            do_capture=args.capture,
-            force_device=args.device,
-        )
-    elif args.command == "login":
-        return auth_commands.authenticate_account(config)
-    elif args.command == "complete":
-        return auth_commands.complete_authentication(config, flow_cache=args.flow_cache)
-    elif args.command == "remove":
-        return auth_commands.remove_account(config, account_email=args.account)
-    elif args.command == "owa-login":
-        return auth_commands.owa_login(config, account_email=args.account, use_device=args.device, token=args.token)
-    elif args.command == "owa-complete":
-        return auth_commands.owa_complete(config, account_email=args.account, flow_cache=args.flow_cache)
-    elif args.command == "teams-login":
-        return auth_commands.teams_login(config)
-    elif args.command == "teams-complete":
-        return auth_commands.teams_complete(config, flow_cache=args.flow_cache)
-    elif args.command == "teams-capture":
-        return auth_commands.teams_capture(config, account_email=args.account, token=args.token)
+    return _AUTH_HANDLERS[args.command](args, config) if args.command in _AUTH_HANDLERS else None
 
 
 def _graph_has_account(config, account_email: str) -> bool:
@@ -549,6 +581,70 @@ def _route(args, config, account_email, graph_fn, rest_fn):
     return backend.run(backend.AUTO, graph_fn, rest_fn)
 
 
+def _email_routes():
+    """Routed email commands: (graph implementation, OWA REST implementation, per-command kwargs from args).
+    `account_email` is merged in at dispatch time. Built per dispatch so module attributes stay late-bound."""
+    return {
+        "list": (email.list_emails, owa_rest_commands.list_emails, lambda a: {"folder": a.folder, "limit": a.limit}),
+        "get": (
+            email.get_email,
+            owa_rest_commands.get_email,
+            lambda a: {"email_id": a.email_id, "include_attachments": not a.no_attachments, "save_to_file": a.save_to},
+        ),
+        "send": (
+            email.send_email,
+            owa_rest_commands.send_email,
+            lambda a: {"mail": MailDraft(to=a.to, subject=a.subject, body=a.body, cc=a.cc, bcc=a.bcc, attachments=a.attachments, html=a.html)},
+        ),
+        "draft": (
+            email.create_email_draft,
+            owa_rest_commands.create_email_draft,
+            lambda a: {
+                "mail": MailDraft(
+                    to=a.to,
+                    subject=a.subject,
+                    body=a.body,
+                    cc=a.cc,
+                    bcc=a.bcc,
+                    attachments=a.attachments,
+                    reply_to_id=a.reply_to_id,
+                    forward_id=a.forward_id,
+                )
+            },
+        ),
+        "reply": (
+            email.reply_to_email,
+            owa_rest_commands.reply_to_email,
+            lambda a: {"email_id": a.email_id, "body": a.body, "attachments": a.attachments, "reply_all": a.reply_all, "html": a.html},
+        ),
+        "forward": (
+            email.forward_email,
+            owa_rest_commands.forward_email,
+            lambda a: {
+                "email_id": a.email_id,
+                "mail": MailDraft(to=a.to, body=a.body, cc=a.cc, attachments=a.attachments, html=a.html),
+            },
+        ),
+        "move": (email.move_email, owa_rest_commands.move_email, lambda a: {"email_id": a.email_id, "to_folder": a.to_folder}),
+        "archive": (email.archive_email, owa_rest_commands.archive_email, lambda a: {"email_id": a.email_id}),
+        "search": (
+            email.search_emails,
+            owa_rest_commands.search_emails,
+            lambda a: {"query": a.query, "limit": a.limit, "folder": a.folder},
+        ),
+        "update": (
+            email.update_email,
+            owa_rest_commands.update_email,
+            lambda a: {"email_id": a.email_id, "is_read": a.is_read, "categories": a.categories, "flagged": a.flagged},
+        ),
+        "delete": (
+            email.delete_email,
+            owa_rest_commands.delete_email,
+            lambda a: {"email_id": a.email_id, "sender": a.sender, "permanent": a.permanent},
+        ),
+    }
+
+
 def _dispatch_email(args, config, client):
     acct = args.account
 
@@ -557,56 +653,18 @@ def _dispatch_email(args, config, client):
     if args.command in _TRANSMIT_COMMANDS and _draft_only_enabled():
         raise RuntimeError(_DRAFT_ONLY_MESSAGE)
 
-    def route(graph_fn, rest_fn):
-        return _route(args, config, acct, graph_fn, rest_fn)
-
-    if args.command == "list":
-        # `list --search/--query` is an alias for `email search`: run the identical search path.
-        if args.search is not None:
-            # Match `email search` semantics: default to searching all folders (folder=None)
-            # unless the caller explicitly narrowed it with --folder.
-            query: str = args.search
-            folder = args.folder if args.folder != "inbox" else None
-            return route(
-                lambda: email.search_emails(config, client, account_email=acct, query=query, limit=args.limit, folder=folder),
-                lambda: owa_rest_commands.search_emails(config, client, account_email=acct, query=query, limit=args.limit, folder=folder),
-            )
-        kw = dict(account_email=acct, folder=args.folder, limit=args.limit)
-        return route(lambda: email.list_emails(config, client, **kw), lambda: owa_rest_commands.list_emails(config, client, **kw))
-    elif args.command == "get":
-        kw = dict(account_email=acct, email_id=args.email_id, include_attachments=not args.no_attachments, save_to_file=args.save_to)
-        return route(lambda: email.get_email(config, client, **kw), lambda: owa_rest_commands.get_email(config, client, **kw))
-    elif args.command == "send":
-        kw = dict(
-            account_email=acct,
-            to=args.to,
-            subject=args.subject,
-            body=args.body,
-            cc=args.cc,
-            bcc=args.bcc,
-            attachments=args.attachments,
-            html=args.html,
+    if args.command == "list" and args.search is not None:
+        # `list --search/--query` is an alias for `email search`: run the identical search path,
+        # defaulting to all folders (folder=None) unless the caller explicitly narrowed it.
+        kw = {"account_email": acct, "query": args.search, "limit": args.limit, "folder": args.folder if args.folder != "inbox" else None}
+        return _route(
+            args,
+            config,
+            acct,
+            lambda: email.search_emails(config, client, **kw),
+            lambda: owa_rest_commands.search_emails(config, client, **kw),
         )
-        return route(lambda: email.send_email(config, client, **kw), lambda: owa_rest_commands.send_email(config, client, **kw))
-    elif args.command == "draft":
-        kw = dict(
-            account_email=acct,
-            to=args.to,
-            subject=args.subject,
-            body=args.body,
-            cc=args.cc,
-            bcc=args.bcc,
-            attachments=args.attachments,
-            reply_to_id=args.reply_to_id,
-            forward_id=args.forward_id,
-        )
-        return route(lambda: email.create_email_draft(config, client, **kw), lambda: owa_rest_commands.create_email_draft(config, client, **kw))
-    elif args.command == "reply":
-        kw = dict(
-            account_email=acct, email_id=args.email_id, body=args.body, attachments=args.attachments, reply_all=args.reply_all, html=args.html
-        )
-        return route(lambda: email.reply_to_email(config, client, **kw), lambda: owa_rest_commands.reply_to_email(config, client, **kw))
-    elif args.command == "reply-draft":
+    if args.command == "reply-draft":
         # Graph-only: leaving a properly-threaded unsent draft over the preserved quote
         # has no OWA REST counterpart, so this bypasses the backend router.
         return email.reply_draft(
@@ -619,49 +677,44 @@ def _dispatch_email(args, config, client):
             reply_all=args.reply_all,
             replace_draft=args.replace_draft,
         )
-    elif args.command == "forward":
-        kw = dict(
-            account_email=acct, email_id=args.email_id, to=args.to, body=args.body, cc=args.cc, attachments=args.attachments, html=args.html
-        )
-        return route(lambda: email.forward_email(config, client, **kw), lambda: owa_rest_commands.forward_email(config, client, **kw))
-    elif args.command == "move":
-        kw = dict(account_email=acct, email_id=args.email_id, to_folder=args.to_folder)
-        return route(lambda: email.move_email(config, client, **kw), lambda: owa_rest_commands.move_email(config, client, **kw))
-    elif args.command == "archive":
-        kw = dict(account_email=acct, email_id=args.email_id)
-        return route(lambda: email.archive_email(config, client, **kw), lambda: owa_rest_commands.archive_email(config, client, **kw))
-    elif args.command == "attachment":
+    if args.command == "attachment":
         return _dispatch_attachment(args, config, client)
-    elif args.command == "search":
-        kw = dict(account_email=acct, query=args.query, limit=args.limit, folder=args.folder)
-        return route(lambda: email.search_emails(config, client, **kw), lambda: owa_rest_commands.search_emails(config, client, **kw))
-    elif args.command == "update":
-        kw = dict(account_email=acct, email_id=args.email_id, is_read=args.is_read, categories=args.categories, flagged=args.flagged)
-        return route(lambda: email.update_email(config, client, **kw), lambda: owa_rest_commands.update_email(config, client, **kw))
-    elif args.command == "delete":
-        kw = dict(account_email=acct, email_id=args.email_id, sender=args.sender, permanent=args.permanent)
-        return route(lambda: email.delete_email(config, client, **kw), lambda: owa_rest_commands.delete_email(config, client, **kw))
-    elif args.command == "block":
-        if args.list:
-            return route(
-                lambda: block.list_block_rules(config, client, account_email=acct),
-                lambda: owa_rest_commands.list_block_rules(config, client, account_email=acct),
-            )
-        return route(
-            lambda: block.block_sender(config, client, account_email=acct, sender=args.sender),
-            lambda: owa_rest_commands.block_sender(config, client, account_email=acct, sender=args.sender),
-        )
-    elif args.command == "unblock":
+    if args.command in ("block", "unblock"):
+        return _dispatch_block(args, config, client)
+    routes = _email_routes()
+    if args.command in routes:
+        graph_impl, rest_impl, kw_of = routes[args.command]
+        kw = {"account_email": acct, **kw_of(args)}
+        return _route(args, config, acct, lambda: graph_impl(config, client, **kw), lambda: rest_impl(config, client, **kw))
+    return None
+
+
+def _dispatch_block(args, config, client):
+    acct = args.account
+
+    def route(graph_fn, rest_fn):
+        return _route(args, config, acct, graph_fn, rest_fn)
+
+    if args.command == "unblock":
         return route(
             lambda: block.unblock_sender(config, client, account_email=acct, sender=args.sender),
             lambda: owa_rest_commands.unblock_sender(config, client, account_email=acct, sender=args.sender),
         )
+    if args.list:
+        return route(
+            lambda: block.list_block_rules(config, client, account_email=acct),
+            lambda: owa_rest_commands.list_block_rules(config, client, account_email=acct),
+        )
+    return route(
+        lambda: block.block_sender(config, client, account_email=acct, sender=args.sender),
+        lambda: owa_rest_commands.block_sender(config, client, account_email=acct, sender=args.sender),
+    )
 
 
 def _dispatch_attachment(args, config, client):
     acct = args.account
     if args.list_only:
-        kw = dict(account_email=acct, email_id=args.email_id)
+        kw = {"account_email": acct, "email_id": args.email_id}
         return _route(
             args,
             config,
@@ -671,7 +724,7 @@ def _dispatch_attachment(args, config, client):
         )
     if args.download_all:
         out_dir = args.out_dir or str(config.data_dir / "attachments" / args.email_id)
-        kw = dict(account_email=acct, email_id=args.email_id, out_dir=out_dir)
+        kw = {"account_email": acct, "email_id": args.email_id, "out_dir": out_dir}
         return _route(
             args,
             config,
@@ -681,7 +734,7 @@ def _dispatch_attachment(args, config, client):
         )
     if not args.attachment_id or not args.save_path:
         raise ValueError("Provide --attachment-id and --save-path to download one attachment, or use --list / --all")
-    kw = dict(account_email=acct, email_id=args.email_id, attachment_id=args.attachment_id, save_path=args.save_path)
+    kw = {"account_email": acct, "email_id": args.email_id, "attachment_id": args.attachment_id, "save_path": args.save_path}
     return _route(
         args,
         config,
@@ -702,101 +755,132 @@ def _dispatch_folder(args, config, client):
             lambda: folders.list_folders(config, client, account_email=acct),
             lambda: owa_rest_commands.list_folders(config, client, account_email=acct),
         )
-    elif args.command == "status":
+    if args.command == "status":
         return route(
             lambda: folders.folder_status(config, client, account_email=acct, folder=args.folder),
             lambda: owa_rest_commands.folder_status(config, client, account_email=acct, folder=args.folder),
         )
-    elif args.command == "create":
+    if args.command == "create":
         return route(
             lambda: folders.create_folder(config, client, account_email=acct, name=args.name, parent_id=args.parent_id),
             lambda: owa_rest_commands.create_folder(config, client, account_email=acct, name=args.name, parent_id=args.parent_id),
         )
-    elif args.command == "rename":
+    if args.command == "rename":
         return route(
             lambda: folders.rename_folder(config, client, account_email=acct, folder_id=args.folder_id, name=args.name),
             lambda: owa_rest_commands.rename_folder(config, client, account_email=acct, folder_id=args.folder_id, name=args.name),
         )
-    elif args.command == "delete":
+    if args.command == "delete":
         return route(
             lambda: folders.delete_folder(config, client, account_email=acct, folder_id=args.folder_id),
             lambda: owa_rest_commands.delete_folder(config, client, account_email=acct, folder_id=args.folder_id),
         )
+    return None
 
 
 def _dispatch_notify(args, config, client):
     if args.command == "list":
         return notify.list_notify(config, client, account_email=args.account)
-    elif args.command == "add":
+    if args.command == "add":
         return notify.add_notify(config, client, account_email=args.account, folder=args.folder, all_folders=args.all_folders)
-    elif args.command == "remove":
+    if args.command == "remove":
         return notify.remove_notify(config, client, account_email=args.account, folder=args.folder)
+    return None
+
+
+def _calendar_routes():
+    """Routed calendar commands, same shape as _email_routes(). The update patch carries the
+    Graph-only reminder knobs; the OWA REST path ignores them."""
+    return {
+        "list": (
+            calendar.list_events,
+            owa_rest_commands.list_events,
+            lambda a: {
+                "calendar_name": a.calendar_name,
+                "days_ahead": a.days_ahead,
+                "days_back": a.days_back,
+                "include_details": not a.no_details,
+                "user_timezone": a.user_timezone,
+            },
+        ),
+        "calendars": (calendar.list_calendars, owa_rest_commands.list_calendars, lambda _a: {}),
+        "get": (calendar.get_event, owa_rest_commands.get_event, lambda a: {"event_id": a.event_id}),
+        "create": (
+            calendar.create_event,
+            owa_rest_commands.create_event,
+            lambda a: {
+                "event": EventFields(
+                    subject=a.subject,
+                    start=a.start,
+                    end=a.end,
+                    location=a.location,
+                    body=a.body,
+                    attendees=a.attendees,
+                    timezone=a.timezone,
+                    calendar_name=a.calendar_name,
+                    is_all_day=a.all_day,
+                    recurrence=a.recurrence,
+                    recurrence_end_date=a.recurrence_end_date,
+                )
+            },
+        ),
+        "update": (
+            calendar.update_event,
+            owa_rest_commands.update_event,
+            lambda a: {
+                "event_id": a.event_id,
+                "patch": EventPatch(
+                    subject=a.subject,
+                    start=a.start,
+                    end=a.end,
+                    location=a.location,
+                    body=a.body,
+                    timezone=a.timezone,
+                    reminder_on=a.reminder_on,
+                    reminder_minutes=a.reminder_minutes,
+                ),
+            },
+        ),
+        "delete": (
+            calendar.delete_event,
+            owa_rest_commands.delete_event,
+            lambda a: {"event_id": a.event_id, "send_cancellation": not a.no_cancellation},
+        ),
+        "respond": (
+            calendar.respond_event,
+            owa_rest_commands.respond_event,
+            lambda a: {"event_id": a.event_id, "response": a.response, "message": a.message},
+        ),
+    }
 
 
 def _dispatch_calendar(args, config, client):
     acct = args.account
+    routes = _calendar_routes()
+    if args.command in routes:
+        graph_impl, rest_impl, kw_of = routes[args.command]
+        kw = {"account_email": acct, **kw_of(args)}
+        return _route(args, config, acct, lambda: graph_impl(config, client, **kw), lambda: rest_impl(config, client, **kw))
+    return None
 
-    def route(graph_fn, rest_fn):
-        return _route(args, config, acct, graph_fn, rest_fn)
 
-    if args.command == "list":
-        kw = dict(
-            account_email=acct,
-            calendar_name=args.calendar_name,
-            days_ahead=args.days_ahead,
-            days_back=args.days_back,
-            include_details=not args.no_details,
-            user_timezone=args.user_timezone,
-        )
-        return route(lambda: calendar.list_events(config, client, **kw), lambda: owa_rest_commands.list_events(config, client, **kw))
-    elif args.command == "calendars":
-        return route(
-            lambda: calendar.list_calendars(config, client, account_email=acct),
-            lambda: owa_rest_commands.list_calendars(config, client, account_email=acct),
-        )
-    elif args.command == "get":
-        return route(
-            lambda: calendar.get_event(config, client, account_email=acct, event_id=args.event_id),
-            lambda: owa_rest_commands.get_event(config, client, account_email=acct, event_id=args.event_id),
-        )
-    elif args.command == "create":
-        kw = dict(
-            account_email=acct,
-            subject=args.subject,
-            start=args.start,
-            end=args.end,
-            location=args.location,
-            body=args.body,
-            attendees=args.attendees,
-            timezone=args.timezone,
-            calendar_name=args.calendar_name,
-            is_all_day=args.all_day,
-            recurrence=args.recurrence,
-            recurrence_end_date=args.recurrence_end_date,
-        )
-        return route(lambda: calendar.create_event(config, client, **kw), lambda: owa_rest_commands.create_event(config, client, **kw))
-    elif args.command == "update":
-        # The reminder knob is Graph-only; the OWA REST update takes the shared fields.
-        shared = dict(
-            account_email=acct,
-            event_id=args.event_id,
-            subject=args.subject,
-            start=args.start,
-            end=args.end,
-            location=args.location,
-            body=args.body,
-            timezone=args.timezone,
-        )
-        return route(
-            lambda: calendar.update_event(config, client, reminder_on=args.reminder_on, reminder_minutes=args.reminder_minutes, **shared),
-            lambda: owa_rest_commands.update_event(config, client, **shared),
-        )
-    elif args.command == "delete":
-        kw = dict(account_email=acct, event_id=args.event_id, send_cancellation=not args.no_cancellation)
-        return route(lambda: calendar.delete_event(config, client, **kw), lambda: owa_rest_commands.delete_event(config, client, **kw))
-    elif args.command == "respond":
-        kw = dict(account_email=acct, event_id=args.event_id, response=args.response, message=args.message)
-        return route(lambda: calendar.respond_event(config, client, **kw), lambda: owa_rest_commands.respond_event(config, client, **kw))
+# Teams commands as (client, token, args) calls; the dispatcher supplies the token per backend.
+_TEAMS_CALLS = {
+    "chats": lambda c, t, a: teams.list_chats(c, t, limit=a.limit),
+    "messages": lambda c, t, a: teams.list_chat_messages(c, t, chat_id=a.chat_id, limit=a.limit),
+    "send": lambda c, t, a: teams.send_chat_message(c, t, chat_id=a.chat_id, body=a.body, html=a.html),
+    "start": lambda c, t, a: teams.start_chat(c, t, members=a.members, body=a.body, topic=a.topic, html=a.html),
+    "teams": lambda c, t, _a: teams.list_teams(c, t),
+    "channels": lambda c, t, a: teams.list_channels(c, t, team_id=a.team_id),
+    "channel-messages": lambda c, t, a: teams.list_channel_messages(c, t, team_id=a.team_id, channel_id=a.channel_id, limit=a.limit),
+    "post": lambda c, t, a: teams.post_channel_message(c, t, team_id=a.team_id, channel_id=a.channel_id, body=a.body, html=a.html),
+    "reply": lambda c, t, a: teams.reply_channel_message(
+        c, t, team_id=a.team_id, channel_id=a.channel_id, message_id=a.message_id, body=a.body, html=a.html
+    ),
+    "presence": lambda c, t, _a: teams.get_presence(c, t),
+    "set-presence": lambda c, t, a: teams.set_presence(c, t, availability=a.availability, expires=a.expires),
+    "clear-presence": lambda c, t, _a: teams.clear_presence(c, t),
+}
 
 
 def _dispatch_teams(args, config, client):
@@ -804,50 +888,21 @@ def _dispatch_teams(args, config, client):
     browser-captured token (owa-rest). backend.run picks per --backend, falling back on a
     permission failure exactly like the mail dispatcher."""
     acct = args.account
+    if args.command not in _TEAMS_CALLS:
+        return None
+    fn = _TEAMS_CALLS[args.command]
 
-    def call(fn):
-        graph_fn = lambda: fn(client, teams.graph_token(config, acct))  # noqa: E731
-        rest_fn = lambda: fn(client, teams.captured_token(config, acct))  # noqa: E731
-        try:
-            return backend.run(args.backend, graph_fn, rest_fn)
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 403:
-                raise PermissionError(
-                    f"the Teams token for {acct} lacks the scope for `teams {args.command}`. Re-authorize: "
-                    f"microsoft auth setup --account {acct} --browser"
-                ) from e
-            raise
-
-    if args.command == "chats":
-        return call(lambda c, t: teams.list_chats(c, t, limit=args.limit))
-    elif args.command == "messages":
-        return call(lambda c, t: teams.list_chat_messages(c, t, chat_id=args.chat_id, limit=args.limit))
-    elif args.command == "send":
-        return call(lambda c, t: teams.send_chat_message(c, t, chat_id=args.chat_id, body=args.body, html=args.html))
-    elif args.command == "start":
-        return call(lambda c, t: teams.start_chat(c, t, members=args.members, body=args.body, topic=args.topic, html=args.html))
-    elif args.command == "teams":
-        return call(lambda c, t: teams.list_teams(c, t))
-    elif args.command == "channels":
-        return call(lambda c, t: teams.list_channels(c, t, team_id=args.team_id))
-    elif args.command == "channel-messages":
-        return call(lambda c, t: teams.list_channel_messages(c, t, team_id=args.team_id, channel_id=args.channel_id, limit=args.limit))
-    elif args.command == "post":
-        return call(
-            lambda c, t: teams.post_channel_message(c, t, team_id=args.team_id, channel_id=args.channel_id, body=args.body, html=args.html)
-        )
-    elif args.command == "reply":
-        return call(
-            lambda c, t: teams.reply_channel_message(
-                c, t, team_id=args.team_id, channel_id=args.channel_id, message_id=args.message_id, body=args.body, html=args.html
-            )
-        )
-    elif args.command == "presence":
-        return call(lambda c, t: teams.get_presence(c, t))
-    elif args.command == "set-presence":
-        return call(lambda c, t: teams.set_presence(c, t, availability=args.availability, expires=args.expires))
-    elif args.command == "clear-presence":
-        return call(lambda c, t: teams.clear_presence(c, t))
+    graph_fn = lambda: fn(client, teams.graph_token(config, acct), args)
+    rest_fn = lambda: fn(client, teams.captured_token(config, acct), args)
+    try:
+        return backend.run(args.backend, graph_fn, rest_fn)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 403:
+            raise PermissionError(
+                f"the Teams token for {acct} lacks the scope for `teams {args.command}`. Re-authorize: "
+                f"microsoft auth setup --account {acct} --browser"
+            ) from e
+        raise
 
 
 def _run_serve(config: Config, notif_dir: Path):
@@ -889,7 +944,7 @@ def _run_serve(config: Config, notif_dir: Path):
 
     shutdown_reason = "unknown"
 
-    def handle_signal(signum, frame):
+    def handle_signal(signum, _frame):
         nonlocal shutdown_reason
         shutdown_reason = signal.Signals(signum).name
         monitor_stop_event.set()

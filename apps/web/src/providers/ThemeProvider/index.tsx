@@ -1,5 +1,5 @@
 import * as React from "react";
-import { isTauri } from "@/lib/env";
+import { native } from "@/lib/native";
 import {
   ThemeProviderContext,
   type ResolvedTheme,
@@ -9,17 +9,12 @@ import {
 
 export { useTheme } from "./context";
 
-const tauriCore = isTauri ? import("@tauri-apps/api/core") : null;
-function tauriInvoke(cmd: string, args?: Record<string, unknown>) {
-  tauriCore?.then(({ invoke }) => invoke(cmd, args));
-}
-
-type ThemeProviderProps = {
+interface ThemeProviderProps {
   children: React.ReactNode;
   defaultTheme?: Theme;
   storageKey?: string;
   disableTransitionOnChange?: boolean;
-};
+}
 
 const COLOR_SCHEME_QUERY = "(prefers-color-scheme: dark)";
 const THEME_VALUES: Theme[] = ["dark", "light", "system"];
@@ -96,9 +91,7 @@ export function ThemeProvider({
     root.style.colorScheme = resolved;
     setResolvedTheme(resolved);
 
-    if (isTauri) {
-      tauriInvoke("set_theme", { theme: resolved });
-    }
+    native.setNativeTheme(resolved);
 
     if (restoreTransitions) {
       restoreTransitions();

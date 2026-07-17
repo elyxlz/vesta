@@ -23,16 +23,15 @@ import dataclasses as dc
 import datetime as dt
 import json
 import logging
-import typing as tp
 import sqlite3
 import time
+import typing as tp
 import weakref
 
 import aiohttp as _aiohttp
 import pydantic as pyd
 from aiohttp import web
 
-from .events import ChatEvent, EventBus, SnapshotChat, SnapshotEvent, UserEvent, VestaEvent
 from .config import (
     ClaudeConfig,
     VestaConfig,
@@ -42,11 +41,11 @@ from .config import (
     update_config_store,
     validate_config_updates,
 )
+from .events import ChatEvent, EventBus, SnapshotChat, SnapshotEvent, UserEvent, VestaEvent
 from .helpers import get_memory_path
 from .models import State
 from .notification import Notification
 from .provider import ProviderAuthState, UsageError, clear_provider, get_usage, set_claude, set_openrouter
-
 
 logger = logging.getLogger("vesta.api")
 
@@ -91,7 +90,15 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
             events, cursor = await asyncio.to_thread(event_bus.recent, channel="app-chat")
             chat = SnapshotChat(events=events, cursor=cursor)
         pending = await asyncio.to_thread(_pending_notification_ids, config)
-        await ws.send_json(SnapshotEvent(type="snapshot", state=event_bus.state, chat=chat, notifications={"pending": pending}))
+        await ws.send_json(
+            SnapshotEvent(
+                type="snapshot",
+                state=event_bus.state,
+                chat=chat,
+                notifications={"pending": pending},
+                config={"timezone": config.timezone},
+            )
+        )
         recv_task = asyncio.create_task(_recv_loop(ws, event_bus, config))
         send_task = asyncio.create_task(_send_loop(ws, sub))
         await asyncio.wait([recv_task, send_task], return_when=asyncio.FIRST_COMPLETED)
@@ -120,7 +127,14 @@ def _write_app_chat_notification(config: VestaConfig, text: str) -> None:
     # text, matching what the app-chat sidecar used to write. model_validate takes the dict so the
     # extra passes the type checker.
     notif = Notification.model_validate(
-        {"timestamp": dt.datetime.now(), "source": "app-chat", "type": "message", "message": text, "interrupt": True}
+        {
+            "timestamp": dt.datetime.now(),
+            "source": "app-chat",
+            "type": "message",
+            "message": text,
+            "interrupt": True,
+            "reply_hint": "reply with `app-chat send`, and think about how you can best show your personality",
+        }
     )
     path = directory / f"{time.time_ns()}-app-chat-message.json"
     atomic_write_text(path, notif.model_dump_json())
@@ -182,7 +196,7 @@ async def _send_loop(ws: web.WebSocketResponse, sub: asyncio.Queue[VestaEvent]) 
     except TimeoutError:
         logger.info("ws send stalled for %.0fs, closing", _SEND_TIMEOUT_S)
     except (ConnectionError, RuntimeError, TypeError) as e:
-        logger.info(f"ws send_loop exited: {type(e).__name__}: {e}")
+        logger.info("ws send_loop exited: %s: %s", type(e).__name__, e)
 
 
 async def _history_handler(request: web.Request) -> web.Response:
@@ -209,11 +223,11 @@ async def _history_handler(request: web.Request) -> web.Response:
             events = await asyncio.to_thread(event_bus.search, query, limit=limit if limit is not None else 20)
         except sqlite3.OperationalError as e:
             # FTS5 raises OperationalError for a malformed MATCH expression: that's a client error.
-            logger.warning(f"search query rejected: {e}")
+            logger.warning("search query rejected: %s", e)
             return web.json_response({"error": "invalid search query"}, status=400)
         except sqlite3.Error as e:
             # A genuine SQLite fault (locked db, disk full, corrupted FTS) must surface, not masquerade as a bad query.
-            logger.error(f"search failed for query={query!r}: {e}")
+            logger.error("search failed for query=%r: %s", query, e)
             return web.json_response({"error": "search failed"}, status=500)
         return web.json_response({"events": events, "cursor": None})
 
@@ -239,7 +253,7 @@ async def _usage_handler(request: web.Request) -> web.Response:
     try:
         usage = await get_usage(config)
     except UsageError as e:
-        logger.error(f"usage fetch failed: {e}")
+        logger.error("usage fetch failed: %s", e)
         return web.json_response({"error": str(e)}, status=502)
     return web.json_response(dc.asdict(usage))
 
@@ -251,8 +265,26 @@ async def _config_get_handler(request: web.Request) -> web.Response:
     config: VestaConfig = request.app["config"]
     data = stored_config(config)
     data.pop("provider", None)
-    data["notification_rules"] = [rule.model_dump() for rule in load_notification_rules()]
+    data["notification_rules"] = [rule.model_dump(mode="json") for rule in load_notification_rules()]
     return web.json_response(data)
+
+
+async def _validate_and_store(config: VestaConfig, data: object, *, label: str) -> web.Response:
+    """The shared tail of a config write (PUT /config, PATCH /provider): validate the updates against
+    the current config, write them to the store, and map each failure to its response."""
+    try:
+        updates = validate_config_updates(config, data)
+    except pyd.ValidationError as e:
+        return web.json_response({"error": f"invalid {label}: {e.errors(include_url=False)}"}, status=400)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    if not updates:
+        return web.json_response({"error": "no config provided"}, status=400)
+    try:
+        await asyncio.to_thread(update_config_store, updates)
+    except OSError as e:
+        return web.json_response({"error": f"failed to write config: {e}"}, status=500)
+    return web.json_response({"ok": True})
 
 
 async def _config_put_handler(request: web.Request) -> web.Response:
@@ -266,19 +298,7 @@ async def _config_put_handler(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid json body"}, status=400)
     if isinstance(data, dict) and "provider" in data:
         return web.json_response({"error": "provider is set via PUT/PATCH /provider"}, status=400)
-    try:
-        updates = validate_config_updates(config, data)
-    except pyd.ValidationError as e:
-        return web.json_response({"error": f"invalid config: {e.errors(include_url=False)}"}, status=400)
-    except ValueError as e:
-        return web.json_response({"error": str(e)}, status=400)
-    if not updates:
-        return web.json_response({"error": "no config provided"}, status=400)
-    try:
-        await asyncio.to_thread(update_config_store, updates)
-    except OSError as e:
-        return web.json_response({"error": f"failed to write config: {e}"}, status=500)
-    return web.json_response({"ok": True})
+    return await _validate_and_store(config, data, label="config")
 
 
 class _ClaudeSignIn(pyd.BaseModel):
@@ -322,7 +342,7 @@ async def _provider_get_handler(request: web.Request) -> web.Response:
     # The Claude plan tier (from the on-disk OAuth blob, excluded from stored_config) so the context
     # picker can restrict >200K windows to Max, the only plan entitled to the 1M-context beta.
     if isinstance(config.provider, ClaudeConfig) and config.provider.oauth is not None:
-        body["plan"] = config.provider.oauth.subscriptionType
+        body["plan"] = config.provider.oauth.subscription_type
     return web.json_response(body)
 
 
@@ -384,26 +404,15 @@ async def _provider_patch_handler(request: web.Request) -> web.Response:
     patch = prefs.model_dump(exclude_unset=True)
     if not patch:
         return web.json_response({"error": "no provider fields provided"}, status=400)
-    try:
-        updates = validate_config_updates(config, {"provider": patch})
-    except pyd.ValidationError as e:
-        return web.json_response({"error": f"invalid provider: {e.errors(include_url=False)}"}, status=400)
-    except ValueError as e:
-        return web.json_response({"error": str(e)}, status=400)
-    try:
-        await asyncio.to_thread(update_config_store, updates)
-    except OSError as e:
-        return web.json_response({"error": f"failed to write config: {e}"}, status=500)
-    return web.json_response({"ok": True})
+    return await _validate_and_store(config, {"provider": patch}, label="provider")
 
 
 async def _provider_delete_handler(request: web.Request) -> web.Response:
     """Sign out: clear the provider credentials, resetting to a valid signed-out state. Idempotent.
     Applied by the next restart."""
     state: State = request.app["state"]
-    config: VestaConfig = request.app["config"]
     try:
-        state.provider_status = await asyncio.to_thread(clear_provider, config=config)
+        state.provider_status = await asyncio.to_thread(clear_provider)
     except OSError as e:
         return web.json_response({"error": f"sign out failed: {e}"}, status=500)
     return web.json_response({"ok": True})

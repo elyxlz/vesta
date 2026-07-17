@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import ctypes.util
 import hashlib
 import zipfile
 
 import pytest
-
 from vesta_browser import launcher
 
 
@@ -28,6 +28,18 @@ def test_asset_for_arch_unknown(monkeypatch):
     monkeypatch.setattr(launcher.platform, "machine", lambda: "sparc64")
     with pytest.raises(RuntimeError, match="no Camoufox build"):
         launcher._asset_for_arch()
+
+
+def test_libs_readiness_is_ready_when_every_soname_loads(monkeypatch):
+    libc = ctypes.util.find_library("c")
+    assert libc is not None
+    monkeypatch.setattr(launcher, "CAMOUFOX_SHARED_LIBS", (libc,))
+    assert launcher.libs_readiness() == {"ready": True, "missing": []}
+
+
+def test_libs_readiness_names_the_missing_lib_and_how_to_install_it(monkeypatch):
+    monkeypatch.setattr(launcher, "CAMOUFOX_SHARED_LIBS", ("libvesta-absent.so.9",))
+    assert launcher.libs_readiness() == {"ready": False, "missing": ["libvesta-absent.so.9"], "install": launcher.CAMOUFOX_LIBS_INSTALL}
 
 
 def test_camoufox_home_uses_release_tag():

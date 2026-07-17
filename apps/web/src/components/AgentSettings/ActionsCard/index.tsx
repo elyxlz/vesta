@@ -24,15 +24,12 @@ export function ActionsCard() {
   const { showToolCalls, setShowToolCalls } = useAgentSocket();
 
   const isRunning =
-    agent?.status !== "stopped" &&
-    agent?.status !== "dead" &&
-    agent?.status !== "not_found";
-  const showAliveActions = agent?.status === "alive";
-  const isAuthenticated = Boolean(
-    agent &&
-    agent.status !== "not_authenticated" &&
-    agent.status !== "unprovisioned",
-  );
+    agent.status !== "stopped" &&
+    agent.status !== "dead" &&
+    agent.status !== "not_found";
+  const showAliveActions = agent.status === "alive";
+  const isAuthenticated =
+    agent.status !== "not_authenticated" && agent.status !== "unprovisioned";
 
   // On mobile (no navbar sign-in button) an agent that needs auth is an urgent
   // action: lift "sign in" to a primary button at the top and drop the routine
@@ -50,7 +47,7 @@ export function ActionsCard() {
             variant="default"
             size="lg"
             className="mb-4 w-full"
-            onClick={() => void handleOpenAuth()}
+            onClick={() => handleOpenAuth()}
           >
             <KeyRound data-icon="inline-start" />
             sign in
@@ -61,13 +58,16 @@ export function ActionsCard() {
           showAliveActions={showAliveActions}
           isBusy={isBusy}
           showToolCalls={showToolCalls}
-          onLogs={() =>
-            navigate(`/agent/${encodeURIComponent(agentName)}/logs`)
-          }
+          onLogs={() => {
+            void navigate(`/agent/${encodeURIComponent(agentName)}/logs`);
+          }}
           onToolCalls={() => setShowToolCalls((value) => !value)}
-          onToggle={() => void (isRunning ? stop() : start())}
+          onToggle={() => {
+            if (isRunning) stop();
+            else start();
+          }}
           onRestart={() => void restart()}
-          onBackup={() => void backup()}
+          onBackup={() => backup()}
           onDelete={() => setDeleteDialogOpen(true)}
         />
       </CardContent>

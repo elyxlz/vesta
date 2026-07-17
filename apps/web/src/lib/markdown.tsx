@@ -16,7 +16,7 @@ export function Markdown({ children }: { children: string }) {
           />
         ),
         code: ({ node: _n, className, children, ...props }) => {
-          const isBlock = /language-/.test(className ?? "");
+          const isBlock = (className ?? "").includes("language-");
           return isBlock ? (
             <code
               {...props}

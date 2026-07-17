@@ -26,6 +26,7 @@ import { useModals } from "@/providers/ModalsProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useLayout } from "@/stores/use-layout";
 import { useRestartPending } from "@/stores/use-restart-pending";
+import type { AgentStatus } from "@/lib/types";
 import { Navbar } from "..";
 
 export function AgentNavbar({
@@ -61,11 +62,6 @@ export function AgentNavbar({
       setRestarting(false);
     }
   };
-  const needsAuth =
-    (agent?.status === "not_authenticated" ||
-      agent?.status === "unprovisioned") &&
-    reachable;
-
   const agentDashboardMatch = useMatch({ path: "/agent/:name", end: true });
   const chatMatch = useMatch({ path: "/agent/:name/chat", end: true });
   const logsMatch = useMatch({ path: "/agent/:name/logs", end: true });
@@ -75,14 +71,14 @@ export function AgentNavbar({
   const hideMobileNavbar = isMobile && !!chatMatch && chatKeyboardFocused;
   // Subpages go back to wherever they were opened from (chat or dashboard); a
   // deep link has no in-app history (location.key === "default"), so fall back
-  // to the dashboard.
+  // to the dashboard, replacing the entry so browser back still exits the app.
   const showBack = !!logsMatch || !!settingsMatch;
   const showDashboardBack = !isMobile && !!chatMatch;
   const goBack = () => {
     if (location.key === "default") {
-      navigate(`/agent/${encodeURIComponent(name)}`);
+      void navigate(`/agent/${encodeURIComponent(name)}`, { replace: true });
     } else {
-      navigate(-1);
+      void navigate(-1);
     }
   };
   const showChatButton =
@@ -96,67 +92,27 @@ export function AgentNavbar({
     <>
       <Navbar
         leading={
-          showBack ? (
-            <LeadingButton label="back" icon={<ArrowLeft />} onClick={goBack} />
-          ) : showDashboardBack ? (
-            <LeadingButton
-              label="dashboard"
-              icon={<LayoutDashboard />}
-              onClick={() => navigate(`/agent/${encodeURIComponent(name)}`)}
-            />
-          ) : (
-            <LeadingButton
-              label="home"
-              icon={<Home />}
-              onClick={() => navigate("/")}
-            />
-          )
+          <AgentNavbarLeading
+            showBack={showBack}
+            showDashboardBack={showDashboardBack}
+            goBack={goBack}
+            name={name}
+          />
         }
         center={<AgentIsland />}
         trailing={
           connected ? (
-            <div className="flex items-center gap-2">
-              <StatusPill showHostname={false} />
-              {restartPending && (
-                <Button
-                  variant="default"
-                  size={isMobile ? "icon-lg" : "lg"}
-                  disabled={restarting}
-                  aria-label="restart to apply changes"
-                  onClick={() => void applyRestart()}
-                >
-                  <RotateCw
-                    data-icon={isMobile ? undefined : "inline-start"}
-                    className={restarting ? "animate-spin" : undefined}
-                  />
-                  {!isMobile &&
-                    (restarting ? "restarting..." : "restart to apply")}
-                </Button>
-              )}
-              {!isMobile && needsAuth && (
-                <Button
-                  variant="default"
-                  size="lg"
-                  onClick={() => void handleOpenAuth()}
-                >
-                  <KeyRound data-icon="inline-start" />
-                  sign in
-                </Button>
-              )}
-              {showChatButton && (
-                <Button
-                  variant="default"
-                  size="lg"
-                  onClick={() => setChatCollapsed(false)}
-                >
-                  <MessageSquare data-icon="inline-start" />
-                  chat
-                </Button>
-              )}
-              <div data-agent-menu className="flex items-center">
-                <AgentMenu />
-              </div>
-            </div>
+            <AgentNavbarTrailing
+              reachable={reachable}
+              agentStatus={agent.status}
+              isMobile={isMobile}
+              restartPending={restartPending}
+              restarting={restarting}
+              onRestart={applyRestart}
+              onOpenAuth={handleOpenAuth}
+              showChatButton={Boolean(showChatButton)}
+              onExpandChat={() => setChatCollapsed(false)}
+            />
           ) : undefined
         }
       />
@@ -164,6 +120,108 @@ export function AgentNavbar({
         <MobileNavbar progress={swipeProgress} />
       )}
     </>
+  );
+}
+
+function AgentNavbarLeading({
+  showBack,
+  showDashboardBack,
+  goBack,
+  name,
+}: {
+  showBack: boolean;
+  showDashboardBack: boolean;
+  goBack: () => void;
+  name: string;
+}) {
+  const navigate = useNavigate();
+
+  if (showBack) {
+    return <LeadingButton label="back" icon={<ArrowLeft />} onClick={goBack} />;
+  }
+  if (showDashboardBack) {
+    return (
+      <LeadingButton
+        label="dashboard"
+        icon={<LayoutDashboard />}
+        onClick={() => {
+          void navigate(`/agent/${encodeURIComponent(name)}`);
+        }}
+      />
+    );
+  }
+  return (
+    <LeadingButton
+      label="home"
+      icon={<Home />}
+      onClick={() => {
+        void navigate("/");
+      }}
+    />
+  );
+}
+
+function AgentNavbarTrailing({
+  reachable,
+  agentStatus,
+  isMobile,
+  restartPending,
+  restarting,
+  onRestart,
+  onOpenAuth,
+  showChatButton,
+  onExpandChat,
+}: {
+  reachable: boolean;
+  agentStatus: AgentStatus;
+  isMobile: boolean;
+  restartPending: boolean;
+  restarting: boolean;
+  onRestart: () => Promise<void>;
+  onOpenAuth: () => void;
+  showChatButton: boolean;
+  onExpandChat: () => void;
+}) {
+  const needsAuth =
+    (agentStatus === "not_authenticated" || agentStatus === "unprovisioned") &&
+    reachable;
+
+  return (
+    <div className="flex items-center gap-2">
+      <StatusPill showHostname={false} />
+      {restartPending && (
+        <Button
+          variant="default"
+          size={isMobile ? "icon-lg" : "lg"}
+          disabled={restarting}
+          aria-label="restart to apply changes"
+          onClick={() => {
+            void onRestart();
+          }}
+        >
+          <RotateCw
+            data-icon={isMobile ? undefined : "inline-start"}
+            className={restarting ? "animate-spin" : undefined}
+          />
+          {!isMobile && (restarting ? "restarting..." : "restart to apply")}
+        </Button>
+      )}
+      {!isMobile && needsAuth && (
+        <Button variant="default" size="lg" onClick={onOpenAuth}>
+          <KeyRound data-icon="inline-start" />
+          sign in
+        </Button>
+      )}
+      {showChatButton && (
+        <Button variant="default" size="lg" onClick={onExpandChat}>
+          <MessageSquare data-icon="inline-start" />
+          chat
+        </Button>
+      )}
+      <div data-agent-menu className="flex items-center">
+        <AgentMenu />
+      </div>
+    </div>
   );
 }
 

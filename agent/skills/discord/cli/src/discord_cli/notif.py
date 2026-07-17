@@ -52,6 +52,16 @@ def build_notification(facts: MessageFacts) -> dict[str, str | bool] | None:
     return notif
 
 
+def daemon_died_notification() -> dict[str, str | bool]:
+    """The notification the gateway daemon writes when it exits, so the agent restarts it.
+    interrupt defaults on (discord is a live channel), so a dead daemon preempts."""
+    return {
+        "source": "discord",
+        "type": "daemon_died",
+        "timestamp": dt.datetime.now(dt.UTC).isoformat(),
+    }
+
+
 def write_notification(notifications_dir: pathlib.Path, notif: dict[str, str | bool]) -> pathlib.Path:
     notifications_dir.mkdir(parents=True, exist_ok=True)
     path = notifications_dir / f"{uuid.uuid4()}-{notif['source']}-{notif['type']}.json"

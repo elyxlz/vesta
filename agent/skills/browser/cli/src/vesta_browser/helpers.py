@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import gzip
 import json
+import re
 import time
 import urllib.request
 from collections.abc import Callable
@@ -194,7 +195,7 @@ def iframe_target(url_substring: str) -> str | None:
             url = node["url"] if "url" in node else ""
             if depth > 0 and url_substring in url:
                 return node["context"]
-            children = node["children"] if "children" in node and node["children"] else []
+            children = node["children"] if node.get("children") else []
             found = walk(children, depth + 1)
             if found:
                 return found
@@ -246,13 +247,10 @@ def press_key(key: str, modifiers: int | list[str] = 0) -> None:
     else:
         mods = [m for m in modifiers if m in MODIFIER_KEYS]
     value = SPECIAL_KEYS[key] if key in SPECIAL_KEYS else key
-    actions: list[dict] = []
-    for m in mods:
-        actions.append({"type": "keyDown", "value": MODIFIER_KEYS[m]})
+    actions: list[dict] = [{"type": "keyDown", "value": MODIFIER_KEYS[m]} for m in mods]
     actions.append({"type": "keyDown", "value": value})
     actions.append({"type": "keyUp", "value": value})
-    for m in reversed(mods):
-        actions.append({"type": "keyUp", "value": MODIFIER_KEYS[m]})
+    actions.extend({"type": "keyUp", "value": MODIFIER_KEYS[m]} for m in reversed(mods))
     _perform([{"type": "key", "id": "kbd", "actions": actions}])
 
 
@@ -325,17 +323,17 @@ _FMT_MIME = {"png": "image/png", "jpeg": "image/jpeg", "webp": "image/jpeg"}
 def screenshot(
     path: str = "/tmp/screenshot.png",
     full_page: bool = False,
-    format: str = "png",
+    image_format: str = "png",
     region: tuple[float, float, float, float] | None = None,
     quality: int | None = None,
 ) -> str:
-    """Capture a screenshot via BiDi. `format` accepts 'png', 'jpeg', or 'webp' (webp
-    is captured as jpeg). `region` is (x, y, width, height) for a clip rectangle.
+    """Capture a screenshot via BiDi. `image_format` accepts 'png', 'jpeg', or 'webp'
+    (webp is captured as jpeg). `region` is (x, y, width, height) for a clip rectangle.
     `quality` (0-100) applies to jpeg/webp."""
-    if format not in ("png", "jpeg", "webp"):
-        raise ValueError(f"screenshot format must be png/jpeg/webp, got {format!r}")
-    fmt: dict = {"type": _FMT_MIME[format]}
-    if quality is not None and format in ("jpeg", "webp"):
+    if image_format not in ("png", "jpeg", "webp"):
+        raise ValueError(f"screenshot format must be png/jpeg/webp, got {image_format!r}")
+    fmt: dict = {"type": _FMT_MIME[image_format]}
+    if quality is not None and image_format in ("jpeg", "webp"):
         fmt["quality"] = max(0.0, min(1.0, quality / 100.0))
     params: dict = {"origin": "document" if full_page else "viewport", "format": fmt}
     if region is not None:
@@ -457,6 +455,20 @@ def _skills_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
+def _declared_hosts(path: Path) -> set[str]:
+    """Hosts a recipe claims via a leading `hosts:` frontmatter line (comma/space separated).
+    Lets one recipe cover several domains (e.g. a job board on many country TLDs) that no single
+    directory name maps to."""
+    front = re.match(r"^---\n(.*?)\n---", path.read_text(encoding="utf-8", errors="ignore"), re.DOTALL)
+    if not front:
+        return set()
+    line = re.search(r"^hosts:\s*(.+)$", front.group(1), re.MULTILINE)
+    if not line:
+        return set()
+    raw = line.group(1).strip().strip("[]")
+    return {h.strip().strip("\"'").removeprefix("www.") for h in re.split(r"[,\s]+", raw) if h.strip()}
+
+
 def recipes_for(url: str) -> list[str]:
     """Matching domain-skill files for this URL. Returns relative paths."""
     host = (urlparse(url).hostname or "").lstrip(".").removeprefix("www.")
@@ -474,7 +486,9 @@ def recipes_for(url: str) -> list[str]:
         d = root / candidate
         if d.is_dir():
             return sorted(f"domain-skills/{candidate}/{p.name}" for p in d.rglob("*.md"))
-    return []
+    # No host-named directory: fall back to recipes that declare this host in frontmatter.
+    wanted = set(candidates)
+    return sorted(f"domain-skills/{p.relative_to(root)}" for p in root.rglob("*.md") if wanted & _declared_hosts(p))
 
 
 def recipe_banner(url: str) -> str:

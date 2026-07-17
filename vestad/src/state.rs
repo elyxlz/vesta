@@ -1,6 +1,6 @@
 //! The HTTP layer's shared vocabulary, below every handler module: the daemon's
 //! `AppState`, the JSON response helpers, and the request-layer constants. Handler
-//! modules (serve.rs, auth.rs, control_ws.rs, agent_proxy.rs, providers/*) all
+//! modules (serve.rs, auth.rs, `control_ws.rs`, `agent_proxy.rs`, providers/*) all
 //! import from here; this module imports none of them.
 
 use std::collections::HashMap;
@@ -45,7 +45,7 @@ impl AuthSession {
 pub(crate) struct RefreshFamily {
     pub(crate) live: String,
     pub(crate) prev: Option<String>,
-    /// Idle expiry (unix secs) for pruning: set to now + REFRESH_TOKEN_TTL at
+    /// Idle expiry (unix secs) for pruning: set to now + `REFRESH_TOKEN_TTL` at
     /// registration and slid forward on every successful rotation, so an active
     /// client never expires and an idle one re-auths after the TTL.
     pub(crate) exp: u64,
@@ -117,21 +117,29 @@ pub struct AppState {
     build_phases: Arc<std::sync::Mutex<HashMap<String, docker::BuildPhase>>>,
 }
 
+/// Read-only serving facts fixed at startup (mode, port, LAN exposure), carried
+/// into `AppState::new` as one unit and stored as individual fields.
+pub(crate) struct GatewayFacts {
+    pub(crate) dev_mode: bool,
+    pub(crate) https_port: u16,
+    pub(crate) expose_lan: bool,
+    pub(crate) lan_url: Option<String>,
+}
+
 impl AppState {
-    // Single-call startup constructor: its params mirror the fields of
-    // ServerConfig (the caller), so grouping them into a param struct would just
-    // duplicate that type. Allow the arg count rather than add a redundant struct.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         api_key: String,
         env_config: docker::AgentEnvConfig,
         docker: bollard::Docker,
         tunnel_url: Option<String>,
-        dev_mode: bool,
-        https_port: u16,
-        expose_lan: bool,
-        lan_url: Option<String>,
+        facts: GatewayFacts,
     ) -> Self {
+        let GatewayFacts {
+            dev_mode,
+            https_port,
+            expose_lan,
+            lan_url,
+        } = facts;
         let settings = load_settings();
         // Restore the refresh-token registry from disk (dropping expired families)
         // so a restart/self-update doesn't log everyone out. Read before `env_config`
@@ -164,7 +172,7 @@ impl AppState {
     pub(crate) fn set_build_phase(&self, name: &str, phase: docker::BuildPhase) {
         self.build_phases
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(name.to_string(), phase);
     }
 
@@ -172,14 +180,14 @@ impl AppState {
     pub(crate) fn clear_build_phase(&self, name: &str) {
         self.build_phases
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(name);
     }
 
     pub(crate) fn build_phase(&self, name: &str) -> Option<docker::BuildPhase> {
         self.build_phases
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(name)
             .copied()
     }
@@ -214,14 +222,13 @@ pub fn err_response(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_js
 }
 
 pub(crate) fn map_docker_err(e: docker::DockerError) -> (StatusCode, Json<serde_json::Value>) {
-    use docker::DockerError::*;
-    let status = match &e {
-        NotFound(_) => StatusCode::NOT_FOUND,
-        AlreadyExists(_) => StatusCode::CONFLICT,
-        NotRunning(_) => StatusCode::SERVICE_UNAVAILABLE,
-        BrokenState(_) => StatusCode::INTERNAL_SERVER_ERROR,
-        InvalidName(_) | BuildRequired(_) => StatusCode::BAD_REQUEST,
-        Failed(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    use docker::DockerError::{NotFound, AlreadyExists, NotRunning, BrokenState, InvalidName, BuildRequired, Failed};
+    let (status, message) = match e {
+        NotFound(message) => (StatusCode::NOT_FOUND, message),
+        AlreadyExists(message) => (StatusCode::CONFLICT, message),
+        NotRunning(message) => (StatusCode::SERVICE_UNAVAILABLE, message),
+        BrokenState(message) | Failed(message) => (StatusCode::INTERNAL_SERVER_ERROR, message),
+        InvalidName(message) | BuildRequired(message) => (StatusCode::BAD_REQUEST, message),
     };
-    err_response(status, &e.to_string())
+    err_response(status, &message)
 }

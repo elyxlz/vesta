@@ -3,7 +3,7 @@ package main
 import "testing"
 
 // TestBubbleLintPasses pins the sends that must reach the recipient untouched:
-// short bubbles, one or two sentences, and the protected spans (urls, decimals,
+// short bubbles, one sentence, and the protected spans (urls, decimals,
 // initialisms, abbreviations) whose dots must not read as sentence breaks.
 func TestBubbleLintPasses(t *testing.T) {
 	cases := []string{
@@ -16,7 +16,7 @@ func TestBubbleLintPasses(t *testing.T) {
 		"the W.A.S.T.E. system is down",                 // initialism protected
 		"see https://example.com/a.b.c for the details", // url protected
 		"call Dr. Smith back today",                     // abbreviation protected
-		"done. anything else?",                          // exactly two sentences is allowed
+		"done, anything else?",                          // single sentence is allowed
 	}
 	for _, msg := range cases {
 		if reason := bubbleLintReason(msg); reason != "" {
@@ -32,6 +32,7 @@ func TestBubbleLintBlocks(t *testing.T) {
 		name string
 		msg  string
 	}{
+		{"two sentences in one bubble", "done. anything else?"},
 		{"three sentences in one bubble", "i checked the first folder. then the second one. nothing in either."},
 		{"long single sentence", "so the thing about the deploy is that it kept timing out on the build step and i had to bump the worker memory and also tweak the cache config and re-run it twice and then clear the layer cache before it finally went green for us this afternoon"},
 	}
