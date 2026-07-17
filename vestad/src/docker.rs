@@ -114,8 +114,10 @@ pub(crate) const MOUNT_DESTS: &[&str] = &[
 
 pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
     let steps: [String; 10] = [
-        // The engine venv's bin leads PATH so the agent and skills reach the interpreter and its
-        // pinned tools (ruff, pytest) as plain commands. UV_PROJECT_ENVIRONMENT is never exported.
+        // The engine venv is reached via PATH, never an exported UV_PROJECT_ENVIRONMENT (nor `uv
+        // run`, which exports it): exported, it retargets every uv project, so a skill's `uv run`
+        // re-syncs and can delete the engine venv. The core sync gets it scoped, since uv would
+        // otherwise default to core/.venv, inside the read-only mount.
         "export PATH=\"/root/agent/.venv/bin:/root/.local/bin:/root/.claude/local/bin:$PATH\"".into(),
         ". /run/vestad-env".into(),
         ". ~/.bashrc || true".into(),
@@ -136,10 +138,6 @@ pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
         // network) once tmux is on PATH, and the next snapshot captures the install so it
         // persists across future rebuilds. `|| true` so a failed install never aborts boot.
         "command -v tmux >/dev/null 2>&1 || (apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tmux) || true".into(),
-        // UV_PROJECT_ENVIRONMENT stays scoped to this command: exported, it retargets every uv
-        // project, so `uv run` in a skill's cli/ would re-sync (and can delete) the engine venv
-        // under the running agent. Core needs the override or uv defaults to core/.venv, inside
-        // the read-only mount.
         // LEGACY(remove-when: unmanaged boxes have pulled a post-engine-move snapshot): the old
         // layout (pyproject at /root/agent) defaults to the engine venv, so it needs no override.
         "if [ -f /root/agent/core/pyproject.toml ]; then UV_PROJECT_ENVIRONMENT=/root/agent/.venv uv sync --frozen --project /root/agent/core; else uv sync --frozen --project /root/agent; fi".into(),
@@ -150,8 +148,6 @@ pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
         "rm -rf ~/.claude/skills && mkdir -p ~/.claude/skills".into(),
         "for d in /root/agent/skills/*/SKILL.md /root/agent/core/skills/*/SKILL.md; do [ -f \"$d\" ] || continue; s=$(dirname \"$d\"); ln -sfn \"$s\" ~/.claude/skills/$(basename \"$s\"); done".into(),
         "test -f ~/.claude/settings.json || printf '{\"permissions\":{\"allow\":[]}}\\n' > ~/.claude/settings.json".into(),
-        // Launch the engine interpreter directly: `uv run` would carry UV_PROJECT_ENVIRONMENT
-        // into the agent and every shell it spawns. cwd makes `core` importable.
         "cd /root/agent && exec .venv/bin/python -m core.main".into(),
     ];
     vec!["sh".into(), "-c".into(), steps.join("; \\\n")]
@@ -2821,9 +2817,6 @@ mod tests {
 
     #[test]
     fn entrypoint_never_exports_uv_project_environment_into_the_agent() {
-        // Exported, UV_PROJECT_ENVIRONMENT retargets every uv project, so `uv run` in a skill's
-        // cli/ re-syncs and can delete the engine venv. It stays scoped to the core sync, and the
-        // engine launches without `uv run`, which would propagate it.
         let cmd = agent_container_entrypoint_cmd();
         let script = cmd.last().expect("entrypoint script");
         assert!(
