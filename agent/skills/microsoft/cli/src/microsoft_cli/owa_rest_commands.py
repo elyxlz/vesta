@@ -16,6 +16,7 @@ import datetime as dt
 import pathlib as pl
 from zoneinfo import ZoneInfo
 
+from . import calendar as calendar_mod
 from . import email as email_mod
 from . import owa_rest
 from .config import Config
@@ -187,6 +188,22 @@ def delete_folder(config: Config, client, *, account_email: str, folder_id: str)
 # ---------------------------------------------------------------------------
 
 
+def _localize_event(event: dict, timezone: str) -> dict:
+    """Report a UTC-stored event's start/end as wall-clock time in ``timezone`` (IANA).
+
+    The OWA REST calendar endpoints always answer in UTC, so the Graph path's
+    ``Prefer: outlook.timezone`` equivalent is applied here on read. All-day boundaries
+    already read as local midnight, so they are relabelled without shifting; converting
+    them would move the event onto a neighbouring date.
+    """
+    localized = dict(event)
+    for slot in ("start", "end"):
+        stored = dt.datetime.fromisoformat(localized[slot]["dateTime"].replace("Z", "")).replace(microsecond=0)
+        moment = stored if event["isAllDay"] else stored.replace(tzinfo=dt.UTC).astimezone(ZoneInfo(timezone)).replace(tzinfo=None)
+        localized[slot] = {"dateTime": moment.isoformat(), "timeZone": timezone}
+    return localized
+
+
 def list_events(
     config: Config,
     client,
@@ -199,8 +216,8 @@ def list_events(
     user_timezone: str | None = None,
 ) -> list[dict]:
     del calendar_name, include_details  # Graph-only knobs; the OWA REST view has no calendar or detail selection
-    tz = user_timezone or "UTC"
-    now = dt.datetime.now(ZoneInfo(tz)) if tz != "UTC" else dt.datetime.now(dt.UTC)
+    tz = calendar_mod.resolve_timezone(user_timezone)
+    now = dt.datetime.now(ZoneInfo(tz))
     start_of_today = now.replace(hour=0, minute=0, second=0, microsecond=0)
     start = (start_of_today - dt.timedelta(days=days_back)).astimezone(dt.UTC)
     end = (start_of_today + dt.timedelta(days=days_ahead + 1)).astimezone(dt.UTC)
@@ -208,7 +225,8 @@ def list_events(
     def z(d: dt.datetime) -> str:
         return d.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
-    return owa_rest.list_events(client, account_email, config, start_utc=z(start), end_utc=z(end), limit=100)
+    events = owa_rest.list_events(client, account_email, config, start_utc=z(start), end_utc=z(end), limit=100)
+    return [_localize_event(event, tz) for event in events]
 
 
 def list_calendars(config: Config, client, *, account_email: str) -> list[dict]:
@@ -216,8 +234,8 @@ def list_calendars(config: Config, client, *, account_email: str) -> list[dict]:
 
 
 def get_event(config: Config, client, *, account_email: str, event_id: str, user_timezone: str | None = None) -> dict:
-    del user_timezone  # Graph-only knob; OWA REST returns event times as stored
-    return owa_rest.get_event(client, account_email, config, event_id=event_id)
+    tz = calendar_mod.resolve_timezone(user_timezone)
+    return _localize_event(owa_rest.get_event(client, account_email, config, event_id=event_id), tz)
 
 
 def create_event(config: Config, client, *, account_email: str, event: EventFields) -> dict:
