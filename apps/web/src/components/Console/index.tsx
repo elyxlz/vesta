@@ -10,11 +10,14 @@ import { useLayout } from "@/stores/use-layout";
 import { streamLogs, stopLogs } from "@/api";
 import { stripAnsi } from "@/lib/ansi";
 import { linkify } from "@/lib/linkify";
-import { logStreamAction, isAgentContainerUp } from "@/lib/log-stream-policy";
+import {
+  logStreamAction,
+  isAgentContainerUp,
+  LOG_SCROLLBACK_LINES,
+} from "@/lib/log-stream-policy";
 import type { AgentStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-const MAX_LINES = 5000;
 const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 30000;
 // One mono line is ~19px; wrapped lines measure taller (measureElement corrects).
@@ -167,7 +170,9 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
     const buffered = bufferRef.current;
     bufferRef.current = [];
     setLines(
-      buffered.length > MAX_LINES ? buffered.slice(-MAX_LINES) : buffered,
+      buffered.length > LOG_SCROLLBACK_LINES
+        ? buffered.slice(-LOG_SCROLLBACK_LINES)
+        : buffered,
     );
   }, []);
 
@@ -217,7 +222,9 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
               }
               setLines((prev) => {
                 const next = [...prev, line];
-                return next.length > MAX_LINES ? next.slice(-MAX_LINES) : next;
+                return next.length > LOG_SCROLLBACK_LINES
+                  ? next.slice(-LOG_SCROLLBACK_LINES)
+                  : next;
               });
               break;
             }
@@ -304,7 +311,7 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
     estimateSize: () => ESTIMATED_LINE_HEIGHT,
     getItemKey,
     // End-anchored stream: stick to the bottom on new lines (unless the user scrolled up),
-    // and stay anchored when old lines drop off the front at the MAX_LINES cap.
+    // and stay anchored when old lines drop off the front at the LOG_SCROLLBACK_LINES cap.
     anchorTo: "end",
     followOnAppend: true,
     scrollEndThreshold: AT_BOTTOM_THRESHOLD_PX,

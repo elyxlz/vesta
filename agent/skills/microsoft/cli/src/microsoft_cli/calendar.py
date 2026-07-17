@@ -18,6 +18,12 @@ def _validate_timezone(timezone: str) -> None:
         raise ValueError(f"Invalid timezone: '{timezone}'. Use IANA names like 'Europe/London' or 'America/New_York'.") from e
 
 
+def resolve_timezone(user_timezone: str | None) -> str:
+    timezone = user_timezone if user_timezone is not None else graph.get_default_iana_timezone()
+    _validate_timezone(timezone)
+    return timezone
+
+
 def _get_calendar_day_range(
     days_ahead: int,
     days_back: int,
@@ -66,9 +72,7 @@ def list_events(
     include_details: bool = True,
     user_timezone: str | None = None,
 ) -> list[dict[str, Any]]:
-    if user_timezone is None:
-        user_timezone = graph.get_default_iana_timezone()
-    _validate_timezone(user_timezone)
+    user_timezone = resolve_timezone(user_timezone)
     extra_prefer = [f'outlook.timezone="{user_timezone}"']
 
     try:
@@ -121,9 +125,7 @@ def get_event(
 ) -> dict[str, Any]:
     account_id = auth.get_account_id_by_email(account_email, config.cache_file)
 
-    if user_timezone is None:
-        user_timezone = graph.get_default_iana_timezone()
-    _validate_timezone(user_timezone)
+    user_timezone = resolve_timezone(user_timezone)
     extra_prefer = [f'outlook.timezone="{user_timezone}"']
 
     result = graph.request_cfg(config, client, "GET", f"/me/events/{event_id}", account_id, extra_prefer=extra_prefer)

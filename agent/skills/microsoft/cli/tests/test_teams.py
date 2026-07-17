@@ -465,6 +465,89 @@ def test_poll_teams_skips_own_message(tmp_path, monkeypatch):
     assert list((tmp_path / "notif").glob("*.json")) == []
 
 
+def test_poll_teams_skips_authorless_bodyless_system_event(tmp_path, monkeypatch):
+    """Graph gives system messages (member added, chat renamed) `from: null` and an empty body.
+    They carry no sender and no text, so they must never reach the agent, least of all as an
+    interrupt the user's notification rules have no field to match on."""
+    from datetime import UTC, datetime
+
+    from microsoft_cli import monitor
+
+    chats = [
+        {
+            "id": "chat-1",
+            "topic": "IVF 2026",
+            "lastMessagePreview": {
+                "createdDateTime": "2026-07-10T12:00:00Z",
+                "from": None,
+                "body": {"content": ""},
+            },
+        }
+    ]
+    ctx = _teams_ctx(tmp_path, monkeypatch, chats)
+    last_dt = datetime(2026, 7, 10, 11, 0, tzinfo=UTC)
+    monitor._poll_teams_account(ctx, Config(data_dir=tmp_path), "me@x.com", last_dt, False)
+    assert list((tmp_path / "notif").glob("*.json")) == []
+
+
+def test_poll_teams_still_emits_for_authored_message_without_body(tmp_path, monkeypatch):
+    """An image-only post has a real author but strips to an empty preview. It is a real message
+    from a real person, so it still notifies rather than being swallowed with the system events."""
+    from datetime import UTC, datetime
+
+    from microsoft_cli import monitor
+
+    chats = [
+        {
+            "id": "chat-1",
+            "topic": "Standup",
+            "lastMessagePreview": {
+                "createdDateTime": "2026-07-10T12:00:00Z",
+                "from": {"user": {"id": "other-guid", "displayName": "Bob"}},
+                "body": {"content": '<img src="x.png">'},
+            },
+        }
+    ]
+    ctx = _teams_ctx(tmp_path, monkeypatch, chats)
+    last_dt = datetime(2026, 7, 10, 11, 0, tzinfo=UTC)
+    monitor._poll_teams_account(ctx, Config(data_dir=tmp_path), "me@x.com", last_dt, False)
+
+    files = list((tmp_path / "notif").glob("*.json"))
+    assert len(files) == 1
+    notif = json.loads(files[0].read_text())
+    assert notif["sender"] == "Bob"
+    assert notif["preview"] == ""
+
+
+def test_poll_teams_still_emits_for_app_message_with_body(tmp_path, monkeypatch):
+    """A bot/app post carries `from.application` rather than `from.user`, so no display name
+    resolves, but it has real text. Text is the signal: it notifies under the placeholder sender."""
+    from datetime import UTC, datetime
+
+    from microsoft_cli import monitor
+
+    chats = [
+        {
+            "id": "chat-1",
+            "topic": "Builds",
+            "lastMessagePreview": {
+                "createdDateTime": "2026-07-10T12:00:00Z",
+                "from": {"application": {"id": "app-guid", "displayName": "Jenkins"}},
+                "body": {"content": "<p>build 42 failed</p>"},
+            },
+        }
+    ]
+    ctx = _teams_ctx(tmp_path, monkeypatch, chats)
+    last_dt = datetime(2026, 7, 10, 11, 0, tzinfo=UTC)
+    monitor._poll_teams_account(ctx, Config(data_dir=tmp_path), "me@x.com", last_dt, False)
+
+    files = list((tmp_path / "notif").glob("*.json"))
+    assert len(files) == 1
+    notif = json.loads(files[0].read_text())
+    assert notif["sender"] == "Someone"
+    assert "build 42 failed" in notif["preview"]
+
+
 # ---------------------------------------------------------------------------
 # Monitor: Teams CHANNEL message notification emit + graceful degrade
 # ---------------------------------------------------------------------------
@@ -551,6 +634,28 @@ def test_poll_teams_channels_skips_own_message(tmp_path, monkeypatch):
             "createdDateTime": "2026-07-10T12:00:00Z",
             "from": {"user": {"id": "me-guid", "displayName": "Me"}},
             "body": {"content": "my own post"},
+        }
+    ]
+    ctx = _teams_channels_ctx(tmp_path, monkeypatch, teams_list=teams_list, channels=channels, messages=messages)
+    last_dt = datetime(2026, 7, 10, 11, 0, tzinfo=UTC)
+    monitor._poll_teams_channels_account(ctx, Config(data_dir=tmp_path), "me@x.com", last_dt, False)
+    assert list((tmp_path / "notif").glob("*.json")) == []
+
+
+def test_poll_teams_channels_skips_authorless_bodyless_system_event(tmp_path, monkeypatch):
+    """The channel path shares the chat path's extraction, so it drops system events too."""
+    from datetime import UTC, datetime
+
+    from microsoft_cli import monitor
+
+    teams_list = [{"id": "team-1", "displayName": "Engineering"}]
+    channels = [{"id": "chan-1", "displayName": "General"}]
+    messages = [
+        {
+            "id": "msg-1",
+            "createdDateTime": "2026-07-10T12:00:00Z",
+            "from": None,
+            "body": {"content": ""},
         }
     ]
     ctx = _teams_channels_ctx(tmp_path, monkeypatch, teams_list=teams_list, channels=channels, messages=messages)

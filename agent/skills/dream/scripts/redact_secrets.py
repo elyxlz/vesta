@@ -4,6 +4,7 @@ Usage: redact_secrets.py            # scan, printing each hit with the value mas
        redact_secrets.py --scrub ID [ID ...]   # redact every secret in those events
 """
 
+import json
 import re
 import sqlite3
 import sys
@@ -44,6 +45,23 @@ def mask(match: re.Match[str]) -> str:
     return match.group(0) if REDACTED in match.group(0) else REDACTED
 
 
+type JsonValue = str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
+
+
+def redact_json(value: JsonValue) -> JsonValue:
+    """Recursively apply the mask regex to every string inside a parsed JSON value. Redacting the
+    decoded structure (not the serialized blob) guarantees the re-serialized event is still valid
+    JSON: a raw text .sub can splice `[REDACTED]` across a `\"`/escape boundary and corrupt the blob,
+    which then breaks the json_extract in the FTS resync and rolls back the whole scrub."""
+    if isinstance(value, str):
+        return REGEX.sub(mask, value)
+    if isinstance(value, list):
+        return [redact_json(v) for v in value]
+    if isinstance(value, dict):
+        return {k: redact_json(v) for k, v in value.items()}
+    return value
+
+
 def scan(conn: sqlite3.Connection) -> list[tuple[int, str]]:
     """Every pattern hit as (event id, masked context snippet). The secret itself is replaced with
     [REDACTED] in the snippet, so reviewing candidates never re-leaks the value into a new event
@@ -71,9 +89,20 @@ def scrub(conn: sqlite3.Connection, ids: list[int]) -> int:
         row = conn.execute("SELECT data FROM events WHERE id = ?", (row_id,)).fetchone()
         if row is None or not row[0]:
             continue
-        new_data = REGEX.sub(mask, row[0])
-        if new_data != row[0]:
-            changed[row_id] = new_data
+        try:
+            obj = json.loads(row[0])
+        except (json.JSONDecodeError, TypeError):
+            # Non-JSON payload: fall back to a raw text sub (nothing to keep valid).
+            new_data = REGEX.sub(mask, row[0])
+            if new_data != row[0]:
+                changed[row_id] = new_data
+            continue
+        new_obj = redact_json(obj)
+        if new_obj != obj:
+            # Re-serialize only when a real redaction changed the structure, so events with no
+            # secret are never rewritten (a reformat-only diff would rewrite every event). Match
+            # events.py's json.dumps(event) so a scrubbed blob keeps the fleet's byte representation.
+            changed[row_id] = json.dumps(new_obj)
     if not changed:
         return 0
     changed_ids = list(changed)
@@ -116,7 +145,8 @@ def main() -> int:
         ids = sorted({row_id for row_id, _ in matches})
         print(f"Found {len(ids)} event(s) with potential secrets (value masked below).")
         print("Review the context, then redact the real leaks: redact_secrets.sh --scrub <id> <id> ...")
-        for row_id, snippet in matches[:20]:
+        # Never cap this list: matches arrive in rowid order, so any cap hides the newest events' leaks.
+        for row_id, snippet in matches:
             print(f"{row_id}|{snippet}")
         return 0
     finally:

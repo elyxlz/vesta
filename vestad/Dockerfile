@@ -20,11 +20,12 @@ LABEL org.opencontainers.image.title="Vesta" \
       org.opencontainers.image.source="https://github.com/elyxlz/vesta" \
       org.opencontainers.image.licenses="MIT"
 
-# libgtk-3-0t64 is the browser skill's one OS dependency: headless Camoufox still runs GTK init,
-# so without it every `browser launch` exits 255 before BiDi with `libgtk-3.so.0: cannot open
-# shared object file`. The t64 name is trixie's time_t rename; plain libgtk-3-0 does not exist here.
+# The browser skill's OS deps: headless Camoufox is still Gecko and dlopens these at startup, so
+# without them every `browser launch` exits 255 before BiDi. The t64 names are trixie's time_t
+# rename; gdk-pixbuf comes in via GTK3.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl git ca-certificates tzdata gnupg screen tmux libgtk-3-0t64 && \
+    curl git ca-certificates tzdata gnupg screen tmux \
+    libgtk-3-0t64 libx11-xcb1 libdbus-glib-1-2 libxtst6 libasound2t64 && \
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
     rm -rf /var/lib/apt/lists/*
@@ -62,9 +63,11 @@ RUN for d in agent/skills/*/; do \
       grep -qx "$name" agent/core/default-skills.txt || rm -rf "$d"; \
     done
 
-ENV UV_PROJECT_ENVIRONMENT=/root/agent/.venv
 WORKDIR /root/agent
-RUN uv sync --frozen --no-install-project --project core
+# Scoped, never ENV: exported, UV_PROJECT_ENVIRONMENT retargets every uv project, so a skill's
+# `uv run` would re-sync the engine venv. PATH exposes the venv instead.
+RUN UV_PROJECT_ENVIRONMENT=/root/agent/.venv uv sync --frozen --no-install-project --project core
+ENV PATH="/root/agent/.venv/bin:${PATH}"
 
 # Install Claude Code on PATH. claude_agent_sdk would otherwise fall back to its own bundled CLI
 # (deep in site-packages), but skills shell out to `claude` directly (e.g. video-use), so it must

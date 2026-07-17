@@ -1461,7 +1461,7 @@ const SERVICE_PORT_MAX: u16 = 65535;
 struct RegisterServiceBody {
     name: String,
     #[serde(default)]
-    public: bool,
+    public: Option<bool>,
 }
 
 /// Collect all ports in use across all agents in the service registry.
@@ -1541,6 +1541,15 @@ async fn is_cached_port_reusable(port: u16) -> bool {
             .is_ok()
 }
 
+/// `public` is intrinsic to a registration, like the port: an absent field inherits
+/// the cached entry's value, so a re-register that only wants the port (whatsapp's
+/// `resolveVoiceBaseURL`, voice's own status/stop/restart) cannot silently revoke a
+/// deliberate publish. An explicit value always wins, including `false`; a first
+/// registration with nothing cached defaults private.
+fn resolve_public(requested: Option<bool>, cached: Option<ServiceEntry>) -> bool {
+    requested.unwrap_or_else(|| cached.is_some_and(|entry| entry.public))
+}
+
 async fn register_service_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
@@ -1567,24 +1576,22 @@ async fn register_service_handler(
 
     let mut settings = state.settings.write().await;
 
-    let cached_port = settings
+    let cached_entry = settings
         .services
         .get(&name)
-        .and_then(|s| s.get(&service_name))
-        .map(|e| e.port);
-    let port = match cached_port {
-        Some(p) if is_cached_port_reusable(p).await => p,
-        Some(p) => {
-            tracing::warn!(agent = %name, service = %service_name, stale_port = p, "cached service port is not bindable, allocating a fresh one");
+        .and_then(|services| services.get(&service_name))
+        .copied();
+    let port = match cached_entry.map(|entry| entry.port) {
+        Some(cached_port) if is_cached_port_reusable(cached_port).await => cached_port,
+        Some(stale_port) => {
+            tracing::warn!(agent = %name, service = %service_name, stale_port, "cached service port is not bindable, allocating a fresh one");
             allocate_service_port(&settings.services).ok_or_else(no_free_ports_err)?
         }
         None => allocate_service_port(&settings.services).ok_or_else(no_free_ports_err)?,
     };
+    let public = resolve_public(body.public, cached_entry);
 
-    let entry = ServiceEntry {
-        port,
-        public: body.public,
-    };
+    let entry = ServiceEntry { port, public };
     settings
         .services
         .entry(name.clone())
@@ -1592,9 +1599,9 @@ async fn register_service_handler(
         .insert(service_name.clone(), entry);
     save_settings(&settings);
     state.agent_status_cache.update_services(&settings.services);
-    tracing::info!(agent = %name, service = %service_name, port, public = body.public, "service registered");
+    tracing::info!(agent = %name, service = %service_name, port, public, "service registered");
     Ok(Json(
-        serde_json::json!({"ok": true, "port": port, "public": body.public}),
+        serde_json::json!({"ok": true, "port": port, "public": public}),
     ))
 }
 
@@ -2914,7 +2921,8 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::{
-        allocate_service_port, ensure_not_rebuilding, is_cached_port_reusable, spawn_pipeline_sse,
+        allocate_service_port, ensure_not_rebuilding, is_cached_port_reusable, resolve_public,
+        spawn_pipeline_sse, RegisterServiceBody,
     };
 
     #[test]
@@ -3153,6 +3161,61 @@ mod tests {
         );
     }
 
+    /// A port a crashed startup left *held but unserved* (#371, #433), and the corpse
+    /// holding it: connect is refused, yet bind still fails. Only a raw socket bound
+    /// without `SO_REUSEADDR` and never listened on models that; std/tokio listeners
+    /// always listen. The port is OS-ephemeral rather than from `allocate_service_port`,
+    /// whose deterministic scan would hand the same port to a parallel test.
+    fn dead_port_with_corpse() -> (u16, socket2::Socket) {
+        let probe = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("an ephemeral port");
+        let port = probe.local_addr().expect("the probe's address").port();
+        drop(probe);
+        let corpse = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None)
+            .expect("a raw tcp socket");
+        let addr = std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, port));
+        corpse.bind(&addr.into()).expect("bind without listening");
+        (port, corpse)
+    }
+
+    #[tokio::test]
+    async fn cached_port_is_not_reusable_when_held_but_unserved() {
+        let (port, _corpse) = dead_port_with_corpse();
+        assert!(
+            !is_cached_port_reusable(port).await,
+            "a port held by a crashed service's corpse must not be reused",
+        );
+    }
+
+    // The recovery half of #371/#433: a crashed service re-registering must land on a
+    // port it can actually bind, without a container or host restart.
+    #[tokio::test]
+    async fn crashed_service_is_reallocated_off_its_dead_port() {
+        let (dead_port, _corpse) = dead_port_with_corpse();
+        let mut registry: HashMap<String, HashMap<String, ServiceEntry>> = HashMap::new();
+        registry.entry("agent".into()).or_default().insert(
+            "dashboard".into(),
+            ServiceEntry {
+                port: dead_port,
+                public: false,
+            },
+        );
+
+        // Re-registration, replaying register_service_handler's port decision.
+        let cached = registry
+            .get("agent")
+            .and_then(|services| services.get("dashboard"))
+            .map(|entry| entry.port);
+        let resolved = match cached {
+            Some(port) if is_cached_port_reusable(port).await => port,
+            _ => allocate_service_port(&registry).expect("a port should be free"),
+        };
+
+        assert_ne!(
+            resolved, dead_port,
+            "a crashed service must be moved off its held-but-dead port, not handed it back forever",
+        );
+    }
+
     // Reproduction of vesta#1254. A resident service (voice-server) stays bound to
     // its registered port; re-registration, which is also how consumers resolve the
     // port (whatsapp's resolveVoiceBaseURL, voice's own status/stop/restart), must
@@ -3195,6 +3258,49 @@ mod tests {
             resolved, p1,
             "a resident service must resolve to its live port {p1}, not a fresh dead one ({resolved})",
         );
+    }
+
+    // Reproduction of vesta#1323. `public` is as durable a choice as the port, and the
+    // caller re-registering is often a resolver that never chose it, so an omitted flag
+    // must inherit the cached one instead of revoking a publish. Drives the real
+    // resolve_public register_service_handler calls.
+    #[test]
+    fn public_flag_survives_a_reregistration_that_omits_it() {
+        let published = Some(ServiceEntry {
+            port: 50000,
+            public: true,
+        });
+        let private = Some(ServiceEntry {
+            port: 50001,
+            public: false,
+        });
+        let cases = [
+            (None, published, true, "omitting public keeps a published service public"),
+            (Some(false), published, false, "an explicit false still demotes a published service"),
+            (None, private, false, "omitting public keeps a private service private"),
+            (Some(true), private, true, "an explicit true still publishes a private service"),
+            (None, None, false, "a first registration with no flag defaults private"),
+            (Some(true), None, true, "a first registration honors an explicit true"),
+        ];
+        for (requested, cached, expected, reason) in cases {
+            assert_eq!(resolve_public(requested, cached), expected, "{reason}");
+        }
+    }
+
+    // The fleet-compat crux of #1323: a pre-fix client sends "public":false explicitly
+    // while a post-fix one omits the field, so the body must tell absent from false.
+    // A null reads as absent, so a client serializing the field as JSON null inherits.
+    #[test]
+    fn register_body_tells_an_absent_public_from_an_explicit_false() {
+        let parse = |body: &str| {
+            serde_json::from_str::<RegisterServiceBody>(body)
+                .expect("a well-formed body should deserialize")
+                .public
+        };
+        assert_eq!(parse(r#"{"name":"dashboard"}"#), None);
+        assert_eq!(parse(r#"{"name":"dashboard","public":null}"#), None);
+        assert_eq!(parse(r#"{"name":"dashboard","public":false}"#), Some(false));
+        assert_eq!(parse(r#"{"name":"dashboard","public":true}"#), Some(true));
     }
 
     // ── API contract fixtures ──────────────────────────────────────────────

@@ -352,13 +352,14 @@ def cmd_fetch(args: argparse.Namespace) -> int:
 def cmd_doctor(_args: argparse.Namespace) -> int:
     import platform
 
-    from .launcher import CAMOUFOX_RELEASE_TAG, _asset_for_arch, camoufox_home, camoufox_installed
+    from .launcher import CAMOUFOX_RELEASE_TAG, _asset_for_arch, camoufox_home, camoufox_installed, libs_readiness
 
     report: dict = {
         "arch": platform.machine(),
         "camoufox_release": CAMOUFOX_RELEASE_TAG,
         "camoufox_installed": camoufox_installed(),
         "camoufox_home": str(camoufox_home()),
+        "shared_libs": libs_readiness(),
         "sessions": admin.list_sessions(),
         "handover": handover.readiness(),
     }
