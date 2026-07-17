@@ -106,7 +106,13 @@ export function MobileNavbar({ progress }: { progress: MotionValue<number> }) {
       <button
         type="button"
         ref={interactive ? dashboardRef : undefined}
-        onClick={interactive ? () => navigate(base) : undefined}
+        onClick={
+          interactive
+            ? () => {
+                void navigate(base);
+              }
+            : undefined
+        }
         aria-current={isDashboard ? "page" : undefined}
         tabIndex={interactive ? undefined : -1}
         className={cn(
@@ -120,7 +126,13 @@ export function MobileNavbar({ progress }: { progress: MotionValue<number> }) {
       <button
         type="button"
         ref={interactive ? chatRef : undefined}
-        onClick={interactive ? () => navigate(chatPath) : undefined}
+        onClick={
+          interactive
+            ? () => {
+                void navigate(chatPath);
+              }
+            : undefined
+        }
         aria-current={isChat ? "page" : undefined}
         tabIndex={interactive ? undefined : -1}
         className={cn(

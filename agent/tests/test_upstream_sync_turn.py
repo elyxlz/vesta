@@ -2,8 +2,8 @@
 
 import asyncio
 
-import core.models as vm
 import core.config as cfg
+import core.models as vm
 from core import state_store
 from core.tools import _vesta_tools
 from core.upstream_sync import upstream_sync_turn, vesta_version

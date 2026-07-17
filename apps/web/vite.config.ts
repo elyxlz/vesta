@@ -2,7 +2,8 @@ import { readFileSync, writeFileSync, mkdirSync } from "fs";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import basicSsl from "@vitejs/plugin-basic-ssl";
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig } from "vitest/config";
+import type { Plugin } from "vite";
 import path from "path";
 
 // Set by apps/desktop/scripts/dev.mjs: plain http on a fixed port so the
@@ -18,15 +19,16 @@ const cargoToml = readFileSync(
   path.resolve(__dirname, "..", "..", "vestad", "Cargo.toml"),
   "utf-8",
 );
-const versionMatch = cargoToml.match(
-  /\[package\][^[]*?\nversion\s*=\s*"([^"]+)"/,
+const versionMatch = /\[package\][^[]*?\nversion\s*=\s*"([^"]+)"/.exec(
+  cargoToml,
 );
-if (!versionMatch) {
+const versionCapture = versionMatch?.[1];
+if (versionCapture === undefined) {
   throw new Error(
     "could not read [package] version from ../../vestad/Cargo.toml",
   );
 }
-const version = versionMatch[1];
+const version: string = versionCapture;
 
 function installScriptsPlugin(): Plugin {
   return {
@@ -63,6 +65,25 @@ export default defineConfig({
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
+  },
+  test: {
+    projects: [
+      {
+        extends: true,
+        test: {
+          include: ["src/**/*.test.tsx"],
+          environment: "jsdom",
+          setupFiles: ["./src/vitest.setup.ts"],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          include: ["src/**/*.test.ts"],
+          environment: "node",
+        },
+      },
+    ],
   },
   clearScreen: false,
   server: {

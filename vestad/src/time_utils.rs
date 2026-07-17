@@ -22,7 +22,8 @@ pub fn now_timestamp() -> String {
 
 /// The compact `YYYYMMDD-HHMMSS` UTC timestamp for an epoch.
 pub fn now_timestamp_from_epoch(epoch_secs: u64) -> String {
-    let dt = time::OffsetDateTime::from_unix_timestamp(epoch_secs as i64)
+    let epoch = i64::try_from(epoch_secs).expect("epoch seconds fit in i64");
+    let dt = time::OffsetDateTime::from_unix_timestamp(epoch)
         .expect("epoch seconds within valid range");
     let fmt = time::macros::format_description!("[year][month][day]-[hour][minute][second]");
     dt.format(&fmt).expect("timestamp format never fails")
@@ -37,18 +38,18 @@ pub fn parse_compact_utc_epoch(created_at: &str) -> Option<u64> {
 }
 
 fn local_tm(epoch_secs: u64) -> libc::tm {
-    let epoch = epoch_secs as libc::time_t;
+    let epoch = libc::time_t::try_from(epoch_secs).expect("epoch seconds fit in time_t");
     // SAFETY: libc::tm is a plain-integer C struct for which an all-zero bit pattern is valid.
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     // SAFETY: &epoch and &mut tm are valid, non-overlapping, properly aligned pointers for the
     // duration of the call.
-    unsafe { libc::localtime_r(&epoch, &mut tm) };
+    unsafe { libc::localtime_r(&raw const epoch, &raw mut tm) };
     tm
 }
 
 /// The host-local hour of day (0-23) right now.
 pub fn local_hour() -> u8 {
-    local_tm(now_epoch_secs()).tm_hour as u8
+    u8::try_from(local_tm(now_epoch_secs()).tm_hour).expect("tm_hour is 0-23")
 }
 
 /// Host-local calendar date (YYYYMMDD) for an epoch. Keying the once-per-day backup dedup to this

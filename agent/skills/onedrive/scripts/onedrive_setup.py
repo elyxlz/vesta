@@ -72,7 +72,7 @@ def mount() -> None:
 
     # Unmount if already mounted
     _unmount_if_mounted(mount_dir)
-    r = subprocess.run(["rm", "-rf", str(mount_dir)], capture_output=True, text=True)
+    r = subprocess.run(["rm", "-rf", str(mount_dir)], capture_output=True, text=True, check=False)
     if r.returncode != 0:
         print(f"Warning: failed to clean mount dir: {r.stderr.strip()}", file=sys.stderr)
     mount_dir.mkdir(parents=True, exist_ok=True)
@@ -115,7 +115,7 @@ def mount() -> None:
         "INFO",
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         print(f"Error: rclone mount failed: {result.stderr.strip()}", file=sys.stderr)
         sys.exit(1)
@@ -132,7 +132,7 @@ def _unmount_if_mounted(mount_dir: pl.Path) -> None:
         ["umount", str(mount_dir)],
     ]:
         try:
-            if subprocess.run(cmd, capture_output=True, timeout=10).returncode == 0:
+            if subprocess.run(cmd, capture_output=True, timeout=10, check=False).returncode == 0:
                 return
         except (subprocess.SubprocessError, FileNotFoundError):
             continue
@@ -140,7 +140,7 @@ def _unmount_if_mounted(mount_dir: pl.Path) -> None:
 
 def _is_mounted(mount_dir: pl.Path) -> bool:
     try:
-        with open("/proc/mounts") as f:
+        with pl.Path("/proc/mounts").open() as f:
             return str(mount_dir) in f.read()
     except FileNotFoundError:
         return mount_dir.is_mount()

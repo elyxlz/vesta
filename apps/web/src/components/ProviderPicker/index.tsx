@@ -15,7 +15,7 @@ import type { ProviderMode } from "./types";
 import { useManifest } from "@/hooks/use-manifest";
 import { useClaudeModels } from "@/hooks/use-claude-models";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cn } from "@/lib/utils";
+import { cn, errorMessage } from "@/lib/utils";
 
 type InternalStep = "choice" | "auth" | "key" | "model" | "context";
 
@@ -61,9 +61,7 @@ export function ProviderPicker({
       })
       .catch((e: unknown) => {
         if (cancelled) return;
-        setAuthStartError(
-          (e as { message?: string })?.message || "failed to start auth",
-        );
+        setAuthStartError(errorMessage(e, "failed to start auth"));
       });
     return () => {
       cancelled = true;

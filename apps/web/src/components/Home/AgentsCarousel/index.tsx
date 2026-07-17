@@ -38,7 +38,7 @@ function Pagination({
       {Array.from({ length: total }, (_, i) => (
         <motion.button
           key={i}
-          aria-label={`page ${i + 1}`}
+          aria-label={`page ${String(i + 1)}`}
           className="grid size-10 place-items-center rounded-full"
           animate={{
             opacity: current === i ? 1 : 0.3,
@@ -81,7 +81,7 @@ export function AgentsCarousel({
       if (!card) return;
       const cardCenter = card.offsetLeft + card.offsetWidth / 2;
       const offset = cardCenter - viewportCenter;
-      card.style.transform = `scale(${scaleForCarouselItemOffset(offset)})`;
+      card.style.transform = `scale(${String(scaleForCarouselItemOffset(offset))})`;
       const distance = Math.abs(offset);
       if (distance < nearestDistance) {
         nearestDistance = distance;
@@ -142,7 +142,7 @@ export function AgentsCarousel({
         style={{
           gap: AGENT_CAROUSEL_GAP,
           scrollSnapType: "x mandatory",
-          paddingInline: `calc(50% - ${AGENT_CAROUSEL_CARD_WIDTH / 2}px)`,
+          paddingInline: `calc(50% - ${String(AGENT_CAROUSEL_CARD_WIDTH / 2)}px)`,
           overscrollBehaviorX: "none",
           touchAction: "pan-x",
           maskImage: EDGE_FADE,
@@ -157,7 +157,7 @@ export function AgentsCarousel({
             }}
             className="flex shrink-0 items-center justify-center"
             style={{
-              width: `${AGENT_CAROUSEL_CARD_WIDTH}px`,
+              width: `${String(AGENT_CAROUSEL_CARD_WIDTH)}px`,
               aspectRatio: "1/1",
               scrollSnapAlign: "center",
             }}

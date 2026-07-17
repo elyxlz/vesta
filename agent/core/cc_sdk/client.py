@@ -16,8 +16,8 @@ session_id / async context manager) matches what core/ already calls.
 """
 
 import asyncio
+import contextlib
 import json
-import os
 import pathlib as pl
 import shlex
 import shutil
@@ -27,12 +27,11 @@ import time
 import typing as tp
 import uuid
 
-from . import transcript
-from . import tmux
+from . import tmux, transcript
 from ._claude_bin import ensure_claude
 from .bridge import Bridge
-from .messages import ClaudeAgentOptions, ClaudeSDKError, ResultMessage
 from .mcp import McpServer
+from .messages import ClaudeAgentOptions, ClaudeSDKError, ResultMessage
 
 _PKG_DIR = pl.Path(__file__).resolve().parent
 _FORWARD = _PKG_DIR / "_forward.py"
@@ -55,7 +54,7 @@ _ALWAYS_EVENTS = ("SessionStart", "Stop", "PreCompact")
 
 def _preseed_config(cwd: str) -> None:
     """Make a fresh interactive session skip onboarding and the workspace trust dialog."""
-    path = pl.Path(os.path.expanduser("~/.claude.json"))
+    path = pl.Path("~/.claude.json").expanduser()
     data: dict[str, tp.Any] = {}
     if path.exists():
         try:
@@ -121,9 +120,9 @@ def _claude_args(
 class ClaudeSDKClient:
     def __init__(self, *, options: ClaudeAgentOptions) -> None:
         self._options = options
-        self._session_id = options.resume if options.resume else str(uuid.uuid4())
+        self._session_id = options.resume or str(uuid.uuid4())
         self._resuming = bool(options.resume)
-        self._cwd = str(pl.Path(options.cwd).expanduser().resolve()) if options.cwd else os.getcwd()
+        self._cwd = str(pl.Path(options.cwd).expanduser().resolve()) if options.cwd else str(pl.Path.cwd())
         suffix = self._session_id.replace("-", "")[:12]
         self._tmux_socket = f"ccsdk_{suffix}"
         self._tmux_session = f"cc_{suffix}"
@@ -195,22 +194,18 @@ class ClaudeSDKClient:
     async def _cleanup(self) -> None:
         if self._monitor_task is not None:
             self._monitor_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._monitor_task
-            except asyncio.CancelledError:
-                pass
             self._monitor_task = None
         await tmux.kill_server(self._tmux_socket)
         await self._bridge.stop()
         for child in self._workdir.glob("*"):
             child.unlink(missing_ok=True)
-        try:
+        with contextlib.suppress(OSError):
             self._workdir.rmdir()
-        except OSError:
-            pass
 
     def _find_transcript(self) -> pl.Path | None:
-        base = pl.Path(os.path.expanduser("~/.claude/projects"))
+        base = pl.Path("~/.claude/projects").expanduser()
         matches = sorted(base.glob(f"*/{self._session_id}.jsonl"))
         return matches[0] if matches else None
 
@@ -332,13 +327,13 @@ class ClaudeSDKClient:
                 self._transcript_path = pl.Path(payload["transcript_path"])
             self._ready.set()
 
-        async def on_stop(payload: dict[str, tp.Any]) -> None:
+        async def on_stop(_payload: dict[str, tp.Any]) -> None:
             # Clamp to turn_index: interrupt() already credits stops_received up to turn_index
             # when it fires, so a late Stop that arrives in the 50-200ms window after interrupt()
             # must not increment past the current turn's threshold and pre-satisfy the next turn.
             self._stops_received = min(self._stops_received + 1, self._turn_index)
 
-        async def on_precompact(payload: dict[str, tp.Any]) -> None:
+        async def on_precompact(_payload: dict[str, tp.Any]) -> None:
             self._compaction_started.set()
 
         self._bridge.on("SessionStart", on_session_start)

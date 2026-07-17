@@ -63,8 +63,9 @@ export const useAgentOps = create<AgentOpsStore>((set, get) => ({
       const alive = new Set(agents.map((a) => a.name));
       const stale = Object.keys(s.states).filter((n) => !alive.has(n));
       if (stale.length === 0) return s;
-      const states = { ...s.states };
-      for (const name of stale) delete states[name];
+      const states = Object.fromEntries(
+        Object.entries(s.states).filter(([name]) => alive.has(name)),
+      );
       return { states };
     }),
 

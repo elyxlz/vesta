@@ -65,9 +65,8 @@ class Notification(pyd.BaseModel):
         for key, value in data.items():
             if value is None or value == "" or value is False or value == []:
                 continue
-            if isinstance(value, dt.datetime):
-                value = value.replace(microsecond=0).isoformat()
-            if value is True:
-                value = "true"
-            attrs.append(f"{key}={xml_utils.quoteattr(str(value))}")
+            rendered = value.replace(microsecond=0).isoformat() if isinstance(value, dt.datetime) else value
+            if rendered is True:
+                rendered = "true"
+            attrs.append(f"{key}={xml_utils.quoteattr(str(rendered))}")
         return f"<channel {' '.join(attrs)}>{content}</channel>"

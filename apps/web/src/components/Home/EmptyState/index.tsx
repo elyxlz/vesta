@@ -20,7 +20,11 @@ export function EmptyState() {
           <EmptyDescription>create an agent to get started</EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
-          <Button onClick={() => navigate("/new")}>
+          <Button
+            onClick={() => {
+              void navigate("/new");
+            }}
+          >
             <Plus data-icon="inline-start" />
             new agent
           </Button>

@@ -7,8 +7,8 @@ import pytest
 
 import core.config as cfg
 import core.models as vm
-from core.state_store import PersistedState
 from core import state_store
+from core.state_store import PersistedState
 
 
 def _config(tmp_path):

@@ -15,10 +15,9 @@ marks: no churn on a broken pyproject.
 
 import tomllib
 
-from . import logger
-from . import models as vm
 from . import config as cfg
-from . import state_store
+from . import logger, state_store
+from . import models as vm
 
 UNKNOWN_VERSION = "unknown"
 

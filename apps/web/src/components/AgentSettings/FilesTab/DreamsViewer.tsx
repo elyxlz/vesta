@@ -27,13 +27,16 @@ export function DreamsViewer({ agent, dreamPaths }: DreamsViewerProps) {
     setEntries(null);
     setError(null);
 
-    if (dreamPaths.length === 0) {
+    // Derive paths from the joined key so the effect re-runs only when the
+    // set of paths changes, not on every new array identity.
+    const paths = pathsKey === "" ? [] : pathsKey.split("|");
+    if (paths.length === 0) {
       setEntries([]);
       return;
     }
 
     Promise.all(
-      dreamPaths.map(async (path) => {
+      paths.map(async (path) => {
         const r = await readFile(agent, path);
         const fname = path.slice(DREAMER_PREFIX.length);
         return {
@@ -52,14 +55,13 @@ export function DreamsViewer({ agent, dreamPaths }: DreamsViewerProps) {
         });
         setEntries(results);
       })
-      .catch((e: Error) => {
-        if (!cancelled) setError(e.message);
+      .catch((e: unknown) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
       });
 
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent, pathsKey]);
 
   return (

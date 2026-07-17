@@ -28,6 +28,7 @@ import getpass
 import http.server
 import json
 import os
+import pathlib
 import secrets
 import socket
 import sys
@@ -36,8 +37,8 @@ import time
 import urllib.parse
 import urllib.request
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from imap_client import (  # noqa: E402
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from imap_client import (
     _env,
     _token_path,
     account_dir,
@@ -47,13 +48,12 @@ from imap_client import (  # noqa: E402
     save_config,
     save_token,
 )
-from providers import (  # noqa: E402
+from providers import (
     apply_env_overrides,
     detect_provider,
     get_profile,
     resolve_provider,
 )
-
 
 # -- device flow (Microsoft) ----------------------------------------
 
@@ -85,7 +85,7 @@ class _RedirectHandler(http.server.BaseHTTPRequestHandler):
 
     captured: dict | None = None
 
-    def do_GET(self):  # noqa: N802
+    def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         params = urllib.parse.parse_qs(parsed.query)
         # Ignore unrelated requests (e.g. the browser's /favicon.ico) so they
@@ -109,7 +109,7 @@ class _RedirectHandler(http.server.BaseHTTPRequestHandler):
         )
         self.wfile.write(body.encode())
 
-    def log_message(self, *a, **kw):  # silence default access log
+    def log_message(self, *_a, **_kw):  # silence default access log
         return
 
 
@@ -217,7 +217,7 @@ def auth_app_password(provider: str, profile: dict, user: str) -> dict:
     }
 
 
-def _resolve_user(provider: str | None, user: str | None) -> str:
+def _resolve_user(user: str | None) -> str:
     if user:
         return user
     env_user = _env("EMAIL_CLIENT_USER")
@@ -254,7 +254,7 @@ def run_add(
     the top-level ``accounts.json`` index.
     """
     account_dir(account)
-    user = _resolve_user(provider, user)
+    user = _resolve_user(user)
     name, profile = _resolve_named_provider(provider, user)
 
     token_path = _token_path(account)

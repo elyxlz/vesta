@@ -25,8 +25,7 @@ export function buildTree(entries: FileTreeEntry[]): TreeNode {
 
     let parent = root;
     let currentPath = "";
-    for (let i = 0; i < segments.length; i++) {
-      const segment = segments[i];
+    for (const [i, segment] of segments.entries()) {
       currentPath += `/${segment}`;
       const isLeaf = i === segments.length - 1;
       const isDir = isLeaf ? entry.is_dir : true;

@@ -61,6 +61,7 @@ _SNAPSHOT_FIXTURE: SnapshotEvent = SnapshotEvent(
         "cursor": 42,
     },
     notifications={"pending": ["email-123"]},
+    config={"timezone": "America/New_York"},
 )
 
 _FIXTURES_HEADER = (

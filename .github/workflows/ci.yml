@@ -5,7 +5,10 @@ on:
     branches: [master]
   pull_request:
   release:
-    types: [created, published]
+    # published only: gh release create fires created+published together, and two
+    # racing runs each execute test-live (double flake exposure and token spend) while
+    # either one failing deletes the release even when the other fully passed.
+    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -81,6 +84,7 @@ jobs:
               - 'check.sh'
             go:
               - 'agent/skills/whatsapp/cli/**'
+              - 'agent/skills/telegram/cli/**'
               - '.github/workflows/ci.yml'
               - 'check.sh'
 
@@ -181,7 +185,7 @@ jobs:
       - name: Run agent checks
         run: ./check.sh agent
 
-  # ── Go checks (whatsapp CLI) ──────────────────────────────────────────
+  # ── Go checks (whatsapp + telegram CLIs) ──────────────────────────────
   go-checks:
     needs: detect-changes
     if: github.event_name != 'pull_request' || needs.detect-changes.outputs.go == 'true'
@@ -203,6 +207,9 @@ jobs:
 
       - name: Run whatsapp checks
         run: ./check.sh whatsapp
+
+      - name: Run telegram checks
+        run: ./check.sh telegram
 
   # ── Windows install script guard ──────────────────────────────────────
   install-script-check:
@@ -269,6 +276,24 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+
+      # The integration suite exports multi-GB agent containers, streams them into
+      # restic, and re-imports them, up to 8 tests in parallel (--test-threads=8). On a
+      # stock ubuntu runner (~14 GB free on /) that exhausts the disk: docker
+      # export/import, restic, and the mounted-repo git fetch fail with "no space left
+      # on device", and the backup/rename tests stall until the step times out.
+      # Reclaim the tens of GB of preinstalled toolchains this job never uses, and prune
+      # the runner's seeded Docker images. This runs before the agent image is built, so
+      # nothing the tests need is removed. Best-effort: cleanup never fails the job.
+      - name: Free runner disk space
+        run: |
+          echo "Disk before cleanup:"
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/share/swift || true
+          docker system prune --all --force || true
+          echo "Disk after cleanup:"
+          df -h /
 
       - name: Install Rust
         uses: ./.github/actions/install-rust
@@ -722,9 +747,12 @@ jobs:
         working-directory: apps
         run: npm -w @vesta/web run build
 
-      # Signing/notarization env is empty on PRs; electron-builder then skips
-      # both and produces unsigned artifacts, which is exactly what PR
-      # validation needs.
+      # electron-builder auto-skips signing on pull_request builds, but on a
+      # push it attempts to sign and fails when no cert is configured. Key the
+      # signed path on the cert being present: with a cert, sign + notarize;
+      # without one, force an unsigned build so master stays green until the
+      # Apple secrets are added, after which the signed path engages with no
+      # further change.
       - name: Build Electron app
         working-directory: apps/desktop
         env:
@@ -735,7 +763,18 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           npx tsc
-          npx electron-builder --mac dmg zip --universal --publish never
+          if [ -n "$CSC_LINK" ]; then
+            npx electron-builder --mac dmg zip --universal --publish never
+          else
+            echo "No signing certificate configured; building unsigned."
+            # The empty secrets above still define the env vars: electron-builder resolves an
+            # empty CSC_LINK against the project dir and dies with "not a file" on non-PR
+            # events (PR builds skip signing wholesale, so only push/release hit it). Unset
+            # them so the unsigned path is genuinely unsigned.
+            unset CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+            CSC_IDENTITY_AUTO_DISCOVERY=false \
+              npx electron-builder --mac dmg zip --universal --publish never -c.mac.notarize=false
+          fi
 
       - name: Collect artifacts
         if: github.event_name != 'pull_request'

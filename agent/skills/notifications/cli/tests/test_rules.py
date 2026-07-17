@@ -3,12 +3,11 @@ import json
 import sqlite3
 
 import pytest
-
 from notifications_cli import cli
 
 
 def _args(**kwargs) -> argparse.Namespace:
-    base = {"source": None, "type": None, "sender": None, "keyword": None, "match": None, "before": None, "after": None}
+    base = {"source": None, "type": None, "sender": None, "keyword": None, "match": None, "before": None, "after": None, "for_duration": None}
     base.update(kwargs)
     return argparse.Namespace(**base)
 
@@ -54,6 +53,41 @@ def test_add_builds_trash_rule(monkeypatch, capsys):
     assert rule["action"] == "trash" and rule["source"] == "whatsapp"
     assert rule["match"] == [{"field": "chat_name", "op": "contains", "value": "status", "negate": False}]
     assert "-> trash" in capsys.readouterr().out
+
+
+def test_parse_duration_sums_chunks():
+    assert cli._parse_duration("2h") == __import__("datetime").timedelta(hours=2)
+    assert cli._parse_duration("30m") == __import__("datetime").timedelta(minutes=30)
+    assert cli._parse_duration("1h30m") == __import__("datetime").timedelta(minutes=90)
+    assert cli._parse_duration("1d") == __import__("datetime").timedelta(days=1)
+
+
+@pytest.mark.parametrize("spec", ["", "2x", "2h5x", "0m", "abc"])
+def test_parse_duration_rejects_bad(spec):
+    with pytest.raises(ValueError):
+        cli._parse_duration(spec)
+
+
+def test_add_temporary_rule_stamps_expiry(monkeypatch):
+    import datetime as _dt
+
+    store = _store(monkeypatch)
+    fixed = _dt.datetime(2026, 1, 1, tzinfo=_dt.UTC)
+    monkeypatch.setattr(cli, "_utcnow", lambda: fixed)
+    assert cli.cmd_add(_args(action="snooze", source="twitter", for_duration="2h")) == 0
+    assert store[0]["expires_at"] == (fixed + _dt.timedelta(hours=2)).isoformat()
+
+
+def test_add_permanent_rule_has_no_expiry(monkeypatch):
+    store = _store(monkeypatch)
+    assert cli.cmd_add(_args(action="snooze", source="twitter")) == 0
+    assert "expires_at" not in store[0]
+
+
+def test_add_rejects_bad_duration(monkeypatch, capsys):
+    _store(monkeypatch)
+    assert cli.cmd_add(_args(action="snooze", source="twitter", for_duration="soon")) == 1
+    assert "--for must be a duration" in capsys.readouterr().err
 
 
 def test_add_rejects_core_source(monkeypatch, capsys):

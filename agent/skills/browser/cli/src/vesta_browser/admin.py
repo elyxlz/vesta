@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import signal
@@ -73,10 +74,8 @@ def _terminate_pid(pid: int) -> None:
         except ProcessLookupError:
             return
         time.sleep(GRACEFUL_POLL_INTERVAL_S)
-    try:
+    with contextlib.suppress(ProcessLookupError):
         os.kill(pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
 
 
 def _read_pid(path: Path) -> int | None:
@@ -237,10 +236,8 @@ def ensure_daemon(wait_s: float = 30.0, name: str | None = None) -> None:
         time.sleep(0.2)
 
     tail = ""
-    try:
+    with contextlib.suppress(FileNotFoundError, IndexError):
         tail = Path(log_path(session)).read_text().splitlines()[-1]
-    except (FileNotFoundError, IndexError):
-        pass
     raise RuntimeError(f"daemon {session!r} did not come up within {wait_s}s. Last log line: {tail or '(none)'}")
 
 

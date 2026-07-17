@@ -3,10 +3,10 @@ paraphrase (which has misreported a five_hour rejection as a "monthly spend limi
 
 import pytest
 from claude_agent_sdk import RateLimitEvent, RateLimitInfo, RateLimitStatus, RateLimitType
-
 from conftest import consuming, make_stream_harness, result_msg
-from core.sdk_parsing import rate_limit_notice
 from wait_util import wait_for_condition
+
+from core.sdk_parsing import rate_limit_notice
 
 NOW = 1_000_000.0
 

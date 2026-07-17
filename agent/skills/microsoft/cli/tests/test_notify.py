@@ -3,8 +3,7 @@
 import json
 
 import pytest
-
-from microsoft_cli import notify, folders
+from microsoft_cli import folders, notify
 from microsoft_cli.config import Config
 
 _FOLDERS_PAGE = {
@@ -25,7 +24,7 @@ def patched(monkeypatch):
     def fake_account_id(account_email, cache_file):
         return "acct-1"
 
-    def fake_request(client, cache_file, scopes, base_url, method, path, account_id=None, **kwargs):
+    def fake_request(conn, method, path, account_id=None, **kwargs):
         if method == "GET" and path == "/me/mailFolders":
             return _FOLDERS_PAGE
         return None

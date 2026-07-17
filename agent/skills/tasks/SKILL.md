@@ -70,7 +70,7 @@ uv tool install --editable ~/agent/skills/tasks/cli
 
 One daemon handles everything: task due-date monitoring, reminder scheduling, and the daily digest. `--notifications-dir` defaults to `~/agent/notifications`; pass it only to override. Register with vestad to get a port (see [vestad](../vestad/SKILL.md)) and add this startup command to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
 ```
-PORT=$(~/agent/skills/vestad/scripts/register-service tasks) && screen -dmS tasks tasks serve --port $PORT
+running tasks || { PORT=$(~/agent/skills/vestad/scripts/register-service tasks) && screen -dmS tasks tasks serve --port $PORT; sleep 1; }
 ```
 
 ### Reminder Patterns

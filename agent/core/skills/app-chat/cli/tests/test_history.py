@@ -1,6 +1,6 @@
 """Tests for `app-chat history` recent-message paging (no --search)."""
 
-import app_chat_cli.commands as commands
+from app_chat_cli import commands
 
 
 def _make_api_get(pages: list[dict[str, object]], calls: list[dict[str, str]]):

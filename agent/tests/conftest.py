@@ -6,9 +6,10 @@ import typing as tp
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-import core.models as vm
+
 import core.config as cfg
-from core.events import EventBus
+import core.models as vm
+from core.events import EventBus, StreamEvent
 
 os.environ.pop("CLAUDECODE", None)
 os.environ.setdefault("WS_PORT", "17865")
@@ -88,16 +89,16 @@ def make_stream_harness(response_timeout: int | None = None):
         config = cfg.VestaConfig(interrupt_timeout=0.5, response_timeout=response_timeout)
     state = vm.State()
     state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
-    state.event_bus = EventBus()
 
-    original_emit = state.event_bus.emit
+    class _TrackingEventBus(EventBus):
+        """EventBus that records each emitted assistant text with its wall-clock instant."""
 
-    def tracking_emit(event):
-        if isinstance(event, dict) and event.get("type") == "assistant":
-            emitted.append((event["text"], time.monotonic()))
-        original_emit(event)
+        def emit(self, event: StreamEvent) -> None:
+            if event["type"] == "assistant" and "text" in event:
+                emitted.append((str(event["text"]), time.monotonic()))
+            super().emit(event)
 
-    state.event_bus.emit = tracking_emit  # ty: ignore[invalid-assignment]
+    state.event_bus = _TrackingEventBus()
 
     mock_client = MagicMock()
     mock_client.query = AsyncMock()
@@ -115,7 +116,7 @@ def make_stream_harness(response_timeout: int | None = None):
             # `msg` — i.e. its dispatch (emit/turn bookkeeping) has fully completed.
             consumed.append(msg)
 
-    mock_client.receive_messages = MagicMock(side_effect=lambda: _receive_messages())
+    mock_client.receive_messages = MagicMock(side_effect=_receive_messages)
 
     return state, config, mock_client, emitted, message_queue, consumed
 

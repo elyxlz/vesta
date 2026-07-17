@@ -31,6 +31,9 @@ const linkifyText = fc.string({
 
 const TAG_RE = /<\/?(?:a|code|strong|em)(?:\s[^>]*)?>/g;
 
+const NUL = "\x00";
+const MARKER_RE = new RegExp(`[*\`${NUL}]`);
+
 describe("linkify properties", () => {
   it("never throws on any input", () => {
     fc.assert(
@@ -59,8 +62,7 @@ describe("linkify properties", () => {
   it("equals plain HTML escaping when there are no URLs, markdown markers, or placeholders", () => {
     const plainText = fc
       .string({ unit: "grapheme", maxLength: 200 })
-      // eslint-disable-next-line no-control-regex
-      .filter((s) => !/https?:\/\//.test(s) && !/[*`\x00]/.test(s));
+      .filter((s) => !/https?:\/\//.test(s) && !MARKER_RE.test(s));
     fc.assert(
       fc.property(plainText, (text) => {
         const expected = text

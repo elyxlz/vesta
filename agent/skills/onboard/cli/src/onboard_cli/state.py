@@ -33,14 +33,14 @@ def _read_all() -> dict[str, Any]:
 def _write_all(data: dict[str, Any]) -> None:
     _STATE_DIR.mkdir(parents=True, exist_ok=True)
     # Write 0600 (it holds a session token) to a temp file, then atomically
-    # os.replace — so an overlapping CLI invocation never reads a half-written
+    # replace — so an overlapping CLI invocation never reads a half-written
     # file (the read-modify-write itself is still unsynchronized; the SKILL keeps
     # onboards one-at-a-time, and atomic replace prevents corruption).
     tmp = _STATE_FILE.with_suffix(".tmp")
     fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
         json.dump(data, f)
-    os.replace(tmp, _STATE_FILE)
+    tmp.replace(_STATE_FILE)
 
 
 def load(email: str) -> dict[str, Any]:

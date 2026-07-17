@@ -5,9 +5,7 @@ from __future__ import annotations
 import base64
 
 import pytest
-
 from vesta_browser import helpers
-
 
 # ── Recipe banner logic ────────────────────────────────────────
 
@@ -214,7 +212,7 @@ def test_screenshot_webp_maps_to_jpeg(monkeypatch, tmp_path):
     calls: list[tuple[str, dict]] = []
     payload = base64.b64encode(b"img").decode()
     monkeypatch.setattr(helpers, "bidi", lambda method, **params: calls.append((method, params)) or {"data": payload})
-    helpers.screenshot(path=str(tmp_path / "s.webp"), format="webp", quality=50)
+    helpers.screenshot(path=str(tmp_path / "s.webp"), image_format="webp", quality=50)
     fmt = calls[0][1]["format"]
     assert fmt["type"] == "image/jpeg"
     assert abs(fmt["quality"] - 0.5) < 1e-9
@@ -230,4 +228,4 @@ def test_screenshot_full_page_sets_document_origin(monkeypatch, tmp_path):
 
 def test_screenshot_rejects_bad_format():
     with pytest.raises(ValueError, match="format must be"):
-        helpers.screenshot(format="gif")
+        helpers.screenshot(image_format="gif")

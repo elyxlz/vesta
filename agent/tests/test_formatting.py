@@ -3,6 +3,7 @@
 import datetime as dt
 
 import pytest
+
 from core.client import _contains_dashes
 from core.sdk_parsing import (
     _parse_agent_input,
@@ -10,7 +11,6 @@ from core.sdk_parsing import (
     filter_tool_lines,
     parse_sdk_message,
 )
-
 
 # --- Agent input parsing ---
 
@@ -152,7 +152,7 @@ def test_parse_sdk_message_returns_session_id_from_init():
 
     msg = SystemMessage(subtype="init", data={"session_id": "sess-abc-123", "slash_commands": ["compact"]})
 
-    texts, thinking_blocks, session_id, _error_texts = parse_sdk_message(msg)
+    texts, _thinking_blocks, session_id, _error_texts = parse_sdk_message(msg)
 
     assert session_id == "sess-abc-123"
     assert texts == []

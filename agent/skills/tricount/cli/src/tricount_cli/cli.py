@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import NoReturn
 
-from .client import TricountClient
+from .client import SplitSpec, TricountClient
 
 
 def _out(data: object) -> None:
@@ -34,18 +34,32 @@ def _parse_weighted_split(raw: str) -> dict[str, float] | None:
         return None
     result = {}
     for part in raw.split(","):
-        part = part.strip()
-        if "=" not in part:
-            raise ValueError(f"Invalid weighted split entry '{part}': expected 'Name=Amount'")
-        name, val = part.split("=", 1)
+        entry = part.strip()
+        if "=" not in entry:
+            raise ValueError(f"Invalid weighted split entry '{entry}': expected 'Name=Amount'")
+        name, val = entry.split("=", 1)
         try:
             result[name.strip()] = float(val.strip())
         except ValueError:
-            raise ValueError(f"Invalid amount '{val.strip()}' for member '{name.strip()}'")
+            raise ValueError(f"Invalid amount '{val.strip()}' for member '{name.strip()}'") from None
     return result
 
 
-def _resolve_split_members(t, raw: str, active_members):
+def _parse_weighted_or_err(raw: str) -> dict[str, float] | None:
+    try:
+        return _parse_weighted_split(raw)
+    except ValueError as e:
+        _err(str(e))
+
+
+def _member_or_err(t, name: str):
+    m = t.member_by_name(name) or t.member_by_uuid(name)
+    if not m:
+        _err(f"Member '{name}' not found in this tricount")
+    return m
+
+
+def _resolve_split_members(t, raw: str):
     """Resolve a comma-separated name/UUID list to Member objects."""
     names = [s.strip() for s in raw.split(",")]
     members = []
@@ -57,12 +71,37 @@ def _resolve_split_members(t, raw: str, active_members):
     return members
 
 
+def _resolve_shares(t, shares_raw: str):
+    """Resolve --shares 'Alice=1,Bob=3' to ({uuid: weight}, members)."""
+    named = _parse_weighted_or_err(shares_raw)
+    if named is None:
+        _err("--shares requires 'Name=weight' format, e.g. 'Alice=1,Bob=3'")
+    ratio_splits = {}
+    members = []
+    for name, weight in named.items():
+        m = _member_or_err(t, name)
+        ratio_splits[m.uuid] = weight
+        members.append(m)
+    return ratio_splits, members
+
+
+def _resolve_amounts(t, named: dict[str, float]):
+    """Resolve a {'Alice': 30.0} name-to-amount map to ({uuid: amount}, members)."""
+    amount_splits = {}
+    members = []
+    for name, amt in named.items():
+        m = _member_or_err(t, name)
+        amount_splits[m.uuid] = amt
+        members.append(m)
+    return amount_splits, members
+
+
 # ---------------------------------------------------------------------------
 # Command handlers
 # ---------------------------------------------------------------------------
 
 
-def cmd_auth_register(args: argparse.Namespace, client: TricountClient) -> dict:
+def cmd_auth_register(_args: argparse.Namespace, client: TricountClient) -> dict:
     """Register this device with Tricount (no account needed)."""
     creds = client.authenticate()
     return {
@@ -74,16 +113,16 @@ def cmd_auth_register(args: argparse.Namespace, client: TricountClient) -> dict:
     }
 
 
-def cmd_auth_status(args: argparse.Namespace, client: TricountClient) -> dict:
+def cmd_auth_status(_args: argparse.Namespace, client: TricountClient) -> dict:
     return client.auth_status()
 
 
-def cmd_auth_logout(args: argparse.Namespace, client: TricountClient) -> dict:
+def cmd_auth_logout(_args: argparse.Namespace, client: TricountClient) -> dict:
     result = client.logout()
     return {"status": "logged_out", "credentials_deleted": result["deleted"]}
 
 
-def cmd_list(args: argparse.Namespace, client: TricountClient) -> list:
+def cmd_list(_args: argparse.Namespace, client: TricountClient) -> list:
     tricounts = client.list_tricounts()
     return [
         {
@@ -167,11 +206,10 @@ def cmd_balances(args: argparse.Namespace, client: TricountClient) -> list:
     return balances
 
 
-def _resolve_add_expense_args(args, client, t):
-    """Shared resolution logic for add-expense and edit-expense."""
+def _resolve_add_expense_args(args, t):
+    """Resolution logic for add-expense: payer plus the requested split mode."""
     active_members = [m for m in t.members if m.status == "ACTIVE"]
 
-    # Resolve payer (may be None for edit where payer is unchanged)
     payer_member = None
     if args.payer:
         payer_member = t.member_by_name(args.payer) or t.member_by_uuid(args.payer)
@@ -182,51 +220,24 @@ def _resolve_add_expense_args(args, client, t):
                 "Tip: use the name exactly as shown in 'tricount show <tricount>'"
             )
 
-    # Determine split mode
     amount_splits = None  # uuid -> float
     ratio_splits = None  # uuid -> float (shares)
     split_uuids = None
-    split_members = []
 
-    shares_raw = getattr(args, "shares", None)
-    split_raw = getattr(args, "split", None)
-
-    if shares_raw:
+    if args.shares:
         # --shares "Alice=1,Bob=3" — proportional
-        try:
-            named = _parse_weighted_split(shares_raw)
-        except ValueError as e:
-            _err(str(e))
-        if named is None:
-            _err("--shares requires 'Name=weight' format, e.g. 'Alice=1,Bob=3'")
-        ratio_splits = {}
-        for name, weight in named.items():
-            m = t.member_by_name(name) or t.member_by_uuid(name)
-            if not m:
-                _err(f"Member '{name}' not found in this tricount")
-            ratio_splits[m.uuid] = weight
-            split_members.append(m)
-    elif split_raw:
-        try:
-            named = _parse_weighted_split(split_raw)
-        except ValueError as e:
-            _err(str(e))
-
+        ratio_splits, split_members = _resolve_shares(t, args.shares)
+    elif args.split:
+        named = _parse_weighted_or_err(args.split)
         if named is not None:
             # --split "Alice=30,Bob=70" — fixed amounts
-            amount_splits = {}
-            for name, amt in named.items():
-                m = t.member_by_name(name) or t.member_by_uuid(name)
-                if not m:
-                    _err(f"Member '{name}' not found in this tricount")
-                amount_splits[m.uuid] = amt
-                split_members.append(m)
+            amount_splits, split_members = _resolve_amounts(t, named)
         else:
             # --split "Alice,Bob" — equal split among named members
-            split_members = _resolve_split_members(t, split_raw, active_members)
+            split_members = _resolve_split_members(t, args.split)
             split_uuids = [m.uuid for m in split_members]
     else:
-        # Default: equal split among all active members (only for add-expense)
+        # Default: equal split among all active members
         split_members = active_members
         split_uuids = [m.uuid for m in split_members]
 
@@ -245,7 +256,7 @@ def cmd_add_expense(args: argparse.Namespace, client: TricountClient) -> dict:
       (omit both)                equal split among all active members
     """
     t = client.find_tricount(args.tricount)
-    payer_member, split_members, split_uuids, amount_splits, ratio_splits = _resolve_add_expense_args(args, client, t)
+    payer_member, split_members, split_uuids, amount_splits, ratio_splits = _resolve_add_expense_args(args, t)
 
     result = client.add_expense(
         tricount=t,
@@ -264,13 +275,10 @@ def cmd_add_expense(args: argparse.Namespace, client: TricountClient) -> dict:
         if "Id" in item:
             new_id = item["Id"]["id"]
 
-    split_desc = []
     if amount_splits:
-        for m in split_members:
-            split_desc.append(f"{m.display_name}={amount_splits[m.uuid]:.2f}")
+        split_desc = [f"{m.display_name}={amount_splits[m.uuid]:.2f}" for m in split_members]
     elif ratio_splits:
-        for m in split_members:
-            split_desc.append(f"{m.display_name}(share={ratio_splits[m.uuid]})")
+        split_desc = [f"{m.display_name}(share={ratio_splits[m.uuid]})" for m in split_members]
     else:
         split_desc = [m.display_name for m in split_members]
 
@@ -312,46 +320,22 @@ def cmd_edit_expense(args: argparse.Namespace, client: TricountClient) -> dict:
         payer_name = payer_member.display_name
 
     # Determine split mode
-    amount_splits = None
-    ratio_splits = None
-    split_uuids = None
+    split = SplitSpec()
     split_desc = None
 
-    shares_raw = getattr(args, "shares", None)
-    split_raw = getattr(args, "split", None)
-
-    if shares_raw:
-        try:
-            named = _parse_weighted_split(shares_raw)
-        except ValueError as e:
-            _err(str(e))
-        if named is None:
-            _err("--shares requires 'Name=weight' format, e.g. 'Alice=1,Bob=3'")
-        ratio_splits = {}
-        split_desc = []
-        for name, weight in named.items():
-            m = t.member_by_name(name) or t.member_by_uuid(name)
-            if not m:
-                _err(f"Member '{name}' not found in this tricount")
-            ratio_splits[m.uuid] = weight
-            split_desc.append(f"{m.display_name}(share={weight})")
-    elif split_raw:
-        try:
-            named = _parse_weighted_split(split_raw)
-        except ValueError as e:
-            _err(str(e))
+    if args.shares:
+        ratio_splits, members = _resolve_shares(t, args.shares)
+        split = SplitSpec(ratio_splits=ratio_splits)
+        split_desc = [f"{m.display_name}(share={ratio_splits[m.uuid]})" for m in members]
+    elif args.split:
+        named = _parse_weighted_or_err(args.split)
         if named is not None:
-            amount_splits = {}
-            split_desc = []
-            for name, amt in named.items():
-                m = t.member_by_name(name) or t.member_by_uuid(name)
-                if not m:
-                    _err(f"Member '{name}' not found in this tricount")
-                amount_splits[m.uuid] = amt
-                split_desc.append(f"{m.display_name}={amt:.2f}")
+            amount_splits, members = _resolve_amounts(t, named)
+            split = SplitSpec(amount_splits=amount_splits)
+            split_desc = [f"{m.display_name}={amount_splits[m.uuid]:.2f}" for m in members]
         else:
-            split_members = _resolve_split_members(t, split_raw, active_members)
-            split_uuids = [m.uuid for m in split_members]
+            split_members = _resolve_split_members(t, args.split)
+            split = SplitSpec(split_uuids=[m.uuid for m in split_members])
             split_desc = [m.display_name for m in split_members]
 
     client.edit_expense(
@@ -360,9 +344,7 @@ def cmd_edit_expense(args: argparse.Namespace, client: TricountClient) -> dict:
         description=args.description,
         amount=args.amount,
         payer_uuid=payer_uuid,
-        split_uuids=split_uuids,
-        amount_splits=amount_splits,
-        ratio_splits=ratio_splits,
+        split=split,
         date=args.date,
     )
 
@@ -370,17 +352,17 @@ def cmd_edit_expense(args: argparse.Namespace, client: TricountClient) -> dict:
     out = {
         "status": "updated",
         "id": entry_id,
-        "description": args.description if args.description else existing.description,
+        "description": args.description or existing.description,
         "amount": args.amount if args.amount is not None else existing.amount.abs_float,
         "currency": t.currency,
-        "payer": payer_name if payer_name else member_by_uuid.get(existing.payer_uuid, existing.payer_uuid),
+        "payer": payer_name or member_by_uuid.get(existing.payer_uuid, existing.payer_uuid),
     }
     if split_desc:
         out["split"] = split_desc
     return out
 
 
-def cmd_serve(args: argparse.Namespace, client: TricountClient) -> None:
+def cmd_serve(args: argparse.Namespace, _client: TricountClient) -> None:
     """Run the watcher daemon: poll all joined tricounts and emit notifications."""
     from . import watcher
 
@@ -412,7 +394,7 @@ def cmd_delete_expense(args: argparse.Namespace, client: TricountClient) -> dict
 # ---------------------------------------------------------------------------
 
 
-def main() -> None:
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="tricount",
         description="Unofficial Tricount CLI",
@@ -632,7 +614,11 @@ def main() -> None:
     )
     serve_p.set_defaults(func=cmd_serve)
 
-    args = parser.parse_args()
+    return parser
+
+
+def main() -> None:
+    args = _build_parser().parse_args()
 
     client = TricountClient()
 

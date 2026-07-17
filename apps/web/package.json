@@ -1,7 +1,7 @@
 {
   "name": "@vesta/web",
   "private": true,
-  "version": "0.1.176",
+  "version": "0.1.177",
   "description": "Vesta web app (served by vestad at /app)",
   "license": "MIT",
   "repository": {
@@ -57,6 +57,7 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@eslint-community/eslint-plugin-eslint-comments": "^4.7.2",
     "@eslint/js": "^10.0.1",
     "@tailwindcss/vite": "^4.3.2",
     "@testing-library/react": "^16.3.2",
@@ -67,6 +68,8 @@
     "@vitejs/plugin-basic-ssl": "^2.3.0",
     "@vitejs/plugin-react": "^6.0.3",
     "eslint": "^10.6.0",
+    "eslint-import-resolver-typescript": "^4.4.5",
+    "eslint-plugin-import-x": "^4.17.1",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.3",
     "fast-check": "^4.9.0",
