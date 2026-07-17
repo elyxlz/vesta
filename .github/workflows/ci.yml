@@ -687,7 +687,10 @@ jobs:
       needs.detect-changes.outputs.app == 'true'
       )
     runs-on: macos-latest
-    timeout-minutes: 60
+    # Release builds sign and notarize; Apple's notarytool can wait well past an
+    # hour during notary-service backlogs, so give it the headroom the mobile
+    # delivery job already has. PR builds are unsigned and finish in minutes.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
 
