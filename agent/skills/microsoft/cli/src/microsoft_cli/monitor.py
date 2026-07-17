@@ -295,11 +295,11 @@ def _teams_notifiable(message: dict, my_id: str) -> TeamsNotifiable | None:
     if "id" in sender_user and sender_user["id"] == my_id:
         return None
     body = message["body"] if "body" in message else {}
-    text = clean_preview(_HTML_TAG.sub(" ", body["content"] if "content" in body else ""))[:200]
-    named = "displayName" in sender_user
-    if not named and not text:
+    text = clean_preview(_HTML_TAG.sub(" ", (body["content"] if "content" in body else None) or ""))[:200]
+    name = (sender_user["displayName"] if "displayName" in sender_user else None) or ""
+    if not name and not text:
         return None
-    return {"sender": sender_user["displayName"] if named else "Someone", "text": text}
+    return {"sender": name or "Someone", "text": text}
 
 
 def _arrived_since(message: dict, last_dt: datetime) -> bool:
