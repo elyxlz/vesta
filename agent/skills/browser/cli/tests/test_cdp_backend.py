@@ -271,6 +271,18 @@ async def _with_silent_transport(body):
         await server.stop()
 
 
+async def _with_silent_backend(body):
+    server = SilentCdpServer()
+    url = await server.start()
+    backend = CdpBackend()
+    await backend.connect(url)
+    try:
+        return await asyncio.wait_for(body(backend), timeout=HANG_GUARD_S)
+    finally:
+        await backend.close()
+        await server.stop()
+
+
 def test_withheld_cdp_response_raises_timeout_naming_the_method(monkeypatch):
     """A Chrome that accepts a command and never answers must error, not hang forever."""
     monkeypatch.setattr(cdp_backend, "_CDP_RESPONSE_TIMEOUT_S", TEST_TIMEOUT_S)
@@ -295,6 +307,20 @@ def test_timed_out_cdp_request_is_dropped_from_pending(monkeypatch):
         return dict(transport._pending)
 
     assert asyncio.run(_with_silent_transport(body)) == {}
+
+
+def test_wedged_attach_reports_timeout_not_a_retryable_frame_error(monkeypatch):
+    """A withheld attach means the browser is wedged; reporting 'no such frame' would send the daemon to re-derive and replay it."""
+    monkeypatch.setattr(cdp_backend, "_CDP_RESPONSE_TIMEOUT_S", TEST_TIMEOUT_S)
+
+    async def body(backend):
+        with pytest.raises(BidiError) as excinfo:
+            await backend.send("browsingContext.navigate", {"context": "T1", "url": "about:blank"})
+        return excinfo.value
+
+    error = asyncio.run(_with_silent_backend(body))
+    assert error.code == "timeout"
+    assert "Target.attachToTarget" in error.message
 
 
 def test_cancelled_cdp_request_is_dropped_from_pending():
