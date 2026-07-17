@@ -19,12 +19,15 @@ The version you are running: `grep '^version = ' ~/agent/core/pyproject.toml`
 ## Sync (after an upgrade, when the boot turn asks)
 
 ```bash
-cd ~
-git add -A && git commit -m checkpoint    # only if `git status` shows changes
-bash ~/agent/core/skills/upstream-sync/scripts/fetch-upstream.sh
-git rebase agent-vX.Y.Z                   # X.Y.Z = the version you are running (see top)
-bash ~/agent/core/skills/upstream-sync/scripts/set-cone.sh   # cone covers your tracked dirs
+bash ~/agent/core/skills/upstream-sync/scripts/sync.sh
 ```
+
+That is the whole procedure: it checkpoints your work, fetches, fixes the cone, and rebases
+you onto the snapshot for the version you run. It is idempotent, and it exits 0 saying
+"already synced" when there is nothing to do. Exit 5 means the rebase stopped on a conflict
+and needs you; anything else it prints is the reason it could not proceed. Do not hand-run
+the porcelain instead: on a managed box the engine is a read-only mount, and the script is
+what keeps git from trying to rewrite it.
 
 - Conflicts: ALWAYS resolve by hand, and the default is to keep BOTH sides, your change
   AND the stock change, not pick a winner. Do NOT reflexively `git checkout --ours/--theirs`
@@ -39,7 +42,7 @@ bash ~/agent/core/skills/upstream-sync/scripts/set-cone.sh   # cone covers your 
 - `git add -A` refusing paths "outside of your sparse-checkout definition" means you
   created a new directory: stage it deliberately with `git add --sparse <dir>` (never
   a blanket `add -A --sparse`, which would also stage engine files from the core
-  mount); the set-cone.sh step covers it once committed.
+  mount); sync.sh's cone step covers it once committed.
 - For `agent/MEMORY.md`, keep your accumulated knowledge and adopt the stock structure.
 - Then call `mark_upstream_synced`. If the rebase brought changes, call `restart_vesta`
   (after marking) so the new skills load.

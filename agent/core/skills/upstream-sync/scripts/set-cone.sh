@@ -59,3 +59,12 @@ if [ -z "$CONE" ]; then
   exit 1
 fi
 printf '%s\n' "$CONE" | sort -u | git sparse-checkout set --cone --stdin
+
+# A managed box's agent/core is vestad's read-only mount. Leaving it out of the cone is not
+# enough to keep git out of it: sparsifying a path means deleting it from the worktree, the
+# mount forbids that, so git keeps the entry present and worktree-live and every later
+# checkout tries to rewrite the mount (issue #1280). Set the bit straight in the index,
+# which needs no worktree write.
+if [ ! -w agent/core ] && git rev-parse -q --verify HEAD >/dev/null; then
+  git ls-files -z -- agent/core | xargs -0r git update-index --skip-worktree --
+fi
