@@ -103,7 +103,14 @@ for round = 1, 2, 3, ...:
 
 ## Running the skill
 
-The two phases above are the whole workflow: run the approach session, write the initial draft to `<task_id>_essay/draft.md` (or copy the user's existing draft in as v0), run the loop saving each round's reviews and a `summary.md` under `iterations/round_<N>/`, then present the final draft with a round-by-round score table per axis and any residual gaps flagged honestly. The user submits or asks for another round.
+The two phases above are the whole workflow:
+
+- Run the approach session
+- Write the initial draft to `<task_id>_essay/draft.md` (or copy the user's existing draft in as v0)
+- Run the loop, saving each round's reviews and a `summary.md` under `iterations/round_<N>/`
+- Present the final draft with a round-by-round score table per axis and any residual gaps flagged honestly
+
+The user submits or asks for another round.
 
 ## Reviewer prompt templates
 

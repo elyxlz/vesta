@@ -25,8 +25,12 @@ without reinstalling.
 The first `browser launch` downloads the pinned Camoufox release for the host arch (arm64 or
 x86_64, ~650 MB) from GitHub, verifies its sha256, and extracts it to
 `~/.cache/camoufox/<version>/`. That first launch takes a while; every launch after is instant.
-No apt packages, no Chromium, no Xvfb, no display: Camoufox runs headless and fully
-fingerprint-spoofed. Check state with `browser doctor`.
+No Chromium, no Xvfb, no display: Camoufox runs headless and fully fingerprint-spoofed. Check
+state with `browser doctor`.
+
+It does need GTK3, which the image installs (headless still runs GTK init). Without it Camoufox
+exits 255 before BiDi with `libgtk-3.so.0: cannot open shared object file`. On a non-vesta image
+install GTK3: `libgtk-3-0t64` on Debian trixie and later, `libgtk-3-0` on bookworm and earlier.
 
 ## Handover dependencies
 
