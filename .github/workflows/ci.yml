@@ -57,7 +57,23 @@ jobs:
       mobile_native: ${{ steps.filter.outputs.mobile_native }}
       agent: ${{ steps.filter.outputs.agent }}
       go: ${{ steps.filter.outputs.go }}
+      mac_universal: ${{ steps.flags.outputs.mac_universal }}
+      mobile_matrix: ${{ steps.flags.outputs.mobile_matrix }}
     steps:
+      # Build toggles: flip a value to re-enable that target on the next build.
+      - name: Resolve build toggles
+        id: flags
+        env:
+          BUILD_MAC_UNIVERSAL: "false" # false = Apple Silicon (arm64) only; true = universal (arm64 + Intel)
+          BUILD_ANDROID: "false" # false = skip the Android compile; true = build it
+        run: |
+          echo "mac_universal=${BUILD_MAC_UNIVERSAL}" >> "$GITHUB_OUTPUT"
+          matrix='[{"label":"iOS simulator","platform":"ios","os":"macos-latest"}]'
+          if [ "${BUILD_ANDROID}" = "true" ]; then
+            matrix="$(printf '%s' "$matrix" | jq -c '. + [{"label":"Android debug","platform":"android","os":"ubuntu-latest"}]')"
+          fi
+          echo "mobile_matrix=${matrix}" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v4
         id: filter
@@ -675,9 +691,9 @@ jobs:
           name: windows-cli-exe
           path: cli/target/x86_64-pc-windows-msvc/release/vesta.exe
 
-  # ── Build Electron app (macOS, universal) ────────────────────────────
+  # ── Build Electron app (macOS) ───────────────────────────────────────
   build-electron-macos:
-    name: Desktop · Build (macOS universal)
+    name: Desktop · Build (macOS)
     needs: [test-frontend, detect-changes]
     if: >-
       !failure() && !cancelled() &&
@@ -707,6 +723,16 @@ jobs:
         working-directory: apps
         run: npm -w @vesta/web run build
 
+      - name: Resolve macOS build arch
+        env:
+          MAC_UNIVERSAL: ${{ needs.detect-changes.outputs.mac_universal }}
+        run: |
+          if [ "${MAC_UNIVERSAL}" = "true" ]; then
+            echo "MAC_ARCH_FLAG=--universal" >> "$GITHUB_ENV"
+          else
+            echo "MAC_ARCH_FLAG=--arm64" >> "$GITHUB_ENV"
+          fi
+
       # PRs package without credentials below. Non-PR builds key the signed path
       # on the cert being present: with a cert, sign + notarize; without one,
       # force an unsigned build instead of letting electron-builder resolve an
@@ -723,7 +749,7 @@ jobs:
         working-directory: apps/desktop
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-        run: npx electron-builder --mac dmg zip --universal --publish never -c.mac.notarize=false
+        run: npx electron-builder --mac dmg zip "$MAC_ARCH_FLAG" --publish never -c.mac.notarize=false
 
       - name: Build signed and notarized Electron app
         if: github.event_name != 'pull_request'
@@ -736,7 +762,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           if [ -n "$CSC_LINK" ]; then
-            npx electron-builder --mac dmg zip --universal --publish never
+            npx electron-builder --mac dmg zip "$MAC_ARCH_FLAG" --publish never
           else
             echo "No signing certificate configured; building unsigned."
             # The empty secrets above still define the env vars: electron-builder resolves an
@@ -744,7 +770,7 @@ jobs:
             # them so the fallback path is genuinely unsigned.
             unset CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
             CSC_IDENTITY_AUTO_DISCOVERY=false \
-              npx electron-builder --mac dmg zip --universal --publish never -c.mac.notarize=false
+              npx electron-builder --mac dmg zip "$MAC_ARCH_FLAG" --publish never -c.mac.notarize=false
           fi
 
       - name: Collect artifacts
@@ -757,7 +783,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: inputs.release_artifacts
         with:
-          name: electron-darwin-universal
+          name: electron-darwin
           path: electron-out/*
 
   # ── Build Electron app (Linux) ────────────────────────────────────────
@@ -879,14 +905,9 @@ jobs:
       needs.detect-changes.outputs.mobile_native == 'true'
     strategy:
       fail-fast: false
+      # Platforms come from the detect-changes flags (Android is toggled there).
       matrix:
-        include:
-          - label: iOS simulator
-            platform: ios
-            os: macos-latest
-          - label: Android debug
-            platform: android
-            os: ubuntu-latest
+        include: ${{ fromJSON(needs.detect-changes.outputs.mobile_matrix) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
