@@ -14,7 +14,7 @@ describe("inverted chat rows", () => {
 
     expect(
       rows.map((row) => (row.kind === "event" ? row.event.type : row.kind)),
-    ).toEqual(["chat", "chat", "user"]);
+    ).toEqual(["chat", "chat", "user", "date"]);
     expect(rows[0]?.key).toBe("2026-07-15T10:00:02Z-chat");
   });
 
@@ -29,10 +29,11 @@ describe("inverted chat rows", () => {
       false,
     );
 
-    expect(
-      paginatedRows.slice(0, initialRows.length).map((row) => row.key),
-    ).toEqual(initialRows.map((row) => row.key));
-    expect(paginatedRows.at(-1)?.key).toBe("2026-07-15T09:59:59Z-chat");
+    expect(paginatedRows.slice(0, events.length).map((row) => row.key)).toEqual(
+      initialRows.slice(0, events.length).map((row) => row.key),
+    );
+    expect(paginatedRows.at(-2)?.key).toBe("2026-07-15T09:59:59Z-chat");
+    expect(paginatedRows.at(-1)?.key).toBe("date-2026-07-15");
   });
 
   it("places typing at the latest edge and joins consecutive agent bubbles", () => {
@@ -46,5 +47,96 @@ describe("inverted chat rows", () => {
       kind: "event",
       endsBubbleGroup: false,
     });
+  });
+
+  it("starts agent spacing on the first tool after a user", () => {
+    const rows = createInvertedChatRows(
+      [
+        { type: "user", text: "do this", ts: "2026-07-15T10:00:00Z" },
+        {
+          type: "tool_start",
+          tool: "Read",
+          input: "first.txt",
+          ts: "2026-07-15T10:00:01Z",
+        },
+        {
+          type: "tool_start",
+          tool: "Read",
+          input: "second.txt",
+          ts: "2026-07-15T10:00:02Z",
+        },
+        { type: "chat", text: "done", ts: "2026-07-15T10:00:03Z" },
+      ],
+      true,
+      false,
+    );
+
+    expect(
+      [...rows].reverse().flatMap((row) =>
+        row.kind === "event"
+          ? [
+              {
+                type: row.event.type,
+                startsNewBubbleGroup: row.startsNewBubbleGroup,
+              },
+            ]
+          : [],
+      ),
+    ).toEqual([
+      { type: "user", startsNewBubbleGroup: false },
+      { type: "tool_start", startsNewBubbleGroup: true },
+      { type: "tool_start", startsNewBubbleGroup: false },
+      { type: "chat", startsNewBubbleGroup: false },
+    ]);
+  });
+
+  it("keeps typing grouped with a visible tool", () => {
+    const rows = createInvertedChatRows(
+      [
+        { type: "user", text: "do this", ts: "2026-07-15T10:00:00Z" },
+        {
+          type: "tool_start",
+          tool: "Read",
+          input: "file.txt",
+          ts: "2026-07-15T10:00:01Z",
+        },
+      ],
+      true,
+      true,
+    );
+
+    expect(rows[0]).toMatchObject({
+      kind: "typing",
+      startsNewBubbleGroup: false,
+    });
+    expect(rows[1]).toMatchObject({
+      kind: "event",
+      startsNewBubbleGroup: true,
+    });
+  });
+
+  it("inserts a header above each local calendar day", () => {
+    const rows = createInvertedChatRows(
+      [
+        { type: "user", text: "day one", ts: "2026-07-14T10:00:00" },
+        { type: "chat", text: "day one reply", ts: "2026-07-14T10:01:00" },
+        { type: "chat", text: "day two", ts: "2026-07-15T10:00:00" },
+      ],
+      false,
+      false,
+    );
+
+    expect(rows.map((row) => row.key)).toEqual([
+      "2026-07-15T10:00:00-chat",
+      "date-2026-07-15",
+      "2026-07-14T10:01:00-chat",
+      "2026-07-14T10:00:00-user",
+      "date-2026-07-14",
+    ]);
+    expect(rows[0]).toMatchObject({
+      startsNewBubbleGroup: false,
+      endsBubbleGroup: true,
+    });
+    expect(rows[2]).toMatchObject({ startsNewBubbleGroup: true });
   });
 });

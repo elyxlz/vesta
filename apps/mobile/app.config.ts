@@ -5,7 +5,18 @@ const easProjectId =
   process.env.EXPO_PUBLIC_EAS_PROJECT_ID ??
   process.env.EAS_PROJECT_ID ??
   "4efcaf3d-c813-457a-a656-5f27b5975834";
+const appVariant =
+  process.env.VESTA_APP_VARIANT === "development"
+    ? "development"
+    : "production";
+const isDevelopment = appVariant === "development";
 const localIosNoPush = process.env.VESTA_LOCAL_IOS_NO_PUSH === "1";
+const bundleIdentifier =
+  process.env.VESTA_APP_BUNDLE_ID ??
+  (isDevelopment ? "com.vesta.mobile.dev" : "com.vesta.mobile");
+const appIcon = isDevelopment
+  ? "./assets/app-icon-dev.png"
+  : "../web/app-icon.png";
 const notificationPlugins = localIosNoPush
   ? []
   : ([
@@ -19,13 +30,13 @@ const notificationPlugins = localIosNoPush
     ] satisfies NonNullable<ExpoConfig["plugins"]>);
 
 const config: ExpoConfig = {
-  name: "Vesta",
+  name: isDevelopment ? "Vesta Dev" : "Vesta",
   owner: "vesta-cloud",
   slug: "vesta",
   version: "0.1.177",
-  scheme: "vesta",
+  scheme: isDevelopment ? "vesta-dev" : "vesta",
   orientation: "portrait",
-  icon: "../web/app-icon.png",
+  icon: appIcon,
   userInterfaceStyle: "automatic",
   newArchEnabled: true,
   updates: {
@@ -35,7 +46,7 @@ const config: ExpoConfig = {
     policy: "appVersion",
   },
   ios: {
-    bundleIdentifier: "com.vestarun.mobile",
+    bundleIdentifier,
     buildNumber: "1",
     supportsTablet: false,
     ...(localIosNoPush
@@ -48,9 +59,9 @@ const config: ExpoConfig = {
     },
   },
   android: {
-    package: "com.vestarun.mobile",
+    package: bundleIdentifier,
     adaptiveIcon: {
-      foregroundImage: "../web/app-icon.png",
+      foregroundImage: appIcon,
       backgroundColor: nativeConfigTokens.background,
     },
     predictiveBackGestureEnabled: true,
@@ -72,6 +83,8 @@ const config: ExpoConfig = {
   plugins: [
     "expo-router",
     "expo-secure-store",
+    "expo-status-bar",
+    "expo-web-browser",
     [
       "expo-camera",
       {
@@ -104,6 +117,7 @@ const config: ExpoConfig = {
   },
   extra: {
     apiCompat: "0.2",
+    appVariant,
     pushNotificationsEnabled: !localIosNoPush,
     ...(easProjectId ? { eas: { projectId: easProjectId } } : {}),
   },

@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { StyleSheet, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Stack, useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
+import Stack from "expo-router/stack";
 import { readFile, writeFile } from "@/api/endpoints";
-import { AgentProvider, useAgent } from "@/agent/AgentProvider";
+import { useAgent } from "@/agent/AgentProvider";
 import { Screen } from "@/components/layout/Screen";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -36,29 +37,50 @@ function AgentFileContent() {
   const save = useMutation({
     mutationFn: () => writeFile(api, name, path, draft),
     onSuccess: () => {
-      queryClient.setQueryData(["agent-file", name, path], file.data ? { ...file.data, content: draft } : file.data);
+      queryClient.setQueryData(
+        ["agent-file", name, path],
+        file.data ? { ...file.data, content: draft } : file.data,
+      );
     },
   });
 
   if (!path) return <ErrorState message="No file path was provided." />;
   if (file.isLoading) return <LoadingState label="Opening file…" />;
   if (!file.data) {
-    return <ErrorState message={file.error instanceof Error ? file.error.message : "The file could not be opened."} retry={() => void file.refetch()} />;
+    return (
+      <ErrorState
+        message={
+          file.error instanceof Error
+            ? file.error.message
+            : "The file could not be opened."
+        }
+        retry={() => void file.refetch()}
+      />
+    );
   }
-  const editable = !file.data.readonly && file.data.encoding === "utf-8" && !file.data.is_dir;
+  const editable =
+    !file.data.readonly && file.data.encoding === "utf-8" && !file.data.is_dir;
   const changed = editable && draft !== file.data.content;
   return (
     <>
-      <Stack.Screen options={{ title: fileName(path) }} />
+      <Stack.Title>{fileName(path)}</Stack.Title>
       <Screen contentStyle={styles.content}>
         <Card>
-          <Text selectable style={[styles.path, { color: colors.secondaryText }]}>{path}</Text>
+          <Text
+            selectable
+            style={[styles.path, { color: colors.secondaryText }]}
+          >
+            {path}
+          </Text>
           <Text style={[styles.meta, { color: colors.tertiaryText }]}>
-            {file.data.readonly ? "Read only" : "Writable"} · {file.data.size.toLocaleString()} bytes
+            {file.data.readonly ? "Read only" : "Writable"} ·{" "}
+            {file.data.size.toLocaleString()} bytes
           </Text>
         </Card>
         {file.data.encoding === "base64" ? (
-          <Text style={[styles.unsupported, { color: colors.secondaryText }]}>Binary files are not displayed on mobile.</Text>
+          <Text style={[styles.unsupported, { color: colors.secondaryText }]}>
+            Binary files are not displayed on mobile.
+          </Text>
         ) : (
           <TextInput
             family="mono"
@@ -90,14 +112,20 @@ function AgentFileContent() {
             >
               Revert
             </Button>
-            <Button loading={save.isPending} disabled={!changed} onPress={() => save.mutate()}>
+            <Button
+              loading={save.isPending}
+              disabled={!changed}
+              onPress={() => save.mutate()}
+            >
               Save file
             </Button>
           </View>
         ) : null}
         {save.error ? (
           <Text accessibilityRole="alert" style={{ color: colors.danger }}>
-            {save.error instanceof Error ? save.error.message : "The file could not be saved."}
+            {save.error instanceof Error
+              ? save.error.message
+              : "The file could not be saved."}
           </Text>
         ) : null}
       </Screen>
@@ -106,11 +134,7 @@ function AgentFileContent() {
 }
 
 export default function AgentFileScreen() {
-  return (
-    <AgentProvider>
-      <AgentFileContent />
-    </AgentProvider>
-  );
+  return <AgentFileContent />;
 }
 
 const styles = StyleSheet.create({

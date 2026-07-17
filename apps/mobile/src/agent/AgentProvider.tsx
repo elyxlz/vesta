@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, type ReactNode } from "react";
+import { createContext, use, useEffect, type ReactNode } from "react";
 import { useLocalSearchParams } from "expo-router";
 import type { AgentInfo } from "@/api/types";
 import { useAgentSocket } from "@/chat/useAgentSocket";
@@ -44,7 +44,7 @@ export function AgentProvider({ children }: { children: ReactNode }) {
 }
 
 export function useAgent(): AgentValue {
-  const value = useContext(AgentContext);
+  const value = use(AgentContext);
   if (!value) throw new Error("useAgent must be used within AgentProvider");
   return value;
 }

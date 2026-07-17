@@ -11,12 +11,14 @@ interface FieldProps extends ComponentProps<typeof TextInput> {
   label?: string;
   description?: string;
   error?: string;
+  accessory?: ReactNode;
 }
 
 export function Field({
   label,
   description,
   error,
+  accessory,
   ...inputProps
 }: FieldProps) {
   const { colors } = usePreferences();
@@ -30,21 +32,27 @@ export function Field({
           {description}
         </Text>
       ) : null}
-      <TextInput
-        {...inputProps}
-        placeholderTextColor={colors.tertiaryText}
-        selectionColor={colors.accent}
-        style={[
-          styles.input,
-          {
-            backgroundColor: colors.input,
-            borderColor: error ? colors.danger : colors.border,
-            color: colors.text,
-          },
-          inputProps.multiline ? styles.multiline : null,
-          inputProps.style,
-        ]}
-      />
+      <View style={styles.inputContainer}>
+        <TextInput
+          {...inputProps}
+          placeholderTextColor={colors.tertiaryText}
+          selectionColor={colors.accent}
+          style={[
+            styles.input,
+            {
+              backgroundColor: colors.input,
+              borderColor: error ? colors.danger : colors.border,
+              color: colors.text,
+            },
+            accessory ? styles.inputWithAccessory : null,
+            inputProps.multiline ? styles.multiline : null,
+            inputProps.style,
+          ]}
+        />
+        {accessory ? (
+          <View style={styles.inputAccessory}>{accessory}</View>
+        ) : null}
+      </View>
       {error ? (
         <Text
           accessibilityRole="alert"
@@ -99,6 +107,7 @@ interface RowProps {
   value?: string;
   onPress?: () => void;
   destructive?: boolean;
+  destructiveIcon?: boolean;
   trailing?: ReactNode;
 }
 
@@ -109,6 +118,7 @@ export function FormRow({
   value,
   onPress,
   destructive = false,
+  destructiveIcon = false,
   trailing,
 }: RowProps) {
   const { colors } = usePreferences();
@@ -116,7 +126,11 @@ export function FormRow({
     <View style={styles.row}>
       {icon ? (
         <View style={[styles.rowIcon, { backgroundColor: colors.accentSoft }]}>
-          <Ionicons name={icon} size={18} color={colors.accent} />
+          <Ionicons
+            name={icon}
+            size={18}
+            color={destructive || destructiveIcon ? colors.danger : colors.accent}
+          />
         </View>
       ) : null}
       <View style={styles.rowText}>
@@ -203,6 +217,15 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     paddingHorizontal: 14,
     fontSize: 16,
+  },
+  inputContainer: { position: "relative" },
+  inputWithAccessory: { paddingRight: 52 },
+  inputAccessory: {
+    position: "absolute",
+    top: 0,
+    right: 4,
+    bottom: 0,
+    justifyContent: "center",
   },
   multiline: { minHeight: 120, paddingTop: 13, textAlignVertical: "top" },
   error: { fontSize: 13, fontWeight: "600" },

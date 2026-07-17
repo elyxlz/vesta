@@ -18,13 +18,18 @@ import {
   type NativeSyntheticEvent,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Stack, useFocusEffect, useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
+import Stack from "expo-router/stack";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import type { AgentInfo } from "@/api/types";
 import { AgentOrb } from "@/components/AgentOrb";
-import { AgentStatusBadge } from "@/components/AgentStatus";
 import { BootTransitionTarget } from "@/components/BootTransition";
+import {
+  AGENT_IDENTITY_ORB_SIZE,
+  AgentIdentityCard,
+} from "@/components/agent-identity-card";
+import { GatewaySettingsButton } from "@/components/gateway-settings-button";
 import { Screen } from "@/components/layout/Screen";
 import { EmptyState } from "@/components/ui/States";
 import { Text } from "@/components/ui/Typography";
@@ -37,9 +42,9 @@ interface RestoreRequest {
   name: string;
 }
 
-const HOME_AGENT_ORB_SIZE = 144;
 const PAGE_DOT_SIZE = 7;
 const PAGE_DOT_ACTIVE_WIDTH = 20;
+const IS_IOS = process.env.EXPO_OS === "ios";
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -141,54 +146,7 @@ export default function HomeScreen() {
 
   return (
     <Screen scroll={false} contentStyle={styles.screen}>
-      <Stack.Screen
-        options={{
-          headerLargeTitle: false,
-          headerTransparent: true,
-          headerStyle: { backgroundColor: "transparent" },
-          headerShadowVisible: false,
-          headerBackVisible: false,
-          headerTitle: () => <HomeWordmark />,
-          unstable_headerLeftItems: () => [
-            {
-              type: "button",
-              label: "Settings",
-              accessibilityLabel: "Settings",
-              icon: { type: "sfSymbol", name: "gearshape" },
-              tintColor: colors.text,
-              identifier: "home-settings",
-              onPress: () => router.push("/settings"),
-            },
-          ],
-          unstable_headerRightItems: () => [
-            {
-              type: "button",
-              label: "Create agent",
-              accessibilityLabel: "Create agent",
-              icon: { type: "sfSymbol", name: "plus" },
-              tintColor: colors.text,
-              identifier: "home-create-agent",
-              onPress: () => router.push("/new-agent"),
-            },
-          ],
-          headerLeft: () => (
-            <HomeHeaderButton
-              accessibilityLabel="Settings"
-              icon="settings-outline"
-              iconSize={21}
-              onPress={() => router.push("/settings")}
-            />
-          ),
-          headerRight: () => (
-            <HomeHeaderButton
-              accessibilityLabel="Create agent"
-              icon="add"
-              iconSize={26}
-              onPress={() => router.push("/new-agent")}
-            />
-          ),
-        }}
-      />
+      <HomeHeader showCreate />
 
       {agents.length === 0 ? (
         <View style={styles.empty}>
@@ -345,57 +303,54 @@ function AgentCarouselItem({
       onPressOut={() => animateOrb(1, true)}
       style={[styles.agentPage, { width }]}
     >
-      <Animated.View
-        style={[styles.orbHandoff, { transform: [{ scale: orbScale }] }]}
-      >
-        <Animated.View
-          style={[StyleSheet.absoluteFill, { opacity: orbReveal }]}
-        >
-          <BootTransitionTarget
-            destination="home"
-            enabled={bootTarget}
-            status={agent.status}
-            activityState={agent.activityState}
+      <AgentIdentityCard
+        name={agent.name}
+        status={agent.status}
+        activityState={agent.activityState}
+        orb={
+          <Animated.View
+            style={[styles.orbHandoff, { transform: [{ scale: orbScale }] }]}
           >
-            <AgentOrb
-              status={agent.status}
-              activityState={agent.activityState}
-              size={HOME_AGENT_ORB_SIZE}
-            />
-          </BootTransitionTarget>
-        </Animated.View>
-        <Animated.View
-          pointerEvents="none"
-          style={[
-            StyleSheet.absoluteFill,
-            {
-              opacity: orbReveal.interpolate({
-                inputRange: [0, 1],
-                outputRange: [0.62, 0],
-              }),
-            },
-          ]}
-        >
-          <View
-            style={[styles.skeletonOrb, { backgroundColor: colors.input }]}
-          />
-        </Animated.View>
-      </Animated.View>
-      <View style={styles.agentDetails}>
-        <AgentStatusBadge status={agent.status} centered />
-        <Text
-          family="heading"
-          style={[styles.agentName, { color: colors.text }]}
-        >
-          {agent.name}
-        </Text>
-      </View>
+            <Animated.View
+              style={[StyleSheet.absoluteFill, { opacity: orbReveal }]}
+            >
+              <BootTransitionTarget
+                destination="home"
+                enabled={bootTarget}
+                status={agent.status}
+                activityState={agent.activityState}
+              >
+                <AgentOrb
+                  status={agent.status}
+                  activityState={agent.activityState}
+                  size={AGENT_IDENTITY_ORB_SIZE}
+                />
+              </BootTransitionTarget>
+            </Animated.View>
+            <Animated.View
+              pointerEvents="none"
+              style={[
+                StyleSheet.absoluteFill,
+                {
+                  opacity: orbReveal.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0.62, 0],
+                  }),
+                },
+              ]}
+            >
+              <View
+                style={[styles.skeletonOrb, { backgroundColor: colors.input }]}
+              />
+            </Animated.View>
+          </Animated.View>
+        }
+      />
     </Pressable>
   );
 }
 
 function HomeSkeleton() {
-  const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors } = usePreferences();
   const [opacity] = useState(() => new Animated.Value(0.48));
@@ -442,37 +397,7 @@ function HomeSkeleton() {
 
   return (
     <Screen scroll={false} contentStyle={styles.screen}>
-      <Stack.Screen
-        options={{
-          headerLargeTitle: false,
-          headerTransparent: true,
-          headerStyle: { backgroundColor: "transparent" },
-          headerShadowVisible: false,
-          headerBackVisible: false,
-          headerTitle: () => <HomeWordmark />,
-          unstable_headerLeftItems: () => [
-            {
-              type: "button",
-              label: "Settings",
-              accessibilityLabel: "Settings",
-              icon: { type: "sfSymbol", name: "gearshape" },
-              tintColor: colors.text,
-              identifier: "home-settings",
-              onPress: () => router.push("/settings"),
-            },
-          ],
-          unstable_headerRightItems: () => [],
-          headerLeft: () => (
-            <HomeHeaderButton
-              accessibilityLabel="Settings"
-              icon="settings-outline"
-              iconSize={21}
-              onPress={() => router.push("/settings")}
-            />
-          ),
-          headerRight: () => null,
-        }}
-      />
+      <HomeHeader showCreate={false} />
       <Animated.View
         accessible
         accessibilityLabel="Opening Vesta"
@@ -498,6 +423,77 @@ function HomeSkeleton() {
         <View style={[styles.skeletonIndicator, placeholder]} />
       </Animated.View>
     </Screen>
+  );
+}
+
+function HomeHeader({ showCreate }: { showCreate: boolean }) {
+  const router = useRouter();
+  const { colors } = usePreferences();
+  const { reachable } = useSession();
+  const openSettings = () => router.push("/settings");
+  const openCreateAgent = () => router.push("/new-agent");
+
+  return (
+    <>
+      <Stack.Screen
+        options={{
+          headerLargeTitle: false,
+          headerTransparent: true,
+          headerStyle: { backgroundColor: "transparent" },
+          headerShadowVisible: false,
+          headerBackVisible: false,
+          headerLeft:
+            IS_IOS || !showCreate
+              ? undefined
+              : () => (
+                  <HomeHeaderButton
+                    accessibilityLabel="Create agent"
+                    icon="add"
+                    iconSize={22}
+                    onPress={openCreateAgent}
+                  />
+                ),
+          headerRight: IS_IOS
+            ? undefined
+            : () => (
+                <GatewaySettingsButton
+                  color={colors.text}
+                  connectedColor={colors.success}
+                  disconnectedColor={colors.danger}
+                  reachable={reachable}
+                  label="App settings"
+                  onPress={openSettings}
+                />
+              ),
+        }}
+      />
+      <Stack.Title asChild>
+        <HomeWordmark />
+      </Stack.Title>
+      {IS_IOS ? (
+        <>
+          <Stack.Toolbar placement="left">
+            <Stack.Toolbar.Button
+              accessibilityLabel="Create agent"
+              icon="plus"
+              tintColor={colors.text}
+              hidden={!showCreate}
+              onPress={openCreateAgent}
+            />
+          </Stack.Toolbar>
+          <Stack.Toolbar placement="right" asChild>
+            <GatewaySettingsButton
+              color={colors.text}
+              connectedColor={colors.success}
+              disconnectedColor={colors.danger}
+              reachable={reachable}
+              label="App settings"
+              onPress={openSettings}
+            />
+          </Stack.Toolbar>
+        </>
+      ) : null}
+    </>
   );
 }
 
@@ -559,10 +555,9 @@ const styles = StyleSheet.create({
   },
   agentDetails: { alignItems: "center", gap: 6 },
   orbHandoff: {
-    width: HOME_AGENT_ORB_SIZE,
-    height: HOME_AGENT_ORB_SIZE,
+    width: AGENT_IDENTITY_ORB_SIZE,
+    height: AGENT_IDENTITY_ORB_SIZE,
   },
-  agentName: { fontSize: 38, fontWeight: "500", letterSpacing: -1 },
   indicators: {
     position: "absolute",
     left: 0,
@@ -615,9 +610,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   skeletonOrb: {
-    width: HOME_AGENT_ORB_SIZE,
-    height: HOME_AGENT_ORB_SIZE,
-    borderRadius: HOME_AGENT_ORB_SIZE / 2,
+    width: AGENT_IDENTITY_ORB_SIZE,
+    height: AGENT_IDENTITY_ORB_SIZE,
+    borderRadius: AGENT_IDENTITY_ORB_SIZE / 2,
   },
   skeletonStatus: { width: 76, height: 24, borderRadius: 12 },
   skeletonName: { width: 148, height: 38, borderRadius: 12 },

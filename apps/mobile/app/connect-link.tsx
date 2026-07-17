@@ -66,6 +66,7 @@ function ConnectLinkContent({
   const [link, setLink] = useState(initialLink);
   const [busy, setBusy] = useState(false);
   const [autoConnecting, setAutoConnecting] = useState(false);
+  const [linkVisible, setLinkVisible] = useState(false);
   const [error, setError] = useState("");
 
   const connect = useCallback(
@@ -153,8 +154,36 @@ function ConnectLinkContent({
               setError("");
             }}
             autoCapitalize="none"
+            autoComplete={
+              Platform.OS === "android" ? "current-password" : undefined
+            }
             autoCorrect={false}
+            importantForAutofill={
+              Platform.OS === "android" ? "yes" : undefined
+            }
             keyboardAppearance="light"
+            secureTextEntry={!linkVisible}
+            textContentType={Platform.OS === "ios" ? "password" : undefined}
+            accessory={
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={
+                  linkVisible ? "Hide connection link" : "Show connection link"
+                }
+                hitSlop={8}
+                onPress={() => setLinkVisible((visible) => !visible)}
+                style={({ pressed }) => [
+                  styles.visibilityButton,
+                  { opacity: pressed ? 0.55 : 1 },
+                ]}
+              >
+                <Ionicons
+                  name={linkVisible ? "eye-off-outline" : "eye-outline"}
+                  size={20}
+                  color={colors.secondaryText}
+                />
+              </Pressable>
+            }
             error={error || undefined}
           />
 
@@ -231,6 +260,12 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  visibilityButton: {
+    width: 40,
+    height: 40,
     alignItems: "center",
     justifyContent: "center",
   },

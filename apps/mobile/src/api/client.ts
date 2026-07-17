@@ -29,6 +29,30 @@ export interface ApiClient {
   mediaUrl: (path: string, query?: URLSearchParams) => string;
 }
 
+function apiErrorMessage(response: Response, body: string): string {
+  const statusText = response.statusText.trim();
+  const fallback = statusText
+    ? `Gateway request failed (${response.status} ${statusText}).`
+    : `Gateway request failed with status ${response.status}.`;
+  if (!body) return fallback;
+
+  try {
+    const parsed: { error?: unknown } = JSON.parse(body);
+    if (typeof parsed.error === "string" && parsed.error.trim()) {
+      return parsed.error;
+    }
+  } catch {
+    // Non-JSON errors are handled below.
+  }
+
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+  const looksLikeHtml =
+    contentType.includes("text/html") ||
+    /^\s*<!doctype\s+html/i.test(body) ||
+    /^\s*<html(?:\s|>)/i.test(body);
+  return looksLikeHtml ? fallback : body;
+}
+
 export function createApiClient(options: ClientOptions): ApiClient {
   let refreshPromise: Promise<ConnectionConfig | null> | null = null;
 
@@ -105,14 +129,7 @@ export function createApiClient(options: ClientOptions): ApiClient {
     }
     if (!response.ok) {
       const body = await response.text();
-      let message = body || `Request failed with status ${response.status}.`;
-      try {
-        const parsed: { error?: string } = JSON.parse(body);
-        message = parsed.error ?? message;
-      } catch {
-        // The plain response body is already the best error available.
-      }
-      throw new ApiError(response.status, message);
+      throw new ApiError(response.status, apiErrorMessage(response, body));
     }
     return response;
   };
@@ -134,7 +151,9 @@ export function createApiClient(options: ClientOptions): ApiClient {
     if (!connection) throw new Error("Not connected to a Vesta gateway.");
     query.set("token", connection.accessToken);
     const base =
-      protocol === "ws" ? connection.url.replace(/^http/, "ws") : connection.url;
+      protocol === "ws"
+        ? connection.url.replace(/^http/, "ws")
+        : connection.url;
     return `${base}${path}?${query.toString()}`;
   };
 

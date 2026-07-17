@@ -184,8 +184,23 @@ export function useSpeechPlayer(name: string, latestText: string | null) {
     };
   }, [api, enabled, latestText, name, player]);
 
+  const play = useCallback(
+    async (text: string): Promise<void> => {
+      if (!enabled || !text.trim()) return;
+      const identifier = await prepareSpeech(api, name, text);
+      player.replace(
+        api.mediaUrl(
+          `/agents/${encodeURIComponent(name)}/voice/tts/stream/${encodeURIComponent(identifier)}`,
+        ),
+      );
+      player.play();
+    },
+    [api, enabled, name, player],
+  );
+
   return {
     stop: () => player.pause(),
+    play,
     enabled,
   };
 }

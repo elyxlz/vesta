@@ -12,7 +12,8 @@
     "prebuild": "expo prebuild",
     "lint": "expo lint",
     "check": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "@expo-google-fonts/archivo": "^0.4.2",
@@ -65,6 +66,7 @@
     "eslint": "^9.39.5",
     "eslint-config-expo": "~57.0.0",
     "eslint-import-resolver-typescript": "^4.4.5",
+    "patch-package": "^8.0.1",
     "typescript": "~6.0.3",
     "vitest": "^4.1.10"
   }

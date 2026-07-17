@@ -46,11 +46,33 @@ module.exports = function withBlankLaunchScreen(
         },
       ];
 
-      if (document.resources?.[0]) {
-        delete document.resources[0].image;
-        delete document.resources[0].namedColor;
-        delete document.resources[0].systemColor;
+      document.resources ??= [{}];
+      if (
+        typeof document.resources[0] !== "object" ||
+        document.resources[0] === null
+      ) {
+        document.resources[0] = {};
       }
+
+      document.resources[0] = {
+        namedColor: [
+          {
+            $: { name: "VestaLaunchBackground" },
+            color: [
+              {
+                $: {
+                  red,
+                  green,
+                  blue,
+                  alpha: "1",
+                  colorSpace: "custom",
+                  customColorSpace: "sRGB",
+                },
+              },
+            ],
+          },
+        ],
+      };
 
       return modConfig;
     },

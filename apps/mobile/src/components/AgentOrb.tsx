@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Animated, Easing, StyleSheet, View } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import type { AgentActivityState, AgentStatus } from "@/api/types";
+import { useBootTransitionTargetFrozen } from "@/components/BootTransition";
 import { designTokens } from "@/theme/generated";
 
 interface AgentOrbProps {
@@ -49,6 +50,8 @@ export function AgentOrb({
 }: AgentOrbProps) {
   const [rotation] = useState(() => new Animated.Value(0));
   const [pulse] = useState(() => new Animated.Value(1));
+  const transitionFrozen = useBootTransitionTargetFrozen();
+  const shouldAnimate = animated && !transitionFrozen;
   const colors = orbColors(status, activityState);
   const maximumPulseScale =
     pulseScale ?? (activityState === "thinking" ? 1.1 : 1.04);
@@ -56,7 +59,7 @@ export function AgentOrb({
     pulseDuration ?? (activityState === "thinking" ? 1200 : 1800);
 
   useEffect(() => {
-    if (!animated) {
+    if (!shouldAnimate) {
       rotation.setValue(0);
       return;
     }
@@ -71,10 +74,10 @@ export function AgentOrb({
     );
     rotate.start();
     return () => rotate.stop();
-  }, [activityState, animated, rotation]);
+  }, [activityState, rotation, shouldAnimate]);
 
   useEffect(() => {
-    if (!animated || status !== "alive") {
+    if (!shouldAnimate || status !== "alive") {
       pulse.setValue(1);
       return;
     }
@@ -97,7 +100,7 @@ export function AgentOrb({
     );
     breathe.start();
     return () => breathe.stop();
-  }, [animated, halfPulseDuration, maximumPulseScale, pulse, status]);
+  }, [halfPulseDuration, maximumPulseScale, pulse, shouldAnimate, status]);
 
   const rotate = rotation.interpolate({
     inputRange: [0, 1],

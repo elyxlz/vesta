@@ -14,7 +14,31 @@ export interface TypingChatRow {
   startsNewBubbleGroup: boolean;
 }
 
-export type ChatRow = EventChatRow | TypingChatRow;
+export interface DateChatRow {
+  kind: "date";
+  key: string;
+  timestamp: string;
+}
+
+export type ChatRow = EventChatRow | TypingChatRow | DateChatRow;
+type ChatSide = "user" | "agent";
+
+function eventChatSide(event: VestaEvent): ChatSide | null {
+  if (event.type === "user") return "user";
+  if (event.type === "chat" || event.type === "tool_start") return "agent";
+  return null;
+}
+
+function calendarDay(timestamp: string | undefined): string | null {
+  if (!timestamp) return null;
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return null;
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+}
 
 function eventRows(
   events: VestaEvent[],
@@ -31,17 +55,16 @@ function eventRows(
         !(event.tool === "Bash" && event.input.includes("app-chat"))),
   );
   const seen = new Map<string, number>();
-  let previousBubbleType: "user" | "chat" | null = null;
+  let previousSide: ChatSide | null = null;
   const rows = visible.map((event) => {
     const base = `${event.ts ?? "live"}-${event.type}`;
     const count = seen.get(base) ?? 0;
     seen.set(base, count + 1);
-    const bubbleType =
-      event.type === "user" || event.type === "chat" ? event.type : null;
+    const side = eventChatSide(event);
     const startsNewBubbleGroup = Boolean(
-      bubbleType && previousBubbleType && bubbleType !== previousBubbleType,
+      side && previousSide && side !== previousSide,
     );
-    if (bubbleType) previousBubbleType = bubbleType;
+    if (side) previousSide = side;
     return {
       kind: "event" as const,
       key: count === 0 ? base : `${base}#${count}`,
@@ -52,6 +75,7 @@ function eventRows(
   });
 
   let nextBubbleType: "user" | "chat" | null = null;
+  let nextBubbleDay: string | null = null;
   for (let index = rows.length - 1; index >= 0; index -= 1) {
     const row = rows[index];
     if (!row) continue;
@@ -60,11 +84,36 @@ function eventRows(
         ? row.event.type
         : null;
     if (!bubbleType) continue;
+    const bubbleDay = calendarDay(row.event.ts);
     row.endsBubbleGroup =
-      nextBubbleType === null || bubbleType !== nextBubbleType;
+      nextBubbleType === null ||
+      bubbleType !== nextBubbleType ||
+      bubbleDay !== nextBubbleDay;
     nextBubbleType = bubbleType;
+    nextBubbleDay = bubbleDay;
   }
   return rows;
+}
+
+function addDateRows(rows: EventChatRow[]): ChatRow[] {
+  const datedRows: ChatRow[] = [];
+  let previousDay: string | null = null;
+
+  for (const row of rows) {
+    const day = calendarDay(row.event.ts);
+    if (day && day !== previousDay && row.event.ts) {
+      row.startsNewBubbleGroup = false;
+      datedRows.push({
+        kind: "date",
+        key: `date-${day}`,
+        timestamp: row.event.ts,
+      });
+    }
+    datedRows.push(row);
+    if (day) previousDay = day;
+  }
+
+  return datedRows;
 }
 
 export function createInvertedChatRows(
@@ -72,22 +121,23 @@ export function createInvertedChatRows(
   showToolCalls: boolean,
   isTyping: boolean,
 ): ChatRow[] {
-  const rows: ChatRow[] = eventRows(events, showToolCalls);
+  const rows = addDateRows(eventRows(events, showToolCalls));
   if (isTyping) {
-    let latestBubbleType: "user" | "chat" | null = null;
+    let latestSide: ChatSide | null = null;
     for (let index = rows.length - 1; index >= 0; index -= 1) {
       const row = rows[index];
       if (!row || row.kind !== "event") continue;
-      if (row.event.type === "user" || row.event.type === "chat") {
-        latestBubbleType = row.event.type;
-        if (latestBubbleType === "chat") row.endsBubbleGroup = false;
+      const side = eventChatSide(row.event);
+      if (side) {
+        latestSide = side;
+        if (row.event.type === "chat") row.endsBubbleGroup = false;
         break;
       }
     }
     rows.push({
       kind: "typing",
       key: "typing-indicator",
-      startsNewBubbleGroup: latestBubbleType === "user",
+      startsNewBubbleGroup: latestSide === "user",
     });
   }
 

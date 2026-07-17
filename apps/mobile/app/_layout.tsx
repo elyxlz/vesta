@@ -1,16 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { StyleSheet, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useSegments } from "expo-router";
+import Stack from "expo-router/stack";
 import {
   DarkTheme,
   DefaultTheme,
-  Stack,
   ThemeProvider,
-  useRouter,
-  useSegments,
-} from "expo-router";
+} from "expo-router/react-navigation";
 import { StatusBar } from "expo-status-bar";
 import { useFonts } from "expo-font";
 import * as SplashScreen from "expo-splash-screen";
@@ -53,9 +52,9 @@ function SessionNavigation() {
   const { colors, dark } = usePreferences();
   const segments = useSegments();
   const activeRoute = segments[0];
-  const router = useRouter();
   const [bootSplashVisible, setBootSplashVisible] = useState(true);
   const [bootPageRevealed, setBootPageRevealed] = useState(false);
+  const [bootTargetVisible, setBootTargetVisible] = useState(false);
   const [bootTargets, setBootTargets] = useState<
     Partial<Record<BootDestination, BootTargetFrame>>
   >({});
@@ -102,6 +101,7 @@ function SessionNavigation() {
     destination === "agent" ||
     (destination === "home" && isHomeRoute && agents.length > 0);
   const revealBootPage = useCallback(() => setBootPageRevealed(true), []);
+  const revealBootTarget = useCallback(() => setBootTargetVisible(true), []);
   const finishBootSplash = useCallback(() => setBootSplashVisible(false), []);
   const reportBootTarget = useCallback(
     (nextDestination: BootDestination, frame: BootTargetFrame) => {
@@ -123,20 +123,11 @@ function SessionNavigation() {
     [],
   );
 
-  useEffect(() => {
-    if (status === "booting") return;
-    if (status === "disconnected" && !isConnectRoute) {
-      router.replace("/connect");
-    } else if (status === "connected" && isConnectRoute) {
-      if (router.canDismiss()) router.dismissAll();
-      else router.replace("/");
-    }
-  }, [activeRoute, isConnectRoute, router, status]);
-
   return (
     <BootTransitionProvider
       active={bootSplashVisible}
       onTarget={reportBootTarget}
+      targetVisible={bootTargetVisible}
     >
       <View
         style={[
@@ -173,78 +164,88 @@ function SessionNavigation() {
               headerBackButtonDisplayMode: "minimal",
             }}
           >
-            <Stack.Screen
-              name="index"
-              options={{ title: "Vesta", headerLargeTitle: true }}
-            />
-            <Stack.Screen
-              name="connect"
-              options={{
-                headerShown: false,
-                animation: "fade",
-                animationDuration: 500,
-              }}
-            />
-            <Stack.Screen
-              name="connect-link"
-              options={{
-                headerShown: false,
-                presentation: "formSheet",
-                sheetAllowedDetents: "fitToContents",
-                sheetGrabberVisible: true,
-              }}
-            />
-            <Stack.Screen
-              name="recent-gateways"
-              options={{
-                headerShown: false,
-                presentation: "formSheet",
-                sheetAllowedDetents: "fitToContents",
-                sheetGrabberVisible: true,
-              }}
-            />
-            <Stack.Screen
-              name="scan"
-              options={{
-                headerShown: false,
-                presentation: "fullScreenModal",
-                statusBarHidden: true,
-              }}
-            />
-            <Stack.Screen
-              name="new-agent"
-              options={{
-                headerShown: false,
-                presentation: "formSheet",
-                sheetAllowedDetents: "fitToContents",
-                sheetInitialDetentIndex: 0,
-                sheetGrabberVisible: true,
-                sheetExpandsWhenScrolledToEdge: false,
-              }}
-            />
-            <Stack.Screen
-              name="settings"
-              options={{
-                title: "Settings",
-                headerTitle: () => (
-                  <Text
-                    family="heading"
-                    style={[styles.settingsTitle, { color: activeColors.text }]}
-                  >
-                    Settings
-                  </Text>
-                ),
-              }}
-            />
-            <Stack.Screen name="debug" options={{ title: "Diagnostics" }} />
-            <Stack.Screen name="agent/[name]" />
+            <Stack.Protected guard={status !== "connected"}>
+              <Stack.Screen
+                name="connect"
+                options={{
+                  headerShown: false,
+                  animation: "fade",
+                  animationDuration: 500,
+                }}
+              />
+              <Stack.Screen
+                name="connect-link"
+                options={{
+                  headerShown: false,
+                  presentation: "formSheet",
+                  sheetAllowedDetents: "fitToContents",
+                  sheetGrabberVisible: true,
+                }}
+              />
+              <Stack.Screen
+                name="recent-gateways"
+                options={{
+                  headerShown: false,
+                  presentation: "formSheet",
+                  sheetAllowedDetents: "fitToContents",
+                  sheetGrabberVisible: true,
+                }}
+              />
+              <Stack.Screen
+                name="scan"
+                options={{
+                  headerShown: false,
+                  presentation: "fullScreenModal",
+                  statusBarHidden: true,
+                }}
+              />
+            </Stack.Protected>
+            <Stack.Protected guard={status === "connected"}>
+              <Stack.Screen
+                name="index"
+                options={{ title: "Vesta", headerLargeTitle: true }}
+              />
+              <Stack.Screen
+                name="new-agent"
+                options={{
+                  headerShown: false,
+                  presentation: "formSheet",
+                  sheetAllowedDetents: "fitToContents",
+                  sheetInitialDetentIndex: 0,
+                  sheetGrabberVisible: true,
+                  sheetExpandsWhenScrolledToEdge: false,
+                }}
+              />
+              <Stack.Screen
+                name="settings"
+                options={{
+                  title: "Settings",
+                  headerTitle: () => (
+                    <Text
+                      family="heading"
+                      style={[
+                        styles.settingsTitle,
+                        { color: activeColors.text },
+                      ]}
+                    >
+                      Settings
+                    </Text>
+                  ),
+                }}
+              />
+              <Stack.Screen name="debug" options={{ title: "Diagnostics" }} />
+              <Stack.Screen
+                name="agent/[name]"
+                options={{ headerShown: false }}
+              />
+            </Stack.Protected>
           </Stack>
           <GatewayConnectionBanner
             visible={
               status === "connected" &&
               agentsReady &&
               !reachable &&
-              !isConnectRoute &&
+              isHomeRoute &&
               !bootSplashVisible
             }
           />
@@ -254,6 +255,7 @@ function SessionNavigation() {
               target={destination ? (bootTargets[destination] ?? null) : null}
               targetExpected={targetExpected}
               onDisconnect={status === "connected" ? disconnect : undefined}
+              onHandoff={revealBootTarget}
               onReveal={revealBootPage}
               onFinish={finishBootSplash}
             />

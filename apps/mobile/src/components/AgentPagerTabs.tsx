@@ -1,15 +1,14 @@
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import { Pressable, StyleSheet, View, type ViewStyle } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import {
   GlassView,
   isGlassEffectAPIAvailable,
-  type GlassViewProps,
+  type GlassEffectStyleConfig,
 } from "expo-glass-effect";
 import Animated, {
   Extrapolation,
   interpolate,
-  useAnimatedProps,
   useAnimatedStyle,
   type AnimatedStyle,
   type SharedValue,
@@ -21,7 +20,6 @@ const BAR_PADDING = 4;
 const TAB_WIDTH = 52;
 const TAB_HEIGHT = 40;
 const SURFACE_HEIGHT = TAB_HEIGHT + BAR_PADDING * 2;
-const AnimatedGlassView = Animated.createAnimatedComponent(GlassView);
 
 export interface AgentPagerTab {
   key: string;
@@ -35,7 +33,7 @@ interface AgentPagerTabsProps {
   bottom: number;
   progress: SharedValue<number>;
   visibility: SharedValue<number>;
-  mounted: boolean;
+  visible: boolean;
   interactive: boolean;
   tabs: readonly AgentPagerTab[];
   onSelect: (page: number) => void;
@@ -44,23 +42,33 @@ interface AgentPagerTabsProps {
 function TabSurface({
   children,
   selectionStyle,
-  glassVisible,
   visibility,
+  visible,
   width,
 }: {
   children: ReactNode;
   selectionStyle: AnimatedStyle<ViewStyle>;
-  glassVisible: boolean;
   visibility: SharedValue<number>;
+  visible: boolean;
   width: number;
 }) {
   const { colors, dark } = usePreferences();
-  const glassAnimatedProps = useAnimatedProps<GlassViewProps>(() => ({
-    glassEffectStyle: visibility.value > 0.01 ? "regular" : "none",
+  const glassEffectStyle = useMemo<GlassEffectStyleConfig>(
+    () => ({
+      style: visible ? "regular" : "none",
+      animate: true,
+      animationDuration: 0.22,
+    }),
+    [visible],
+  );
+  const contentVisibilityStyle = useAnimatedStyle(() => ({
+    opacity: visibility.value,
   }));
-  if (!glassVisible) return null;
+  const fallbackVisibilityStyle = useAnimatedStyle(() => ({
+    opacity: visibility.value,
+  }));
 
-  const content = (
+  const layers = (
     <>
       <Animated.View
         pointerEvents="none"
@@ -78,28 +86,33 @@ function TabSurface({
 
   if (isGlassEffectAPIAvailable()) {
     return (
-      <AnimatedGlassView
-        animatedProps={glassAnimatedProps}
+      <GlassView
         colorScheme={dark ? "dark" : "light"}
+        glassEffectStyle={glassEffectStyle}
         isInteractive
         style={[styles.surface, { width }]}
       >
-        {content}
-      </AnimatedGlassView>
+        <Animated.View
+          style={[styles.surfaceContent, contentVisibilityStyle]}
+        >
+          {layers}
+        </Animated.View>
+      </GlassView>
     );
   }
 
   return (
-    <View
+    <Animated.View
       style={[
         styles.surface,
         styles.surfaceFallback,
         { width },
         { backgroundColor: colors.elevated, borderColor: colors.border },
+        fallbackVisibilityStyle,
       ]}
     >
-      {content}
-    </View>
+      {layers}
+    </Animated.View>
   );
 }
 
@@ -108,14 +121,13 @@ export function AgentPagerTabs({
   bottom,
   progress,
   visibility,
-  mounted,
+  visible,
   interactive,
   tabs,
   onSelect,
 }: AgentPagerTabsProps) {
   const surfaceWidth = tabs.length * TAB_WIDTH + BAR_PADDING * 2;
   const overlayStyle = useAnimatedStyle(() => ({
-    opacity: visibility.value,
     transform: [
       {
         translateY: interpolate(
@@ -148,8 +160,8 @@ export function AgentPagerTabs({
     >
       <TabSurface
         selectionStyle={selectionStyle}
-        glassVisible={mounted}
         visibility={visibility}
+        visible={visible}
         width={surfaceWidth}
       >
         {tabs.map((tab, index) => (
@@ -157,6 +169,8 @@ export function AgentPagerTabs({
             key={tab.key}
             label={tab.label}
             icon={tab.icon}
+            index={index}
+            progress={progress}
             selectedIcon={tab.selectedIcon}
             selected={activePage === index}
             onPress={() => onSelect(index)}
@@ -170,18 +184,60 @@ export function AgentPagerTabs({
 function Tab({
   label,
   icon,
+  index,
+  progress,
   selectedIcon,
   selected,
   onPress,
 }: {
   label: string;
   icon: keyof typeof Ionicons.glyphMap;
+  index: number;
+  progress: SharedValue<number>;
   selectedIcon: keyof typeof Ionicons.glyphMap;
   selected: boolean;
   onPress: () => void;
 }) {
   const { colors } = usePreferences();
-  const color = selected ? colors.text : colors.secondaryText;
+  const outlineStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(
+      Math.abs(progress.value - index),
+      [0, 1],
+      [0, 1],
+      Extrapolation.CLAMP,
+    ),
+    transform: [
+      {
+        scale: interpolate(
+          Math.abs(progress.value - index),
+          [0, 1],
+          [0.84, 1],
+          Extrapolation.CLAMP,
+        ),
+      },
+    ],
+  }));
+  const filledStyle = useAnimatedStyle(() => {
+    const distance = Math.abs(progress.value - index);
+    return {
+      opacity: interpolate(
+        distance,
+        [0, 1],
+        [1, 0],
+        Extrapolation.CLAMP,
+      ),
+      transform: [
+        {
+          scale: interpolate(
+            distance,
+            [0, 1],
+            [1, 0.84],
+            Extrapolation.CLAMP,
+          ),
+        },
+      ],
+    };
+  });
 
   return (
     <Pressable
@@ -191,7 +247,14 @@ function Tab({
       onPress={onPress}
       style={styles.tab}
     >
-      <Ionicons name={selected ? selectedIcon : icon} size={19} color={color} />
+      <View style={styles.iconSlot}>
+        <Animated.View style={[styles.iconLayer, outlineStyle]}>
+          <Ionicons name={icon} size={19} color={colors.secondaryText} />
+        </Animated.View>
+        <Animated.View style={[styles.iconLayer, filledStyle]}>
+          <Ionicons name={selectedIcon} size={19} color={colors.text} />
+        </Animated.View>
+      </View>
     </Pressable>
   );
 }
@@ -207,6 +270,13 @@ const styles = StyleSheet.create({
   surface: {
     height: SURFACE_HEIGHT,
     borderRadius: radii.pill,
+  },
+  surfaceContent: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
   },
   surfaceFallback: { borderWidth: StyleSheet.hairlineWidth },
   selection: {
@@ -229,6 +299,16 @@ const styles = StyleSheet.create({
   tab: {
     width: TAB_WIDTH,
     height: TAB_HEIGHT,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  iconSlot: { width: 22, height: 22 },
+  iconLayer: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
     alignItems: "center",
     justifyContent: "center",
   },

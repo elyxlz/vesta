@@ -1,13 +1,14 @@
 import {
   createContext,
+  use,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useState,
   type ReactNode,
 } from "react";
 import { AppState } from "react-native";
+import { useQueryClient } from "@tanstack/react-query";
 import Constants from "expo-constants";
 import {
   connectWithKey,
@@ -35,6 +36,7 @@ import {
   readRecentGateways,
   saveRecentGateway,
 } from "@/storage/recent-gateways";
+import { changesGateway } from "@/session/session-model";
 
 const RECONNECT_MAX_MS = 30_000;
 const INITIAL_RECONNECT_MS = 750;
@@ -86,6 +88,7 @@ class ConnectionStore {
 }
 
 export function SessionProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient();
   const [status, setStatus] = useState<SessionStatus>("booting");
   const [connection, setConnection] = useState<ConnectionConfig | null>(null);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
@@ -107,11 +110,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       options: CommitConnectionOptions = {},
     ): Promise<void> => {
       const current = connectionStore.read();
-      if (
-        !current ||
-        current.url !== next.url ||
-        current.hosted !== next.hosted
-      ) {
+      if (changesGateway(current, next)) {
+        queryClient.clear();
         setAgents([]);
         setAgentsReady(false);
       }
@@ -128,10 +128,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           console.warn("Could not save recent gateway:", cause),
         );
     },
-    [connectionStore],
+    [connectionStore, queryClient],
   );
 
   const disconnect = useCallback(async (): Promise<void> => {
+    queryClient.clear();
     connectionStore.write(null);
     setConnection(null);
     setAgents([]);
@@ -142,7 +143,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setCompatibility(null);
     setStatus("disconnected");
     await clearStoredConnection();
-  }, [connectionStore]);
+  }, [connectionStore, queryClient]);
 
   const api = useMemo(
     () =>
@@ -246,6 +247,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
     let active = true;
     let socket: WebSocket | null = null;
+    let gatewayLoad: AbortController | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let reconnectDelay = INITIAL_RECONNECT_MS;
     let appActive = AppState.currentState === "active";
@@ -255,6 +257,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
       }
+      gatewayLoad?.abort();
+      gatewayLoad = null;
       socket?.close();
       socket = null;
       setReachable(false);
@@ -269,11 +273,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
     };
 
-    const loadGateway = async (): Promise<boolean> => {
+    const loadGateway = async (signal: AbortSignal): Promise<boolean> => {
       try {
         const [versionInfo, info] = await Promise.all([
-          api.json<GatewayVersionInfo>("/version"),
-          api.json<{ managed?: boolean }>("/info").catch(() => ({
+          api.json<GatewayVersionInfo>("/version", { signal }),
+          api.json<{ managed?: boolean }>("/info", { signal }).catch(() => ({
             managed: false,
           })),
         ]);
@@ -296,46 +300,61 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     };
 
     const connectControlSocket = () => {
-      if (!active || !appActive || socket) return;
-      void loadGateway().then((compatible) => {
-        if (!active || !appActive || !compatible || socket) return;
-        const next = new WebSocket(api.websocketUrl("/ws"));
-        socket = next;
-        next.onopen = () => {
-          reconnectDelay = INITIAL_RECONNECT_MS;
-          setReachable(true);
-        };
-        next.onmessage = (event) => {
-          if (typeof event.data !== "string") return;
-          try {
-            const message: ControlWsMessage = JSON.parse(event.data);
-            if (message.type === "hello") {
-              setVersion((current) =>
-                current
-                  ? { ...current, version: message.version ?? current.version }
-                  : current,
-              );
-            } else if (message.type === "agents") {
-              setAgents(message.agents ?? []);
-              setAgentsReady(true);
-            }
-          } catch {
-            // Ignore an invalid gateway frame and keep the healthy socket open.
+      if (!active || !appActive || socket || gatewayLoad) return;
+      const controller = new AbortController();
+      gatewayLoad = controller;
+      void loadGateway(controller.signal)
+        .then((compatible) => {
+          if (!active || !appActive || socket || controller.signal.aborted) {
+            return;
           }
-        };
-        next.onerror = () => next.close();
-        next.onclose = () => {
-          if (socket === next) socket = null;
-          setReachable(false);
-          scheduleReconnect();
-        };
-      });
+          if (!compatible) {
+            return;
+          }
+          const next = new WebSocket(api.websocketUrl("/ws"));
+          socket = next;
+          next.onopen = () => {
+            reconnectDelay = INITIAL_RECONNECT_MS;
+            setReachable(true);
+          };
+          next.onmessage = (event) => {
+            if (typeof event.data !== "string") return;
+            try {
+              const message: ControlWsMessage = JSON.parse(event.data);
+              if (message.type === "hello") {
+                setVersion((current) =>
+                  current
+                    ? {
+                        ...current,
+                        version: message.version ?? current.version,
+                      }
+                    : current,
+                );
+              } else if (message.type === "agents") {
+                setAgents(message.agents ?? []);
+                setAgentsReady(true);
+              }
+            } catch {
+              // Ignore an invalid gateway frame and keep the healthy socket open.
+            }
+          };
+          next.onerror = () => next.close();
+          next.onclose = () => {
+            if (socket === next) socket = null;
+            setReachable(false);
+            scheduleReconnect();
+          };
+        })
+        .finally(() => {
+          if (gatewayLoad === controller) gatewayLoad = null;
+        });
     };
 
     const appStateSubscription = AppState.addEventListener(
       "change",
       (nextState) => {
-        appActive = nextState === "active";
+        const nextAppActive = nextState === "active";
+        appActive = nextAppActive;
         if (appActive) connectControlSocket();
         else closeSocket();
       },
@@ -394,7 +413,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 }
 
 export function useSession(): SessionValue {
-  const value = useContext(SessionContext);
+  const value = use(SessionContext);
   if (!value) throw new Error("useSession must be used within SessionProvider");
   return value;
 }

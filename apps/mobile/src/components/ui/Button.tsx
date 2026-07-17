@@ -23,6 +23,7 @@ interface ButtonProps {
   onPress: () => void;
   variant?: ButtonVariant;
   icon?: IconName;
+  iconColor?: string;
   disabled?: boolean;
   loading?: boolean;
   pill?: boolean;
@@ -41,6 +42,7 @@ export function Button({
   onPress,
   variant = "primary",
   icon,
+  iconColor,
   disabled = false,
   loading = false,
   pill = false,
@@ -90,7 +92,9 @@ export function Button({
         <ActivityIndicator color={textColor} />
       ) : (
         <View style={styles.content}>
-          {icon ? <Ionicons name={icon} size={18} color={textColor} /> : null}
+          {icon ? (
+            <Ionicons name={icon} size={18} color={iconColor ?? textColor} />
+          ) : null}
           <Text
             style={[
               styles.label,

@@ -1,20 +1,15 @@
-import { Stack } from "expo-router";
-import { AgentProvider } from "@/agent/AgentProvider";
+import Stack from "expo-router/stack";
 import NotificationsPage from "@/agent/NotificationsPage";
 
 function NotificationsContent() {
   return (
     <>
-      <Stack.Screen options={{ title: "Notifications" }} />
+      <Stack.Title>Notifications</Stack.Title>
       <NotificationsPage />
     </>
   );
 }
 
 export default function NotificationsScreen() {
-  return (
-    <AgentProvider>
-      <NotificationsContent />
-    </AgentProvider>
-  );
+  return <NotificationsContent />;
 }

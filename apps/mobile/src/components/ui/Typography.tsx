@@ -6,6 +6,7 @@ import {
   type TextProps,
   type TextStyle,
 } from "react-native";
+import type { Ref } from "react";
 import { fontNames } from "@/theme/typography";
 
 export type FontFamily = "sans" | "heading" | "mono";
@@ -60,8 +61,18 @@ export function Text({
 
 export function TextInput({
   family = "sans",
+  ref,
   style,
   ...props
-}: TextInputProps & { family?: FontFamily }) {
-  return <NativeTextInput {...props} style={themedStyle(style, family)} />;
+}: TextInputProps & {
+  family?: FontFamily;
+  ref?: Ref<NativeTextInput>;
+}) {
+  return (
+    <NativeTextInput
+      ref={ref}
+      {...props}
+      style={themedStyle(style, family)}
+    />
+  );
 }

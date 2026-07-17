@@ -1,5 +1,6 @@
 import { Pressable, StyleSheet, View } from "react-native";
-import { Stack, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
+import Stack from "expo-router/stack";
 import { Ionicons } from "@expo/vector-icons";
 import { GlassView, isGlassEffectAPIAvailable } from "expo-glass-effect";
 import type { AgentActivityState, AgentStatus } from "@/api/types";
@@ -9,6 +10,8 @@ import { BootTransitionTarget } from "@/components/BootTransition";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { radii } from "@/theme/layout";
+
+const IS_IOS = process.env.EXPO_OS === "ios";
 
 export function AgentStackHeader({ hidden = false }: { hidden?: boolean }) {
   const router = useRouter();
@@ -23,45 +26,44 @@ export function AgentStackHeader({ hidden = false }: { hidden?: boolean }) {
   const goHome = () => router.dismissTo("/");
 
   return (
-    <Stack.Screen
-      options={{
-        title: name,
-        headerShown: !hidden,
-        headerTransparent: true,
-        headerStyle: { backgroundColor: "transparent" },
-        headerShadowVisible: false,
-        headerBackButtonDisplayMode: "minimal",
-        headerTitle: () => (
-          <AgentHeaderTitle
-            name={name}
-            status={status}
-            activityState={socket.agentState}
-            color={colors.text}
-            dark={dark}
-            fallbackColor={colors.elevated}
-            borderColor={colors.border}
+    <>
+      <Stack.Screen
+        options={{
+          headerShown: !hidden,
+          headerTransparent: true,
+          headerStyle: { backgroundColor: "transparent" },
+          headerShadowVisible: false,
+          headerBackButtonDisplayMode: "minimal",
+          headerLeft: IS_IOS
+            ? undefined
+            : () => (
+                <AgentBackHeaderButton color={colors.text} onPress={goHome} />
+              ),
+        }}
+      />
+      <Stack.Title asChild>
+        <AgentHeaderTitle
+          name={name}
+          status={status}
+          activityState={socket.agentState}
+          color={colors.text}
+          dark={dark}
+          fallbackColor={colors.elevated}
+          borderColor={colors.border}
+          onPress={openSettings}
+        />
+      </Stack.Title>
+      {IS_IOS && !hidden ? (
+        <Stack.Toolbar placement="left">
+          <Stack.Toolbar.Button
+            accessibilityLabel="Back to agents"
+            icon="chevron.backward"
+            tintColor={colors.text}
             onPress={goHome}
           />
-        ),
-        unstable_headerRightItems: () => [
-          {
-            type: "button",
-            label: "Settings",
-            accessibilityLabel: "Agent settings",
-            icon: { type: "sfSymbol", name: "gearshape" },
-            tintColor: colors.text,
-            identifier: "agent-settings",
-            onPress: openSettings,
-          },
-        ],
-        headerRight: () => (
-          <AgentSettingsHeaderButton
-            color={colors.text}
-            onPress={openSettings}
-          />
-        ),
-      }}
-    />
+        </Stack.Toolbar>
+      ) : null}
+    </>
   );
 }
 
@@ -87,7 +89,7 @@ export function AgentHeaderTitle({
   const content = (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel="Back to agents"
+      accessibilityLabel="Agent settings"
       onPress={onPress}
       style={({ pressed }) => [
         styles.titleContent,
@@ -133,7 +135,7 @@ export function AgentHeaderTitle({
   );
 }
 
-export function AgentSettingsHeaderButton({
+function AgentBackHeaderButton({
   color,
   onPress,
 }: {
@@ -143,12 +145,12 @@ export function AgentSettingsHeaderButton({
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel="Agent settings"
+      accessibilityLabel="Back to agents"
       hitSlop={10}
       onPress={onPress}
       style={({ pressed }) => [styles.button, { opacity: pressed ? 0.72 : 1 }]}
     >
-      <Ionicons name="settings-outline" size={22} color={color} />
+      <Ionicons name="chevron-back" size={25} color={color} />
     </Pressable>
   );
 }

@@ -69,20 +69,6 @@ export default function SettingsScreen() {
           value={preferences.theme}
           onPress={chooseTheme}
         />
-        <SwitchRow
-          label="Natural chat pacing"
-          detail="Let replies arrive with a more human rhythm."
-          icon="chatbubble-ellipses-outline"
-          value={preferences.naturalChatPacing}
-          onValueChange={(value) => void preferences.update({ naturalChatPacing: value })}
-        />
-        <SwitchRow
-          label="Show tool activity"
-          detail="Include Vesta's live tool calls in chat."
-          icon="hammer-outline"
-          value={preferences.showToolCalls}
-          onValueChange={(value) => void preferences.update({ showToolCalls: value })}
-        />
       </FormSection>
 
       <AgentPagesSettingsSection />
@@ -206,7 +192,7 @@ export default function SettingsScreen() {
         <FormRow
           label="Disconnect"
           icon="log-out-outline"
-          destructive
+          destructiveIcon
           onPress={() => {
             Alert.alert("Disconnect from Vesta?", "You can reconnect using your account or tunnel link.", [
               { text: "Cancel", style: "cancel" },

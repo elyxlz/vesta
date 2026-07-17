@@ -30,7 +30,8 @@ function typingDelay(characterCount: number): number {
 
 export function useAgentSocket(name: string, active: boolean) {
   const { api } = useSession();
-  const { naturalChatPacing } = usePreferences();
+  const preferences = usePreferences();
+  const naturalChatPacing = preferences.naturalChatPacingForAgent(name);
   const [events, setEvents] = useState<VestaEvent[]>([]);
   const [agentState, setAgentState] = useState<AgentActivityState>("idle");
   const [isTyping, setIsTyping] = useState(false);

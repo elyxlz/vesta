@@ -1,20 +1,15 @@
-import { Stack } from "expo-router";
-import { AgentProvider } from "@/agent/AgentProvider";
+import Stack from "expo-router/stack";
 import LogsPage from "@/agent/LogsPage";
 
 function LogsContent() {
   return (
     <>
-      <Stack.Screen options={{ title: "Logs" }} />
+      <Stack.Title>Logs</Stack.Title>
       <LogsPage />
     </>
   );
 }
 
 export default function LogsScreen() {
-  return (
-    <AgentProvider>
-      <LogsContent />
-    </AgentProvider>
-  );
+  return <LogsContent />;
 }

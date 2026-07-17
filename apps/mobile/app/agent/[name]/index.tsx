@@ -16,7 +16,6 @@ import Animated, {
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { scheduleOnRN } from "react-native-worklets";
-import { AgentProvider } from "@/agent/AgentProvider";
 import ChatPage from "@/agent/ChatPage";
 import DashboardPage from "@/agent/DashboardPage";
 import LogsPage from "@/agent/LogsPage";
@@ -31,8 +30,8 @@ import { usePreferences } from "@/preferences/PreferencesProvider";
 
 const AnimatedPagerView = Animated.createAnimatedComponent(PagerView);
 const TAB_HIDE_DELAY_MS = 50;
+const INITIAL_TAB_HINT_DELAY_MS = 700;
 const TAB_ANIMATION_DURATION_MS = 220;
-const TAB_MOUNT_VISIBILITY = 0.01;
 const TAP_MAX_TRAVEL = 8;
 const PAGE_TABS = {
   chat: {
@@ -66,15 +65,14 @@ function AgentPages() {
   const { showNotificationsPage, showLogsPage } = usePreferences();
   const pager = useRef<PagerView>(null);
   const pageProgress = useSharedValue(0);
-  const tabVisibility = useSharedValue(0);
+  const tabVisibility = useSharedValue(1);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tabTransitionId = useRef(0);
-  const tabsShouldShow = useRef(false);
   const pageTouchStart = useRef<{ x: number; y: number } | null>(null);
   const hapticPageKey = useRef<AgentPageKey>("chat");
   const [activePageKey, setActivePageKey] = useState<AgentPageKey>("chat");
-  const [tabsMounted, setTabsMounted] = useState(false);
-  const [tabsInteractive, setTabsInteractive] = useState(false);
+  const [tabsVisible, setTabsVisible] = useState(true);
+  const [tabsInteractive, setTabsInteractive] = useState(true);
   const pages = useMemo(
     () => getAgentPageKeys({ showNotificationsPage, showLogsPage }),
     [showLogsPage, showNotificationsPage],
@@ -110,16 +108,11 @@ function AgentPages() {
 
   const showTabs = useCallback(() => {
     clearHideTimer();
-    tabsShouldShow.current = true;
     tabTransitionId.current += 1;
+    setTabsVisible(true);
     setTabsInteractive(true);
-    if (tabsMounted) {
-      animateTabsIn();
-      return;
-    }
-    tabVisibility.set(TAB_MOUNT_VISIBILITY);
-    setTabsMounted(true);
-  }, [animateTabsIn, clearHideTimer, tabVisibility, tabsMounted]);
+    animateTabsIn();
+  }, [animateTabsIn, clearHideTimer]);
 
   const disableTabs = useCallback((transitionId: number) => {
     if (transitionId !== tabTransitionId.current) return;
@@ -127,8 +120,8 @@ function AgentPages() {
   }, []);
 
   const animateTabsOut = useCallback(() => {
-    tabsShouldShow.current = false;
     const transitionId = ++tabTransitionId.current;
+    setTabsVisible(false);
     tabVisibility.set(
       withTiming(
         0,
@@ -179,16 +172,16 @@ function AgentPages() {
   }, [animateTabsOut, clearHideTimer]);
 
   useEffect(() => {
-    if (tabsMounted && tabsShouldShow.current) animateTabsIn();
-  }, [animateTabsIn, tabsMounted]);
+    hideTimer.current = setTimeout(() => {
+      hideTimer.current = null;
+      animateTabsOut();
+    }, INITIAL_TAB_HINT_DELAY_MS);
 
-  useEffect(
-    () => () => {
+    return () => {
       clearHideTimer();
       cancelAnimation(tabVisibility);
-    },
-    [clearHideTimer, tabVisibility],
-  );
+    };
+  }, [animateTabsOut, clearHideTimer, tabVisibility]);
 
   const onPageScrollStateChanged = useCallback(
     (event: PageScrollStateChangedNativeEvent) => {
@@ -269,7 +262,7 @@ function AgentPages() {
         bottom={insets.bottom + 40}
         progress={pageProgress}
         visibility={tabVisibility}
-        mounted={tabsMounted}
+        visible={tabsVisible}
         interactive={tabsInteractive}
         tabs={tabs}
         onSelect={selectPage}
@@ -279,11 +272,7 @@ function AgentPages() {
 }
 
 export default function AgentScreen() {
-  return (
-    <AgentProvider>
-      <AgentPages />
-    </AgentProvider>
-  );
+  return <AgentPages />;
 }
 
 const styles = StyleSheet.create({

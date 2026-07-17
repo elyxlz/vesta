@@ -1,6 +1,6 @@
 import { Alert, StyleSheet } from "react-native";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Stack, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import {
   createBackup,
   deleteAgent,
@@ -8,10 +8,11 @@ import {
   startAgent,
   stopAgent,
 } from "@/api/endpoints";
-import { AgentProvider, useAgent } from "@/agent/AgentProvider";
+import { useAgent } from "@/agent/AgentProvider";
 import { AgentPagesSettingsSection } from "@/components/AgentPagesSettingsSection";
+import { AgentIdentityCard } from "@/components/agent-identity-card";
 import { Screen } from "@/components/layout/Screen";
-import { FormRow, FormSection } from "@/components/ui/Form";
+import { FormRow, FormSection, SwitchRow } from "@/components/ui/Form";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
@@ -20,8 +21,9 @@ function AgentSettingsContent() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { api } = useSession();
-  const { name, agent } = useAgent();
-  const { colors } = usePreferences();
+  const { name, agent, socket } = useAgent();
+  const preferences = usePreferences();
+  const { colors } = preferences;
   const action = useMutation({
     mutationFn: async (
       operation: "start" | "stop" | "restart" | "backup" | "delete",
@@ -54,7 +56,12 @@ function AgentSettingsContent() {
 
   return (
     <Screen contentStyle={styles.content}>
-      <Stack.Screen options={{ title: `${name}’s Settings` }} />
+      <AgentIdentityCard
+        name={name}
+        status={agent?.status ?? "not_found"}
+        activityState={socket.agentState}
+        style={styles.identityCard}
+      />
       {action.error ? (
         <Text accessibilityRole="alert" style={{ color: colors.danger }}>
           {action.error instanceof Error
@@ -63,12 +70,6 @@ function AgentSettingsContent() {
         </Text>
       ) : null}
       <FormSection title="Agent">
-        <FormRow
-          label="General"
-          detail="Identity and current status"
-          icon="person-outline"
-          onPress={() => open("general")}
-        />
         <FormRow
           label="Provider and model"
           detail="Credentials, model, context, and usage"
@@ -80,6 +81,24 @@ function AgentSettingsContent() {
           detail="Live transcription and spoken replies"
           icon="mic-outline"
           onPress={() => open("voice")}
+        />
+        <SwitchRow
+          label="Natural chat pacing"
+          detail="Let this agent's replies arrive with a more human rhythm."
+          icon="chatbubble-ellipses-outline"
+          value={preferences.naturalChatPacingForAgent(name)}
+          onValueChange={(value) =>
+            void preferences.setNaturalChatPacingForAgent(name, value)
+          }
+        />
+        <SwitchRow
+          label="Show tool activity"
+          detail="Include this agent's live tool calls in chat."
+          icon="hammer-outline"
+          value={preferences.showToolCallsForAgent(name)}
+          onValueChange={(value) =>
+            void preferences.setShowToolCallsForAgent(name, value)
+          }
         />
       </FormSection>
       <AgentPagesSettingsSection />
@@ -172,13 +191,10 @@ function AgentSettingsContent() {
 }
 
 export default function AgentSettingsScreen() {
-  return (
-    <AgentProvider>
-      <AgentSettingsContent />
-    </AgentProvider>
-  );
+  return <AgentSettingsContent />;
 }
 
 const styles = StyleSheet.create({
   content: { paddingBottom: 80 },
+  identityCard: { paddingVertical: 20 },
 });
