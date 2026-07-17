@@ -20,9 +20,13 @@ import json
 
 import websockets
 
+# Generous: the longest legitimate single command (navigate to a slow page, screenshot a
+# large one) stays well inside it, so firing means the browser withheld the response.
+BIDI_RESPONSE_TIMEOUT_S = 60.0
+
 
 class BidiError(Exception):
-    """A BiDi command returned {type: "error"}."""
+    """A BiDi command failed: the server returned {type: "error"}, or withheld its response."""
 
     def __init__(self, code: str, message: str) -> None:
         super().__init__(f"{code}: {message}")
@@ -92,7 +96,13 @@ class BidiClient:
         future: asyncio.Future[dict] = asyncio.get_running_loop().create_future()
         self._pending[command_id] = future
         await self._ws.send(json.dumps({"id": command_id, "method": method, "params": params or {}}))
-        return await future
+        try:
+            return await asyncio.wait_for(future, timeout=BIDI_RESPONSE_TIMEOUT_S)
+        except TimeoutError:
+            raise BidiError("timeout", f"no response to {method!r} within {BIDI_RESPONSE_TIMEOUT_S}s") from None
+        finally:
+            if command_id in self._pending:
+                del self._pending[command_id]
 
     async def new_session(self) -> str:
         """Open a session and return the first top-level browsing-context id."""

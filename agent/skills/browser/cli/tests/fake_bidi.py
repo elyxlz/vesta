@@ -20,9 +20,12 @@ _PNG_1X1 = base64.b64encode(
 
 
 class FakeBidiServer:
-    def __init__(self, snapshot_nodes: list[dict] | None = None) -> None:
+    def __init__(self, snapshot_nodes: list[dict] | None = None, withhold: set[str] | None = None) -> None:
         self.navigations: list[str] = []
         self.snapshot_nodes = snapshot_nodes or []
+        # Methods the server accepts and never answers, as Camoufox does for
+        # browsingContext.create (issue #1305).
+        self.withhold = withhold or set()
         self._server: websockets.Server | None = None
         self.url = ""
 
@@ -46,6 +49,8 @@ class FakeBidiServer:
         method = message["method"]
         params = message["params"]
         command_id = message["id"]
+        if method in self.withhold:
+            return
         if method == "session.new":
             result = {"sessionId": "fake-session", "capabilities": {}}
         elif method == "session.subscribe":
