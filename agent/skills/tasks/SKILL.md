@@ -73,7 +73,5 @@ One daemon handles everything: task due-date monitoring, reminder scheduling, an
 running tasks || { PORT=$(~/agent/skills/vestad/scripts/register-service tasks) && screen -dmS tasks tasks serve --port $PORT; sleep 1; }
 ```
 
-**Liveness**: `tasks daemon status` (add `-q` for exit-code only: 0 serving, 1 not). It curls the daemon's own HTTP port (recorded in `~/.tasks/serve.port` on start), so it reports whether the daemon is actually serving, not merely that a `screen` session or the sqlite store exists. This is the same `daemon status` check the messaging daemons expose; proactive-check calls it to catch a silently dead daemon.
-
 ### Reminder Patterns
 [User's common reminder types and preferences]

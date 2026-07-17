@@ -87,9 +87,28 @@ async def webhook(request: Request, secret: str = Query(default="")) -> dict:
     return {"ok": True, "notification_path": str(final)}
 
 
+def _write_daemon_died() -> None:
+    """Record the mail service's exit so the agent restarts it: uvicorn.run returns on
+    SIGTERM/SIGINT and raises on a bind/fatal error, so a dead inbound-mail listener is
+    reported either way. interrupt defaults on (silent mail loss is urgent)."""
+    NOTIFICATIONS_DIR.mkdir(parents=True, exist_ok=True)
+    notif = {
+        "source": "agentmail",
+        "type": "daemon_died",
+        "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+    }
+    fname = f"{int(time.time() * 1e6)}-agentmail-daemon_died.json"
+    tmp = NOTIFICATIONS_DIR / f"{fname}.tmp"
+    tmp.write_text(json.dumps(notif, indent=2))
+    tmp.replace(NOTIFICATIONS_DIR / fname)
+
+
 @click.command("serve")
 @click.option("--port", required=True, type=int, help="Port to bind to")
 @click.option("--host", default="0.0.0.0", help="Bind address")
 def serve_cmd(port: int, host: str) -> None:
     """Run the local HTTP service that receives inbound mail from AgentMail."""
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    try:
+        uvicorn.run(app, host=host, port=port, log_level="info")
+    finally:
+        _write_daemon_died()

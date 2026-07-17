@@ -5,8 +5,6 @@ import os
 import signal
 import sys
 import time
-import urllib.error
-import urllib.request
 from contextlib import closing, suppress
 from pathlib import Path
 
@@ -23,9 +21,6 @@ def _add_format_flags(parser: argparse.ArgumentParser) -> None:
     group.add_argument("--json-pretty", action="store_true", help="Emit indented JSON instead of a table.")
 
 
-DAEMON_STATUS_TIMEOUT = 2.0
-
-
 def _write_pid(config):
     (config.data_dir / "serve.pid").write_text(str(os.getpid()))
 
@@ -33,40 +28,6 @@ def _write_pid(config):
 def _remove_pid(config):
     with suppress(FileNotFoundError):
         (config.data_dir / "serve.pid").unlink()
-
-
-def _write_port(config, port: int):
-    (config.data_dir / "serve.port").write_text(str(port))
-
-
-def _remove_port(config):
-    with suppress(FileNotFoundError):
-        (config.data_dir / "serve.port").unlink()
-
-
-def _daemon_status(config: Config, *, quiet: bool) -> None:
-    """Report whether the daemon is actually SERVING, by curling its own HTTP API.
-
-    The port comes from serve.port (written on bind); a live sqlite store or a live
-    screen session proves neither, so this hits the endpoint the daemon owns. Prints
-    {"running": bool, ...} to match the messaging daemons' `daemon status`; exits 0
-    when serving, 1 otherwise so `daemon status -q` is a scriptable liveness gate.
-    """
-    port_file = config.data_dir / "serve.port"
-    running = False
-    detail = "no serve.port (daemon never started, or predates this check: restart it)"
-    port: int | None = None
-    if port_file.exists():
-        port = int(port_file.read_text().strip())
-        try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}/tasks", timeout=DAEMON_STATUS_TIMEOUT) as resp:
-                running = resp.status == 200
-                detail = f"HTTP {resp.status}"
-        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as e:
-            detail = f"port {port} not serving ({e})"
-    if not quiet:
-        print(json.dumps({"running": running, "port": port, "detail": detail}))
-    sys.exit(0 if running else 1)
 
 
 def _fail_daemon_not_running(detail: str):
@@ -125,12 +86,6 @@ def _add_id_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--id", default=None, dest="task_id")
 
 
-def _add_daemon_parser(sub) -> None:
-    p_daemon = sub.add_parser("daemon", help="Inspect the background daemon")
-    p_daemon.add_argument("action", choices=["status"], help="status: is the daemon actually serving?")
-    p_daemon.add_argument("-q", "--quiet", action="store_true", help="Exit-code only (0 serving, 1 not); print nothing.")
-
-
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="tasks")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -139,8 +94,6 @@ def _build_parser() -> argparse.ArgumentParser:
     p_serve = sub.add_parser("serve", help="Run background daemon (scheduler + reminder engine)")
     p_serve.add_argument("--notifications-dir", default=str(Path.home() / "agent" / "notifications"))
     p_serve.add_argument("--port", type=int, required=True, help="HTTP server port (allocated by vestad)")
-
-    _add_daemon_parser(sub)
 
     # add
     p_add = sub.add_parser("add", help="Add a new task")
@@ -231,10 +184,6 @@ def main():
     try:
         if args.command == "serve":
             _run_serve(config, Path(args.notifications_dir), port=args.port)
-            return None
-
-        if args.command == "daemon":
-            _daemon_status(config, quiet=args.quiet)
             return None
 
         _require_daemon(config)
@@ -528,7 +477,6 @@ def _run_serve(config: Config, notif_dir: Path, *, port: int):
     sync_interval = int(os.environ["TASKS_SYNC_INTERVAL"]) if "TASKS_SYNC_INTERVAL" in os.environ else 5
 
     _write_pid(config)
-    _write_port(config, port)
 
     print(json.dumps({"status": "serving", "sync_interval": sync_interval, "http_port": port}))
     sys.stdout.flush()
@@ -545,5 +493,4 @@ def _run_serve(config: Config, notif_dir: Path, *, port: int):
         http_server.should_exit = True
         write_notification(notif_dir, "daemon_died", reason=shutdown_reason)
         _remove_pid(config)
-        _remove_port(config)
         scheduler.shutdown(wait=True)
