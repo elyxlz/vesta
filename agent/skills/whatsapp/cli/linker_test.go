@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestChooseLinkerParadigm pins the one construction-time decision: a box that can
@@ -71,5 +73,57 @@ func TestChooseLinkerKeepsNumberWhenReconcilingCreds(t *testing.T) {
 	chooseLinker(managedConfig{directURL: "https://wa.example", directKey: "wak_abc"}, newStateStore(dir))
 	if st := loadStateFromDisk(dir); st.MSISDN != "+447700900009" || st.DirectKey != "wak_abc" {
 		t.Fatalf("reconcile clobbered number or creds: %+v", st)
+	}
+}
+
+// TestGuardedPairPhoneBlocksAtCap proves the managed path is gated by the same
+// ban-avoidance rate-limit guard as the phone path: once the cap is reached the
+// guard returns errRateLimited and PairPhone is never called (no real pairing
+// request from a datacenter IP on a minutes-old number).
+func TestGuardedPairPhoneBlocksAtCap(t *testing.T) {
+	store := newStateStore(t.TempDir())
+	now := time.Now()
+	store.update(func(s *daemonState) {
+		for i := 0; i < MaxPairAttempts; i++ {
+			s.PairAttempts = append(s.PairAttempts, now)
+		}
+	})
+	l := &managedLinker{state: store}
+	called := false
+	guarded := l.guardedPairPhone(func(string) (string, error) { called = true; return "C0DE", nil })
+	if _, err := guarded("+447700900000"); !errors.Is(err, errRateLimited) {
+		t.Fatalf("guarded pair at cap = %v, want errRateLimited", err)
+	}
+	if called {
+		t.Fatal("PairPhone must not be called once the rate-limit cap is reached")
+	}
+}
+
+// TestGuardedPairPhoneRecordsOnGeneratedCode proves the guard records an attempt
+// only when a code is actually minted (so the cap actually advances on the managed
+// path, matching the phone path's checkPairAttempt-then-record contract).
+func TestGuardedPairPhoneRecordsOnGeneratedCode(t *testing.T) {
+	store := newStateStore(t.TempDir())
+	l := &managedLinker{state: store}
+	guarded := l.guardedPairPhone(func(string) (string, error) { return "C0DE", nil })
+	if _, err := guarded("+447700900000"); err != nil {
+		t.Fatalf("guarded pair below cap: %v", err)
+	}
+	if n := len(store.snapshot().PairAttempts); n != 1 {
+		t.Fatalf("a generated code must record exactly one attempt, got %d", n)
+	}
+}
+
+// TestGuardedPairPhoneNoRecordOnFailure proves a pre-code failure (e.g. websocket
+// not up yet) burns no slot, so a transient failure never eats into the cap.
+func TestGuardedPairPhoneNoRecordOnFailure(t *testing.T) {
+	store := newStateStore(t.TempDir())
+	l := &managedLinker{state: store}
+	guarded := l.guardedPairPhone(func(string) (string, error) { return "", errors.New("websocket not up") })
+	if _, err := guarded("+447700900000"); err == nil {
+		t.Fatal("expected the underlying pair failure to surface")
+	}
+	if n := len(store.snapshot().PairAttempts); n != 0 {
+		t.Fatalf("a pre-code failure must record nothing, got %d attempts", n)
 	}
 }

@@ -213,6 +213,49 @@ func TestReauth_postsFreshCode(t *testing.T) {
 	}
 }
 
+// A number banned AFTER linking comes back as a blocked /pair state; reauth must
+// surface errBlocked so the agent re-runs connect for a fresh number instead of
+// looping on the dead one.
+func TestReauth_blockedPairStateSurfacesErrBlocked(t *testing.T) {
+	m := managedFor(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/integrations/whatsapp/pair" {
+			_ = json.NewEncoder(w).Encode(map[string]string{"state": "banned"})
+			return
+		}
+		http.Error(w, "no", http.StatusNotFound)
+	})
+
+	err := m.reauth(managedState{MSISDN: "+44"}, func(string) (string, error) { return "FRSH-0001", nil })
+	if !errors.Is(err, errBlocked) {
+		t.Fatalf("reauth onto a post-link-banned number = %v, want errBlocked", err)
+	}
+}
+
+// After a post-link ban the control plane auto-heals the account onto a FRESH
+// number on the next /provision; provision (which reauth now routes through) must
+// pair THAT healed number, not the stale one.
+func TestProvision_picksUpHealedNumber(t *testing.T) {
+	var paired string
+	m := managedFor(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/integrations/whatsapp/provision":
+			_ = json.NewEncoder(w).Encode(map[string]any{"msisdn": "+447700900099", "state": "linked"})
+		case "/integrations/whatsapp/pair":
+			_ = json.NewEncoder(w).Encode(map[string]string{"state": "linked"})
+		default:
+			http.Error(w, "no", http.StatusNotFound)
+		}
+	})
+
+	st, err := m.provision(func(msisdn string) (string, error) { paired = msisdn; return "C0DE", nil })
+	if err != nil {
+		t.Fatalf("provision: %v", err)
+	}
+	if paired != "+447700900099" || st.MSISDN != "+447700900099" {
+		t.Fatalf("must pair the /provision (healed) number, paired=%q st=%q", paired, st.MSISDN)
+	}
+}
+
 func TestControlError_surfaces(t *testing.T) {
 	m := managedFor(t, func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, `{"error":"membership_inactive"}`, http.StatusForbidden)

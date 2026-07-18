@@ -28,7 +28,7 @@ instance-specific to do here.
 
 Run `whatsapp status`. A normal `linked`/`not linked` verdict means the CLI is
 healthy against the new state layout. (If it reports `linked: false`, the one and
-only recovery is still `whatsapp provision`, exactly as before; do that only with
+only recovery is still `whatsapp connect`, exactly as before; do that only with
 the user's go-ahead, never in a retry loop.)
 
 ### 3. Mark this migration applied

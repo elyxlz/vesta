@@ -244,16 +244,24 @@ func (m *managedAuth) claim() (managedState, error) {
 	return managedState{}, errPoolFilling
 }
 
-// reauth mints a fresh pairing code for the account's number and posts it,
-// re-linking the same companion. The skill calls this on a dropped session — no
-// new number, no OTP, no user action.
+// reauth mints a fresh pairing code for st.MSISDN and posts it, re-linking the
+// same companion. No new number, no OTP, no user action. It decodes /pair's
+// {state}: a number banned after linking comes back blocked, surfaced as
+// errBlocked so the agent re-runs connect for a fresh number instead of looping
+// on the dead one (claim already handles a /provision-side block on the way in).
 func (m *managedAuth) reauth(st managedState, pairPhone func(msisdn string) (string, error)) error {
 	code, err := pairPhone(st.MSISDN)
 	if err != nil {
 		return fmt.Errorf("pair phone: %w", err)
 	}
-	if err := m.call(http.MethodPost, "/pair", map[string]string{"code": code}, nil); err != nil {
+	var out struct {
+		State string `json:"state"`
+	}
+	if err := m.call(http.MethodPost, "/pair", map[string]string{"code": code}, &out); err != nil {
 		return fmt.Errorf("link: %w", err)
+	}
+	if isBlockedState(out.State) {
+		return fmt.Errorf("%w (state %q)", errBlocked, out.State)
 	}
 	return nil
 }

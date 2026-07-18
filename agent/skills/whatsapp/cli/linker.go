@@ -11,6 +11,11 @@ import (
 // already holds the single-flight (beginPairing). One pairing at a time.
 var errPairingInProgress = errors.New("a pairing (provision/link) is already in progress; retry in a moment")
 
+// errRateLimited is returned when the ban-avoidance rate-limit guard blocks a
+// managed pairing before any PairPhone code is minted. It wraps the guard's own
+// message (which carries the cooldown window) so the agent gets a clean status.
+var errRateLimited = errors.New("the pairing rate limit was reached")
+
 // linkResult is the terminal outcome of a successful pairing.
 type linkResult struct {
 	MSISDN string // the linked number; empty for a QR-linked user account
@@ -125,14 +130,12 @@ func (l *managedLinker) provision(wac *WhatsAppClient) (linkResult, error) {
 		}
 	}()
 
-	saved := l.state.snapshot().MSISDN
-	var st managedState
-	if saved != "" {
-		st = managedState{MSISDN: saved}
-		err = l.auth.reauth(st, wac.PairPhone)
-	} else {
-		st, err = l.auth.provision(wac.PairPhone)
-	}
+	// Always re-consult the idempotent POST /provision (inside auth.provision),
+	// even when a number is already saved: the control plane auto-heals a banned
+	// account onto a FRESH number, so a post-link ban is picked up here instead of
+	// blindly re-pairing the stale (dead) saved number forever. The pairing code is
+	// minted through the ban-avoidance guard, at the same safe rate as the phone path.
+	st, err := l.auth.provision(l.guardedPairPhone(wac.PairPhone))
 	if err != nil {
 		wac.client.Disconnect()
 		return linkResult{}, err
@@ -150,4 +153,27 @@ func (l *managedLinker) provision(wac *WhatsAppClient) (linkResult, error) {
 	}
 	wac.client.Disconnect()
 	return linkResult{}, fmt.Errorf("pairing code accepted but the companion did not finish linking within %s; retry `whatsapp connect`", ManagedLinkTimeout)
+}
+
+// guardedPairPhone wraps PairPhone in the same ban-avoidance rate-limit guard the
+// phone-code path uses, so re-running `whatsapp connect` on a number that keeps
+// failing to finish linking cannot issue unbounded real PairPhone requests (the
+// exact auto-ban pattern). It checks the cap BEFORE minting a code and records the
+// attempt only once a code is actually generated (a pre-code failure burns no
+// slot); when the cap is reached it returns errRateLimited and never calls
+// PairPhone. The managed path has no --acknowledge-ban-risk flag, so the guard is
+// never overridden here.
+func (l *managedLinker) guardedPairPhone(pair func(msisdn string) (string, error)) func(msisdn string) (string, error) {
+	return func(msisdn string) (string, error) {
+		now := time.Now()
+		if err := checkPairAttempt(l.state.snapshot().PairAttempts, now, false); err != nil {
+			return "", fmt.Errorf("%w: %w", errRateLimited, err)
+		}
+		code, err := pair(msisdn)
+		if err != nil {
+			return "", err
+		}
+		l.state.recordPairAttempt(time.Now())
+		return code, nil
+	}
 }

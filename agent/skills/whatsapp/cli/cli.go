@@ -1055,6 +1055,14 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 				"next":   "This number was blocked and cannot be used. Re-run `whatsapp connect` to get a fresh number.",
 			}, nil
 		}
+		if errors.Is(err, errRateLimited) {
+			// The guard blocked before any PairPhone code was minted; never pair.
+			return map[string]any{
+				"status": "rate_limited",
+				"reason": err.Error(),
+				"next":   "Too many link attempts on this number recently. Wait out the cooldown noted above before running `whatsapp connect` again; repeated pairing is exactly what gets a fresh number banned.",
+			}, nil
+		}
 		return nil, err
 	}
 	return managedLinkedResult(res.MSISDN), nil
