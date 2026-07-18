@@ -402,9 +402,8 @@ def test_wedged_domain_enable_does_not_cache_the_half_enabled_session(monkeypatc
 
 
 def test_event_arriving_mid_enable_routes_to_its_target_not_the_context(monkeypatch):
-    """A CDP event that arrives while the domain-enables are still in flight must resolve to the attaching
-    target. _session_targets is populated before the enable loop (only the _sessions memo moved below it),
-    so routing never regresses to the self._context fallback while the memo is briefly unset."""
+    """A CDP event arriving while the domain-enables are still in flight must resolve to the attaching target,
+    not regress to the self._context fallback while the _sessions memo is briefly unset."""
     monkeypatch.setattr(cdp_backend, "_CDP_RESPONSE_TIMEOUT_S", TEST_TIMEOUT_S)
 
     async def answer(ws, message):

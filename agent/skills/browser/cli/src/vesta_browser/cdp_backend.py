@@ -161,8 +161,7 @@ class CdpBackend:
                 raise BidiError("no such frame", e.message) from e
             raise
         session_id = attach["sessionId"]
-        # The session->target map feeds event routing, so populate it before the enables run:
-        # a CDP event arriving mid-enable must resolve to this target, not fall back to self._context.
+        # Set _session_targets before the enables so a mid-enable event routes here, not to the self._context fallback.
         self._session_targets[session_id] = target_id
         for domain in _DOMAINS:
             try:
@@ -172,8 +171,7 @@ class CdpBackend:
                 # Any other error (a withheld "timeout") means a wedged browser and must propagate.
                 if e.code != "cdp error":
                     raise
-        # Cache the target->session memo only after every domain is enabled, so a wedged enable
-        # is not cached: a later _session_for retries the attach+enable instead of returning it.
+        # Cache the target->session memo only after every enable succeeds, so a wedged enable is retried, not returned half-enabled.
         self._sessions[target_id] = session_id
         return session_id
 
