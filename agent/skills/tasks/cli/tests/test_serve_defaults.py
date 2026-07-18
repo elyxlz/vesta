@@ -1,6 +1,6 @@
 from pathlib import Path
 
-import tasks_cli.cli as cli
+from tasks_cli import cli
 
 
 def test_serve_notifications_dir_defaults_to_agent_notifications(tmp_path, monkeypatch):

@@ -11,10 +11,12 @@ This is a core skill: its CLI lives under `~/agent/core/skills/app-chat/` (read-
 uv tool install --editable ~/agent/core/skills/app-chat/cli
 ```
 
-**Daemon**: `app-chat daemon start|stop|restart|status`. Start is idempotent (a running daemon is a
-no-op), stop marks the shutdown as intentional so it doesn't fire a `daemon_died` notification,
-and status reports the daemon process plus its WS connection state to the agent as JSON. Manage
-the daemon through these commands, not raw `screen`.
+**Daemon**: `app-chat daemon start|stop|restart|status`:
+- Start is idempotent (a running daemon is a no-op)
+- Stop marks the shutdown as intentional so it doesn't fire a `daemon_died` notification
+- Status reports the daemon process plus its WS connection state to the agent as JSON
+
+Manage the daemon through these commands, not raw `screen`.
 **Restart**: Add to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
 ```
 app-chat daemon start
@@ -39,5 +41,5 @@ app-chat history --limit 20
 - Always reply to app messages using `app-chat send`, not through any other channel
 - Send multiple short messages instead of one long one (like texting)
 - Lowercase, no bullets, keep messages tight — texting feel, not document feel
-- Messages render as markdown: use fenced ``` blocks for code/commands, `[label](url)` for links. Newlines work but multiple short messages still beat one long one
+- Messages render as markdown: use fenced ``` blocks for code/commands, `[label](url)` for links. Newlines work
 - The daemon auto-reconnects if the agent restarts

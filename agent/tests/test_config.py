@@ -97,7 +97,7 @@ def test_config_issues_turn_tells_agent(config):
     """Config issues reach the agent as a boot-turn body so it can tell the user."""
     from core.main import config_issues_turn
 
-    body = config_issues_turn(["THINKING='bogus' is invalid (...); reverted to default"], config=config)
+    body = config_issues_turn(["THINKING='bogus' is invalid (...); reverted to default"])
 
     assert body is not None
     assert "THINKING" in body
@@ -107,7 +107,7 @@ def test_config_issues_turn_tells_agent(config):
 def test_config_issues_turn_noop_without_issues(config):
     from core.main import config_issues_turn
 
-    assert config_issues_turn([], config=config) is None
+    assert config_issues_turn([]) is None
 
 
 # --- Config store (nested provider + scalar prefs) ---

@@ -26,7 +26,7 @@ from typing import Any
 
 from . import state
 from .client import Client, OnboardError
-from .config import LINKS, PLAN, PLAN_FLOOR_USD, Config
+from .config import LINKS, PLAN, Config
 
 
 def _print(payload: dict[str, Any]) -> None:
@@ -37,7 +37,7 @@ def _email(args: argparse.Namespace) -> str:
     return args.email.strip().lower()
 
 
-class _Invalid(Exception):
+class _InvalidError(Exception):
     """A surfaced bad-input/state condition: its payload is printed and the CLI exits 2."""
 
     def __init__(self, payload: dict[str, Any]) -> None:
@@ -47,7 +47,7 @@ class _Invalid(Exception):
 def _require_token(email: str, hint: str = "run `onboard verify` first") -> str:
     token = state.token_for(email)
     if not token:
-        raise _Invalid({"error": f"not verified — {hint}"})
+        raise _InvalidError({"error": f"not verified — {hint}"})
     return token
 
 
@@ -62,19 +62,19 @@ def _cmd_verify_send(args: argparse.Namespace, client: Client, cfg: Config) -> i
     referral_code = (args.referral.strip() if getattr(args, "referral", None) else None) or cfg.referral_code
     resp = client.create_account(email, referral_code)
     if "error" in resp:
-        raise _Invalid(resp)  # e.g. a malformed email
+        raise _InvalidError(resp)  # e.g. a malformed email
     client.send_otp(email)
     _print({"sent": True, "email": email, "referral_code_applied": bool(resp.get("referral_code_applied"))})
     return 0
 
 
-def _cmd_verify(args: argparse.Namespace, client: Client, cfg: Config) -> int:
+def _cmd_verify(args: argparse.Namespace, client: Client, _cfg: Config) -> int:
     email = _email(args)
     # Verifying the OTP is what actually CREATES the invitee's account (issue #79:
     # creation is deferred from verify-send to here) and returns their session token.
     token = client.verify_otp(email, args.code.strip())
     if not token:
-        raise _Invalid({"error": "wrong or expired code — ask them to re-read it (or resend)"})
+        raise _InvalidError({"error": "wrong or expired code — ask them to re-read it (or resend)"})
     state.update(email, token=token)
     _print({"verified": True, "email": email})
     return 0
@@ -83,20 +83,17 @@ def _cmd_verify(args: argparse.Namespace, client: Client, cfg: Config) -> int:
 # --- checkout + status ------------------------------------------------------
 
 
-def _cmd_checkout(args: argparse.Namespace, client: Client, cfg: Config) -> int:
+def _cmd_checkout(args: argparse.Namespace, client: Client, _cfg: Config) -> int:
     email = _email(args)
     token = _require_token(email, "run `onboard verify` with the buyer's code first")
 
-    price: float | None = None
-    if args.price is not None:
-        if args.price < PLAN_FLOOR_USD:
-            raise _Invalid({"error": f"price ${args.price:g} is below the ${PLAN_FLOOR_USD} floor", "floor_usd": PLAN_FLOOR_USD})
-        price = args.price
-
+    # The floor is enforced (and reported) server-side: a below-floor price comes back
+    # as {error, floor_usd} from checkout, which the skill re-quotes against. No local
+    # mirror of the floor to drift.
     result = client.checkout(
         token=token,
         plan=PLAN,
-        price=price,
+        price=args.price,
         discount_code=(args.code.strip() if args.code else None),
     )
     if "url" in result:
@@ -109,7 +106,7 @@ def _cmd_checkout(args: argparse.Namespace, client: Client, cfg: Config) -> int:
     return 0 if "url" in result else 2
 
 
-def _cmd_status(args: argparse.Namespace, client: Client, cfg: Config) -> int:
+def _cmd_status(args: argparse.Namespace, client: Client, _cfg: Config) -> int:
     email = _email(args)
     token = _require_token(email)
     me = client.me(token)
@@ -144,11 +141,11 @@ def _active_server(client: Client, token: str) -> dict[str, Any] | None:
 def _require_active_server(client: Client, token: str) -> dict[str, Any]:
     server = _active_server(client, token)
     if not server:
-        raise _Invalid({"error": "server not ready yet — poll `onboard status` until it is active"})
+        raise _InvalidError({"error": "server not ready yet — poll `onboard status` until it is active"})
     return server
 
 
-def _cmd_create_agent(args: argparse.Namespace, client: Client, cfg: Config) -> int:
+def _cmd_create_agent(args: argparse.Namespace, client: Client, _cfg: Config) -> int:
     email = _email(args)
     token = _require_token(email)
     server = _require_active_server(client, token)
@@ -159,7 +156,7 @@ def _cmd_create_agent(args: argparse.Namespace, client: Client, cfg: Config) -> 
     server_token = client.server_token(token, server["id"])
     result = client.create_agent(subdomain=server["subdomain"], server_token=server_token, name=name)
     if "error" in result:
-        raise _Invalid(result)
+        raise _InvalidError(result)
     # vestad normalizes the name (lowercases/strips); store what it ACTUALLY created
     # so claude-finish addresses /agents/<name>/provider with a name that validates.
     # Personality + seed context are stashed here and delivered through claude-finish's
@@ -170,7 +167,7 @@ def _cmd_create_agent(args: argparse.Namespace, client: Client, cfg: Config) -> 
     return 0
 
 
-def _cmd_claude_start(args: argparse.Namespace, client: Client, cfg: Config) -> int:
+def _cmd_claude_start(args: argparse.Namespace, client: Client, _cfg: Config) -> int:
     email = _email(args)
     token = _require_token(email)
     server = _require_active_server(client, token)
@@ -178,22 +175,22 @@ def _cmd_claude_start(args: argparse.Namespace, client: Client, cfg: Config) -> 
     server_token = client.server_token(token, server["id"])
     result = client.claude_oauth_start(subdomain=server["subdomain"], server_token=server_token)
     if "error" in result:
-        raise _Invalid(result)
+        raise _InvalidError(result)
     state.update(email, claude_session_id=result["session_id"])
     _print({"auth_url": result["auth_url"], "next": "have them open it, approve, and read the code back"})
     return 0
 
 
-def _cmd_claude_finish(args: argparse.Namespace, client: Client, cfg: Config) -> int:
+def _cmd_claude_finish(args: argparse.Namespace, client: Client, _cfg: Config) -> int:
     email = _email(args)
     token = _require_token(email)
     st = state.load(email)
     session_id = st["claude_session_id"] if "claude_session_id" in st else None
     if not session_id:
-        raise _Invalid({"error": "no Claude auth in progress — run `onboard claude-start` first"})
+        raise _InvalidError({"error": "no Claude auth in progress — run `onboard claude-start` first"})
     name = args.name.strip() if args.name else (st["agent_name"] if "agent_name" in st else None)
     if not name:
-        raise _Invalid({"error": "unknown agent name — pass --name (the one used in create-agent)"})
+        raise _InvalidError({"error": "unknown agent name — pass --name (the one used in create-agent)"})
     server = _require_active_server(client, token)
 
     server_token = client.server_token(token, server["id"])
@@ -217,7 +214,7 @@ def _cmd_claude_finish(args: argparse.Namespace, client: Client, cfg: Config) ->
         seed_context=st["seed_context"] if "seed_context" in st else None,
     )
     if "error" in result:
-        raise _Invalid(
+        raise _InvalidError(
             {"error": f"authorized on Anthropic's side but attaching it failed ({result['error']}); run `onboard claude-start` again to retry"}
         )
     # Onboarding complete — forget the buyer's session token.
@@ -239,13 +236,13 @@ def _installable_skills() -> list[str]:
         try:
             if p.exists():
                 data = json.loads(p.read_text())
-                return sorted(s["name"] for s in data if "name" in s and s["name"])
+                return sorted(s["name"] for s in data if s.get("name"))
         except (OSError, ValueError):
             continue
     return []
 
 
-def _cmd_presets(args: argparse.Namespace, client: Client, cfg: Config) -> int:
+def _cmd_presets(_args: argparse.Namespace, client: Client, _cfg: Config) -> int:
     # Read the live reference data from this box's vestad (the one source of truth) rather
     # than keeping hardcoded copies; skills still come from the on-box index.
     defaults = client.fetch_agent_defaults()
@@ -253,7 +250,7 @@ def _cmd_presets(args: argparse.Namespace, client: Client, cfg: Config) -> int:
         {
             "personalities": [p["name"] for p in client.fetch_personalities()],
             "skills": _installable_skills(),
-            "plan_floor_usd": PLAN_FLOOR_USD,
+            "plan_floor_usd": client.fetch_floor_usd(),
             "claude_models": [m["id"] for m in client.fetch_claude_models()],
             "default_personality": defaults["personality"],
             "default_model": defaults["model"],
@@ -262,7 +259,7 @@ def _cmd_presets(args: argparse.Namespace, client: Client, cfg: Config) -> int:
     return 0
 
 
-def _cmd_links(args: argparse.Namespace, client: Client, cfg: Config) -> int:
+def _cmd_links(_args: argparse.Namespace, _client: Client, _cfg: Config) -> int:
     _print(LINKS)
     return 0
 
@@ -284,7 +281,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_checkout = sub.add_parser("checkout", help="Reserve + mint a Stripe link (auto subdomain).")
     p_checkout.add_argument("--email", required=True)
-    p_checkout.add_argument("--price", type=float, help="Negotiated MONTHLY USD (>= the $24 floor; uncapped above).")
+    p_checkout.add_argument("--price", type=float, help="Negotiated MONTHLY USD (>= the $12 floor; uncapped above).")
     p_checkout.add_argument("--code", help="Optional discount code to redeem at checkout.")
 
     p_status = sub.add_parser("status", help="Has the buyer paid + the VM come up?")
@@ -332,7 +329,7 @@ def main(argv: list[str] | None = None) -> int:
     handler = handlers[args.command]
     try:
         return handler(args, client, cfg)
-    except _Invalid as e:
+    except _InvalidError as e:
         _print(e.payload)
         return 2
     except OnboardError as e:

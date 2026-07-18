@@ -10,7 +10,6 @@ import time
 import typing as tp
 
 import aiohttp
-
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
@@ -21,11 +20,13 @@ from claude_agent_sdk import (
     ResultMessage,
     ThinkingBlock,
 )
-from claude_agent_sdk.types import PermissionResultAllow, ThinkingConfigDisabled, ToolPermissionContext
+from claude_agent_sdk.types import PermissionResultAllow, SdkBeta, ThinkingConfigDisabled, ToolPermissionContext
 
-from . import logger
+from . import config as cfg
+from . import diagnostics, logger, sdk_parsing, state_store
 from . import models as vm
-from . import state_store
+from .config import CONTEXT_1M_BETA, DEFAULT_CONTEXT_WINDOW
+from .helpers import get_constitution_path, get_memory_path
 from .provider import (
     OPENROUTER_SMALL_FAST_MODEL,
     TERMINAL_PROVIDER_ERRORS,
@@ -33,11 +34,6 @@ from .provider import (
     is_unauthenticated,
     observed_provider_failure,
 )
-from . import config as cfg
-from .config import CONTEXT_1M_BETA, DEFAULT_CONTEXT_WINDOW
-from . import diagnostics
-from . import sdk_parsing
-from .helpers import get_constitution_path, get_memory_path
 from .tools import build_vesta_tools_server
 
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
@@ -58,15 +54,17 @@ async def resolve_openrouter_max_tokens(config: cfg.VestaConfig) -> int | None:
     if not isinstance(config.provider, cfg.OpenRouterConfig):
         return None
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
+        async with (
+            aiohttp.ClientSession() as session,
+            session.get(
                 OPENROUTER_MODELS_URL,
                 headers={"Authorization": f"Bearer {config.provider.key.get_secret_value()}"},
                 timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status != 200:
-                    return None
-                body = await resp.json()
+            ) as resp,
+        ):
+            if resp.status != 200:
+                return None
+            body = await resp.json()
     except (TimeoutError, aiohttp.ClientError, ValueError) as e:
         logger.warning(f"OpenRouter context-window lookup failed: {e}")
         return None
@@ -116,17 +114,27 @@ async def attempt_interrupt(state: vm.State, *, config: cfg.VestaConfig, reason:
 
 
 async def send_preempt(prompt: str, *, state: vm.State, config: cfg.VestaConfig) -> bool:
-    """Preempt the running turn by delivering `prompt` as a priority:"now" user message (the
-    envelope and its protocol story live in sdk_parsing.build_priority_now_message). A foreground
-    tool call already executing is not cut short: the abort latches and applies when the tool
+    """Deliver `prompt` into the live session as a priority:"now" user message (the envelope
+    and its protocol story live in sdk_parsing.build_priority_now_message). A foreground tool
+    call already executing is not cut short: the abort latches and applies when the tool
     returns, so the preempt is delayed by at most that tool's remaining runtime, never lost.
+
+    A True return is the end of the prompt's lifecycle. The CLI persists the message into the
+    session on receipt (a crash-restart resumes with it in context) and its output streams
+    through the session's single consumer, but it guarantees no per-prompt ResultMessage: it
+    merges rapid queued prompts into one turn, starts turns of its own (background task
+    notifications), and its results carry no prompt identity. Counting-based turn pairing on
+    top of that wedged a turn on a merged-away result and crashed the agent (incident
+    2026-07-14, agent luna), so the caller consumes the item at delivery and never opens a
+    Vesta turn for it. The open turn is marked `preempted` for reply-completeness consumers
+    (the dash correction).
 
     Returns False without sending when there is nothing to preempt (no client, no open turn),
     when preemption is barred (boot turn, compaction in flight, unauthenticated provider), or
-    on a failed write — the caller then queues the prompt plain, and the processor's
-    queue-watcher retries the pre-send if the item lands while a later turn is running."""
+    on a failed write; the caller then queues the prompt as an ordinary turn."""
     client = state.client
-    if not client or state.turn is None or state.noninterruptible_turn_active or state.compacting:
+    turn = state.turn
+    if not client or turn is None or state.noninterruptible_turn_active or state.compacting:
         return False
     if is_unauthenticated(state.provider_status):
         # Same deferral as the processor's gate: don't hand prompts to a dead token; the
@@ -139,15 +147,15 @@ async def send_preempt(prompt: str, *, state: vm.State, config: cfg.VestaConfig)
         yield message
 
     try:
-        # A single stdin write: bound it like an interrupt, not like a query — on timeout the
+        # A single stdin write: bound it like an interrupt, not like a query. On timeout the
         # caller queues plain and nothing is lost.
         await asyncio.wait_for(client.query(_one()), timeout=config.interrupt_timeout)
-        state.preempt_outstanding += 1
+        turn.preempted = True
         logger.debug("Preempt sent (priority=now)")
         return True
     except Exception as e:
         # Like attempt_interrupt: best-effort, broad catch. A failed preempt must never abort
-        # the notification/message that asked for it — the prompt still queues and runs.
+        # the notification/message that asked for it; the prompt still queues and runs.
         logger.error(f"Preempt send failed: {e} | {diagnostics.format_hang_diagnostics(state)}")
         return False
 
@@ -163,10 +171,8 @@ _SILENCE_POLL_S = 10.0  # wake the turn's wait loop during quiet stretches to lo
 
 async def cancel_task(task: asyncio.Task[tp.Any]) -> None:
     task.cancel()
-    try:
+    with contextlib.suppress(asyncio.CancelledError):
         await task
-    except asyncio.CancelledError:
-        pass
 
 
 def _open_turn(state: vm.State, *, show_output: bool) -> vm.TurnSignals:
@@ -192,27 +198,10 @@ def _emit_thinking(block: ThinkingBlock, *, state: vm.State) -> None:
     state.event_bus.emit({"type": "thinking", "text": block.thinking, "signature": block.signature})
 
 
-async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaConfig) -> None:
-    """Handle one SDK stream message: emit content, persist session ids, detect auth loss, and
-    close the open turn on its ResultMessage. Messages with no open turn (a self-initiated
-    continuation turn, or an interrupted turn's wind-down) still emit — nothing is ever lost —
-    and their ResultMessage is dropped."""
-    diagnostics.touch_activity(state, "sdk_message")
+def _emit_parsed_content(texts: list[str], thinking_blocks: list[ThinkingBlock], error_texts: list[str], *, state: vm.State) -> None:
+    """Emit one message's parsed content: thinking + speech (respecting the turn's show_output),
+    and CLI-synthesized error text through the error channel."""
     turn = state.turn
-    if turn:
-        turn.last_message_at = time.monotonic()
-    if isinstance(msg, AssistantMessage):
-        state.compacting = False
-    # The CLI ticks a thinking counter while the model reasons; diagnostics turns it into the
-    # turn's liveness narrative ("Thinking..." on the first tick, interval notes from the wait loop).
-    thinking_estimate = sdk_parsing.thinking_tokens_estimate(msg)
-    if turn and thinking_estimate is not None:
-        diagnostics.note_thinking_tick(turn, tokens=thinking_estimate)
-    texts, thinking_blocks, session_id, error_texts = sdk_parsing.parse_sdk_message(msg)
-    if session_id and session_id != state.persisted.session_id:
-        if state.persisted.session_id:
-            logger.warning(f"Session ID changed: {state.persisted.session_id[:16]} -> {session_id[:16]} (resume may have failed)")
-        await persist_session_id(session_id, state=state, config=config)
     show = turn.show_output if turn else True
     if show:
         for block in thinking_blocks:
@@ -231,16 +220,51 @@ async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaC
         # CLI-synthesized error text is kept out of Vesta's speech by parse_sdk_message; surface
         # the failure through the error channel instead so a failed turn is never silent in the app.
         state.event_bus.emit({"type": "error", "text": f"Turn failed upstream: {error_text[:500]}"})
+
+
+def _note_rate_limit(msg: RateLimitEvent, *, state: vm.State) -> None:
+    """Surface a rejected rate limit from the structured classification: the CLI's synthesized text
+    for the same event misnames the window (issue #1071), so this event is what consumers trust.
+    Once per window; the type/resets_at pair changes when a different limit trips."""
+    info = msg.rate_limit_info
+    notice = sdk_parsing.rate_limit_notice(info, now=time.time())
+    window_key = (info.rate_limit_type, info.resets_at)
+    if notice and window_key != state.rate_limit_noticed:
+        state.rate_limit_noticed = window_key
+        state.event_bus.emit({"type": "rate_limited", "text": notice, "window": info.rate_limit_type, "resets_at": info.resets_at})
+
+
+async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaConfig) -> None:
+    """Handle one SDK stream message: emit content, persist session ids, detect auth loss, and
+    close the open turn on its ResultMessage. Messages with no open turn (a delivered preempt
+    running as its own turn, a CLI-initiated continuation, or an interrupted turn's wind-down)
+    still emit, nothing is ever lost, and their ResultMessage is dropped."""
+    diagnostics.touch_activity(state, "sdk_message")
+    turn = state.turn
+    if turn:
+        turn.last_message_at = time.monotonic()
+    # Turnless CLI activity (a delivered preempt running as its own turn, or a
+    # CLI-initiated turn such as a background task notification): keep the activity state
+    # honest, since it drives the snoozed-batch flush and the proactive-check gate.
+    elif isinstance(msg, AssistantMessage):
+        state.event_bus.set_state("thinking")
+    elif isinstance(msg, ResultMessage):
+        state.event_bus.set_state("idle")
+    if isinstance(msg, AssistantMessage):
+        state.compacting = False
+    # The CLI ticks a thinking counter while the model reasons; diagnostics turns it into the
+    # turn's liveness narrative ("Thinking..." on the first tick, interval notes from the wait loop).
+    thinking_estimate = sdk_parsing.thinking_tokens_estimate(msg)
+    if turn and thinking_estimate is not None:
+        diagnostics.note_thinking_tick(turn, tokens=thinking_estimate)
+    texts, thinking_blocks, session_id, error_texts = sdk_parsing.parse_sdk_message(msg)
+    if session_id and session_id != state.persisted.session_id:
+        if state.persisted.session_id:
+            logger.warning(f"Session ID changed: {state.persisted.session_id[:16]} -> {session_id[:16]} (resume may have failed)")
+        await persist_session_id(session_id, state=state, config=config)
+    _emit_parsed_content(texts, thinking_blocks, error_texts, state=state)
     if isinstance(msg, RateLimitEvent):
-        # Surface the rejection from the structured classification: the CLI's synthesized text
-        # for the same event misnames the window (issue #1071), so this event is what consumers
-        # trust. Once per window; the type/resets_at pair changes when a different limit trips.
-        info = msg.rate_limit_info
-        notice = sdk_parsing.rate_limit_notice(info, now=time.time())
-        window_key = (info.rate_limit_type, info.resets_at)
-        if notice and window_key != state.rate_limit_noticed:
-            state.rate_limit_noticed = window_key
-            state.event_bus.emit({"type": "rate_limited", "text": notice, "window": info.rate_limit_type, "resets_at": info.resets_at})
+        _note_rate_limit(msg, state=state)
     # OpenRouter's upstream 401/402 is caught by its cache proxy. Claude bypasses that proxy,
     # so a terminal auth/billing failure surfaces through the SDK either as the assistant
     # turn's classified error (authentication_failed / billing_error) OR as the result's HTTP
@@ -259,14 +283,7 @@ async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaC
         if turn and not turn.done.is_set():
             turn.done.set()
         elif isinstance(msg, ResultMessage):
-            if state.preempt_outstanding > 0:
-                # A pre-sent turn ran to its result before the processor opened a Vesta turn
-                # for it (fast preempt). Bank it so converse(pre_sent=True) completes at open
-                # instead of waiting out the silence timeout on a turn nothing will close.
-                state.preempt_orphaned_results += 1
-                logger.debug("ResultMessage with no open turn while a preempt is outstanding; banked for the pre-sent turn")
-            else:
-                logger.debug("ResultMessage with no open turn (continuation or interrupted-turn wind-down); dropped")
+            logger.debug("ResultMessage with no open turn (continuation or CLI-initiated turn); dropped")
 
 
 async def consume_stream(*, state: vm.State, config: cfg.VestaConfig) -> None:
@@ -346,44 +363,38 @@ async def client_session(*, state: vm.State, config: cfg.VestaConfig) -> tp.Asyn
             retried = True
 
 
-class QueryNotDelivered(Exception):
+class QueryNotDeliveredError(Exception):
     """The query never reached the CLI: the send timed out, or client.query() raised on a dead
     transport. The caller must keep the notification file that fed this turn (the resumed session
     never saw the message), unlike a post-delivery failure (response timeout, stream death) where
     deletion stays correct because the session already contains it."""
 
 
-async def converse(prompt: str, *, state: vm.State, config: cfg.VestaConfig, show_output: bool, pre_sent: bool = False) -> list[str]:
-    """Drive one turn: send the query (skipped for a pre-sent preempt — see send_preempt) and
-    wait for the turn's result. A later preempt needs no handling here: the CLI-side abort ends
-    this turn as an ordinary ResultMessage."""
+async def converse(prompt: str, *, state: vm.State, config: cfg.VestaConfig, show_output: bool) -> vm.TurnSignals:
+    """Drive one plain turn: send the query and wait for the result that closes it. Sound
+    because plain turns are self-serializing (one query in flight, then wait). Delivered
+    preempts never come through here; send_preempt's True return is their whole lifecycle.
+    A preempt landing mid-turn needs no handling: the CLI-side abort ends this turn as an
+    ordinary ResultMessage."""
     assert state.client is not None
     client = state.client
 
     diagnostics.touch_activity(state, "query_start")
     state.active_tools.clear()
     turn = _open_turn(state, show_output=show_output)
-    if pre_sent:
-        state.preempt_outstanding -= 1
-        if state.preempt_orphaned_results > 0:
-            # The pre-sent turn already ran to its result before this open (banked by the
-            # consumer); its output was emitted live, so complete immediately with no texts.
-            state.preempt_orphaned_results -= 1
-            turn.done.set()
-    else:
-        query = sdk_parsing.build_query(prompt, timestamp=dt.datetime.now())
-        try:
-            await asyncio.wait_for(client.query(query), timeout=config.query_timeout)
-        except TimeoutError:
-            _close_turn(state, turn)
-            await attempt_interrupt(state, config=config, reason="Query timeout")
-            raise QueryNotDelivered("query timed out before the CLI received it") from None
-        except Exception as e:
-            # query() surfaces SDK/transport failures across a wide, loosely typed error surface
-            # (see attempt_interrupt above) — catch broadly, like a send timeout this means the CLI
-            # never got the prompt.
-            _close_turn(state, turn)
-            raise QueryNotDelivered(str(e) or type(e).__name__) from e
+    query = sdk_parsing.build_query(prompt, timestamp=dt.datetime.now())
+    try:
+        await asyncio.wait_for(client.query(query), timeout=config.query_timeout)
+    except TimeoutError:
+        _close_turn(state, turn)
+        await attempt_interrupt(state, config=config, reason="Query timeout")
+        raise QueryNotDeliveredError("query timed out before the CLI received it") from None
+    except Exception as e:
+        # query() surfaces SDK/transport failures across a wide, loosely typed error surface
+        # (see attempt_interrupt above): catch broadly; like a send timeout this means the CLI
+        # never got the prompt.
+        _close_turn(state, turn)
+        raise QueryNotDeliveredError(str(e) or type(e).__name__) from e
     diagnostics.touch_activity(state, "query_sent")
 
     done_task = asyncio.create_task(turn.done.wait())
@@ -412,11 +423,11 @@ async def converse(prompt: str, *, state: vm.State, config: cfg.VestaConfig, sho
         _close_turn(state, turn)
         await cancel_task(done_task)
 
-    return turn.texts
+    return turn
 
 
 _EM_DASH = "—"
-_EN_DASH = "–"
+_EN_DASH = "\u2013"  # en dash
 _DASH_WARNING = (
     "[System: your last response contained an em dash, en dash, or ' - ' used as a separator. "
     "Never use these. Use commas, periods, colons, or restructure the sentence. "
@@ -428,21 +439,18 @@ def _contains_dashes(texts: list[str]) -> bool:
     return any(_EM_DASH in t or _EN_DASH in t or " - " in t for t in texts)
 
 
-async def process_message(
-    msg: str, *, state: vm.State, config: cfg.VestaConfig, is_user: bool, pre_sent: bool = False
-) -> tuple[list[str], vm.State]:
-    responses = await converse(msg, state=state, config=config, show_output=True, pre_sent=pre_sent)
-    if responses and _contains_dashes(responses) and state.preempt_outstanding == 0:
-        # With a preempt outstanding the correction query would land behind the queued preempt
-        # CLI-side while its Vesta turn opened first, crossing turn attribution — skip it; the
-        # preempted reply was cut short anyway.
+async def process_message(msg: str, *, state: vm.State, config: cfg.VestaConfig) -> tuple[list[str], vm.State]:
+    turn = await converse(msg, state=state, config=config, show_output=True)
+    if config.block_dashes and turn.texts and _contains_dashes(turn.texts) and not turn.preempted:
+        # A preempted turn's reply was cut short at a step boundary; correcting a truncated
+        # reply would re-send it after the preempting prompt's work, so skip it.
         logger.warning("Em/en dash detected in response, sending correction")
         await converse(_DASH_WARNING, state=state, config=config, show_output=True)
     await diagnostics.log_context_usage(state)
-    return responses, state
+    return turn.texts, state
 
 
-async def _approve_all_tools(tool_name: str, tool_input: dict[str, tp.Any], context: ToolPermissionContext) -> PermissionResultAllow:
+async def _approve_all_tools(_tool_name: str, _tool_input: dict[str, tp.Any], _context: ToolPermissionContext) -> PermissionResultAllow:
     return PermissionResultAllow()
 
 
@@ -462,7 +470,7 @@ def _read_compaction_summary(session_id: str) -> str | None:
         text: str | None = None
         for line in matches[-1].read_text().splitlines():
             entry = json.loads(line)
-            if not ("isCompactSummary" in entry and entry["isCompactSummary"]):
+            if not (entry.get("isCompactSummary")):
                 continue
             if "message" not in entry or "content" not in entry["message"]:
                 continue
@@ -549,7 +557,7 @@ def build_client_options(config: cfg.VestaConfig, state: vm.State) -> ClaudeAgen
         raise RuntimeError("build_client_options reached with no authenticated provider")
 
     sdk_env: dict[str, str] = {}
-    betas: list[str] = []
+    betas: list[SdkBeta] = []
     # 1M-context beta and thinking are Anthropic-only; openrouter forces thinking disabled.
     thinking_config = ThinkingConfigDisabled(type="disabled")
     if isinstance(provider, cfg.OpenRouterConfig):
@@ -583,7 +591,7 @@ def build_client_options(config: cfg.VestaConfig, state: vm.State) -> ClaudeAgen
     return ClaudeAgentOptions(
         system_prompt=system_prompt,
         model=provider.model,
-        betas=betas,  # ty: ignore[invalid-argument-type]
+        betas=betas,
         hooks=sdk_parsing.make_hooks(state),
         permission_mode="bypassPermissions",
         can_use_tool=_approve_all_tools,
@@ -594,7 +602,7 @@ def build_client_options(config: cfg.VestaConfig, state: vm.State) -> ClaudeAgen
         # Skill tool on for every discovered skill (the single documented switch).
         setting_sources=["user", "project"],
         skills="all",
-        add_dirs=[str(config.agent_dir), os.path.expanduser("~")],
+        add_dirs=[str(config.agent_dir), str(pl.Path.home())],
         thinking=thinking_config,
         max_buffer_size=10 * 1024 * 1024,
         stderr=diagnostics.make_stderr_handler(state),

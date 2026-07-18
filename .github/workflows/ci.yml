@@ -4,13 +4,18 @@ on:
   push:
     branches: [master]
   pull_request:
-  release:
-    types: [created, published]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      release_artifacts:
+        description: Upload signed/package artifacts for the release pipeline
+        type: boolean
+        required: false
+        default: false
 
 permissions:
-  contents: write
-  packages: write
+  contents: read
+  pull-requests: read
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -21,7 +26,6 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  NSIS_VERSION: "3.11"
   # Harden cargo against transient crates.io registry flakes (sporadic
   # "curl failed" / partial downloads). Retry network ops well past the
   # default of 3, and disable HTTP/2 multiplexing, whose connection reuse is
@@ -38,23 +42,38 @@ env:
 
 jobs:
   # ── Detect what changed (for smart PR filtering) ────────────────────────
-  # When release.yml dispatches, it (1) pushes a "Bump version to X" commit
-  # to master and (2) creates a release tag. Both fire CI: a `push` event for
-  # the commit and a `release` event for the tag, on different refs (so
-  # different concurrency groups). The release run produces the artifacts
-  # and is load-bearing; the push run is a redundant validation pass over
-  # the same SHA. Skip the push run for these commits so we don't pay for
-  # two parallel CIs per release.
+  # release.yml pushes a version-bump commit before creating a release. The
+  # release pipeline calls this workflow against the same SHA and produces
+  # the artifacts, so skip the redundant master-push validation run.
   detect-changes:
+    name: Detect changes
     if: github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'Bump version to ')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       cli: ${{ steps.filter.outputs.cli }}
       app: ${{ steps.filter.outputs.app }}
+      mobile: ${{ steps.filter.outputs.mobile }}
+      mobile_native: ${{ steps.filter.outputs.mobile_native }}
       agent: ${{ steps.filter.outputs.agent }}
       go: ${{ steps.filter.outputs.go }}
+      mac_universal: ${{ steps.flags.outputs.mac_universal }}
+      mobile_matrix: ${{ steps.flags.outputs.mobile_matrix }}
     steps:
+      # Build toggles: flip a value to re-enable that target on the next build.
+      - name: Resolve build toggles
+        id: flags
+        env:
+          BUILD_MAC_UNIVERSAL: "false" # false = Apple Silicon (arm64) only; true = universal (arm64 + Intel)
+          BUILD_ANDROID: "false" # false = skip the Android compile; true = build it
+        run: |
+          echo "mac_universal=${BUILD_MAC_UNIVERSAL}" >> "$GITHUB_OUTPUT"
+          matrix='[{"label":"iOS simulator","platform":"ios","os":"macos-latest"}]'
+          if [ "${BUILD_ANDROID}" = "true" ]; then
+            matrix="$(printf '%s' "$matrix" | jq -c '. + [{"label":"Android debug","platform":"android","os":"ubuntu-latest"}]')"
+          fi
+          echo "mobile_matrix=${matrix}" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v4
         id: filter
@@ -63,18 +82,47 @@ jobs:
             cli:
               - 'cli/**'
               - 'vestad/**'
+              - 'install.sh'
+              - 'install.ps1'
+              # vestad embeds the agent home (build.rs EMBED_DIRS/EMBED_FILES), so
+              # Agent-only changes can break the CLI or vestad and must trigger
+              # their checks on PRs.
+              - 'agent/core/**'
+              - 'agent/skills/**'
+              - 'agent/MEMORY.md'
+              - 'agent/.gitignore'
+              - 'agent/ruff.toml'
               - '.github/workflows/ci.yml'
               - 'check.sh'
             app:
               - 'apps/**'
+              - 'design/**'
+              - 'scripts/sync-design-tokens.py'
+              - 'scripts/sync-dashboard.sh'
               - '.github/workflows/ci.yml'
               - 'check.sh'
+            mobile:
+              - 'apps/mobile/**'
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/mobile-build.yml'
+              - 'check.sh'
+            mobile_native:
+              - 'apps/mobile/app.config.ts'
+              - 'apps/mobile/package.json'
+              - 'apps/mobile/package-lock.json'
+              - 'apps/mobile/assets/**'
+              - 'apps/mobile/modules/**'
+              - 'apps/mobile/plugins/**'
+              - 'scripts/check-mobile-native.sh'
+              - 'scripts/check-mobile-prebuild.sh'
+              - '.github/workflows/ci.yml'
             agent:
               - 'agent/**'
               - '.github/workflows/ci.yml'
               - 'check.sh'
             go:
               - 'agent/skills/whatsapp/cli/**'
+              - 'agent/skills/telegram/cli/**'
               - '.github/workflows/ci.yml'
               - 'check.sh'
 
@@ -85,6 +133,7 @@ jobs:
   # of that cascade, so they must also gate on
   # `needs.detect-changes.result == 'success'` explicitly.
   version-check:
+    name: Repository · Verify version consistency
     if: github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'Bump version to ')
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -97,28 +146,22 @@ jobs:
           VESTAD=$(grep '^version = ' vestad/Cargo.toml | head -1 | cut -d'"' -f2)
           CLI=$(grep '^version = ' cli/Cargo.toml | head -1 | cut -d'"' -f2)
           TESTS=$(grep '^version = ' vestad/tests-integration/Cargo.toml | head -1 | cut -d'"' -f2)
-          DESKTOP_CONF=$(python3 -c "import json; print(json.load(open('apps/desktop/src-tauri/tauri.conf.json'))['version'])")
-          DESKTOP_CARGO=$(grep '^version = ' apps/desktop/src-tauri/Cargo.toml | head -1 | cut -d'"' -f2)
           DESKTOP_PKG=$(python3 -c "import json; print(json.load(open('apps/desktop/package.json'))['version'])")
-          MOBILE_CONF=$(python3 -c "import json; print(json.load(open('apps/mobile/src-tauri/tauri.conf.json'))['version'])")
-          MOBILE_CARGO=$(grep '^version = ' apps/mobile/src-tauri/Cargo.toml | head -1 | cut -d'"' -f2)
           MOBILE_PKG=$(python3 -c "import json; print(json.load(open('apps/mobile/package.json'))['version'])")
+          MOBILE_APP=$(sed -n 's/^  version: "\([^"]*\)",/\1/p' apps/mobile/app.config.ts)
           APP=$(python3 -c "import json; print(json.load(open('apps/web/package.json'))['version'])")
 
           echo "agent:         $AGENT"
           echo "vestad:        $VESTAD"
           echo "cli:           $CLI"
           echo "tests:         $TESTS"
-          echo "desktop.conf:  $DESKTOP_CONF"
-          echo "desktop cargo: $DESKTOP_CARGO"
           echo "desktop pkg:   $DESKTOP_PKG"
-          echo "mobile.conf:   $MOBILE_CONF"
-          echo "mobile cargo:  $MOBILE_CARGO"
           echo "mobile pkg:    $MOBILE_PKG"
+          echo "mobile app:    $MOBILE_APP"
           echo "app:           $APP"
 
           FAIL=0
-          for name_val in "vestad:$VESTAD" "cli:$CLI" "tests:$TESTS" "desktop.conf:$DESKTOP_CONF" "desktop-cargo:$DESKTOP_CARGO" "desktop-pkg:$DESKTOP_PKG" "mobile.conf:$MOBILE_CONF" "mobile-cargo:$MOBILE_CARGO" "mobile-pkg:$MOBILE_PKG" "app:$APP"; do
+          for name_val in "vestad:$VESTAD" "cli:$CLI" "tests:$TESTS" "desktop-pkg:$DESKTOP_PKG" "mobile-pkg:$MOBILE_PKG" "mobile-app:$MOBILE_APP" "app:$APP"; do
             name="${name_val%%:*}"
             val="${name_val#*:}"
             if [ "$AGENT" != "$val" ]; then
@@ -148,6 +191,7 @@ jobs:
 
   # ── Fast repo-hygiene guards (skills index, uv.lock, dashboard sync, vite base) ──
   guards:
+    name: Repository · Lint and guardrails
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -159,8 +203,75 @@ jobs:
       - name: Run guard checks
         run: ./check.sh guards
 
+  # ── GitHub Actions syntax and expression validation ─────────────────
+  workflow-lint:
+    name: Workflows · Validate GitHub Actions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.25"
+          cache: false
+
+      - name: Run actionlint
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
+  # ── Reject newly introduced vulnerable dependencies on PRs ──────────
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      # Dependency review is only available after a repository administrator
+      # enables GitHub's dependency graph. Probe the API so a repository that
+      # has not enabled it gets an actionable warning instead of a permanently
+      # broken merge gate; once enabled, vulnerable additions fail normally.
+      - name: Check dependency graph availability
+        id: dependency-graph
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          response="$RUNNER_TEMP/dependency-review.json"
+          status=$(curl --silent --show-error \
+            --output "$response" \
+            --write-out '%{http_code}' \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2026-03-10' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/dependency-graph/compare/${BASE_SHA}...${HEAD_SHA}")
+          case "$status" in
+            200)
+              echo "available=true" >> "$GITHUB_OUTPUT"
+              ;;
+            403|404)
+              echo "available=false" >> "$GITHUB_OUTPUT"
+              echo "::warning::Dependency graph is disabled; enable it in Settings > Advanced Security to activate dependency review"
+              echo "Dependency review is waiting for a repository administrator to enable the dependency graph." >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            *)
+              cat "$response"
+              echo "::error::Dependency graph probe returned HTTP $status"
+              exit 1
+              ;;
+          esac
+
+      - name: Review dependency changes
+        if: steps.dependency-graph.outputs.available == 'true'
+        uses: actions/dependency-review-action@v5
+
   # ── Agent checks (lint, types, unit + transport tests) ────────────────
   agent-tests:
+    name: Agent · Typecheck and test
     needs: detect-changes
     if: github.event_name != 'pull_request' || needs.detect-changes.outputs.agent == 'true'
     runs-on: ubuntu-latest
@@ -185,8 +296,9 @@ jobs:
       - name: Run agent checks
         run: ./check.sh agent
 
-  # ── Go checks (whatsapp CLI) ──────────────────────────────────────────
+  # ── Go checks (whatsapp + telegram CLIs) ──────────────────────────────
   go-checks:
+    name: WhatsApp & Telegram · Lint, build, and test
     needs: detect-changes
     if: github.event_name != 'pull_request' || needs.detect-changes.outputs.go == 'true'
     runs-on: ubuntu-latest
@@ -195,12 +307,15 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
-          go-version: '1.25'
+          go-version: "1.25"
+          cache-dependency-path: |
+            agent/skills/whatsapp/cli/go.sum
+            agent/skills/telegram/cli/go.sum
 
       - name: Cache whisper.cpp static build
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/vesta-whisper
           key: whisper-${{ hashFiles('agent/skills/whatsapp/cli/go.mod', 'agent/skills/whatsapp/cli/build-whisper.sh') }}
@@ -208,44 +323,12 @@ jobs:
       - name: Run whatsapp checks
         run: ./check.sh whatsapp
 
-  # ── Windows install script guard ──────────────────────────────────────
-  install-script-check:
-    if: github.event_name == 'pull_request'
-    runs-on: windows-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Syntax-check install.ps1 (PowerShell 5.1)
-        shell: powershell
-        run: |
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-            "$PWD\install.ps1", [ref]$null, [ref]$errors
-          )
-          if ($errors.Count -gt 0) {
-            $errors | ForEach-Object { Write-Host "❌ $_" }
-            exit 1
-          }
-          Write-Host "✅ install.ps1 has no syntax errors"
-
-      - name: Check for PowerShell 5.1 incompatibilities
-        shell: powershell
-        run: |
-          $content = Get-Content install.ps1 -Raw
-          $issues = @()
-          # Join-Path with 3+ args requires PowerShell 6+
-          if ($content -match 'Join-Path\s+\S+\s+"[^"]+"\s+"[^"]+"') {
-            $issues += "Join-Path with 3+ arguments is not supported in PowerShell 5.1"
-          }
-          if ($issues.Count -gt 0) {
-            $issues | ForEach-Object { Write-Host "❌ $_" }
-            exit 1
-          }
-          Write-Host "✅ No PowerShell 5.1 compatibility issues found"
+      - name: Run telegram checks
+        run: ./check.sh telegram
 
   # ── Frontend unit tests ──────────────────────────────────────────────
   test-frontend:
+    name: Apps · Lint, typecheck, and test
     needs: detect-changes
     if: github.event_name != 'pull_request' || needs.detect-changes.outputs.app == 'true'
     runs-on: ubuntu-latest
@@ -254,25 +337,76 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 22
 
       - name: Install deps
-        working-directory: apps
-        run: npm ci
+        run: |
+          npm --prefix apps ci
+          npm --prefix apps/mobile ci
 
       - name: Run web checks
         run: ./check.sh web
 
+  # ── EAS workflow schema validation (mobile PRs only) ─────────────────
+  # This is local schema validation only. It neither authenticates to Expo nor
+  # queues a cloud build, so PRs cannot consume EAS quota or access EXPO_TOKEN.
+  validate-mobile-eas:
+    name: Mobile · Validate EAS workflows
+    needs: detect-changes
+    if: github.event_name == 'pull_request' && needs.detect-changes.outputs.mobile == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Validate EAS workflows
+        working-directory: apps/mobile
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          workflows=(.eas/workflows/*.yml .eas/workflows/*.yaml)
+          if [ "${#workflows[@]}" -eq 0 ]; then
+            echo "No EAS workflows found"
+            exit 1
+          fi
+          schema="$RUNNER_TEMP/eas-workflow-schema.json"
+          curl --fail --silent --show-error https://api.expo.dev/v2/workflows/schema |
+            jq --exit-status '.data' > "$schema"
+          uvx check-jsonschema==0.36.2 --schemafile "$schema" "${workflows[@]}"
+
   # ── Integration tests (real vestad + real client, Docker required) ─────
   test-integration:
+    name: vestad · Run end-to-end integration tests
     needs: [version-check, detect-changes]
     if: github.event_name != 'pull_request' || needs.detect-changes.outputs.cli == 'true' || needs.detect-changes.outputs.agent == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+
+      # The integration suite exports multi-GB agent containers, streams them into
+      # restic, and re-imports them, up to 8 tests in parallel (--test-threads=8). On a
+      # stock ubuntu runner (~14 GB free on /) that exhausts the disk: docker
+      # export/import, restic, and the mounted-repo git fetch fail with "no space left
+      # on device", and the backup/rename tests stall until the step times out.
+      # Reclaim the tens of GB of preinstalled toolchains this job never uses, and prune
+      # the runner's seeded Docker images. This runs before the agent image is built, so
+      # nothing the tests need is removed. Best-effort: cleanup never fails the job.
+      - name: Free runner disk space
+        run: |
+          echo "Disk before cleanup:"
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/share/swift || true
+          docker system prune --all --force || true
+          echo "Disk after cleanup:"
+          df -h /
 
       - name: Install Rust
         uses: ./.github/actions/install-rust
@@ -329,95 +463,21 @@ jobs:
             echo "Check the failed attempt's logs above — the retry masked a real race or Docker flake."
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # ── Live agent e2e (real Claude) — RELEASE ONLY ──────────
-  # Runs a real agent container talking to real Claude via the CLAUDE_CREDENTIALS
-  # OAuth secret. These are slow and spend real API tokens, so they do NOT
-  # run on PRs or master pushes — only on the release event, where they gate the
-  # release (the `release` and `push-image` jobs depend on this one, so a live-test
-  # failure blocks publishing artifacts and the image).
-  test-live:
-    needs: [version-check]
-    if: github.event_name == 'release'
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install Rust
-        uses: ./.github/actions/install-rust
-
-      - uses: Swatinem/rust-cache@v2
-        # Caching is best-effort: a transient cache-service outage must not fail the
-        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
-        continue-on-error: true
-
-      # Live tests must exercise the image being released, not the PREVIOUS release's
-      # :latest — build it from this checkout (shares the GHA layer cache with
-      # test-integration and push-image).
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Build agent image from checkout
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: vestad/Dockerfile
-          load: true
-          tags: vesta:local
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      # The live suite authenticates to Claude with the CLAUDE_CREDENTIALS secret (an OAuth blob),
-      # written to ~/.claude/.credentials.json where the agent reads it. A MISSING secret (forks have
-      # no repo secrets) makes the tests skip themselves. The SDK refreshes the access token at runtime
-      # from the refresh token, so an expired access token is fine as long as the refresh token is live.
-      - name: Write Claude credentials
-        env:
-          CLAUDE_CREDENTIALS: ${{ secrets.CLAUDE_CREDENTIALS }}
-        run: |
-          if [ -z "$CLAUDE_CREDENTIALS" ]; then
-            echo "::warning::CLAUDE_CREDENTIALS not available (fork release?) — live e2e tests will skip"
-            exit 0
-          fi
-          ok=$(printf '%s' "$CLAUDE_CREDENTIALS" | python3 -c "
-          import sys, json
-          json.load(sys.stdin)['claudeAiOauth']['refreshToken']
-          print('ok')" 2>/dev/null || echo "invalid")
-          if [ "$ok" != "ok" ]; then
-            echo "::error::CLAUDE_CREDENTIALS is malformed or missing a refreshToken — re-seed from a fresh 'claude' login (~/.claude/.credentials.json)"
-            exit 1
-          fi
-          mkdir -p ~/.claude
-          printf '%s' "$CLAUDE_CREDENTIALS" > ~/.claude/.credentials.json
-          chmod 600 ~/.claude/.credentials.json
-
-      - name: Build vestad
-        working-directory: vestad
-        run: cargo build
-
-      - name: Run live e2e tests
-        uses: nick-fields/retry@v4
-        with:
-          timeout_minutes: 40
-          max_attempts: 2
-          retry_wait_seconds: 30
-          shell: bash
-          command: VESTAD_AGENT_IMAGE=vesta:local ./check.sh live
-
-  # ── Check vesta (clippy + tests) ──────────────────────────────────────
-  check-vesta:
+  # ── Check the vesta CLI on every platform it ships on ────────────────
+  check-cli:
+    name: CLI · Lint and test (${{ matrix.label }})
     needs: [version-check, detect-changes]
     if: github.event_name != 'pull_request' || needs.detect-changes.outputs.cli == 'true'
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-unknown-linux-gnu
+          - label: Linux x64
+            target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            run-vestad: true
-          - target: aarch64-apple-darwin
+          - label: macOS ARM64
+            target: aarch64-apple-darwin
             os: macos-latest
-            run-vestad: false
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
@@ -439,23 +499,40 @@ jobs:
             vestad
           key: ${{ matrix.target }}
 
-      # cli clippy + tests run on BOTH platforms: the CLI ships to macOS users, so its
-      # tests must run there too, not just be cross-compiled.
       - name: Check cli (clippy + tests)
         run: TARGET=${{ matrix.target }} ./check.sh cli
 
-      - name: Check vestad (clippy + tests, Linux only)
-        if: matrix.run-vestad
-        run: TARGET=${{ matrix.target }} ./check.sh vestad
+  # ── Check vestad (clippy, unit tests, and Docker tests) ───────────────
+  check-vestad:
+    name: vestad · Lint, unit, and Docker tests (Linux x64)
+    needs: [version-check, detect-changes]
+    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.cli == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: ./.github/actions/install-rust
+        with:
+          targets: x86_64-unknown-linux-gnu
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        continue-on-error: true
+        with:
+          workspaces: vestad
+          key: x86_64-unknown-linux-gnu
+
+      - name: Check vestad (clippy + unit tests)
+        run: TARGET=x86_64-unknown-linux-gnu ./check.sh vestad
 
       # Hermetic: the #[ignore] Docker tests run against an image built from this
       # checkout, not the released ghcr.io :latest.
       - name: Set up Docker Buildx
-        if: matrix.run-vestad
         uses: docker/setup-buildx-action@v4
 
       - name: Build agent image from checkout
-        if: matrix.run-vestad
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -466,78 +543,11 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Docker integration tests (vestad, Linux only)
-        if: matrix.run-vestad
         run: VESTAD_AGENT_IMAGE=vesta:local ./check.sh vestad-docker
-
-  # ── Build vesta client (all unix targets) ─────────────────────────────
-  # Pure build job: clippy + tests live in check-vesta (and check-windows), which also
-  # run on non-PR events — duplicating them here just slowed releases down.
-  build-vesta:
-    needs: [version-check]
-    if: github.event_name != 'pull_request'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-            artifact: vesta-x86_64-unknown-linux-gnu
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            artifact: vesta-aarch64-unknown-linux-gnu
-            cross: true
-          - target: aarch64-apple-darwin
-            os: macos-latest
-            artifact: vesta-aarch64-apple-darwin
-          - target: x86_64-apple-darwin
-            os: macos-latest
-            artifact: vesta-x86_64-apple-darwin
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install Rust
-        uses: ./.github/actions/install-rust
-        with:
-          targets: ${{ matrix.target }}
-
-      - uses: Swatinem/rust-cache@v2
-        # Caching is best-effort: a transient cache-service outage must not fail the
-        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
-        continue-on-error: true
-        with:
-          workspaces: |
-            cli
-            vestad
-          key: ${{ matrix.target }}
-
-      - name: Install Linux cross-compile deps
-        if: matrix.cross
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          mkdir -p cli/.cargo
-          echo '[target.aarch64-unknown-linux-gnu]' >> cli/.cargo/config.toml
-          echo 'linker = "aarch64-linux-gnu-gcc"' >> cli/.cargo/config.toml
-
-      - name: Build vesta
-        working-directory: cli
-        run: cargo build --release --target ${{ matrix.target }}
-
-      - name: Package
-        run: |
-          mkdir staging
-          cp cli/target/${{ matrix.target }}/release/vesta staging/
-          tar -czf ${{ matrix.artifact }}.tar.gz -C staging .
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}.tar.gz
 
   # ── Build vestad server (Linux only) ─────────────────────────────────
   build-vestad:
+    name: vestad · Build (${{ matrix.label }})
     needs: [version-check, detect-changes]
     if: needs.detect-changes.outputs.cli == 'true' || needs.detect-changes.outputs.app == 'true' || github.event_name != 'pull_request'
     strategy:
@@ -545,10 +555,12 @@ jobs:
       matrix:
         include:
           # musl targets for static binaries; build natively per arch
-          - target: x86_64-unknown-linux-musl
+          - label: Linux x64
+            target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             artifact: vestad-x86_64-unknown-linux-gnu
-          - target: aarch64-unknown-linux-musl
+          - label: Linux ARM64
+            target: aarch64-unknown-linux-musl
             os: ubuntu-24.04-arm
             artifact: vestad-aarch64-unknown-linux-gnu
     runs-on: ${{ matrix.os }}
@@ -589,33 +601,17 @@ jobs:
           tar -czf ${{ matrix.artifact }}.tar.gz -C staging .
 
       - uses: actions/upload-artifact@v7
+        if: inputs.release_artifacts
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}.tar.gz
 
-  # ── Test Linux (vestad HTTP API) ──────────────────────────────────────
-  test-linux:
-    needs: [build-vestad, build-vesta]
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v8
-        with:
-          pattern: "{vestad-x86_64-unknown-linux-gnu,vesta-x86_64-unknown-linux-gnu}"
-          merge-multiple: true
-
-      - name: Smoke test release binaries
-        run: |
-          for f in *.tar.gz; do tar -xzf "$f"; done
-          chmod +x vestad vesta
-          ./vestad --version
-          ./vesta --version
-
-  # ── Windows checks (clippy + tests, runs on PRs too) ─────────────────
-  # The CLI ships to Windows users; its tests must actually run on Windows,
-  # not just be lint-checked there.
+  # ── Windows CLI checks and release packaging ─────────────────────────
+  # PRs run the same lint/tests as Linux and macOS. The reusable release call
+  # additionally builds and uploads the optimized Windows package in this same
+  # job, avoiding a second Windows checkout/toolchain setup.
   check-windows:
+    name: CLI · Lint and test (Windows x64)
     needs: [version-check, detect-changes]
     if: >-
       github.event_name != 'pull_request' ||
@@ -643,38 +639,32 @@ jobs:
         shell: bash
         run: TARGET=x86_64-pc-windows-msvc ./check.sh cli
 
-  # ── Build Windows CLI (native MSVC) ──────────────────────────────────
-  build-windows:
-    needs: [version-check, detect-changes]
-    if: >-
-      !failure() && !cancelled() &&
-      needs.detect-changes.result == 'success' && (
-      needs.detect-changes.outputs.cli == 'true' ||
-      github.event_name != 'pull_request'
-      )
-    runs-on: windows-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
+      - name: Verify install.ps1 with PowerShell 5.1
+        shell: powershell
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "$PWD\install.ps1", [ref]$null, [ref]$errors
+          )
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Host "❌ $_" }
+            exit 1
+          }
 
-      - name: Install Rust
-        uses: ./.github/actions/install-rust
-        with:
-          targets: x86_64-pc-windows-msvc
+          $content = Get-Content install.ps1 -Raw
+          if ($content -match 'Join-Path\s+\S+\s+"[^"]+"\s+"[^"]+"') {
+            Write-Host "❌ Join-Path with 3+ arguments requires PowerShell 6+"
+            exit 1
+          }
+          Write-Host "✅ install.ps1 is compatible with PowerShell 5.1"
 
-      - uses: Swatinem/rust-cache@v2
-        # Caching is best-effort: a transient cache-service outage must not fail the
-        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
-        continue-on-error: true
-        with:
-          workspaces: cli
-          key: x86_64-pc-windows-msvc
-
-      - name: Build vesta
+      - name: Build release CLI
+        if: inputs.release_artifacts
         working-directory: cli
         run: cargo build --release --target x86_64-pc-windows-msvc
 
-      - name: Smoke test
+      - name: Smoke test release CLI
+        if: inputs.release_artifacts
         shell: bash
         run: |
           CLI="cli/target/x86_64-pc-windows-msvc/release/vesta.exe"
@@ -682,6 +672,7 @@ jobs:
           "$CLI" --help
 
       - name: Package Windows CLI zip
+        if: inputs.release_artifacts
         shell: bash
         run: |
           mkdir vesta-windows
@@ -689,17 +680,115 @@ jobs:
           7z a vesta-x86_64-pc-windows-msvc.zip vesta-windows/
 
       - uses: actions/upload-artifact@v7
+        if: inputs.release_artifacts
         with:
           name: vesta-x86_64-pc-windows-msvc
           path: vesta-x86_64-pc-windows-msvc.zip
 
       - uses: actions/upload-artifact@v7
+        if: inputs.release_artifacts
         with:
           name: windows-cli-exe
           path: cli/target/x86_64-pc-windows-msvc/release/vesta.exe
 
-  # ── Build Tauri app (macOS) ───────────────────────────────────────────
-  build-tauri-macos:
+  # ── Build Electron app (macOS) ───────────────────────────────────────
+  build-electron-macos:
+    name: Desktop · Build (macOS)
+    needs: [test-frontend, detect-changes]
+    if: >-
+      !failure() && !cancelled() &&
+      needs.detect-changes.result == 'success' && (
+      github.event_name != 'pull_request' ||
+      needs.detect-changes.outputs.cli == 'true' ||
+      needs.detect-changes.outputs.app == 'true'
+      )
+    runs-on: macos-latest
+    # Release builds sign and notarize; Apple's notarytool can wait well past an
+    # hour during notary-service backlogs, so give it the headroom the mobile
+    # delivery job already has. PR builds are unsigned and finish in minutes.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Install frontend deps
+        working-directory: apps
+        run: npm install
+
+      - name: Build web app
+        working-directory: apps
+        run: npm -w @vesta/web run build
+
+      - name: Resolve macOS build arch
+        env:
+          MAC_UNIVERSAL: ${{ needs.detect-changes.outputs.mac_universal }}
+        run: |
+          if [ "${MAC_UNIVERSAL}" = "true" ]; then
+            echo "MAC_ARCH_FLAG=--universal" >> "$GITHUB_ENV"
+          else
+            echo "MAC_ARCH_FLAG=--arm64" >> "$GITHUB_ENV"
+          fi
+
+      # PRs package without credentials below. Non-PR builds key the signed path
+      # on the cert being present: with a cert, sign + notarize; without one,
+      # force an unsigned build instead of letting electron-builder resolve an
+      # empty CSC_LINK as a project-relative file.
+      - name: Type-check Electron app
+        working-directory: apps/desktop
+        run: npx tsc
+
+      # PR source is untrusted build input. Keep every signing and notarization
+      # credential out of this step instead of relying on electron-builder's CI
+      # auto-detection to skip signing after secrets have already been injected.
+      - name: Build unsigned Electron app for PR
+        if: github.event_name == 'pull_request'
+        working-directory: apps/desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npx electron-builder --mac dmg zip "$MAC_ARCH_FLAG" --publish never -c.mac.notarize=false
+
+      - name: Build signed and notarized Electron app
+        if: github.event_name != 'pull_request'
+        working-directory: apps/desktop
+        env:
+          CSC_LINK: ${{ secrets.APPLE_CERT_P12 }}
+          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -n "$CSC_LINK" ]; then
+            npx electron-builder --mac dmg zip "$MAC_ARCH_FLAG" --publish never
+          else
+            echo "No signing certificate configured; building unsigned."
+            # The empty secrets above still define the env vars: electron-builder resolves an
+            # empty CSC_LINK against the project dir and dies with "not a file". Unset
+            # them so the fallback path is genuinely unsigned.
+            unset CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+            CSC_IDENTITY_AUTO_DISCOVERY=false \
+              npx electron-builder --mac dmg zip "$MAC_ARCH_FLAG" --publish never -c.mac.notarize=false
+          fi
+
+      - name: Collect artifacts
+        if: inputs.release_artifacts
+        run: |
+          mkdir -p electron-out
+          cp apps/desktop/dist/*.dmg apps/desktop/dist/*.zip apps/desktop/dist/*.blockmap apps/desktop/dist/latest-mac.yml electron-out/
+          [ "$(ls -A electron-out)" ] || { echo "No artifacts collected"; exit 1; }
+
+      - uses: actions/upload-artifact@v7
+        if: inputs.release_artifacts
+        with:
+          name: electron-darwin
+          path: electron-out/*
+
+  # ── Build Electron app (Linux) ────────────────────────────────────────
+  build-electron-linux:
+    name: Desktop · Build (${{ matrix.label }})
     needs: [test-frontend, detect-changes]
     if: >-
       !failure() && !cancelled() &&
@@ -712,166 +801,55 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target: aarch64-apple-darwin
-            os: macos-latest
-            bundles: dmg
-          - target: x86_64-apple-darwin
-            os: macos-latest
-            bundles: dmg
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 100
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install Rust
-        uses: ./.github/actions/install-rust
-        with:
-          targets: ${{ matrix.target }}
-
-      - uses: Swatinem/rust-cache@v2
-        # Caching is best-effort: a transient cache-service outage must not fail the
-        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
-        continue-on-error: true
-        with:
-          workspaces: apps/desktop/src-tauri
-          key: ${{ matrix.target }}
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 22
-
-      - name: Install frontend deps
-        working-directory: apps
-        run: npm install
-
-      # Retry: bundle_dmg.sh occasionally fails on macos-latest runners when the
-      # window server is unresponsive to the AppleScript-driven Finder layout step.
-      - name: Build Tauri app
-        uses: nick-fields/retry@v4
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          timeout_minutes: 30
-          max_attempts: 3
-          command: cd apps/desktop && npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
-
-      - name: Collect artifacts
-        if: github.event_name != 'pull_request'
-        run: |
-          mkdir -p tauri-out
-          find apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle \
-            -type f \( -name '*.dmg' -o -name '*.tar.gz' -o -name '*.sig' \) \
-            -exec cp {} tauri-out/ \;
-          ARCH_PREFIX=$(echo "${{ matrix.target }}" | cut -d'-' -f1)
-          for f in tauri-out/Vesta.app.tar.gz*; do
-            [ -f "$f" ] && mv "$f" "${f/Vesta.app/Vesta_${ARCH_PREFIX}.app}"
-          done
-          [ "$(ls -A tauri-out)" ] || { echo "No artifacts collected"; exit 1; }
-
-      - uses: actions/upload-artifact@v7
-        if: github.event_name != 'pull_request'
-        with:
-          name: tauri-${{ matrix.target }}
-          path: tauri-out/*
-
-  # ── Build Tauri app (Linux — needs vestad bundled) ──────────────────
-  build-tauri-linux:
-    needs: [test-frontend, detect-changes, build-vestad]
-    if: >-
-      !failure() && !cancelled() &&
-      needs.detect-changes.result == 'success' && (
-      github.event_name != 'pull_request' ||
-      needs.detect-changes.outputs.cli == 'true' ||
-      needs.detect-changes.outputs.app == 'true'
-      )
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
+          - label: Linux x64
             os: ubuntu-latest
-            bundles: deb,rpm
-          - target: aarch64-unknown-linux-gnu
+            arch: x64
+          - label: Linux ARM64
             os: ubuntu-24.04-arm
-            bundles: deb,rpm
+            arch: arm64
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 100
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Rust
-        uses: ./.github/actions/install-rust
-        with:
-          targets: ${{ matrix.target }}
-
-      - uses: Swatinem/rust-cache@v2
-        # Caching is best-effort: a transient cache-service outage must not fail the
-        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
-        continue-on-error: true
-        with:
-          workspaces: apps/desktop/src-tauri
-          key: ${{ matrix.target }}
-
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 22
 
-      - name: Install Linux deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential pkg-config \
-            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev
-
-      - name: Bundle vestad
-        uses: actions/download-artifact@v8
-        with:
-          name: vestad-${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-unknown-linux-gnu' || 'x86_64-unknown-linux-gnu' }}
-          path: /tmp/vestad-artifact
-
-      - name: Install vestad into resources
-        run: |
-          tar -xzf /tmp/vestad-artifact/vestad-*.tar.gz -C /tmp/vestad-artifact/
-          mkdir -p apps/desktop/src-tauri/resources
-          cp /tmp/vestad-artifact/vestad apps/desktop/src-tauri/resources/vestad
-          chmod +x apps/desktop/src-tauri/resources/vestad
+      - name: Install packaging deps
+        run: sudo apt-get update && sudo apt-get install -y rpm
 
       - name: Install frontend deps
         working-directory: apps
         run: npm install
 
-      - name: Build Tauri app
-        uses: nick-fields/retry@v4
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          timeout_minutes: 30
-          max_attempts: 3
-          command: cd apps/desktop && npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+      - name: Build web app
+        working-directory: apps
+        run: npm -w @vesta/web run build
+
+      - name: Build Electron app
+        working-directory: apps/desktop
+        run: |
+          npx tsc
+          npx electron-builder --linux deb rpm --${{ matrix.arch }} --publish never
 
       - name: Collect artifacts
-        if: github.event_name != 'pull_request'
+        if: inputs.release_artifacts
         run: |
-          mkdir -p tauri-out
-          find apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle \
-            -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.tar.gz' -o -name '*.sig' \) \
-            -exec cp {} tauri-out/ \;
-          [ "$(ls -A tauri-out)" ] || { echo "No artifacts collected"; exit 1; }
+          mkdir -p electron-out
+          cp apps/desktop/dist/*.deb apps/desktop/dist/*.rpm electron-out/
+          [ "$(ls -A electron-out)" ] || { echo "No artifacts collected"; exit 1; }
 
       - uses: actions/upload-artifact@v7
-        if: github.event_name != 'pull_request'
+        if: inputs.release_artifacts
         with:
-          name: tauri-${{ matrix.target }}
-          path: tauri-out/*
+          name: electron-linux-${{ matrix.arch }}
+          path: electron-out/*
 
-  # ── Build Tauri app (Windows) ─────────────────────────────────────────
-  build-tauri-windows:
+  # ── Build Electron app (Windows) ──────────────────────────────────────
+  build-electron-windows:
+    name: Desktop · Build (Windows x64)
     needs: [test-frontend, detect-changes]
     if: >-
       !failure() && !cancelled() &&
@@ -880,372 +858,105 @@ jobs:
       needs.detect-changes.outputs.app == 'true'
       )
     runs-on: windows-latest
-    timeout-minutes: 100
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Rust
-        uses: ./.github/actions/install-rust
-
-      - uses: Swatinem/rust-cache@v2
-        # Caching is best-effort: a transient cache-service outage must not fail the
-        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
-        continue-on-error: true
-        with:
-          workspaces: apps/desktop/src-tauri
-          key: x86_64-pc-windows-msvc
-
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 22
-
-      - name: Cache NSIS
-        id: cache-nsis
-        uses: actions/cache@v6
-        with:
-          path: ~\AppData\Local\tauri\NSIS
-          key: nsis-${{ env.NSIS_VERSION }}
-
-      - name: Pre-install NSIS
-        if: steps.cache-nsis.outputs.cache-hit != 'true'
-        shell: bash
-        run: |
-          NSIS_DIR="$LOCALAPPDATA/tauri/NSIS"
-          mkdir -p "$NSIS_DIR"
-          curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors \
-            -o /tmp/nsis.zip \
-            "https://github.com/tauri-apps/binary-releases/releases/download/nsis-${NSIS_VERSION}/nsis-${NSIS_VERSION}.zip"
-          unzip -qo /tmp/nsis.zip -d "$NSIS_DIR"
-          rm /tmp/nsis.zip
 
       - name: Install frontend deps
         working-directory: apps
         run: npm install
 
-      - name: Build Tauri app
-        uses: nick-fields/retry@v4
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          timeout_minutes: 30
-          max_attempts: 3
-          shell: bash
-          command: cd apps/desktop && npx tauri build --target x86_64-pc-windows-msvc --bundles nsis
+      - name: Build web app
+        working-directory: apps
+        run: npm -w @vesta/web run build
 
-      - name: Collect artifacts
-        if: github.event_name != 'pull_request'
+      - name: Build Electron app
+        working-directory: apps/desktop
         shell: bash
         run: |
-          mkdir -p tauri-out
-          cp apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe tauri-out/
-          # The updater artifact (.nsis.zip) is what the updater plugin downloads;
-          # without it, the release manifest signature is empty and Windows fails
-          # with "update failed". createUpdaterArtifacts in tauri.conf.json enables it.
-          find apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle \
-            -type f \( -name '*.nsis.zip' -o -name '*.sig' \) -exec cp {} tauri-out/ \;
+          npx tsc
+          npx electron-builder --win nsis --x64 --publish never
+
+      - name: Collect artifacts
+        if: inputs.release_artifacts
+        shell: bash
+        run: |
+          mkdir -p electron-out
+          cp apps/desktop/dist/*.exe apps/desktop/dist/*.blockmap apps/desktop/dist/latest.yml electron-out/
+          [ "$(ls -A electron-out)" ] || { echo "No artifacts collected"; exit 1; }
 
       - uses: actions/upload-artifact@v7
-        if: github.event_name != 'pull_request'
+        if: inputs.release_artifacts
         with:
-          name: tauri-x86_64-pc-windows-msvc
-          path: tauri-out/*
+          name: electron-win32-x64
+          path: electron-out/*
 
-  # ── Build Tauri app (Android APK) ────────────────────────────────────
-  build-tauri-android:
-    needs: [test-frontend, detect-changes]
+  # ── Compile generated native mobile projects without EAS quota ───────
+  mobile-native:
+    name: Mobile · Compile (${{ matrix.label }})
+    needs: detect-changes
     if: >-
-      !failure() && !cancelled() &&
-      needs.detect-changes.result == 'success' && (
       github.event_name != 'pull_request' ||
-      needs.detect-changes.outputs.app == 'true'
-      )
-    runs-on: ubuntu-latest
-    timeout-minutes: 100
+      needs.detect-changes.outputs.mobile_native == 'true'
+    strategy:
+      fail-fast: false
+      # Platforms come from the detect-changes flags (Android is toggled there).
+      matrix:
+        include: ${{ fromJSON(needs.detect-changes.outputs.mobile_matrix) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Rust
-        uses: ./.github/actions/install-rust
+      - uses: actions/setup-node@v7
         with:
-          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
 
-      - uses: Swatinem/rust-cache@v2
-        # Caching is best-effort: a transient cache-service outage must not fail the
-        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
-        continue-on-error: true
-        with:
-          workspaces: apps/mobile/src-tauri
-          key: android
-
-      - name: Setup Java
+      - name: Set up Java
+        if: matrix.platform == 'android'
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: 17
+          java-version: "17"
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v4
+      - name: Install mobile dependencies
+        run: npm --prefix apps/mobile ci
 
-      # sdkmanager streams the NDK zip with no internal retry, so a single
-      # corrupted download ("Error reading Zip content from a SeekableByteChannel")
-      # fails the whole job. Retry the download instead of one-shotting it.
-      - name: Install Android NDK
-        uses: nick-fields/retry@v4
-        with:
-          timeout_minutes: 10
-          max_attempts: 3
-          retry_wait_seconds: 30
-          shell: bash
-          command: sdkmanager "ndk;27.0.12077973"
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 22
-
-      - name: Install frontend deps
-        working-directory: apps
-        run: npm install
-
-      - name: Initialize Android project
-        uses: nick-fields/retry@v4
-        with:
-          timeout_minutes: 15
-          max_attempts: 3
-          retry_wait_seconds: 30
-          shell: bash
-          command: cd apps/mobile && npx tauri android init
-
-      # Tauri's AndroidManifest template only declares INTERNET. Add the
-      # microphone permissions the web app's getUserMedia call needs.
-      - name: Add runtime permissions to AndroidManifest
-        run: python3 scripts/android-add-permissions.py apps/mobile/src-tauri/gen/android/app/src/main/AndroidManifest.xml
-
-      # Set up release signing if the ANDROID_KEYSTORE_BASE64 secret is configured.
-      # If the secret is missing, the next step falls back to a debug-signed APK
-      # so CI doesn't break (debug APKs install on-device but can't be used for
-      # real Play Store updates because Android tracks signing certs per app).
-      - name: Set up release signing
-        id: signing
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
-            echo "signed=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::ANDROID_KEYSTORE_BASE64 secret not set — building debug-signed APK (not suitable for Play Store updates)"
-            exit 0
-          fi
-          KEYSTORE_PATH="$RUNNER_TEMP/release.jks"
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_PATH"
-          cat > apps/mobile/src-tauri/gen/android/keystore.properties <<EOF
-          storePassword=$ANDROID_KEYSTORE_PASSWORD
-          keyPassword=$ANDROID_KEY_PASSWORD
-          keyAlias=$ANDROID_KEY_ALIAS
-          storeFile=$KEYSTORE_PATH
-          EOF
-          python3 scripts/android-sign-patch.py apps/mobile/src-tauri/gen/android/app/build.gradle.kts
-          echo "signed=true" >> "$GITHUB_OUTPUT"
-
-      # Retry: Gradle bootstraps from GitHub on first run, and resolves Kotlin/
-      # Android deps from Maven Central + plugins.gradle.org, which intermittently
-      # 403/502. retry_wait_seconds backs off so a transient block clears between
-      # attempts instead of all 3 retries hitting it back-to-back.
-      - name: Build Android APK
-        uses: nick-fields/retry@v4
-        env:
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
-        with:
-          timeout_minutes: 30
-          max_attempts: 3
-          retry_wait_seconds: 30
-          shell: bash
-          command: |
-            cd apps/mobile
-            if [ "${{ steps.signing.outputs.signed }}" = "true" ]; then
-              npx tauri android build --apk
-            else
-              npx tauri android build --apk --debug
-            fi
-
-      - name: Collect artifacts
-        if: github.event_name != 'pull_request'
-        run: |
-          mkdir -p tauri-out
-          find apps/mobile/src-tauri/gen/android -name '*.apk' -exec cp {} tauri-out/ \;
-          VERSION=$(python3 -c "import json; print(json.load(open('apps/mobile/src-tauri/tauri.conf.json'))['version'])")
-          SUFFIX=""
-          if [ "${{ steps.signing.outputs.signed }}" != "true" ]; then
-            SUFFIX="-debug"
-          fi
-          for f in tauri-out/*.apk; do
-            mv "$f" "tauri-out/Vesta_${VERSION}${SUFFIX}.apk"
-          done
-          ls -lh tauri-out/
-
-      - uses: actions/upload-artifact@v7
-        if: github.event_name != 'pull_request'
-        with:
-          name: tauri-android
-          path: tauri-out/*
-
-  # ── Build Tauri app (iOS) ────────────────────────────────────────────
-  build-tauri-ios:
-    needs: [test-frontend, detect-changes]
-    if: >-
-      !failure() && !cancelled() &&
-      needs.detect-changes.result == 'success' && (
-      github.event_name != 'pull_request' ||
-      needs.detect-changes.outputs.app == 'true'
-      )
-    runs-on: macos-latest
-    timeout-minutes: 150
-    steps:
-      - name: Check for Apple signing secrets
-        env:
-          HAS_SECRETS: ${{ secrets.APPLE_CERTIFICATE != '' }}
-        run: |
-          if [ "$HAS_SECRETS" != "true" ]; then
-            echo "::warning::Apple signing secrets not configured — skipping iOS build"
-            echo "SKIP_IOS=true" >> $GITHUB_ENV
-          fi
-
-      - uses: actions/checkout@v7
-        if: env.SKIP_IOS != 'true'
-
-      - name: Install Rust
-        if: env.SKIP_IOS != 'true'
-        uses: ./.github/actions/install-rust
-        with:
-          targets: aarch64-apple-ios
-
-      - uses: Swatinem/rust-cache@v2
-        # Caching is best-effort: a transient cache-service outage must not fail the
-        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
-        continue-on-error: true
-        if: env.SKIP_IOS != 'true'
-        with:
-          workspaces: apps/mobile/src-tauri
-          key: ios
-
-      - name: Setup Node
-        if: env.SKIP_IOS != 'true'
-        uses: actions/setup-node@v6
-        with:
-          node-version: 22
-
-      - name: Install Apple certificate and provisioning profile
-        if: env.SKIP_IOS != 'true'
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_PROVISIONING_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
-          KEYCHAIN_PASSWORD: ${{ github.run_id }}
-        run: |
-          CERTIFICATE_PATH=$RUNNER_TEMP/certificate.p12
-          PROFILE_PATH=$RUNNER_TEMP/profile.mobileprovision
-          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
-
-          echo -n "$APPLE_CERTIFICATE" | base64 --decode -o $CERTIFICATE_PATH
-          echo -n "$APPLE_PROVISIONING_PROFILE" | base64 --decode -o $PROFILE_PATH
-
-          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          security import $CERTIFICATE_PATH -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          security list-keychain -d user -s $KEYCHAIN_PATH
-
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          cp $PROFILE_PATH ~/Library/MobileDevice/Provisioning\ Profiles/
-
-      - name: Install frontend deps
-        if: env.SKIP_IOS != 'true'
-        working-directory: apps
-        run: npm install
-
-      - name: Initialize iOS project
-        if: env.SKIP_IOS != 'true'
-        uses: nick-fields/retry@v4
-        with:
-          timeout_minutes: 15
-          max_attempts: 3
-          retry_wait_seconds: 30
-          shell: bash
-          command: cd apps/mobile && npx tauri ios init
-
-      - name: Build iOS
-        if: env.SKIP_IOS != 'true'
-        uses: nick-fields/retry@v4
-        with:
-          timeout_minutes: 45
-          max_attempts: 3
-          shell: bash
-          command: cd apps/mobile && npx tauri ios build --export-method app-store-connect
-
-      - name: Collect artifacts
-        if: env.SKIP_IOS != 'true'
-        run: |
-          mkdir -p tauri-out
-          find apps/mobile/src-tauri/gen/apple -name '*.ipa' -exec cp {} tauri-out/ \;
-          VERSION=$(python3 -c "import json; print(json.load(open('apps/mobile/src-tauri/tauri.conf.json'))['version'])")
-          for f in tauri-out/*.ipa; do
-            mv "$f" "tauri-out/Vesta_${VERSION}.ipa"
-          done
-          ls -lh tauri-out/
-
-      - name: Upload to TestFlight
-        if: env.SKIP_IOS != 'true' && github.event_name == 'release'
-        env:
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-        run: |
-          mkdir -p ~/.appstoreconnect/private_keys
-          echo -n "$APPLE_API_KEY" | base64 --decode > ~/.appstoreconnect/private_keys/AuthKey_${APPLE_API_KEY_ID}.p8
-          xcrun altool --upload-app \
-            --type ios \
-            --file tauri-out/Vesta_*.ipa \
-            --apiKey "$APPLE_API_KEY_ID" \
-            --apiIssuer "$APPLE_API_ISSUER_ID"
-
-      - uses: actions/upload-artifact@v7
-        if: env.SKIP_IOS != 'true'
-        with:
-          name: tauri-ios
-          path: tauri-out/*
-
-      - name: Clean up keychain
-        if: env.SKIP_IOS != 'true'
-        run: security delete-keychain $RUNNER_TEMP/app-signing.keychain-db
+      - name: Compile native project
+        run: ./check.sh mobile-${{ matrix.platform }}
 
   # ── Merge gate (single required check for branch protection) ─────────
   merge-gate-ci:
+    # Keep this check context stable: branch protection requires the job ID's
+    # existing `merge-gate-ci` name.
+    name: merge-gate-ci
     if: always()
     needs:
+      - detect-changes
       - version-check
       - guards
+      - workflow-lint
+      - dependency-review
       - agent-tests
       - go-checks
-      - install-script-check
       - test-frontend
       - test-integration
-      - check-vesta
-      - build-vesta
+      - check-cli
+      - check-vestad
       - build-vestad
-      - test-linux
       - check-windows
-      - build-windows
-      - build-tauri-macos
-      - build-tauri-linux
-      - build-tauri-windows
-      - build-tauri-android
-      - build-tauri-ios
+      - build-electron-macos
+      - build-electron-linux
+      - build-electron-windows
+      - mobile-native
+      - validate-mobile-eas
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -1254,184 +965,4 @@ jobs:
           if [[ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
             echo "One or more required jobs failed or were cancelled"
             exit 1
-          fi
-
-  # ── Push Docker image (release only) ─────────────────────────────────
-  # Gated on test-live: a live-test failure (via !failure() over needs) skips the
-  # image push, so a broken agent is never published to :latest.
-  push-image:
-    needs: [test-linux, test-live]
-    if: ${{ !failure() && !cancelled() && github.event_name == 'release' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Login to ghcr.io
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: vestad/Dockerfile
-          push: true
-          platforms: linux/amd64,linux/arm64
-          # Beta publish pushes only the version tag. `:latest` is moved onto this
-          # digest later by promote.yml, so stable agents (which pull `:vX.Y.Z`
-          # pinned to the vestad version) are unaffected until promotion.
-          tags: |
-            ghcr.io/${{ github.repository }}:${{ github.event.release.tag_name }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  # ── Upload artifacts to release and publish ──────────────────────────
-  release:
-    needs: [build-vesta, build-vestad, test-frontend, test-integration, test-live, test-linux, build-windows, build-tauri-macos, build-tauri-linux, build-tauri-windows, build-tauri-android, build-tauri-ios, push-image]
-    if: ${{ !failure() && !cancelled() && github.event_name == 'release' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v8
-        with:
-          path: artifacts
-          pattern: "!*.dockerbuild"
-
-      - name: Verify install scripts exist at tagged version
-        run: |
-          VERSION="${{ github.event.release.tag_name }}"
-          REPO="elyxlz/vesta"
-          BASE="https://raw.githubusercontent.com/${REPO}/${VERSION}"
-          for script in install.sh install.ps1; do
-            STATUS=$(curl -sL -o /dev/null -w "%{http_code}" "${BASE}/${script}")
-            if [ "$STATUS" != "200" ]; then
-              echo "::error::${script} not found at ${BASE}/${script} (HTTP ${STATUS})"
-              exit 1
-            fi
-            echo "✓ ${script} exists at ${VERSION}"
-          done
-
-      - name: Collect release assets
-        run: |
-          mkdir release
-          find artifacts -type f \( \
-            -name '*.tar.gz' -o -name '*.zip' -o \
-            -name '*.deb' -o -name '*.rpm' -o -name '*.dmg' -o \
-            -name '*-setup.exe' -o -name '*_x64-setup.exe' -o \
-            -name '*.nsis.zip' -o \
-            -name '*.apk' -o -name '*.ipa' -o \
-            -name '*.sig' \
-          \) -exec cp {} release/ \;
-          ls -lh release/
-
-      - name: Generate updater manifest
-        run: |
-          VERSION="${{ github.event.release.tag_name }}"
-          VERSION="${VERSION#v}"
-          REPO="elyxlz/vesta"
-          BASE="https://github.com/${REPO}/releases/download/v${VERSION}"
-          DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
-          read_sig() {
-            local f="release/$1"
-            if [ -f "$f" ]; then cat "$f"; else echo ""; fi
-          }
-
-          # Tauri updater platform keys: {os}-{arch}
-          # macOS uses .app.tar.gz, Windows uses .nsis.zip
-          # Linux uses script-based self-update (not Tauri updater)
-          cat > release/latest.json << MANIFEST
-          {
-            "version": "${VERSION}",
-            "pub_date": "${DATE}",
-            "platforms": {
-              "darwin-aarch64": {
-                "url": "${BASE}/Vesta_aarch64.app.tar.gz",
-                "signature": "$(read_sig Vesta_aarch64.app.tar.gz.sig)"
-              },
-              "darwin-x86_64": {
-                "url": "${BASE}/Vesta_x86_64.app.tar.gz",
-                "signature": "$(read_sig Vesta_x86_64.app.tar.gz.sig)"
-              },
-              "windows-x86_64": {
-                "url": "${BASE}/Vesta_${VERSION}_x64-setup.nsis.zip",
-                "signature": "$(read_sig Vesta_${VERSION}_x64-setup.nsis.zip.sig)"
-              }
-            }
-          }
-          MANIFEST
-          sed -i 's/^          //' release/latest.json
-          echo "Generated latest.json:"
-          cat release/latest.json
-
-      - name: Generate checksums
-        run: |
-          cd release
-          sha256sum $(ls | grep -v '\.sig$\|\.json$') > checksums.txt
-
-      # Beta publish: upload assets to the release but leave it a prerelease. Only
-      # opted-in beta clients follow prereleases; stable stays put until promote.yml
-      # flips this release to latest. This is the canary window.
-      - name: Upload assets to prerelease
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          for f in release/*; do
-            gh release upload "${{ github.event.release.tag_name }}" "$f" --clobber
-          done
-          echo "Uploaded assets to prerelease ${{ github.event.release.tag_name }}."
-          echo "Run ./promote.sh ${{ github.event.release.tag_name }} to release it to stable."
-
-  # ── Revert a failed release ───────────────────────────────────────────
-  # release.sh creates the GitHub release BEFORE CI runs, so a failure (e.g.
-  # test-live) leaves a published-but-asset-less release. Updaters that follow
-  # prereleases then pick it up and 404 on the missing binary. Delete the
-  # release and its tag, AND revert the "Bump version to X" commit release.yml
-  # pushed to master — otherwise the version is stranded (master sits at the
-  # bumped version with no release, and the next ./release.sh skips to the next
-  # patch). Reverting it lets a re-run retry the same version.
-  revert-failed-release:
-    needs: [build-vesta, build-vestad, test-frontend, test-integration, test-live, test-linux, build-windows, build-tauri-macos, build-tauri-linux, build-tauri-windows, build-tauri-android, build-tauri-ios, push-image, release]
-    if: ${{ failure() && github.event_name == 'release' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: master
-          fetch-depth: 0
-          token: ${{ secrets.RELEASE_PAT }}
-
-      - name: Configure git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-      - name: Delete the failed release and revert the bump
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
-        run: |
-          TAG="${{ github.event.release.tag_name }}"
-          echo "::warning::release CI failed for ${TAG} — deleting the release and its tag so updaters cannot pick up an asset-less release. Re-run ./release.sh after fixing to retry ${TAG}."
-          gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
-          # Undo the bump with a revert commit, not a force-push: branch protection
-          # forbids force-pushes to master (allow_force_pushes: false). Only revert
-          # when the bump is still the tip, so a commit that landed after it is safe.
-          git fetch origin master
-          if git log origin/master -1 --pretty=%s | grep -q "^Bump version to "; then
-            git reset --hard origin/master
-            git revert --no-edit HEAD
-            git push origin master
-          else
-            echo "::warning::master tip is not a 'Bump version to' commit — leaving it for manual cleanup."
           fi

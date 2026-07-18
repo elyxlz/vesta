@@ -1,11 +1,12 @@
 """ElevenLabs TTS provider — HTTP streaming."""
 
+import logging
 import typing as tp
 
 import aiohttp
 from aiohttp import web
 
-import logging
+from .base import SettingDef
 
 logger = logging.getLogger("voice.elevenlabs")
 
@@ -142,7 +143,7 @@ PREMADE_VOICES: list[dict[str, str]] = [
 class ElevenLabsTts:
     name = "elevenlabs"
 
-    def settings_schema(self) -> list[dict]:
+    def settings_schema(self) -> list[SettingDef]:
         return [
             {
                 "key": "selected_voice_id",
@@ -184,7 +185,7 @@ class ElevenLabsTts:
             )
         except (TimeoutError, aiohttp.ClientError) as e:
             await session.close()
-            logger.error(f"elevenlabs request failed: {e}")
+            logger.error("elevenlabs request failed: %s", e)
             return web.json_response({"error": f"elevenlabs request failed: {e}"}, status=502)
 
         if upstream.status != 200:
@@ -223,15 +224,17 @@ class ElevenLabsTts:
 
 async def _fetch_subscription(api_key: str) -> dict:
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
+        async with (
+            aiohttp.ClientSession() as session,
+            session.get(
                 f"{ELEVENLABS_API}/v1/user/subscription",
                 headers={"xi-api-key": api_key},
                 timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                body: tp.Any = await resp.json()
-                if resp.status != 200:
-                    return {"error": f"status {resp.status}", "body": body}
-                return body
+            ) as resp,
+        ):
+            body: tp.Any = await resp.json()
+            if resp.status != 200:
+                return {"error": f"status {resp.status}", "body": body}
+            return body
     except (TimeoutError, aiohttp.ClientError) as e:
         return {"error": str(e)}

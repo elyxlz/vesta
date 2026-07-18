@@ -117,8 +117,9 @@ export function NotificationInterruptRulesCard() {
         setRules(r);
         lastSaved.current = r;
       })
-      .catch((e: Error) => {
-        if (!cancelled) setLoadError(e.message);
+      .catch((e: unknown) => {
+        if (!cancelled)
+          setLoadError(e instanceof Error ? e.message : String(e));
       });
     return () => {
       cancelled = true;
@@ -197,6 +198,7 @@ export function NotificationInterruptRulesCard() {
     if (from === to || from < 0 || to < 0 || from >= current.length) return;
     const next = [...current];
     const [moved] = next.splice(from, 1);
+    if (moved === undefined) return;
     next.splice(to, 0, moved);
     commit(next);
   };

@@ -1,4 +1,5 @@
 import copy
+import datetime as dt
 import json
 import os
 import pathlib as pl
@@ -8,11 +9,11 @@ import uuid
 
 import pydantic as pyd
 import pydantic_settings as pyd_settings
+from claude_agent_sdk.types import SdkBeta, ThinkingConfigAdaptive, ThinkingConfigDisabled, ThinkingConfigEnabled
+
 from core import logger
-from claude_agent_sdk.types import ThinkingConfigAdaptive, ThinkingConfigDisabled, ThinkingConfigEnabled
 
-from .notification_interrupt_policy import NotificationInterruptRule
-
+from .notification_interrupt_policy import NotificationInterruptRule, drop_expired
 
 _DEFAULT_AGENT_DIR = pl.Path.home() / "agent"
 _THINKING_ENABLED_BUDGET_TOKENS = 10000
@@ -65,7 +66,7 @@ _DEFAULT_CLAUDE_MODEL = _manifest_default("providers", "claude", "default_model"
 DEFAULT_CONTEXT_WINDOW = 200_000
 
 # The 1M-context beta. build_client_options enables it when the chosen window exceeds the 200k default.
-CONTEXT_1M_BETA = "context-1m-2025-08-07"
+CONTEXT_1M_BETA: SdkBeta = "context-1m-2025-08-07"
 
 # Per-provider context bounds enforced by the Field constraints (the catalog's presets live in the manifest).
 _CTX_MIN = 1_000
@@ -77,7 +78,7 @@ ADAPTIVE_THINKING = ThinkingConfigAdaptive(type="adaptive", display="summarized"
 
 def _resolve_agent_dir() -> pl.Path:
     # Mirrors the agent_dir field, but resolved from env before the config exists so the store path can be located.
-    if "AGENT_DIR" in os.environ and os.environ["AGENT_DIR"]:
+    if os.environ.get("AGENT_DIR"):
         return pl.Path(os.environ["AGENT_DIR"]).expanduser().resolve()
     return _DEFAULT_AGENT_DIR
 
@@ -113,7 +114,7 @@ def atomic_write_text(path: pl.Path, text: str) -> None:
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(tmp_name, path)
+        pl.Path(tmp_name).replace(path)
     finally:
         pl.Path(tmp_name).unlink(missing_ok=True)  # no-op after a successful replace; removes the orphan on failure
     dir_fd = os.open(path.parent, os.O_RDONLY)
@@ -165,21 +166,22 @@ def load_notification_rules() -> list[NotificationInterruptRule]:
             rules.append(NotificationInterruptRule.model_validate(item))
         except pyd.ValidationError as exc:
             logger.error(f"dropping invalid notification rule {item} — keeping the rest ({exc})")
-    return rules
+    return drop_expired(rules, dt.datetime.now(dt.UTC))
 
 
 class ClaudeOAuth(pyd.BaseModel):
-    """Mirrors the `claudeAiOauth` blob in the SDK credentials file. Tolerates extra keys: the `claude`
-    CLI owns the file and adds fields we don't model. Loaded at boot, never persisted to the store."""
+    """Mirrors the `claudeAiOauth` blob in the SDK credentials file (aliases carry the on-disk
+    camelCase). Tolerates extra keys: the `claude` CLI owns the file and adds fields we don't model.
+    Loaded at boot, never persisted to the store."""
 
-    model_config = pyd.ConfigDict(extra="allow")
+    model_config = pyd.ConfigDict(extra="allow", populate_by_name=True, serialize_by_alias=True)
 
-    accessToken: str | None = None  # noqa: N815  (mirrors the on-disk camelCase verbatim)
-    refreshToken: str | None = None  # noqa: N815
-    expiresAt: int | None = None  # noqa: N815
+    access_token: str | None = pyd.Field(default=None, alias="accessToken")
+    refresh_token: str | None = pyd.Field(default=None, alias="refreshToken")
+    expires_at: int | None = pyd.Field(default=None, alias="expiresAt")
     # The plan tier ("free" | "pro" | "max"); drives the context-window presets the picker offers,
     # since the 1M-context beta is a Max-only entitlement.
-    subscriptionType: str | None = None  # noqa: N815
+    subscription_type: str | None = pyd.Field(default=None, alias="subscriptionType")
 
 
 def read_claude_oauth() -> "ClaudeOAuth | None":
@@ -277,6 +279,9 @@ class VestaConfig(pyd_settings.BaseSettings):
     # Ordered interrupt ruleset (first match wins; no match -> interrupt). Edited live via PUT /config
     # and the notifications skill; monitor_loop reads it from the store each tick (see load_notification_rules).
     notification_rules: list[NotificationInterruptRule] = pyd.Field(default_factory=list)
+    # When True, a reply containing an em dash, en dash, or ' - ' separator triggers a resend-without-them
+    # correction turn (see client.process_message). Off lets the model use dashes freely.
+    block_dashes: bool = True
 
     ephemeral: bool = False
     log_level: tp.Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
@@ -416,7 +421,7 @@ def validate_config_updates(config: "VestaConfig", data: object) -> dict[str, py
         for rule in validated.notification_rules:
             if not rule.id:
                 rule.id = uuid.uuid4().hex
-        updates["notification_rules"] = [rule.model_dump() for rule in validated.notification_rules]
+        updates["notification_rules"] = [rule.model_dump(mode="json") for rule in validated.notification_rules]
     return updates
 
 
@@ -461,7 +466,7 @@ def load_config() -> tuple[VestaConfig, list[str]]:
                 # rather than crash-loop. model_construct skips validators, so build provider by hand
                 # and preserve the agent token from env so the HTTP/WS API stays authenticated.
                 issues.append(f"configuration could not be validated, using all defaults: {exc}")
-                token = os.environ["AGENT_TOKEN"] if "AGENT_TOKEN" in os.environ and os.environ["AGENT_TOKEN"] else None
+                token = os.environ["AGENT_TOKEN"] if os.environ.get("AGENT_TOKEN") else None
                 return (
                     VestaConfig.model_construct(
                         provider=ClaudeConfig(oauth=read_claude_oauth()),

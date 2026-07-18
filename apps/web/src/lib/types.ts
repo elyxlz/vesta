@@ -29,7 +29,9 @@ export type AgentActivityState = "idle" | "thinking";
 
 export type InputMethod = "voice" | "typed";
 
-type BaseEvent = { ts?: string };
+interface BaseEvent {
+  ts?: string;
+}
 
 export type VestaEvent =
   | (BaseEvent & { type: "status"; state: AgentActivityState })
@@ -87,6 +89,7 @@ export type VestaEvent =
       state: AgentActivityState;
       chat: { events: VestaEvent[]; cursor: number | null };
       notifications: { pending: string[] };
+      config: { timezone: string };
     });
 
 export type LogEvent =

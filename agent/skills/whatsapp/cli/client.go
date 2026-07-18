@@ -221,11 +221,10 @@ func (wac *WhatsAppClient) EnsureConnected() error {
 // auto-recover from: StreamReplaced disables auto-reconnect by design, and a
 // StreamError or a high-count KeepAliveTimeout means the socket is dead. It
 // tries one active reconnect; if that fails the daemon is alive but deaf
-// (receiving nothing, not reconnecting), so it writes the daemon_died marker
-// the agent watches for and exits, letting the supervisor start a fresh
-// session. Without this the process silently drops every inbound message until
-// a manual restart. Runs in its own goroutine so EnsureConnected's retry loop
-// does not block the whatsmeow event dispatcher.
+// (receiving nothing, not reconnecting, silently dropping every inbound
+// message until a manual restart), so it writes the daemon_died marker the
+// agent watches for and exits, letting the supervisor start a fresh session.
+// Runs in its own goroutine so it does not block the whatsmeow event dispatcher.
 func (wac *WhatsAppClient) recoverOrRestart(reason string) {
 	wac.logger.Warnf("Connection-fatal event (%s); attempting reconnect", reason)
 	if err := wac.EnsureConnected(); err == nil {

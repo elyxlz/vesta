@@ -6,8 +6,19 @@ const _authReady = new Promise<void>((r) => { _resolveAuth = r; });
 let _fullscreen = false;
 const _layoutListeners: Set<(fullscreen: boolean) => void> = new Set();
 
+declare global {
+  interface Window {
+    ReactNativeWebView?: { postMessage: (message: string) => void };
+  }
+}
+
+function postToParent(message: { type: string }): void {
+  window.parent.postMessage(message, "*");
+  window.ReactNativeWebView?.postMessage(JSON.stringify(message));
+}
+
 export interface PlatformInfo {
-  isTauri: boolean;
+  isDesktopApp: boolean;
   platform: string;
   isDesktop: boolean;
   isMobile: boolean;
@@ -15,7 +26,7 @@ export interface PlatformInfo {
 }
 
 let _platform: PlatformInfo = {
-  isTauri: false,
+  isDesktopApp: false,
   platform: "unknown",
   isDesktop: false,
   isMobile: false,
@@ -89,20 +100,23 @@ export function initParentBridge() {
     }
     if (event.data?.type === "vesta-platform") {
       _platform = {
-        isTauri: !!event.data.isTauri,
+        isDesktopApp: !!event.data.isDesktopApp,
         platform: event.data.platform ?? "unknown",
         isDesktop: !!event.data.isDesktop,
         isMobile: !!event.data.isMobile,
         vibrancy: !!event.data.vibrancy,
       };
-      document.documentElement.classList.toggle("tauri", _platform.isTauri);
+      document.documentElement.classList.toggle(
+        "desktop",
+        _platform.isDesktopApp,
+      );
       document.documentElement.classList.toggle("vibrancy", _platform.vibrancy);
       _platformListeners.forEach((cb) => cb(_platform));
     }
   });
 
-  window.parent.postMessage({ type: "vesta-theme-request" }, "*");
-  window.parent.postMessage({ type: "vesta-auth-request" }, "*");
-  window.parent.postMessage({ type: "vesta-layout-request" }, "*");
-  window.parent.postMessage({ type: "vesta-platform-request" }, "*");
+  postToParent({ type: "vesta-theme-request" });
+  postToParent({ type: "vesta-auth-request" });
+  postToParent({ type: "vesta-layout-request" });
+  postToParent({ type: "vesta-platform-request" });
 }

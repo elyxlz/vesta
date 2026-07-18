@@ -14,7 +14,9 @@ export function useMeasuredHeight(setHeight: (height: number) => void) {
   useLayoutEffect(() => {
     if (!node) return;
     setHeight(node.getBoundingClientRect().height);
-    const observer = new ResizeObserver(([entry]) => {
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
       const border = entry.borderBoxSize[0];
       setHeight(
         border ? border.blockSize : entry.target.getBoundingClientRect().height,

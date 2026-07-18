@@ -9,6 +9,15 @@ import {
   Copy,
   Check,
 } from "lucide-react";
+import {
+  Empty,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+  EmptyDescription,
+  EmptyContent,
+} from "@/components/ui/empty";
+import { Button } from "@/components/ui/button";
 
 interface ErrorBoundaryState {
   error: Error | null;
@@ -23,17 +32,17 @@ export class ErrorBoundary extends Component<
   ErrorBoundaryProps,
   ErrorBoundaryState
 > {
-  state: ErrorBoundaryState = { error: null };
+  override state: ErrorBoundaryState = { error: null };
 
   static getDerivedStateFromError(error: Error): ErrorBoundaryState {
     return { error };
   }
 
-  componentDidCatch(error: Error, info: ErrorInfo) {
+  override componentDidCatch(error: Error, info: ErrorInfo) {
     console.error("[ErrorBoundary]", error, info.componentStack);
   }
 
-  render() {
+  override render() {
     if (this.state.error) {
       return (
         this.props.fallback ?? (
@@ -56,7 +65,9 @@ export function RouteErrorBoundary() {
     return (
       <ErrorFallback
         error={
-          new Error(`${error.status}: ${error.statusText || "page not found"}`)
+          new Error(
+            `${String(error.status)}: ${error.statusText || "page not found"}`,
+          )
         }
         title={error.status === 404 ? "page not found" : "something went wrong"}
         description={
@@ -71,7 +82,7 @@ export function RouteErrorBoundary() {
   const resolvedError =
     error instanceof Error
       ? error
-      : new Error(String(error ?? "Unknown error"));
+      : new Error(typeof error === "string" ? error : "Unknown error");
 
   return <ErrorFallback error={resolvedError} />;
 }
@@ -106,61 +117,39 @@ function ErrorFallback({
 
   const handleCopy = () => {
     const text = [error.message, error.stack].filter(Boolean).join("\n\n");
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
+    navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      })
+      .catch(() => {
+        /* clipboard unavailable; leave the copied state untouched */
+      });
   };
 
   return (
-    <div className="flex h-full w-full items-center justify-center p-6">
-      <motion.div
-        initial={{ opacity: 0, y: 12, scale: 0.98 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ duration: 0.4, ease: [0.25, 0.46, 0.45, 0.94] }}
-        className="flex w-full max-w-md flex-col items-center gap-6 text-center"
-      >
-        <motion.div
-          initial={{ scale: 0 }}
-          animate={{ scale: 1 }}
-          transition={{
-            delay: 0.1,
-            type: "spring",
-            stiffness: 200,
-            damping: 20,
-          }}
-          className="flex h-16 w-16 items-center justify-center rounded-2xl bg-destructive/10"
+    <Empty className="h-full">
+      <EmptyHeader>
+        <EmptyMedia
+          variant="icon"
+          className="size-16 rounded-2xl bg-destructive/10 text-destructive"
         >
-          <AlertTriangle
-            className="h-8 w-8 text-destructive"
-            strokeWidth={1.5}
-          />
-        </motion.div>
-
-        <div className="flex flex-col gap-2">
-          <h1 className="text-xl font-semibold tracking-tight text-foreground">
-            {title}
-          </h1>
-          <p className="text-sm leading-relaxed text-muted-foreground">
-            {description}
-          </p>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <button
-            onClick={handleRetry}
-            className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-sm transition-all hover:opacity-90 active:scale-[0.97]"
-          >
-            <RotateCcw className="h-4 w-4" />
+          <AlertTriangle className="size-8" strokeWidth={1.5} />
+        </EmptyMedia>
+        <EmptyTitle>{title}</EmptyTitle>
+        <EmptyDescription>{description}</EmptyDescription>
+      </EmptyHeader>
+      <EmptyContent>
+        <div className="flex items-center gap-2">
+          <Button onClick={handleRetry}>
+            <RotateCcw data-icon="inline-start" />
             try again
-          </button>
-          <button
-            onClick={handleGoHome}
-            className="inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2.5 text-sm font-medium text-foreground shadow-sm transition-all hover:bg-accent active:scale-[0.97]"
-          >
-            <Home className="h-4 w-4" />
+          </Button>
+          <Button variant="outline" onClick={handleGoHome}>
+            <Home data-icon="inline-start" />
             go home
-          </button>
+          </Button>
         </div>
 
         <div className="w-full">
@@ -172,7 +161,7 @@ function ErrorFallback({
               animate={{ rotate: detailsOpen ? 180 : 0 }}
               transition={{ duration: 0.2 }}
             >
-              <ChevronDown className="h-3.5 w-3.5" />
+              <ChevronDown className="size-3.5" />
             </motion.div>
             error details
           </button>
@@ -189,19 +178,19 @@ function ErrorFallback({
                 <div className="relative mt-3 rounded-lg border border-border bg-muted/50 p-4 text-left">
                   <button
                     onClick={handleCopy}
-                    className="absolute right-2 top-2 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    className="absolute top-2 right-2 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                   >
                     {copied ? (
-                      <Check className="h-3.5 w-3.5" />
+                      <Check className="size-3.5" />
                     ) : (
-                      <Copy className="h-3.5 w-3.5" />
+                      <Copy className="size-3.5" />
                     )}
                   </button>
                   <p className="pr-8 font-mono text-xs leading-relaxed text-foreground">
                     {error.message}
                   </p>
                   {error.stack && (
-                    <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-muted-foreground">
+                    <pre className="mt-2 max-h-40 overflow-auto font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-muted-foreground">
                       {error.stack
                         .split("\n")
                         .slice(1)
@@ -214,7 +203,7 @@ function ErrorFallback({
             )}
           </AnimatePresence>
         </div>
-      </motion.div>
-    </div>
+      </EmptyContent>
+    </Empty>
   );
 }

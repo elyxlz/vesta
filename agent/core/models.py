@@ -15,18 +15,13 @@ from .state_store import PersistedState
 class QueuedTurn(tp.NamedTuple):
     """One item in the agent's processing queue: a prompt plus how to handle it.
 
-    `interruptible=False` marks a boot turn — boot-time control-flow that must run to completion;
-    a later-queued message waits its turn instead of preempting it.
-
-    `pre_sent=True` records that the queue-watcher already delivered this prompt to the CLI as
-    a priority:"now" preempt (client.send_preempt), so converse must wait for its turn without
-    sending a second query."""
+    `interruptible=False` marks a boot turn: boot-time control-flow that must run to completion;
+    a later-queued message waits its turn instead of preempting it."""
 
     text: str
     is_user: bool
     file_paths: list[str]
     interruptible: bool = True
-    pre_sent: bool = False
 
 
 CLEAN_RESTART = "clean: routine restart, no specific reason"
@@ -39,7 +34,7 @@ def is_crash_reason(reason: str | None) -> bool:
     processor/loop error handlers write). The single owner of the crash-category vocabulary: it
     drives the non-zero exit that lets Docker's on-failure policy recover the agent, the
     inbox-override precedence on boot, and the render (crash reasons keep their marker)."""
-    return reason is not None and (reason.startswith("crash:") or reason.startswith("error:"))
+    return reason is not None and (reason.startswith(("crash:", "error:")))
 
 
 @dc.dataclass
@@ -63,6 +58,10 @@ class TurnSignals:
     texts: list[str] = dc.field(default_factory=list)
     done: asyncio.Event = dc.field(default_factory=asyncio.Event)
     error: Exception | None = None
+    # Set by send_preempt when a priority:"now" prompt is delivered while this turn runs: the
+    # reply is being cut short at the CLI's next step boundary, so followups that assume a
+    # complete reply (the dash-correction turn) are skipped.
+    preempted: bool = False
     last_message_at: float = dc.field(default_factory=time.monotonic)
     # Liveness for the turn's wait loop (owned by diagnostics.note_turn_liveness /
     # note_thinking_tick): the CLI streams a thinking_tokens counter while the model reasons
@@ -107,12 +106,6 @@ class State:
     # so requests can be rewritten for prompt-cache hits. Both set once at boot.
     openrouter_proxy_url: str | None = None
     cache_proxy_runner: AppRunner | None = None
-    # Pre-sent prompts the CLI holds that no Vesta turn has opened for yet (send_preempt
-    # increments, converse(pre_sent=True) decrements at open), and the results of pre-sent
-    # turns that finished before their Vesta turn opened (banked by the stream consumer,
-    # claimed at open). Why each exists: see send_preempt and _dispatch_message.
-    preempt_outstanding: int = 0
-    preempt_orphaned_results: int = 0
     # The currently open turn's signals; written by the stream consumer, waited on by converse /
     # compact_session. None while no turn is open (results arriving then are dropped as advisory).
     turn: TurnSignals | None = None
@@ -126,7 +119,7 @@ class State:
     # intentional restart fires mid-turn, since the notification is already handled and its file
     # would otherwise survive the SIGTERM and be re-delivered on reboot.
     in_flight_notification_paths: list[str] = dc.field(default_factory=list)
-    # Set by run_one when the current turn's query never reached the CLI (QueryNotDelivered): the
+    # Set by run_one when the current turn's query never reached the CLI (QueryNotDeliveredError): the
     # message loop then keeps in_flight_notification_paths instead of clearing it, since the
     # resumed session never saw the message. Reset at the start of every turn.
     query_not_delivered: bool = False

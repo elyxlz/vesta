@@ -18,10 +18,9 @@ they still queue when the user updates.
 
 import pathlib as pl
 
-from . import logger
-from . import models as vm
 from . import config as cfg
-from . import state_store
+from . import logger, state_store
+from . import models as vm
 
 
 def _migrations_dir(config: cfg.VestaConfig) -> pl.Path:
@@ -44,7 +43,9 @@ def list_pending(*, state: vm.State, config: cfg.VestaConfig) -> list[tuple[str,
 
 
 def pending_migration_turns(*, state: vm.State, config: cfg.VestaConfig, first_start: bool = False) -> list[str]:
-    """Return one boot-turn prompt body per pending migration, in filename order. On first start, mark every migration applied and return nothing — the agent is born already converged. The agent itself records completion via `mark_migration_applied`; this function does not pre-mark."""
+    """Return one boot-turn prompt body per pending migration, in filename order. On first start,
+    mark every migration applied and return nothing — the agent is born already converged. The agent
+    itself records completion via `mark_migration_applied`; this function does not pre-mark."""
     pending = list_pending(state=state, config=config)
     if first_start:
         if pending:

@@ -21,6 +21,7 @@ import type {
   GatewayVersionInfo,
   ReleaseChannel,
 } from "@/lib/types";
+import { useAgentOps } from "@/stores/use-agent-ops";
 import { useRestartPending } from "@/stores/use-restart-pending";
 import { GatewayContext, disconnectedValue } from "./context";
 
@@ -173,6 +174,8 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
               setAgentsFetched(true);
               // Clear any "restart to apply" flag whose agent has since restarted (by any path).
               useRestartPending.getState().reconcile(agents);
+              // Drop op state for agents that are gone (ends a delete's "deleting" orb).
+              useAgentOps.getState().reconcile(agents);
               break;
             }
           }
@@ -226,7 +229,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
 
   const send = (event: object): boolean => {
     const ws = wsRef.current?.current();
-    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+    if (ws?.readyState !== WebSocket.OPEN) return false;
     ws.send(JSON.stringify(event));
     return true;
   };
@@ -255,10 +258,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
       }}
     >
       {versionMismatch ? (
-        <VersionMismatchScreen
-          gatewayVersion={gatewayVersion}
-          onUpdateGateway={triggerGatewayUpdate}
-        />
+        <VersionMismatchScreen gatewayVersion={gatewayVersion} />
       ) : (
         children
       )}

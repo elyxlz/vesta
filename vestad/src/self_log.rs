@@ -21,7 +21,7 @@ pub fn build_appender(
         .filename_prefix(LOG_FILENAME_PREFIX)
         .max_log_files(MAX_LOG_FILES)
         .build(dir)
-        .map_err(|e| format!("failed to build log appender: {}", e))
+        .map_err(|e| format!("failed to build log appender: {e}"))
 }
 
 /// Newest log file in the log directory (rotation writes one dated file per day),
@@ -56,14 +56,14 @@ pub fn spawn_log_tail(
     follow: bool,
 ) -> Result<tokio::process::Child, String> {
     let argv = log_tail_argv(path, lines, follow);
-    let (program, args) = argv.split_first().expect("log_tail_argv is never empty");
+    let (program, tail_args) = argv.split_first().expect("log_tail_argv is never empty");
     tokio::process::Command::new(program)
-        .args(args)
+        .args(tail_args)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true)
         .spawn()
-        .map_err(|e| format!("failed to spawn log tail: {}", e))
+        .map_err(|e| format!("failed to spawn log tail: {e}"))
 }
 
 #[cfg(test)]

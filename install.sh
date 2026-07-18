@@ -211,15 +211,17 @@ EOF
   }
 
   install_app_macos() {
-    local artifact="Vesta_${VERSION}_${ARCH}.dmg"
+    # The desktop app supports Apple Silicon only.
+    local artifact
+    case "$ARCH" in
+      aarch64) artifact="Vesta_${VERSION}_arm64.dmg" ;;
+      *)
+        echo "  ⚠ The Vesta desktop app supports Apple Silicon only; skipping"
+        return
+        ;;
+    esac
     local dmg_path="$WORK_DIR/Vesta.dmg"
     echo "Downloading desktop app (DMG)..."
-
-    # Map arch for DMG filename
-    case "$ARCH" in
-      x86_64) artifact="Vesta_${VERSION}_x64.dmg" ;;
-      aarch64) artifact="Vesta_${VERSION}_aarch64.dmg" ;;
-    esac
 
     curl -fsSL -o "$dmg_path" "https://github.com/${REPO}/releases/download/v${VERSION}/${artifact}"
     verify_checksum "$dmg_path" "$artifact"

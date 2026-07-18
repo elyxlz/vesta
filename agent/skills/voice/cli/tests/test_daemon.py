@@ -1,10 +1,8 @@
 import pathlib as pl
 
 import pytest
-
 import voice.config as vc
-import voice.daemon as daemon
-
+from voice import daemon
 
 LIVE_LS = "There are screens on:\n\t12345.voice\t(Detached)\n1 Socket in /run/screen/S-root.\n"
 DEAD_LS = "There are screens on:\n\t12345.voice\t(Dead ???)\nRemove dead screens with 'screen -wipe'.\n"

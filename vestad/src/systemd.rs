@@ -6,12 +6,12 @@ const SERVICE_POLL_INTERVAL_MS: u64 = 100;
 
 fn unit_file_path() -> Result<String, String> {
     let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
-    Ok(format!("{}/.config/systemd/user/vestad.service", home))
+    Ok(format!("{home}/.config/systemd/user/vestad.service"))
 }
 
 pub fn ensure_service_installed() -> Result<(), String> {
     let vestad_path = std::env::current_exe()
-        .map_err(|e| format!("cannot determine binary path: {}", e))?
+        .map_err(|e| format!("cannot determine binary path: {e}"))?
         .to_str()
         .ok_or("binary path is not valid UTF-8")?
         .trim_end_matches(" (deleted)")
@@ -33,7 +33,7 @@ pub fn ensure_service_installed() -> Result<(), String> {
     };
 
     let unit_content = format!(
-        r#"[Unit]
+        r"[Unit]
 Description=Vesta API Server
 After=docker.service network-online.target
 Wants=network-online.target
@@ -45,7 +45,7 @@ RestartSec=5
 
 [Install]
 WantedBy=default.target
-"#
+"
     );
 
     if let Ok(existing) = std::fs::read_to_string(&unit_path) {
@@ -63,7 +63,7 @@ WantedBy=default.target
     }
 
     std::fs::write(&unit_path, &unit_content)
-        .map_err(|e| format!("failed to write systemd service: {}", e))?;
+        .map_err(|e| format!("failed to write systemd service: {e}"))?;
 
     run_systemctl(&["daemon-reload"])?;
     run_systemctl(&["enable", SERVICE_NAME])?;
@@ -74,7 +74,7 @@ WantedBy=default.target
         .stdout(process::Stdio::null())
         .stderr(process::Stdio::null())
         .status()
-        .map_err(|e| format!("failed to run loginctl: {}", e))?;
+        .map_err(|e| format!("failed to run loginctl: {e}"))?;
     if !status.success() {
         eprintln!("warning: loginctl enable-linger failed, vestad may stop on logout");
     }
@@ -88,8 +88,7 @@ pub fn is_active() -> bool {
         .stdout(process::Stdio::null())
         .stderr(process::Stdio::null())
         .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+        .is_ok_and(|s| s.success())
 }
 
 pub fn start() -> Result<(), String> {
@@ -161,7 +160,7 @@ pub fn exec_journal(lines: usize, follow: bool) -> ! {
     let err = Command::new("journalctl")
         .args(journal_args(lines, follow))
         .exec();
-    eprintln!("failed to exec journalctl: {}", err);
+    eprintln!("failed to exec journalctl: {err}");
     process::exit(1);
 }
 
@@ -193,7 +192,7 @@ fn run_systemctl(args: &[&str]) -> Result<(), String> {
         .args(&full_args)
         .stdout(process::Stdio::null())
         .output()
-        .map_err(|e| format!("failed to run systemctl: {}", e))?;
+        .map_err(|e| format!("failed to run systemctl: {e}"))?;
 
     if output.status.success() {
         Ok(())

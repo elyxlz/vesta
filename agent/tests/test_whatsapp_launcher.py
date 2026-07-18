@@ -35,7 +35,7 @@ def _run(tmp_path, args, go_get_exit=0):
         "RUN_LOG": str(tmp_path / "run.log"),
         "GO_GET_EXIT": str(go_get_exit),
     }
-    result = subprocess.run(["bash", str(LAUNCHER), *args], env=env, capture_output=True, text=True, cwd=tmp_path)
+    result = subprocess.run(["bash", str(LAUNCHER), *args], env=env, capture_output=True, text=True, cwd=tmp_path, check=False)
     go_log = (tmp_path / "go.log").read_text() if (tmp_path / "go.log").exists() else ""
     run_log = (tmp_path / "run.log").read_text() if (tmp_path / "run.log").exists() else ""
     return result, go_log, run_log
@@ -58,7 +58,7 @@ def test_one_shot_commands_skip_the_whatsmeow_update(tmp_path):
 
 
 def test_failed_whatsmeow_update_warns_and_serves_current_source(tmp_path):
-    result, go_log, run_log = _run(tmp_path, ["serve", "--notifications-dir", "/tmp/notif"], go_get_exit=1)
+    result, _go_log, run_log = _run(tmp_path, ["serve", "--notifications-dir", "/tmp/notif"], go_get_exit=1)
     assert result.returncode == 0, result.stderr
     assert "could not update whatsmeow" in result.stderr
     assert run_log.strip() == "serve --notifications-dir /tmp/notif"

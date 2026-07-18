@@ -6,8 +6,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from claude_agent_sdk import AssistantMessage, TextBlock
 from conftest import assistant_msg, consuming, make_stream_harness, result_msg
-from core.sdk_parsing import parse_sdk_message
 from wait_util import wait_for_condition
+
+from core.sdk_parsing import parse_sdk_message
 
 API_ERROR_TEXT = 'API Error: 500 {"type":"error","error":{"type":"api_error","message":"Internal server error"}}'
 

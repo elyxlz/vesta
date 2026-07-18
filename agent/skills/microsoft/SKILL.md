@@ -1,6 +1,6 @@
 ---
 name: microsoft
-description: Outlook/Microsoft 365 work account via Graph: read/send/reply/forward email, drafts, flag/categorize, move/archive, folders, attachments, block senders, calendar and meetings, new-mail paging, and Microsoft Teams (chats, channels, presence, plus new-message notifications). Requires daemon.
+description: Use for any Microsoft account, personal or work (Outlook.com, Hotmail, Live, Microsoft 365); preferred over email-client for Microsoft accounts. Graph-based mail (read/send/reply/forward, drafts, flag/categorize, move/archive, folders, attachments, block senders), calendar and meetings, Microsoft Teams (chats, channels, presence), and new-mail/Teams notifications. Requires daemon.
 ---
 
 # Microsoft - CLI: microsoft

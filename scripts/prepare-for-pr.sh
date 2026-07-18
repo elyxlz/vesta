@@ -4,7 +4,7 @@
 # ruff/ty/clippy/lockfile" cases without waiting for CI.
 #
 # Skipped (out of scope for local): test-integration (Docker + slow),
-# Windows/macOS/iOS/Android builds, Tauri bundling, install-script-check
+# Windows/macOS builds, Electron bundling, install-script-check
 # (PowerShell-only).
 #
 # Usage:
@@ -16,7 +16,7 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$REPO_ROOT"
+cd "$REPO_ROOT" || exit 1
 
 BOLD=$'\033[1m'; RED=$'\033[31m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; DIM=$'\033[2m'; RESET=$'\033[0m'
 FAILED=()
@@ -51,11 +51,12 @@ AGENT=$(grep '^version = ' agent/core/pyproject.toml | cut -d'"' -f2)
 VESTAD=$(grep '^version = ' vestad/Cargo.toml | head -1 | cut -d'"' -f2)
 CLI=$(grep '^version = ' cli/Cargo.toml | head -1 | cut -d'"' -f2)
 TESTS=$(grep '^version = ' vestad/tests-integration/Cargo.toml | head -1 | cut -d'"' -f2)
-TAURI_CONF=$(python3 -c "import json; print(json.load(open('apps/desktop/src-tauri/tauri.conf.json'))['version'])")
-TAURI_CARGO=$(grep '^version = ' apps/desktop/src-tauri/Cargo.toml | head -1 | cut -d'"' -f2)
+DESKTOP_PKG=$(python3 -c "import json; print(json.load(open('apps/desktop/package.json'))['version'])")
+MOBILE_PKG=$(python3 -c "import json; print(json.load(open('apps/mobile/package.json'))['version'])")
+MOBILE_APP=$(sed -n 's/^  version: "\([^"]*\)",/\1/p' apps/mobile/app.config.ts)
 APP=$(python3 -c "import json; print(json.load(open('apps/web/package.json'))['version'])")
 MISMATCH=0
-for nv in "vestad:$VESTAD" "cli:$CLI" "tests:$TESTS" "tauri.conf:$TAURI_CONF" "tauri-cargo:$TAURI_CARGO" "app:$APP"; do
+for nv in "vestad:$VESTAD" "cli:$CLI" "tests:$TESTS" "desktop-pkg:$DESKTOP_PKG" "mobile-pkg:$MOBILE_PKG" "mobile-app:$MOBILE_APP" "app:$APP"; do
   if [ "$AGENT" != "${nv#*:}" ]; then
     printf "  ${RED}✗${RESET} agent (%s) != %s (%s)\n" "$AGENT" "${nv%%:*}" "${nv#*:}"
     MISMATCH=1
@@ -106,6 +107,14 @@ else
   fi
 fi
 
+# ── design-token-check ────────────────────────────────────────
+section "design-token-check"
+if python3 scripts/sync-design-tokens.py --check >/dev/null 2>&1; then
+  pass "generated design tokens up to date"
+else
+  fail "generated design tokens stale — run 'python3 scripts/sync-design-tokens.py' and commit"
+fi
+
 # ── dashboard-sync-check ──────────────────────────────────────
 section "dashboard-sync-check"
 if bash scripts/sync-dashboard.sh >/dev/null 2>&1; then
@@ -123,8 +132,8 @@ section "agent-tests"
 if [ "${SKIP_AGENT:-0}" = "1" ]; then
   skip "agent-tests"
 else
-  run_in agent "ruff check"          uv run ruff check
-  run_in agent "ruff format --check" uv run ruff format --check
+  run_in . "ruff check (repo-wide)"          uv run --project agent/core ruff check .
+  run_in . "ruff format --check (repo-wide)" uv run --project agent/core ruff format --check .
   run_in agent "ty check"            uv run ty check
   run_in agent "pytest"              uv run pytest tests/ --ignore=tests/test_e2e.py -q
 fi
@@ -142,6 +151,8 @@ else
   run_in apps "web format check" npm -w @vesta/web run format:check
   run_in apps "web type check"   npm -w @vesta/web run check
   run_in apps "web tests"        npm -w @vesta/web run test
+  run_in apps "desktop lint"     npm -w @vesta/desktop run lint
+  run_in apps "desktop types"    npm -w @vesta/desktop run check
 fi
 
 # ── check-vesta (clippy + unit tests, cli + vestad) ───────────

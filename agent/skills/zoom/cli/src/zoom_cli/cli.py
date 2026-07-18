@@ -2,8 +2,8 @@ import argparse
 import json
 import sys
 
-from .config import Config
 from . import meetings
+from .config import Config
 
 
 def _setup(config: Config):
@@ -70,7 +70,8 @@ def _dispatch_meeting(args, config):
             start_time=args.start_time,
             timezone=args.timezone,
         )
-    elif args.command == "list":
+    if args.command == "list":
         return meetings.list_meetings(config)
-    elif args.command == "delete":
+    if args.command == "delete":
         return meetings.delete_meeting(config, meeting_id=args.meeting_id)
+    return None

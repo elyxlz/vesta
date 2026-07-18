@@ -5,11 +5,10 @@ import {
   connectReconnectingWs,
   type ReconnectingWsHandle,
 } from "@/lib/reconnecting-ws";
-import { isTauri } from "@/lib/env";
+import { native } from "@/lib/native";
 import { setAppBadge } from "@/lib/app-badge";
 import { setFaviconUnseen } from "@/lib/favicon";
 import { useWindowFocus } from "@/hooks/use-window-focus";
-import { router } from "@/router";
 import type { AgentInfo, VestaEvent } from "@/lib/types";
 import { NotificationContext } from "./context";
 
@@ -33,21 +32,25 @@ async function ensurePermission(): Promise<boolean> {
   return result === "granted";
 }
 
-async function focusAndNavigate(agentName: string): Promise<void> {
-  if (isTauri) {
-    try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      await invoke("focus_window");
-    } catch {
-      /* ignore */
-    }
-  } else {
-    window.focus();
+async function focusAndOpen(
+  agentName: string,
+  openAgent: (agentName: string) => void,
+): Promise<void> {
+  try {
+    await native.focusWindow();
+  } catch {
+    /* ignore */
   }
-  router.navigate(`/agent/${encodeURIComponent(agentName)}`);
+  openAgent(agentName);
 }
 
-export function NotificationProvider({ children }: { children: ReactNode }) {
+export function NotificationProvider({
+  children,
+  onOpenAgent,
+}: {
+  children: ReactNode;
+  onOpenAgent: (agentName: string) => void;
+}) {
   const { agents, reachable } = useGateway();
   const focused = useWindowFocus();
   const focusedRef = useRef(focused);
@@ -85,45 +88,54 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     [agents],
   );
 
-  const notifyAssistant = useCallback((agentName: string, text: string) => {
-    if (focusedRef.current) return;
-    if (!permissionRef.current) return;
-    const body = text.trim();
-    if (!body) return;
-    try {
-      const n = new Notification(agentName, {
-        body: truncate(body),
-        tag: agentName,
-      });
-      const autoClose = setTimeout(() => n.close(), NOTIFICATION_AUTO_CLOSE_MS);
-      n.onclick = () => {
-        clearTimeout(autoClose);
-        void focusAndNavigate(agentName);
-        n.close();
-      };
-      n.onclose = () => clearTimeout(autoClose);
-    } catch {
-      /* ignore */
-    }
-  }, []);
+  const notifyAssistant = useCallback(
+    (agentName: string, text: string) => {
+      if (focusedRef.current) return;
+      if (!permissionRef.current) return;
+      const body = text.trim();
+      if (!body) return;
+      try {
+        const n = new Notification(agentName, {
+          body: truncate(body),
+          tag: agentName,
+        });
+        const autoClose = setTimeout(
+          () => n.close(),
+          NOTIFICATION_AUTO_CLOSE_MS,
+        );
+        n.onclick = () => {
+          clearTimeout(autoClose);
+          void focusAndOpen(agentName, onOpenAgent);
+          n.close();
+        };
+        n.onclose = () => clearTimeout(autoClose);
+      } catch {
+        /* ignore */
+      }
+    },
+    [onOpenAgent],
+  );
 
   // Unlike chat previews, a hit rate limit fires even while the app is focused: the chat
   // surface shows nothing for a throttled turn, so this is the user's only signal.
-  const notifyRateLimited = useCallback((agentName: string, text: string) => {
-    if (!permissionRef.current) return;
-    try {
-      const n = new Notification(`${agentName} hit a Claude rate limit`, {
-        body: text,
-        tag: `${agentName}-rate-limited`,
-      });
-      n.onclick = () => {
-        void focusAndNavigate(agentName);
-        n.close();
-      };
-    } catch {
-      /* ignore */
-    }
-  }, []);
+  const notifyRateLimited = useCallback(
+    (agentName: string, text: string) => {
+      if (!permissionRef.current) return;
+      try {
+        const n = new Notification(`${agentName} hit a Claude rate limit`, {
+          body: text,
+          tag: `${agentName}-rate-limited`,
+        });
+        n.onclick = () => {
+          void focusAndOpen(agentName, onOpenAgent);
+          n.close();
+        };
+      } catch {
+        /* ignore */
+      }
+    },
+    [onOpenAgent],
+  );
 
   const setChattingAgent = useCallback((agentName: string | null) => {
     chattingAgentRef.current = agentName;
@@ -131,7 +143,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
-    ensurePermission().then((granted) => {
+    void ensurePermission().then((granted) => {
       if (!cancelled) permissionRef.current = granted;
     });
     return () => {
@@ -222,14 +234,14 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
           tag: `${agent.name}-${agent.status}`,
         });
         n.onclick = () => {
-          void focusAndNavigate(agent.name);
+          void focusAndOpen(agent.name, onOpenAgent);
           n.close();
         };
       } catch {
         /* ignore */
       }
     }
-  }, [agents]);
+  }, [agents, onOpenAgent]);
 
   const value = useMemo(
     () => ({ notifyAssistant, setChattingAgent }),

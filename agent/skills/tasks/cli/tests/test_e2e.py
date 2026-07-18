@@ -5,7 +5,7 @@ import socket
 import sqlite3
 import subprocess
 import time
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -31,6 +31,7 @@ def tasks_cli(home: Path, *args: str, timeout: float = 10) -> subprocess.Complet
         text=True,
         timeout=timeout,
         env=_env(home),
+        check=False,
     )
 
 
@@ -571,13 +572,27 @@ class TestAutoReminders:
 
     def test_auto_reminders_skipped_if_past(self, shared_env):
         home, _, _ = shared_env
-        # Due in 30 minutes: only 15-min auto-reminder should be created (others are in the past)
+        # Due in 30 minutes: only the 15-min pre-due reminder plus the at-due decision fire remain
         future = (datetime.now(UTC) + timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%S")
         task = parse(tasks_cli(home, "add", "soon task", "--due-datetime", future, "--timezone", "UTC"))
         items = parse(tasks_cli(home, "remind", "list", "--task", task["id"], "--json"))
         auto = [i for i in items if i["auto_generated"]]
-        assert len(auto) == 1
-        assert "15 minutes" in auto[0]["message"]
+        assert len(auto) == 2
+        messages = sorted(i["message"] for i in auto)
+        assert "is due now" in messages[0]
+        assert "15 minutes" in messages[1]
+
+    def test_at_due_reminder_carries_decision_menu(self, shared_env):
+        home, _, _ = shared_env
+        future = (datetime.now(UTC) + timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%S")
+        task = parse(tasks_cli(home, "add", "decision task", "--due-datetime", future, "--timezone", "UTC"))
+        items = parse(tasks_cli(home, "remind", "list", "--task", task["id"], "--json"))
+        at_due = [i for i in items if i["schedule"] == "auto: at due"]
+        assert len(at_due) == 1
+        message = at_due[0]["message"]
+        assert f"tasks done {task['id']}" in message
+        assert f"tasks postpone {task['id']}" in message
+        assert f"tasks delete {task['id']}" in message
 
     def test_done_status_cleans_auto_reminders(self, shared_env):
         home, _, _ = shared_env
@@ -605,6 +620,35 @@ class TestAutoReminders:
         assert not any(i["task_id"] == task["id"] for i in all_items)
 
 
+# === Low-friction verbs ===
+
+
+class TestVerbs:
+    def test_done_marks_task_done(self, shared_env):
+        home, _, _ = shared_env
+        task = parse(tasks_cli(home, "add", "verb done"))
+        data = parse(tasks_cli(home, "done", task["id"]))
+        assert data["status"] == "done"
+
+    def test_postpone_sets_new_due_from_now(self, shared_env):
+        home, _, _ = shared_env
+        task = parse(tasks_cli(home, "add", "verb postpone"))
+        data = parse(tasks_cli(home, "postpone", task["id"], "--in-days", "2"))
+        assert data["due_date"] is not None
+
+    def test_postpone_without_timing_errors(self, shared_env):
+        home, _, _ = shared_env
+        task = parse(tasks_cli(home, "add", "verb postpone bad"))
+        r = tasks_cli(home, "postpone", task["id"])
+        assert r.returncode != 0
+
+    def test_remind_snooze_moves_one_shot(self, shared_env):
+        home, _, _ = shared_env
+        s = parse(tasks_cli(home, "remind", "snooze me", "--in-hours", "1"))
+        data = parse(tasks_cli(home, "remind", "snooze", s["id"], "--in-hours", "5"))
+        assert data["status"] == "snoozed"
+
+
 # === Daemon / Notification tests ===
 
 
@@ -625,8 +669,7 @@ class TestDaemonNotifications:
                 data = json.loads(f.read_text())
                 if data.get("reminder_id") == rid:
                     assert data["message"].startswith("fire soon")
-                    assert "rearm" in data["message"]
-                    assert f"tasks remind delete {rid}" in data["message"]
+                    assert f"tasks remind snooze {rid}" in data["message"]
                     assert data["source"] == "tasks"
                     found = True
                     break
@@ -643,6 +686,49 @@ class TestDaemonNotifications:
             time.sleep(2)
             items = parse(tasks_cli(home, "remind", "list", "--json"))
             assert any(i["id"] == rid for i in items)
+        finally:
+            stop_daemon(proc)
+
+    def test_snoozed_reminder_fires_at_new_time(self, test_home):
+        home, notif_dir = test_home
+        proc = start_daemon(home, notif_dir)
+        try:
+            far = (datetime.now(UTC) + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%S")
+            s = parse(tasks_cli(home, "remind", "snooze fire", "--at", far, "--tz", "UTC"))
+            time.sleep(2)  # let the daemon schedule the original far-off job
+            soon = (datetime.now(UTC) + timedelta(seconds=3)).strftime("%Y-%m-%dT%H:%M:%S")
+            snoozed = parse(tasks_cli(home, "remind", "snooze", s["id"], "--at", soon, "--tz", "UTC"))
+            assert snoozed["status"] == "snoozed"
+
+            deadline = time.time() + 15
+            found = False
+            while time.time() < deadline and not found:
+                found = any(json.loads(f.read_text())["reminder_id"] == s["id"] for f in notif_dir.glob("*-tasks-reminder.json"))
+                time.sleep(0.5)
+            assert found, "snoozed reminder did not fire at its new time"
+        finally:
+            stop_daemon(proc)
+
+    def test_digest_fires_for_overdue_task(self, test_home):
+        home, notif_dir = test_home
+        proc = start_daemon(home, notif_dir)
+        try:
+            task = parse(tasks_cli(home, "add", "already late", "--due-in-minutes", "5"))
+            past = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+            conn = sqlite3.connect(home / ".tasks" / "tasks.db")
+            conn.execute("UPDATE tasks SET due_date = ? WHERE id = ?", (past, task["id"]))
+            conn.commit()
+            conn.close()
+
+            deadline = time.time() + 15
+            digest_files = []
+            while time.time() < deadline and not digest_files:
+                digest_files = list(notif_dir.glob("*-tasks-task_digest.json"))
+                time.sleep(0.5)
+            assert digest_files, "daemon did not emit a digest for the overdue task"
+            payload = json.loads(digest_files[0].read_text())
+            assert task["id"] in payload["message"]
+            assert "tasks postpone <id>" in payload["message"]
         finally:
             stop_daemon(proc)
 
@@ -866,8 +952,8 @@ class TestRecurringNextRun:
 
     def test_nonexistent_reminder_no_crash(self, test_home):
         """Firing a reminder ID that doesn't exist in the DB should not crash."""
-        from tasks_cli.commands import send_reminder_job
         from tasks_cli import db as tasks_db
+        from tasks_cli.commands import send_reminder_job
 
         home, notif_dir = test_home
         data_dir = home / ".tasks"
@@ -953,7 +1039,7 @@ class TestRecurringNextRun:
         """Empty string notif_dir should skip all processing."""
         from tasks_cli.commands import send_reminder_job
 
-        home, notif_dir = test_home
+        home, _notif_dir = test_home
         conn = self._setup_db(home)
         original_time = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
         conn.execute(

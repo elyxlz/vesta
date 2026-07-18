@@ -17,10 +17,13 @@ box (dev/tests) it falls back to a local port.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import socket
 import subprocess
+import time
+import typing as tp
 from pathlib import Path
 
 from . import admin, launcher
@@ -31,11 +34,19 @@ ASSETS_DIR = Path(__file__).parent / "assets" / "handover"
 FONTS_DIR = ASSETS_DIR / "fonts"
 VNC_PORT_START = 5900
 WEB_PORT_START = 6080
-# A 16:10 screen. Camoufox renders headed through software WebRender (it ships no GPU/glxtest
-# helper), so a huge framebuffer would rasterize far too slowly on the CPU; 1600x1000 keeps the
-# stream responsive, and 16:10 matches the MacBook frame in the page so the browser fills the
-# screen cut-out.
-SCREEN_W, SCREEN_H = 1600, 1000
+X11VNC_READY_TIMEOUT_S = 10.0
+X11VNC_SETTLE_S = 0.4
+X11VNC_TERMINATE_TIMEOUT_S = 5.0
+DISPLAY_CLAIM_ATTEMPTS = 10
+READY_POLL_S = 0.1
+PROC = Path("/proc")
+# The 13" MacBook's native resolution: a real monitor size, and the one the framed machine in the
+# page actually has. `fit_to_screen` reports this verbatim as screen.width/height, so a geometry no
+# real display ships would itself be an automation tell on the account-trust sites handover exists
+# for. It is deliberately not larger: the page scales the stream down into the frame's cut-out, so
+# every extra pixel here shrinks the user's text. 1280 lands ~1:1 on a maximised 1080p viewport,
+# where 1920 rendered a 16px font at 11px. 16:10 keeps it filling the cut-out exactly.
+SCREEN_W, SCREEN_H = 1280, 800
 
 # Public vestad service name for the handover page. The tunnel routes it at
 # `$VESTAD_TUNNEL/agents/$AGENT_NAME/browser/handover.html` (no token).
@@ -77,7 +88,11 @@ def _find_novnc_dir() -> Path:
     raise RuntimeError("noVNC not found (looked for core/rfb.js under /usr/share/novnc). Install it: apt-get install -y novnc x11vnc openbox")
 
 
-HANDOVER_BINARIES = ("x11vnc", "websockify", "openbox")
+# Xvfb belongs here even though `_ensure_xvfb` is the one that runs it: it never raises (the
+# headless path falls back), so a box missing only Xvfb would pass this gate and then hang the
+# page on "Waking" forever while x11vnc failed to open a display it never got.
+HANDOVER_BINARIES = ("Xvfb", "x11vnc", "websockify", "openbox")
+HANDOVER_APT_LINE = "apt-get install -y xvfb novnc x11vnc openbox"
 
 
 def readiness() -> dict[str, object]:
@@ -94,7 +109,7 @@ def readiness() -> dict[str, object]:
 def _require_binaries() -> None:
     missing = [b for b in HANDOVER_BINARIES if not shutil.which(b)]
     if missing:
-        raise RuntimeError(f"missing {', '.join(missing)}. Install: apt-get install -y novnc x11vnc openbox")
+        raise RuntimeError(f"missing {', '.join(missing)}. Install: {HANDOVER_APT_LINE}")
 
 
 def _free_port(start: int) -> int:
@@ -111,27 +126,54 @@ def _free_port(start: int) -> int:
 
 
 def _free_display(start: int = 99) -> str:
-    """A display number with no X server yet, so handover always provisions its OWN Xvfb.
+    """A display number with no live X server, so handover always provisions its OWN Xvfb.
 
     Reusing the ambient DISPLAY breaks on a real desktop seat: x11vnc cannot X_GetImage a live
-    Wayland/Xorg screen (it fails BadMatch), so noVNC hangs on connect. A dedicated Xvfb is always
-    grabbable, and on a headless box (the container) picking a free number lands on :99 as before."""
+    Wayland/Xorg screen (it fails BadMatch), so noVNC hangs on connect. Judge by liveness, not the
+    socket FILE existing: a dead Xvfb leaves its /tmp/.X11-unix socket behind and nothing cleans it,
+    so trusting file existence lets corpses exhaust the range. _ensure_xvfb clears a stale socket
+    before launching on the number returned here."""
     for n in range(start, start + 100):
-        if not Path(f"/tmp/.X11-unix/X{n}").exists():
+        if not launcher._x_display_reachable(f":{n}"):
             return f":{n}"
     raise RuntimeError(f"no free X display in range :{start}-:{start + 100}")
 
 
+def _claim_own_display() -> tuple[str, int]:
+    """A display this container's OWN Xvfb holds, returned with its pid.
+
+    `_free_display` sees only who holds a number the instant it looks, and agent containers share
+    the host abstract-socket namespace, so two handovers can pick the same free number and race to
+    bind it: the loser's Xvfb dies while the winner's container answers on that number. So start
+    Xvfb and confirm we own it before trusting the display. A lost race just advances, the next scan
+    finds the winner holding that number and moves on.
+    """
+    for _ in range(DISPLAY_CLAIM_ATTEMPTS):
+        display = _free_display()
+        pid = launcher._ensure_xvfb(display, screen=f"{SCREEN_W}x{SCREEN_H}x24")
+        if pid is not None:
+            return display, pid
+    raise RuntimeError(f"could not claim a free X display after {DISPLAY_CLAIM_ATTEMPTS} attempts")
+
+
 def _alive(pid: int | None) -> bool:
+    """True only for a process that is actually running.
+
+    A signal-0 probe cannot answer this: start() exits once it has spawned these, so they reparent
+    to init and a dead one's pid lingers unreaped, answering the probe like a live process.
+    /proc's state code distinguishes the corpse; the comm field can hold spaces and parens, so the
+    state is read relative to its closing paren rather than by splitting on whitespace.
+    """
     if pid is None:
         return False
     try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
+        stat = (PROC / str(pid) / "stat").read_text()
+    except (FileNotFoundError, ProcessLookupError, PermissionError, OSError):
         return False
-    except PermissionError:
-        return True
-    return True
+    comm_end = stat.rfind(") ")
+    if comm_end == -1:
+        return False
+    return stat[comm_end + 2] != "Z"
 
 
 def _read_pid(suffix: str) -> int | None:
@@ -157,6 +199,7 @@ def _register_public_service() -> tuple[int, str] | None:
         capture_output=True,
         text=True,
         timeout=SERVICE_REGISTER_TIMEOUT_S,
+        check=False,
     )
     if result.returncode != 0:
         return None
@@ -185,6 +228,55 @@ def _build_webroot() -> Path:
     return WEBROOT
 
 
+def _port_serving(port: int) -> bool:
+    with socket.socket() as probe:
+        probe.settimeout(0.2)
+        return probe.connect_ex(("127.0.0.1", port)) == 0
+
+
+def _start_x11vnc(*, display: str, vnc_port: int, log: tp.TextIO) -> subprocess.Popen[bytes]:
+    """Start x11vnc and return only once it is really serving `vnc_port`.
+
+    Shared memory makes its framebuffer reads ~25x faster (9000 vs 350 MB/sec measured), so shm is
+    always tried first and -noshm is the fallback, not the default: some hosts deny X_ShmAttach and
+    x11vnc dies on its first grab there. Waiting for the port is what makes either outcome knowable
+    here, instead of handing back a link to a page that spins on "Waking" forever.
+    """
+    # -cursor most + -cursorpos send the real X cursor shape (hand over links, caret over text)
+    # and its position, not a static dot. XDAMAGE (left on) means only changed regions are
+    # re-encoded, so typing on the framebuffer stays responsive instead of repolling the whole
+    # screen; -threads parallelises encoding for lower latency.
+    argv = ["x11vnc", "-display", display, "-localhost", "-rfbport", str(vnc_port)]
+    argv += ["-forever", "-shared", "-nopw", "-quiet", "-threads", "-cursor", "most", "-cursorpos"]
+    for shm_args in ((), ("-noshm",)):
+        proc = subprocess.Popen([*argv, *shm_args], stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+        if _x11vnc_settles(proc, vnc_port):
+            return proc
+        # Popen no-ops terminate() once it has reaped, so this can never signal a recycled pid.
+        proc.terminate()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            proc.wait(timeout=X11VNC_TERMINATE_TIMEOUT_S)
+    raise RuntimeError(f"x11vnc never served port {vnc_port}, with or without shm. See {_session_file('handover-log')}")
+
+
+def _x11vnc_settles(proc: subprocess.Popen[bytes], vnc_port: int) -> bool:
+    """Whether `proc` reaches a serving port and is still alive a beat later.
+
+    Binding is not survival: x11vnc grabs the framebuffer around the same time it opens the port,
+    so a host that refuses shm can kill it either side of the bind. Requiring it to still be up
+    after SETTLE keeps the -noshm retry reachable from both orders.
+    """
+    deadline = time.monotonic() + X11VNC_READY_TIMEOUT_S
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            return False
+        if _port_serving(vnc_port):
+            time.sleep(X11VNC_SETTLE_S)
+            return proc.poll() is None
+        time.sleep(READY_POLL_S)
+    return False
+
+
 def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> dict[str, object]:
     """Bring up headed Camoufox + a window manager + x11vnc + websockify serving the branded page.
 
@@ -209,7 +301,10 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
     # over time like a real user's. Camoufox (Firefox) single-instances a profile, so free the
     # lock by stopping the default session's browser and clearing its now-stale profile lock
     # before the headed handover takes the profile over.
+    # Recorded before the launch that writes the headed prefs into it, so stop() can always find
+    # the profile to strip them back out of, including when that launch is what failed.
     profile = Path(user_data_dir) if user_data_dir else launcher.PROFILE_ROOT
+    _session_file("profile").write_text(str(profile))
     admin.stop_browser("default")
     for lock in ("lock", ".parentlock"):
         (profile / lock).unlink(missing_ok=True)
@@ -220,72 +315,55 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
     # Wayland host x11vnc and Firefox both prefer the ambient Wayland session over our X11 display
     # (x11vnc 0.9.x exits outright when WAYLAND_DISPLAY is set), so drop it and force Firefox onto
     # X11 with MOZ_ENABLE_WAYLAND=0. Harmless where WAYLAND_DISPLAY is unset (e.g. the container).
-    display = _free_display()
-    os.environ["DISPLAY"] = display
     os.environ.pop("WAYLAND_DISPLAY", None)
     os.environ["MOZ_ENABLE_WAYLAND"] = "0"
 
-    # Bring the display up, then a window manager, then the headed browser. Two levers make the
-    # window fill the cut-out for complementary reasons: openbox strips decorations and pins the
-    # window at the origin (physical placement), while window_size refits the fingerprint's
-    # screen/window geometry so what the page reports to JS matches the real 1600x1000 (fingerprint
-    # coherence). The sign-in URL is passed as a trailing arg so it opens there.
-    launcher._ensure_xvfb(display, screen=f"{SCREEN_W}x{SCREEN_H}x24")
-    openbox_rc = _session_file("openbox-rc.xml")
-    openbox_rc.write_text(OPENBOX_RC)
-    openbox = subprocess.Popen(
-        ["openbox", "--config-file", str(openbox_rc)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
-    )
-    running = admin.launch_browser(
-        HANDOVER_SESSION,
-        headless=False,
-        user_data_dir=profile,
-        extra_args=[url] if url else None,
-        window_size=(SCREEN_W, SCREEN_H),
-    )
+    # Display, then a window manager, then the VNC bridge, and only then the browser. x11vnc grabs
+    # the display's root window and never needs Gecko, so bridging before the launch lets the page
+    # connect while Camoufox is still booting: the user watches the browser appear instead of
+    # waiting on a spinner, and a bridge that dies writes its log before the browser masks it.
+    # openbox strips decorations and pins the window at the origin. Every pid reaches its session
+    # file the moment its process exists, so the stop() below reaps whatever a raise leaves behind.
+    try:
+        display, xvfb_pid = _claim_own_display()
+        os.environ["DISPLAY"] = display
+        _session_file("xvfb-pid").write_text(str(xvfb_pid))
+        openbox_rc = _session_file("openbox-rc.xml")
+        openbox_rc.write_text(OPENBOX_RC)
+        openbox = subprocess.Popen(
+            ["openbox", "--config-file", str(openbox_rc)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
+        )
+        _session_file("openbox-pid").write_text(str(openbox.pid))
 
-    vnc_port = _free_port(VNC_PORT_START)
-    webroot = _build_webroot()
+        vnc_port = _free_port(VNC_PORT_START)
+        _session_file("vnc-port").write_text(str(vnc_port))
+        webroot = _build_webroot()
 
-    log = open(_session_file("handover-log"), "w")
-    # -cursor most + -cursorpos send the real X cursor shape (hand over links, caret over text)
-    # and its position, not a static dot. XDAMAGE (left on) means only changed regions are
-    # re-encoded, so typing on the framebuffer stays responsive instead of repolling the whole
-    # screen; -threads parallelises encoding for lower latency.
-    x11vnc = subprocess.Popen(
-        [
-            "x11vnc",
-            "-display",
-            display,
-            "-localhost",
-            "-rfbport",
-            str(vnc_port),
-            "-forever",
-            "-shared",
-            "-nopw",
-            "-quiet",
-            "-threads",
-            "-cursor",
-            "most",
-            "-cursorpos",
-        ],
-        stdout=log,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
-    websockify = subprocess.Popen(
-        ["websockify", "--web", str(webroot), str(web_port), f"localhost:{vnc_port}"],
-        stdout=log,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
+        with _session_file("handover-log").open("w") as log:
+            x11vnc = _start_x11vnc(display=display, vnc_port=vnc_port, log=log)
+            _session_file("x11vnc-pid").write_text(str(x11vnc.pid))
+            websockify = subprocess.Popen(
+                ["websockify", "--web", str(webroot), str(web_port), f"localhost:{vnc_port}"],
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+            _session_file("websockify-pid").write_text(str(websockify.pid))
 
-    _session_file("openbox-pid").write_text(str(openbox.pid))
-    _session_file("x11vnc-pid").write_text(str(x11vnc.pid))
-    _session_file("websockify-pid").write_text(str(websockify.pid))
+        # window_size refits the fingerprint's screen/window geometry so what the page reports to
+        # JS matches the real framebuffer; the sign-in URL rides in as a trailing arg to open there.
+        running = admin.launch_browser(
+            HANDOVER_SESSION,
+            headless=False,
+            user_data_dir=profile,
+            extra_args=[url] if url else None,
+            window_size=(SCREEN_W, SCREEN_H),
+        )
+    except Exception:
+        stop()
+        raise
+
     _session_file("web-port").write_text(str(web_port))
-    _session_file("vnc-port").write_text(str(vnc_port))
-    _session_file("profile").write_text(str(profile))
 
     return {
         "session": HANDOVER_SESSION,
@@ -300,13 +378,23 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
 
 
 def stop() -> dict[str, object]:
-    """Tear down the handover: websockify, x11vnc, the WM, headed Camoufox, and the web root. Idempotent."""
+    """Tear down the handover: websockify, x11vnc, the WM, headed Camoufox, Xvfb, and the web root. Idempotent.
+
+    Xvfb goes last: the bridge and the browser are its clients, so dropping the display first would
+    leave them thrashing against a server that vanished. Nothing else reaps it, and a live leftover
+    keeps answering on its display number, so `_free_display` skips past it and the next handover
+    climbs to the following one until the range runs dry.
+    """
     for suffix in ("websockify-pid", "x11vnc-pid", "openbox-pid"):
         pid = _read_pid(suffix)
         if pid is not None:
             admin._terminate_pid(pid)
         _session_file(suffix).unlink(missing_ok=True)
     admin.stop_browser(HANDOVER_SESSION)
+    xvfb_pid = _read_pid("xvfb-pid")
+    if xvfb_pid is not None:
+        admin._terminate_pid(xvfb_pid)
+    _session_file("xvfb-pid").unlink(missing_ok=True)
     # The headed software-render prefs are handover-only; drop them from whichever profile this
     # handover used so later headless launches don't inherit them.
     profile_file = _session_file("profile")
@@ -324,9 +412,11 @@ def status() -> dict[str, object]:
     return {
         "session": HANDOVER_SESSION,
         "browser": _alive(admin.read_session_browser_pid(HANDOVER_SESSION)),
+        "xvfb": _alive(_read_pid("xvfb-pid")),
         "openbox": _alive(_read_pid("openbox-pid")),
         "x11vnc": _alive(_read_pid("x11vnc-pid")),
         "websockify": _alive(_read_pid("websockify-pid")),
+        "serving": _port_serving(web_port) if web_port else False,
         "web_port": web_port,
         "page": "handover.html" if web_port else None,
     }
@@ -354,33 +444,46 @@ _PAGE_TEMPLATE = """<!doctype html>
     --label: oklch(0.46 0.012 70); --screen-bg: oklch(0.97 0.006 80); --ok: oklch(0.66 0.17 150);
   }
   @media (prefers-color-scheme: dark) {
-    :root { --desk-1: oklch(0.19 0.008 80); --desk-2: oklch(0.11 0.006 80); --label: oklch(0.72 0.02 80); --screen-bg: oklch(0.19 0.007 80); --ok: oklch(0.74 0.18 150); }
+    :root { --desk-1: oklch(0.19 0.008 80); --desk-2: oklch(0.11 0.006 80); --label: oklch(0.72 0.02 80);
+      --screen-bg: oklch(0.19 0.007 80); --ok: oklch(0.74 0.18 150); }
   }
-  :root[data-theme="light"]{color-scheme:light;--desk-1:oklch(0.95 0.008 80);--desk-2:oklch(0.88 0.014 75);--label:oklch(0.46 0.012 70);--screen-bg:oklch(0.97 0.006 80);--ok:oklch(0.66 0.17 150);}
-  :root[data-theme="dark"]{color-scheme:dark;--desk-1:oklch(0.19 0.008 80);--desk-2:oklch(0.11 0.006 80);--label:oklch(0.72 0.02 80);--screen-bg:oklch(0.19 0.007 80);--ok:oklch(0.74 0.18 150);}
+  :root[data-theme="light"]{color-scheme:light;--desk-1:oklch(0.95 0.008 80);--desk-2:oklch(0.88 0.014 75);
+    --label:oklch(0.46 0.012 70);--screen-bg:oklch(0.97 0.006 80);--ok:oklch(0.66 0.17 150);}
+  :root[data-theme="dark"]{color-scheme:dark;--desk-1:oklch(0.19 0.008 80);--desk-2:oklch(0.11 0.006 80);
+    --label:oklch(0.72 0.02 80);--screen-bg:oklch(0.19 0.007 80);--ok:oklch(0.74 0.18 150);}
 
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
   body {
     background: radial-gradient(135% 105% at 50% -25%, var(--desk-1), var(--desk-2));
     font-family: "Public Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased;
-    overflow: hidden; display: flex; align-items: center; justify-content: center; padding: 1.2vmin;
+    overflow: hidden; display: flex; align-items: center; justify-content: center;
   }
-  /* the machine fills most of the viewport; container-type lets the chin engraving scale with it */
-  .macbook { container-type: inline-size; position: relative; width: min(99vw, calc(97vh * 1.5725)); aspect-ratio: 1280 / 814; }
+  /* The machine bleeds off the top and bottom rather than sitting in letterbox bars, so a viewport
+     up to ~16:9 fills edge to edge and a wider one keeps only a little desk at the sides, which
+     beats a decapitated laptop. The chin is deeper than the top bezel, so it is nudged down until
+     the SCREEN is centred rather than the frame. 178vh is where the chin engraving would slide off
+     the bottom, and it also happens to be just past the 177.7vh that covering the top costs once
+     nudged, so it is a single fixed height. 131.1vw stops a narrow viewport cropping the screen. */
+  .macbook { container-type: inline-size; position: relative; aspect-ratio: 1240 / 740;
+    width: min(178vh, 131.1vw); flex-shrink: 0; transform: translateY(2.838%); }
   /* the screen rectangle, measured from macbook.png: the live browser shows through the cut-out */
-  #stage { position: absolute; left: 13.05%; top: 13.64%; width: 73.91%; height: 72.73%; overflow: hidden; background: var(--screen-bg); z-index: 0; }
+  #stage { position: absolute; left: 11.855%; top: 7.297%; width: 76.29%; height: 79.73%;
+    overflow: hidden; background: var(--screen-bg); z-index: 0; }
   #screen { width: 100%; height: 100%; }
-  .frame { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none; -webkit-user-drag: none; user-select: none; }
+  .frame { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1;
+    pointer-events: none; -webkit-user-drag: none; user-select: none; }
   #overlay { position: absolute; inset: 0; display: grid; place-items: center; background: var(--screen-bg); transition: opacity .45s ease; }
   #overlay.hidden { opacity: 0; pointer-events: none; }
-  .spinner { width: 26px; height: 26px; border-radius: 50%; border: 2.5px solid oklch(0.5 0 0 / 0.2); border-top-color: var(--ok); animation: spin .8s linear infinite; }
+  .spinner { width: 26px; height: 26px; border-radius: 50%; border: 2.5px solid oklch(0.5 0 0 / 0.2);
+    border-top-color: var(--ok); animation: spin .8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   #overlay p { margin: 14px 0 0; color: var(--label); font-size: 13px; }
   .overlay-inner { display: grid; justify-items: center; }
   /* "vesta" engraved on the chin in place of the removed "MacBook Pro"; scales with the machine */
-  .engraving { position: absolute; left: 0; right: 0; top: 88%; text-align: center; z-index: 2; pointer-events: none;
-    font-family: var(--serif); font-weight: 500; font-size: 2.15cqw; letter-spacing: 0.02em; color: rgb(150, 150, 153); text-shadow: 0 1px 1px rgba(0, 0, 0, 0.55); }
+  .engraving { position: absolute; left: 0; right: 0; top: 88.96%; text-align: center; z-index: 2; pointer-events: none;
+    font-family: var(--serif); font-weight: 500; font-size: 2.22cqw; letter-spacing: 0.02em;
+    color: rgb(150, 150, 153); text-shadow: 0 1px 1px rgba(0, 0, 0, 0.55); }
   @media (prefers-reduced-motion: reduce) { .spinner, #overlay { animation: none !important; transition: none !important; } }
 
   /* Hidden textarea used only to summon the phone's soft keyboard: focusing it raises the
@@ -401,8 +504,7 @@ _PAGE_TEMPLATE = """<!doctype html>
      screen fill the viewport edge to edge, so login fields are tap-sized instead of a letterboxed
      strip inside a shrunken laptop. Desktop keeps the frame (this block does not apply there). */
   @media (max-width: 820px), (pointer: coarse) {
-    body { padding: 0; }
-    .macbook { width: 100vw; height: 100vh; height: 100dvh; aspect-ratio: auto; }
+    .macbook { width: 100vw; height: 100vh; height: 100dvh; aspect-ratio: auto; transform: none; }
     .frame, .engraving { display: none; }
     #stage { left: 0; top: 0; width: 100%; height: 100%; }
     #kbd-button { display: flex; }
@@ -423,7 +525,8 @@ _PAGE_TEMPLATE = """<!doctype html>
     <img class="frame" src="./macbook.png" alt="" draggable="false">
     <div class="engraving">vesta</div>
   </div>
-  <textarea id="kbdinput" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" aria-hidden="true" tabindex="-1"></textarea>
+  <textarea id="kbdinput" autocapitalize="off" autocomplete="off" autocorrect="off"
+    spellcheck="false" aria-hidden="true" tabindex="-1"></textarea>
   <button id="kbd-button" type="button" aria-label="Show keyboard"><span class="glyph">⌨</span>Keyboard</button>
   <script type="module">
     import RFB from './core/rfb.js';

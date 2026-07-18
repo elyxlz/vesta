@@ -16,6 +16,7 @@ mod control_ws;
 mod docker;
 mod jwt;
 mod manifest;
+mod mobile_app;
 mod mounts;
 mod paths;
 mod providers;
@@ -31,6 +32,7 @@ mod time_utils;
 mod tunnel;
 mod types;
 mod update_check;
+mod update_window;
 mod upstream;
 mod vendored_bin;
 
@@ -124,7 +126,7 @@ enum TunnelAction {
     Setup {
         /// Subdomain name (e.g., "alice" for alice.yourdomain.com)
         subdomain: String,
-        /// Emit a single line of JSON ({"tunnel_id","dns_record_id","hostname"})
+        /// Emit a single line of JSON ({"`tunnel_id","dns_record_id","hostname`"})
         /// to stdout instead of human-readable output (for cloud-init / jq).
         #[arg(long)]
         json: bool,
@@ -134,7 +136,7 @@ enum TunnelAction {
 }
 
 fn die(msg: impl std::fmt::Display) -> ! {
-    eprintln!("error: {}", msg);
+    eprintln!("error: {msg}");
     std::process::exit(1);
 }
 
@@ -147,7 +149,7 @@ fn docker_exec_inherit(args: &[&str]) {
         .stdout(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::inherit())
         .status()
-        .unwrap_or_else(|e| die(format!("docker exec failed: {}", e)));
+        .unwrap_or_else(|e| die(format!("docker exec failed: {e}")));
     if !status.success() {
         std::process::exit(status.code().unwrap_or(1));
     }
@@ -292,8 +294,8 @@ fn report_restart_readiness(config: &std::path::Path) {
 /// (serve.rs binds HTTPS on the stored port and plain HTTP on port + 1).
 fn local_health_url(config: &std::path::Path) -> Option<String> {
     let https_port = read_port_file(config)?;
-    let http_port = https_port.checked_add(1)?;
-    Some(format!("http://127.0.0.1:{http_port}/health"))
+    let health_port = https_port.checked_add(1)?;
+    Some(format!("http://127.0.0.1:{health_port}/health"))
 }
 
 /// Poll `url` until it answers 2xx or `timeout` elapses. A connection refused / 5xx
@@ -359,8 +361,8 @@ fn local_lan_ip() -> Option<String> {
 }
 
 /// Bind the HTTP listener atomically inside the tokio runtime. If the HTTP port
-/// (N+1) is in use, re-select a new N via find_available_port and retry. This
-/// closes the TOCTOU race where find_available_port's probe was dropped before
+/// (N+1) is in use, re-select a new N via `find_available_port` and retry. This
+/// closes the TOCTOU race where `find_available_port`'s probe was dropped before
 /// serve.rs bound the port, letting a parallel vestad steal it.
 async fn bind_http_atomically(
     explicit: Option<u16>,
@@ -378,169 +380,16 @@ async fn bind_http_atomically(
             Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
                 if attempt + 1 == MAX_BIND_ATTEMPTS {
                     die(format!(
-                        "http bind retries exhausted on port {}: {}",
-                        http_port, e
+                        "http bind retries exhausted on port {http_port}: {e}"
                     ));
                 }
                 tracing::warn!(port, http_port, "http port raced, reselecting");
                 port = find_available_port().unwrap_or_else(|| die("no available port found"));
             }
-            Err(e) => die(format!("failed to bind http listener: {}", e)),
+            Err(e) => die(format!("failed to bind http listener: {e}")),
         }
     }
     unreachable!()
-}
-
-/// How many times startup tries to bring the tunnel up before giving up and
-/// starting anyway (with the failure shown in the banner). Absorbs a tunnel that
-/// is slow to register right after boot (DNS-readiness is handled separately by
-/// wait_for_dns_ready, so these retries are for a slow first registration).
-const TUNNEL_STARTUP_ATTEMPTS: u32 = 3;
-const TUNNEL_STARTUP_RETRY_DELAY_SECS: u64 = 5;
-
-/// A stable Cloudflare host whose resolution signals the local resolver is
-/// actually serving. Right after boot systemd-resolved can be up-but-not-ready
-/// and answer "server misbehaving"; cloudflared's edge discovery then fails
-/// fast and burns every tunnel retry in seconds. Waiting for one successful
-/// lookup first removes that race at its source.
-const DNS_READY_HOST: &str = "api.cloudflare.com:443";
-/// Bounded so a genuinely-offline box still finishes booting — the tunnel
-/// supervisor keeps retrying afterward — yet long enough to outlast a slow boot.
-const DNS_READY_MAX_WAIT_SECS: u64 = 60;
-const DNS_READY_POLL_SECS: u64 = 2;
-
-/// Wait (bounded) for DNS to resolve before the tunnel attempts. Returns as soon
-/// as a lookup succeeds, or after DNS_READY_MAX_WAIT_SECS regardless (the tunnel
-/// attempt and its supervisor handle a still-down resolver from there).
-async fn wait_for_dns_ready() {
-    let deadline =
-        tokio::time::Instant::now() + std::time::Duration::from_secs(DNS_READY_MAX_WAIT_SECS);
-    loop {
-        if let Ok(mut addrs) = tokio::net::lookup_host(DNS_READY_HOST).await {
-            if addrs.next().is_some() {
-                return;
-            }
-        }
-        if tokio::time::Instant::now() >= deadline {
-            tracing::warn!("DNS still not resolving after {DNS_READY_MAX_WAIT_SECS}s; attempting tunnel anyway");
-            return;
-        }
-        tokio::time::sleep(std::time::Duration::from_secs(DNS_READY_POLL_SECS)).await;
-    }
-}
-
-/// Bring the tunnel up at startup, retrying before giving up. On success the
-/// banner advertises the live URL and the supervisor keeps it alive; if every
-/// attempt fails, vestad starts ANYWAY (local access + agents) with the error
-/// surfaced in the banner — a broken tunnel must not block the rest of the box.
-///
-/// The /ready pre-flight is credential-free, so this works even on a box that
-/// can't reach the Cloudflare API. Managed (vesta.run) boxes are exempt: the
-/// control plane owns the tunnel, so we trust the seeded config and let the
-/// supervisor (re)connect rather than pre-flighting.
-///
-/// Whether a failed boot setup should discard the saved `tunnel.json`. Only
-/// forget when the box could rebuild it — i.e. it holds its own Cloudflare creds
-/// (the same predicate that gates the recreate path in `try_establish_tunnel`).
-/// Forgetting a config the box CANNOT rebuild turns a transient boot failure into
-/// a permanent outage. Managed boxes never forget (the control plane owns it).
-fn should_forget_failed_tunnel(failed: bool, managed: bool, has_creds: bool) -> bool {
-    failed && !managed && has_creds
-}
-
-async fn setup_and_verify_tunnel(config: &std::path::Path, port: u16) -> TunnelStatus {
-    // Managed boxes don't pre-flight cloudflared at boot (they trust the seeded
-    // config), so only the self-hosted pre-flight path needs a ready resolver.
-    if !is_cloud_managed() {
-        wait_for_dns_ready().await;
-    }
-    let status = retry_tunnel(
-        TUNNEL_STARTUP_ATTEMPTS,
-        std::time::Duration::from_secs(TUNNEL_STARTUP_RETRY_DELAY_SECS),
-        |attempt| async move {
-            let result = try_establish_tunnel(config, port).await;
-            if let Err(reason) = &result {
-                tracing::warn!(
-                    attempt,
-                    attempts = TUNNEL_STARTUP_ATTEMPTS,
-                    "tunnel not up: {reason}"
-                );
-            }
-            result
-        },
-    )
-    .await;
-
-    // Gave up. Drop the saved config ONLY when this box could recreate it (has its
-    // own Cloudflare creds). On a creds-less box (e.g. a legacy vesta.run tunnel) a
-    // merely-transient boot failure — DNS not ready yet — would otherwise orphan a
-    // still-valid tunnel forever AND suppress the supervisor, which keys off
-    // tunnel.json existing. Keeping the config lets the supervisor respawn
-    // cloudflared and self-heal once DNS is up; a genuinely revoked tunnel just
-    // loops with its reason in `vestad logs` (recovery is `vestad connect`).
-    if should_forget_failed_tunnel(
-        matches!(status, TunnelStatus::Failed(_)),
-        is_cloud_managed(),
-        tunnel::has_cf_creds(config),
-    ) {
-        tunnel::forget_tunnel(config);
-    }
-    status
-}
-
-/// Retry an async tunnel attempt up to `attempts` times, sleeping `delay` between
-/// tries. Returns `Active` with the first URL that comes up, or `Failed` carrying
-/// the last error once every attempt has failed.
-async fn retry_tunnel<F, Fut>(
-    attempts: u32,
-    delay: std::time::Duration,
-    mut attempt: F,
-) -> TunnelStatus
-where
-    F: FnMut(u32) -> Fut,
-    Fut: std::future::Future<Output = Result<String, String>>,
-{
-    let mut reason = "tunnel could not be established".to_string();
-    for n in 1..=attempts {
-        match attempt(n).await {
-            Ok(url) => return TunnelStatus::Active(url),
-            Err(e) => {
-                reason = e;
-                if n < attempts {
-                    tokio::time::sleep(delay).await;
-                }
-            }
-        }
-    }
-    TunnelStatus::Failed(reason)
-}
-
-/// One attempt to bring up and verify the tunnel. `Ok(url)` once it registers an
-/// edge connection; `Err(reason)` describes why this attempt failed.
-async fn try_establish_tunnel(config: &std::path::Path, port: u16) -> Result<String, String> {
-    let tc = tunnel::ensure_cloudflared(config).and_then(|_| tunnel::ensure_tunnel(config))?;
-
-    if is_cloud_managed() {
-        return Ok(format!("https://{}", tc.hostname));
-    }
-
-    if tunnel::preflight_tunnel(config, port).await {
-        return Ok(format!("https://{}", tc.hostname));
-    }
-    tracing::warn!(hostname = %tc.hostname, "saved tunnel failed to register");
-
-    // With our own creds the tunnel may be fixable — recreate it from scratch
-    // (new tunnel + token + DNS) and re-verify.
-    if tunnel::has_cf_creds(config) {
-        let subdomain = tc.hostname.split('.').next().unwrap_or("");
-        let fresh = tunnel::setup_tunnel(config, subdomain)?;
-        if tunnel::preflight_tunnel(config, port).await {
-            tracing::info!(hostname = %fresh.hostname, "tunnel recreated and registered");
-            return Ok(format!("https://{}", fresh.hostname));
-        }
-        return Err("recreated tunnel still could not register".to_string());
-    }
-    Err("saved tunnel could not register".to_string())
 }
 
 fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
@@ -570,17 +419,42 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-        .unwrap()
+        .expect("tokio runtime builds")
         .block_on(async {
             let (port, http_listener) = bind_http_atomically(port, &config).await;
             serve::write_port_file(&config, port);
 
+            // Best-effort convergence before the surfaces below read
+            // tunnel.json: create a missing tunnel (fresh BYOK box) or
+            // reconcile a changed pinned subdomain, so agent env files, /info,
+            // and the banner get the right identity URL on first boot. Failure
+            // is fine here; the supervisor keeps converging after boot.
+            let byok_tunnel_wanted =
+                tunnel::has_cf_creds(&config) && !tunnel::has_declined_tunnel(&config);
+            if !no_tunnel && !is_cloud_managed() && byok_tunnel_wanted {
+                if let Err(e) = tunnel::ensure_tunnel(&config) {
+                    tracing::warn!("boot tunnel converge failed (supervisor will retry): {e}");
+                }
+            }
+
+            // Boot renders no verdict on tunnel health: the supervisor owns
+            // establish/verify/repair and mirrors sustained state into
+            // status.json via on_tunnel_up. Boot only decides whether a tunnel
+            // is intended and advertises the identity URL from tunnel.json
+            // (read after the converge above, which may have just created it).
+            let saved_url = tunnel::get_tunnel_config(&config).map(|tc| tc.url());
+            let tunnel_intended =
+                !no_tunnel && (is_cloud_managed() || saved_url.is_some() || byok_tunnel_wanted);
+            let tunnel_url = if tunnel_intended { saved_url } else { None };
             let tunnel_status = if no_tunnel {
                 TunnelStatus::Disabled
+            } else if tunnel_intended {
+                TunnelStatus::Connecting(tunnel_url.clone())
             } else {
-                setup_and_verify_tunnel(&config, port).await
+                TunnelStatus::Failed(
+                    "no tunnel configured: run `vestad connect` to connect a domain".to_string(),
+                )
             };
-            let tunnel_url = tunnel_status.url().map(str::to_string);
 
             docker::update_all_agent_env_files(&config.join("agents"), port, tunnel_url.as_deref());
             // Only advertise a LAN address when the API is actually bound to the
@@ -588,7 +462,7 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
             let lan_url = expose_lan
                 .then(local_lan_ip)
                 .flatten()
-                .map(|ip| format!("https://{}:{}", ip, port));
+                .map(|ip| format!("https://{ip}:{port}"));
             let user = std::env::var("USER")
                 .or_else(|_| std::env::var("LOGNAME"))
                 .unwrap_or_else(|_| "unknown".into());
@@ -603,31 +477,31 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
                 .into_iter()
                 .map(|name| AgentEntry { name, status: None })
                 .collect();
-            let status = Status::new(
-                env!("CARGO_PKG_VERSION").to_string(),
+            let status = Status {
+                version: env!("CARGO_PKG_VERSION").to_string(),
                 user,
                 port,
                 dev_mode,
                 expose_lan,
-                lan_url.clone(),
-                tunnel_status,
+                lan_url: lan_url.clone(),
+                tunnel: tunnel_status,
                 agents,
-            );
+                pid: std::process::id(),
+            };
             status.persist(&config);
             status.print_banner(&api_key);
-
-            // Supervise whenever a tunnel is INTENDED, not only when boot-time
-            // setup succeeded: a managed box whose tunnel.json the control plane
-            // is still seeding, or a transient ensure_tunnel failure, must not
-            // leave the daemon tunnel-less until a manual restart. The supervisor
-            // re-reads tunnel.json on every respawn, so late config is picked up.
-            let tunnel_intended = tunnel_url.is_some()
-                || (!no_tunnel
-                    && (is_cloud_managed() || tunnel::get_tunnel_config(&config).is_some()));
 
             // Keep status.json honest: on a SUSTAINED tunnel outage the supervisor
             // flips the tunnel field to an error and back to enabled on recovery.
             // Transient blips it recovers from on its own don't change it.
+            // Recovery guidance differs by who owns the tunnel: a managed
+            // (vesta.run) tunnel is the control plane's to fix, a self-hosted
+            // one is re-created by `vestad connect`.
+            let tunnel_down_hint = if is_cloud_managed() {
+                "tunnel down 2+ min; the vesta.run control plane owns it and should recover it"
+            } else {
+                "tunnel down 2+ min; if it persists, run vestad connect"
+            };
             let status = std::sync::Arc::new(std::sync::Mutex::new(status));
             let on_tunnel_up: std::sync::Arc<dyn Fn(bool) + Send + Sync> = {
                 let status = status.clone();
@@ -635,22 +509,19 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
                 let tunnel_url = tunnel_url.clone();
                 std::sync::Arc::new(move |up: bool| {
                     let next = if up {
-                        match tunnel_url.clone().or_else(|| {
-                            tunnel::get_tunnel_config(&config)
-                                .map(|tc| format!("https://{}", tc.hostname))
-                        }) {
+                        match tunnel::get_tunnel_config(&config)
+                            .map(|tc| tc.url())
+                            .or_else(|| tunnel_url.clone())
+                        {
                             Some(url) => TunnelStatus::Active(url),
                             None => return, // can't name the URL; leave the field as-is
                         }
                     } else {
-                        // Fired only after TUNNEL_DOWN_SUSTAINED_SECS with a live
-                        // cloudflared whose edge stayed unregistered (a wedged
-                        // connector). A revoked/deleted tunnel exits too fast to
-                        // reach this path and keeps its boot-time failure reason,
-                        // so this is a general recovery hint, not revoked-specific.
-                        TunnelStatus::Failed(
-                            "tunnel down 2+ min — if it persists, run vestad connect".to_string(),
-                        )
+                        // Fired once the tunnel has been unregistered for
+                        // TUNNEL_DOWN_SUSTAINED_SECS, whatever the failure mode
+                        // (wedged connector, fast-exiting cloudflared, dead
+                        // config): a general recovery hint, not revoked-specific.
+                        TunnelStatus::Failed(tunnel_down_hint.to_string())
                     };
                     if let Ok(mut s) = status.lock() {
                         s.set_tunnel(next);
@@ -724,7 +595,7 @@ fn run_server_systemd(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
             return;
         }
         if let Some(pid) = systemd::main_pid() {
-            eprintln!("vestad is already running (pid {}).", pid);
+            eprintln!("vestad is already running (pid {pid}).");
         } else {
             eprintln!("vestad is already running.");
         }
@@ -763,16 +634,14 @@ fn run_server_systemd(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
     eprintln!("scan the QR or open the link to create your first agent. manage with vestad status | logs | restart.");
 }
 
-/// Log to stdout (captured by journald under systemd, shown in the terminal under
-/// `cargo run`) and to a rolling file under the config dir. The file is what the
-/// gateway logs viewer tails, so the viewer works regardless of how vestad is run.
-/// A failed appender (no HOME, unwritable dir) degrades to stdout-only rather than
-/// crashing the daemon.
+/// Log to stdout (journald under systemd, the terminal under `cargo run`) and to a
+/// rolling file under the config dir; the file is what the gateway logs viewer tails,
+/// so the viewer works regardless of how vestad is run. A failed appender (no HOME,
+/// unwritable dir) degrades to stdout-only rather than crashing the daemon.
 ///
-/// ANSI is disabled on both sinks: the two fmt layers share one span-field cache
-/// (`FormattedFields<DefaultFields>`) in the span extensions, so a colored stdout
-/// layer would bleed escape codes into the plain file. Logs are plain text on every
-/// sink; the gateway logs viewer adds its own per-level color in the browser.
+/// ANSI is disabled on both sinks: the two fmt layers share one span-field cache in
+/// the span extensions, so a colored stdout layer would bleed escape codes into the
+/// plain file; the gateway logs viewer adds its own per-level color in the browser.
 fn init_tracing() {
     use tracing_subscriber::prelude::*;
 
@@ -833,16 +702,13 @@ fn main() {
 
         Command::Status => {
             let config = config_dir();
-            let binary_path = std::env::current_exe()
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|_| "<unknown>".into());
+            let binary_path = std::env::current_exe().map_or_else(|_| "<unknown>".into(), |p| p.display().to_string());
             let agent_count = std::fs::read_dir(config.join("agents"))
-                .map(|rd| {
+                .map_or(0, |rd| {
                     rd.filter_map(Result::ok)
                         .filter(|e| e.file_name().to_string_lossy().ends_with(".env"))
                         .count()
-                })
-                .unwrap_or(0);
+                });
 
             eprintln!();
             eprintln!(
@@ -879,7 +745,7 @@ fn main() {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
-                .unwrap();
+                .expect("tokio runtime builds");
             rt.block_on(docker::ensure_running(&docker, &cname))
                 .unwrap_or_else(|e| die(&e));
 
@@ -892,7 +758,7 @@ fn main() {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
-                .unwrap();
+                .expect("tokio runtime builds");
 
             match action {
                 BackupAction::Export { name, output } => {
@@ -903,7 +769,7 @@ fn main() {
                     rt.block_on(async {
                         let cs = docker::container_status(&docker, &cname).await;
                         if cs == docker::ContainerStatus::NotFound {
-                            die(format!("agent '{}' not found", name));
+                            die(format!("agent '{name}' not found"));
                         }
 
                         let was_running = cs == docker::ContainerStatus::Running;
@@ -915,18 +781,18 @@ fn main() {
                                 backup::BACKUP_STOP_TIMEOUT_SECS,
                             )
                             .await
-                            .unwrap_or_else(|e| die(format!("failed to stop container: {}", e)));
+                            .unwrap_or_else(|e| die(format!("failed to stop container: {e}")));
                         }
 
                         eprintln!("snapshotting container...");
-                        let temp_tag = format!("vesta-export:{}-temp", name);
+                        let temp_tag = format!("vesta-export:{name}-temp");
                         if let Err(e) =
                             docker::snapshot_container(&docker, &cname, &temp_tag, &[]).await
                         {
                             if was_running {
                                 docker::start_container(&docker, &cname).await;
                             }
-                            die(format!("snapshot failed: {}", e));
+                            die(format!("snapshot failed: {e}"));
                         }
 
                         if was_running {
@@ -936,11 +802,11 @@ fn main() {
                         eprintln!("exporting to {}...", output.display());
                         docker::export_image_gzip(&docker, &temp_tag, &output)
                             .await
-                            .unwrap_or_else(|e| die(format!("export failed: {}", e)));
+                            .unwrap_or_else(|e| die(format!("export failed: {e}")));
 
                         docker::remove_image(&docker, &temp_tag)
                             .await
-                            .unwrap_or_else(|e| die(format!("failed to remove temp image: {}", e)));
+                            .unwrap_or_else(|e| die(format!("failed to remove temp image: {e}")));
 
                         eprintln!("exported: {}", output.display());
                     });
@@ -957,19 +823,18 @@ fn main() {
 
                     rt.block_on(async {
                         if docker::container_status(&docker, &cname).await != docker::ContainerStatus::NotFound {
-                            die(format!("agent '{}' already exists — destroy it first or pick a different name", name));
+                            die(format!("agent '{name}' already exists — destroy it first or pick a different name"));
                         }
 
                         eprintln!("loading image from {}...", input.display());
                         let loaded_image = docker::import_image_gzip(&docker, &input).await
-                            .unwrap_or_else(|e| die(format!("import failed: {}", e)));
+                            .unwrap_or_else(|e| die(format!("import failed: {e}")));
                         let loaded_image = loaded_image.as_str();
 
-                        eprintln!("creating agent '{}'...", name);
+                        eprintln!("creating agent '{name}'...");
                         let config = config_dir();
                         let vestad_port = read_port_file(&config).unwrap_or(0);
-                        let vestad_tunnel = tunnel::get_tunnel_config(&config)
-                            .map(|tc| format!("https://{}", tc.hostname));
+                        let vestad_tunnel = tunnel::get_tunnel_config(&config).map(|tc| tc.url());
                         let env_config = docker::AgentEnvConfig {
                             config_dir: config.clone(),
                             agents_dir: config.join("agents"),
@@ -983,13 +848,25 @@ fn main() {
                         // root and the next vestad startup could no longer write into it.
                         upstream::ensure_upstream(&config, &code_dir).unwrap_or_else(|e| die(e.to_string()));
                         let port = docker::allocate_port(&env_config.agents_dir).unwrap_or_else(|e| die(&e));
-                        docker::create_container(&docker, &cname, loaded_image, port, &name, &env_config, true, &[]).await
-                            .unwrap_or_else(|e| die(&e));
+                        docker::create_container(
+                            &docker,
+                            &env_config,
+                            docker::ContainerSpec {
+                                cname: &cname,
+                                image: loaded_image,
+                                port,
+                                agent_name: &name,
+                                manage_core_code: true,
+                                user_mounts: &[],
+                            },
+                        )
+                        .await
+                        .unwrap_or_else(|e| die(&e));
 
                         if !docker::start_container(&docker, &cname).await {
                             die("failed to start imported agent");
                         }
-                        eprintln!("imported: {} (port {})", name, port);
+                        eprintln!("imported: {name} (port {port})");
                     });
                 }
             }
@@ -1032,6 +909,11 @@ fn main() {
                 }
                 TunnelAction::Destroy => {
                     tunnel::destroy_tunnel(&config).unwrap_or_else(|e| die(e));
+                    if let Err(e) = tunnel::decline_tunnel(&config) {
+                        eprintln!(
+                            "warning: tunnel destroyed but failed to persist the no-tunnel preference: {e}"
+                        );
+                    }
                     eprintln!("✓ tunnel removed");
                 }
             }
@@ -1040,12 +922,7 @@ fn main() {
         Command::Update => {
             let outcome = self_update::perform_update(channel::Channel::effective())
                 .unwrap_or_else(|e| die(e.to_string()));
-            if !outcome.updated {
-                println!(
-                    "vestad already at the latest version (v{})",
-                    outcome.current
-                );
-            } else {
+            if outcome.updated {
                 println!("✓ updated v{} → v{}", outcome.current, outcome.latest);
                 println!(
                     "{}",
@@ -1055,6 +932,11 @@ fn main() {
                         "  run `vestad` to start the new version."
                     },
                 );
+            } else {
+                println!(
+                    "vestad already at the latest version (v{})",
+                    outcome.current
+                );
             }
         }
 
@@ -1063,8 +945,9 @@ fn main() {
         }
 
         Command::Uninstall => {
-            eprint!("This will stop vestad, remove its systemd service, config, and binary. Continue? [y/N] ");
             use std::io::Write;
+
+            eprint!("This will stop vestad, remove its systemd service, config, and binary. Continue? [y/N] ");
             std::io::stderr().flush().ok();
             let mut answer = String::new();
             if std::io::stdin().read_line(&mut answer).is_err() {
@@ -1078,10 +961,10 @@ fn main() {
 
             if systemd::is_active() {
                 eprintln!("stopping vestad service...");
-                systemd::stop().unwrap_or_else(|e| eprintln!("warning: {}", e));
+                systemd::stop().unwrap_or_else(|e| eprintln!("warning: {e}"));
             }
             if let Err(err) = systemd::uninstall() {
-                eprintln!("warning: {}", err);
+                eprintln!("warning: {err}");
             } else {
                 eprintln!("  removed systemd service");
             }
@@ -1090,14 +973,14 @@ fn main() {
             match std::fs::remove_dir_all(&config) {
                 Ok(()) => eprintln!("  removed {}", config.display()),
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                Err(err) => eprintln!("warning: failed to remove config: {}", err),
+                Err(err) => eprintln!("warning: failed to remove config: {err}"),
             }
 
             if let Some(tunnel_dir) = config.parent().map(|p| p.join("cloudflared")) {
                 match std::fs::remove_dir_all(&tunnel_dir) {
                     Ok(()) => eprintln!("  removed {}", tunnel_dir.display()),
                     Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(err) => eprintln!("warning: failed to remove cloudflared: {}", err),
+                    Err(err) => eprintln!("warning: failed to remove cloudflared: {err}"),
                 }
             }
 
@@ -1126,66 +1009,6 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn forget_failed_tunnel_only_when_the_box_can_recreate_it() {
-        // Transient boot failure on a creds-less box: keep the config so the
-        // supervisor can self-heal. Forgetting would permanently orphan it.
-        assert!(!should_forget_failed_tunnel(true, false, false));
-        // Failed WITH own creds: the recreate path already tried and failed, so
-        // dropping the dead config is safe — a fresh boot / connect rebuilds it.
-        assert!(should_forget_failed_tunnel(true, false, true));
-        // Managed boxes never forget — the control plane owns tunnel.json.
-        assert!(!should_forget_failed_tunnel(true, true, true));
-        // A tunnel that came up is never forgotten.
-        assert!(!should_forget_failed_tunnel(false, false, true));
-    }
-
-    #[tokio::test]
-    async fn retry_tunnel_succeeds_without_retrying_when_first_attempt_works() {
-        let calls = std::cell::Cell::new(0u32);
-        let status = retry_tunnel(3, std::time::Duration::ZERO, |_| {
-            calls.set(calls.get() + 1);
-            async { Ok::<String, String>("https://host".to_string()) }
-        })
-        .await;
-        assert!(matches!(status, TunnelStatus::Active(url) if url == "https://host"));
-        assert_eq!(calls.get(), 1, "should not retry once an attempt succeeds");
-    }
-
-    #[tokio::test]
-    async fn retry_tunnel_retries_until_an_attempt_succeeds() {
-        let calls = std::cell::Cell::new(0u32);
-        let status = retry_tunnel(3, std::time::Duration::ZERO, |attempt| {
-            calls.set(calls.get() + 1);
-            async move {
-                if attempt < 3 {
-                    Err(format!("not up yet (attempt {attempt})"))
-                } else {
-                    Ok("https://up".to_string())
-                }
-            }
-        })
-        .await;
-        assert!(matches!(status, TunnelStatus::Active(url) if url == "https://up"));
-        assert_eq!(calls.get(), 3);
-    }
-
-    #[tokio::test]
-    async fn retry_tunnel_gives_up_with_the_last_error_after_all_attempts() {
-        let calls = std::cell::Cell::new(0u32);
-        let status = retry_tunnel(3, std::time::Duration::ZERO, |attempt| {
-            calls.set(calls.get() + 1);
-            async move { Err::<String, String>(format!("boom {attempt}")) }
-        })
-        .await;
-        assert!(matches!(status, TunnelStatus::Failed(reason) if reason == "boom 3"));
-        assert_eq!(
-            calls.get(),
-            3,
-            "should try exactly `attempts` times before giving up"
-        );
-    }
 
     #[test]
     fn local_health_url_targets_http_port_plus_one() {

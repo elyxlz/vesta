@@ -14,7 +14,7 @@ pub struct TopModel {
     pub label: String,
     pub author: String,
     pub context_length: Option<u64>,
-    /// USD per million prompt/completion/cache-read tokens, when OpenRouter reports it.
+    /// USD per million prompt/completion/cache-read tokens, when `OpenRouter` reports it.
     pub input_price: Option<f64>,
     pub output_price: Option<f64>,
     pub cache_read_price: Option<f64>,
@@ -54,9 +54,8 @@ struct FrontendPricing {
 }
 
 // OpenRouter reports per-token prices as decimal strings; convert to USD per million.
-fn price_per_million(raw: &Option<String>) -> Option<f64> {
-    raw.as_ref()?
-        .parse::<f64>()
+fn price_per_million(raw: Option<&str>) -> Option<f64> {
+    raw?.parse::<f64>()
         .ok()
         .map(|per_token| per_token * TOKENS_PER_PRICE_UNIT)
 }
@@ -96,9 +95,9 @@ pub async fn list_top_models_handler(
             let pricing = m.endpoint.and_then(|e| e.pricing);
             let (input_price, output_price, cache_read_price) = match pricing {
                 Some(p) => (
-                    price_per_million(&p.prompt),
-                    price_per_million(&p.completion),
-                    price_per_million(&p.input_cache_read),
+                    price_per_million(p.prompt.as_deref()),
+                    price_per_million(p.completion.as_deref()),
+                    price_per_million(p.input_cache_read.as_deref()),
                 ),
                 None => (None, None, None),
             };
@@ -121,7 +120,7 @@ pub struct ValidateKeyBody {
     pub key: String,
 }
 
-/// Probes OpenRouter's /api/v1/key with the user-supplied key. 200 means the key
+/// Probes `OpenRouter`'s /api/v1/key with the user-supplied key. 200 means the key
 /// is valid; 401 means it isn't. Lets both CLI and web validate before commit.
 pub async fn validate_key_handler(
     State(state): State<SharedState>,

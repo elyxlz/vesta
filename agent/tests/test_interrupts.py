@@ -5,14 +5,14 @@ import typing as tp
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import core.models as vm
-import core.config as cfg
 from claude_agent_sdk.types import SubagentStartHookInput
 from conftest import assistant_msg, consuming, idle_message_stream, make_stream_harness, result_msg
-from core.sdk_parsing import _subagent_hook
-from core.events import SubagentStartEvent, SubagentStopEvent
 from wait_util import wait_for_condition
 
+import core.config as cfg
+import core.models as vm
+from core.events import SubagentStartEvent, SubagentStopEvent
+from core.sdk_parsing import _subagent_hook
 
 # --- Subagent hooks ---
 
@@ -50,7 +50,7 @@ async def test_message_processor_sets_busy_flag_during_turn(config, state):
     processing_started = asyncio.Event()
     busy_during_turn = False
 
-    async def slow_side_effect(msg, *, state, config, is_user, pre_sent=False):
+    async def slow_side_effect(msg, *, state, config):
         nonlocal busy_during_turn
         busy_during_turn = state.processor_busy
         processing_started.set()
@@ -96,7 +96,7 @@ async def test_run_messages_with_preempts_cancels_process_task(config, state):
     task_started = asyncio.Event()
     task_cancelled = False
 
-    async def hanging_process(msg, *, state, config, is_user, pre_sent=False):
+    async def hanging_process(msg, *, state, config):
         nonlocal task_cancelled
         task_started.set()
         try:
@@ -123,15 +123,15 @@ async def test_query_not_delivered_keeps_notification_file(config, state, tmp_pa
     """A turn whose query never reached the CLI (send timeout, or client.query() raised on a dead
     transport) must not delete its notification file: the resumed session never saw the message,
     so it must re-run on the next boot rather than being silently lost."""
-    from core.client import QueryNotDelivered
+    from core.client import QueryNotDeliveredError
     from core.loops import _run_messages_with_preempts
 
     queue: asyncio.Queue = asyncio.Queue()
     notif_path = tmp_path / "notif.json"
     notif_path.write_text("{}")
 
-    async def failing_process(msg, *, state, config, is_user, pre_sent=False):
-        raise QueryNotDelivered("query timed out before the CLI received it")
+    async def failing_process(msg, *, state, config):
+        raise QueryNotDeliveredError("query timed out before the CLI received it")
 
     with patch("core.loops.process_message", failing_process):
         await _run_messages_with_preempts(vm.QueuedTurn("hello", True, [str(notif_path)]), queue=queue, state=state, config=config)
@@ -151,7 +151,7 @@ async def test_response_timeout_deletes_notification_file(config, state, tmp_pat
     notif_path = tmp_path / "notif.json"
     notif_path.write_text("{}")
 
-    async def failing_process(msg, *, state, config, is_user, pre_sent=False):
+    async def failing_process(msg, *, state, config):
         raise TimeoutError
 
     with patch("core.loops.process_message", failing_process):
@@ -171,7 +171,7 @@ async def test_non_interruptible_boot_turn_is_not_preempted(config, state):
     boot_started = asyncio.Event()
     release_boot = asyncio.Event()
 
-    async def fake_process(msg, *, state, config, is_user, pre_sent=False):
+    async def fake_process(msg, *, state, config):
         processed.append(msg)
         if msg == "boot":
             boot_started.set()
@@ -330,15 +330,16 @@ async def test_attempt_interrupt_fires_while_tool_in_flight(tmp_path, state, eve
 async def test_converse_collects_texts_and_ends_on_result():
     """A normal turn: converse returns every text the consumer attributed to it, in order."""
     from claude_agent_sdk import TextBlock
+
     from core.client import converse
 
-    state, config, mock_client, emitted, message_queue, consumed = make_stream_harness()
+    state, config, mock_client, emitted, message_queue, _consumed = make_stream_harness()
 
     async with consuming(state, config):
         await message_queue.put(assistant_msg([TextBlock("one")]))
         await message_queue.put(assistant_msg([TextBlock("two")]))
         await message_queue.put(result_msg())
-        responses = await converse("test prompt", state=state, config=config, show_output=True)
+        responses = (await converse("test prompt", state=state, config=config, show_output=True)).texts
 
     assert responses == ["one", "two"]
     assert [t for t, _ in emitted] == ["one", "two"]
@@ -349,9 +350,10 @@ async def test_converse_collects_texts_and_ends_on_result():
 async def test_converse_emits_text_immediately_with_tool_use():
     """Text in messages that also have tool_use must be emitted immediately, not buffered."""
     from claude_agent_sdk import TextBlock, ToolUseBlock
+
     from core.client import converse
 
-    state, config, mock_client, emitted, message_queue, consumed = make_stream_harness()
+    state, config, _mock_client, emitted, message_queue, _consumed = make_stream_harness()
 
     async with consuming(state, config):
         await message_queue.put(assistant_msg([TextBlock("restarting daemon"), ToolUseBlock("1", "Bash", {})]))
@@ -367,9 +369,10 @@ async def test_converse_emits_text_immediately_with_tool_use():
 @pytest.mark.anyio
 async def test_converse_emits_thinking_events():
     from claude_agent_sdk import TextBlock, ThinkingBlock
+
     from core.client import converse
 
-    state, config, mock_client, emitted, message_queue, consumed = make_stream_harness()
+    state, config, _mock_client, emitted, message_queue, _consumed = make_stream_harness()
     thinking_events: list[tuple[str, str]] = []
     original_emit = state.event_bus.emit
 
@@ -396,6 +399,7 @@ async def test_late_result_after_timeout_does_not_wedge_later_turns():
     closes early (advisory), but every message still reaches the user in real time, the stray
     result is dropped, and the stream self-heals by the turn after."""
     from claude_agent_sdk import TextBlock
+
     from core.client import converse
 
     state, config, mock_client, emitted, message_queue, consumed = make_stream_harness(response_timeout=1)
@@ -433,7 +437,7 @@ async def test_late_result_after_timeout_does_not_wedge_later_turns():
             await message_queue.put(result_msg())
 
         feeder = asyncio.create_task(feed_turn3())
-        responses3 = await converse("turn three", state=state, config=config, show_output=True)
+        responses3 = (await converse("turn three", state=state, config=config, show_output=True)).texts
         await feeder
 
     assert responses3 == ["turn three answer"], f"stream did not self-heal: {responses3}"
@@ -444,6 +448,7 @@ async def test_result_with_no_open_turn_is_dropped():
     """An unprompted ResultMessage (a self-initiated CLI continuation turn) arriving while idle is
     dropped, its text still emitted, and the next real turn is unaffected."""
     from claude_agent_sdk import TextBlock
+
     from core.client import converse
 
     state, config, mock_client, emitted, message_queue, consumed = make_stream_harness()
@@ -464,7 +469,7 @@ async def test_result_with_no_open_turn_is_dropped():
             await message_queue.put(result_msg())
 
         feeder = asyncio.create_task(feed())
-        responses = await converse("real question", state=state, config=config, show_output=True)
+        responses = (await converse("real question", state=state, config=config, show_output=True)).texts
         await feeder
 
     assert responses == ["real answer"], f"continuation result leaked into the next turn: {responses}"
@@ -474,15 +479,16 @@ async def test_result_with_no_open_turn_is_dropped():
 async def test_converse_raises_when_stream_dies_mid_turn():
     """A stream death mid-turn surfaces through the open turn so run_one's restart path fires."""
     from claude_agent_sdk import ClaudeSDKError, TextBlock
+
     from core.client import converse
 
-    state, config, mock_client, emitted, message_queue, consumed = make_stream_harness()
+    state, config, mock_client, _emitted, _message_queue, _consumed = make_stream_harness()
 
     async def dying_stream():
         yield assistant_msg([TextBlock("partial")])
         raise ClaudeSDKError("subprocess died")
 
-    mock_client.receive_messages = MagicMock(side_effect=lambda: dying_stream())
+    mock_client.receive_messages = MagicMock(side_effect=dying_stream)
 
     async with consuming(state, config):
         with pytest.raises(ClaudeSDKError, match="subprocess died"):
@@ -495,7 +501,7 @@ async def test_converse_times_out_on_stream_silence():
     same silence budget the per-message wait enforced before the consumer restructure."""
     from core.client import converse
 
-    state, config, mock_client, emitted, message_queue, consumed = make_stream_harness(response_timeout=1)
+    state, config, mock_client, _emitted, _message_queue, _consumed = make_stream_harness(response_timeout=1)
 
     async with consuming(state, config):
         with pytest.raises(TimeoutError):
@@ -506,11 +512,11 @@ async def test_converse_times_out_on_stream_silence():
 
 @pytest.mark.anyio
 async def test_converse_raises_query_not_delivered_on_send_timeout():
-    """A query send that never completes within query_timeout raises QueryNotDelivered, not a bare
+    """A query send that never completes within query_timeout raises QueryNotDeliveredError, not a bare
     TimeoutError, so the caller can tell a pre-delivery failure from a post-delivery one."""
-    from core.client import QueryNotDelivered, converse
+    from core.client import QueryNotDeliveredError, converse
 
-    state, config, mock_client, emitted, message_queue, consumed = make_stream_harness()
+    state, config, mock_client, _emitted, _message_queue, _consumed = make_stream_harness()
     config.query_timeout = 1
 
     async def slow_query(*args, **kwargs):
@@ -519,21 +525,21 @@ async def test_converse_raises_query_not_delivered_on_send_timeout():
     mock_client.query = AsyncMock(side_effect=slow_query)
 
     async with consuming(state, config):
-        with pytest.raises(QueryNotDelivered):
+        with pytest.raises(QueryNotDeliveredError):
             await asyncio.wait_for(converse("test", state=state, config=config, show_output=True), timeout=5.0)
 
 
 @pytest.mark.anyio
 async def test_converse_raises_query_not_delivered_on_dead_transport():
     """client.query() raising on a dead transport (no send timeout involved) is also surfaced as
-    QueryNotDelivered: the CLI never received the prompt either way."""
-    from core.client import QueryNotDelivered, converse
+    QueryNotDeliveredError: the CLI never received the prompt either way."""
+    from core.client import QueryNotDeliveredError, converse
 
-    state, config, mock_client, emitted, message_queue, consumed = make_stream_harness()
+    state, config, mock_client, _emitted, _message_queue, _consumed = make_stream_harness()
     mock_client.query = AsyncMock(side_effect=RuntimeError("transport closed"))
 
     async with consuming(state, config):
-        with pytest.raises(QueryNotDelivered):
+        with pytest.raises(QueryNotDeliveredError):
             await asyncio.wait_for(converse("test", state=state, config=config, show_output=True), timeout=5.0)
 
 
@@ -541,9 +547,10 @@ async def test_converse_raises_query_not_delivered_on_dead_transport():
 async def test_compact_session_waits_for_result(config):
     """compact_session blocks until the compaction turn's ResultMessage closes the turn."""
     from claude_agent_sdk import SystemMessage
+
     from core.client import compact_session
 
-    state, _, mock_client, emitted, message_queue, consumed = make_stream_harness()
+    state, _, mock_client, _emitted, message_queue, _consumed = make_stream_harness()
 
     async with consuming(state, config):
         boundary = SystemMessage(subtype="compact_boundary", data={"compact_metadata": {"pre_tokens": 1000, "trigger": "manual"}})
@@ -560,9 +567,10 @@ async def test_compact_session_collapses_multiline_prompt_to_one_line(config):
     """A slash command is a single line: multi-line guidance is collapsed so nothing after the
     first newline is truncated by the CLI parser."""
     from claude_agent_sdk import SystemMessage
+
     from core.client import compact_session
 
-    state, _, mock_client, emitted, message_queue, consumed = make_stream_harness()
+    state, _, mock_client, _emitted, message_queue, _consumed = make_stream_harness()
 
     async with consuming(state, config):
         boundary = SystemMessage(subtype="compact_boundary", data={"compact_metadata": {"pre_tokens": 1000, "trigger": "manual"}})
@@ -582,7 +590,7 @@ async def test_compact_session_query_send_timeout_fails_compaction():
     follow-up, still restarts) instead of wedging the message processor forever."""
     from core.client import compact_session
 
-    state, config, mock_client, emitted, message_queue, consumed = make_stream_harness()
+    state, config, mock_client, _emitted, _message_queue, _consumed = make_stream_harness()
     config.query_timeout = 1
 
     async def hung_query(query):
@@ -599,6 +607,7 @@ def test_read_compaction_summary_extracts_latest(tmp_path, monkeypatch):
     isCompactSummary entry and join its text blocks."""
     import json
     import pathlib as pl
+
     from core import client
 
     proj = tmp_path / ".claude" / "projects" / "-root-agent"
@@ -616,6 +625,7 @@ def test_read_compaction_summary_extracts_latest(tmp_path, monkeypatch):
 
 def test_read_compaction_summary_returns_none_when_absent(tmp_path, monkeypatch):
     import pathlib as pl
+
     from core import client
 
     monkeypatch.setattr(pl.Path, "home", lambda: tmp_path)
@@ -630,11 +640,12 @@ async def test_converse_flips_to_unauthenticated_on_claude_401(config):
     """A terminal Claude api-error turn (401) flips the provider to not_authenticated, interrupts the
     CLI's retries, and ends the turn cleanly (no exception -> no restart loop)."""
     from claude_agent_sdk import AssistantMessage, TextBlock
+
     from core.client import converse
     from core.provider import ProviderAuthState, ProviderStatus
 
     config.data_dir.mkdir(parents=True, exist_ok=True)
-    state, _, mock_client, emitted, message_queue, consumed = make_stream_harness()
+    state, _, mock_client, _emitted, message_queue, _consumed = make_stream_harness()
     state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
 
     async with consuming(state, config):
@@ -657,11 +668,12 @@ async def test_converse_flips_to_unauthenticated_on_claude_401(config):
 async def test_converse_ignores_transient_api_error(config):
     """A transient api-error turn (502) must NOT flip auth — it resolves on retry."""
     from claude_agent_sdk import AssistantMessage, TextBlock
+
     from core.client import converse
     from core.provider import ProviderAuthState, ProviderStatus
 
     config.data_dir.mkdir(parents=True, exist_ok=True)
-    state, _, mock_client, emitted, message_queue, consumed = make_stream_harness()
+    state, _, mock_client, _emitted, message_queue, _consumed = make_stream_harness()
     state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
 
     async with consuming(state, config):
@@ -684,11 +696,12 @@ async def test_converse_flips_auth_on_result_api_error_status(config):
     """A terminal 401/402 may surface on the ResultMessage's HTTP status rather than the assistant
     turn's error field; that must still flip the agent to not_authenticated."""
     from claude_agent_sdk import ResultMessage
+
     from core.client import converse
     from core.provider import ProviderAuthState, ProviderStatus
 
     config.data_dir.mkdir(parents=True, exist_ok=True)
-    state, _, mock_client, emitted, message_queue, consumed = make_stream_harness()
+    state, _, _mock_client, _emitted, message_queue, _consumed = make_stream_harness()
     state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
 
     async with consuming(state, config):

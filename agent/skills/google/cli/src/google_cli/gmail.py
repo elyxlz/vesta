@@ -1,10 +1,10 @@
 import base64
 import pathlib as pl
 import re
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from email.mime.base import MIMEBase
 from email import encoders
+from email.mime.base import MIMEBase
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from html.parser import HTMLParser
 from typing import Any
 
@@ -191,7 +191,7 @@ def _get_attachments_info(payload: dict) -> list[dict]:
     attachments = []
     for part in payload["parts"] if "parts" in payload else []:
         part_body = part["body"] if "body" in part else {}
-        if ("filename" in part and part["filename"]) and ("attachmentId" in part_body):
+        if (part.get("filename")) and ("attachmentId" in part_body):
             attachments.append(
                 {
                     "id": part_body["attachmentId"],
@@ -200,7 +200,7 @@ def _get_attachments_info(payload: dict) -> list[dict]:
                     "mimeType": part["mimeType"] if "mimeType" in part else "application/octet-stream",
                 }
             )
-        if "parts" in part and part["parts"]:
+        if part.get("parts"):
             attachments.extend(_get_attachments_info(part))
     return attachments
 

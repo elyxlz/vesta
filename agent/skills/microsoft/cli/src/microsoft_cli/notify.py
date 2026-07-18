@@ -11,7 +11,7 @@ from pathlib import Path
 
 import httpx
 
-from . import folders, auth
+from . import auth, folders
 from .config import Config
 
 DEFAULT_NOTIFY_FOLDERS = ["inbox"]
@@ -39,7 +39,7 @@ def get_notify_folders(path: Path, account_email: str) -> list[str]:
     return data[account_email] if account_email in data else list(DEFAULT_NOTIFY_FOLDERS)
 
 
-def list_notify(config: Config, client: httpx.Client, *, account_email: str) -> dict[str, object]:
+def list_notify(config: Config, _client: httpx.Client, *, account_email: str) -> dict[str, object]:
     auth.get_account_id_by_email(account_email, config.cache_file)
     return {"account": account_email, "folders": get_notify_folders(notify_file_for(config), account_email)}
 
@@ -74,7 +74,7 @@ def add_notify(
     return {"account": account_email, "folders": current}
 
 
-def remove_notify(config: Config, client: httpx.Client, *, account_email: str, folder: str) -> dict[str, object]:
+def remove_notify(config: Config, _client: httpx.Client, *, account_email: str, folder: str) -> dict[str, object]:
     auth.get_account_id_by_email(account_email, config.cache_file)
     path = notify_file_for(config)
     data = _load(path)

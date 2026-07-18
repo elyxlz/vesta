@@ -3,8 +3,7 @@
 from types import SimpleNamespace
 
 import pytest
-
-from microsoft_cli import cli, email, backend
+from microsoft_cli import backend, cli, email
 from microsoft_cli.config import Config
 
 QUOTED = "<div>quoted original</div>"
@@ -17,7 +16,7 @@ def patched(monkeypatch):
     def fake_account_id(account_email, cache_file):
         return "acct-1"
 
-    def fake_request(client, cache_file, scopes, base_url, method, path, account_id=None, **kwargs):
+    def fake_request(conn, method, path, account_id=None, **kwargs):
         calls.append({"method": method, "path": path, "json": kwargs["json"] if "json" in kwargs else None})
         if method == "POST" and path.endswith("/createReply"):
             return {"id": "reply-draft"}
@@ -99,4 +98,11 @@ def test_reply_draft_parser_and_dispatch(monkeypatch):
     )
     # Graph-only: even with --backend owa-rest the reply-draft path runs the Graph function.
     assert cli._dispatch_email(dispatch_args, Config(), client=None) == "drafted"
-    assert seen == dict(account_email="me@example.com", email_id="m-1", body="hi", attachments=None, reply_all=True, replace_draft="old-1")
+    assert seen == {
+        "account_email": "me@example.com",
+        "email_id": "m-1",
+        "body": "hi",
+        "attachments": None,
+        "reply_all": True,
+        "replace_draft": "old-1",
+    }

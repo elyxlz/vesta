@@ -1,5 +1,5 @@
 //! Thin edge around vestad/scripts/build-upstream.sh: the script owns all git logic
-//! (and has its own real-git test suite in agent/tests/test_build_upstream.py); this
+//! (and has its own real-git test suite in `agent/tests/test_build_upstream.py`); this
 //! module only probes git, materializes the embedded script, and runs it.
 
 use std::fmt;

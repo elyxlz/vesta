@@ -16,6 +16,14 @@ on:
         description: 'User-facing "What''s new" summary shown in the app and on the changelog'
         type: string
         required: true
+      mobile_delivery:
+        description: "Mobile delivery for this prerelease"
+        type: choice
+        required: true
+        default: testflight
+        options:
+          - testflight
+          - skip
 
 permissions:
   contents: write
@@ -26,6 +34,7 @@ concurrency:
 
 jobs:
   release:
+    name: Release · Create prerelease
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -40,13 +49,6 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
-
-      - name: Install Tauri system deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential pkg-config \
-            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev
 
       - name: Configure git
         run: |
@@ -63,9 +65,11 @@ jobs:
             minor) NEW="${major}.$((minor + 1)).0" ;;
             major) NEW="$((major + 1)).0.0" ;;
           esac
-          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
-          echo "new=$NEW" >> "$GITHUB_OUTPUT"
-          echo "tag=v$NEW" >> "$GITHUB_OUTPUT"
+          {
+            echo "current=$CURRENT"
+            echo "new=$NEW"
+            echo "tag=v$NEW"
+          } >> "$GITHUB_OUTPUT"
           echo "Bumping $CURRENT -> $NEW"
 
       - name: Bump version in all sources
@@ -77,21 +81,17 @@ jobs:
           sed -i "0,/^version = \"${CURRENT}\"/s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" vestad/Cargo.toml
           sed -i "0,/^version = \"${CURRENT}\"/s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" vestad/tests-integration/Cargo.toml
           sed -i "0,/^version = \"${CURRENT}\"/s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" cli/Cargo.toml
-          sed -i "0,/^version = \"${CURRENT}\"/s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" apps/desktop/src-tauri/Cargo.toml
-          sed -i "0,/^version = \"${CURRENT}\"/s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" apps/mobile/src-tauri/Cargo.toml
-          sed -i "s|\"version\": \"${CURRENT}\"|\"version\": \"${NEW}\"|" apps/desktop/src-tauri/tauri.conf.json
-          sed -i "s|\"version\": \"${CURRENT}\"|\"version\": \"${NEW}\"|" apps/mobile/src-tauri/tauri.conf.json
           sed -i "s|\"version\": \"${CURRENT}\"|\"version\": \"${NEW}\"|" apps/web/package.json
           sed -i "s|\"version\": \"${CURRENT}\"|\"version\": \"${NEW}\"|" apps/desktop/package.json
           sed -i "s|\"version\": \"${CURRENT}\"|\"version\": \"${NEW}\"|" apps/mobile/package.json
+          sed -i "s|^  version: \"${CURRENT}\",|  version: \"${NEW}\",|" apps/mobile/app.config.ts
 
       - name: Refresh lockfiles
         run: |
           (cd vestad && cargo check --quiet) &
           (cd cli && cargo check --quiet) &
-          (cd apps/desktop/src-tauri && cargo check --quiet) &
-          (cd apps/mobile/src-tauri && cargo check --quiet) &
           (cd agent && uv lock --project core --quiet) &
+          (cd apps && npm install --package-lock-only --ignore-scripts --quiet) &
           wait
 
       - name: Commit and push
@@ -110,12 +110,14 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
           TAG: ${{ steps.bump.outputs.tag }}
           MESSAGE: ${{ inputs.message }}
+          MOBILE_DELIVERY: ${{ inputs.mobile_delivery }}
         run: |
           BODY="<!-- whats-new -->
           ${MESSAGE}
-          <!-- /whats-new -->"
+          <!-- /whats-new -->
+          <!-- mobile-delivery: ${MOBILE_DELIVERY} -->"
           gh release create "$TAG" --title "$TAG" --notes "$BODY" --generate-notes --target master --prerelease
-          echo "Created prerelease $TAG"
+          echo "Created prerelease $TAG with mobile delivery: $MOBILE_DELIVERY"
 
       - name: Cleanup on failure
         if: failure()

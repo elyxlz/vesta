@@ -23,13 +23,17 @@ export function ChatHeaderActions({
       <ButtonGroup>
         <Button
           variant="outline"
+          size="icon-sm"
           className="text-muted-foreground"
-          onClick={() => navigate(`/agent/${agentName}/chat`)}
+          onClick={() => {
+            void navigate(`/agent/${agentName}/chat`);
+          }}
         >
           <Maximize2 />
         </Button>
         <Button
           variant="outline"
+          size="icon-sm"
           className="text-muted-foreground"
           onClick={onCollapse}
         >

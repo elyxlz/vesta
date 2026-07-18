@@ -96,6 +96,12 @@ class Client:
             body["referral_code"] = referral_code
         return self._json(self._post("/onboard/account", json=body))
 
+    def fetch_floor_usd(self) -> int:
+        """GET /onboard/pricing -> the live membership floor in USD. The control plane's
+        `listMonthlyCents` is the single source of truth; the skill reads it live so a
+        quote can't drift from what checkout enforces. Public (no token)."""
+        return int(self._json(self._get("/onboard/pricing"))["floor_usd"])
+
     # --- control plane: auth -------------------------------------------------
 
     def send_otp(self, email: str) -> dict[str, Any]:

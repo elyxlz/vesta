@@ -47,8 +47,9 @@ export function connectReconnectingWs(
     delay = Math.min(delay * 2, maxDelay);
   };
 
+  // connect only runs while the loop is live (the initial call, and timers that
+  // close() clears), so the sole cancellation window is the beforeConnect await.
   async function connect() {
-    if (cancelled) return;
     if (options.beforeConnect) {
       const verdict = await options.beforeConnect();
       if (cancelled) return;
@@ -81,7 +82,9 @@ export function connectReconnectingWs(
       options.onClose?.();
       scheduleReconnect();
     };
-    sock.onerror = () => {};
+    sock.onerror = () => {
+      /* noop: the paired close event owns the reconnect */
+    };
   }
 
   void connect();

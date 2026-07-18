@@ -1,0 +1,26 @@
+name: TestFlight prerelease
+
+on:
+  workflow_dispatch:
+    inputs:
+      changelog:
+        type: string
+        required: true
+        description: What internal testers should test
+
+jobs:
+  build_ios:
+    name: Build iOS prerelease
+    type: build
+    params:
+      platform: ios
+      profile: production
+      message: ${{ inputs.changelog }}
+
+  submit_ios:
+    name: Upload to TestFlight
+    needs: [build_ios]
+    type: submit
+    params:
+      build_id: ${{ needs.build_ios.outputs.build_id }}
+      profile: production

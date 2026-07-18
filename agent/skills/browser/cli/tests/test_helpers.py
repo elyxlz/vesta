@@ -5,9 +5,7 @@ from __future__ import annotations
 import base64
 
 import pytest
-
 from vesta_browser import helpers
-
 
 # ── Recipe banner logic ────────────────────────────────────────
 
@@ -70,6 +68,45 @@ def test_recipe_banner_formats_when_matches(tmp_path, monkeypatch):
 def test_recipe_banner_empty_when_no_match(tmp_path, monkeypatch):
     monkeypatch.setattr(helpers, "_skills_root", lambda: tmp_path)
     assert helpers.recipe_banner("https://unknown.example") == ""
+
+
+def _write_job_boards(tmp_path):
+    skill_dir = tmp_path / "domain-skills" / "job-boards"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "indeed-glassdoor.md").write_text("---\nhosts: indeed.com, glassdoor.com\n---\n\n# Indeed")
+    (skill_dir / "jobsdb-seek.md").write_text("---\nhosts: jobsdb.com, jobstreet.com, seek.com.au\n---\n\n# JobsDB")
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://hk.indeed.com/jobs", "domain-skills/job-boards/indeed-glassdoor.md"),
+        ("https://www.indeed.com/jobs", "domain-skills/job-boards/indeed-glassdoor.md"),
+        ("https://www.glassdoor.com/", "domain-skills/job-boards/indeed-glassdoor.md"),
+        ("https://hk.jobsdb.com/jobs", "domain-skills/job-boards/jobsdb-seek.md"),
+        ("https://id.jobstreet.com/jobs", "domain-skills/job-boards/jobsdb-seek.md"),
+        ("https://seek.com.au/", "domain-skills/job-boards/jobsdb-seek.md"),
+    ],
+)
+def test_recipes_for_resolves_frontmatter_declared_hosts(tmp_path, monkeypatch, url, expected):
+    _write_job_boards(tmp_path)
+    monkeypatch.setattr(helpers, "_skills_root", lambda: tmp_path)
+    assert helpers.recipes_for(url) == [expected]
+
+
+def test_recipes_for_ignores_unrelated_frontmatter_host(tmp_path, monkeypatch):
+    _write_job_boards(tmp_path)
+    monkeypatch.setattr(helpers, "_skills_root", lambda: tmp_path)
+    assert helpers.recipes_for("https://monster.com/") == []
+
+
+def test_recipes_for_prefers_host_directory_over_frontmatter(tmp_path, monkeypatch):
+    _write_job_boards(tmp_path)
+    dir_recipe = tmp_path / "domain-skills" / "indeed.com"
+    dir_recipe.mkdir(parents=True)
+    (dir_recipe / "search.md").write_text("# search")
+    monkeypatch.setattr(helpers, "_skills_root", lambda: tmp_path)
+    assert helpers.recipes_for("https://indeed.com/") == ["domain-skills/indeed.com/search.md"]
 
 
 # ── Keyboard primitives (BiDi input.performActions) ────────────
@@ -214,7 +251,7 @@ def test_screenshot_webp_maps_to_jpeg(monkeypatch, tmp_path):
     calls: list[tuple[str, dict]] = []
     payload = base64.b64encode(b"img").decode()
     monkeypatch.setattr(helpers, "bidi", lambda method, **params: calls.append((method, params)) or {"data": payload})
-    helpers.screenshot(path=str(tmp_path / "s.webp"), format="webp", quality=50)
+    helpers.screenshot(path=str(tmp_path / "s.webp"), image_format="webp", quality=50)
     fmt = calls[0][1]["format"]
     assert fmt["type"] == "image/jpeg"
     assert abs(fmt["quality"] - 0.5) < 1e-9
@@ -230,4 +267,4 @@ def test_screenshot_full_page_sets_document_origin(monkeypatch, tmp_path):
 
 def test_screenshot_rejects_bad_format():
     with pytest.raises(ValueError, match="format must be"):
-        helpers.screenshot(format="gif")
+        helpers.screenshot(image_format="gif")

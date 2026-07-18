@@ -262,7 +262,7 @@ function SkillsCard({
   onSelect: (path: string) => void;
 }) {
   const [nav, setNav] = useState<SkillNav>(() => {
-    if (selected && selected.startsWith(SKILLS_PREFIX)) {
+    if (selected?.startsWith(SKILLS_PREFIX)) {
       const skillName = selected.slice(SKILLS_PREFIX.length).split("/")[0];
       const skill = skills.find((s) => s.name === skillName);
       if (skill) return { view: "skill", skillPath: skill.path };
@@ -280,13 +280,12 @@ function SkillsCard({
     nav.view === "skill"
       ? (skills.find((s) => s.path === nav.skillPath) ?? null)
       : null;
-  const inSkillView = activeSkill !== null;
 
   return (
     <Card size="sm" className="!py-0">
       <ScrollArea className="h-80">
         <div className="flex flex-col gap-2 p-3">
-          {inSkillView && activeSkill ? (
+          {activeSkill ? (
             <>
               <button
                 type="button"
@@ -326,9 +325,7 @@ function SkillsCard({
                   iconClass="bg-violet-500/12 text-violet-600 dark:text-violet-400"
                   label={skill.name}
                   hasChevron
-                  selected={
-                    selected !== null && selected.startsWith(`${skill.path}/`)
-                  }
+                  selected={selected?.startsWith(`${skill.path}/`) ?? false}
                   onClick={() =>
                     setNav({ view: "skill", skillPath: skill.path })
                   }

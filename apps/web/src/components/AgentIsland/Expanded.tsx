@@ -3,13 +3,13 @@ import { CardDescription, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import type { OrbVisualState } from "@/components/Orb/styles";
 
-type AgentIslandExpandedProps = {
+interface AgentIslandExpandedProps {
   name: string;
   orbState: OrbVisualState;
   statusLabel: string;
   error: string;
   model: string | null;
-};
+}
 
 // Self-sized content view (no motion / no layoutId). The shell crossfades whole
 // views, so the model just lives here and fades in/out with the rest.

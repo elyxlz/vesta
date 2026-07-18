@@ -8,9 +8,7 @@ serve: voice-keys daemon start
 
 Voice lets the user talk to you through the mic and hear your responses spoken aloud in the Vesta app.
 
-This skill is also your one voice backend: it owns the STT/TTS providers, keys, and chosen voice, so anything that speaks or listens on your behalf uses the same voice. Other capabilities reach it as consumers rather than configuring speech themselves; setting it up here is what turns them on.
-
-Once configured, the user can manage voice settings directly from the **agent settings page** in the app, including changing voices, listening to voice previews, toggling STT/TTS on or off, and adjusting sensitivity. Let them know this after setup.
+This skill is also your one voice backend: it owns the STT/TTS providers, keys, and chosen voice, so anything that speaks or listens on your behalf uses the same voice; setting it up here is what turns them on.
 
 ## When to offer setup
 
@@ -36,12 +34,11 @@ Once configured, the user can manage voice settings directly from the **agent se
    ```bash
    voice-keys set-voice --id <voice_id>
    ```
-   Let them know they can browse all voices and listen to previews in the app settings later.
 6. **Ensure the voice server is running.** The app fetches config from it.
    ```bash
    voice-keys daemon start
    ```
-   Idempotent (a running daemon is a no-op) and owns the register-service call, so this is the only command needed. Check with `voice-keys daemon status`.
+   Check with `voice-keys daemon status`.
 7. **Confirm**, e.g. "Voice is ready! You can use the mic button now. You can also change voices, listen to previews, and tweak settings from the settings page in the app."
 
 ## Commands
@@ -81,7 +78,7 @@ voice-keys set-eot --timeout-ms 10000
 - **"Enable TTS / start speaking again"** → `enable --domain tts`
 - **"Disable STT / turn off the mic"** → `disable --domain stt`
 - **"Remove voice completely"** → `clear --domain tts` (wipes provider + keys)
-- **"I want you to sound like <name>"** → `set-voice --id <matching voice_id from status>` (or tell them they can browse and preview voices in the app settings)
+- **"I want you to sound like <name>"** → `set-voice --id <matching voice_id from status>`
 - **"Make sure you recognize '{AGENT_NAME}'"** → `add-keyterm {AGENT_NAME}`
 - **"Finalize my turns faster"** → lower `--threshold` (e.g. 0.6)
 - **"Stop cutting me off"** → raise `--threshold` (e.g. 0.9) or raise `--timeout-ms`
@@ -94,7 +91,6 @@ voice-keys set-eot --timeout-ms 10000
 - Model: `flux-general-en` (~$0.0048/min)
 - New accounts get $200 free credit
 - Keyterms bias the transcription toward specific words (e.g. the agent's name)
-- End-of-turn detection is tuned via `--threshold` (confidence, 0-1) and `--timeout-ms` (silence timeout)
 
 ### ElevenLabs (TTS, voice output)
 

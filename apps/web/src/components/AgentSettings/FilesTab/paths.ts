@@ -51,7 +51,7 @@ export function collectDreamPaths(
 }
 
 export function parseDreamFilename(fname: string): Date | null {
-  const m = fname.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2})(\d{2})\.md$/);
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2})(\d{2})\.md$/.exec(fname);
   if (!m) return null;
   const [, y, mo, d, h, mi] = m;
   const date = new Date(

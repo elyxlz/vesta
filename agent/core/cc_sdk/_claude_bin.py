@@ -53,8 +53,7 @@ def _detect_platform() -> str:
 
 def _cache_dir() -> pl.Path:
     override = os.environ.get("CC_SDK_CACHE_DIR")
-    base = pl.Path(override) if override else pl.Path(os.path.expanduser("~/.cache/cc-sdk"))
-    return base
+    return pl.Path(override) if override else pl.Path("~/.cache/cc-sdk").expanduser()
 
 
 def _fetch(url: str) -> bytes:
@@ -99,8 +98,8 @@ def ensure_claude(version: str = CLAUDE_VERSION) -> str:
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(blob)
-        os.chmod(tmp_name, 0o755)
-        os.replace(tmp_name, target)
+        pl.Path(tmp_name).chmod(0o755)
+        pl.Path(tmp_name).replace(target)
     except BaseException:
         pl.Path(tmp_name).unlink(missing_ok=True)
         raise

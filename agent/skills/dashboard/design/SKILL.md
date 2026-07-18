@@ -31,7 +31,7 @@ A widget-heavy page is a responsive auto-fill grid: `grid gap-2 grid-cols-[repea
 
 ## Desktop and mobile are both first class
 
-The dashboard renders inside an iframe, in a card that sits in the main app's layout, on both desktop and mobile. It never owns the viewport: the frame is wide on desktop and narrow on a phone. Design every widget and page for both from the start, not desktop first with mobile bolted on afterward. The grid reflows to a single column on a narrow frame, text and controls stay legible and tappable, and nothing overflows the card. Do not assume full-screen chrome or fixed viewport heights, you live inside a card.
+The dashboard renders inside an iframe, in a card that sits in the main app's layout, on both desktop and mobile. It never owns the viewport: the frame is wide on desktop and narrow on a phone. Design every widget and page for both from the start, not desktop first with mobile bolted on afterward. The grid reflows to a single column on a narrow frame, text and controls stay legible and tappable, and nothing overflows the card. The content frame clips horizontal overflow rather than scrolling it, because on the mobile app the user swipes sideways to move between the dashboard and the chat and logs tabs, so a page that scrolled sideways would swallow that swipe. A widget wider than the frame is cut off, not scrollable: size every table, chart, and wide row to the frame and let it reflow, never rely on horizontal scroll. Do not assume full-screen chrome or fixed viewport heights, you live inside a card.
 
 Prefer a single responsive layout, but when making one layout serve both gets contorted, it is fine to branch: render a distinct arrangement per viewport with `useIsMobile()` from `@/hooks/use-mobile` (the parent app also passes `isMobile` through `parent-bridge`). A clean desktop view and a clean mobile view beat one tangled layout that half works on each.
 
@@ -61,7 +61,7 @@ In a dense card a chart is a glance, not a report. Drop gridlines, legends, and 
 
 ## Match complexity to the data
 
-A dense, minimal surface needs precision in spacing, type scale, and detail rather than more elements. Elegance is executing the chosen layout well. Combine related information into single rows, and let each widget say one thing clearly.
+A dense, minimal surface needs precision in spacing, type scale, and detail rather than more elements. Elegance is executing the chosen layout well.
 
 ## Widgets are a family
 

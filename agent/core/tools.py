@@ -5,11 +5,9 @@ import typing as tp
 
 from claude_agent_sdk import create_sdk_mcp_server, tool
 
-from . import logger
-from . import models as vm
 from . import config as cfg
-from . import state_store
-from . import vestad_client
+from . import logger, state_store, vestad_client
+from . import models as vm
 from .api import start_ws_server
 from .helpers import clear_notifications
 from .upstream_sync import vesta_version
@@ -20,7 +18,7 @@ def _opt_str(value: tp.Any) -> str:
     return str(value).strip() if value is not None else ""
 
 
-def _vesta_tools(state: vm.State, config: cfg.VestaConfig) -> list[tp.Any]:
+def _lifecycle_tools(state: vm.State) -> list[tp.Any]:
     async def _lifecycle_via_vestad(verb: str, request: tp.Callable[[], tp.Awaitable[bool]]) -> dict[str, tp.Any]:
         # vestad owns the container lifecycle: ask it to act (graceful docker restart/stop). It
         # SIGTERMs this process, the agent shuts down cleanly, and vestad restarts it or keeps it
@@ -37,23 +35,29 @@ def _vesta_tools(state: vm.State, config: cfg.VestaConfig) -> list[tp.Any]:
         return {"content": [{"type": "text", "text": f"Container {verb} initiated."}]}
 
     @tool("restart_vesta", "Restart the agent container. Triggers a full Docker container restart to reload everything.", {})
-    async def restart_vesta(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
+    async def restart_vesta(_args: dict[str, tp.Any]) -> dict[str, tp.Any]:
         return await _lifecycle_via_vestad("restart", vestad_client.request_restart)
 
     @tool(
         "stop_vesta",
-        "Stop the agent container and keep it stopped. vestad records this as user-requested, so the agent stays down across reboots until it's explicitly started again. Use restart_vesta if you just want to reload.",
+        "Stop the agent container and keep it stopped. vestad records this as user-requested, so the agent stays down "
+        "across reboots until it's explicitly started again. Use restart_vesta if you just want to reload.",
         {},
     )
-    async def stop_vesta(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
+    async def stop_vesta(_args: dict[str, tp.Any]) -> dict[str, tp.Any]:
         return await _lifecycle_via_vestad("stop", vestad_client.request_stop)
 
+    return [restart_vesta, stop_vesta]
+
+
+def _mark_tools(state: vm.State, config: cfg.VestaConfig) -> list[tp.Any]:
     @tool(
         "mark_setup_done",
-        "Call once the silent setup steps are complete and you're ready to start talking to the user. This records first-start completion so it doesn't re-run on every reboot. The WebSocket server is already online from boot.",
+        "Call once the silent setup steps are complete and you're ready to start talking to the user. This records "
+        "first-start completion so it doesn't re-run on every reboot. The WebSocket server is already online from boot.",
         {},
     )
-    async def mark_setup_done(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
+    async def mark_setup_done(_args: dict[str, tp.Any]) -> dict[str, tp.Any]:
         state.persisted.first_start_done = True
         await state_store.save_state_async(state.persisted, config)
         if state.ws_runner is None:
@@ -64,7 +68,8 @@ def _vesta_tools(state: vm.State, config: cfg.VestaConfig) -> list[tp.Any]:
 
     @tool(
         "mark_migration_applied",
-        "Call as the final step of a migration prompt, once the migration has actually been applied. Without this call, the migration re-runs on the next boot.",
+        "Call as the final step of a migration prompt, once the migration has actually been applied. Without this call, "
+        "the migration re-runs on the next boot.",
         {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
     )
     async def mark_migration_applied(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
@@ -84,7 +89,7 @@ def _vesta_tools(state: vm.State, config: cfg.VestaConfig) -> list[tp.Any]:
         "the sync boot turn re-fires on every boot. Call it BEFORE restart_vesta.",
         {},
     )
-    async def mark_upstream_synced(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
+    async def mark_upstream_synced(_args: dict[str, tp.Any]) -> dict[str, tp.Any]:
         version = vesta_version(config)
         state.persisted.last_synced_version = version
         await state_store.save_state_async(state.persisted, config)
@@ -106,12 +111,16 @@ def _vesta_tools(state: vm.State, config: cfg.VestaConfig) -> list[tp.Any]:
         "restart as your final step via compact_context(followup=..., restart=true).",
         {},
     )
-    async def mark_dreamer_complete(args: dict[str, tp.Any]) -> dict[str, tp.Any]:
+    async def mark_dreamer_complete(_args: dict[str, tp.Any]) -> dict[str, tp.Any]:
         state.persisted.last_dreamer_run = dt.datetime.now()
         await state_store.save_state_async(state.persisted, config)
         logger.dreamer("Dreamer run recorded by agent")
         return {"content": [{"type": "text", "text": "dreamer run recorded"}]}
 
+    return [mark_setup_done, mark_migration_applied, mark_upstream_synced, mark_workspace_synced, mark_dreamer_complete]
+
+
+def _compaction_tools(state: vm.State) -> list[tp.Any]:
     @tool(
         "compact_context",
         "Compact this conversation at the next idle point (it needs an idle session). `followup` "
@@ -140,16 +149,11 @@ def _vesta_tools(state: vm.State, config: cfg.VestaConfig) -> list[tp.Any]:
         logger.client(f"Compaction scheduled by agent (has_followup={bool(followup)}, restart={restart})")
         return {"content": [{"type": "text", "text": "compaction scheduled for end of turn"}]}
 
-    return [
-        restart_vesta,
-        stop_vesta,
-        mark_setup_done,
-        mark_migration_applied,
-        mark_upstream_synced,
-        mark_workspace_synced,
-        mark_dreamer_complete,
-        compact_context,
-    ]
+    return [compact_context]
+
+
+def _vesta_tools(state: vm.State, config: cfg.VestaConfig) -> list[tp.Any]:
+    return [*_lifecycle_tools(state), *_mark_tools(state, config), *_compaction_tools(state)]
 
 
 def build_vesta_tools_server(state: vm.State, config: cfg.VestaConfig) -> tp.Any:

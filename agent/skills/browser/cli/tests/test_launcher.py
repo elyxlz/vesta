@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import ctypes.util
 import hashlib
 import zipfile
 
 import pytest
-
 from vesta_browser import launcher
 
 
@@ -28,6 +28,18 @@ def test_asset_for_arch_unknown(monkeypatch):
     monkeypatch.setattr(launcher.platform, "machine", lambda: "sparc64")
     with pytest.raises(RuntimeError, match="no Camoufox build"):
         launcher._asset_for_arch()
+
+
+def test_libs_readiness_is_ready_when_every_soname_loads(monkeypatch):
+    libc = ctypes.util.find_library("c")
+    assert libc is not None
+    monkeypatch.setattr(launcher, "CAMOUFOX_SHARED_LIBS", (libc,))
+    assert launcher.libs_readiness() == {"ready": True, "missing": []}
+
+
+def test_libs_readiness_names_the_missing_lib_and_how_to_install_it(monkeypatch):
+    monkeypatch.setattr(launcher, "CAMOUFOX_SHARED_LIBS", ("libvesta-absent.so.9",))
+    assert launcher.libs_readiness() == {"ready": False, "missing": ["libvesta-absent.so.9"], "install": launcher.CAMOUFOX_LIBS_INSTALL}
 
 
 def test_camoufox_home_uses_release_tag():
@@ -136,3 +148,106 @@ def test_ensure_headed_prefs_is_idempotent(tmp_path):
     launcher._ensure_headed_prefs(tmp_path)
     launcher._ensure_headed_prefs(tmp_path)
     assert (tmp_path / "user.js").read_text().count("gfx.webrender.software") == 1
+
+
+# ── display selection across containers ───────────────────────
+
+
+def test_display_held_only_on_the_abstract_socket_is_not_free():
+    """An X server in another container leaves our /tmp empty but owns the display number.
+
+    Agent containers share the host's network namespace, so they share one abstract socket
+    namespace. Judging by the filesystem socket alone hands our X clients to that container's
+    server: the shm attach then crosses IPC namespaces and the stream dies with BadAccess.
+    """
+    import socket as socket_module
+    from pathlib import Path
+
+    from vesta_browser.launcher import _x_display_reachable
+
+    display_number = 71
+    holder = socket_module.socket(socket_module.AF_UNIX, socket_module.SOCK_STREAM)
+    try:
+        holder.bind(f"\0/tmp/.X11-unix/X{display_number}")  # abstract only: nothing lands in /tmp
+        holder.listen(1)
+        assert not Path(f"/tmp/.X11-unix/X{display_number}").exists()  # the fs socket really is absent
+        assert _x_display_reachable(f":{display_number}") is True
+    finally:
+        holder.close()
+
+
+def test_display_with_neither_socket_is_free():
+    from vesta_browser.launcher import _x_display_reachable
+
+    assert _x_display_reachable(":73") is False
+
+
+def test_own_display_serving_ignores_another_containers_abstract_socket():
+    """Ownership must read only the container-private /tmp socket.
+
+    When another container holds the display on the shared abstract socket, _x_display_reachable is
+    True but the display is NOT ours; _own_display_serving must say False, so _ensure_xvfb does not
+    mistake the other container's server for the Xvfb it just tried to start.
+    """
+    import socket as socket_module
+
+    from vesta_browser.launcher import _own_display_serving, _x_display_reachable
+
+    display_number = 72
+    holder = socket_module.socket(socket_module.AF_UNIX, socket_module.SOCK_STREAM)
+    try:
+        holder.bind(f"\0/tmp/.X11-unix/X{display_number}")  # abstract only, as a sibling container's server appears
+        holder.listen(1)
+        assert _x_display_reachable(f":{display_number}") is True  # visible in the shared namespace
+        assert _own_display_serving(str(display_number)) is False  # but not ours
+    finally:
+        holder.close()
+
+
+def test_own_display_serving_reads_only_the_filesystem_socket(monkeypatch):
+    """Ownership probes the /tmp socket, never the abstract one another container could hold."""
+    from vesta_browser import launcher
+
+    probed: list[bool] = []
+
+    def record(number, *, abstract):
+        probed.append(abstract)
+        return not abstract
+
+    monkeypatch.setattr(launcher, "_display_socket_serving", record)
+    assert launcher._own_display_serving("74") is True
+    assert probed == [False]  # the abstract socket is never consulted for ownership
+
+
+def test_await_own_xvfb_rejects_a_dead_proc_even_when_a_sibling_container_answers(monkeypatch):
+    """The race: our Xvfb lost the abstract bind and died, but another container answers on it.
+
+    Judging by generic reachability would return our dead pid and let handover connect to the
+    sibling's server (BadAccess on shm); ownership must return None so the caller retries.
+    """
+    from vesta_browser import launcher
+
+    monkeypatch.setattr(launcher, "_own_display_serving", lambda _number: False)  # not ours
+    monkeypatch.setattr(launcher, "_x_display_reachable", lambda _display: True)  # sibling answers
+
+    class Dead:
+        pid = 5151
+
+        def poll(self):
+            return 1  # exited: lost the abstract bind
+
+    assert launcher._await_own_xvfb(Dead(), "99") is None
+
+
+def test_await_own_xvfb_returns_pid_once_our_own_socket_serves(monkeypatch):
+    from vesta_browser import launcher
+
+    monkeypatch.setattr(launcher, "_own_display_serving", lambda _number: True)
+
+    class Alive:
+        pid = 6262
+
+        def poll(self):
+            return None
+
+    assert launcher._await_own_xvfb(Alive(), "92") == 6262

@@ -49,7 +49,7 @@
   },
   {
     "name": "email-client",
-    "description": "Personal email over IMAP/SMTP for any provider (Gmail, Outlook, Yahoo, iCloud, Fastmail, generic IMAP). Multi-account: read an inbox, send/reply/forward, save drafts, manage messages and folders, handle attachments, and get paged on new mail. Gmail accounts also get Google Calendar (list/create/update/delete/respond to events) in the same sign-in. Requires the poll daemon for notifications."
+    "description": "Personal email over IMAP/SMTP for any provider (Gmail, Outlook, Yahoo, iCloud, Fastmail, generic IMAP). Multi-account: read an inbox, send/reply/forward, save drafts, manage messages and folders, handle attachments, and get paged on new mail. Calendar over CalDAV with the same credential (Gmail, iCloud, Fastmail, any CalDAV server): list/create/update/delete/respond to events. Requires the poll daemon for notifications."
   },
   {
     "name": "enable-banking",
@@ -73,7 +73,7 @@
   },
   {
     "name": "google",
-    "description": "Gmail and Google Calendar: email, events, scheduling. Requires daemon."
+    "description": "Google-native REST APIs (Gmail, Google Calendar) for users who bring their own Google Cloud OAuth client (~/.google/credentials.json required). For everyday email and calendar prefer the email-client skill, which needs no Google Cloud project. Requires daemon."
   },
   {
     "name": "growth",
@@ -93,7 +93,7 @@
   },
   {
     "name": "microsoft",
-    "description": "Outlook/Microsoft 365 work account via Graph: read/send/reply/forward email, drafts, flag/categorize, move/archive, folders, attachments, block senders, calendar and meetings, new-mail paging, and Microsoft Teams (chats, channels, presence, plus new-message notifications). Requires daemon."
+    "description": "Use for any Microsoft account, personal or work (Outlook.com, Hotmail, Live, Microsoft 365); preferred over email-client for Microsoft accounts. Graph-based mail (read/send/reply/forward, drafts, flag/categorize, move/archive, folders, attachments, block senders), calendar and meetings, Microsoft Teams (chats, channels, presence), and new-mail/Teams notifications. Requires daemon."
   },
   {
     "name": "nap",
@@ -180,6 +180,10 @@
     "description": "This skill should be used when the user asks about their torrent box: searching trackers, adding torrents to qBittorrent, monitoring downloads, or browsing the media library on the server."
   },
   {
+    "name": "tricount",
+    "description": "Tricount shared-expense / bill-splitting CLI. List tricounts, view expenses and balances, add expenses. No official API: uses the reverse-engineered Tricount (bunq) REST API."
+  },
+  {
     "name": "trivia",
     "description": "Run a trivia game with the user. Use when the user says \"let's play trivia\", \"trivia game\", \"quiz\", or asks for trivia questions on a topic. Generates 15 multiple-choice questions easy to hard, marks correct answers, and tallies scores across multiple players."
   },
@@ -222,6 +226,10 @@
   {
     "name": "windy-weather",
     "description": "Weather, forecast, temperature, wind, humidity for any location via Windy."
+  },
+  {
+    "name": "wx",
+    "description": "Quick one-line weather for any location, no API key needed (open-meteo). Good default for a morning brief or a fast \"what's it doing outside\"."
   },
   {
     "name": "zoom",
