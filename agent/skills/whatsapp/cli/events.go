@@ -170,7 +170,7 @@ func (wac *WhatsAppClient) handleDeviceRemoved(reason string) {
 			s.PreserveRetryAt = time.Now().UTC()
 		})
 		wac.reExecDaemon() // does not return
-	default: // preserveGiveUp — today's exact behavior (unchanged)
+	default: // preserveGiveUp: today's exact behavior (unchanged)
 		wac.logger.Warnf("Device logged out (%s). Clearing dead device and exiting; run `whatsapp connect` to re-link.", reason)
 		wac.state.update(func(s *daemonState) {
 			s.ExitStatus, s.ExitReason, s.ExitTime = "logged_out", reason, time.Now().UTC()
