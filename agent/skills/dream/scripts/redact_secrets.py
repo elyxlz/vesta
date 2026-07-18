@@ -19,6 +19,10 @@ FTS_TYPES = ("user", "assistant", "chat")
 
 PATTERNS = [
     r"sk-[a-zA-Z0-9_-]{20,}",
+    # Stripe secret + restricted keys use an UNDERSCORE (sk_live_ / sk_test_ / rk_live_ / rk_test_),
+    # so the sk- (hyphen) pattern above never matched them. Publishable pk_ keys are not secret and
+    # are deliberately excluded.
+    r"[sr]k_(?:live|test)_[0-9a-zA-Z]{20,}",
     r"xox[bp]-[0-9A-Za-z-]+",
     r"gh[posr]_[A-Za-z0-9]{36,}",
     r"github_pat_[A-Za-z0-9_]{20,}",
@@ -37,6 +41,25 @@ PATTERNS = [
     r"(?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql|redis)://[^ \"']+",
 ]
 REGEX = re.compile("|".join(PATTERNS), re.IGNORECASE)
+
+# Structural false-positive filter, scoped to the sk- (hyphen) OpenAI pattern ONLY, because that is
+# the one pattern whose body collides with English-word URL slugs: "sk-hynix-raises-full-year-
+# guidance" (a SK Hynix news URL) matches sk-[a-zA-Z0-9_-]{20,} but is words, not a key. Other key
+# families are deliberately NOT slug-checked: their bodies are hex/base62, not English words, and a
+# short lowercase one (e.g. a Slack xoxb-1234-abcdef) would be wrongly skipped. A real sk- key
+# always carries a long unbroken high-entropy run and/or uppercase, so it survives; a slug is short
+# all-lowercase hyphen/underscore words. This generalises to slugs never seen before.
+_SLUG_PREFIX = re.compile(r"^sk-")
+
+
+def _looks_like_word_slug(token: str) -> bool:
+    body, n = _SLUG_PREFIX.subn("", token)
+    if n == 0:  # only sk- tokens are eligible; everything else is never treated as a slug
+        return False
+    if body != body.lower():  # a real sk- key carries uppercase/high-entropy; slugs are lowercase
+        return False
+    segs = [s for s in re.split(r"[-_]", body) if s]
+    return len(segs) >= 2 and all(len(s) < 16 for s in segs)
 
 
 def mask(match: re.Match[str]) -> str:
@@ -76,6 +99,8 @@ def scan(conn: sqlite3.Connection) -> list[tuple[int, str]]:
         for m in REGEX.finditer(data):
             if REDACTED in m.group(0):
                 continue
+            if _looks_like_word_slug(m.group(0)):
+                continue  # news/URL slug (hyphenated words), not a secret
             window = data[max(0, m.start() - 40) : m.end() + 40]
             matches.append((row_id, REGEX.sub(mask, window).replace("\n", " ")))
     return matches
