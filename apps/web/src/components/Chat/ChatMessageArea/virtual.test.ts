@@ -42,6 +42,30 @@ describe("buildDecorated", () => {
     expect(keys[0]).toBe("2026-06-08T10:00:00Z-user");
   });
 
+  it("keeps a tight gap between same-sender messages sent close together", () => {
+    const rows = buildDecorated([
+      userMsg("2026-06-08T10:00:00Z"),
+      userMsg("2026-06-08T10:04:00Z"),
+    ]);
+    expect(rows[1]?.gap).toBe("mt-1.5");
+  });
+
+  it("widens the gap between same-sender messages resumed after >= 5 minutes", () => {
+    const rows = buildDecorated([
+      userMsg("2026-06-08T10:00:00Z"),
+      userMsg("2026-06-08T10:05:00Z"),
+    ]);
+    expect(rows[1]?.gap).toBe("mt-5");
+  });
+
+  it("keeps the tight gap when a timestamp is unparseable", () => {
+    const rows = buildDecorated([
+      userMsg("2026-06-08T10:00:00Z"),
+      userMsg("not-a-date"),
+    ]);
+    expect(rows[1]?.gap).toBe("mt-1.5");
+  });
+
   it("uses a tight gap between consecutive tool calls", () => {
     const rows = buildDecorated([
       {

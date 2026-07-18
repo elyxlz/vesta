@@ -14,6 +14,21 @@ export function rowKey(event: VestaEvent, idxFallback: number): string {
   return event.ts ? `${event.ts}-${event.type}` : `i-${String(idxFallback)}`;
 }
 
+// A same-sender run resumed after this long reads as a new beat, so it gets the
+// wider alternating-style gap instead of the tight same-sender one.
+const TIME_GAP_THRESHOLD_MS = 5 * 60 * 1000;
+
+function elapsedAtLeastThreshold(
+  msg: VestaEvent,
+  prev: VestaEvent | undefined,
+): boolean {
+  if (!msg.ts || !prev?.ts) return false;
+  const now = Date.parse(msg.ts);
+  const before = Date.parse(prev.ts);
+  if (Number.isNaN(now) || Number.isNaN(before)) return false;
+  return now - before >= TIME_GAP_THRESHOLD_MS;
+}
+
 function rowGap(
   msg: VestaEvent,
   prev: VestaEvent | undefined,
@@ -26,7 +41,8 @@ function rowGap(
   const prevIsTool = prev?.type === "tool_start";
   if (isTool && prevIsTool) return "mt-1";
   if (isTool || prevIsTool) return "mt-2";
-  return prev?.type === msg.type ? "mt-1.5" : "mt-5";
+  if (prev?.type !== msg.type) return "mt-5";
+  return elapsedAtLeastThreshold(msg, prev) ? "mt-5" : "mt-1.5";
 }
 
 export function buildDecorated(chatMessages: VestaEvent[]): DecoratedRow[] {
