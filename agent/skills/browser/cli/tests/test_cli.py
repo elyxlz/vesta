@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 
+import pytest
 from vesta_browser import cli, helpers
 
 
@@ -66,14 +67,12 @@ def _minimal_args_for(cmd: str) -> list[str]:
     return _MINIMAL_ARGS[cmd] if cmd in _MINIMAL_ARGS else []
 
 
-def test_parser_launch_flags_compat():
-    # --stealth/--no-sandbox/--port stay accepted (no-ops now) so existing prompts keep parsing.
+def test_parser_launch_rejects_removed_noop_flags():
+    # Camoufox is stealthy + headless by default; these flags never did anything and are gone.
     parser = cli._build_parser()
-    ns = parser.parse_args(["launch", "--headless", "--stealth", "--no-sandbox", "--port", "9999"])
-    assert ns.headless is True
-    assert ns.stealth is True
-    assert ns.no_sandbox is True
-    assert ns.port == 9999
+    for flag in ("--headless", "--stealth", "--no-sandbox", "--port"):
+        with pytest.raises(SystemExit):
+            parser.parse_args(["launch", flag] if flag != "--port" else ["launch", flag, "9999"])
 
 
 def test_parser_fetch_navigate_first():

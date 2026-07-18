@@ -276,7 +276,7 @@ def _owa_login_browser(config: Config, *, account_email: str) -> dict[str, str]:
         result = subprocess.run(["browser", *args], capture_output=True, text=True, env=env, check=False)
         return result.stdout.strip()
 
-    _run("launch", "--stealth")
+    _run("launch")
     _run("open", "https://outlook.office.com/mail/")
     token = _run("evaluate", _OWA_TOKEN_JS)
 
@@ -421,7 +421,7 @@ def _teams_capture_browser(config: Config, *, account_email: str) -> dict[str, s
         result = subprocess.run(["browser", *args], capture_output=True, text=True, env=env, check=False)
         return result.stdout.strip()
 
-    _run("launch", "--stealth")
+    _run("launch")
     _run("open", "https://teams.microsoft.com/")
     token = _run("evaluate", capture._TEAMS_TOKEN_JS)
 

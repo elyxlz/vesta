@@ -422,13 +422,9 @@ def cmd_stdin(_args: argparse.Namespace) -> int:
 
 def _add_lifecycle_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     lp = sub.add_parser("launch", help="Launch Camoufox for this session.")
-    lp.add_argument("--headless", action="store_true")
-    lp.add_argument("--stealth", action="store_true")
-    lp.add_argument("--no-sandbox", action="store_true")
     lp.add_argument("--mode", choices=admin.PERCEPTION_MODES, default=None, help="Perception mode for this session: a11y | screenshot | both.")
     lp.add_argument("--user-data-dir", default=None)
     lp.add_argument("--executable", default=None)
-    lp.add_argument("--port", type=int, default=None)
     lp.set_defaults(func=cmd_launch)
 
     cp = sub.add_parser("connect", help="Connect to an externally running Camoufox.")
