@@ -382,3 +382,46 @@ def test_wedged_domain_enable_propagates_timeout_instead_of_being_swallowed(monk
     error = asyncio.run(_with_silent_backend(body, SilentCdpServer(answer_attach)))
     assert error.code == "timeout"
     assert ".enable" in error.message
+
+
+def test_wedged_domain_enable_does_not_cache_the_half_enabled_session(monkeypatch):
+    """A wedged enable must leave the target->session memo unset, so a later _session_for retries the
+    attach+enable instead of returning a cached session that has no domains enabled."""
+    monkeypatch.setattr(cdp_backend, "_CDP_RESPONSE_TIMEOUT_S", TEST_TIMEOUT_S)
+
+    async def answer_attach(ws, message):
+        if message["method"] == "Target.attachToTarget":
+            await ws.send(json.dumps({"id": message["id"], "result": {"sessionId": "S1"}}))
+
+    async def body(backend):
+        with pytest.raises(BidiError):
+            await backend._session_for("T1")
+        return dict(backend._sessions)
+
+    assert asyncio.run(_with_silent_backend(body, SilentCdpServer(answer_attach))) == {}
+
+
+def test_event_arriving_mid_enable_routes_to_its_target_not_the_context(monkeypatch):
+    """A CDP event that arrives while the domain-enables are still in flight must resolve to the attaching
+    target. _session_targets is populated before the enable loop (only the _sessions memo moved below it),
+    so routing never regresses to the self._context fallback while the memo is briefly unset."""
+    monkeypatch.setattr(cdp_backend, "_CDP_RESPONSE_TIMEOUT_S", TEST_TIMEOUT_S)
+
+    async def answer(ws, message):
+        method = message["method"]
+        if method == "Target.attachToTarget":
+            await ws.send(json.dumps({"id": message["id"], "result": {"sessionId": "S1"}}))
+        elif method == "Page.enable":
+            # Push a load event mid-enable: it arrives before this reply, while _sessions has no T1 entry.
+            await ws.send(json.dumps({"method": "Page.loadEventFired", "params": {}, "sessionId": "S1"}))
+            await ws.send(json.dumps({"id": message["id"], "result": {}}))
+        else:
+            await ws.send(json.dumps({"id": message["id"], "result": {}}))
+
+    async def body(backend):
+        loads = backend.on_event("browsingContext.load")
+        await backend._session_for("T1")
+        return await asyncio.wait_for(loads.get(), timeout=HANG_GUARD_S)
+
+    # backend._context is "" on a fresh backend, so a routing regression would yield {"context": ""}.
+    assert asyncio.run(_with_silent_backend(body, SilentCdpServer(answer))) == {"context": "T1"}
