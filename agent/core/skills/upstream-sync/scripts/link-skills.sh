@@ -16,6 +16,14 @@ LINK_DIR="$HOME/.claude/skills"
 
 mkdir -p agent/data
 
+# LEGACY(remove-when: the 2026-08-flat-checkout migration is fleet-applied): a cone box on its
+# first flat boot has no installed-skills.txt yet and only its installed (coned) skills on disk.
+# Seed the list from the cone so those skills stay active through the conversion boot, before
+# the migration captures them. A flat box has no sparse-checkout file, so this never fires there.
+if [ ! -f "$INSTALLED" ] && [ -f .git/info/sparse-checkout ]; then
+  git sparse-checkout list 2>/dev/null | sed -n 's#^agent/skills/##p' | sort -u > "$INSTALLED" || true
+fi
+
 # Seed the installed list from the shipped defaults on first boot, then union any
 # newly-shipped default in on later boots, so an upgrade's new default activates before
 # the session starts (no boot turn, no restart). A default the user removed reappears -

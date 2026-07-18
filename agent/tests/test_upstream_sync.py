@@ -27,6 +27,7 @@ FETCH = AGENT_ROOT / "core/skills/upstream-sync/scripts/fetch-upstream.sh"
 SYNC = AGENT_ROOT / "core/skills/upstream-sync/scripts/sync.sh"
 STATUS = AGENT_ROOT / "core/skills/upstream-sync/scripts/status.sh"
 LINK_SKILLS = AGENT_ROOT / "core/skills/upstream-sync/scripts/link-skills.sh"
+SET_CONE = AGENT_ROOT / "core/skills/upstream-sync/scripts/set-cone.sh"  # LEGACY no-op for released migrations
 SKILLS_INSTALL = AGENT_ROOT / "skills/skills-registry/scripts/skills-install"
 SKILLS_REMOVE = AGENT_ROOT / "skills/skills-registry/scripts/skills-remove"
 SKILLS_SEARCH = AGENT_ROOT / "skills/skills-registry/scripts/skills-search"
@@ -78,7 +79,7 @@ def _copy_sync_scripts(core_skills):
     plus the forwarding workspace-sync shims at their old paths."""
     scripts = core_skills / "upstream-sync/scripts"
     scripts.mkdir(parents=True, exist_ok=True)
-    for script in (ATTACH, FETCH, SYNC, STATUS, LINK_SKILLS):
+    for script in (ATTACH, FETCH, SYNC, STATUS, LINK_SKILLS, SET_CONE):
         shutil.copy(script, scripts / script.name)
     forwarding = core_skills / "workspace-sync/scripts"
     forwarding.mkdir(parents=True, exist_ok=True)
@@ -441,6 +442,19 @@ def test_link_skills_drops_a_deactivated_optional(tmp_path):
     assert set(DEFAULT_SKILLS) <= set(_links(home))  # defaults still linked
 
 
+def test_link_skills_bridges_the_cone_on_first_flat_boot(tmp_path):
+    """A cone box's first flat boot (before the migration converts it): link-skills seeds
+    installed-skills.txt from the still-present cone so the user's installed skills stay active,
+    instead of collapsing to defaults-only."""
+    source = _upstream_fixture(tmp_path)
+    # whatsapp is NOT a default, so only the cone bridge (not default-seeding) can preserve it.
+    home, env = _legacy_cone_box(tmp_path, source, installed=("tasks", "whatsapp"))
+    assert not (home / "agent/data/installed-skills.txt").exists()
+    assert _run(LINK_SKILLS, home, extra_env=env).returncode == 0
+    assert "whatsapp" in _installed(home)  # captured from the cone, not from defaults
+    assert "whatsapp" in _links(home)  # and linked (on disk in the cone)
+
+
 # --- the cone->flat boot migration spine (2026-08-flat-checkout.md) ----------------------
 
 
@@ -514,6 +528,10 @@ def test_forwarding_workspace_sync_scripts_behave_identically(tmp_path):
     r = _run(home / "agent/core/skills/workspace-sync/scripts/fetch-workspace.sh", home, extra_env=env)
     assert r.returncode == 0, r.stdout + r.stderr
     assert _git(["rev-parse", "refs/remotes/upstream/agent-upstream"], home, env).strip()
+    # The released 2026-07-workspace-conversion migration's final step still calls set-cone.sh;
+    # the shim must forward to the no-op and exit cleanly, not error on a converted (flat) box.
+    r = _run(home / "agent/core/skills/workspace-sync/scripts/set-cone.sh", home, extra_env=env)
+    assert r.returncode == 0, r.stdout + r.stderr
 
 
 def test_fetch_from_the_legacy_bundle_lands_the_same_refs(tmp_path):
