@@ -90,10 +90,11 @@ func TestCommandsThatTakeNoFlagsSaySo(t *testing.T) {
 	}
 }
 
-// A lifecycle command is dispatched outside the registry, so without its own help path
-// `whatsapp link --help` would start a real, rate-limited pairing attempt.
+// A pure lifecycle command is dispatched outside the registry, so `whatsapp serve --help`
+// answers with the general usage rather than reaching a command body. (link and provision
+// are registry-backed socket commands and answer with their own flags, covered above.)
 func TestLifecycleCommandsAnswerHelpRatherThanRunning(t *testing.T) {
-	for _, name := range []string{"link", "serve", "daemon", "authenticate"} {
+	for _, name := range []string{"serve", "daemon", "authenticate"} {
 		usage := helpFor(t, name)
 		if !strings.Contains(usage, "Usage: whatsapp") {
 			t.Errorf("%s --help = %q, want the usage text", name, usage)

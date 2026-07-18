@@ -918,7 +918,7 @@ func cmdSetProfilePhoto(args []string, wac *WhatsAppClient) (any, error) {
 	var filePath string
 	fs := flag.NewFlagSet("set-profile-photo", flag.ContinueOnError)
 	fs.StringVar(&filePath, "file", "", "Path to profile image (JPEG; PNG is converted to JPEG)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if filePath == "" {
@@ -938,7 +938,7 @@ func cmdSetProfileName(args []string, wac *WhatsAppClient) (any, error) {
 	var name string
 	fs := flag.NewFlagSet("set-profile-name", flag.ContinueOnError)
 	fs.StringVar(&name, "name", "", "New display name (push name)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if name == "" {
@@ -1017,6 +1017,9 @@ func cmdCheckDelivery(args []string, wac *WhatsAppClient) (any, error) {
 // cold-starts the daemon before dispatching this, so the agent runs one command
 // and never orchestrates the steps itself.
 func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
+	if err := parseNoFlags("provision", args); err != nil {
+		return nil, err
+	}
 	if wac.client.Store.ID != nil {
 		// Already linked. If a takeover parked it, an explicit provision means
 		// "reclaim the session": clear the park and reconnect (a plain send never
