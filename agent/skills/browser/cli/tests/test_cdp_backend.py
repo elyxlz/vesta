@@ -236,10 +236,11 @@ HANG_GUARD_S = 5
 
 
 class SilentCdpServer:
-    """Accepts CDP commands and never answers them, as a wedged Chrome does."""
+    """Accepts CDP commands and never answers, as a wedged Chrome does; an optional answer hook may reply to some before the silence."""
 
-    def __init__(self) -> None:
+    def __init__(self, answer=None) -> None:
         self._server: websockets.Server | None = None
+        self._answer = answer
 
     async def start(self) -> str:
         self._server = await websockets.serve(self._handle, "127.0.0.1", 0)
@@ -252,8 +253,9 @@ class SilentCdpServer:
             await self._server.wait_closed()
 
     async def _handle(self, ws: websockets.ServerConnection) -> None:
-        async for _raw in ws:
-            pass
+        async for raw in ws:
+            if self._answer is not None:
+                await self._answer(ws, json.loads(raw))
 
 
 async def _unused_event_cb(method: str, params: dict, session_id: str | None) -> None:
@@ -272,8 +274,8 @@ async def _with_silent_transport(body):
         await server.stop()
 
 
-async def _with_silent_backend(body):
-    server = SilentCdpServer()
+async def _with_silent_backend(body, server=None):
+    server = server or SilentCdpServer()
     url = await server.start()
     backend = CdpBackend()
     await backend.connect(url)
@@ -336,50 +338,19 @@ def test_cancelled_cdp_request_is_dropped_from_pending():
     assert asyncio.run(_with_silent_transport(body)) == {}
 
 
-class AttachThenSilentCdpServer:
-    """Answers Target.attachToTarget, then withholds every domain-enable reply, as a Chrome wedged mid-attach does."""
-
-    def __init__(self) -> None:
-        self._server: websockets.Server | None = None
-
-    async def start(self) -> str:
-        self._server = await websockets.serve(self._handle, "127.0.0.1", 0)
-        port = self._server.sockets[0].getsockname()[1]
-        return f"ws://127.0.0.1:{port}/devtools/browser/fake"
-
-    async def stop(self) -> None:
-        if self._server is not None:
-            self._server.close()
-            await self._server.wait_closed()
-
-    async def _handle(self, ws: websockets.ServerConnection) -> None:
-        async for raw in ws:
-            message = json.loads(raw)
-            if message["method"] == "Target.attachToTarget":
-                await ws.send(json.dumps({"id": message["id"], "result": {"sessionId": "S1"}}))
-
-
-async def _with_attach_then_silent_backend(body):
-    server = AttachThenSilentCdpServer()
-    url = await server.start()
-    backend = CdpBackend()
-    await backend.connect(url)
-    try:
-        return await asyncio.wait_for(body(backend), timeout=HANG_GUARD_S)
-    finally:
-        await backend.close()
-        await server.stop()
-
-
 def test_wedged_domain_enable_propagates_timeout_instead_of_being_swallowed(monkeypatch):
     """A withheld domain-enable reply means a wedged browser: the timeout must propagate, not be swallowed as a missing-domain refusal."""
     monkeypatch.setattr(cdp_backend, "_CDP_RESPONSE_TIMEOUT_S", TEST_TIMEOUT_S)
+
+    async def answer_attach(ws, message):
+        if message["method"] == "Target.attachToTarget":
+            await ws.send(json.dumps({"id": message["id"], "result": {"sessionId": "S1"}}))
 
     async def body(backend):
         with pytest.raises(BidiError) as excinfo:
             await backend._session_for("T1")
         return excinfo.value
 
-    error = asyncio.run(_with_attach_then_silent_backend(body))
+    error = asyncio.run(_with_silent_backend(body, SilentCdpServer(answer_attach)))
     assert error.code == "timeout"
     assert ".enable" in error.message
