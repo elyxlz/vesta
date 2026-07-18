@@ -18,7 +18,7 @@ Client/server: the `vestad` daemon runs on the host (manages Docker containers, 
 - **Web App** (`apps/web/`): React + TypeScript SPA served by vestad at `/app` and embedded in both Tauri wrappers. Components in `apps/web/src/components/`, providers in `apps/web/src/providers/`.
 - **Desktop App** (`apps/desktop/`): Tauri wrapper around `@vesta/web` for macOS/Windows/Linux; only `src-tauri/` plus a thin `package.json`, no frontend code of its own.
 - **Mobile App** (`apps/mobile/`): separate self-contained Tauri wrapper around `@vesta/web` for iOS/Android: independent Cargo crate (`vesta-mobile`), bundle id `com.vestarun.mobile`, no shared Rust code with desktop.
-- **Skills** (`agent/skills/` + `agent/core/skills/`): each skill directory has `SKILL.md` + scripts. `agent/core/skills/` holds built-ins shipped with the agent (e.g. `app-chat`, `upstream-sync`); `agent/skills/` holds the rest. On a box, skills are installed via the sparse-checkout cone of the local workspace checkout (`skills-install` = `git sparse-checkout add`, `skills-remove` drops the cone entry; instant and offline, content comes from local branch history). Skills are plain directories, not MCP servers; the only MCP server is the agent's own native tool registry (`core/tools.py`), exposed in-process via the SDK's `create_sdk_mcp_server`.
+- **Skills** (`agent/skills/` + `agent/core/skills/`): each skill directory has `SKILL.md` + scripts. `agent/core/skills/` holds built-ins shipped with the agent (e.g. `upstream-sync`); `agent/skills/` holds the rest. On a box, skills are installed via the sparse-checkout cone of the local workspace checkout (`skills-install` = `git sparse-checkout add`, `skills-remove` drops the cone entry; instant and offline, content comes from local branch history). Skills are plain directories, not MCP servers; the only MCP server is the agent's own native tool registry (`core/tools.py`), exposed in-process via the SDK's `create_sdk_mcp_server`.
 
 ### Key Flows
 
@@ -209,7 +209,7 @@ Run locally on master. Bumps versions, updates lockfiles, commits, pushes, and c
 
 ## Adding a skill
 
-Skills are how Vesta reaches the world; each is a directory the agent (and Claude Code) loads natively. Two locations: `agent/skills/{name}/` for most skills, `agent/core/skills/{name}/` for built-ins shipped with the agent (e.g. `app-chat`). Every skill has a `SKILL.md` with YAML frontmatter (`name` + `description`):
+Skills are how Vesta reaches the world; each is a directory the agent (and Claude Code) loads natively. Two locations: `agent/skills/{name}/` for most skills, `agent/core/skills/{name}/` for built-ins shipped with the agent (e.g. `upstream-sync`). Every skill has a `SKILL.md` with YAML frontmatter (`name` + `description`):
 
 ```markdown
 ---

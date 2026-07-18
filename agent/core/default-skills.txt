@@ -1,3 +1,4 @@
+app-chat
 birth
 browser
 claude-code

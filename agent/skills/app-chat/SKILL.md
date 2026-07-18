@@ -6,9 +6,8 @@ description: Reply to notifications with `source=app-chat` via `app-chat send`. 
 # App Chat - CLI: app-chat
 
 ## Setup
-This is a core skill: its CLI lives under `~/agent/core/skills/app-chat/` (read-only mount), not `~/agent/skills/`.
 ```bash
-uv tool install --editable ~/agent/core/skills/app-chat/cli
+uv tool install --editable ~/agent/skills/app-chat/cli
 ```
 
 **Daemon**: `app-chat daemon start|stop|restart|status`. Start is idempotent (a running daemon is a
