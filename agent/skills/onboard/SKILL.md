@@ -116,13 +116,13 @@ and links between them and the CLI.
 
 ## Pricing
 
-**One plan, one box**: a dedicated server (4 vCPU / 8 GB / 80 GB) running their
-vesta. **From $24/month.** That's the **floor**, not a fixed price: the price is
+**One plan, one box**: a dedicated server (2 vCPU / 4 GB / 40 GB) running their
+vesta. **From $12/month.** That's the **floor**, not a fixed price: the price is
 negotiable **upward**, never below.
 
 **How to price:**
 
-- **Default to the floor ($24)** for a normal person who just wants in.
+- **Default to the floor ($12)** for a normal person who just wants in.
 - **Price to desire + status.** The whole point of the velvet rope is that people
   pay for exclusivity. If they fought to get in, gushed about it, or are clearly
   wealthy (a founder, an exec, "money's no object", a whale who wants a concierge
@@ -132,11 +132,11 @@ negotiable **upward**, never below.
 - **You earn 50% of their first month** (hosted introducer), so anchoring high is
   literally your payday. A $2,000 close earns you $1,000.
 
-Pass the agreed figure as `--price <usd>` (monthly). Omit it to charge the $24 floor.
+Pass the agreed figure as `--price <usd>` (monthly). Omit it to charge the $12 floor.
 
 **Discount codes.** If the owner has given you a discount/invite code, pass it as
 `--code <code>` and it knocks a percentage off the first month at checkout (it
-composes with whatever `--price` you set: half off $24 or off $2,000 alike). You
+composes with whatever `--price` you set: half off $12 or off $2,000 alike). You
 never invent codes: pass only what the owner hands you. An unknown code comes back
 `{"error": "invalid code"}`: relay that and continue without it. There is nothing
 to look up or reveal; the code's value and effect live entirely on the server.
@@ -174,7 +174,7 @@ onboard verify --email ada@example.com --code 123456
 
 # Someone who just wants in, the floor:
 onboard checkout --email ada@example.com
-# { "url": "https://checkout.stripe.com/c/pay/cs_test_...", "subdomain": "ada" }   ($24/mo)
+# { "url": "https://checkout.stripe.com/c/pay/cs_test_...", "subdomain": "ada" }   ($12/mo)
 
 # A whale who fought to get in, anchor high (uncapped):
 onboard checkout --email vc@example.com --price 2000
@@ -182,7 +182,7 @@ onboard checkout --email vc@example.com --price 2000
 
 # Below the floor is rejected (the server enforces it too):
 onboard checkout --email x@example.com --price 5
-# { "error": "price $5 is below the $24 floor", "floor_usd": 24 }
+# { "error": "price $5 is below the $12 floor", "floor_usd": 12 }
 
 onboard status --email ada@example.com
 # { "status": "reserved", ... }   (paid? provisioning? not active yet)
@@ -214,7 +214,7 @@ The cases you'll actually hit, and the move for each:
   to the owner that their referral code changed.
 - `invalid code` (a bad discount `--code` at checkout): re-run `onboard checkout`
   **without** `--code`.
-- `price ... below the $24 floor`: re-quote at or above $24 and re-run.
+- `price ... below the $12 floor`: re-quote at or above $12 and re-run.
 - `already provisioned`: they already have a vesta. Send them `onboard links` to
   sign in; do not onboard them again.
 - `rate limited`: too many attempts from here today. Tell them you'll pick it back

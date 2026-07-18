@@ -284,7 +284,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_checkout = sub.add_parser("checkout", help="Reserve + mint a Stripe link (auto subdomain).")
     p_checkout.add_argument("--email", required=True)
-    p_checkout.add_argument("--price", type=float, help="Negotiated MONTHLY USD (>= the $24 floor; uncapped above).")
+    p_checkout.add_argument("--price", type=float, help="Negotiated MONTHLY USD (>= the $12 floor; uncapped above).")
     p_checkout.add_argument("--code", help="Optional discount code to redeem at checkout.")
 
     p_status = sub.add_parser("status", help="Has the buyer paid + the VM come up?")

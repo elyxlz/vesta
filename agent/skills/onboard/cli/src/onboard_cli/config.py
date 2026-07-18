@@ -30,8 +30,8 @@ from . import referral_store
 # staging/testing (the control plane injects it into managed boxes).
 DEFAULT_CONTROL_URL = "https://vesta.run/api"
 
-# Hosted Vesta is ONE plan, one box — the control plane's `pro` tier (4 vCPU /
-# 8 GB). The control plane also defines starter/power for admin provisioning and
+# Hosted Vesta is ONE plan, one box — the control plane's `pro` tier (2 vCPU /
+# 4 GB). The control plane also defines starter/power for admin provisioning and
 # upgrades, but onboarding only ever sells this one.
 PLAN = "pro"
 
@@ -39,7 +39,7 @@ PLAN = "pro"
 # >= it (uncapped above); the control plane enforces the floor server-side, so
 # this is for the agent's UX + a friendly local error. Keep in sync with the
 # control plane's listMonthlyCents("pro").
-PLAN_FLOOR_USD = 24
+PLAN_FLOOR_USD = 12
 
 # Public marketing + install links surfaced by `onboard links`.
 LINKS = {

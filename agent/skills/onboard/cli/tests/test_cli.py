@@ -63,7 +63,7 @@ def test_presets_lists_live_reference_data(capsys, monkeypatch):
     rc, data = _run(["presets"], capsys)
     assert rc == 0
     assert "dry" in data["personalities"]
-    assert data["plan_floor_usd"] == 24
+    assert data["plan_floor_usd"] == 12
     assert "plans" not in data  # single plan — no tier list
     assert data["claude_models"] == ["opus", "sonnet", "haiku"]
     assert data["default_personality"] == "dry"
@@ -190,7 +190,7 @@ def test_checkout_rejects_below_floor_without_calling(capsys, monkeypatch):
     calls = {"n": 0}
     monkeypatch.setattr(cli_mod.Client, "checkout", lambda self, **kw: calls.__setitem__("n", calls["n"] + 1) or {"url": "x"})
     rc, data = _run(["checkout", "--email", E, "--price", "5"], capsys)
-    assert rc == 2 and data["floor_usd"] == 24 and calls["n"] == 0
+    assert rc == 2 and data["floor_usd"] == 12 and calls["n"] == 0
 
 
 def test_checkout_surfaces_structured_error(capsys, monkeypatch):
