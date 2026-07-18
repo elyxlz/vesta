@@ -333,3 +333,31 @@ def test_cancelled_cdp_request_is_dropped_from_pending():
         return dict(transport._pending)
 
     assert asyncio.run(_with_silent_transport(body)) == {}
+
+
+class BlockingSendWs:
+    """A websocket whose send never returns, so a cancel lands on ws.send itself (backpressure when the buffer fills)."""
+
+    def __init__(self) -> None:
+        self.send_started = asyncio.Event()
+
+    async def send(self, _data: str) -> None:
+        self.send_started.set()
+        await asyncio.Event().wait()
+
+
+def test_cancel_landing_on_the_send_is_dropped_from_pending():
+    """Registration stays before the send, so a cancel that lands on ws.send itself must still clear the entry via the finally."""
+
+    async def body():
+        transport = _CdpTransport()
+        transport._ws = BlockingSendWs()
+        request = asyncio.ensure_future(transport.send(CREATE_TARGET, {"url": "about:blank"}))
+        await asyncio.wait_for(transport._ws.send_started.wait(), timeout=HANG_GUARD_S)
+        assert transport._pending  # registered before the send, so the entry is already present when the cancel lands
+        request.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await request
+        return dict(transport._pending)
+
+    assert asyncio.run(body()) == {}
