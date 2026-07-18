@@ -42,21 +42,21 @@ PATTERNS = [
 ]
 REGEX = re.compile("|".join(PATTERNS), re.IGNORECASE)
 
-# Structural false-positive filter for news/URL slugs. The sk-[a-zA-Z0-9_-]{20,} pattern also
-# matches hyphenated headline slugs that begin sk- (e.g. "sk-hynix-raises-full-year-guidance" from
-# a SK Hynix news URL), which are not secrets. Every real key we scan for carries a long unbroken
-# high-entropy run (OpenAI 40+ base62 body, gh/glpat 20-36+, AKIA 16, JWT), while a slug is short
-# hyphen/underscore-separated lowercase words. So: strip a key-ish prefix, and if the remainder is
-# all-lowercase with >=2 segments none >=16 chars, it is a slug. This cannot mask a real key (they
-# always have a >=16 unbroken run and/or uppercase) and generalises to slugs never seen before.
-_SLUG_PREFIX = re.compile(r"^(sk|gh[posr]|glpat|xox[bp]|pmak|akia)[-_]", re.IGNORECASE)
+# Structural false-positive filter, scoped to the sk- (hyphen) OpenAI pattern ONLY, because that is
+# the one pattern whose body collides with English-word URL slugs: "sk-hynix-raises-full-year-
+# guidance" (a SK Hynix news URL) matches sk-[a-zA-Z0-9_-]{20,} but is words, not a key. Other key
+# families are deliberately NOT slug-checked: their bodies are hex/base62, not English words, and a
+# short lowercase one (e.g. a Slack xoxb-1234-abcdef) would be wrongly skipped. A real sk- key
+# always carries a long unbroken high-entropy run and/or uppercase, so it survives; a slug is short
+# all-lowercase hyphen/underscore words. This generalises to slugs never seen before.
+_SLUG_PREFIX = re.compile(r"^sk-")
 
 
 def _looks_like_word_slug(token: str) -> bool:
     body, n = _SLUG_PREFIX.subn("", token)
-    if n == 0:  # not key-prefixed (password/db-url matches): never treat as a slug
+    if n == 0:  # only sk- tokens are eligible; everything else is never treated as a slug
         return False
-    if body != body.lower():  # real keys carry uppercase/high-entropy; slugs are lowercase
+    if body != body.lower():  # a real sk- key carries uppercase/high-entropy; slugs are lowercase
         return False
     segs = [s for s in re.split(r"[-_]", body) if s]
     return len(segs) >= 2 and all(len(s) < 16 for s in segs)
