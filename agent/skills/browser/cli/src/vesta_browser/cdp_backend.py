@@ -103,8 +103,8 @@ class _CdpTransport:
         frame: dict = {"id": command_id, "method": method, "params": params or {}}
         if session_id is not None:
             frame["sessionId"] = session_id
-        await self._ws.send(json.dumps(frame))
         try:
+            await self._ws.send(json.dumps(frame))
             return await asyncio.wait_for(future, timeout=_CDP_RESPONSE_TIMEOUT_S)
         except TimeoutError:
             # BidiError, not TimeoutError: the latter is an OSError with an empty str(), which the daemon relays as {"error": ""}.
