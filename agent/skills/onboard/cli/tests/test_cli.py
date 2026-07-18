@@ -55,15 +55,16 @@ def test_links(capsys):
 
 
 def test_presets_lists_live_reference_data(capsys, monkeypatch):
-    # `onboard presets` now reads personalities / models / defaults from the box's vestad
-    # instead of hardcoding them, so the command is a pure consumer of that one source.
+    # `onboard presets` reads personalities / models / defaults from the box's vestad and the
+    # floor from the control plane, so the command is a pure consumer of those sources (no hardcoding).
     monkeypatch.setattr(cli_mod.Client, "fetch_personalities", lambda self: [{"name": "dry"}, {"name": "chill"}])
     monkeypatch.setattr(cli_mod.Client, "fetch_claude_models", lambda self: [{"id": "opus"}, {"id": "sonnet"}, {"id": "haiku"}])
     monkeypatch.setattr(cli_mod.Client, "fetch_agent_defaults", lambda self: {"personality": "dry", "model": "opus"})
+    monkeypatch.setattr(cli_mod.Client, "fetch_floor_usd", lambda self: 12)
     rc, data = _run(["presets"], capsys)
     assert rc == 0
     assert "dry" in data["personalities"]
-    assert data["plan_floor_usd"] == 24
+    assert data["plan_floor_usd"] == 12
     assert "plans" not in data  # single plan — no tier list
     assert data["claude_models"] == ["opus", "sonnet", "haiku"]
     assert data["default_personality"] == "dry"
@@ -185,12 +186,19 @@ def test_checkout_forwards_price_and_code_no_referral(capsys, monkeypatch):
     assert "server_id" not in data
 
 
-def test_checkout_rejects_below_floor_without_calling(capsys, monkeypatch):
+def test_checkout_below_floor_is_enforced_server_side(capsys, monkeypatch):
+    # No local floor mirror: a below-floor price is forwarded to the control plane, whose
+    # {error, floor_usd} is surfaced to the agent (the floor lives in one place, the server).
     _verified()
-    calls = {"n": 0}
-    monkeypatch.setattr(cli_mod.Client, "checkout", lambda self, **kw: calls.__setitem__("n", calls["n"] + 1) or {"url": "x"})
+    captured = {}
+
+    def fake_checkout(self, *, token, plan, price, discount_code):
+        captured["price"] = price
+        return {"error": "price below floor", "floor_usd": 12}
+
+    monkeypatch.setattr(cli_mod.Client, "checkout", fake_checkout)
     rc, data = _run(["checkout", "--email", E, "--price", "5"], capsys)
-    assert rc == 2 and data["floor_usd"] == 24 and calls["n"] == 0
+    assert rc == 2 and data["floor_usd"] == 12 and captured["price"] == 5.0
 
 
 def test_checkout_surfaces_structured_error(capsys, monkeypatch):

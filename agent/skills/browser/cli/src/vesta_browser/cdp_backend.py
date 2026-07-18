@@ -17,7 +17,6 @@ explicitly handed over, so enabling the CDP domains is fine.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 
 import websockets
@@ -165,9 +164,13 @@ class CdpBackend:
         self._sessions[target_id] = session_id
         self._session_targets[session_id] = target_id
         for domain in _DOMAINS:
-            # A domain a given target lacks must not abort the attach.
-            with contextlib.suppress(BidiError):
+            try:
                 await self._cdp.send(f"{domain}.enable", {}, session_id)
+            except BidiError as e:
+                # A "cdp error" means the target lacks that domain, which must not abort the attach.
+                # Any other error (a withheld "timeout") means a wedged browser and must propagate.
+                if e.code != "cdp error":
+                    raise
         return session_id
 
     # ── BiDi -> CDP command translation ───────────────────────
