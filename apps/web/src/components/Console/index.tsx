@@ -5,103 +5,34 @@ import {
   useRef,
   useState,
 } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import { useLayout } from "@/stores/use-layout";
 import { streamLogs, stopLogs } from "@/api";
-import { stripAnsi } from "@/lib/ansi";
+import { renderAnsiHtml } from "@/lib/ansi";
 import { linkify } from "@/lib/linkify";
-import { logStreamAction, isAgentContainerUp } from "@/lib/log-stream-policy";
+import {
+  logStreamAction,
+  isAgentContainerUp,
+  LOG_SCROLLBACK_LINES,
+} from "@/lib/log-stream-policy";
 import type { AgentStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-const MAX_LINES = 5000;
 const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 30000;
-// One mono line is ~19px; wrapped lines measure taller (measureElement corrects).
+// One mono line is ~19px; off-screen rows reserve this via contain-intrinsic-size.
 const ESTIMATED_LINE_HEIGHT = 20;
-// Render margin beyond the viewport so rows are measured before they scroll into view.
-const OVERSCAN_ROWS = 16;
 // How close to the bottom still counts as pinned for follow-on-append.
 const AT_BOTTOM_THRESHOLD_PX = 80;
 // The opening `tail -n N -f` dumps the recent tail back-to-back, then `-f` idles.
 // We buffer that burst behind the "streaming logs..." placeholder and flush it as a
-// single batch so the list mounts already-complete and one scrollToEnd lands at the
-// true bottom (an incremental per-line fill leaves scroll short — rows re-measure
-// taller than the estimate after the at-end gate has already dropped). Flush once the
-// burst goes quiet for this long...
+// single batch so the list mounts already-complete and one scroll-to-bottom lands at
+// the true bottom. Flush once the burst goes quiet for this long...
 const INITIAL_FILL_QUIESCE_MS = 150;
 // ...or this long has passed regardless, so a perpetually-chatty agent still renders.
 const INITIAL_FILL_MAX_MS = 1500;
 
-const LOG_LEVEL_TAGS = new Set([
-  "DEBUG",
-  "INFO",
-  "WARNING",
-  "ERROR",
-  "CRITICAL",
-]);
-const FAMILY_TAGS = new Set(["AGENT", "SYSTEM", "USER", "EVENT"]);
-
-const FAMILY_COLOR_CLASS: Record<string, string> = {
-  AGENT: "text-fuchsia-300/90",
-  SYSTEM: "text-green-300/90",
-  USER: "text-white/90",
-  EVENT: "text-yellow-300/90",
-};
-
-const SUBFAMILY_COLOR_CLASS: Record<string, Record<string, string>> = {
-  AGENT: {
-    ASSISTANT: "text-fuchsia-200/90",
-    THINKING: "text-fuchsia-300/90",
-    "TOOL CALL": "text-fuchsia-400/90",
-    SUBAGENT: "text-fuchsia-500/90",
-  },
-  SYSTEM: {
-    INIT: "text-green-200/90",
-    STARTUP: "text-green-300/90",
-    SHUTDOWN: "text-green-500/90",
-    CLIENT: "text-green-400/90",
-    DREAMER: "text-green-200/90",
-    INTERRUPT: "text-green-500/90",
-    PROACTIVE: "text-green-200/90",
-    MESSAGE: "text-green-300/90",
-    SDK: "text-green-500/90",
-    USAGE: "text-green-400/90",
-  },
-  USER: {
-    MESSAGE: "text-white/90",
-  },
-  EVENT: {
-    NOTIFICATION: "text-yellow-200/90",
-  },
-};
-
-function extractTags(line: string): string[] {
-  return [...line.matchAll(/\[([A-Z ]+)\]/g)]
-    .map((match) => match[1])
-    .filter(
-      (tag): tag is string => tag !== undefined && !LOG_LEVEL_TAGS.has(tag),
-    );
-}
-
-function lineColorClass(line: string): string | null {
-  const tags = extractTags(line);
-  const familyIndex = tags.findIndex((tag) => FAMILY_TAGS.has(tag));
-  if (familyIndex === -1) return null;
-
-  const family = tags[familyIndex];
-  if (family === undefined) return null;
-  const subfamily = tags[familyIndex + 1];
-  const subfamilyClass =
-    subfamily === undefined
-      ? undefined
-      : SUBFAMILY_COLOR_CLASS[family]?.[subfamily];
-  return subfamilyClass ?? FAMILY_COLOR_CLASS[family] ?? null;
-}
-
 interface LogLine {
   id: number;
-  colorClass: string | null;
   html: string;
 }
 
@@ -149,6 +80,8 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
   const reconnectDelayRef = useRef(RECONNECT_BASE);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeRef = useRef(true);
+  // Follow the tail unless the user has scrolled up; true whenever the list is (re)filled.
+  const pinnedRef = useRef(true);
 
   // Initial replay-tail buffering: while `fillingRef` is set, appended lines collect
   // in `bufferRef` instead of `lines`, then flush as one batch (see the FILL consts).
@@ -167,7 +100,9 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
     const buffered = bufferRef.current;
     bufferRef.current = [];
     setLines(
-      buffered.length > MAX_LINES ? buffered.slice(-MAX_LINES) : buffered,
+      buffered.length > LOG_SCROLLBACK_LINES
+        ? buffered.slice(-LOG_SCROLLBACK_LINES)
+        : buffered,
     );
   }, []);
 
@@ -194,11 +129,9 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
             case "append": {
               // A line means the connection is healthy, so reset the backoff.
               reconnectDelayRef.current = RECONNECT_BASE;
-              const stripped = stripAnsi(action.text);
               const line = {
                 id: idRef.current++,
-                colorClass: lineColorClass(stripped),
-                html: linkify(stripped),
+                html: renderAnsiHtml(action.text, linkify),
               };
               if (fillingRef.current) {
                 // Buffer the opening tail; flush on quiescence or the max cap.
@@ -217,7 +150,9 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
               }
               setLines((prev) => {
                 const next = [...prev, line];
-                return next.length > MAX_LINES ? next.slice(-MAX_LINES) : next;
+                return next.length > LOG_SCROLLBACK_LINES
+                  ? next.slice(-LOG_SCROLLBACK_LINES)
+                  : next;
               });
               break;
             }
@@ -258,6 +193,7 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
   useEffect(() => {
     activeRef.current = true;
     idRef.current = 0;
+    pinnedRef.current = true;
     setLines([]);
     reconnectDelayRef.current = RECONNECT_BASE;
     connect.current?.(true);
@@ -283,6 +219,7 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
     if (prev === status || streamState === "live") return;
     if (isAgentContainerUp(status)) {
       idRef.current = 0;
+      pinnedRef.current = true;
       setLines([]);
       reconnectDelayRef.current = RECONNECT_BASE;
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
@@ -293,38 +230,24 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const count = lines.length;
 
-  const getItemKey = useCallback(
-    (index: number) => lines[index]?.id ?? index,
-    [lines],
-  );
+  // Every log line stays in the DOM (no windowing) so a native text selection survives
+  // scrolling and copies the full range; off-screen rows skip layout/paint via
+  // content-visibility, so 5000 lines still scroll smoothly.
+  const updatePinned = useCallback(() => {
+    const el = parentRef.current;
+    if (!el) return;
+    pinnedRef.current =
+      el.scrollHeight - el.scrollTop - el.clientHeight <=
+      AT_BOTTOM_THRESHOLD_PX;
+  }, []);
 
-  const virtualizer = useVirtualizer({
-    count,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => ESTIMATED_LINE_HEIGHT,
-    getItemKey,
-    // End-anchored stream: stick to the bottom on new lines (unless the user scrolled up),
-    // and stay anchored when old lines drop off the front at the MAX_LINES cap.
-    anchorTo: "end",
-    followOnAppend: true,
-    scrollEndThreshold: AT_BOTTOM_THRESHOLD_PX,
-    overscan: OVERSCAN_ROWS,
-    directDomUpdates: true,
-  });
-
-  // Jump to the bottom when the buffered tail first lands (count 0 -> N in one batch),
-  // and again whenever the list resets to empty (agent switch / resume) and refills.
-  // Because the list mounts already-complete, one scrollToEnd + the virtualizer's
-  // reconcile loop reaches the true bottom; from then on anchorTo:"end" +
-  // followOnAppend keep the live tail pinned.
-  const hadLinesRef = useRef(false);
+  // Follow the tail on append, and jump to the bottom when the buffered tail first
+  // lands or the list refills after an agent switch/resume, unless the user scrolled up.
   useLayoutEffect(() => {
-    const hasLines = count > 0;
-    if (hasLines && !hadLinesRef.current) virtualizer.scrollToEnd();
-    hadLinesRef.current = hasLines;
-  }, [count, virtualizer]);
+    const el = parentRef.current;
+    if (el && count > 0 && pinnedRef.current) el.scrollTop = el.scrollHeight;
+  }, [count]);
 
-  const items = virtualizer.getVirtualItems();
   const linePad = fullscreen ? "px-page" : "px-5";
 
   return (
@@ -337,6 +260,7 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
       <div className="flex-1 min-h-0">
         <div
           ref={parentRef}
+          onScroll={updatePinned}
           className="h-full overflow-y-auto overflow-x-hidden font-mono text-xs leading-[1.6] text-white/70"
           style={
             fullscreen
@@ -349,54 +273,31 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
           {count === 0 ? (
             <StreamingPlaceholder state={streamState} />
           ) : (
-            <div
-              ref={virtualizer.containerRef}
-              style={{ position: "relative", width: "100%" }}
-            >
-              {items.map((item) => {
-                const line = lines[item.index];
-                if (!line) return null;
-                const isFirst = item.index === 0;
-                const isLast = item.index === count - 1;
-                return (
-                  <div
-                    key={item.key}
-                    ref={virtualizer.measureElement}
-                    data-index={item.index}
-                    style={{
-                      position: "absolute",
-                      top: 0,
-                      left: 0,
-                      width: "100%",
-                    }}
-                  >
-                    {isFirst &&
-                      (fullscreen ? (
-                        <div
-                          style={{
-                            height: `calc(${String(navbarHeight)}px + var(--page-padding-x))`,
-                          }}
-                        />
-                      ) : (
-                        <div className="h-6" />
-                      ))}
-                    <div
-                      className={cn(
-                        "break-words whitespace-pre-wrap",
-                        linePad,
-                        line.colorClass,
-                      )}
-                      dangerouslySetInnerHTML={{ __html: line.html }}
-                    />
-                    {isLast && (
-                      <div className={fullscreen ? "pb-page" : "pb-6"}>
-                        <StreamNotice state={streamState} />
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+            <>
+              {fullscreen ? (
+                <div
+                  style={{
+                    height: `calc(${String(navbarHeight)}px + var(--page-padding-x))`,
+                  }}
+                />
+              ) : (
+                <div className="h-6" />
+              )}
+              {lines.map((line) => (
+                <div
+                  key={line.id}
+                  className={cn("break-words whitespace-pre-wrap", linePad)}
+                  style={{
+                    contentVisibility: "auto",
+                    containIntrinsicSize: `auto ${String(ESTIMATED_LINE_HEIGHT)}px`,
+                  }}
+                  dangerouslySetInnerHTML={{ __html: line.html }}
+                />
+              ))}
+              <div className={fullscreen ? "pb-page" : "pb-6"}>
+                <StreamNotice state={streamState} />
+              </div>
+            </>
           )}
         </div>
       </div>

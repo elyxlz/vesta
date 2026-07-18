@@ -1,4 +1,5 @@
 import { getConnection } from "@/lib/connection";
+import { replayTailLines } from "@/lib/log-stream-policy";
 import type { LogEvent } from "@/lib/types";
 import { openLogStream } from "./log-stream";
 
@@ -16,12 +17,11 @@ export function streamLogs(
       return;
     }
 
-    // A fresh stream replays the recent tail; a reconnect after a transport drop
-    // passes tail=0 so the server follows new lines only and we don't re-append
-    // the same block as duplicates.
-    const replay = opts?.replay ?? true;
-    const tailParam = replay ? "" : "&tail=0";
-    const url = `${conn.url}/agents/${encodeURIComponent(name)}/logs?token=${encodeURIComponent(conn.accessToken)}${tailParam}`;
+    const params = new URLSearchParams({
+      token: conn.accessToken,
+      tail: String(replayTailLines(opts?.replay ?? true)),
+    });
+    const url = `${conn.url}/agents/${encodeURIComponent(name)}/logs?${params.toString()}`;
     logSources.get(name)?.close();
     logSources.set(
       name,

@@ -6,10 +6,23 @@ websocket proxy) is exercised end-to-end in a real container, not here.
 
 from __future__ import annotations
 
+import os
 import socket
+import subprocess
+import time
 
 import pytest
 from vesta_browser import handover
+
+
+def wait_until(predicate, timeout_s=5.0):
+    """Poll `predicate` to a deadline. A process reaching zombie state is not an event we can await."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.02)
+    return predicate()
 
 
 @pytest.fixture(autouse=True)
@@ -102,13 +115,208 @@ def test_find_novnc_dir_raises_with_install_hint(monkeypatch, tmp_path):
 
 def test_require_binaries_lists_missing(monkeypatch):
     monkeypatch.setattr(handover.shutil, "which", lambda _: None)
-    with pytest.raises(RuntimeError, match="x11vnc, websockify, openbox"):
+    with pytest.raises(RuntimeError, match="Xvfb, x11vnc, websockify, openbox"):
         handover._require_binaries()
+
+
+def test_missing_xvfb_alone_is_refused_not_hung(monkeypatch, isolated):
+    # _ensure_xvfb never raises, so an unguarded Xvfb leaves x11vnc with no display to open and
+    # the page spinning on "Waking" forever. The gate has to catch it up front.
+    monkeypatch.setattr(handover, "NOVNC_DIRS", [_fake_novnc(isolated)])
+    monkeypatch.setattr(handover.shutil, "which", lambda name: None if name == "Xvfb" else f"/usr/bin/{name}")
+    with pytest.raises(RuntimeError, match="missing Xvfb"):
+        handover._require_binaries()
+    assert handover.readiness() == {"ready": False, "missing": ["Xvfb"]}
+
+
+def test_install_hint_covers_every_required_binary(monkeypatch):
+    # The hint is what an agent actually runs, so a package short of the gate strands it in a
+    # state doctor calls ready. xvfb ships Xvfb, novnc ships websockify.
+    monkeypatch.setattr(handover.shutil, "which", lambda _: None)
+    with pytest.raises(RuntimeError) as excinfo:
+        handover._require_binaries()
+    hint = str(excinfo.value)
+    assert handover.HANDOVER_APT_LINE in hint
+    for package in ("xvfb", "novnc", "x11vnc", "openbox"):
+        assert package in handover.HANDOVER_APT_LINE
 
 
 def test_require_binaries_ok_when_present(monkeypatch):
     monkeypatch.setattr(handover.shutil, "which", lambda name: f"/usr/bin/{name}")
     handover._require_binaries()  # does not raise
+
+
+# ── teardown ──────────────────────────────────────────────────
+
+
+def _record_kills(monkeypatch):
+    killed: list[int] = []
+    monkeypatch.setattr(handover.admin, "_terminate_pid", killed.append)
+    monkeypatch.setattr(handover.admin, "stop_browser", lambda _name: None)
+    return killed
+
+
+def test_stop_reaps_the_xvfb_it_started(monkeypatch):
+    # Nothing else reaps Xvfb, and a live leftover keeps answering on its display number, so
+    # _free_display climbs to the next one and the range runs dry after enough handovers.
+    killed = _record_kills(monkeypatch)
+    for suffix, pid in (("websockify-pid", 11), ("x11vnc-pid", 22), ("openbox-pid", 33), ("xvfb-pid", 44)):
+        handover._session_file(suffix).write_text(str(pid))
+    handover.stop()
+    assert killed == [11, 22, 33, 44]  # Xvfb last: the bridge and browser are its clients
+    assert not handover._session_file("xvfb-pid").exists()
+
+
+def test_stop_is_idempotent_without_an_xvfb_pid(monkeypatch):
+    killed = _record_kills(monkeypatch)
+    assert handover.stop() == {"stopped": True}
+    assert killed == []
+
+
+# ── liveness ──────────────────────────────────────────────────
+
+
+def test_alive_is_false_for_a_real_zombie():
+    # A genuine zombie, made the way handover makes them: Popen never reaps until wait(), so once
+    # `true` exits its pid lingers in the table. This is the exact state that had status() calling
+    # a dead x11vnc up while the page span on "Waking".
+    proc = subprocess.Popen(["true"])
+    try:
+        assert wait_until(lambda: not handover._alive(proc.pid)), "zombie still reported alive"
+        os.kill(proc.pid, 0)  # the old signal-0 probe still succeeds on the corpse: that was the bug
+    finally:
+        proc.wait()
+
+
+def test_alive_is_true_for_a_running_process():
+    proc = subprocess.Popen(["sleep", "30"])
+    try:
+        assert handover._alive(proc.pid) is True
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+def test_alive_is_false_for_an_absent_or_unknown_pid():
+    assert handover._alive(None) is False
+    assert handover._alive(999_999_999) is False
+
+
+# ── x11vnc bring-up ───────────────────────────────────────────
+
+
+def _stub_x11vnc(monkeypatch, *, serves_with, dies_when_refused=True):
+    """Stand in for x11vnc: it 'serves' only when launched with the arg set in `serves_with`.
+
+    `dies_when_refused=False` models the other failure shape: a process that stays up but never
+    opens the port, which only the readiness deadline can catch.
+    """
+    attempts: list[tuple[str, ...]] = []
+
+    class FakeProc:
+        def __init__(self, argv):
+            self.pid = 1000 + len(attempts)
+            self._ok = tuple(a for a in argv if a == "-noshm") == serves_with
+            self.terminated = False
+
+        def poll(self):
+            if self._ok or not dies_when_refused:
+                return None
+            return 1
+
+        def terminate(self):
+            self.terminated = True
+
+        def wait(self, timeout=None):
+            return 0
+
+    def fake_popen(argv, **_kw):
+        attempts.append(tuple(a for a in argv if a == "-noshm"))
+        return FakeProc(argv)
+
+    monkeypatch.setattr(handover.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(handover, "_port_serving", lambda _p: attempts[-1] == serves_with)
+    monkeypatch.setattr(handover, "X11VNC_SETTLE_S", 0)
+    return attempts
+
+
+def test_x11vnc_uses_shared_memory_when_the_host_allows_it(monkeypatch, isolated):
+    # shm reads the framebuffer ~25x faster, so it must not be given up pre-emptively.
+    attempts = _stub_x11vnc(monkeypatch, serves_with=())
+    with (isolated / "log").open("w") as log:
+        handover._start_x11vnc(display=":99", vnc_port=5900, log=log)
+    assert attempts == [()]  # first try, no -noshm, done
+
+
+def test_x11vnc_falls_back_to_noshm_when_the_host_denies_shm(monkeypatch, isolated):
+    # Some hosts deny X_ShmAttach and x11vnc dies on its first grab; that must self-heal rather
+    # than hand the user a link to a page that spins on "Waking" forever.
+    attempts = _stub_x11vnc(monkeypatch, serves_with=("-noshm",))
+    with (isolated / "log").open("w") as log:
+        handover._start_x11vnc(display=":99", vnc_port=5900, log=log)
+    assert attempts == [(), ("-noshm",)]
+
+
+def test_x11vnc_raises_when_neither_mode_serves(monkeypatch, isolated):
+    attempts = _stub_x11vnc(monkeypatch, serves_with=("never",))
+    monkeypatch.setattr(handover, "X11VNC_READY_TIMEOUT_S", 0.2)
+    with (isolated / "log").open("w") as log, pytest.raises(RuntimeError, match="never served port 5900"):
+        handover._start_x11vnc(display=":99", vnc_port=5900, log=log)
+    assert attempts == [(), ("-noshm",)]
+
+
+def test_x11vnc_that_stays_up_but_never_serves_hits_the_deadline(monkeypatch, isolated):
+    # The hang this whole path exists to end: the process is alive, so polling poll() alone would
+    # wait forever. Only the readiness deadline ends it, and it must still try -noshm.
+    attempts = _stub_x11vnc(monkeypatch, serves_with=("never",), dies_when_refused=False)
+    monkeypatch.setattr(handover, "X11VNC_READY_TIMEOUT_S", 0.2)
+    with (isolated / "log").open("w") as log, pytest.raises(RuntimeError, match="never served port 5900"):
+        handover._start_x11vnc(display=":99", vnc_port=5900, log=log)
+    assert attempts == [(), ("-noshm",)]
+
+
+def test_x11vnc_that_binds_then_dies_is_not_taken_as_ready(monkeypatch, isolated):
+    # Binding is not survival: x11vnc grabs the framebuffer around the time it opens the port, so a
+    # host refusing shm can kill it just after the bind. Taking the port as proof would strand the
+    # user on a dead stream with the -noshm retry never fired.
+    attempts: list[tuple[str, ...]] = []
+
+    class BindsThenDies:
+        pid = 4242
+
+        def __init__(self):
+            self.polls = 0
+
+        def poll(self):
+            self.polls += 1
+            return None if self.polls <= 1 else 1  # alive at the port check, dead after the settle
+
+        def terminate(self):
+            pass
+
+        def wait(self, timeout=None):
+            return 1
+
+    def fake_popen(argv, **_kw):
+        attempts.append(tuple(a for a in argv if a == "-noshm"))
+        return BindsThenDies()
+
+    monkeypatch.setattr(handover.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(handover, "_port_serving", lambda _p: True)
+    monkeypatch.setattr(handover, "X11VNC_SETTLE_S", 0)
+    monkeypatch.setattr(handover, "X11VNC_READY_TIMEOUT_S", 0.2)
+    with (isolated / "log").open("w") as log, pytest.raises(RuntimeError, match="never served port 5900"):
+        handover._start_x11vnc(display=":99", vnc_port=5900, log=log)
+    assert attempts == [(), ("-noshm",)]  # the death after the bind still reached the fallback
+
+
+def test_alive_reads_the_state_past_a_comm_holding_spaces_and_parens(isolated, monkeypatch):
+    # /proc/<pid>/stat's comm field is unescaped, so splitting on whitespace misreads the state.
+    proc_root = isolated / "proc"
+    (proc_root / "42").mkdir(parents=True)
+    (proc_root / "42" / "stat").write_text("42 (odd ) name Z) R 1 1 0 0 -1 0 0 0")
+    monkeypatch.setattr(handover, "PROC", proc_root)
+    assert handover._alive(42) is True
 
 
 def test_readiness_reports_missing_binaries(monkeypatch):
@@ -158,17 +366,42 @@ def test_free_port_returns_a_bindable_port():
         s.close()
 
 
-def test_free_display_skips_existing_seats(monkeypatch):
-    # A real desktop seat (:0/:1) already has an X socket; handover must never pick it, else x11vnc
-    # grabs the live seat and noVNC hangs. Pretend :99 and :100 are taken; it must land on :101.
-    taken = {"/tmp/.X11-unix/X99", "/tmp/.X11-unix/X100"}
-    monkeypatch.setattr(handover.Path, "exists", lambda self: str(self) in taken)
+def test_free_display_skips_live_seats(monkeypatch):
+    # A real desktop seat (:0/:1) already has a LIVE X server; handover must never pick it, else
+    # x11vnc grabs the live seat and noVNC hangs. :99 and :100 answer; it must land on :101.
+    monkeypatch.setattr(handover.launcher, "_x_display_reachable", lambda disp: disp in {":99", ":100"})
     assert handover._free_display() == ":101"
 
 
-def test_free_display_returns_base_when_free(monkeypatch):
-    monkeypatch.setattr(handover.Path, "exists", lambda self: False)
-    assert handover._free_display() == ":99"
+def test_claim_own_display_returns_the_display_it_actually_won(monkeypatch):
+    monkeypatch.setattr(handover.launcher, "_x_display_reachable", lambda _disp: False)
+    monkeypatch.setattr(handover.launcher, "_ensure_xvfb", lambda display, screen: 4242)
+    assert handover._claim_own_display() == (":99", 4242)
+
+
+def test_claim_own_display_advances_when_a_race_is_lost(monkeypatch):
+    # Two handovers pick the same free number and race to bind its shared abstract socket; the loser
+    # sees _ensure_xvfb return None (its Xvfb died) and must move to the next number, not proceed
+    # against the winner's server. The winner then holds :99, so the next scan lands on :100.
+    held = {":99"}
+    monkeypatch.setattr(handover.launcher, "_x_display_reachable", lambda disp: disp in held)
+
+    def ensure(display, screen):
+        if display == ":99":  # lost the race for :99
+            return None
+        held.add(display)  # won this one
+        return 4243
+
+    monkeypatch.setattr(handover.launcher, "_ensure_xvfb", ensure)
+    assert handover._claim_own_display() == (":100", 4243)
+
+
+def test_claim_own_display_gives_up_after_the_attempt_cap(monkeypatch):
+    monkeypatch.setattr(handover.launcher, "_x_display_reachable", lambda _disp: False)
+    monkeypatch.setattr(handover.launcher, "_ensure_xvfb", lambda display, screen: None)  # always loses
+    monkeypatch.setattr(handover, "DISPLAY_CLAIM_ATTEMPTS", 3)
+    with pytest.raises(RuntimeError, match="could not claim a free X display"):
+        handover._claim_own_display()
 
 
 def test_alive_false_for_none_and_dead_pid():
@@ -204,3 +437,14 @@ def test_status_all_false_when_idle():
     assert st["websockify"] is False
     assert st["web_port"] is None
     assert st["page"] is None
+
+
+# ── display selection: liveness, not file existence ───────────
+
+
+def test_free_display_reuses_a_dead_display(monkeypatch):
+    # Regression: _free_display judged a display taken by its /tmp/.X11-unix/Xn socket FILE, so a
+    # dead Xvfb's leftover socket (crash, or a restart that leaves /tmp intact) blocked the number
+    # and corpses eventually exhausted the range. Judging by liveness makes a dead display reusable.
+    monkeypatch.setattr(handover.launcher, "_x_display_reachable", lambda disp: False)
+    assert handover._free_display(start=99) == ":99"

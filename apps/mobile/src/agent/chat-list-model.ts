@@ -1,0 +1,145 @@
+import type { VestaEvent } from "../api/types";
+
+export interface EventChatRow {
+  kind: "event";
+  key: string;
+  event: VestaEvent;
+  startsNewBubbleGroup: boolean;
+  endsBubbleGroup: boolean;
+}
+
+export interface TypingChatRow {
+  kind: "typing";
+  key: "typing-indicator";
+  startsNewBubbleGroup: boolean;
+}
+
+export interface DateChatRow {
+  kind: "date";
+  key: string;
+  timestamp: string;
+}
+
+export type ChatRow = EventChatRow | TypingChatRow | DateChatRow;
+type ChatSide = "user" | "agent";
+
+function eventChatSide(event: VestaEvent): ChatSide | null {
+  if (event.type === "user") return "user";
+  if (event.type === "chat" || event.type === "tool_start") return "agent";
+  return null;
+}
+
+function calendarDay(timestamp: string | undefined): string | null {
+  if (!timestamp) return null;
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return null;
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function eventRows(
+  events: VestaEvent[],
+  showToolCalls: boolean,
+): EventChatRow[] {
+  const visible = events.filter(
+    (event) =>
+      event.type === "user" ||
+      event.type === "chat" ||
+      event.type === "error" ||
+      event.type === "rate_limited" ||
+      (showToolCalls &&
+        event.type === "tool_start" &&
+        !(event.tool === "Bash" && event.input.includes("app-chat"))),
+  );
+  const seen = new Map<string, number>();
+  let previousSide: ChatSide | null = null;
+  const rows = visible.map((event) => {
+    const base = `${event.ts ?? "live"}-${event.type}`;
+    const count = seen.get(base) ?? 0;
+    seen.set(base, count + 1);
+    const side = eventChatSide(event);
+    const startsNewBubbleGroup = Boolean(
+      side && previousSide && side !== previousSide,
+    );
+    if (side) previousSide = side;
+    return {
+      kind: "event" as const,
+      key: count === 0 ? base : `${base}#${count}`,
+      event,
+      startsNewBubbleGroup,
+      endsBubbleGroup: false,
+    };
+  });
+
+  let nextBubbleType: "user" | "chat" | null = null;
+  let nextBubbleDay: string | null = null;
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const row = rows[index];
+    if (!row) continue;
+    const bubbleType =
+      row.event.type === "user" || row.event.type === "chat"
+        ? row.event.type
+        : null;
+    if (!bubbleType) continue;
+    const bubbleDay = calendarDay(row.event.ts);
+    row.endsBubbleGroup =
+      nextBubbleType === null ||
+      bubbleType !== nextBubbleType ||
+      bubbleDay !== nextBubbleDay;
+    nextBubbleType = bubbleType;
+    nextBubbleDay = bubbleDay;
+  }
+  return rows;
+}
+
+function addDateRows(rows: EventChatRow[]): ChatRow[] {
+  const datedRows: ChatRow[] = [];
+  let previousDay: string | null = null;
+
+  for (const row of rows) {
+    const day = calendarDay(row.event.ts);
+    if (day && day !== previousDay && row.event.ts) {
+      row.startsNewBubbleGroup = false;
+      datedRows.push({
+        kind: "date",
+        key: `date-${day}`,
+        timestamp: row.event.ts,
+      });
+    }
+    datedRows.push(row);
+    if (day) previousDay = day;
+  }
+
+  return datedRows;
+}
+
+export function createInvertedChatRows(
+  events: VestaEvent[],
+  showToolCalls: boolean,
+  isTyping: boolean,
+): ChatRow[] {
+  const rows = addDateRows(eventRows(events, showToolCalls));
+  if (isTyping) {
+    let latestSide: ChatSide | null = null;
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+      const row = rows[index];
+      if (!row || row.kind !== "event") continue;
+      const side = eventChatSide(row.event);
+      if (side) {
+        latestSide = side;
+        if (row.event.type === "chat") row.endsBubbleGroup = false;
+        break;
+      }
+    }
+    rows.push({
+      kind: "typing",
+      key: "typing-indicator",
+      startsNewBubbleGroup: latestSide === "user",
+    });
+  }
+
+  return rows.reverse();
+}

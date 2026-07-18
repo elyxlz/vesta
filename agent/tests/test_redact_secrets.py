@@ -1,6 +1,7 @@
 """Tests for the dream skill's redact_secrets script: masked pattern scan + in-place scrub by id."""
 
 import importlib.util
+import json
 import pathlib as pl
 import sqlite3
 
@@ -70,6 +71,27 @@ def test_scrub_keeps_fts_in_sync(event_bus, db_conn):
     db_conn.execute("DELETE FROM events")
     db_conn.commit()
     assert event_bus.search("backup") == []
+
+
+def test_scrub_keeps_blob_valid_json_when_secret_abuts_escaped_quote(event_bus, db_conn):
+    # A mongodb URI wrapped in shell double-quotes: the closing quote JSON-encodes to \", so the
+    # secret abuts an escape boundary. A raw text .sub over the stored blob splices [REDACTED]
+    # across that \" and produces invalid JSON, which breaks the FTS json_extract and rolls the
+    # whole scrub back. The JSON-aware scrub redacts the decoded value and re-serializes cleanly.
+    event_bus.emit(ChatEvent(type="chat", text='mongo "mongodb://user:secretpass@cluster0.example.net/db"'))
+    raw = db_conn.execute("SELECT data FROM events").fetchone()[0]
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(redact.REGEX.sub(redact.mask, raw))
+
+    ids = [row_id for row_id, _ in redact.scan(db_conn)]
+    assert redact.scrub(db_conn, ids) == 1
+
+    data = db_conn.execute("SELECT data FROM events").fetchone()[0]
+    parsed = json.loads(data)
+    assert "secretpass" not in data
+    assert "[REDACTED]" in parsed["text"]
+    assert event_bus.search("secretpass") == []
+    assert len(event_bus.search("mongo")) == 1
 
 
 def test_scrub_only_touches_the_given_events(event_bus, db_conn):

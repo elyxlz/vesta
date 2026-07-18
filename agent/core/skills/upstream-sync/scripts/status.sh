@@ -7,7 +7,12 @@ TAG="agent-v$VERSION"
 bash ~/agent/core/skills/upstream-sync/scripts/fetch-upstream.sh
 echo "== running core: v$VERSION (snapshot $TAG)"
 if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
-  echo "== my changes on top of $TAG:"
+  # `$TAG..HEAD` lists my commits either way, so only merge-base says whether the rebase landed.
+  if git merge-base --is-ancestor "$TAG" HEAD; then
+    echo "== synced: my changes on top of $TAG:"
+  else
+    echo "== NOT synced: $TAG is not in my history, run sync.sh. My commits:"
+  fi
   git log --oneline "$TAG..HEAD" || true
 else
   echo "== snapshot $TAG not in the upstream repo"

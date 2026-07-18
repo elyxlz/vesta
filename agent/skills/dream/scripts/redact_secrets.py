@@ -4,6 +4,7 @@ Usage: redact_secrets.py            # scan, printing each hit with the value mas
        redact_secrets.py --scrub ID [ID ...]   # redact every secret in those events
 """
 
+import json
 import re
 import sqlite3
 import sys
@@ -18,6 +19,10 @@ FTS_TYPES = ("user", "assistant", "chat")
 
 PATTERNS = [
     r"sk-[a-zA-Z0-9_-]{20,}",
+    # Stripe secret + restricted keys use an UNDERSCORE (sk_live_ / sk_test_ / rk_live_ / rk_test_),
+    # so the sk- (hyphen) pattern above never matched them. Publishable pk_ keys are not secret and
+    # are deliberately excluded.
+    r"[sr]k_(?:live|test)_[0-9a-zA-Z]{20,}",
     r"xox[bp]-[0-9A-Za-z-]+",
     r"gh[posr]_[A-Za-z0-9]{36,}",
     r"github_pat_[A-Za-z0-9_]{20,}",
@@ -37,11 +42,47 @@ PATTERNS = [
 ]
 REGEX = re.compile("|".join(PATTERNS), re.IGNORECASE)
 
+# Structural false-positive filter, scoped to the sk- (hyphen) OpenAI pattern ONLY, because that is
+# the one pattern whose body collides with English-word URL slugs: "sk-hynix-raises-full-year-
+# guidance" (a SK Hynix news URL) matches sk-[a-zA-Z0-9_-]{20,} but is words, not a key. Other key
+# families are deliberately NOT slug-checked: their bodies are hex/base62, not English words, and a
+# short lowercase one (e.g. a Slack xoxb-1234-abcdef) would be wrongly skipped. A real sk- key
+# always carries a long unbroken high-entropy run and/or uppercase, so it survives; a slug is short
+# all-lowercase hyphen/underscore words. This generalises to slugs never seen before.
+_SLUG_PREFIX = re.compile(r"^sk-")
+
+
+def _looks_like_word_slug(token: str) -> bool:
+    body, n = _SLUG_PREFIX.subn("", token)
+    if n == 0:  # only sk- tokens are eligible; everything else is never treated as a slug
+        return False
+    if body != body.lower():  # a real sk- key carries uppercase/high-entropy; slugs are lowercase
+        return False
+    segs = [s for s in re.split(r"[-_]", body) if s]
+    return len(segs) >= 2 and all(len(s) < 16 for s in segs)
+
 
 def mask(match: re.Match[str]) -> str:
     """Replace a real hit with the placeholder; leave an already-scrubbed span untouched so the
     scan and scrub are both idempotent (a re-run never re-flags or mangles `password=[REDACTED]`)."""
     return match.group(0) if REDACTED in match.group(0) else REDACTED
+
+
+type JsonValue = str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
+
+
+def redact_json(value: JsonValue) -> JsonValue:
+    """Recursively apply the mask regex to every string inside a parsed JSON value. Redacting the
+    decoded structure (not the serialized blob) guarantees the re-serialized event is still valid
+    JSON: a raw text .sub can splice `[REDACTED]` across a `\"`/escape boundary and corrupt the blob,
+    which then breaks the json_extract in the FTS resync and rolls back the whole scrub."""
+    if isinstance(value, str):
+        return REGEX.sub(mask, value)
+    if isinstance(value, list):
+        return [redact_json(v) for v in value]
+    if isinstance(value, dict):
+        return {k: redact_json(v) for k, v in value.items()}
+    return value
 
 
 def scan(conn: sqlite3.Connection) -> list[tuple[int, str]]:
@@ -58,6 +99,8 @@ def scan(conn: sqlite3.Connection) -> list[tuple[int, str]]:
         for m in REGEX.finditer(data):
             if REDACTED in m.group(0):
                 continue
+            if _looks_like_word_slug(m.group(0)):
+                continue  # news/URL slug (hyphenated words), not a secret
             window = data[max(0, m.start() - 40) : m.end() + 40]
             matches.append((row_id, REGEX.sub(mask, window).replace("\n", " ")))
     return matches
@@ -71,9 +114,20 @@ def scrub(conn: sqlite3.Connection, ids: list[int]) -> int:
         row = conn.execute("SELECT data FROM events WHERE id = ?", (row_id,)).fetchone()
         if row is None or not row[0]:
             continue
-        new_data = REGEX.sub(mask, row[0])
-        if new_data != row[0]:
-            changed[row_id] = new_data
+        try:
+            obj = json.loads(row[0])
+        except (json.JSONDecodeError, TypeError):
+            # Non-JSON payload: fall back to a raw text sub (nothing to keep valid).
+            new_data = REGEX.sub(mask, row[0])
+            if new_data != row[0]:
+                changed[row_id] = new_data
+            continue
+        new_obj = redact_json(obj)
+        if new_obj != obj:
+            # Re-serialize only when a real redaction changed the structure, so events with no
+            # secret are never rewritten (a reformat-only diff would rewrite every event). Match
+            # events.py's json.dumps(event) so a scrubbed blob keeps the fleet's byte representation.
+            changed[row_id] = json.dumps(new_obj)
     if not changed:
         return 0
     changed_ids = list(changed)
@@ -116,7 +170,8 @@ def main() -> int:
         ids = sorted({row_id for row_id, _ in matches})
         print(f"Found {len(ids)} event(s) with potential secrets (value masked below).")
         print("Review the context, then redact the real leaks: redact_secrets.sh --scrub <id> <id> ...")
-        for row_id, snippet in matches[:20]:
+        # Never cap this list: matches arrive in rowid order, so any cap hides the newest events' leaks.
+        for row_id, snippet in matches:
             print(f"{row_id}|{snippet}")
         return 0
     finally:

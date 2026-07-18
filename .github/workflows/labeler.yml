@@ -1,4 +1,4 @@
-name: PR Labeler
+name: Pull request
 
 on:
   pull_request_target:
@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   label:
+    name: Apply labels
     runs-on: ubuntu-latest
     steps:
       - uses: actions/labeler@v6

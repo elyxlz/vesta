@@ -155,11 +155,12 @@ npm -w @vesta/desktop run build            # Package the desktop app (electron-b
 ./release.sh "<message>"         # Patch release (0.1.0 -> 0.1.1)
 ./release.sh minor "<message>"   # Minor release (0.1.0 -> 0.2.0)
 ./release.sh major "<message>"   # Major release (0.1.0 -> 1.0.0)
+MOBILE_DELIVERY=skip ./release.sh "<message>"  # Release without a TestFlight build
 ```
 
 The message is required: user-facing "What's new" marketing copy embedded in the release body (the app and changelog parse it). Pull a broken beta with `./unrelease.sh vX.Y.Z`; promote a soaked one with `./promote.sh vX.Y.Z`.
 
-Run locally on master. Bumps versions, updates lockfiles, commits, pushes, and creates the GitHub release. CI then builds artifacts and publishes. Do NOT bump versions in PRs: `release.sh` handles version bumps at release time.
+Run locally on master. Bumps versions, updates lockfiles, commits, pushes, and creates the GitHub release. CI then builds artifacts and publishes. Mobile delivery defaults to an internal TestFlight build of the same tagged commit; set `MOBILE_DELIVERY=skip` for a release that should not create one. Public App Store delivery is deliberately not part of promotion yet. Do NOT bump versions in PRs: `release.sh` handles version bumps at release time.
 
 ## Code conventions
 
@@ -251,11 +252,11 @@ If the skill ships a CLI, put it in a `cli/` subdirectory as its **own standalon
 
 ## CI
 
-One workflow (`ci.yml`) runs on push to `master`, PRs, and releases; jobs are path-filtered on PRs. The check/test jobs call `./check.sh` subcommands, so CI and local checks are identical by construction. Checks: version sync across sources (`agent/pyproject.toml`, `vestad/Cargo.toml`, `cli/Cargo.toml`, `vestad/tests-integration/Cargo.toml`, `apps/desktop/package.json`, `apps/web/package.json`), ruff, ty, cargo clippy, pytest (incl. cc_sdk e2e transport tests under tmux), `uv.lock` freshness. The single required branch-protection check is `merge-gate-ci`.
+`ci.yml` runs shared validation on pushes to `master` and PRs; jobs are path-filtered on PRs. `release-pipeline.yml` is triggered only by a published prerelease, calls the same reusable CI workflow, then runs the live gate and publishing jobs. Keeping delivery separate means PRs do not show irrelevant skipped release checks. The check/test jobs call `./check.sh` subcommands, so CI and local checks are identical by construction. Checks include version sync across sources, workflow syntax, dependency review when GitHub's dependency graph is enabled, ruff, ty, cargo clippy, pytest (including cc_sdk transport tests under tmux), `uv.lock` freshness, and native iOS/Android mobile compiles when native inputs change. Mobile PRs also validate every EAS workflow against Expo's public schema without authenticating or queuing a cloud build. Electron PR packages are explicitly unsigned and never receive Apple signing credentials; signing and notarization remain release-only. The single required branch-protection check is `merge-gate-ci`.
 
 Docker-based jobs (integration tests, vestad Docker unit tests, live tests) build the agent image **from the checkout** (GHA layer cache) and run with `VESTAD_AGENT_IMAGE=vesta:local`, so PRs are validated against their own agent code and Dockerfile, never the previously released image.
 
-A live agent e2e job (`test-live`) runs a real agent against real Claude using the `CLAUDE_CREDENTIALS` OAuth secret **only on the release event** (not PRs; it is slow and spends API tokens) and gates the release: a failure blocks publishing artifacts and the `:latest` image. Releases are triggered by `gh release create` (via `./release.sh`). Desktop builds from `apps/desktop` (Electron, no Rust): a universal signed + notarized dmg/zip on macOS, deb/rpm on Linux, NSIS on Windows, plus the `latest*.yml` manifests electron-updater reads.
+A live agent e2e job runs a real agent against real Claude using the `CLAUDE_CREDENTIALS` OAuth secret **only in the release pipeline** (not PRs; it is slow and spends API tokens) and gates publishing artifacts and the versioned agent image. Releases are triggered by `gh release create` (via `./release.sh`). Desktop builds from `apps/desktop` (Electron, no Rust): a universal signed + notarized dmg/zip on macOS, deb/rpm on Linux, NSIS on Windows, plus the `latest*.yml` manifests electron-updater reads. Unless the release was created with `MOBILE_DELIVERY=skip`, successful release CI then runs the tagged mobile project through EAS Build and delivers it to automatic internal TestFlight groups. This does not submit the app for public App Store review or release.
 
 ## Pull requests
 

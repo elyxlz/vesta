@@ -61,7 +61,21 @@ interface ReleaseAsset {
   browser_download_url: string;
 }
 
-/** Pick this arch's .deb or .rpm from the release's asset list by name. */
+export function selectLinuxAsset(
+  assets: ReleaseAsset[],
+  arch: string,
+  extension: string,
+): ReleaseAsset | undefined {
+  const archTokens =
+    arch === "arm64" ? ["arm64", "aarch64"] : ["x64", "amd64", "x86_64"];
+  return assets.find(
+    (candidate) =>
+      candidate.name.endsWith(extension) &&
+      archTokens.some((token) => candidate.name.includes(token)),
+  );
+}
+
+/** Resolve this arch's package download url from the release's assets. */
 async function findLinuxAsset(
   version: string,
   extension: string,
@@ -74,15 +88,7 @@ async function findLinuxAsset(
     release !== null && typeof release === "object" && "assets" in release
       ? (release as { assets: ReleaseAsset[] }).assets
       : [];
-  const archTokens =
-    process.arch === "arm64"
-      ? ["arm64", "aarch64"]
-      : ["x64", "amd64", "x86_64"];
-  const asset = assets.find(
-    (candidate) =>
-      candidate.name.endsWith(extension) &&
-      archTokens.some((token) => candidate.name.includes(token)),
-  );
+  const asset = selectLinuxAsset(assets, process.arch, extension);
   if (!asset)
     throw new Error(
       `no ${extension} for ${process.arch} in release v${version}`,

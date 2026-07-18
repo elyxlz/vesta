@@ -17,7 +17,6 @@ explicitly handed over, so enabling the CDP domains is fine.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 
 import websockets
@@ -47,6 +46,7 @@ _KEY_MAP = {
 _CDP_BUTTON = {0: "left", 1: "middle", 2: "right"}
 _INTERNAL_PREFIXES = ("devtools://", "chrome://", "chrome-extension://")
 _LOAD_TIMEOUT_S = 30.0
+_CDP_RESPONSE_TIMEOUT_S = 60.0
 _DOMAINS = ("Page", "Runtime", "Log", "DOM")
 
 
@@ -103,8 +103,14 @@ class _CdpTransport:
         frame: dict = {"id": command_id, "method": method, "params": params or {}}
         if session_id is not None:
             frame["sessionId"] = session_id
-        await self._ws.send(json.dumps(frame))
-        return await future
+        try:
+            await self._ws.send(json.dumps(frame))
+            return await asyncio.wait_for(future, timeout=_CDP_RESPONSE_TIMEOUT_S)
+        except TimeoutError:
+            # BidiError, not TimeoutError: the latter is an OSError with an empty str(), which the daemon relays as {"error": ""}.
+            raise BidiError("timeout", f"no response to {method!r} within {_CDP_RESPONSE_TIMEOUT_S}s") from None
+        finally:
+            self._pending.pop(command_id, None)
 
     async def close(self) -> None:
         if self._reader is not None:
@@ -150,14 +156,21 @@ class CdpBackend:
         try:
             attach = await self._cdp.send("Target.attachToTarget", {"targetId": target_id, "flatten": True})
         except BidiError as e:
-            raise BidiError("no such frame", e.message) from e
+            # Only a refusal means the target is gone. Relabelling a withheld response sends the daemon to re-derive and retry a wedged browser.
+            if e.code == "cdp error":
+                raise BidiError("no such frame", e.message) from e
+            raise
         session_id = attach["sessionId"]
         self._sessions[target_id] = session_id
         self._session_targets[session_id] = target_id
         for domain in _DOMAINS:
-            # A domain a given target lacks must not abort the attach.
-            with contextlib.suppress(BidiError):
+            try:
                 await self._cdp.send(f"{domain}.enable", {}, session_id)
+            except BidiError as e:
+                # A "cdp error" means the target lacks that domain, which must not abort the attach.
+                # Any other error (a withheld "timeout") means a wedged browser and must propagate.
+                if e.code != "cdp error":
+                    raise
         return session_id
 
     # ── BiDi -> CDP command translation ───────────────────────

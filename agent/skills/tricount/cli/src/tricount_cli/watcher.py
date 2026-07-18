@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import signal
 import sys
+import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -329,10 +331,25 @@ def serve(notif_dir: Path, interval: int = DEFAULT_INTERVAL) -> None:
     seeding = not state
     _log(f"starting (interval={interval}s, notif_dir={notif_dir}, {'fresh seed' if seeding else 'resuming'})")
 
-    while True:
-        try:
-            state = poll_once(client, notif_dir, state)
-            save_state(state)
-        except Exception as e:
-            _log(f"poll failed ({type(e).__name__}: {e}); continuing")
-        time.sleep(interval)
+    stop = threading.Event()
+    shutdown_reason = "unknown"
+
+    def handle_signal(signum: int, _frame: object) -> None:
+        nonlocal shutdown_reason
+        shutdown_reason = signal.Signals(signum).name
+        stop.set()
+
+    signal.signal(signal.SIGINT, handle_signal)
+    signal.signal(signal.SIGTERM, handle_signal)
+
+    try:
+        while not stop.is_set():
+            try:
+                state = poll_once(client, notif_dir, state)
+                save_state(state)
+            except Exception as e:
+                _log(f"poll failed ({type(e).__name__}: {e}); continuing")
+            stop.wait(interval)
+    finally:
+        # interrupt off: a stale expense feed is not worth preempting the agent mid-task.
+        write_notification(notif_dir, "daemon_died", reason=shutdown_reason, interrupt=False)

@@ -1,5 +1,6 @@
 import type { AgentActivityState } from "@/lib/types";
 import type { AgentOperation } from "@/stores/use-agent-ops";
+export { orbColors } from "@/design-tokens";
 
 export type OrbVisualState = "alive" | "thinking" | "busy" | "off" | "deleting";
 
@@ -74,11 +75,3 @@ function resolveAgentStatus(
       return { label: status, orbState: "off" };
   }
 }
-
-export const orbColors: Record<OrbVisualState, [string, string, string]> = {
-  alive: ["#b8ceb0", "#7a9e70", "#5a7e50"],
-  thinking: ["#e8d0a0", "#c4a060", "#a08040"],
-  busy: ["#c0d0e0", "#8a9eb0", "#6a8094"],
-  off: ["#c2c0ba", "#8e8c84", "#66645e"],
-  deleting: ["#e0a0a0", "#c45050", "#a03030"],
-};

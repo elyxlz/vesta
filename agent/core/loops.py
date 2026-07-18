@@ -189,7 +189,14 @@ def greeting_turn(*, config: cfg.VestaConfig, state: vm.State, reason: str) -> s
 # --- Message processing ---
 
 
-async def _run_one_turn(text: str, *, user: bool, state: vm.State, config: cfg.VestaConfig) -> None:
+async def _run_one_turn(
+    text: str,
+    *,
+    user: bool,
+    is_notification: bool,
+    state: vm.State,
+    config: cfg.VestaConfig,
+) -> None:
     """Drive one queued turn through process_message, mapping failures to a graceful restart."""
     try:
         if user:
@@ -197,7 +204,8 @@ async def _run_one_turn(text: str, *, user: bool, state: vm.State, config: cfg.V
             state.event_bus.emit({"type": "user", "text": text})
         else:
             preview = text[:1000] + "..." if len(text) > 1000 else text
-            logger.system(preview.replace("\n", " "))
+            log = logger.notification if is_notification else logger.system
+            log(preview)
         state.event_bus.set_state("thinking")
         await process_message(text, state=state, config=config)
     except asyncio.CancelledError:
@@ -290,7 +298,15 @@ async def _run_messages_with_preempts(
             state.noninterruptible_turn_active = not current.interruptible
             state.in_flight_notification_paths = current.file_paths
             state.query_not_delivered = False
-            process_task = asyncio.create_task(_run_one_turn(current.text, user=current.is_user, state=state, config=config))
+            process_task = asyncio.create_task(
+                _run_one_turn(
+                    current.text,
+                    user=current.is_user,
+                    is_notification=current.interruptible and not current.is_user,
+                    state=state,
+                    config=config,
+                )
+            )
             await _watch_queue_during_turn(process_task, queue=queue, pending=pending, state=state, config=config)
             await process_task
             state.noninterruptible_turn_active = False

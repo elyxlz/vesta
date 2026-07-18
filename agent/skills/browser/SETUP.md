@@ -28,16 +28,18 @@ x86_64, ~650 MB) from GitHub, verifies its sha256, and extracts it to
 No Chromium, no Xvfb, no display: Camoufox runs headless and fully fingerprint-spoofed. Check
 state with `browser doctor`.
 
-It does need GTK3, which the image installs (headless still runs GTK init). Without it Camoufox
-exits 255 before BiDi with `libgtk-3.so.0: cannot open shared object file`. On a non-vesta image
-install GTK3: `libgtk-3-0t64` on Debian trixie and later, `libgtk-3-0` on bookworm and earlier.
+## Shared library dependencies
+
+Headless Camoufox is still Gecko, so it dlopens GTK, X, dbus-glib and ALSA at startup; without them
+`browser launch` exits 255 before BiDi. The Vesta image installs them at build time. Anywhere else,
+`browser doctor` reports them under `shared_libs` and prints the apt line for whatever is missing.
 
 ## Handover dependencies
 
-Install these only for `browser handover` (letting the user sign in on the agent's headed browser
-when account trust, not fingerprint, is the wall). `xvfb` is the headless X server the headed
-browser renders on; `novnc` provides `websockify` plus the noVNC client assets under
-`/usr/share/novnc`, which the branded page symlinks:
+`browser handover` (letting the user sign in on the agent's headed browser when account trust, not
+fingerprint, is the wall) needs four packages, which the image installs. `xvfb` is the headless X
+server the headed browser renders on; `novnc` provides `websockify` plus the noVNC client assets
+under `/usr/share/novnc`, which the branded page symlinks. On a non-vesta image:
 
 ```bash
 apt-get install -y xvfb novnc x11vnc openbox

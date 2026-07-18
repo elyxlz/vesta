@@ -68,9 +68,19 @@ def test_fit_to_screen_rewrites_geometry_keeping_chrome():
 
 
 def test_every_bundled_preset_fits_the_handover_screen():
+    from vesta_browser.handover import SCREEN_H, SCREEN_W
     from vesta_browser.presets import _load
 
     for preset in _load():
-        fitted = fit_to_screen(preset, 1600, 1000)
-        assert fitted["window.innerWidth"] <= 1600
-        assert 0 < fitted["window.innerHeight"] <= 1000
+        fitted = fit_to_screen(preset, SCREEN_W, SCREEN_H)
+        assert fitted["window.innerWidth"] <= SCREEN_W
+        assert 0 < fitted["window.innerHeight"] <= SCREEN_H
+
+
+def test_handover_screen_is_a_real_monitor_geometry():
+    # fit_to_screen reports the framebuffer verbatim as screen.width/height, so a size no real
+    # display ships is an automation tell. 16:10 also keeps the browser filling the page's cut-out.
+    from vesta_browser.handover import SCREEN_H, SCREEN_W
+
+    assert (SCREEN_W, SCREEN_H) in {(1280, 800), (1440, 900), (1680, 1050), (1920, 1200)}
+    assert SCREEN_W / SCREEN_H == 1.6

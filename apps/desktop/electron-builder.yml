@@ -5,6 +5,7 @@ directories:
   output: dist
 files:
   - dist-electron/**
+  - "!dist-electron/**/*.test.js"
   - package.json
 extraResources:
   - from: ../web/dist
@@ -13,9 +14,9 @@ mac:
   category: public.app-category.productivity
   target:
     - target: dmg
-      arch: [universal]
+      arch: [arm64]
     - target: zip
-      arch: [universal]
+      arch: [arm64]
   hardenedRuntime: true
   notarize: true
   extendInfo:

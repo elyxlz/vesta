@@ -1,6 +1,7 @@
 """Upstream PR tool — authenticates via GitHub App, pushes branch, creates PR."""
 
 import argparse
+import base64
 import os
 import subprocess
 import sys
@@ -53,11 +54,24 @@ def get_installation_token():
     return resp.json()["token"]
 
 
-def run(cmd):
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+def run(cmd, env=None):
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False, env=env)
     if result.returncode != 0 and result.stderr:
         print(result.stderr, file=sys.stderr)
     return result
+
+
+def git_auth_env(token):
+    """Auth rides in this process's env only, never .git/config (which `git remote -v` and
+    `git config --list` print) nor argv (which `ps` shows). Scoped to github.com so a
+    cross-host redirect can't carry the header off."""
+    basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    return {
+        **os.environ,
+        "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+        "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: Basic {basic}",
+        "GIT_CONFIG_COUNT": "1",
+    }
 
 
 def resolve_agent_identity():
@@ -73,13 +87,13 @@ def resolve_agent_identity():
     return agent_name, vesta_version
 
 
-def ensure_shared_history(base):
+def ensure_shared_history(base, env):
     """Guard: HEAD must share history with the base branch, else PR-create fails 422 with a
     cryptic "no history in common with master". This happens when upstream-pr is run from
     the workspace branch (~), whose base is a standalone stock snapshot tag with no ancestry
     to real GitHub master, so pushing it force-pushes an unrelated root. Catch it here with
     an actionable message BEFORE we amend the commit author or push anything."""
-    run(["git", "fetch", "--quiet", "upstream", base])
+    run(["git", "fetch", "--quiet", "upstream", base], env=env)
     merge_base = run(["git", "merge-base", "FETCH_HEAD", "HEAD"])
     if merge_base.returncode != 0 or not merge_base.stdout.strip():
         print(f"Error: HEAD shares no history with upstream/{base}.", file=sys.stderr)
@@ -149,15 +163,17 @@ def main():
     current_branch = result.stdout.strip()
     branch = args.branch or current_branch
 
-    # Configure upstream remote
-    remote_url = f"https://x-access-token:{token}@github.com/{UPSTREAM_REPO}.git"
+    # Credential-free URL: auth rides in git_auth_env, and set-url scrubs any tokenized
+    # URL an older version wrote to .git/config.
+    remote_url = f"https://github.com/{UPSTREAM_REPO}.git"
     result = run(["git", "remote", "get-url", "upstream"])
     if result.returncode != 0:
         run(["git", "remote", "add", "upstream", remote_url])
     else:
         run(["git", "remote", "set-url", "upstream", remote_url])
 
-    ensure_shared_history(args.base)
+    auth_env = git_auth_env(token)
+    ensure_shared_history(args.base, auth_env)
 
     # Set commit author so pushes are attributed to this vesta instance
     run(["git", "config", "user.name", author_name])
@@ -168,7 +184,7 @@ def main():
 
     # Push
     print(f"Pushing {current_branch} -> upstream/{branch}...")
-    result = run(["git", "push", "upstream", f"{current_branch}:{branch}", "--force"])
+    result = run(["git", "push", "upstream", f"{current_branch}:{branch}", "--force"], env=auth_env)
     if result.returncode != 0:
         print("Push failed", file=sys.stderr)
         sys.exit(1)
