@@ -10,13 +10,14 @@ The `whatsapp` skill picks one of two auth strategies automatically:
 Selection: **a hosted box with no linked WhatsApp uses managed; otherwise QR.**
 Provisioning is **lazy and agent-initiated**: every paid account is entitled to
 exactly one number, but a number is claimed only when the agent actually needs
-WhatsApp (`whatsapp provision`). A user who never uses WhatsApp never gets one.
+WhatsApp (`whatsapp connect`). A user who never uses WhatsApp never gets one.
 
 ## How auth works
 
-There is one pool API (on the home phone box) with three native paths, and two
-interchangeable ways to reach it. The agent code (`cli/managed_auth.go`) picks by
-environment; the paths and payloads are identical either way.
+There is one pool API (on the home phone box) with two native paths (`/provision`,
+`/pair`), and two interchangeable ways to reach it. The agent code
+(`cli/managed_auth.go`) picks by environment; the paths and payloads are identical
+either way.
 
 - **Cloud (vesta.run tenant):** the agent holds no WhatsApp secret. It mints a
   short-lived **server-identity token** from its own vestad (`POST
@@ -40,7 +41,9 @@ The flow:
 1. Auth per the mode above (mint a token, or just use the direct key).
 2. `POST /provision` → `{msisdn, state}`. Idempotent: the account's one number is
    returned as-is if it already has one. If the pool is dry the number is queued
-   (empty `msisdn`); poll `GET /session` until it is bound (the pool never rejects).
+   (empty `msisdn`); re-POST the same idempotent `/provision` until it is bound
+   (the pool never rejects). There is no `GET /session`. A `state` of `banned`/
+   `blocked` means that number is unusable; re-running claims a fresh one.
 3. `whatsmeow PairPhone(msisdn)` → an 8-char code (the agent links to the assigned
    primary as a companion).
 4. `POST /pair {code}` → the home box drives the primary to accept the link.
@@ -75,12 +78,16 @@ The `NewWhatsAppClient` fingerprint fix (`client.go`: `SetOSInfo` + Chrome
 
 ## One command, terminal result (why the edge cases can't happen)
 
-`whatsapp provision` is a top-level command (`runProvision`), built exactly like
-`whatsapp link`: it cold-starts the daemon (`startDaemonProcess` waits for the
-socket through the first-boot recompile, up to 5 min), then dispatches the
-synchronous `provision` command, which runs the whole handshake **in the daemon**
-and returns a terminal `{status:"linked", msisdn}` or a clear error. There is no
-step for the agent to sequence, so the failure modes are gone by construction:
+`whatsapp connect` is the single setup verb (`runConnect`). It picks the paradigm
+the way `chooseLinker` does (managed pooled number vs. the user's own WhatsApp by
+QR); the hidden `provision`/`link` aliases route to the same path. On a hosted box
+it dispatches the managed arm (`runProvision`): cold-start the daemon
+(`startDaemonProcess` waits for the socket through the first-boot recompile, up to 5
+min), then dispatch the synchronous `provision` command, which runs the whole
+handshake **in the daemon** and returns a terminal `{status:"linked", number,
+next}` (or `{status:"provisioning"}` while the pool fills, `{status:"blocked"}` for
+a banned number). Every output carries a `next:` step. There is no step for the
+agent to sequence, so the failure modes are gone by construction:
 
 - **No recompile / daemon-readiness race:** the command blocks on the socket
   until the daemon answers, so it just waits out the compile instead of failing.
@@ -111,10 +118,10 @@ state or a terminal error. On ANY failure it disconnects, leaving the client cle
 for the next attempt (no GetQRChannel-on-connected-client error on retry).
 
 `Connect()` never auto-pairs: a hosted box with no linked device stays idle until a
-deliberate `whatsapp provision`. A logged-out device is never re-paired
+deliberate `whatsapp connect`. A logged-out device is never re-paired
 automatically: the daemon records the logout, notifies the agent, clears the dead
 device, and exits, so the next serve restarts into a fresh device for a deliberate
-`whatsapp provision`. The persisted number (in `state.json`) means that re-provision
+`whatsapp connect`. The persisted number (in `state.json`) means that re-connecting
 re-links the SAME number (reauth), no re-claim.
 
 **Live validation still needed:** the phone-code pairing choreography over a

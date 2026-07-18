@@ -127,9 +127,9 @@ func runLink() {
 	// call: it serves the page, waits for the scan, and returns a terminal result.
 	pageURL := linkPageURL(os.Getenv("VESTAD_TUNNEL"), os.Getenv("AGENT_NAME"), linkServiceName(), port)
 	printJSON(map[string]any{
-		"status":       "linking",
-		"url":          pageURL,
-		"instructions": "Send the user this URL. On their phone: WhatsApp > Settings > Linked Devices > Link a Device, then scan the code on the page. The page keeps itself current; there is no rush.",
+		"status": "linking",
+		"url":    pageURL,
+		"next":   "Send the user this URL to scan. On their phone: WhatsApp > Settings > Linked Devices > Link a Device, then scan the code on the page. The page keeps itself current; there is no rush.",
 	})
 
 	linkArgs := []string{"--port", fmt.Sprintf("%d", port)}

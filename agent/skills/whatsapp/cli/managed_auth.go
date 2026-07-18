@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,20 @@ import (
 	"strings"
 	"time"
 )
+
+// claim's two non-error terminal outcomes, surfaced to the agent as a clean status
+// (not a raw error): the pool is still filling (no number bound yet, re-run later),
+// or the assigned number is blocked (banned; re-run to get a fresh one).
+var (
+	errPoolFilling = errors.New("the number pool is still filling; no number is bound yet")
+	errBlocked     = errors.New("the assigned number is blocked")
+)
+
+// isBlockedState reports whether a pool state means the number is unusable (banned).
+// The control plane owns the fresh-number handoff; the agent just re-runs connect.
+func isBlockedState(state string) bool {
+	return state == "banned" || state == "blocked"
+}
 
 // Managed WhatsApp auth (the "token" strategy): the agent side of the hosted
 // vesta.run proxy. The agent reaches WhatsApp through the control plane, not the
@@ -27,7 +42,7 @@ const (
 	// controlHTTPTimeout bounds a call to the pool API. It is generous because
 	// /pair blocks server-side while the home box holds the primary online through
 	// the just-linked companion's initial sync (a cold primary there leaves the
-	// companion unable to decrypt); provision/session are fast and unaffected.
+	// companion unable to decrypt); provision is fast and unaffected.
 	controlHTTPTimeout = 180 * time.Second
 	// provisionPollMax bounds a queued (dry-pool) provision. At provisionPollInterval
 	// this stays well under SocketTimeout so the whole synchronous handshake (claim +
@@ -44,7 +59,7 @@ var provisionPollInterval = 3 * time.Second
 //   - cloud (vesta.run tenant): a server-identity token minted from vestad, sent to
 //     vesta.run's /api/integrations/whatsapp, which authenticates and forwards to the home box.
 //
-// Both hit the same native paths (/provision, /pair, /session); only the base URL
+// Both hit the same native paths (/provision, /pair); only the base URL
 // and the credential differ.
 type managedConfig struct {
 	directURL  string // home box base, e.g. https://<tunnel> (direct mode)
@@ -202,30 +217,31 @@ func (m *managedAuth) provision(pairPhone func(msisdn string) (string, error)) (
 	return st, nil
 }
 
-// claim POSTs /provision (idempotent) and, if the pool is dry and the number is
-// still being set up, polls status until one is bound. The caller persists the
-// returned number (into the state store).
+// claim POSTs /provision (idempotent) and, while the pool is dry and the number is
+// still being set up, re-POSTs the same idempotent /provision until one is bound.
+// The caller persists the returned number (into the state store). A dry pool that
+// never binds returns errPoolFilling and a banned number returns errBlocked, both
+// surfaced to the agent as a clean status rather than a raw error.
 func (m *managedAuth) claim() (managedState, error) {
-	var out struct {
-		MSISDN string `json:"msisdn"`
-		State  string `json:"state"`
-	}
-	if err := m.call(http.MethodPost, "/provision", map[string]string{}, &out); err != nil {
-		return managedState{}, fmt.Errorf("provision: %w", err)
-	}
-	st := managedState{MSISDN: out.MSISDN, DirectURL: m.cfg.directURL, DirectKey: m.cfg.directKey}
-	for i := 0; st.MSISDN == "" && i < provisionPollMax; i++ {
-		time.Sleep(provisionPollInterval)
-		s, err := m.status()
-		if err != nil {
-			return managedState{}, fmt.Errorf("poll queued provision: %w", err)
+	for i := 0; i <= provisionPollMax; i++ {
+		var out struct {
+			MSISDN string `json:"msisdn"`
+			State  string `json:"state"`
 		}
-		st.MSISDN = s.MSISDN
+		if err := m.call(http.MethodPost, "/provision", map[string]string{}, &out); err != nil {
+			return managedState{}, fmt.Errorf("provision: %w", err)
+		}
+		if isBlockedState(out.State) {
+			return managedState{}, fmt.Errorf("%w (state %q)", errBlocked, out.State)
+		}
+		if out.MSISDN != "" {
+			return managedState{MSISDN: out.MSISDN, DirectURL: m.cfg.directURL, DirectKey: m.cfg.directKey}, nil
+		}
+		if i < provisionPollMax {
+			time.Sleep(provisionPollInterval)
+		}
 	}
-	if st.MSISDN == "" {
-		return managedState{}, fmt.Errorf("number still being set up after %d polls", provisionPollMax)
-	}
-	return st, nil
+	return managedState{}, errPoolFilling
 }
 
 // reauth mints a fresh pairing code for the account's number and posts it,
@@ -240,19 +256,6 @@ func (m *managedAuth) reauth(st managedState, pairPhone func(msisdn string) (str
 		return fmt.Errorf("link: %w", err)
 	}
 	return nil
-}
-
-// whatsappStatus is the pool API's GET /session response.
-type whatsappStatus struct {
-	Provisioned bool   `json:"provisioned"`
-	State       string `json:"state"`
-	MSISDN      string `json:"msisdn"`
-}
-
-func (m *managedAuth) status() (whatsappStatus, error) {
-	var out whatsappStatus
-	err := m.call(http.MethodGet, "/session", nil, &out)
-	return out, err
 }
 
 // do is the single JSON request helper: encodes body, sets headers, decodes a

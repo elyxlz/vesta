@@ -9,7 +9,7 @@ import (
 // live connection, and prints a simple self-explanatory verdict:
 //
 //	linked:    {"linked":true,"number":"+44...","connected":true}
-//	not linked:{"linked":false,"connected":false,"next":"run: whatsapp provision","reason":"..."}
+//	not linked:{"linked":false,"connected":false,"next":"run: whatsapp connect","reason":"..."}
 func runStatus() {
 	dataDir := stateDataDir()
 	resolved, err := resolveDir(dataDir)
@@ -51,7 +51,7 @@ func notLinkedStatus(dataDir, startErr string) map[string]any {
 	result := map[string]any{
 		"linked":    false,
 		"connected": false,
-		"next":      "run: whatsapp provision",
+		"next":      "run: whatsapp connect",
 	}
 	// A live daemon-start error is the real, current failure, so it wins over the
 	// last-exit reason (which a successful connect clears anyway).

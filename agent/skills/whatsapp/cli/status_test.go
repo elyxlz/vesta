@@ -28,8 +28,8 @@ func TestSimpleStatusNotLinkedSurfacesReason(t *testing.T) {
 	if got["linked"] != false {
 		t.Errorf("linked = %v, want false", got["linked"])
 	}
-	if got["next"] != "run: whatsapp provision" {
-		t.Errorf("next = %v, want the provision hint", got["next"])
+	if got["next"] != "run: whatsapp connect" {
+		t.Errorf("next = %v, want the connect hint", got["next"])
 	}
 	if got["reason"] != "unlinked from the phone (stream:error logout)" {
 		t.Errorf("reason = %v, want the recorded last-exit reason", got["reason"])

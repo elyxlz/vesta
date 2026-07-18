@@ -30,15 +30,15 @@ func TestChooseLinkerParadigm(t *testing.T) {
 // commands, so the mode decision lives in the constructed value, not inline checks.
 func TestWrongParadigmRejected(t *testing.T) {
 	qr := qrLinker{}
-	if _, err := qr.provision(nil); err == nil || !strings.Contains(err.Error(), "whatsapp link") {
+	if _, err := qr.provision(nil); err == nil || !strings.Contains(err.Error(), "whatsapp connect") {
 		t.Errorf("qr linker must reject provision, got %v", err)
 	}
 
 	managed := &managedLinker{}
-	if _, err := managed.linkQR(nil, 0); err == nil || !strings.Contains(err.Error(), "whatsapp provision") {
+	if _, err := managed.linkQR(nil, 0); err == nil || !strings.Contains(err.Error(), "whatsapp connect") {
 		t.Errorf("managed linker must reject linkQR, got %v", err)
 	}
-	if _, err := managed.pairCode(nil, "+1"); err == nil || !strings.Contains(err.Error(), "whatsapp provision") {
+	if _, err := managed.pairCode(nil, "+1"); err == nil || !strings.Contains(err.Error(), "whatsapp connect") {
 		t.Errorf("managed linker must reject pairCode, got %v", err)
 	}
 }

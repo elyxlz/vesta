@@ -171,11 +171,11 @@ func (wac *WhatsAppClient) handleDeviceRemoved(reason string) {
 		})
 		wac.reExecDaemon() // does not return
 	default: // preserveGiveUp — today's exact behavior (unchanged)
-		wac.logger.Warnf("Device logged out (%s). Clearing dead device and exiting; run `whatsapp provision` to re-link.", reason)
+		wac.logger.Warnf("Device logged out (%s). Clearing dead device and exiting; run `whatsapp connect` to re-link.", reason)
 		wac.state.update(func(s *daemonState) {
 			s.ExitStatus, s.ExitReason, s.ExitTime = "logged_out", reason, time.Now().UTC()
 			s.AuthStatus = "logged_out"
-			s.AuthNote = "WhatsApp logged this device out. Re-linking is a deliberate `whatsapp provision`, never an automatic retry loop."
+			s.AuthNote = "WhatsApp logged this device out. Re-linking is a deliberate `whatsapp connect`, never an automatic retry loop."
 			s.PreserveRetryAt = time.Time{} // episode closed
 			// Keep MSISDN so the next `whatsapp provision` re-links the SAME number
 			// (reauth), no re-claim.

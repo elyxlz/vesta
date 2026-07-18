@@ -205,7 +205,7 @@ func (wac *WhatsAppClient) enqueueWork(fn func()) {
 func (wac *WhatsAppClient) Connect() error {
 	if wac.client.Store.ID == nil {
 		wac.setAuthStatus(AuthStatusNotAuthenticated)
-		wac.logger.Infof("No linked device; staying idle. Run `whatsapp provision` (hosted) or `whatsapp link` (self-hosted) to link.")
+		wac.logger.Infof("No linked device; staying idle. Run `whatsapp connect` to link.")
 		return nil
 	}
 
@@ -303,7 +303,7 @@ func (wac *WhatsAppClient) EnsureConnected() error {
 	// ping-pong with the other holder, so refuse instead. A deliberate re-link
 	// clears the park.
 	if wac.connModeIs(connParked) {
-		return fmt.Errorf("WhatsApp session parked: another device took over. Re-link with `whatsapp provision` (hosted) or `whatsapp link` (self-hosted)")
+		return fmt.Errorf("WhatsApp session parked: another device took over. Re-link with `whatsapp connect`")
 	}
 
 	wac.logger.Warnf("WhatsApp is not connected. Attempting to reconnect...")
@@ -437,7 +437,7 @@ func (wac *WhatsAppClient) runQRLink(port int) (linkResult, error) {
 		// Codes exhausted without a scan; drop the socket and re-arm a fresh batch.
 		wac.client.Disconnect()
 	}
-	return linkResult{}, fmt.Errorf("no device linked within %s; retry `whatsapp link` when the user is ready", LinkSessionTimeout)
+	return linkResult{}, fmt.Errorf("no device linked within %s; retry `whatsapp connect` when the user is ready", LinkSessionTimeout)
 }
 
 // consumeQRChannel drains one QR channel, publishing each rotated code to disk and

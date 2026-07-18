@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -84,23 +85,22 @@ func TestProvision_claimsPairsAndSaves(t *testing.T) {
 	}
 }
 
-// A queued provision (dry pool) polls status until a number is bound.
+// A queued provision (dry pool) re-POSTs the idempotent /provision until a number
+// is bound; the removed GET /session is never called.
 func TestProvision_queuedThenBound(t *testing.T) {
 	old := provisionPollInterval
 	provisionPollInterval = time.Millisecond
 	defer func() { provisionPollInterval = old }()
 
-	var polls int32
+	var provisions int32
 	m := managedFor(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/integrations/whatsapp/provision":
-			_ = json.NewEncoder(w).Encode(map[string]any{"msisdn": "", "state": "queued"})
-		case "/integrations/whatsapp/session":
 			msisdn := ""
-			if atomic.AddInt32(&polls, 1) >= 3 {
+			if atomic.AddInt32(&provisions, 1) >= 3 {
 				msisdn = "+447700900002"
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"provisioned": true, "state": "queued", "msisdn": msisdn})
+			_ = json.NewEncoder(w).Encode(map[string]any{"msisdn": msisdn, "state": "queued"})
 		case "/integrations/whatsapp/pair":
 			_ = json.NewEncoder(w).Encode(map[string]string{"state": "linked"})
 		default:
@@ -114,6 +114,43 @@ func TestProvision_queuedThenBound(t *testing.T) {
 	}
 	if st.MSISDN != "+447700900002" {
 		t.Fatalf("queued provision not fulfilled: %+v", st)
+	}
+}
+
+// A blocked (banned) number surfaces errBlocked so connect can tell the agent to
+// re-run for a fresh number rather than emitting a raw error.
+func TestProvision_blockedSurfacesErrBlocked(t *testing.T) {
+	m := managedFor(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/integrations/whatsapp/provision" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"msisdn": "+447700900004", "state": "banned"})
+			return
+		}
+		http.Error(w, "no", http.StatusNotFound)
+	})
+
+	_, err := m.provision(func(string) (string, error) { return "C0DE", nil })
+	if !errors.Is(err, errBlocked) {
+		t.Fatalf("provision of a banned number = %v, want errBlocked", err)
+	}
+}
+
+// A pool that never binds within the poll budget surfaces errPoolFilling.
+func TestProvision_dryPoolSurfacesErrPoolFilling(t *testing.T) {
+	old := provisionPollInterval
+	provisionPollInterval = time.Microsecond
+	defer func() { provisionPollInterval = old }()
+
+	m := managedFor(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/integrations/whatsapp/provision" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"msisdn": "", "state": "queued"})
+			return
+		}
+		http.Error(w, "no", http.StatusNotFound)
+	})
+
+	_, err := m.provision(func(string) (string, error) { return "C0DE", nil })
+	if !errors.Is(err, errPoolFilling) {
+		t.Fatalf("dry-pool provision = %v, want errPoolFilling", err)
 	}
 }
 

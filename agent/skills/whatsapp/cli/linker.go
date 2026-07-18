@@ -62,7 +62,7 @@ type qrLinker struct{}
 func (qrLinker) name() string { return "self-hosted" }
 
 func (qrLinker) provision(*WhatsAppClient) (linkResult, error) {
-	return linkResult{}, fmt.Errorf("managed WhatsApp is only available on a hosted (vesta.run) box; this box links the user's own WhatsApp with `whatsapp link`")
+	return linkResult{}, fmt.Errorf("managed WhatsApp is only available on a hosted (vesta.run) box; this box links the user's own WhatsApp: run `whatsapp connect`")
 }
 
 func (qrLinker) linkQR(wac *WhatsAppClient, port int) (linkResult, error) {
@@ -84,11 +84,11 @@ type managedLinker struct {
 func (*managedLinker) name() string { return "managed" }
 
 func (*managedLinker) linkQR(*WhatsAppClient, int) (linkResult, error) {
-	return linkResult{}, fmt.Errorf("this managed (vesta.run) box links its own pooled number; run `whatsapp provision`, not `whatsapp link`")
+	return linkResult{}, fmt.Errorf("this managed (vesta.run) box links its own pooled number; run `whatsapp connect`")
 }
 
 func (*managedLinker) pairCode(*WhatsAppClient, string) (string, error) {
-	return "", fmt.Errorf("this managed (vesta.run) box links its own pooled number; run `whatsapp provision`, not a phone pairing code")
+	return "", fmt.Errorf("this managed (vesta.run) box links its own pooled number; run `whatsapp connect`, not a phone pairing code")
 }
 
 // provision claims (or re-links) this box's managed number and links the companion,
@@ -149,5 +149,5 @@ func (l *managedLinker) provision(wac *WhatsAppClient) (linkResult, error) {
 		time.Sleep(ConnectRetryDelay)
 	}
 	wac.client.Disconnect()
-	return linkResult{}, fmt.Errorf("pairing code accepted but the companion did not finish linking within %s; retry `whatsapp provision`", ManagedLinkTimeout)
+	return linkResult{}, fmt.Errorf("pairing code accepted but the companion did not finish linking within %s; retry `whatsapp connect`", ManagedLinkTimeout)
 }

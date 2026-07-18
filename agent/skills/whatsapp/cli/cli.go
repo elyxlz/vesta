@@ -1021,7 +1021,7 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 		return nil, err
 	}
 	if wac.client.Store.ID != nil {
-		// Already linked. If a takeover parked it, an explicit provision means
+		// Already linked. If a takeover parked it, an explicit connect means
 		// "reclaim the session": clear the park and reconnect (a plain send never
 		// does this, so it can't ping-pong). If the other holder is still live it
 		// simply re-parks. Otherwise it's already connected and this is a no-op.
@@ -1031,7 +1031,7 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 				return nil, fmt.Errorf("reconnect the parked session: %w", err)
 			}
 		}
-		return map[string]any{"status": "linked", "msisdn": wac.state.snapshot().MSISDN}, nil
+		return managedLinkedResult(wac.state.snapshot().MSISDN), nil
 	}
 	release, ok := wac.beginPairing()
 	if !ok {
@@ -1040,13 +1040,38 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 	defer release()
 	res, err := wac.linker.provision(wac)
 	if err != nil {
+		// A still-filling pool and a banned number are normal outcomes, not
+		// failures: return a clean status carrying the next step, never a raw error.
+		if errors.Is(err, errPoolFilling) {
+			return map[string]any{
+				"status": "provisioning",
+				"next":   "Your number is still being set up. Re-run `whatsapp connect` in about 30 seconds; it is idempotent, so repeating it is safe until it returns linked.",
+			}, nil
+		}
+		if errors.Is(err, errBlocked) {
+			return map[string]any{
+				"status": "blocked",
+				"reason": err.Error(),
+				"next":   "This number was blocked and cannot be used. Re-run `whatsapp connect` to get a fresh number.",
+			}, nil
+		}
 		return nil, err
 	}
+	return managedLinkedResult(res.MSISDN), nil
+}
+
+// managedLinkedResult is the terminal linked output for a managed number: it names
+// the number and spells out the reply-first onboarding (surface the wa.me link, let
+// the user message first, never cold-initiate from a fresh number).
+func managedLinkedResult(number string) map[string]any {
 	return map[string]any{
 		"status": "linked",
-		"msisdn": res.MSISDN,
-		"note":   "Linked. Surface this number to the user with a wa.me link so they message you FIRST (reply-first, never cold-initiate).",
-	}, nil
+		"number": number,
+		"next": fmt.Sprintf(
+			"Linked as %s. Share this number with the user and ask them to message you FIRST: send them the click-to-chat link %s, then reply only once they say hi. A fresh number must never cold-initiate.",
+			number, waMeLink(number, ""),
+		),
+	}
 }
 
 func cmdPairPhone(args []string, wac *WhatsAppClient) (any, error) {

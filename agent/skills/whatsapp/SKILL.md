@@ -9,27 +9,37 @@ You never stop or restart anything, and you don't manage the daemon by hand. The
 `whatsapp` CLI runs its own background daemon: the restart skill runs `whatsapp
 start` at boot to bring it up (so inbound WhatsApp notifications flow before you
 send anything), and every command below also brings it up on demand. Your whole
-world is four verbs: **provision, status, send, messages** (plus profile and calls).
+world is four verbs: **connect, status, send, messages** (plus profile and calls).
 
 ## The one rule
 
-**If `whatsapp status` ever shows `linked: false`, run `whatsapp provision`.**
+**If `whatsapp status` ever shows `linked: false`, run `whatsapp connect`.**
 That is the only recovery you ever need. Never re-link, re-pair, or "restart the
-daemon" any other way; provision is idempotent and safe to re-run.
+daemon" any other way; connect is idempotent and safe to re-run.
 
-## Get your number
+## Set up (one command)
 
-- **Hosted (vesta.run) box:** `whatsapp provision`. One blocking command claims
-  the agent's own managed number and links it, returning `{status:"linked", msisdn}`.
-  Then message the user first so they have the number (reply-first: never cold-initiate).
-- **Self-hosted (user's own WhatsApp):** `whatsapp link` serves a QR page and
-  prints its URL for the user to scan. See [SETUP.md](SETUP.md) / [MANAGED_AUTH.md](MANAGED_AUTH.md).
+`whatsapp connect` is the single setup verb. It picks the right path for the box on
+its own, so you never choose between modes. Every output carries a `next:` step, so
+just do what it says:
+
+- **Hosted (vesta.run) box:** it claims the agent's own managed number and links
+  it, returning `{status:"linked", number, next:...}`. Follow `next`: share the
+  number and its `wa.me` link so the user messages you FIRST (reply-first: never
+  cold-initiate), then reply only once they do.
+- **Still filling:** `{status:"provisioning", next:...}` means the number is still
+  being set up. Re-run `whatsapp connect` in about 30 seconds; repeating is safe.
+- **Blocked:** `{status:"blocked", next:...}` means that number was banned. Re-run
+  `whatsapp connect` to get a fresh one.
+- **Self-hosted (user's own WhatsApp):** it serves a QR page and returns
+  `{status:"linking", url, next:...}`. Send the user the URL to scan in WhatsApp >
+  Settings > Linked Devices. See [SETUP.md](SETUP.md) / [MANAGED_AUTH.md](MANAGED_AUTH.md).
 
 ## Check state
 
 `whatsapp status` is your one diagnostic:
 - linked: `{"linked":true,"number":"+44...","connected":true}`
-- not linked: `{"linked":false,"connected":false,"next":"run: whatsapp provision","reason":"<why>"}`
+- not linked: `{"linked":false,"connected":false,"next":"run: whatsapp connect","reason":"<why>"}`
 
 ## Send
 

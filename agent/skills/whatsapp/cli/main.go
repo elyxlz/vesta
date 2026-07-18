@@ -17,14 +17,12 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage: whatsapp <command> [args] [flags]")
 	// The lifecycle commands run in the client, not the daemon, so they are not in the registry.
 	fmt.Fprintln(w, "Setup / health:")
-	fmt.Fprintln(w, "  provision                            hosted box: claim + link the agent's own managed number (one blocking call)")
+	fmt.Fprintln(w, "  connect                              set up WhatsApp: claim + link the agent's own number, or link the user's own WhatsApp by QR (one command, idempotent, safe to re-run)")
+	fmt.Fprintln(w, "  status                               simple health check: linked, number, connected. If it shows linked:false, run `whatsapp connect`")
 	fmt.Fprintln(w, "  start                                bring the daemon up (idempotent); the restart skill runs this at boot")
-	fmt.Fprintln(w, "  status                               simple health check: linked, number, connected")
-	fmt.Fprintln(w, "  link [--phone +E.164]                link a WhatsApp account (QR page, or pairing code with --phone)")
 	fmt.Fprintln(w, "Internal (the CLI self-manages its daemon; agents never call these):")
 	fmt.Fprintln(w, "  daemon <start|stop|restart|status>   manage the background daemon")
 	fmt.Fprintln(w, "  serve                                run the daemon in the foreground")
-	fmt.Fprintln(w, "  authenticate                         print auth status (alias of status, kept for back-compat)")
 	fmt.Fprintln(w, "  update-deps                          bump the pinned whatsmeow to latest (do this deliberately, not mid-session)")
 	fmt.Fprintln(w, "Commands (short aliases in parentheses; `whatsapp <command> --help` for its flags):")
 	for _, cmd := range commands {
@@ -134,10 +132,10 @@ func main() {
 		runAuthenticate()
 	case "daemon":
 		runDaemon()
-	case "link":
-		runLink()
-	case "provision":
-		runProvision()
+	// connect is the one setup verb; provision and link are hidden back-compat
+	// aliases for the same unified path (runConnect picks managed vs. QR).
+	case "connect", "link", "provision":
+		runConnect()
 	default:
 		runOneShot(command)
 	}
