@@ -90,9 +90,6 @@ enum Command {
         /// Agent name (prompted interactively if omitted)
         #[arg(long)]
         name: Option<String>,
-        /// Use the Docker image's baked-in code instead of vestad-managed core code
-        #[arg(long)]
-        no_manage_core_code: bool,
         /// Claude OAuth credentials JSON, to provision Claude without the interactive
         /// login (the non-interactive counterpart to the `OpenRouter` flags). Get it
         /// from `vesta auth` or an existing agent.
@@ -112,9 +109,6 @@ enum Command {
         /// Agent name (prompted interactively if omitted)
         #[arg(long)]
         name: Option<String>,
-        /// Use the Docker image's baked-in code instead of vestad-managed core code
-        #[arg(long)]
-        no_manage_core_code: bool,
         #[command(flatten)]
         openrouter: OpenRouterFlags,
     },
@@ -177,8 +171,7 @@ enum Command {
         #[command(subcommand)]
         cmd: MountCommand,
     },
-    /// View or change agent settings. With no flags, prints model + context window
-    /// (`manage_agent_code` is fixed at create time and read-only here).
+    /// View or change agent settings. With no flags, prints model + context window.
     Settings {
         /// Agent name
         name: String,
@@ -1106,7 +1099,7 @@ fn run(cli: Cli) {
     let token_ref = cli.token.as_deref();
 
     match command {
-        Command::Setup { yes, name, no_manage_core_code, claude_token, claude_model, context_window, openrouter } => {
+        Command::Setup { yes, name, claude_token, claude_model, context_window, openrouter } => {
             let c = get_client(host_ref, token_ref);
 
             let name = name.map_or_else(prompt_name, |name| name.trim().to_string());
@@ -1122,7 +1115,7 @@ fn run(cli: Cli) {
             // 1. Create an empty agent. Vestad no longer accepts credentials or timezone at
             //    create time — the agent owns its own auth state and config store. Timezone rides
             //    the provider provisioning call below.
-            let created_name = match c.create_agent(&name, !no_manage_core_code) {
+            let created_name = match c.create_agent(&name) {
                 Ok(n) => { eprintln!("created agent '{n}'"); n }
                 Err(e) if e.contains("already exists") && yes => {
                     eprintln!("agent '{name}' already exists, continuing...");
@@ -1193,7 +1186,7 @@ fn run(cli: Cli) {
 
         }
 
-        Command::Create { name, no_manage_core_code, openrouter } => {
+        Command::Create { name, openrouter } => {
             let c = get_client(host_ref, token_ref);
             let name = name.map_or_else(prompt_name, |name| name.trim().to_string());
             let openrouter = build_openrouter_args(openrouter);
@@ -1205,7 +1198,7 @@ fn run(cli: Cli) {
                     .or_die();
             }
 
-            let name = c.create_agent(&name, !no_manage_core_code)
+            let name = c.create_agent(&name)
                 .or_die();
 
             // If --openrouter-key was provided, finish provisioning the agent immediately, carrying
@@ -1238,8 +1231,6 @@ fn run(cli: Cli) {
                 .or_die();
                 eprintln!("updated. the agent is restarting to apply the change.");
             } else {
-                let result = c.get_agent_settings(&name).or_die();
-                eprintln!("manage_agent_code = {}", result["manage_agent_code"].as_bool().unwrap_or(true));
                 // Only report model/context when a provider is actually configured; a signed-out
                 // agent (kind "none") has a stored default model but no active provider.
                 if let Ok(provider) = c.get_provider(&name) {

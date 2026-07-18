@@ -1,9 +1,9 @@
-"""The agent's $HOME is a sparse git checkout of the vesta repo, which tracks dev tooling
-under .claude/ -- the same directory holding the agent's runtime .credentials.json. A
-`git sparse-checkout reapply` sparsifies the out-of-cone .claude/ and (on git < 2.40) deletes
-the untracked credentials with it. The container entrypoint self-heals at boot by dropping
-.claude from the index and excluding it; sync.sh strips .claude from merges so it never
-re-enters. These tests pin that mechanism (the same git commands the entrypoint runs)."""
+"""A LEGACY pre-flat agent $HOME could be a git checkout that tracks dev tooling under .claude/ --
+the same directory holding the agent's runtime .credentials.json. Left tracked, a later git op
+(a sparse-checkout reapply on old boxes) could delete the untracked credentials alongside it. The
+container entrypoint self-heals at boot on every box by dropping .claude from the index and
+excluding it locally, so no later op can touch it. These tests pin that mechanism (the same git
+commands the entrypoint runs) on a plain flat checkout."""
 
 import subprocess
 from pathlib import Path
@@ -14,8 +14,8 @@ def _git(repo: Path, *args: str) -> str:
 
 
 def _agent_workspace(tmp_path: Path) -> Path:
-    """A sparse checkout mirroring a real agent home: cone is /agent/, but the repo tracks dev
-    tooling under .claude/ (out of cone), and the agent's live .credentials.json sits untracked
+    """A plain flat checkout mirroring a real agent home, in the shape the guard must heal: the
+    repo tracks dev tooling under .claude/, and the agent's live .credentials.json sits untracked
     alongside it."""
     repo = tmp_path / "home"
     repo.mkdir()
@@ -30,8 +30,6 @@ def _agent_workspace(tmp_path: Path) -> Path:
     (skill / "SKILL.md").write_text("dev skill\n")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-qm", "init")
-    _git(repo, "sparse-checkout", "init", "--no-cone")
-    (repo / ".git" / "info" / "sparse-checkout").write_text("/agent/\n/.gitignore\n")
     return repo
 
 
@@ -54,8 +52,8 @@ def _write_credentials(repo: Path) -> Path:
 
 
 def test_boot_self_heal_untracks_and_excludes_claude(tmp_path: Path) -> None:
-    """The git-version-independent contract: after the self-heal, git tracks nothing under
-    .claude/ and excludes it -- so no later reapply can sparsify it away."""
+    """The contract: after the self-heal, git tracks nothing under .claude/ and excludes it --
+    so no later git op can sparsify or delete it."""
     repo = _agent_workspace(tmp_path)
     assert ".claude/skills/babysit-prs/SKILL.md" in _git(repo, "ls-files", "--", ".claude")
     _exclude_claude(repo)
@@ -63,11 +61,10 @@ def test_boot_self_heal_untracks_and_excludes_claude(tmp_path: Path) -> None:
     assert "/.claude/" in (repo / ".git" / "info" / "exclude").read_text()
 
 
-def test_reapply_after_self_heal_preserves_credentials(tmp_path: Path) -> None:
+def test_self_heal_preserves_untracked_credentials(tmp_path: Path) -> None:
     repo = _agent_workspace(tmp_path)
     creds = _write_credentials(repo)
     _exclude_claude(repo)
-    _git(repo, "sparse-checkout", "reapply")
     assert creds.exists()
     assert creds.read_text().startswith('{"claudeAiOauth"')
 

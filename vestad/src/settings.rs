@@ -84,27 +84,15 @@ pub(crate) enum UserDesired {
     Stopped,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Default)]
 pub(crate) struct AgentSettings {
-    #[serde(default = "default_true")]
-    pub(crate) manage_agent_code: bool,
     #[serde(default)]
     pub(crate) user_desired: UserDesired,
     #[serde(default)]
     pub(crate) mounts: Vec<crate::mounts::HostMount>,
 }
 
-impl Default for AgentSettings {
-    fn default() -> Self {
-        Self { manage_agent_code: true, user_desired: UserDesired::Running, mounts: Vec::new() }
-    }
-}
-
 impl Settings {
-    pub(crate) fn manages_core_code(&self, name: &str) -> bool {
-        self.agents.get(name).is_none_or(|s| s.manage_agent_code)
-    }
-
     /// The agent's host-folder grants, or an empty list if the agent has none recorded.
     /// One reader so every mount-consuming path (restart, rebuild, rename, restore, list,
     /// reconcile) sees grants the same way.
@@ -297,16 +285,14 @@ mod tests {
 
     #[test]
     fn agent_settings_missing_user_desired_deserializes_running() {
-        // An agent entry written before the field existed (only manage_agent_code) must come up.
-        let s: AgentSettings =
-            serde_json::from_str(r#"{"manage_agent_code": true}"#).expect("valid AgentSettings");
+        // An agent entry written before the field existed (an empty object) must come up.
+        let s: AgentSettings = serde_json::from_str(r#"{}"#).expect("valid AgentSettings");
         assert_eq!(s.user_desired, UserDesired::Running);
     }
 
     #[test]
     fn agent_settings_user_desired_stopped_round_trips() {
         let s = AgentSettings {
-            manage_agent_code: true,
             user_desired: UserDesired::Stopped,
             mounts: Vec::new(),
         };
@@ -321,7 +307,7 @@ mod tests {
 
     #[test]
     fn agent_settings_defaults_mounts_to_empty() {
-        let json = r#"{"manage_agent_code": true, "user_desired": "running"}"#;
+        let json = r#"{"user_desired": "running"}"#;
         let s: AgentSettings = serde_json::from_str(json).expect("valid AgentSettings");
         assert!(s.mounts.is_empty());
     }
@@ -329,7 +315,6 @@ mod tests {
     #[test]
     fn agent_settings_roundtrips_mounts() {
         let s = AgentSettings {
-            manage_agent_code: true,
             user_desired: UserDesired::Running,
             mounts: vec![crate::mounts::HostMount {
                 host_path: "/mnt/media".into(),

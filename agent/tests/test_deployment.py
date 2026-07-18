@@ -1,6 +1,5 @@
 """Tests for deployment structure: skills directories, frontmatter, index."""
 
-import json
 import re
 from pathlib import Path
 
@@ -54,29 +53,11 @@ def test_skill_frontmatter():
         )
 
 
-def test_skills_index_valid():
-    skills_dir = Path(__file__).parent.parent / "skills"
-    index = json.loads((skills_dir / "index.json").read_text())
-    assert isinstance(index, list) and index, "skills/index.json must be a non-empty list"
-    skill_names = {s["name"] for s in index}
-    default_skills_path = skills_dir.parent / "core" / "default-skills.txt"
-    default_skills = set(default_skills_path.read_text().splitlines()) if default_skills_path.exists() else set()
-    for skill_md in skills_dir.glob("*/SKILL.md"):
-        text = skill_md.read_text()
-        match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
-        fm = dict(re.findall(r"^(\w[\w-]*)\s*:\s*(.+)$", match.group(1), re.MULTILINE)) if match else {}
-        skill_dir_name = skill_md.parent.name
-        name = fm.get("name", skill_dir_name)
-        if name in default_skills:
-            continue
-        assert name in skill_names, f"{skill_dir_name} missing from skills/index.json"
-
-
 def test_default_skills_are_real_and_include_runtime_deps():
     """Every default skill named in the version-pinned core list (core/default-skills.txt) must have
     a matching directory under skills/, and the skills the core runtime points at (proactive-check,
-    personality) must ship by default. The Dockerfile rm -rf's any skills/ dir not listed here, so a
-    missing entry deletes a skill the runtime references."""
+    personality) must ship by default. link-skills.sh seeds/unions this list into installed-skills.txt,
+    so a missing entry means the runtime references a skill that can never activate."""
     skills_dir = Path(__file__).parent.parent / "skills"
     default_skills_path = Path(__file__).parent.parent / "core" / "default-skills.txt"
     default_skills = [line for line in default_skills_path.read_text().splitlines() if line.strip()]

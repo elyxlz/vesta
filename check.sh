@@ -21,7 +21,7 @@ Suites:
   mobile-ios     clean Expo prebuild + unsigned iOS simulator compile
   mobile-android clean Expo prebuild + Android debug compile
   guards         repo-wide ruff check + format, convention guards (lint escapes,
-                 comment length, import cycles), shellcheck, skills index, uv.lock,
+                 comment length, import cycles), shellcheck, uv.lock,
                  and dashboard-sync freshness + the vite base check
   whatsapp       gofmt + go vet + go build + go test for the whatsapp skill CLI
                  (builds whisper.cpp static libs to ~/.cache/vesta-whisper on first run)
@@ -128,7 +128,7 @@ check_web() {
 
 check_guards() {
   # Fast repo-hygiene checks ci.yml otherwise runs as raw steps outside this
-  # entry point: repo-wide ruff, skills index, uv.lock, and dashboard-sync
+  # entry point: repo-wide ruff, uv.lock, and dashboard-sync
   # freshness, plus the vite base path check. All run from the repo root; none
   # need Docker.
   local failed=0
@@ -150,12 +150,6 @@ check_guards() {
     echo "error: shellcheck is not installed (apt install shellcheck / brew install shellcheck)" >&2
     failed=1
   fi
-
-  uv run python agent/skills/generate-index.py
-  git diff --exit-code agent/skills/index.json || {
-    echo "error: agent/skills/index.json is stale — run 'uv run python agent/skills/generate-index.py' and commit the result" >&2
-    failed=1
-  }
 
   cp agent/core/uv.lock agent/core/uv.lock.before
   uv lock --project agent/core

@@ -1,26 +1,25 @@
 #!/usr/bin/env bash
-# Install a skill: add its directory to the sparse-checkout cone. Instant and offline -
-# the content is already in the local branch history from the last sync/attach.
+# Install a skill: mark it in data/installed-skills.txt and relink ~/.claude/skills. Every
+# optional skill already sits on disk (the workspace is a full checkout), so installing
+# only activates it. Instant, offline, no git.
 set -euo pipefail
 SKILL_NAME="${1:?Usage: skills-install <skill-name>}"
 cd ~
 DEST="agent/skills/$SKILL_NAME"
+INSTALLED="agent/data/installed-skills.txt"
 
-if [ -d "$DEST" ]; then
-    echo "Skill '$SKILL_NAME' is already installed."
-    exit 0
+if [ ! -f "$DEST/SKILL.md" ]; then
+    echo "Error: no skill '$SKILL_NAME' (run skills-search to list available skills)." >&2
+    exit 1
 fi
 
-# Self-init a virgin workspace. Skipped when already attached: attach fetches, and
-# installs from local history must stay offline.
-[ -d .git ] || bash ~/agent/core/skills/upstream-sync/scripts/attach.sh
-
-# Validate before touching the cone; attach guarantees HEAD, the install source.
-git rev-parse -q --verify "HEAD:$DEST" >/dev/null || {
-    echo "Error: skill '$SKILL_NAME' not found in the registry (agent/skills/index.json lists all)." >&2
-    exit 1
-}
-bash ~/agent/core/skills/upstream-sync/scripts/set-cone.sh --add "$DEST"
+mkdir -p agent/data
+if grep -qxF "$SKILL_NAME" "$INSTALLED" 2>/dev/null; then
+    echo "Skill '$SKILL_NAME' is already installed."
+else
+    printf '%s\n' "$SKILL_NAME" >> "$INSTALLED"
+fi
+bash ~/agent/core/skills/upstream-sync/scripts/link-skills.sh
 
 echo "Installed '$SKILL_NAME'. Restart Vesta to activate it."
 if [ -f "$DEST/SETUP.md" ]; then

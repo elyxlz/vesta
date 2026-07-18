@@ -39,6 +39,10 @@ trap cleanup EXIT
 mkdir -p "$STAGE/agent"
 cp -a "$CONTENT/." "$STAGE/agent/"
 rm -f "$STAGE/agent/.vestad-fingerprint"
+# Core is a read-only bind mount on a box, not tracked content: keep it out of the snapshot
+# and gitignore it so the mount never shows as untracked noise (same as constitution.md).
+rm -rf "$STAGE/agent/core"
+printf '/core/\n' >> "$STAGE/agent/.gitignore"
 cat > "$STAGE/.gitignore" <<'EOF'
 /*
 !/.gitignore

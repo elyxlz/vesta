@@ -64,14 +64,6 @@ WORKDIR /root
 
 COPY agent/ ./agent/
 
-# Prune optional skills out of the image: keep only the defaults listed in the
-# version-pinned core list (agent/core/default-skills.txt). That list ships inside
-# core so the runtime reconciler reads it from the read-only core mount.
-RUN for d in agent/skills/*/; do \
-      name="$(basename "$d")"; \
-      grep -qx "$name" agent/core/default-skills.txt || rm -rf "$d"; \
-    done
-
 WORKDIR /root/agent
 # Scoped, never ENV: exported, UV_PROJECT_ENVIRONMENT retargets every uv project, so a skill's
 # `uv run` would re-sync the engine venv. PATH exposes the venv instead.

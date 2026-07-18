@@ -484,8 +484,8 @@ impl Client {
     /// Create an empty agent container. Credentials, timezone, and other preferences are sent
     /// separately via `update_settings` once the agent is up (vestad no longer accepts credentials or
     /// timezone at create time — the agent owns its config store).
-    pub fn create_agent(&self, name: &str, manage_agent_code: bool) -> Result<String, String> {
-        let body = serde_json::json!({"name": name, "manage_agent_code": manage_agent_code});
+    pub fn create_agent(&self, name: &str) -> Result<String, String> {
+        let body = serde_json::json!({"name": name});
         // vestad pulls/builds the agent image before responding; a cold multi-GB pull
         // legitimately exceeds any fixed response ceiling.
         let request = self
@@ -550,11 +550,6 @@ impl Client {
         self.delete_req(&format!("/agents/{name}/provider"))?;
         self.restart_agent(name)
     }
-
-    pub fn get_agent_settings(&self, name: &str) -> Result<serde_json::Value, String> {
-        read_json(self.get(&format!("/agents/{name}/settings"))?)
-    }
-
 
     pub fn start_agent(&self, name: &str) -> Result<(), String> {
         self.post(&format!("/agents/{name}/start"))?;

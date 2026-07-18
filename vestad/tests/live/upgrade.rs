@@ -145,7 +145,7 @@ fn upgrade_from_previous_release_converges_migrations_and_keeps_agent_healthy() 
     );
 
     // Seed the credential-loss precondition a fresh agent lacks (tracked .claude + an untracked
-    // sentinel in ~/.claude), so the upgrade boot's reapply would delete it absent the fix.
+    // sentinel in ~/.claude), so the upgrade boot's guard would delete it absent the fix.
     seed_tracked_claude_precondition(&container);
 
     // ── The update: replace the installed binary in place, then restart the daemon ────────────
@@ -198,12 +198,12 @@ fn upgrade_from_previous_release_converges_migrations_and_keeps_agent_healthy() 
         panic!("agent did not process work after update: {e}");
     }
 
-    // By now the upgrade boot has run skills-install + migrations (each does a sparse-checkout
-    // reapply). The sentinel under ~/.claude must have survived: if a reapply sparsified the
-    // tracked .claude/ and took untracked files with it, real agents lose .credentials.json here.
+    // By now the upgrade boot has run the entrypoint .claude self-heal + migrations. The sentinel
+    // under ~/.claude must have survived: if the guard untracked .claude but a later git op took
+    // untracked files with it, real agents lose .credentials.json here.
     assert!(
         claude_sentinel_survives(&container),
-        "an upgrade-boot reapply deleted the untracked sentinel under ~/.claude — \
+        "an upgrade boot deleted the untracked sentinel under ~/.claude — \
          .credentials.json would be lost the same way (credential-loss regression)"
     );
 
@@ -437,23 +437,18 @@ const CLAUDE_SENTINEL: &str = "/root/.claude/e2e-credential-sentinel";
 /// Recreate the precondition that made real agents lose their credentials on upgrade, which a
 /// fresh test agent never has on its own: a $HOME git workspace that TRACKS a file under .claude/
 /// (months of upstream-sync merges pull the repo's dev .claude/ tooling into tracking), with the
-/// agent's live credentials sitting untracked alongside it. With .claude tracked but outside the
-/// sparse cone, a later `git sparse-checkout reapply` (run by skills-install / migrations on the
-/// upgrade boot) sparsifies .claude and deletes the untracked credentials with it. We drop a
-/// sentinel in ~/.claude and assert post-upgrade that it survived. Without the entrypoint's
-/// boot-time untrack this reproduces the de-auth; with it the sentinel is preserved.
+/// agent's live credentials sitting untracked alongside it. Left tracked, a later git op on the
+/// upgrade boot can delete the untracked credentials alongside it. We drop a sentinel in ~/.claude
+/// and assert post-upgrade that it survived. Without the entrypoint's boot-time untrack this
+/// reproduces the de-auth; with it the sentinel is preserved.
 fn seed_tracked_claude_precondition(container: &str) {
-    // first-start sets up the $HOME workspace + sparse cone; ensure it deterministically (and that
-    // sparse-checkout is ON with .claude out of cone) so the precondition holds regardless of the
-    // old version's exact first-start timing, then track a .claude file and drop the sentinel.
+    // Ensure a plain $HOME git repo deterministically, then track a .claude file and drop the
+    // untracked sentinel, so the precondition holds regardless of the old version's first-start timing.
     let script = "set -e; cd /root; \
         [ -d .git ] || git init -q; \
-        git config core.sparseCheckout true; \
-        mkdir -p .git/info; \
-        grep -qxF '/agent/' .git/info/sparse-checkout 2>/dev/null || printf '/agent/\\n' >> .git/info/sparse-checkout; \
         mkdir -p .claude/skills/e2e-dev-skill; \
         printf 'dev tooling\\n' > .claude/skills/e2e-dev-skill/SKILL.md; \
-        git add --sparse -f .claude/skills/e2e-dev-skill/SKILL.md; \
+        git add -f .claude/skills/e2e-dev-skill/SKILL.md; \
         git -c user.email=e2e@vesta -c user.name=e2e commit -q -m 'e2e: simulate tracked dev .claude tooling'; \
         printf 'SENTINEL\\n' > /root/.claude/e2e-credential-sentinel; \
         git ls-files -- .claude";

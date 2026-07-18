@@ -14,7 +14,6 @@ from . import config as cfg
 from . import logger, state_store
 from . import models as vm
 from .api import start_ws_server
-from .default_skills import default_skill_sync_turn
 from .diagnostics import format_crash_detail
 from .events import EventBus
 from .loops import (
@@ -169,8 +168,8 @@ def collect_boot_turns(
     *, state: vm.State, config: cfg.VestaConfig, config_issues: list[str], greeting_reason: str, first_start: bool
 ) -> list[str]:
     """Boot-time control-flow as ordered prompt bodies: migrations, then upstream sync, then
-    default-skill sync, then config issues, then the greeting last — converge first, orient and
-    reach out last. Each is delivered as a boot turn (immediate, non-interruptible), not a notification.
+    config issues, then the greeting last — converge first, orient and reach out last. Each is
+    delivered as a boot turn (immediate, non-interruptible), not a notification.
     The greeting's restart turn restores daemons; converge turns run before it, so the first one carries
     BOOT_RESTORE_ORIENTATION to restore daemons first."""
     turns: list[str] = []
@@ -178,9 +177,6 @@ def collect_boot_turns(
     sync_turn = upstream_sync_turn(state=state, config=config, first_start=first_start)
     if sync_turn is not None:
         turns.append(sync_turn)
-    skill_sync = default_skill_sync_turn(config=config, first_start=first_start)
-    if skill_sync is not None:
-        turns.append(skill_sync)
     config_turn = config_issues_turn(config_issues)
     if config_turn is not None:
         turns.append(config_turn)
