@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import os
 import signal
+import socket
+import threading
 
 from vesta_browser import admin, daemon
+
+HANG_GUARD_S = 5
 
 
 def test_session_name_default(monkeypatch):
@@ -136,3 +140,31 @@ def test_read_mode_falls_back_on_garbage(tmp_path, monkeypatch):
         assert admin.read_mode() == "a11y"
     finally:
         admin._session_file(None, "mode").unlink(missing_ok=True)
+
+
+def test_send_times_out_when_the_daemon_never_replies(tmp_path, monkeypatch):
+    """A daemon that accepts the request and goes quiet must surface an error, not hang."""
+    monkeypatch.setattr(admin, "DAEMON_RESPONSE_TIMEOUT_S", 0.3)
+    sock_path = str(tmp_path / "silent.sock")
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listener.bind(sock_path)
+    listener.listen(1)
+    monkeypatch.setattr(admin, "socket_path", lambda name=None: sock_path)
+
+    raised: list[BaseException] = []
+
+    def call_send() -> None:
+        try:
+            admin.send({"method": "browsingContext.create", "params": {"type": "tab"}})
+        except BaseException as e:
+            raised.append(e)
+
+    caller = threading.Thread(target=call_send, daemon=True)
+    caller.start()
+    try:
+        caller.join(timeout=HANG_GUARD_S)
+        assert not caller.is_alive(), "admin.send() hung: the daemon socket read is unbounded"
+        assert isinstance(raised[0], RuntimeError)
+        assert "did not respond to 'browsingContext.create' within 0.3s" in str(raised[0])
+    finally:
+        listener.close()

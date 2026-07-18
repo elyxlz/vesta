@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .settings import get_settings, DEFAULT_CLIENT_ID
+from .settings import DEFAULT_CLIENT_ID, get_settings
 
 # Dynamic-consent scopes for the shared default public client (it has no permissions we control,
 # so ".default" would either grant nothing useful or demand admin consent for its whole catalog).

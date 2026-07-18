@@ -26,8 +26,7 @@ pub async fn invalidate_service_handler(
         return Err(err_response(
             StatusCode::NOT_FOUND,
             &format!(
-                "service '{}' not registered for agent '{}'",
-                service_name, name
+                "service '{service_name}' not registered for agent '{name}'"
             ),
         ));
     }
@@ -60,7 +59,7 @@ pub(crate) fn build_agents_message(
         .map(|a| {
             let mut obj = serde_json::to_value(a).unwrap_or_default();
             if let Some(map) = obj.as_object_mut() {
-                let state = activity.get(&a.name).map(|s| s.as_str()).unwrap_or("idle");
+                let state = activity.get(&a.name).map_or("idle", std::string::String::as_str);
                 map.insert(
                     "activityState".into(),
                     serde_json::Value::String(state.into()),
@@ -152,7 +151,7 @@ async fn control_ws_session(state: SharedState, socket: axum::extract::ws::WebSo
                 }
             }
             _ = keepalive.tick() => {
-                if tx.send(Message::Ping(Default::default())).await.is_err() { break; }
+                if tx.send(Message::Ping(bytes::Bytes::new())).await.is_err() { break; }
                 continue;
             }
         }

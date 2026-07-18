@@ -3,9 +3,13 @@
 # them (CARGO_BIN_EXE_vestad); vestad dev-depends on this crate for the harness.
 [package]
 name = "vesta-tests"
-version = "0.1.177"
+version = "0.1.179"
 edition = "2021"
 publish = false
+
+# Test harness crate: workspace lints, but unwrap is fine in test plumbing.
+[lints]
+workspace = true
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

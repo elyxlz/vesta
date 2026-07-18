@@ -1,7 +1,7 @@
 """Spotify search."""
 
-from .config import Config
 from .auth import get_client
+from .config import Config
 
 
 def search(

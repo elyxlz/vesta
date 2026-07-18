@@ -229,7 +229,7 @@ function ConnectedGateway({ children }: { children: ReactNode }) {
 
   const send = (event: object): boolean => {
     const ws = wsRef.current?.current();
-    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+    if (ws?.readyState !== WebSocket.OPEN) return false;
     ws.send(JSON.stringify(event));
     return true;
   };

@@ -1,20 +1,22 @@
-from datetime import datetime, timedelta, UTC
-from contextlib import closing
-from pathlib import Path
-from typing import Any, TypedDict
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import json
 import logging
 import random
 import uuid
+from contextlib import closing
+from datetime import UTC, datetime, timedelta
+from itertools import pairwise
+from pathlib import Path
+from typing import Any, Literal, TypedDict
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from apscheduler.triggers.date import DateTrigger
-from apscheduler.triggers.cron import CronTrigger
-from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
+from apscheduler.triggers.interval import IntervalTrigger
+from pydantic import BaseModel
 
-from .config import Config
 from . import db
+from .config import Config
 from .format import PRIORITY_LABEL, rel_delta
 from .scheduler import write_notification, write_reminder_notification
 
@@ -33,6 +35,31 @@ class TriggerData(TypedDict, total=False):
     tz: str  # "cron": IANA timezone the expression is interpreted in (DST-aware)
     hours: int  # "interval": fixed hour spacing
     fuzz_minutes: int  # "cron": each fire shifts by a deterministic sample in [-fuzz, +fuzz]
+
+
+class DueSpec(BaseModel):
+    """A task due date: an absolute datetime + timezone, or a relative due-in offset."""
+
+    due_datetime: str | None = None
+    timezone: str | None = None
+    due_in_minutes: int | None = None
+    due_in_hours: int | None = None
+    due_in_days: int | None = None
+
+
+class ReminderSpec(BaseModel):
+    """A reminder to schedule: the message plus one-shot, recurring, or cron timing."""
+
+    message: str
+    task_id: str | None = None
+    scheduled_datetime: str | None = None
+    tz: str | None = None
+    in_minutes: int | None = None
+    in_hours: int | None = None
+    in_days: int | None = None
+    recurring: Literal["hourly", "daily", "weekly", "monthly", "yearly"] | None = None
+    cron: str | None = None
+    fuzz_minutes: int | None = None
 
 
 # Overdue pending tasks (past due_date) always float to the top, ordered by most overdue first.
@@ -86,7 +113,7 @@ def _validate_fuzz(fuzz_minutes: int, trigger: CronTrigger):
     while next_fire is not None and len(fires) < FUZZ_VALIDATION_FIRES:
         fires.append(next_fire)
         next_fire = trigger.get_next_fire_time(next_fire, next_fire + timedelta(seconds=1))
-    gaps = [later - earlier for earlier, later in zip(fires, fires[1:])]
+    gaps = [later - earlier for earlier, later in pairwise(fires)]
     if not gaps or timedelta(minutes=fuzz_minutes) > min(gaps) / 2:
         raise ValueError("fuzz_minutes must be at most half the gap between fires")
 
@@ -173,9 +200,9 @@ def _parse_local_dt(datetime_str: str, timezone_str: str) -> datetime:
     try:
         local_tz = ZoneInfo(timezone_str)
     except (ZoneInfoNotFoundError, KeyError):
-        raise ValueError(f"Invalid timezone: '{timezone_str}'. Use IANA names like 'Europe/London' or 'America/New_York'.")
+        raise ValueError(f"Invalid timezone: '{timezone_str}'. Use IANA names like 'Europe/London' or 'America/New_York'.") from None
 
-    parsed = datetime.fromisoformat(datetime_str.replace("Z", "+00:00"))
+    parsed = datetime.fromisoformat(datetime_str)
     if parsed.tzinfo is not None:
         return parsed.astimezone(local_tz)
     return parsed.replace(tzinfo=local_tz)
@@ -203,19 +230,22 @@ def normalize_priority(priority: int | str) -> int:
     return priority_map[key]
 
 
-def _compute_due_date(
-    due_datetime: str | None,
-    timezone_str: str | None,
-    due_in_minutes: int | None,
-    due_in_hours: int | None,
-    due_in_days: int | None,
-) -> str | None:
-    if due_datetime is not None:
-        if timezone_str is None:
-            raise ValueError("timezone is required when due_datetime is provided")
-        return _to_utc(due_datetime, timezone_str)
+def _due_requested(due: DueSpec | None) -> bool:
+    """Whether the spec asks for a due-date change (a timezone alone does not)."""
+    return due is not None and (
+        due.due_datetime is not None or due.due_in_minutes is not None or due.due_in_hours is not None or due.due_in_days is not None
+    )
 
-    offset = _relative_offset(due_in_minutes, due_in_hours, due_in_days)
+
+def _compute_due_date(due: DueSpec | None) -> str | None:
+    if due is None:
+        return None
+    if due.due_datetime is not None:
+        if due.timezone is None:
+            raise ValueError("timezone is required when due_datetime is provided")
+        return _to_utc(due.due_datetime, due.timezone)
+
+    offset = _relative_offset(due.due_in_minutes, due.due_in_hours, due.due_in_days)
     if offset is not None:
         return (_now_utc() + offset).isoformat()
 
@@ -273,17 +303,13 @@ def add_task(
     config: Config,
     *,
     title: str,
-    due_datetime: str | None = None,
-    timezone: str | None = None,
-    due_in_minutes: int | None = None,
-    due_in_hours: int | None = None,
-    due_in_days: int | None = None,
+    due: DueSpec | None = None,
     priority: int | str = 2,
     initial_metadata: str | None = None,
 ) -> dict:
     priority = normalize_priority(priority)
     task_id = str(uuid.uuid4())[:8]
-    due_date = _compute_due_date(due_datetime, timezone, due_in_minutes, due_in_hours, due_in_days)
+    due_date = _compute_due_date(due)
 
     with closing(db.get_db(config.data_dir)) as conn:
         conn.execute(
@@ -317,6 +343,18 @@ def list_tasks(config: Config, *, show_completed: bool = False) -> list[dict]:
         return [_task_with_metadata(config.data_dir, dict(row), include_content=False) for row in cursor]
 
 
+def _rebuild_due_reminders(conn, task_id: str, row, *, title: str | None, status: str | None, new_due_date: str | None):
+    """Rebuild the auto reminders after a due-date change, preferring the values updated in the same call."""
+    db.delete_auto_reminders(conn, task_id)
+    if not new_due_date:
+        return
+    reminder_title = title if title is not None else row["title"]
+    # Only create reminders if the task is (or will be) pending.
+    effective_status = status if status is not None else row["status"]
+    if effective_status == "pending":
+        db.create_auto_reminders(conn, task_id, reminder_title, new_due_date)
+
+
 def update_task(
     config: Config,
     *,
@@ -324,22 +362,15 @@ def update_task(
     status: str | None = None,
     title: str | None = None,
     priority: int | str | None = None,
-    due_datetime: str | None = None,
-    timezone: str | None = None,
-    due_in_minutes: int | None = None,
-    due_in_hours: int | None = None,
-    due_in_days: int | None = None,
+    due: DueSpec | None = None,
 ) -> dict:
     if status and status not in ("pending", "done"):
         raise ValueError(f"Status must be pending or done, got {status}")
     if priority is not None:
         priority = normalize_priority(priority)
 
-    new_due_date: str | None = None
-    due_date_changed = False
-    if due_datetime is not None or due_in_minutes is not None or due_in_hours is not None or due_in_days is not None:
-        new_due_date = _compute_due_date(due_datetime, timezone, due_in_minutes, due_in_hours, due_in_days)
-        due_date_changed = True
+    due_date_changed = _due_requested(due)
+    new_due_date = _compute_due_date(due)
 
     with closing(db.get_db(config.data_dir)) as conn:
         result = _require_task_row(conn, task_id)
@@ -372,14 +403,7 @@ def update_task(
         if due_date_changed:
             updates.append("due_date = ?")
             params.append(new_due_date)
-            db.delete_auto_reminders(conn, task_id)
-            if new_due_date:
-                # Use the updated title if provided in the same call, else existing.
-                reminder_title = title if title is not None else result["title"]
-                # Only create reminders if the task is (or will be) pending.
-                effective_status = status if status is not None else result["status"]
-                if effective_status == "pending":
-                    db.create_auto_reminders(conn, task_id, reminder_title, new_due_date)
+            _rebuild_due_reminders(conn, task_id, result, title=title, status=status, new_due_date=new_due_date)
 
         if updates:
             params.append(task_id)
@@ -408,11 +432,7 @@ def postpone_task(
     return update_task(
         config,
         task_id=task_id,
-        due_datetime=due_datetime,
-        timezone=timezone,
-        due_in_minutes=in_minutes,
-        due_in_hours=in_hours,
-        due_in_days=in_days,
+        due=DueSpec(due_datetime=due_datetime, timezone=timezone, due_in_minutes=in_minutes, due_in_hours=in_hours, due_in_days=in_days),
     )
 
 
@@ -578,7 +598,7 @@ def send_reminder_job(reminder_id: str, *, message: str, data_dir: str, notif_di
                         logger.info("Reminder %s was snoozed to %s; skipping stale fire", reminder_id, trigger_data["run_date"])
                         return
 
-                logger.info(f"Firing reminder {reminder_id}: {message[:50]}")
+                logger.info("Firing reminder %s: %s", reminder_id, message[:50])
 
                 write_reminder_notification(
                     Path(notif_dir),
@@ -626,7 +646,7 @@ def _restore_row(scheduler: BackgroundScheduler, row, now: datetime, notif_dir: 
 
         if trigger_type == "date":
             if "run_date" not in trigger_data:
-                logger.warning(f"Reminder {reminder_id}: date trigger missing 'run_date', skipping")
+                logger.warning("Reminder %s: date trigger missing 'run_date', skipping", reminder_id)
                 return False
             run_date = db.parse_datetime(trigger_data["run_date"])
             if run_date < now:
@@ -634,7 +654,7 @@ def _restore_row(scheduler: BackgroundScheduler, row, now: datetime, notif_dir: 
                     # Probably firing right now in a scheduler worker; a later tick either finds
                     # it completed or declares it missed for real.
                     return False
-                logger.info(f"Reminder {reminder_id}: past due, sending missed notification")
+                logger.info("Reminder %s: past due, sending missed notification", reminder_id)
                 if notif_dir:
                     write_reminder_notification(
                         notif_dir,
@@ -662,30 +682,30 @@ def _restore_row(scheduler: BackgroundScheduler, row, now: datetime, notif_dir: 
             trigger = IntervalTrigger(hours=trigger_data["hours"] if "hours" in trigger_data else 1)
 
         else:
-            logger.warning(f"Reminder {reminder_id}: unknown trigger type '{trigger_type}', skipping")
+            logger.warning("Reminder %s: unknown trigger type '%s', skipping", reminder_id, trigger_type)
             return False
 
-        add_job_kwargs: dict = dict(
-            func=send_reminder_job,
-            trigger=trigger,
-            args=[reminder_id],
-            kwargs={
+        add_job_kwargs: dict = {
+            "func": send_reminder_job,
+            "trigger": trigger,
+            "args": [reminder_id],
+            "kwargs": {
                 "message": row["message"],
                 "data_dir": str(config.data_dir),
                 "notif_dir": str(notif_dir) if notif_dir else "",
             },
-            id=reminder_id,
-            replace_existing=True,
-        )
+            "id": reminder_id,
+            "replace_existing": True,
+        }
         if trigger_type in ("cron", "interval"):
             add_job_kwargs["misfire_grace_time"] = 3600
             add_job_kwargs["coalesce"] = True
         scheduler.add_job(**add_job_kwargs)
-        logger.info(f"Restored reminder {reminder_id} ({trigger_type})")
+        logger.info("Restored reminder %s (%s)", reminder_id, trigger_type)
         return True
 
     except (json.JSONDecodeError, KeyError, ValueError) as e:
-        logger.error(f"Failed to restore reminder {reminder_id}: {e}")
+        logger.error("Failed to restore reminder %s: %s", reminder_id, e)
         return False
 
 
@@ -730,94 +750,86 @@ def _apply_fuzz(
     return f"{schedule_info}, fuzz {fuzz_minutes}m", fuzzed_next_fire(reminder_id, trigger_data, _now_utc())
 
 
-def remind_set(
-    config: Config,
-    *,
-    message: str,
-    task_id: str | None = None,
-    scheduled_datetime: str | None = None,
-    tz: str | None = None,
-    in_minutes: int | None = None,
-    in_hours: int | None = None,
-    in_days: int | None = None,
-    recurring: str | None = None,
-    cron: str | None = None,
-    fuzz_minutes: int | None = None,
-    notif_dir: Path | None = None,
-) -> dict:
-    reminder_id = str(uuid.uuid4())[:8]
-    trigger_data = None
+def _recurring_trigger(reminder_id: str, spec: ReminderSpec) -> tuple[str, TriggerData, datetime | None]:
+    if not spec.scheduled_datetime or not spec.tz:
+        raise ValueError(f"scheduled_datetime and tz are required for {spec.recurring} reminders")
+    # Build the cron expression from the user's wall-clock time and store the IANA tz alongside it,
+    # so APScheduler recomputes the correct UTC instant on every fire and the reminder holds its
+    # wall-clock time across DST transitions instead of drifting by the offset.
+    local_dt = _parse_local_dt(spec.scheduled_datetime, spec.tz)
+    h, m = local_dt.hour, local_dt.minute
 
-    if fuzz_minutes is not None and cron is None and recurring not in ("daily", "weekly", "monthly", "yearly"):
+    if spec.recurring == "daily":
+        expr = f"{m} {h} * * *"
+        schedule_info = f"daily at {h:02d}:{m:02d} {spec.tz}"
+    elif spec.recurring == "weekly":
+        dow = local_dt.strftime("%a").lower()
+        expr = f"{m} {h} * * {dow}"
+        schedule_info = f"weekly on {dow} at {h:02d}:{m:02d} {spec.tz}"
+    elif spec.recurring == "monthly":
+        expr = f"{m} {h} {local_dt.day} * *"
+        schedule_info = f"monthly on day {local_dt.day} at {h:02d}:{m:02d} {spec.tz}"
+    else:  # yearly
+        expr = f"{m} {h} {local_dt.day} {local_dt.month} *"
+        schedule_info = f"yearly on {local_dt.month}/{local_dt.day} at {h:02d}:{m:02d} {spec.tz}"
+
+    expr = _normalize_cron_expr(expr)
+    trigger = CronTrigger.from_crontab(expr, timezone=ZoneInfo(spec.tz))
+    trigger_data: TriggerData = {"type": "cron", "expr": expr, "tz": spec.tz}
+    next_run = trigger.get_next_fire_time(None, _now_utc())
+    if spec.fuzz_minutes is not None:
+        schedule_info, next_run = _apply_fuzz(reminder_id, trigger_data, trigger, schedule_info, spec.fuzz_minutes)
+    return schedule_info, trigger_data, next_run
+
+
+def _build_trigger(reminder_id: str, spec: ReminderSpec) -> tuple[str, TriggerData, datetime | None]:
+    """Resolve a reminder spec to (schedule_info, trigger_data, next_run)."""
+    if spec.fuzz_minutes is not None and spec.cron is None and spec.recurring not in ("daily", "weekly", "monthly", "yearly"):
         raise ValueError("fuzz_minutes needs a daily/weekly/monthly/yearly or cron schedule")
 
-    if cron is not None:
-        if recurring or scheduled_datetime or in_minutes or in_hours or in_days:
+    if spec.cron is not None:
+        if spec.recurring or spec.scheduled_datetime or spec.in_minutes or spec.in_hours or spec.in_days:
             raise ValueError("--cron cannot be combined with --recurring, --at, or --in-* options")
-        if not tz:
+        if not spec.tz:
             raise ValueError("tz is required when cron is provided")
-        expr = _normalize_cron_expr(cron)
-        trigger = CronTrigger.from_crontab(expr, timezone=ZoneInfo(tz))
-        schedule_info = f"cron: {cron} ({tz})"
-        trigger_data = {"type": "cron", "expr": expr, "tz": tz}
+        expr = _normalize_cron_expr(spec.cron)
+        trigger = CronTrigger.from_crontab(expr, timezone=ZoneInfo(spec.tz))
+        schedule_info = f"cron: {spec.cron} ({spec.tz})"
+        trigger_data: TriggerData = {"type": "cron", "expr": expr, "tz": spec.tz}
         next_run = trigger.get_next_fire_time(None, _now_utc())
-        if fuzz_minutes is not None:
-            schedule_info, next_run = _apply_fuzz(reminder_id, trigger_data, trigger, schedule_info, fuzz_minutes)
-    elif recurring == "hourly":
-        schedule_info = "hourly"
-        trigger_data = {"type": "interval", "hours": 1}
-        next_run = None
-    elif recurring in ("daily", "weekly", "monthly", "yearly"):
-        if not scheduled_datetime or not tz:
-            raise ValueError(f"scheduled_datetime and tz are required for {recurring} reminders")
-        # Build the cron expression from the user's wall-clock time and store the IANA tz alongside it,
-        # so APScheduler recomputes the correct UTC instant on every fire and the reminder holds its
-        # wall-clock time across DST transitions instead of drifting by the offset.
-        local_dt = _parse_local_dt(scheduled_datetime, tz)
-        h, m = local_dt.hour, local_dt.minute
+        if spec.fuzz_minutes is not None:
+            schedule_info, next_run = _apply_fuzz(reminder_id, trigger_data, trigger, schedule_info, spec.fuzz_minutes)
+        return schedule_info, trigger_data, next_run
 
-        if recurring == "daily":
-            expr = f"{m} {h} * * *"
-            schedule_info = f"daily at {h:02d}:{m:02d} {tz}"
-        elif recurring == "weekly":
-            dow = local_dt.strftime("%a").lower()
-            expr = f"{m} {h} * * {dow}"
-            schedule_info = f"weekly on {dow} at {h:02d}:{m:02d} {tz}"
-        elif recurring == "monthly":
-            expr = f"{m} {h} {local_dt.day} * *"
-            schedule_info = f"monthly on day {local_dt.day} at {h:02d}:{m:02d} {tz}"
-        else:  # yearly
-            expr = f"{m} {h} {local_dt.day} {local_dt.month} *"
-            schedule_info = f"yearly on {local_dt.month}/{local_dt.day} at {h:02d}:{m:02d} {tz}"
+    if spec.recurring == "hourly":
+        return "hourly", {"type": "interval", "hours": 1}, None
 
-        expr = _normalize_cron_expr(expr)
-        trigger = CronTrigger.from_crontab(expr, timezone=ZoneInfo(tz))
-        trigger_data = {"type": "cron", "expr": expr, "tz": tz}
-        next_run = trigger.get_next_fire_time(None, _now_utc())
-        if fuzz_minutes is not None:
-            schedule_info, next_run = _apply_fuzz(reminder_id, trigger_data, trigger, schedule_info, fuzz_minutes)
-    elif scheduled_datetime:
-        if not tz:
+    if spec.recurring in ("daily", "weekly", "monthly", "yearly"):
+        return _recurring_trigger(reminder_id, spec)
+
+    if spec.scheduled_datetime:
+        if not spec.tz:
             raise ValueError("tz is required when scheduled_datetime is provided")
-        utc_dt = _to_utc_dt(scheduled_datetime, tz)
-        schedule_info = f"once at {utc_dt.isoformat()}"
-        trigger_data = {"type": "date", "run_date": utc_dt.isoformat()}
-        next_run = utc_dt
-    else:
-        offset = _relative_offset(in_minutes, in_hours, in_days)
-        if offset is None:
-            raise ValueError("Must specify when to send reminder")
-        run_time = _now_utc() + offset
-        parts = [f"{v} {u}" for v, u in [(in_days, "days"), (in_hours, "hours"), (in_minutes, "minutes")] if v]
-        schedule_info = f"once (in {' '.join(parts)})"
-        trigger_data = {"type": "date", "run_date": run_time.isoformat()}
-        next_run = run_time
+        utc_dt = _to_utc_dt(spec.scheduled_datetime, spec.tz)
+        return f"once at {utc_dt.isoformat()}", {"type": "date", "run_date": utc_dt.isoformat()}, utc_dt
+
+    offset = _relative_offset(spec.in_minutes, spec.in_hours, spec.in_days)
+    if offset is None:
+        raise ValueError("Must specify when to send reminder")
+    run_time = _now_utc() + offset
+    parts = [f"{v} {u}" for v, u in [(spec.in_days, "days"), (spec.in_hours, "hours"), (spec.in_minutes, "minutes")] if v]
+    return f"once (in {' '.join(parts)})", {"type": "date", "run_date": run_time.isoformat()}, run_time
+
+
+def remind_set(config: Config, spec: ReminderSpec) -> dict:
+    reminder_id = str(uuid.uuid4())[:8]
+    schedule_info, trigger_data, next_run = _build_trigger(reminder_id, spec)
 
     with closing(db.get_db(config.data_dir)) as conn:
-        if task_id is not None:
-            cursor = conn.execute("SELECT 1 FROM tasks WHERE id = ?", (task_id,))
+        if spec.task_id is not None:
+            cursor = conn.execute("SELECT 1 FROM tasks WHERE id = ?", (spec.task_id,))
             if not cursor.fetchone():
-                raise ValueError(f"Task '{task_id}' not found")
+                raise ValueError(f"Task '{spec.task_id}' not found")
 
         conn.execute(
             """INSERT OR REPLACE INTO reminders
@@ -825,11 +837,11 @@ def remind_set(
                VALUES (?, ?, ?, ?, ?, 0, ?, 0)""",
             (
                 reminder_id,
-                task_id,
-                message,
+                spec.task_id,
+                spec.message,
                 schedule_info,
                 next_run.isoformat() if next_run else None,
-                json.dumps(trigger_data) if trigger_data else None,
+                json.dumps(trigger_data),
             ),
         )
         conn.commit()
@@ -838,8 +850,8 @@ def remind_set(
 
     return {
         "id": reminder_id,
-        "message": message,
-        "task_id": task_id,
+        "message": spec.message,
+        "task_id": spec.task_id,
         "schedule": schedule_info,
         "next_run": next_run.isoformat() if next_run else None,
         "created_at": created_at,

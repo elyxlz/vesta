@@ -14,8 +14,7 @@ from unittest.mock import MagicMock
 
 import httpx
 import pytest
-
-from microsoft_cli import auth_commands, capture, cli, owa_rest, teams, backend
+from microsoft_cli import auth_commands, backend, capture, cli, owa_rest, teams
 from microsoft_cli.config import Config
 
 

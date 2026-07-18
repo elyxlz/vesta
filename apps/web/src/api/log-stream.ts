@@ -11,7 +11,7 @@ export function openLogStream(
 ): EventSource {
   const es = new EventSource(url);
 
-  es.onmessage = (e) => {
+  es.onmessage = (e: MessageEvent<string>) => {
     const text = e.data;
     onEvent(
       text.startsWith("error:")

@@ -8,19 +8,14 @@ use vesta_tests::{docker_cmd, dump_agent_diagnostics, exec_in_container, TestAge
 
 type SharedAgent = Option<(TestAgent<'static>, String)>;
 
-/// The live suite runs against a POOL of two shared agents rather than one, so independent tests
-/// run in parallel. Each agent pays its own one-time first-start (the expensive multi-minute
-/// real-model setup), but the two first-starts run concurrently, so the pool's setup wall-clock
-/// stays ~= a single first-start while the test bodies overlap.
-///
-/// Tests are partitioned by agent and must NOT mix pools mid-test: notifications and interrupts
-/// are global to an agent's conversation, so two tests sharing one agent would corrupt each
-/// other. Each pool's Mutex serializes its own tests. The dreamer (which restarts and compacts
-/// its agent) gets pool B to itself; everything else shares pool A. The suite must run with
-/// enough `--test-threads` that both pools have a runner at once (see check.sh `live`).
-///
-/// Like SHARED_RO_AGENT in the server suite, the statics never drop; containers are cleaned up
-/// on the next run (TestAgent::create destroys leftovers by name).
+/// The live suite runs against a POOL of two shared agents so independent tests run in
+/// parallel: each pays its own one-time first-start (the expensive multi-minute real-model
+/// setup), but the two run concurrently, so setup wall-clock stays ~= one first-start.
+/// Tests are partitioned by agent and must NOT mix pools mid-test: notifications and
+/// interrupts are global to an agent's conversation. Each pool's Mutex serializes its own
+/// tests; the dreamer (which restarts and compacts its agent) gets pool B to itself. Run
+/// with enough `--test-threads` that both pools have a runner at once (see check.sh `live`).
+/// The statics never drop; the next run cleans up (TestAgent::create destroys leftovers).
 static LIVE_AGENT_A: LazyLock<Mutex<SharedAgent>> =
     LazyLock::new(|| Mutex::new(setup_live_agent("test-e2e-a")));
 static LIVE_AGENT_B: LazyLock<Mutex<SharedAgent>> =
@@ -178,14 +173,12 @@ const FIRST_START_AUTH_FAILURE_MARKERS: &[&str] =
     &["Provider auth lost (terminal upstream 401/402)"];
 
 /// Block until the agent has fully finished first-start and is idle, using the product's own
-/// idle signal rather than a timer.
-///
-/// `wait_until_alive` only waits for `mark_setup_done` (step 6 of ~14), after which the agent
-/// keeps going (greeting, timezone, channel setup, a self-restart at the end). The monitor
-/// loop holds PASSIVE notifications until it observes `event_bus.state == "idle"`, so a passive
-/// task is processed only once the agent is genuinely done and ready for test traffic. We drop
-/// one passive "write a marker file" task and wait for the file: its appearance IS the agent
-/// reporting itself idle.
+/// idle signal rather than a timer. `wait_until_alive` only waits for `mark_setup_done` (step
+/// 6 of ~14), after which the agent keeps going (greeting, timezone, channel setup, a
+/// self-restart at the end). The monitor loop holds PASSIVE notifications until it observes
+/// `event_bus.state == "idle"`, so a passive task is processed only once the agent is
+/// genuinely done and ready for test traffic. We drop one passive "write a marker file" task
+/// and wait for the file: its appearance IS the agent reporting itself idle.
 fn wait_for_first_start_settled(container: &str) -> Result<(), String> {
     write_notification(
         container,

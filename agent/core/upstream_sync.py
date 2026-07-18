@@ -15,10 +15,9 @@ marks: no churn on a broken pyproject.
 
 import tomllib
 
-from . import logger
-from . import models as vm
 from . import config as cfg
-from . import state_store
+from . import logger, state_store
+from . import models as vm
 
 UNKNOWN_VERSION = "unknown"
 
@@ -55,8 +54,9 @@ def upstream_sync_turn(*, state: vm.State, config: cfg.VestaConfig, first_start:
     return (
         "[Upstream sync]\n\n"
         f"Vesta was upgraded (now v{running}). Read `~/agent/core/skills/upstream-sync/SKILL.md` "
-        f"and follow it to sync your workspace to this version: rebase your changes "
-        f"onto `agent-v{running}`, resolving any conflicts. Then call `mark_upstream_synced`. "
+        f"and follow it to sync your workspace to this version: run its `sync.sh`, which rebases "
+        f"your changes onto `agent-v{running}`, and resolve any conflicts it stops on. "
+        f"Then call `mark_upstream_synced`. "
         "If the rebase brought changes, call `restart_vesta` afterward so the new skills load; "
         "if it was a no-op, no restart is needed. If it fails, tell the user what blocked it."
     )

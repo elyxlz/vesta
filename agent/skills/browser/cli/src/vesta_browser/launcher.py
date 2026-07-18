@@ -12,6 +12,8 @@ file the detached process can always write to and tail it for the URL.
 
 from __future__ import annotations
 
+import contextlib
+import ctypes
 import os
 import platform
 import re
@@ -42,6 +44,8 @@ DOWNLOAD_TIMEOUT_S = 600.0
 DOWNLOAD_CHUNK = 1 << 20
 READY_TIMEOUT_S = 45.0
 READY_POLL_S = 0.2
+X_PROBE_TIMEOUT_S = 2
+XVFB_READY_TIMEOUT_S = 5
 BIDI_RE = re.compile(r"WebDriver BiDi listening on (ws://\S+)")
 
 
@@ -69,9 +73,34 @@ def camoufox_installed() -> bool:
     return (camoufox_home() / "camoufox").is_file()
 
 
+# Gecko dlopens these at startup even headless; one missing and Camoufox exits 255 before BiDi.
+CAMOUFOX_SHARED_LIBS = (
+    "libgtk-3.so.0",
+    "libgdk_pixbuf-2.0.so.0",
+    "libX11-xcb.so.1",
+    "libdbus-glib-1.so.2",
+    "libXtst.so.6",
+    "libasound.so.2",
+)
+CAMOUFOX_LIBS_INSTALL = "apt-get install -y libgtk-3-0 libgdk-pixbuf-2.0-0 libx11-xcb1 libdbus-glib-1-2 libxtst6 libasound2"
+
+
+def libs_readiness() -> dict[str, bool | list[str] | str]:
+    missing: list[str] = []
+    for soname in CAMOUFOX_SHARED_LIBS:
+        try:
+            ctypes.CDLL(soname)
+        except OSError:
+            missing.append(soname)
+    report: dict[str, bool | list[str] | str] = {"ready": not missing, "missing": missing}
+    if missing:
+        report["install"] = CAMOUFOX_LIBS_INSTALL
+    return report
+
+
 def _verify_sha256(path: Path, expected: str) -> None:
     digest = sha256()
-    with open(path, "rb") as f:
+    with path.open("rb") as f:
         for chunk in iter(lambda: f.read(DOWNLOAD_CHUNK), b""):
             digest.update(chunk)
     actual = digest.hexdigest()
@@ -81,7 +110,7 @@ def _verify_sha256(path: Path, expected: str) -> None:
 
 def _download(url: str, dest: Path) -> None:
     req = urllib.request.Request(url, headers={"User-Agent": "vesta-browser"})
-    with urllib.request.urlopen(req, timeout=DOWNLOAD_TIMEOUT_S) as r, open(dest, "wb") as f:
+    with urllib.request.urlopen(req, timeout=DOWNLOAD_TIMEOUT_S) as r, dest.open("wb") as f:
         shutil.copyfileobj(r, f, DOWNLOAD_CHUNK)
 
 
@@ -93,7 +122,7 @@ def _extract_preserving_mode(zip_path: Path, dest: Path) -> None:
             z.extract(info, dest)
             mode = info.external_attr >> 16
             if mode:
-                os.chmod(dest / info.filename, mode)
+                (dest / info.filename).chmod(mode)
 
 
 def ensure_camoufox(override: str | None = None) -> str:
@@ -125,7 +154,7 @@ def ensure_camoufox(override: str | None = None) -> str:
     if exe.is_file():
         shutil.rmtree(staging, ignore_errors=True)
     else:
-        os.replace(staging, home)
+        staging.replace(home)
     return str(exe)
 
 
@@ -145,50 +174,78 @@ def _read_ws_url(proc: subprocess.Popen[bytes], log_path: Path, timeout_s: float
     raise RuntimeError(f"Camoufox did not announce BiDi within {timeout_s}s. Log tail:\n{tail}")
 
 
-def _x_display_reachable(display: str) -> bool:
-    """True iff an X server is actually accepting connections on `display`."""
-    if shutil.which("xdpyinfo"):
-        try:
-            return (
-                subprocess.run(
-                    ["xdpyinfo", "-display", display],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    timeout=5,
-                ).returncode
-                == 0
-            )
-        except Exception:
-            return False
-    # Fallback when xdpyinfo isn't installed: probe the X11 unix socket directly.
+def _display_socket_serving(number: str, *, abstract: bool) -> bool:
+    """Whether an X server accepts a connection on `number`'s abstract or filesystem socket."""
+    address = f"\0/tmp/.X11-unix/X{number}" if abstract else f"/tmp/.X11-unix/X{number}"
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(X_PROBE_TIMEOUT_S)
     try:
-        n = display.lstrip(":").split(".")[0]
-        sock_path = f"/tmp/.X11-unix/X{n}"
-        if not os.path.exists(sock_path):
-            return False
-        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        s.settimeout(2)
-        s.connect(sock_path)
-        s.close()
+        sock.connect(address)
         return True
     except OSError:
         return False
+    finally:
+        sock.close()
 
 
-def _ensure_xvfb(display: str, screen: str = "1920x1080x24") -> bool:
+def _x_display_reachable(display: str) -> bool:
+    """True iff an X server anywhere in this NETWORK namespace serves `display`.
+
+    An X server listens on two sockets: a filesystem one under this container's private /tmp, and
+    an abstract one, which Xlib prefers when both exist. The abstract namespace is scoped to the
+    network namespace, and agent containers share the host's, so another container's server holds a
+    display number here while our own /tmp stays empty. Probing only /tmp would call such a number
+    free, and our X clients would then land on that other container's server.
+    """
+    number = display.lstrip(":").split(".")[0]
+    return _display_socket_serving(number, abstract=True) or _display_socket_serving(number, abstract=False)
+
+
+def _own_display_serving(number: str) -> bool:
+    """Whether OUR own Xvfb is up: serving on the container-private /tmp socket specifically.
+
+    _x_display_reachable answers True for another container's server on the shared abstract socket,
+    so it cannot tell 'we hold this display' from 'someone else does'. The /tmp socket is created
+    only by this container's own Xvfb, so a connection there is proof the display is ours.
+    """
+    return _display_socket_serving(number, abstract=False)
+
+
+def _await_own_xvfb(proc: subprocess.Popen[bytes], number: str) -> int | None:
+    """The pid once OUR Xvfb serves its own /tmp socket, else None if it lost the display.
+
+    Trust our container-private /tmp socket, not generic reachability: with the abstract number
+    already taken by a racing container, our Xvfb cannot bind and dies, yet that other container
+    keeps answering on the shared abstract socket. A slow-but-alive Xvfb is still ours (we hold the
+    abstract bind), so its pid comes back rather than being dropped and leaked.
+    """
+    deadline = time.time() + XVFB_READY_TIMEOUT_S
+    while time.time() < deadline:
+        if _own_display_serving(number):
+            return proc.pid
+        if proc.poll() is not None:
+            return None
+        time.sleep(READY_POLL_S)
+    return proc.pid
+
+
+def _ensure_xvfb(display: str, screen: str = "1920x1080x24") -> int | None:
     """Best-effort: guarantee an X server is up on `display` before a headed browser.
 
     Camoufox runs headless by default, so only the handover flow (streaming a headed
     browser to the user over VNC) needs this. Self-heals a dead/lock-stuck Xvfb in
     ~2s, serialised with an flock so concurrent launches don't stomp each other. Never
     raises; on failure the caller falls back to headless. `screen` is the Xvfb
-    `WxHxDEPTH` geometry; handover uses a larger one so the stream stays crisp on HiDPI.
+    `WxHxDEPTH` geometry. Returns the pid of an Xvfb THIS call owns; None when one was already up
+    (not ours to kill), the spawn failed, or the display was lost to another container racing for
+    the same number in the shared abstract namespace (that Xvfb dies, so its pid is already reaped).
+    A slow-but-alive Xvfb is still ours: we hold the abstract bind, so its pid comes back.
     """
     if _x_display_reachable(display):
-        return True
+        return None
     xvfb = shutil.which("Xvfb")
     if not xvfb:
-        return False
+        return None
     n = display.lstrip(":").split(".")[0]
     lock_fd = None
     try:
@@ -198,27 +255,20 @@ def _ensure_xvfb(display: str, screen: str = "1920x1080x24") -> bool:
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
         # Another launcher may have started it while we waited for the lock.
         if _x_display_reachable(display):
-            return True
+            return None
         # Safe to remove now: we just confirmed nothing is listening on :n.
         for stale in (f"/tmp/.X{n}-lock", f"/tmp/.X11-unix/X{n}"):
-            try:
-                os.remove(stale)
-            except OSError:
-                pass
-        subprocess.Popen(
+            with contextlib.suppress(OSError):
+                Path(stale).unlink()
+        proc = subprocess.Popen(
             [xvfb, display, "-screen", "0", screen, "-nolisten", "tcp"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
-        deadline = time.time() + 5
-        while time.time() < deadline:
-            if _x_display_reachable(display):
-                return True
-            time.sleep(0.2)
-        return _x_display_reachable(display)
+        return _await_own_xvfb(proc, n)
     except Exception:
-        return False
+        return None
     finally:
         if lock_fd is not None:
             try:
@@ -299,8 +349,9 @@ def launch(
     env = _launch_env(profile_dir, use_headless, window_size)
 
     stderr_log = log_path or Path(f"/tmp/vesta-camoufox-{os.getpid()}.log")
-    log_handle = open(stderr_log, "w+b")
-    try:
+    # The child dups the fd; closing our copy after spawn lets this launch CLI exit
+    # cleanly while the detached browser keeps writing.
+    with stderr_log.open("w+b") as log_handle:
         proc = subprocess.Popen(
             args,
             stdout=subprocess.DEVNULL,
@@ -308,18 +359,12 @@ def launch(
             env=env,
             start_new_session=True,
         )
-    finally:
-        # The child dup'd the fd; our copy is no longer needed and closing it lets
-        # this launch CLI exit cleanly while the detached browser keeps writing.
-        log_handle.close()
 
     try:
         ws_url = _read_ws_url(proc, stderr_log, READY_TIMEOUT_S)
     except Exception:
-        try:
+        with contextlib.suppress(ProcessLookupError):
             proc.kill()
-        except ProcessLookupError:
-            pass
         raise
 
     return RunningCamoufox(
@@ -344,7 +389,5 @@ def stop(running: RunningCamoufox, timeout_s: float = 5.0) -> None:
         if proc.poll() is not None:
             return
         time.sleep(0.1)
-    try:
+    with contextlib.suppress(ProcessLookupError):
         proc.kill()
-    except ProcessLookupError:
-        pass

@@ -8,14 +8,14 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-
+from vesta_browser import bidi as bidi_module
 from vesta_browser.bidi import BidiClient, BidiError
 
 from .fake_bidi import FakeBidiServer
 
 
-async def _with_client(body, snapshot_nodes=None):
-    server = FakeBidiServer(snapshot_nodes)
+async def _with_client(body, snapshot_nodes=None, withhold=None):
+    server = FakeBidiServer(snapshot_nodes, withhold=withhold)
     url = await server.start()
     client = BidiClient()
     await client.connect(url)
@@ -63,3 +63,96 @@ def test_event_lands_on_queue():
 
     event = asyncio.run(_with_client(body))
     assert event["url"] == "https://a.test"
+
+
+CREATE = "browsingContext.create"
+NAVIGATE = "browsingContext.navigate"
+TEST_TIMEOUT_S = 0.2
+HANG_GUARD_S = 5
+
+
+async def _create_tab(client):
+    return await asyncio.wait_for(client.send(CREATE, {"type": "tab"}), timeout=HANG_GUARD_S)
+
+
+def test_withheld_response_raises_timeout_naming_the_method(monkeypatch):
+    """A browser that accepts a command and never answers must error, not hang forever."""
+    monkeypatch.setattr(bidi_module, "BIDI_RESPONSE_TIMEOUT_S", TEST_TIMEOUT_S)
+
+    async def body(_server, client):
+        await client.new_session()
+        return await _create_tab(client)
+
+    with pytest.raises(BidiError) as excinfo:
+        asyncio.run(_with_client(body, withhold={CREATE}))
+    assert excinfo.value.code == "timeout"
+    assert CREATE in excinfo.value.message
+
+
+def test_timed_out_request_is_dropped_from_pending(monkeypatch):
+    """The abandoned future is released, so a wedged browser cannot accumulate them."""
+    monkeypatch.setattr(bidi_module, "BIDI_RESPONSE_TIMEOUT_S", TEST_TIMEOUT_S)
+
+    async def body(_server, client):
+        await client.new_session()
+        with pytest.raises(BidiError):
+            await _create_tab(client)
+        return dict(client._pending)
+
+    assert asyncio.run(_with_client(body, withhold={CREATE})) == {}
+
+
+def test_a_withheld_response_does_not_block_later_commands(monkeypatch):
+    """Each request is bounded on its own; one silent command must not wedge the client."""
+    monkeypatch.setattr(bidi_module, "BIDI_RESPONSE_TIMEOUT_S", TEST_TIMEOUT_S)
+
+    async def body(_server, client):
+        await client.new_session()
+        with pytest.raises(BidiError):
+            await _create_tab(client)
+        return await client.send(NAVIGATE, {"context": "ctx-1", "url": "https://a.test"})
+
+    assert asyncio.run(_with_client(body, withhold={CREATE}))["url"] == "https://a.test"
+
+
+def test_navigate_gets_the_longer_wait_for_load_bound(monkeypatch):
+    """A wait-for-load navigation is bounded by the navigate timeout, not the shorter generic one."""
+    monkeypatch.setattr(bidi_module, "BIDI_RESPONSE_TIMEOUT_S", 0.01)
+    monkeypatch.setattr(bidi_module, "NAVIGATE_RESPONSE_TIMEOUT_S", TEST_TIMEOUT_S)
+
+    async def body(_server, client):
+        await client.new_session()
+        return await asyncio.wait_for(client.send(NAVIGATE, {"url": "https://slow.test"}), timeout=HANG_GUARD_S)
+
+    with pytest.raises(BidiError) as excinfo:
+        asyncio.run(_with_client(body, withhold={NAVIGATE}))
+    assert excinfo.value.code == "timeout"
+    assert f"within {TEST_TIMEOUT_S}s" in excinfo.value.message
+
+
+class BlockingSendWs:
+    """A websocket whose send never returns, so a cancel lands on ws.send itself (backpressure when the buffer fills)."""
+
+    def __init__(self) -> None:
+        self.send_started = asyncio.Event()
+
+    async def send(self, _data: str) -> None:
+        self.send_started.set()
+        await asyncio.Event().wait()
+
+
+def test_cancel_landing_on_the_send_is_dropped_from_pending():
+    """Registration stays before the send, so a cancel that lands on ws.send itself must still clear the entry via the finally."""
+
+    async def body():
+        client = BidiClient()
+        client._ws = BlockingSendWs()
+        request = asyncio.ensure_future(client.send(CREATE, {"type": "tab"}))
+        await asyncio.wait_for(client._ws.send_started.wait(), timeout=HANG_GUARD_S)
+        assert client._pending
+        request.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await request
+        return dict(client._pending)
+
+    assert asyncio.run(body()) == {}

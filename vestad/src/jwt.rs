@@ -9,16 +9,12 @@ pub const REFRESH_TOKEN_TTL: u64 = 30 * 86400; // 30 days
 
 // --- Per-purpose key derivation (HKDF-SHA256) ---------------------------------
 //
-// Every token is HS256-signed, but NOT with the raw `api_key`: we derive a
-// distinct subkey per purpose so a token minted for one role cannot verify for
-// another, cryptographically (not merely because consumers check `typ`). The
-// `typ` claim is kept as defense-in-depth.
-//
-// CROSS-REPO CONTRACT: the vesta-cloud control plane derives the SAME subkeys
-// (functions/lib/tokens.ts) to mint access / verify server-identity tokens, so
-// these constants and the derivation (salt, label = PREFIX || typ, 32-byte
-// output) MUST stay byte-identical on both sides. The known-answer test below
-// pins the vector; its twin in vesta-cloud pins the same one.
+// Every token is HS256-signed, but NOT with the raw `api_key`: a distinct subkey per
+// purpose means a token minted for one role cannot verify for another, cryptographically
+// (the `typ` claim stays as defense-in-depth). CROSS-REPO CONTRACT: the vesta-cloud
+// control plane derives the SAME subkeys (functions/lib/tokens.ts), so these constants
+// and the derivation (salt, label = PREFIX || typ, 32-byte output) MUST stay
+// byte-identical on both sides. The known-answer test below pins the vector.
 const HKDF_SALT: &[u8] = b"vesta-auth-hkdf-v1";
 const KEY_LABEL_PREFIX: &[u8] = b"vesta/auth/";
 

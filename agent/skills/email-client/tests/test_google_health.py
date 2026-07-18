@@ -16,7 +16,7 @@ import pytest
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 
-import google_health as gh  # noqa: E402
+import google_health as gh
 
 DEAD_ID = "dead-000.apps.googleusercontent.com"
 NEW_ID = "fresh-999.apps.googleusercontent.com"
@@ -75,7 +75,7 @@ def _post_returning(response):
 
 def test_probe_refresh_sends_refresh_grant_and_classifies():
     post, seen = _post_returning(RESP_INVALID_GRANT)
-    classification, status, body = gh.probe_refresh("cid", "secret", "RT", post=post)
+    classification, status, _body = gh.probe_refresh("cid", "secret", "RT", post=post)
     assert classification == gh.BAD_TOKEN
     assert status == 400
     assert seen["params"]["grant_type"] == "refresh_token"

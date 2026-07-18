@@ -9,7 +9,7 @@ import aiohttp
 import discord
 import pydantic as pyd
 
-from discord_cli.notif import MessageFacts, build_notification, write_notification
+from discord_cli.notif import MessageFacts, build_notification, daemon_died_notification, write_notification
 
 CREDENTIALS_PATH = pathlib.Path.home() / ".discord" / "credentials.json"
 API_BASE = "https://discord.com/api/v10"
@@ -75,12 +75,14 @@ def load_credentials() -> Credentials:
 
 
 async def api_request(token: str, method: str, path: str, body: pyd.JsonValue | None = None) -> pyd.JsonValue:
-    async with aiohttp.ClientSession(headers={"Authorization": f"Bot {token}"}) as session:
-        async with session.request(method, f"{API_BASE}{path}", json=body) as response:
-            if response.status >= 400:
-                detail = await response.text()
-                raise SystemExit(f"discord api error {response.status}: {detail}")
-            return await response.json()
+    async with (
+        aiohttp.ClientSession(headers={"Authorization": f"Bot {token}"}) as session,
+        session.request(method, f"{API_BASE}{path}", json=body) as response,
+    ):
+        if response.status >= 400:
+            detail = await response.text()
+            raise SystemExit(f"discord api error {response.status}: {detail}")
+        return await response.json()
 
 
 def extract_facts(message: discord.Message, *, self_id: int) -> MessageFacts:
@@ -133,7 +135,13 @@ def cmd_serve(notifications_dir: pathlib.Path) -> None:
             path = await asyncio.to_thread(write_notification, notifications_dir, notif)
             logger.info("wrote %s", path.name)
 
-    client.run(token)
+    try:
+        client.run(token)
+    finally:
+        # client.run returns on SIGTERM/SIGINT and re-raises on a fatal gateway error;
+        # either way the daemon is gone, so tell the agent to restart it. An intentional
+        # screen quit sends SIGHUP, which terminates before this runs, so no false alarm.
+        write_notification(notifications_dir, daemon_died_notification())
 
 
 async def cmd_send(token: str, target: str, message: str, reply: str | None) -> None:

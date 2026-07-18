@@ -13,9 +13,15 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::settings::{load_settings, save_settings, AgentBackupOverride, BackupGlobalSettings, ServiceEntry, Settings, UserDesired};
+use crate::settings::{
+    load_settings, save_settings, AgentBackupOverride, BackupGlobalSettings, ServiceEntry,
+    Settings, UserDesired,
+};
 use crate::state::{err_response, map_docker_err, ok_json, AppState, SharedState};
-use crate::{agent_provider, agent_proxy, agent_status, auth, backup, control_ws, docker, self_update, systemd, update_check};
+use crate::{
+    agent_provider, agent_proxy, agent_status, auth, backup, control_ws, docker, mobile_app,
+    self_update, systemd, update_check, update_window,
+};
 
 const GATEWAY_RESTART_DELAY_MS: u64 = 200;
 
@@ -32,8 +38,8 @@ const LONGRUN_REQUEST_TIMEOUT_SECS: u64 = 1800;
 const API_KEY_BYTES: usize = 32;
 
 const RESERVED_SERVICE_NAMES: &[&str] = &[
-    "start", "stop", "restart", "destroy", "auth", "logs", "tree", "file", "backups",
-    "settings", "services",
+    "start", "stop", "restart", "destroy", "auth", "logs", "tree", "file", "backups", "settings",
+    "services",
 ];
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
 const AUTO_BACKUP_CHECK_INTERVAL_SECS: u64 = 3600;
@@ -64,7 +70,7 @@ pub fn ensure_tls(config_dir: &std::path::Path) -> Result<(String, String, Strin
     params
         .subject_alt_names
         .push(rcgen::SanType::IpAddress(std::net::IpAddr::V4(
-            std::net::Ipv4Addr::new(127, 0, 0, 1),
+            std::net::Ipv4Addr::LOCALHOST,
         )));
     // Add all local IP addresses as SANs for remote connections
     if let Ok(output) = std::process::Command::new("hostname").arg("-I").output() {
@@ -95,7 +101,7 @@ pub fn ensure_tls(config_dir: &std::path::Path) -> Result<(String, String, Strin
         digest
             .as_ref()
             .iter()
-            .map(|b| format!("{:02X}", b))
+            .map(|b| format!("{b:02X}"))
             .collect::<Vec<_>>()
             .join(":")
     );
@@ -132,9 +138,7 @@ pub fn ensure_api_key(config_dir: &std::path::Path) -> Result<String, String> {
     std::fs::create_dir_all(config_dir)
         .map_err(|e| format!("failed to create {}: {e}", config_dir.display()))?;
 
-    let key: String = (0..API_KEY_BYTES)
-        .map(|_| format!("{:02x}", rand::random::<u8>()))
-        .collect();
+    let key = hex::encode(rand::random::<[u8; API_KEY_BYTES]>());
 
     std::fs::write(&key_path, &key)
         .map_err(|e| format!("failed to write {}: {e}", key_path.display()))?;
@@ -164,7 +168,9 @@ fn ensure_not_rebuilding(
     if rebuilding.is_rebuilding(name) {
         return Err(err_response(
             StatusCode::CONFLICT,
-            &format!("agent '{name}' is updating (container rebuild in progress); wait for it to finish"),
+            &format!(
+                "agent '{name}' is updating (container rebuild in progress); wait for it to finish"
+            ),
         ));
     }
     Ok(())
@@ -216,15 +222,13 @@ async fn info() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "managed": crate::is_cloud_managed() }))
 }
 
-/// `POST /agents/{name}/account-token` — mint a short-lived server-identity token
-/// for the on-box agent (issue #20).
-///
-/// Agent-token authenticated (the agent proves itself with its `X-Agent-Token`);
-/// vestad then signs `{ sub: VESTA_CLOUD_SERVER_ID, typ: "server-identity" }` with its
-/// `api_key` and hands it back. The agent carries this to the control plane's
-/// `/api/account/*` to read its plan or open a billing portal. vestad makes NO
-/// network call — it only signs locally; the agent does the talking. The
-/// `api_key` never enters the agent container, only this 10-minute token does.
+/// `POST /agents/{name}/account-token`: mint a short-lived server-identity token for
+/// the on-box agent (issue #20). Agent-token authenticated (the agent proves itself
+/// with its `X-Agent-Token`); vestad signs `{ sub: VESTA_CLOUD_SERVER_ID, typ:
+/// "server-identity" }` with its `api_key` and hands it back. The agent carries this
+/// to the control plane's `/api/account/*` to read its plan or open a billing portal.
+/// vestad makes NO network call, it only signs locally; the `api_key` never enters
+/// the agent container, only this 10-minute token does.
 async fn account_token_handler(State(state): State<SharedState>) -> axum::response::Response {
     if !crate::is_cloud_managed() {
         return err_response(StatusCode::NOT_FOUND, "not a cloud-managed server").into_response();
@@ -320,7 +324,7 @@ async fn gateway_logs_handler(
     Sse<impl futures_core::Stream<Item = Result<Event, std::io::Error>>>,
     (StatusCode, Json<serde_json::Value>),
 > {
-    let tail = query.tail.unwrap_or(DEFAULT_LOG_TAIL_LINES) as usize;
+    let tail = usize::try_from(query.tail.unwrap_or(DEFAULT_LOG_TAIL_LINES)).unwrap_or(usize::MAX);
 
     let log_dir = crate::paths::config_dir_or_relative();
     let log_file = crate::self_log::latest_log_file(&log_dir)
@@ -345,7 +349,7 @@ async fn gateway_logs_handler(
                 Ok(Some(line)) => yield Ok(Event::default().data(line)),
                 Ok(None) => break,
                 Err(e) => {
-                    yield Ok(Event::default().data(format!("error: {}", e)));
+                    yield Ok(Event::default().data(format!("error: {e}")));
                     break;
                 }
             }
@@ -426,10 +430,14 @@ async fn gateway_update_handler(
     }
 }
 
-async fn list_agents_handler(
-    State(state): State<SharedState>,
-) -> impl IntoResponse {
-    let agents = agent_status::list_agents(&state.docker, &state.http_client, &state.env_config.agents_dir, &state.rebuilding).await;
+async fn list_agents_handler(State(state): State<SharedState>) -> impl IntoResponse {
+    let agents = agent_status::list_agents(
+        &state.docker,
+        &state.http_client,
+        &state.env_config.agents_dir,
+        &state.rebuilding,
+    )
+    .await;
     Json(agents)
 }
 
@@ -519,9 +527,15 @@ async fn agent_status_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Result<Json<docker::StatusJson>, (StatusCode, Json<serde_json::Value>)> {
-    let status = agent_status::get_status(&state.docker, &state.http_client, &name, &state.env_config.agents_dir, &state.rebuilding)
-        .await
-        .map_err(map_docker_err)?;
+    let status = agent_status::get_status(
+        &state.docker,
+        &state.http_client,
+        &name,
+        &state.env_config.agents_dir,
+        &state.rebuilding,
+    )
+    .await
+    .map_err(map_docker_err)?;
     Ok(Json(status))
 }
 
@@ -770,7 +784,8 @@ fn rename_notification_payload(
     new_name: &str,
     epoch_secs: u64,
 ) -> Result<serde_json::Value, String> {
-    let timestamp = time::OffsetDateTime::from_unix_timestamp(epoch_secs as i64)
+    let epoch = i64::try_from(epoch_secs).map_err(|e| format!("epoch out of range: {e}"))?;
+    let timestamp = time::OffsetDateTime::from_unix_timestamp(epoch)
         .map_err(|e| format!("epoch out of range: {e}"))?
         .format(&time::format_description::well_known::Rfc3339)
         .map_err(|e| format!("format timestamp: {e}"))?;
@@ -832,7 +847,7 @@ enum AgentWrite {
 /// the caller applies them with one `POST /agents/{name}/restart` after its writes (so provisioning
 /// is several writes + a single restart, with nothing racing a restarting agent). Ensures the agent
 /// exists, takes the per-agent write lock, and auto-starts a stopped agent so it can receive the
-/// proxied call. The agent owns the file writes, format, and validation; a forward failure is BAD_GATEWAY.
+/// proxied call. The agent owns the file writes, format, and validation; a forward failure is `BAD_GATEWAY`.
 async fn write_to_agent(
     state: &SharedState,
     name: &str,
@@ -953,11 +968,12 @@ async fn logs_handler(
     if status == docker::ContainerStatus::NotFound {
         return Err(err_response(
             StatusCode::BAD_REQUEST,
-            &format!("agent '{}' not found", name),
+            &format!("agent '{name}' not found"),
         ));
     }
 
-    let tail_lines = query.tail.unwrap_or(DEFAULT_LOG_TAIL_LINES) as usize;
+    let tail_lines =
+        usize::try_from(query.tail.unwrap_or(DEFAULT_LOG_TAIL_LINES)).unwrap_or(usize::MAX);
     let docker = state.docker.clone();
     let stream = async_stream::stream! {
         if status != docker::ContainerStatus::Running {
@@ -986,7 +1002,7 @@ async fn logs_handler(
         }).await {
             Ok(e) => e,
             Err(e) => {
-                yield Ok(Event::default().data(format!("error: {}", e)));
+                yield Ok(Event::default().data(format!("error: {e}")));
                 return;
             }
         };
@@ -998,7 +1014,7 @@ async fn logs_handler(
                 return;
             }
             Err(e) => {
-                yield Ok(Event::default().data(format!("error: {}", e)));
+                yield Ok(Event::default().data(format!("error: {e}")));
                 return;
             }
         };
@@ -1017,7 +1033,7 @@ async fn logs_handler(
                     }
                 }
                 Err(e) => {
-                    yield Ok(Event::default().data(format!("error: {}", e)));
+                    yield Ok(Event::default().data(format!("error: {e}")));
                     break;
                 }
             }
@@ -1147,6 +1163,8 @@ async fn docker_exec_capture(
     cmd: Vec<String>,
     stdin: Option<Vec<u8>>,
 ) -> Result<ExecResult, String> {
+    use futures_util::StreamExt;
+
     let attach_stdin = stdin.is_some();
     let exec = docker
         .create_exec(
@@ -1182,14 +1200,13 @@ async fn docker_exec_capture(
         }
         drop(input);
 
-        use futures_util::StreamExt;
         while let Some(chunk) = output.next().await {
             match chunk.map_err(|e| e.to_string())? {
                 bollard::container::LogOutput::StdOut { message } => {
-                    stdout.extend_from_slice(&message)
+                    stdout.extend_from_slice(&message);
                 }
                 bollard::container::LogOutput::StdErr { message } => {
-                    stderr.push_str(&String::from_utf8_lossy(&message))
+                    stderr.push_str(&String::from_utf8_lossy(&message));
                 }
                 _ => {}
             }
@@ -1320,15 +1337,14 @@ async fn read_file_handler(
     }
 
     let readonly = is_readonly_path(&q.path) || (mode & 0o200) == 0;
-    let (content, encoding) = match std::str::from_utf8(&cat.stdout) {
-        Ok(s) => (s.to_string(), "utf-8"),
-        Err(_) => {
-            use base64::Engine;
-            (
-                base64::engine::general_purpose::STANDARD.encode(&cat.stdout),
-                "base64",
-            )
-        }
+    let (content, encoding) = if let Ok(s) = std::str::from_utf8(&cat.stdout) {
+        (s.to_string(), "utf-8")
+    } else {
+        use base64::Engine;
+        (
+            base64::engine::general_purpose::STANDARD.encode(&cat.stdout),
+            "base64",
+        )
     };
 
     Ok(Json(serde_json::json!({
@@ -1463,7 +1479,7 @@ const SERVICE_PORT_MAX: u16 = 65535;
 struct RegisterServiceBody {
     name: String,
     #[serde(default)]
-    public: bool,
+    public: Option<bool>,
 }
 
 /// Collect all ports in use across all agents in the service registry.
@@ -1477,7 +1493,7 @@ fn all_registered_ports(registry: &HashMap<String, HashMap<String, ServiceEntry>
 /// Upper bound of the kernel's ephemeral source-port range
 /// (`net.ipv4.ip_local_port_range`). Service ports are allocated above this so
 /// the kernel never reuses a just-allocated service port as a transient
-/// outbound source port (which would make a later bind() of that port fail).
+/// outbound source port (which would make a later `bind()` of that port fail).
 fn ephemeral_port_high() -> u16 {
     std::fs::read_to_string("/proc/sys/net/ipv4/ip_local_port_range")
         .ok()
@@ -1498,14 +1514,12 @@ fn no_free_ports_err() -> (StatusCode, Json<serde_json::Value>) {
 
 /// Find a free port not used by any registered service or other process.
 ///
-/// Callers bind the returned port themselves, only later. The previous
-/// implementation asked the OS for a port via `bind(0)`, which hands back an
-/// *ephemeral* port; between allocation and the caller binding it, the kernel
-/// could reuse that same port as the source port of an outbound connection,
-/// producing a spurious `EADDRINUSE` (the port looks free to a LISTEN scan but
-/// bind() fails). To avoid that race we scan deterministically and prefer ports
-/// *above* the ephemeral range, which the kernel will not hand out as source
-/// ports.
+/// Callers bind the returned port themselves, only later. Asking the OS via `bind(0)`
+/// hands back an *ephemeral* port that the kernel can reuse as the source port of an
+/// outbound connection before the caller binds it, producing a spurious `EADDRINUSE`
+/// (the port looks free to a LISTEN scan but `bind()` fails). So scan
+/// deterministically and prefer ports *above* the ephemeral range, which the kernel
+/// will not hand out as source ports.
 fn allocate_service_port(registry: &HashMap<String, HashMap<String, ServiceEntry>>) -> Option<u16> {
     let used = all_registered_ports(registry);
     let scan = |lo: u16| {
@@ -1522,19 +1536,14 @@ fn allocate_service_port(registry: &HashMap<String, HashMap<String, ServiceEntry
     scan(safe_min).or_else(|| scan(SERVICE_PORT_MIN))
 }
 
-/// A cached service port is reusable when it's the service's own live server
-/// (TCP connect succeeds) or genuinely free (bind succeeds). Only a port that is
-/// neither — a zombie/TIME_WAIT corpse left by a crashed startup (#371) — is
-/// dropped so the caller gets a fresh one.
-///
-/// The bind-only probe this replaced (#436) assumed every caller binds the
-/// returned port, so any listener meant a squatter that would crash the caller.
-/// That no longer holds: resolvers (whatsapp's `resolveVoiceBaseURL`, voice's own
-/// status/stop/restart) POST here purely to *find* the live port, and treating
-/// their own live server as a squatter reallocated the port out from under a
-/// resident service — every later lookup then resolved a fresh, dead port. The
-/// one caller that binds (voice `start`) guards with `port_alive` first, so it
-/// never binds a live port.
+/// A cached service port is reusable when it's the service's own live server (TCP
+/// connect succeeds) or genuinely free (bind succeeds). Only a port that is neither,
+/// a `zombie/TIME_WAIT` corpse left by a crashed startup (#371), is dropped so the
+/// caller gets a fresh one. A bind-only probe (#436) treats every listener as a
+/// squatter, but resolvers (whatsapp's `resolveVoiceBaseURL`, voice's own
+/// status/stop/restart) POST here purely to *find* the live port, and reallocating a
+/// resident service's port leaves every later lookup on a fresh, dead port. The one
+/// caller that binds (voice `start`) guards with `port_alive` first.
 async fn is_cached_port_reusable(port: u16) -> bool {
     use std::net::Ipv4Addr;
     use std::time::Duration;
@@ -1548,6 +1557,15 @@ async fn is_cached_port_reusable(port: u16) -> bool {
         || tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port))
             .await
             .is_ok()
+}
+
+/// `public` is intrinsic to a registration, like the port: an absent field inherits
+/// the cached entry's value, so a re-register that only wants the port (whatsapp's
+/// `resolveVoiceBaseURL`, voice's own status/stop/restart) cannot silently revoke a
+/// deliberate publish. An explicit value always wins, including `false`; a first
+/// registration with nothing cached defaults private.
+fn resolve_public(requested: Option<bool>, cached: Option<ServiceEntry>) -> bool {
+    requested.unwrap_or_else(|| cached.is_some_and(|entry| entry.public))
 }
 
 async fn register_service_handler(
@@ -1571,29 +1589,27 @@ async fn register_service_handler(
     let exists = docker::container_status(&state.docker, &docker_name).await
         != docker::ContainerStatus::NotFound;
     if !exists {
-        return Err(err_response(StatusCode::NOT_FOUND, &format!("agent '{}' not found — is the container running? check with: docker ps | grep vesta", name)));
+        return Err(err_response(StatusCode::NOT_FOUND, &format!("agent '{name}' not found — is the container running? check with: docker ps | grep vesta")));
     }
 
     let mut settings = state.settings.write().await;
 
-    let cached_port = settings
+    let cached_entry = settings
         .services
         .get(&name)
-        .and_then(|s| s.get(&service_name))
-        .map(|e| e.port);
-    let port = match cached_port {
-        Some(p) if is_cached_port_reusable(p).await => p,
-        Some(p) => {
-            tracing::warn!(agent = %name, service = %service_name, stale_port = p, "cached service port is not bindable, allocating a fresh one");
+        .and_then(|services| services.get(&service_name))
+        .copied();
+    let port = match cached_entry.map(|entry| entry.port) {
+        Some(cached_port) if is_cached_port_reusable(cached_port).await => cached_port,
+        Some(stale_port) => {
+            tracing::warn!(agent = %name, service = %service_name, stale_port, "cached service port is not bindable, allocating a fresh one");
             allocate_service_port(&settings.services).ok_or_else(no_free_ports_err)?
         }
         None => allocate_service_port(&settings.services).ok_or_else(no_free_ports_err)?,
     };
+    let public = resolve_public(body.public, cached_entry);
 
-    let entry = ServiceEntry {
-        port,
-        public: body.public,
-    };
+    let entry = ServiceEntry { port, public };
     settings
         .services
         .entry(name.clone())
@@ -1601,9 +1617,9 @@ async fn register_service_handler(
         .insert(service_name.clone(), entry);
     save_settings(&settings);
     state.agent_status_cache.update_services(&settings.services);
-    tracing::info!(agent = %name, service = %service_name, port, public = body.public, "service registered");
+    tracing::info!(agent = %name, service = %service_name, port, public, "service registered");
     Ok(Json(
-        serde_json::json!({"ok": true, "port": port, "public": body.public}),
+        serde_json::json!({"ok": true, "port": port, "public": public}),
     ))
 }
 
@@ -1843,7 +1859,7 @@ fn validate_retention(
             if v < MIN_RETENTION {
                 return Err(err_response(
                     StatusCode::BAD_REQUEST,
-                    &format!("retention.{} must be at least {}", name, MIN_RETENTION),
+                    &format!("retention.{name} must be at least {MIN_RETENTION}"),
                 ));
             }
         }
@@ -1925,11 +1941,11 @@ async fn put_gateway_settings_handler(
 // --- Read-only gateway info ---
 
 /// Read-only daemon reachability facts surfaced by GET /gateway/info. Pure so the
-/// wire shape is unit-testable without constructing AppState.
+/// wire shape is unit-testable without constructing `AppState`.
 fn gateway_info_json(
     expose_lan: bool,
-    lan_url: &Option<String>,
-    tunnel_url: &Option<String>,
+    lan_url: Option<&str>,
+    tunnel_url: Option<&str>,
     port: u16,
 ) -> serde_json::Value {
     serde_json::json!({
@@ -1943,8 +1959,8 @@ async fn gateway_info_handler(State(state): State<SharedState>) -> Json<serde_js
     let tunnel_url = state.tunnel_url.lock().await.clone();
     Json(gateway_info_json(
         state.expose_lan,
-        &state.lan_url,
-        &tunnel_url,
+        state.lan_url.as_deref(),
+        tunnel_url.as_deref(),
         state.https_port,
     ))
 }
@@ -2104,7 +2120,12 @@ async fn set_mounts_handler(
     })?;
     {
         let mut settings = state.settings.write().await;
-        settings.agents.entry(name.clone()).or_default().mounts = validated.clone();
+        settings
+            .agents
+            .entry(name.clone())
+            .or_default()
+            .mounts
+            .clone_from(&validated);
         save_settings(&settings);
     }
     tracing::info!(agent = %name, "agent mounts updated");
@@ -2115,7 +2136,7 @@ async fn set_mounts_handler(
 
 /// Suggest existing host folders the user might share, so they don't hand-type a path. Reads the
 /// host filesystem (common mount roots + home media folders), so it is API-key only — never the
-/// agent token; an agent must not enumerate the host. The scan is blocking std::fs (and a hung
+/// agent token; an agent must not enumerate the host. The scan is blocking `std::fs` (and a hung
 /// network mount under one of the roots can stall it), so it runs off the async worker.
 async fn host_folder_suggestions_handler(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
@@ -2173,15 +2194,14 @@ pub fn write_port_file(config_dir: &std::path::Path, port: u16) {
 
 pub fn acquire_pid_lock(config_dir: &std::path::Path) -> Result<std::fs::File, String> {
     let pid_path = config_dir.join("vestad.pid");
-    std::fs::create_dir_all(config_dir)
-        .map_err(|e| format!("failed to create config dir: {}", e))?;
+    std::fs::create_dir_all(config_dir).map_err(|e| format!("failed to create config dir: {e}"))?;
 
     let file = std::fs::OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true)
         .open(&pid_path)
-        .map_err(|e| format!("failed to open pid file: {}", e))?;
+        .map_err(|e| format!("failed to open pid file: {e}"))?;
 
     #[cfg(unix)]
     {
@@ -2310,6 +2330,10 @@ pub fn build_router(state: SharedState) -> Router {
         )
         .route("/agents/{name}/mounts", put(set_mounts_handler))
         .route("/host/folders", get(host_folder_suggestions_handler))
+        .route(
+            "/mobile/devices",
+            put(mobile_app::register_device_handler).delete(mobile_app::delete_device_handler),
+        )
         .route(
             "/gateway/settings",
             get(get_gateway_settings_handler).put(put_gateway_settings_handler),
@@ -2527,7 +2551,8 @@ fn spawn_auto_backup_task(state: SharedState) {
             let now_epoch = crate::time_utils::now_epoch_secs();
             let today_local = crate::time_utils::local_date_of_epoch(now_epoch);
             let seven_days_ago = crate::time_utils::now_timestamp_from_epoch(now_epoch - 7 * 86400);
-            let thirty_days_ago = crate::time_utils::now_timestamp_from_epoch(now_epoch - 30 * 86400);
+            let thirty_days_ago =
+                crate::time_utils::now_timestamp_from_epoch(now_epoch - 30 * 86400);
 
             for name in &agents {
                 // Resolve per-agent settings (override or global fallback)
@@ -2560,7 +2585,10 @@ fn spawn_auto_backup_task(state: SharedState) {
 
                 let has_daily_today = backups.iter().any(|b| {
                     b.backup_type == crate::types::BackupType::Daily
-                        && crate::time_utils::parse_compact_utc_epoch(&b.created_at).map(crate::time_utils::local_date_of_epoch).as_deref() == Some(today_local.as_str())
+                        && crate::time_utils::parse_compact_utc_epoch(&b.created_at)
+                            .map(crate::time_utils::local_date_of_epoch)
+                            .as_deref()
+                            == Some(today_local.as_str())
                 });
                 if !has_daily_today {
                     needed.push(crate::types::BackupType::Daily);
@@ -2616,47 +2644,100 @@ fn spawn_auto_backup_task(state: SharedState) {
 
 // --- Update-check background task ---
 
+// Detection cadence with no update pending -- also the UpdatePill's refresh rate. While an update
+// waits for the fleet's quiet window we re-poll this often instead, so update_info, the release
+// channel and the fleet's timezones all stay fresh and a transient apply failure retries within the
+// window rather than a night later.
+const WINDOW_POLL_SECS: u64 = 15 * 60;
+
+// Give the agent WS snapshots that carry each agent's timezone time to arrive before the first
+// auto-apply decision, so an update already pending at startup targets the fleet's real windows
+// instead of resolving a still-empty cache to host-local.
+const STARTUP_SETTLE_SECS: u64 = 60;
+
+/// The local timezone of every alive agent, falling back to host-local for any agent that hasn't
+/// reported one (pre-upstream-sync fleet). Drives which 3-5am window the auto-update targets.
+fn running_agent_zones(state: &SharedState) -> Vec<jiff::tz::TimeZone> {
+    let timezones = state.agent_status_cache.timezones();
+    state
+        .agent_status_cache
+        .agents()
+        .iter()
+        .filter(|entry| entry.status == docker::AgentStatus::Alive)
+        .map(|entry| update_window::resolve_zone(timezones.get(&entry.name).map(String::as_str)))
+        .collect()
+}
+
 fn spawn_update_check_task(state: SharedState) {
     tokio::spawn(async move {
+        // Settle first so the timezone cache is populated before any startup-pending update applies.
+        tokio::time::sleep(tokio::time::Duration::from_secs(STARTUP_SETTLE_SECS)).await;
         loop {
             let channel = effective_channel(&state).await;
-            match tokio::task::spawn_blocking(move || update_check::check_once(channel)).await {
+            let update_available = match tokio::task::spawn_blocking(move || {
+                update_check::check_once(channel)
+            })
+            .await
+            {
                 Ok(Ok(info)) => {
-                    let update_available = info.update_available;
+                    let available = info.update_available;
                     *state.update_info.lock().await = Some(info);
-                    // Auto-apply when enabled (the default) and a newer release exists
-                    // on the active channel. `perform_update` no-ops if already current
-                    // and restarts the systemd service on success — replacing this
-                    // process — so control may never return past this call.
-                    if update_available && state.settings.read().await.auto_update {
-                        tracing::info!(
-                            channel = channel.as_str(),
-                            "auto-update: newer release available, applying"
-                        );
-                        match tokio::task::spawn_blocking(move || {
-                            self_update::perform_update(channel)
-                        })
+                    available
+                }
+                Ok(Err(e)) => {
+                    tracing::warn!("update check failed: {}", e);
+                    false
+                }
+                Err(e) => {
+                    tracing::error!("update check task failed: {}", e);
+                    false
+                }
+            };
+
+            // Apply a pending update only once the fleet is in the 3-5am window covering the most
+            // agents (see update_window); until then keep polling fast so we notice the window open,
+            // a channel switch, a pulled release, or a cleared auto_update. perform_update restarts
+            // this process on success, so control usually never returns from the apply branch.
+            let mut awaiting_window = false;
+            if update_available && state.settings.read().await.auto_update {
+                let zones = running_agent_zones(&state);
+                if update_window::wait_until_best_window(&zones, jiff::Timestamp::now()).is_zero() {
+                    tracing::info!(
+                        channel = channel.as_str(),
+                        agents = zones.len(),
+                        "auto-update: agent quiet window reached, applying"
+                    );
+                    match tokio::task::spawn_blocking(move || self_update::perform_update(channel))
                         .await
-                        {
-                            Ok(Ok(outcome)) => tracing::info!(
-                                updated = outcome.updated,
-                                restarted = outcome.restarted,
-                                current = %outcome.current,
-                                latest = %outcome.latest,
-                                "auto-update finished",
-                            ),
-                            Ok(Err(e)) => tracing::warn!("auto-update failed: {}", e),
-                            Err(e) => tracing::error!("auto-update task panicked: {}", e),
+                    {
+                        Ok(Ok(outcome)) => tracing::info!(
+                            updated = outcome.updated,
+                            restarted = outcome.restarted,
+                            current = %outcome.current,
+                            latest = %outcome.latest,
+                            "auto-update finished",
+                        ),
+                        // Retry within the window on the fast cadence rather than the next night.
+                        Ok(Err(e)) => {
+                            tracing::warn!("auto-update failed: {}", e);
+                            awaiting_window = true;
+                        }
+                        Err(e) => {
+                            tracing::error!("auto-update task panicked: {}", e);
+                            awaiting_window = true;
                         }
                     }
+                } else {
+                    awaiting_window = true;
                 }
-                Ok(Err(e)) => tracing::warn!("update check failed: {}", e),
-                Err(e) => tracing::error!("update check task failed: {}", e),
             }
-            tokio::time::sleep(tokio::time::Duration::from_secs(
-                update_check::CHECK_INTERVAL_SECS,
-            ))
-            .await;
+
+            let interval = if awaiting_window {
+                WINDOW_POLL_SECS
+            } else {
+                update_check::CHECK_INTERVAL_SECS
+            };
+            tokio::time::sleep(tokio::time::Duration::from_secs(interval)).await;
         }
     });
 }
@@ -2733,23 +2814,27 @@ pub async fn run_server(cfg: ServerConfig) {
         std::process::exit(1);
     }
     let agent_settings = load_settings().agents.clone();
-    let state = Arc::new(AppState::new(
+    let (app_state, mobile_app_worker) = AppState::new(
         api_key,
         env_config,
         docker.clone(),
         tunnel_url,
-        dev_mode,
-        port,
-        expose_lan,
-        lan_url,
-    ));
+        crate::state::GatewayFacts {
+            dev_mode,
+            https_port: port,
+            expose_lan,
+            lan_url,
+        },
+    );
+    let state = Arc::new(app_state);
+    let mobile_app_handle = tokio::spawn(mobile_app_worker.run());
     // Reconcile in the background so the API serves immediately: a rebuild (entrypoint/mount change)
     // snapshots each container's filesystem (minutes), and awaiting it would leave vestad unreachable.
     let reconcile_docker = docker.clone();
     let reconcile_env = state.env_config.clone();
     let reconcile_rebuilding = state.rebuilding.clone();
     tokio::spawn(async move {
-        docker::reconcile_containers(
+        Box::pin(docker::reconcile_containers(
             &reconcile_docker,
             &reconcile_env,
             agent_code_changed,
@@ -2766,7 +2851,7 @@ pub async fn run_server(cfg: ServerConfig) {
             // (or via a later `vesta restart`) is reflected without needing a fresh vestad boot.
             &|name| load_settings().agent_mounts(name),
             &reconcile_rebuilding,
-        )
+        ))
         .await;
     });
     // Keep a docker handle for the shutdown hook: vestad stops every agent when it exits, so a
@@ -2779,6 +2864,7 @@ pub async fn run_server(cfg: ServerConfig) {
         state.env_config.agents_dir.clone(),
         on_agents_changed,
         state.rebuilding.clone(),
+        state.mobile_app.clone(),
     );
     let app = build_router(state.clone());
     spawn_auto_backup_task(state.clone());
@@ -2795,17 +2881,14 @@ pub async fn run_server(cfg: ServerConfig) {
     .await
     .expect("failed to configure TLS");
 
-    // HTTP listener was bound atomically in main.rs before the runtime entered
-    // the async block, closing the TOCTOU race on the HTTP port. HTTPS binds
-    // inside axum_server::bind_rustls below; its window is short and a loss is
-    // loud (the task panics) rather than silent.
-    // Bind the HTTPS control API to loopback by default — every normal path
-    // reaches vestad via localhost (cloudflared dials https://localhost:{port}),
-    // so this keeps the API off the LAN and the public internet. `--expose-lan`
-    // opts into binding all interfaces so other devices on the LAN can connect
-    // (0.0.0.0 still includes loopback, so the tunnel keeps working); the API is
-    // then guarded only by the API key + fingerprint-pinned self-signed TLS. The
-    // plain HTTP server stays loopback-only regardless (see main.rs).
+    // The HTTP listener was bound atomically in main.rs before the runtime entered the
+    // async block, closing the TOCTOU race on the HTTP port; HTTPS binds inside
+    // axum_server::bind_rustls below, whose window is short and a loss is loud (the task
+    // panics). HTTPS binds loopback by default: every normal path reaches vestad via
+    // localhost (cloudflared dials https://localhost:{port}), keeping the API off the LAN
+    // and the public internet. `--expose-lan` opts into all interfaces so LAN devices can
+    // connect (0.0.0.0 still includes loopback, so the tunnel keeps working), guarded by
+    // the API key + fingerprint-pinned TLS; plain HTTP stays loopback-only (see main.rs).
     let https_bind_addr = if expose_lan {
         std::net::Ipv4Addr::UNSPECIFIED
     } else {
@@ -2826,7 +2909,7 @@ pub async fn run_server(cfg: ServerConfig) {
         .expect("http server failed");
     });
 
-    let https_handle = tokio::spawn(async move {
+    let tls_handle = tokio::spawn(async move {
         axum_server::bind_rustls(https_addr, rustls_config)
             .serve(app.into_make_service_with_connect_info::<std::net::SocketAddr>())
             .await
@@ -2835,8 +2918,12 @@ pub async fn run_server(cfg: ServerConfig) {
 
     tokio::select! {
         r = http_handle => r.expect("http task panicked"),
-        r = https_handle => r.expect("https task panicked"),
-        _ = shutdown_signal() => {
+        r = tls_handle => r.expect("https task panicked"),
+        r = mobile_app_handle => match r {
+            Ok(()) => panic!("mobile app delivery worker exited unexpectedly"),
+            Err(error) => panic!("mobile app delivery worker failed: {error}"),
+        },
+        () = shutdown_signal() => {
             tracing::info!("shutdown signal received, stopping all agents before exit");
             docker::stop_all_agents(&shutdown_docker).await;
         }
@@ -2864,15 +2951,16 @@ async fn shutdown_signal() {
     #[cfg(not(unix))]
     let terminate = std::future::pending::<()>();
     tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
+        () = ctrl_c => {},
+        () = terminate => {},
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        allocate_service_port, ensure_not_rebuilding, is_cached_port_reusable, spawn_pipeline_sse,
+        allocate_service_port, ensure_not_rebuilding, is_cached_port_reusable, resolve_public,
+        spawn_pipeline_sse, RegisterServiceBody,
     };
 
     #[test]
@@ -2880,7 +2968,8 @@ mod tests {
         let rebuilding = crate::docker::RebuildTracker::default();
         assert!(ensure_not_rebuilding(&rebuilding, "apollo").is_ok());
         let _mark = rebuilding.mark("apollo");
-        let err = ensure_not_rebuilding(&rebuilding, "apollo").expect_err("expected 409 while rebuilding");
+        let err = ensure_not_rebuilding(&rebuilding, "apollo")
+            .expect_err("expected 409 while rebuilding");
         assert_eq!(err.0, axum::http::StatusCode::CONFLICT);
     }
 
@@ -3111,15 +3200,69 @@ mod tests {
         );
     }
 
-    // Reproduction of vesta#1254. A resident service (voice-server) stays bound
-    // to its registered port; re-registration -- which is also how consumers
-    // resolve the port, e.g. whatsapp's resolveVoiceBaseURL and voice's own
-    // status/stop/restart -- must return that same live port. This replays the
-    // exact choice register_service_handler makes (reuse the cached port when
-    // reusable, else allocate a fresh one) against a real live listener, using
-    // the same allocate_service_port + is_cached_port_reusable it calls. Under
-    // the old bind-only probe the live listener made reuse fail and the port
-    // drifted to a fresh, dead one; the fix keeps it sticky.
+    /// A port a crashed startup left *held but unserved* (#371, #433), and the corpse
+    /// holding it: connect is refused, yet bind still fails. Only a raw socket bound
+    /// without `SO_REUSEADDR` and never listened on models that; std/tokio listeners
+    /// always listen. The port is OS-ephemeral rather than from `allocate_service_port`,
+    /// whose deterministic scan would hand the same port to a parallel test.
+    fn dead_port_with_corpse() -> (u16, socket2::Socket) {
+        let probe = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("an ephemeral port");
+        let port = probe.local_addr().expect("the probe's address").port();
+        drop(probe);
+        let corpse = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None)
+            .expect("a raw tcp socket");
+        let addr = std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, port));
+        corpse.bind(&addr.into()).expect("bind without listening");
+        (port, corpse)
+    }
+
+    #[tokio::test]
+    async fn cached_port_is_not_reusable_when_held_but_unserved() {
+        let (port, _corpse) = dead_port_with_corpse();
+        assert!(
+            !is_cached_port_reusable(port).await,
+            "a port held by a crashed service's corpse must not be reused",
+        );
+    }
+
+    // The recovery half of #371/#433: a crashed service re-registering must land on a
+    // port it can actually bind, without a container or host restart.
+    #[tokio::test]
+    async fn crashed_service_is_reallocated_off_its_dead_port() {
+        let (dead_port, _corpse) = dead_port_with_corpse();
+        let mut registry: HashMap<String, HashMap<String, ServiceEntry>> = HashMap::new();
+        registry.entry("agent".into()).or_default().insert(
+            "dashboard".into(),
+            ServiceEntry {
+                port: dead_port,
+                public: false,
+            },
+        );
+
+        // Re-registration, replaying register_service_handler's port decision.
+        let cached = registry
+            .get("agent")
+            .and_then(|services| services.get("dashboard"))
+            .map(|entry| entry.port);
+        let resolved = match cached {
+            Some(port) if is_cached_port_reusable(port).await => port,
+            _ => allocate_service_port(&registry).expect("a port should be free"),
+        };
+
+        assert_ne!(
+            resolved, dead_port,
+            "a crashed service must be moved off its held-but-dead port, not handed it back forever",
+        );
+    }
+
+    // Reproduction of vesta#1254. A resident service (voice-server) stays bound to
+    // its registered port; re-registration, which is also how consumers resolve the
+    // port (whatsapp's resolveVoiceBaseURL, voice's own status/stop/restart), must
+    // return that same live port. This replays the exact choice
+    // register_service_handler makes (reuse the cached port when reusable, else
+    // allocate a fresh one) against a real live listener, using the same
+    // allocate_service_port + is_cached_port_reusable it calls; a bind-only probe
+    // makes reuse fail here and the port drifts to a fresh, dead one.
     #[tokio::test]
     async fn resident_service_keeps_its_port_across_reregistration() {
         use std::collections::HashMap;
@@ -3154,6 +3297,78 @@ mod tests {
             resolved, p1,
             "a resident service must resolve to its live port {p1}, not a fresh dead one ({resolved})",
         );
+    }
+
+    // Reproduction of vesta#1323: the caller re-registering is often a resolver that never
+    // chose the flag, so an omitted one must inherit the cached value instead of revoking a
+    // publish. Drives the real `resolve_public` that `register_service_handler` calls.
+    #[test]
+    fn public_flag_survives_a_reregistration_that_omits_it() {
+        let published = Some(ServiceEntry {
+            port: 50000,
+            public: true,
+        });
+        let private = Some(ServiceEntry {
+            port: 50001,
+            public: false,
+        });
+        let cases = [
+            (
+                None,
+                published,
+                true,
+                "omitting public keeps a published service public",
+            ),
+            (
+                Some(false),
+                published,
+                false,
+                "an explicit false still demotes a published service",
+            ),
+            (
+                None,
+                private,
+                false,
+                "omitting public keeps a private service private",
+            ),
+            (
+                Some(true),
+                private,
+                true,
+                "an explicit true still publishes a private service",
+            ),
+            (
+                None,
+                None,
+                false,
+                "a first registration with no flag defaults private",
+            ),
+            (
+                Some(true),
+                None,
+                true,
+                "a first registration honors an explicit true",
+            ),
+        ];
+        for (requested, cached, expected, reason) in cases {
+            assert_eq!(resolve_public(requested, cached), expected, "{reason}");
+        }
+    }
+
+    // The fleet-compat crux of #1323: a pre-fix client sends "public":false explicitly
+    // while a post-fix one omits the field, so the body must tell absent from false.
+    // A null reads as absent, so a client serializing the field as JSON null inherits.
+    #[test]
+    fn register_body_tells_an_absent_public_from_an_explicit_false() {
+        let parse = |body: &str| {
+            serde_json::from_str::<RegisterServiceBody>(body)
+                .expect("a well-formed body should deserialize")
+                .public
+        };
+        assert_eq!(parse(r#"{"name":"dashboard"}"#), None);
+        assert_eq!(parse(r#"{"name":"dashboard","public":null}"#), None);
+        assert_eq!(parse(r#"{"name":"dashboard","public":false}"#), Some(false));
+        assert_eq!(parse(r#"{"name":"dashboard","public":true}"#), Some(true));
     }
 
     // ── API contract fixtures ──────────────────────────────────────────────
@@ -3396,8 +3611,8 @@ mod gateway_settings_tests {
     fn info_json_reports_lan_tunnel_and_port() {
         let exposed = gateway_info_json(
             true,
-            &Some("https://192.168.1.4:7777".to_string()),
-            &Some("https://x.trycloudflare.com".to_string()),
+            Some("https://192.168.1.4:7777"),
+            Some("https://x.trycloudflare.com"),
             7777,
         );
         assert_eq!(exposed["lan"]["exposed"], serde_json::json!(true));
@@ -3411,7 +3626,7 @@ mod gateway_settings_tests {
         );
         assert_eq!(exposed["port"], serde_json::json!(7777));
 
-        let off = gateway_info_json(false, &None, &None, 7777);
+        let off = gateway_info_json(false, None, None, 7777);
         assert_eq!(off["lan"]["exposed"], serde_json::json!(false));
         assert_eq!(off["lan"]["url"], serde_json::Value::Null);
         assert_eq!(off["tunnel_url"], serde_json::Value::Null);

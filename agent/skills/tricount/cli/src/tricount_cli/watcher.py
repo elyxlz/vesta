@@ -18,14 +18,15 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
+import signal
 import sys
+import threading
 import time
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from pathlib import Path
 
 from . import config
-from .client import TricountClient, Tricount, Transaction
+from .client import Transaction, Tricount, TricountClient
 
 STATE_FILE = config.CONFIG_DIR / "watch-state.json"
 
@@ -54,7 +55,7 @@ def write_notification(notif_dir: Path, type_: str, **fields: object) -> None:
     filename = f"{int(time.time() * 1e6)}-tricount-{type_}.json"
     tmp = notif_dir / f"{filename}.tmp"
     tmp.write_text(json.dumps(notif, indent=2, ensure_ascii=False))
-    os.replace(tmp, notif_dir / filename)
+    tmp.replace(notif_dir / filename)
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +119,7 @@ def save_state(state: dict) -> None:
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     tmp = STATE_FILE.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(state, indent=2, ensure_ascii=False))
-    os.replace(tmp, STATE_FILE)
+    tmp.replace(STATE_FILE)
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +136,30 @@ def _fmt_amount(amount: float, currency: str) -> str:
     return f"{currency} {amount:.2f}"
 
 
+def _notify_member_joins(notif_dir: Path, t: Tricount, prev_members: dict) -> None:
+    for m in t.members:
+        if m.uuid not in prev_members and m.status == "ACTIVE":
+            write_notification(
+                notif_dir,
+                "member_joined",
+                interrupt=False,
+                tricount=t.title,
+                member=m.display_name,
+                message=f"{m.display_name} joined '{t.title}'",
+            )
+            _log(f"[{t.title}] member joined: {m.display_name}")
+
+
+def _notify_hard_deletes(notif_dir: Path, title: str, prev_entries: dict, current_by_id: dict, currency: str) -> None:
+    """Entries that vanished entirely from the API (hard delete)."""
+    for entry_id, prev_entry in prev_entries.items():
+        if entry_id in current_by_id:
+            continue
+        if prev_entry.get("deleted", False):
+            continue  # already notified as deleted
+        _emit_delete(notif_dir, title, prev_entry, currency)
+
+
 def diff_tricount(t: Tricount, prev: dict, notif_dir: Path) -> None:
     """Compare current tricount state against the stored snapshot and emit
     notifications for every delta. ``prev`` is the previously stored snapshot
@@ -147,17 +172,7 @@ def diff_tricount(t: Tricount, prev: dict, notif_dir: Path) -> None:
     current_by_id = {str(tx.id): tx for tx in t.transactions}
 
     # New member joined (nice-to-have)
-    for m in t.members:
-        if m.uuid not in prev_members and m.status == "ACTIVE":
-            write_notification(
-                notif_dir,
-                "member_joined",
-                interrupt=False,
-                tricount=title,
-                member=m.display_name,
-                message=f"{m.display_name} joined '{title}'",
-            )
-            _log(f"[{title}] member joined: {m.display_name}")
+    _notify_member_joins(notif_dir, t, prev_members)
 
     # Entries: additions, edits, settlements
     for entry_id, tx in current_by_id.items():
@@ -222,13 +237,7 @@ def diff_tricount(t: Tricount, prev: dict, notif_dir: Path) -> None:
             )
             _log(f"[{title}] edit: '{desc}' {amt}")
 
-    # Entries that vanished entirely from the API (hard delete).
-    for entry_id, prev_entry in prev_entries.items():
-        if entry_id in current_by_id:
-            continue
-        if prev_entry.get("deleted", False):
-            continue  # already notified as deleted
-        _emit_delete(notif_dir, title, prev_entry, currency)
+    _notify_hard_deletes(notif_dir, title, prev_entries, current_by_id, currency)
 
 
 def _emit_delete(notif_dir: Path, title: str, prev_entry: dict, currency: str) -> None:
@@ -322,10 +331,25 @@ def serve(notif_dir: Path, interval: int = DEFAULT_INTERVAL) -> None:
     seeding = not state
     _log(f"starting (interval={interval}s, notif_dir={notif_dir}, {'fresh seed' if seeding else 'resuming'})")
 
-    while True:
-        try:
-            state = poll_once(client, notif_dir, state)
-            save_state(state)
-        except Exception as e:  # noqa: BLE001 - loop must survive any transient error
-            _log(f"poll failed ({type(e).__name__}: {e}); continuing")
-        time.sleep(interval)
+    stop = threading.Event()
+    shutdown_reason = "unknown"
+
+    def handle_signal(signum: int, _frame: object) -> None:
+        nonlocal shutdown_reason
+        shutdown_reason = signal.Signals(signum).name
+        stop.set()
+
+    signal.signal(signal.SIGINT, handle_signal)
+    signal.signal(signal.SIGTERM, handle_signal)
+
+    try:
+        while not stop.is_set():
+            try:
+                state = poll_once(client, notif_dir, state)
+                save_state(state)
+            except Exception as e:
+                _log(f"poll failed ({type(e).__name__}: {e}); continuing")
+            stop.wait(interval)
+    finally:
+        # interrupt off: a stale expense feed is not worth preempting the agent mid-task.
+        write_notification(notif_dir, "daemon_died", reason=shutdown_reason, interrupt=False)

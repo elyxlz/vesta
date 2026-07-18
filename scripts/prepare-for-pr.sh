@@ -16,7 +16,7 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$REPO_ROOT"
+cd "$REPO_ROOT" || exit 1
 
 BOLD=$'\033[1m'; RED=$'\033[31m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; DIM=$'\033[2m'; RESET=$'\033[0m'
 FAILED=()
@@ -52,9 +52,11 @@ VESTAD=$(grep '^version = ' vestad/Cargo.toml | head -1 | cut -d'"' -f2)
 CLI=$(grep '^version = ' cli/Cargo.toml | head -1 | cut -d'"' -f2)
 TESTS=$(grep '^version = ' vestad/tests-integration/Cargo.toml | head -1 | cut -d'"' -f2)
 DESKTOP_PKG=$(python3 -c "import json; print(json.load(open('apps/desktop/package.json'))['version'])")
+MOBILE_PKG=$(python3 -c "import json; print(json.load(open('apps/mobile/package.json'))['version'])")
+MOBILE_APP=$(sed -n 's/^  version: "\([^"]*\)",/\1/p' apps/mobile/app.config.ts)
 APP=$(python3 -c "import json; print(json.load(open('apps/web/package.json'))['version'])")
 MISMATCH=0
-for nv in "vestad:$VESTAD" "cli:$CLI" "tests:$TESTS" "desktop-pkg:$DESKTOP_PKG" "app:$APP"; do
+for nv in "vestad:$VESTAD" "cli:$CLI" "tests:$TESTS" "desktop-pkg:$DESKTOP_PKG" "mobile-pkg:$MOBILE_PKG" "mobile-app:$MOBILE_APP" "app:$APP"; do
   if [ "$AGENT" != "${nv#*:}" ]; then
     printf "  ${RED}✗${RESET} agent (%s) != %s (%s)\n" "$AGENT" "${nv%%:*}" "${nv#*:}"
     MISMATCH=1
@@ -103,6 +105,14 @@ else
   else
     fail "generate-index.py failed"
   fi
+fi
+
+# ── design-token-check ────────────────────────────────────────
+section "design-token-check"
+if python3 scripts/sync-design-tokens.py --check >/dev/null 2>&1; then
+  pass "generated design tokens up to date"
+else
+  fail "generated design tokens stale — run 'python3 scripts/sync-design-tokens.py' and commit"
 fi
 
 # ── dashboard-sync-check ──────────────────────────────────────

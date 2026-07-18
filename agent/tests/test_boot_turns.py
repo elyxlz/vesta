@@ -1,8 +1,8 @@
 """Tests for boot-turn assembly: boot-time control-flow delivered as ordered, non-interruptible turns."""
 
-import core.models as vm
 import core.config as cfg
-from core.main import collect_boot_turns, BOOT_RESTORE_ORIENTATION
+import core.models as vm
+from core.main import BOOT_RESTORE_ORIENTATION, collect_boot_turns
 from core.provider import ProviderAuthState, ProviderStatus
 
 

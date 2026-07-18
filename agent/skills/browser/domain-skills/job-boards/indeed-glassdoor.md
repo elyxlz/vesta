@@ -1,3 +1,7 @@
+---
+hosts: indeed.com, glassdoor.com, stepstone.de
+---
+
 # Job Boards — Indeed, Glassdoor, Stepstone
 
 Covers: `indeed.com`, `glassdoor.com`, `stepstone.de`
@@ -135,9 +139,40 @@ wait(1)
 
 Each result card on Indeed carries a `data-jk` attribute (the job key). Use it to construct direct URLs.
 
+> **Locale layouts differ: match the title heading loosely.** The US layout wraps card titles in
+> `h2.jobTitle`, but other locales don't. On `hk.indeed.com` (verified 17 Jul 2026) every card
+> uses `h3.jobTitle`: a search returned 16 cards, `h2.jobTitle` matched **0** and `h3.jobTitle`
+> matched **16**, so an `h2`-only selector silently yields empty titles on every row rather than
+> erroring. Always match both, as the snippets below do. If titles come back empty, check the
+> heading level before assuming the page failed to load.
+
+> **Filter honeypot job keys.** Indeed plants decoy cards carrying patterned `data-jk` values, and
+> each decoy duplicates a real listing's title. Verified on `hk.indeed.com` (17 Jul 2026): among 16
+> cards, `789abcdef0123456` carried the same title as the genuine `a5055593f3b6a805`. Scraping
+> these reports phantom jobs.
+>
+> **Dedupe by title+company is the real defence; the key-pattern filter is a cheap extra.** Because
+> every decoy shadows a genuine row, deduping catches them regardless of key shape. Do not rely on
+> pattern-matching alone: `is_honeypot_jk` below flags rotations of the hex alphabet
+> (`789abcdef0123456`, `123456789abcdef0`, `fedcba9876543210`) and was checked against 19 real keys
+> with no false positives, but other reported forms such as `a1b2c3d4e5f67890` are interleaved
+> rather than rotated and slip straight through it. Treat a patterned key as a hint to distrust the
+> row, not as the whole filter.
+
 ```python
 import json
 from urllib.parse import quote_plus
+
+# Decoy job keys are rotations of the hex alphabet and duplicate a real listing's title.
+HEX_RING = "0123456789abcdef"
+
+def is_honeypot_jk(jk: str) -> bool:
+    """True for Indeed decoy keys like 789abcdef0123456 / fedcba9876543210."""
+    j = (jk or "").lower()
+    if len(j) != 16 or not all(c in HEX_RING for c in j):
+        return False
+    doubled, rdoubled = HEX_RING * 2, HEX_RING[::-1] * 2
+    return j in doubled or j in rdoubled
 
 query, location = "machine learning engineer", "New York"
 goto(f"https://www.indeed.com/jobs?q={quote_plus(query)}&l={quote_plus(location)}")
@@ -156,7 +191,8 @@ jobs = js("""
     if (!jk) continue;
 
     // Title
-    var titleEl = c.querySelector('h2.jobTitle span[title], h2.jobTitle span:not(.visually-hidden), [data-testid="job-title"]');
+    // Title. Match h2 AND h3: US uses h2.jobTitle, hk.indeed.com uses h3.jobTitle.
+    var titleEl = c.querySelector('h2.jobTitle span[title], h3.jobTitle span[title], h2.jobTitle span:not(.visually-hidden), h3.jobTitle span:not(.visually-hidden), [data-testid="job-title"]');
     var title = titleEl ? titleEl.innerText.trim() : '';
 
     // Company name
@@ -187,9 +223,23 @@ jobs = js("""
 """)
 
 results = json.loads(jobs)
+
+# Drop decoys before doing anything else: filter honeypot keys (cheap), then dedupe by
+# title+company (the real defence, since every decoy shadows a genuine listing's title).
+seen = set()
+clean = []
 for r in results:
+    if is_honeypot_jk(r["jk"]):
+        continue
+    ident = (r["title"].lower(), r["company"].lower())
+    if ident in seen:
+        continue
+    seen.add(ident)
+    clean.append(r)
+
+for r in clean:
     print(r)
-# Typically returns 10–15 cards per page
+# Typically returns 10-15 cards per page
 ```
 
 ---
@@ -225,7 +275,7 @@ for page in range(3):   # 3 pages = up to ~30 results
         var c = cards[i];
         var jk = c.getAttribute('data-jk') || '';
         if (!jk) continue;
-        var titleEl = c.querySelector('h2.jobTitle span[title], [data-testid="job-title"]');
+        var titleEl = c.querySelector('h2.jobTitle span[title], h3.jobTitle span[title], h2.jobTitle span:not(.visually-hidden), h3.jobTitle span:not(.visually-hidden), [data-testid="job-title"]');
         var compEl  = c.querySelector('[data-testid="company-name"], .companyName');
         var locEl   = c.querySelector('[data-testid="text-location"], .companyLocation');
         var salEl   = c.querySelector('[data-testid="attribute_snippet_testid"], .salary-snippet-container');
@@ -262,6 +312,21 @@ base_url = f"https://www.indeed.com/jobs?q={quote_plus(query)}&l={quote_plus(loc
 ## Workflow 3: Indeed — job detail page extraction
 
 Fetch the full job description from the detail page. The `viewjob?jk=` URL is canonical and stable.
+
+> **`/viewjob` can hit a Cloudflare wall; read the inline panel instead.** On `hk.indeed.com`
+> (verified 17 Jul 2026) navigating to `/viewjob?jk=...` directly serves an "Additional
+> Verification Required" interstitial even under Camoufox, while the same job renders fine in the
+> results-page side panel. When `/viewjob` is challenged, re-run the search URL with `&vjk={jk}`
+> appended and scrape the panel:
+>
+> ```python
+> goto(f"https://hk.indeed.com/jobs?q={quote_plus(query)}&l={quote_plus(location)}&vjk={jk}")
+> wait_for_load(); wait(2)
+> desc = js("(document.querySelector('#jobDescriptionText')||{}).innerText || ''")
+> ```
+>
+> `/viewjob` links are still fine to *hand to a human*: the block is on automated navigation, and
+> the URL resolves normally in the user's own browser.
 
 ```python
 import json, re
@@ -917,7 +982,7 @@ def collect_indeed_jobs(query: str, location: str = "", max_results: int = 20,
     Waits between pages to avoid bot detection.
     """
     all_jobs = []
-    seen_jks = set()
+    seen = set()  # (title, company): dedupe by identity, which also drops decoy rows
     page = 0
 
     while len(all_jobs) < max_results:
@@ -942,7 +1007,7 @@ def collect_indeed_jobs(query: str, location: str = "", max_results: int = 20,
             var c = cards[i];
             var jk = c.getAttribute('data-jk') || '';
             if (!jk) continue;
-            var titleEl = c.querySelector('h2.jobTitle span[title], [data-testid="job-title"]');
+            var titleEl = c.querySelector('h2.jobTitle span[title], h3.jobTitle span[title], h2.jobTitle span:not(.visually-hidden), h3.jobTitle span:not(.visually-hidden), [data-testid="job-title"]');
             var compEl  = c.querySelector('[data-testid="company-name"], .companyName');
             var locEl   = c.querySelector('[data-testid="text-location"], .companyLocation');
             var salEl   = c.querySelector('[data-testid="attribute_snippet_testid"], .salary-snippet-container');
@@ -965,8 +1030,8 @@ def collect_indeed_jobs(query: str, location: str = "", max_results: int = 20,
         if not batch:
             break  # no more results
 
-        new_jobs = [j for j in batch if j["jk"] not in seen_jks]
-        seen_jks.update(j["jk"] for j in new_jobs)
+        new_jobs = [j for j in batch if (j["title"].lower(), j["company"].lower()) not in seen]
+        seen.update((j["title"].lower(), j["company"].lower()) for j in new_jobs)
         all_jobs.extend(new_jobs)
         page += 1
 

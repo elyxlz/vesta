@@ -25,6 +25,12 @@ A rule has two dedicated fields (`source`, `type`) plus any number of `match` co
 notification's other fields. Every field/condition you set must hold (AND); whatever you omit is ignored.
 
 - `--action` is `interrupt`, `snooze`, or `trash` (drop entirely; see the mental model).
+- `--for <duration>` makes any rule **temporary**: it auto-expires (and is then removed) after that long, so
+  notifications flow by their default again with nothing to remember. Pairs with any action, so a
+  temporary silence is `--action snooze --for 2h` and a temporary trash is `--action trash --for 1d`.
+  Duration is `s`/`m`/`h`/`d` chunks: `30m`, `2h`, `1h30m`, `1d`. A permanent rule (no `--for`) stays
+  until you remove it. Prefer a temporary rule whenever the reason is time-bounded (deep work, a noisy
+  event that ends), so a suppression can never outlive its purpose.
 - `source`/`type` are exact (case-insensitive), e.g. `--source whatsapp --type message`.
 - Each `match` targets one field: `--match 'FIELD<op>VALUE'`, ops (case-insensitive):
   - `=` substring, e.g. `--match 'chat_name=Bride squad'`
@@ -60,6 +66,12 @@ notifications list
 # Snooze low-value distractions so they wait until you are idle
 notifications add --source twitter --action snooze
 
+# Temporary silence: mute a source for a few hours, then it flows again on its own (no cleanup needed)
+notifications add --source whatsapp --action snooze --for 2h
+
+# Temporary trash: drop a source that is noisy only for today (an event, a live thread), auto-expires
+notifications add --source twitter --match 'chat_name=World Cup' --action trash --for 1d
+
 # Let what genuinely matters reach you immediately (auto-placed above broader snooze rules)
 notifications add --source whatsapp --sender "wife" --action interrupt
 notifications add --source email --keyword urgent --action interrupt
@@ -90,7 +102,7 @@ notifications clear
 
 ## Guarding a hard task
 
-Before deep work you don't want broken, add a broad `--action snooze` rule (with narrower `interrupt` rules above it for the few things that should still reach you), then **remove it when you're done**: a forgotten snooze rule keeps holding back interrupts after the session is over.
+Before deep work you don't want broken, add a broad `--action snooze` rule (with narrower `interrupt` rules above it for the few things that should still reach you). If you know roughly how long the work will take, add `--for <duration>` (e.g. `--for 90m`) so the rule lifts itself and you can't forget it. Otherwise **remove it when you're done**: a forgotten permanent snooze rule keeps holding back interrupts after the session is over.
 
 ## Working through snoozed notifications
 

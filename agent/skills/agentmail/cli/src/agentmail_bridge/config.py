@@ -7,7 +7,6 @@ import os
 import shlex
 from pathlib import Path
 
-
 CONFIG_DIR = Path.home() / ".agentmail"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 NOTIFICATIONS_DIR = Path.home() / "agent" / "notifications"

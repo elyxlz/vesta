@@ -43,7 +43,7 @@ export function NameStep({
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") submit();
-    if (e.key === "Escape" && agents.length > 0) navigate("/");
+    if (e.key === "Escape" && agents.length > 0) void navigate("/");
   };
 
   return (

@@ -59,3 +59,9 @@ if [ -z "$CONE" ]; then
   exit 1
 fi
 printf '%s\n' "$CONE" | sort -u | git sparse-checkout set --cone --stdin
+
+# Sparsifying agent/core means deleting the read-only mount, which git can't do, so it leaves
+# the entry worktree-live and every later checkout rewrites the mount (#1280); pin it in the index.
+if [ ! -w agent/core ]; then
+  git ls-files -z -- agent/core | xargs -0r git update-index --skip-worktree --
+fi

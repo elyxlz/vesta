@@ -4,7 +4,10 @@ set -euo pipefail
 # Register a background service with vestad and print the assigned port.
 # Pass --public for services that need a public tunnel route (no token), omit
 # it for token-only services. Registration is idempotent: vestad returns the
-# same port for a given name on every call.
+# same port for a given name on every call, and omitting --public keeps whatever
+# the service is already registered as rather than revoking a publish, so a
+# re-register that only wants the port is safe. To make a public service private,
+# unregister it and register it again.
 #
 # vestad's HTTP API may not be up yet when the restart skill runs this (the
 # daemon block can fire before vestad's API is back). Rather than pipe a refused
@@ -18,9 +21,10 @@ set -euo pipefail
 #   PORT=$(~/agent/skills/vestad/scripts/register-service dashboard --public)
 
 NAME="${1:?Usage: register-service <name> [--public]}"
-PUBLIC="false"
 if [ "${2:-}" = "--public" ]; then
-    PUBLIC="true"
+    REQUEST="{\"name\":\"$NAME\",\"public\":true}"
+else
+    REQUEST="{\"name\":\"$NAME\"}"
 fi
 
 WAIT_SECONDS="${REGISTER_SERVICE_WAIT:-30}"
@@ -30,7 +34,7 @@ DEADLINE=$(( $(date +%s) + WAIT_SECONDS ))
 while :; do
     BODY=$(curl -sk -X POST "$URL" \
         -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' \
-        -d "{\"name\":\"$NAME\",\"public\":$PUBLIC}") || BODY=""
+        -d "$REQUEST") || BODY=""
     PORT=$(printf '%s' "$BODY" | python3 -c \
         'import sys, json
 try:

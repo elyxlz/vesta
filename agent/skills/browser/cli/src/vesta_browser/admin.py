@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import signal
@@ -17,6 +18,8 @@ from .launcher import RunningCamoufox, launch
 SESSION_FILE_PREFIX = "/tmp/vesta-browser-"
 GRACEFUL_EXIT_POLLS = 25
 GRACEFUL_POLL_INTERVAL_S = 0.2
+# Above the daemon's largest per-command bound (the navigate wait), so its error (which names the method) wins the race.
+DAEMON_RESPONSE_TIMEOUT_S = 120.0
 
 
 def _session_name(name: str | None = None) -> str:
@@ -73,10 +76,8 @@ def _terminate_pid(pid: int) -> None:
         except ProcessLookupError:
             return
         time.sleep(GRACEFUL_POLL_INTERVAL_S)
-    try:
+    with contextlib.suppress(ProcessLookupError):
         os.kill(pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
 
 
 def _read_pid(path: Path) -> int | None:
@@ -237,25 +238,29 @@ def ensure_daemon(wait_s: float = 30.0, name: str | None = None) -> None:
         time.sleep(0.2)
 
     tail = ""
-    try:
+    with contextlib.suppress(FileNotFoundError, IndexError):
         tail = Path(log_path(session)).read_text().splitlines()[-1]
-    except (FileNotFoundError, IndexError):
-        pass
     raise RuntimeError(f"daemon {session!r} did not come up within {wait_s}s. Last log line: {tail or '(none)'}")
 
 
 def send(req: dict, name: str | None = None) -> dict:
     """Low-level sync request to the daemon. Raises on error."""
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.connect(socket_path(name))
-    s.sendall((json.dumps(req) + "\n").encode())
-    data = b""
-    while not data.endswith(b"\n"):
-        chunk = s.recv(1 << 20)
-        if not chunk:
-            break
-        data += chunk
-    s.close()
+    s.settimeout(DAEMON_RESPONSE_TIMEOUT_S)
+    try:
+        s.connect(socket_path(name))
+        s.sendall((json.dumps(req) + "\n").encode())
+        data = b""
+        while not data.endswith(b"\n"):
+            chunk = s.recv(1 << 20)
+            if not chunk:
+                break
+            data += chunk
+    except TimeoutError:
+        label = req["method"] if "method" in req else req["meta"]
+        raise RuntimeError(f"daemon did not respond to {label!r} within {DAEMON_RESPONSE_TIMEOUT_S}s") from None
+    finally:
+        s.close()
     resp = json.loads(data)
     if "error" in resp:
         raise RuntimeError(resp["error"])

@@ -72,7 +72,7 @@ export function AgentIsland() {
         if (e.key === "Escape") setExpanded(false);
       }}
       onBlur={(e) => {
-        if (!islandRef.current?.contains(e.relatedTarget as Node)) {
+        if (!islandRef.current?.contains(e.relatedTarget)) {
           setExpanded(false);
         }
       }}

@@ -24,11 +24,15 @@ function socketValue(
     pendingNotifications: pending,
     hasMore: false,
     loadingMore: false,
-    loadMore: async () => {},
+    loadMore: async () => {
+      /* noop */
+    },
     send: () => true,
     sendEvent: () => true,
     showToolCalls: false,
-    setShowToolCalls: () => {},
+    setShowToolCalls: () => {
+      /* noop */
+    },
   };
 }
 

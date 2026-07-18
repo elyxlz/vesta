@@ -9,7 +9,6 @@ from unittest.mock import MagicMock
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
-
 from voice import handlers, server
 
 CONFIGURED_TTS = {

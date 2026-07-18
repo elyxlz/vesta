@@ -1,7 +1,7 @@
 {
   "name": "@vesta/desktop",
   "private": true,
-  "version": "0.1.177",
+  "version": "0.1.179",
   "description": "Vesta desktop app (Electron wrapper around @vesta/web)",
   "author": "elyxlz <58893694+elyxlz@users.noreply.github.com>",
   "license": "MIT",
@@ -15,18 +15,21 @@
     "compile": "tsc",
     "check": "tsc --noEmit",
     "lint": "eslint src scripts",
+    "test": "vitest run",
     "build": "npm -w @vesta/web run build && tsc && electron-builder --publish never"
   },
   "dependencies": {
     "electron-updater": "^6.8.9"
   },
   "devDependencies": {
+    "@eslint-community/eslint-plugin-eslint-comments": "^4.7.2",
     "@eslint/js": "^10.0.1",
-    "electron": "43.1.0",
+    "electron": "43.1.1",
     "electron-builder": "^26.15.3",
     "eslint": "^10.7.0",
     "globals": "^17.7.0",
     "typescript": "^7.0.2",
-    "typescript-eslint": "^8.64.0"
+    "typescript-eslint": "^8.64.0",
+    "vitest": "^4.1.10"
   }
 }

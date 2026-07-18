@@ -2,14 +2,34 @@
 members = [".", "tests-integration"]
 resolver = "2"
 
+
+# Lint escapes (#[allow]/#[expect]) are banned repo-wide; tune rules here instead.
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# API-doc ceremony and display-only casts: not worth the churn for an internal binary.
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+module_name_repetitions = "allow"
+too_many_lines = "allow"
+cast_precision_loss = "allow"
+unwrap_used = "deny"
+allow_attributes = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+
 [package]
 name = "vestad"
-version = "0.1.177"
+version = "0.1.179"
 license = "MIT"
 repository = "https://github.com/elyxlz/vesta"
 authors = ["elyxlz"]
 edition = "2021"
 description = "Vesta API server daemon (Linux only)"
+
+[lints]
+workspace = true
 
 [[bin]]
 name = "vestad"
@@ -53,10 +73,14 @@ mime_guess = "2"
 base64 = "0.22"
 hex = "0.4"
 qrcode = { version = "0.14", default-features = false }
+jiff = "0.2"
 
 [dev-dependencies]
 tempfile = "3"
 proptest = "1"
+# The port-reuse tests' corpse socket: bound, never listened on, the one shape std/tokio
+# cannot build. Already in the tree via tokio.
+socket2 = "0.6"
 # Integration/live e2e tests live here (in vestad's own tests/) so `cargo test -p vestad
 # --test <name>` builds the vestad binary and exposes its path via CARGO_BIN_EXE_vestad —
 # no separate build step, no stale-binary risk. They reuse the shared harness from vesta-tests.

@@ -1,6 +1,6 @@
 """Compact text formatters for tasks CLI output."""
 
-from datetime import datetime, UTC, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .db import parse_datetime

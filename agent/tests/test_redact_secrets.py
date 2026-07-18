@@ -1,6 +1,7 @@
 """Tests for the dream skill's redact_secrets script: masked pattern scan + in-place scrub by id."""
 
 import importlib.util
+import json
 import pathlib as pl
 import sqlite3
 
@@ -72,6 +73,27 @@ def test_scrub_keeps_fts_in_sync(event_bus, db_conn):
     assert event_bus.search("backup") == []
 
 
+def test_scrub_keeps_blob_valid_json_when_secret_abuts_escaped_quote(event_bus, db_conn):
+    # A mongodb URI wrapped in shell double-quotes: the closing quote JSON-encodes to \", so the
+    # secret abuts an escape boundary. A raw text .sub over the stored blob splices [REDACTED]
+    # across that \" and produces invalid JSON, which breaks the FTS json_extract and rolls the
+    # whole scrub back. The JSON-aware scrub redacts the decoded value and re-serializes cleanly.
+    event_bus.emit(ChatEvent(type="chat", text='mongo "mongodb://user:secretpass@cluster0.example.net/db"'))
+    raw = db_conn.execute("SELECT data FROM events").fetchone()[0]
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(redact.REGEX.sub(redact.mask, raw))
+
+    ids = [row_id for row_id, _ in redact.scan(db_conn)]
+    assert redact.scrub(db_conn, ids) == 1
+
+    data = db_conn.execute("SELECT data FROM events").fetchone()[0]
+    parsed = json.loads(data)
+    assert "secretpass" not in data
+    assert "[REDACTED]" in parsed["text"]
+    assert event_bus.search("secretpass") == []
+    assert len(event_bus.search("mongo")) == 1
+
+
 def test_scrub_only_touches_the_given_events(event_bus, db_conn):
     event_bus.emit(ChatEvent(type="chat", text=f"real leak {SECRET}"))
     event_bus.emit(ChatEvent(type="chat", text=f"benign discussion of {SECRET} to keep"))
@@ -113,10 +135,47 @@ def test_scan_skips_already_redacted_values(event_bus, db_conn):
     assert redact.scan(db_conn) == []
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "password reuse",
+        "secret santa",
+        "the api key rotation",
+        "please remember your password before you leave",
+    ],
+)
+def test_scan_ignores_benign_prose_with_bare_space(event_bus, db_conn, text):
+    event_bus.emit(ChatEvent(type="chat", text=text))
+
+    assert redact.scan(db_conn) == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "password=hunter2longvalue",
+        "password = hunter2longvalue",
+        'api_key = "abcd1234efgh"',
+        'password: "supersecretvalue"',
+        "password: hunter2value",
+        "secret = topsecretvalue",
+        '{"password":"supersecretvalue"}',
+        'api_key="abcd1234"',
+    ],
+)
+def test_scan_catches_space_padded_credential_assignments(event_bus, db_conn, text):
+    event_bus.emit(ChatEvent(type="chat", text=text))
+
+    matches = redact.scan(db_conn)
+
+    assert len(matches) == 1
+    assert "[REDACTED]" in matches[0][1]
+
+
 def test_main_scan_then_scrub_end_to_end(tmp_path, event_bus, db_conn, monkeypatch, capsys):
     event_bus.emit(ChatEvent(type="chat", text=f"my key is {SECRET}"))
     event_bus.emit(UserEvent(type="user", text="just a normal message"))
-    monkeypatch.setattr(redact, "DB", str(tmp_path / "events.db"))
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
 
     monkeypatch.setattr("sys.argv", ["redact_secrets.py"])
     assert redact.main() == 0

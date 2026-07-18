@@ -38,12 +38,11 @@ your edits and upstream updates take effect on the command's next run:
 uv tool install --editable ~/agent/skills/<name>/cli
 ```
 
-Never install a skill's CLI with `uv pip install -e` or `pip install -e`. You run
-with the engine venv active (`VIRTUAL_ENV=~/agent/.venv`), so an editable pip
-install drops the skill's command into `~/agent/.venv/bin`, which sits ahead of
-`~/.local/bin` on PATH and shadows the real tool: the command and its daemon then
-break with an import error. `uv tool install` keeps the CLI isolated and on
-`~/.local/bin`, so use it every time.
+Never install a skill's CLI with `uv pip install -e` or `pip install -e`. Run from
+`~/agent` those resolve the engine venv, dropping the skill's command into
+`~/agent/.venv/bin`, which leads your PATH and shadows the real tool: the command
+and its daemon then break with an import error. `uv tool install` keeps the CLI
+isolated and on `~/.local/bin`, so use it every time.
 
 ## Notes
 

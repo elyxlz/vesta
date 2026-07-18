@@ -177,28 +177,32 @@ export async function getBuildPhase(name: string): Promise<BuildPhase | null> {
   return resp.phase;
 }
 
+interface StatusWait {
+  ready: readonly string[];
+  failed: readonly string[];
+  timeoutLabel: string;
+}
+
 /// Poll /agents/{name} until its status settles into one of `ready` (resolve) or `failed` (throw);
 /// anything else (still starting up) keeps polling until `timeoutMs` elapses.
 async function waitForStatus(
   name: string,
   timeoutMs: number,
   pollIntervalMs: number,
-  ready: readonly string[],
-  failed: readonly string[],
-  timeoutLabel: string,
+  wait: StatusWait,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const resp = await apiJson<{ status: string }>(
       `/agents/${encodeURIComponent(name)}`,
     );
-    if (ready.includes(resp.status)) return;
-    if (failed.includes(resp.status)) {
+    if (wait.ready.includes(resp.status)) return;
+    if (wait.failed.includes(resp.status)) {
       throw new Error(`${name}: ${resp.status}`);
     }
     await new Promise((r) => setTimeout(r, pollIntervalMs));
   }
-  throw new Error(`${name}: ${timeoutLabel}`);
+  throw new Error(`${name}: ${wait.timeoutLabel}`);
 }
 
 /// Poll /agents/{name} until it reports a settled HTTP-up status. A brand-new empty agent boots into
@@ -208,14 +212,11 @@ export async function waitUntilRunning(
   timeoutMs: number,
   pollIntervalMs = 500,
 ): Promise<void> {
-  await waitForStatus(
-    name,
-    timeoutMs,
-    pollIntervalMs,
-    ["alive", "not_authenticated", "unprovisioned"],
-    ["dead", "stopped", "not_found"],
-    "timed out waiting for HTTP server",
-  );
+  await waitForStatus(name, timeoutMs, pollIntervalMs, {
+    ready: ["alive", "not_authenticated", "unprovisioned"],
+    failed: ["dead", "stopped", "not_found"],
+    timeoutLabel: "timed out waiting for HTTP server",
+  });
 }
 
 export async function waitUntilAlive(
@@ -223,14 +224,17 @@ export async function waitUntilAlive(
   timeoutMs: number,
   pollIntervalMs = 500,
 ): Promise<void> {
-  await waitForStatus(
-    name,
-    timeoutMs,
-    pollIntervalMs,
-    ["alive"],
-    ["dead", "stopped", "not_found", "not_authenticated", "unprovisioned"],
-    "timed out waiting to become alive",
-  );
+  await waitForStatus(name, timeoutMs, pollIntervalMs, {
+    ready: ["alive"],
+    failed: [
+      "dead",
+      "stopped",
+      "not_found",
+      "not_authenticated",
+      "unprovisioned",
+    ],
+    timeoutLabel: "timed out waiting to become alive",
+  });
 }
 
 export async function startAgent(name: string): Promise<void> {
@@ -381,6 +385,17 @@ export async function getNotificationHistory(
   // Newest-first for the view; the history endpoint returns ascending within a page.
   items.reverse();
   return { notifications: items, cursor: resp.cursor };
+}
+
+export async function fetchHistory(
+  name: string,
+  channel: "app-chat" | "internals",
+  cursor: number,
+): Promise<{ events: VestaEvent[]; cursor: number | null }> {
+  const params = new URLSearchParams({ channel, cursor: String(cursor) });
+  return apiJson(
+    `/agents/${encodeURIComponent(name)}/history?${params.toString()}`,
+  );
 }
 
 /// A user-granted host filesystem access: a host path bind-mounted into the agent's container at

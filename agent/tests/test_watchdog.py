@@ -6,11 +6,12 @@ import typing as tp
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-import core.models as vm
-import core.config as cfg
 from conftest import consuming, make_stream_harness, result_msg
-from core.client import converse
 from wait_util import wait_for_condition
+
+import core.config as cfg
+import core.models as vm
+from core.client import converse
 from core.diagnostics import (
     format_hang_diagnostics,
     longest_running_tool,
@@ -214,14 +215,15 @@ def test_liveness_stays_debug_while_tool_runs(captured_warnings, captured_notes,
 async def test_converse_notes_thinking_while_waiting(captured_notes, monkeypatch):
     """End to end through the wait loop: the first thinking_tokens tick logs "Thinking..." once,
     the counter stays fresh while producing no visible output, and the interval note reports it."""
+    from claude_agent_sdk import SystemMessage
+
     import core.client as client_mod
     import core.diagnostics as diagnostics_mod
-    from claude_agent_sdk import SystemMessage
 
     monkeypatch.setattr(client_mod, "_SILENCE_POLL_S", 0.02)
     monkeypatch.setattr(diagnostics_mod, "_QUIET_NOTE_INTERVAL_S", 0.01)
 
-    state, config, mock_client, emitted, message_queue, consumed = make_stream_harness()
+    state, config, _mock_client, _emitted, message_queue, _consumed = make_stream_harness()
 
     async def think_then_finish():
         await message_queue.put(SystemMessage(subtype="thinking_tokens", data={"estimated_tokens": 312, "estimated_tokens_delta": 5}))
@@ -308,7 +310,7 @@ async def _run_converse_with_consumer(state, config, messages):
         await asyncio.Event().wait()
 
     assert state.client is not None
-    state.client.receive_messages = MagicMock(side_effect=lambda: stream())
+    state.client.receive_messages = MagicMock(side_effect=stream)
     async with consuming(state, config):
         await converse("test", state=state, config=config, show_output=False)
 

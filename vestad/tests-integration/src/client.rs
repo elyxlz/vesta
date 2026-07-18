@@ -19,18 +19,18 @@ fn check_response(resp: Response<Body>) -> Result<Response<Body>, String> {
             .ok()?
             .get("error")?
             .as_str()
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
     });
     match status {
         401 => Err("invalid API key".into()),
         404 => Err(error_msg.unwrap_or_else(|| "not found".into())),
         409 => Err(error_msg.unwrap_or_else(|| "conflict".into())),
-        _ => Err(error_msg.unwrap_or_else(|| format!("server error ({})", status))),
+        _ => Err(error_msg.unwrap_or_else(|| format!("server error ({status})"))),
     }
 }
 
-fn map_error(e: ureq::Error) -> String {
-    format!("request failed: {}", e)
+fn map_error(e: &ureq::Error) -> String {
+    format!("request failed: {e}")
 }
 
 fn urlencod(s: &str) -> String {
@@ -38,7 +38,7 @@ fn urlencod(s: &str) -> String {
     for b in s.bytes() {
         match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char)
+                out.push(b as char);
             }
             _ => {
                 out.push('%');
@@ -57,7 +57,7 @@ fn read_sse_result(resp: Response<Body>) -> Result<String, String> {
     let mut data = String::new();
 
     for line in BufRead::lines(reader) {
-        let line = line.map_err(|e| format!("read error: {}", e))?;
+        let line = line.map_err(|e| format!("read error: {e}"))?;
 
         if let Some(ev) = line.strip_prefix("event:") {
             event_type = ev.trim().to_string();
@@ -73,7 +73,7 @@ fn read_sse_result(resp: Response<Body>) -> Result<String, String> {
                             v["error"]["message"]
                                 .as_str()
                                 .or(v["error"].as_str())
-                                .map(|s| s.to_string())
+                                .map(std::string::ToString::to_string)
                         })
                         .unwrap_or(data);
                     return Err(msg);
@@ -122,7 +122,7 @@ impl Client {
             .get(&format!("{}{}", self.base_url, path))
             .header("Authorization", &format!("Bearer {}", self.api_key))
             .call()
-            .map_err(map_error)?;
+            .map_err(|e| map_error(&e))?;
         check_response(resp)
     }
 
@@ -132,7 +132,7 @@ impl Client {
             .post(&format!("{}{}", self.base_url, path))
             .header("Authorization", &format!("Bearer {}", self.api_key))
             .send_empty()
-            .map_err(map_error)?;
+            .map_err(|e| map_error(&e))?;
         check_response(resp)
     }
 
@@ -142,7 +142,7 @@ impl Client {
             .post(&format!("{}{}", self.base_url, path))
             .header("Authorization", &format!("Bearer {}", self.api_key))
             .send_json(body)
-            .map_err(map_error)?;
+            .map_err(|e| map_error(&e))?;
         check_response(resp)
     }
 
@@ -152,7 +152,7 @@ impl Client {
             .put(&format!("{}{}", self.base_url, path))
             .header("Authorization", &format!("Bearer {}", self.api_key))
             .send_json(body)
-            .map_err(map_error)?;
+            .map_err(|e| map_error(&e))?;
         check_response(resp)
     }
 
@@ -162,7 +162,7 @@ impl Client {
             .patch(&format!("{}{}", self.base_url, path))
             .header("Authorization", &format!("Bearer {}", self.api_key))
             .send_json(body)
-            .map_err(map_error)?;
+            .map_err(|e| map_error(&e))?;
         check_response(resp)
     }
 
@@ -172,7 +172,7 @@ impl Client {
             .delete(&format!("{}{}", self.base_url, path))
             .header("Authorization", &format!("Bearer {}", self.api_key))
             .call()
-            .map_err(map_error)?;
+            .map_err(|e| map_error(&e))?;
         check_response(resp)
     }
 
@@ -181,7 +181,7 @@ impl Client {
             .agent
             .get(&format!("{}/health", self.base_url))
             .call()
-            .map_err(map_error)?;
+            .map_err(|e| map_error(&e))?;
         check_response(resp)?;
         Ok(())
     }
@@ -191,25 +191,25 @@ impl Client {
             .agent
             .get(&format!("{}/health", self.base_url))
             .call()
-            .map_err(map_error)?;
+            .map_err(|e| map_error(&e))?;
         let resp = check_response(resp)?;
         resp.into_body()
             .read_json()
-            .map_err(|e| format!("parse error: {}", e))
+            .map_err(|e| format!("parse error: {e}"))
     }
 
     pub fn list_agents(&self) -> Result<Vec<ListEntry>, String> {
         let resp = self.get("/agents")?;
         resp.into_body()
             .read_json()
-            .map_err(|e| format!("parse error: {}", e))
+            .map_err(|e| format!("parse error: {e}"))
     }
 
     pub fn agent_status(&self, name: &str) -> Result<StatusJson, String> {
-        let resp = self.get(&format!("/agents/{}", name))?;
+        let resp = self.get(&format!("/agents/{name}"))?;
         resp.into_body()
             .read_json()
-            .map_err(|e| format!("parse error: {}", e))
+            .map_err(|e| format!("parse error: {e}"))
     }
 
     pub fn create_agent(&self, name: &str) -> Result<String, String> {
@@ -229,12 +229,12 @@ impl Client {
         let v: serde_json::Value = resp
             .into_body()
             .read_json()
-            .map_err(|e| format!("parse error: {}", e))?;
+            .map_err(|e| format!("parse error: {e}"))?;
         Ok(v["name"].as_str().unwrap_or(name).to_string())
     }
 
     pub fn start_agent(&self, name: &str) -> Result<(), String> {
-        self.post(&format!("/agents/{}/start", name))?;
+        self.post(&format!("/agents/{name}/start"))?;
         Ok(())
     }
 
@@ -247,32 +247,32 @@ impl Client {
         let v: Resp = resp
             .into_body()
             .read_json()
-            .map_err(|e| format!("parse error: {}", e))?;
+            .map_err(|e| format!("parse error: {e}"))?;
         Ok(v.results)
     }
 
     pub fn stop_agent(&self, name: &str) -> Result<(), String> {
-        self.post(&format!("/agents/{}/stop", name))?;
+        self.post(&format!("/agents/{name}/stop"))?;
         Ok(())
     }
 
     pub fn restart_agent(&self, name: &str) -> Result<(), String> {
-        self.post(&format!("/agents/{}/restart", name))?;
+        self.post(&format!("/agents/{name}/restart"))?;
         Ok(())
     }
 
     pub fn destroy_agent(&self, name: &str) -> Result<(), String> {
-        self.delete(&format!("/agents/{}", name))?;
+        self.delete(&format!("/agents/{name}"))?;
         Ok(())
     }
 
     pub fn rename_agent(&self, name: &str, new_name: &str) -> Result<String, String> {
         let body = serde_json::json!({"new_name": new_name});
-        let resp = self.patch_json(&format!("/agents/{}", name), &body)?;
+        let resp = self.patch_json(&format!("/agents/{name}"), &body)?;
         let v: serde_json::Value = resp
             .into_body()
             .read_json()
-            .map_err(|e| format!("parse error: {}", e))?;
+            .map_err(|e| format!("parse error: {e}"))?;
         Ok(v["name"].as_str().unwrap_or(new_name).to_string())
     }
 
@@ -314,8 +314,7 @@ impl Client {
             if std::time::Instant::now() >= deadline {
                 crate::dump_agent_diagnostics(name);
                 return Err(format!(
-                    "{}: timeout waiting for stopped (status: {})",
-                    name, status
+                    "{name}: timeout waiting for stopped (status: {status})"
                 ));
             }
             std::thread::sleep(backoff);
@@ -335,14 +334,13 @@ impl Client {
                 "alive" | "setting_up" | "not_authenticated" | "unprovisioned" => {
                     return Ok(status)
                 }
-                "not_found" | "dead" => return Err(format!("{}: {}", name, status)),
+                "not_found" | "dead" => return Err(format!("{name}: {status}")),
                 _ => {}
             }
             if std::time::Instant::now() >= deadline {
                 crate::dump_agent_diagnostics(name);
                 return Err(format!(
-                    "{}: timeout waiting for running (status: {})",
-                    name, status
+                    "{name}: timeout waiting for running (status: {status})"
                 ));
             }
             std::thread::sleep(backoff);
@@ -355,7 +353,7 @@ impl Client {
         let resp = self.post("/providers/claude/oauth/start")?;
         resp.into_body()
             .read_json()
-            .map_err(|e| format!("parse error: {}", e))
+            .map_err(|e| format!("parse error: {e}"))
     }
 
     /// Standalone Claude OAuth completion. Returns the credentials JSON on success.
@@ -365,20 +363,20 @@ impl Client {
         let v: serde_json::Value = resp
             .into_body()
             .read_json()
-            .map_err(|e| format!("parse error: {}", e))?;
+            .map_err(|e| format!("parse error: {e}"))?;
         v["credentials"]
             .as_str()
             .map(str::to_string)
             .ok_or_else(|| "missing credentials in response".to_string())
     }
 
-    /// Sign an agent in with an OpenRouter key + model via `PUT /provider`. The write doesn't restart
-    /// — callers (e.g. provision_and_settle) restart afterwards. The agent must be running (its WS
+    /// Sign an agent in with an `OpenRouter` key + model via `PUT /provider`. The write doesn't restart
+    /// — callers (e.g. `provision_and_settle`) restart afterwards. The agent must be running (its WS
     /// port bound) to receive the call, so this waits first.
     pub fn sign_in_openrouter(&self, name: &str, key: &str, model: &str) -> Result<(), String> {
         self.wait_until_running(name, 60)?;
         let body = serde_json::json!({"kind": "openrouter", "model": model, "key": key});
-        self.put_json(&format!("/agents/{}/provider", name), &body)?;
+        self.put_json(&format!("/agents/{name}/provider"), &body)?;
         Ok(())
     }
 
@@ -388,21 +386,21 @@ impl Client {
         self.wait_until_running(name, 60)?;
         let body =
             serde_json::json!({"kind": "claude", "credentials": credentials, "model": model});
-        self.put_json(&format!("/agents/{}/provider", name), &body)?;
+        self.put_json(&format!("/agents/{name}/provider"), &body)?;
         Ok(())
     }
 
     pub fn create_backup(&self, name: &str) -> Result<BackupInfo, String> {
-        let resp = self.post(&format!("/agents/{}/backups", name))?;
+        let resp = self.post(&format!("/agents/{name}/backups"))?;
         let data = read_sse_result(resp)?;
-        serde_json::from_str(&data).map_err(|e| format!("parse error: {}", e))
+        serde_json::from_str(&data).map_err(|e| format!("parse error: {e}"))
     }
 
     pub fn list_backups(&self, name: &str) -> Result<Vec<BackupInfo>, String> {
-        let resp = self.get(&format!("/agents/{}/backups", name))?;
+        let resp = self.get(&format!("/agents/{name}/backups"))?;
         resp.into_body()
             .read_json()
-            .map_err(|e| format!("parse error: {}", e))
+            .map_err(|e| format!("parse error: {e}"))
     }
 
     pub fn restore_backup(&self, name: &str, backup_id: &str) -> Result<(), String> {
@@ -426,16 +424,16 @@ impl Client {
             ))
             .header("Authorization", &format!("Bearer {}", self.api_key))
             .call()
-            .map_err(map_error)?;
+            .map_err(|e| map_error(&e))?;
         check_response(resp)?;
         Ok(())
     }
 
     pub fn stream_logs(&self, name: &str) -> Result<(), String> {
-        let resp = self.get(&format!("/agents/{}/logs", name))?;
+        let resp = self.get(&format!("/agents/{name}/logs"))?;
         let reader = std::io::BufReader::new(resp.into_body().into_reader());
         for line in std::io::BufRead::lines(reader) {
-            let line = line.map_err(|e| format!("read error: {}", e))?;
+            let line = line.map_err(|e| format!("read error: {e}"))?;
             if let Some(data) = line.strip_prefix("data:") {
                 println!("{}", data.trim_start());
             } else if line.starts_with("event:agent_stopped") {

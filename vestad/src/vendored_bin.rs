@@ -97,7 +97,7 @@ pub(crate) fn extract_embedded(
 ) -> Result<PathBuf, VendoredBinError> {
     let local_bin = config_dir.join(bin_name);
     let marker = config_dir.join(format!(".{bin_name}-fingerprint"));
-    let _guard = EXTRACT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = EXTRACT_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     if local_bin.exists()
         && std::fs::read_to_string(&marker).ok().as_deref() == Some(fingerprint)
     {

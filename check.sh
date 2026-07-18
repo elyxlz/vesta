@@ -16,11 +16,16 @@ Suites:
   vestad         cargo clippy -p vestad -D warnings + cargo test -p vestad
   vestad-docker  vestad #[ignore] Docker tests (needs Docker + an agent image:
                  set VESTAD_AGENT_IMAGE or docker pull ghcr.io/elyxlz/vesta:latest)
-  web            eslint + prettier --check + tsc + vitest (web) and eslint + tsc (desktop)
-  guards         repo-wide ruff check + format, skills index, uv.lock, and
-                 dashboard-sync freshness + the vite base check
+  web            eslint + prettier --check + tsc + vitest (web), eslint + tsc + vitest (desktop),
+                 and Expo dependency validation + eslint + tsc + vitest (mobile)
+  mobile-ios     clean Expo prebuild + unsigned iOS simulator compile
+  mobile-android clean Expo prebuild + Android debug compile
+  guards         repo-wide ruff check + format, convention guards (lint escapes,
+                 comment length, import cycles), shellcheck, skills index, uv.lock,
+                 and dashboard-sync freshness + the vite base check
   whatsapp       gofmt + go vet + go build + go test for the whatsapp skill CLI
                  (builds whisper.cpp static libs to ~/.cache/vesta-whisper on first run)
+  telegram       gofmt + go vet + go build + go test for the telegram skill CLI
   integration    vestad integration tests (needs Docker)
   live           live agent e2e tests, incl. the upgrade gate (needs Docker + ~/.claude/.credentials.json; real Claude)
   upgrade        just the upgrade e2e: create an agent on the previous release, update in place
@@ -97,10 +102,14 @@ check_vestad_docker() {
 }
 
 check_web() {
+  python3 scripts/sync-design-tokens.py --check
   (
     cd apps
     if [ ! -d node_modules ]; then
       npm install
+    fi
+    if [ ! -d mobile/node_modules ]; then
+      npm --prefix mobile install
     fi
     npm -w @vesta/web run lint
     npm -w @vesta/web run format:check
@@ -108,6 +117,12 @@ check_web() {
     npm -w @vesta/web run test
     npm -w @vesta/desktop run lint
     npm -w @vesta/desktop run check
+    npm -w @vesta/desktop run test
+    (cd mobile && npx expo install --check)
+    npm --prefix mobile run lint
+    npm --prefix mobile run check
+    npm --prefix mobile run test
+    bash ../scripts/check-mobile-prebuild.sh
   )
 }
 
@@ -125,6 +140,17 @@ check_guards() {
   uv run --project agent/core ruff check . || failed=1
   uv run --project agent/core ruff format --check . || failed=1
 
+  # Convention guards: no lint/type-ignore escape hatches, no oversized comment
+  # blocks, no import cycles (see scripts/check-conventions.py).
+  uv run --project agent/core python scripts/check-conventions.py || failed=1
+
+  if command -v shellcheck >/dev/null; then
+    git ls-files '*.sh' | xargs shellcheck -S warning || failed=1
+  else
+    echo "error: shellcheck is not installed (apt install shellcheck / brew install shellcheck)" >&2
+    failed=1
+  fi
+
   uv run python agent/skills/generate-index.py
   git diff --exit-code agent/skills/index.json || {
     echo "error: agent/skills/index.json is stale — run 'uv run python agent/skills/generate-index.py' and commit the result" >&2
@@ -138,6 +164,11 @@ check_guards() {
     failed=1
   }
   rm -f agent/core/uv.lock.before
+
+  python3 scripts/sync-design-tokens.py --check || {
+    echo "error: generated design tokens are stale — run 'python3 scripts/sync-design-tokens.py' and commit the changes" >&2
+    failed=1
+  }
 
   bash scripts/sync-dashboard.sh
   git diff --quiet agent/skills/dashboard/app/ || {
@@ -173,6 +204,22 @@ check_whatsapp() {
   )
 }
 
+check_telegram() {
+  (
+    cd agent/skills/telegram/cli
+    . ./cgo-env.sh
+    UNFORMATTED=$(gofmt -l .)
+    if [ -n "$UNFORMATTED" ]; then
+      echo "error: unformatted Go files:" >&2
+      echo "$UNFORMATTED" >&2
+      exit 1
+    fi
+    go vet -tags fts5 ./...
+    go build -tags fts5 -o /tmp/telegram-check-build .
+    go test -tags fts5 ./...
+  )
+}
+
 check_integration() {
   (
     cd vestad
@@ -189,8 +236,16 @@ check_live() {
     # every test starts and self-organizes onto its pool's mutex, so the two agents run in
     # parallel instead of serializing on one. The upgrade e2e (tests/live/upgrade.rs) is part of
     # this suite, so the release gate covers it alongside the other live tests.
-    cargo test -p vestad --test live -- --test-threads=8
+    local test_args=()
+    if [ -n "${LIVE_TEST_FILTER:-}" ]; then
+      test_args+=("$LIVE_TEST_FILTER")
+    fi
+    cargo test -p vestad --test live "${test_args[@]}" -- --test-threads=8
   )
+}
+
+check_mobile_native() {
+  scripts/check-mobile-native.sh "$1"
 }
 
 check_upgrade() {
@@ -228,8 +283,11 @@ for suite in "$@"; do
     vestad) check_vestad ;;
     vestad-docker) check_vestad_docker ;;
     web) check_web ;;
+    mobile-ios) check_mobile_native ios ;;
+    mobile-android) check_mobile_native android ;;
     guards) check_guards ;;
     whatsapp) check_whatsapp ;;
+    telegram) check_telegram ;;
     integration) check_integration ;;
     live) check_live ;;
     all) check_guards && check_agent && check_cli && check_vestad && check_web ;;

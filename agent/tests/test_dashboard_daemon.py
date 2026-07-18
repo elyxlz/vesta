@@ -78,7 +78,7 @@ def _rig(tmp_path):
 
 
 def _run(script, args, env):
-    return subprocess.run([str(script), *args], env=env, capture_output=True, text=True)
+    return subprocess.run([str(script), *args], env=env, capture_output=True, text=True, check=False)
 
 
 def test_daemon_start_is_idempotent(tmp_path):
@@ -171,7 +171,7 @@ def test_setup_starts_daemon_and_appends_restart_line_once(tmp_path):
     restart_skill = pl.Path(env["HOME"]) / "agent/skills/restart/SKILL.md"
     restart_skill.write_text("# Restart\n\n## Daemons\n")
 
-    first = subprocess.run(["sh", str(setup)], env=env, capture_output=True, text=True)
+    first = subprocess.run(["sh", str(setup)], env=env, capture_output=True, text=True, check=False)
     assert first.returncode == 0, first.stdout + first.stderr
     assert json.loads(_run(DAEMON, ["status"], env).stdout)["running"] is True
 
@@ -179,6 +179,6 @@ def test_setup_starts_daemon_and_appends_restart_line_once(tmp_path):
     content_after_first = restart_skill.read_text()
     assert content_after_first.count(line) == 1
 
-    second = subprocess.run(["sh", str(setup)], env=env, capture_output=True, text=True)
+    second = subprocess.run(["sh", str(setup)], env=env, capture_output=True, text=True, check=False)
     assert second.returncode == 0, second.stdout + second.stderr
     assert restart_skill.read_text().count(line) == 1

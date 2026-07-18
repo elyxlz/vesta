@@ -15,7 +15,7 @@ export function loadOnboarding(): OnboardingProgress | null {
   if (!raw) return null;
   let parsed: { agentName?: unknown; personality?: unknown };
   try {
-    parsed = JSON.parse(raw);
+    parsed = JSON.parse(raw) as { agentName?: unknown; personality?: unknown };
   } catch {
     return null;
   }

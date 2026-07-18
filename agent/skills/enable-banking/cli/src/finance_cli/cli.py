@@ -19,11 +19,10 @@ Commands:
 import argparse
 import json
 import sys
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 
 from . import config as cfg
 from . import enablebanking as eb
-
 
 # ---------------------------------------------------------------------------
 # Date helpers
@@ -38,10 +37,7 @@ def _month_range(month_str: str) -> tuple[datetime, datetime]:
     """Return (start, end) datetimes for a YYYY-MM month string."""
     dt = datetime.strptime(month_str, "%Y-%m").replace(tzinfo=UTC)
     from_dt = dt
-    if dt.month == 12:
-        to_dt = dt.replace(year=dt.year + 1, month=1)
-    else:
-        to_dt = dt.replace(month=dt.month + 1)
+    to_dt = dt.replace(year=dt.year + 1, month=1) if dt.month == 12 else dt.replace(month=dt.month + 1)
     return from_dt, to_dt
 
 
@@ -55,10 +51,7 @@ def _resolve_date_range(args, default_days: int = 30) -> tuple[datetime, datetim
     else:
         from_dt = now - timedelta(days=default_days)
 
-    if hasattr(args, "to_date") and args.to_date:
-        to_dt = _parse_date(args.to_date)
-    else:
-        to_dt = now
+    to_dt = _parse_date(args.to_date) if hasattr(args, "to_date") and args.to_date else now
 
     return from_dt, to_dt
 
@@ -118,7 +111,7 @@ def cmd_config_set(args) -> dict:
     }
 
 
-def cmd_config_show(args) -> dict:
+def cmd_config_show(_args) -> dict:
     conf = cfg.load()
     return {
         "app_id": conf.get("app_id", ""),
@@ -130,13 +123,13 @@ def cmd_config_show(args) -> dict:
     }
 
 
-def cmd_auth_login(args) -> dict:
+def cmd_auth_login(_args) -> dict:
     conf = cfg.load()
     cfg.require_credentials(conf)
 
     print(json.dumps({"status": "initiating", "message": "Contacting Enable Banking..."}), flush=True)
 
-    auth_url, state = eb.initiate_auth(conf)
+    auth_url, _state = eb.initiate_auth(conf)
 
     print(
         json.dumps(
@@ -145,7 +138,9 @@ def cmd_auth_login(args) -> dict:
                 "message": "Open this URL in your browser to authorise bank access:",
                 "url": auth_url,
                 "waiting": f"Listening on https://localhost:{eb.CALLBACK_PORT}{eb.CALLBACK_PATH} for the callback...",
-                "fallback": "If the browser shows an SSL error, copy the full URL from the address bar and run: finance auth callback --url '<url>'",
+                "fallback": (
+                    "If the browser shows an SSL error, copy the full URL from the address bar and run: finance auth callback --url '<url>'"
+                ),
             }
         ),
         flush=True,
@@ -181,7 +176,7 @@ def cmd_auth_callback(args) -> dict:
     return _persist_session(conf, session_data)
 
 
-def cmd_auth_status(args) -> dict:
+def cmd_auth_status(_args) -> dict:
     conf = cfg.load()
     has_creds = bool(conf.get("app_id") and conf.get("key_path"))
     has_session = bool(conf.get("session_id"))
@@ -205,7 +200,7 @@ def cmd_auth_status(args) -> dict:
     return result
 
 
-def cmd_auth_revoke(args) -> dict:
+def cmd_auth_revoke(_args) -> dict:
     conf = cfg.load()
     cfg.require_session(conf)
 
@@ -218,13 +213,13 @@ def cmd_auth_revoke(args) -> dict:
     return {"status": "revoked", "message": "Session deleted and local credentials cleared."}
 
 
-def cmd_accounts(args) -> list:
+def cmd_accounts(_args) -> list:
     conf = cfg.load()
     cfg.require_session(conf)
     return conf.get("accounts", [])
 
 
-def cmd_balances(args) -> list:
+def cmd_balances(_args) -> list:
     conf = cfg.load()
     cfg.require_session(conf)
 

@@ -13,6 +13,14 @@ Enable Banking is a Finland-licensed AISP operating under EU/EEA PSD2. It does *
 
 For UK users, workable alternatives outside the EB API are per-bank developer APIs (e.g. Monzo, free for own-account use), manual CSV imports, or a UK-licensed AISP with personal-tier API access (as of May 2026 there is no straightforward free auto-aggregator for UK individuals).
 
+**That block is about WHERE the user consents from, not a permanent per-bank ban.** The same Revolut Bank UAB (LT) link that failed for a UK-based PSU in May 2026 succeeded in July 2026 for the same user consenting from the EU (`--aspsp-name Revolut --aspsp-country LT`, 4 accounts, 90-day consent). If a user's circumstances have changed, retry before repeating a documented limitation back at them: a "confirmed" failure can be circumstantial rather than structural.
+
+## A suggestive config key is not evidence of what the code reads
+
+`~/.finance/config.json` can accumulate vestigial keys from unrelated/abandoned setups (e.g. `environment: "sandbox"`, a `client_id`, a `redirect_uri`, stray `access_token`/`refresh_token` from a different provider's SDK). **This CLI reads none of them.** It authenticates with exactly three things: `app_id`, `key_path` (RS256 PEM), and `session_id`.
+
+Do not infer the liveness of a connection from a string in a config file. Read the code to see which keys the client actually consumes, or confirm against the API. Getting this backwards in either direction is costly, and calling REAL financial data "fake sandbox data" is just as damaging as trusting fake data: it can push someone to act on a balance you told them wasn't real. If you truly need to know whether data is live, the decisive test is a fresh user-consented session: if it returns the same values, they were always live.
+
 ## Transaction Watcher (daemon)
 
 The watcher (`finance-watcher` / `python -m finance_cli.transaction_watcher`) polls Enable Banking every 5 minutes and writes new transaction notifications to `~/agent/notifications/<time_ns>-finance-message.json`. It must be running at all times.
