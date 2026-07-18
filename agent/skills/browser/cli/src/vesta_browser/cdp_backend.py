@@ -157,7 +157,10 @@ class CdpBackend:
         try:
             attach = await self._cdp.send("Target.attachToTarget", {"targetId": target_id, "flatten": True})
         except BidiError as e:
-            raise BidiError("no such frame", e.message) from e
+            # Only a refusal means the target is gone. Relabelling a withheld response sends the daemon to re-derive and retry a wedged browser.
+            if e.code == "cdp error":
+                raise BidiError("no such frame", e.message) from e
+            raise
         session_id = attach["sessionId"]
         self._sessions[target_id] = session_id
         self._session_targets[session_id] = target_id
