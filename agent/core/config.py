@@ -441,12 +441,7 @@ def load_config() -> tuple[VestaConfig, list[str]]:
     `on-failure` restart policy retries a few times before giving up and leaving the agent down. So
     drop each offending env override and rebuild, reverting only that field; if nothing is droppable,
     fall back to a default claude provider.
-
-    Legacy convergence runs first (before the config is built), so the loaded config reflects the
-    migrated store rather than a stale default. This makes load_config the single owner of "what
-    config does the agent run on" — there is no separate boot step to sequence wrongly.
     """
-    migrate_notification_policy_file()
     issues: list[str] = []
     dropped: set[str] = set()
     while True:
@@ -479,63 +474,3 @@ def load_config() -> tuple[VestaConfig, list[str]]:
                     ),
                     issues,
                 )
-
-
-_LEGACY_POLICY_FILE = "notification_policy.json"
-
-
-def _default_as_rule(default: object) -> dict[str, pyd.JsonValue]:
-    """A legacy per-source default -> an equivalent catch-all rule. An empty type (the no-type bucket)
-    becomes a source-only rule; a concrete type is preserved."""
-    if not isinstance(default, dict):
-        return {}
-    data = tp.cast("dict[str, pyd.JsonValue]", default)
-    type_ = data["type"] if "type" in data else None
-    rule: dict[str, pyd.JsonValue] = {
-        "source": data["source"] if "source" in data else None,
-        "action": data["action"] if "action" in data else None,
-    }
-    if isinstance(type_, str) and type_:
-        rule["type"] = type_
-    return rule
-
-
-def migrate_notification_policy_file() -> None:
-    """Fold a legacy agent's notification_policy.json (a separate file: rules + per-source defaults)
-    into config.json's notification_rules, then delete the file. Per-source defaults were consulted
-    after all rules, so they become trailing catch-all rules and first-match order is preserved. Runs
-    once — the file is deleted after — and only seeds when the store has no rules yet.
-
-    LEGACY(remove-when: no fleet agent has notification_policy.json on disk): this function,
-    _default_as_rule, _LEGACY_POLICY_FILE, and the boot call site.
-    """
-    path = _resolve_agent_dir() / "data" / _LEGACY_POLICY_FILE
-    if not path.is_file():
-        return
-    try:
-        policy = json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError):
-        path.unlink(missing_ok=True)
-        return
-    sections = tp.cast("dict[str, pyd.JsonValue]", policy) if isinstance(policy, dict) else {}
-
-    def _as_list(key: str) -> list[pyd.JsonValue]:
-        value = sections[key] if key in sections else None
-        return value if isinstance(value, list) else []
-
-    migrated: list[pyd.JsonValue] = []
-    rules_raw, defaults_raw = _as_list("rules"), _as_list("defaults")
-    for item in [*rules_raw, *(_default_as_rule(d) for d in defaults_raw)]:
-        try:
-            rule = NotificationInterruptRule.model_validate(item)
-        except pyd.ValidationError:
-            continue
-        if not rule.id:
-            rule.id = uuid.uuid4().hex
-        migrated.append(rule.model_dump())
-    store = read_config_store()
-    if migrated and "notification_rules" not in store:
-        store["notification_rules"] = migrated
-        _write_config_store(store)
-        logger.startup(f"migrated {len(migrated)} notification rule(s) from notification_policy.json into config")
-    path.unlink(missing_ok=True)

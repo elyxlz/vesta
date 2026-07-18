@@ -109,7 +109,9 @@ def _window_read_through(messages: list[dict], new_check_time: datetime) -> date
         received = datetime.fromisoformat(newest["receivedDateTime"])
     except ValueError:
         return None
-    return received if received.tzinfo else None
+    # Park a second back so a same-second tie split off the truncated window is re-scanned next cycle,
+    # not lost to strict `gt`; the boundary second re-notifies (no id-level dedup), a bounded dup over a drop.
+    return received - timedelta(seconds=1) if received.tzinfo else None
 
 
 class EmailAddress(TypedDict):

@@ -294,7 +294,8 @@ def test_a_window_over_the_drain_limit_parks_the_watermark_at_the_last_message_r
 
     drained = mailbox[: monitor._MAX_WINDOW_MESSAGES]
     assert [call["sender"] for call in calls] == [call["from"]["emailAddress"]["name"] for call in drained]
-    assert _watermark(ctx, "mail:me@x.com") == datetime.fromisoformat(drained[-1]["receivedDateTime"])
+    # Parked one second before the last message read, so the boundary second is re-scanned next cycle.
+    assert _watermark(ctx, "mail:me@x.com") == datetime.fromisoformat(drained[-1]["receivedDateTime"]) - timedelta(seconds=1)
     assert _watermark(ctx, "mail:me@x.com") < datetime.fromisoformat(mailbox[monitor._MAX_WINDOW_MESSAGES]["receivedDateTime"])
 
 
@@ -311,10 +312,36 @@ def test_the_rest_of_an_oversized_window_is_drained_by_the_following_cycle(tmp_p
     monkeypatch.setattr(monitor.owa_rest, "list_messages_since", _mailbox(*mailbox))
     monitor.run(ctx)
 
-    assert [call["sender"] for call in calls] == [email["from"]["emailAddress"]["name"] for email in mailbox]
+    delivered = [call["sender"] for call in calls]
+    boundary = mailbox[monitor._MAX_WINDOW_MESSAGES - 1]["from"]["emailAddress"]["name"]
+    # Every message is delivered; the truncation boundary's second is re-scanned, so it repeats once.
+    assert set(delivered) == {email["from"]["emailAddress"]["name"] for email in mailbox}
+    assert delivered.count(boundary) == 2
 
 
-def test_graph_mail_pages_a_bounded_window_and_parks_at_the_last_message_read(tmp_path, monkeypatch):
+def test_a_boundary_second_tie_in_a_truncated_window_is_not_dropped(tmp_path, monkeypatch):
+    """A 501st message sharing the 500th's second is split out of the truncated window. Strict `gt` at
+    the 500th's timestamp would drop it forever; parking one second early re-scans the tie into the next
+    cycle. Discriminates against the old park-at-newest behavior, under which "Tie" never arrives."""
+    calls = []
+    monkeypatch.setattr(monitor.notifications, "write_notification", lambda *a, **k: calls.append(k))
+    _single_owa_account(monkeypatch)
+
+    now = datetime.now(UTC)
+    limit = monitor._MAX_WINDOW_MESSAGES
+    window = _oversized_window(now, limit)
+    tied = _email("tie@x.com", "Tie", window[-1]["receivedDateTime"])  # shares the 500th's second
+    mailbox = [*window, tied]
+
+    ctx = _run_ctx(tmp_path, cycles=2)
+    ctx.monitor_state_file.write_text((now - timedelta(seconds=limit + 1)).isoformat())
+    monkeypatch.setattr(monitor.owa_rest, "list_messages_since", _mailbox(*mailbox))
+    monitor.run(ctx)
+
+    assert "Tie" in [call["sender"] for call in calls]
+
+
+def test_graph_mail_pages_a_bounded_window_and_parks_before_the_last_message_read(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(monitor.notifications, "write_notification", lambda *a, **k: calls.append(k))
     monkeypatch.setattr(monitor.folders, "resolve_folder_id", lambda *a, **k: "inbox-id")
@@ -336,4 +363,4 @@ def test_graph_mail_pages_a_bounded_window_and_parks_at_the_last_message_read(tm
     assert asked["params"]["$orderby"] == "receivedDateTime asc"
     assert asked["limit"] == monitor._MAX_WINDOW_MESSAGES
     assert len(calls) == monitor._MAX_WINDOW_MESSAGES
-    assert read_through == datetime.fromisoformat(mailbox[-1]["receivedDateTime"])
+    assert read_through == datetime.fromisoformat(mailbox[-1]["receivedDateTime"]) - timedelta(seconds=1)
