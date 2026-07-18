@@ -631,6 +631,36 @@ def test_poll_teams_reads_null_body_content_as_empty(tmp_path, monkeypatch):
     assert notif["preview"] == ""
 
 
+def test_poll_teams_topic_fallback_skips_null_member_names(tmp_path, monkeypatch):
+    """A topic-less chat falls back to its member names, and Graph declares conversationMember
+    displayName nullable (removed/federated/anonymous members). A null name must be dropped from the
+    join, not crash it: reading the key unguarded would hand `None` to `str.join`."""
+    from datetime import UTC, datetime
+
+    from microsoft_cli import monitor
+
+    chats = [
+        {
+            "id": "chat-1",
+            "members": [{"displayName": None}, {"displayName": "Alice"}],
+            "lastMessagePreview": {
+                "createdDateTime": "2026-07-10T12:00:00Z",
+                "from": {"user": {"id": "other-guid", "displayName": "Alice"}},
+                "body": {"content": "<p>lunch?</p>"},
+            },
+        }
+    ]
+    ctx = _teams_ctx(tmp_path, monkeypatch, chats)
+    last_dt = datetime(2026, 7, 10, 11, 0, tzinfo=UTC)
+    monitor._poll_teams_account(ctx, Config(data_dir=tmp_path), "me@x.com", last_dt, False)
+
+    files = list((tmp_path / "notif").glob("*.json"))
+    assert len(files) == 1
+    notif = json.loads(files[0].read_text())
+    assert notif["topic"] == "Alice"
+    assert "lunch?" in notif["preview"]
+
+
 # ---------------------------------------------------------------------------
 # Monitor: Teams CHANNEL message notification emit + graceful degrade
 # ---------------------------------------------------------------------------
