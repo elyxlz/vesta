@@ -18,6 +18,9 @@ _CATCHUP_GAP_SECONDS = 90
 _FRESH_START_LOOKBACK = timedelta(hours=1)
 # Bounds how much history a long-dead unit re-reads once it heals, so recovery cannot flood the user.
 _MAX_CATCHUP = timedelta(days=7)
+# Bounds a cycle's drain per folder in volume as _MAX_CATCHUP bounds it in time; later cycles drain the rest.
+_MAIL_PAGE_SIZE = 50
+_MAX_WINDOW_MESSAGES = 500
 
 
 # Zero-width and bidi / formatting characters that marketing emails use to pad previews with
@@ -67,16 +70,46 @@ def _write_state(path: Path, state: MonitorState) -> None:
     tmp.rename(path)
 
 
-def _poll_unit(ctx: MicrosoftContext, state: MonitorState, unit: str, new_check_time: datetime, poll: Callable[[datetime, bool], bool]) -> None:
-    """Advance the unit's watermark only across a window the poll actually read, so a failed poll
-    re-reads that window next cycle instead of skipping the mail it never fetched."""
+def _poll_unit(
+    ctx: MicrosoftContext, state: MonitorState, unit: str, new_check_time: datetime, poll: Callable[[datetime, bool], datetime | None]
+) -> None:
+    """Advance the unit's watermark only across the window the poll reports reading through, so a
+    failed or part-drained poll re-reads the rest next cycle instead of skipping what it never read."""
     units = state["units"]
     last_dt = max(datetime.fromisoformat(units[unit] if unit in units else state["last_cycle"]), new_check_time - _MAX_CATCHUP)
     gap_seconds = (new_check_time - last_dt).total_seconds()
     catching_up = gap_seconds > _CATCHUP_GAP_SECONDS
     if catching_up:
         ctx.monitor_logger.info("Catching up %s from %s, %.0fs behind", unit, last_dt.isoformat(), gap_seconds)
-    units[unit] = new_check_time.isoformat() if poll(last_dt, catching_up) else last_dt.isoformat()
+    read_through = poll(last_dt, catching_up)
+    units[unit] = last_dt.isoformat() if read_through is None else read_through.isoformat()
+
+
+def _whole_window(new_check_time: datetime, poll: Callable[[datetime, bool], bool]) -> Callable[[datetime, bool], datetime | None]:
+    """Adapt a poll that reads its window in one shot: it read through the whole cycle, or not at all."""
+    return lambda last_dt, catching_up: new_check_time if poll(last_dt, catching_up) else None
+
+
+def _earliest(left: datetime | None, right: datetime | None) -> datetime | None:
+    """A unit read through only as far as its least-drained folder; a folder it could not read wins."""
+    if left is None or right is None:
+        return None
+    return min(left, right)
+
+
+def _window_read_through(messages: list[dict], new_check_time: datetime) -> datetime | None:
+    """How far a fetch honestly read its window: a full-limit response holds more than one cycle drains, so it
+    read only as far as the last message fetched. An unusable timestamp reports the window unread, not drained."""
+    if len(messages) < _MAX_WINDOW_MESSAGES:
+        return new_check_time
+    newest = messages[-1]
+    if "receivedDateTime" not in newest:
+        return None
+    try:
+        received = datetime.fromisoformat(newest["receivedDateTime"])
+    except ValueError:
+        return None
+    return received if received.tzinfo else None
 
 
 class EmailAddress(TypedDict):
@@ -222,33 +255,32 @@ def _poll_owa_rest_mail(
     config: Config,
     account_email: str,
     watch_folders: list[str],
+    new_check_time: datetime,
     last_dt: datetime,
     catching_up: bool,
-) -> bool:
-    """Poll a locked-tenant OWA REST account's watched folders for new mail, True when every folder
-    was read. Fetching runs through load_token, so this also keeps the token warm in the background."""
+) -> datetime | None:
+    """Poll a locked-tenant OWA REST account's watched folders for new mail, returning how far its
+    mail was read. Fetching runs through load_token, so this also keeps the token warm."""
     logger = ctx.monitor_logger
-    polled = True
+    read_through: datetime | None = new_check_time
     for folder_token in watch_folders:
         try:
-            messages = owa_rest.list_messages(ctx.http_client, account_email, config, folder=folder_token, limit=50)
-            new_messages = []
-            for message in messages:
-                if "receivedDateTime" not in message:
-                    continue
-                try:
-                    received = datetime.fromisoformat(message["receivedDateTime"])
-                except ValueError:
-                    continue
-                if received > last_dt:
-                    new_messages.append(message)
-            logger.info("OWA REST: %d new emails for %s in %s", len(new_messages), account_email, folder_token)
-            for message in reversed(new_messages):  # oldest first, matching arrival order
+            messages = owa_rest.list_messages_since(
+                ctx.http_client,
+                account_email,
+                config,
+                folder=folder_token,
+                since_utc=last_dt.isoformat().replace("+00:00", "Z"),
+                limit=_MAX_WINDOW_MESSAGES,
+            )
+            logger.info("OWA REST: %d new emails for %s in %s", len(messages), account_email, folder_token)
+            for message in messages:  # oldest first, matching arrival order
                 _emit_email_notification(ctx, message, account_email, folder_token, catching_up)
+            read_through = _earliest(read_through, _window_read_through(messages, new_check_time))
         except Exception as e:
             logger.error("Error fetching OWA REST emails for %s folder %s: %s", account_email, folder_token, e)
-            polled = False
-    return polled
+            read_through = None
+    return read_through
 
 
 def _poll_owa_rest_calendar(
@@ -434,42 +466,40 @@ def _refresh_captured_tokens(ctx: MicrosoftContext, config: Config, gave_up: set
             notifications.write_notification(ctx.notif_dir, "auth_needed", interrupt=False, account=account, message=str(e))
 
 
-def _poll_graph_mail(ctx: MicrosoftContext, acc, last_dt: datetime, catching_up: bool) -> bool:
-    """Poll one MSAL (Graph) account's watched folders for new mail, True when every folder was read."""
+def _poll_graph_mail(ctx: MicrosoftContext, acc, new_check_time: datetime, last_dt: datetime, catching_up: bool) -> datetime | None:
+    """Poll one MSAL (Graph) account's watched folders for new mail, returning how far its mail was read."""
     logger = ctx.monitor_logger
     conn = graph.GraphConn(ctx.http_client, ctx.cache_file, ctx.scopes, ctx.base_url)
     watch_folders = notify.get_notify_folders(ctx.notify_file, acc.username) if ctx.notify_file else ["inbox"]
-    polled = True
+    read_through: datetime | None = new_check_time
     for folder_token in watch_folders:
         try:
             folder_id = folders.resolve_folder_id(
                 ctx.http_client, ctx.cache_file, ctx.scopes, ctx.base_url, ctx.folders, acc.account_id, folder_token
             )
-            result = graph.request(
-                conn,
-                "GET",
-                f"/me/mailFolders/{folder_id}/messages",
-                acc.account_id,
-                params={
-                    "$filter": f"receivedDateTime gt {last_dt.isoformat()}",
-                    "$select": "subject,from,bodyPreview,receivedDateTime",
-                    "$top": 50,
-                },
+            emails = list(
+                graph.request_paginated(
+                    conn,
+                    f"/me/mailFolders/{folder_id}/messages",
+                    acc.account_id,
+                    params={
+                        "$filter": f"receivedDateTime gt {last_dt.isoformat()}",
+                        "$orderby": "receivedDateTime asc",
+                        "$select": "subject,from,bodyPreview,receivedDateTime",
+                        "$top": _MAIL_PAGE_SIZE,
+                    },
+                    limit=_MAX_WINDOW_MESSAGES,
+                )
             )
-
-            if not result or "value" not in result:
-                logger.warning("Unexpected email API response: %s", result)
-                polled = False
-                continue
-            emails = result["value"]
             logger.info("Found %d new emails for %s in %s", len(emails), acc.username, folder_token)
 
             for email in emails:
                 _emit_email_notification(ctx, email, acc.username, folder_token, catching_up)
+            read_through = _earliest(read_through, _window_read_through(emails, new_check_time))
         except Exception as e:
             logger.error("Error fetching emails for %s folder %s: %s", acc.username, folder_token, e)
-            polled = False
-    return polled
+            read_through = None
+    return read_through
 
 
 def _poll_graph_calendar(ctx: MicrosoftContext, acc, new_check_time: datetime, last_dt: datetime, catching_up: bool) -> bool:
@@ -517,8 +547,14 @@ def run(ctx: MicrosoftContext):
             msal_accounts = auth.list_accounts(ctx.cache_file)
             for acc in msal_accounts:
                 logger.info("Checking account: %s", acc.username)
-                _poll_unit(ctx, state, f"mail:{acc.username}", new_check_time, partial(_poll_graph_mail, ctx, acc))
-                _poll_unit(ctx, state, f"calendar:{acc.username}", new_check_time, partial(_poll_graph_calendar, ctx, acc, new_check_time))
+                _poll_unit(ctx, state, f"mail:{acc.username}", new_check_time, partial(_poll_graph_mail, ctx, acc, new_check_time))
+                _poll_unit(
+                    ctx,
+                    state,
+                    f"calendar:{acc.username}",
+                    new_check_time,
+                    _whole_window(new_check_time, partial(_poll_graph_calendar, ctx, acc, new_check_time)),
+                )
 
             # OWA REST accounts (locked tenants) are not in the MSAL cache, so poll them separately
             # for anything Graph did not already cover.
@@ -529,22 +565,36 @@ def run(ctx: MicrosoftContext):
                 logger.info("Checking OWA REST account: %s", account_email)
                 watch_folders = notify.get_notify_folders(ctx.notify_file, account_email) if ctx.notify_file else ["inbox"]
                 _poll_unit(
-                    ctx, state, f"mail:{account_email}", new_check_time, partial(_poll_owa_rest_mail, ctx, config, account_email, watch_folders)
+                    ctx,
+                    state,
+                    f"mail:{account_email}",
+                    new_check_time,
+                    partial(_poll_owa_rest_mail, ctx, config, account_email, watch_folders, new_check_time),
                 )
                 _poll_unit(
                     ctx,
                     state,
                     f"calendar:{account_email}",
                     new_check_time,
-                    partial(_poll_owa_rest_calendar, ctx, config, account_email, new_check_time),
+                    _whole_window(new_check_time, partial(_poll_owa_rest_calendar, ctx, config, account_email, new_check_time)),
                 )
 
             # Teams chats: every account that has authorized Teams (device or captured token).
             for account_email in teams.list_accounts(config):
                 logger.info("Checking Teams account: %s", account_email)
-                _poll_unit(ctx, state, f"teams:{account_email}", new_check_time, partial(_poll_teams_account, ctx, config, account_email))
                 _poll_unit(
-                    ctx, state, f"channels:{account_email}", new_check_time, partial(_poll_teams_channels_account, ctx, config, account_email)
+                    ctx,
+                    state,
+                    f"teams:{account_email}",
+                    new_check_time,
+                    _whole_window(new_check_time, partial(_poll_teams_account, ctx, config, account_email)),
+                )
+                _poll_unit(
+                    ctx,
+                    state,
+                    f"channels:{account_email}",
+                    new_check_time,
+                    _whole_window(new_check_time, partial(_poll_teams_channels_account, ctx, config, account_email)),
                 )
 
             # Keep browser-captured tokens fresh so the user's one sign-in lasts the SSO session.
