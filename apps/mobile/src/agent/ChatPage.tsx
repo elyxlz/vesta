@@ -52,6 +52,13 @@ import { fontNames } from "@/theme/typography";
 import { radii } from "@/theme/layout";
 import { useLiveVoice, useSpeechPlayer } from "@/voice/useLiveVoice";
 import {
+  clampComposerInputHeight,
+  COMPOSER_BASE_HEIGHT,
+  COMPOSER_INPUT_MAX_HEIGHT,
+  COMPOSER_INPUT_MIN_HEIGHT,
+  COMPOSER_SURFACE_PADDING,
+} from "@/agent/chat-composer-model";
+import {
   createInvertedChatRows,
   type ChatRow,
 } from "@/agent/chat-list-model";
@@ -62,8 +69,8 @@ import {
 } from "@/agent/message-actions";
 import { useInvertedChatScroll } from "@/agent/use-inverted-chat-scroll";
 
-const COMPOSER_BASE_HEIGHT = 52;
 const USES_NATIVE_BUBBLE_SHAPE = process.env.EXPO_OS === "ios";
+const CHAT_COMPOSER_GAP = 12;
 
 const MESSAGE_ACTIONS: Record<MessageActionId, MessageMenuAction> = {
   reply: {
@@ -829,6 +836,7 @@ export default function ChatPage() {
   const { colors } = preferences;
   const showToolCalls = preferences.showToolCallsForAgent(name);
   const [input, setInput] = useState("");
+  const [inputHeight, setInputHeight] = useState(COMPOSER_INPUT_MIN_HEIGHT);
   const [replyTarget, setReplyTarget] = useState<ReplyTarget | null>(null);
   const [transcript, setTranscript] = useState("");
   const [voiceError, setVoiceError] = useState("");
@@ -892,6 +900,8 @@ export default function ChatPage() {
     onError: setVoiceError,
   });
   const canSend = socket.connected && agent?.status === "alive";
+  const composerContentInset =
+    Math.max(insets.bottom, 8) + COMPOSER_BASE_HEIGHT + CHAT_COMPOSER_GAP;
 
   const focusComposer = useCallback(() => {
     setTimeout(() => inputRef.current?.focus(), 250);
@@ -960,6 +970,7 @@ export default function ChatPage() {
       : text;
     if (socket.send(outgoing)) {
       setInput("");
+      setInputHeight(COMPOSER_INPUT_MIN_HEIGHT);
       setReplyTarget(null);
     }
   };
@@ -987,11 +998,13 @@ export default function ChatPage() {
         contentContainerStyle={[
           styles.listContent,
           {
+            paddingTop: composerContentInset,
             paddingBottom: insets.top + 104,
             flexGrow: rows.length === 0 ? 1 : undefined,
           },
         ]}
         keyboardShouldPersistTaps="handled"
+        scrollEnabled={socket.historyLoaded || rows.length > 0}
         renderScrollComponent={renderScrollComponent}
         onScroll={handleScroll}
         scrollEventThrottle={16}
@@ -1019,7 +1032,7 @@ export default function ChatPage() {
           style={[
             styles.loadingOverlay,
             {
-              paddingBottom: Math.max(insets.bottom, 8) + 72,
+              paddingBottom: composerContentInset,
             },
           ]}
         >
@@ -1059,22 +1072,33 @@ export default function ChatPage() {
                 <Pressable
                   accessibilityLabel={voice.active ? "Stop listening" : "Start voice input"}
                   disabled={!canSend}
+                  hitSlop={6}
                   onPress={toggleVoice}
                   style={[
                     styles.roundButton,
                     { backgroundColor: voice.active ? colors.danger : "transparent", opacity: canSend ? 1 : 0.4 },
                   ]}
                 >
-                  <Ionicons name={voice.active ? "stop" : "mic"} size={18} color={voice.active ? "white" : colors.text} />
+                  <Ionicons name={voice.active ? "stop" : "mic"} size={16} color={voice.active ? "white" : colors.text} />
                 </Pressable>
               ) : null}
               <TextInput
                 ref={inputRef}
-                style={[styles.input, { color: colors.text }]}
+                style={[
+                  styles.input,
+                  { color: colors.text, height: inputHeight },
+                ]}
                 placeholder={canSend ? `Message ${name}` : "Waiting for agent…"}
                 placeholderTextColor={colors.tertiaryText}
                 value={input}
                 onChangeText={setInput}
+                onContentSizeChange={(event) =>
+                  setInputHeight(
+                    clampComposerInputHeight(
+                      event.nativeEvent.contentSize.height,
+                    ),
+                  )
+                }
                 multiline
                 maxLength={20_000}
                 editable={canSend}
@@ -1083,13 +1107,14 @@ export default function ChatPage() {
               <Pressable
                 accessibilityLabel="Send message"
                 disabled={!canSend || !input.trim()}
+                hitSlop={6}
                 onPress={send}
                 style={[
                   styles.roundButton,
                   { backgroundColor: colors.accent, opacity: canSend && input.trim() ? 1 : 0.38 },
                 ]}
               >
-                <Ionicons name="arrow-up" size={19} color={colors.accentText} />
+                <Ionicons name="arrow-up" size={17} color={colors.accentText} />
               </Pressable>
             </View>
           </ComposerSurface>
@@ -1101,7 +1126,7 @@ export default function ChatPage() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  listContent: { paddingHorizontal: 12, paddingTop: 104 },
+  listContent: { paddingHorizontal: 12 },
   loadingOverlay: {
     position: "absolute",
     zIndex: 1,
@@ -1189,7 +1214,11 @@ const styles = StyleSheet.create({
   scrollToBottomButton: { width: 34, height: 34, borderRadius: 17, overflow: "hidden" },
   scrollToBottomPressable: { flex: 1, alignItems: "center", justifyContent: "center" },
   scrollToBottomFallback: { borderWidth: StyleSheet.hairlineWidth },
-  composerSurface: { padding: 5, borderRadius: 26, overflow: "hidden" },
+  composerSurface: {
+    padding: COMPOSER_SURFACE_PADDING,
+    borderRadius: 22,
+    overflow: "hidden",
+  },
   composerRow: { flexDirection: "row", alignItems: "flex-end", gap: 4 },
   composerFallback: { borderWidth: StyleSheet.hairlineWidth },
   replyPreview: { flexDirection: "row", alignItems: "center", gap: 8, margin: 3, marginBottom: 6, paddingLeft: 9, paddingRight: 3, paddingVertical: 7, borderRadius: 16, borderCurve: "continuous" },
@@ -1198,6 +1227,21 @@ const styles = StyleSheet.create({
   replyLabel: { fontSize: 12, fontWeight: "600" },
   replyText: { fontSize: 13, lineHeight: 17 },
   replyClose: { width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center" },
-  input: { flex: 1, minHeight: 42, maxHeight: 180, paddingHorizontal: 10, paddingTop: 11, paddingBottom: 11, fontSize: 16, lineHeight: 20 },
-  roundButton: { width: 38, height: 38, marginBottom: 2, borderRadius: 19, alignItems: "center", justifyContent: "center" },
+  input: {
+    flex: 1,
+    maxHeight: COMPOSER_INPUT_MAX_HEIGHT,
+    paddingHorizontal: 9,
+    paddingTop: 8,
+    paddingBottom: 8,
+    fontSize: 15,
+    lineHeight: 19,
+  },
+  roundButton: {
+    width: 32,
+    height: 32,
+    marginBottom: 2,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
 });

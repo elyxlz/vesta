@@ -22,6 +22,7 @@ export interface DateChatRow {
 
 export type ChatRow = EventChatRow | TypingChatRow | DateChatRow;
 type ChatSide = "user" | "agent";
+const BUBBLE_GROUP_TIME_GAP_MS = 5 * 60 * 1000;
 
 function eventChatSide(event: VestaEvent): ChatSide | null {
   if (event.type === "user") return "user";
@@ -40,6 +41,12 @@ function calendarDay(timestamp: string | undefined): string | null {
   ].join("-");
 }
 
+function timestampMillis(timestamp: string | undefined): number | null {
+  if (!timestamp) return null;
+  const value = new Date(timestamp).getTime();
+  return Number.isNaN(value) ? null : value;
+}
+
 function eventRows(
   events: VestaEvent[],
   showToolCalls: boolean,
@@ -56,15 +63,27 @@ function eventRows(
   );
   const seen = new Map<string, number>();
   let previousSide: ChatSide | null = null;
+  let previousTimestamp: number | null = null;
   const rows = visible.map((event) => {
     const base = `${event.ts ?? "live"}-${event.type}`;
     const count = seen.get(base) ?? 0;
     seen.set(base, count + 1);
     const side = eventChatSide(event);
-    const startsNewBubbleGroup = Boolean(
-      side && previousSide && side !== previousSide,
+    const timestamp = timestampMillis(event.ts);
+    const exceedsTimeGap = Boolean(
+      side &&
+      side === previousSide &&
+      timestamp !== null &&
+      previousTimestamp !== null &&
+      timestamp - previousTimestamp >= BUBBLE_GROUP_TIME_GAP_MS,
     );
-    if (side) previousSide = side;
+    const startsNewBubbleGroup = Boolean(
+      side && previousSide && (side !== previousSide || exceedsTimeGap),
+    );
+    if (side) {
+      previousSide = side;
+      previousTimestamp = timestamp;
+    }
     return {
       kind: "event" as const,
       key: count === 0 ? base : `${base}#${count}`,
@@ -76,6 +95,7 @@ function eventRows(
 
   let nextBubbleType: "user" | "chat" | null = null;
   let nextBubbleDay: string | null = null;
+  let nextBubbleStartsNewGroup = false;
   for (let index = rows.length - 1; index >= 0; index -= 1) {
     const row = rows[index];
     if (!row) continue;
@@ -88,9 +108,11 @@ function eventRows(
     row.endsBubbleGroup =
       nextBubbleType === null ||
       bubbleType !== nextBubbleType ||
-      bubbleDay !== nextBubbleDay;
+      bubbleDay !== nextBubbleDay ||
+      nextBubbleStartsNewGroup;
     nextBubbleType = bubbleType;
     nextBubbleDay = bubbleDay;
+    nextBubbleStartsNewGroup = row.startsNewBubbleGroup;
   }
   return rows;
 }

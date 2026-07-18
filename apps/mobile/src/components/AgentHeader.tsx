@@ -34,6 +34,7 @@ export function AgentStackHeader({ hidden = false }: { hidden?: boolean }) {
           headerStyle: { backgroundColor: "transparent" },
           headerShadowVisible: false,
           headerBackButtonDisplayMode: "minimal",
+          headerTitleAlign: "center",
           headerLeft: IS_IOS
             ? undefined
             : () => (
@@ -86,7 +87,36 @@ export function AgentHeaderTitle({
   borderColor: string;
   onPress: () => void;
 }) {
-  const content = (
+  const nameContent = (
+    <View style={styles.nameContent}>
+      <Text family="heading" numberOfLines={1} style={[styles.name, { color }]}>
+        {name}
+      </Text>
+    </View>
+  );
+
+  const namePill = isGlassEffectAPIAvailable() ? (
+    <GlassView
+      glassEffectStyle="regular"
+      colorScheme={dark ? "dark" : "light"}
+      isInteractive
+      style={styles.namePill}
+    >
+      {nameContent}
+    </GlassView>
+  ) : (
+    <View
+      style={[
+        styles.namePill,
+        styles.titleFallback,
+        { backgroundColor: fallbackColor, borderColor },
+      ]}
+    >
+      {nameContent}
+    </View>
+  );
+
+  return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel="Agent settings"
@@ -101,37 +131,10 @@ export function AgentHeaderTitle({
         status={status}
         activityState={activityState}
       >
-        <AgentOrb status={status} activityState={activityState} size={24} />
+        <AgentOrb status={status} activityState={activityState} size={28} />
       </BootTransitionTarget>
-      <Text family="heading" numberOfLines={1} style={[styles.name, { color }]}>
-        {name}
-      </Text>
+      {namePill}
     </Pressable>
-  );
-
-  if (isGlassEffectAPIAvailable()) {
-    return (
-      <GlassView
-        glassEffectStyle="regular"
-        colorScheme={dark ? "dark" : "light"}
-        isInteractive
-        style={styles.titlePill}
-      >
-        {content}
-      </GlassView>
-    );
-  }
-
-  return (
-    <View
-      style={[
-        styles.titlePill,
-        styles.titleFallback,
-        { backgroundColor: fallbackColor, borderColor },
-      ]}
-    >
-      {content}
-    </View>
   );
 }
 
@@ -156,8 +159,8 @@ function AgentBackHeaderButton({
 }
 
 const styles = StyleSheet.create({
-  titlePill: {
-    maxWidth: 220,
+  namePill: {
+    maxWidth: 190,
     borderRadius: radii.pill,
     overflow: "hidden",
   },
@@ -165,15 +168,25 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
   },
   titleContent: {
-    minHeight: 42,
-    flexDirection: "row",
+    height: 50,
+    maxWidth: 220,
     alignItems: "center",
     justifyContent: "center",
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    gap: 2,
+    paddingHorizontal: 8,
   },
-  name: { flexShrink: 1, fontSize: 18, fontWeight: "500" },
+  nameContent: {
+    minHeight: 20,
+    justifyContent: "center",
+    paddingHorizontal: 10,
+    paddingVertical: 2,
+  },
+  name: {
+    flexShrink: 1,
+    fontSize: 13,
+    lineHeight: 16,
+    fontWeight: "500",
+  },
   button: {
     width: 42,
     height: 42,
