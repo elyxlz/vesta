@@ -109,6 +109,9 @@ enum Command {
         /// Agent name (prompted interactively if omitted)
         #[arg(long)]
         name: Option<String>,
+        /// Run the Docker image's baked-in core instead of vestad-managed core code
+        #[arg(long, hide = true)]
+        no_manage_core_code: bool,
         #[command(flatten)]
         openrouter: OpenRouterFlags,
     },
@@ -1115,7 +1118,7 @@ fn run(cli: Cli) {
             // 1. Create an empty agent. Vestad no longer accepts credentials or timezone at
             //    create time — the agent owns its own auth state and config store. Timezone rides
             //    the provider provisioning call below.
-            let created_name = match c.create_agent(&name) {
+            let created_name = match c.create_agent(&name, true) {
                 Ok(n) => { eprintln!("created agent '{n}'"); n }
                 Err(e) if e.contains("already exists") && yes => {
                     eprintln!("agent '{name}' already exists, continuing...");
@@ -1186,7 +1189,7 @@ fn run(cli: Cli) {
 
         }
 
-        Command::Create { name, openrouter } => {
+        Command::Create { name, no_manage_core_code, openrouter } => {
             let c = get_client(host_ref, token_ref);
             let name = name.map_or_else(prompt_name, |name| name.trim().to_string());
             let openrouter = build_openrouter_args(openrouter);
@@ -1198,7 +1201,7 @@ fn run(cli: Cli) {
                     .or_die();
             }
 
-            let name = c.create_agent(&name)
+            let name = c.create_agent(&name, !no_manage_core_code)
                 .or_die();
 
             // If --openrouter-key was provided, finish provisioning the agent immediately, carrying

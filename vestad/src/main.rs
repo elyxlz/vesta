@@ -856,6 +856,7 @@ fn main() {
                                 image: loaded_image,
                                 port,
                                 agent_name: &name,
+                                manage_core_code: true,
                                 user_mounts: &[],
                             },
                         )

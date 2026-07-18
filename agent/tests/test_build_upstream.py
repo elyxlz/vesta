@@ -44,7 +44,7 @@ def test_first_build_creates_repo_tag_and_bundle(tmp_path):
     assert "agent/skills/tasks/SKILL.md" in files
     assert "agent/MEMORY.md" in files
     assert ".gitignore" in files.splitlines()  # script-owned root scoping file
-    assert "/core/\n" in _git(["show", f"{BRANCH}:agent/.gitignore"], repo)  # scopes the mount out of the tree
+    assert "/agent/core/\n" in _git(["show", f"{BRANCH}:.gitignore"], repo)  # root ignore scopes the mount out
     assert ".vestad-fingerprint" not in files and "agent/.vestad-fingerprint" not in files
     assert "agent-v0.1.170" in _git(["tag"], repo)
     assert (ws / "workspace.bundle").is_file()

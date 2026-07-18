@@ -321,6 +321,9 @@ pub async fn restore_backup(
             image: &image,
             port,
             agent_name: name,
+            // Restore always mounts vestad-managed core, even for a box that was unmanaged;
+            // acceptable for a non-first-class escape hatch.
+            manage_core_code: true,
             user_mounts,
         },
     )

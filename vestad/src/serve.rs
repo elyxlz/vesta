@@ -444,6 +444,9 @@ async fn list_agents_handler(State(state): State<SharedState>) -> impl IntoRespo
 #[derive(Deserialize)]
 struct CreateBody {
     name: Option<String>,
+    /// Escape hatch (default true): when false, skip the vestad-managed core mount so the
+    /// box runs the image's baked core and the dev owns it. Fixed at create time.
+    manage_agent_code: Option<bool>,
 }
 
 async fn create_agent_handler(
@@ -455,7 +458,8 @@ async fn create_agent_handler(
     if name.is_empty() {
         return Err(err_response(StatusCode::BAD_REQUEST, "invalid agent name"));
     }
-    tracing::info!(name = %name, "creating agent");
+    let manage_core_code = body.manage_agent_code.unwrap_or(true);
+    tracing::info!(name = %name, manage_core_code, "creating agent");
 
     let _guard = agent_write_guard(&state, &name).await;
 
@@ -470,7 +474,7 @@ async fn create_agent_handler(
         phases.set_build_phase(&progress_name, phase);
     }));
 
-    let result = create_and_start(&state, &name, &progress).await;
+    let result = create_and_start(&state, &name, manage_core_code, &progress).await;
     state.clear_build_phase(&name);
     let name = result?;
 
@@ -482,9 +486,10 @@ async fn create_agent_handler(
 async fn create_and_start(
     state: &SharedState,
     name: &str,
+    manage_core_code: bool,
     progress: &docker::BuildProgress,
 ) -> Result<String, (StatusCode, Json<serde_json::Value>)> {
-    let name = docker::create_agent(&state.docker, name, &state.env_config, progress)
+    let name = docker::create_agent(&state.docker, name, &state.env_config, manage_core_code, progress)
         .await
         .map_err(map_docker_err)?;
 

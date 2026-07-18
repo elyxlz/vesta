@@ -19,9 +19,10 @@ fn agent_attaches_to_the_upstream_through_the_mounted_repo() {
     assert!(attach.contains("attached:"), "attach output: {attach}");
 
     // Enforces the MOUNT_DESTS invariant (see docker.rs): anything mounted under
-    // /root/agent/ that isn't in the upstream snapshot must be gitignored in the snapshot's
-    // agent/.gitignore (agent/core -> /core/, constitution.md -> /constitution.md), so the flat
-    // checkout stays clean. An untracked path here means a new mount was added without doing that.
+    // /root/agent/ that isn't in the upstream snapshot must be gitignored in the snapshot
+    // (agent/core -> the root .gitignore's /agent/core/, constitution.md -> agent/.gitignore's
+    // /constitution.md), so the flat checkout stays clean. An untracked path here means a new
+    // mount was added without doing that.
     let status = exec_in_container(&container, "cd ~ && git status --porcelain").expect("status");
     assert_eq!(
         status.trim(),

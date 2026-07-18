@@ -87,11 +87,10 @@ def _copy_sync_scripts(core_skills):
 
 
 def _box_gitignore():
-    """The agent/.gitignore a flat-checkout image ships: the repo's, with the /core/ mount
-    scope build-upstream.sh appends to the snapshot. It must already carry /core/ or every
-    box's tree is dirty (the read-only core mount shows as untracked); this mirrors the
-    snapshot so a fresh attach lands clean."""
-    return (AGENT_ROOT / ".gitignore").read_text() + "/core/\n"
+    """The agent/.gitignore a flat-checkout image ships: exactly the repo's. build-upstream.sh
+    scopes the core mount out via the ROOT .gitignore (/agent/core/), not this file, so the box's
+    baked agent/.gitignore matches the snapshot and a fresh attach lands clean."""
+    return (AGENT_ROOT / ".gitignore").read_text()
 
 
 def _memory_template(version):
@@ -132,9 +131,9 @@ def _upstream_fixture(tmp_path, versions=("0.1.170",)):
 
 
 def _write_core_mount(home, version="0.1.170"):
-    """The read-only engine mount at agent/core: on disk under agent/ but gitignored (/core/),
-    so it never enters the checkout. A real bind mount persists through any git operation; a
-    plain dir is re-materialized after sparse-checkout would otherwise strip it."""
+    """The read-only engine mount at agent/core: on disk under agent/ but gitignored (the root
+    .gitignore's /agent/core/), so it never enters the checkout. A real bind mount persists
+    through any git operation; here a plain dir stands in for it."""
     core = home / "agent/core"
     core.mkdir(parents=True, exist_ok=True)
     (core / "pyproject.toml").write_text(f'[project]\nname = "vesta"\nversion = "{version}"\n')
