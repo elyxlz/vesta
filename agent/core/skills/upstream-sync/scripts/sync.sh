@@ -28,7 +28,7 @@ fi
 
 if [ -n "$(git status --porcelain)" ]; then
   git add -A
-  git commit -q -m checkpoint
+  git diff --cached --quiet || git commit -q -m checkpoint
 fi
 
 # A managed box's engine is a read-only mount already running $TAG, so replaying a commit
