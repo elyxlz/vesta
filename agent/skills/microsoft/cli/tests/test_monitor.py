@@ -329,7 +329,7 @@ def test_a_boundary_second_tie_in_a_truncated_window_is_not_dropped(tmp_path, mo
 
     now = datetime.now(UTC)
     limit = monitor._MAX_WINDOW_MESSAGES
-    window = _oversized_window(now, limit)  # `limit` messages, one second apart, oldest first
+    window = _oversized_window(now, limit)
     tied = _email("tie@x.com", "Tie", window[-1]["receivedDateTime"])  # shares the 500th's second
     mailbox = [*window, tied]
 
