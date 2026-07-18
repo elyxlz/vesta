@@ -44,6 +44,8 @@ DOWNLOAD_TIMEOUT_S = 600.0
 DOWNLOAD_CHUNK = 1 << 20
 READY_TIMEOUT_S = 45.0
 READY_POLL_S = 0.2
+X_PROBE_TIMEOUT_S = 2
+XVFB_READY_TIMEOUT_S = 5
 BIDI_RE = re.compile(r"WebDriver BiDi listening on (ws://\S+)")
 
 
@@ -172,51 +174,78 @@ def _read_ws_url(proc: subprocess.Popen[bytes], log_path: Path, timeout_s: float
     raise RuntimeError(f"Camoufox did not announce BiDi within {timeout_s}s. Log tail:\n{tail}")
 
 
-def _x_display_reachable(display: str) -> bool:
-    """True iff an X server is actually accepting connections on `display`."""
-    if shutil.which("xdpyinfo"):
-        try:
-            return (
-                subprocess.run(
-                    ["xdpyinfo", "-display", display],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    timeout=5,
-                    check=False,
-                ).returncode
-                == 0
-            )
-        except Exception:
-            return False
-    # Fallback when xdpyinfo isn't installed: probe the X11 unix socket directly.
+def _display_socket_serving(number: str, *, abstract: bool) -> bool:
+    """Whether an X server accepts a connection on `number`'s abstract or filesystem socket."""
+    address = f"\0/tmp/.X11-unix/X{number}" if abstract else f"/tmp/.X11-unix/X{number}"
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(X_PROBE_TIMEOUT_S)
     try:
-        n = display.lstrip(":").split(".")[0]
-        sock_path = f"/tmp/.X11-unix/X{n}"
-        if not Path(sock_path).exists():
-            return False
-        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        s.settimeout(2)
-        s.connect(sock_path)
-        s.close()
+        sock.connect(address)
         return True
     except OSError:
         return False
+    finally:
+        sock.close()
 
 
-def _ensure_xvfb(display: str, screen: str = "1920x1080x24") -> bool:
+def _x_display_reachable(display: str) -> bool:
+    """True iff an X server anywhere in this NETWORK namespace serves `display`.
+
+    An X server listens on two sockets: a filesystem one under this container's private /tmp, and
+    an abstract one, which Xlib prefers when both exist. The abstract namespace is scoped to the
+    network namespace, and agent containers share the host's, so another container's server holds a
+    display number here while our own /tmp stays empty. Probing only /tmp would call such a number
+    free, and our X clients would then land on that other container's server.
+    """
+    number = display.lstrip(":").split(".")[0]
+    return _display_socket_serving(number, abstract=True) or _display_socket_serving(number, abstract=False)
+
+
+def _own_display_serving(number: str) -> bool:
+    """Whether OUR own Xvfb is up: serving on the container-private /tmp socket specifically.
+
+    _x_display_reachable answers True for another container's server on the shared abstract socket,
+    so it cannot tell 'we hold this display' from 'someone else does'. The /tmp socket is created
+    only by this container's own Xvfb, so a connection there is proof the display is ours.
+    """
+    return _display_socket_serving(number, abstract=False)
+
+
+def _await_own_xvfb(proc: subprocess.Popen[bytes], number: str) -> int | None:
+    """The pid once OUR Xvfb serves its own /tmp socket, else None if it lost the display.
+
+    Trust our container-private /tmp socket, not generic reachability: with the abstract number
+    already taken by a racing container, our Xvfb cannot bind and dies, yet that other container
+    keeps answering on the shared abstract socket. A slow-but-alive Xvfb is still ours (we hold the
+    abstract bind), so its pid comes back rather than being dropped and leaked.
+    """
+    deadline = time.time() + XVFB_READY_TIMEOUT_S
+    while time.time() < deadline:
+        if _own_display_serving(number):
+            return proc.pid
+        if proc.poll() is not None:
+            return None
+        time.sleep(READY_POLL_S)
+    return proc.pid
+
+
+def _ensure_xvfb(display: str, screen: str = "1920x1080x24") -> int | None:
     """Best-effort: guarantee an X server is up on `display` before a headed browser.
 
     Camoufox runs headless by default, so only the handover flow (streaming a headed
     browser to the user over VNC) needs this. Self-heals a dead/lock-stuck Xvfb in
     ~2s, serialised with an flock so concurrent launches don't stomp each other. Never
     raises; on failure the caller falls back to headless. `screen` is the Xvfb
-    `WxHxDEPTH` geometry; handover uses a larger one so the stream stays crisp on HiDPI.
+    `WxHxDEPTH` geometry. Returns the pid of an Xvfb THIS call owns; None when one was already up
+    (not ours to kill), the spawn failed, or the display was lost to another container racing for
+    the same number in the shared abstract namespace (that Xvfb dies, so its pid is already reaped).
+    A slow-but-alive Xvfb is still ours: we hold the abstract bind, so its pid comes back.
     """
     if _x_display_reachable(display):
-        return True
+        return None
     xvfb = shutil.which("Xvfb")
     if not xvfb:
-        return False
+        return None
     n = display.lstrip(":").split(".")[0]
     lock_fd = None
     try:
@@ -226,25 +255,20 @@ def _ensure_xvfb(display: str, screen: str = "1920x1080x24") -> bool:
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
         # Another launcher may have started it while we waited for the lock.
         if _x_display_reachable(display):
-            return True
+            return None
         # Safe to remove now: we just confirmed nothing is listening on :n.
         for stale in (f"/tmp/.X{n}-lock", f"/tmp/.X11-unix/X{n}"):
             with contextlib.suppress(OSError):
                 Path(stale).unlink()
-        subprocess.Popen(
+        proc = subprocess.Popen(
             [xvfb, display, "-screen", "0", screen, "-nolisten", "tcp"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
-        deadline = time.time() + 5
-        while time.time() < deadline:
-            if _x_display_reachable(display):
-                return True
-            time.sleep(0.2)
-        return _x_display_reachable(display)
+        return _await_own_xvfb(proc, n)
     except Exception:
-        return False
+        return None
     finally:
         if lock_fd is not None:
             try:
