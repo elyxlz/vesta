@@ -1031,7 +1031,9 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 				return nil, fmt.Errorf("reconnect the parked session: %w", err)
 			}
 		}
-		return managedLinkedResult(wac.state.snapshot().MSISDN), nil
+		// Store.ID is set (guaranteed non-nil here), so the device number is
+		// authoritative; daemon-status formats it the same way.
+		return managedLinkedResult("+" + wac.client.Store.ID.User), nil
 	}
 	release, ok := wac.beginPairing()
 	if !ok {

@@ -31,6 +31,10 @@ just do what it says:
   being set up. Re-run `whatsapp connect` in about 30 seconds; repeating is safe.
 - **Blocked:** `{status:"blocked", next:...}` means that number was banned. Re-run
   `whatsapp connect` to get a fresh one.
+- **Rate limited:** `{status:"rate_limited", next:...}` means the number keeps
+  failing to link and the ban guard paused pairing. Wait out the cooldown named in
+  `next` before running `whatsapp connect` again; retrying sooner is what gets a
+  number banned.
 - **Self-hosted (user's own WhatsApp):** it serves a QR page and returns
   `{status:"linking", url, next:...}`. Send the user the URL to scan in WhatsApp >
   Settings > Linked Devices. See [SETUP.md](SETUP.md) / [MANAGED_AUTH.md](MANAGED_AUTH.md).
