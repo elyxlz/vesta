@@ -312,50 +312,47 @@ def _poll_owa_rest_calendar(
 
 
 class Identity(TypedDict):
-    """A Graph identity (a chatMessage's author, a conversationMember). displayName is nullable:
-    Graph sends null for removed, federated, and anonymous users."""
+    """A Graph identity (a chatMessage's author, a conversationMember). Graph sends a null
+    displayName for removed, federated, and anonymous users."""
 
     id: str
     displayName: NotRequired[str | None]
 
 
 class IdentitySet(TypedDict):
-    """A chatMessage's `from`: authored by a user or an app, or neither (system events carry
-    `from: null`, so this whole set is nullable at the read)."""
+    """A chatMessage's `from`: a user, an app, or neither (system events carry `from: null`)."""
 
     user: NotRequired[Identity | None]
     application: NotRequired[Identity | None]
 
 
 class ItemBody(TypedDict):
-    """A message body. content is nullable, so every read must handle the null case."""
+    """A message body."""
 
     content: NotRequired[str | None]
 
 
-# The shared read-surface of a Graph chatMessage (the channel path) and chatMessageInfo (a chat's
-# lastMessagePreview): different resources, but the poller only ever reads from/body/createdDateTime,
-# and one shape over exactly those fields is what makes conflating them safe. `from` is a keyword, so
-# the functional TypedDict form is the only way to name the key.
+# One shape over from/body/createdDateTime covers both a Graph chatMessage (the channel path) and a
+# chatMessageInfo (a chat's lastMessagePreview): the poller reads only those fields, so conflating the
+# two resources is safe. `from` is a keyword, so the functional TypedDict form is the only way to name it.
 ChatMessage = TypedDict(
     "ChatMessage",
     {
         "from": NotRequired[IdentitySet | None],
-        "body": NotRequired[ItemBody],
+        "body": NotRequired[ItemBody | None],
         "createdDateTime": NotRequired[str],
     },
 )
 
 
 class ConversationMember(TypedDict):
-    """A chat member as the poller reads it: displayName is nullable like every Graph identity."""
+    """A chat member as the poller reads it."""
 
     displayName: NotRequired[str | None]
 
 
 class Chat(TypedDict):
-    """A Graph chat as the poller reads it: id, an optional topic, expanded members, and the
-    lastMessagePreview (a chatMessageInfo, nullable for a chat with no messages)."""
+    """A Graph chat as the poller reads it. lastMessagePreview is null for a chat with no messages."""
 
     id: str
     topic: NotRequired[str | None]
@@ -364,7 +361,7 @@ class Chat(TypedDict):
 
 
 class ChannelResource(TypedDict):
-    """A Graph team or channel as the poller reads it: an id and a nullable displayName."""
+    """A Graph team or channel as the poller reads it."""
 
     id: NotRequired[str]
     displayName: NotRequired[str | None]
