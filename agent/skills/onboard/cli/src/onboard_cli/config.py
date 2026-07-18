@@ -35,12 +35,6 @@ DEFAULT_CONTROL_URL = "https://vesta.run/api"
 # upgrades, but onboarding only ever sells this one.
 PLAN = "pro"
 
-# List MONTHLY price (USD) — the NEGOTIATION FLOOR. The agent can quote any price
-# >= it (uncapped above); the control plane enforces the floor server-side, so
-# this is for the agent's UX + a friendly local error. Keep in sync with the
-# control plane's listMonthlyCents("pro").
-PLAN_FLOOR_USD = 12
-
 # Public marketing + install links surfaced by `onboard links`.
 LINKS = {
     "marketing": "https://vesta.run",
