@@ -22,10 +22,10 @@ environment; the paths and payloads are identical either way.
   short-lived **server-identity token** from its own vestad (`POST
   https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/account-token`, `X-Agent-Token`
   authed; vestad signs it locally from the box `api_key`, no network call) and
-  calls `https://vesta.run/api/whatsapp/*` with it as a Bearer. vesta.run is a
+  calls `https://vesta.run/api/integrations/whatsapp/*` with it as a Bearer. vesta.run is a
   **pure auth-forward**: it verifies the token + the paid-membership gate, then
   passes the request through to the home box verbatim, injecting our upstream key
-  and the Vesta account id (`X-Vesta-Account`). `/api/whatsapp/<x>` maps 1:1 to the
+  and the Vesta account id (`X-Vesta-Account`). `/api/integrations/whatsapp/<x>` maps 1:1 to the
   home box's `/<x>`, so vesta.run adds no API of its own.
 - **Direct (self-hosted):** set `WHATSAPP_API_URL` (the home box base) and
   `WHATSAPP_API_KEY` (a per-account `wak_…` key the box operator minted). The agent

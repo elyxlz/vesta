@@ -17,7 +17,7 @@ import (
 // vesta.run proxy. The agent reaches WhatsApp through the control plane, not the
 // home phone box directly, minting a short-lived server-identity token from its
 // own vestad (loopback, agent-token authed; no standing credential) and calling
-// /api/whatsapp/* with it as a Bearer. Every paid account is entitled to exactly
+// /api/integrations/whatsapp/* with it as a Bearer. Every paid account is entitled to exactly
 // ONE number: provision claims it lazily and idempotently, reauth re-posts a
 // fresh pairing code for the same account (no new number, no OTP, no user step).
 // This file is the HTTP client + on-disk state; daemon wiring lives in MANAGED_AUTH.md.
@@ -42,7 +42,7 @@ var provisionPollInterval = 3 * time.Second
 //   - direct (self-hosted): WHATSAPP_API_URL + WHATSAPP_API_KEY, a per-account key
 //     straight to the home box, no vesta.run and no vestad;
 //   - cloud (vesta.run tenant): a server-identity token minted from vestad, sent to
-//     vesta.run's /api/whatsapp, which authenticates and forwards to the home box.
+//     vesta.run's /api/integrations/whatsapp, which authenticates and forwards to the home box.
 //
 // Both hit the same native paths (/provision, /pair, /session); only the base URL
 // and the credential differ.
@@ -172,7 +172,7 @@ func (m *managedAuth) mintToken() (string, error) {
 }
 
 // call sends an authenticated request to the pool API. Direct mode hits the home
-// box with the per-account key; cloud mode hits vesta.run's /api/whatsapp with a
+// box with the per-account key; cloud mode hits vesta.run's /api/integrations/whatsapp with a
 // freshly minted server-identity token. Both use the same native paths, so only
 // the base URL and the credential differ.
 func (m *managedAuth) call(method, path string, body, out any) error {
@@ -182,7 +182,7 @@ func (m *managedAuth) call(method, path string, body, out any) error {
 		if err != nil {
 			return err
 		}
-		base, auth = m.cfg.controlURL+"/whatsapp", "Bearer "+token
+		base, auth = m.cfg.controlURL+"/integrations/whatsapp", "Bearer "+token
 	}
 	return m.do(m.control, method, base+path, map[string]string{"Authorization": auth}, body, out)
 }
@@ -231,14 +231,6 @@ func (m *managedAuth) claim() (managedState, error) {
 // reauth mints a fresh pairing code for the account's number and posts it,
 // re-linking the same companion. The skill calls this on a dropped session — no
 // new number, no OTP, no user action.
-// reportLogout tells the pool this managed account was logged out (device_removed),
-// so it marks the account dead and re-binds a fresh one on the next provision. Fire
-// and forget from the caller's side: a failure just leaves the pool to discover the
-// dead account at the next provision attempt.
-func (m *managedAuth) reportLogout() error {
-	return m.call(http.MethodPost, "/logout", nil, nil)
-}
-
 func (m *managedAuth) reauth(st managedState, pairPhone func(msisdn string) (string, error)) error {
 	code, err := pairPhone(st.MSISDN)
 	if err != nil {

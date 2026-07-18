@@ -35,10 +35,6 @@ const (
 	// handling (bounded memory, backpressure only under a sustained flood).
 	MsgWorkBuffer = 512
 
-	// ReportLogoutTimeout bounds the best-effort device_removed report to the pool
-	// on the give-up path, so a dead network never delays the daemon's exit for long.
-	ReportLogoutTimeout = 10 * time.Second
-
 	QRCodeSize                  = 256
 	MaxConcurrentTranscriptions = 3
 

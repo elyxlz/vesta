@@ -47,9 +47,9 @@ func TestProvision_claimsPairsAndSaves(t *testing.T) {
 	var gotAuth, gotCode string
 	m := managedFor(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/whatsapp/provision":
+		case "/integrations/whatsapp/provision":
 			_ = json.NewEncoder(w).Encode(map[string]any{"msisdn": "+447700900001", "state": "linked"})
-		case "/whatsapp/pair":
+		case "/integrations/whatsapp/pair":
 			gotAuth = r.Header.Get("Authorization")
 			var b map[string]string
 			_ = json.NewDecoder(r.Body).Decode(&b)
@@ -93,15 +93,15 @@ func TestProvision_queuedThenBound(t *testing.T) {
 	var polls int32
 	m := managedFor(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/whatsapp/provision":
+		case "/integrations/whatsapp/provision":
 			_ = json.NewEncoder(w).Encode(map[string]any{"msisdn": "", "state": "queued"})
-		case "/whatsapp/session":
+		case "/integrations/whatsapp/session":
 			msisdn := ""
 			if atomic.AddInt32(&polls, 1) >= 3 {
 				msisdn = "+447700900002"
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"provisioned": true, "state": "queued", "msisdn": msisdn})
-		case "/whatsapp/pair":
+		case "/integrations/whatsapp/pair":
 			_ = json.NewEncoder(w).Encode(map[string]string{"state": "linked"})
 		default:
 			http.Error(w, "no", http.StatusNotFound)
@@ -154,31 +154,10 @@ func TestProvision_directKeyHitsHomeBoxNatively(t *testing.T) {
 	}
 }
 
-func TestReportLogout_postsToPool(t *testing.T) {
-	var logoutPath, gotMethod string
-	box := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/logout" {
-			logoutPath, gotMethod = r.URL.Path, r.Method
-			_ = json.NewEncoder(w).Encode(map[string]string{"state": "failed"})
-			return
-		}
-		http.Error(w, "no", http.StatusNotFound)
-	}))
-	t.Cleanup(box.Close)
-	m := newManagedAuth(managedConfig{directURL: box.URL, directKey: "wak_test"})
-
-	if err := m.reportLogout(); err != nil {
-		t.Fatalf("reportLogout: %v", err)
-	}
-	if logoutPath != "/logout" || gotMethod != http.MethodPost {
-		t.Fatalf("reportLogout must POST /logout, got %s %q", gotMethod, logoutPath)
-	}
-}
-
 func TestReauth_postsFreshCode(t *testing.T) {
 	var gotCode string
 	m := managedFor(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/whatsapp/pair" {
+		if r.URL.Path == "/integrations/whatsapp/pair" {
 			var b map[string]string
 			_ = json.NewDecoder(r.Body).Decode(&b)
 			gotCode = b["code"]
