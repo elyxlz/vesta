@@ -154,6 +154,44 @@ func TestProvision_dryPoolSurfacesErrPoolFilling(t *testing.T) {
 	}
 }
 
+// A control plane where every /provision is slow must still bound the claim by
+// wall-clock, not iteration count: the poll stops near provisionPollMax*
+// provisionPollInterval regardless of per-call latency, so the synchronous
+// handshake never approaches the daemon's socket budget with a spurious timeout.
+func TestClaim_boundsPollByWallClock(t *testing.T) {
+	old := provisionPollInterval
+	provisionPollInterval = 2 * time.Millisecond
+	defer func() { provisionPollInterval = old }()
+
+	const perCallDelay = 20 * time.Millisecond
+	var calls int32
+	m := managedFor(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/integrations/whatsapp/provision" {
+			atomic.AddInt32(&calls, 1)
+			time.Sleep(perCallDelay)
+			_ = json.NewEncoder(w).Encode(map[string]any{"msisdn": "", "state": "queued"})
+			return
+		}
+		http.Error(w, "no", http.StatusNotFound)
+	})
+
+	start := time.Now()
+	_, err := m.claim()
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, errPoolFilling) {
+		t.Fatalf("slow dry-pool claim = %v, want errPoolFilling", err)
+	}
+	// A count-based loop would make provisionPollMax+1 slow calls; the wall-clock
+	// bound consumes its budget in far fewer, finishing well under that count time.
+	if n := atomic.LoadInt32(&calls); n >= provisionPollMax {
+		t.Fatalf("claim made %d calls; the wall-clock bound must stop well under %d", n, provisionPollMax)
+	}
+	if countBound := time.Duration(provisionPollMax+1) * perCallDelay; elapsed >= countBound {
+		t.Fatalf("claim took %s; a wall-clock bound must finish well under the count-based %s", elapsed, countBound)
+	}
+}
+
 // A direct (self-hosted) box uses its own per-account key straight to the home
 // box's native paths, with no vestad token and no vesta.run in the loop.
 func TestProvision_directKeyHitsHomeBoxNatively(t *testing.T) {

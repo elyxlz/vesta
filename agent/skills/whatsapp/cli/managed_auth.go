@@ -186,19 +186,38 @@ func (m *managedAuth) mintToken() (string, error) {
 	return out.Token, nil
 }
 
-// call sends an authenticated request to the pool API. Direct mode hits the home
-// box with the per-account key; cloud mode hits vesta.run's /api/integrations/whatsapp with a
-// freshly minted server-identity token. Both use the same native paths, so only
-// the base URL and the credential differ.
-func (m *managedAuth) call(method, path string, body, out any) error {
-	base, auth := m.cfg.directURL, "Bearer "+m.cfg.directKey
-	if !m.isDirect() {
-		token, err := m.mintToken()
-		if err != nil {
-			return err
-		}
-		base, auth = m.cfg.controlURL+"/integrations/whatsapp", "Bearer "+token
+// authorize resolves the pool-API base URL and Authorization header once. Direct
+// mode uses the static per-account key; cloud mode mints ONE short-lived
+// server-identity token (SERVER_IDENTITY_TTL 10m, comfortably longer than any
+// single command's work), so a caller making several requests in a row (claim's
+// poll loop) resolves once here and reuses the result rather than minting per call.
+func (m *managedAuth) authorize() (base, auth string, err error) {
+	if m.isDirect() {
+		return m.cfg.directURL, "Bearer " + m.cfg.directKey, nil
 	}
+	token, err := m.mintToken()
+	if err != nil {
+		return "", "", err
+	}
+	return m.cfg.controlURL + "/integrations/whatsapp", "Bearer " + token, nil
+}
+
+// call sends one authenticated request to the pool API, resolving the base +
+// credential per call. Direct mode hits the home box with the per-account key;
+// cloud mode hits vesta.run's /api/integrations/whatsapp with a freshly minted
+// server-identity token. Both use the same native paths, so only the base URL and
+// the credential differ.
+func (m *managedAuth) call(method, path string, body, out any) error {
+	base, auth, err := m.authorize()
+	if err != nil {
+		return err
+	}
+	return m.callWith(base, auth, method, path, body, out)
+}
+
+// callWith sends one request against an already-resolved base + Authorization,
+// so a multi-request caller can reuse a single authorize() result.
+func (m *managedAuth) callWith(base, auth, method, path string, body, out any) error {
 	return m.do(m.control, method, base+path, map[string]string{"Authorization": auth}, body, out)
 }
 
@@ -223,12 +242,26 @@ func (m *managedAuth) provision(pairPhone func(msisdn string) (string, error)) (
 // never binds returns errPoolFilling and a banned number returns errBlocked, both
 // surfaced to the agent as a clean status rather than a raw error.
 func (m *managedAuth) claim() (managedState, error) {
-	for i := 0; i <= provisionPollMax; i++ {
+	// Resolve the credential ONCE for the whole poll: a dry-pool claim can make many
+	// /provision calls, and re-minting per call would be up to ~61 loopback token
+	// mints for one connect (the token easily outlives the poll window).
+	base, auth, err := m.authorize()
+	if err != nil {
+		return managedState{}, err
+	}
+	// Bound the poll by wall-clock, not iteration count: under pathological
+	// control-plane slowness (each /provision taking seconds) a count-based loop
+	// could approach the daemon's socket budget and surface a spurious "daemon not
+	// answering". The deadline keeps total claim wall-clock under provisionPollMax*
+	// provisionPollInterval regardless of per-call latency; a number binding quickly
+	// still returns immediately.
+	deadline := time.Now().Add(provisionPollMax * provisionPollInterval)
+	for {
 		var out struct {
 			MSISDN string `json:"msisdn"`
 			State  string `json:"state"`
 		}
-		if err := m.call(http.MethodPost, "/provision", map[string]string{}, &out); err != nil {
+		if err := m.callWith(base, auth, http.MethodPost, "/provision", map[string]string{}, &out); err != nil {
 			return managedState{}, fmt.Errorf("provision: %w", err)
 		}
 		if isBlockedState(out.State) {
@@ -237,11 +270,11 @@ func (m *managedAuth) claim() (managedState, error) {
 		if out.MSISDN != "" {
 			return managedState{MSISDN: out.MSISDN, DirectURL: m.cfg.directURL, DirectKey: m.cfg.directKey}, nil
 		}
-		if i < provisionPollMax {
-			time.Sleep(provisionPollInterval)
+		if !time.Now().Before(deadline) {
+			return managedState{}, errPoolFilling
 		}
+		time.Sleep(provisionPollInterval)
 	}
-	return managedState{}, errPoolFilling
 }
 
 // reauth mints a fresh pairing code for st.MSISDN and posts it, re-linking the

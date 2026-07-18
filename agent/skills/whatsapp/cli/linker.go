@@ -173,7 +173,7 @@ func (l *managedLinker) guardedPairPhone(pair func(msisdn string) (string, error
 		if err != nil {
 			return "", err
 		}
-		l.state.recordPairAttempt(time.Now())
+		l.state.recordPairAttempt(now)
 		return code, nil
 	}
 }
