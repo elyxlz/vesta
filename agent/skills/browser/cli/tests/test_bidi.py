@@ -149,7 +149,7 @@ def test_cancel_landing_on_the_send_is_dropped_from_pending():
         client._ws = BlockingSendWs()
         request = asyncio.ensure_future(client.send(CREATE, {"type": "tab"}))
         await asyncio.wait_for(client._ws.send_started.wait(), timeout=HANG_GUARD_S)
-        assert client._pending  # registered before the send, so the entry is already present when the cancel lands
+        assert client._pending
         request.cancel()
         with pytest.raises(asyncio.CancelledError):
             await request
