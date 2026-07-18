@@ -109,7 +109,10 @@ def _window_read_through(messages: list[dict], new_check_time: datetime) -> date
         received = datetime.fromisoformat(newest["receivedDateTime"])
     except ValueError:
         return None
-    return received if received.tzinfo else None
+    # Park one second before the newest, so a same-second tie the truncation split (message 501 sharing
+    # the 500th's second-precision receivedDateTime) is re-scanned next cycle instead of lost to strict
+    # `gt`. The boundary second re-notifies (there is no id-level dedup), a bounded duplicate over a drop.
+    return received - timedelta(seconds=1) if received.tzinfo else None
 
 
 class EmailAddress(TypedDict):
