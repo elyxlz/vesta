@@ -17,7 +17,6 @@ explicitly handed over, so enabling the CDP domains is fine.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 
 import websockets
@@ -104,8 +103,8 @@ class _CdpTransport:
         frame: dict = {"id": command_id, "method": method, "params": params or {}}
         if session_id is not None:
             frame["sessionId"] = session_id
-        await self._ws.send(json.dumps(frame))
         try:
+            await self._ws.send(json.dumps(frame))
             return await asyncio.wait_for(future, timeout=_CDP_RESPONSE_TIMEOUT_S)
         except TimeoutError:
             # BidiError, not TimeoutError: the latter is an OSError with an empty str(), which the daemon relays as {"error": ""}.
@@ -162,12 +161,18 @@ class CdpBackend:
                 raise BidiError("no such frame", e.message) from e
             raise
         session_id = attach["sessionId"]
-        self._sessions[target_id] = session_id
+        # Set _session_targets before the enables so a mid-enable event routes here, not to the self._context fallback.
         self._session_targets[session_id] = target_id
         for domain in _DOMAINS:
-            # A domain a given target lacks must not abort the attach.
-            with contextlib.suppress(BidiError):
+            try:
                 await self._cdp.send(f"{domain}.enable", {}, session_id)
+            except BidiError as e:
+                # A "cdp error" means the target lacks that domain, which must not abort the attach.
+                # Any other error (a withheld "timeout") means a wedged browser and must propagate.
+                if e.code != "cdp error":
+                    raise
+        # Cache the target->session memo only after every enable succeeds, so a wedged enable is retried, not returned half-enabled.
+        self._sessions[target_id] = session_id
         return session_id
 
     # ── BiDi -> CDP command translation ───────────────────────

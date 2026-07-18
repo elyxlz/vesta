@@ -5,7 +5,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from functools import partial
 from pathlib import Path
-from typing import NotRequired, TypedDict
+from typing import NotRequired, TypedDict, cast
 from zoneinfo import ZoneInfo
 
 from . import auth, capture, folders, graph, notifications, notify, owa_rest, teams
@@ -109,7 +109,9 @@ def _window_read_through(messages: list[dict], new_check_time: datetime) -> date
         received = datetime.fromisoformat(newest["receivedDateTime"])
     except ValueError:
         return None
-    return received if received.tzinfo else None
+    # Park a second back so a same-second tie split off the truncated window is re-scanned next cycle,
+    # not lost to strict `gt`; the boundary second re-notifies (no id-level dedup), a bounded dup over a drop.
+    return received - timedelta(seconds=1) if received.tzinfo else None
 
 
 class EmailAddress(TypedDict):
@@ -311,6 +313,62 @@ def _poll_owa_rest_calendar(
     return True
 
 
+class Identity(TypedDict):
+    """A Graph identity (a chatMessage's author, a conversationMember). Graph sends a null
+    displayName for removed, federated, and anonymous users."""
+
+    id: str
+    displayName: NotRequired[str | None]
+
+
+class IdentitySet(TypedDict):
+    """A chatMessage's `from`: a user, an app, or neither (system events carry `from: null`)."""
+
+    user: NotRequired[Identity | None]
+    application: NotRequired[Identity | None]
+
+
+class ItemBody(TypedDict):
+    """A message body."""
+
+    content: NotRequired[str | None]
+
+
+# One shape over from/body/createdDateTime covers both a Graph chatMessage (the channel path) and a
+# chatMessageInfo (a chat's lastMessagePreview): the poller reads only those fields, so conflating the
+# two resources is safe. `from` is a keyword, so the functional TypedDict form is the only way to name it.
+ChatMessage = TypedDict(
+    "ChatMessage",
+    {
+        "from": NotRequired[IdentitySet | None],
+        "body": NotRequired[ItemBody | None],
+        "createdDateTime": NotRequired[str],
+    },
+)
+
+
+class ConversationMember(TypedDict):
+    """A chat member as the poller reads it."""
+
+    displayName: NotRequired[str | None]
+
+
+class Chat(TypedDict):
+    """A Graph chat as the poller reads it. lastMessagePreview is null for a chat with no messages."""
+
+    id: str
+    topic: NotRequired[str | None]
+    members: NotRequired[list[ConversationMember]]
+    lastMessagePreview: NotRequired[ChatMessage | None]
+
+
+class ChannelResource(TypedDict):
+    """A Graph team or channel as the poller reads it."""
+
+    id: NotRequired[str]
+    displayName: NotRequired[str | None]
+
+
 class TeamsNotifiable(TypedDict):
     """What a Teams notification says about a message: who sent it and its body preview."""
 
@@ -318,23 +376,24 @@ class TeamsNotifiable(TypedDict):
     text: str
 
 
-def _teams_notifiable(message: dict, my_id: str) -> TeamsNotifiable | None:
+def _teams_notifiable(message: ChatMessage, my_id: str) -> TeamsNotifiable | None:
     """Sender + body preview for a Teams message, or None when it must not notify: the user's own
     message, or a system event carrying neither author nor body (member added, chat renamed, meeting
     started). Graph gives those `from: null` and an empty body, leaving nothing to report."""
     sender = message["from"] if "from" in message else None
-    sender_user = (sender["user"] if sender and "user" in sender else None) or {}
-    if "id" in sender_user and sender_user["id"] == my_id:
+    sender_user = sender["user"] if sender and "user" in sender else None
+    if sender_user and "id" in sender_user and sender_user["id"] == my_id:
         return None
-    body = message["body"] if "body" in message else {}
-    text = clean_preview(_HTML_TAG.sub(" ", (body["content"] if "content" in body else None) or ""))[:200]
-    name = (sender_user["displayName"] if "displayName" in sender_user else None) or ""
+    body = message["body"] if "body" in message else None
+    content = body["content"] if body and "content" in body else None
+    text = clean_preview(_HTML_TAG.sub(" ", content or ""))[:200]
+    name = (sender_user["displayName"] if sender_user and "displayName" in sender_user else None) or ""
     if not name and not text:
         return None
     return {"sender": name or "Someone", "text": text}
 
 
-def _arrived_since(message: dict, last_dt: datetime) -> bool:
+def _arrived_since(message: ChatMessage, last_dt: datetime) -> bool:
     """True when the message carries a parseable createdDateTime newer than last_dt."""
     if "createdDateTime" not in message:
         return False
@@ -357,7 +416,7 @@ def _poll_teams_account(ctx: MicrosoftContext, config: Config, account_email: st
         return False
     try:
         my_id = teams._my_id(ctx.http_client, token)
-        chats = teams.list_chats(ctx.http_client, token, limit=50)
+        chats = cast("list[Chat]", teams.list_chats(ctx.http_client, token, limit=50))
     except Exception as e:
         logger.error("Error fetching Teams chats for %s: %s", account_email, e)
         return False
@@ -369,7 +428,8 @@ def _poll_teams_account(ctx: MicrosoftContext, config: Config, account_email: st
         notifiable = _teams_notifiable(preview, my_id)
         if notifiable is None:
             continue  # our own outgoing message, or a contentless system event
-        members = ", ".join(m["displayName"] for m in (chat["members"] if "members" in chat else []) if "displayName" in m)
+        member_list = chat["members"] if "members" in chat else []
+        members = ", ".join(name for m in member_list if (name := m["displayName"] if "displayName" in m else None))
         topic = (chat["topic"] if "topic" in chat else None) or members or None
         logger.info("Writing Teams notification from %s in chat %s", notifiable["sender"], chat["id"])
         notifications.write_notification(
@@ -402,7 +462,7 @@ def _poll_teams_channels_account(ctx: MicrosoftContext, config: Config, account_
         return False
     try:
         my_id = teams._my_id(ctx.http_client, token)
-        teams_list = teams.list_teams(ctx.http_client, token)
+        teams_list = cast("list[ChannelResource]", teams.list_teams(ctx.http_client, token))
     except Exception as e:
         # No channel access (missing ChannelMessage.Read.All / no Graph): degrade to chats-only.
         logger.info("Teams channel messages unavailable for %s, keeping chats-only: %s", account_email, e)
@@ -414,7 +474,7 @@ def _poll_teams_channels_account(ctx: MicrosoftContext, config: Config, account_
             continue
         team_name = (team["displayName"] if "displayName" in team else None) or "Team"
         try:
-            channels = teams.list_channels(ctx.http_client, token, team_id=team_id)
+            channels = cast("list[ChannelResource]", teams.list_channels(ctx.http_client, token, team_id=team_id))
         except Exception as e:
             logger.debug("Skipping Teams channels for team %s (%s): %s", team_name, account_email, e)
             continue
@@ -424,7 +484,9 @@ def _poll_teams_channels_account(ctx: MicrosoftContext, config: Config, account_
                 continue
             channel_name = (channel["displayName"] if "displayName" in channel else None) or "Channel"
             try:
-                messages = teams.list_channel_messages(ctx.http_client, token, team_id=team_id, channel_id=channel_id, limit=20)
+                messages = cast(
+                    "list[ChatMessage]", teams.list_channel_messages(ctx.http_client, token, team_id=team_id, channel_id=channel_id, limit=20)
+                )
             except Exception as e:
                 logger.debug("Skipping Teams channel %s / %s (%s): %s", team_name, channel_name, account_email, e)
                 continue

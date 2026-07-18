@@ -97,7 +97,7 @@ function DashboardContent() {
         />
         <SidebarInset>
           <SiteHeader title={activePage?.title ?? ""} icon={activePage?.icon} />
-          <div className="@container/main overflow-y-auto flex-1 min-h-0 px-4 py-4 lg:px-6">
+          <div className="@container/main overflow-x-hidden overflow-y-auto flex-1 min-h-0 px-4 py-4 lg:px-6">
             {activePage?.component && <activePage.component />}
           </div>
         </SidebarInset>

@@ -112,32 +112,6 @@ class NotificationInterruptRule(pyd.BaseModel):
             data["action"] = "snooze"
         return data
 
-    @pyd.model_validator(mode="before")
-    @classmethod
-    def _absorb_legacy_match_fields(cls, data: object) -> object:
-        # LEGACY(remove-when: no stored rule still carries flat sender/keyword keys — every agent
-        # rewrites its rules in canonical {source,type,match} shape on its next rule edit). Old rules
-        # (from notification_policy.json / the pre-update skill) wrote flat `sender`/`keyword` keys; fold
-        # them into `match` predicates so they keep working and extra="forbid" doesn't drop them. `sender`
-        # is a case-insensitive substring over the identity alias; `keyword` is a regex over the text alias.
-        if not isinstance(data, dict) or not ("sender" in data or "keyword" in data):
-            return data
-        data = dict(data)
-        legacy: list[dict[str, object]] = []
-        if "sender" in data:
-            sender = data["sender"]
-            del data["sender"]
-            if sender is not None:
-                legacy.append({"field": "sender", "op": "contains", "value": sender})
-        if "keyword" in data:
-            keyword = data["keyword"]
-            del data["keyword"]
-            if keyword is not None:
-                legacy.append({"field": "text", "op": "regex", "value": keyword})
-        existing = data["match"] if "match" in data and data["match"] is not None else []
-        data["match"] = legacy + list(existing)
-        return data
-
     @pyd.field_validator("source")
     @classmethod
     def _reject_core_source(cls, value: str | None) -> str | None:

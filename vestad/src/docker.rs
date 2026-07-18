@@ -113,7 +113,7 @@ pub(crate) const MOUNT_DESTS: &[&str] = &[
 ];
 
 pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
-    let steps: [String; 9] = [
+    let steps: [String; 8] = [
         // The engine venv is reached via PATH, never an exported UV_PROJECT_ENVIRONMENT (nor `uv
         // run`, which exports it): exported, it retargets every uv project, so a skill's `uv run`
         // re-syncs and can delete the engine venv. The core sync gets it scoped, since uv would
@@ -121,15 +121,6 @@ pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
         "export PATH=\"/root/agent/.venv/bin:/root/.local/bin:/root/.claude/local/bin:$PATH\"".into(),
         ". /run/vestad-env".into(),
         ". ~/.bashrc || true".into(),
-        // LEGACY(remove-when: the 2026-08-flat-checkout migration is fleet-applied, so no box is a
-        // sparse checkout): a pre-flat $HOME was a sparse git checkout that could track dev tooling
-        // under .claude/, but ~/.claude is ALSO the agent's runtime dir (credentials, sessions). If
-        // such a workspace tracked .claude, a `git sparse-checkout reapply` (run by skills-install
-        // and migrations) sparsified the out-of-cone .claude/ and, on git 2.39, deleted the untracked
-        // credentials, de-authing the agent. Self-heal at boot (the one place reaching already-
-        // snapshotted agents): untrack .claude and exclude it locally. A flat checkout never tracks
-        // .claude, so this is a no-op there; a no-op outside a git repo too; `|| true` never aborts boot.
-        "if gd=$(git -C ~ rev-parse --absolute-git-dir 2>/dev/null); then git -C ~ ls-files -z -- .claude | xargs -0r git -C ~ update-index --force-remove; grep -qxF '/.claude/' \"$gd/info/exclude\" 2>/dev/null || printf '/.claude/\\n' >> \"$gd/info/exclude\"; fi || true".into(),
         // tmux is a hard runtime dependency of cc_sdk (it drives the real claude TUI in a
         // private tmux server). Fresh images bake it in via the Dockerfile, but `rebuild`
         // recreates a container from a `docker export|import` snapshot and never re-runs the
@@ -138,9 +129,7 @@ pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
         // network) once tmux is on PATH, and the next snapshot captures the install so it
         // persists across future rebuilds. `|| true` so a failed install never aborts boot.
         "command -v tmux >/dev/null 2>&1 || (apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tmux) || true".into(),
-        // LEGACY(remove-when: unmanaged boxes have pulled a post-engine-move snapshot): the old
-        // layout (pyproject at /root/agent) defaults to the engine venv, so it needs no override.
-        "if [ -f /root/agent/core/pyproject.toml ]; then UV_PROJECT_ENVIRONMENT=/root/agent/.venv uv sync --frozen --project /root/agent/core; else uv sync --frozen --project /root/agent; fi".into(),
+        "UV_PROJECT_ENVIRONMENT=/root/agent/.venv uv sync --frozen --project /root/agent/core".into(),
         // ~/.claude/skills is the symlink farm Claude Code discovers skills from, rebuilt
         // every boot (before the SDK session starts) from data/installed-skills.txt: core
         // skills always, optional skills only when installed. See link-skills.sh.
@@ -1119,14 +1108,7 @@ pub fn update_all_agent_env_files(
             .lines()
             .filter_map(|line| {
                 let stripped = line.strip_prefix("export ").unwrap_or(line);
-                // LEGACY(remove-when: no agent env file carries VESTA_UPSTREAM_REF or
-                // VESTA_WORKSPACE_REF): the workspace ref moved out of env entirely (boxes
-                // fetch a bundle from vestad; no branch name needed) - strip stale keys.
-                if stripped.starts_with("VESTAD_PORT=")
-                    || stripped.starts_with("VESTAD_TUNNEL=")
-                    || stripped.starts_with("VESTA_WORKSPACE_REF=")
-                    || stripped.starts_with("VESTA_UPSTREAM_REF=")
-                {
+                if stripped.starts_with("VESTAD_PORT=") || stripped.starts_with("VESTAD_TUNNEL=") {
                     return None; // re-appended below with the current values
                 }
                 Some(line.to_string())
@@ -2761,37 +2743,9 @@ mod tests {
     }
 
     #[test]
-    fn entrypoint_untracks_claude_from_git_workspace() {
-        // ~/.claude holds the agent's credentials but the repo tracks dev tooling there; if the git
-        // workspace tracks .claude, a sparse-checkout reapply deletes ~/.claude/.credentials.json.
-        // The entrypoint must untrack + exclude .claude at boot, before the agent can reapply.
-        let cmd = agent_container_entrypoint_cmd();
-        let script = cmd.last().expect("entrypoint script");
-        assert!(
-            script.contains("update-index --force-remove"),
-            "entrypoint must untrack .claude: {script}"
-        );
-        assert!(
-            script.contains("/.claude/"),
-            "entrypoint must exclude .claude: {script}"
-        );
-        let untrack_at = script
-            .find("update-index --force-remove")
-            .expect("untrack step present");
-        let main_at = script
-            .find("python -m core.main")
-            .expect("main step present");
-        assert!(
-            untrack_at < main_at,
-            ".claude untrack must precede launching core.main"
-        );
-    }
-
-    #[test]
-    fn entrypoint_pins_venv_and_tolerates_both_engine_layouts() {
+    fn entrypoint_pins_venv_and_syncs_core() {
         // The venv must live outside the read-only core mount, and the sync/launch steps
-        // must handle both the new layout (pyproject in core/) and the legacy root layout
-        // so unmanaged boxes never crash-loop before their first upstream sync.
+        // target the core project (pyproject in core/).
         let cmd = agent_container_entrypoint_cmd();
         let script = cmd.last().expect("entrypoint script");
         assert!(

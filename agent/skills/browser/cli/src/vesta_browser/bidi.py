@@ -96,9 +96,9 @@ class BidiClient:
         command_id = self._next_id
         future: asyncio.Future[dict] = asyncio.get_running_loop().create_future()
         self._pending[command_id] = future
-        await self._ws.send(json.dumps({"id": command_id, "method": method, "params": params or {}}))
         timeout = NAVIGATE_RESPONSE_TIMEOUT_S if method in _WAIT_FOR_LOAD_METHODS else BIDI_RESPONSE_TIMEOUT_S
         try:
+            await self._ws.send(json.dumps({"id": command_id, "method": method, "params": params or {}}))
             return await asyncio.wait_for(future, timeout=timeout)
         except TimeoutError:
             # BidiError, not TimeoutError: the latter is an OSError with an empty str(), which the daemon relays as {"error": ""}.

@@ -1,6 +1,5 @@
 """Tests for VestaConfig and initialization."""
 
-import json
 import os
 import pathlib as pl
 
@@ -12,7 +11,6 @@ from core.config import (
     config_store_path,
     load_config,
     load_notification_rules,
-    migrate_notification_policy_file,
     read_config_store,
     update_config_store,
     validate_config_updates,
@@ -252,54 +250,3 @@ def test_validating_a_config_update_does_not_apply_it(config, monkeypatch):
     updates = validate_config_updates(config, {"timezone": "Pacific/Auckland"})
     assert updates == {"timezone": "Pacific/Auckland"}
     assert os.environ["TZ"] == "UTC"
-
-
-# --- migrate_notification_policy_file (legacy notification_policy.json -> notification_rules) ---
-
-
-def _write_legacy_policy(agentdir, policy):
-    (agentdir / "data" / "notification_policy.json").write_text(json.dumps(policy))
-
-
-def test_migrate_policy_folds_rules_and_deletes_file(agentdir):
-    _write_legacy_policy(agentdir, {"rules": [{"id": "a", "source": "twitter", "action": "pool"}]})
-    migrate_notification_policy_file()
-    assert "notification_rules" in read_config_store()
-    assert [rule.source for rule in load_notification_rules()] == ["twitter"]
-    assert not (agentdir / "data" / "notification_policy.json").exists()
-
-
-def test_migrate_policy_translates_defaults_into_trailing_rules(agentdir):
-    # A default with an empty type becomes a source-only rule; a concrete type is preserved. Defaults
-    # were consulted after rules, so they trail; every migrated rule gets an id.
-    _write_legacy_policy(
-        agentdir,
-        {
-            "rules": [{"source": "twitter", "action": "interrupt"}],
-            "defaults": [
-                {"source": "outlook", "type": "", "action": "pool"},
-                {"source": "calendar", "type": "reminder", "action": "pool"},
-            ],
-        },
-    )
-    migrate_notification_policy_file()
-    rules = load_notification_rules()
-    assert [(rule.source, rule.type, rule.action) for rule in rules] == [
-        ("twitter", None, "interrupt"),
-        ("outlook", None, "snooze"),
-        ("calendar", "reminder", "snooze"),
-    ]
-    assert all(rule.id for rule in rules)
-
-
-def test_migrate_policy_no_file_is_a_noop(agentdir):
-    migrate_notification_policy_file()
-    assert "notification_rules" not in read_config_store()
-
-
-def test_migrate_policy_does_not_overwrite_existing_rules(agentdir):
-    update_config_store({"notification_rules": [{"id": "keep", "source": "existing", "action": "snooze"}]})
-    _write_legacy_policy(agentdir, {"rules": [{"source": "twitter", "action": "interrupt"}]})
-    migrate_notification_policy_file()
-    assert [rule.source for rule in load_notification_rules()] == ["existing"]
-    assert not (agentdir / "data" / "notification_policy.json").exists()

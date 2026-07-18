@@ -27,7 +27,7 @@ from typing import Any
 
 from . import state
 from .client import Client, OnboardError
-from .config import LINKS, PLAN, PLAN_FLOOR_USD, Config
+from .config import LINKS, PLAN, Config
 
 
 def _print(payload: dict[str, Any]) -> None:
@@ -88,16 +88,13 @@ def _cmd_checkout(args: argparse.Namespace, client: Client, _cfg: Config) -> int
     email = _email(args)
     token = _require_token(email, "run `onboard verify` with the buyer's code first")
 
-    price: float | None = None
-    if args.price is not None:
-        if args.price < PLAN_FLOOR_USD:
-            raise _InvalidError({"error": f"price ${args.price:g} is below the ${PLAN_FLOOR_USD} floor", "floor_usd": PLAN_FLOOR_USD})
-        price = args.price
-
+    # The floor is enforced (and reported) server-side: a below-floor price comes back
+    # as {error, floor_usd} from checkout, which the skill re-quotes against. No local
+    # mirror of the floor to drift.
     result = client.checkout(
         token=token,
         plan=PLAN,
-        price=price,
+        price=args.price,
         discount_code=(args.code.strip() if args.code else None),
     )
     if "url" in result:
@@ -263,7 +260,7 @@ def _cmd_presets(_args: argparse.Namespace, client: Client, _cfg: Config) -> int
         {
             "personalities": [p["name"] for p in client.fetch_personalities()],
             "skills": _installable_skills(),
-            "plan_floor_usd": PLAN_FLOOR_USD,
+            "plan_floor_usd": client.fetch_floor_usd(),
             "claude_models": [m["id"] for m in client.fetch_claude_models()],
             "default_personality": defaults["personality"],
             "default_model": defaults["model"],
@@ -294,7 +291,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_checkout = sub.add_parser("checkout", help="Reserve + mint a Stripe link (auto subdomain).")
     p_checkout.add_argument("--email", required=True)
-    p_checkout.add_argument("--price", type=float, help="Negotiated MONTHLY USD (>= the $24 floor; uncapped above).")
+    p_checkout.add_argument("--price", type=float, help="Negotiated MONTHLY USD (>= the $12 floor; uncapped above).")
     p_checkout.add_argument("--code", help="Optional discount code to redeem at checkout.")
 
     p_status = sub.add_parser("status", help="Has the buyer paid + the VM come up?")

@@ -20,6 +20,16 @@ def _notif(**fields) -> Notification:
 
 
 def _rule(**fields) -> npn.NotificationInterruptRule:
+    # `sender`/`keyword` are test-authoring shorthands for the two most common predicates (sender =
+    # substring over the identity alias, keyword = regex over the text alias); fold them into `match`
+    # here so rule tests stay readable. The rule model itself only accepts canonical `match` predicates.
+    match = list(fields.pop("match", []))
+    if "sender" in fields:
+        match.append({"field": "sender", "op": "contains", "value": fields.pop("sender")})
+    if "keyword" in fields:
+        match.append({"field": "text", "op": "regex", "value": fields.pop("keyword")})
+    if match:
+        fields["match"] = match
     return npn.NotificationInterruptRule(**fields)
 
 
@@ -201,26 +211,6 @@ def test_match_blank_field_is_rejected():
 def test_match_predicate_forbids_unknown_keys():
     with pytest.raises(pyd.ValidationError):
         _rule(match=[{"field": "chat_name", "value": "x", "bogus": 1}], action="snooze")
-
-
-# --- legacy sender/keyword normalization into match ---
-
-
-def test_legacy_sender_keyword_normalize_into_match():
-    rule = _rule(source="whatsapp", sender="wife", keyword="urgent", action="interrupt")
-    assert rule.match == [
-        npn.FieldPredicate(field="sender", op="contains", value="wife"),
-        npn.FieldPredicate(field="text", op="regex", value="urgent"),
-    ]
-
-
-def test_legacy_null_sender_keyword_are_dropped_not_predicates():
-    # The pre-update CLI wrote sender/keyword as explicit null on every rule; they must vanish, not
-    # become predicates that match everything.
-    rule = npn.NotificationInterruptRule.model_validate(
-        {"id": "x", "source": "twitter", "type": None, "sender": None, "keyword": None, "action": "snooze"}
-    )
-    assert rule.match == []
 
 
 # --- notif_disposition ordering / catch-all ---
