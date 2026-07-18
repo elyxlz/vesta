@@ -363,6 +363,22 @@ def test_remove_not_installed_is_reported(tmp_path):
     assert "is not installed" in r.stdout
 
 
+def test_remove_default_is_honest_and_keeps_it_active(tmp_path):
+    """A default skill reactivates on every relink, so removing it is a no-op; the command must
+    say so instead of claiming it was deactivated."""
+    source = _upstream_fixture(tmp_path)
+    home = _fresh_box(tmp_path)
+    env = _box_env(source)
+    assert _attach(home, source).returncode == 0
+    _run(LINK_SKILLS, home, extra_env=env)  # seed installed-skills.txt with the defaults
+    assert "tasks" in _installed(home)
+    r = _run(SKILLS_REMOVE, home, args=("tasks",), extra_env=env)
+    assert r.returncode == 0
+    assert "can't be deactivated" in r.stdout
+    assert "Restart Vesta to deactivate it" not in r.stdout
+    assert "tasks" in _installed(home)  # still active, no false "Removed"
+
+
 def test_search_lists_local_catalog_and_marks_installed(tmp_path):
     source = _upstream_fixture(tmp_path)
     home = _fresh_box(tmp_path)
@@ -433,6 +449,9 @@ def _legacy_cone_box(tmp_path, source, installed=("tasks", "dream")):
     carrying a personalization in MEMORY.md."""
     home = _fresh_box(tmp_path)
     env = _box_env(source)
+    # The pre-flat root .gitignore: it scoped $HOME but never ignored the engine mount
+    # (agent/core was tracked content back then). A real cone box carries exactly this.
+    (home / ".gitignore").write_text("/*\n!/.gitignore\n!/agent/\n")
     _git(["init", "-b", "testbox"], home, env)
     _git(["add", "-A"], home, env)
     _git(["commit", "-m", "init"], home, env)
@@ -474,6 +493,10 @@ def test_flat_checkout_migration_converts_cone_to_flat(tmp_path):
     assert "agent/MEMORY.md" in status  # personalization surfaced, not lost
     assert "my personal notes" in (home / "agent/MEMORY.md").read_text()
     assert (home / "agent/skills/whatsapp/SKILL.md").exists()  # restored by the full checkout
+    # The stale pre-flat root .gitignore must not survive the re-attach: attach force-adopts
+    # the snapshot's (which ignores /agent/core/), so the read-only engine mount never shows
+    # as untracked and a `git add -A` can't commit it onto the mount.
+    assert "agent/core" not in status
 
 
 # --- LEGACY forwarding + bundle (pre-rename boxes) ---------------------------------------

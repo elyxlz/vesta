@@ -33,11 +33,16 @@ git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || {
 }
 
 if ! git rev-parse -q --verify HEAD >/dev/null; then
-  # Virgin box: point the branch at the snapshot and materialize any tracked file the
-  # image didn't bake in (notably the root .gitignore that scopes $HOME). The image's
-  # skills and MEMORY.md are identical to the snapshot, so present files are left as-is.
+  # Virgin box, or a migration's fresh re-attach. Point the branch at the snapshot, then
+  # bring the worktree to it WITHOUT clobbering local content. The root .gitignore is
+  # core-scoping infra (it ignores the agent/core mount), never user content, so force it to
+  # the snapshot's version even when a stale one is already on disk: a box converting from an
+  # older snapshot whose .gitignore lacked /agent/core/ would otherwise leave the read-only
+  # mount showing as untracked, and a later `git add -A` would commit it onto the mount. Every
+  # other tracked file is materialized only when absent, so personalizations survive.
   git update-ref "refs/heads/$NAME" "$TAG"
   git reset --mixed >/dev/null
+  git checkout-index -f -- .gitignore
   git ls-files -z | while IFS= read -r -d '' f; do [ -e "$f" ] || git checkout-index -f -- "$f"; done
 fi
 echo "attached: branch $NAME on $TAG"

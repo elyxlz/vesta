@@ -7,6 +7,10 @@ SKILL_NAME="${1:?Usage: skills-remove <skill-name>}"
 cd ~
 INSTALLED="agent/data/installed-skills.txt"
 
+if grep -qxF "$SKILL_NAME" agent/core/default-skills.txt 2>/dev/null; then
+    echo "'$SKILL_NAME' is a default skill: it reactivates on every relink and can't be deactivated."
+    exit 0
+fi
 if ! grep -qxF "$SKILL_NAME" "$INSTALLED" 2>/dev/null; then
     echo "Skill '$SKILL_NAME' is not installed."
     exit 0
