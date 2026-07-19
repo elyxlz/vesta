@@ -51,6 +51,11 @@ REGEX = re.compile("|".join(PATTERNS), re.IGNORECASE)
 # all-lowercase hyphen/underscore words. This generalises to slugs never seen before.
 _SLUG_PREFIX = re.compile(r"^sk-")
 
+# A thinking block's base64 "signature" in the raw JSON blob. scan() skips matches inside these
+# spans so it never reports a chance secret-pattern hit inside a signature (mirrors scrub, which
+# leaves signatures untouched); signatures are attestations, not leaks.
+_SIGNATURE_SPAN = re.compile(r'"signature"\s*:\s*"[^"]*"')
+
 
 def _looks_like_word_slug(token: str) -> bool:
     body, n = _SLUG_PREFIX.subn("", token)
@@ -81,7 +86,10 @@ def redact_json(value: JsonValue) -> JsonValue:
     if isinstance(value, list):
         return [redact_json(v) for v in value]
     if isinstance(value, dict):
-        return {k: redact_json(v) for k, v in value.items()}
+        # Never touch a thinking block's "signature": it is a cryptographic attestation over the
+        # block, and if a secret pattern chance-matches inside its base64 the sub would overwrite it
+        # with [REDACTED], irreparably corrupting the attestation. Pass its value through untouched.
+        return {k: (v if k == "signature" else redact_json(v)) for k, v in value.items()}
     return value
 
 
@@ -96,11 +104,14 @@ def scan(conn: sqlite3.Connection) -> list[tuple[int, str]]:
     for row_id, data in conn.execute("SELECT id, data FROM events"):
         if not data:
             continue
+        sig_spans = [s.span() for s in _SIGNATURE_SPAN.finditer(data)]
         for m in REGEX.finditer(data):
             if REDACTED in m.group(0):
                 continue
             if _looks_like_word_slug(m.group(0)):
                 continue  # news/URL slug (hyphenated words), not a secret
+            if any(lo <= m.start() < hi for lo, hi in sig_spans):
+                continue  # inside a thinking-block signature, an attestation, not a leak
             window = data[max(0, m.start() - 40) : m.end() + 40]
             matches.append((row_id, REGEX.sub(mask, window).replace("\n", " ")))
     return matches
