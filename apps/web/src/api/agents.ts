@@ -1,7 +1,7 @@
 import { apiJson, apiFetch, jsonInit } from "./client";
-import type { VestaEvent } from "@/lib/types";
+import type { NotificationEvent, VestaEvent } from "@vesta/core";
 
-export type NotificationEvent = Extract<VestaEvent, { type: "notification" }>;
+export type { NotificationEvent };
 
 export interface OpenRouterConfig {
   key: string;

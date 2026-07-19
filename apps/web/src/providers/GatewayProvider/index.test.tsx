@@ -110,7 +110,7 @@ describe("GatewayProvider", () => {
     expect(getByTestId("reachable").textContent).toBe("true");
     expect(getByTestId("fetched").textContent).toBe("true");
     expect(getByTestId("names").textContent).toBe("ada");
-    // The optional field carries the agent's start time (the replica's null maps to undefined).
+    // The roster row carries the replica's start time through unchanged (null for a never-started agent).
     expect(getByTestId("started").textContent).toBe("2026-01-01T00:00:00Z");
   });
 

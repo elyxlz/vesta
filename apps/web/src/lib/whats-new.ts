@@ -1,5 +1,5 @@
 import { compareVersions } from "@/lib/version";
-import type { ReleaseChannel } from "@/lib/types";
+import type { ReleaseChannel } from "@vesta/core";
 
 // Marketing summaries live in each GitHub release body between these markers
 // (written by the release pipeline); releases without a well-formed block are

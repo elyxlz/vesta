@@ -7,7 +7,8 @@ import {
   ControllerContext,
   useControllerReconnect,
 } from "@/providers/ControllerProvider";
-import type { AgentInfo, ServiceInfo } from "@/lib/types";
+import type { ServiceInfo } from "@vesta/core";
+import type { AgentRow } from "@/lib/types";
 import { useAgentOps } from "@/stores/use-agent-ops";
 import { useRestartPending } from "@/stores/use-restart-pending";
 import {
@@ -42,7 +43,7 @@ function servicesEqual(
 
 // Structural compare of the derived roster so an unrelated tree delta (e.g. a notification)
 // does not hand every gateway consumer a fresh array.
-function agentRowsEqual(a: AgentInfo[], b: AgentInfo[]): boolean {
+function agentRowsEqual(a: AgentRow[], b: AgentRow[]): boolean {
   if (a.length !== b.length) return false;
   return a.every((row, index) => {
     const other = b[index];
@@ -57,15 +58,11 @@ function agentRowsEqual(a: AgentInfo[], b: AgentInfo[]): boolean {
   });
 }
 
-function selectAgents(tree: Tree | null): AgentInfo[] {
+function selectAgents(tree: Tree | null): AgentRow[] {
   if (!tree) return [];
   return Object.entries(tree.agents).map(([name, node]) => ({
     name,
-    status: node.info.status,
-    activityState: node.info.activityState,
-    services: node.info.services,
-    // The replica carries null for a never-started agent; the contract's optional field is undefined.
-    startedAt: node.info.startedAt ?? undefined,
+    ...node.info,
   }));
 }
 

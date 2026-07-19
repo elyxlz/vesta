@@ -2,7 +2,8 @@ import { memo } from "react";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Message } from "@/components/ui/message";
 import { Markdown } from "@/lib/markdown";
-import type { InputMethod, VestaEvent } from "@/lib/types";
+import type { InputMethod } from "@vesta/core";
+import type { ChatMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ToolCallLabel } from "../ToolCallLabel";
 
@@ -33,7 +34,7 @@ function formatBubbleTime(ts: string | undefined): string {
 }
 
 function statusLineText(
-  event: Extract<VestaEvent, { type: "error" | "rate_limited" }>,
+  event: Extract<ChatMessage, { type: "error" | "rate_limited" }>,
 ): string {
   if (event.type === "error")
     return "hit a snag, this may not have gone through";
@@ -49,7 +50,7 @@ export const ChatBubble = memo(function ChatBubble({
   isMobile,
   onRetry,
 }: {
-  event: VestaEvent;
+  event: ChatMessage;
   className?: string;
   fullscreen?: boolean;
   isMobile: boolean;

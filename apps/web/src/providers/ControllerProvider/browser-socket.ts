@@ -2,7 +2,7 @@ import type { SocketLike } from "@vesta/core";
 
 // Adapt the browser WebSocket to core's SocketLike. Only string frames reach core
 // (the sync protocol is JSON text); binary messages are ignored. The error event is
-// left to its paired close event, which owns reconnect (matching reconnecting-ws).
+// left to its paired close event, which owns reconnect.
 export function createBrowserSocket(url: string): SocketLike {
   const ws = new WebSocket(url);
   const adapter: SocketLike = {

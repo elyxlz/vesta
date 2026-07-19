@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { VestaEvent, InputMethod } from "@/lib/types";
-import type { Delta, Tree } from "@vesta/core";
+import type { ChatMessage } from "@/lib/types";
+import type { Delta, InputMethod, Tree } from "@vesta/core";
 import {
   PACING,
   typingDelay,
@@ -12,7 +12,7 @@ import { useReplica, useSyncState, useWatch } from "@vesta/core/react";
 import { fetchHistory } from "@/api/agents";
 import { useChatPacing } from "@/stores/use-chat-pacing";
 
-function capTail(messages: VestaEvent[]): VestaEvent[] {
+function capTail(messages: ChatMessage[]): ChatMessage[] {
   return messages.length > PACING.maxMessages
     ? messages.slice(-PACING.maxMessages)
     : messages;
@@ -41,7 +41,7 @@ export function useAgentSocketState({
   onPrefetch,
 }: UseAgentSocketOptions) {
   const controller = useController();
-  const [messages, setMessages] = useState<VestaEvent[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isTyping, setIsTyping] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -58,7 +58,7 @@ export function useAgentSocketState({
   onAssistantMessageRef.current = onAssistantMessage;
   const onPrefetchRef = useRef(onPrefetch);
   onPrefetchRef.current = onPrefetch;
-  const chatQueueRef = useRef<VestaEvent[]>([]);
+  const chatQueueRef = useRef<ChatMessage[]>([]);
   const drainingRef = useRef(false);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -127,7 +127,7 @@ export function useAgentSocketState({
   }, [flushQueue]);
 
   const enqueueChatMessage = useCallback(
-    (event: VestaEvent) => {
+    (event: ChatMessage) => {
       chatQueueRef.current.push(event);
       drainQueue();
     },
@@ -202,9 +202,7 @@ export function useAgentSocketState({
     const seedTail = async () => {
       const page = await fetchHistory(agent, "app-chat");
       if (cancelled) return;
-      const pageIds = new Set<number>(
-        page.events.flatMap((e) => (e.id != null ? [e.id] : [])),
-      );
+      const pageIds = new Set<number>(page.events.map((e) => e.id));
       setCursor(page.cursor);
       setMessages((prev) => {
         const survivors = prev.filter(
@@ -222,7 +220,7 @@ export function useAgentSocketState({
 
     // Fold one live event into the tail: confirm an optimistic bubble by intent id, dedup a persisted
     // row by event id, pace chat through the typing queue, append everything else.
-    const addLiveEvent = (event: VestaEvent) => {
+    const addLiveEvent = (event: ChatMessage) => {
       if (
         event.type === "user" &&
         event.intent_id != null &&
@@ -264,7 +262,7 @@ export function useAgentSocketState({
 
     const unsubscribe = controller.subscribeDeltas((delta: Delta) => {
       if (delta.type === "append" && delta.agent === agent) {
-        const events: VestaEvent[] = delta.events;
+        const events: ChatMessage[] = delta.events;
         for (const event of events) addLiveEvent(event);
       } else if (delta.type === "resync" && delta.agent === agent) {
         resetTyping();
@@ -330,8 +328,7 @@ export function useAgentSocketState({
     setLoadingMore(true);
     try {
       const result = await fetchHistory(name, "app-chat", cursor);
-      for (const event of result.events)
-        if (event.id != null) shownIdsRef.current.add(event.id);
+      for (const event of result.events) shownIdsRef.current.add(event.id);
       setMessages((prev) => [...result.events, ...prev]);
       setCursor(result.cursor);
     } finally {

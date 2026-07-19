@@ -1,22 +1,22 @@
 import { calendarDayKey, formatChatDayStampLabel } from "@/lib/chat-day-stamp";
-import type { VestaEvent } from "@/lib/types";
+import type { ChatMessage } from "@/lib/types";
 
 export interface DecoratedRow {
   key: string;
-  event: VestaEvent;
+  event: ChatMessage;
   gap: string;
   showDayStamp: boolean;
   dayLabel: string;
   isFirst: boolean;
 }
 
-export function rowKey(event: VestaEvent, idxFallback: number): string {
+export function rowKey(event: ChatMessage, idxFallback: number): string {
   return event.ts ? `${event.ts}-${event.type}` : `i-${String(idxFallback)}`;
 }
 
 function rowGap(
-  msg: VestaEvent,
-  prev: VestaEvent | undefined,
+  msg: ChatMessage,
+  prev: ChatMessage | undefined,
   showDayStamp: boolean,
   index: number,
 ): string {
@@ -29,7 +29,7 @@ function rowGap(
   return prev?.type === msg.type ? "mt-1.5" : "mt-5";
 }
 
-export function buildDecorated(chatMessages: VestaEvent[]): DecoratedRow[] {
+export function buildDecorated(chatMessages: ChatMessage[]): DecoratedRow[] {
   let lastDayKey: string | null = null;
   // rowKey (`${ts}-${type}`) is not guaranteed unique — two events can share a
   // timestamp and type. Suffix repeats so keys stay unique, which the virtualizer's

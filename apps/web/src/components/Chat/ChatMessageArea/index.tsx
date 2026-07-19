@@ -12,7 +12,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { ArrowDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CardContent } from "@/components/ui/card";
-import type { VestaEvent } from "@/lib/types";
+import type { ChatMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { stepTransition } from "@/lib/motion";
 import { ChatBubble, type RetryHandler } from "../ChatBubble";
@@ -45,7 +45,7 @@ interface ChatMessageAreaProps {
   loadingMore: boolean;
   fullscreen?: boolean;
   navbarHeight: number;
-  chatMessages: VestaEvent[];
+  chatMessages: ChatMessage[];
   connected: boolean;
   historyLoaded: boolean;
   agentName: string;
