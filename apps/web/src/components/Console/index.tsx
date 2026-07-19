@@ -7,7 +7,7 @@ import {
 } from "react";
 import { useLayout } from "@/stores/use-layout";
 import { streamLogs, stopLogs } from "@/api";
-import { renderAnsiHtml } from "@/lib/ansi";
+import { renderAnsiHtml } from "@/lib/ansi-html";
 import { linkify } from "@/lib/linkify";
 import {
   logStreamAction,
