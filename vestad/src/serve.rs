@@ -2859,16 +2859,16 @@ pub async fn run_server(cfg: ServerConfig) {
     // Keep a docker handle for the shutdown hook: vestad stops every agent when it exits, so a
     // vestad update/restart hands off with nothing running on a stale container.
     let shutdown_docker = docker.clone();
-    agent_status::spawn_agent_status_task(
-        state.agent_status_cache.clone(),
+    agent_status::spawn_agent_status_task(agent_status::AgentStatusTaskDeps {
+        cache: state.agent_status_cache.clone(),
         docker,
-        state.http_client.clone(),
-        state.env_config.agents_dir.clone(),
+        http_client: state.http_client.clone(),
+        agents_dir: state.env_config.agents_dir.clone(),
         on_agents_changed,
-        state.rebuilding.clone(),
-        state.mobile_app.clone(),
-        state.sync_hub.clone(),
-    );
+        rebuilding: state.rebuilding.clone(),
+        mobile_app: state.mobile_app.clone(),
+        sync_hub: state.sync_hub.clone(),
+    });
     let app = build_router(state.clone());
     spawn_auto_backup_task(state.clone());
     if dev_mode {

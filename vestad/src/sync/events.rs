@@ -2,21 +2,6 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
-/// The id + type every agent event carries (the events.db rowid on the Python seam; negative for
-/// live-only variants). The single extractor vestad uses to interpret an otherwise opaque, relayed
-/// event.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct EventMeta {
-    pub id: i64,
-    pub kind: String,
-}
-
-pub(crate) fn event_meta(event: &Value) -> Option<EventMeta> {
-    let id = event.get("id")?.as_i64()?;
-    let kind = event.get("type")?.as_str()?.to_string();
-    Some(EventMeta { id, kind })
-}
-
 /// The agent's live activity state, present on both a `status` event and the connect `snapshot`
 /// frame (top-level `state`). Keeps the roster's activityState fresh.
 pub(crate) fn activity_state(frame: &Value) -> Option<String> {
@@ -122,12 +107,13 @@ mod tests {
         let events = fixture["events"].as_array().expect("events array");
         assert_eq!(events.len(), 13, "the union covers all 13 stream variants");
         for event in events {
-            let meta = event_meta(event).expect("every event carries id + type");
-            let live = meta.kind == "status" || meta.kind == "notification_cleared";
+            let id = event.get("id").and_then(Value::as_i64).expect("every event carries an id");
+            let kind = event.get("type").and_then(Value::as_str).expect("every event carries a type");
+            let live = kind == "status" || kind == "notification_cleared";
             if live {
-                assert!(meta.id < 0, "live-only {} uses a negative id", meta.kind);
+                assert!(id < 0, "live-only {kind} uses a negative id");
             } else {
-                assert!(meta.id > 0, "persisted {} uses a positive rowid", meta.kind);
+                assert!(id > 0, "persisted {kind} uses a positive rowid");
             }
         }
     }

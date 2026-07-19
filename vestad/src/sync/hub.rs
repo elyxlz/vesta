@@ -7,7 +7,7 @@ use tokio::sync::{broadcast, mpsc, watch};
 use super::events::{NotificationChange, PendingNotifications};
 
 /// Per-agent live-edge buffer. A watcher that falls this far behind is dropped with a `resync`
-/// delta (today's EventBus eviction contract, scoped to one subscription instead of the socket).
+/// delta (today's `EventBus` eviction contract, scoped to one subscription instead of the socket).
 const AGENT_BROADCAST_CAPACITY: usize = 256;
 
 /// One live-edge message for an agent's watchers. `Resync` tells a watcher its live edge had a gap
