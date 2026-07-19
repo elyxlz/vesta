@@ -434,18 +434,18 @@ var commands = []command{
 	{name: "call-status", run: cmdCallStatus},
 	{name: "daemon-status", hidden: true, run: cmdDaemonStatus},
 	{name: "link", hidden: true, timeout: LinkSocketTimeout, run: cmdLink},
+	{name: "own-number-link", hidden: true, timeout: LinkSocketTimeout, run: cmdOwnNumberLink},
 }
 
-// cmdLink runs the whole self-hosted QR pairing synchronously in one socket call:
-// serve the scan page on --port (when set), then block until the user scans or the
-// window elapses, returning a terminal status. Single-flighted with every other
-// pairing op, so a link during an in-flight provision is refused (never burns a
-// rate-limit slot or serves a blank QR). Replaces the old link-start/status/stop
-// trio and the client-side poll loop.
-func cmdLink(args []string, wac *WhatsAppClient) (any, error) {
+// linkViaQR runs a QR companion-link socket command end to end: parse the shared
+// port + ban-override flags, gate on the linked fact, single-flight, record the
+// rate-limit attempt, then invoke link (the QR mechanism). Both self-hosted `link`
+// (through the linker) and user-owned `own-number-link` (direct, bypassing the
+// managed linker's own-number paradigm) share this body.
+func linkViaQR(name string, args []string, wac *WhatsAppClient, link func(port int) (linkResult, error), result map[string]any) (any, error) {
 	var port int
 	var acknowledged bool
-	fs := flag.NewFlagSet("link", flag.ContinueOnError)
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.IntVar(&port, "port", 0, "Serve the QR link page on this port (0 = no page)")
 	fs.BoolVar(&acknowledged, "acknowledge-ban-risk", false, "Override the pairing rate limit")
 	if err := parseFlags(fs, args); err != nil {
@@ -463,10 +463,32 @@ func cmdLink(args []string, wac *WhatsAppClient) (any, error) {
 	if err := wac.state.tryRecordPairAttempt(time.Now(), acknowledged); err != nil {
 		return nil, err
 	}
-	if _, err := wac.linker.linkQR(wac, port); err != nil {
+	if _, err := link(port); err != nil {
 		return nil, err
 	}
-	return map[string]any{"status": string(AuthStatusAuthenticated)}, nil
+	return result, nil
+}
+
+// cmdLink runs the whole self-hosted QR pairing synchronously in one socket call:
+// serve the scan page on --port (when set), then block until the user scans or the
+// window elapses, returning a terminal status. Single-flighted with every other
+// pairing op, so a link during an in-flight provision is refused (never burns a
+// rate-limit slot or serves a blank QR). Replaces the old link-start/status/stop
+// trio and the client-side poll loop.
+func cmdLink(args []string, wac *WhatsAppClient) (any, error) {
+	return linkViaQR("link", args, wac, func(port int) (linkResult, error) {
+		return wac.linker.linkQR(wac, port)
+	}, map[string]any{"status": string(AuthStatusAuthenticated)})
+}
+
+// cmdOwnNumberLink links the agent as a COMPANION to a user-owned pool number the
+// user already registered on their own phone (see runConnectOwnNumber). It runs the
+// QR link DIRECTLY rather than through the linker: on a cloud box the linker owns the
+// agent's OWN number and rejects a QR link, but here the primary is the user's phone.
+func cmdOwnNumberLink(args []string, wac *WhatsAppClient) (any, error) {
+	return linkViaQR("own-number-link", args, wac, func(port int) (linkResult, error) {
+		return wac.runQRLink(port)
+	}, map[string]any{"status": string(AuthStatusAuthenticated), "owner": "user"})
 }
 
 func cmdDaemonStatus(args []string, wac *WhatsAppClient) (any, error) {

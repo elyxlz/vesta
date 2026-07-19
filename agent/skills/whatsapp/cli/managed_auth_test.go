@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -360,6 +361,157 @@ func TestMintToken_missingCredentials(t *testing.T) {
 	m2 := newManagedAuth(managedConfig{controlURL: "https://x"})
 	if _, err := m2.mintToken(); err == nil {
 		t.Fatal("expected error without VESTAD_PORT/AGENT_NAME")
+	}
+}
+
+// leaseProxy POSTs the control-plane lease endpoint with the same server-identity
+// token the rest of managed auth mints, and returns the url from the JSON body.
+func TestLeaseProxy_returnsURL(t *testing.T) {
+	const wantURL = "http://user-US-1234:pass@host:8080"
+	var gotAuth, gotMethod string
+	m := managedFor(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/integrations/proxy/lease" {
+			http.Error(w, "no", http.StatusNotFound)
+			return
+		}
+		gotAuth, gotMethod = r.Header.Get("Authorization"), r.Method
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"url": wantURL, "protocol": "http", "region": "US", "sticky_id": "1234", "expires_at": "2026-07-20T00:00:00Z",
+		})
+	})
+	got, err := m.leaseProxy()
+	if err != nil {
+		t.Fatalf("leaseProxy: %v", err)
+	}
+	if got != wantURL {
+		t.Fatalf("leaseProxy url = %q, want %q", got, wantURL)
+	}
+	if gotMethod != http.MethodPost {
+		t.Fatalf("leaseProxy method = %q, want POST", gotMethod)
+	}
+	if gotAuth != "Bearer sit_minted" {
+		t.Fatalf("leaseProxy Authorization = %q, want the minted server-identity token", gotAuth)
+	}
+}
+
+// A 503 proxy_unconfigured surfaces as a clear "not configured" error so the caller
+// fails closed rather than connecting on the datacenter IP.
+func TestLeaseProxy_unconfigured503(t *testing.T) {
+	m := managedFor(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/integrations/proxy/lease" {
+			http.Error(w, "no", http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "proxy_unconfigured"})
+	})
+	_, err := m.leaseProxy()
+	if err == nil || !strings.Contains(err.Error(), "not configured") {
+		t.Fatalf("leaseProxy on 503 = %v, want a not-configured error", err)
+	}
+}
+
+// ensureManagedProxy fails closed on a cloud-managed box when no lease is available:
+// it returns an error, caches nothing, and never reaches SetProxyAddress (so the
+// companion never connects to WhatsApp on the datacenter IP).
+func TestEnsureManagedProxy_failsClosedWithoutLease(t *testing.T) {
+	vestad := fakeVestad(t, "atok")
+	ctrl := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/integrations/proxy/lease" {
+			http.Error(w, "no", http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "proxy_unconfigured"})
+	}))
+	t.Cleanup(ctrl.Close)
+	m := newManagedAuth(managedConfig{controlURL: ctrl.URL, vestadBase: vestad.URL, agentName: "alice", agentToken: "atok", cloudManaged: true})
+	wac := &WhatsAppClient{managed: m}
+	if err := wac.ensureManagedProxy(); err == nil || !strings.Contains(err.Error(), "not configured") {
+		t.Fatalf("cloud-managed ensureManagedProxy without a lease = %v, want a fail-closed not-configured error", err)
+	}
+	if wac.proxyURL != "" {
+		t.Fatalf("a failed lease must cache nothing, got %q", wac.proxyURL)
+	}
+}
+
+// A self-hosted (no managed client) and a direct box (own residential IP already)
+// both skip the proxy entirely, so a self-hosted/direct connect is unaffected. Both
+// return before touching the (here nil) whatsmeow client.
+func TestEnsureManagedProxy_noopWhenNotCloudManaged(t *testing.T) {
+	if err := (&WhatsAppClient{}).ensureManagedProxy(); err != nil {
+		t.Fatalf("self-hosted ensureManagedProxy = %v, want no-op nil", err)
+	}
+	direct := &WhatsAppClient{managed: newManagedAuth(managedConfig{directURL: "https://box", directKey: "wak_x", cloudManaged: true})}
+	if err := direct.ensureManagedProxy(); err != nil {
+		t.Fatalf("direct ensureManagedProxy = %v, want no-op nil", err)
+	}
+}
+
+// provisionSelf POSTs /byo (idempotent) and returns the reserved user-owned number.
+func TestProvisionSelf_returnsNumber(t *testing.T) {
+	var gotMethod string
+	m := managedFor(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/integrations/whatsapp/byo" {
+			http.Error(w, "no", http.StatusNotFound)
+			return
+		}
+		gotMethod = r.Method
+		_ = json.NewEncoder(w).Encode(map[string]string{"msisdn": "+15551230000", "state": "self_owned"})
+	})
+	got, err := m.provisionSelf()
+	if err != nil {
+		t.Fatalf("provisionSelf: %v", err)
+	}
+	if got != "+15551230000" {
+		t.Fatalf("provisionSelf msisdn = %q", got)
+	}
+	if gotMethod != http.MethodPost {
+		t.Fatalf("provisionSelf method = %q, want POST", gotMethod)
+	}
+}
+
+// A control error (e.g. inactive membership) surfaces rather than a bare empty number.
+func TestProvisionSelf_error(t *testing.T) {
+	m := managedFor(t, func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"error":"membership_inactive"}`, http.StatusForbidden)
+	})
+	if _, err := m.provisionSelf(); err == nil {
+		t.Fatal("expected error on a 403 provisionSelf")
+	}
+}
+
+// selfNumberOTP GETs /byo/otp and returns the relayed SMS code.
+func TestSelfNumberOTP_returnsCode(t *testing.T) {
+	var gotMethod string
+	m := managedFor(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/integrations/whatsapp/byo/otp" {
+			http.Error(w, "no", http.StatusNotFound)
+			return
+		}
+		gotMethod = r.Method
+		_ = json.NewEncoder(w).Encode(map[string]string{"code": "123456"})
+	})
+	got, err := m.selfNumberOTP()
+	if err != nil {
+		t.Fatalf("selfNumberOTP: %v", err)
+	}
+	if got != "123456" {
+		t.Fatalf("selfNumberOTP code = %q", got)
+	}
+	if gotMethod != http.MethodGet {
+		t.Fatalf("selfNumberOTP method = %q, want GET", gotMethod)
+	}
+}
+
+// An empty code is off-contract; selfNumberOTP surfaces an error rather than
+// returning a blank string the caller would print as the user's OTP.
+func TestSelfNumberOTP_emptyCode(t *testing.T) {
+	m := managedFor(t, func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"code": ""})
+	})
+	if _, err := m.selfNumberOTP(); err == nil {
+		t.Fatal("expected error on an empty OTP code")
 	}
 }
 

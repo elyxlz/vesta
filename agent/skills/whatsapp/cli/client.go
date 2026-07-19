@@ -64,10 +64,16 @@ type WhatsAppClient struct {
 	sendersMutex     sync.RWMutex
 	state            *stateStore
 	linker           linker
-	authStatus       AuthStatus
-	authMutex        sync.RWMutex
-	qrPath           string
-	currentQRCode    string // guarded by authMutex, cleared on success
+	// managed is the pool-API client when this box links a managed number (nil on a
+	// self-hosted QR box). It leases the residential proxy the cloud companion egresses
+	// through and drives the user-owned (BYO) number flow.
+	managed       *managedAuth
+	proxyMu       sync.Mutex
+	proxyURL      string // cached residential proxy lease for the process lifetime
+	authStatus    AuthStatus
+	authMutex     sync.RWMutex
+	qrPath        string
+	currentQRCode string // guarded by authMutex, cleared on success
 	// pairMu single-flights every pairing op (provision, QR link, phone code): only
 	// one runs at a time, so a failed one leaves a clean client for the next and no
 	// two pairings ever race for the rate-limit slot or the QR channel.
@@ -145,6 +151,7 @@ func NewWhatsAppClient(dataDir, notificationsDir, instance string, readOnly bool
 	}
 
 	state := newStateStore(dataDir)
+	boxLinker := chooseLinker(loadManagedConfig(), state)
 	wac := &WhatsAppClient{
 		client:           client,
 		store:            store,
@@ -157,12 +164,17 @@ func NewWhatsAppClient(dataDir, notificationsDir, instance string, readOnly bool
 		skipSenders:      skipSenders,
 		messageSenders:   make(map[string]string),
 		state:            state,
-		linker:           chooseLinker(loadManagedConfig(), state),
+		linker:           boxLinker,
 		authStatus:       AuthStatusNotAuthenticated,
 		transcribeSem:    make(chan struct{}, MaxConcurrentTranscriptions),
 		readQueue:        make(map[string]*chatReadBatch),
 		msgWork:          make(chan func(), MsgWorkBuffer),
 		workerDone:       make(chan struct{}),
+	}
+	// A managed box (direct or cloud) carries a pool-API client, reused for the
+	// residential proxy lease and the user-owned number flow; a QR box has none.
+	if ml, ok := boxLinker.(*managedLinker); ok {
+		wac.managed = ml.auth
 	}
 
 	client.AddEventHandler(wac.eventHandler)
@@ -196,6 +208,31 @@ func (wac *WhatsAppClient) enqueueWork(fn func()) {
 	}
 }
 
+// ensureManagedProxy routes the cloud-managed companion through a leased residential
+// proxy BEFORE it connects, so it never egresses from the datacenter IP (a ban
+// signal). No-op on self-hosted/direct boxes, which already egress from the user's
+// residential IP. Fails closed: on a lease error the caller must not connect on the
+// bare datacenter IP. The lease is cached for the process (sticky per account);
+// SetProxyAddress must run before Connect to take effect.
+func (wac *WhatsAppClient) ensureManagedProxy() error {
+	if wac.managed == nil || !wac.managed.usesResidentialProxy() {
+		return nil
+	}
+	wac.proxyMu.Lock()
+	defer wac.proxyMu.Unlock()
+	if wac.proxyURL == "" {
+		leased, err := wac.managed.leaseProxy()
+		if err != nil {
+			return err
+		}
+		wac.proxyURL = leased
+	}
+	if err := wac.client.SetProxyAddress(wac.proxyURL); err != nil {
+		return fmt.Errorf("apply residential proxy: %w", err)
+	}
+	return nil
+}
+
 // Connect is the daemon's boot connection step. Its whole job is to maintain a
 // LINKED device: if the device is linked (Store.ID != nil) it connects and keeps
 // the session; if it is not linked it stays IDLE (socket up, not connected), never
@@ -217,6 +254,14 @@ func (wac *WhatsAppClient) Connect() error {
 	if wac.state.snapshot().ConnParked {
 		wac.setConnMode(connParked)
 		wac.logger.Infof("Session parked: another device took over. Staying idle; run `whatsapp connect` to re-link.")
+		return nil
+	}
+
+	// Fail closed on the connection, not the daemon: if the residential lease is
+	// unavailable, stay idle (socket server still comes up for `whatsapp status`)
+	// rather than connecting from the datacenter IP.
+	if err := wac.ensureManagedProxy(); err != nil {
+		wac.logger.Errorf("Residential proxy lease unavailable; staying idle rather than connecting on the datacenter IP: %v", err)
 		return nil
 	}
 
@@ -318,6 +363,11 @@ func (wac *WhatsAppClient) EnsureConnected() error {
 	// clears the park.
 	if wac.connModeIs(connParked) {
 		return fmt.Errorf("WhatsApp session parked: another device took over. Re-link with `whatsapp connect`")
+	}
+
+	// Never reconnect the cloud companion without the residential egress in place.
+	if err := wac.ensureManagedProxy(); err != nil {
+		return fmt.Errorf("residential proxy lease required before reconnecting: %w", err)
 	}
 
 	wac.logger.Warnf("WhatsApp is not connected. Attempting to reconnect...")
@@ -433,6 +483,12 @@ func (wac *WhatsAppClient) runQRLink(port int) (linkResult, error) {
 		defer wac.stopLinkServer()
 	}
 	defer wac.clearQR()
+
+	// On a cloud box the companion (including a user-owned BYO link) egresses through
+	// the residential proxy; a no-op on a self-hosted box.
+	if err := wac.ensureManagedProxy(); err != nil {
+		return linkResult{}, err
+	}
 
 	deadline := time.Now().Add(LinkSessionTimeout)
 	for time.Now().Before(deadline) {

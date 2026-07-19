@@ -97,16 +97,12 @@ func linkServeArgs() []string {
 	return nil
 }
 
-func runLink() {
-	if phone, present := lookupFlag("phone"); present && phone != "" {
-		runLinkPhone(phone)
-		return
-	}
-
-	if err := startDaemonProcess(linkServeArgs()); err != nil {
-		failJSON("%s", err.Error())
-	}
-
+// serveAndRunQRLink resolves the scan-page port (an explicit --port, else a
+// vestad-registered public service), surfaces the scan URL to the user, then makes
+// the one blocking socket call that serves the page and waits for the scan.
+// socketCommand is the daemon verb that runs the link (self-hosted `link` or the
+// user-owned `own-number-link`). Returns the daemon's terminal output + exit code.
+func serveAndRunQRLink(socketCommand string) ([]byte, int) {
 	port := 0
 	if flagPort, present := lookupFlag("port"); present {
 		var err error
@@ -122,24 +118,34 @@ func runLink() {
 		}
 		port = registeredPort
 	}
-
-	// Surface the scan URL to the user FIRST, then make the one blocking `link`
-	// call: it serves the page, waits for the scan, and returns a terminal result.
 	pageURL := linkPageURL(os.Getenv("VESTAD_TUNNEL"), os.Getenv("AGENT_NAME"), linkServiceName(), port)
 	printJSON(map[string]any{
 		"status": "linking",
 		"url":    pageURL,
 		"next":   "Send the user this URL to scan. On their phone: WhatsApp > Settings > Linked Devices > Link a Device, then scan the code on the page. The page keeps itself current; there is no rush.",
 	})
-
 	linkArgs := []string{"--port", fmt.Sprintf("%d", port)}
 	if hasBareFlag("acknowledge-ban-risk") {
 		linkArgs = append(linkArgs, "--acknowledge-ban-risk")
 	}
-	output, exitCode, connected := trySocketCommand(getSocketPath(), "link", linkArgs)
+	output, exitCode, connected := trySocketCommand(getSocketPath(), socketCommand, linkArgs)
 	if !connected {
 		failJSON("daemon stopped answering during linking; check 'whatsapp daemon status'")
 	}
+	return output, exitCode
+}
+
+func runLink() {
+	if phone, present := lookupFlag("phone"); present && phone != "" {
+		runLinkPhone(phone)
+		return
+	}
+
+	if err := startDaemonProcess(linkServeArgs()); err != nil {
+		failJSON("%s", err.Error())
+	}
+
+	output, exitCode := serveAndRunQRLink("link")
 	if exitCode != 0 {
 		fmt.Println(string(output))
 		os.Exit(1)

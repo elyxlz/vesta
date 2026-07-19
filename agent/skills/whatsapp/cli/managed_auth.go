@@ -96,6 +96,10 @@ const (
 	// this stays well under SocketTimeout so the whole synchronous handshake (claim +
 	// pair + link wait) always returns a terminal result within one socket call.
 	provisionPollMax = 60
+	// proxyLeasePath is the control-plane endpoint that hands the cloud companion a
+	// residential proxy lease. It sits outside /integrations/whatsapp, so leaseProxy
+	// builds the URL from controlURL directly rather than through call().
+	proxyLeasePath = "/integrations/proxy/lease"
 )
 
 // provisionPollInterval is a var so tests can shrink it.
@@ -254,6 +258,73 @@ func (m *managedAuth) authorize() (base, auth string, err error) {
 		return "", "", err
 	}
 	return m.cfg.controlURL + "/integrations/whatsapp", "Bearer " + token, nil
+}
+
+// usesResidentialProxy reports whether this box must egress through a leased
+// residential proxy: a genuine cloud tenant whose companion would otherwise hit
+// WhatsApp from a datacenter IP (a ban signal). A direct self-hosted box already
+// egresses from the user's residential IP, so it never leases.
+func (m *managedAuth) usesResidentialProxy() bool {
+	return m.cfg.cloudManaged && !m.isDirect()
+}
+
+// leaseProxy fetches a residential proxy lease for the cloud companion, reusing the
+// same server-identity token the rest of managed auth mints. A 503 proxy_unconfigured
+// surfaces as a clear "not configured" error so the caller fails closed rather than
+// connecting to WhatsApp on the bare datacenter IP.
+func (m *managedAuth) leaseProxy() (string, error) {
+	token, err := m.mintToken()
+	if err != nil {
+		return "", err
+	}
+	var out struct {
+		URL string `json:"url"`
+	}
+	headers := map[string]string{"Authorization": "Bearer " + token}
+	if err := m.do(m.control, http.MethodPost, m.cfg.controlURL+proxyLeasePath, headers, map[string]string{}, &out); err != nil {
+		if status, ok := httpStatus(err); ok && status == http.StatusServiceUnavailable {
+			return "", fmt.Errorf("residential proxy not configured on the control plane: %w", err)
+		}
+		return "", fmt.Errorf("lease residential proxy: %w", err)
+	}
+	if out.URL == "" {
+		return "", fmt.Errorf("control plane returned an empty proxy lease")
+	}
+	return out.URL, nil
+}
+
+// provisionSelf claims (idempotently) a pool number the USER will own on their own
+// phone: the control plane reserves it, the user registers it themselves and keeps
+// their phone online, then the agent links only as a companion. Distinct from
+// provision, where the agent drives a headless primary for its own number.
+func (m *managedAuth) provisionSelf() (string, error) {
+	var out struct {
+		MSISDN string `json:"msisdn"`
+		State  string `json:"state"`
+	}
+	if err := m.call(http.MethodPost, "/byo", map[string]string{}, &out); err != nil {
+		return "", fmt.Errorf("reserve a user-owned number: %w", err)
+	}
+	if out.MSISDN == "" {
+		return "", fmt.Errorf("control plane returned no number for the user-owned account")
+	}
+	return out.MSISDN, nil
+}
+
+// selfNumberOTP blocks server-side (up to the pool API deadline) until the SMS
+// verification code for the user-owned number arrives, then returns it for the user
+// to enter while registering the number in WhatsApp on their own phone.
+func (m *managedAuth) selfNumberOTP() (string, error) {
+	var out struct {
+		Code string `json:"code"`
+	}
+	if err := m.call(http.MethodGet, "/byo/otp", nil, &out); err != nil {
+		return "", fmt.Errorf("fetch the user-owned number verification code: %w", err)
+	}
+	if out.Code == "" {
+		return "", fmt.Errorf("control plane returned an empty verification code")
+	}
+	return out.Code, nil
 }
 
 // call sends one authenticated request to the pool API, resolving the base +

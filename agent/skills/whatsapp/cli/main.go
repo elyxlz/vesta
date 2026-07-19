@@ -17,7 +17,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage: whatsapp <command> [args] [flags]")
 	// The lifecycle commands run in the client, not the daemon, so they are not in the registry.
 	fmt.Fprintln(w, "Setup / health:")
-	fmt.Fprintln(w, "  connect                              set up WhatsApp: claim + link the agent's own number, or link the user's own WhatsApp by QR (one command, idempotent, safe to re-run)")
+	fmt.Fprintln(w, "  connect [--own-number]               set up WhatsApp: claim + link the agent's own number, or link the user's own WhatsApp by QR (idempotent, safe to re-run). --own-number: the user owns a pool number on their own phone; the agent links only as a companion")
 	fmt.Fprintln(w, "  status                               simple health check: linked, number, connected. If it shows linked:false, run `whatsapp connect`")
 	fmt.Fprintln(w, "  start                                bring the daemon up (idempotent); the restart skill runs this at boot")
 	fmt.Fprintln(w, "Internal (the CLI self-manages its daemon; agents never call these):")

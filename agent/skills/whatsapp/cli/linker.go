@@ -112,6 +112,12 @@ func (l *managedLinker) provision(wac *WhatsAppClient) (linkResult, error) {
 	}
 	l.state.update(func(s *daemonState) { s.MSISDN = st.MSISDN })
 
+	// Route the cloud companion through the residential proxy before the pairing WS
+	// comes up, so it never pairs from the datacenter IP. Fails closed.
+	if err := wac.ensureManagedProxy(); err != nil {
+		return linkResult{}, err
+	}
+
 	// Bring the pairing WS up. We link by phone code, so the QR channel is drained
 	// unused: GetQRChannel must precede Connect, and PairPhone waits for the WS.
 	qrChan, err := wac.client.GetQRChannel(context.Background())
