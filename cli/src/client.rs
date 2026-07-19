@@ -354,7 +354,31 @@ enum SyncFrame {
 /// The snapshot is tail-less; chat only needs the roster key set to confirm the agent exists.
 #[derive(serde::Deserialize, Debug)]
 struct RosterSnapshot {
-    agents: std::collections::BTreeMap<String, serde::de::IgnoredAny>,
+    #[serde(deserialize_with = "deserialize_roster_keys")]
+    agents: std::collections::BTreeSet<String>,
+}
+
+/// Collect just the roster's agent names, ignoring each node body: chat only needs the key set to
+/// confirm an agent exists, so the values never have to be retained or modelled.
+fn deserialize_roster_keys<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<std::collections::BTreeSet<String>, D::Error> {
+    struct KeysVisitor;
+    impl<'de> serde::de::Visitor<'de> for KeysVisitor {
+        type Value = std::collections::BTreeSet<String>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("a map of agent names to nodes")
+        }
+
+        fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+            let mut keys = std::collections::BTreeSet::new();
+            while let Some(key) = map.next_key::<String>()? {
+                map.next_value::<serde::de::IgnoredAny>()?;
+                keys.insert(key);
+            }
+            Ok(keys)
+        }
+    }
+    deserializer.deserialize_map(KeysVisitor)
 }
 
 /// One conversation event as chat renders it. `id` is the events.db rowid (dedup key); `intent_id`
@@ -431,8 +455,9 @@ fn should_print(id: i64, last: &mut i64) -> bool {
     }
 }
 
-/// Classify a send-message response: 2xx is delivered, a retryable `503` keeps the composer for a
-/// same-intent retry, anything else is fatal. Pure so the mapping is unit-tested without a socket.
+/// Classify a send-message response: 2xx means accepted/queued (delivery truth is the append echo
+/// carrying the intent id, not this ack), a retryable `503` keeps the composer for a same-intent
+/// retry, anything else is fatal. Pure so the mapping is unit-tested without a socket.
 fn classify_send(status: u16, body: &str) -> Result<(), SendError> {
     if (200..300).contains(&status) {
         return Ok(());
@@ -1405,7 +1430,7 @@ mod tests {
                 .expect("snapshot parses (gateway branch ignored)");
         match snapshot {
             SyncFrame::Snapshot { tree } => {
-                assert!(tree.agents.contains_key("alpha"), "roster key set is read");
+                assert!(tree.agents.contains("alpha"), "roster key set is read");
             }
             other => panic!("expected Snapshot, got {other:?}"),
         }
