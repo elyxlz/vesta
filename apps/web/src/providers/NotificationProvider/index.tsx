@@ -50,81 +50,37 @@ async function focusAndOpen(
   openAgent(agentName);
 }
 
-// The controller-driven half of the provider: it watches every alive agent on the single sync
-// socket and fires background chat/rate-limit previews off the multiplexed delta stream, plus
+// The controller-driven half of the provider: it toasts the server's always-on `alert` deltas and
 // lights the unseen badge from the replica's fleet-wide pending branch. Rendered only once the
 // controller exists, so its hooks always have a live replica.
 function ReplicaNotifications({
   controller,
-  agents,
   chattingAgentRef,
   notifyAssistant,
   notifyRateLimited,
   markUnseen,
 }: {
   controller: Controller;
-  agents: AgentInfo[];
   chattingAgentRef: RefObject<string | null>;
   notifyAssistant: (agentName: string, text: string) => void;
   notifyRateLimited: (agentName: string, text: string) => void;
   markUnseen: () => void;
 }) {
-  const aliveNames = useMemo(
-    () =>
-      agents
-        .filter((a) => a.status === "alive")
-        .map((a) => a.name)
-        .sort(),
-    [agents],
-  );
-
-  // One WATCH per alive agent on the shared socket; watches are ref-counted, so overlapping with
-  // AgentSocketProvider's active-agent watch is safe. Reconcile incrementally: watch agents that
-  // joined the alive roster, unwatch those that left, and unwatch all on unmount.
-  const watchedRef = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    const desired = new Set(aliveNames);
-    const watched = watchedRef.current;
-    for (const name of Array.from(watched)) {
-      if (!desired.has(name)) {
-        controller.unwatch(name);
-        watched.delete(name);
-      }
-    }
-    for (const name of aliveNames) {
-      if (!watched.has(name)) {
-        controller.watch(name);
-        watched.add(name);
-      }
-    }
-  }, [controller, aliveNames]);
-
-  useEffect(() => {
-    const watched = watchedRef.current;
-    return () => {
-      for (const name of watched) controller.unwatch(name);
-      watched.clear();
-    };
-  }, [controller]);
-
-  // Background previews from the multiplexed live edge (same event types as the old per-agent taps):
-  // a rate limit alerts for any agent even while focused; a chat line lights the unseen badge and
-  // fires a preview, deferring the actively-chatted agent to AgentSocketProvider (which fires after
-  // the typing delay so the notification lines up with the visible bubble).
+  // Toasts come from vestad's server-decided `alert` deltas (each carries the notification-worthy
+  // event plus a ready preview), independent of any watch. A rate limit alerts even while focused; a
+  // chat lights the unseen badge and toasts, deferring the actively-chatted agent to
+  // AgentSocketProvider (which fires after the typing delay so it lines up with the visible bubble).
   useEffect(() => {
     return controller.subscribeDeltas((delta: Delta) => {
-      if (delta.type !== "append") return;
-      const agentName = delta.agent;
-      for (const event of delta.events) {
-        if (event.type === "rate_limited") {
-          notifyRateLimited(agentName, event.text);
-          continue;
-        }
-        if (event.type !== "chat") continue;
-        markUnseen();
-        if (chattingAgentRef.current === agentName) continue;
-        notifyAssistant(agentName, event.text);
+      if (delta.type !== "alert") return;
+      const { agent, event, preview } = delta;
+      if (event.type === "rate_limited") {
+        notifyRateLimited(agent, preview);
+        return;
       }
+      markUnseen();
+      if (chattingAgentRef.current === agent) return;
+      notifyAssistant(agent, preview);
     });
   }, [
     controller,
@@ -301,7 +257,6 @@ export function NotificationProvider({
       {controller ? (
         <ReplicaNotifications
           controller={controller}
-          agents={agents}
           chattingAgentRef={chattingAgentRef}
           notifyAssistant={notifyAssistant}
           notifyRateLimited={notifyRateLimited}

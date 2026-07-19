@@ -156,6 +156,12 @@ function blur() {
   });
 }
 
+function focus() {
+  act(() => {
+    window.dispatchEvent(new Event("focus"));
+  });
+}
+
 function setHidden(hidden: boolean) {
   Object.defineProperty(document, "hidden", {
     configurable: true,
@@ -179,41 +185,7 @@ afterEach(() => {
 });
 
 describe("NotificationProvider", () => {
-  it("watches every alive agent and unwatches them on unmount", async () => {
-    const { controller } = makeController({ ada: "alive", bob: "alive" });
-    const view = mount(controller, [
-      agentInfo("ada", "alive"),
-      agentInfo("bob", "alive"),
-    ]);
-    await flush();
-
-    expect(vi.mocked(controller.watch).mock.calls.sort()).toEqual([
-      ["ada"],
-      ["bob"],
-    ]);
-
-    view.unmount();
-    expect(vi.mocked(controller.unwatch).mock.calls.sort()).toEqual([
-      ["ada"],
-      ["bob"],
-    ]);
-  });
-
-  it("does not watch a non-alive agent", async () => {
-    const { controller } = makeController({
-      ada: "alive",
-      bob: "not_authenticated",
-    });
-    mount(controller, [
-      agentInfo("ada", "alive"),
-      agentInfo("bob", "not_authenticated"),
-    ]);
-    await flush();
-
-    expect(vi.mocked(controller.watch).mock.calls).toEqual([["ada"]]);
-  });
-
-  it("fires one background chat preview for a non-active agent when unfocused", async () => {
+  it("toasts a background chat alert with the server preview when unfocused", async () => {
     const { controller, emit } = makeController({ ada: "alive", bob: "alive" });
     mount(controller, [agentInfo("ada", "alive"), agentInfo("bob", "alive")]);
     await flush();
@@ -221,16 +193,17 @@ describe("NotificationProvider", () => {
 
     act(() => {
       emit({
-        type: "append",
+        type: "alert",
         agent: "bob",
-        events: [{ type: "chat", text: "pong", id: 1 }],
+        event: { type: "chat", text: "the full turn text", id: 1 },
+        preview: "pong",
       });
     });
 
     expect(built).toEqual([{ title: "bob", body: "pong" }]);
   });
 
-  it("defers the actively-chatted agent's chat preview to the chat surface", async () => {
+  it("defers the actively-chatted agent's chat alert to the chat surface", async () => {
     const { controller, emit } = makeController({ ada: "alive" });
     mount(
       controller,
@@ -242,33 +215,51 @@ describe("NotificationProvider", () => {
 
     act(() => {
       emit({
-        type: "append",
+        type: "alert",
         agent: "ada",
-        events: [{ type: "chat", text: "hi", id: 2 }],
+        event: { type: "chat", text: "hi", id: 2 },
+        preview: "hi",
       });
     });
 
     expect(built).toEqual([]);
   });
 
-  it("fires a rate-limit alert even while focused", async () => {
+  it("does not toast a background chat alert while focused", async () => {
+    const { controller, emit } = makeController({ ada: "alive" });
+    mount(controller, [agentInfo("ada", "alive")]);
+    await flush();
+    focus();
+
+    act(() => {
+      emit({
+        type: "alert",
+        agent: "ada",
+        event: { type: "chat", text: "hi", id: 3 },
+        preview: "hi",
+      });
+    });
+
+    expect(built).toEqual([]);
+  });
+
+  it("toasts a rate-limit alert even while focused", async () => {
     const { controller, emit } = makeController({ ada: "alive" });
     mount(controller, [agentInfo("ada", "alive")]);
     await flush();
 
     act(() => {
       emit({
-        type: "append",
+        type: "alert",
         agent: "ada",
-        events: [
-          {
-            type: "rate_limited",
-            text: "resets at 3pm",
-            id: 3,
-            window: null,
-            resets_at: null,
-          },
-        ],
+        event: {
+          type: "rate_limited",
+          text: "resets at 3pm",
+          id: 4,
+          window: null,
+          resets_at: null,
+        },
+        preview: "resets at 3pm",
       });
     });
 
