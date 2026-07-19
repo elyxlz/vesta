@@ -2,33 +2,42 @@ import { useEffect, useState, type ReactNode } from "react";
 import type { Controller } from "@vesta/core";
 import { useSyncState } from "@vesta/core/react";
 import { useSession } from "@/session/SessionProvider";
+import { connectionKeyOf } from "@/session/session-model";
 import { buildController } from "./build-controller";
 import { controllerGateAction, type GateInput } from "./controller-gate";
 import { ControllerContext } from "./context";
 import { createAppStateForegroundSignal } from "./foreground-signal";
+import { runReauthCheck } from "./reauth-poll";
 import { IncompatibleScreen } from "./IncompatibleScreen";
 
 export { useController } from "./context";
 export { useSyncState };
 
+const REAUTH_POLL_MS = 60000;
+
 // Owns the single sync controller's lifetime. The pure gate (controller-gate) decides build
-// vs. close from (connected, foreground); AppState drives foreground, and a connection change
-// (new gateway or refreshed token) re-runs the effect, closing the old controller and building
-// a fresh one. Backgrounding closes the socket; returning to foreground builds a new epoch.
+// vs. close from (connected, foreground); AppState drives foreground. The build effect keys on
+// the gateway identity (connectionKeyOf), not the connection object: a token rotation preserves
+// the key and reauths in-band (the reauth poll below), only a gateway switch rebuilds.
+// Backgrounding closes the socket; returning to foreground builds a new epoch.
 function ConnectedController({ children }: { children: ReactNode }) {
-  const { connection, refreshAccessToken } = useSession();
+  const { connection, api, refreshAccessToken } = useSession();
   const [signal] = useState(createAppStateForegroundSignal);
   const [controller, setController] = useState<Controller | null>(null);
+  const connectionKey = connectionKeyOf(connection);
 
   useEffect(() => {
     let prev: GateInput = { connected: false, foreground: false };
     let current: Controller | null = null;
     const reconcile = (foreground: boolean) => {
-      const next: GateInput = { connected: connection !== null, foreground };
+      const next: GateInput = { connected: connectionKey !== null, foreground };
       const action = controllerGateAction(prev, next);
       prev = next;
       if (action === "build") {
-        current = buildController({ connection, refreshAccessToken });
+        current = buildController({
+          getConnection: api.getConnection,
+          refreshAccessToken,
+        });
         setController(current);
       } else if (action === "close") {
         current?.close();
@@ -43,7 +52,25 @@ function ConnectedController({ children }: { children: ReactNode }) {
       current?.close();
       setController(null);
     };
-  }, [connection, refreshAccessToken, signal]);
+  }, [connectionKey, api, refreshAccessToken, signal]);
+
+  useEffect(() => {
+    if (!controller) return;
+    const timer = setInterval(() => {
+      void runReauthCheck({
+        getConnection: api.getConnection,
+        refreshAccessToken,
+        reauth: (token) => {
+          controller.reauth(token);
+        },
+      }).catch((err: unknown) =>
+        console.warn("[controller] reauth failed:", err),
+      );
+    }, REAUTH_POLL_MS);
+    return () => {
+      clearInterval(timer);
+    };
+  }, [controller, api, refreshAccessToken]);
 
   if (!controller) {
     return (

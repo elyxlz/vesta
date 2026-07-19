@@ -2,15 +2,17 @@ import { createController, type Controller } from "@vesta/core";
 import type { ConnectionConfig } from "@/api/types";
 import { createRnSocket } from "./rn-socket";
 
-// The controller's view of the session: the live connection (base URL + token) and the
-// single force-refresh path owned by SessionProvider's api client. No second refresh impl.
+// The controller's view of the session: a LIVE connection accessor (base URL + token, read
+// fresh on every socket build and http call) and the single force-refresh path owned by
+// SessionProvider's api client. Reading live means a token rotation reauths in-band instead
+// of tearing the controller down. No second refresh impl.
 export interface ControllerSession {
-  connection: ConnectionConfig | null;
+  getConnection: () => ConnectionConfig | null;
   refreshAccessToken: () => Promise<boolean>;
 }
 
 export function buildController(session: ControllerSession): Controller {
-  const conn = () => session.connection;
+  const conn = () => session.getConnection();
   const syncUrl = () => {
     const current = conn();
     if (!current) throw new Error("not connected to a Vesta gateway");
