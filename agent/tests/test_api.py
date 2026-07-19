@@ -31,6 +31,7 @@ async def _start_server(event_bus):
     app = web.Application()
     app["event_bus"] = event_bus
     app["config"] = cfg.VestaConfig(agent_dir=Path(tempfile.mkdtemp()) / "agent")
+    app["state"] = vm.State()
     app["websockets"] = weakref.WeakSet()
     app.router.add_get("/ws", _ws_handler)
     runner = web.AppRunner(app)
@@ -79,6 +80,7 @@ async def test_ws_snapshot_carries_agent_timezone(event_bus):
     app = web.Application()
     app["event_bus"] = event_bus
     app["config"] = cfg.VestaConfig(agent_dir=Path(tempfile.mkdtemp()) / "agent", timezone="America/New_York")
+    app["state"] = vm.State()
     app["websockets"] = weakref.WeakSet()
     app.router.add_get("/ws", _ws_handler)
     runner = web.AppRunner(app)
@@ -141,6 +143,7 @@ async def _start_server_with_config(event_bus, config):
     app = web.Application()
     app["event_bus"] = event_bus
     app["config"] = config
+    app["state"] = vm.State()
     app["websockets"] = weakref.WeakSet()
     app.router.add_get("/ws", _ws_handler)
     runner = web.AppRunner(app)
@@ -641,3 +644,76 @@ def test_write_app_chat_notification_stores_intent_id(config):
     files = list(config.notifications_dir.glob("*.json"))
     assert len(files) == 1
     assert json.loads(files[0].read_text())["intent_id"] == "intent-xyz"
+
+
+@pytest.mark.anyio
+async def test_ws_message_dedups_a_retried_intent_id(event_bus, tmp_path):
+    """A retried send-message (same intent_id, the client resending on a 503/timeout) is idempotent:
+    exactly one echo event and one intake notification, so the model never acts on it twice."""
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
+    runner, base = await _start_server_with_config(event_bus, config)
+    try:
+        async with ClientSession() as session, session.ws_connect(f"{base}/ws") as ws:
+            await asyncio.wait_for(ws.receive(), timeout=1.0)  # snapshot
+            await ws.send_json({"type": "message", "text": "pay bob", "intent_id": "dup-1"})
+            await ws.send_json({"type": "message", "text": "pay bob", "intent_id": "dup-1"})
+            # Drain long enough that an erroneous second echo would have arrived.
+            received = await _drain_until(ws, lambda _got: False, timeout=0.5)
+        user_events = [e for e in received if e.get("type") == "user"]
+        assert len(user_events) == 1
+        assert len(list(config.notifications_dir.glob("*.json"))) == 1
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.anyio
+async def test_ws_message_distinct_intent_ids_are_not_deduped(event_bus, tmp_path):
+    """Distinct intent_ids are distinct messages: both echo and both write intake."""
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
+    runner, base = await _start_server_with_config(event_bus, config)
+    try:
+        async with ClientSession() as session, session.ws_connect(f"{base}/ws") as ws:
+            await asyncio.wait_for(ws.receive(), timeout=1.0)  # snapshot
+            await ws.send_json({"type": "message", "text": "one", "intent_id": "i-1"})
+            await ws.send_json({"type": "message", "text": "two", "intent_id": "i-2"})
+            received = await _drain_until(ws, lambda got: len([e for e in got if e.get("type") == "user"]) >= 2)
+            await wait_for_condition(
+                lambda: len(list(config.notifications_dir.glob("*.json"))) == 2,
+                message="expected two intake notifications",
+            )
+        assert len([e for e in received if e.get("type") == "user"]) == 2
+        assert len(list(config.notifications_dir.glob("*.json"))) == 2
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.anyio
+async def test_ws_message_without_intent_id_is_never_deduped(event_bus, tmp_path):
+    """Two identical messages carrying no intent_id are both delivered: dedup is intent-id only."""
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
+    runner, base = await _start_server_with_config(event_bus, config)
+    try:
+        async with ClientSession() as session, session.ws_connect(f"{base}/ws") as ws:
+            await asyncio.wait_for(ws.receive(), timeout=1.0)  # snapshot
+            await ws.send_json({"type": "message", "text": "same text"})
+            await ws.send_json({"type": "message", "text": "same text"})
+            received = await _drain_until(ws, lambda got: len([e for e in got if e.get("type") == "user"]) >= 2)
+            await wait_for_condition(
+                lambda: len(list(config.notifications_dir.glob("*.json"))) == 2,
+                message="expected two intake notifications (no dedup without intent_id)",
+            )
+        assert len([e for e in received if e.get("type") == "user"]) == 2
+    finally:
+        await runner.cleanup()
+
+
+def test_remember_intent_bounds_the_seen_set():
+    """The seen-intent set is a bounded FIFO: past the cap the oldest intent ages out, the newest stay."""
+    from core.api import _SEEN_INTENT_IDS_CAP, _remember_intent
+
+    state = vm.State()
+    for i in range(_SEEN_INTENT_IDS_CAP + 10):
+        _remember_intent(state, f"intent-{i}")
+    assert len(state.seen_intent_ids) == _SEEN_INTENT_IDS_CAP
+    assert "intent-0" not in state.seen_intent_ids  # oldest evicted
+    assert f"intent-{_SEEN_INTENT_IDS_CAP + 9}" in state.seen_intent_ids  # newest kept

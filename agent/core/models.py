@@ -141,3 +141,8 @@ class State:
     # True while context usage is above the warning threshold, so log_context_usage emits
     # the warning event once on crossing rather than on every per-message check.
     context_warning_active: bool = False
+    # Recently-seen app-chat intent_ids, so a retried send-message (same intent_id) is idempotent:
+    # it emits no second echo and writes no second intake notification. Shared across the agent's WS
+    # connections (a retry may land on a reconnected socket); bounded FIFO (OrderedDict as an ordered
+    # set, see api._remember_intent). Messages without an intent_id are never deduped.
+    seen_intent_ids: "collections.OrderedDict[str, None]" = dc.field(default_factory=collections.OrderedDict)

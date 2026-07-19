@@ -67,6 +67,7 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     On connect: sends a `snapshot` seed (state + chat + pending notifications)."""
     event_bus: EventBus = request.app["event_bus"]
     config: VestaConfig = request.app["config"]
+    state: State = request.app["state"]
 
     ws = web.WebSocketResponse()
     await ws.prepare(request)
@@ -94,7 +95,7 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
                 config={"timezone": config.timezone},
             )
         )
-        recv_task = asyncio.create_task(_recv_loop(ws, event_bus, config))
+        recv_task = asyncio.create_task(_recv_loop(ws, event_bus, config, state))
         send_task = asyncio.create_task(_send_loop(ws, sub))
         await asyncio.wait([recv_task, send_task], return_when=asyncio.FIRST_COMPLETED)
     finally:
@@ -136,15 +137,37 @@ def _write_app_chat_notification(config: VestaConfig, text: str, intent_id: str 
     atomic_write_text(path, notif.model_dump_json())
 
 
-async def _handle_app_message(data: dict[str, pyd.JsonValue], text: str, event_bus: EventBus, config: VestaConfig) -> None:
+# Bound on the recently-seen intent_id set (State.seen_intent_ids): the newest N intents dedup a
+# retried send-message; older ones age out (a retry that far behind is not a real double-send).
+_SEEN_INTENT_IDS_CAP = 256
+
+
+def _remember_intent(state: State, intent_id: str) -> None:
+    """Record an app-chat intent_id as seen, bounded FIFO so the set can't grow without limit."""
+    state.seen_intent_ids[intent_id] = None
+    while len(state.seen_intent_ids) > _SEEN_INTENT_IDS_CAP:
+        state.seen_intent_ids.popitem(last=False)
+
+
+async def _handle_app_message(data: dict[str, pyd.JsonValue], text: str, event_bus: EventBus, config: VestaConfig, state: State) -> None:
     """Emit the `user` echo event (history + broadcast, the chat's own view of the message) and write
     the intake notification the monitor loop turns into a model turn. Intake is the file write, done
-    in-process off the loop so a dead subscriber can't drop a message the UI already echoed."""
+    in-process off the loop so a dead subscriber can't drop a message the UI already echoed.
+
+    A message carrying an intent_id already seen is a retry (the client resends on a `503`/timeout);
+    it is dropped whole, no second echo and no second intake, so the model never acts on it twice. The
+    intent is recorded before the awaited write so a concurrent retry on another socket dedups too.
+    Messages without an intent_id are never deduped."""
+    intent_id = data["intent_id"] if "intent_id" in data and isinstance(data["intent_id"], str) else None
+    if intent_id is not None:
+        if intent_id in state.seen_intent_ids:
+            logger.debug("dropping duplicate app-chat message intent_id=%s", intent_id)
+            return
+        _remember_intent(state, intent_id)
     event: UserEvent = {"type": "user", "text": text}
     method = data["input_method"] if "input_method" in data else None
     if isinstance(method, str) and method in ("voice", "typed"):
         event["input_method"] = method
-    intent_id = data["intent_id"] if "intent_id" in data and isinstance(data["intent_id"], str) else None
     if intent_id is not None:
         event["intent_id"] = intent_id
     event_bus.emit(event)
@@ -155,7 +178,7 @@ async def _handle_app_message(data: dict[str, pyd.JsonValue], text: str, event_b
         logger.error("failed to write app-chat notification: %s", e)
 
 
-async def _recv_loop(ws: web.WebSocketResponse, event_bus: EventBus, config: VestaConfig) -> None:
+async def _recv_loop(ws: web.WebSocketResponse, event_bus: EventBus, config: VestaConfig, state: State) -> None:
     """Receive events from clients and emit to event bus."""
     async for msg in ws:
         if msg.type == web.WSMsgType.TEXT:
@@ -172,7 +195,7 @@ async def _recv_loop(ws: web.WebSocketResponse, event_bus: EventBus, config: Ves
                 text = data["text"].strip()
                 if text:
                     if msg_type == "message":
-                        await _handle_app_message(data, text, event_bus, config)
+                        await _handle_app_message(data, text, event_bus, config, state)
                     else:
                         event_bus.emit(ChatEvent(type="chat", text=text))
         elif msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):
