@@ -9,6 +9,7 @@ import {
   ItemMedia,
   ItemTitle,
 } from "@/components/ui/item";
+import { isStructured, notificationContent, parseFields } from "@vesta/core";
 import { type NotificationEvent } from "@/api/agents";
 import { cn } from "@/lib/utils";
 
@@ -76,16 +77,6 @@ function sourceColor(source: string): string {
   return SOURCE_COLORS[Math.abs(hash) % SOURCE_COLORS.length] ?? "";
 }
 
-// The stored summary is `<notification source=… type=…>INNER</notification>` (see
-// Notification.format_for_display in core/models.py). The header already shows source/type/sender,
-// so the row body just needs INNER. Falls back to the whole string if the shape ever changes.
-function notificationContent(summary: string): string {
-  const open = summary.indexOf(">");
-  const close = summary.lastIndexOf("</notification>");
-  if (open === -1 || close === -1 || close <= open) return summary;
-  return summary.slice(open + 1, close).trim();
-}
-
 function relativeTime(ts: string | undefined): string {
   if (!ts) return "";
   const then = new Date(ts).getTime();
@@ -101,16 +92,6 @@ function relativeTime(ts: string | undefined): string {
     month: "short",
     day: "numeric",
   }).format(then);
-}
-
-// Notification bodies often arrive as `key=value, key=value` — and a value can itself
-// contain commas (e.g. a message). Split on the next `key=` boundary so a comma inside
-// a value isn't mistaken for a separator. Returns [] for plain (non key=value) text.
-function parseFields(content: string): { key: string; value: string }[] {
-  return [...content.matchAll(/(\w+)=(.*?)(?=,\s*\w+=|$)/g)].map((m) => ({
-    key: m[1] ?? "",
-    value: m[2]?.trim() ?? "",
-  }));
 }
 
 // Shows what happened to this notification: the effective decision (interrupt, snooze, or trashed =
@@ -153,7 +134,7 @@ export function NotificationRow({
   // the body text and render every other field as a tag (timestamp dropped — the row
   // already shows the time). Plain prose falls through unchanged.
   const rawContent = notificationContent(event.summary);
-  const structured = /^\w+=/.test(rawContent);
+  const structured = isStructured(rawContent);
   const fields = structured ? parseFields(rawContent) : [];
   const message = fields.find((f) => f.key === "message")?.value;
   const body = structured ? (message ?? "") : rawContent;
