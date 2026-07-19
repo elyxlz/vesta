@@ -2865,6 +2865,7 @@ pub async fn run_server(cfg: ServerConfig) {
         on_agents_changed,
         state.rebuilding.clone(),
         state.mobile_app.clone(),
+        state.sync_hub.clone(),
     );
     let app = build_router(state.clone());
     spawn_auto_backup_task(state.clone());

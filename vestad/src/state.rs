@@ -104,6 +104,10 @@ pub struct AppState {
     pub(crate) mobile_app: mobile_app::MobileApp,
     pub(crate) dev_mode: bool,
     pub(crate) agent_status_cache: Arc<agent_status::AgentStatusCache>,
+    /// The client-protocol aggregator's fan-out state: per-agent live edge, notifications
+    /// projection, and tap write-half for send-message relay. Fed by the tap in `agent_status.rs`
+    /// and read by the `/sync` handler.
+    pub(crate) sync_hub: Arc<crate::sync::SyncHub>,
     /// Agents whose container is mid-rebuild; shared with the boot reconcile and the
     /// status poll so they report `Rebuilding` and mutating handlers refuse to race it.
     pub(crate) rebuilding: docker::RebuildTracker,
@@ -167,6 +171,7 @@ impl AppState {
                 mobile_app,
                 dev_mode,
                 agent_status_cache: Arc::new(agent_status::AgentStatusCache::new()),
+                sync_hub: Arc::new(crate::sync::SyncHub::new()),
                 rebuilding: docker::RebuildTracker::default(),
                 https_port,
                 expose_lan,
