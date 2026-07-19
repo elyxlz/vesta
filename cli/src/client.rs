@@ -342,7 +342,7 @@ pub struct Manifest {
 #[derive(serde::Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum SyncFrame {
-    Hello { protocol: u32, floor: u32 },
+    Hello { floor: u32 },
     Snapshot { tree: RosterSnapshot },
     Append { agent: String, events: Vec<ChatEvent> },
     Resync { agent: String },
@@ -922,21 +922,6 @@ impl Client {
         Ok(())
     }
 
-    /// Deliver a send-message intent (`POST /agents/{name}/message` with `intent_id`, no
-    /// `input_method`). Reads the raw status/body and routes them through `classify_send` so a
-    /// retryable `503` (tap down) stays distinct from a fatal failure; deliberately bypasses
-    /// `check_response`, which would flatten every non-2xx into one indistinguishable string.
-    fn send_message(&self, name: &str, text: &str, intent_id: &str) -> Result<(), SendError> {
-        let body = serde_json::json!({ "text": text, "intent_id": intent_id });
-        let resp = self
-            .authorized(self.agent.post(self.url(&format!("/agents/{name}/message"))))
-            .send_json(&body)
-            .map_err(|e| SendError::Fatal(map_error(&self.base_url, e)))?;
-        let status = resp.status().as_u16();
-        let response_body = resp.into_body().read_to_string().unwrap_or_default();
-        classify_send(status, &response_body)
-    }
-
     /// One recent page of the app-chat conversation (`GET /agents/{name}/history`), oldest-to-newest
     /// within the page as the agent serves it; the cursor is dropped (the terminal has no scrollback).
     fn fetch_chat_tail(&self, name: &str) -> Result<Vec<ChatEvent>, String> {
@@ -974,6 +959,16 @@ const CHAT_RECONNECT_WINDOW_SECS: u64 = 90;
 /// Delay between reconnect attempts within the window.
 const CHAT_RECONNECT_DELAY_MS: u64 = 1500;
 
+/// How many times a send worker retries a tap-down `503` under the same intent id before reporting
+/// the message as not delivered. Times `CHAT_SEND_RETRY_DELAY_MS`, this spans the reconnect window,
+/// so a send that raced an agent restart keeps trying for as long as the socket keeps reconnecting.
+const CHAT_SEND_RETRIES: u32 = 60;
+/// Delay between same-intent send retries while the tap is down.
+const CHAT_SEND_RETRY_DELAY_MS: u64 = 1500;
+
+/// The subtle dim glyph trailing an optimistic "you" line until its append echo confirms delivery.
+const PENDING_GLYPH: &str = "…";
+
 const ANSI_RESET: &str = "\x1b[0m";
 const ANSI_TS: &str = "\x1b[90m";
 const ANSI_YOU: &str = "\x1b[1;36m";
@@ -1009,16 +1004,11 @@ type SyncSocket = tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std
 /// How a single chat session ended.
 #[derive(Debug)]
 enum SessionEnd {
-    /// The server closed the stream cleanly (agent stopped) — exit without retrying.
+    /// The server closed the stream cleanly (agent stopped or removed) — exit without retrying.
     Closed,
-    /// The connection dropped unexpectedly — the agent is likely restarting, so reconnect.
-    /// `unsent` carries a message the drop swallowed mid-send, already rendered on screen,
-    /// so the reconnect loop can deliver it on the fresh socket.
-    Lost { reason: String, unsent: Option<String> },
-}
-
-fn chat_message_frame(text: &str) -> tungstenite::Message {
-    tungstenite::Message::Text(serde_json::json!({"type": "message", "text": text}).to_string().into())
+    /// The connection dropped unexpectedly — the agent is likely restarting, so reconnect. Delivery
+    /// no longer rides the socket (the send worker retries over HTTP), so nothing is carried here.
+    Lost { reason: String },
 }
 
 /// Open one `/sync` WebSocket. A pinned fingerprint gets the same verification as the HTTP
@@ -1052,79 +1042,149 @@ fn connect_sync_socket(client: &Client, url: &str) -> Result<SyncSocket, String>
     Ok(socket)
 }
 
-/// Pump one connected socket until it ends. `render_history` is false on reconnect so the
-/// replayed backlog isn't printed twice. Input typed while disconnected stays buffered in `rx`
-/// and is flushed here once the socket is live again.
-fn run_chat_session(
-    socket: &mut SyncSocket,
-    rx: &std::sync::mpsc::Receiver<String>,
-    name: &str,
-    color: bool,
-    render_history: bool,
-) -> SessionEnd {
+/// The optimistic "you" lines shown before their append echo arrives. Delivery truth is the echo
+/// carrying the intent id (never the send POST's 200): `clear` drops a line on confirmation or on a
+/// terminal send failure. `last` names the most recently printed still-pending line so a confirm
+/// arriving right after it can be rewritten in place.
+struct Pending {
+    lines: std::collections::HashMap<String, PendingLine>,
+    last: Option<String>,
+}
+
+/// One optimistic line, retained so a confirmation can rewrite it and a failure can name its text.
+struct PendingLine {
+    text: String,
+    time: String,
+}
+
+impl Pending {
+    fn new() -> Self {
+        Self { lines: std::collections::HashMap::new(), last: None }
+    }
+
+    /// Record an optimistic line just printed for `intent_id`; it becomes the last line printed.
+    fn begin(&mut self, intent_id: String, text: String, time: String) {
+        self.lines.insert(intent_id.clone(), PendingLine { text, time });
+        self.last = Some(intent_id);
+    }
+
+    /// Drop the pending line for `intent_id`, returning it plus whether it was still the last line
+    /// printed (so the caller may rewrite it in place). An unknown id is a no-op (`None`).
+    fn clear(&mut self, intent_id: &str) -> Option<(PendingLine, bool)> {
+        let line = self.lines.remove(intent_id)?;
+        let was_last = self.last.as_deref() == Some(intent_id);
+        if was_last {
+            self.last = None;
+        }
+        Some((line, was_last))
+    }
+
+    /// Note that some non-optimistic output was just printed, so no pending line is "last" anymore.
+    fn mark_interposed(&mut self) {
+        self.last = None;
+    }
+}
+
+/// A send worker's report back to the chat loop. A 2xx ack is NOT delivery truth (the append echo
+/// is), so a success carries no signal the loop acts on: `error` is `Some` only on a terminal
+/// failure, which surfaces as a `-- not delivered --` line and drops the pending entry.
+#[derive(Debug)]
+struct SendOutcome {
+    intent_id: String,
+    error: Option<String>,
+}
+
+/// Deliver one send-message intent with bounded same-intent retry: a `Retryable` failure (tap down)
+/// sleeps and retries under the SAME `intent_id` up to `retries` times, then reports it not
+/// delivered; a `Fatal` reports at once; a 2xx reports success (no `error`). Generic over the send
+/// call so the retry policy is unit-tested without a socket.
+fn drive_send(intent_id: &str, retries: u32, retry_delay: Duration, mut attempt_send: impl FnMut() -> Result<(), SendError>) -> SendOutcome {
+    let mut attempts = 0u32;
     loop {
-        if let Ok(input) = rx.try_recv() {
-            if !input.is_empty() {
-                if color {
-                    print!("\x1b[1A\x1b[2K\r");
+        match attempt_send() {
+            Ok(()) => return SendOutcome { intent_id: intent_id.to_string(), error: None },
+            Err(SendError::Fatal(msg)) => return SendOutcome { intent_id: intent_id.to_string(), error: Some(msg) },
+            Err(SendError::Retryable(msg)) => {
+                if attempts >= retries {
+                    return SendOutcome { intent_id: intent_id.to_string(), error: Some(msg) };
                 }
-                render_line(&time_now_utc(), "you", ANSI_YOU, &input, color);
-                std::io::stdout().flush().ok();
-                if let Err(send_err) = socket.send(chat_message_frame(&input)) {
-                    return SessionEnd::Lost {
-                        reason: format!("connection lost while sending: {send_err}"),
-                        unsent: Some(input),
-                    };
-                }
+                attempts += 1;
+                std::thread::sleep(retry_delay);
             }
         }
+    }
+}
 
-        match socket.read() {
-            Ok(tungstenite::Message::Text(text)) => {
-                if let Ok(msg) = serde_json::from_str::<serde_json::Value>(text.as_ref()) {
-                    match msg["type"].as_str() {
-                        Some("chat") => {
-                            if let Some(content) = msg["text"].as_str() {
-                                let time = time_from_ts(msg["ts"].as_str().unwrap_or(""));
-                                render_line(&time, name, ANSI_AGENT, content.trim_end(), color);
-                                std::io::stdout().flush().ok();
-                            }
-                        }
-                        Some("snapshot") if render_history => {
-                            if let Some(events) = msg["chat"]["events"].as_array() {
-                                for event in events {
-                                    let event_type = event["type"].as_str().unwrap_or("");
-                                    let time = time_from_ts(event["ts"].as_str().unwrap_or(""));
-                                    if event_type == "user" {
-                                        if let Some(content) = event["text"].as_str() {
-                                            render_line(&time, "you", ANSI_YOU, content.trim_end(), color);
-                                        }
-                                    } else if event_type == "chat" {
-                                        if let Some(content) = event["text"].as_str() {
-                                            render_line(&time, name, ANSI_AGENT, content.trim_end(), color);
-                                        }
-                                    }
-                                }
-                                std::io::stdout().flush().ok();
-                            }
-                        }
-                        _ => {}
-                    }
-                }
+/// Deliver a send-message intent over HTTP (`POST /agents/{name}/message` with `intent_id`),
+/// classifying the raw status/body via `classify_send` so a retryable `503` (tap down) stays
+/// distinct from a fatal failure. A free function (not a `Client` method) so a detached send worker
+/// owns cheap clones of the agent + base url + key and delivers off the chat thread.
+fn post_message(agent: &ureq::Agent, base_url: &str, api_key: &str, name: &str, text: &str, intent_id: &str) -> Result<(), SendError> {
+    let body = serde_json::json!({ "text": text, "intent_id": intent_id });
+    let resp = agent
+        .post(format!("{base_url}/agents/{name}/message"))
+        .header("Authorization", &format!("Bearer {api_key}"))
+        .send_json(&body)
+        .map_err(|e| SendError::Fatal(map_error(base_url, e)))?;
+    let status = resp.status().as_u16();
+    let response_body = resp.into_body().read_to_string().unwrap_or_default();
+    classify_send(status, &response_body)
+}
+
+/// Render an optimistic "you" line, tagged with a subtle dim pending glyph (color only) until the
+/// append echo confirms delivery. Reuses `render_line`; the marker rides inside the text argument.
+fn render_optimistic(time: &str, text: &str, color: bool) {
+    if color {
+        render_line(time, "you", ANSI_YOU, &format!("{text} {ANSI_TS}{PENDING_GLYPH}{ANSI_RESET}"), true);
+    } else {
+        render_line(time, "you", ANSI_YOU, text, false);
+    }
+}
+
+/// The live wiring a `/sync` session drains alongside the socket: typed lines in, send outcomes
+/// back, the pending optimistic lines, and the sink that fires a detached send worker. Bundled so
+/// the session signature stays small and the reconnect wrapper hands one handle through unchanged.
+struct ChatIo<'a> {
+    input: &'a std::sync::mpsc::Receiver<String>,
+    outcomes: &'a std::sync::mpsc::Receiver<SendOutcome>,
+    pending: &'a mut Pending,
+    spawn_send: &'a mut dyn FnMut(String, String),
+}
+
+/// Drain every buffered input line: mint an intent id, print the optimistic "you" line (erasing the
+/// terminal's own echo on a tty), record it pending, and fire a send worker for it.
+fn drain_input(io: &mut ChatIo, color: bool) {
+    while let Ok(line) = io.input.try_recv() {
+        if line.is_empty() {
+            continue;
+        }
+        let intent_id = next_intent_id();
+        let time = time_now_utc();
+        if color {
+            print!("\x1b[1A\x1b[2K\r");
+        }
+        render_optimistic(&time, &line, color);
+        std::io::stdout().flush().ok();
+        io.pending.begin(intent_id.clone(), line.clone(), time);
+        (io.spawn_send)(intent_id, line);
+    }
+}
+
+/// Drain send-worker reports: a terminal failure prints a `-- not delivered --` line and drops the
+/// pending entry; a success (no `error`) is not delivery truth (the append echo confirms) and is
+/// ignored here.
+fn drain_outcomes(io: &mut ChatIo, color: bool) {
+    while let Ok(outcome) = io.outcomes.try_recv() {
+        if outcome.error.is_none() {
+            continue;
+        }
+        if let Some((line, _)) = io.pending.clear(&outcome.intent_id) {
+            if color {
+                println!("{ANSI_TS}-- not delivered: {} --{ANSI_RESET}", line.text);
+            } else {
+                println!("-- not delivered: {} --", line.text);
             }
-            Ok(tungstenite::Message::Close(_)) | Err(tungstenite::Error::ConnectionClosed) => {
-                return SessionEnd::Closed;
-            }
-            Ok(_) => {}
-            Err(tungstenite::Error::Io(ref e))
-                if e.kind() == std::io::ErrorKind::WouldBlock
-                    || e.kind() == std::io::ErrorKind::TimedOut => {}
-            Err(read_err) => {
-                return SessionEnd::Lost {
-                    reason: format!("connection lost: {read_err}"),
-                    unsent: None,
-                }
-            }
+            io.pending.mark_interposed();
         }
     }
 }
@@ -1144,24 +1204,37 @@ fn reconnect_chat_socket(client: &Client, url: &str, name: &str, reason: &str) -
     None
 }
 
-/// Connect to Chat WebSocket and run interactive chat (CLI-only).
+/// Run `/sync` chat under the bounded reconnect window: a clean close exits `Ok`; a mid-session
+/// drop (or a handshake-level transport failure) reconnects within `CHAT_RECONNECT_WINDOW_SECS`,
+/// re-running the full hello+snapshot+watch+tail on the fresh socket. The high-water id and pending
+/// map persist across the reconnect, so nothing double-prints and in-flight sends still confirm on
+/// the fresh echo; an incompatible or missing-agent handshake is fatal.
+fn run_chat_with_reconnect(client: &Client, name: &str, url: &str, color: bool, last_id: &mut i64, io: &mut ChatIo) -> Result<(), String> {
+    let mut socket = connect_sync_socket(client, url)?;
+    loop {
+        let mut fetch_tail = || client.fetch_chat_tail(name);
+        let reason = match run_sync_session(&mut socket, name, color, last_id, &mut fetch_tail, io) {
+            Ok(SessionEnd::Closed) => return Ok(()),
+            Ok(SessionEnd::Lost { reason }) | Err(ChatError::Transport(reason)) => reason,
+            Err(fatal) => return Err(fatal.to_string()),
+        };
+        match reconnect_chat_socket(client, url, name, &reason) {
+            Some(fresh) => socket = fresh,
+            None => return Err(reason),
+        }
+    }
+}
+
+/// Interactive chat over the gateway's `/sync` watch socket: a history tail + high-water seed, an
+/// optimistic "you" line confirmed by its append echo (never the POST), a detached send worker
+/// retrying tap-down 503s under one intent id, and reconnect-on-drop. Stdin lines in, streamed out.
 pub fn chat(client: &Client, name: &str) -> Result<(), String> {
-    let url = format!(
-        "{}/agents/{}/ws?token={}",
-        ws_base_url(&client.base_url),
-        name,
-        client.api_key()
-    );
-
-    let mut socket = connect_sync_socket(client, &url)?;
-
+    let url = sync_url(&client.base_url, client.api_key());
     let color = std::io::stdout().is_terminal();
-
     eprintln!("connected to {name}. type a message and press enter.");
 
-    let (tx, rx) = std::sync::mpsc::channel::<String>();
-
-    let _stdin_handle = std::thread::spawn(move || {
+    let (input_tx, input_rx) = std::sync::mpsc::channel::<String>();
+    std::thread::spawn(move || {
         let stdin = std::io::stdin();
         let mut line = String::new();
         loop {
@@ -1169,7 +1242,7 @@ pub fn chat(client: &Client, name: &str) -> Result<(), String> {
             match stdin.lock().read_line(&mut line) {
                 Ok(0) | Err(_) => break,
                 Ok(_) => {
-                    if tx.send(line.trim().to_string()).is_err() {
+                    if input_tx.send(line.trim().to_string()).is_err() {
                         break;
                     }
                 }
@@ -1177,31 +1250,33 @@ pub fn chat(client: &Client, name: &str) -> Result<(), String> {
         }
     });
 
-    // The agent bounces its WS server on every self-restart. Rather than crash on the drop,
-    // keep the session alive across restarts: run until the socket ends, then reconnect within
-    // a bounded window. Only a clean server close (agent stopped) or an exhausted window exits.
-    let mut render_history = true;
-    loop {
-        match run_chat_session(&mut socket, &rx, name, color, render_history) {
-            SessionEnd::Closed => return Ok(()),
-            SessionEnd::Lost { reason, unsent } => loop {
-                match reconnect_chat_socket(client, &url, name, &reason) {
-                    Some(fresh) => socket = fresh,
-                    None => return Err(reason),
-                }
-                render_history = false;
-                // The lost message is already on screen as sent; deliver it silently on the
-                // fresh socket, and if that send also dies, retry through another reconnect.
-                let resent = match &unsent {
-                    Some(text) => socket.send(chat_message_frame(text)).is_ok(),
-                    None => true,
-                };
-                if resent {
-                    break;
-                }
-            },
-        }
-    }
+    // A send rides HTTP off the chat thread: each optimistic line spawns a detached worker that
+    // owns cheap clones of the agent + base url + key, retries the tap-down 503s under its intent
+    // id, and reports the outcome back over the channel the loop drains.
+    let (outcome_tx, outcome_rx) = std::sync::mpsc::channel::<SendOutcome>();
+    let send_ctx = (client.agent.clone(), client.base_url.clone(), client.api_key.clone());
+    let worker_name = name.to_string();
+    let mut spawn_send = move |intent_id: String, text: String| {
+        let (agent, base_url, api_key) = send_ctx.clone();
+        let name = worker_name.clone();
+        let outcomes = outcome_tx.clone();
+        std::thread::spawn(move || {
+            let outcome = drive_send(&intent_id, CHAT_SEND_RETRIES, Duration::from_millis(CHAT_SEND_RETRY_DELAY_MS), || {
+                post_message(&agent, &base_url, &api_key, &name, &text, &intent_id)
+            });
+            outcomes.send(outcome).ok();
+        });
+    };
+
+    let mut pending = Pending::new();
+    let mut last_id = 0i64;
+    let mut io = ChatIo {
+        input: &input_rx,
+        outcomes: &outcome_rx,
+        pending: &mut pending,
+        spawn_send: &mut spawn_send,
+    };
+    run_chat_with_reconnect(client, name, &url, color, &mut last_id, &mut io)
 }
 
 // ── /sync watch engine ─────────────────────────────────────────
@@ -1382,18 +1457,21 @@ fn read_sync_frame(socket: &mut SyncSocket) -> Result<SyncFrame, ChatError> {
 
 /// Drive one `/sync` session over a connected socket: gate on `hello` (protocol floor) and the
 /// `snapshot` roster (agent existence), send `watch`, print the history tail deduped by id, then
-/// fold live `append`/`resync`/`agent_removed` frames until the socket ends. Returns a `ChatError`
-/// on a failed handshake, or a `SessionEnd` describing how the live loop finished. `fetch_tail` is
-/// injected so the socket path stays hermetically testable without the history HTTP endpoint.
+/// fold live `append`/`resync`/`agent_removed` frames until the socket ends. Each live iteration
+/// also drains typed input (optimistic echo + send worker) and send outcomes via `io`, and clears a
+/// pending line on its append echo. Returns a `ChatError` on a failed handshake, or a `SessionEnd`
+/// describing how the live loop finished. `fetch_tail` is injected so the socket path stays
+/// hermetically testable without the history HTTP endpoint.
 fn run_sync_session(
     socket: &mut SyncSocket,
     name: &str,
     color: bool,
     last_id: &mut i64,
     fetch_tail: &mut dyn FnMut() -> Result<Vec<ChatEvent>, String>,
+    io: &mut ChatIo,
 ) -> Result<SessionEnd, ChatError> {
     match read_sync_frame(socket)? {
-        SyncFrame::Hello { floor, .. } => {
+        SyncFrame::Hello { floor } => {
             if !is_compatible(CLI_PROTOCOL, floor) {
                 return Err(ChatError::Incompatible);
             }
@@ -1416,6 +1494,8 @@ fn run_sync_session(
     print_tail(&tail, name, color, last_id);
 
     loop {
+        drain_input(io, color);
+        drain_outcomes(io, color);
         match socket.read() {
             Ok(tungstenite::Message::Text(text)) => {
                 let frame = serde_json::from_str::<SyncFrame>(text.as_ref()).unwrap_or(SyncFrame::Unknown);
@@ -1424,25 +1504,27 @@ fn run_sync_session(
                         for line in &lines {
                             print_line(line, name, color);
                         }
+                        io.pending.mark_interposed();
                         std::io::stdout().flush().ok();
                     }
+                    FrameOutcome::Confirm(intent_id) => confirm_pending(io.pending, &intent_id, color),
                     FrameOutcome::Resync => {
                         if let Err(send_err) = socket.send(watch_frame(name)) {
-                            return Ok(SessionEnd::Lost { reason: format!("connection lost on resync: {send_err}"), unsent: None });
+                            return Ok(SessionEnd::Lost { reason: format!("connection lost on resync: {send_err}") });
                         }
                         match fetch_tail() {
                             Ok(events) => {
                                 print_resync_marker(color);
                                 print_tail(&events, name, color, last_id);
+                                io.pending.mark_interposed();
                             }
                             Err(fetch_err) => {
-                                return Ok(SessionEnd::Lost { reason: format!("tail refetch failed on resync: {fetch_err}"), unsent: None });
+                                return Ok(SessionEnd::Lost { reason: format!("tail refetch failed on resync: {fetch_err}") });
                             }
                         }
                     }
                     FrameOutcome::Removed => return Ok(SessionEnd::Closed),
-                    // Delivery confirmation is Task 3's pending-marker concern; the id already advanced.
-                    FrameOutcome::Confirm(_) | FrameOutcome::Ignore => {}
+                    FrameOutcome::Ignore => {}
                 }
             }
             Ok(tungstenite::Message::Close(_)) | Err(tungstenite::Error::ConnectionClosed) => {
@@ -1452,8 +1534,21 @@ fn run_sync_session(
             Err(tungstenite::Error::Io(ref e))
                 if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {}
             Err(read_err) => {
-                return Ok(SessionEnd::Lost { reason: format!("connection lost: {read_err}"), unsent: None });
+                return Ok(SessionEnd::Lost { reason: format!("connection lost: {read_err}") });
             }
+        }
+    }
+}
+
+/// Clear a confirmed pending line: if it is still the last thing printed (and color is on), rewrite
+/// it in place without the pending glyph; a scrolled line is left as printed. The append echo is
+/// never reprinted (the line was shown optimistically), so this only drops the marker.
+fn confirm_pending(pending: &mut Pending, intent_id: &str, color: bool) {
+    if let Some((line, was_last)) = pending.clear(intent_id) {
+        if was_last && color {
+            print!("\x1b[1A\x1b[2K\r");
+            render_line(&line.time, "you", ANSI_YOU, &line.text, true);
+            std::io::stdout().flush().ok();
         }
     }
 }
@@ -1546,23 +1641,6 @@ mod tests {
         assert_eq!(ws_base_url("https://example.com"), "wss://example.com");
         assert_eq!(ws_base_url("http://localhost:8080"), "ws://localhost:8080");
         assert_eq!(ws_base_url("http://127.0.0.1:9001"), "ws://127.0.0.1:9001");
-    }
-
-    #[test]
-    fn chat_url_uses_ws_route() {
-        // The URL must use /ws, not /ws/app-chat (agent only exposes /ws).
-        let base = "http://127.0.0.1:9001";
-        let name = "myagent";
-        let token = "mytoken";
-        let url = format!(
-            "{}/agents/{}/ws?token={}",
-            ws_base_url(base),
-            name,
-            token
-        );
-        assert!(url.contains("/ws?"), "chat URL must use /ws, got: {url}");
-        assert!(!url.contains("/ws/app-chat"), "chat URL must not use /ws/app-chat, got: {url}");
-        assert_eq!(url, "ws://127.0.0.1:9001/agents/myagent/ws?token=mytoken");
     }
 
     #[test]
@@ -1671,12 +1749,9 @@ mod tests {
     #[test]
     fn sync_frame_parses_the_frames_chat_consumes() {
         let hello: SyncFrame = serde_json::from_str(r#"{"type":"hello","version":"0.1.0","protocol":1,"floor":1}"#)
-            .expect("hello parses (extra version field ignored)");
+            .expect("hello parses (extra version + protocol fields ignored)");
         match hello {
-            SyncFrame::Hello { protocol, floor } => {
-                assert_eq!(protocol, 1);
-                assert_eq!(floor, 1);
-            }
+            SyncFrame::Hello { floor } => assert_eq!(floor, 1),
             other => panic!("expected Hello, got {other:?}"),
         }
 
@@ -1844,11 +1919,75 @@ mod tests {
     }
 
     #[test]
-    fn send_message_reports_a_transport_failure_as_fatal() {
+    fn post_message_reports_a_transport_failure_as_fatal() {
         // Port 1 refuses fast: a raw transport failure to vestad is fatal (never retryable), and the
-        // method must surface it as Err, never panic.
-        let err = test_client().send_message("ghost", "hi", "cli-1").unwrap_err();
+        // send must surface it as Err, never panic.
+        let client = test_client();
+        let err = post_message(&client.agent, &client.base_url, &client.api_key, "ghost", "hi", "cli-1").unwrap_err();
         assert!(matches!(err, SendError::Fatal(_)), "got: {err:?}");
+    }
+
+    #[test]
+    fn pending_begins_clears_and_ignores_unknown_ids() {
+        let mut pending = Pending::new();
+        pending.begin("cli-1".into(), "hello".into(), "12:00".into());
+        // A matching clear returns the line and reports it was still the last printed.
+        let (line, was_last) = pending.clear("cli-1").expect("known id clears");
+        assert_eq!(line.text, "hello");
+        assert!(was_last);
+        // Clearing it again, or an unknown id, is a no-op.
+        assert!(pending.clear("cli-1").is_none());
+        assert!(pending.clear("nope").is_none());
+    }
+
+    #[test]
+    fn pending_reports_a_scrolled_line_as_not_last() {
+        let mut pending = Pending::new();
+        pending.begin("cli-1".into(), "first".into(), "12:00".into());
+        pending.begin("cli-2".into(), "second".into(), "12:01".into());
+        // cli-1 is no longer the last printed line (cli-2 came after), so it cannot be rewritten in place.
+        let (line, was_last) = pending.clear("cli-1").expect("known id clears");
+        assert_eq!(line.text, "first");
+        assert!(!was_last);
+        // An interposing non-optimistic print forgets the last pointer entirely.
+        pending.mark_interposed();
+        let (_, was_last) = pending.clear("cli-2").expect("known id clears");
+        assert!(!was_last);
+    }
+
+    #[test]
+    fn drive_send_retries_the_same_intent_then_reports_success() {
+        let calls = std::cell::Cell::new(0u32);
+        let outcome = drive_send("cli-7", CHAT_SEND_RETRIES, Duration::ZERO, || {
+            let n = calls.get();
+            calls.set(n + 1);
+            if n < 3 { Err(SendError::Retryable("tap down".into())) } else { Ok(()) }
+        });
+        assert_eq!(outcome.intent_id, "cli-7");
+        assert!(outcome.error.is_none(), "a 2xx reports success");
+        assert_eq!(calls.get(), 4, "three retries then the accepting attempt");
+    }
+
+    #[test]
+    fn drive_send_reports_not_delivered_past_the_cap() {
+        let calls = std::cell::Cell::new(0u32);
+        let outcome = drive_send("cli-8", 2, Duration::ZERO, || {
+            calls.set(calls.get() + 1);
+            Err::<(), _>(SendError::Retryable("still down".into()))
+        });
+        assert_eq!(outcome.error.as_deref(), Some("still down"));
+        assert_eq!(calls.get(), 3, "the initial attempt plus the two allowed retries");
+    }
+
+    #[test]
+    fn drive_send_reports_a_fatal_without_retrying() {
+        let calls = std::cell::Cell::new(0u32);
+        let outcome = drive_send("cli-9", CHAT_SEND_RETRIES, Duration::ZERO, || {
+            calls.set(calls.get() + 1);
+            Err::<(), _>(SendError::Fatal("nope".into()))
+        });
+        assert_eq!(outcome.error.as_deref(), Some("nope"));
+        assert_eq!(calls.get(), 1, "a fatal error stops immediately");
     }
 
     #[test]
@@ -1987,6 +2126,29 @@ mod tests {
         || Ok(Vec::new())
     }
 
+    /// A `ChatIo` with no typed input, no send outcomes, and a no-op send sink: for the session
+    /// tests that exercise the socket path (handshake/watch/append/resync) with the live wiring idle.
+    struct IdleIo {
+        _input_tx: std::sync::mpsc::Sender<String>,
+        input_rx: std::sync::mpsc::Receiver<String>,
+        _outcome_tx: std::sync::mpsc::Sender<SendOutcome>,
+        outcome_rx: std::sync::mpsc::Receiver<SendOutcome>,
+        pending: Pending,
+        spawn: Box<dyn FnMut(String, String)>,
+    }
+
+    impl IdleIo {
+        fn new() -> Self {
+            let (input_tx, input_rx) = std::sync::mpsc::channel();
+            let (outcome_tx, outcome_rx) = std::sync::mpsc::channel();
+            Self { _input_tx: input_tx, input_rx, _outcome_tx: outcome_tx, outcome_rx, pending: Pending::new(), spawn: Box::new(|_, _| {}) }
+        }
+
+        fn io(&mut self) -> ChatIo<'_> {
+            ChatIo { input: &self.input_rx, outcomes: &self.outcome_rx, pending: &mut self.pending, spawn_send: self.spawn.as_mut() }
+        }
+    }
+
     #[test]
     fn run_sync_session_handshakes_watches_and_folds_an_append() {
         let (port, server) = spawn_sync_server(|ws| {
@@ -2004,7 +2166,8 @@ mod tests {
         let mut socket = connect_at(port);
         let mut last_id = 0i64;
         let mut fetch = empty_tail();
-        let end = run_sync_session(&mut socket, "scout", false, &mut last_id, &mut fetch).expect("session runs");
+        let mut idle = IdleIo::new();
+        let end = run_sync_session(&mut socket, "scout", false, &mut last_id, &mut fetch, &mut idle.io()).expect("session runs");
         assert!(matches!(end, SessionEnd::Closed), "a clean close ends the session");
         assert_eq!(last_id, 5, "the append advanced the high-water mark");
         server.join().expect("server thread");
@@ -2020,7 +2183,8 @@ mod tests {
         let mut socket = connect_at(port);
         let mut last_id = 0i64;
         let mut fetch = empty_tail();
-        let err = run_sync_session(&mut socket, "scout", false, &mut last_id, &mut fetch).expect_err("incompatible floor");
+        let mut idle = IdleIo::new();
+        let err = run_sync_session(&mut socket, "scout", false, &mut last_id, &mut fetch, &mut idle.io()).expect_err("incompatible floor");
         assert!(matches!(err, ChatError::Incompatible), "got: {err:?}");
         server.join().expect("server thread");
     }
@@ -2036,7 +2200,8 @@ mod tests {
         let mut socket = connect_at(port);
         let mut last_id = 0i64;
         let mut fetch = empty_tail();
-        let err = run_sync_session(&mut socket, "scout", false, &mut last_id, &mut fetch).expect_err("agent absent");
+        let mut idle = IdleIo::new();
+        let err = run_sync_session(&mut socket, "scout", false, &mut last_id, &mut fetch, &mut idle.io()).expect_err("agent absent");
         assert!(matches!(err, ChatError::NotFound), "got: {err:?}");
         server.join().expect("server thread");
     }
@@ -2062,7 +2227,8 @@ mod tests {
             fetch_calls.set(fetch_calls.get() + 1);
             Ok::<_, String>(Vec::<ChatEvent>::new())
         };
-        let end = run_sync_session(&mut socket, "scout", false, &mut last_id, &mut fetch).expect("session runs");
+        let mut idle = IdleIo::new();
+        let end = run_sync_session(&mut socket, "scout", false, &mut last_id, &mut fetch, &mut idle.io()).expect("session runs");
         assert!(matches!(end, SessionEnd::Closed));
         assert_eq!(fetch_calls.get(), 2, "resync triggers a second tail fetch");
         server.join().expect("server thread");
