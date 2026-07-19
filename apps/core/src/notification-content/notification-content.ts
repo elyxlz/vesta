@@ -14,13 +14,24 @@ export function notificationContent(summary: string): string {
 }
 
 // Notification bodies often arrive as `key=value, key=value` — and a value can itself
-// contain commas (e.g. a message). Split on the next `key=` boundary so a comma inside
-// a value isn't mistaken for a separator. Returns [] for plain (non key=value) text.
+// contain commas (e.g. a message). A key boundary is a `\w+=` at the start or right after
+// `, `; scan each boundary and take the value up to the next one, so a comma inside a value
+// isn't mistaken for a separator. Linear (no backtracking). Returns [] for plain text.
 export function parseFields(content: string): { key: string; value: string }[] {
-  return [...content.matchAll(/(\w+)=(.*?)(?=,\s*\w+=|$)/g)].map((m) => ({
-    key: m[1] ?? "",
-    value: m[2]?.trim() ?? "",
-  }))
+  const fields: { key: string; value: string }[] = []
+  const keyRe = /(?:^|,\s*)(\w+)=/g
+  let match = keyRe.exec(content)
+  while (match) {
+    const key = match[1] ?? ""
+    const valueStart = keyRe.lastIndex
+    const next = keyRe.exec(content)
+    fields.push({
+      key,
+      value: content.slice(valueStart, next ? next.index : content.length).trim(),
+    })
+    match = next
+  }
+  return fields
 }
 
 // The backend renders a notification either as plain prose (its `body`) or, when it has
