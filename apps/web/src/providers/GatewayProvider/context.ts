@@ -11,7 +11,6 @@ export interface GatewayContextValue {
   /** True iff this is a hosted (vesta.run-managed) box — gates the account link. */
   managed: boolean;
   gatewayVersion: string;
-  gatewayBranch: string | null;
   gatewayChannel: ReleaseChannel;
   gatewayAutoUpdate: boolean;
   gatewayPort: number;
@@ -30,7 +29,6 @@ export const disconnectedValue: GatewayContextValue = {
   reachable: false,
   managed: false,
   gatewayVersion: "",
-  gatewayBranch: null,
   gatewayChannel: "stable",
   gatewayAutoUpdate: true,
   gatewayPort: 0,

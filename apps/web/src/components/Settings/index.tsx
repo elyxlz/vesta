@@ -49,7 +49,7 @@ export function AppSettings() {
   const { theme, setTheme } = useTheme();
   const { isDesktopApp } = useRuntime();
   const { disconnect } = useAuth();
-  const { reachable, managed, gatewayVersion, gatewayBranch } = useGateway();
+  const { reachable, managed, gatewayVersion } = useGateway();
   const naturalPacing = useChatPacing((s) => s.natural);
   const setNaturalPacing = useChatPacing((s) => s.setNatural);
   const appMode = useAppMode((s) => s.mode);
@@ -148,11 +148,9 @@ export function AppSettings() {
           <MenuSection
             title="gateway"
             trailing={
-              (gatewayVersion || gatewayBranch) && (
+              gatewayVersion && (
                 <span className="shrink-0 text-xs font-medium text-muted-foreground">
-                  {gatewayVersion && <>v{gatewayVersion}</>}
-                  {gatewayVersion && gatewayBranch && " "}
-                  {gatewayBranch && <>({gatewayBranch})</>}
+                  v{gatewayVersion}
                 </span>
               )
             }
