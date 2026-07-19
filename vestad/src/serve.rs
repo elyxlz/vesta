@@ -2364,6 +2364,7 @@ pub fn build_router(state: SharedState) -> Router {
             post(restore_backup_handler),
         )
         .route("/ws", get(control_ws::control_ws_handler))
+        .route("/sync", get(crate::sync::sync_ws_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware,
