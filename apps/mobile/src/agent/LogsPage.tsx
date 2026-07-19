@@ -9,16 +9,14 @@ import { useBottomAnchoredFeed } from "@/agent/use-bottom-anchored-feed";
 import { AnsiText } from "@/components/ui/AnsiText";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
+import { useRoster } from "@/session/RosterProvider";
 import { useSession } from "@/session/SessionProvider";
 
 const LOG_RETRY_DELAY_MS = 1_000;
 
-interface LogsPageProps {
-  presentation?: "pager" | "standalone";
-}
-
-export default function LogsPage({ presentation = "pager" }: LogsPageProps) {
-  const { api, reachable } = useSession();
+export default function LogsPage() {
+  const { api } = useSession();
+  const { reachable } = useRoster();
   const { name } = useAgent();
 
   return reachable ? (

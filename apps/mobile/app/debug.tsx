@@ -3,16 +3,15 @@ import Constants from "expo-constants";
 import * as Device from "expo-device";
 import { Screen } from "@/components/layout/Screen";
 import { FormRow, FormSection } from "@/components/ui/Form";
-import { useSession } from "@/session/SessionProvider";
+import { useRoster } from "@/session/RosterProvider";
 
 export default function DebugScreen() {
-  const session = useSession();
+  const roster = useRoster();
   const diagnostics = [
     `App: ${Constants.expoConfig?.version ?? "unknown"}`,
-    `Gateway: ${session.version?.version ?? "unknown"}`,
-    `API compatibility: ${session.version?.api_compat ?? "unknown"}`,
-    `Reachable: ${String(session.reachable)}`,
-    `Agents: ${session.agents.length}`,
+    `Gateway: ${roster.gatewayVersion ?? "unknown"}`,
+    `Reachable: ${String(roster.reachable)}`,
+    `Agents: ${roster.agents.length}`,
     `Device: ${Device.modelName ?? "unknown"}`,
     `OS: ${Device.osName ?? "unknown"} ${Device.osVersion ?? ""}`,
   ].join("\n");
@@ -26,10 +25,9 @@ export default function DebugScreen() {
         <FormRow label="Operating system" value={`${Device.osName ?? "unknown"} ${Device.osVersion ?? ""}`} />
       </FormSection>
       <FormSection title="Gateway">
-        <FormRow label="Reachable" value={session.reachable ? "yes" : "no"} />
-        <FormRow label="Version" value={session.version?.version ?? "unknown"} />
-        <FormRow label="API compatibility" value={session.version?.api_compat ?? "unknown"} />
-        <FormRow label="Agents" value={String(session.agents.length)} />
+        <FormRow label="Reachable" value={roster.reachable ? "yes" : "no"} />
+        <FormRow label="Version" value={roster.gatewayVersion ?? "unknown"} />
+        <FormRow label="Agents" value={String(roster.agents.length)} />
       </FormSection>
       <FormSection>
         <FormRow
