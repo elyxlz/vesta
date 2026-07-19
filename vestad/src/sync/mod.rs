@@ -3,6 +3,7 @@
 //! `apps/core/src/protocol` and contract-tested at the fixture seam. It is additive beside the
 //! legacy control WS in this stage; the old surface is retired later in the epic.
 
+pub(crate) mod events;
 pub(crate) mod protocol;
 
 /// The protocol version vestad speaks and the minimum it still accepts. Mirrors
@@ -10,3 +11,5 @@ pub(crate) mod protocol;
 /// pins them equal on both seams.
 pub(crate) const PROTOCOL_VERSION: u32 = 1;
 pub(crate) const PROTOCOL_FLOOR: u32 = 1;
+
+pub(crate) use events::{NotificationChange, PendingNotifications, activity_state, notification_change};
