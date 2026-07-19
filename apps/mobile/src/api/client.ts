@@ -27,6 +27,7 @@ export interface ApiClient {
   jsonInit: (method: string, body: unknown) => RequestInit;
   websocketUrl: (path: string, query?: URLSearchParams) => string;
   mediaUrl: (path: string, query?: URLSearchParams) => string;
+  forceRefresh: () => Promise<boolean>;
 }
 
 function apiErrorMessage(response: Response, body: string): string {
@@ -169,5 +170,6 @@ export function createApiClient(options: ClientOptions): ApiClient {
       withToken(path, query, "ws"),
     mediaUrl: (path, query = new URLSearchParams()) =>
       withToken(path, query, "http"),
+    forceRefresh: async () => (await refresh(true)) !== null,
   };
 }
