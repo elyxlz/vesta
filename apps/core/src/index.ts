@@ -53,6 +53,8 @@ export type {
 export { readSse } from "./transport/sse"
 export type { SseDeps, SseHandle, StreamEvent } from "./transport/sse"
 
+export { PACING, typingDelay } from "./pacing/pacing"
+
 export { createSendMessageIntent } from "./intents/types"
 export type {
   IdGenerator,
