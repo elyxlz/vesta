@@ -28,7 +28,6 @@ function socketValue(
       /* noop */
     },
     send: () => true,
-    sendEvent: () => true,
     showToolCalls: false,
     setShowToolCalls: () => {
       /* noop */

@@ -390,9 +390,10 @@ export async function getNotificationHistory(
 export async function fetchHistory(
   name: string,
   channel: "app-chat" | "internals",
-  cursor: number,
+  cursor?: number,
 ): Promise<{ events: VestaEvent[]; cursor: number | null }> {
-  const params = new URLSearchParams({ channel, cursor: String(cursor) });
+  const params = new URLSearchParams({ channel });
+  if (cursor != null) params.set("cursor", String(cursor));
   return apiJson(
     `/agents/${encodeURIComponent(name)}/history?${params.toString()}`,
   );

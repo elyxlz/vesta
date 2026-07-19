@@ -30,12 +30,23 @@ export type AgentActivityState = "idle" | "thinking";
 export type InputMethod = "voice" | "typed";
 
 interface BaseEvent {
+  // The events.db rowid, present on every server-sent event; absent on client-only optimistic
+  // bubbles (a locally-echoed send that has no persisted id until its append echo returns).
+  id?: number;
   ts?: string;
 }
 
 export type VestaEvent =
   | (BaseEvent & { type: "status"; state: AgentActivityState })
-  | (BaseEvent & { type: "user"; text: string; input_method?: InputMethod })
+  | (BaseEvent & {
+      type: "user";
+      text: string;
+      input_method?: InputMethod;
+      // The client-generated send-message id, echoed back on the append so the optimistic bubble
+      // dedups by id (not text); `send_state` tracks a bubble whose POST is unconfirmed/failed.
+      intent_id?: string;
+      send_state?: "sending" | "retry" | "failed";
+    })
   | (BaseEvent & { type: "assistant"; text: string })
   | (BaseEvent & { type: "thinking"; text: string; signature: string })
   | (BaseEvent & { type: "chat"; text: string })
