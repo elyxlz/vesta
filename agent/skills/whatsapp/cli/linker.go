@@ -163,17 +163,12 @@ func (l *managedLinker) provision(wac *WhatsAppClient) (linkResult, error) {
 	return linkResult{}, fmt.Errorf("pairing code accepted but the companion did not finish linking within %s; retry `whatsapp connect`", ManagedLinkTimeout)
 }
 
-// guardedPairPhone wraps PairPhone in the same ban-avoidance rate-limit guard the
-// phone-code path uses, so re-running `whatsapp connect` on a number that keeps
-// failing to finish linking cannot issue unbounded real PairPhone requests (the
-// exact auto-ban pattern). It checks the cap BEFORE minting a code and, once the
-// socket is up, records the attempt on DISPATCH (before awaiting the response), so a
-// request that reaches WhatsApp but errors mid-handshake still burns a slot; a
-// pre-dispatch failure (socket not up yet) burns none. When the cap is reached it
-// returns errRateLimited and never calls pair. The managed path has no
-// --acknowledge-ban-risk flag, so the guard is never overridden here. connected and
-// pair are seams (wac.client.IsConnected, wac.PairPhone) so the guard is testable
-// without a live socket.
+// guardedPairPhone applies the ban-avoidance cap to the managed pairing path: it
+// checks the cap before minting a code, and records the attempt on DISPATCH (once
+// the socket is up, before awaiting the response), so a request that reaches WhatsApp
+// but errors mid-handshake still burns a slot while a pre-dispatch failure burns
+// none. At the cap it returns errRateLimited and never calls pair. connected and pair
+// are seams (wac.client.IsConnected, wac.PairPhone) so the guard is testable offline.
 func (l *managedLinker) guardedPairPhone(connected func() bool, pair func(msisdn string) (string, error)) func(msisdn string) (string, error) {
 	return func(msisdn string) (string, error) {
 		now := time.Now()
