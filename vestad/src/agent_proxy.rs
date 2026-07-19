@@ -145,7 +145,7 @@ pub async fn agent_proxy_handler(
         if service.is_none() {
             return Err(err_response(
                 StatusCode::NOT_FOUND,
-                "the raw agent event bus is not client-exposed — use /sync",
+                "the raw agent event bus is not client-exposed; use /sync",
             ));
         }
         let (mut parts, _body) = request.into_parts();
