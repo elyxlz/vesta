@@ -1776,7 +1776,7 @@ pub(crate) async fn docker_cp_content(
 /// Coarse, user-facing stage of first-time agent creation, emitted in order so the
 /// onboarding UI can show honest status instead of a decorative loop. The dominant
 /// wait is the image step (`Pulling` on a release, `Building` from a local checkout).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BuildPhase {
     Pulling,

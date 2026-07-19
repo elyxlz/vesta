@@ -2286,6 +2286,7 @@ pub fn build_router(state: SharedState) -> Router {
                 .patch(rename_agent_handler),
         )
         .route("/agents/{name}/build-phase", get(build_phase_handler))
+        .route("/agents/{name}/message", post(crate::sync::send_message_handler))
         .route("/agents/{name}/start", post(start_agent_handler))
         .route(
             "/agents/{name}/config",
@@ -2364,6 +2365,7 @@ pub fn build_router(state: SharedState) -> Router {
             post(restore_backup_handler),
         )
         .route("/ws", get(control_ws::control_ws_handler))
+        .route("/sync", get(crate::sync::sync_ws_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware,
@@ -2857,15 +2859,16 @@ pub async fn run_server(cfg: ServerConfig) {
     // Keep a docker handle for the shutdown hook: vestad stops every agent when it exits, so a
     // vestad update/restart hands off with nothing running on a stale container.
     let shutdown_docker = docker.clone();
-    agent_status::spawn_agent_status_task(
-        state.agent_status_cache.clone(),
+    agent_status::spawn_agent_status_task(agent_status::AgentStatusTaskDeps {
+        cache: state.agent_status_cache.clone(),
         docker,
-        state.http_client.clone(),
-        state.env_config.agents_dir.clone(),
+        http_client: state.http_client.clone(),
+        agents_dir: state.env_config.agents_dir.clone(),
         on_agents_changed,
-        state.rebuilding.clone(),
-        state.mobile_app.clone(),
-    );
+        rebuilding: state.rebuilding.clone(),
+        mobile_app: state.mobile_app.clone(),
+        sync_hub: state.sync_hub.clone(),
+    });
     let app = build_router(state.clone());
     spawn_auto_backup_task(state.clone());
     if dev_mode {
@@ -3556,6 +3559,15 @@ mod tests {
         let cli_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../cli/tests/fixtures/vestad-api.json");
         sync_fixture_file(&cli_path, &cli_content, regen);
+
+        // Sync-protocol fixtures (Stage 4): the /sync frames the @vesta/core contract test parses.
+        // Additive beside the web/cli fixtures above, which retire when those clients migrate.
+        let sync_json = serde_json::to_string_pretty(&crate::sync::protocol::protocol_fixtures())
+            .expect("serialize sync fixtures");
+        let sync_content = format!("{sync_json}\n");
+        let sync_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../apps/core/fixtures/sync-protocol.json");
+        sync_fixture_file(&sync_path, &sync_content, regen);
     }
 }
 
