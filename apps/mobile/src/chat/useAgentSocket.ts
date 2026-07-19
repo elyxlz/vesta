@@ -6,11 +6,11 @@ import { useReplica, useSyncState, useWatch } from "@vesta/core/react";
 import { useController } from "@/controller/context";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
+import { connectionKeyOf } from "@/session/session-model";
 import { useChatHold } from "./ChatHoldProvider";
 import {
   captureChatHold,
   chatHoldKey,
-  connectionKeyOf,
   heldChatState,
 } from "./chat-hold-model";
 import {
@@ -45,7 +45,7 @@ export function useAgentSocket(name: string, active: boolean) {
   const preferences = usePreferences();
   const { connection } = useSession();
   const holdStore = useChatHold();
-  const key = chatHoldKey(name, connectionKeyOf(connection));
+  const key = chatHoldKey(name, connectionKeyOf(connection) ?? "");
   const keyRef = useRef(key);
   keyRef.current = key;
   const naturalPacing = preferences.naturalChatPacingForAgent(name);

@@ -7,9 +7,9 @@ import {
 } from "react";
 import type { Controller, Tree } from "@vesta/core";
 import { useReplica, useSyncState } from "@vesta/core/react";
-import type { ConnectionConfig } from "@/api/types";
 import { ControllerContext } from "@/controller/context";
 import { useSession } from "@/session/SessionProvider";
+import { connectionKeyOf } from "@/session/session-model";
 import {
   emptyRosterHold,
   reconcileRosterHold,
@@ -28,7 +28,6 @@ interface RosterValue {
   managed: boolean;
   updateAvailable: boolean;
   latestVersion: string | null;
-  compatible: boolean;
 }
 
 const RosterContext = createContext<RosterValue | null>(null);
@@ -72,13 +71,9 @@ function selectGateway(tree: Tree | null) {
   return tree?.gateway ?? null;
 }
 
-function connectionKeyOf(connection: ConnectionConfig | null): string {
-  return connection ? `${connection.url}\n${String(connection.hosted)}` : "";
-}
-
 function servedRoster(
   hold: RosterHold,
-  live: { reachable: boolean; compatible: boolean },
+  live: { reachable: boolean },
 ): RosterValue {
   return {
     agents: hold.agents,
@@ -88,7 +83,6 @@ function servedRoster(
     managed: hold.managed,
     updateAvailable: hold.updateAvailable,
     latestVersion: hold.latestVersion,
-    compatible: live.compatible,
   };
 }
 
@@ -99,7 +93,7 @@ function useServedRoster(
   store: RosterHoldStore,
   connectionKey: string,
   fresh: RosterSnapshot | null,
-  live: { reachable: boolean; compatible: boolean },
+  live: { reachable: boolean },
 ): RosterValue {
   const hold = reconcileRosterHold(store.read(), connectionKey, fresh);
   useEffect(() => {
@@ -134,7 +128,6 @@ function LiveRoster({
     : null;
   const value = useServedRoster(store, connectionKey, fresh, {
     reachable: syncState === "open",
-    compatible: syncState !== "incompatible",
   });
   return (
     <RosterContext.Provider value={value}>{children}</RosterContext.Provider>
@@ -152,7 +145,6 @@ function DisconnectedRoster({
 }) {
   const value = useServedRoster(store, connectionKey, null, {
     reachable: false,
-    compatible: true,
   });
   return (
     <RosterContext.Provider value={value}>{children}</RosterContext.Provider>
@@ -166,7 +158,7 @@ export function RosterProvider({ children }: { children: ReactNode }) {
   const controller = use(ControllerContext);
   const { connection } = useSession();
   const store = useRosterHold();
-  const connectionKey = connectionKeyOf(connection);
+  const connectionKey = connectionKeyOf(connection) ?? "";
   if (!controller) {
     return (
       <DisconnectedRoster connectionKey={connectionKey} store={store}>
