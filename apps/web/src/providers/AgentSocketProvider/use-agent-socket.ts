@@ -135,7 +135,7 @@ export function useAgentSocketState({
   );
 
   const markIntent = useCallback(
-    (intentId: string, state: "retry" | "failed") => {
+    (intentId: string, state: "sending" | "retry" | "failed") => {
       setMessages((prev) =>
         prev.map((m) =>
           m.type === "user" && m.intent_id === intentId
@@ -145,6 +145,35 @@ export function useAgentSocketState({
       );
     },
     [],
+  );
+
+  // POST the send-message intent. A 200 only means queued-on-tap; delivery truth is the append echo
+  // (which clears send_state). A retryable 503 leaves the bubble retryable; any other error fails it.
+  // The intent id is idempotent server-side, so a retry re-posts the same id (dedup on the echo).
+  const postIntent = useCallback(
+    (
+      agent: string,
+      intentId: string,
+      text: string,
+      inputMethod: InputMethod,
+    ) => {
+      void controller.http
+        .json(`/agents/${encodeURIComponent(agent)}/message`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text,
+            input_method: inputMethod,
+            intent_id: intentId,
+          }),
+        })
+        .catch((error: unknown) => {
+          if (error instanceof ApiError && error.status === 503)
+            markIntent(intentId, "retry");
+          else markIntent(intentId, "failed");
+        });
+    },
+    [controller, markIntent],
   );
 
   useEffect(() => {
@@ -255,9 +284,8 @@ export function useAgentSocketState({
   const send = useCallback(
     (text: string, inputMethod: InputMethod = "typed"): boolean => {
       if (!name) return false;
-      const agent = name;
       const intent = createSendMessageIntent(
-        agent,
+        name,
         { text, input_method: inputMethod },
         () => crypto.randomUUID(),
       );
@@ -275,22 +303,22 @@ export function useAgentSocketState({
           },
         ]),
       );
-      void controller.http
-        .json(`/agents/${encodeURIComponent(agent)}/message`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...intent.body, intent_id: intent.id }),
-        })
-        .catch((error: unknown) => {
-          // A 200 only means queued-on-tap; delivery truth is the append echo. A retryable 503 keeps
-          // the bubble as retryable; anything else marks it failed.
-          if (error instanceof ApiError && error.status === 503)
-            markIntent(intent.id, "retry");
-          else markIntent(intent.id, "failed");
-        });
+      postIntent(name, intent.id, text, inputMethod);
       return true;
     },
-    [controller, name, markIntent],
+    [name, postIntent],
+  );
+
+  // Re-post a failed/retryable bubble under its ORIGINAL intent id (idempotent): the bubble returns to
+  // "sending" and confirms on the same echo. Text + input method come from the bubble the user tapped.
+  const retry = useCallback(
+    (intentId: string, text: string, inputMethod: InputMethod = "typed") => {
+      if (!name) return;
+      pendingIntentsRef.current.add(intentId);
+      markIntent(intentId, "sending");
+      postIntent(name, intentId, text, inputMethod);
+    },
+    [name, markIntent, postIntent],
   );
 
   const hasMore = cursor !== null;
@@ -323,5 +351,6 @@ export function useAgentSocketState({
     loadingMore,
     loadMore,
     send,
+    retry,
   };
 }
