@@ -127,7 +127,7 @@ CI runs these exact subcommands, so passing locally means passing CI:
 ./check.sh cli            # cargo clippy -D warnings + cargo test
 ./check.sh vestad         # cargo clippy -p vestad -D warnings + cargo test -p vestad
 ./check.sh vestad-docker  # vestad #[ignore] Docker tests (needs Docker + agent image)
-./check.sh web            # eslint + prettier --check + tsc + vitest
+./check.sh web            # the JS/TS suite: @vesta/core (lint + format + tsc + vitest) then web, desktop, mobile
 ./check.sh integration    # vestad integration tests (needs Docker)
 ./check.sh live           # live agent e2e (Docker + CLAUDE_CREDENTIALS; real Claude)
 ./check.sh all            # guards + agent + cli + vestad + web
@@ -136,6 +136,10 @@ CI runs these exact subcommands, so passing locally means passing CI:
 ### Finer-grained commands
 
 ```bash
+# Contract fixtures (the two seams; regenerate + commit when wire shapes change)
+REGEN_API_FIXTURES=1 cargo test -p vestad api_contract   # vestad -> apps/core/fixtures + cli fixtures (from vestad/)
+REGEN_EVENT_FIXTURES=1 uv run pytest tests/test_event_union_fixture.py  # agent event union -> vestad seam (from agent/)
+
 # Agent (run from agent/)
 uv run pytest tests/                                # All agent tests
 uv run pytest tests/test_notifications.py           # Single module
