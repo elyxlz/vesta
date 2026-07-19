@@ -8,10 +8,7 @@ import {
   getPendingNotificationIds,
   mergeLiveNotifications,
 } from "@/agent/notification-list-model";
-import {
-  parseNotificationContent,
-  type NotificationView,
-} from "@/agent/notification-content";
+import { parseNotificationContent, type NotificationView } from "@vesta/core";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";

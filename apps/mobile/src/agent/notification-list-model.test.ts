@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ChatMessage } from "@/chat/chat-stream-model";
-import type { NotificationView } from "./notification-content";
+import type { NotificationView } from "@vesta/core";
 import {
   getPendingNotificationIds,
   mergeLiveNotifications,

@@ -56,10 +56,10 @@ export type { SseDeps, SseHandle, StreamEvent } from "./transport/sse"
 
 export { PACING, typingDelay } from "./pacing/pacing"
 
-export {
-  isStructured,
-  notificationContent,
-  parseFields,
+export { parseNotificationContent } from "./notification-content/notification-content"
+export type {
+  NotificationContent,
+  NotificationView,
 } from "./notification-content/notification-content"
 
 export { createSendMessageIntent } from "./intents/types"
