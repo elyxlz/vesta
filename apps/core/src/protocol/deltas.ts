@@ -35,5 +35,21 @@ export interface ResyncDelta {
   agent: string
 }
 
+// The always-on, server-decided notification-worthy event (chat / rate_limited), carrying the full
+// event plus vestad's preview. Independent of watches; clients toast it. Additive: an old client on
+// the pre-alert union simply ignored it.
+export interface AlertDelta {
+  type: "alert"
+  agent: string
+  event: VestaEvent
+  preview: string
+}
+
 export type Delta =
-  StateDelta | AgentDelta | AgentRemovedDelta | AppendDelta | NotificationsDelta | ResyncDelta
+  | StateDelta
+  | AgentDelta
+  | AgentRemovedDelta
+  | AppendDelta
+  | NotificationsDelta
+  | ResyncDelta
+  | AlertDelta

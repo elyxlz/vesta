@@ -9,7 +9,7 @@ use tokio::sync::watch;
 use crate::docker::{self, ListEntry};
 use crate::mobile_app::MobileApp;
 use crate::settings::ServiceEntry;
-use crate::sync::{activity_state, notification_change, SyncHub};
+use crate::sync::{activity_state, alert_for, notification_change, SyncHub};
 
 const POLL_INTERVAL_SECS: u64 = 3;
 
@@ -476,10 +476,14 @@ async fn agent_event_listener(
                         continue;
                     }
 
-                    // A live event: feed the watch fan-out, the notifications projection, and push.
+                    // A live event: feed the watch fan-out, the notifications projection, the always-on
+                    // alert edge, and mobile push.
                     hub.publish_event(&name, std::sync::Arc::new(parsed.clone()));
                     if let Some(change) = notification_change(&parsed) {
                         hub.apply_notification(&name, change);
+                    }
+                    if let Some(alert) = alert_for(&parsed) {
+                        hub.publish_alert(&name, parsed.clone(), alert.preview);
                     }
                     mobile_app.observe_agent_event(&name, parsed);
                 }
