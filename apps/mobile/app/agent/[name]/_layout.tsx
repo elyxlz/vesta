@@ -3,13 +3,6 @@ import { AgentProvider } from "@/agent/AgentProvider";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { fontNames } from "@/theme/typography";
 
-const INVERTED_LIST_EDGE_EFFECTS = {
-  top: "hidden",
-  right: "hidden",
-  bottom: "hidden",
-  left: "hidden",
-} as const;
-
 export default function AgentLayout() {
   const { colors } = usePreferences();
 
@@ -32,14 +25,8 @@ export default function AgentLayout() {
       >
         <Stack.Screen name="index" />
         <Stack.Screen name="settings" options={{ headerTitle: "" }} />
-        <Stack.Screen
-          name="logs"
-          options={{ scrollEdgeEffects: INVERTED_LIST_EDGE_EFFECTS }}
-        />
-        <Stack.Screen
-          name="notifications"
-          options={{ scrollEdgeEffects: INVERTED_LIST_EDGE_EFFECTS }}
-        />
+        <Stack.Screen name="logs" />
+        <Stack.Screen name="notifications" />
         <Stack.Screen name="file" />
         <Stack.Screen name="details/[section]" />
       </Stack>

@@ -5,7 +5,7 @@ function NotificationsContent() {
   return (
     <>
       <Stack.Title>Notifications</Stack.Title>
-      <NotificationsPage />
+      <NotificationsPage presentation="standalone" />
     </>
   );
 }
