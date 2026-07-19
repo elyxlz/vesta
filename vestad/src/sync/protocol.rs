@@ -107,6 +107,62 @@ pub(crate) enum ClientFrame {
     Reauth { token: String },
 }
 
+/// Build one representative of every `/sync` frame through the real serde path, for the contract
+/// fixture the `@vesta/core` test parses. Test-only.
+#[cfg(test)]
+pub(crate) fn protocol_fixtures() -> serde_json::Value {
+    use serde_json::to_value;
+
+    let gateway = GatewayInfo {
+        version: "0.1.0".into(),
+        channel: "stable".into(),
+        auto_update: true,
+        port: 4111,
+        lan: GatewayLan { exposed: false, url: None },
+        tunnel_url: Some("https://sample.vesta.run".into()),
+        update_available: true,
+        latest_version: Some("0.1.1".into()),
+        managed: false,
+    };
+    let mut services = BTreeMap::new();
+    services.insert("dashboard".to_string(), ServiceInfo { port: 8080, rev: 3 });
+    let info = AgentInfo {
+        status: AgentStatus::Alive,
+        activity_state: "thinking".into(),
+        build_phase: None,
+        started_at: Some("2026-01-01T00:00:00Z".into()),
+        services,
+    };
+    let notification = serde_json::json!({
+        "id": 7, "type": "notification", "source": "whatsapp", "summary": "new message",
+        "notif_id": "whatsapp-123",
+    });
+    let chat = serde_json::json!({ "id": 5, "type": "chat", "text": "hello" });
+    let mut agents = BTreeMap::new();
+    agents.insert(
+        "sample-agent".to_string(),
+        AgentNode { info: info.clone(), notifications: NotificationsBranch { pending: vec![notification.clone()] } },
+    );
+    let tree = Tree { gateway: gateway.clone(), agents };
+
+    serde_json::json!({
+        "hello": to_value(Frame::Hello {
+            version: "0.1.0".into(),
+            protocol: super::PROTOCOL_VERSION,
+            floor: super::PROTOCOL_FLOOR,
+        }).expect("serialize hello"),
+        "snapshot": to_value(Frame::Snapshot { tree }).expect("serialize snapshot"),
+        "deltas": {
+            "state": to_value(Frame::State { scope: GatewayScope::Gateway, value: gateway }).expect("serialize state"),
+            "agent": to_value(Frame::Agent { name: "sample-agent".into(), info }).expect("serialize agent"),
+            "agent_removed": to_value(Frame::AgentRemoved { name: "stopped-agent".into() }).expect("serialize agent_removed"),
+            "append": to_value(Frame::Append { agent: "sample-agent".into(), events: vec![chat] }).expect("serialize append"),
+            "notifications": to_value(Frame::Notifications { agent: "sample-agent".into(), pending: vec![notification] }).expect("serialize notifications"),
+            "resync": to_value(Frame::Resync { agent: "sample-agent".into() }).expect("serialize resync"),
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

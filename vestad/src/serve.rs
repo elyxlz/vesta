@@ -3559,6 +3559,15 @@ mod tests {
         let cli_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../cli/tests/fixtures/vestad-api.json");
         sync_fixture_file(&cli_path, &cli_content, regen);
+
+        // Sync-protocol fixtures (Stage 4): the /sync frames the @vesta/core contract test parses.
+        // Additive beside the web/cli fixtures above, which retire when those clients migrate.
+        let sync_json = serde_json::to_string_pretty(&crate::sync::protocol::protocol_fixtures())
+            .expect("serialize sync fixtures");
+        let sync_content = format!("{sync_json}\n");
+        let sync_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../apps/core/fixtures/sync-protocol.json");
+        sync_fixture_file(&sync_path, &sync_content, regen);
     }
 }
 
