@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { createController, type Controller } from "@vesta/core";
 import { useSyncState } from "@vesta/core/react";
 import { getConnection, isTokenExpiringSoon } from "@/lib/connection";
@@ -8,9 +8,13 @@ import { useAuth } from "@/providers/AuthProvider";
 import { VersionMismatchScreen } from "@/components/VersionMismatchScreen";
 import { DisconnectedOverlay } from "@/components/DisconnectedOverlay";
 import { createBrowserSocket } from "./browser-socket";
-import { ControllerContext } from "./context";
+import { ControllerContext, ControllerReconnectContext } from "./context";
 
-export { useController } from "./context";
+export {
+  ControllerContext,
+  useController,
+  useControllerReconnect,
+} from "./context";
 export { useSyncState };
 
 // Brief grace before the disconnect overlay appears, so quick socket blips and the
@@ -45,10 +49,28 @@ function buildController(): Controller {
 }
 
 // The controller (and its socket) is constructed only once the version gate passes, so a
-// mismatch never opens a socket. Built once for the lifetime of this mount; reauth hands
-// the live socket a rotated token in-band, and the overlay tracks the sync sub-store.
+// mismatch never opens a socket. `reconnect` bumps `connectEpoch`, remounting the session with
+// a fresh controller (the gateway-update path forces a reconnect this way).
 function ActiveController({ children }: { children: ReactNode }) {
-  const controller = useMemo(() => buildController(), []);
+  const [connectEpoch, setConnectEpoch] = useState(0);
+  const reconnect = useCallback(
+    () => setConnectEpoch((epoch) => epoch + 1),
+    [],
+  );
+
+  return (
+    <ControllerReconnectContext.Provider value={reconnect}>
+      <ControllerSession key={connectEpoch}>{children}</ControllerSession>
+    </ControllerReconnectContext.Provider>
+  );
+}
+
+// One live controller for the lifetime of a session mount. Built once via a lazy useState
+// initializer (run exactly once per mount and never discarded, so it avoids the
+// useMemo-side-effect-in-render caveat), closed on unmount. Reauth rotates the socket's token
+// in-band before it expires; the overlay tracks the sync sub-store.
+function ControllerSession({ children }: { children: ReactNode }) {
+  const [controller] = useState(buildController);
   const syncState = useSyncState(controller);
   const [showDisconnected, setShowDisconnected] = useState(false);
 
@@ -61,9 +83,13 @@ function ActiveController({ children }: { children: ReactNode }) {
   useEffect(() => {
     const timer = window.setInterval(() => {
       void (async () => {
-        if (isTokenExpiringSoon() && (await ensureFreshToken()) === "ok") {
-          const conn = getConnection();
-          if (conn) controller.reauth(conn.accessToken);
+        try {
+          if (isTokenExpiringSoon() && (await ensureFreshToken()) === "ok") {
+            const conn = getConnection();
+            if (conn) controller.reauth(conn.accessToken);
+          }
+        } catch (err) {
+          console.warn("[controller] reauth failed:", err);
         }
       })();
     }, REAUTH_POLL_MS);

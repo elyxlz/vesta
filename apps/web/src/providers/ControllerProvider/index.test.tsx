@@ -5,6 +5,8 @@ import type { Controller } from "@vesta/core";
 import { ControllerProvider } from "./index";
 import { ControllerContext } from "./context";
 
+const mockConn = vi.hoisted(() => ({ tokenExpiring: false }));
+
 vi.mock("@/lib/connection", () => ({
   getConnection: () => ({
     url: "https://vestad.test",
@@ -12,9 +14,12 @@ vi.mock("@/lib/connection", () => ({
     refreshToken: "ref",
     expiresAt: Date.now() + 60_000,
   }),
-  isTokenExpiringSoon: () => false,
+  isTokenExpiringSoon: () => mockConn.tokenExpiring,
   connectionHostname: () => "vestad.test",
 }));
+
+// Mirrors REAUTH_POLL_MS in index.tsx (not exported).
+const REAUTH_POLL_MS = 60_000;
 
 vi.mock("@/lib/token-refresh", () => ({
   ensureFreshToken: () => Promise.resolve("ok"),
@@ -97,6 +102,7 @@ const snapshotFrame = JSON.stringify({
 beforeEach(() => {
   FakeWebSocket.instances = [];
   fetchVersionInfo.mockReset();
+  mockConn.tokenExpiring = false;
   vi.stubGlobal("WebSocket", FakeWebSocket);
 });
 
@@ -149,6 +155,40 @@ describe("ControllerProvider", () => {
     await waitFor(() => {
       expect(controller?.replica.getState()?.gateway.version).toBe("9.9.9");
     });
+  });
+
+  it("rotates the token in-band when it is expiring", async () => {
+    mockConn.tokenExpiring = true;
+    fetchVersionInfo.mockResolvedValue({ version: __APP_VERSION__ });
+    vi.useFakeTimers();
+    try {
+      render(
+        <ControllerProvider>
+          <div>app body</div>
+        </ControllerProvider>,
+      );
+      // Flush the async version gate and the controller-build effect so the socket exists.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      const socket = FakeWebSocket.instances[0];
+      if (!socket) throw new Error("socket not constructed");
+      act(() => {
+        socket.onopen?.();
+      });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(REAUTH_POLL_MS);
+      });
+
+      expect(
+        socket.sent.some(
+          (frame) => (JSON.parse(frame) as { type: string }).type === "reauth",
+        ),
+      ).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("closes the controller socket on unmount", async () => {
