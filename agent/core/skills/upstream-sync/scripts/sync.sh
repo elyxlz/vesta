@@ -27,7 +27,7 @@ if git merge-base --is-ancestor "$TAG" HEAD; then
 fi
 
 if [ -n "$(git status --porcelain)" ]; then
-  git add -A
+  git add -A || true          # out-of-cone untracked files (drafts/, scratch) must not abort the checkpoint
   git diff --cached --quiet || git commit -q -m checkpoint
 fi
 
