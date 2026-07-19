@@ -29,7 +29,12 @@ describe("parseServerFrame", () => {
       { raw: { type: "notifications", agent: "scout", pending: [] }, type: "notifications" },
       { raw: { type: "resync", agent: "scout" }, type: "resync" },
       {
-        raw: { type: "alert", agent: "scout", event: { id: 1, type: "chat", text: "hi" }, preview: "hi" },
+        raw: {
+          type: "alert",
+          agent: "scout",
+          event: { id: 1, type: "chat", text: "hi" },
+          preview: "hi",
+        },
         type: "alert",
       },
     ]
