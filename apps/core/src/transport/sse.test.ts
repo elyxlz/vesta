@@ -67,4 +67,44 @@ describe("readSse", () => {
     })
     expect(events).toEqual([{ kind: "line", text: "only" }, { kind: "end" }])
   })
+
+  it("buffers a data line split across chunk boundaries", async () => {
+    const encoder = new TextEncoder()
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const part of ["data: hel", "lo\n\n"]) controller.enqueue(encoder.encode(part))
+        controller.close()
+      },
+    })
+    const events = await collect({
+      fetch: vi.fn<FetchLike>().mockResolvedValue(new Response(stream)),
+      url: "https://vestad.test/logs",
+      stoppedEvent: "logs_stopped",
+    })
+    expect(events).toEqual([{ kind: "line", text: "hello" }, { kind: "end" }])
+  })
+
+  it("emits nothing further after cancel while a read is pending", async () => {
+    const encoder = new TextEncoder()
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode("data: one\n\n"))
+      },
+    })
+    const events: StreamEvent[] = []
+    const handle = readSse(
+      {
+        fetch: vi.fn<FetchLike>().mockResolvedValue(new Response(stream)),
+        url: "https://vestad.test/logs",
+        stoppedEvent: "logs_stopped",
+      },
+      (event) => events.push(event),
+    )
+    await vi.waitFor(() => {
+      expect(events).toEqual([{ kind: "line", text: "one" }])
+    })
+    handle.cancel()
+    await new Promise<void>((resolve) => setTimeout(resolve, 20))
+    expect(events).toEqual([{ kind: "line", text: "one" }])
+  })
 })
