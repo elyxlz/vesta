@@ -89,7 +89,7 @@ func checkPairAttempt(attempts []time.Time, now time.Time, acknowledged bool) er
 	if hourly := attemptsWithin(attempts, now, PairAttemptWindow); len(hourly) >= MaxPairAttempts && !acknowledged {
 		cooldown := (PairAttemptWindow - now.Sub(oldestAttempt(hourly))).Round(time.Minute)
 		return fmt.Errorf(
-			"pairing blocked for %s: %d pairing attempts in the last hour. Repeated pairing attempts get WhatsApp numbers flagged and banned. Wait out the cooldown and only retry with the user's explicit go-ahead; pass --acknowledge-ban-risk to override",
+			"pairing blocked for %s: %d pairing attempts in the last hour. Repeated pairing attempts get WhatsApp numbers flagged and banned. Wait out the cooldown and only retry with the user's explicit go-ahead. A self-hosted link can pass --acknowledge-ban-risk to override; a managed number has no override and must wait out the cooldown",
 			cooldown, len(hourly))
 	}
 	return nil

@@ -8,8 +8,9 @@ import (
 )
 
 // TestChooseLinkerParadigm pins the one construction-time decision: a box that can
-// reach a pool (direct key or the vesta.run identity path) gets the managed linker;
-// a plain box gets the QR linker.
+// reach a pool (a direct key, or the vesta.run identity path on a genuine cloud
+// tenant) gets the managed linker; a plain box (including a self-hosted CONTAINER,
+// whose identity env is present but which is not a paid tenant) gets the QR linker.
 func TestChooseLinkerParadigm(t *testing.T) {
 	cases := []struct {
 		name string
@@ -17,7 +18,8 @@ func TestChooseLinkerParadigm(t *testing.T) {
 		want string
 	}{
 		{"direct key", managedConfig{directURL: "https://box", directKey: "wak_x"}, "managed"},
-		{"vesta.run identity", managedConfig{vestadBase: "https://localhost:1", agentName: "a", agentToken: "t"}, "managed"},
+		{"cloud tenant", managedConfig{vestadBase: "https://localhost:1", agentName: "a", agentToken: "t", cloudManaged: true}, "managed"},
+		{"self-hosted container (identity but not a tenant)", managedConfig{vestadBase: "https://localhost:1", agentName: "a", agentToken: "t"}, "self-hosted"},
 		{"plain box", managedConfig{}, "self-hosted"},
 	}
 	for _, tc := range cases {
@@ -90,7 +92,8 @@ func TestGuardedPairPhoneBlocksAtCap(t *testing.T) {
 	})
 	l := &managedLinker{state: store}
 	called := false
-	guarded := l.guardedPairPhone(func(string) (string, error) { called = true; return "C0DE", nil })
+	up := func() bool { return true }
+	guarded := l.guardedPairPhone(up, func(string) (string, error) { called = true; return "C0DE", nil })
 	if _, err := guarded("+447700900000"); !errors.Is(err, errRateLimited) {
 		t.Fatalf("guarded pair at cap = %v, want errRateLimited", err)
 	}
@@ -99,31 +102,39 @@ func TestGuardedPairPhoneBlocksAtCap(t *testing.T) {
 	}
 }
 
-// TestGuardedPairPhoneRecordsOnGeneratedCode proves the guard records an attempt
-// only when a code is actually minted (so the cap actually advances on the managed
-// path, matching the phone path's checkPairAttempt-then-record contract).
-func TestGuardedPairPhoneRecordsOnGeneratedCode(t *testing.T) {
+// TestGuardedPairPhoneRecordsOnDispatch proves the guard records an attempt the
+// moment the request is dispatched to WhatsApp (socket up), NOT only on success: a
+// request that reaches WhatsApp but errors mid-handshake must still burn a slot, or a
+// retry loop would slip past the cap.
+func TestGuardedPairPhoneRecordsOnDispatch(t *testing.T) {
 	store := newStateStore(t.TempDir())
 	l := &managedLinker{state: store}
-	guarded := l.guardedPairPhone(func(string) (string, error) { return "C0DE", nil })
-	if _, err := guarded("+447700900000"); err != nil {
-		t.Fatalf("guarded pair below cap: %v", err)
-	}
-	if n := len(store.snapshot().PairAttempts); n != 1 {
-		t.Fatalf("a generated code must record exactly one attempt, got %d", n)
-	}
-}
-
-// TestGuardedPairPhoneNoRecordOnFailure proves a pre-code failure (e.g. websocket
-// not up yet) burns no slot, so a transient failure never eats into the cap.
-func TestGuardedPairPhoneNoRecordOnFailure(t *testing.T) {
-	store := newStateStore(t.TempDir())
-	l := &managedLinker{state: store}
-	guarded := l.guardedPairPhone(func(string) (string, error) { return "", errors.New("websocket not up") })
+	up := func() bool { return true }
+	guarded := l.guardedPairPhone(up, func(string) (string, error) { return "", errors.New("handshake failed after dispatch") })
 	if _, err := guarded("+447700900000"); err == nil {
 		t.Fatal("expected the underlying pair failure to surface")
 	}
+	if n := len(store.snapshot().PairAttempts); n != 1 {
+		t.Fatalf("a dispatched request must record one attempt even on a response error, got %d", n)
+	}
+}
+
+// TestGuardedPairPhoneNoRecordWhenNotConnected proves a pre-dispatch failure (socket
+// not up yet) burns no slot and never calls pair, so a transient failure never eats
+// into the cap.
+func TestGuardedPairPhoneNoRecordWhenNotConnected(t *testing.T) {
+	store := newStateStore(t.TempDir())
+	l := &managedLinker{state: store}
+	called := false
+	down := func() bool { return false }
+	guarded := l.guardedPairPhone(down, func(string) (string, error) { called = true; return "C0DE", nil })
+	if _, err := guarded("+447700900000"); err == nil {
+		t.Fatal("expected a not-connected error before dispatch")
+	}
+	if called {
+		t.Fatal("pair must not be called when the socket is not up")
+	}
 	if n := len(store.snapshot().PairAttempts); n != 0 {
-		t.Fatalf("a pre-code failure must record nothing, got %d attempts", n)
+		t.Fatalf("a pre-dispatch failure must record nothing, got %d attempts", n)
 	}
 }

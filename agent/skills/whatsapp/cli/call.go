@@ -149,6 +149,12 @@ func (cm *CallManager) Place(target string) (any, error) {
 	if !isDirectChatJID(jid) {
 		return nil, fmt.Errorf("group calls are not supported; call a person, not a group")
 	}
+	// A voice call is the strongest ban trigger, so it passes the same gate as a text
+	// send: a saved contact, and on a managed number a prior inbound (reply-first)
+	// before dialing. Checked before touching meowcaller so a blocked call never dials.
+	if err := cm.wac.requireSendAllowed(jid); err != nil {
+		return nil, err
+	}
 	name, phone := cm.displayFor(jid)
 
 	cm.mu.Lock()

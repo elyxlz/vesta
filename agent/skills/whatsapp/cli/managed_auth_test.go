@@ -117,23 +117,6 @@ func TestProvision_queuedThenBound(t *testing.T) {
 	}
 }
 
-// A blocked (banned) number surfaces errBlocked so connect can tell the agent to
-// re-run for a fresh number rather than emitting a raw error.
-func TestProvision_blockedSurfacesErrBlocked(t *testing.T) {
-	m := managedFor(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/integrations/whatsapp/provision" {
-			_ = json.NewEncoder(w).Encode(map[string]any{"msisdn": "+447700900004", "state": "banned"})
-			return
-		}
-		http.Error(w, "no", http.StatusNotFound)
-	})
-
-	_, err := m.provision(func(string) (string, error) { return "C0DE", nil })
-	if !errors.Is(err, errBlocked) {
-		t.Fatalf("provision of a banned number = %v, want errBlocked", err)
-	}
-}
-
 // A pool that never binds within the poll budget surfaces errPoolFilling.
 func TestProvision_dryPoolSurfacesErrPoolFilling(t *testing.T) {
 	old := provisionPollInterval
@@ -294,6 +277,69 @@ func TestProvision_picksUpHealedNumber(t *testing.T) {
 	}
 }
 
+// The pool API signals a ban as an HTTP 403 account_banned, never as a 200 body, so
+// claim must map the typed error (not a decoded {state}) to errBlocked. A prior shape
+// of this test faked a 200 the server never sends, hiding the mismatch.
+func TestClaim_banned403SurfacesErrBlocked(t *testing.T) {
+	m := managedFor(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "account_banned", "detail": "banned"})
+	})
+	if _, err := m.claim(); !errors.Is(err, errBlocked) {
+		t.Fatalf("claim on a 403 account_banned = %v, want errBlocked", err)
+	}
+}
+
+// A temporary restriction is a distinct HTTP 409 account_restricted (self-clearing);
+// claim surfaces it as errRestricted so the agent waits rather than burning attempts.
+func TestClaim_restricted409SurfacesErrRestricted(t *testing.T) {
+	m := managedFor(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "account_restricted", "detail": "restricted"})
+	})
+	if _, err := m.claim(); !errors.Is(err, errRestricted) {
+		t.Fatalf("claim on a 409 account_restricted = %v, want errRestricted", err)
+	}
+}
+
+// A dry pool answers 409 with no ready account (no machine key), distinct from a
+// restriction: claim re-POSTs the idempotent /provision until the deadline, then
+// returns errPoolFilling (the clean "provisioning" status), never a raw error.
+func TestClaim_dryPool409PollsToPoolFilling(t *testing.T) {
+	prev := provisionPollInterval
+	provisionPollInterval = time.Millisecond
+	t.Cleanup(func() { provisionPollInterval = prev })
+	var calls atomic.Int32
+	m := managedFor(t, func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "no ready account"})
+	})
+	if _, err := m.claim(); !errors.Is(err, errPoolFilling) {
+		t.Fatalf("claim on a persistently dry pool = %v, want errPoolFilling", err)
+	}
+	if calls.Load() < 2 {
+		t.Fatalf("a dry pool must be re-polled, got %d calls", calls.Load())
+	}
+}
+
+// A number banned AFTER linking comes back as a 403 on /pair (the error path, not a
+// 200 {state}); reauth must map that typed error to errBlocked too.
+func TestReauth_banned403SurfacesErrBlocked(t *testing.T) {
+	m := managedFor(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/integrations/whatsapp/pair" {
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "account_banned"})
+			return
+		}
+		http.Error(w, "no", http.StatusNotFound)
+	})
+	err := m.reauth(managedState{MSISDN: "+44"}, func(string) (string, error) { return "FRSH-0001", nil })
+	if !errors.Is(err, errBlocked) {
+		t.Fatalf("reauth on a 403 account_banned = %v, want errBlocked", err)
+	}
+}
+
 func TestControlError_surfaces(t *testing.T) {
 	m := managedFor(t, func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, `{"error":"membership_inactive"}`, http.StatusForbidden)
@@ -319,7 +365,7 @@ func TestMintToken_missingCredentials(t *testing.T) {
 
 func TestWaMeLink(t *testing.T) {
 	st := managedState{MSISDN: "+39 351 152 6318"}
-	got := st.WaMeLink("hi there")
+	got := waMeLink(st.MSISDN, "hi there")
 	want := "https://wa.me/393511526318?text=hi+there"
 	if got != want {
 		t.Errorf("WaMeLink = %q, want %q", got, want)

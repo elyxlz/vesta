@@ -1,10 +1,13 @@
 package main
 
 import (
+	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"go.mau.fi/whatsmeow/types/events"
+	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
 // TestEnqueueWorkOffloadsSlowHandler proves the data-plane offload keeps a slow
@@ -62,6 +65,73 @@ func TestClassifyConnEvent(t *testing.T) {
 		if got := classifyConnEvent(tc.evt); got != tc.want {
 			t.Errorf("%s: classifyConnEvent = %d, want %d", tc.name, got, tc.want)
 		}
+	}
+}
+
+// TestApplyYieldParksAndPersists proves the yield side-effect persists the park (so
+// a restart honors it), records the exit reason, and resets presence.
+func TestApplyYieldParksAndPersists(t *testing.T) {
+	wac := &WhatsAppClient{state: newStateStore(t.TempDir())}
+	wac.presenceActive = true
+
+	wac.applyYield("another connection took over this device session")
+
+	if !wac.connModeIs(connParked) {
+		t.Fatal("yield must park the in-memory posture")
+	}
+	st := wac.state.snapshot()
+	if !st.ConnParked {
+		t.Fatal("yield must persist the parked posture so a restart does not steal the session back")
+	}
+	if st.ExitStatus != "stream_replaced" || st.ExitReason != "another connection took over this device session" {
+		t.Fatalf("yield must record the exit reason: %+v", st)
+	}
+	if wac.presenceActive {
+		t.Fatal("yield must reset presence")
+	}
+}
+
+// TestRecordDeviceLoggedOutPersistsAndNotifies proves the device-removed give-up
+// side-effect records the logged_out posture, keeps MSISDN for a same-number reauth,
+// closes the preserve episode, and writes exactly one logged_out notification.
+func TestRecordDeviceLoggedOutPersistsAndNotifies(t *testing.T) {
+	notifDir := t.TempDir()
+	wac := &WhatsAppClient{
+		state:            newStateStore(t.TempDir()),
+		notificationsDir: notifDir,
+		instance:         "personal",
+		logger:           waLog.Noop,
+	}
+	wac.state.update(func(s *daemonState) {
+		s.MSISDN = "+447700900001"
+		s.PreserveRetryAt = time.Now().UTC()
+	})
+
+	wac.recordDeviceLoggedOut("unlinked from the phone (stream:error logout)")
+
+	st := wac.state.snapshot()
+	if st.AuthStatus != "logged_out" || st.ExitStatus != "logged_out" {
+		t.Fatalf("device removal must record the logged_out posture: %+v", st)
+	}
+	if st.MSISDN != "+447700900001" {
+		t.Fatal("device removal must keep MSISDN so the next provision re-links the same number")
+	}
+	if !st.PreserveRetryAt.IsZero() {
+		t.Fatal("device removal must close the preserve episode")
+	}
+
+	entries, err := os.ReadDir(notifDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loggedOut := 0
+	for _, e := range entries {
+		if strings.Contains(e.Name(), "logged_out") {
+			loggedOut++
+		}
+	}
+	if loggedOut != 1 {
+		t.Fatalf("device removal must write exactly one logged_out notification, got %d", loggedOut)
 	}
 }
 

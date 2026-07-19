@@ -228,12 +228,12 @@ func runServe() {
 		fmt.Fprintf(os.Stderr, "Failed to initialize WhatsApp client: %v\n", err)
 		os.Exit(1)
 	}
-	// The restore (if any) is done and the store is open; clear the flag so a
-	// later ordinary boot does not restore a now-stale snapshot.
-	wac.state.update(func(s *daemonState) { s.RestorePending = false })
-	// Record this run's serve flags so `daemon restart` can bring the daemon back
-	// faithfully (survives stops and crashes via the persisted state).
+	// One boot write: clear RestorePending (the restore, if any, is done and the
+	// store is open, so a later ordinary boot does not restore a now-stale snapshot)
+	// and record this run's serve flags so `daemon restart` brings the daemon back
+	// faithfully (both survive stops and crashes via the persisted state).
 	wac.state.update(func(s *daemonState) {
+		s.RestorePending = false
 		s.Args, s.PID, s.StartedAt = os.Args[1:], os.Getpid(), time.Now().UTC()
 	})
 
@@ -1032,14 +1032,21 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 			}
 		}
 		// Store.ID is set (guaranteed non-nil here), so the device number is
-		// authoritative; daemon-status formats it the same way.
-		return managedLinkedResult("+" + wac.client.Store.ID.User), nil
+		// authoritative; daemon-status formats it the same way. An already-linked
+		// device is a resume, not a first link, so it never re-emits the reply-first
+		// onboarding copy meant for a brand-new number.
+		return managedResumeResult("+" + wac.client.Store.ID.User), nil
 	}
 	release, ok := wac.beginPairing()
 	if !ok {
 		return nil, errPairingInProgress
 	}
 	defer release()
+	// Capture the number we held BEFORE provisioning: a first-ever claim (no prior
+	// number) or a control-plane heal onto a different number is a genuinely new
+	// number that needs onboarding; re-linking the same established number is a
+	// resume that must not tell Vesta to stop initiating mid-relationship.
+	priorMSISDN := wac.state.snapshot().MSISDN
 	res, err := wac.linker.provision(wac)
 	if err != nil {
 		// A still-filling pool and a banned number are normal outcomes, not
@@ -1065,14 +1072,28 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 				"next":   "Too many link attempts on this number recently. Wait out the cooldown noted above before running `whatsapp connect` again; repeated pairing is exactly what gets a fresh number banned.",
 			}, nil
 		}
+		if errors.Is(err, errRestricted) {
+			// WhatsApp has temporarily restricted the account (self-clearing); waiting
+			// is the fix, not a fresh number or more pairing.
+			return map[string]any{
+				"status": "rate_limited",
+				"reason": err.Error(),
+				"next":   "WhatsApp has temporarily restricted this number (it self-clears). Wait a while, then re-run `whatsapp connect`; do not keep retrying, repeated attempts on a restricted number risk a full ban.",
+			}, nil
+		}
 		return nil, err
 	}
-	return managedLinkedResult(res.MSISDN), nil
+	// A new number (first claim or a healed replacement) gets the reply-first
+	// onboarding; re-linking the same established number is a quiet resume.
+	if priorMSISDN == "" || priorMSISDN != res.MSISDN {
+		return managedLinkedResult(res.MSISDN), nil
+	}
+	return managedResumeResult(res.MSISDN), nil
 }
 
-// managedLinkedResult is the terminal linked output for a managed number: it names
-// the number and spells out the reply-first onboarding (surface the wa.me link, let
-// the user message first, never cold-initiate from a fresh number).
+// managedLinkedResult is the terminal output for a genuinely NEW managed number: it
+// names the number and spells out the reply-first onboarding (surface the wa.me link,
+// let the user message first, never cold-initiate from a fresh number).
 func managedLinkedResult(number string) map[string]any {
 	return map[string]any{
 		"status": "linked",
@@ -1081,6 +1102,18 @@ func managedLinkedResult(number string) map[string]any {
 			"Linked as %s. Share this number with the user and ask them to message you FIRST: send them the click-to-chat link %s, then reply only once they say hi. A fresh number must never cold-initiate.",
 			number, waMeLink(number, ""),
 		),
+	}
+}
+
+// managedResumeResult is the terminal output when connect re-links an already
+// established managed number (a re-run or a reauth of the same number). It omits the
+// reply-first onboarding, which belongs only to a brand-new number: telling Vesta to
+// stop initiating and re-share a wa.me link mid-relationship would be wrong.
+func managedResumeResult(number string) map[string]any {
+	return map[string]any{
+		"status": "linked",
+		"number": number,
+		"next":   fmt.Sprintf("Reconnected as %s. Existing conversations continue as normal; no need to re-share the number or wait for an inbound.", number),
 	}
 }
 
@@ -1104,19 +1137,17 @@ func cmdPairPhone(args []string, wac *WhatsAppClient) (any, error) {
 		return nil, errPairingInProgress
 	}
 	defer release()
-	// Check the ban guard first, but record the attempt only once a code is
-	// actually generated: pairing fails cheaply when the websocket is not up yet
-	// (fresh daemon still recompiling), and such a failure must not burn a slot.
-	// The single-flight (beginPairing) means no concurrent caller can double-spend.
-	now := time.Now()
-	if err := checkPairAttempt(wac.state.snapshot().PairAttempts, now, acknowledged); err != nil {
+	// Check the ban guard first; PairPhone records the attempt on dispatch (once the
+	// socket is up), so a cheap pre-dispatch failure (websocket not up yet on a fresh
+	// daemon) burns no slot while a request that reaches WhatsApp does. The
+	// single-flight (beginPairing) means no concurrent caller can double-spend.
+	if err := checkPairAttempt(wac.state.snapshot().PairAttempts, time.Now(), acknowledged); err != nil {
 		return nil, err
 	}
 	code, err := wac.linker.pairCode(wac, phone)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate pairing code: %v", err)
 	}
-	wac.state.recordPairAttempt(time.Now())
 	return map[string]any{
 		"pairing_code": code,
 		"phone":        phone,

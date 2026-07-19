@@ -138,21 +138,30 @@ func (wac *WhatsAppClient) applyConnAction(action connEventAction, reason string
 	case connYield:
 		// Another connection owns this session and whatsmeow already stopped
 		// reconnecting. Park (connParked): record the reason and stay up WITHOUT
-		// reconnecting or exiting. The park mode is what every reconnect path
+		// reconnecting or exiting. The park is what every reconnect path
 		// (EnsureConnected, recoverOrRestart) reads to refuse reconnecting, so the
 		// next auto-started daemon can't steal the session back and ping-pong.
 		wac.logger.Warnf("Yielding: %s. Parking (no reconnect, no exit).", reason)
-		wac.setConnMode(connParked)
-		wac.recordExit("stream_replaced", reason)
-		wac.presenceMutex.Lock()
-		wac.presenceActive = false
-		wac.presenceMutex.Unlock()
+		wac.applyYield(reason)
 	case connNeedsProvision:
 		// A device removal (mid-session or on-connect). Try device preservation
 		// first (restore last-good + reconnect once); fall back to today's exact
 		// clear-and-exit when preservation is not available or a retry just failed.
 		wac.handleDeviceRemoved(reason)
 	}
+}
+
+// applyYield records and persists the parked posture on a yield (StreamReplaced):
+// mark parked in memory AND on disk (so a restart honors it), record the exit
+// reason, and reset presence. Split off the event dispatcher so the persisted
+// side-effects are testable without a live socket.
+func (wac *WhatsAppClient) applyYield(reason string) {
+	wac.setConnMode(connParked)
+	wac.state.update(func(s *daemonState) { s.ConnParked = true })
+	wac.recordExit("stream_replaced", reason)
+	wac.presenceMutex.Lock()
+	wac.presenceActive = false
+	wac.presenceMutex.Unlock()
 }
 
 // handleDeviceRemoved responds to a whatsmeow device removal. When a last-good
@@ -172,21 +181,27 @@ func (wac *WhatsAppClient) handleDeviceRemoved(reason string) {
 		wac.reExecDaemon() // does not return
 	default: // preserveGiveUp: today's exact behavior (unchanged)
 		wac.logger.Warnf("Device logged out (%s). Clearing dead device and exiting; run `whatsapp connect` to re-link.", reason)
-		wac.state.update(func(s *daemonState) {
-			s.ExitStatus, s.ExitReason, s.ExitTime = "logged_out", reason, time.Now().UTC()
-			s.AuthStatus = "logged_out"
-			s.AuthNote = "WhatsApp logged this device out. Re-linking is a deliberate `whatsapp connect`, never an automatic retry loop."
-			s.PreserveRetryAt = time.Time{} // episode closed
-			// Keep MSISDN so the next `whatsapp provision` re-links the SAME number
-			// (reauth), no re-claim.
-		})
-		if wac.notificationsDir != "" {
-			if err := WriteLoggedOutNotification(wac.notificationsDir, wac.instance, reason); err != nil {
-				wac.logger.Warnf("Failed to write logged_out notification: %v", err)
-			}
-		}
+		wac.recordDeviceLoggedOut(reason)
 		wac.dropDeadDevice()
 		os.Exit(0)
+	}
+}
+
+// recordDeviceLoggedOut persists the logged-out posture and notifies the agent
+// once. Split from the exit path (dropDeadDevice + os.Exit) so the persisted state
+// and the notification are testable. Keeps MSISDN so the next `whatsapp provision`
+// re-links the SAME number (reauth), no re-claim.
+func (wac *WhatsAppClient) recordDeviceLoggedOut(reason string) {
+	wac.state.update(func(s *daemonState) {
+		s.ExitStatus, s.ExitReason, s.ExitTime = "logged_out", reason, time.Now().UTC()
+		s.AuthStatus = "logged_out"
+		s.AuthNote = "WhatsApp logged this device out. Re-linking is a deliberate `whatsapp connect`, never an automatic retry loop."
+		s.PreserveRetryAt = time.Time{} // episode closed
+	})
+	if wac.notificationsDir != "" {
+		if err := WriteLoggedOutNotification(wac.notificationsDir, wac.instance, reason); err != nil {
+			wac.logger.Warnf("Failed to write logged_out notification: %v", err)
+		}
 	}
 }
 

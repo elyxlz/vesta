@@ -39,11 +39,13 @@ The home box owns all number/session state, keyed by that account id.
 The flow:
 
 1. Auth per the mode above (mint a token, or just use the direct key).
-2. `POST /provision` → `{msisdn, state}`. Idempotent: the account's one number is
-   returned as-is if it already has one. If the pool is dry the number is queued
-   (empty `msisdn`); re-POST the same idempotent `/provision` until it is bound
-   (the pool never rejects). There is no `GET /session`. A `state` of `banned`/
-   `blocked` means that number is unusable; re-running claims a fresh one.
+2. `POST /provision` → `200 {msisdn}` once a number is bound. Idempotent: the
+   account's one number is returned as-is if it already has one. A dry pool answers
+   `409` with no ready account; re-POST the same idempotent `/provision` until it
+   binds. There is no `GET /session`. A ban is a typed `403 account_banned` and a
+   temporary restriction a `409 account_restricted` (never a 200 body); a ban means
+   the number is unusable and re-running claims a fresh one, a restriction self-clears
+   so waiting is the fix.
 3. `whatsmeow PairPhone(msisdn)` → an 8-char code (the agent links to the assigned
    primary as a companion).
 4. `POST /pair {code}` → the home box drives the primary to accept the link.

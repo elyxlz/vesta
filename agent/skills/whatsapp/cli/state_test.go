@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -102,6 +103,60 @@ func TestStateJSONWinsOverLegacy(t *testing.T) {
 	if got := loadStateFromDisk(dir); got.MSISDN != "+11111111111" {
 		t.Fatalf("state.json must win over a stray legacy file, got %q", got.MSISDN)
 	}
+}
+
+// TestCorruptStatePreservesAndSalvages proves a corrupt state.json is preserved
+// aside (never overwritten in place) and never silently reopens the HARD pairing
+// caps: unreadable bytes start cap-exhausted, salvageable bytes keep the attempts.
+func TestCorruptStatePreservesAndSalvages(t *testing.T) {
+	t.Run("unreadable starts safe and cap-exhausted", func(t *testing.T) {
+		dir := t.TempDir()
+		original := []byte("this is not json {{{")
+		if err := os.WriteFile(statePath(dir), original, 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		got := loadStateFromDisk(dir)
+
+		if got.MSISDN != "" || got.AuthStatus != "" {
+			t.Fatalf("a corrupt state must load an empty/safe base: %+v", got)
+		}
+		// The original bytes are moved aside, not overwritten in place.
+		if _, err := os.Stat(statePath(dir)); !os.IsNotExist(err) {
+			t.Fatal("the corrupt state.json must be renamed aside, not left in place")
+		}
+		corrupt, err := os.ReadFile(statePath(dir) + ".corrupt")
+		if err != nil {
+			t.Fatalf("a .corrupt sidecar must preserve the original bytes: %v", err)
+		}
+		if string(corrupt) != string(original) {
+			t.Fatal("the .corrupt sidecar must hold the original bytes verbatim")
+		}
+		// Cap-exhausted: the pairing rate limit stays closed, never a clean zero.
+		if len(got.PairAttempts) != MaxPairPer7d {
+			t.Fatalf("unreadable corrupt state must start cap-exhausted, got %d attempts", len(got.PairAttempts))
+		}
+		if err := checkPairAttempt(got.PairAttempts, time.Now(), false); err == nil {
+			t.Fatal("cap-exhausted state must block a fresh pairing attempt")
+		}
+	})
+
+	t.Run("salvages pair attempts when partially decodable", func(t *testing.T) {
+		dir := t.TempDir()
+		attempt := time.Now().UTC().Truncate(time.Second)
+		// Valid JSON, but pid is the wrong type so the full daemonState decode fails;
+		// pair_attempts is intact and must be salvaged rather than reset to a clean zero.
+		raw := fmt.Sprintf(`{"pid":"not-an-int","pair_attempts":[%q]}`, attempt.Format(time.RFC3339))
+		if err := os.WriteFile(statePath(dir), []byte(raw), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		got := loadStateFromDisk(dir)
+
+		if len(got.PairAttempts) != 1 || !got.PairAttempts[0].Equal(attempt) {
+			t.Fatalf("salvage must preserve the decodable pair attempts, got %+v", got.PairAttempts)
+		}
+	})
 }
 
 func TestDefaultNotificationsDir(t *testing.T) {

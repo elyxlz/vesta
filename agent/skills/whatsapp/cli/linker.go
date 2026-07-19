@@ -100,6 +100,18 @@ func (*managedLinker) pairCode(*WhatsAppClient, string) (string, error) {
 // synchronously. It leaves the client CLEAN (disconnected) on every failure path so
 // the next attempt starts fresh (never a GetQRChannel-on-connected-client error).
 func (l *managedLinker) provision(wac *WhatsAppClient) (linkResult, error) {
+	// Claim (or re-confirm) this box's number FIRST, off the pairing socket. A
+	// dry-pool claim can poll for a while, and whatsmeow closes the login websocket
+	// once its QR sequence exhausts (~160s after Connect); opening the socket only
+	// after a number is in hand keeps the pair well inside that window. Always
+	// re-consulting the idempotent POST /provision also auto-heals a post-link ban
+	// onto a FRESH number, so we pair the current number, never a stale dead one.
+	st, err := l.auth.claim()
+	if err != nil {
+		return linkResult{}, err
+	}
+	l.state.update(func(s *daemonState) { s.MSISDN = st.MSISDN })
+
 	// Bring the pairing WS up. We link by phone code, so the QR channel is drained
 	// unused: GetQRChannel must precede Connect, and PairPhone waits for the WS.
 	qrChan, err := wac.client.GetQRChannel(context.Background())
@@ -130,17 +142,13 @@ func (l *managedLinker) provision(wac *WhatsAppClient) (linkResult, error) {
 		}
 	}()
 
-	// Always re-consult the idempotent POST /provision (inside auth.provision),
-	// even when a number is already saved: the control plane auto-heals a banned
-	// account onto a FRESH number, so a post-link ban is picked up here instead of
-	// blindly re-pairing the stale (dead) saved number forever. The pairing code is
-	// minted through the ban-avoidance guard, at the same safe rate as the phone path.
-	st, err := l.auth.provision(l.guardedPairPhone(wac.PairPhone))
-	if err != nil {
+	// Mint the pairing code immediately, while the socket is fresh, and post it. The
+	// code is minted through the ban-avoidance guard, at the same safe rate as the
+	// phone path.
+	if err := l.auth.reauth(st, l.guardedPairPhone(wac.client.IsConnected, wac.PairPhone)); err != nil {
 		wac.client.Disconnect()
 		return linkResult{}, err
 	}
-	l.state.update(func(s *daemonState) { s.MSISDN = st.MSISDN })
 
 	deadline := time.Now().Add(ManagedLinkTimeout)
 	for time.Now().Before(deadline) {
@@ -158,22 +166,24 @@ func (l *managedLinker) provision(wac *WhatsAppClient) (linkResult, error) {
 // guardedPairPhone wraps PairPhone in the same ban-avoidance rate-limit guard the
 // phone-code path uses, so re-running `whatsapp connect` on a number that keeps
 // failing to finish linking cannot issue unbounded real PairPhone requests (the
-// exact auto-ban pattern). It checks the cap BEFORE minting a code and records the
-// attempt only once a code is actually generated (a pre-code failure burns no
-// slot); when the cap is reached it returns errRateLimited and never calls
-// PairPhone. The managed path has no --acknowledge-ban-risk flag, so the guard is
-// never overridden here.
-func (l *managedLinker) guardedPairPhone(pair func(msisdn string) (string, error)) func(msisdn string) (string, error) {
+// exact auto-ban pattern). It checks the cap BEFORE minting a code and, once the
+// socket is up, records the attempt on DISPATCH (before awaiting the response), so a
+// request that reaches WhatsApp but errors mid-handshake still burns a slot; a
+// pre-dispatch failure (socket not up yet) burns none. When the cap is reached it
+// returns errRateLimited and never calls pair. The managed path has no
+// --acknowledge-ban-risk flag, so the guard is never overridden here. connected and
+// pair are seams (wac.client.IsConnected, wac.PairPhone) so the guard is testable
+// without a live socket.
+func (l *managedLinker) guardedPairPhone(connected func() bool, pair func(msisdn string) (string, error)) func(msisdn string) (string, error) {
 	return func(msisdn string) (string, error) {
 		now := time.Now()
 		if err := checkPairAttempt(l.state.snapshot().PairAttempts, now, false); err != nil {
 			return "", fmt.Errorf("%w: %w", errRateLimited, err)
 		}
-		code, err := pair(msisdn)
-		if err != nil {
-			return "", err
+		if !connected() {
+			return "", fmt.Errorf("pairing websocket not connected; retry `whatsapp connect`")
 		}
 		l.state.recordPairAttempt(now)
-		return code, nil
+		return pair(msisdn)
 	}
 }

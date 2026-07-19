@@ -35,6 +35,12 @@ type daemonState struct {
 	ExitReason string    `json:"exit_reason,omitempty"`
 	ExitTime   time.Time `json:"exit_time,omitempty"`
 
+	// ConnParked records that this device yielded to another connection that took
+	// over the session (a StreamReplaced). It persists so a restart does not steal
+	// the session back and ping-pong with the other holder; only a deliberate
+	// `whatsapp connect` clears it.
+	ConnParked bool `json:"conn_parked,omitempty"`
+
 	// The running daemon's serve flags, so `daemon restart` brings it back faithfully.
 	Args      []string  `json:"args,omitempty"`
 	PID       int       `json:"pid,omitempty"`
@@ -178,14 +184,48 @@ func loadStateFromDisk(dataDir string) daemonState {
 		// state.json exists but is unreadable. Do NOT fall through to the legacy
 		// migration (which returns empty on a converged box and would then be saved
 		// over the damaged file, losing MSISDN + pool creds). Preserve the bytes as
-		// state.json.corrupt for recovery and start empty so the daemon still boots.
-		fmt.Fprintf(os.Stderr, "warning: state.json is corrupt; preserving it as state.json.corrupt and starting empty\n")
+		// state.json.corrupt for recovery and start from a SAFE base: salvage the
+		// ban-avoidance caps when the bytes still decode, else treat the state as
+		// cap-exhausted so a corrupt file never silently reopens the HARD pairing
+		// rate limit. MSISDN + pool creds are re-derived by `whatsapp connect`.
+		fmt.Fprintf(os.Stderr, "warning: state.json is corrupt; preserving it as state.json.corrupt and starting from a safe base\n")
 		os.Rename(statePath(dataDir), statePath(dataDir)+".corrupt")
-		return daemonState{}
+		return salvageCorruptState(b, time.Now())
 	}
 	return migrateLegacyState(dataDir)
 }
 
+// salvageCorruptState builds a safe daemonState from the bytes of a corrupt
+// state.json. It leniently decodes just the ban-avoidance caps (PairAttempts +
+// LinkedAt); when even that fails it returns a cap-exhausted window, so a corrupt
+// state can never silently zero the HARD pairing rate limit into a clean slate.
+func salvageCorruptState(raw []byte, now time.Time) daemonState {
+	var lenient struct {
+		PairAttempts []time.Time `json:"pair_attempts"`
+		LinkedAt     time.Time   `json:"linked_at"`
+	}
+	if json.Unmarshal(raw, &lenient) == nil {
+		return daemonState{PairAttempts: lenient.PairAttempts, LinkedAt: lenient.LinkedAt}
+	}
+	return daemonState{PairAttempts: exhaustedAttempts(now)}
+}
+
+// exhaustedAttempts returns a pairing history that trips every ban-avoidance cap:
+// MaxPairPer7d attempts stamped at now, so an unreadable corrupt state defaults to
+// cap-exhausted rather than a clean zero that would reopen the hard pairing limit.
+func exhaustedAttempts(now time.Time) []time.Time {
+	attempts := make([]time.Time, MaxPairPer7d)
+	for i := range attempts {
+		attempts[i] = now
+	}
+	return attempts
+}
+
+// LEGACY(remove-when: all whatsapp daemons have booted once and written state.json):
+// migrateLegacyState and the legacyStateFiles/removeLegacyStateFiles machinery below
+// exist only to fold the pre-consolidation per-concern files into state.json on the
+// first boot after upgrade; delete once no fleet daemon still carries them on disk.
+//
 // migrateLegacyState assembles a daemonState from the pre-consolidation files. It
 // reads whatever is present and ignores the rest, so a partially-populated legacy
 // data dir converges without loss.

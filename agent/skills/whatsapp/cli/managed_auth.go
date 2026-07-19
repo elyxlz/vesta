@@ -14,18 +14,66 @@ import (
 	"time"
 )
 
-// claim's two non-error terminal outcomes, surfaced to the agent as a clean status
-// (not a raw error): the pool is still filling (no number bound yet, re-run later),
-// or the assigned number is blocked (banned; re-run to get a fresh one).
+// claim's non-error terminal outcomes, surfaced to the agent as a clean status (not
+// a raw error): the pool is still filling (no number bound yet, re-run later), the
+// assigned number is blocked (banned; re-run to get a fresh one), or the account is
+// temporarily restricted (self-clearing; wait, then re-run).
 var (
 	errPoolFilling = errors.New("the number pool is still filling; no number is bound yet")
 	errBlocked     = errors.New("the assigned number is blocked")
+	errRestricted  = errors.New("the account is temporarily restricted by whatsapp")
 )
 
 // isBlockedState reports whether a pool state means the number is unusable (banned).
 // The control plane owns the fresh-number handoff; the agent just re-runs connect.
 func isBlockedState(state string) bool {
 	return state == "banned" || state == "blocked"
+}
+
+// httpError carries a non-2xx pool-API response so callers can branch on the status
+// and the machine key. The control plane signals a ban as 403 account_banned and a
+// restriction as 409 account_restricted (never as a 200 body), so classifying by the
+// status + key is exact where matching an opaque error string would be brittle.
+type httpError struct {
+	Status int
+	Key    string // the {"error": ...} machine key, empty when absent
+	Body   string // trimmed response body, for diagnostics
+	Method string
+	URL    string
+}
+
+func (e *httpError) Error() string {
+	if e.Body != "" {
+		return fmt.Sprintf("%s %s: %d: %s", e.Method, e.URL, e.Status, e.Body)
+	}
+	return fmt.Sprintf("%s %s: %d", e.Method, e.URL, e.Status)
+}
+
+// httpStatus returns the HTTP status of a pool-API error, if it carries one.
+func httpStatus(err error) (int, bool) {
+	var he *httpError
+	if errors.As(err, &he) {
+		return he.Status, true
+	}
+	return 0, false
+}
+
+// classifyBlock maps a pool-API error to the agent-facing terminal state it encodes,
+// if any: a banned number (403 account_banned) to errBlocked, a temporary restriction
+// (409 account_restricted) to errRestricted. Every other error (including a dry-pool
+// 409 with no ready account) returns nil so the caller decides in context.
+func classifyBlock(err error) error {
+	var he *httpError
+	if !errors.As(err, &he) {
+		return nil
+	}
+	switch {
+	case he.Status == http.StatusForbidden && he.Key == "account_banned":
+		return fmt.Errorf("%w: %s", errBlocked, he.Body)
+	case he.Status == http.StatusConflict && he.Key == "account_restricted":
+		return fmt.Errorf("%w: %s", errRestricted, he.Body)
+	}
+	return nil
 }
 
 // Managed WhatsApp auth (the "token" strategy): the agent side of the hosted
@@ -68,6 +116,11 @@ type managedConfig struct {
 	vestadBase string // this box's vestad over the loopback, e.g. https://localhost:<port>
 	agentName  string
 	agentToken string
+	// cloudManaged is the paid-tenant signal: the control plane's cloud-init sets
+	// VESTA_CLOUD_CONTROL_URL only on managed VMs and vestad forwards it into the
+	// container, so its presence tells a cloud tenant from a plain self-hosted box
+	// (whose identity env is otherwise identical).
+	cloudManaged bool
 }
 
 // loadManagedConfig reads the managed-auth environment (mirrors the account skill).
@@ -77,12 +130,13 @@ func loadManagedConfig() managedConfig {
 		base = "https://localhost:" + port
 	}
 	return managedConfig{
-		directURL:  strings.TrimRight(strings.TrimSpace(os.Getenv("WHATSAPP_API_URL")), "/"),
-		directKey:  strings.TrimSpace(os.Getenv("WHATSAPP_API_KEY")),
-		controlURL: strings.TrimRight(envOrDefault("VESTA_CONTROL_URL", "https://vesta.run/api"), "/"),
-		vestadBase: base,
-		agentName:  strings.TrimSpace(os.Getenv("AGENT_NAME")),
-		agentToken: strings.TrimSpace(os.Getenv("AGENT_TOKEN")),
+		directURL:    strings.TrimRight(strings.TrimSpace(os.Getenv("WHATSAPP_API_URL")), "/"),
+		directKey:    strings.TrimSpace(os.Getenv("WHATSAPP_API_KEY")),
+		controlURL:   strings.TrimRight(envOrDefault("VESTA_CONTROL_URL", "https://vesta.run/api"), "/"),
+		vestadBase:   base,
+		agentName:    strings.TrimSpace(os.Getenv("AGENT_NAME")),
+		agentToken:   strings.TrimSpace(os.Getenv("AGENT_TOKEN")),
+		cloudManaged: strings.TrimSpace(os.Getenv("VESTA_CLOUD_CONTROL_URL")) != "",
 	}
 }
 
@@ -109,12 +163,10 @@ type managedState struct {
 	DirectKey string
 }
 
-// WaMeLink builds the click-to-chat URL that gets the USER to message this agent
+// waMeLink builds the click-to-chat URL that gets the USER to message this agent
 // FIRST (reply-first onboarding, #10): the agent surfaces the link to its user, the
 // user taps and sends, and only then does the agent reply. A managed (fresh) number
 // must never cold-initiate, so the first message in any thread has to be inbound.
-func (s managedState) WaMeLink(text string) string { return waMeLink(s.MSISDN, text) }
-
 func waMeLink(msisdn, text string) string {
 	digits := strings.Map(func(r rune) rune {
 		if r >= '0' && r <= '9' {
@@ -135,11 +187,16 @@ func (m *managedAuth) isDirect() bool {
 	return m.cfg.directURL != "" && m.cfg.directKey != ""
 }
 
-// isHosted reports whether this box can use managed WhatsApp at all: either a
-// direct key (self-hosted) or the vesta.run server-identity path (cloud tenant).
-// Neither present means a plain box, which falls back to the QR strategy.
+// isHosted reports whether this box can use managed WhatsApp at all: either a direct
+// key (self-hosted managed), or a genuine vesta.run cloud tenant. Every agent
+// container carries VESTAD_PORT/AGENT_NAME/AGENT_TOKEN, so their presence alone
+// cannot tell a paid tenant from a plain self-hosted box. The distinguishing signal
+// is cloudManaged (VESTA_CLOUD_CONTROL_URL), which the control plane's cloud-init
+// drop-in sets only on managed VMs and vestad forwards into the container. Without
+// it, a plain box falls back to the QR strategy instead of dead-ending on a managed
+// path whose account-token mint would 404.
 func (m *managedAuth) isHosted() bool {
-	return m.isDirect() || (m.cfg.vestadBase != "" && m.cfg.agentName != "" && m.cfg.agentToken != "")
+	return m.isDirect() || (m.cfg.cloudManaged && m.cfg.vestadBase != "" && m.cfg.agentName != "" && m.cfg.agentToken != "")
 }
 
 // newManagedAuth builds the pool-API HTTP client. Direct-mode cred reconciliation
@@ -170,17 +227,14 @@ func (m *managedAuth) mintToken() (string, error) {
 	}
 	var out struct {
 		Token string `json:"token"`
-		Error string `json:"error"`
 	}
 	u := fmt.Sprintf("%s/agents/%s/account-token", m.cfg.vestadBase, m.cfg.agentName)
+	// A non-cloud-managed box answers 404; do() carries that status + body in the
+	// returned error, so the 404 detail surfaces without a separate decode branch.
 	if err := m.do(m.vestad, http.MethodPost, u, map[string]string{"X-Agent-Token": m.cfg.agentToken}, map[string]string{}, &out); err != nil {
 		return "", fmt.Errorf("mint server-identity token: %w", err)
 	}
 	if out.Token == "" {
-		if out.Error != "" {
-			// A non-cloud-managed box answers 404 {error}; surface it verbatim.
-			return "", fmt.Errorf("vestad: %s", out.Error)
-		}
 		return "", fmt.Errorf("vestad did not return a server-identity token")
 	}
 	return out.Token, nil
@@ -259,16 +313,24 @@ func (m *managedAuth) claim() (managedState, error) {
 	for {
 		var out struct {
 			MSISDN string `json:"msisdn"`
-			State  string `json:"state"`
 		}
-		if err := m.callWith(base, auth, http.MethodPost, "/provision", map[string]string{}, &out); err != nil {
-			return managedState{}, fmt.Errorf("provision: %w", err)
-		}
-		if isBlockedState(out.State) {
-			return managedState{}, fmt.Errorf("%w (state %q)", errBlocked, out.State)
-		}
-		if out.MSISDN != "" {
+		err := m.callWith(base, auth, http.MethodPost, "/provision", map[string]string{}, &out)
+		switch {
+		case err == nil && out.MSISDN != "":
 			return managedState{MSISDN: out.MSISDN, DirectURL: m.cfg.directURL, DirectKey: m.cfg.directKey}, nil
+		case err == nil:
+			// A 2xx with no number is off-contract; treat it as "still filling" and
+			// keep polling rather than returning a bare success.
+		default:
+			if blocked := classifyBlock(err); blocked != nil {
+				return managedState{}, blocked
+			}
+			// A dry pool answers 409 with no ready account: keep re-POSTing the
+			// idempotent /provision until one binds or the deadline elapses. Any
+			// other error is a real failure.
+			if status, ok := httpStatus(err); !ok || status != http.StatusConflict {
+				return managedState{}, fmt.Errorf("provision: %w", err)
+			}
 		}
 		if !time.Now().Before(deadline) {
 			return managedState{}, errPoolFilling
@@ -291,6 +353,9 @@ func (m *managedAuth) reauth(st managedState, pairPhone func(msisdn string) (str
 		State string `json:"state"`
 	}
 	if err := m.call(http.MethodPost, "/pair", map[string]string{"code": code}, &out); err != nil {
+		if blocked := classifyBlock(err); blocked != nil {
+			return blocked
+		}
 		return fmt.Errorf("link: %w", err)
 	}
 	if isBlockedState(out.State) {
@@ -326,8 +391,12 @@ func (m *managedAuth) do(client *http.Client, method, u string, headers map[stri
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("%s %s: %s: %s", method, u, resp.Status, strings.TrimSpace(string(msg)))
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		var parsed struct {
+			Error string `json:"error"`
+		}
+		_ = json.Unmarshal(raw, &parsed)
+		return &httpError{Status: resp.StatusCode, Key: parsed.Error, Body: strings.TrimSpace(string(raw)), Method: method, URL: u}
 	}
 	if out != nil {
 		return json.NewDecoder(resp.Body).Decode(out)

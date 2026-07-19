@@ -209,6 +209,17 @@ func (wac *WhatsAppClient) Connect() error {
 		return nil
 	}
 
+	// A parked posture persists across restarts (state.json). A prior yield to
+	// another device stays parked until a deliberate `whatsapp connect` clears it:
+	// reconnecting here would steal the session back and ping-pong with the other
+	// holder. Hydrate the in-memory mode so every reconnect path (EnsureConnected,
+	// recoverOrRestart) refuses too, and stay idle.
+	if wac.state.snapshot().ConnParked {
+		wac.setConnMode(connParked)
+		wac.logger.Infof("Session parked: another device took over. Staying idle; run `whatsapp connect` to re-link.")
+		return nil
+	}
+
 	wac.logger.Infof("Device already authenticated, connecting...")
 	err := wac.client.Connect()
 	if errors.Is(err, whatsmeow.ErrAlreadyConnected) {
@@ -249,6 +260,9 @@ func (wac *WhatsAppClient) connModeIs(m connMode) bool { return connMode(wac.mod
 // the stale detector, go online. It does NOT touch the post-link sync window.
 func (wac *WhatsAppClient) onConnected() {
 	wac.setConnMode(connNormal)
+	// A successful (re)connect only ever reaches here via boot or a deliberate
+	// connect/link, so it is the single point that clears the persisted park.
+	wac.state.update(func(s *daemonState) { s.ConnParked = false })
 	wac.setAuthStatus(AuthStatusAuthenticated)
 	wac.startStaleMessageDetector()
 	if err := wac.EnsureOnline(); err != nil {
@@ -476,6 +490,14 @@ func (wac *WhatsAppClient) generatePairCode(phone string) (string, error) {
 			return "", fmt.Errorf("connect for pairing: %w", err)
 		}
 	}
+	if !wac.client.IsConnected() {
+		return "", fmt.Errorf("WhatsApp websocket not connected; retry `whatsapp pair-phone` in a moment")
+	}
+	// The socket is up and the pairing request is about to go to WhatsApp: record the
+	// attempt on dispatch, before awaiting the response, so a request that reaches
+	// WhatsApp but errors mid-handshake still burns a ban-avoidance slot. The caller
+	// (cmdPairPhone) owns the pre-mint cap CHECK; a pre-dispatch failure records none.
+	wac.state.recordPairAttempt(time.Now())
 	return wac.PairPhone(phone)
 }
 
