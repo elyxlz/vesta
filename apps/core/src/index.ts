@@ -67,3 +67,6 @@ export type {
 } from "./intents/types"
 
 export type { ForegroundSignal, PushTokenProvider, StorageAdapter } from "./adapters/types"
+
+export { createController } from "./controller/controller"
+export type { Controller, ControllerDeps } from "./controller/controller"
