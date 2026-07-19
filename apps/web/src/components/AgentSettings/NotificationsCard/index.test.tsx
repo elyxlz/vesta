@@ -6,13 +6,13 @@ import {
   AgentSocketContext,
   type AgentSocketValue,
 } from "@/providers/AgentSocketProvider/context";
-import type { VestaEvent } from "@/lib/types";
+import type { ChatMessage } from "@/lib/types";
 import { NotificationsCard } from "./index";
 
 // A fake AgentSocket context: `pending` is the connect-snapshot seed; `messages` carries any live
 // notification / notification_cleared deltas the card folds on top of it.
 function socketValue(
-  messages: VestaEvent[],
+  messages: ChatMessage[],
   pending: string[] = [],
 ): AgentSocketValue {
   return {
@@ -55,6 +55,7 @@ describe("NotificationsCard", () => {
           summary:
             '<notification source="twitter" type="tweet">a new tweet</notification>',
           notif_type: "tweet",
+          id: 101,
           sender: "@bob",
           decided: "snooze",
           ts: new Date().toISOString(),
@@ -79,6 +80,7 @@ describe("NotificationsCard", () => {
           summary:
             '<notification source="whatsapp" type="message">status update</notification>',
           notif_type: "message",
+          id: 102,
           sender: "someone",
           decided: "trash",
           ts: new Date().toISOString(),
@@ -104,6 +106,7 @@ describe("NotificationsCard", () => {
             summary:
               '<notification source="twitter" type="tweet">first</notification>',
             notif_type: "tweet",
+            id: 103,
             ts: new Date().toISOString(),
           },
         ],
@@ -117,6 +120,7 @@ describe("NotificationsCard", () => {
             summary:
               '<notification source="email" type="message">older</notification>',
             notif_type: "message",
+            id: 104,
             ts: new Date().toISOString(),
           },
         ],
@@ -156,6 +160,7 @@ describe("NotificationsCard pending", () => {
           summary:
             '<notification source="twitter" type="tweet">a</notification>',
           notif_type: "tweet",
+          id: 105,
           notif_id: "n-pending",
           ts: new Date().toISOString(),
         },
@@ -165,6 +170,7 @@ describe("NotificationsCard pending", () => {
           summary:
             '<notification source="email" type="message">b</notification>',
           notif_type: "message",
+          id: 106,
           notif_id: "n-cleared",
           ts: new Date().toISOString(),
         },
@@ -191,6 +197,7 @@ describe("NotificationsCard pending", () => {
           summary:
             '<notification source="app-chat" type="message">hi</notification>',
           notif_type: "message",
+          id: 107,
           notif_id: "abc-app-chat-message",
           decided: "interrupt",
           ts: new Date().toISOString(),

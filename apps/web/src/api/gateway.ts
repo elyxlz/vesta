@@ -1,5 +1,6 @@
 import { getConnection } from "@/lib/connection";
-import type { GatewayVersionInfo, LogEvent, ReleaseChannel } from "@/lib/types";
+import type { ReleaseChannel } from "@vesta/core";
+import type { GatewayVersionInfo, LogEvent } from "@/lib/types";
 import { apiJson } from "./client";
 import { openLogStream } from "./log-stream";
 

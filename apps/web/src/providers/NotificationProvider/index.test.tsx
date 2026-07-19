@@ -9,7 +9,7 @@ import {
   disconnectedValue,
   type GatewayContextValue,
 } from "@/providers/GatewayProvider/context";
-import type { AgentInfo } from "@/lib/types";
+import type { AgentRow } from "@/lib/types";
 import { setAppBadge } from "@/lib/app-badge";
 import { setFaviconUnseen } from "@/lib/favicon";
 import { NotificationProvider, useNotifications } from "./index";
@@ -44,11 +44,18 @@ class FakeNotification {
   }
 }
 
-function agentInfo(name: string, status: AgentInfo["status"]): AgentInfo {
-  return { name, status, activityState: "idle", services: {} };
+function agentInfo(name: string, status: AgentRow["status"]): AgentRow {
+  return {
+    name,
+    status,
+    activityState: "idle",
+    buildPhase: null,
+    startedAt: null,
+    services: {},
+  };
 }
 
-function node(status: AgentInfo["status"]) {
+function node(status: AgentRow["status"]) {
   return {
     info: {
       status,
@@ -61,7 +68,7 @@ function node(status: AgentInfo["status"]) {
   };
 }
 
-function tree(statuses: Record<string, AgentInfo["status"]>): Tree {
+function tree(statuses: Record<string, AgentRow["status"]>): Tree {
   const agents: Tree["agents"] = {};
   for (const [name, status] of Object.entries(statuses))
     agents[name] = node(status);
@@ -81,7 +88,7 @@ function tree(statuses: Record<string, AgentInfo["status"]>): Tree {
   };
 }
 
-function makeController(statuses: Record<string, AgentInfo["status"]>) {
+function makeController(statuses: Record<string, AgentRow["status"]>) {
   const replica = createReplica();
   replica.applySnapshot(tree(statuses));
   const listeners = new Set<(delta: Delta) => void>();
@@ -106,7 +113,7 @@ function makeController(statuses: Record<string, AgentInfo["status"]>) {
   return { controller, emit };
 }
 
-function gatewayValue(agents: AgentInfo[]): GatewayContextValue {
+function gatewayValue(agents: AgentRow[]): GatewayContextValue {
   return { ...disconnectedValue, reachable: true, agents, agentsFetched: true };
 }
 
@@ -123,7 +130,7 @@ function ChattingWith({ agent }: { agent: string | null }) {
 
 function mount(
   controller: Controller,
-  agents: AgentInfo[],
+  agents: AgentRow[],
   child: ReactNode = null,
 ) {
   return render(
@@ -247,6 +254,7 @@ describe("NotificationProvider", () => {
     const { controller, emit } = makeController({ ada: "alive" });
     mount(controller, [agentInfo("ada", "alive")]);
     await flush();
+    focus();
 
     act(() => {
       emit({

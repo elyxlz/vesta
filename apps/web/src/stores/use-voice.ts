@@ -8,7 +8,7 @@ import {
   type SttStatus,
   type TtsStatus,
 } from "@/lib/voice";
-import type { InputMethod, ServiceInfo } from "@/lib/types";
+import type { InputMethod, ServiceInfo } from "@vesta/core";
 import { useVoiceActivation } from "@/stores/use-voice-activation";
 
 interface VoiceState {

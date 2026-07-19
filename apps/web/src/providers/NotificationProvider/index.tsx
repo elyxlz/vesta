@@ -15,7 +15,7 @@ import { native } from "@/lib/native";
 import { setAppBadge } from "@/lib/app-badge";
 import { setFaviconUnseen } from "@/lib/favicon";
 import { useWindowFocus } from "@/hooks/use-window-focus";
-import type { AgentInfo } from "@/lib/types";
+import type { AgentRow } from "@/lib/types";
 import { NotificationContext } from "./context";
 
 export { useNotifications } from "./context";
@@ -127,7 +127,7 @@ export function NotificationProvider({
 
   const permissionRef = useRef<boolean>(false);
   const chattingAgentRef = useRef<string | null>(null);
-  const prevStatusRef = useRef<Map<string, AgentInfo["status"]>>(new Map());
+  const prevStatusRef = useRef<Map<string, AgentRow["status"]>>(new Map());
 
   useEffect(() => {
     const onVisible = () => {

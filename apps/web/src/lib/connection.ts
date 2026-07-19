@@ -42,7 +42,7 @@ export interface ConnectionConfig {
 // ── Storage backend ────────────────────────────────────────────
 // The bridge owns persistence (Electron: json in userData via the preload;
 // browser: localStorage). `cached` gives the sync accessors (authHeaders,
-// apiUrl, wsUrl) their value; AuthProvider awaits initConnection before
+// apiUrl) their value; AuthProvider awaits initConnection before
 // anything reads it.
 let cached: ConnectionConfig | null | undefined;
 
@@ -140,17 +140,4 @@ export function apiUrl(path: string): string {
   const conn = getConnection();
   if (!conn) throw new Error("not connected to vestad");
   return `${conn.url}${path}`;
-}
-
-export interface WsUrlOptions {
-  skipHistory?: boolean;
-}
-
-export function wsUrl(name: string, opts: WsUrlOptions = {}): string {
-  const conn = getConnection();
-  if (!conn) throw new Error("not connected to vestad");
-  const base = conn.url.replace(/^http/, "ws");
-  const params = new URLSearchParams({ token: conn.accessToken });
-  if (opts.skipHistory) params.set("skip_history", "1");
-  return `${base}/agents/${name}/ws?${params.toString()}`;
 }
