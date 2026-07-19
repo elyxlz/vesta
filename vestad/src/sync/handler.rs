@@ -145,7 +145,7 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
                 }
             }
             Wake::Notifications => {
-                if emit_notifications(&state, &mut tx, &mut last_pending).await.is_err() {
+                if emit_notifications(&state, &mut tx, &mut last_pending, &last_roster).await.is_err() {
                     break;
                 }
             }
@@ -256,16 +256,38 @@ async fn emit_notifications(
     state: &SharedState,
     tx: &mut Tx,
     last: &mut HashMap<String, Vec<serde_json::Value>>,
+    last_roster: &BTreeMap<String, AgentInfo>,
 ) -> Result<(), ()> {
-    let current = state.sync_hub.pending_all();
-    for (agent, pending) in &current {
-        if last.get(agent) != Some(pending) {
-            send_frame(tx, &Frame::Notifications { agent: agent.clone(), pending: pending.clone() }).await?;
-        }
+    let (deltas, recorded) = notifications_deltas(last, state.sync_hub.pending_all(), last_roster);
+    for delta in &deltas {
+        send_frame(tx, delta).await?;
     }
-    // Agents dropped from the map (forgotten) need no notifications delta; `agent_removed` covers it.
-    *last = current;
+    *last = recorded;
     Ok(())
+}
+
+/// Changed pending sets -> `notifications` deltas, plus the map to record as sent. An agent absent
+/// from the last-sent roster is skipped AND left unrecorded: the client's reducer drops a delta with
+/// no node to attach it to, so leaving it unrecorded lets the next notifications wake retry once the
+/// roster catches up. Agents dropped from `current` (forgotten) fall out of the record; `agent_removed`
+/// covers them.
+fn notifications_deltas(
+    last: &HashMap<String, Vec<serde_json::Value>>,
+    current: HashMap<String, Vec<serde_json::Value>>,
+    last_roster: &BTreeMap<String, AgentInfo>,
+) -> (Vec<Frame>, HashMap<String, Vec<serde_json::Value>>) {
+    let mut deltas = Vec::new();
+    let mut recorded = HashMap::new();
+    for (agent, pending) in current {
+        if !last_roster.contains_key(&agent) {
+            continue;
+        }
+        if last.get(&agent) != Some(&pending) {
+            deltas.push(Frame::Notifications { agent: agent.clone(), pending: pending.clone() });
+        }
+        recorded.insert(agent, pending);
+    }
+    (deltas, recorded)
 }
 
 /// Handle one client frame. Unknown/malformed frames are ignored by rule. Returns Break only on a
@@ -559,6 +581,24 @@ mod tests {
 
         // No change -> no deltas.
         assert!(roster_deltas(&current, &current).is_empty());
+    }
+
+    #[test]
+    fn notifications_for_an_agent_absent_from_the_roster_wait_unrecorded() {
+        let pending = vec![serde_json::json!("n1")];
+        let current = HashMap::from([("newbie".to_string(), pending.clone())]);
+
+        // The roster has not caught up: no delta (the client would drop it) and nothing recorded.
+        let empty_roster = BTreeMap::new();
+        let (deltas, recorded) = notifications_deltas(&HashMap::new(), current.clone(), &empty_roster);
+        assert!(deltas.is_empty());
+        assert!(recorded.is_empty());
+
+        // Roster upsert lands; the next emit with the same pending now delivers and records it.
+        let roster = BTreeMap::from([("newbie".to_string(), info_of(AgentStatus::Alive))]);
+        let (deltas, recorded) = notifications_deltas(&recorded, current, &roster);
+        assert_eq!(deltas, vec![Frame::Notifications { agent: "newbie".into(), pending: pending.clone() }]);
+        assert_eq!(recorded.get("newbie"), Some(&pending));
     }
 
     #[test]
