@@ -1333,8 +1333,9 @@ struct RenderedLine {
 /// What the loop does with one routed frame. Keeps the branch logic pure and unit-testable.
 #[derive(Debug)]
 enum FrameOutcome {
-    /// New chat/user lines (`id` > `last_id`) to print in order.
-    Print(Vec<RenderedLine>),
+    /// New chat/user lines (`id` > `last_id`) to print in order, plus any intent id co-batched in
+    /// the same append: a pending send confirmed by a user echo that rode alongside the printed events.
+    Print(Vec<RenderedLine>, Option<String>),
     /// A user echo carrying this intent id: delivery truth for a pending send, not reprinted.
     Confirm(String),
     /// The per-watch edge overflowed: re-watch and re-fetch the tail.
@@ -1384,7 +1385,7 @@ fn route_frame(frame: SyncFrame, name: &str, last_id: &mut i64) -> FrameOutcome 
                 }
             }
             if !lines.is_empty() {
-                FrameOutcome::Print(lines)
+                FrameOutcome::Print(lines, confirm)
             } else if let Some(intent_id) = confirm {
                 FrameOutcome::Confirm(intent_id)
             } else {
@@ -1500,12 +1501,15 @@ fn run_sync_session(
             Ok(tungstenite::Message::Text(text)) => {
                 let frame = serde_json::from_str::<SyncFrame>(text.as_ref()).unwrap_or(SyncFrame::Unknown);
                 match route_frame(frame, name, last_id) {
-                    FrameOutcome::Print(lines) => {
+                    FrameOutcome::Print(lines, maybe_confirm) => {
                         for line in &lines {
                             print_line(line, name, color);
                         }
                         io.pending.mark_interposed();
                         std::io::stdout().flush().ok();
+                        if let Some(intent_id) = maybe_confirm {
+                            confirm_pending(io.pending, &intent_id, color);
+                        }
                     }
                     FrameOutcome::Confirm(intent_id) => confirm_pending(io.pending, &intent_id, color),
                     FrameOutcome::Resync => {
@@ -2039,10 +2043,11 @@ mod tests {
         let mut last = 0i64;
         let frame = SyncFrame::Append { agent: "scout".into(), events: vec![chat_event(5, "chat", Some("hi"), None)] };
         match route_frame(frame, "scout", &mut last) {
-            FrameOutcome::Print(lines) => {
+            FrameOutcome::Print(lines, confirm) => {
                 assert_eq!(lines.len(), 1);
                 assert_eq!(lines[0].speaker, Speaker::Agent);
                 assert_eq!(lines[0].text, "hi");
+                assert_eq!(confirm, None);
             }
             other => panic!("expected Print, got {other:?}"),
         }
@@ -2054,10 +2059,29 @@ mod tests {
         let mut last = 0i64;
         let frame = SyncFrame::Append { agent: "scout".into(), events: vec![chat_event(8, "user", Some("from the app"), None)] };
         match route_frame(frame, "scout", &mut last) {
-            FrameOutcome::Print(lines) => assert_eq!(lines[0].speaker, Speaker::You),
+            FrameOutcome::Print(lines, _) => assert_eq!(lines[0].speaker, Speaker::You),
             other => panic!("expected Print, got {other:?}"),
         }
         assert_eq!(last, 8);
+    }
+
+    #[test]
+    fn route_frame_prints_a_co_batched_chat_line_and_confirms_the_user_echo() {
+        let mut last = 0i64;
+        let frame = SyncFrame::Append {
+            agent: "scout".into(),
+            events: vec![chat_event(10, "chat", Some("on it"), None), chat_event(11, "user", Some("hey"), Some("cli-2"))],
+        };
+        match route_frame(frame, "scout", &mut last) {
+            FrameOutcome::Print(lines, confirm) => {
+                assert_eq!(lines.len(), 1);
+                assert_eq!(lines[0].text, "on it");
+                assert_eq!(confirm.as_deref(), Some("cli-2"));
+            }
+            other => panic!("expected Print, got {other:?}"),
+        }
+        // Both the printed chat and the confirmed echo advance the watermark so a later tail refetch cannot dup either.
+        assert_eq!(last, 11);
     }
 
     #[test]
