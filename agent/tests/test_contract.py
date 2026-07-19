@@ -60,6 +60,7 @@ _SNAPSHOT_FIXTURE: SnapshotEvent = SnapshotEvent(
     config={"timezone": "America/New_York"},
 )
 
+
 def test_all_stream_events_serializable():
     """Every event fixture round-trips through json without loss of its type tag."""
     for event in [*_STREAM_FIXTURES, _SNAPSHOT_FIXTURE]:
