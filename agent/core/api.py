@@ -113,7 +113,7 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
-def _write_app_chat_notification(config: VestaConfig, text: str) -> None:
+def _write_app_chat_notification(config: VestaConfig, text: str, intent_id: str | None = None) -> None:
     """Persist an inbound app message as a `source=app-chat` notification file — the in-process
     intake the monitor loop picks up. This is what actually delivers app chat to the model.
 
@@ -125,19 +125,39 @@ def _write_app_chat_notification(config: VestaConfig, text: str) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     # `message` is an extra field (Notification allows extras); it renders as the notification's
     # text, matching what the app-chat sidecar used to write. model_validate takes the dict so the
-    # extra passes the type checker.
-    notif = Notification.model_validate(
-        {
-            "timestamp": dt.datetime.now(),
-            "source": "app-chat",
-            "type": "message",
-            "message": text,
-            "interrupt": True,
-            "reply_hint": "reply with `app-chat send`, and think about how you can best show your personality",
-        }
-    )
+    # extra passes the type checker. intent_id rides along as another extra when the client sent one.
+    fields: dict[str, str | bool | dt.datetime] = {
+        "timestamp": dt.datetime.now(),
+        "source": "app-chat",
+        "type": "message",
+        "message": text,
+        "interrupt": True,
+        "reply_hint": "reply with `app-chat send`, and think about how you can best show your personality",
+    }
+    if intent_id is not None:
+        fields["intent_id"] = intent_id
+    notif = Notification.model_validate(fields)
     path = directory / f"{time.time_ns()}-app-chat-message.json"
     atomic_write_text(path, notif.model_dump_json())
+
+
+async def _handle_app_message(data: dict[str, pyd.JsonValue], text: str, event_bus: EventBus, config: VestaConfig) -> None:
+    """Emit the `user` echo event (history + broadcast, the chat's own view of the message) and write
+    the intake notification the monitor loop turns into a model turn. Intake is the file write, done
+    in-process off the loop so a dead subscriber can't drop a message the UI already echoed."""
+    event: UserEvent = {"type": "user", "text": text}
+    method = data["input_method"] if "input_method" in data else None
+    if isinstance(method, str) and method in ("voice", "typed"):
+        event["input_method"] = method
+    intent_id = data["intent_id"] if "intent_id" in data and isinstance(data["intent_id"], str) else None
+    if intent_id is not None:
+        event["intent_id"] = intent_id
+    event_bus.emit(event)
+    try:
+        await asyncio.to_thread(_write_app_chat_notification, config, text, intent_id)
+    except OSError as e:
+        # A lost intake write must surface loudly, never masquerade as delivered.
+        logger.error("failed to write app-chat notification: %s", e)
 
 
 async def _recv_loop(ws: web.WebSocketResponse, event_bus: EventBus, config: VestaConfig) -> None:
@@ -157,18 +177,7 @@ async def _recv_loop(ws: web.WebSocketResponse, event_bus: EventBus, config: Ves
                 text = data["text"].strip()
                 if text:
                     if msg_type == "message":
-                        # The `user` event is history + broadcast (the chat's own echo of the
-                        # message). Intake — turning the message into the notification the model
-                        # processes — is the file write below, done in-process off the loop.
-                        event: UserEvent = {"type": "user", "text": text}
-                        if "input_method" in data and data["input_method"] in ("voice", "typed"):
-                            event["input_method"] = data["input_method"]
-                        event_bus.emit(event)
-                        try:
-                            await asyncio.to_thread(_write_app_chat_notification, config, text)
-                        except OSError as e:
-                            # A lost intake write must surface loudly, never masquerade as delivered.
-                            logger.error("failed to write app-chat notification: %s", e)
+                        await _handle_app_message(data, text, event_bus, config)
                     else:
                         event_bus.emit(ChatEvent(type="chat", text=text))
         elif msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):
