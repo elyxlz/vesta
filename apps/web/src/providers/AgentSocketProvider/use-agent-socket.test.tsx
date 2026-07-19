@@ -246,4 +246,79 @@ describe("useAgentSocketState", () => {
     });
     expect(result.current.messages).toHaveLength(2);
   });
+
+  it("keeps a live append that raced the history fetch and is absent from the page", async () => {
+    useChatPacing.setState({ natural: false });
+    let resolveHistory!: (page: {
+      events: VestaEvent[];
+      cursor: number | null;
+    }) => void;
+    fetchHistoryMock.mockReturnValueOnce(
+      new Promise((r) => {
+        resolveHistory = r;
+      }),
+    );
+    const { controller, emit } = makeController();
+    const { result } = render(controller);
+
+    // The append lands after subscribe but before the history fetch resolves; its id is not in the page.
+    act(() => {
+      emit({ type: "append", agent: AGENT, events: [chat(99, "raced")] });
+    });
+    expect(result.current.messages).toHaveLength(1);
+
+    await act(async () => {
+      resolveHistory({ events: [chat(1, "seed")], cursor: null });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Merge, not replace: the seed row and the raced row both present, the raced row exactly once.
+    const texts = result.current.messages.map((m) =>
+      m.type === "chat" ? m.text : "",
+    );
+    expect(texts).toEqual(["seed", "raced"]);
+    expect(texts.filter((t) => t === "raced")).toHaveLength(1);
+  });
+
+  it("preserves a pending optimistic bubble across a resync and confirms its later echo", async () => {
+    fetchHistoryMock.mockResolvedValueOnce({ events: [], cursor: null });
+    const { controller, json, emit } = makeController();
+    const { result } = render(controller);
+    await flush();
+
+    act(() => {
+      expect(result.current.send("hi")).toBe(true);
+    });
+    await flush();
+
+    const call = json.mock.calls[0];
+    if (!call) throw new Error("send did not POST");
+    const body = JSON.parse((call[1] as { body: string }).body) as {
+      intent_id: string;
+    };
+    const users = () =>
+      result.current.messages.filter((m) => m.type === "user");
+
+    // Resync refetches an empty page (the send is not yet persisted); the bubble must survive.
+    fetchHistoryMock.mockResolvedValueOnce({ events: [], cursor: null });
+    act(() => {
+      emit({ type: "resync", agent: AGENT });
+    });
+    await flush();
+    expect(users()).toHaveLength(1);
+    expect(users()[0]).toMatchObject({ text: "hi", send_state: "sending" });
+
+    // The later echo confirms the surviving bubble: no vanish, no duplicate.
+    act(() => {
+      emit({
+        type: "append",
+        agent: AGENT,
+        events: [userEcho(5, "hi", body.intent_id)],
+      });
+    });
+    await flush();
+    expect(users()).toHaveLength(1);
+    expect(users()[0]?.send_state).toBeUndefined();
+  });
 });
