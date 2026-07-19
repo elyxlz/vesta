@@ -21,6 +21,13 @@ describe("parseFields", () => {
       { key: "message", value: "hi" },
     ])
   })
+
+  it("keeps a comma inside a value out of the field split", () => {
+    expect(parseFields("chat_name=a, b, message=hi")).toEqual([
+      { key: "chat_name", value: "a, b" },
+      { key: "message", value: "hi" },
+    ])
+  })
 })
 
 describe("isStructured", () => {

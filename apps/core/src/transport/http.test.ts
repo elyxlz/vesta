@@ -58,6 +58,18 @@ describe("createHttpClient", () => {
     expect(fetch).toHaveBeenCalledTimes(1)
   })
 
+  it("does not refresh a second time when the retried request is still 401", async () => {
+    const fetch = vi
+      .fn<FetchLike>()
+      .mockResolvedValueOnce(new Response("nope", { status: 401 }))
+      .mockResolvedValueOnce(new Response("still nope", { status: 401 }))
+    const refresh = vi.fn<() => Promise<boolean>>().mockResolvedValue(true)
+    const client = createHttpClient(deps(fetch, { refresh }))
+    await expect(client.request("/agents")).rejects.toMatchObject({ status: 401 })
+    expect(refresh).toHaveBeenCalledTimes(1)
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
   it("throws ApiError with the server error message", async () => {
     const fetch = vi.fn<FetchLike>().mockResolvedValue(jsonResponse(409, { error: "name taken" }))
     const client = createHttpClient(deps(fetch))
