@@ -87,7 +87,7 @@ async fn drive_and_expect_append(
     let deadline = Instant::now() + APPEND_TIMEOUT;
     // Track only the MOST RECENT send outcome: a stale error would mislead (a 503 before the tap
     // installs, then successful sends whose echo never lands, are two different failures).
-    let mut last_send_err: Option<String> = None;
+    let mut last_send_err: Option<String>;
     loop {
         match c.send_message(agent, text, Some(intent)) {
             Ok(()) => last_send_err = None,
