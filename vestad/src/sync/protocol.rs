@@ -152,12 +152,23 @@ mod tests {
         assert!(value.get("startedAt").is_some());
     }
 
+    fn sample_agent_info() -> AgentInfo {
+        AgentInfo {
+            status: crate::docker::AgentStatus::Alive,
+            activity_state: "idle".into(),
+            build_phase: None,
+            started_at: None,
+            services: BTreeMap::new(),
+        }
+    }
+
     #[test]
     fn every_frame_variant_uses_its_wire_tag() {
         let cases = [
             (Frame::Hello { version: "0.1.0".into(), protocol: 1, floor: 1 }, "hello"),
             (Frame::Snapshot { tree: Tree { gateway: sample_gateway(), agents: Default::default() } }, "snapshot"),
             (Frame::State { scope: GatewayScope::Gateway, value: sample_gateway() }, "state"),
+            (Frame::Agent { name: "scout".into(), info: sample_agent_info() }, "agent"),
             (Frame::AgentRemoved { name: "scout".into() }, "agent_removed"),
             (Frame::Append { agent: "scout".into(), events: vec![] }, "append"),
             (Frame::Notifications { agent: "scout".into(), pending: vec![] }, "notifications"),
