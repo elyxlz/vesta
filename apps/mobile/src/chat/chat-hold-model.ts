@@ -1,4 +1,3 @@
-import type { ConnectionConfig } from "@/api/types";
 import type { ChatState } from "./chat-stream-model";
 
 // A single stale-while-reconnecting cell for the chat tail, held ABOVE the controller so it survives
@@ -12,12 +11,8 @@ export interface ChatHold {
 
 export const emptyChatHold: ChatHold = { key: "", state: null };
 
-// Chat is per-agent AND per-gateway: the key pins the held tail to both so a different agent or a
-// switched gateway never seeds the wrong conversation.
-export function connectionKeyOf(connection: ConnectionConfig | null): string {
-  return connection ? `${connection.url}\n${String(connection.hosted)}` : "";
-}
-
+// Chat is per-agent AND per-gateway: the key pins the held tail to both (via the gateway's
+// connectionKeyOf) so a different agent or a switched gateway never seeds the wrong conversation.
 export function chatHoldKey(agent: string, connectionKey: string): string {
   return `${agent}\n${connectionKey}`;
 }

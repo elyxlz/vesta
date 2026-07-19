@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { VestaEvent } from "@vesta/core";
 import type { ConnectionConfig } from "@/api/types";
+import { connectionKeyOf } from "@/session/session-model";
 import {
   captureChatHold,
   chatHoldKey,
-  connectionKeyOf,
   emptyChatHold,
   heldChatState,
 } from "./chat-hold-model";
@@ -37,7 +37,7 @@ function connection(url: string): ConnectionConfig {
   };
 }
 
-const GW = connectionKeyOf(connection("https://gw-a"));
+const GW = connectionKeyOf(connection("https://gw-a")) ?? "";
 
 // A live-then-committed chat, the shape a tail carries by the time the app backgrounds.
 function tailWith(...ids: [number, string][]): ChatState {
@@ -92,7 +92,7 @@ describe("chat hold", () => {
 
   it("clears on a connection (gateway) switch", () => {
     const captured = captureChatHold(chatHoldKey("ada", GW), tailWith([1, "a"]));
-    const otherGateway = connectionKeyOf(connection("https://gw-b"));
+    const otherGateway = connectionKeyOf(connection("https://gw-b")) ?? "";
     expect(heldChatState(captured, chatHoldKey("ada", otherGateway))).toBeNull();
   });
 

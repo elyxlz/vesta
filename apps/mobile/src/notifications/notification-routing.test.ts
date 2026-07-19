@@ -37,7 +37,6 @@ describe("notification navigation", () => {
         agentsReady: true,
         agentNames: ["alex"],
         routeReady: false,
-        compatible: true,
         currentGateway: "https://first.vesta.run",
       }),
     ).toBe("wait");
@@ -49,20 +48,18 @@ describe("notification navigation", () => {
         agentsReady: true,
         agentNames: ["alex"],
         routeReady: true,
-        compatible: true,
         currentGateway: "https://first.vesta.run",
       }),
     ).toBe("wait");
   });
 
-  it("opens only an agent belonging to the connected compatible gateway", () => {
+  it("opens only an agent belonging to the connected gateway", () => {
     const ready = {
       pending,
       sessionStatus: "connected" as const,
       reachable: true,
       agentsReady: true,
       routeReady: true,
-      compatible: true,
       currentGateway: "https://first.vesta.run",
     };
     expect(
@@ -70,13 +67,6 @@ describe("notification navigation", () => {
     ).toBe("open");
     expect(
       notificationNavigationDecision({ ...ready, agentNames: ["other"] }),
-    ).toBe("discard");
-    expect(
-      notificationNavigationDecision({
-        ...ready,
-        agentNames: ["alex"],
-        compatible: false,
-      }),
     ).toBe("discard");
   });
 
@@ -89,7 +79,6 @@ describe("notification navigation", () => {
         agentsReady: true,
         agentNames: ["alex"],
         routeReady: true,
-        compatible: true,
         currentGateway: "https://second.vesta.run",
       }),
     ).toBe("discard");
