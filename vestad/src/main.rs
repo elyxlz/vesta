@@ -12,7 +12,6 @@ mod app_static;
 mod auth;
 mod backup;
 mod channel;
-mod control_ws;
 mod docker;
 mod jwt;
 mod manifest;
