@@ -11,6 +11,12 @@ This is your scheduled moment to think unprompted. No one asked; you're checking
 
 Before anything else, confirm your core daemons are actually alive: `screen -ls` and check that at least your messaging, mail, and `tasks` daemons are present and not `(Dead ...)`. Daemons can die SILENTLY without a `[System Restart]` banner (the container keeps running; only the daemon dies). A dead messaging daemon means you cannot reach the user at all, so this check is load-bearing. If any expected daemon is missing or dead, re-run the `restart` skill's guarded `running <name> ||` block immediately (it is idempotent, so running it when everything is already up is a safe no-op). Tell for `tasks`: an empty `tasks remind list` / `tasks list` is the sign its daemon is down.
 
+## After any account outage: sweep the gap yourself (the daemon will NOT)
+
+If a connected account (mail, calendar, chat) was broken and is now back, **manually sweep the messages that arrived during the outage before assuming you saw them.** A notification daemon typically advances its "last check" watermark on every cycle, including cycles whose fetches failed on a dead token, so everything that landed while auth was down is skipped permanently and silently. The daemon logs healthy cycles throughout and its own catch-up logic only covers a dead PROCESS, not a live process with dead auth (vesta issue #1311).
+
+So on the first check after a recovery: list the account's items received between the outage start and the recovery, and triage them like a snoozed batch. This is exactly where the important, un-noticed thing hides: on one box a ~26h outage silently swallowed a meeting cancellation from the user's own manager and a team-wide ask that cc'd their manager. Both needed a reply; neither ever notified. Do not trust "no notification" to mean "no mail" across an outage.
+
 ## Two questions, every time
 
 Your running narration is visible to the user in the app: think out loud like yourself, not like a service log.
