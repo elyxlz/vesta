@@ -7,7 +7,6 @@ import {
   fetchGatewaySettings,
   updateGateway,
 } from "@/api/endpoints";
-import { AgentPagesSettingsSection } from "@/components/AgentPagesSettingsSection";
 import { Screen } from "@/components/layout/Screen";
 import { FormRow, FormSection, SwitchRow } from "@/components/ui/Form";
 import { unregisterCurrentMobileDevice } from "@/notifications/PushCoordinator";
@@ -70,8 +69,6 @@ export default function SettingsScreen() {
           onPress={chooseTheme}
         />
       </FormSection>
-
-      <AgentPagesSettingsSection />
 
       <FormSection title="Notifications">
         <SwitchRow
