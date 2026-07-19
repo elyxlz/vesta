@@ -221,7 +221,9 @@ impl AgentStatus {
     /// connects in every one of these states: the app-chat echo and the event stream are
     /// credential-independent, so an unauthenticated or unprovisioned agent still streams events and
     /// accepts relayed chat (the raw per-agent WS proxy this hub replaced served it regardless of
-    /// auth). Excludes `Starting` (port not yet bound) and every down/rebuilding state.
+    /// auth). The push projection rides the same tap, so it too observes these states, wider than
+    /// the old Alive-only listener, bounded by the same alert-worthiness gate.
+    /// Excludes `Starting` (port not yet bound) and every down/rebuilding state.
     pub fn serves_ws(self) -> bool {
         matches!(
             self,
