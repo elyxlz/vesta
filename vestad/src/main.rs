@@ -27,6 +27,7 @@ mod serve;
 mod settings;
 mod state;
 mod status;
+mod sync;
 mod systemd;
 mod time_utils;
 mod tunnel;
