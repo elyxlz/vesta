@@ -52,6 +52,7 @@ function agentRowsEqual(a: AgentRow[], b: AgentRow[]): boolean {
       row.name === other.name &&
       row.status === other.status &&
       row.activityState === other.activityState &&
+      row.buildPhase === other.buildPhase &&
       row.startedAt === other.startedAt &&
       servicesEqual(row.services, other.services)
     );

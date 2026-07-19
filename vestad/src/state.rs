@@ -117,11 +117,6 @@ pub struct AppState {
     /// `https://<lan-ip>:<port>` (only set when exposed and an IP was resolvable).
     pub(crate) expose_lan: bool,
     pub(crate) lan_url: Option<String>,
-    /// Coarse, in-flight build phase per agent, keyed by normalized name. Written
-    /// by the create handler as `create_agent` progresses and read into the roster
-    /// (and the replica tree it feeds) so onboarding shows honest status. Entries
-    /// exist only for the duration of a create and are removed when it settles.
-    build_phases: Arc<std::sync::Mutex<HashMap<String, docker::BuildPhase>>>,
 }
 
 /// Read-only serving facts fixed at startup (mode, port, LAN exposure), carried
@@ -176,35 +171,9 @@ impl AppState {
                 https_port,
                 expose_lan,
                 lan_url,
-                build_phases: Arc::new(std::sync::Mutex::new(HashMap::new())),
             },
             mobile_app_worker,
         )
-    }
-
-    /// Record the current build phase for `name` (normalized). Lock poisoning is
-    /// recovered in place: a panic mid-build must not wedge later creates.
-    pub(crate) fn set_build_phase(&self, name: &str, phase: docker::BuildPhase) {
-        self.build_phases
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(name.to_string(), phase);
-    }
-
-    /// Drop the build-phase entry for `name` once a create settles (success or error).
-    pub(crate) fn clear_build_phase(&self, name: &str) {
-        self.build_phases
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(name);
-    }
-
-    pub(crate) fn build_phase(&self, name: &str) -> Option<docker::BuildPhase> {
-        self.build_phases
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(name)
-            .copied()
     }
 
     pub(crate) async fn agent_lock(&self, name: &str) -> Arc<tokio::sync::RwLock<()>> {
