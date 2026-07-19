@@ -1,0 +1,139 @@
+{
+  "events": [
+    {
+      "id": -1,
+      "state": "thinking",
+      "ts": "2026-01-01T00:00:00+00:00",
+      "type": "status"
+    },
+    {
+      "id": 1,
+      "input_method": "typed",
+      "intent_id": "intent-abc",
+      "text": "hello",
+      "ts": "2026-01-01T00:00:00+00:00",
+      "type": "user"
+    },
+    {
+      "id": 2,
+      "text": "hi",
+      "ts": "2026-01-01T00:00:00+00:00",
+      "type": "assistant"
+    },
+    {
+      "id": 3,
+      "signature": "sig",
+      "text": "hmm",
+      "ts": "2026-01-01T00:00:00+00:00",
+      "type": "thinking"
+    },
+    {
+      "id": 4,
+      "text": "yo",
+      "ts": "2026-01-01T00:00:00+00:00",
+      "type": "chat"
+    },
+    {
+      "id": 5,
+      "input": "ls",
+      "subagent": false,
+      "tool": "Bash",
+      "ts": "2026-01-01T00:00:00+00:00",
+      "type": "tool_start"
+    },
+    {
+      "id": 6,
+      "subagent": false,
+      "tool": "Bash",
+      "ts": "2026-01-01T00:00:00+00:00",
+      "type": "tool_end"
+    },
+    {
+      "id": 7,
+      "text": "oops",
+      "ts": "2026-01-01T00:00:00+00:00",
+      "type": "error"
+    },
+    {
+      "id": 8,
+      "resets_at": 1767225600,
+      "text": "Claude rate limit hit",
+      "ts": "2026-01-01T00:00:00+00:00",
+      "type": "rate_limited",
+      "window": "five_hour"
+    },
+    {
+      "decided": "interrupt",
+      "fields": {
+        "chat_name": "Bride squad"
+      },
+      "id": 9,
+      "notif_id": "whatsapp-123",
+      "notif_type": "message",
+      "sender": "Alex",
+      "source": "whatsapp",
+      "summary": "new message",
+      "ts": "2026-01-01T00:00:00+00:00",
+      "type": "notification"
+    },
+    {
+      "id": -2,
+      "notif_id": "whatsapp-123",
+      "ts": "2026-01-01T00:00:00+00:00",
+      "type": "notification_cleared"
+    },
+    {
+      "agent_id": "abc",
+      "agent_type": "browser",
+      "id": 10,
+      "ts": "2026-01-01T00:00:00+00:00",
+      "type": "subagent_start"
+    },
+    {
+      "agent_id": "abc",
+      "agent_type": "browser",
+      "id": 11,
+      "ts": "2026-01-01T00:00:00+00:00",
+      "type": "subagent_stop"
+    }
+  ],
+  "snapshot": {
+    "chat": {
+      "cursor": null,
+      "events": [
+        {
+          "id": 1,
+          "input_method": "typed",
+          "intent_id": "intent-abc",
+          "text": "hello",
+          "ts": "2026-01-01T00:00:00+00:00",
+          "type": "user"
+        },
+        {
+          "id": 4,
+          "text": "yo",
+          "ts": "2026-01-01T00:00:00+00:00",
+          "type": "chat"
+        },
+        {
+          "id": 5,
+          "input": "ls",
+          "subagent": false,
+          "tool": "Bash",
+          "ts": "2026-01-01T00:00:00+00:00",
+          "type": "tool_start"
+        }
+      ]
+    },
+    "config": {
+      "timezone": "America/New_York"
+    },
+    "notifications": {
+      "pending": [
+        "whatsapp-123"
+      ]
+    },
+    "state": "idle",
+    "type": "snapshot"
+  }
+}
