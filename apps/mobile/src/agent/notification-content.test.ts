@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
-import type { NotificationEvent } from "../api/types";
-import { parseNotificationContent } from "./notification-content";
+import {
+  parseNotificationContent,
+  type NotificationView,
+} from "./notification-content";
 
 function notification(
   summary: string,
-  patch: Partial<NotificationEvent> = {},
-): NotificationEvent {
+  patch: Partial<NotificationView> = {},
+): NotificationView {
   return {
     type: "notification",
     source: "test",

@@ -1,5 +1,5 @@
 import { StyleSheet, View } from "react-native";
-import type { AgentStatus } from "@/api/types";
+import type { AgentStatus } from "@vesta/core";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { Text } from "@/components/ui/Typography";
 

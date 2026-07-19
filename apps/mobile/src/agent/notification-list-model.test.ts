@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { NotificationEvent, VestaEvent } from "../api/types";
+import type { ChatMessage } from "@/chat/chat-stream-model";
+import type { NotificationView } from "./notification-content";
 import {
   getPendingNotificationIds,
   mergeLiveNotifications,
@@ -8,7 +9,7 @@ import {
 function notification(
   notifId: string,
   ts: string,
-): NotificationEvent {
+): NotificationView {
   return {
     type: "notification",
     source: "test",
@@ -30,7 +31,7 @@ describe("notification list model", () => {
   });
 
   it("combines the snapshot seed with live arrivals and clears", () => {
-    const events: VestaEvent[] = [
+    const events: ChatMessage[] = [
       notification("new", "2026-01-01T00:01:00Z"),
       { type: "notification_cleared", notif_id: "seed" },
     ];

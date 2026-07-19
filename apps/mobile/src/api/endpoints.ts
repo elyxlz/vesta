@@ -1,3 +1,4 @@
+import type { NotificationEvent, VestaEvent } from "@vesta/core";
 import type { ApiClient } from "./client";
 import type {
   BackupInfo,
@@ -8,11 +9,9 @@ import type {
   GatewayVersionInfo,
   HostMount,
   Manifest,
-  NotificationEvent,
   NotificationInterruptRule,
   ProviderInfo,
   Usage,
-  VestaEvent,
   VoiceStatus,
 } from "./types";
 

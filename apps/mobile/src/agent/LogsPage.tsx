@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { readSse, type SseHandle } from "@vesta/core";
+import { useEffect, useRef, useState } from "react";
 import { FlatList, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { ApiClient } from "@/api/client";
-import { streamLogs, type LogEvent } from "@/api/log-stream";
 import { useAgent } from "@/agent/AgentProvider";
 import { addLatestLogLine, type LogLine } from "@/agent/log-list-model";
 import { useBottomAnchoredFeed } from "@/agent/use-bottom-anchored-feed";
@@ -45,20 +45,24 @@ function LiveLogs({
   const [logError, setLogError] = useState("");
 
   useEffect(() => {
-    const abort = new AbortController();
+    let cancelled = false;
+    let handle: SseHandle | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let receivedLine = false;
 
-    const openStream = async (): Promise<void> => {
-      let agentStopped = false;
-      const tail = receivedLine ? "?tail=0" : "";
-      await streamLogs(
-        api,
-        `/agents/${encodeURIComponent(name)}/logs${tail}`,
-        "agent_stopped",
-        abort.signal,
-        (event: LogEvent) => {
-          if (event.kind === "Line") {
+    const openStream = (): void => {
+      const query = receivedLine
+        ? new URLSearchParams({ tail: "0" })
+        : undefined;
+      handle = readSse(
+        {
+          fetch: (url, init) => fetch(url, init),
+          url: api.mediaUrl(`/agents/${encodeURIComponent(name)}/logs`, query),
+          stoppedEvent: "agent_stopped",
+        },
+        (event) => {
+          if (cancelled) return;
+          if (event.kind === "line") {
             receivedLine = true;
             setLogError("");
             const id = nextLogId.current;
@@ -66,21 +70,18 @@ function LiveLogs({
             setLogs((current) =>
               addLatestLogLine(current, { id, text: event.text }),
             );
-          } else if (event.kind === "Error") {
+          } else if (event.kind === "error") {
             setLogError(event.message);
-          } else {
-            agentStopped = true;
+            retryTimer = setTimeout(openStream, LOG_RETRY_DELAY_MS);
           }
         },
       );
-
-      if (abort.signal.aborted || agentStopped) return;
-      retryTimer = setTimeout(() => void openStream(), LOG_RETRY_DELAY_MS);
     };
 
-    void openStream();
+    openStream();
     return () => {
-      abort.abort();
+      cancelled = true;
+      handle?.cancel();
       if (retryTimer) clearTimeout(retryTimer);
     };
   }, [api, name]);
