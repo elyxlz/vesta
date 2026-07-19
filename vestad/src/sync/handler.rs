@@ -415,6 +415,8 @@ pub(crate) struct SendMessageBody {
     text: String,
     #[serde(default)]
     intent_id: Option<String>,
+    #[serde(default)]
+    input_method: Option<String>,
 }
 
 /// Relay a send-message intent to the agent over the tap's write-half. Returns a typed retryable
@@ -439,12 +441,16 @@ pub(crate) async fn send_message_handler(
     }
 }
 
-/// The agent-WS `message` frame the tap relays: `{type:"message", text, intent_id?}`, matching the
-/// agent's `_recv_loop` intake (Stage 3). `intent_id` is omitted when absent, never null.
+/// The agent-WS `message` frame the tap relays: `{type:"message", text, intent_id?, input_method?}`,
+/// matching the agent's `_recv_loop` intake (Stage 3). Optional fields are omitted when absent, never
+/// null.
 fn message_frame(body: &SendMessageBody) -> serde_json::Value {
     let mut frame = serde_json::json!({ "type": "message", "text": body.text });
     if let Some(intent_id) = &body.intent_id {
         frame["intent_id"] = serde_json::Value::String(intent_id.clone());
+    }
+    if let Some(input_method) = &body.input_method {
+        frame["input_method"] = serde_json::Value::String(input_method.clone());
     }
     frame
 }
@@ -614,13 +620,22 @@ mod tests {
     }
 
     #[test]
-    fn message_frame_threads_intent_id_only_when_present() {
-        let with_id = message_frame(&SendMessageBody { text: "hi".into(), intent_id: Some("i-9".into()) });
-        assert_eq!(with_id["type"], serde_json::json!("message"));
-        assert_eq!(with_id["text"], serde_json::json!("hi"));
-        assert_eq!(with_id["intent_id"], serde_json::json!("i-9"));
+    fn message_frame_threads_optional_fields_only_when_present() {
+        let full = message_frame(&SendMessageBody {
+            text: "hi".into(),
+            intent_id: Some("i-9".into()),
+            input_method: Some("voice".into()),
+        });
+        assert_eq!(full["type"], serde_json::json!("message"));
+        assert_eq!(full["text"], serde_json::json!("hi"));
+        assert_eq!(full["intent_id"], serde_json::json!("i-9"));
+        assert_eq!(full["input_method"], serde_json::json!("voice"));
 
-        let without = message_frame(&SendMessageBody { text: "hi".into(), intent_id: None });
+        let without = message_frame(&SendMessageBody { text: "hi".into(), intent_id: None, input_method: None });
         assert!(without.get("intent_id").is_none(), "absent intent_id stays absent, never null");
+        assert!(
+            without.get("input_method").is_none(),
+            "absent input_method stays absent, never null"
+        );
     }
 }
