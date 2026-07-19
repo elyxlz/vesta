@@ -369,16 +369,17 @@ pub fn spawn_agent_status_task(deps: AgentStatusTaskDeps) {
                 on_agents_changed(&agents);
             }
 
-            // Reconcile internal WS connections for activity and mobile app events.
-            let alive_agents: HashMap<String, u16> = agents
+            // Reconcile internal WS connections (the tap: activity, mobile push, and the sync live
+            // edge) for every agent whose WS server is up, not just the fully-provisioned ones.
+            let tappable_agents: HashMap<String, u16> = agents
                 .iter()
-                .filter(|a| a.status == docker::AgentStatus::Alive)
+                .filter(|a| a.status.serves_ws())
                 .map(|a| (a.name.clone(), a.ws_port))
                 .collect();
 
-            // Close connections for agents that are no longer alive
+            // Close connections for agents whose WS is no longer reachable
             agent_ws_handles.retain(|name, handle| {
-                if alive_agents.contains_key(name) {
+                if tappable_agents.contains_key(name) {
                     true
                 } else {
                     handle.abort_handle.abort();
@@ -394,8 +395,8 @@ pub fn spawn_agent_status_task(deps: AgentStatusTaskDeps) {
                 }
             });
 
-            // Open connections for newly alive agents
-            for (name, ws_port) in &alive_agents {
+            // Open connections for newly reachable agents
+            for (name, ws_port) in &tappable_agents {
                 if agent_ws_handles.contains_key(name) {
                     continue;
                 }

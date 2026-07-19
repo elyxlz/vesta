@@ -216,6 +216,21 @@ impl AgentStatus {
             AgentStatus::NotFound => "not found",
         }
     }
+
+    /// True while the container is up with its WS/HTTP server bound and serving. The sync tap
+    /// connects in every one of these states: the app-chat echo and the event stream are
+    /// credential-independent, so an unauthenticated or unprovisioned agent still streams events and
+    /// accepts relayed chat (the raw per-agent WS proxy this hub replaced served it regardless of
+    /// auth). Excludes `Starting` (port not yet bound) and every down/rebuilding state.
+    pub fn serves_ws(self) -> bool {
+        matches!(
+            self,
+            AgentStatus::Alive
+                | AgentStatus::SettingUp
+                | AgentStatus::NotAuthenticated
+                | AgentStatus::Unprovisioned
+        )
+    }
 }
 
 /// Live registry of agents whose container is mid-rebuild (stop → snapshot → remove → create).
@@ -2594,6 +2609,27 @@ pub async fn rename_agent(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn serves_ws_covers_every_running_reachable_state() {
+        for status in [
+            AgentStatus::Alive,
+            AgentStatus::SettingUp,
+            AgentStatus::NotAuthenticated,
+            AgentStatus::Unprovisioned,
+        ] {
+            assert!(status.serves_ws(), "{} should be tappable", status.human_text());
+        }
+        for status in [
+            AgentStatus::Starting,
+            AgentStatus::Rebuilding,
+            AgentStatus::Stopped,
+            AgentStatus::Dead,
+            AgentStatus::NotFound,
+        ] {
+            assert!(!status.serves_ws(), "{} must not be tapped", status.human_text());
+        }
+    }
 
     #[test]
     fn rebuild_tracker_marks_agent_while_guard_held() {
