@@ -1,6 +1,6 @@
 import { memo, useMemo } from "react";
 import type { TextProps, TextStyle } from "react-native";
-import { parseAnsi, resolveAnsiColor, type AnsiStyle } from "@/lib/ansi";
+import { parseAnsi, resolveAnsiColor, type AnsiStyle } from "@vesta/core";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { designTokens } from "@/theme/generated";
 import { Text } from "./Typography";
