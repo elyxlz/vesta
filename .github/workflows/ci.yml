@@ -87,6 +87,7 @@ jobs:
               - 'check.sh'
             mobile:
               - 'apps/mobile/**'
+              - 'apps/core/**'
               - '.github/workflows/ci.yml'
               - '.github/workflows/mobile-build.yml'
               - 'check.sh'
