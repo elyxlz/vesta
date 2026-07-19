@@ -114,28 +114,6 @@ async def test_ws_sends_empty_snapshot_when_no_events(event_bus):
 
 
 @pytest.mark.anyio
-async def test_ws_skip_history_sends_snapshot_without_chat(event_bus):
-    """skip_history still sends the snapshot (state + notifications), just omitting the heavy chat
-    seed, so lightweight taps get connect state without the conversation backlog."""
-    event_bus.emit(ChatEvent(type="chat", text="stored"))
-    runner, base = await _start_server(event_bus)
-    try:
-        async with ClientSession() as session, session.ws_connect(f"{base}/ws?skip_history=1") as ws:
-            msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
-            snapshot = json.loads(msg.data)
-            assert snapshot["type"] == "snapshot"
-            assert snapshot["chat"]["events"] == []  # "stored" backlog omitted
-            event_bus.emit(ChatEvent(type="chat", text="live"))
-            received = await _drain_until(
-                ws,
-                lambda r: any(e.get("type") == "chat" and e.get("text") == "live" for e in r),
-            )
-            assert any(e.get("type") == "chat" and e.get("text") == "live" for e in received)
-    finally:
-        await runner.cleanup()
-
-
-@pytest.mark.anyio
 async def test_ws_history_survives_notification_storm(event_bus):
     """Regression: a burst of notifications used to fill the recent window and the
     seeded history rendered empty. The WS now seeds the app-chat channel, so the
@@ -237,7 +215,7 @@ async def test_ws_survives_non_dict_json_frame(event_bus):
     killer: a later valid message on the same socket still comes through."""
     runner, base = await _start_server(event_bus)
     try:
-        async with ClientSession() as session, session.ws_connect(f"{base}/ws?skip_history=1") as ws:
+        async with ClientSession() as session, session.ws_connect(f"{base}/ws") as ws:
             await asyncio.wait_for(ws.receive(), timeout=1.0)  # snapshot
             await ws.send_str("123")
             await ws.send_str("[]")
@@ -346,9 +324,9 @@ async def test_runner_cleanup_completes_quickly_with_open_ws(event_bus, tmp_path
 
     async with ClientSession() as session:
         sockets = [
-            await session.ws_connect(f"{base}/ws?skip_history=1", headers=auth),
-            await session.ws_connect(f"{base}/ws?skip_history=1", headers=auth),
-            await session.ws_connect(f"{base}/ws?skip_history=1", headers=auth),
+            await session.ws_connect(f"{base}/ws", headers=auth),
+            await session.ws_connect(f"{base}/ws", headers=auth),
+            await session.ws_connect(f"{base}/ws", headers=auth),
         ]
         await wait_for_condition(lambda: len(runner.app["websockets"]) == 3, message="WS handlers never registered")
 
@@ -371,9 +349,9 @@ async def test_close_all_websockets_sends_close_frame(event_bus, tmp_path):
     auth = {"X-Agent-Token": "test-token"}
 
     async with ClientSession() as session:
-        ws = await session.ws_connect(f"{base}/ws?skip_history=1", headers=auth)
+        ws = await session.ws_connect(f"{base}/ws", headers=auth)
         await wait_for_condition(lambda: len(runner.app["websockets"]) == 1, message="WS handler never registered")
-        # Drain the connect snapshot (always sent, even with skip_history) so the next frame is the close.
+        # Drain the connect snapshot (always sent) so the next frame is the close.
         await asyncio.wait_for(ws.receive(), timeout=SHUTDOWN_BUDGET_SEC)
 
         cleanup_task = asyncio.create_task(runner.cleanup())

@@ -64,11 +64,9 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
 
     Send: all events from the event bus are pushed to connected clients.
     Recv: clients can emit events (e.g. user messages, chat replies).
-    On connect: sends a `snapshot` seed (state + chat + pending notifications); ?skip_history=1
-    omits the chat backlog for lightweight taps."""
+    On connect: sends a `snapshot` seed (state + chat + pending notifications)."""
     event_bus: EventBus = request.app["event_bus"]
     config: VestaConfig = request.app["config"]
-    skip_history = request.query.get("skip_history", "") in ("1", "true")
 
     ws = web.WebSocketResponse()
     await ws.prepare(request)
@@ -80,15 +78,12 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     try:
         # The connect snapshot: one event seeding the client with current agent state. `chat` is the
         # app-chat conversation (notifications/internal events still arrive live but never bury the
-        # capped recent window) — skipped with ?skip_history=1 for lightweight taps. `notifications`
-        # carries the ids still on disk so the view can mark pending without polling. Always sent, even
-        # empty, so the client can tell "still loading" from "no messages". Reads run off the loop: a
-        # slow scan must not freeze the agent (it would starve vestad's status poll and flap "starting").
-        if skip_history:
-            chat = SnapshotChat(events=[], cursor=None)
-        else:
-            events, cursor = await asyncio.to_thread(event_bus.recent, channel="app-chat")
-            chat = SnapshotChat(events=events, cursor=cursor)
+        # capped recent window). `notifications` carries the ids still on disk so the view can mark
+        # pending without polling. Always sent, even empty, so the client can tell "still loading" from
+        # "no messages". Reads run off the loop: a slow scan must not freeze the agent (it would starve
+        # vestad's status poll and flap "starting").
+        events, cursor = await asyncio.to_thread(event_bus.recent, channel="app-chat")
+        chat = SnapshotChat(events=events, cursor=cursor)
         pending = await asyncio.to_thread(_pending_notification_ids, config)
         await ws.send_json(
             SnapshotEvent(

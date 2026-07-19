@@ -148,7 +148,7 @@ type StreamEvent = (
 # new connect-time state is added within a domain (or as a new domain) without disturbing readers;
 # consumers read only the domains they care about (web: all; CLI: chat; vestad: state).
 class SnapshotChat(tp.TypedDict):
-    events: list[StreamEvent]  # recent app-chat seed; empty when the client connected with skip_history
+    events: list[StreamEvent]  # recent app-chat seed
     cursor: int | None  # load-older pagination cursor
 
 
