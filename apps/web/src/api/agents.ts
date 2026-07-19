@@ -1,5 +1,7 @@
 import { apiJson, apiFetch, jsonInit } from "./client";
-import type { NotificationEvent, VestaEvent } from "@vesta/core";
+import type { BuildPhase, NotificationEvent, VestaEvent } from "@vesta/core";
+
+export type { BuildPhase };
 
 export type { NotificationEvent };
 
@@ -147,12 +149,9 @@ export async function createAgent(name: string): Promise<void> {
   await apiJson("/agents", jsonInit("POST", { name }));
 }
 
-/// Coarse, ordered stages of first-time agent creation reported by vestad while
-/// the create POST is in flight. The image step (`pulling` on a release build,
-/// `building` from a local checkout) is the dominant wait.
-export type BuildPhase =
-  "pulling" | "building" | "preparing" | "creating" | "starting";
-
+// Coarse, ordered stages of first-time agent creation reported by vestad while the create POST is in
+// flight (core owns the type). The image step (`pulling` on a release build, `building` from a local
+// checkout) is the dominant wait.
 const BUILD_PHASE_MESSAGES: Record<BuildPhase, string> = {
   pulling: "downloading the agent image...",
   building: "building the agent image...",
