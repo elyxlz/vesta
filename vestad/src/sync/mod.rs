@@ -5,15 +5,15 @@
 
 pub(crate) mod events;
 mod handler;
-mod hub;
+pub(crate) mod hub;
 pub(crate) mod protocol;
 
 /// The protocol version vestad speaks and the minimum it still accepts. Mirrors
-/// `apps/core/src/protocol/version.ts` (PROTOCOL_VERSION / PROTOCOL_FLOOR); the contract fixture
+/// `apps/core/src/protocol/version.ts` (`PROTOCOL_VERSION` / `PROTOCOL_FLOOR`); the contract fixture
 /// pins them equal on both seams.
 pub(crate) const PROTOCOL_VERSION: u32 = 1;
 pub(crate) const PROTOCOL_FLOOR: u32 = 1;
 
-pub(crate) use events::{NotificationChange, PendingNotifications, activity_state, notification_change};
+pub(crate) use events::{activity_state, notification_change};
 pub(crate) use handler::{send_message_handler, sync_ws_handler};
-pub(crate) use hub::{LiveMessage, SyncHub, TapUnavailable};
+pub(crate) use hub::SyncHub;

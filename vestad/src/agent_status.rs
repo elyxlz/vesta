@@ -247,18 +247,33 @@ impl AgentStatusCache {
     }
 }
 
+/// The collaborators the agent-status poll task owns for its lifetime: the shared cache, a docker
+/// handle and HTTP client for polling, and the roster/rebuild/mobile/sync collaborators it
+/// reconciles each tick.
+pub struct AgentStatusTaskDeps {
+    pub cache: Arc<AgentStatusCache>,
+    pub docker: Docker,
+    pub http_client: reqwest::Client,
+    pub agents_dir: PathBuf,
+    pub on_agents_changed: OnAgentsChanged,
+    pub rebuilding: docker::RebuildTracker,
+    pub mobile_app: MobileApp,
+    pub sync_hub: Arc<SyncHub>,
+}
+
 /// Spawns the background polling loop that keeps the cache fresh and manages
 /// internal WebSocket connections to observe live events from alive agents.
-pub fn spawn_agent_status_task(
-    cache: Arc<AgentStatusCache>,
-    docker: Docker,
-    http_client: reqwest::Client,
-    agents_dir: PathBuf,
-    on_agents_changed: OnAgentsChanged,
-    rebuilding: docker::RebuildTracker,
-    mobile_app: MobileApp,
-    sync_hub: Arc<SyncHub>,
-) {
+pub fn spawn_agent_status_task(deps: AgentStatusTaskDeps) {
+    let AgentStatusTaskDeps {
+        cache,
+        docker,
+        http_client,
+        agents_dir,
+        on_agents_changed,
+        rebuilding,
+        mobile_app,
+        sync_hub,
+    } = deps;
     tokio::spawn(async move {
         let mut agent_ws_handles: HashMap<String, AgentWsHandle> = HashMap::new();
         let mut previous_agents: Option<Vec<ListEntry>> = None;
@@ -588,7 +603,8 @@ mod tests {
     }
 
     use crate::mobile_app::MobileApp;
-    use crate::sync::{LiveMessage, SyncHub};
+    use crate::sync::hub::LiveMessage;
+    use crate::sync::SyncHub;
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message as WsMessage;
 
