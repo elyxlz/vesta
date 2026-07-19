@@ -124,6 +124,24 @@ describe("createSyncSocket", () => {
     expect(h.sockets[1]?.sent).toEqual([JSON.stringify({ type: "watch", agent: "scout" })])
   })
 
+  it("emits WATCH once per agent and UNWATCH only on the last reference", () => {
+    const h = harness()
+    const sync = start(h)
+    h.sockets[0]?.onopen?.()
+    sync.watch("scout")
+    sync.watch("scout")
+    // A second watcher of the same agent sends nothing new: one WATCH covers both.
+    expect(h.sockets[0]?.sent).toEqual([JSON.stringify({ type: "watch", agent: "scout" })])
+    sync.unwatch("scout")
+    // One watcher gone but another remains: no UNWATCH yet.
+    expect(h.sockets[0]?.sent).toEqual([JSON.stringify({ type: "watch", agent: "scout" })])
+    sync.unwatch("scout")
+    expect(h.sockets[0]?.sent).toEqual([
+      JSON.stringify({ type: "watch", agent: "scout" }),
+      JSON.stringify({ type: "unwatch", agent: "scout" }),
+    ])
+  })
+
   it("drops a watch when its agent is removed", () => {
     const h = harness()
     const sync = start(h)
