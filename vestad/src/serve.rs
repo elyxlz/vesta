@@ -2286,6 +2286,7 @@ pub fn build_router(state: SharedState) -> Router {
                 .patch(rename_agent_handler),
         )
         .route("/agents/{name}/build-phase", get(build_phase_handler))
+        .route("/agents/{name}/message", post(crate::sync::send_message_handler))
         .route("/agents/{name}/start", post(start_agent_handler))
         .route(
             "/agents/{name}/config",
