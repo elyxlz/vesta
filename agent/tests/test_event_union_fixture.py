@@ -1,7 +1,7 @@
 """Event-union fixture emitter: serialize one instance of every StreamEvent variant plus a
 SnapshotEvent through the real EventBus emit/read path into a committed JSON fixture, so Stage 4's
-vestad aggregator test can parse the exact Python-to-Rust wire shape. Mirrors the REGEN_STREAM_FIXTURES
-flow in tests/test_contract.py; regenerate with REGEN_EVENT_FIXTURES=1.
+vestad aggregator test can parse the exact Python-to-Rust wire shape. Regenerate with
+REGEN_EVENT_FIXTURES=1.
 """
 
 import json
