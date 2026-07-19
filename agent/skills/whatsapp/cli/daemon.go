@@ -125,14 +125,17 @@ func daemonStart(serveArgs []string) {
 	printJSON(map[string]any{"status": "started", "session": sessionName()})
 }
 
-func daemonStop() {
+// stopDaemon does the stop work and returns the resulting status ("already_stopped"
+// or "stopped") or an error. It prints NOTHING, so callers compose it without
+// emitting stray JSON: the stop verb prints one object, restart stays silent and
+// prints only its own.
+func stopDaemon() (string, error) {
 	dataDir := stateDataDir()
 	if !daemonAlive(getSocketPath()) {
-		printJSON(map[string]any{"status": "already_stopped", "session": sessionName()})
-		return
+		return "already_stopped", nil
 	}
 	if msg := stopRefusal(syncWindowRemaining(loadStateFromDisk(dataDir).LinkedAt, time.Now()), hasBareFlag("force")); msg != "" {
-		failJSON("%s", msg)
+		return "", fmt.Errorf("%s", msg)
 	}
 	// Mark the stop intentional so serve's shutdown skips the daemon_died
 	// notification the agent would otherwise investigate.
@@ -143,13 +146,12 @@ func daemonStop() {
 		// The daemon never got the quit, so remove the marker: leaving it behind
 		// would suppress the death notification of a later genuine crash.
 		os.Remove(stopRequestedPath(dataDir))
-		failJSON("screen quit failed: %v", err)
+		return "", fmt.Errorf("screen quit failed: %v", err)
 	}
 	deadline := time.Now().Add(DaemonStopTimeout)
 	for time.Now().Before(deadline) {
 		if !daemonAlive(getSocketPath()) {
-			printJSON(map[string]any{"status": "stopped", "session": sessionName()})
-			return
+			return "stopped", nil
 		}
 		time.Sleep(DaemonPollInterval)
 	}
@@ -157,7 +159,15 @@ func daemonStop() {
 	// it: leaving it behind would suppress the death notification of a later
 	// genuine crash.
 	os.Remove(stopRequestedPath(dataDir))
-	failJSON("daemon still answering after screen quit; do NOT send signals. Inspect with 'screen -r %s'", sessionName())
+	return "", fmt.Errorf("daemon still answering after screen quit; do NOT send signals. Inspect with 'screen -r %s'", sessionName())
+}
+
+func daemonStop() {
+	status, err := stopDaemon()
+	if err != nil {
+		failJSON("%s", err.Error())
+	}
+	printJSON(map[string]any{"status": status, "session": sessionName()})
 }
 
 func daemonRestart() {
@@ -171,7 +181,9 @@ func daemonRestart() {
 	}
 	serveArgs, note := restartServeArgs(st.Args, recorded)
 	if running {
-		daemonStop()
+		if _, err := stopDaemon(); err != nil {
+			failJSON("%s", err.Error())
+		}
 	}
 	if err := startDaemonProcess(serveArgs); err != nil {
 		failJSON("%s", err.Error())
