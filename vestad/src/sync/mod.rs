@@ -4,6 +4,7 @@
 //! legacy control WS in this stage; the old surface is retired later in the epic.
 
 pub(crate) mod events;
+mod hub;
 pub(crate) mod protocol;
 
 /// The protocol version vestad speaks and the minimum it still accepts. Mirrors
@@ -13,3 +14,4 @@ pub(crate) const PROTOCOL_VERSION: u32 = 1;
 pub(crate) const PROTOCOL_FLOOR: u32 = 1;
 
 pub(crate) use events::{NotificationChange, PendingNotifications, activity_state, notification_change};
+pub(crate) use hub::{LiveMessage, SyncHub, TapUnavailable};
