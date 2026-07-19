@@ -9,6 +9,7 @@ import { usePathname, useRouter } from "expo-router";
 import { registerMobileDevice, unregisterMobileDevice } from "@/api/endpoints";
 import type { ApiClient } from "@/api/client";
 import { usePreferences } from "@/preferences/PreferencesProvider";
+import { useRoster } from "@/session/RosterProvider";
 import { useSession } from "@/session/SessionProvider";
 import { designTokens } from "@/theme/generated";
 import { shouldPresentForegroundNotification } from "./foreground-policy";
@@ -32,9 +33,9 @@ Notifications.setNotificationHandler({
       notification.request.content.data,
     );
     return {
-      // Hide only when this exact agent is visible and its canonical socket is
-      // healthy. Home, settings, another agent, and reconnecting states still
-      // receive the notification normally.
+      // Foreground presentation has one owner: while /sync is connected the alert delta shows the
+      // notification, so the push is suppressed here (foreground-policy). When sync is down the
+      // push is the fallback, suppressed only for the visible agent's healthy socket.
       shouldShowBanner: present,
       shouldShowList: present,
       shouldPlaySound: present,
@@ -71,6 +72,7 @@ function EnabledPushCoordinator() {
   const router = useRouter();
   const pathname = usePathname();
   const session = useSession();
+  const { reachable, agentsReady, agents, compatible } = useRoster();
   const preferences = usePreferences();
   const [pending, setPending] = useState<PendingNotification | null>(null);
   const processingNotification = useRef<string | null>(null);
@@ -128,11 +130,11 @@ function EnabledPushCoordinator() {
     const decision = notificationNavigationDecision({
       pending,
       sessionStatus: session.status,
-      reachable: session.reachable,
-      agentsReady: session.agentsReady,
-      agentNames: session.agents.map((agent) => agent.name),
+      reachable,
+      agentsReady,
+      agentNames: agents.map((agent) => agent.name),
       routeReady,
-      compatible: session.compatibility?.compatible ?? null,
+      compatible,
       currentGateway: session.connection?.url ?? null,
     });
     if (decision === "wait") return;
@@ -156,7 +158,16 @@ function EnabledPushCoordinator() {
           processingNotification.current = null;
         }
       });
-  }, [pathname, pending, router, session]);
+  }, [
+    pathname,
+    pending,
+    router,
+    session,
+    reachable,
+    agentsReady,
+    agents,
+    compatible,
+  ]);
 
   useEffect(() => {
     const registrationDecision = pushRegistrationDecision({

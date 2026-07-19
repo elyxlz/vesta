@@ -3,13 +3,15 @@ import { FlatList, StyleSheet, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { getNotificationHistory } from "@/api/endpoints";
-import type { NotificationEvent } from "@/api/types";
 import { useAgent } from "@/agent/AgentProvider";
 import {
   getPendingNotificationIds,
   mergeLiveNotifications,
 } from "@/agent/notification-list-model";
-import { parseNotificationContent } from "@/agent/notification-content";
+import {
+  parseNotificationContent,
+  type NotificationView,
+} from "@/agent/notification-content";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
@@ -19,7 +21,7 @@ function NotificationRow({
   event,
   pending,
 }: {
-  event: NotificationEvent;
+  event: NotificationView;
   pending: boolean;
 }) {
   const { colors } = usePreferences();
@@ -116,7 +118,7 @@ export default function NotificationsPage() {
     queryKey: ["notifications", name],
     queryFn: () => getNotificationHistory(api, name),
   });
-  const lastSnapshotRevision = useRef(0);
+  const lastReseedRevision = useRef(0);
   const items = useMemo(
     () =>
       mergeLiveNotifications(
@@ -133,14 +135,14 @@ export default function NotificationsPage() {
 
   useEffect(() => {
     if (
-      socket.snapshotRevision === 0 ||
-      socket.snapshotRevision === lastSnapshotRevision.current
+      socket.reseedRevision === 0 ||
+      socket.reseedRevision === lastReseedRevision.current
     ) {
       return;
     }
-    lastSnapshotRevision.current = socket.snapshotRevision;
+    lastReseedRevision.current = socket.reseedRevision;
     void refetch();
-  }, [refetch, socket.snapshotRevision]);
+  }, [refetch, socket.reseedRevision]);
 
   return (
     <View style={styles.screen}>

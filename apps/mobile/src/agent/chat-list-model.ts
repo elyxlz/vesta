@@ -1,9 +1,9 @@
-import type { VestaEvent } from "../api/types";
+import type { ChatMessage } from "@/chat/chat-stream-model";
 
 export interface EventChatRow {
   kind: "event";
   key: string;
-  event: VestaEvent;
+  event: ChatMessage;
   startsNewBubbleGroup: boolean;
   endsBubbleGroup: boolean;
 }
@@ -23,7 +23,7 @@ export interface DateChatRow {
 export type ChatRow = EventChatRow | TypingChatRow | DateChatRow;
 type ChatSide = "user" | "agent";
 
-function eventChatSide(event: VestaEvent): ChatSide | null {
+function eventChatSide(event: ChatMessage): ChatSide | null {
   if (event.type === "user") return "user";
   if (event.type === "chat" || event.type === "tool_start") return "agent";
   return null;
@@ -41,7 +41,7 @@ function calendarDay(timestamp: string | undefined): string | null {
 }
 
 function eventRows(
-  events: VestaEvent[],
+  events: ChatMessage[],
   showToolCalls: boolean,
 ): EventChatRow[] {
   const visible = events.filter(
@@ -117,7 +117,7 @@ function addDateRows(rows: EventChatRow[]): ChatRow[] {
 }
 
 export function createInvertedChatRows(
-  events: VestaEvent[],
+  events: ChatMessage[],
   showToolCalls: boolean,
   isTyping: boolean,
 ): ChatRow[] {

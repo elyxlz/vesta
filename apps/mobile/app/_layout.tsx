@@ -31,8 +31,16 @@ import {
   PreferencesProvider,
   usePreferences,
 } from "@/preferences/PreferencesProvider";
+import { AlertNotifications } from "@/notifications/AlertNotifications";
 import { PushCoordinator } from "@/notifications/PushCoordinator";
+import {
+  RosterHoldProvider,
+  RosterProvider,
+  useRoster,
+} from "@/session/RosterProvider";
 import { SessionProvider, useSession } from "@/session/SessionProvider";
+import { ChatHoldProvider } from "@/chat/ChatHoldProvider";
+import { ControllerProvider } from "@/controller/ControllerProvider";
 import { BootSplash } from "@/components/BootSplash";
 import { GatewayConnectionBanner } from "@/components/GatewayConnectionBanner";
 import { Text } from "@/components/ui/Typography";
@@ -48,7 +56,8 @@ WebBrowser.maybeCompleteAuthSession();
 void SplashScreen.preventAutoHideAsync();
 
 function SessionNavigation() {
-  const { status, agents, agentsReady, reachable, disconnect } = useSession();
+  const { status, disconnect } = useSession();
+  const { agents, agentsReady, reachable } = useRoster();
   const { colors, dark } = usePreferences();
   const segments = useSegments();
   const activeRoute = segments[0];
@@ -308,8 +317,17 @@ export default function RootLayout() {
         <QueryClientProvider client={queryClient}>
           <PreferencesProvider>
             <SessionProvider>
-              <PushCoordinator />
-              <SessionNavigation />
+              <RosterHoldProvider>
+                <ChatHoldProvider>
+                  <ControllerProvider>
+                    <RosterProvider>
+                      <AlertNotifications />
+                      <PushCoordinator />
+                      <SessionNavigation />
+                    </RosterProvider>
+                  </ControllerProvider>
+                </ChatHoldProvider>
+              </RosterHoldProvider>
             </SessionProvider>
           </PreferencesProvider>
         </QueryClientProvider>

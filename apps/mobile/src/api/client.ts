@@ -2,6 +2,13 @@ import type { ConnectionConfig } from "./types";
 
 const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
 
+export function isTokenExpiringSoon(
+  connection: ConnectionConfig,
+  now: number = Date.now(),
+): boolean {
+  return now >= connection.expiresAt - TOKEN_REFRESH_BUFFER_MS;
+}
+
 export class ApiError extends Error {
   readonly status: number;
 
@@ -27,6 +34,8 @@ export interface ApiClient {
   jsonInit: (method: string, body: unknown) => RequestInit;
   websocketUrl: (path: string, query?: URLSearchParams) => string;
   mediaUrl: (path: string, query?: URLSearchParams) => string;
+  getConnection: () => ConnectionConfig | null;
+  forceRefresh: () => Promise<boolean>;
 }
 
 function apiErrorMessage(response: Response, body: string): string {
@@ -169,5 +178,7 @@ export function createApiClient(options: ClientOptions): ApiClient {
       withToken(path, query, "ws"),
     mediaUrl: (path, query = new URLSearchParams()) =>
       withToken(path, query, "http"),
+    getConnection: options.getConnection,
+    forceRefresh: async () => (await refresh(true)) !== null,
   };
 }

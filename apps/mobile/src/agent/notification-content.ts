@@ -1,4 +1,8 @@
-import type { NotificationEvent } from "../api/types";
+import type { NotificationEvent } from "@vesta/core";
+
+// A notification as the view holds it: core's wire shape minus the strict ledger `id`, which the
+// live chat stream leaves optional (ChatMessage) and notification display never reads.
+export type NotificationView = Omit<NotificationEvent, "id"> & { id?: number };
 
 export interface NotificationContent {
   headline: string;
@@ -85,7 +89,7 @@ function contextValue(key: string, value: string): string {
 }
 
 export function parseNotificationContent(
-  event: NotificationEvent,
+  event: NotificationView,
 ): NotificationContent {
   const parsed = parseChannel(event.summary);
   if (!parsed) {
