@@ -1,7 +1,20 @@
+//! `/sync` WebSocket integration scenarios, driven end-to-end against a real vestad + agent
+//! container through the T1 harness `SyncSocket`. Fake-token agents settle unprovisioned yet still
+//! emit the in-process app-chat echo these appends ride on, so no real model is needed.
+//!
+//! Two spec sub-scenarios are deliberately absent: sub-floor client rejection (D2, dropped — the
+//! server always speaks protocol 1 and never rejects; the floor is a client-side gate) and the
+//! reauth deadline-expiry timer (D3, covered in the handler unit tier via `token_deadline`/`expire`).
+//! This module owns the socket-observable behaviors only.
+
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use vesta_tests::client::{Client, SyncSocket};
-use vesta_tests::{inject_fake_token, unique_agent, TestAgent, SERVER, SHARED_RO_AGENT};
+use vesta_tests::{
+    agent_container_name, docker_cmd, inject_fake_token, unique_agent, TestAgent, SERVER,
+    SHARED_RO_AGENT,
+};
 
 const AGENT_RUNNING_TIMEOUT_SECS: u64 = 90;
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
@@ -283,5 +296,126 @@ async fn unknown_client_frames_are_ignored() {
     // The socket stayed live: a following watch still delivers.
     sock.watch(&agent.name).await.expect("watch");
     drive_and_expect_append(&c, &mut sock, &agent.name, "still alive", "intent-unknown").await;
+    sock.close().await.ok();
+}
+
+/// Drive one app-chat message and return the string form of the echoed event's `id` (the events.db
+/// row id). Fails exactly as `drive_and_expect_append` does if no append lands within the budget.
+async fn driven_event_id(c: &Client, sock: &mut SyncSocket, agent: &str, text: &str, intent: &str) -> String {
+    let append = drive_and_expect_append(c, sock, agent, text, intent).await;
+    let event = append["events"]
+        .as_array()
+        .expect("events array")
+        .iter()
+        .find(|e| e["intent_id"].as_str() == Some(intent))
+        .expect("the echoed event");
+    assert!(event.get("id").is_some(), "echoed event carries an id");
+    event["id"].to_string()
+}
+
+/// (7) `send_message` with an explicit intent id round-trips end-to-end: the `append` echo carries
+/// the SAME `intent_id` the HTTP relay was given (HTTP intent -> tap -> live edge), the delivery-truth
+/// contract clients dedup and confirm on.
+#[tokio::test]
+async fn send_message_intent_id_echoes_on_the_append() {
+    let c = SERVER.client();
+    let agent = running_agent(&c, "sync-intent");
+    let mut sock = c.open_sync().await.expect("open sync");
+    handshake(&mut sock).await;
+    sock.watch(&agent.name).await.expect("watch");
+
+    let intent = "i-2f8c1a90-send-echo";
+    let append = drive_and_expect_append(&c, &mut sock, &agent.name, "carry my intent", intent).await;
+    let event = append["events"]
+        .as_array()
+        .expect("events array")
+        .iter()
+        .find(|e| e["intent_id"].as_str() == Some(intent))
+        .expect("the echoed event");
+    assert_eq!(
+        event["intent_id"].as_str(),
+        Some(intent),
+        "the append echo carries the exact intent id the send was given"
+    );
+    sock.close().await.ok();
+}
+
+/// (8) A watched agent killed mid-stream (`docker kill` -> non-zero exit -> `on-failure` auto-restart
+/// of the same container) emits one `resync` on the tap's reconnect; after re-watching, appends
+/// resume. The union of the event ids seen before the kill and after the restart has no repeats: the
+/// live edge never replays across the gap, so a client deduping by id gains no duplicate across the
+/// seam. (The paged-history reseed that fills the gap is the client controller's job, unit-tested.)
+#[tokio::test]
+async fn kill_restart_reseeds_without_duplicate_ids() {
+    let c = SERVER.client();
+    let agent = running_agent(&c, "sync-killrestart");
+    let mut sock = c.open_sync().await.expect("open sync");
+    handshake(&mut sock).await;
+    sock.watch(&agent.name).await.expect("watch");
+
+    let mut ids: Vec<String> = Vec::new();
+    ids.push(driven_event_id(&c, &mut sock, &agent.name, "before-1", "kb-1").await);
+    ids.push(driven_event_id(&c, &mut sock, &agent.name, "before-2", "kb-2").await);
+
+    // Ungraceful crash: SIGKILL exits non-zero, so docker's on-failure policy restarts the SAME
+    // container (its events.db persists, so ids stay monotonic). The tap gaps then reconnects,
+    // emitting one resync that drops this agent's server-side watch.
+    let cname = agent_container_name(&agent.name);
+    docker_cmd(&["kill", &cname]).expect("kill agent container");
+    sock.expect_frame_matching(
+        |f| f["type"].as_str() == Some("resync") && f["agent"].as_str() == Some(agent.name.as_str()),
+        RESYNC_TIMEOUT,
+    )
+    .await
+    .expect("a resync after the kill/restart");
+
+    c.wait_until_running(&agent.name, AGENT_RUNNING_TIMEOUT_SECS)
+        .expect("agent back up");
+    sock.watch(&agent.name).await.expect("re-watch");
+    ids.push(driven_event_id(&c, &mut sock, &agent.name, "after-1", "ka-1").await);
+    ids.push(driven_event_id(&c, &mut sock, &agent.name, "after-2", "ka-2").await);
+
+    let unique: HashSet<&String> = ids.iter().collect();
+    assert_eq!(
+        unique.len(),
+        ids.len(),
+        "event ids across the kill/restart seam must not repeat: {ids:?}"
+    );
+    sock.close().await.ok();
+}
+
+/// (9) A `watch` for an agent that does not exist yet is accepted (the hub creates the live-edge
+/// channel lazily via `subscribe_events`); once the agent is created and its tap attaches, the roster
+/// `agent` upsert and then appends flow to that pre-registered watch. Bounded generously: agent
+/// creation (image build/pull + container boot) is slow.
+#[tokio::test]
+async fn watch_before_create_is_held_until_the_agent_materializes() {
+    let c = SERVER.client();
+    // The name the agent will take: `unique_agent` yields an already-normalized name, so the watch
+    // key matches the container the create produces (asserted below, guarding a future rename rule).
+    let name = unique_agent("sync-precreate");
+
+    let mut sock = c.open_sync().await.expect("open sync");
+    handshake(&mut sock).await;
+    // Accepted with no error though the agent is absent; the hub creates the channel lazily.
+    sock.watch(&name).await.expect("watch before create");
+
+    let agent = TestAgent::create(&c, &name).expect("create agent");
+    assert_eq!(agent.name, name, "created name matches the pre-watched key");
+    inject_fake_token(&c, &agent.name);
+    c.start_agent(&agent.name).expect("start agent");
+    c.wait_until_running(&agent.name, AGENT_RUNNING_TIMEOUT_SECS)
+        .expect("agent running");
+
+    // The roster upsert for the freshly created agent reaches this held session.
+    sock.expect_frame_matching(
+        |f| f["type"].as_str() == Some("agent") && f["name"].as_str() == Some(name.as_str()),
+        RESYNC_TIMEOUT,
+    )
+    .await
+    .expect("roster upsert for the new agent");
+
+    // The pre-registered watch delivers appends once the tap attaches.
+    drive_and_expect_append(&c, &mut sock, &agent.name, "hello held watch", "i-held-watch").await;
     sock.close().await.ok();
 }
