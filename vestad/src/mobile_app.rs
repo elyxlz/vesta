@@ -454,8 +454,7 @@ fn message_for(
     let (title, body, route) = match event_type {
         "chat" => {
             let body = if device.previews {
-                crate::sync::alert_for(event)
-                    .map_or_else(|| format!("{agent} sent a new message."), |alert| alert.preview)
+                crate::sync::alert_for(event).unwrap_or_else(|| format!("{agent} sent a new message."))
             } else {
                 format!("{agent} sent a new message.")
             };

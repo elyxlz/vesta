@@ -548,8 +548,8 @@ async fn agent_event_listener(
                     if let Some(change) = notification_change(&parsed) {
                         hub.apply_notification(&name, change);
                     }
-                    if let Some(alert) = alert_for(&parsed) {
-                        hub.publish_alert(&name, parsed.clone(), alert.preview);
+                    if let Some(preview) = alert_for(&parsed) {
+                        hub.publish_alert(&name, parsed.clone(), preview);
                     }
                     mobile_app.observe_agent_event(&name, parsed);
                 }
