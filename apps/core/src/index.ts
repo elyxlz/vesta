@@ -1,4 +1,4 @@
-export { PROTOCOL_FLOOR, PROTOCOL_VERSION } from "./protocol/version"
+export { PROTOCOL_VERSION } from "./protocol/version"
 
 export type {
   AgentActivityState,
@@ -13,46 +13,18 @@ export type {
   Tree,
 } from "./protocol/tree"
 export type { InputMethod, NotificationEvent, VestaEvent } from "./protocol/events"
-export { encodeFrame, reauthFrame, unwatchFrame, watchFrame } from "./protocol/frames"
-export type {
-  ClientFrame,
-  HelloFrame,
-  ReauthFrame,
-  SnapshotFrame,
-  UnwatchFrame,
-  WatchFrame,
-} from "./protocol/frames"
-export type {
-  AgentDelta,
-  AgentRemovedDelta,
-  AlertDelta,
-  AppendDelta,
-  Delta,
-  NotificationsDelta,
-  ResyncDelta,
-  StateDelta,
-} from "./protocol/deltas"
-export { parseServerFrame } from "./protocol/parse"
-export type { ParsedFrame } from "./protocol/parse"
+export type { AlertDelta, Delta } from "./protocol/deltas"
 
-export { reduceDelta } from "./replica/reducer"
 export { createReplica } from "./replica/store"
 export type { Replica } from "./replica/store"
-export { createWatchManager } from "./replica/watch"
-export type { WatchManager } from "./replica/watch"
 
-export { ApiError, createHttpClient } from "./transport/http"
+export { ApiError } from "./transport/http"
 export type { FetchLike, HttpClient, HttpDeps } from "./transport/http"
-export { createSyncSocket } from "./transport/socket"
-export type {
-  SocketLike,
-  SyncSocket,
-  SyncSocketCallbacks,
-  SyncSocketDeps,
-  SyncState,
-} from "./transport/socket"
+export type { SocketLike, SyncSocketDeps, SyncState } from "./transport/socket"
 export { readSse } from "./transport/sse"
 export type { SseDeps, SseHandle, StreamEvent } from "./transport/sse"
+
+export type { ForegroundSignal } from "./adapters/types"
 
 export { PACING, typingDelay } from "./pacing/pacing"
 
@@ -62,16 +34,22 @@ export type {
   NotificationView,
 } from "./notification-content/notification-content"
 
-export { createSendMessageIntent } from "./intents/types"
-export type {
-  IdGenerator,
-  IntentEnvelope,
-  IntentId,
-  SendMessageBody,
-  SendMessageIntent,
-} from "./intents/types"
+export {
+  beginSend,
+  commitPacedChat,
+  foldLiveEvent,
+  initialChatState,
+  markSend,
+  prependPage,
+  seedTail,
+} from "./chat/chat-stream-model"
+export type { ChatMessage, ChatState, HistoryPage, SendState } from "./chat/chat-stream-model"
 
-export type { ForegroundSignal, PushTokenProvider, StorageAdapter } from "./adapters/types"
+export { sendMessage } from "./intents/send-message"
+export type { IdGenerator, SendFailure, SendMessageBody, SentMessage } from "./intents/send-message"
+
+export { rosterFromTree, rostersEqual } from "./tree/roster"
+export type { AgentRow } from "./tree/roster"
 
 export { createController } from "./controller/controller"
 export type { Controller, ControllerDeps } from "./controller/controller"
