@@ -1,10 +1,14 @@
 use std::io::BufRead;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use futures_util::{SinkExt, StreamExt};
+use tokio_tungstenite::tungstenite::Message;
 use ureq::http::Response;
 use ureq::Body;
 
 use crate::types::{
-    AuthFlowResponse, BackupInfo, ListEntry, ServerConfig, StartAllResult, StatusJson,
+    AccessToken, AuthFlowResponse, BackupInfo, ListEntry, ServerConfig, StartAllResult, StatusJson,
 };
 
 // ── HTTP client ─────────────────────────────────────────────────
@@ -92,6 +96,7 @@ pub struct Client {
     agent: ureq::Agent,
     base_url: String,
     api_key: String,
+    cert_fingerprint: Option<String>,
 }
 
 impl Client {
@@ -113,6 +118,7 @@ impl Client {
             agent,
             base_url: config.url.clone(),
             api_key: config.api_key.clone(),
+            cert_fingerprint: config.cert_fingerprint.clone(),
         }
     }
 
@@ -390,6 +396,55 @@ impl Client {
         Ok(())
     }
 
+    /// Relay a chat message to a running agent via `POST /agents/{name}/message`. A `200` ack means
+    /// the frame was queued onto the live tap, not that the agent read it (delivery truth is the
+    /// `append` echo carrying `intent_id`). Pass `intent_id` to correlate that echo; omit with `None`.
+    pub fn send_message(&self, name: &str, text: &str, intent_id: Option<&str>) -> Result<(), String> {
+        let mut body = serde_json::json!({ "text": text });
+        if let Some(id) = intent_id {
+            body["intent_id"] = serde_json::Value::String(id.to_string());
+        }
+        self.post_json(&format!("/agents/{name}/message"), &body)?;
+        Ok(())
+    }
+
+    /// Mint a JWT access token (+ rotating refresh token) via `POST /auth/session`, exchanging the
+    /// raw API key. Use the returned `access_token` for `open_sync_with_token` to exercise the `/sync`
+    /// deadline/`reauth` path a raw-key connect never hits.
+    pub fn mint_access_token(&self) -> Result<AccessToken, String> {
+        let body = serde_json::json!({ "api_key": self.api_key });
+        let resp = self.post_json("/auth/session", &body)?;
+        resp.into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {e}"))
+    }
+
+    /// Open a `/sync` WebSocket authenticated with the raw API key (never-expiring, no deadline).
+    pub async fn open_sync(&self) -> Result<SyncSocket, String> {
+        self.connect_sync(&self.api_key).await
+    }
+
+    /// Open a `/sync` WebSocket authenticated with a JWT access token (from `mint_access_token`),
+    /// so the connection carries a `token_deadline` the server enforces unless a `reauth` extends it.
+    pub async fn open_sync_with_token(&self, jwt: &str) -> Result<SyncSocket, String> {
+        self.connect_sync(jwt).await
+    }
+
+    async fn connect_sync(&self, token: &str) -> Result<SyncSocket, String> {
+        let url = format!(
+            "{}/sync?token={}",
+            ws_base_url(&self.base_url),
+            urlencod(token)
+        );
+        let tls = make_ws_rustls_config(self.cert_fingerprint.clone());
+        let connector = tokio_tungstenite::Connector::Rustls(tls);
+        let (ws, _resp) =
+            tokio_tungstenite::connect_async_tls_with_config(&url, None, false, Some(connector))
+                .await
+                .map_err(|e| format!("sync connect failed: {e}"))?;
+        Ok(SyncSocket { ws })
+    }
+
     pub fn create_backup(&self, name: &str) -> Result<BackupInfo, String> {
         let resp = self.post(&format!("/agents/{name}/backups"))?;
         let data = read_sse_result(resp)?;
@@ -443,4 +498,164 @@ impl Client {
         }
         Ok(())
     }
+}
+
+// ── /sync WebSocket client ──────────────────────────────────────
+
+type WsStream =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// A live `/sync` connection. Frames are parsed as `serde_json::Value` keyed on `type` (lighter than
+/// mirroring the server's protocol enum here); ping/pong are drained transparently on `recv_frame`.
+pub struct SyncSocket {
+    ws: WsStream,
+}
+
+impl SyncSocket {
+    /// Send a raw client frame (`watch`/`unwatch`/`reauth`, or an arbitrary one to probe the
+    /// server's ignore-unknown rule).
+    pub async fn send_client_frame(&mut self, frame: &serde_json::Value) -> Result<(), String> {
+        self.ws
+            .send(Message::Text(frame.to_string().into()))
+            .await
+            .map_err(|e| format!("send frame: {e}"))
+    }
+
+    pub async fn watch(&mut self, agent: &str) -> Result<(), String> {
+        self.send_client_frame(&serde_json::json!({ "type": "watch", "agent": agent }))
+            .await
+    }
+
+    pub async fn unwatch(&mut self, agent: &str) -> Result<(), String> {
+        self.send_client_frame(&serde_json::json!({ "type": "unwatch", "agent": agent }))
+            .await
+    }
+
+    pub async fn reauth(&mut self, token: &str) -> Result<(), String> {
+        self.send_client_frame(&serde_json::json!({ "type": "reauth", "token": token }))
+            .await
+    }
+
+    /// Read the next text frame within `timeout`, draining ping/pong/binary. Errors on timeout, a
+    /// close frame, a transport error, or a stream end.
+    pub async fn recv_frame(&mut self, timeout: Duration) -> Result<serde_json::Value, String> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let next = tokio::time::timeout(remaining, self.ws.next())
+                .await
+                .map_err(|_| "timed out waiting for sync frame".to_string())?;
+            match next {
+                Some(Ok(Message::Text(text))) => {
+                    return serde_json::from_str(text.as_str())
+                        .map_err(|e| format!("parse frame: {e}"));
+                }
+                Some(Ok(Message::Close(_))) => return Err("sync socket closed by server".into()),
+                Some(Err(e)) => return Err(format!("sync socket error: {e}")),
+                None => return Err("sync socket ended".into()),
+                // Ping/pong/binary/raw: drain and keep waiting for a text frame.
+                Some(Ok(_)) => {}
+            }
+        }
+    }
+
+    /// Read frames until one satisfies `pred` or `timeout` elapses, mirroring the harness's
+    /// `wait_until_*` deadline idiom for the WS stream.
+    pub async fn expect_frame_matching<F>(
+        &mut self,
+        mut pred: F,
+        timeout: Duration,
+    ) -> Result<serde_json::Value, String>
+    where
+        F: FnMut(&serde_json::Value) -> bool,
+    {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err("timed out waiting for a matching sync frame".into());
+            }
+            let frame = self.recv_frame(remaining).await?;
+            if pred(&frame) {
+                return Ok(frame);
+            }
+        }
+    }
+
+    pub async fn close(mut self) -> Result<(), String> {
+        self.ws.close(None).await.map_err(|e| format!("close: {e}"))
+    }
+}
+
+fn ws_base_url(url: &str) -> String {
+    url.replace("https://", "wss://").replace("http://", "ws://")
+}
+
+/// Build a rustls client config that pins the server's self-signed cert by SHA-256 fingerprint,
+/// matching vestad's fingerprint-verification TLS (no CA chain). Lifted from
+/// `vestad/tests/server/websocket.rs` so the shared harness owns the one connector.
+fn make_ws_rustls_config(fingerprint: Option<String>) -> Arc<rustls::ClientConfig> {
+    #[derive(Debug)]
+    struct AcceptAll {
+        expected: Option<String>,
+    }
+
+    impl rustls::client::danger::ServerCertVerifier for AcceptAll {
+        fn verify_server_cert(
+            &self,
+            end_entity: &rustls::pki_types::CertificateDer<'_>,
+            _: &[rustls::pki_types::CertificateDer<'_>],
+            _: &rustls::pki_types::ServerName<'_>,
+            _: &[u8],
+            _: rustls::pki_types::UnixTime,
+        ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+            if let Some(ref expected) = self.expected {
+                let digest = ring::digest::digest(&ring::digest::SHA256, end_entity.as_ref());
+                let actual = format!(
+                    "sha256:{}",
+                    digest
+                        .as_ref()
+                        .iter()
+                        .map(|b| format!("{b:02X}"))
+                        .collect::<Vec<_>>()
+                        .join(":")
+                );
+                if actual != *expected {
+                    return Err(rustls::Error::General("fingerprint mismatch".into()));
+                }
+            }
+            Ok(rustls::client::danger::ServerCertVerified::assertion())
+        }
+        fn verify_tls12_signature(
+            &self,
+            _: &[u8],
+            _: &rustls::pki_types::CertificateDer<'_>,
+            _: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        }
+        fn verify_tls13_signature(
+            &self,
+            _: &[u8],
+            _: &rustls::pki_types::CertificateDer<'_>,
+            _: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        }
+        fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+            rustls::crypto::ring::default_provider()
+                .signature_verification_algorithms
+                .supported_schemes()
+        }
+    }
+
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    Arc::new(
+        rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(AcceptAll {
+                expected: fingerprint,
+            }))
+            .with_no_client_auth(),
+    )
 }
