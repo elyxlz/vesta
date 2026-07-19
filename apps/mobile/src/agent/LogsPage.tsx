@@ -1,11 +1,11 @@
-import { readSse, type SseHandle } from "@vesta/core";
+import { readSse } from "@vesta/core";
 import { useEffect, useRef, useState } from "react";
 import { FlatList, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { ApiClient } from "@/api/client";
 import { useAgent } from "@/agent/AgentProvider";
 import { addLatestLogLine, type LogLine } from "@/agent/log-list-model";
-import { useBottomAnchoredFeed } from "@/agent/use-bottom-anchored-feed";
+import { subscribeLogs } from "@/agent/log-stream-subscription";
 import { AnsiText } from "@/components/ui/AnsiText";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
@@ -44,47 +44,32 @@ function LiveLogs({
   const nextLogId = useRef(0);
   const [logError, setLogError] = useState("");
 
-  useEffect(() => {
-    let cancelled = false;
-    let handle: SseHandle | null = null;
-    let retryTimer: ReturnType<typeof setTimeout> | null = null;
-    let receivedLine = false;
-
-    const openStream = (): void => {
-      const query = receivedLine
-        ? new URLSearchParams({ tail: "0" })
-        : undefined;
-      handle = readSse(
-        {
-          fetch: (url, init) => fetch(url, init),
-          url: api.mediaUrl(`/agents/${encodeURIComponent(name)}/logs`, query),
-          stoppedEvent: "agent_stopped",
+  useEffect(
+    () =>
+      subscribeLogs({
+        open: (reconnect, onEvent) =>
+          readSse(
+            {
+              fetch: (url, init) => fetch(url, init),
+              url: api.mediaUrl(
+                `/agents/${encodeURIComponent(name)}/logs`,
+                reconnect ? new URLSearchParams({ tail: "0" }) : undefined,
+              ),
+              stoppedEvent: "agent_stopped",
+            },
+            onEvent,
+          ),
+        onLine: (text) => {
+          setLogError("");
+          const id = nextLogId.current;
+          nextLogId.current += 1;
+          setLogs((current) => addLatestLogLine(current, { id, text }));
         },
-        (event) => {
-          if (cancelled) return;
-          if (event.kind === "line") {
-            receivedLine = true;
-            setLogError("");
-            const id = nextLogId.current;
-            nextLogId.current += 1;
-            setLogs((current) =>
-              addLatestLogLine(current, { id, text: event.text }),
-            );
-          } else if (event.kind === "error") {
-            setLogError(event.message);
-            retryTimer = setTimeout(openStream, LOG_RETRY_DELAY_MS);
-          }
-        },
-      );
-    };
-
-    openStream();
-    return () => {
-      cancelled = true;
-      handle?.cancel();
-      if (retryTimer) clearTimeout(retryTimer);
-    };
-  }, [api, name]);
+        onError: setLogError,
+        retryDelayMs: LOG_RETRY_DELAY_MS,
+      }),
+    [api, name],
+  );
 
   return (
     <LogList
