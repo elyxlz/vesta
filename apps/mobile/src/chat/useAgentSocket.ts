@@ -1,7 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as Crypto from "expo-crypto";
-import type { Delta, InputMethod, Tree, VestaEvent } from "@vesta/core";
-import { ApiError, PACING, createSendMessageIntent, typingDelay } from "@vesta/core";
+import {
+  PACING,
+  beginSend,
+  commitPacedChat,
+  foldLiveEvent,
+  initialChatState,
+  markSend,
+  prependPage,
+  seedTail,
+  sendMessage,
+  typingDelay,
+  type ChatMessage,
+  type ChatState,
+  type Delta,
+  type InputMethod,
+  type SendFailure,
+  type Tree,
+  type VestaEvent,
+} from "@vesta/core";
 import { useReplica, useSyncState, useWatch } from "@vesta/core/react";
 import { useController } from "@/controller/context";
 import { usePreferences } from "@/preferences/PreferencesProvider";
@@ -13,17 +30,6 @@ import {
   chatHoldKey,
   heldChatState,
 } from "./chat-hold-model";
-import {
-  beginSend,
-  commitPacedChat,
-  foldLiveEvent,
-  initialChatState,
-  markSend,
-  prependPage,
-  seedTail,
-  type ChatMessage,
-  type ChatState,
-} from "./chat-stream-model";
 
 function idsEqual(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((value, index) => value === b[index]);
@@ -195,12 +201,8 @@ export function useAgentSocket(name: string, active: boolean) {
     };
 
     const addLiveEvent = (event: ChatMessage) => {
-      let paced = false;
-      commit((current) => {
-        const result = foldLiveEvent(current, event);
-        paced = result.paced;
-        return result.state;
-      });
+      const { state: next, paced } = foldLiveEvent(stateRef.current, event);
+      commit(() => next);
       if (paced) enqueueChat(event);
       else if (event.type === "error" || event.type === "rate_limited") resetTyping();
     };
@@ -237,38 +239,31 @@ export function useAgentSocket(name: string, active: boolean) {
     fetchPage,
   ]);
 
-  // POST the send-message intent. A 200 only means queued-on-tap; delivery truth is the append echo
-  // (which clears send_state). A retryable 503 leaves the bubble retryable; any other error fails it.
-  // The intent id is idempotent server-side, so a retry re-posts the same id (dedup on the echo).
-  const postIntent = useCallback(
-    (intentId: string, text: string, inputMethod: InputMethod) => {
-      void controller.http
-        .json(`/agents/${encodeURIComponent(name)}/message`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, input_method: inputMethod, intent_id: intentId }),
-        })
-        .catch((error: unknown) => {
-          const retryable = error instanceof ApiError && error.status === 503;
-          commit((current) => markSend(current, intentId, retryable ? "retry" : "failed"));
-        });
+  // Reflect the POST's settled disposition into the bubble. A null outcome means queued-on-tap:
+  // delivery truth is the append echo (which clears send_state), so only a failure marks the bubble.
+  const applyOutcome = useCallback(
+    (intentId: string, outcome: Promise<SendFailure | null>) => {
+      void outcome.then((failure) => {
+        if (failure) commit((current) => markSend(current, intentId, failure));
+      });
     },
-    [controller, name, commit],
+    [commit],
   );
 
   const send = useCallback(
     (text: string, inputMethod: InputMethod = "typed"): boolean => {
       if (!name) return false;
-      const intent = createSendMessageIntent(
+      const { id, outcome } = sendMessage(
+        controller.http,
         name,
         { text, input_method: inputMethod },
         () => Crypto.randomUUID(),
       );
-      commit((current) => beginSend(current, text, inputMethod, intent.id));
-      postIntent(intent.id, text, inputMethod);
+      commit((current) => beginSend(current, text, inputMethod, id));
+      applyOutcome(id, outcome);
       return true;
     },
-    [name, commit, postIntent],
+    [name, controller, commit, applyOutcome],
   );
 
   // Re-post a failed/retryable bubble under its ORIGINAL intent id (idempotent): the bubble returns
@@ -277,9 +272,15 @@ export function useAgentSocket(name: string, active: boolean) {
     (intentId: string, text: string, inputMethod: InputMethod = "typed") => {
       if (!name) return;
       commit((current) => markSend(current, intentId, "sending"));
-      postIntent(intentId, text, inputMethod);
+      const { outcome } = sendMessage(
+        controller.http,
+        name,
+        { text, input_method: inputMethod },
+        () => intentId,
+      );
+      applyOutcome(intentId, outcome);
     },
-    [name, commit, postIntent],
+    [name, controller, commit, applyOutcome],
   );
 
   const hasMore = state.cursor !== null;

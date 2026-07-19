@@ -1,5 +1,4 @@
-import type { ChatMessage } from "@/chat/chat-stream-model";
-import type { NotificationView } from "@vesta/core";
+import type { ChatMessage, NotificationView } from "@vesta/core";
 
 function notificationKey(event: NotificationView): string {
   return (

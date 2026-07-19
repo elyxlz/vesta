@@ -1,4 +1,4 @@
-import type { ChatState } from "./chat-stream-model";
+import type { ChatState } from "@vesta/core";
 
 // A single stale-while-reconnecting cell for the chat tail, held ABOVE the controller so it survives
 // the controller epoch (background tears the controller down and unmounts the chat view-model). It

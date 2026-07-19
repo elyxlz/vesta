@@ -40,7 +40,7 @@ import * as Haptics from "expo-haptics";
 import * as WebBrowser from "expo-web-browser";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Path } from "react-native-svg";
-import type { ChatMessage } from "@/chat/chat-stream-model";
+import type { ChatMessage } from "@vesta/core";
 import { fetchVoiceStatus } from "@/api/endpoints";
 import { useAgent } from "@/agent/AgentProvider";
 import {

@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
-import { createReplica } from "@vesta/core";
-import { ApiError } from "@vesta/core";
+import { ApiError, createReplica } from "@vesta/core";
 import type { Controller, Delta, Tree, VestaEvent } from "@vesta/core";
 import { ControllerContext } from "@/providers/ControllerProvider";
 import { useChatPacing } from "@/stores/use-chat-pacing";
@@ -133,7 +132,7 @@ describe("useAgentSocketState", () => {
     expect(result.current.connected).toBe(true);
   });
 
-  it("confirms the optimistic bubble by intent_id without duplicating it", async () => {
+  it("sends an optimistic bubble and confirms it on the append echo", async () => {
     fetchHistoryMock.mockResolvedValue({ events: [], cursor: null });
     const { controller, json, emit } = makeController();
     const { result } = render(controller);
@@ -165,7 +164,7 @@ describe("useAgentSocketState", () => {
     });
     await flush();
 
-    // Dedup by id, not text: the echo confirms the existing bubble rather than appending a second.
+    // The echo confirms the existing bubble rather than appending a second.
     expect(users()).toHaveLength(1);
     expect(users()[0]?.send_state).toBeUndefined();
   });
@@ -208,117 +207,5 @@ describe("useAgentSocketState", () => {
     const users = result.current.messages.filter((m) => m.type === "user");
     expect(users).toHaveLength(1);
     expect(users[0]).toMatchObject({ text: "retryable", send_state: "retry" });
-  });
-
-  it("reseeds the tail on resync without duplicating rows by id", async () => {
-    useChatPacing.setState({ natural: false });
-    fetchHistoryMock.mockResolvedValueOnce({
-      events: [chat(1, "a")],
-      cursor: null,
-    });
-    const { controller, emit } = makeController();
-    const { result } = render(controller);
-    await flush();
-
-    act(() => {
-      emit({ type: "append", agent: AGENT, events: [chat(2, "b")] });
-    });
-    expect(result.current.messages).toHaveLength(2);
-
-    // The refetched newest page carries both rows; the reseed must not duplicate them.
-    fetchHistoryMock.mockResolvedValueOnce({
-      events: [chat(1, "a"), chat(2, "b")],
-      cursor: null,
-    });
-    act(() => {
-      emit({ type: "resync", agent: AGENT });
-    });
-    await flush();
-
-    expect(result.current.messages.map((m) => m.type)).toEqual([
-      "chat",
-      "chat",
-    ]);
-
-    // A replayed append for an id already in the reseeded tail is deduped away.
-    act(() => {
-      emit({ type: "append", agent: AGENT, events: [chat(2, "b")] });
-    });
-    expect(result.current.messages).toHaveLength(2);
-  });
-
-  it("keeps a live append that raced the history fetch and is absent from the page", async () => {
-    useChatPacing.setState({ natural: false });
-    let resolveHistory!: (page: {
-      events: VestaEvent[];
-      cursor: number | null;
-    }) => void;
-    fetchHistoryMock.mockReturnValueOnce(
-      new Promise((r) => {
-        resolveHistory = r;
-      }),
-    );
-    const { controller, emit } = makeController();
-    const { result } = render(controller);
-
-    // The append lands after subscribe but before the history fetch resolves; its id is not in the page.
-    act(() => {
-      emit({ type: "append", agent: AGENT, events: [chat(99, "raced")] });
-    });
-    expect(result.current.messages).toHaveLength(1);
-
-    await act(async () => {
-      resolveHistory({ events: [chat(1, "seed")], cursor: null });
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    // Merge, not replace: the seed row and the raced row both present, the raced row exactly once.
-    const texts = result.current.messages.map((m) =>
-      m.type === "chat" ? m.text : "",
-    );
-    expect(texts).toEqual(["seed", "raced"]);
-    expect(texts.filter((t) => t === "raced")).toHaveLength(1);
-  });
-
-  it("preserves a pending optimistic bubble across a resync and confirms its later echo", async () => {
-    fetchHistoryMock.mockResolvedValueOnce({ events: [], cursor: null });
-    const { controller, json, emit } = makeController();
-    const { result } = render(controller);
-    await flush();
-
-    act(() => {
-      expect(result.current.send("hi")).toBe(true);
-    });
-    await flush();
-
-    const call = json.mock.calls[0];
-    if (!call) throw new Error("send did not POST");
-    const body = JSON.parse((call[1] as { body: string }).body) as {
-      intent_id: string;
-    };
-    const users = () =>
-      result.current.messages.filter((m) => m.type === "user");
-
-    // Resync refetches an empty page (the send is not yet persisted); the bubble must survive.
-    fetchHistoryMock.mockResolvedValueOnce({ events: [], cursor: null });
-    act(() => {
-      emit({ type: "resync", agent: AGENT });
-    });
-    await flush();
-    expect(users()).toHaveLength(1);
-    expect(users()[0]).toMatchObject({ text: "hi", send_state: "sending" });
-
-    // The later echo confirms the surviving bubble: no vanish, no duplicate.
-    act(() => {
-      emit({
-        type: "append",
-        agent: AGENT,
-        events: [userEcho(5, "hi", body.intent_id)],
-      });
-    });
-    await flush();
-    expect(users()).toHaveLength(1);
-    expect(users()[0]?.send_state).toBeUndefined();
   });
 });

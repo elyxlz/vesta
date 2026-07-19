@@ -1,13 +1,4 @@
 import { describe, expect, it } from "vitest";
-import type { VestaEvent } from "@vesta/core";
-import type { ConnectionConfig } from "@/api/types";
-import { connectionKeyOf } from "@/session/session-model";
-import {
-  captureChatHold,
-  chatHoldKey,
-  emptyChatHold,
-  heldChatState,
-} from "./chat-hold-model";
 import {
   beginSend,
   commitPacedChat,
@@ -17,7 +8,16 @@ import {
   seedTail,
   type ChatMessage,
   type ChatState,
-} from "./chat-stream-model";
+  type VestaEvent,
+} from "@vesta/core";
+import type { ConnectionConfig } from "@/api/types";
+import { connectionKeyOf } from "@/session/session-model";
+import {
+  captureChatHold,
+  chatHoldKey,
+  emptyChatHold,
+  heldChatState,
+} from "./chat-hold-model";
 
 function chat(id: number, text: string): VestaEvent {
   return { type: "chat", text, id };

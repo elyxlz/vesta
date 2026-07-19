@@ -1,4 +1,4 @@
-import type { ChatMessage } from "@/chat/chat-stream-model";
+import type { ChatMessage } from "@vesta/core";
 
 export interface EventChatRow {
   kind: "event";

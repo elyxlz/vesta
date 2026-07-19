@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ChatMessage } from "../chat/chat-stream-model";
+import type { ChatMessage } from "@vesta/core";
 import { createInvertedChatRows } from "./chat-list-model";
 
 const events: ChatMessage[] = [
