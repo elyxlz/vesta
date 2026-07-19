@@ -6,10 +6,22 @@ import type { Controller } from "@vesta/core";
 // AgentSocketProvider). A single controller serves the whole connection.
 export const ControllerContext = createContext<Controller | null>(null);
 
+// A no-op default so a consumer outside an ActiveController (before the version gate
+// passes) can call it harmlessly; the update path only fires once a controller exists.
+export const ControllerReconnectContext = createContext<() => void>(
+  () => undefined,
+);
+
+// Invariant: a consumer that can mount during the pre-connect "checking" phase (e.g.
+// GatewayProvider) must read the nullable ControllerContext directly, not useController().
 export function useController(): Controller {
   const controller = useContext(ControllerContext);
   if (!controller) {
     throw new Error("useController must be used within ControllerProvider");
   }
   return controller;
+}
+
+export function useControllerReconnect(): () => void {
+  return useContext(ControllerReconnectContext);
 }
