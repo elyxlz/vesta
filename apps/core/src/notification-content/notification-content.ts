@@ -52,19 +52,58 @@ function decodeXml(value: string): string {
   })
 }
 
+function isSpace(ch: string): boolean {
+  return ch === " " || ch === "\t" || ch === "\n" || ch === "\r" || ch === "\f"
+}
+
+function isKeyStart(ch: string): boolean {
+  return (ch >= "A" && ch <= "Z") || (ch >= "a" && ch <= "z") || ch === "_"
+}
+
+function isKeyChar(ch: string): boolean {
+  return isKeyStart(ch) || (ch >= "0" && ch <= "9") || ch === "." || ch === "-"
+}
+
+// Strictly linear `key="value"` scan over quoteattr output (space-separated, values XML-escaped so
+// they never contain a raw delimiter quote). A regex over this grammar backtracks quadratically on a
+// long run of name-chars (js/polynomial-redos); a single indexOf-driven pass cannot. Each iteration
+// consumes at least one character, so a garbage prefix with no `=` terminates in one sweep.
+function parseAttributes(attrText: string): Record<string, string> {
+  const attributes: Record<string, string> = {}
+  const length = attrText.length
+  let cursor = 0
+  while (cursor < length) {
+    while (isSpace(attrText.charAt(cursor))) cursor++
+    if (cursor >= length) break
+    const keyStart = cursor
+    while (isKeyChar(attrText.charAt(cursor))) cursor++
+    const key = attrText.slice(keyStart, cursor)
+    while (isSpace(attrText.charAt(cursor))) cursor++
+    if (attrText.charAt(cursor) !== "=") {
+      if (cursor === keyStart) cursor++
+      continue
+    }
+    cursor++
+    while (isSpace(attrText.charAt(cursor))) cursor++
+    const quote = attrText.charAt(cursor)
+    if (quote !== '"' && quote !== "'") continue
+    const valueStart = cursor + 1
+    const valueEnd = attrText.indexOf(quote, valueStart)
+    if (valueEnd === -1) break
+    if (key !== "" && isKeyStart(key.charAt(0))) {
+      attributes[key] = decodeXml(attrText.slice(valueStart, valueEnd))
+    }
+    cursor = valueEnd + 1
+  }
+  return attributes
+}
+
 function parseChannel(summary: string): ParsedChannel | null {
   const match = /^<channel\b([^>]*)>([\s\S]*)<\/channel>$/.exec(summary.trim())
   if (!match) return null
 
-  const attributes: Record<string, string> = {}
-  const attributePattern = /([A-Za-z_][\w.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g
-  for (const attribute of match[1]?.matchAll(attributePattern) ?? []) {
-    const key = attribute[1]
-    if (!key) continue
-    attributes[key] = decodeXml(attribute[2] ?? attribute[3] ?? "")
-  }
   return {
-    attributes,
+    attributes: parseAttributes(match[1] ?? ""),
     body: decodeXml(match[2] ?? "").trim(),
   }
 }
