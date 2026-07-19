@@ -38,6 +38,7 @@ import {
   useRoster,
 } from "@/session/RosterProvider";
 import { SessionProvider, useSession } from "@/session/SessionProvider";
+import { ChatHoldProvider } from "@/chat/ChatHoldProvider";
 import { ControllerProvider } from "@/controller/ControllerProvider";
 import { BootSplash } from "@/components/BootSplash";
 import { GatewayConnectionBanner } from "@/components/GatewayConnectionBanner";
@@ -316,12 +317,14 @@ export default function RootLayout() {
           <PreferencesProvider>
             <SessionProvider>
               <RosterHoldProvider>
-                <ControllerProvider>
-                  <RosterProvider>
-                    <PushCoordinator />
-                    <SessionNavigation />
-                  </RosterProvider>
-                </ControllerProvider>
+                <ChatHoldProvider>
+                  <ControllerProvider>
+                    <RosterProvider>
+                      <PushCoordinator />
+                      <SessionNavigation />
+                    </RosterProvider>
+                  </ControllerProvider>
+                </ChatHoldProvider>
               </RosterHoldProvider>
             </SessionProvider>
           </PreferencesProvider>

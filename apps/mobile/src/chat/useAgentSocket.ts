@@ -5,6 +5,14 @@ import { ApiError, PACING, createSendMessageIntent, typingDelay } from "@vesta/c
 import { useReplica, useSyncState, useWatch } from "@vesta/core/react";
 import { useController } from "@/controller/context";
 import { usePreferences } from "@/preferences/PreferencesProvider";
+import { useSession } from "@/session/SessionProvider";
+import { useChatHold } from "./ChatHoldProvider";
+import {
+  captureChatHold,
+  chatHoldKey,
+  connectionKeyOf,
+  heldChatState,
+} from "./chat-hold-model";
 import {
   beginSend,
   commitPacedChat,
@@ -35,6 +43,11 @@ interface HistoryPage {
 export function useAgentSocket(name: string, active: boolean) {
   const controller = useController();
   const preferences = usePreferences();
+  const { connection } = useSession();
+  const holdStore = useChatHold();
+  const key = chatHoldKey(name, connectionKeyOf(connection));
+  const keyRef = useRef(key);
+  keyRef.current = key;
   const naturalPacing = preferences.naturalChatPacingForAgent(name);
   const naturalPacingRef = useRef(naturalPacing);
   naturalPacingRef.current = naturalPacing;
@@ -61,13 +74,22 @@ export function useAgentSocket(name: string, active: boolean) {
   const pendingNotifications = useReplica(controller.replica, pendingSelector, idsEqual);
 
   // ChatState is the model's single source of truth. It lives in a ref (synchronous, so a batch of
-  // appends dedups against the running accumulation) mirrored into React state for rendering.
-  const stateRef = useRef<ChatState>(initialChatState());
-  const [state, setState] = useState<ChatState>(stateRef.current);
-  const commit = useCallback((fold: (current: ChatState) => ChatState) => {
-    stateRef.current = fold(stateRef.current);
-    setState(stateRef.current);
-  }, []);
+  // appends dedups against the running accumulation) mirrored into React state for rendering. It is
+  // seeded from the hold so a conversation renders immediately (stale) across a controller epoch
+  // instead of blanking to a skeleton; seedTail refetches and merges by id. Every commit persists the
+  // render slice back to the hold under the current key, so a background/foreground survives it.
+  const [state, setState] = useState<ChatState>(
+    () => heldChatState(holdStore.read(), key) ?? initialChatState(),
+  );
+  const stateRef = useRef<ChatState>(state);
+  const commit = useCallback(
+    (fold: (current: ChatState) => ChatState) => {
+      stateRef.current = fold(stateRef.current);
+      setState(stateRef.current);
+      holdStore.persist(captureChatHold(keyRef.current, stateRef.current));
+    },
+    [holdStore],
+  );
 
   const [isTyping, setIsTyping] = useState(false);
   const [latestLiveChat, setLatestLiveChat] = useState<string | null>(null);
@@ -156,8 +178,11 @@ export function useAgentSocket(name: string, active: boolean) {
     const agent = name;
     let cancelled = false;
 
-    stateRef.current = initialChatState();
-    setState(stateRef.current);
+    // Seed from the hold for this key (survives the controller epoch); a mismatched key clears to
+    // empty at the read, so a switched agent or gateway never renders the prior conversation.
+    const seeded = heldChatState(holdStore.read(), key) ?? initialChatState();
+    stateRef.current = seeded;
+    setState(seeded);
     resetTyping();
 
     // Reseed the tail from the newest history page and MERGE, never replace. Serves the initial load
@@ -200,7 +225,17 @@ export function useAgentSocket(name: string, active: boolean) {
       unsubscribe();
       resetTyping();
     };
-  }, [active, name, controller, commit, resetTyping, enqueueChat, fetchPage]);
+  }, [
+    active,
+    name,
+    controller,
+    key,
+    holdStore,
+    commit,
+    resetTyping,
+    enqueueChat,
+    fetchPage,
+  ]);
 
   // POST the send-message intent. A 200 only means queued-on-tap; delivery truth is the append echo
   // (which clears send_state). A retryable 503 leaves the bubble retryable; any other error fails it.
