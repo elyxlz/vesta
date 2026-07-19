@@ -32,7 +32,11 @@ import {
   usePreferences,
 } from "@/preferences/PreferencesProvider";
 import { PushCoordinator } from "@/notifications/PushCoordinator";
-import { RosterProvider, useRoster } from "@/session/RosterProvider";
+import {
+  RosterHoldProvider,
+  RosterProvider,
+  useRoster,
+} from "@/session/RosterProvider";
 import { SessionProvider, useSession } from "@/session/SessionProvider";
 import { ControllerProvider } from "@/controller/ControllerProvider";
 import { BootSplash } from "@/components/BootSplash";
@@ -311,12 +315,14 @@ export default function RootLayout() {
         <QueryClientProvider client={queryClient}>
           <PreferencesProvider>
             <SessionProvider>
-              <ControllerProvider>
-                <RosterProvider>
-                  <PushCoordinator />
-                  <SessionNavigation />
-                </RosterProvider>
-              </ControllerProvider>
+              <RosterHoldProvider>
+                <ControllerProvider>
+                  <RosterProvider>
+                    <PushCoordinator />
+                    <SessionNavigation />
+                  </RosterProvider>
+                </ControllerProvider>
+              </RosterHoldProvider>
             </SessionProvider>
           </PreferencesProvider>
         </QueryClientProvider>
