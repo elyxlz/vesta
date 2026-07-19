@@ -112,6 +112,7 @@ check_web() {
       npm --prefix mobile install
     fi
     npm -w @vesta/core run lint
+    npm -w @vesta/core run format:check
     npm -w @vesta/core run check
     npm -w @vesta/core run test
     npm -w @vesta/web run lint
