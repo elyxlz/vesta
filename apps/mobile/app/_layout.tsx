@@ -32,6 +32,7 @@ import {
   usePreferences,
 } from "@/preferences/PreferencesProvider";
 import { PushCoordinator } from "@/notifications/PushCoordinator";
+import { RosterProvider, useRoster } from "@/session/RosterProvider";
 import { SessionProvider, useSession } from "@/session/SessionProvider";
 import { ControllerProvider } from "@/controller/ControllerProvider";
 import { BootSplash } from "@/components/BootSplash";
@@ -49,7 +50,8 @@ WebBrowser.maybeCompleteAuthSession();
 void SplashScreen.preventAutoHideAsync();
 
 function SessionNavigation() {
-  const { status, agents, agentsReady, reachable, disconnect } = useSession();
+  const { status, disconnect } = useSession();
+  const { agents, agentsReady, reachable } = useRoster();
   const { colors, dark } = usePreferences();
   const segments = useSegments();
   const activeRoute = segments[0];
@@ -310,8 +312,10 @@ export default function RootLayout() {
           <PreferencesProvider>
             <SessionProvider>
               <ControllerProvider>
-                <PushCoordinator />
-                <SessionNavigation />
+                <RosterProvider>
+                  <PushCoordinator />
+                  <SessionNavigation />
+                </RosterProvider>
               </ControllerProvider>
             </SessionProvider>
           </PreferencesProvider>

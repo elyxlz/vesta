@@ -12,11 +12,13 @@ import { Screen } from "@/components/layout/Screen";
 import { FormRow, FormSection, SwitchRow } from "@/components/ui/Form";
 import { unregisterCurrentMobileDevice } from "@/notifications/PushCoordinator";
 import { usePreferences, type ThemePreference } from "@/preferences/PreferencesProvider";
+import { useRoster } from "@/session/RosterProvider";
 import { useSession } from "@/session/SessionProvider";
 
 export default function SettingsScreen() {
   const router = useRouter();
   const session = useSession();
+  const roster = useRoster();
   const preferences = usePreferences();
   const gateway = useQuery({
     queryKey: ["gateway", session.connection?.url],
@@ -35,8 +37,10 @@ export default function SettingsScreen() {
   const gatewayUpdate = useMutation({
     mutationFn: () => updateGateway(session.api),
   });
-  const checkedVersion = updateCheck.data ?? session.version;
-  const updateAvailable = checkedVersion?.update_available === true;
+  const freshCheck = updateCheck.data;
+  const updateAvailable = freshCheck
+    ? freshCheck.update_available === true
+    : roster.updateAvailable;
 
   const confirmGatewayUpdate = () => {
     Alert.alert("Update gateway?", "Agents will briefly restart.", [
@@ -119,10 +123,10 @@ export default function SettingsScreen() {
         <FormRow
           label="Status"
           icon="radio-outline"
-          value={session.reachable ? "connected" : "reconnecting"}
+          value={roster.reachable ? "connected" : "reconnecting"}
         />
         <FormRow label="Host" icon="cloud-outline" value={session.connection ? new URL(session.connection.url).hostname : ""} />
-        <FormRow label="Version" icon="git-branch-outline" value={session.version?.version ?? "unknown"} />
+        <FormRow label="Version" icon="git-branch-outline" value={roster.gatewayVersion ?? "unknown"} />
         <FormRow label="Channel" icon="flask-outline" value={gateway.data?.settings.channel ?? "unknown"} />
         <FormRow
           label="Public tunnel"
@@ -149,7 +153,7 @@ export default function SettingsScreen() {
           <FormRow
             label="Update available"
             icon="arrow-up-circle-outline"
-            value={checkedVersion?.latest_version ?? "available"}
+            value={freshCheck?.latest_version ?? roster.latestVersion ?? "available"}
             onPress={confirmGatewayUpdate}
           />
         ) : updateCheck.isError ? (
@@ -169,7 +173,7 @@ export default function SettingsScreen() {
         )}
       </FormSection>
 
-      {session.managed ? (
+      {roster.managed ? (
         <FormSection title="Account">
           <FormRow
             label="Manage account and billing"

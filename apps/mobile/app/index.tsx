@@ -22,7 +22,6 @@ import { useFocusEffect, useRouter } from "expo-router";
 import Stack from "expo-router/stack";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import type { AgentInfo } from "@/api/types";
 import { AgentOrb } from "@/components/AgentOrb";
 import { BootTransitionTarget } from "@/components/BootTransition";
 import {
@@ -34,7 +33,9 @@ import { Screen } from "@/components/layout/Screen";
 import { EmptyState } from "@/components/ui/States";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
+import { useRoster } from "@/session/RosterProvider";
 import { useSession } from "@/session/SessionProvider";
+import type { AgentRow } from "@/session/roster-model";
 import { readLastUsedAgent } from "@/storage/recent-agent";
 
 interface RestoreRequest {
@@ -50,9 +51,10 @@ export default function HomeScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
-  const { status, agents, agentsReady } = useSession();
+  const { status } = useSession();
+  const { agents, agentsReady } = useRoster();
   const { colors } = usePreferences();
-  const carouselRef = useRef<FlatList<AgentInfo>>(null);
+  const carouselRef = useRef<FlatList<AgentRow>>(null);
   const hapticPageIndex = useRef(0);
   const [scrollX] = useState(() => new Animated.Value(0));
   const restoreRequestId = useRef(0);
@@ -117,7 +119,7 @@ export default function HomeScreen() {
     return <HomeSkeleton />;
   }
 
-  const openAgent = (agent: AgentInfo) => {
+  const openAgent = (agent: AgentRow) => {
     router.push({
       pathname: "/agent/[name]",
       params: { name: agent.name },
@@ -258,7 +260,7 @@ function AgentCarouselItem({
   onOpen,
   width,
 }: {
-  agent: AgentInfo;
+  agent: AgentRow;
   bootTarget: boolean;
   onOpen: () => void;
   width: number;
@@ -429,7 +431,7 @@ function HomeSkeleton() {
 function HomeHeader({ showCreate }: { showCreate: boolean }) {
   const router = useRouter();
   const { colors } = usePreferences();
-  const { reachable } = useSession();
+  const { reachable } = useRoster();
   const openSettings = () => router.push("/settings");
   const openCreateAgent = () => router.push("/new-agent");
 

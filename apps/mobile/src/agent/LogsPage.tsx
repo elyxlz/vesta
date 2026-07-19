@@ -8,12 +8,14 @@ import { addLatestLogLine, type LogLine } from "@/agent/log-list-model";
 import { AnsiText } from "@/components/ui/AnsiText";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
+import { useRoster } from "@/session/RosterProvider";
 import { useSession } from "@/session/SessionProvider";
 
 const LOG_RETRY_DELAY_MS = 1_000;
 
 export default function LogsPage() {
-  const { api, reachable } = useSession();
+  const { api } = useSession();
+  const { reachable } = useRoster();
   const { name } = useAgent();
 
   return reachable ? (
