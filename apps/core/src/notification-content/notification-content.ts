@@ -1,42 +1,115 @@
-// Pure parsing for a notification's stored summary, extracted from web's NotificationRow so
-// web and mobile render the same body. The stored summary is
-// `<notification source=… type=…>INNER</notification>` (see Notification.format_for_display in
-// the agent's core/models.py); callers already show source/type/sender separately, so the body
-// just needs INNER, optionally split into fields.
+import type { NotificationEvent } from "../protocol/events"
 
-// Unwrap the `<notification …>INNER</notification>` envelope to INNER. Falls back to the whole
-// string if the shape ever changes.
-export function notificationContent(summary: string): string {
-  const open = summary.indexOf(">")
-  const close = summary.lastIndexOf("</notification>")
-  if (open === -1 || close === -1 || close <= open) return summary
-  return summary.slice(open + 1, close).trim()
+// Pure parsing for a notification's stored summary, the single owner shared by web and mobile.
+// The agent emits `<channel source=… type=… …attrs>INNER</channel>` (see Notification.format_for_display
+// in agent/core/notification.py): routing metadata as attributes, the human-readable message as the
+// inner body (or a multi-line prose body directly). This splits that envelope into a display-ready
+// {headline, body, context}, decoding XML entities and promoting the most useful fields.
+
+// A notification as a view holds it: core's wire shape minus the strict ledger `id`, which the live
+// chat stream leaves optional (ChatMessage) and notification display never reads.
+export type NotificationView = Omit<NotificationEvent, "id"> & { id?: number }
+
+export interface NotificationContent {
+  headline: string
+  body: string | null
+  context: string | null
 }
 
-// Notification bodies often arrive as `key=value, key=value` — and a value can itself
-// contain commas (e.g. a message). A key boundary is a `\w+=` at the start or right after
-// `, `; scan each boundary and take the value up to the next one, so a comma inside a value
-// isn't mistaken for a separator. Linear (no backtracking). Returns [] for plain text.
-export function parseFields(content: string): { key: string; value: string }[] {
-  const fields: { key: string; value: string }[] = []
-  const keyRe = /(?:^|,\s*)(\w+)=/g
-  let match = keyRe.exec(content)
-  while (match) {
-    const key = match[1] ?? ""
-    const valueStart = keyRe.lastIndex
-    const next = keyRe.exec(content)
-    fields.push({
-      key,
-      value: content.slice(valueStart, next ? next.index : content.length).trim(),
-    })
-    match = next
+interface ParsedChannel {
+  attributes: Record<string, string>
+  body: string
+}
+
+const TITLE_FIELDS = ["subject", "title"] as const
+const SECONDARY_FIELDS = ["preview", "reason", "description"] as const
+const CONTEXT_FIELDS = [
+  "channel_name",
+  "chat_name",
+  "server",
+  "account",
+  "folder",
+  "location",
+  "start_time",
+  "minutes_until",
+  "media_type",
+] as const
+
+function decodeXml(value: string): string {
+  const named = value
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&apos;", "'")
+    .replaceAll("&amp;", "&")
+  return named.replace(/&#(x[0-9a-f]+|\d+);/gi, (entity, code: string) => {
+    const codePoint = code.toLowerCase().startsWith("x")
+      ? Number.parseInt(code.slice(1), 16)
+      : Number.parseInt(code, 10)
+    return Number.isFinite(codePoint) && codePoint <= 0x10ffff
+      ? String.fromCodePoint(codePoint)
+      : entity
+  })
+}
+
+function parseChannel(summary: string): ParsedChannel | null {
+  const match = /^<channel\b([^>]*)>([\s\S]*)<\/channel>$/.exec(summary.trim())
+  if (!match) return null
+
+  const attributes: Record<string, string> = {}
+  const attributePattern = /([A-Za-z_][\w.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g
+  for (const attribute of match[1]?.matchAll(attributePattern) ?? []) {
+    const key = attribute[1]
+    if (!key) continue
+    attributes[key] = decodeXml(attribute[2] ?? attribute[3] ?? "")
   }
-  return fields
+  return {
+    attributes,
+    body: decodeXml(match[2] ?? "").trim(),
+  }
 }
 
-// The backend renders a notification either as plain prose (its `body`) or, when it has
-// no body, as `key=value, …` of its fields — which always starts with a key. So content is
-// structured exactly when it starts with `key=`.
-export function isStructured(content: string): boolean {
-  return /^\w+=/.test(content)
+function takeFirst(fields: Record<string, string>, keys: readonly string[]): string | null {
+  for (const key of keys) {
+    const value = fields[key]?.trim()
+    if (value) return value
+  }
+  return null
+}
+
+function humanize(value: string): string {
+  const words = value.replaceAll("_", " ").trim()
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : "Notification"
+}
+
+function contextValue(key: string, value: string): string {
+  if (key === "start_time") return `Starts ${value}`
+  if (key === "minutes_until") return `${value} min`
+  return value
+}
+
+export function parseNotificationContent(event: NotificationView): NotificationContent {
+  const parsed = parseChannel(event.summary)
+  if (!parsed) {
+    return {
+      headline: event.summary.trim() || humanize(event.notif_type ?? "notification"),
+      body: null,
+      context: null,
+    }
+  }
+
+  const fields = { ...parsed.attributes, ...(event.fields ?? {}) }
+  const title = takeFirst(fields, TITLE_FIELDS)
+  const secondary = parsed.body || takeFirst(fields, SECONDARY_FIELDS)
+  const context = CONTEXT_FIELDS.flatMap((key) => {
+    const value = fields[key]?.trim()
+    return value ? [contextValue(key, value)] : []
+  })
+  const headline = title ?? secondary ?? humanize(event.notif_type ?? fields.type ?? "notification")
+
+  return {
+    headline,
+    body: title && secondary && secondary !== title ? secondary : null,
+    context: context.length > 0 ? context.join(" · ") : null,
+  }
 }

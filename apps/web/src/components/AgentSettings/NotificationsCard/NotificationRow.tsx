@@ -9,7 +9,7 @@ import {
   ItemMedia,
   ItemTitle,
 } from "@/components/ui/item";
-import { isStructured, notificationContent, parseFields } from "@vesta/core";
+import { parseNotificationContent } from "@vesta/core";
 import { type NotificationEvent } from "@/api/agents";
 import { cn } from "@/lib/utils";
 
@@ -119,8 +119,8 @@ function Disposition({ event }: { event: NotificationEvent }) {
 }
 
 // One notification as an Item cell (matching the files hub): a source icon, the source · type on the
-// title line, the sender + field tags, and the body text (clamped to two lines, expandable). Time and
-// disposition sit in the trailing actions; a pending ring + dot marks unprocessed ones.
+// title line, the sender, and the parsed headline/body/context (headline clamped to two lines,
+// expandable). Time and disposition sit in the trailing actions; a pending ring + dot marks unprocessed ones.
 export function NotificationRow({
   event,
   isPending,
@@ -128,19 +128,11 @@ export function NotificationRow({
   event: NotificationEvent;
   isPending: boolean;
 }) {
-  // The backend renders a notification either as plain prose (its `body`) or, when it has
-  // no body, as `key=value, …` of its fields — which always starts with a key. So treat
-  // the content as structured only when it starts with `key=`: then surface `message` as
-  // the body text and render every other field as a tag (timestamp dropped — the row
-  // already shows the time). Plain prose falls through unchanged.
-  const rawContent = notificationContent(event.summary);
-  const structured = isStructured(rawContent);
-  const fields = structured ? parseFields(rawContent) : [];
-  const message = fields.find((f) => f.key === "message")?.value;
-  const body = structured ? (message ?? "") : rawContent;
-  const tagFields = fields.filter(
-    (f) => f.key !== "message" && f.key !== "timestamp",
-  );
+  // The agent emits a `<channel …>INNER</channel>` envelope; the core parser splits it into a
+  // headline (the message or subject), an optional secondary body (e.g. an email preview), and
+  // an optional context line (routing metadata like account · folder). The headline is the
+  // clamped, expandable text.
+  const content = parseNotificationContent(event);
   const [expanded, setExpanded] = useState(false);
   const [overflows, setOverflows] = useState(false);
   const textRef = useRef<HTMLParagraphElement>(null);
@@ -151,7 +143,7 @@ export function NotificationRow({
     const element = textRef.current;
     if (!element || expanded) return;
     setOverflows(element.scrollHeight > element.clientHeight + 1);
-  }, [body, expanded]);
+  }, [content.headline, expanded]);
 
   return (
     <Item
@@ -192,43 +184,35 @@ export function NotificationRow({
           </span>
         ) : null}
 
-        {tagFields.length > 0 ? (
-          <div className="flex flex-wrap gap-1">
-            {tagFields.map((field) => (
-              <span
-                key={field.key}
-                className="inline-flex max-w-full items-center gap-1 rounded-md bg-muted/60 px-1.5 py-0.5 text-[10px] text-muted-foreground"
-              >
-                <span className="font-medium text-foreground/70">
-                  {field.key}
-                </span>
-                <span className="truncate">{field.value}</span>
-              </span>
-            ))}
-          </div>
+        <div className="flex flex-col gap-1">
+          <p
+            ref={textRef}
+            className={cn(
+              "text-sm leading-relaxed whitespace-pre-wrap text-muted-foreground",
+              expanded ? "" : "line-clamp-2",
+            )}
+          >
+            {content.headline}
+          </p>
+          {overflows ? (
+            <button
+              type="button"
+              className="self-start text-xs font-medium text-primary"
+              onClick={() => setExpanded((value) => !value)}
+            >
+              {expanded ? "show less" : "show more"}
+            </button>
+          ) : null}
+        </div>
+
+        {content.body ? (
+          <p className="text-xs text-muted-foreground/80">{content.body}</p>
         ) : null}
 
-        {body ? (
-          <div className="flex flex-col gap-1">
-            <p
-              ref={textRef}
-              className={cn(
-                "text-sm leading-relaxed whitespace-pre-wrap text-muted-foreground",
-                expanded ? "" : "line-clamp-2",
-              )}
-            >
-              {body}
-            </p>
-            {overflows ? (
-              <button
-                type="button"
-                className="self-start text-xs font-medium text-primary"
-                onClick={() => setExpanded((value) => !value)}
-              >
-                {expanded ? "show less" : "show more"}
-              </button>
-            ) : null}
-          </div>
+        {content.context ? (
+          <span className="text-[11px] text-muted-foreground/70">
+            {content.context}
+          </span>
         ) : null}
       </ItemContent>
 

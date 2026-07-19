@@ -53,7 +53,7 @@ describe("NotificationsCard", () => {
           type: "notification",
           source: "twitter",
           summary:
-            '<notification source="twitter" type="tweet">a new tweet</notification>',
+            '<channel source="twitter" type="tweet">a new tweet</channel>',
           notif_type: "tweet",
           id: 101,
           sender: "@bob",
@@ -78,7 +78,7 @@ describe("NotificationsCard", () => {
           type: "notification",
           source: "whatsapp",
           summary:
-            '<notification source="whatsapp" type="message">status update</notification>',
+            '<channel source="whatsapp" type="message">status update</channel>',
           notif_type: "message",
           id: 102,
           sender: "someone",
@@ -103,8 +103,7 @@ describe("NotificationsCard", () => {
           {
             type: "notification",
             source: "twitter",
-            summary:
-              '<notification source="twitter" type="tweet">first</notification>',
+            summary: '<channel source="twitter" type="tweet">first</channel>',
             notif_type: "tweet",
             id: 103,
             ts: new Date().toISOString(),
@@ -117,8 +116,7 @@ describe("NotificationsCard", () => {
           {
             type: "notification",
             source: "email",
-            summary:
-              '<notification source="email" type="message">older</notification>',
+            summary: '<channel source="email" type="message">older</channel>',
             notif_type: "message",
             id: 104,
             ts: new Date().toISOString(),
@@ -157,8 +155,7 @@ describe("NotificationsCard pending", () => {
         {
           type: "notification",
           source: "twitter",
-          summary:
-            '<notification source="twitter" type="tweet">a</notification>',
+          summary: '<channel source="twitter" type="tweet">a</channel>',
           notif_type: "tweet",
           id: 105,
           notif_id: "n-pending",
@@ -167,8 +164,7 @@ describe("NotificationsCard pending", () => {
         {
           type: "notification",
           source: "email",
-          summary:
-            '<notification source="email" type="message">b</notification>',
+          summary: '<channel source="email" type="message">b</channel>',
           notif_type: "message",
           id: 106,
           notif_id: "n-cleared",
@@ -194,8 +190,7 @@ describe("NotificationsCard pending", () => {
         {
           type: "notification",
           source: "app-chat",
-          summary:
-            '<notification source="app-chat" type="message">hi</notification>',
+          summary: '<channel source="app-chat" type="message">hi</channel>',
           notif_type: "message",
           id: 107,
           notif_id: "abc-app-chat-message",

@@ -290,7 +290,7 @@ describe("NotificationProvider", () => {
           {
             type: "notification",
             source: "whatsapp",
-            summary: '<notification source="whatsapp">hey</notification>',
+            summary: '<channel source="whatsapp">hey</channel>',
             notif_id: "n-1",
             id: 4,
           },
