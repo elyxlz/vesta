@@ -24,6 +24,7 @@ type AgentState = tp.Literal["idle", "thinking"]
 
 
 class _BaseEvent(tp.TypedDict, total=False):
+    id: int
     ts: str
 
 
@@ -278,6 +279,7 @@ class EventBus:
     def __init__(self, data_dir: pl.Path | None = None) -> None:
         self._subscribers: set[asyncio.Queue[VestaEvent]] = set()
         self._state: AgentState = "idle"
+        self._live_id: int = 0
         self._conn: sqlite3.Connection | None = None
         self._db_path: pl.Path | None = None
         if data_dir:
@@ -306,10 +308,17 @@ class EventBus:
     def unsubscribe(self, q: asyncio.Queue[VestaEvent]) -> None:
         self._subscribers.discard(q)
 
+    def _next_live_id(self) -> int:
+        """An ephemeral id for a live-only event (status, notification_cleared) or one whose history
+        write was dropped: a per-session counter running negative so it can never collide with a real
+        events.db rowid, which is always positive."""
+        self._live_id -= 1
+        return self._live_id
+
     def emit(self, event: StreamEvent) -> None:
         event["ts"] = dt.datetime.now(dt.UTC).isoformat()
         # status (activity flips) and notification_cleared (pending deltas) are live-only signals with
-        # no place in history — broadcast them but don't persist.
+        # no place in history: broadcast them but don't persist.
         if event["type"] not in ("status", "notification_cleared") and self._conn:
             # Event-logging is best-effort: a failed history write must NEVER crash the
             # agent loop. Without this guard, a transient "database is locked" (the db
@@ -317,13 +326,18 @@ class EventBus:
             # and took down the whole loop on every event, turning one stuck write into a
             # crash-restart storm. Drop the row with a warning and keep the agent alive.
             try:
-                self._conn.execute(
+                cursor = self._conn.execute(
                     "INSERT INTO events (ts, data) VALUES (?, ?)",
                     (event["ts"], json.dumps(event)),
                 )
                 self._conn.commit()
+                rowid = cursor.lastrowid
+                event["id"] = rowid if rowid is not None else self._next_live_id()
             except sqlite3.Error as e:
                 logger.warning("event-log write failed, dropping event type=%s: %s", event["type"], e)
+                event["id"] = self._next_live_id()
+        else:
+            event["id"] = self._next_live_id()
         for q in list(self._subscribers):
             self._offer(q, event)
 
@@ -383,7 +397,11 @@ class EventBus:
             return [], None
         has_older = len(rows) > limit
         rows = rows[:limit]
-        events = [json.loads(r[1]) for r in reversed(rows)]
+        events: list[StreamEvent] = []
+        for row in reversed(rows):
+            event: StreamEvent = json.loads(row[1])
+            event["id"] = row[0]
+            events.append(event)
         return events, rows[-1][0] if has_older else None
 
     def _conversation_page(self, limit: int, before_cursor: int | None) -> tuple[list[StreamEvent], int | None]:
@@ -411,12 +429,16 @@ class EventBus:
             has_older = len(conv_rows) > limit
             boundary = conv_rows[:limit][-1][0]
             rows = conn.execute(
-                f"SELECT data FROM events WHERE json_extract(data, '$.type') IN ({vis_ph}) AND id >= ? {upper}ORDER BY id ASC",
+                f"SELECT id, data FROM events WHERE json_extract(data, '$.type') IN ({vis_ph}) AND id >= ? {upper}ORDER BY id ASC",
                 (*visible, boundary, *upper_params),
             ).fetchall()
         finally:
             conn.close()
-        events = [json.loads(r[0]) for r in rows]
+        events: list[StreamEvent] = []
+        for row in rows:
+            event: StreamEvent = json.loads(row[1])
+            event["id"] = row[0]
+            events.append(event)
         return events, boundary if has_older else None
 
     def recent(self, limit: int = PAGE_SIZE, *, channel: str | None = None) -> tuple[list[StreamEvent], int | None]:
@@ -445,7 +467,7 @@ class EventBus:
         try:
             rows = conn.execute(
                 """
-                SELECT e.data,
+                SELECT e.id, e.data,
                        f.rank / (1.0 + ? * max(julianday('now') - julianday(e.ts), 0)) AS score
                 FROM events_fts f
                 JOIN events e ON e.id = f.rowid
@@ -457,7 +479,12 @@ class EventBus:
             ).fetchall()
         finally:
             conn.close()
-        return [json.loads(r[0]) for r in rows]
+        events: list[StreamEvent] = []
+        for row in rows:
+            event: StreamEvent = json.loads(row[1])
+            event["id"] = row[0]
+            events.append(event)
+        return events
 
     def close(self) -> None:
         if self._conn:

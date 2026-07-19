@@ -1,5 +1,6 @@
 """Tests for EventBus: emit, persist, pagination, search, lifecycle, schema migration."""
 
+import json
 import sqlite3
 import typing as tp
 
@@ -11,6 +12,7 @@ from core.events import (
     SUBSCRIBER_QUEUE_MAXSIZE,
     ChatEvent,
     EventBus,
+    NotificationClearedEvent,
     NotificationEvent,
     SubagentStartEvent,
     ToolStartEvent,
@@ -390,3 +392,79 @@ def test_transient_open_error_propagates_without_quarantine(tmp_path):
 
     assert db_path.read_bytes() == original_bytes
     assert list(tmp_path.glob("events.db.corrupt-*")) == []
+
+
+# --- Event ids ---
+
+
+def test_emit_stamps_rowid_as_id(event_bus):
+    """A persisted event carries its events.db rowid as a positive, stable id on both the live
+    broadcast and the history read-back (same id from both paths)."""
+    q = event_bus.subscribe()
+    event_bus.emit(ChatEvent(type="chat", text="first"))
+    live = q.get_nowait()
+    assert live["id"] == 1
+    stored, _ = event_bus.recent()
+    assert stored[0]["id"] == 1
+
+
+def test_ids_track_rowid_in_order(event_bus):
+    for i in range(3):
+        event_bus.emit(ChatEvent(type="chat", text=f"m{i}"))
+    stored, _ = event_bus.recent()
+    assert [e["id"] for e in stored] == [1, 2, 3]
+
+
+def test_id_is_not_stored_in_the_data_blob(event_bus):
+    """id is derived from the rowid, never persisted into the JSON blob, so legacy rows stay valid."""
+    event_bus.emit(ChatEvent(type="chat", text="hi"))
+    row = event_bus._conn.execute("SELECT data FROM events").fetchone()
+    assert "id" not in json.loads(row[0])
+
+
+def test_live_only_events_get_negative_ids(event_bus):
+    """status and notification_cleared skip persistence but still carry an id: a per-session
+    counter running negative, which can never collide with a positive rowid."""
+    q = event_bus.subscribe()
+    event_bus.set_state("thinking")
+    first = q.get_nowait()
+    assert first["type"] == "status"
+    assert first["id"] == -1
+    event_bus.emit(NotificationClearedEvent(type="notification_cleared", notif_id="x"))
+    assert q.get_nowait()["id"] == -2
+
+
+def test_legacy_row_without_id_gets_rowid_on_read(tmp_path):
+    """A pre-existing row whose blob predates ids gains an id from its rowid on read: ids are
+    derived, so no schema migration is needed."""
+    conn = sqlite3.connect(str(tmp_path / "events.db"))
+    conn.executescript(_EVENTS_SCHEMA)
+    conn.execute("INSERT INTO events (ts, data) VALUES (?, ?)", ("2026-01-01T00:00:00+00:00", '{"type": "user", "text": "legacy"}'))
+    conn.commit()
+    conn.close()
+
+    bus = EventBus(data_dir=tmp_path)
+    events, _ = bus.recent()
+    bus.close()
+    assert events[0]["id"] == 1
+    assert tp.cast(tp.Any, events[0])["text"] == "legacy"
+
+
+def test_app_chat_and_search_reads_carry_ids(event_bus):
+    event_bus.emit(UserEvent(type="user", text="weather in paris"))
+    event_bus.emit(ChatEvent(type="chat", text="sunny in paris"))
+    chat, _ = event_bus.recent(channel="app-chat")
+    assert all(e["id"] > 0 for e in chat)
+    results = event_bus.search("paris")
+    assert all(e["id"] > 0 for e in results)
+
+
+def test_emit_without_persistence_still_ids(event_bus):
+    """When a history write is dropped (closed/corrupt db), the event still broadcasts and still
+    gets a live id, never a bare event with no id."""
+    q = event_bus.subscribe()
+    event_bus._conn.close()
+    event_bus.emit(ChatEvent(type="chat", text="still delivered"))
+    delivered = q.get_nowait()
+    assert delivered["text"] == "still delivered"
+    assert delivered["id"] < 0
