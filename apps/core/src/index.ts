@@ -1,5 +1,8 @@
 export { PROTOCOL_VERSION } from "./protocol/version"
 
+export { parseAnsi, resolveAnsiColor, stripAnsi } from "./ansi/ansi"
+export type { AnsiColor, AnsiSpan, AnsiStyle } from "./ansi/ansi"
+
 export type {
   AgentActivityState,
   AgentInfo,
