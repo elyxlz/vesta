@@ -1004,9 +1004,10 @@ fn render_line(time: &str, nick: &str, nick_color: &str, text: &str, color: bool
     }
 }
 
-type ChatSocket = tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>;
+type SyncSocket = tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>;
 
 /// How a single chat session ended.
+#[derive(Debug)]
 enum SessionEnd {
     /// The server closed the stream cleanly (agent stopped) — exit without retrying.
     Closed,
@@ -1020,9 +1021,9 @@ fn chat_message_frame(text: &str) -> tungstenite::Message {
     tungstenite::Message::Text(serde_json::json!({"type": "message", "text": text}).to_string().into())
 }
 
-/// Open one chat WebSocket. A pinned fingerprint gets the same verification as the HTTP
+/// Open one `/sync` WebSocket. A pinned fingerprint gets the same verification as the HTTP
 /// client; without one, tungstenite's default connector verifies against native roots.
-fn connect_chat_socket(client: &Client, url: &str) -> Result<ChatSocket, String> {
+fn connect_sync_socket(client: &Client, url: &str) -> Result<SyncSocket, String> {
     // Both ring and aws-lc-rs are compiled in, so tungstenite's default rustls config
     // needs a process-level provider picked before the handshake.
     let _ = rustls::crypto::ring::default_provider().install_default();
@@ -1055,7 +1056,7 @@ fn connect_chat_socket(client: &Client, url: &str) -> Result<ChatSocket, String>
 /// replayed backlog isn't printed twice. Input typed while disconnected stays buffered in `rx`
 /// and is flushed here once the socket is live again.
 fn run_chat_session(
-    socket: &mut ChatSocket,
+    socket: &mut SyncSocket,
     rx: &std::sync::mpsc::Receiver<String>,
     name: &str,
     color: bool,
@@ -1130,12 +1131,12 @@ fn run_chat_session(
 
 /// Retry connecting for up to `CHAT_RECONNECT_WINDOW_SECS` after a drop. Returns the fresh
 /// socket once the agent is reachable again, or `None` if the window elapses first.
-fn reconnect_chat_socket(client: &Client, url: &str, name: &str, reason: &str) -> Option<ChatSocket> {
+fn reconnect_chat_socket(client: &Client, url: &str, name: &str, reason: &str) -> Option<SyncSocket> {
     eprintln!("{reason}; agent may be restarting, reconnecting to {name}...");
     let deadline = Instant::now() + Duration::from_secs(CHAT_RECONNECT_WINDOW_SECS);
     while Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(CHAT_RECONNECT_DELAY_MS));
-        if let Ok(socket) = connect_chat_socket(client, url) {
+        if let Ok(socket) = connect_sync_socket(client, url) {
             eprintln!("reconnected to {name}.");
             return Some(socket);
         }
@@ -1152,7 +1153,7 @@ pub fn chat(client: &Client, name: &str) -> Result<(), String> {
         client.api_key()
     );
 
-    let mut socket = connect_chat_socket(client, &url)?;
+    let mut socket = connect_sync_socket(client, &url)?;
 
     let color = std::io::stdout().is_terminal();
 
@@ -1203,6 +1204,260 @@ pub fn chat(client: &Client, name: &str) -> Result<(), String> {
     }
 }
 
+// ── /sync watch engine ─────────────────────────────────────────
+
+fn sync_url(base: &str, api_key: &str) -> String {
+    // Static-API-key auth carries no exp, so /sync never closes for expiry: no reauth needed
+    // (see plan Decision 2). Token rides the query because the blocking tungstenite handshake
+    // takes a URL, not custom headers, and the /sync handler accepts ?token=.
+    let token = percent_encoding::utf8_percent_encode(api_key, percent_encoding::NON_ALPHANUMERIC);
+    format!("{}/sync?token={token}", ws_base_url(base))
+}
+
+/// A fatal chat-connect failure, distinct from an in-session drop (which reconnects). `chat()`
+/// surfaces it as its `Result<(), String>` via `map_err`.
+#[derive(Debug)]
+enum ChatError {
+    /// The gateway's protocol floor is above this CLI's protocol: the user must update.
+    Incompatible,
+    /// The watched agent is absent from the roster snapshot (matches `vesta status` `not_found`).
+    NotFound,
+    /// A transport failure during the handshake or the history tail fetch.
+    Transport(String),
+}
+
+impl std::fmt::Display for ChatError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ChatError::Incompatible => {
+                f.write_str("this vesta is out of date for the gateway; update vesta or the gateway to continue")
+            }
+            ChatError::NotFound => f.write_str("agent not found"),
+            ChatError::Transport(msg) => f.write_str(msg),
+        }
+    }
+}
+
+impl std::error::Error for ChatError {}
+
+/// Which side authored a rendered line, so the printer picks the nick + color.
+#[derive(Debug, PartialEq, Eq)]
+enum Speaker {
+    You,
+    Agent,
+}
+
+/// One chat line ready to print: the routing seam builds these purely (no IO), the loop prints them.
+#[derive(Debug)]
+struct RenderedLine {
+    time: String,
+    speaker: Speaker,
+    text: String,
+}
+
+/// What the loop does with one routed frame. Keeps the branch logic pure and unit-testable.
+#[derive(Debug)]
+enum FrameOutcome {
+    /// New chat/user lines (`id` > `last_id`) to print in order.
+    Print(Vec<RenderedLine>),
+    /// A user echo carrying this intent id: delivery truth for a pending send, not reprinted.
+    Confirm(String),
+    /// The per-watch edge overflowed: re-watch and re-fetch the tail.
+    Resync,
+    /// The watched agent was removed: exit cleanly.
+    Removed,
+    /// Nothing to do (another agent, an unknown frame, or a replayed id).
+    Ignore,
+}
+
+/// Map one conversation event to a printable line, or `None` for a kind chat does not render or a
+/// text-less event.
+fn event_to_line(event: &ChatEvent) -> Option<RenderedLine> {
+    let speaker = match event.kind.as_str() {
+        "user" => Speaker::You,
+        "chat" => Speaker::Agent,
+        _ => return None,
+    };
+    let text = event.text.as_deref()?;
+    let time = match &event.ts {
+        Some(ts) => time_from_ts(ts),
+        None => time_now_utc(),
+    };
+    Some(RenderedLine { time, speaker, text: text.trim_end().to_string() })
+}
+
+/// Route one parsed frame for the watched agent, advancing `last_id` past every event it accounts
+/// for so the history/watch seam never double-prints. A user echo carrying an intent id confirms a
+/// pending send and is not reprinted; other user/chat events print; everything else is ignored.
+fn route_frame(frame: SyncFrame, name: &str, last_id: &mut i64) -> FrameOutcome {
+    match frame {
+        SyncFrame::Append { agent, events } if agent == name => {
+            let mut lines = Vec::new();
+            let mut confirm = None;
+            for event in events {
+                if !should_print(event.id, last_id) {
+                    continue;
+                }
+                if event.kind == "user" {
+                    if let Some(intent_id) = event.intent_id {
+                        confirm = Some(intent_id);
+                        continue;
+                    }
+                }
+                if let Some(line) = event_to_line(&event) {
+                    lines.push(line);
+                }
+            }
+            if !lines.is_empty() {
+                FrameOutcome::Print(lines)
+            } else if let Some(intent_id) = confirm {
+                FrameOutcome::Confirm(intent_id)
+            } else {
+                FrameOutcome::Ignore
+            }
+        }
+        SyncFrame::Resync { agent } if agent == name => FrameOutcome::Resync,
+        SyncFrame::AgentRemoved { name: removed } if removed == name => FrameOutcome::Removed,
+        SyncFrame::Append { .. }
+        | SyncFrame::Resync { .. }
+        | SyncFrame::AgentRemoved { .. }
+        | SyncFrame::Hello { .. }
+        | SyncFrame::Snapshot { .. }
+        | SyncFrame::Unknown => FrameOutcome::Ignore,
+    }
+}
+
+fn print_line(line: &RenderedLine, name: &str, color: bool) {
+    let (nick, nick_color) = match line.speaker {
+        Speaker::You => ("you", ANSI_YOU),
+        Speaker::Agent => (name, ANSI_AGENT),
+    };
+    render_line(&line.time, nick, nick_color, &line.text, color);
+}
+
+/// Print the history tail once, deduped by id (advancing `last_id`) so live appends that overlap it
+/// are not reprinted.
+fn print_tail(events: &[ChatEvent], name: &str, color: bool, last_id: &mut i64) {
+    for event in events {
+        if should_print(event.id, last_id) {
+            if let Some(line) = event_to_line(event) {
+                print_line(&line, name, color);
+            }
+        }
+    }
+    std::io::stdout().flush().ok();
+}
+
+fn print_resync_marker(color: bool) {
+    if color {
+        println!("{ANSI_TS}-- resynced --{ANSI_RESET}");
+    } else {
+        println!("-- resynced --");
+    }
+}
+
+/// The client->server watch frame for one agent (the live-edge subscription).
+fn watch_frame(name: &str) -> tungstenite::Message {
+    tungstenite::Message::Text(serde_json::json!({ "type": "watch", "agent": name }).to_string().into())
+}
+
+/// Block until the next parseable frame arrives, retrying across the read timeout. A parse failure
+/// folds to `Unknown` (ignored by rule); a socket close during the handshake is a transport error.
+fn read_sync_frame(socket: &mut SyncSocket) -> Result<SyncFrame, ChatError> {
+    loop {
+        match socket.read() {
+            Ok(tungstenite::Message::Text(text)) => {
+                return Ok(serde_json::from_str::<SyncFrame>(text.as_ref()).unwrap_or(SyncFrame::Unknown));
+            }
+            Ok(tungstenite::Message::Close(_)) | Err(tungstenite::Error::ConnectionClosed) => {
+                return Err(ChatError::Transport("connection closed during handshake".into()));
+            }
+            Ok(_) => {}
+            Err(tungstenite::Error::Io(ref e))
+                if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {}
+            Err(read_err) => return Err(ChatError::Transport(format!("handshake read failed: {read_err}"))),
+        }
+    }
+}
+
+/// Drive one `/sync` session over a connected socket: gate on `hello` (protocol floor) and the
+/// `snapshot` roster (agent existence), send `watch`, print the history tail deduped by id, then
+/// fold live `append`/`resync`/`agent_removed` frames until the socket ends. Returns a `ChatError`
+/// on a failed handshake, or a `SessionEnd` describing how the live loop finished. `fetch_tail` is
+/// injected so the socket path stays hermetically testable without the history HTTP endpoint.
+fn run_sync_session(
+    socket: &mut SyncSocket,
+    name: &str,
+    color: bool,
+    last_id: &mut i64,
+    fetch_tail: &mut dyn FnMut() -> Result<Vec<ChatEvent>, String>,
+) -> Result<SessionEnd, ChatError> {
+    match read_sync_frame(socket)? {
+        SyncFrame::Hello { floor, .. } => {
+            if !is_compatible(CLI_PROTOCOL, floor) {
+                return Err(ChatError::Incompatible);
+            }
+        }
+        _ => return Err(ChatError::Transport("expected hello as the first frame".into())),
+    }
+    let roster = loop {
+        if let SyncFrame::Snapshot { tree } = read_sync_frame(socket)? {
+            break tree;
+        }
+    };
+    if !roster.agents.contains(name) {
+        return Err(ChatError::NotFound);
+    }
+
+    socket
+        .send(watch_frame(name))
+        .map_err(|e| ChatError::Transport(format!("watch send failed: {e}")))?;
+    let tail = fetch_tail().map_err(ChatError::Transport)?;
+    print_tail(&tail, name, color, last_id);
+
+    loop {
+        match socket.read() {
+            Ok(tungstenite::Message::Text(text)) => {
+                let frame = serde_json::from_str::<SyncFrame>(text.as_ref()).unwrap_or(SyncFrame::Unknown);
+                match route_frame(frame, name, last_id) {
+                    FrameOutcome::Print(lines) => {
+                        for line in &lines {
+                            print_line(line, name, color);
+                        }
+                        std::io::stdout().flush().ok();
+                    }
+                    FrameOutcome::Resync => {
+                        if let Err(send_err) = socket.send(watch_frame(name)) {
+                            return Ok(SessionEnd::Lost { reason: format!("connection lost on resync: {send_err}"), unsent: None });
+                        }
+                        match fetch_tail() {
+                            Ok(events) => {
+                                print_resync_marker(color);
+                                print_tail(&events, name, color, last_id);
+                            }
+                            Err(fetch_err) => {
+                                return Ok(SessionEnd::Lost { reason: format!("tail refetch failed on resync: {fetch_err}"), unsent: None });
+                            }
+                        }
+                    }
+                    FrameOutcome::Removed => return Ok(SessionEnd::Closed),
+                    // Delivery confirmation is Task 3's pending-marker concern; the id already advanced.
+                    FrameOutcome::Confirm(_) | FrameOutcome::Ignore => {}
+                }
+            }
+            Ok(tungstenite::Message::Close(_)) | Err(tungstenite::Error::ConnectionClosed) => {
+                return Ok(SessionEnd::Closed);
+            }
+            Ok(_) => {}
+            Err(tungstenite::Error::Io(ref e))
+                if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {}
+            Err(read_err) => {
+                return Ok(SessionEnd::Lost { reason: format!("connection lost: {read_err}"), unsent: None });
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1218,21 +1473,21 @@ mod tests {
     }
 
     #[test]
-    fn connect_chat_socket_rejects_invalid_url() {
-        let err = connect_chat_socket(&test_client(), "not a ws url").unwrap_err();
+    fn connect_sync_socket_rejects_invalid_url() {
+        let err = connect_sync_socket(&test_client(), "not a ws url").unwrap_err();
         assert!(err.contains("invalid ws url"), "got: {err}");
     }
 
     #[test]
-    fn connect_chat_socket_errors_on_unreachable_port_without_panicking() {
+    fn connect_sync_socket_errors_on_unreachable_port_without_panicking() {
         // Port 1 on loopback refuses fast — the helper must surface an Err, never panic,
         // so the reconnect loop can keep retrying.
-        let err = connect_chat_socket(&test_client(), "wss://127.0.0.1:1/agents/x/ws?token=tok").unwrap_err();
+        let err = connect_sync_socket(&test_client(), "wss://127.0.0.1:1/sync?token=tok").unwrap_err();
         assert!(err.contains("ws tcp connect failed") || err.contains("ws connect failed"), "got: {err}");
     }
 
     #[test]
-    fn connect_chat_socket_survives_a_slow_handshake() {
+    fn connect_sync_socket_survives_a_slow_handshake() {
         // Regression: the chat read-loop timeout (CHAT_READ_TIMEOUT_MS) must not be applied to the
         // socket until *after* the handshake. A server slower than that timeout (here a cloudflare
         // tunnel's worth of latency, simulated) used to make the handshake read return WouldBlock,
@@ -1249,8 +1504,8 @@ mod tests {
             std::thread::sleep(Duration::from_millis(50));
         });
 
-        let url = format!("ws://127.0.0.1:{port}/agents/x/ws?token=tok");
-        let socket = connect_chat_socket(&test_client(), &url).expect("handshake should survive a slow server");
+        let url = format!("ws://127.0.0.1:{port}/sync?token=tok");
+        let socket = connect_sync_socket(&test_client(), &url).expect("handshake should survive a slow server");
         drop(socket);
         server.join().expect("server thread");
     }
@@ -1612,5 +1867,204 @@ mod tests {
         );
         // A matching computed fingerprint is accepted by the pin comparison.
         assert!(fingerprint_match(&fp, &cert_fingerprint(&[])).is_ok());
+    }
+
+    fn chat_event(id: i64, kind: &str, text: Option<&str>, intent: Option<&str>) -> ChatEvent {
+        ChatEvent {
+            id,
+            kind: kind.to_string(),
+            text: text.map(str::to_string),
+            ts: None,
+            intent_id: intent.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn sync_url_targets_sync_with_a_percent_encoded_token() {
+        assert_eq!(sync_url("http://127.0.0.1:9001", "tok"), "ws://127.0.0.1:9001/sync?token=tok");
+        // Reserved characters in the key are percent-encoded (NON_ALPHANUMERIC).
+        assert_eq!(sync_url("https://example.com", "a b/c"), "wss://example.com/sync?token=a%20b%2Fc");
+    }
+
+    #[test]
+    fn route_frame_prints_a_chat_line_and_advances_the_watermark() {
+        let mut last = 0i64;
+        let frame = SyncFrame::Append { agent: "scout".into(), events: vec![chat_event(5, "chat", Some("hi"), None)] };
+        match route_frame(frame, "scout", &mut last) {
+            FrameOutcome::Print(lines) => {
+                assert_eq!(lines.len(), 1);
+                assert_eq!(lines[0].speaker, Speaker::Agent);
+                assert_eq!(lines[0].text, "hi");
+            }
+            other => panic!("expected Print, got {other:?}"),
+        }
+        assert_eq!(last, 5);
+    }
+
+    #[test]
+    fn route_frame_prints_a_user_line_without_an_intent_id_as_you() {
+        let mut last = 0i64;
+        let frame = SyncFrame::Append { agent: "scout".into(), events: vec![chat_event(8, "user", Some("from the app"), None)] };
+        match route_frame(frame, "scout", &mut last) {
+            FrameOutcome::Print(lines) => assert_eq!(lines[0].speaker, Speaker::You),
+            other => panic!("expected Print, got {other:?}"),
+        }
+        assert_eq!(last, 8);
+    }
+
+    #[test]
+    fn route_frame_confirms_a_user_echo_carrying_an_intent_id_without_reprinting() {
+        let mut last = 0i64;
+        let frame = SyncFrame::Append { agent: "scout".into(), events: vec![chat_event(7, "user", Some("hey"), Some("cli-1"))] };
+        match route_frame(frame, "scout", &mut last) {
+            FrameOutcome::Confirm(intent) => assert_eq!(intent, "cli-1"),
+            other => panic!("expected Confirm, got {other:?}"),
+        }
+        // The echo is not reprinted, but its id still advances so a later tail refetch cannot dup it.
+        assert_eq!(last, 7);
+    }
+
+    #[test]
+    fn route_frame_ignores_other_agents_unknown_frames_and_replayed_ids() {
+        let mut last = 5i64;
+        let other = SyncFrame::Append { agent: "rover".into(), events: vec![chat_event(9, "chat", Some("x"), None)] };
+        assert!(matches!(route_frame(other, "scout", &mut last), FrameOutcome::Ignore));
+        assert_eq!(last, 5, "another agent's append does not move our watermark");
+
+        assert!(matches!(route_frame(SyncFrame::Unknown, "scout", &mut last), FrameOutcome::Ignore));
+        assert_eq!(last, 5);
+
+        // A replayed id (<= watermark) is the history/watch seam overlap: ignored, no rewind.
+        let replay = SyncFrame::Append { agent: "scout".into(), events: vec![chat_event(5, "chat", Some("dup"), None)] };
+        assert!(matches!(route_frame(replay, "scout", &mut last), FrameOutcome::Ignore));
+        assert_eq!(last, 5);
+    }
+
+    #[test]
+    fn route_frame_maps_resync_and_removed_only_for_the_watched_agent() {
+        let mut last = 0i64;
+        assert!(matches!(route_frame(SyncFrame::Resync { agent: "scout".into() }, "scout", &mut last), FrameOutcome::Resync));
+        assert!(matches!(route_frame(SyncFrame::Resync { agent: "rover".into() }, "scout", &mut last), FrameOutcome::Ignore));
+        assert!(matches!(route_frame(SyncFrame::AgentRemoved { name: "scout".into() }, "scout", &mut last), FrameOutcome::Removed));
+        assert!(matches!(route_frame(SyncFrame::AgentRemoved { name: "rover".into() }, "scout", &mut last), FrameOutcome::Ignore));
+        assert_eq!(last, 0);
+    }
+
+    // ── in-process fake `/sync` server (the CLI's own hermetic idiom) ──
+
+    type FakeWs = tungstenite::WebSocket<std::net::TcpStream>;
+
+    fn send_frame(ws: &mut FakeWs, body: &str) {
+        ws.send(tungstenite::Message::Text(body.to_string().into())).expect("server send");
+    }
+
+    fn read_frame(ws: &mut FakeWs) -> serde_json::Value {
+        loop {
+            if let tungstenite::Message::Text(text) = ws.read().expect("server read") {
+                return serde_json::from_str(text.as_str()).expect("server frame json");
+            }
+        }
+    }
+
+    /// Spawn a loopback server, run `drive` over the accepted `/sync` socket, and return the port
+    /// plus the join handle. Mirrors `connect_sync_socket_survives_a_slow_handshake`.
+    fn spawn_sync_server(drive: impl FnOnce(&mut FakeWs) + Send + 'static) -> (u16, std::thread::JoinHandle<()>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let port = listener.local_addr().expect("local addr").port();
+        let handle = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept");
+            let mut ws = tungstenite::accept(stream).expect("server handshake");
+            drive(&mut ws);
+        });
+        (port, handle)
+    }
+
+    fn connect_at(port: u16) -> SyncSocket {
+        connect_sync_socket(&test_client(), &format!("ws://127.0.0.1:{port}/sync?token=tok")).expect("connect")
+    }
+
+    fn empty_tail() -> impl FnMut() -> Result<Vec<ChatEvent>, String> {
+        || Ok(Vec::new())
+    }
+
+    #[test]
+    fn run_sync_session_handshakes_watches_and_folds_an_append() {
+        let (port, server) = spawn_sync_server(|ws| {
+            send_frame(ws, r#"{"type":"hello","protocol":1,"floor":1}"#);
+            send_frame(ws, r#"{"type":"snapshot","tree":{"agents":{"scout":{}}}}"#);
+            // The CLI sends watch only after the hello + roster gates pass.
+            assert_eq!(read_frame(ws), serde_json::json!({"type":"watch","agent":"scout"}));
+            send_frame(ws, r#"{"type":"append","agent":"scout","events":[{"id":5,"type":"chat","text":"hi"}]}"#);
+            // Flush a Close frame and drop: the CLI reads it and exits without acking, so the server
+            // must not wait on the close handshake completing.
+            ws.close(None).ok();
+            ws.flush().ok();
+        });
+
+        let mut socket = connect_at(port);
+        let mut last_id = 0i64;
+        let mut fetch = empty_tail();
+        let end = run_sync_session(&mut socket, "scout", false, &mut last_id, &mut fetch).expect("session runs");
+        assert!(matches!(end, SessionEnd::Closed), "a clean close ends the session");
+        assert_eq!(last_id, 5, "the append advanced the high-water mark");
+        server.join().expect("server thread");
+    }
+
+    #[test]
+    fn run_sync_session_rejects_a_floor_above_the_cli_protocol_before_watching() {
+        let (port, server) = spawn_sync_server(|ws| {
+            send_frame(ws, r#"{"type":"hello","protocol":2,"floor":2}"#);
+            // The CLI bails on the floor gate and never sends watch; the socket goes idle.
+        });
+
+        let mut socket = connect_at(port);
+        let mut last_id = 0i64;
+        let mut fetch = empty_tail();
+        let err = run_sync_session(&mut socket, "scout", false, &mut last_id, &mut fetch).expect_err("incompatible floor");
+        assert!(matches!(err, ChatError::Incompatible), "got: {err:?}");
+        server.join().expect("server thread");
+    }
+
+    #[test]
+    fn run_sync_session_errors_not_found_when_the_roster_lacks_the_agent() {
+        let (port, server) = spawn_sync_server(|ws| {
+            send_frame(ws, r#"{"type":"hello","protocol":1,"floor":1}"#);
+            send_frame(ws, r#"{"type":"snapshot","tree":{"agents":{"other":{}}}}"#);
+            // The CLI bails on the roster gate and never sends watch.
+        });
+
+        let mut socket = connect_at(port);
+        let mut last_id = 0i64;
+        let mut fetch = empty_tail();
+        let err = run_sync_session(&mut socket, "scout", false, &mut last_id, &mut fetch).expect_err("agent absent");
+        assert!(matches!(err, ChatError::NotFound), "got: {err:?}");
+        server.join().expect("server thread");
+    }
+
+    #[test]
+    fn run_sync_session_rewatches_and_refetches_the_tail_on_resync() {
+        let (port, server) = spawn_sync_server(|ws| {
+            send_frame(ws, r#"{"type":"hello","protocol":1,"floor":1}"#);
+            send_frame(ws, r#"{"type":"snapshot","tree":{"agents":{"scout":{}}}}"#);
+            assert_eq!(read_frame(ws), serde_json::json!({"type":"watch","agent":"scout"}));
+            send_frame(ws, r#"{"type":"resync","agent":"scout"}"#);
+            // The CLI re-watches in response to the resync before we close.
+            assert_eq!(read_frame(ws), serde_json::json!({"type":"watch","agent":"scout"}));
+            ws.close(None).ok();
+            ws.flush().ok();
+        });
+
+        let mut socket = connect_at(port);
+        let mut last_id = 0i64;
+        // The tail is fetched once on connect and again on the resync.
+        let fetch_calls = std::cell::Cell::new(0usize);
+        let mut fetch = || {
+            fetch_calls.set(fetch_calls.get() + 1);
+            Ok::<_, String>(Vec::<ChatEvent>::new())
+        };
+        let end = run_sync_session(&mut socket, "scout", false, &mut last_id, &mut fetch).expect("session runs");
+        assert!(matches!(end, SessionEnd::Closed));
+        assert_eq!(fetch_calls.get(), 2, "resync triggers a second tail fetch");
+        server.join().expect("server thread");
     }
 }
