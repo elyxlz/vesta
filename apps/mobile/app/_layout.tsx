@@ -33,6 +33,7 @@ import {
 } from "@/preferences/PreferencesProvider";
 import { PushCoordinator } from "@/notifications/PushCoordinator";
 import { SessionProvider, useSession } from "@/session/SessionProvider";
+import { ControllerProvider } from "@/controller/ControllerProvider";
 import { BootSplash } from "@/components/BootSplash";
 import { GatewayConnectionBanner } from "@/components/GatewayConnectionBanner";
 import { Text } from "@/components/ui/Typography";
@@ -308,8 +309,10 @@ export default function RootLayout() {
         <QueryClientProvider client={queryClient}>
           <PreferencesProvider>
             <SessionProvider>
-              <PushCoordinator />
-              <SessionNavigation />
+              <ControllerProvider>
+                <PushCoordinator />
+                <SessionNavigation />
+              </ControllerProvider>
             </SessionProvider>
           </PreferencesProvider>
         </QueryClientProvider>

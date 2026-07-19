@@ -60,6 +60,7 @@ interface SessionValue {
   version: GatewayVersionInfo | null;
   compatibility: CompatibilityState | null;
   recentGateways: RecentGateway[] | null;
+  refreshAccessToken: () => Promise<boolean>;
   connectLink: (link: string) => Promise<void>;
   connectRecentGateway: (id: string) => Promise<void>;
   forgetRecentGateway: (id: string) => Promise<void>;
@@ -380,6 +381,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       version,
       compatibility,
       recentGateways,
+      refreshAccessToken: api.forceRefresh,
       connectLink,
       connectRecentGateway,
       forgetRecentGateway,
