@@ -419,7 +419,8 @@ pub(crate) struct SendMessageBody {
 
 /// Relay a send-message intent to the agent over the tap's write-half. Returns a typed retryable
 /// `503` when the tap is down (agent restarting/evicted) so the client keeps its composer and
-/// retries; a `200` ack means the agent's intake accepted the message.
+/// retries; a `200` ack means the frame was queued onto the live tap, not that the agent read it.
+/// Delivery truth is the `append` echo carrying the intent id; clients dedup and confirm by id.
 pub(crate) async fn send_message_handler(
     State(state): State<SharedState>,
     axum::extract::Path(name): axum::extract::Path<String>,
