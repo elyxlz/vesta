@@ -166,16 +166,28 @@ export function useAgentSocketState({
     pendingIntentsRef.current = new Set();
     resetTyping();
 
-    // Reseed the tail from the newest history page, dropping any prior live buffer. Serves both the
-    // initial load and a resync (the id set is rebuilt, so later appends dedup against it).
+    // Reseed the tail from the newest history page and MERGE, never replace: a live row that raced the
+    // fetch (id absent from the page) and an optimistic bubble still awaiting its echo both survive, so
+    // no delivered or in-flight message is dropped. shownIds is UNIONed with the page ids (queued chat
+    // and prior appends keep their dedup entries). Serves the initial load and a resync alike.
     const seedTail = async () => {
       const page = await fetchHistory(agent, "app-chat");
       if (cancelled) return;
-      shownIdsRef.current = new Set(
+      const pageIds = new Set<number>(
         page.events.flatMap((e) => (e.id != null ? [e.id] : [])),
       );
       setCursor(page.cursor);
-      setMessages(capTail(page.events));
+      setMessages((prev) => {
+        const survivors = prev.filter(
+          (m) =>
+            (m.type === "user" &&
+              m.intent_id != null &&
+              pendingIntentsRef.current.has(m.intent_id)) ||
+            (m.id != null && !pageIds.has(m.id)),
+        );
+        return capTail([...page.events, ...survivors]);
+      });
+      for (const id of pageIds) shownIdsRef.current.add(id);
       setHistoryLoaded(true);
     };
 
