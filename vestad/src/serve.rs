@@ -483,10 +483,37 @@ async fn create_agent_handler(
     }));
 
     let result = create_and_start(&state, &name, manage_core_code, &progress).await;
+    // On success, retire the bridging build phase only once the poll lists the new container, so the
+    // synthetic mid-build roster row is replaced in place. Clearing it while the container is not yet
+    // listed drops the row entirely for a poll, emitting a spurious `agent_removed` that tears down a
+    // /sync watch registered before create (watch-before-create must survive materialization).
+    if result.is_ok() {
+        wait_for_agent_listed(&state, &name).await;
+    }
     state.agent_status_cache.clear_build_phase(&name);
     let name = result?;
 
     Ok((StatusCode::CREATED, Json(serde_json::json!({"name": name}))))
+}
+
+/// Block until `name` appears in the agent-status roster, bounded so a container that never lists
+/// (a create racing a destroy) still returns and lets the caller clear the phase as a fail-safe.
+async fn wait_for_agent_listed(state: &SharedState, name: &str) {
+    const LISTED_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+    let mut agents_rx = state.agent_status_cache.subscribe_agents();
+    let deadline = tokio::time::Instant::now() + LISTED_TIMEOUT;
+    loop {
+        if agents_rx
+            .borrow_and_update()
+            .iter()
+            .any(|entry| crate::docker::normalize_name(&entry.name) == name)
+        {
+            return;
+        }
+        if tokio::time::timeout_at(deadline, agents_rx.changed()).await.is_err() {
+            return;
+        }
+    }
 }
 
 /// Run the create then the start, reporting `Starting` between them. Split out so
