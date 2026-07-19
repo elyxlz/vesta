@@ -1,4 +1,4 @@
-import { requireNativeModule } from "expo";
+import { requireOptionalNativeModule } from "expo";
 
 interface VestaAudioSessionModule {
   setRecordingHapticsEnabledAsync(enabled: boolean): Promise<void>;
@@ -6,14 +6,14 @@ interface VestaAudioSessionModule {
 }
 
 const audioSession =
-  requireNativeModule<VestaAudioSessionModule>("VestaAudioSession");
+  requireOptionalNativeModule<VestaAudioSessionModule>("VestaAudioSession");
 
 export async function setRecordingHapticsEnabled(
   enabled: boolean,
 ): Promise<void> {
-  await audioSession.setRecordingHapticsEnabledAsync(enabled);
+  await audioSession?.setRecordingHapticsEnabledAsync(enabled);
 }
 
 export async function triggerTranscriptHaptic(): Promise<void> {
-  await audioSession.transcriptHapticAsync();
+  await audioSession?.transcriptHapticAsync();
 }
