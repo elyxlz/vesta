@@ -1787,7 +1787,7 @@ pub enum BuildPhase {
 }
 
 /// A cheap, clonable sink for `BuildPhase` updates. The create handler wires one
-/// that records into shared state for the build-phase endpoint.
+/// that records into shared state, which the roster (and the replica tree) carries.
 #[derive(Clone)]
 pub struct BuildProgress {
     sink: std::sync::Arc<dyn Fn(BuildPhase) + Send + Sync>,

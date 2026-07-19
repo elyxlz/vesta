@@ -52,6 +52,7 @@ function agentRowsEqual(a: AgentRow[], b: AgentRow[]): boolean {
       row.name === other.name &&
       row.status === other.status &&
       row.activityState === other.activityState &&
+      row.buildPhase === other.buildPhase &&
       row.startedAt === other.startedAt &&
       servicesEqual(row.services, other.services)
     );
@@ -118,8 +119,6 @@ function ReplicaGateway({
     reachable: syncState === "open",
     managed: gateway?.managed ?? false,
     gatewayVersion: gateway?.version ?? "",
-    // The sync tree does not carry the dev git branch; it stays null until the tree does.
-    gatewayBranch: null,
     gatewayChannel: gateway?.channel ?? "stable",
     gatewayAutoUpdate: gateway?.autoUpdate ?? true,
     gatewayPort: gateway?.port ?? 0,

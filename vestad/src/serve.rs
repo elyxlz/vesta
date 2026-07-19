@@ -19,7 +19,7 @@ use crate::settings::{
 };
 use crate::state::{err_response, map_docker_err, ok_json, AppState, SharedState};
 use crate::{
-    agent_provider, agent_proxy, agent_status, auth, backup, control_ws, docker, mobile_app,
+    agent_provider, agent_proxy, agent_status, auth, backup, docker, mobile_app,
     self_update, systemd, update_check, update_window,
 };
 
@@ -474,16 +474,16 @@ async fn create_agent_handler(
     // Create + start an empty agent. Credentials and preferences arrive via a separate
     // PUT /agents/{name}/config once the agent is up — the agent owns its own credential
     // files now, vestad only orchestrates. `create_agent` reports coarse phases into shared
-    // state so GET /agents/{name}/build-phase can drive honest onboarding status while this
-    // synchronous call is in flight.
-    let phases = state.clone();
+    // state so the roster (and the replica tree it feeds) shows honest onboarding status while
+    // this synchronous call is in flight.
+    let phases = state.agent_status_cache.clone();
     let progress_name = name.clone();
     let progress = docker::BuildProgress::new(Arc::new(move |phase| {
         phases.set_build_phase(&progress_name, phase);
     }));
 
     let result = create_and_start(&state, &name, manage_core_code, &progress).await;
-    state.clear_build_phase(&name);
+    state.agent_status_cache.clear_build_phase(&name);
     let name = result?;
 
     Ok((StatusCode::CREATED, Json(serde_json::json!({"name": name}))))
@@ -513,14 +513,6 @@ async fn create_and_start(
         .map_err(map_docker_err)?;
 
     Ok(name)
-}
-
-async fn build_phase_handler(
-    State(state): State<SharedState>,
-    Path(name): Path<String>,
-) -> Json<serde_json::Value> {
-    let phase = state.build_phase(&docker::normalize_name(&name));
-    Json(serde_json::json!({ "phase": phase }))
 }
 
 async fn agent_status_handler(
@@ -2285,7 +2277,6 @@ pub fn build_router(state: SharedState) -> Router {
                 .delete(destroy_agent_handler)
                 .patch(rename_agent_handler),
         )
-        .route("/agents/{name}/build-phase", get(build_phase_handler))
         .route("/agents/{name}/message", post(crate::sync::send_message_handler))
         .route("/agents/{name}/start", post(start_agent_handler))
         .route(
@@ -2364,7 +2355,6 @@ pub fn build_router(state: SharedState) -> Router {
             "/agents/{name}/backups/{backup_id}/restore",
             post(restore_backup_handler),
         )
-        .route("/ws", get(control_ws::control_ws_handler))
         .route("/sync", get(crate::sync::sync_ws_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -2391,7 +2381,7 @@ pub fn build_router(state: SharedState) -> Router {
         )
         .route(
             "/agents/{name}/services/{service}/invalidate",
-            post(control_ws::invalidate_service_handler),
+            post(agent_status::invalidate_service_handler),
         )
         .route("/agents/{name}/account-token", post(account_token_handler))
         .route(
@@ -3405,8 +3395,7 @@ mod tests {
         .map(|status| serde_json::to_value(status).expect("serialize AgentStatus"))
         .collect();
 
-        // Feeds both the plain GET /agents response (Vec<ListEntry>, the CLI's `vesta list`)
-        // and, further below, the control WS "agents" message built by the production code path.
+        // The plain GET /agents response (Vec<ListEntry>, the CLI's `vesta list`).
         let agents = vec![
             ListEntry {
                 name: "sample-agent".into(),
@@ -3422,24 +3411,6 @@ mod tests {
             },
         ];
         let agents_json = serde_json::to_value(&agents).expect("serialize ListEntry list");
-        let mut activity = HashMap::new();
-        activity.insert("sample-agent".to_string(), "thinking".to_string());
-        let mut agent_services = HashMap::new();
-        agent_services.insert(
-            "dashboard".to_string(),
-            ServiceEntry {
-                port: 8080,
-                public: true,
-            },
-        );
-        let mut services = HashMap::new();
-        services.insert("sample-agent".to_string(), agent_services);
-        let mut agent_revs = HashMap::new();
-        agent_revs.insert("dashboard".to_string(), 3u64);
-        let mut revs = HashMap::new();
-        revs.insert("sample-agent".to_string(), agent_revs);
-        let agents_ws_message =
-            crate::control_ws::build_agents_message(&agents, &activity, &services, &revs);
 
         let backups: Vec<serde_json::Value> = [
             BackupType::Manual,
@@ -3505,7 +3476,6 @@ mod tests {
         serde_json::json!({
             "agent_statuses": agent_statuses,
             "agents": agents_json,
-            "agents_ws_message": agents_ws_message,
             "agent_status_json": agent_status_json,
             "backups": backups,
             "auth_start": auth_start,

@@ -72,7 +72,7 @@ function EnabledPushCoordinator() {
   const router = useRouter();
   const pathname = usePathname();
   const session = useSession();
-  const { reachable, agentsReady, agents, compatible } = useRoster();
+  const { reachable, agentsReady, agents } = useRoster();
   const preferences = usePreferences();
   const [pending, setPending] = useState<PendingNotification | null>(null);
   const processingNotification = useRef<string | null>(null);
@@ -134,7 +134,6 @@ function EnabledPushCoordinator() {
       agentsReady,
       agentNames: agents.map((agent) => agent.name),
       routeReady,
-      compatible,
       currentGateway: session.connection?.url ?? null,
     });
     if (decision === "wait") return;
@@ -166,7 +165,6 @@ function EnabledPushCoordinator() {
     reachable,
     agentsReady,
     agents,
-    compatible,
   ]);
 
   useEffect(() => {

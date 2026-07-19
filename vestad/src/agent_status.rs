@@ -2,6 +2,11 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    Json,
+};
 use bollard::Docker;
 use futures_util::StreamExt;
 use tokio::sync::watch;
@@ -9,9 +14,34 @@ use tokio::sync::watch;
 use crate::docker::{self, ListEntry};
 use crate::mobile_app::MobileApp;
 use crate::settings::ServiceEntry;
+use crate::state::{err_response, ok_json, SharedState};
 use crate::sync::{activity_state, alert_for, notification_change, SyncHub};
 
 const POLL_INTERVAL_SECS: u64 = 3;
+
+pub async fn invalidate_service_handler(
+    State(state): State<SharedState>,
+    Path((name, service_name)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let settings = state.settings.read().await;
+    let exists = settings
+        .services
+        .get(&name)
+        .is_some_and(|s| s.contains_key(&service_name));
+    if !exists {
+        return Err(err_response(
+            StatusCode::NOT_FOUND,
+            &format!("service '{service_name}' not registered for agent '{name}'"),
+        ));
+    }
+    drop(settings);
+
+    state
+        .agent_status_cache
+        .invalidate_service(&name, &service_name);
+    tracing::debug!(agent = %name, service = %service_name, "service invalidated");
+    Ok(ok_json())
+}
 
 // --- High-level status queries (used by serve.rs handlers and the poll task) ---
 
@@ -158,6 +188,11 @@ pub struct AgentStatusCache {
     /// Monotonic per-service revision counters (agent -> service -> rev).
     /// Bumped when a service's state changes; clients refetch on a higher rev.
     revs: Mutex<HashMap<String, HashMap<String, u64>>>,
+    /// Coarse, in-flight build phase per agent, keyed by normalized name. Written by the create
+    /// handler as `create_agent` progresses; the roster unions these in so onboarding shows the
+    /// phase even before the container exists (Pulling/Building run first). Entries exist only for
+    /// the duration of a create and are removed when it settles.
+    build_phases: Mutex<HashMap<String, docker::BuildPhase>>,
 }
 
 impl AgentStatusCache {
@@ -179,6 +214,7 @@ impl AgentStatusCache {
             invalidations_tx,
             invalidations_rx,
             revs: Mutex::new(HashMap::new()),
+            build_phases: Mutex::new(HashMap::new()),
         }
     }
 
@@ -236,6 +272,35 @@ impl AgentStatusCache {
         }
         // Wake all WS loops.
         let _ = self.invalidations_tx.send(());
+    }
+
+    /// Record the current build phase for `name` (normalized) and wake WS loops so the transition
+    /// reaches onboarding within a tick. Lock poisoning is recovered in place: a panic mid-build
+    /// must not wedge later creates.
+    pub fn set_build_phase(&self, name: &str, phase: docker::BuildPhase) {
+        self.build_phases
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(name.to_string(), phase);
+        let _ = self.invalidations_tx.send(());
+    }
+
+    /// Drop the build-phase entry for `name` once a create settles (success or error) and wake WS
+    /// loops so the synthetic mid-build row retires promptly.
+    pub fn clear_build_phase(&self, name: &str) {
+        self.build_phases
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(name);
+        let _ = self.invalidations_tx.send(());
+    }
+
+    /// Snapshot of every in-flight build phase (normalized name -> phase).
+    pub fn build_phases(&self) -> HashMap<String, docker::BuildPhase> {
+        self.build_phases
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// Current revision for each agent+service.
