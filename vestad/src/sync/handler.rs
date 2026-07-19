@@ -305,8 +305,10 @@ fn handle_client_frame(
     ControlFlow::Continue(())
 }
 
-/// Spawn the forward task for one watch: the hub's live edge becomes `append` deltas; a `Resync` or a
-/// lagging receiver (overflow) becomes one `resync` delta and ends the watch (client re-watches).
+/// Spawn the forward task for one watch: the hub's live edge becomes `append` deltas. Any live-edge
+/// gap becomes one `resync` delta that ends the watch (the client re-watches and refetches the tail by
+/// id): an explicit resync (tap reconnect), a lagging receiver (overflow), or the channel being
+/// forgotten when the agent's tap drops on a restart (`Closed`), which is a gap just like the others.
 fn spawn_watch(sync_hub: &SyncHub, agent: &str, watch_tx: mpsc::Sender<Frame>) -> tokio::task::AbortHandle {
     let mut events = sync_hub.subscribe_events(agent);
     let agent = agent.to_string();
@@ -319,11 +321,11 @@ fn spawn_watch(sync_hub: &SyncHub, agent: &str, watch_tx: mpsc::Sender<Frame>) -
                         break;
                     }
                 }
-                Ok(LiveMessage::Resync) | Err(broadcast::error::RecvError::Lagged(_)) => {
+                Ok(LiveMessage::Resync)
+                | Err(broadcast::error::RecvError::Lagged(_) | broadcast::error::RecvError::Closed) => {
                     let _ = watch_tx.send(Frame::Resync { agent: agent.clone() }).await;
                     break;
                 }
-                Err(broadcast::error::RecvError::Closed) => break,
             }
         }
     });
@@ -701,6 +703,21 @@ mod tests {
             tokio::task::yield_now().await;
         }
         assert!(matches!(watch_rx.try_recv(), Err(mpsc::error::TryRecvError::Empty)));
+        abort_all(watches);
+    }
+
+    #[tokio::test]
+    async fn a_forgotten_channel_yields_one_resync_and_ends_the_watch() {
+        // A watched agent whose tap drops on a restart has its channel forgotten (the broadcast
+        // sender dropped); the watch must surface that gap as a resync, not die silently.
+        let hub = SyncHub::new();
+        let (watch_tx, mut watch_rx) = mpsc::channel::<Frame>(WATCH_FANIN_CAPACITY);
+        let mut watches = HashMap::new();
+        let mut deadline = None;
+
+        let _ = handle_client_frame(&hub, "key", r#"{"type":"watch","agent":"scout"}"#, &mut watches, &watch_tx, &mut deadline);
+        hub.forget_agent("scout");
+        assert!(matches!(watch_rx.recv().await, Some(Frame::Resync { agent }) if agent == "scout"));
         abort_all(watches);
     }
 
