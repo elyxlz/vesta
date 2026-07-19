@@ -102,6 +102,15 @@ describe("createSyncSocket", () => {
     expect(h.timers).toHaveLength(0)
   })
 
+  it("defers a watch requested before open, then replays it once", () => {
+    const h = harness()
+    const sync = start(h)
+    sync.watch("a")
+    expect(h.sockets[0]?.sent).toEqual([])
+    h.sockets[0]?.onopen?.()
+    expect(h.sockets[0]?.sent).toEqual([JSON.stringify({ type: "watch", agent: "a" })])
+  })
+
   it("replays desired watches on reconnect", () => {
     const h = harness()
     const sync = start(h)

@@ -53,6 +53,7 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
   let timer: number | null = null
   let delay = base
   let terminal = false
+  let open = false
 
   const detach = (target: SocketLike): void => {
     target.onopen = null
@@ -60,8 +61,10 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
     target.onclose = null
   }
 
+  // Only send on an open socket: a browser WebSocket throws before OPEN, and the
+  // onopen replay delivers the desired watches, so the connecting window sends nothing.
   const emit = (frame: ClientFrame): void => {
-    if (socket) socket.send(encodeFrame(frame))
+    if (open && socket) socket.send(encodeFrame(frame))
   }
 
   const scheduleReconnect = (): void => {
@@ -74,6 +77,7 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
 
   const goIncompatible = (): void => {
     terminal = true
+    open = false
     if (socket) {
       detach(socket)
       socket.close()
@@ -102,6 +106,7 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
 
   function connect(): void {
     if (terminal) return
+    open = false
     callbacks.onStateChange("connecting")
     let url: string
     try {
@@ -114,6 +119,7 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
     socket = current
     current.onopen = () => {
       if (socket !== current) return
+      open = true
       delay = base
       callbacks.onStateChange("open")
       for (const agent of watches.desired()) current.send(encodeFrame(watchFrame(agent)))
@@ -123,6 +129,7 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
     }
     current.onclose = () => {
       if (socket !== current) return
+      open = false
       socket = null
       if (terminal) return
       scheduleReconnect()
@@ -145,6 +152,7 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
     },
     close: () => {
       terminal = true
+      open = false
       if (timer !== null) {
         deps.clearTimer(timer)
         timer = null
