@@ -474,8 +474,8 @@ async fn create_agent_handler(
     // Create + start an empty agent. Credentials and preferences arrive via a separate
     // PUT /agents/{name}/config once the agent is up — the agent owns its own credential
     // files now, vestad only orchestrates. `create_agent` reports coarse phases into shared
-    // state so GET /agents/{name}/build-phase can drive honest onboarding status while this
-    // synchronous call is in flight.
+    // state so the roster (and the replica tree it feeds) shows honest onboarding status while
+    // this synchronous call is in flight.
     let phases = state.clone();
     let progress_name = name.clone();
     let progress = docker::BuildProgress::new(Arc::new(move |phase| {
@@ -513,14 +513,6 @@ async fn create_and_start(
         .map_err(map_docker_err)?;
 
     Ok(name)
-}
-
-async fn build_phase_handler(
-    State(state): State<SharedState>,
-    Path(name): Path<String>,
-) -> Json<serde_json::Value> {
-    let phase = state.build_phase(&docker::normalize_name(&name));
-    Json(serde_json::json!({ "phase": phase }))
 }
 
 async fn agent_status_handler(
@@ -2285,7 +2277,6 @@ pub fn build_router(state: SharedState) -> Router {
                 .delete(destroy_agent_handler)
                 .patch(rename_agent_handler),
         )
-        .route("/agents/{name}/build-phase", get(build_phase_handler))
         .route("/agents/{name}/message", post(crate::sync::send_message_handler))
         .route("/agents/{name}/start", post(start_agent_handler))
         .route(

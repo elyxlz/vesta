@@ -118,9 +118,9 @@ pub struct AppState {
     pub(crate) expose_lan: bool,
     pub(crate) lan_url: Option<String>,
     /// Coarse, in-flight build phase per agent, keyed by normalized name. Written
-    /// by the create handler as `create_agent` progresses and read by the
-    /// build-phase endpoint so onboarding shows honest status. Entries exist only
-    /// for the duration of a create and are removed when it settles.
+    /// by the create handler as `create_agent` progresses and read into the roster
+    /// (and the replica tree it feeds) so onboarding shows honest status. Entries
+    /// exist only for the duration of a create and are removed when it settles.
     build_phases: Arc<std::sync::Mutex<HashMap<String, docker::BuildPhase>>>,
 }
 
