@@ -16,8 +16,8 @@ use crate::{agent_status, docker, mobile_app, update_check};
 
 pub(crate) const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
 
-// Server-originated WebSocket ping cadence for the control (`/ws`) and agent-proxy
-// (`/agents/{name}/ws`) sockets. Idle connections through the Cloudflare tunnel are reaped
+// Server-originated WebSocket ping cadence for the `/sync` and registered-service proxy
+// sockets. Idle connections through the Cloudflare tunnel are reaped
 // by the edge after ~100s of silence; a periodic ping keeps frames flowing so the socket
 // survives an idle client. Must stay comfortably under that window.
 pub(crate) const WS_KEEPALIVE_INTERVAL_SECS: u64 = 30;
