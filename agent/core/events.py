@@ -61,6 +61,9 @@ class UserEvent(_BaseEvent):
     type: tp.Literal["user"]
     text: str
     input_method: tp.NotRequired[tp.Literal["voice", "typed"]]
+    # The client-generated send-message id, echoed back so the optimistic UI dedups by id (not text)
+    # and a replayed send stays idempotent. Absent when the client sent none.
+    intent_id: tp.NotRequired[str]
 
 
 class ErrorEvent(_BaseEvent):

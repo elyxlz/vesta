@@ -609,3 +609,57 @@ async def test_memory_put_rejects_non_dict_body(event_bus, tmp_path):
             assert resp.status == 400
     finally:
         await runner.cleanup()
+
+
+@pytest.mark.anyio
+async def test_ws_message_threads_intent_id_to_user_event_and_notification(event_bus, tmp_path):
+    """A send-message carrying an intent_id echoes it back on the UserEvent (so the client dedups
+    its optimistic echo by id) and stores it on the intake notification (idempotency seam)."""
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
+    runner, base = await _start_server_with_config(event_bus, config)
+    try:
+        async with ClientSession() as session, session.ws_connect(f"{base}/ws") as ws:
+            await asyncio.wait_for(ws.receive(), timeout=1.0)  # snapshot
+            await ws.send_json({"type": "message", "text": "hi there", "intent_id": "intent-abc"})
+            received = await _drain_until(ws, lambda got: any(e["type"] == "user" for e in got))
+            user = next(e for e in received if e["type"] == "user")
+            assert user["intent_id"] == "intent-abc"
+            await wait_for_condition(
+                lambda: len(list(config.notifications_dir.glob("*.json"))) == 1,
+                message="expected one intake notification",
+            )
+        notif = json.loads(next(iter(config.notifications_dir.glob("*-app-chat-message.json"))).read_text())
+        assert notif["intent_id"] == "intent-abc"
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.anyio
+async def test_ws_message_without_intent_id_stays_absent(event_bus, tmp_path):
+    """intent_id is tolerant: a send-message without one yields a UserEvent and a notification with
+    no intent_id key at all, not a null."""
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
+    runner, base = await _start_server_with_config(event_bus, config)
+    try:
+        async with ClientSession() as session, session.ws_connect(f"{base}/ws") as ws:
+            await asyncio.wait_for(ws.receive(), timeout=1.0)  # snapshot
+            await ws.send_json({"type": "message", "text": "no intent"})
+            received = await _drain_until(ws, lambda got: any(e["type"] == "user" for e in got))
+            user = next(e for e in received if e["type"] == "user")
+            assert "intent_id" not in user
+            await wait_for_condition(
+                lambda: len(list(config.notifications_dir.glob("*.json"))) == 1,
+                message="expected one intake notification",
+            )
+        notif = json.loads(next(iter(config.notifications_dir.glob("*-app-chat-message.json"))).read_text())
+        assert "intent_id" not in notif
+    finally:
+        await runner.cleanup()
+
+
+def test_write_app_chat_notification_stores_intent_id(config):
+    """The intake helper persists a provided intent_id as a notification field."""
+    _write_app_chat_notification(config, "hello", "intent-xyz")
+    files = list(config.notifications_dir.glob("*.json"))
+    assert len(files) == 1
+    assert json.loads(files[0].read_text())["intent_id"] == "intent-xyz"
