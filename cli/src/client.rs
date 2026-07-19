@@ -333,6 +333,119 @@ pub struct Manifest {
     pub providers: std::collections::HashMap<String, ProviderEntry>,
 }
 
+// ── /sync chat DTOs, send-message intent, history tail ──────────
+
+/// The CLI's own minimal mirror of the `/sync` server->client union (spec "Delta catalog").
+/// Only the frames chat consumes are modelled; every other `type` (state/agent/notifications/alert
+/// and any future addition) folds into `Unknown` and is ignored by rule. No shared crate: this
+/// duplicates just the shapes chat reads from vestad/src/sync/protocol.rs.
+#[derive(serde::Deserialize, Debug)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum SyncFrame {
+    Hello { protocol: u32, floor: u32 },
+    Snapshot { tree: RosterSnapshot },
+    Append { agent: String, events: Vec<ChatEvent> },
+    Resync { agent: String },
+    AgentRemoved { name: String },
+    #[serde(other)]
+    Unknown,
+}
+
+/// The snapshot is tail-less; chat only needs the roster key set to confirm the agent exists.
+#[derive(serde::Deserialize, Debug)]
+struct RosterSnapshot {
+    agents: std::collections::BTreeMap<String, serde::de::IgnoredAny>,
+}
+
+/// One conversation event as chat renders it. `id` is the events.db rowid (dedup key); `intent_id`
+/// is present on the user echo of a send (delivery-truth match); other fields are opaque.
+#[derive(serde::Deserialize, Debug)]
+struct ChatEvent {
+    id: i64,
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    ts: Option<String>,
+    #[serde(default)]
+    intent_id: Option<String>,
+}
+
+/// The history page shape (`{events, cursor}`); the cursor is dropped (chat loads one recent page).
+#[derive(serde::Deserialize, Debug)]
+struct HistoryPage {
+    events: Vec<ChatEvent>,
+}
+
+const CLI_PROTOCOL: u32 = 1;
+const CHAT_TAIL_LIMIT: u32 = 50;
+
+/// A send-message failure the engine branches on without string-matching: retry the same intent id,
+/// or surface and stop.
+#[derive(Debug)]
+enum SendError {
+    /// The tap is down (agent restarting/evicted): retry with the SAME `intent_id`.
+    Retryable(String),
+    /// A non-retryable failure (auth, 4xx, transport): surface and stop retrying.
+    Fatal(String),
+}
+
+impl std::fmt::Display for SendError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SendError::Retryable(msg) | SendError::Fatal(msg) => f.write_str(msg),
+        }
+    }
+}
+
+impl std::error::Error for SendError {}
+
+/// True when the CLI's protocol is at or above the server's advertised floor.
+fn is_compatible(cli_protocol: u32, hello_floor: u32) -> bool {
+    cli_protocol >= hello_floor
+}
+
+/// A process-unique, strictly increasing send-message intent id. The per-process nonce keeps two
+/// concurrent CLI sessions from minting colliding ids (which the agent would dedup as a replay); the
+/// zero-padded counter makes ids sort in mint order.
+fn next_intent_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    static NONCE: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    let nonce = *NONCE.get_or_init(|| {
+        u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos())).unwrap_or(0)
+    });
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("cli-{nonce:016x}-{seq:016x}")
+}
+
+/// Advance the printed-watermark and report whether this event id is new (`id > last`); dedup keyed
+/// on the events.db rowid so a snapshot/append overlap never double-prints a line.
+fn should_print(id: i64, last: &mut i64) -> bool {
+    if id > *last {
+        *last = id;
+        true
+    } else {
+        false
+    }
+}
+
+/// Classify a send-message response: 2xx is delivered, a retryable `503` keeps the composer for a
+/// same-intent retry, anything else is fatal. Pure so the mapping is unit-tested without a socket.
+fn classify_send(status: u16, body: &str) -> Result<(), SendError> {
+    if (200..300).contains(&status) {
+        return Ok(());
+    }
+    let value = serde_json::from_str::<serde_json::Value>(body).ok();
+    let error_msg = value.as_ref().and_then(|v| v["error"].as_str()).map(str::to_string);
+    let retryable = value.as_ref().and_then(|v| v["retryable"].as_bool()).unwrap_or(false);
+    if status == 503 && retryable {
+        return Err(SendError::Retryable(error_msg.unwrap_or_else(|| "send unavailable, tap is down".into())));
+    }
+    Err(SendError::Fatal(error_msg.unwrap_or_else(|| format!("send failed ({status})"))))
+}
+
 impl Client {
     pub fn new(config: &ServerConfig) -> Result<Self, String> {
         let tls_config = if let Some(ref pem) = config.cert_pem {
@@ -782,6 +895,29 @@ impl Client {
     pub fn set_notification_rules(&self, name: &str, rules: &[serde_json::Value]) -> Result<(), String> {
         self.put_json(&format!("/agents/{name}/config"), &serde_json::json!({ "notification_rules": rules }))?;
         Ok(())
+    }
+
+    /// Deliver a send-message intent (`POST /agents/{name}/message` with `intent_id`, no
+    /// `input_method`). Reads the raw status/body and routes them through `classify_send` so a
+    /// retryable `503` (tap down) stays distinct from a fatal failure; deliberately bypasses
+    /// `check_response`, which would flatten every non-2xx into one indistinguishable string.
+    fn send_message(&self, name: &str, text: &str, intent_id: &str) -> Result<(), SendError> {
+        let body = serde_json::json!({ "text": text, "intent_id": intent_id });
+        let resp = self
+            .authorized(self.agent.post(self.url(&format!("/agents/{name}/message"))))
+            .send_json(&body)
+            .map_err(|e| SendError::Fatal(map_error(&self.base_url, e)))?;
+        let status = resp.status().as_u16();
+        let response_body = resp.into_body().read_to_string().unwrap_or_default();
+        classify_send(status, &response_body)
+    }
+
+    /// One recent page of the app-chat conversation (`GET /agents/{name}/history`), oldest-to-newest
+    /// within the page as the agent serves it; the cursor is dropped (the terminal has no scrollback).
+    fn fetch_chat_tail(&self, name: &str) -> Result<Vec<ChatEvent>, String> {
+        let page: HistoryPage =
+            read_json(self.get(&format!("/agents/{name}/history?channel=app-chat&limit={CHAT_TAIL_LIMIT}"))?)?;
+        Ok(page.events)
     }
 }
 
@@ -1250,6 +1386,195 @@ mod tests {
         assert!(err.contains("fingerprint mismatch"), "got: {err}");
         assert!(err.contains(expected), "error must name expected pin, got: {err}");
         assert!(err.contains(actual), "error must name actual pin, got: {err}");
+    }
+
+    #[test]
+    fn sync_frame_parses_the_frames_chat_consumes() {
+        let hello: SyncFrame = serde_json::from_str(r#"{"type":"hello","version":"0.1.0","protocol":1,"floor":1}"#)
+            .expect("hello parses (extra version field ignored)");
+        match hello {
+            SyncFrame::Hello { protocol, floor } => {
+                assert_eq!(protocol, 1);
+                assert_eq!(floor, 1);
+            }
+            other => panic!("expected Hello, got {other:?}"),
+        }
+
+        let snapshot: SyncFrame =
+            serde_json::from_str(r#"{"type":"snapshot","tree":{"gateway":{"any":"thing"},"agents":{"alpha":{"x":1}}}}"#)
+                .expect("snapshot parses (gateway branch ignored)");
+        match snapshot {
+            SyncFrame::Snapshot { tree } => {
+                assert!(tree.agents.contains_key("alpha"), "roster key set is read");
+            }
+            other => panic!("expected Snapshot, got {other:?}"),
+        }
+
+        let append: SyncFrame =
+            serde_json::from_str(r#"{"type":"append","agent":"alpha","events":[{"id":5,"type":"chat","text":"hi"}]}"#)
+                .expect("append parses");
+        match append {
+            SyncFrame::Append { agent, events } => {
+                assert_eq!(agent, "alpha");
+                assert_eq!(events.len(), 1);
+                assert_eq!(events[0].id, 5);
+            }
+            other => panic!("expected Append, got {other:?}"),
+        }
+
+        let resync: SyncFrame = serde_json::from_str(r#"{"type":"resync","agent":"alpha"}"#).expect("resync parses");
+        match resync {
+            SyncFrame::Resync { agent } => assert_eq!(agent, "alpha"),
+            other => panic!("expected Resync, got {other:?}"),
+        }
+
+        let removed: SyncFrame = serde_json::from_str(r#"{"type":"agent_removed","name":"beta"}"#).expect("agent_removed parses");
+        match removed {
+            SyncFrame::AgentRemoved { name } => assert_eq!(name, "beta"),
+            other => panic!("expected AgentRemoved, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sync_frame_folds_unknown_types_and_rejects_a_missing_tag() {
+        // Every other delta (state/agent/notifications/alert and any future addition) folds to Unknown.
+        for raw in [
+            r#"{"type":"state","scope":"gateway","value":{}}"#,
+            r#"{"type":"notifications","agent":"alpha","pending":[]}"#,
+            r#"{"type":"alert","agent":"alpha","event":{},"preview":"x"}"#,
+            r#"{"type":"brand_new_frame","whatever":true}"#,
+        ] {
+            let frame: SyncFrame = serde_json::from_str(raw).expect("unknown type folds to Unknown");
+            assert!(matches!(frame, SyncFrame::Unknown), "raw: {raw}");
+        }
+        // A frame with no discriminator is a hard parse error, not Unknown.
+        assert!(serde_json::from_str::<SyncFrame>(r#"{"agent":"alpha"}"#).is_err(), "missing type must error");
+    }
+
+    #[test]
+    fn chat_event_parses_with_and_without_intent_id() {
+        // Agent echo of a send carries intent_id; other events omit it, and ts is optional.
+        let echo: ChatEvent = serde_json::from_str(r#"{"id":9,"type":"user","text":"hey","intent_id":"cli-1"}"#)
+            .expect("user echo parses");
+        assert_eq!(echo.id, 9);
+        assert_eq!(echo.kind, "user");
+        assert_eq!(echo.text.as_deref(), Some("hey"));
+        assert_eq!(echo.ts, None);
+        assert_eq!(echo.intent_id.as_deref(), Some("cli-1"));
+
+        let reply: ChatEvent = serde_json::from_str(r#"{"id":10,"type":"chat","text":"hi","ts":"2026-07-19T12:00:00Z"}"#)
+            .expect("agent reply parses");
+        assert_eq!(reply.id, 10);
+        assert_eq!(reply.kind, "chat");
+        assert_eq!(reply.ts.as_deref(), Some("2026-07-19T12:00:00Z"));
+        assert_eq!(reply.intent_id, None);
+    }
+
+    #[test]
+    fn history_page_drops_the_cursor() {
+        let page: HistoryPage =
+            serde_json::from_str(r#"{"events":[{"id":1,"type":"chat","text":"a"},{"id":2,"type":"user","text":"b"}],"cursor":1}"#)
+                .expect("history page parses");
+        assert_eq!(page.events.len(), 2);
+        assert_eq!(page.events[0].id, 1);
+        assert_eq!(page.events[1].kind, "user");
+    }
+
+    #[test]
+    fn is_compatible_holds_at_or_above_the_floor() {
+        struct Case {
+            cli: u32,
+            floor: u32,
+            compatible: bool,
+        }
+        let cases = [
+            Case { cli: 1, floor: 1, compatible: true },
+            Case { cli: 2, floor: 1, compatible: true },
+            Case { cli: 1, floor: 2, compatible: false },
+            Case { cli: 0, floor: 1, compatible: false },
+        ];
+        for case in cases {
+            assert_eq!(is_compatible(case.cli, case.floor), case.compatible, "cli {} vs floor {}", case.cli, case.floor);
+        }
+        // The CLI speaks protocol 1, so it meets a floor-1 server.
+        assert!(is_compatible(CLI_PROTOCOL, 1));
+    }
+
+    #[test]
+    fn should_print_advances_only_on_a_strictly_newer_id() {
+        let mut last = 0i64;
+        assert!(should_print(1, &mut last));
+        assert_eq!(last, 1);
+        // A replay of the same id is skipped and does not rewind the watermark.
+        assert!(!should_print(1, &mut last));
+        assert_eq!(last, 1);
+        // An older id (out-of-order overlap) is skipped.
+        assert!(!should_print(0, &mut last));
+        assert_eq!(last, 1);
+        // A newer id prints and advances.
+        assert!(should_print(5, &mut last));
+        assert_eq!(last, 5);
+    }
+
+    #[test]
+    fn classify_send_maps_status_and_retryable_flag() {
+        assert!(matches!(classify_send(200, ""), Ok(())));
+        assert!(matches!(classify_send(201, "{}"), Ok(())));
+        assert!(matches!(classify_send(299, ""), Ok(())));
+
+        // A retryable 503 carries the tap-down message through for the retry.
+        match classify_send(503, r#"{"error":"tap is down","retryable":true}"#) {
+            Err(SendError::Retryable(msg)) => assert_eq!(msg, "tap is down"),
+            other => panic!("expected Retryable, got {other:?}"),
+        }
+        // A retryable 503 with no error field still gets a default message.
+        assert!(matches!(classify_send(503, r#"{"retryable":true}"#), Err(SendError::Retryable(_))));
+
+        // A 503 that is not flagged retryable is fatal, as is any other non-2xx.
+        for (status, body) in [(503u16, r#"{"retryable":false}"#), (503, "{}"), (401, "{}"), (500, r#"{"error":"boom"}"#)] {
+            assert!(matches!(classify_send(status, body), Err(SendError::Fatal(_))), "status {status} body {body}");
+        }
+        match classify_send(500, r#"{"error":"boom"}"#) {
+            Err(SendError::Fatal(msg)) => assert_eq!(msg, "boom"),
+            other => panic!("expected Fatal, got {other:?}"),
+        }
+        // The fatal default names the status when the body carries no error.
+        match classify_send(418, "not json") {
+            Err(SendError::Fatal(msg)) => assert_eq!(msg, "send failed (418)"),
+            other => panic!("expected Fatal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn send_error_display_is_the_bare_message() {
+        let fatal: &dyn std::error::Error = &SendError::Fatal("nope".into());
+        assert_eq!(fatal.to_string(), "nope");
+        assert_eq!(SendError::Retryable("later".into()).to_string(), "later");
+    }
+
+    #[test]
+    fn next_intent_id_is_unique_and_strictly_increasing() {
+        const COUNT: usize = 200;
+        let ids: Vec<String> = (0..COUNT).map(|_| next_intent_id()).collect();
+        let unique: std::collections::HashSet<&String> = ids.iter().collect();
+        assert_eq!(unique.len(), COUNT, "every intent id is unique");
+        for pair in ids.windows(2) {
+            assert!(pair[0] < pair[1], "ids sort in mint order: {} then {}", pair[0], pair[1]);
+        }
+    }
+
+    #[test]
+    fn send_message_reports_a_transport_failure_as_fatal() {
+        // Port 1 refuses fast: a raw transport failure to vestad is fatal (never retryable), and the
+        // method must surface it as Err, never panic.
+        let err = test_client().send_message("ghost", "hi", "cli-1").unwrap_err();
+        assert!(matches!(err, SendError::Fatal(_)), "got: {err:?}");
+    }
+
+    #[test]
+    fn fetch_chat_tail_surfaces_an_unreachable_server() {
+        let err = test_client().fetch_chat_tail("ghost").unwrap_err();
+        assert!(err.contains("server not reachable"), "got: {err}");
     }
 
     #[test]
