@@ -168,15 +168,6 @@ export function buildPhaseMessage(phase: BuildPhase | null): string {
   return phase === null ? "setting things up..." : BUILD_PHASE_MESSAGES[phase];
 }
 
-/// Read the current in-flight build phase for an agent, or null when none is
-/// recorded. Best-effort status only; the create flow owns success and failure.
-export async function getBuildPhase(name: string): Promise<BuildPhase | null> {
-  const resp = await apiJson<{ phase: BuildPhase | null }>(
-    `/agents/${encodeURIComponent(name)}/build-phase`,
-  );
-  return resp.phase;
-}
-
 interface StatusWait {
   ready: readonly string[];
   failed: readonly string[];
