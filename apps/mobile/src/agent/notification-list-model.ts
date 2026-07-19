@@ -1,6 +1,7 @@
-import type { NotificationEvent, VestaEvent } from "../api/types";
+import type { ChatMessage } from "@/chat/chat-stream-model";
+import type { NotificationView } from "@/agent/notification-content";
 
-function notificationKey(event: NotificationEvent): string {
+function notificationKey(event: NotificationView): string {
   return (
     event.notif_id ??
     event.ts ??
@@ -9,11 +10,11 @@ function notificationKey(event: NotificationEvent): string {
 }
 
 export function mergeLiveNotifications(
-  history: NotificationEvent[],
-  liveEvents: VestaEvent[],
-): NotificationEvent[] {
+  history: readonly NotificationView[],
+  liveEvents: readonly ChatMessage[],
+): NotificationView[] {
   const seen = new Set(history.map(notificationKey));
-  const arrivals: NotificationEvent[] = [];
+  const arrivals: NotificationView[] = [];
 
   for (const event of liveEvents) {
     if (event.type !== "notification") continue;
@@ -28,7 +29,7 @@ export function mergeLiveNotifications(
 
 export function getPendingNotificationIds(
   pendingSeed: string[],
-  liveEvents: VestaEvent[],
+  liveEvents: readonly ChatMessage[],
 ): Set<string> {
   const pending = new Set(pendingSeed);
 

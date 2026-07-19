@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { StyleSheet, View } from "react-native";
-import type { AgentActivityState, AgentStatus } from "@/api/types";
+import type { AgentActivityState, AgentStatus } from "@vesta/core";
 
 export type BootDestination = "connect" | "home" | "agent";
 

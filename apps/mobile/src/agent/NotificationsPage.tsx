@@ -3,13 +3,15 @@ import { FlatList, StyleSheet, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { getNotificationHistory } from "@/api/endpoints";
-import type { NotificationEvent } from "@/api/types";
 import { useAgent } from "@/agent/AgentProvider";
 import {
   getPendingNotificationIds,
   mergeLiveNotifications,
 } from "@/agent/notification-list-model";
-import { parseNotificationContent } from "@/agent/notification-content";
+import {
+  parseNotificationContent,
+  type NotificationView,
+} from "@/agent/notification-content";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
@@ -19,7 +21,7 @@ function NotificationRow({
   event,
   pending,
 }: {
-  event: NotificationEvent;
+  event: NotificationView;
   pending: boolean;
 }) {
   const { colors } = usePreferences();

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Animated, Easing, StyleSheet, View } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
-import type { AgentActivityState, AgentStatus } from "@/api/types";
+import type { AgentActivityState, AgentStatus } from "@vesta/core";
 import { useBootTransitionTargetFrozen } from "@/components/BootTransition";
 import { designTokens } from "@/theme/generated";
 
