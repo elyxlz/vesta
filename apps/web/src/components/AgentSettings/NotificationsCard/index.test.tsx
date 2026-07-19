@@ -28,6 +28,7 @@ function socketValue(
       /* noop */
     },
     send: () => true,
+    retry: () => undefined,
     showToolCalls: false,
     setShowToolCalls: () => {
       /* noop */
