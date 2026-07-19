@@ -33,9 +33,9 @@ Notifications.setNotificationHandler({
       notification.request.content.data,
     );
     return {
-      // Hide only when this exact agent is visible and its canonical socket is
-      // healthy. Home, settings, another agent, and reconnecting states still
-      // receive the notification normally.
+      // Foreground presentation has one owner: while /sync is connected the alert delta shows the
+      // notification, so the push is suppressed here (foreground-policy). When sync is down the
+      // push is the fallback, suppressed only for the visible agent's healthy socket.
       shouldShowBanner: present,
       shouldShowList: present,
       shouldPlaySound: present,

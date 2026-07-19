@@ -25,6 +25,7 @@ export type {
 export type {
   AgentDelta,
   AgentRemovedDelta,
+  AlertDelta,
   AppendDelta,
   Delta,
   NotificationsDelta,
