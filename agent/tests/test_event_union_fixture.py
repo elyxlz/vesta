@@ -6,6 +6,7 @@ flow in tests/test_contract.py; regenerate with REGEN_EVENT_FIXTURES=1.
 
 import json
 import os
+import typing as tp
 from pathlib import Path
 
 from core.events import (
@@ -135,3 +136,15 @@ def test_every_variant_carries_a_stable_id(tmp_path):
     assert all(e["id"] < 0 for e in live)
     persisted = [e for e in emitted if e["type"] not in ("status", "notification_cleared")]
     assert all(e["id"] > 0 for e in persisted)
+
+
+def test_variants_cover_the_stream_event_union():
+    """Bind the hardcoded _variants() list to the authoritative StreamEvent union so a new variant
+    added to core/events.py but forgotten here fails, instead of the count silently matching the
+    list's own length. Each union member is a TypedDict whose `type` field is a single-literal, so
+    the set of those literals is the exact set _variants() must produce."""
+    members = tp.get_args(StreamEvent.__value__)
+    union_types = {tp.get_args(member.__annotations__["type"])[0] for member in members}
+    variant_types = {event["type"] for event in _variants()}
+    assert len(_variants()) == len(members)
+    assert variant_types == union_types
