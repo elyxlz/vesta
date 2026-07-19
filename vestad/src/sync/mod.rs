@@ -15,5 +15,5 @@ pub(crate) const PROTOCOL_VERSION: u32 = 1;
 pub(crate) const PROTOCOL_FLOOR: u32 = 1;
 
 pub(crate) use events::{NotificationChange, PendingNotifications, activity_state, notification_change};
-pub(crate) use handler::sync_ws_handler;
+pub(crate) use handler::{send_message_handler, sync_ws_handler};
 pub(crate) use hub::{LiveMessage, SyncHub, TapUnavailable};

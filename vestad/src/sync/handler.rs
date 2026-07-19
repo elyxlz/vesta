@@ -410,6 +410,44 @@ async fn build_gateway_info(state: &SharedState) -> GatewayInfo {
     }
 }
 
+#[derive(serde::Deserialize)]
+pub(crate) struct SendMessageBody {
+    text: String,
+    #[serde(default)]
+    intent_id: Option<String>,
+}
+
+/// Relay a send-message intent to the agent over the tap's write-half. Returns a typed retryable
+/// `503` when the tap is down (agent restarting/evicted) so the client keeps its composer and
+/// retries; a `200` ack means the agent's intake accepted the message.
+pub(crate) async fn send_message_handler(
+    State(state): State<SharedState>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+    axum::Json(body): axum::Json<SendMessageBody>,
+) -> Result<axum::Json<serde_json::Value>, (axum::http::StatusCode, axum::Json<serde_json::Value>)> {
+    let frame = message_frame(&body).to_string();
+    match state.sync_hub.send_message(&name, frame) {
+        Ok(()) => Ok(crate::state::ok_json()),
+        Err(error) => {
+            tracing::warn!(agent = %name, %error, "send-message relay unavailable");
+            Err((
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                axum::Json(serde_json::json!({ "error": error.to_string(), "retryable": true })),
+            ))
+        }
+    }
+}
+
+/// The agent-WS `message` frame the tap relays: `{type:"message", text, intent_id?}`, matching the
+/// agent's `_recv_loop` intake (Stage 3). `intent_id` is omitted when absent, never null.
+fn message_frame(body: &SendMessageBody) -> serde_json::Value {
+    let mut frame = serde_json::json!({ "type": "message", "text": body.text });
+    if let Some(intent_id) = &body.intent_id {
+        frame["intent_id"] = serde_json::Value::String(intent_id.clone());
+    }
+    frame
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -572,5 +610,16 @@ mod tests {
         let flow = handle_client_frame(&hub, "secret", r#"{"type":"reauth","token":"bad.token.here"}"#, &mut watches, &watch_tx, &mut deadline);
         assert!(matches!(flow, ControlFlow::Break(())), "a bad reauth breaks the loop");
         assert_eq!(deadline, before, "a failed reauth leaves the deadline unchanged");
+    }
+
+    #[test]
+    fn message_frame_threads_intent_id_only_when_present() {
+        let with_id = message_frame(&SendMessageBody { text: "hi".into(), intent_id: Some("i-9".into()) });
+        assert_eq!(with_id["type"], serde_json::json!("message"));
+        assert_eq!(with_id["text"], serde_json::json!("hi"));
+        assert_eq!(with_id["intent_id"], serde_json::json!("i-9"));
+
+        let without = message_frame(&SendMessageBody { text: "hi".into(), intent_id: None });
+        assert!(without.get("intent_id").is_none(), "absent intent_id stays absent, never null");
     }
 }
