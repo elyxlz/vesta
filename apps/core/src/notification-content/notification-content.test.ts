@@ -28,6 +28,13 @@ describe("parseFields", () => {
       { key: "message", value: "hi" },
     ])
   })
+
+  it("keeps a mid-string key= without a comma prefix inside the previous value", () => {
+    expect(parseFields("a=1 b=2, c=3")).toEqual([
+      { key: "a", value: "1 b=2" },
+      { key: "c", value: "3" },
+    ])
+  })
 })
 
 describe("isStructured", () => {
