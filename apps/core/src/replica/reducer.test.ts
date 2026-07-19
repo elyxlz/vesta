@@ -122,7 +122,11 @@ describe("reduceDelta", () => {
   const immutabilityCases: { name: string; delta: Delta; freshReference: boolean }[] = [
     {
       name: "state",
-      delta: { type: "state", scope: "gateway", value: { ...baseTree().gateway, updateAvailable: true } },
+      delta: {
+        type: "state",
+        scope: "gateway",
+        value: { ...baseTree().gateway, updateAvailable: true },
+      },
       freshReference: true,
     },
     {
@@ -130,7 +134,13 @@ describe("reduceDelta", () => {
       delta: {
         type: "agent",
         name: "scout",
-        info: { status: "restarting", activityState: "idle", buildPhase: null, startedAt: null, services: {} },
+        info: {
+          status: "restarting",
+          activityState: "idle",
+          buildPhase: null,
+          startedAt: null,
+          services: {},
+        },
       },
       freshReference: true,
     },
