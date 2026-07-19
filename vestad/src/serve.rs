@@ -476,14 +476,14 @@ async fn create_agent_handler(
     // files now, vestad only orchestrates. `create_agent` reports coarse phases into shared
     // state so the roster (and the replica tree it feeds) shows honest onboarding status while
     // this synchronous call is in flight.
-    let phases = state.clone();
+    let phases = state.agent_status_cache.clone();
     let progress_name = name.clone();
     let progress = docker::BuildProgress::new(Arc::new(move |phase| {
         phases.set_build_phase(&progress_name, phase);
     }));
 
     let result = create_and_start(&state, &name, manage_core_code, &progress).await;
-    state.clear_build_phase(&name);
+    state.agent_status_cache.clear_build_phase(&name);
     let name = result?;
 
     Ok((StatusCode::CREATED, Json(serde_json::json!({"name": name}))))

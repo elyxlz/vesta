@@ -9,7 +9,7 @@ use axum::response::Response;
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::{broadcast, mpsc};
 
-use crate::docker::ListEntry;
+use crate::docker::{AgentStatus, BuildPhase, ListEntry};
 use crate::settings::ServiceEntry;
 use crate::state::{SharedState, WS_KEEPALIVE_INTERVAL_SECS};
 
@@ -331,17 +331,49 @@ fn spawn_watch(sync_hub: &SyncHub, agent: &str, watch_tx: mpsc::Sender<Frame>) -
 }
 
 fn current_roster(state: &SharedState) -> BTreeMap<String, AgentInfo> {
-    let agents = state.agent_status_cache.agents();
-    let activity = state.agent_status_cache.subscribe_activity().borrow().clone();
-    let services = state.agent_status_cache.subscribe_services().borrow().clone();
-    let revs = state.agent_status_cache.service_revs();
-    agents
+    let cache = &state.agent_status_cache;
+    build_roster(
+        &cache.agents(),
+        &cache.subscribe_activity().borrow(),
+        &cache.subscribe_services().borrow(),
+        &cache.service_revs(),
+        cache.build_phases(),
+    )
+}
+
+/// Join the docker-derived roster with the in-flight build phases. A creating agent has no
+/// container yet during Pulling/Building/Preparing, so its phase would otherwise reach no one;
+/// synthesize a `setting_up` row keyed by the same normalized name the container will take, so it
+/// is replaced in place once the real entry appears.
+fn build_roster(
+    agents: &[ListEntry],
+    activity: &HashMap<String, String>,
+    services: &HashMap<String, HashMap<String, ServiceEntry>>,
+    revs: &HashMap<String, HashMap<String, u64>>,
+    mut build_phases: HashMap<String, BuildPhase>,
+) -> BTreeMap<String, AgentInfo> {
+    let mut roster: BTreeMap<String, AgentInfo> = agents
         .iter()
         .map(|entry| {
-            let build_phase = state.build_phase(&crate::docker::normalize_name(&entry.name));
-            (entry.name.clone(), agent_info(entry, &activity, &services, &revs, build_phase))
+            let build_phase = build_phases.remove(&crate::docker::normalize_name(&entry.name));
+            (entry.name.clone(), agent_info(entry, activity, services, revs, build_phase))
         })
-        .collect()
+        .collect();
+    for (name, phase) in build_phases {
+        roster.entry(name).or_insert_with(|| synthetic_building_info(phase));
+    }
+    roster
+}
+
+/// A stand-in roster row for an agent still being created, before its container exists.
+fn synthetic_building_info(phase: BuildPhase) -> AgentInfo {
+    AgentInfo {
+        status: AgentStatus::SettingUp,
+        activity_state: "idle".into(),
+        build_phase: Some(phase),
+        started_at: None,
+        services: BTreeMap::new(),
+    }
 }
 
 fn agent_info(
@@ -479,7 +511,7 @@ fn message_frame(body: &SendMessageBody) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::docker::AgentStatus;
+    use crate::agent_status::AgentStatusCache;
 
     fn entry(name: &str, status: AgentStatus) -> ListEntry {
         ListEntry { name: name.to_string(), status, ws_port: 4200, started_at: Some("2026-01-01T00:00:00Z".into()) }
@@ -525,6 +557,57 @@ mod tests {
 
         // No change -> no deltas.
         assert!(roster_deltas(&current, &current).is_empty());
+    }
+
+    #[test]
+    fn build_roster_synthesizes_a_mid_build_agent_without_a_container() {
+        let build_phases = HashMap::from([("luna".to_string(), BuildPhase::Pulling)]);
+        let roster = build_roster(&[], &HashMap::new(), &HashMap::new(), &HashMap::new(), build_phases);
+
+        let luna = roster.get("luna").expect("synthetic row for the creating agent");
+        assert_eq!(luna.status, AgentStatus::SettingUp);
+        assert_eq!(luna.build_phase, Some(BuildPhase::Pulling));
+        assert_eq!(luna.started_at, None);
+        assert!(luna.services.is_empty());
+    }
+
+    #[test]
+    fn build_roster_replaces_the_synthetic_row_when_the_container_appears() {
+        // The container now exists while the phase is still recorded: one real row carries the
+        // phase, with no lingering synthetic ghost.
+        let agents = [entry("luna", AgentStatus::SettingUp)];
+        let build_phases = HashMap::from([("luna".to_string(), BuildPhase::Starting)]);
+        let roster = build_roster(&agents, &HashMap::new(), &HashMap::new(), &HashMap::new(), build_phases);
+        assert_eq!(roster.len(), 1);
+        assert_eq!(roster["luna"].build_phase, Some(BuildPhase::Starting));
+
+        // Create settled: phase cleared, the real row remains with no phase.
+        let settled = build_roster(
+            &[entry("luna", AgentStatus::Alive)],
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            HashMap::new(),
+        );
+        assert_eq!(settled.len(), 1);
+        assert_eq!(settled["luna"].build_phase, None);
+    }
+
+    #[test]
+    fn set_and_clear_build_phase_wake_the_roster_subscription() {
+        let cache = AgentStatusCache::new();
+        let mut invalidations = cache.subscribe_invalidations();
+        invalidations.borrow_and_update();
+
+        // The roster loop wakes on this channel (Wake::Roster); each transition must fire it.
+        cache.set_build_phase("luna", BuildPhase::Building);
+        assert!(invalidations.has_changed().expect("sender alive"));
+        assert_eq!(cache.build_phases()["luna"], BuildPhase::Building);
+
+        invalidations.borrow_and_update();
+        cache.clear_build_phase("luna");
+        assert!(invalidations.has_changed().expect("sender alive"));
+        assert!(cache.build_phases().is_empty());
     }
 
     #[test]
