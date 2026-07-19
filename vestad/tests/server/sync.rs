@@ -11,10 +11,7 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use vesta_tests::client::{Client, SyncSocket};
-use vesta_tests::{
-    agent_container_name, docker_cmd, inject_fake_token, unique_agent, TestAgent, SERVER,
-    SHARED_RO_AGENT,
-};
+use vesta_tests::{inject_fake_token, unique_agent, TestAgent, SERVER, SHARED_RO_AGENT};
 
 const AGENT_RUNNING_TIMEOUT_SECS: u64 = 90;
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
@@ -88,8 +85,14 @@ async fn drive_and_expect_append(
     intent: &str,
 ) -> serde_json::Value {
     let deadline = Instant::now() + APPEND_TIMEOUT;
+    // Track only the MOST RECENT send outcome: a stale error would mislead (a 503 before the tap
+    // installs, then successful sends whose echo never lands, are two different failures).
+    let mut last_send_err: Option<String> = None;
     loop {
-        let _ = c.send_message(agent, text, Some(intent));
+        match c.send_message(agent, text, Some(intent)) {
+            Ok(()) => last_send_err = None,
+            Err(e) => last_send_err = Some(e),
+        }
         if let Ok(frame) = sock
             .expect_frame_matching(|f| is_append_for(f, agent, intent), APPEND_ATTEMPT_TIMEOUT)
             .await
@@ -98,7 +101,7 @@ async fn drive_and_expect_append(
         }
         assert!(
             Instant::now() < deadline,
-            "no append for {agent} intent {intent} within {APPEND_TIMEOUT:?}"
+            "no append for {agent} intent {intent} within {APPEND_TIMEOUT:?} (last send error: {last_send_err:?})"
         );
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
@@ -340,15 +343,16 @@ async fn send_message_intent_id_echoes_on_the_append() {
     sock.close().await.ok();
 }
 
-/// (8) A watched agent killed mid-stream (`docker kill` -> non-zero exit -> `on-failure` auto-restart
-/// of the same container) emits one `resync` on the tap's reconnect; after re-watching, appends
-/// resume. The union of the event ids seen before the kill and after the restart has no repeats: the
-/// live edge never replays across the gap, so a client deduping by id gains no duplicate across the
-/// seam. (The paged-history reseed that fills the gap is the client controller's job, unit-tested.)
+/// (8) A watched agent restarted mid-stream keeps the SAME container (its events.db persists, so ids
+/// stay monotonic); the tap gaps then reconnects, emitting one `resync` that drops this agent's
+/// server-side watch. After re-watching, appends resume. The union of the event ids seen before the
+/// restart and after it has no repeats: the live edge never replays across the gap, so a client
+/// deduping by id gains no duplicate across the seam. (The paged-history reseed that fills the gap is
+/// the client controller's job, unit-tested.)
 #[tokio::test]
-async fn kill_restart_reseeds_without_duplicate_ids() {
+async fn restart_reseeds_without_duplicate_ids() {
     let c = SERVER.client();
-    let agent = running_agent(&c, "sync-killrestart");
+    let agent = running_agent(&c, "sync-restart");
     let mut sock = c.open_sync().await.expect("open sync");
     handshake(&mut sock).await;
     sock.watch(&agent.name).await.expect("watch");
@@ -357,17 +361,15 @@ async fn kill_restart_reseeds_without_duplicate_ids() {
     ids.push(driven_event_id(&c, &mut sock, &agent.name, "before-1", "kb-1").await);
     ids.push(driven_event_id(&c, &mut sock, &agent.name, "before-2", "kb-2").await);
 
-    // Ungraceful crash: SIGKILL exits non-zero, so docker's on-failure policy restarts the SAME
-    // container (its events.db persists, so ids stay monotonic). The tap gaps then reconnects,
-    // emitting one resync that drops this agent's server-side watch.
-    let cname = agent_container_name(&agent.name);
-    docker_cmd(&["kill", &cname]).expect("kill agent container");
+    // Restart the same container (events.db persists, so ids stay monotonic). The tap gaps then
+    // reconnects, emitting one resync that drops this agent's server-side watch.
+    c.restart_agent(&agent.name).expect("restart agent");
     sock.expect_frame_matching(
         |f| f["type"].as_str() == Some("resync") && f["agent"].as_str() == Some(agent.name.as_str()),
         RESYNC_TIMEOUT,
     )
     .await
-    .expect("a resync after the kill/restart");
+    .expect("a resync after the restart");
 
     c.wait_until_running(&agent.name, AGENT_RUNNING_TIMEOUT_SECS)
         .expect("agent back up");
@@ -379,7 +381,7 @@ async fn kill_restart_reseeds_without_duplicate_ids() {
     assert_eq!(
         unique.len(),
         ids.len(),
-        "event ids across the kill/restart seam must not repeat: {ids:?}"
+        "event ids across the restart seam must not repeat: {ids:?}"
     );
     sock.close().await.ok();
 }
