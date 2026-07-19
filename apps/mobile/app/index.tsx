@@ -35,7 +35,7 @@ import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useRoster } from "@/session/RosterProvider";
 import { useSession } from "@/session/SessionProvider";
-import type { AgentRow } from "@/session/roster-model";
+import type { AgentRow } from "@vesta/core";
 import { readLastUsedAgent } from "@/storage/recent-agent";
 
 interface RestoreRequest {

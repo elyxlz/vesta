@@ -10,7 +10,7 @@ import { ControllerContext } from "@/controller/context";
 import { setVisibleAgentSocket } from "@/notifications/foreground-policy";
 import { useRoster } from "@/session/RosterProvider";
 import { useSession } from "@/session/SessionProvider";
-import type { AgentRow } from "@/session/roster-model";
+import type { AgentRow } from "@vesta/core";
 import { writeLastUsedAgent } from "@/storage/recent-agent";
 
 type AgentSocket = ReturnType<typeof useAgentSocket>;

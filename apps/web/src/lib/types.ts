@@ -1,12 +1,8 @@
-import type {
-  AgentInfo as AgentNodeInfo,
-  ReleaseChannel,
-  VestaEvent,
-} from "@vesta/core";
+import type { ReleaseChannel, VestaEvent } from "@vesta/core";
 
-// The roster row as the web app holds it: core's per-agent node info plus the `name` the tree keys
-// agents by (core's AgentInfo carries no name of its own).
-export type AgentRow = AgentNodeInfo & { name: string };
+// The roster row: core is the one owner (`AgentInfo & { name }`); re-exported so web consumers keep
+// their `@/lib/types` import path.
+export type { AgentRow } from "@vesta/core";
 
 // A chat row as the view holds it. Core's VestaEvent is the wire shape (server `id` always present);
 // a view row may instead be an optimistic user bubble (no persisted id yet) carrying `intent_id` /

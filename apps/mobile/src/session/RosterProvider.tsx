@@ -5,7 +5,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { Controller, Tree } from "@vesta/core";
+import type { AgentRow, Controller, Tree } from "@vesta/core";
+import { rosterFromTree, rostersEqual } from "@vesta/core";
 import { useReplica, useSyncState } from "@vesta/core/react";
 import { ControllerContext } from "@/controller/context";
 import { useSession } from "@/session/SessionProvider";
@@ -13,9 +14,6 @@ import { connectionKeyOf } from "@/session/session-model";
 import {
   emptyRosterHold,
   reconcileRosterHold,
-  rosterFromTree,
-  rostersEqual,
-  type AgentRow,
   type RosterHold,
   type RosterSnapshot,
 } from "./roster-model";

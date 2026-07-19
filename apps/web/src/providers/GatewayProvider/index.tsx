@@ -1,5 +1,6 @@
 import { useCallback, useContext, useEffect, type ReactNode } from "react";
 import type { Controller, Tree } from "@vesta/core";
+import { rosterFromTree, rostersEqual } from "@vesta/core";
 import { useReplica, useSyncState } from "@vesta/core/react";
 import { apiFetch } from "@/api/client";
 import { useAuth } from "@/providers/AuthProvider";
@@ -7,8 +8,6 @@ import {
   ControllerContext,
   useControllerReconnect,
 } from "@/providers/ControllerProvider";
-import type { ServiceInfo } from "@vesta/core";
-import type { AgentRow } from "@/lib/types";
 import { useAgentOps } from "@/stores/use-agent-ops";
 import { useRestartPending } from "@/stores/use-restart-pending";
 import {
@@ -30,43 +29,6 @@ const checkingValue: GatewayContextValue = {
   versionChecked: false,
 };
 
-function servicesEqual(
-  a: Record<string, ServiceInfo>,
-  b: Record<string, ServiceInfo>,
-): boolean {
-  const keys = Object.keys(a);
-  if (keys.length !== Object.keys(b).length) return false;
-  return keys.every(
-    (key) => a[key]?.port === b[key]?.port && a[key]?.rev === b[key]?.rev,
-  );
-}
-
-// Structural compare of the derived roster so an unrelated tree delta (e.g. a notification)
-// does not hand every gateway consumer a fresh array.
-function agentRowsEqual(a: AgentRow[], b: AgentRow[]): boolean {
-  if (a.length !== b.length) return false;
-  return a.every((row, index) => {
-    const other = b[index];
-    if (other === undefined) return false;
-    return (
-      row.name === other.name &&
-      row.status === other.status &&
-      row.activityState === other.activityState &&
-      row.buildPhase === other.buildPhase &&
-      row.startedAt === other.startedAt &&
-      servicesEqual(row.services, other.services)
-    );
-  });
-}
-
-function selectAgents(tree: Tree | null): AgentRow[] {
-  if (!tree) return [];
-  return Object.entries(tree.agents).map(([name, node]) => ({
-    name,
-    ...node.info,
-  }));
-}
-
 function selectGateway(tree: Tree | null) {
   return tree?.gateway ?? null;
 }
@@ -79,7 +41,7 @@ function ReplicaGateway({
   children: ReactNode;
 }) {
   const gateway = useReplica(controller.replica, selectGateway);
-  const agents = useReplica(controller.replica, selectAgents, agentRowsEqual);
+  const agents = useReplica(controller.replica, rosterFromTree, rostersEqual);
   const syncState = useSyncState(controller);
   const reconnect = useControllerReconnect();
 
