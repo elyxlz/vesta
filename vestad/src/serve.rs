@@ -19,7 +19,7 @@ use crate::settings::{
 };
 use crate::state::{err_response, map_docker_err, ok_json, AppState, SharedState};
 use crate::{
-    agent_provider, agent_proxy, agent_status, auth, backup, control_ws, docker, mobile_app,
+    agent_provider, agent_proxy, agent_status, auth, backup, docker, mobile_app,
     self_update, systemd, update_check, update_window,
 };
 
@@ -2355,7 +2355,6 @@ pub fn build_router(state: SharedState) -> Router {
             "/agents/{name}/backups/{backup_id}/restore",
             post(restore_backup_handler),
         )
-        .route("/ws", get(control_ws::control_ws_handler))
         .route("/sync", get(crate::sync::sync_ws_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -2382,7 +2381,7 @@ pub fn build_router(state: SharedState) -> Router {
         )
         .route(
             "/agents/{name}/services/{service}/invalidate",
-            post(control_ws::invalidate_service_handler),
+            post(agent_status::invalidate_service_handler),
         )
         .route("/agents/{name}/account-token", post(account_token_handler))
         .route(
@@ -3396,8 +3395,7 @@ mod tests {
         .map(|status| serde_json::to_value(status).expect("serialize AgentStatus"))
         .collect();
 
-        // Feeds both the plain GET /agents response (Vec<ListEntry>, the CLI's `vesta list`)
-        // and, further below, the control WS "agents" message built by the production code path.
+        // The plain GET /agents response (Vec<ListEntry>, the CLI's `vesta list`).
         let agents = vec![
             ListEntry {
                 name: "sample-agent".into(),
@@ -3413,24 +3411,6 @@ mod tests {
             },
         ];
         let agents_json = serde_json::to_value(&agents).expect("serialize ListEntry list");
-        let mut activity = HashMap::new();
-        activity.insert("sample-agent".to_string(), "thinking".to_string());
-        let mut agent_services = HashMap::new();
-        agent_services.insert(
-            "dashboard".to_string(),
-            ServiceEntry {
-                port: 8080,
-                public: true,
-            },
-        );
-        let mut services = HashMap::new();
-        services.insert("sample-agent".to_string(), agent_services);
-        let mut agent_revs = HashMap::new();
-        agent_revs.insert("dashboard".to_string(), 3u64);
-        let mut revs = HashMap::new();
-        revs.insert("sample-agent".to_string(), agent_revs);
-        let agents_ws_message =
-            crate::control_ws::build_agents_message(&agents, &activity, &services, &revs);
 
         let backups: Vec<serde_json::Value> = [
             BackupType::Manual,
@@ -3496,7 +3476,6 @@ mod tests {
         serde_json::json!({
             "agent_statuses": agent_statuses,
             "agents": agents_json,
-            "agents_ws_message": agents_ws_message,
             "agent_status_json": agent_status_json,
             "backups": backups,
             "auth_start": auth_start,

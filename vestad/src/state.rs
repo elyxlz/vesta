@@ -1,6 +1,6 @@
 //! The HTTP layer's shared vocabulary, below every handler module: the daemon's
 //! `AppState`, the JSON response helpers, and the request-layer constants. Handler
-//! modules (serve.rs, auth.rs, `control_ws.rs`, `agent_proxy.rs`, providers/*) all
+//! modules (serve.rs, auth.rs, `agent_proxy.rs`, providers/*) all
 //! import from here; this module imports none of them.
 
 use std::collections::HashMap;

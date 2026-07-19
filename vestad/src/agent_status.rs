@@ -2,6 +2,11 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    Json,
+};
 use bollard::Docker;
 use futures_util::StreamExt;
 use tokio::sync::watch;
@@ -9,9 +14,34 @@ use tokio::sync::watch;
 use crate::docker::{self, ListEntry};
 use crate::mobile_app::MobileApp;
 use crate::settings::ServiceEntry;
+use crate::state::{err_response, ok_json, SharedState};
 use crate::sync::{activity_state, alert_for, notification_change, SyncHub};
 
 const POLL_INTERVAL_SECS: u64 = 3;
+
+pub async fn invalidate_service_handler(
+    State(state): State<SharedState>,
+    Path((name, service_name)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let settings = state.settings.read().await;
+    let exists = settings
+        .services
+        .get(&name)
+        .is_some_and(|s| s.contains_key(&service_name));
+    if !exists {
+        return Err(err_response(
+            StatusCode::NOT_FOUND,
+            &format!("service '{service_name}' not registered for agent '{name}'"),
+        ));
+    }
+    drop(settings);
+
+    state
+        .agent_status_cache
+        .invalidate_service(&name, &service_name);
+    tracing::debug!(agent = %name, service = %service_name, "service invalidated");
+    Ok(ok_json())
+}
 
 // --- High-level status queries (used by serve.rs handlers and the poll task) ---
 
