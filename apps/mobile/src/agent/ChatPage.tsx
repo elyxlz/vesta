@@ -16,7 +16,6 @@ import {
   Linking,
   Pressable,
   StyleSheet,
-  TextInput as NativeTextInput,
   View,
   type LayoutChangeEvent,
   type ListRenderItem,
@@ -25,7 +24,11 @@ import { useQuery } from "@tanstack/react-query";
 import {
   KeyboardStickyView,
 } from "react-native-keyboard-controller";
-import { useSharedValue, withTiming } from "react-native-reanimated";
+import Reanimated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
 import Markdown, {
   type ASTNode,
   type RenderRules,
@@ -33,14 +36,19 @@ import Markdown, {
 import { Ionicons } from "@expo/vector-icons";
 import { GlassView, isGlassEffectAPIAvailable } from "expo-glass-effect";
 import * as Clipboard from "expo-clipboard";
+import * as Haptics from "expo-haptics";
 import * as WebBrowser from "expo-web-browser";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Path } from "react-native-svg";
 import type { VestaEvent } from "@/api/types";
 import { fetchVoiceStatus } from "@/api/endpoints";
 import { useAgent } from "@/agent/AgentProvider";
+import {
+  ChatComposerInput,
+  type ChatComposerInputRef,
+} from "@/components/chat-composer-input";
 import { ChatLoadingSkeleton } from "@/components/chat-loading-skeleton";
-import { Text, TextInput } from "@/components/ui/Typography";
+import { Text } from "@/components/ui/Typography";
 import {
   MessageContextMenu,
   type MessageMenuAction,
@@ -50,6 +58,7 @@ import { useSession } from "@/session/SessionProvider";
 import { shareVestaMessage } from "@/sharing/share-message";
 import { fontNames } from "@/theme/typography";
 import { radii } from "@/theme/layout";
+import { triggerTranscriptHaptic } from "@/voice/recording-haptics";
 import { useLiveVoice, useSpeechPlayer } from "@/voice/useLiveVoice";
 import {
   createInvertedChatRows,
@@ -62,8 +71,11 @@ import {
 } from "@/agent/message-actions";
 import { useInvertedChatScroll } from "@/agent/use-inverted-chat-scroll";
 
-const COMPOSER_BASE_HEIGHT = 52;
 const USES_NATIVE_BUBBLE_SHAPE = process.env.EXPO_OS === "ios";
+const COMPOSER_RESIZE_DURATION = 250;
+const COMPOSER_SURFACE_PADDING = 4;
+const CHAT_COMPOSER_GAP = 6;
+const TRANSCRIPT_HAPTIC_INTERVAL_MS = 110;
 
 const MESSAGE_ACTIONS: Record<MessageActionId, MessageMenuAction> = {
   reply: {
@@ -743,13 +755,7 @@ const ReplyPreview = memo(function ReplyPreview({
   );
 });
 
-function ComposerSurface({
-  children,
-  onLayout,
-}: {
-  children: ReactNode;
-  onLayout: (event: LayoutChangeEvent) => void;
-}) {
+function ComposerSurface({ children }: { children: ReactNode }) {
   const { colors, dark } = usePreferences();
   if (isGlassEffectAPIAvailable()) {
     return (
@@ -757,7 +763,6 @@ function ComposerSurface({
         glassEffectStyle="regular"
         colorScheme={dark ? "dark" : "light"}
         isInteractive
-        onLayout={onLayout}
         style={styles.composerSurface}
       >
         {children}
@@ -771,10 +776,100 @@ function ComposerSurface({
         styles.composerFallback,
         { backgroundColor: colors.elevated, borderColor: colors.border },
       ]}
-      onLayout={onLayout}
     >
       {children}
     </View>
+  );
+}
+
+function ComposerActionButton({
+  canSend,
+  hasDraft,
+  voiceActive,
+  voiceEnabled,
+  onSend,
+  onToggleVoice,
+}: {
+  canSend: boolean;
+  hasDraft: boolean;
+  voiceActive: boolean;
+  voiceEnabled: boolean;
+  onSend: () => void;
+  onToggleVoice: () => void;
+}) {
+  const { colors } = usePreferences();
+  const sendMode = !voiceEnabled || (hasDraft && !voiceActive);
+  const sendProgress = useSharedValue(sendMode ? 1 : 0);
+
+  useEffect(() => {
+    sendProgress.set(
+      withTiming(sendMode ? 1 : 0, {
+        duration: 180,
+      }),
+    );
+  }, [sendMode, sendProgress]);
+
+  const voiceStyle = useAnimatedStyle(() => ({
+    opacity: 1 - sendProgress.value,
+    transform: [{ scale: 1 - sendProgress.value * 0.2 }],
+  }));
+  const sendStyle = useAnimatedStyle(() => ({
+    opacity: sendProgress.value,
+    transform: [{ scale: 0.76 + sendProgress.value * 0.24 }],
+  }));
+  const sendSurfaceStyle = useAnimatedStyle(() => ({
+    opacity: sendProgress.value,
+  }));
+  const actionDisabled = sendMode
+    ? !canSend || !hasDraft
+    : !voiceEnabled || !canSend;
+
+  return (
+    <Pressable
+      accessibilityLabel={
+        voiceActive
+          ? "Stop listening"
+          : sendMode
+            ? "Send message"
+            : "Start voice input"
+      }
+      accessibilityRole="button"
+      disabled={actionDisabled}
+      hitSlop={6}
+      onPress={sendMode ? onSend : onToggleVoice}
+      style={({ pressed }) => [
+        styles.roundButton,
+        {
+          backgroundColor: voiceActive ? colors.danger : colors.input,
+          opacity: actionDisabled ? 0.38 : pressed ? 0.72 : 1,
+        },
+      ]}
+    >
+      <Reanimated.View
+        pointerEvents="none"
+        style={[
+          styles.composerActionSurface,
+          { backgroundColor: colors.accent },
+          sendSurfaceStyle,
+        ]}
+      />
+      <Reanimated.View
+        pointerEvents="none"
+        style={[styles.composerActionGlyph, voiceStyle]}
+      >
+        <Ionicons
+          name={voiceActive ? "stop" : "mic"}
+          size={16}
+          color={voiceActive ? "white" : colors.text}
+        />
+      </Reanimated.View>
+      <Reanimated.View
+        pointerEvents="none"
+        style={[styles.composerActionGlyph, sendStyle]}
+      >
+        <Ionicons name="arrow-up" size={17} color={colors.accentText} />
+      </Reanimated.View>
+    </Pressable>
   );
 }
 
@@ -821,6 +916,51 @@ function ScrollToBottomButton({ onPress }: { onPress: () => void }) {
   );
 }
 
+function useTranscriptWordHaptics() {
+  const maximumWordCount = useRef(0);
+  const lastHapticAt = useRef(0);
+  const pendingHaptic = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const cancelPendingHaptic = useCallback(() => {
+    if (pendingHaptic.current === null) return;
+    clearTimeout(pendingHaptic.current);
+    pendingHaptic.current = null;
+  }, []);
+
+  useEffect(() => cancelPendingHaptic, [cancelPendingHaptic]);
+
+  return useCallback(
+    (text: string) => {
+      if (process.env.EXPO_OS !== "ios") return;
+      const trimmed = text.trim();
+      if (!trimmed) {
+        maximumWordCount.current = 0;
+        cancelPendingHaptic();
+        return;
+      }
+
+      const wordCount = trimmed.split(/\s+/u).length;
+      if (wordCount <= maximumWordCount.current) return;
+      maximumWordCount.current = wordCount;
+
+      const pulse = () => {
+        pendingHaptic.current = null;
+        lastHapticAt.current = Date.now();
+        void triggerTranscriptHaptic().catch(() => undefined);
+      };
+      const remaining =
+        TRANSCRIPT_HAPTIC_INTERVAL_MS - (Date.now() - lastHapticAt.current);
+      if (remaining <= 0) {
+        cancelPendingHaptic();
+        pulse();
+      } else if (pendingHaptic.current === null) {
+        pendingHaptic.current = setTimeout(pulse, remaining);
+      }
+    },
+    [cancelPendingHaptic],
+  );
+}
+
 export default function ChatPage() {
   const insets = useSafeAreaInsets();
   const { agent, socket, name } = useAgent();
@@ -828,19 +968,32 @@ export default function ChatPage() {
   const preferences = usePreferences();
   const { colors } = preferences;
   const showToolCalls = preferences.showToolCallsForAgent(name);
-  const [input, setInput] = useState("");
+  const [input, setInputState] = useState("");
+  const inputValueRef = useRef("");
+  const setInput = useCallback((value: string) => {
+    inputValueRef.current = value;
+    setInputState(value);
+  }, []);
   const [replyTarget, setReplyTarget] = useState<ReplyTarget | null>(null);
-  const [transcript, setTranscript] = useState("");
   const [voiceError, setVoiceError] = useState("");
-  const inputRef = useRef<NativeTextInput>(null);
-  const extraContentPadding = useSharedValue(0);
+  const notifyTranscriptWords = useTranscriptWordHaptics();
+  const handleTranscript = useCallback(
+    (text: string) => {
+      setInput(text);
+      notifyTranscriptWords(text);
+    },
+    [notifyTranscriptWords, setInput],
+  );
+  const inputRef = useRef<ChatComposerInputRef>(null);
+  const measuredComposerHeight = useRef<number | null>(null);
+  const composerInset = useSharedValue(0);
   const {
     attachList,
     handleScroll,
     isAwayFromLatest,
     renderScrollComponent,
     scrollToLatest,
-  } = useInvertedChatScroll<ChatRow>(extraContentPadding);
+  } = useInvertedChatScroll<ChatRow>(composerInset);
   const rows = useMemo(
     () =>
       createInvertedChatRows(
@@ -853,16 +1006,25 @@ export default function ChatPage() {
 
   const handleComposerLayout = useCallback(
     (event: LayoutChangeEvent) => {
-      extraContentPadding.set(withTiming(
-        Math.max(
-          event.nativeEvent.layout.height - COMPOSER_BASE_HEIGHT,
-          0,
-        ),
-        { duration: 250 },
-      ));
+      const height = Math.max(event.nativeEvent.layout.height, 0);
+      const previousHeight = measuredComposerHeight.current;
+      if (previousHeight !== null && Math.abs(previousHeight - height) < 0.5) {
+        return;
+      }
+
+      measuredComposerHeight.current = height;
+      const inset = height + CHAT_COMPOSER_GAP;
+      composerInset.set(
+        previousHeight === null
+          ? inset
+          : withTiming(inset, { duration: COMPOSER_RESIZE_DURATION }),
+      );
     },
-    [extraContentPadding],
+    [composerInset],
   );
+  const loadingOverlayInsetStyle = useAnimatedStyle(() => ({
+    paddingBottom: composerInset.value,
+  }));
   const hasVoiceService = Boolean(agent && "voice" in agent.services);
   const speechToText = useQuery({
     queryKey: ["voice", name, "stt"],
@@ -876,22 +1038,28 @@ export default function ChatPage() {
   const speechEnabled = speech.enabled;
   const playSpeech = speech.play;
   const stopSpeech = speech.stop;
-  const voice = useLiveVoice({
-    name,
-    onTranscript: setTranscript,
-    onTurnEnd: (text) => {
+  const canSend = socket.connected && agent?.status === "alive";
+  const sendCurrentInput = useCallback(
+    (source?: "voice") => {
+      const text = inputValueRef.current.trim();
+      if (!text || !canSend) return;
       const outgoing = replyTarget
         ? `${quotedReply(replyTarget.text)}${text}`
         : text;
-      if (socket.send(outgoing, "voice")) {
+      if (socket.send(outgoing, source)) {
+        setInput("");
         setReplyTarget(null);
-      } else {
-        setInput(text);
       }
     },
+    [canSend, replyTarget, setInput, socket],
+  );
+  const voice = useLiveVoice({
+    name,
+    enabled: voiceEnabled,
+    onTranscript: handleTranscript,
+    onTurnEnd: () => sendCurrentInput("voice"),
     onError: setVoiceError,
   });
-  const canSend = socket.connected && agent?.status === "alive";
 
   const focusComposer = useCallback(() => {
     setTimeout(() => inputRef.current?.focus(), 250);
@@ -910,7 +1078,7 @@ export default function ChatPage() {
       setInput(text);
       focusComposer();
     },
-    [focusComposer],
+    [focusComposer, setInput],
   );
   const readAloud = useCallback(
     (text: string) => {
@@ -953,18 +1121,17 @@ export default function ChatPage() {
   };
 
   const send = () => {
-    const text = input.trim();
-    if (!text || !canSend) return;
-    const outgoing = replyTarget
-      ? `${quotedReply(replyTarget.text)}${text}`
-      : text;
-    if (socket.send(outgoing)) {
-      setInput("");
-      setReplyTarget(null);
-    }
+    sendCurrentInput();
   };
 
+  const hasDraft = input.trim().length > 0;
+
   const toggleVoice = () => {
+    if (process.env.EXPO_OS === "ios") {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(
+        () => undefined,
+      );
+    }
     setVoiceError("");
     if (voice.active) {
       voice.stop();
@@ -992,6 +1159,7 @@ export default function ChatPage() {
           },
         ]}
         keyboardShouldPersistTaps="handled"
+        scrollEnabled={socket.historyLoaded || rows.length > 0}
         renderScrollComponent={renderScrollComponent}
         onScroll={handleScroll}
         scrollEventThrottle={16}
@@ -1014,26 +1182,24 @@ export default function ChatPage() {
         }
       />
       {!socket.historyLoaded && rows.length === 0 ? (
-        <View
+        <Reanimated.View
           pointerEvents="none"
-          style={[
-            styles.loadingOverlay,
-            {
-              paddingBottom: Math.max(insets.bottom, 8) + 72,
-            },
-          ]}
+          style={[styles.loadingOverlay, loadingOverlayInsetStyle]}
         >
           <ChatLoadingSkeleton />
-        </View>
+        </Reanimated.View>
       ) : null}
       <KeyboardStickyView
         offset={{ closed: 0, opened: Math.max(insets.bottom - 8, 0) }}
         pointerEvents="box-none"
         style={styles.composerOverlay}
       >
-        {transcript || voiceError ? (
-          <View style={[styles.transcript, { backgroundColor: colors.elevated }]}>
-            <Text style={{ color: voiceError ? colors.danger : colors.secondaryText }}>{voiceError || transcript}</Text>
+        <View onLayout={handleComposerLayout}>
+        {voiceError ? (
+          <View
+            style={[styles.voiceError, { backgroundColor: colors.elevated }]}
+          >
+            <Text style={{ color: colors.danger }}>{voiceError}</Text>
           </View>
         ) : null}
         <View
@@ -1047,7 +1213,7 @@ export default function ChatPage() {
               <ScrollToBottomButton onPress={scrollToLatest} />
             </View>
           ) : null}
-          <ComposerSurface onLayout={handleComposerLayout}>
+          <ComposerSurface>
             {replyTarget ? (
               <ReplyPreview
                 target={replyTarget}
@@ -1055,44 +1221,33 @@ export default function ChatPage() {
               />
             ) : null}
             <View style={styles.composerRow}>
-              {voiceEnabled ? (
-                <Pressable
-                  accessibilityLabel={voice.active ? "Stop listening" : "Start voice input"}
-                  disabled={!canSend}
-                  onPress={toggleVoice}
-                  style={[
-                    styles.roundButton,
-                    { backgroundColor: voice.active ? colors.danger : "transparent", opacity: canSend ? 1 : 0.4 },
-                  ]}
-                >
-                  <Ionicons name={voice.active ? "stop" : "mic"} size={18} color={voice.active ? "white" : colors.text} />
-                </Pressable>
-              ) : null}
-              <TextInput
+              <ChatComposerInput
                 ref={inputRef}
-                style={[styles.input, { color: colors.text }]}
-                placeholder={canSend ? `Message ${name}` : "Waiting for agent…"}
-                placeholderTextColor={colors.tertiaryText}
-                value={input}
-                onChangeText={setInput}
-                multiline
                 maxLength={20_000}
-                editable={canSend}
+                onChangeText={setInput}
+                placeholder={
+                  voice.active
+                    ? "Listening…"
+                    : canSend
+                      ? `Message ${name}`
+                      : "Waiting for agent…"
+                }
+                placeholderTextColor={colors.tertiaryText}
                 selectionColor={colors.accent}
+                textColor={colors.text}
+                value={input}
               />
-              <Pressable
-                accessibilityLabel="Send message"
-                disabled={!canSend || !input.trim()}
-                onPress={send}
-                style={[
-                  styles.roundButton,
-                  { backgroundColor: colors.accent, opacity: canSend && input.trim() ? 1 : 0.38 },
-                ]}
-              >
-                <Ionicons name="arrow-up" size={19} color={colors.accentText} />
-              </Pressable>
+              <ComposerActionButton
+                canSend={canSend}
+                hasDraft={hasDraft}
+                voiceActive={voice.active}
+                voiceEnabled={voiceEnabled}
+                onSend={send}
+                onToggleVoice={toggleVoice}
+              />
             </View>
           </ComposerSurface>
+        </View>
         </View>
       </KeyboardStickyView>
     </View>
@@ -1101,7 +1256,7 @@ export default function ChatPage() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  listContent: { paddingHorizontal: 12, paddingTop: 104 },
+  listContent: { paddingHorizontal: 12 },
   loadingOverlay: {
     position: "absolute",
     zIndex: 1,
@@ -1182,15 +1337,19 @@ const styles = StyleSheet.create({
   empty: { minHeight: 300, justifyContent: "center", alignItems: "center", gap: 7, padding: 30 },
   emptyTitle: { fontSize: 21, fontWeight: "500" },
   emptyDetail: { fontSize: 14, textAlign: "center" },
-  transcript: { marginHorizontal: 12, paddingHorizontal: 13, paddingVertical: 8, borderRadius: 12 },
+  voiceError: { marginHorizontal: 12, paddingHorizontal: 13, paddingVertical: 8, borderRadius: 12 },
   composerOverlay: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, zIndex: 2, justifyContent: "flex-end" },
-  composerDock: { paddingHorizontal: 10, paddingTop: 8 },
+  composerDock: { paddingHorizontal: 22, paddingTop: 8 },
   scrollToBottomSlot: { position: "absolute", top: -36, right: 0, left: 0, zIndex: 3, alignItems: "center" },
   scrollToBottomButton: { width: 34, height: 34, borderRadius: 17, overflow: "hidden" },
   scrollToBottomPressable: { flex: 1, alignItems: "center", justifyContent: "center" },
   scrollToBottomFallback: { borderWidth: StyleSheet.hairlineWidth },
-  composerSurface: { padding: 5, borderRadius: 26, overflow: "hidden" },
-  composerRow: { flexDirection: "row", alignItems: "flex-end", gap: 4 },
+  composerSurface: {
+    padding: COMPOSER_SURFACE_PADDING,
+    borderRadius: 22,
+    overflow: "hidden",
+  },
+  composerRow: { flexDirection: "row", alignItems: "flex-end" },
   composerFallback: { borderWidth: StyleSheet.hairlineWidth },
   replyPreview: { flexDirection: "row", alignItems: "center", gap: 8, margin: 3, marginBottom: 6, paddingLeft: 9, paddingRight: 3, paddingVertical: 7, borderRadius: 16, borderCurve: "continuous" },
   replyAccent: { alignSelf: "stretch", width: 3, borderRadius: 2 },
@@ -1198,6 +1357,30 @@ const styles = StyleSheet.create({
   replyLabel: { fontSize: 12, fontWeight: "600" },
   replyText: { fontSize: 13, lineHeight: 17 },
   replyClose: { width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center" },
-  input: { flex: 1, minHeight: 42, maxHeight: 180, paddingHorizontal: 10, paddingTop: 11, paddingBottom: 11, fontSize: 16, lineHeight: 20 },
-  roundButton: { width: 38, height: 38, marginBottom: 2, borderRadius: 19, alignItems: "center", justifyContent: "center" },
+  roundButton: {
+    width: 32,
+    height: 32,
+    marginBottom: 2,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  composerActionSurface: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    borderRadius: 16,
+  },
+  composerActionGlyph: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    alignItems: "center",
+    justifyContent: "center",
+  },
 });

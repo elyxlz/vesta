@@ -219,7 +219,7 @@ function RecentGatewaysContent() {
                   <Ionicons
                     name={gateway.hosted ? "cloud-outline" : "server-outline"}
                     size={19}
-                    color={colors.accent}
+                    color={colors.text}
                   />
                 </View>
                 <View style={styles.gatewayCopy}>

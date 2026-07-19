@@ -42,7 +42,7 @@ export function AgentStackHeader({ hidden = false }: { hidden?: boolean }) {
         }}
       />
       <Stack.Title asChild>
-        <AgentHeaderTitle
+        <AgentIsland
           name={name}
           status={status}
           activityState={socket.agentState}
@@ -67,7 +67,7 @@ export function AgentStackHeader({ hidden = false }: { hidden?: boolean }) {
   );
 }
 
-export function AgentHeaderTitle({
+export function AgentIsland({
   name,
   status,
   activityState,
