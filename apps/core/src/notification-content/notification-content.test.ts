@@ -90,6 +90,17 @@ describe("parseNotificationContent", () => {
     })
   })
 
+  // A long run of attribute-name characters with no `=` must not extract any attribute (and the
+  // linear tokenizer completes in one sweep rather than backtracking quadratically).
+  it("extracts no attributes from a long attribute-less prefix", () => {
+    const garbage = "A".repeat(10_000)
+    expect(parseNotificationContent(notification(`<channel ${garbage}>hello</channel>`))).toEqual({
+      headline: "hello",
+      body: null,
+      context: null,
+    })
+  })
+
   it("keeps an unknown legacy summary as a safe fallback", () => {
     expect(parseNotificationContent(notification("Legacy notification"))).toEqual({
       headline: "Legacy notification",
