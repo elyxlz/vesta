@@ -119,8 +119,6 @@ function ReplicaGateway({
     reachable: syncState === "open",
     managed: gateway?.managed ?? false,
     gatewayVersion: gateway?.version ?? "",
-    // The sync tree does not carry the dev git branch; it stays null until the tree does.
-    gatewayBranch: null,
     gatewayChannel: gateway?.channel ?? "stable",
     gatewayAutoUpdate: gateway?.autoUpdate ?? true,
     gatewayPort: gateway?.port ?? 0,
