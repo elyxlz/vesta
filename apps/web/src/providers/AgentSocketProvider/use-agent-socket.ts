@@ -253,7 +253,11 @@ export function useAgentSocketState({
     loadingMoreRef.current = true;
     setLoadingMore(true);
     try {
-      const page = await fetchHistory(name, "app-chat", stateRef.current.cursor);
+      const page = await fetchHistory(
+        name,
+        "app-chat",
+        stateRef.current.cursor,
+      );
       commit((current) => prependPage(current, page.events, page.cursor));
     } finally {
       loadingMoreRef.current = false;
