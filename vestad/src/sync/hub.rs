@@ -10,12 +10,26 @@ use super::events::{NotificationChange, PendingNotifications};
 /// delta (today's `EventBus` eviction contract, scoped to one subscription instead of the socket).
 const AGENT_BROADCAST_CAPACITY: usize = 256;
 
+/// Buffer for the always-on alert fan-out. Alerts are ephemeral toasts; a session that falls this
+/// far behind simply drops the intervening ones (no resync), which is acceptable by design.
+const ALERT_BROADCAST_CAPACITY: usize = 256;
+
 /// One live-edge message for an agent's watchers. `Resync` tells a watcher its live edge had a gap
 /// (a tap reconnect); a lagging receiver is turned into the same resync by the handler.
 #[derive(Clone, Debug)]
 pub(crate) enum LiveMessage {
     Event(Arc<Value>),
     Resync,
+}
+
+/// One notification-worthy live event fanned out to every `/sync` session: the source agent, the
+/// full event (opaque JSON, so clients read whatever fields they need), and the server-decided
+/// preview from `alerts::alert_for`.
+#[derive(Clone, Debug)]
+pub(crate) struct LiveAlert {
+    pub agent: String,
+    pub event: Value,
+    pub preview: String,
 }
 
 struct AgentChannel {
@@ -38,6 +52,7 @@ pub(crate) struct SyncHub {
     agents: Mutex<HashMap<String, AgentChannel>>,
     notifications_tx: watch::Sender<u64>,
     notifications_rx: watch::Receiver<u64>,
+    alerts_tx: broadcast::Sender<Arc<LiveAlert>>,
 }
 
 /// Send-message relay failed because the agent's tap is down (restarting, evicted). Retryable: the
@@ -62,7 +77,8 @@ impl Default for SyncHub {
 impl SyncHub {
     pub fn new() -> Self {
         let (notifications_tx, notifications_rx) = watch::channel(0);
-        Self { agents: Mutex::new(HashMap::new()), notifications_tx, notifications_rx }
+        let (alerts_tx, _alerts_rx) = broadcast::channel(ALERT_BROADCAST_CAPACITY);
+        Self { agents: Mutex::new(HashMap::new()), notifications_tx, notifications_rx, alerts_tx }
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, AgentChannel>> {
@@ -143,6 +159,18 @@ impl SyncHub {
         self.notifications_rx.clone()
     }
 
+    /// Subscribe to the always-on alert edge shared by every `/sync` session. Independent of watches:
+    /// a session forwards every alert regardless of which agents it is watching.
+    pub fn subscribe_alerts(&self) -> broadcast::Receiver<Arc<LiveAlert>> {
+        self.alerts_tx.subscribe()
+    }
+
+    /// Fan a notification-worthy live event out to every `/sync` session. A send with no subscribers,
+    /// or one dropped by a lagging receiver, is an accepted no-op: alerts are ephemeral.
+    pub fn publish_alert(&self, agent: &str, event: Value, preview: String) {
+        let _ = self.alerts_tx.send(Arc::new(LiveAlert { agent: agent.to_string(), event, preview }));
+    }
+
     fn bump_notifications(&self) {
         self.notifications_tx.send_modify(|v| *v = v.wrapping_add(1));
     }
@@ -190,6 +218,20 @@ mod tests {
             hub.publish_event("chatty", Arc::new(serde_json::json!({"id": i, "type": "chat", "text": ""})));
         }
         assert!(matches!(rx.recv().await, Err(broadcast::error::RecvError::Lagged(_))));
+    }
+
+    #[tokio::test]
+    async fn an_alert_fans_out_to_every_session_regardless_of_watches() {
+        let hub = SyncHub::new();
+        let mut first = hub.subscribe_alerts();
+        let mut second = hub.subscribe_alerts();
+        hub.publish_alert("scout", serde_json::json!({"id": 5, "type": "chat", "text": "hi"}), "hi".into());
+        for rx in [&mut first, &mut second] {
+            let alert = rx.recv().await.expect("alert");
+            assert_eq!(alert.agent, "scout");
+            assert_eq!(alert.preview, "hi");
+            assert_eq!(alert.event["text"], serde_json::json!("hi"));
+        }
     }
 
     #[test]

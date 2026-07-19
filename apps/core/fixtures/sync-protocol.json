@@ -20,6 +20,16 @@
       "name": "stopped-agent",
       "type": "agent_removed"
     },
+    "alert": {
+      "agent": "sample-agent",
+      "event": {
+        "id": 5,
+        "text": "hello",
+        "type": "chat"
+      },
+      "preview": "hello",
+      "type": "alert"
+    },
     "append": {
       "agent": "sample-agent",
       "events": [

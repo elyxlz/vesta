@@ -21,7 +21,6 @@ const EXPO_PUSH_URL: &str = "https://exp.host/--/api/v2/push/send";
 const MAX_INSTALLATION_ID_LENGTH: usize = 128;
 const MAX_PUSH_TOKEN_LENGTH: usize = 512;
 const MAX_EVENT_TYPES: usize = 32;
-const MAX_PREVIEW_CHARS: usize = 180;
 const MAX_PUSH_ATTEMPTS: usize = 3;
 const MOBILE_EVENT_QUEUE_CAPACITY: usize = 256;
 const MAX_CONCURRENT_EVENT_DELIVERIES: usize = 6;
@@ -223,13 +222,6 @@ fn pushable_event_type(event_type: &str) -> bool {
     PUSHABLE_EVENT_TYPES.contains(&event_type)
 }
 
-fn push_worthy_agent_event(event_type: &str) -> bool {
-    // Agent EventBus `status` frames describe high-frequency activity
-    // (`thinking`/`idle`), not the agent lifecycle status exposed by vestad.
-    // Lifecycle changes enter through `observe_agent_status_changes` below.
-    event_type == "chat"
-}
-
 fn agent_status_changes(
     previous: &[ListEntry],
     current: &[ListEntry],
@@ -280,7 +272,10 @@ impl MobileApp {
         let Some(event_type) = text_field(&event, "type").map(str::to_owned) else {
             return;
         };
-        if !push_worthy_agent_event(&event_type) {
+        // The shared alert decision owns push-worthiness. Per-device subscriptions (chat/status only,
+        // enforced at registration) filter delivery, so a `rate_limited` alert enqueued here reaches
+        // no device and Expo push stays chat-only.
+        if crate::sync::alert_for(&event).is_none() {
             return;
         }
         self.queue_event(agent, &event_type, event);
@@ -450,14 +445,6 @@ fn text_field<'a>(event: &'a serde_json::Value, key: &str) -> Option<&'a str> {
     event.get(key).and_then(serde_json::Value::as_str)
 }
 
-fn truncate_preview(value: &str) -> String {
-    let mut preview: String = value.chars().take(MAX_PREVIEW_CHARS).collect();
-    if value.chars().count() > MAX_PREVIEW_CHARS {
-        preview.push('…');
-    }
-    preview
-}
-
 fn message_for(
     device: &MobileDevice,
     agent: &str,
@@ -467,8 +454,8 @@ fn message_for(
     let (title, body, route) = match event_type {
         "chat" => {
             let body = if device.previews {
-                text_field(event, "text")
-                    .map_or_else(|| format!("{agent} sent a new message."), truncate_preview)
+                crate::sync::alert_for(event)
+                    .map_or_else(|| format!("{agent} sent a new message."), |alert| alert.preview)
             } else {
                 format!("{agent} sent a new message.")
             };
@@ -682,12 +669,6 @@ mod tests {
         assert!(pushable_event_type("chat"));
         assert!(pushable_event_type("status"));
         assert!(!pushable_event_type("notification"));
-    }
-
-    #[test]
-    fn agent_activity_status_is_never_push_worthy() {
-        assert!(!push_worthy_agent_event("status"));
-        assert!(push_worthy_agent_event("chat"));
     }
 
     #[test]
