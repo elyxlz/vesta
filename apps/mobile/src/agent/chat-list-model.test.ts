@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { VestaEvent } from "../api/types";
+import type { ChatMessage } from "../chat/chat-stream-model";
 import { createInvertedChatRows } from "./chat-list-model";
 
-const events: VestaEvent[] = [
+const events: ChatMessage[] = [
   { type: "user", text: "first", ts: "2026-07-15T10:00:00Z" },
   { type: "chat", text: "second", ts: "2026-07-15T10:00:01Z" },
   { type: "chat", text: "latest", ts: "2026-07-15T10:00:02Z" },

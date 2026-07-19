@@ -123,7 +123,7 @@ export default function NotificationsPage({
     queryKey: ["notifications", name],
     queryFn: () => getNotificationHistory(api, name),
   });
-  const lastSnapshotRevision = useRef(0);
+  const lastReseedRevision = useRef(0);
   const items = useMemo(
     () =>
       mergeLiveNotifications(
@@ -148,14 +148,14 @@ export default function NotificationsPage({
 
   useEffect(() => {
     if (
-      socket.snapshotRevision === 0 ||
-      socket.snapshotRevision === lastSnapshotRevision.current
+      socket.reseedRevision === 0 ||
+      socket.reseedRevision === lastReseedRevision.current
     ) {
       return;
     }
-    lastSnapshotRevision.current = socket.snapshotRevision;
+    lastReseedRevision.current = socket.reseedRevision;
     void refetch();
-  }, [refetch, socket.snapshotRevision]);
+  }, [refetch, socket.reseedRevision]);
 
   return (
     <View style={styles.screen}>
