@@ -1,7 +1,22 @@
 import { getConnection } from "@/lib/connection";
-import type { LogEvent, ReleaseChannel } from "@/lib/types";
+import type { ReleaseChannel } from "@vesta/core";
+import type { GatewayVersionInfo, LogEvent } from "@/lib/types";
 import { apiJson } from "./client";
 import { openLogStream } from "./log-stream";
+
+const VERSION_FETCH_TIMEOUT_MS = 5000;
+
+// The gateway's cached /version read: version + update availability. Null on any failure,
+// so the version gate treats an unreachable gateway as "keep trying" rather than a mismatch.
+export async function fetchVersionInfo(): Promise<GatewayVersionInfo | null> {
+  try {
+    return await apiJson<GatewayVersionInfo>("/version", {
+      signal: AbortSignal.timeout(VERSION_FETCH_TIMEOUT_MS),
+    });
+  } catch {
+    return null;
+  }
+}
 
 let gatewayLogSource: EventSource | null = null;
 

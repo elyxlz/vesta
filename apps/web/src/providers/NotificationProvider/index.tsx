@@ -1,15 +1,21 @@
-import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
-import { useGateway } from "@/providers/GatewayProvider";
-import { wsUrl } from "@/lib/connection";
 import {
-  connectReconnectingWs,
-  type ReconnectingWsHandle,
-} from "@/lib/reconnecting-ws";
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  type ReactNode,
+  type RefObject,
+} from "react";
+import type { Controller, Delta, Tree } from "@vesta/core";
+import { useReplica } from "@vesta/core/react";
+import { useGateway } from "@/providers/GatewayProvider";
+import { ControllerContext } from "@/providers/ControllerProvider";
 import { native } from "@/lib/native";
 import { setAppBadge } from "@/lib/app-badge";
 import { setFaviconUnseen } from "@/lib/favicon";
 import { useWindowFocus } from "@/hooks/use-window-focus";
-import type { AgentInfo, VestaEvent } from "@/lib/types";
+import type { AgentRow } from "@/lib/types";
 import { NotificationContext } from "./context";
 
 export { useNotifications } from "./context";
@@ -44,6 +50,66 @@ async function focusAndOpen(
   openAgent(agentName);
 }
 
+// The controller-driven half of the provider: it toasts the server's always-on `alert` deltas and
+// lights the unseen badge from the replica's fleet-wide pending branch. Rendered only once the
+// controller exists, so its hooks always have a live replica.
+function ReplicaNotifications({
+  controller,
+  chattingAgentRef,
+  notifyAssistant,
+  notifyRateLimited,
+  markUnseen,
+}: {
+  controller: Controller;
+  chattingAgentRef: RefObject<string | null>;
+  notifyAssistant: (agentName: string, text: string) => void;
+  notifyRateLimited: (agentName: string, text: string) => void;
+  markUnseen: () => void;
+}) {
+  // Toasts come from vestad's server-decided `alert` deltas (each carries the notification-worthy
+  // event plus a ready preview), independent of any watch. A rate limit alerts even while focused; a
+  // chat lights the unseen badge and toasts, deferring the actively-chatted agent to
+  // AgentSocketProvider (which fires after the typing delay so it lines up with the visible bubble).
+  useEffect(() => {
+    return controller.subscribeDeltas((delta: Delta) => {
+      if (delta.type !== "alert") return;
+      const { agent, event, preview } = delta;
+      if (event.type === "rate_limited") {
+        notifyRateLimited(agent, preview);
+        return;
+      }
+      markUnseen();
+      if (chattingAgentRef.current === agent) return;
+      notifyAssistant(agent, preview);
+    });
+  }, [
+    controller,
+    notifyAssistant,
+    notifyRateLimited,
+    chattingAgentRef,
+    markUnseen,
+  ]);
+
+  // The fleet-wide pending count is the replica's always-on truth for unprocessed notifications.
+  // A rising count while hidden means a new one arrived somewhere: light the unseen badge.
+  const pendingCount = useReplica(controller.replica, (tree: Tree | null) =>
+    tree
+      ? Object.values(tree.agents).reduce(
+          (sum, node) => sum + node.notifications.pending.length,
+          0,
+        )
+      : 0,
+  );
+  const prevPendingRef = useRef(pendingCount);
+  useEffect(() => {
+    const grew = pendingCount > prevPendingRef.current;
+    prevPendingRef.current = pendingCount;
+    if (grew) markUnseen();
+  }, [pendingCount, markUnseen]);
+
+  return null;
+}
+
 export function NotificationProvider({
   children,
   onOpenAgent,
@@ -51,7 +117,8 @@ export function NotificationProvider({
   children: ReactNode;
   onOpenAgent: (agentName: string) => void;
 }) {
-  const { agents, reachable } = useGateway();
+  const { agents } = useGateway();
+  const controller = useContext(ControllerContext);
   const focused = useWindowFocus();
   const focusedRef = useRef(focused);
   useEffect(() => {
@@ -59,9 +126,8 @@ export function NotificationProvider({
   }, [focused]);
 
   const permissionRef = useRef<boolean>(false);
-  const tapsRef = useRef<Map<string, ReconnectingWsHandle>>(new Map());
   const chattingAgentRef = useRef<string | null>(null);
-  const prevStatusRef = useRef<Map<string, AgentInfo["status"]>>(new Map());
+  const prevStatusRef = useRef<Map<string, AgentRow["status"]>>(new Map());
 
   useEffect(() => {
     const onVisible = () => {
@@ -78,15 +144,12 @@ export function NotificationProvider({
     };
   }, []);
 
-  const aliveKey = useMemo(
-    () =>
-      agents
-        .filter((a) => a.status === "alive")
-        .map((a) => a.name)
-        .sort()
-        .join("|"),
-    [agents],
-  );
+  // Light the unseen badge only while the window is hidden; a focused window is already seen.
+  const markUnseen = useCallback(() => {
+    if (!document.hidden) return;
+    setAppBadge(true);
+    setFaviconUnseen(true);
+  }, []);
 
   const notifyAssistant = useCallback(
     (agentName: string, text: string) => {
@@ -152,65 +215,6 @@ export function NotificationProvider({
   }, []);
 
   useEffect(() => {
-    if (!reachable) {
-      for (const name of Array.from(tapsRef.current.keys())) closeTap(name);
-      return;
-    }
-    const aliveNames = aliveKey ? aliveKey.split("|") : [];
-    const aliveSet = new Set(aliveNames);
-
-    for (const name of Array.from(tapsRef.current.keys())) {
-      if (!aliveSet.has(name)) closeTap(name);
-    }
-    for (const name of aliveNames) {
-      if (!tapsRef.current.has(name)) openTap(name);
-    }
-
-    function openTap(name: string) {
-      const handle = connectReconnectingWs({
-        url: () => wsUrl(name, { skipHistory: true }),
-        onMessage: (data) => {
-          let event: VestaEvent;
-          try {
-            event = JSON.parse(data) as VestaEvent;
-          } catch {
-            return;
-          }
-          if (event.type === "rate_limited") {
-            notifyRateLimited(name, event.text);
-            return;
-          }
-          if (event.type !== "chat") return;
-          if (document.hidden) {
-            setAppBadge(true);
-            setFaviconUnseen(true);
-          }
-          // Defer to AgentSocketProvider for the agent being actively chatted with —
-          // it fires after the typing delay so notification lines up with UI.
-          if (chattingAgentRef.current === name) return;
-          notifyAssistant(name, event.text);
-        },
-      });
-      tapsRef.current.set(name, handle);
-    }
-
-    function closeTap(name: string) {
-      const handle = tapsRef.current.get(name);
-      if (!handle) return;
-      handle.close();
-      tapsRef.current.delete(name);
-    }
-  }, [aliveKey, reachable, notifyAssistant, notifyRateLimited]);
-
-  useEffect(() => {
-    const taps = tapsRef.current;
-    return () => {
-      for (const handle of taps.values()) handle.close();
-      taps.clear();
-    };
-  }, []);
-
-  useEffect(() => {
     for (const agent of agents) {
       const previous = prevStatusRef.current.get(agent.name);
       prevStatusRef.current.set(agent.name, agent.status);
@@ -250,6 +254,15 @@ export function NotificationProvider({
 
   return (
     <NotificationContext.Provider value={value}>
+      {controller ? (
+        <ReplicaNotifications
+          controller={controller}
+          chattingAgentRef={chattingAgentRef}
+          notifyAssistant={notifyAssistant}
+          notifyRateLimited={notifyRateLimited}
+          markUnseen={markUnseen}
+        />
+      ) : null}
       {children}
     </NotificationContext.Provider>
   );

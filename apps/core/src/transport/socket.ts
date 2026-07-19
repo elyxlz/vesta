@@ -96,7 +96,7 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
         callbacks.onSnapshot(parsed.frame.tree)
         return
       case "delta":
-        if (parsed.delta.type === "agent_removed") watches.unwatch(parsed.delta.name)
+        if (parsed.delta.type === "agent_removed") watches.drop(parsed.delta.name)
         callbacks.onDelta(parsed.delta)
         return
       case "unknown":
@@ -140,12 +140,10 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
 
   return {
     watch: (agent) => {
-      watches.watch(agent)
-      emit(watchFrame(agent))
+      if (watches.watch(agent)) emit(watchFrame(agent))
     },
     unwatch: (agent) => {
-      watches.unwatch(agent)
-      emit(unwatchFrame(agent))
+      if (watches.unwatch(agent)) emit(unwatchFrame(agent))
     },
     reauth: (token) => {
       emit(reauthFrame(token))

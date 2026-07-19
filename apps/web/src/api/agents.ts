@@ -1,7 +1,7 @@
 import { apiJson, apiFetch, jsonInit } from "./client";
-import type { VestaEvent } from "@/lib/types";
+import type { NotificationEvent, VestaEvent } from "@vesta/core";
 
-export type NotificationEvent = Extract<VestaEvent, { type: "notification" }>;
+export type { NotificationEvent };
 
 export interface OpenRouterConfig {
   key: string;
@@ -390,9 +390,10 @@ export async function getNotificationHistory(
 export async function fetchHistory(
   name: string,
   channel: "app-chat" | "internals",
-  cursor: number,
+  cursor?: number,
 ): Promise<{ events: VestaEvent[]; cursor: number | null }> {
-  const params = new URLSearchParams({ channel, cursor: String(cursor) });
+  const params = new URLSearchParams({ channel });
+  if (cursor != null) params.set("cursor", String(cursor));
   return apiJson(
     `/agents/${encodeURIComponent(name)}/history?${params.toString()}`,
   );

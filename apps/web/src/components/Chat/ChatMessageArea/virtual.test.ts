@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
-import type { VestaEvent } from "@/lib/types";
+import type { ChatMessage } from "@/lib/types";
 import { buildDecorated, rowKey } from "./virtual";
 
-function userMsg(ts: string): VestaEvent {
+function userMsg(ts: string): ChatMessage {
   return { type: "user", text: "hi", ts };
 }
 

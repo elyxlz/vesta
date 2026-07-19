@@ -1,5 +1,6 @@
 import { createContext, useContext } from "react";
-import type { AgentInfo, ReleaseChannel } from "@/lib/types";
+import type { ReleaseChannel } from "@vesta/core";
+import type { AgentRow } from "@/lib/types";
 
 // Context + hook live here, separate from the GatewayProvider component, so the
 // GatewayContext identity is stable across Fast Refresh. Co-locating them with the
@@ -17,9 +18,8 @@ export interface GatewayContextValue {
   versionChecked: boolean;
   updateAvailable: boolean;
   latestVersion: string | null;
-  agents: AgentInfo[];
+  agents: AgentRow[];
   agentsFetched: boolean;
-  send: (event: object) => boolean;
   triggerGatewayUpdate: () => Promise<boolean>;
   checkForUpdate: () => Promise<void>;
 }
@@ -39,7 +39,6 @@ export const disconnectedValue: GatewayContextValue = {
   latestVersion: null,
   agents: [],
   agentsFetched: false,
-  send: () => false,
   triggerGatewayUpdate: () => Promise.resolve(false),
   checkForUpdate: () => Promise.resolve(),
 };

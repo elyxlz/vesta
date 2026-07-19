@@ -5,7 +5,7 @@ import { useCarousel } from "@/lib/Carousel/context.mjs";
 import { useTicker } from "@/lib/Ticker/context.mjs";
 import { useTickerItem } from "@/lib/Ticker/use-ticker-item.mjs";
 import { AgentCard } from "@/components/AgentCard";
-import type { AgentInfo } from "@/lib/types";
+import type { AgentRow } from "@/lib/types";
 import {
   AGENT_CAROUSEL_GAP,
   AGENT_CAROUSEL_CARD_WIDTH,
@@ -58,7 +58,7 @@ function CenterOnMount({ index }: { index: number }) {
   return null;
 }
 
-function CarouselCard({ agent }: { agent: AgentInfo }) {
+function CarouselCard({ agent }: { agent: AgentRow }) {
   const { offset } = useTickerItem();
   const [isCentered, setIsCentered] = useState(
     () => Math.abs(offset.get()) < AGENT_CAROUSEL_ITEM_STRIDE / 2,
@@ -91,7 +91,7 @@ export function AgentsCarousel({
   agents,
   initialIndex = -1,
 }: {
-  agents: AgentInfo[];
+  agents: AgentRow[];
   initialIndex?: number;
 }) {
   const items = agents.map((agent) => (

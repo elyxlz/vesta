@@ -2,9 +2,16 @@ import { memo } from "react";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Message } from "@/components/ui/message";
 import { Markdown } from "@/lib/markdown";
-import type { VestaEvent } from "@/lib/types";
+import type { InputMethod } from "@vesta/core";
+import type { ChatMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ToolCallLabel } from "../ToolCallLabel";
+
+export type RetryHandler = (
+  intentId: string,
+  text: string,
+  inputMethod?: InputMethod,
+) => void;
 
 // Coarse relative countdown to a rate-limit reset (unix seconds); minutes/hours/days is
 // plenty of precision for "come back later" copy.
@@ -27,7 +34,7 @@ function formatBubbleTime(ts: string | undefined): string {
 }
 
 function statusLineText(
-  event: Extract<VestaEvent, { type: "error" | "rate_limited" }>,
+  event: Extract<ChatMessage, { type: "error" | "rate_limited" }>,
 ): string {
   if (event.type === "error")
     return "hit a snag, this may not have gone through";
@@ -41,11 +48,13 @@ export const ChatBubble = memo(function ChatBubble({
   className,
   fullscreen,
   isMobile,
+  onRetry,
 }: {
-  event: VestaEvent;
+  event: ChatMessage;
   className?: string;
   fullscreen?: boolean;
   isMobile: boolean;
+  onRetry?: RetryHandler;
 }) {
   if (event.type === "status") return null;
 
@@ -70,6 +79,38 @@ export const ChatBubble = memo(function ChatBubble({
   }
 
   if (event.type !== "user" && event.type !== "chat") return null;
+
+  // A send whose POST failed (503 retryable) or errored: a subtle "not sent" line with tap-to-retry,
+  // re-posting the same intent id. Delivery truth is still the echo, which clears send_state.
+  if (
+    event.type === "user" &&
+    event.intent_id != null &&
+    (event.send_state === "retry" || event.send_state === "failed")
+  ) {
+    const intentId = event.intent_id;
+    const { text, input_method } = event;
+    return (
+      <div className={className}>
+        <MessageBubble
+          isUser
+          text={text}
+          ts={formatBubbleTime(event.ts)}
+          mobileCard={Boolean(fullscreen && isMobile)}
+        />
+        <div className="mt-0.5 flex justify-end pr-1">
+          <button
+            type="button"
+            onClick={() => {
+              onRetry?.(intentId, text, input_method);
+            }}
+            className="text-[10px] text-destructive/70 transition-colors select-none hover:text-destructive"
+          >
+            not sent · tap to retry
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <MessageBubble

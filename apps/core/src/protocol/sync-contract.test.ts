@@ -39,4 +39,14 @@ describe("sync protocol contract (vestad fixtures)", () => {
       expect(parsed.delta.events[0]?.id).toBe(5)
     }
   })
+
+  it("carries the server-decided preview and event through the alert delta", () => {
+    const parsed = parseServerFrame(JSON.stringify(fixtures.deltas.alert))
+    expect(parsed.kind).toBe("delta")
+    if (parsed.kind === "delta" && parsed.delta.type === "alert") {
+      expect(parsed.delta.agent).toBe("sample-agent")
+      expect(parsed.delta.preview).toBe("hello")
+      expect(parsed.delta.event.type).toBe("chat")
+    }
+  })
 })

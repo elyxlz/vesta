@@ -14,7 +14,7 @@ import {
   isAgentContainerUp,
   LOG_SCROLLBACK_LINES,
 } from "@/lib/log-stream-policy";
-import type { AgentStatus } from "@/lib/types";
+import type { AgentStatus } from "@vesta/core";
 import { cn } from "@/lib/utils";
 
 const RECONNECT_BASE = 1000;

@@ -53,6 +53,14 @@ export type {
 export { readSse } from "./transport/sse"
 export type { SseDeps, SseHandle, StreamEvent } from "./transport/sse"
 
+export { PACING, typingDelay } from "./pacing/pacing"
+
+export {
+  isStructured,
+  notificationContent,
+  parseFields,
+} from "./notification-content/notification-content"
+
 export { createSendMessageIntent } from "./intents/types"
 export type {
   IdGenerator,
@@ -63,3 +71,6 @@ export type {
 } from "./intents/types"
 
 export type { ForegroundSignal, PushTokenProvider, StorageAdapter } from "./adapters/types"
+
+export { createController } from "./controller/controller"
+export type { Controller, ControllerDeps } from "./controller/controller"

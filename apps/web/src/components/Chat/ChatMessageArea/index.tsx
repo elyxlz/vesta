@@ -12,10 +12,10 @@ import { AnimatePresence, motion } from "motion/react";
 import { ArrowDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CardContent } from "@/components/ui/card";
-import type { VestaEvent } from "@/lib/types";
+import type { ChatMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { stepTransition } from "@/lib/motion";
-import { ChatBubble } from "../ChatBubble";
+import { ChatBubble, type RetryHandler } from "../ChatBubble";
 import { buildDecorated } from "./virtual";
 
 // First-paint estimates per row kind (actual heights are measured). Tool-call rows are
@@ -45,13 +45,14 @@ interface ChatMessageAreaProps {
   loadingMore: boolean;
   fullscreen?: boolean;
   navbarHeight: number;
-  chatMessages: VestaEvent[];
+  chatMessages: ChatMessage[];
   connected: boolean;
   historyLoaded: boolean;
   agentName: string;
   notAuthenticated: boolean;
   isTyping: boolean;
   isMobile: boolean;
+  onRetry?: RetryHandler;
 }
 
 // Placeholder bubbles shown while the first page of history is in flight, so a slow
@@ -121,6 +122,7 @@ export function ChatMessageArea({
   notAuthenticated,
   isTyping,
   isMobile,
+  onRetry,
 }: ChatMessageAreaProps) {
   const decorated = useMemo(() => buildDecorated(chatMessages), [chatMessages]);
   const count = decorated.length;
@@ -332,6 +334,7 @@ export function ChatMessageArea({
                         className={row.gap}
                         fullscreen={fullscreen}
                         isMobile={isMobile}
+                        onRetry={onRetry}
                       />
                     </motion.div>
                   ) : (
@@ -340,6 +343,7 @@ export function ChatMessageArea({
                       className={row.gap}
                       fullscreen={fullscreen}
                       isMobile={isMobile}
+                      onRetry={onRetry}
                     />
                   )}
                 </div>

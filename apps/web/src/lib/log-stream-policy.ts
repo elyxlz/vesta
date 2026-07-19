@@ -1,4 +1,5 @@
-import type { AgentStatus, LogEvent } from "./types";
+import type { AgentStatus } from "@vesta/core";
+import type { LogEvent } from "./types";
 
 // The single owner of how the log viewer reacts to the stream and to agent
 // liveness. Kept pure and separate from the Console component so the policy is

@@ -52,6 +52,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     loadingMore,
     loadMore,
     send,
+    retry,
     showToolCalls,
   } = useAgentSocket();
 
@@ -147,6 +148,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
           notAuthenticated={notAuthenticated}
           isTyping={isTyping}
           isMobile={isMobile}
+          onRetry={retry}
         />
 
         <div className="relative">

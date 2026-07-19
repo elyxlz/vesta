@@ -53,6 +53,7 @@ export function parseServerFrame(raw: string): ParsedFrame {
     case "append":
     case "notifications":
     case "resync":
+    case "alert":
       return parseDelta(type, frame)
     default:
       return UNKNOWN
@@ -110,6 +111,15 @@ function parseDelta(type: string, frame: Record<string, unknown>): ParsedFrame {
       const agent = str(frame.agent)
       if (agent === null) return UNKNOWN
       return { kind: "delta", delta: { type: "resync", agent } }
+    }
+    case "alert": {
+      const agent = str(frame.agent)
+      const preview = str(frame.preview)
+      if (agent === null || preview === null || record(frame.event) === null) return UNKNOWN
+      return {
+        kind: "delta",
+        delta: { type: "alert", agent, event: frame.event as VestaEvent, preview },
+      }
     }
     default:
       return UNKNOWN

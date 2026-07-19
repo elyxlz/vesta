@@ -13,7 +13,7 @@ use crate::docker::ListEntry;
 use crate::settings::ServiceEntry;
 use crate::state::{SharedState, WS_KEEPALIVE_INTERVAL_SECS};
 
-use super::hub::{LiveMessage, SyncHub};
+use super::hub::{LiveAlert, LiveMessage, SyncHub};
 use super::protocol::{
     AgentInfo, AgentNode, ClientFrame, Frame, GatewayInfo, GatewayLan, GatewayScope,
     NotificationsBranch, ServiceInfo, Tree,
@@ -84,6 +84,9 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
     let mut services_rx = state.agent_status_cache.subscribe_services();
     let mut invalidations_rx = state.agent_status_cache.subscribe_invalidations();
     let mut notifications_rx = state.sync_hub.subscribe_notifications();
+    // Alerts are live-only (no snapshot backlog), so subscribing before the snapshot send just avoids
+    // missing one that lands during setup; a broadcast receiver needs no borrow_and_update baseline.
+    let mut alerts_rx = state.sync_hub.subscribe_alerts();
     agents_rx.borrow_and_update();
     activity_rx.borrow_and_update();
     services_rx.borrow_and_update();
@@ -120,6 +123,7 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
             r = services_rx.changed() => { if r.is_err() { break } Wake::Roster }
             r = invalidations_rx.changed() => { if r.is_err() { break } Wake::Roster }
             r = notifications_rx.changed() => { if r.is_err() { break } Wake::Notifications }
+            alert = alerts_rx.recv() => Wake::Alert(alert),
             frame = watch_rx.recv() => Wake::Watch(frame),
             client = rx.next() => Wake::Client(client),
             _ = keepalive.tick() => Wake::Keepalive,
@@ -145,6 +149,16 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
                     break;
                 }
             }
+            Wake::Alert(Ok(alert)) => {
+                let frame = Frame::Alert {
+                    agent: alert.agent.clone(),
+                    event: alert.event.clone(),
+                    preview: alert.preview.clone(),
+                };
+                if send_frame(&mut tx, &frame).await.is_err() {
+                    break;
+                }
+            }
             Wake::Watch(Some(delta)) => {
                 // A resync from a watch task means that watch ended (overflow or a tap gap); drop it
                 // so the client re-watches.
@@ -162,10 +176,16 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
                     break;
                 }
             }
-            // End the session: the peer closed, the stream ended, a transport error, or the deadline.
-            Wake::Expire | Wake::Client(None | Some(Ok(Message::Close(_)) | Err(_))) => break,
-            // Ignore: an empty watch wake and any non-text control frame (ping/pong/binary).
-            Wake::Watch(None) | Wake::Client(Some(Ok(_))) => {}
+            // End the session: the peer closed, the stream ended, a transport error, the deadline, or
+            // the process-lifetime alert hub going away (Closed, which cannot happen in practice).
+            Wake::Expire
+            | Wake::Client(None | Some(Ok(Message::Close(_)) | Err(_)))
+            | Wake::Alert(Err(broadcast::error::RecvError::Closed)) => break,
+            // Ignore: an empty watch wake, any non-text control frame (ping/pong/binary), and a lagged
+            // alert (ephemeral, dropped by design).
+            Wake::Watch(None)
+            | Wake::Client(Some(Ok(_)))
+            | Wake::Alert(Err(broadcast::error::RecvError::Lagged(_))) => {}
         }
     }
 
@@ -178,6 +198,7 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
 enum Wake {
     Roster,
     Notifications,
+    Alert(Result<std::sync::Arc<LiveAlert>, broadcast::error::RecvError>),
     Watch(Option<Frame>),
     Client(Option<Result<Message, axum::Error>>),
     Keepalive,
@@ -415,6 +436,8 @@ pub(crate) struct SendMessageBody {
     text: String,
     #[serde(default)]
     intent_id: Option<String>,
+    #[serde(default)]
+    input_method: Option<String>,
 }
 
 /// Relay a send-message intent to the agent over the tap's write-half. Returns a typed retryable
@@ -439,12 +462,16 @@ pub(crate) async fn send_message_handler(
     }
 }
 
-/// The agent-WS `message` frame the tap relays: `{type:"message", text, intent_id?}`, matching the
-/// agent's `_recv_loop` intake (Stage 3). `intent_id` is omitted when absent, never null.
+/// The agent-WS `message` frame the tap relays: `{type:"message", text, intent_id?, input_method?}`,
+/// matching the agent's `_recv_loop` intake (Stage 3). Optional fields are omitted when absent, never
+/// null.
 fn message_frame(body: &SendMessageBody) -> serde_json::Value {
     let mut frame = serde_json::json!({ "type": "message", "text": body.text });
     if let Some(intent_id) = &body.intent_id {
         frame["intent_id"] = serde_json::Value::String(intent_id.clone());
+    }
+    if let Some(input_method) = &body.input_method {
+        frame["input_method"] = serde_json::Value::String(input_method.clone());
     }
     frame
 }
@@ -614,13 +641,22 @@ mod tests {
     }
 
     #[test]
-    fn message_frame_threads_intent_id_only_when_present() {
-        let with_id = message_frame(&SendMessageBody { text: "hi".into(), intent_id: Some("i-9".into()) });
-        assert_eq!(with_id["type"], serde_json::json!("message"));
-        assert_eq!(with_id["text"], serde_json::json!("hi"));
-        assert_eq!(with_id["intent_id"], serde_json::json!("i-9"));
+    fn message_frame_threads_optional_fields_only_when_present() {
+        let full = message_frame(&SendMessageBody {
+            text: "hi".into(),
+            intent_id: Some("i-9".into()),
+            input_method: Some("voice".into()),
+        });
+        assert_eq!(full["type"], serde_json::json!("message"));
+        assert_eq!(full["text"], serde_json::json!("hi"));
+        assert_eq!(full["intent_id"], serde_json::json!("i-9"));
+        assert_eq!(full["input_method"], serde_json::json!("voice"));
 
-        let without = message_frame(&SendMessageBody { text: "hi".into(), intent_id: None });
+        let without = message_frame(&SendMessageBody { text: "hi".into(), intent_id: None, input_method: None });
         assert!(without.get("intent_id").is_none(), "absent intent_id stays absent, never null");
+        assert!(
+            without.get("input_method").is_none(),
+            "absent input_method stays absent, never null"
+        );
     }
 }

@@ -2,7 +2,7 @@ import {
   getAgentVisualStatus,
   type OrbVisualState,
 } from "@/components/Orb/styles";
-import type { AgentActivityState } from "@/lib/types";
+import type { AgentActivityState } from "@vesta/core";
 import { useAgentOps } from "@/stores/use-agent-ops";
 
 interface AgentLike {

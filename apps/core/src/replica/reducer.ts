@@ -28,6 +28,7 @@ export function reduceDelta(tree: Tree, delta: Delta): Tree {
     }
     case "append":
     case "resync":
+    case "alert":
       return tree
   }
 }
