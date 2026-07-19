@@ -47,6 +47,13 @@ async fn handshake(sock: &mut SyncSocket) -> serde_json::Value {
     snapshot
 }
 
+/// True when a harness `recv_frame`/`expect_frame_matching` error string signals a real socket
+/// close/end/transport-failure, false for a plain read timeout ("timed out waiting for sync frame").
+/// Keeps a close assertion from being satisfied by the deadline merely elapsing on a still-open socket.
+fn is_close_error(msg: &str) -> bool {
+    msg.contains("closed") || msg.contains("ended") || msg.contains("socket error")
+}
+
 fn is_append_for(frame: &serde_json::Value, agent: &str, intent: &str) -> bool {
     frame["type"].as_str() == Some("append")
         && frame["agent"].as_str() == Some(agent)
@@ -130,6 +137,9 @@ async fn hello_then_snapshot_carries_agent_info_branch() {
         let snapshot = handshake(&mut sock).await;
         if let Some(node) = snapshot["tree"]["agents"].get(agent.as_str()) {
             assert!(node.get("info").is_some(), "agent node carries an info branch");
+            // The snapshot is tail-less by contract: roster + pending only, no event/chat tails.
+            assert!(node.get("events").is_none(), "snapshot node carries no event tail");
+            assert!(node.get("chat").is_none(), "snapshot node carries no chat tail");
             sock.close().await.ok();
             return;
         }
@@ -234,11 +244,13 @@ async fn reauth_extends_and_closes_on_bad() {
         {
             // Tolerate any in-flight frame queued before the reauth was processed; keep reading.
             Ok(_) if Instant::now() < deadline => {}
+            // Still open at the deadline: not closed. A read timeout is the same signal, so it must
+            // not count as a close (that is exactly the regression this distinguishes).
             Ok(_) => break false,
-            Err(_) => break true,
+            Err(ref e) => break is_close_error(e),
         }
     };
-    assert!(closed, "a bad reauth must close the socket");
+    assert!(closed, "a bad reauth must close the socket (a read timeout is not a close)");
 
     // (b) JWT socket + a valid reauth -> stays open and still delivers an append.
     let jwt = c.mint_access_token().expect("mint jwt");
