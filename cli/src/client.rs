@@ -2026,6 +2026,15 @@ mod tests {
     }
 
     #[test]
+    fn watch_frame_shape() {
+        let tungstenite::Message::Text(text) = watch_frame("scout") else {
+            panic!("watch frame must be a text frame");
+        };
+        let value: serde_json::Value = serde_json::from_str(text.as_str()).expect("watch frame json");
+        assert_eq!(value, serde_json::json!({ "type": "watch", "agent": "scout" }));
+    }
+
+    #[test]
     fn route_frame_prints_a_chat_line_and_advances_the_watermark() {
         let mut last = 0i64;
         let frame = SyncFrame::Append { agent: "scout".into(), events: vec![chat_event(5, "chat", Some("hi"), None)] };
