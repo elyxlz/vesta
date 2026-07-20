@@ -31,7 +31,7 @@ import {
   PreferencesProvider,
   usePreferences,
 } from "@/preferences/PreferencesProvider";
-import { AlertNotifications } from "@/notifications/AlertNotifications";
+import { UserNotifications } from "@/notifications/UserNotifications";
 import { PushCoordinator } from "@/notifications/PushCoordinator";
 import {
   RosterHoldProvider,
@@ -321,7 +321,7 @@ export default function RootLayout() {
                 <ChatHoldProvider>
                   <ControllerProvider>
                     <RosterProvider>
-                      <AlertNotifications />
+                      <UserNotifications />
                       <PushCoordinator />
                       <SessionNavigation />
                     </RosterProvider>

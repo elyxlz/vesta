@@ -524,9 +524,9 @@ async fn agent_event_listener(
                         continue;
                     }
 
-                    // A live event: feed the notifications projection. Alerts + mobile push no longer
-                    // ride the tap; they come from the agent's `notify` primitive
-                    // (POST /agents/{name}/notify), which fans an `alert` delta and an Expo push.
+                    // A live event: feed the notifications projection. User notifications + mobile push
+                    // no longer ride the tap; they come from the agent's user-notification primitive
+                    // (POST /agents/{name}/user-notification), which fans a `user_notification` delta and an Expo push.
                     if let Some(change) = notification_change(&parsed) {
                         hub.apply_notification(&name, change);
                     }

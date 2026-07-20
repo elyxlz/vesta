@@ -2,9 +2,9 @@
 
 Owns the app-chat channel: it runs the skill's HTTP service (POST /message intake, GET /history, and
 GET /ws, the replay-free live chat stream), and accepts CLI commands via a Unix socket to send replies
-(`app-chat send` -> persist a `chat` event, fan it to the /ws subscribers, notify vestad so a
-backgrounded client gets an alert). Durability is the skill's own store, so a reply succeeds even with
-no client connected; the live echo fans out in-process to whoever is on /ws.
+(`app-chat send` -> persist a `chat` event, fan it to the /ws subscribers, send a user notification to
+vestad so a backgrounded client gets one). Durability is the skill's own store, so a reply succeeds even
+with no client connected; the live echo fans out in-process to whoever is on /ws.
 
 `app-chat daemon start|stop|restart|status` owns the process lifecycle: start is idempotent
 (a live daemon is a no-op), stop marks the shutdown as intentional so it does not fire the
@@ -38,10 +38,10 @@ STOP_MARKER_NAME = "stop-requested"
 DAEMON_START_TIMEOUT = 15.0
 DAEMON_STOP_TIMEOUT = 15.0
 DAEMON_POLL_INTERVAL = 0.5
-NOTIFY_TIMEOUT = 10.0
+USER_NOTIFICATION_TIMEOUT = 10.0
 
 REGISTER_SERVICE = pl.Path.home() / "agent" / "skills" / "vestad" / "scripts" / "register-service"
-NOTIFY = pl.Path.home() / "agent" / "skills" / "vestad" / "scripts" / "notify"
+USER_NOTIFICATION = pl.Path.home() / "agent" / "skills" / "vestad" / "scripts" / "user-notification"
 
 
 def resolve_port() -> int:
@@ -77,19 +77,24 @@ class DaemonState:
     shutdown: asyncio.Event = field(default_factory=asyncio.Event)
 
 
-def _notify_reply(text: str) -> None:
-    """Best-effort: tell vestad an app reply went out so it alerts + pushes. A failure here never fails
+def _send_user_notification(text: str) -> None:
+    """Best-effort: tell vestad an app reply went out so it toasts + pushes. A failure here never fails
     the reply (durability + the live echo already happened); it only skips the toast/push, so swallow a
-    spawn error and cap a hung script. The notify script lands with the notify primitive, so the
-    NOTIFY.exists() guard no-ops until then."""
+    spawn error and cap a hung script. The user-notification script lands with the user-notification
+    primitive, so the USER_NOTIFICATION.exists() guard no-ops until then."""
     agent = os.environ.get("AGENT_NAME")
-    if agent is None or not NOTIFY.exists():
+    if agent is None or not USER_NOTIFICATION.exists():
         return
     preview = text[:180]
     try:
-        subprocess.run([str(NOTIFY), "message", agent, preview], check=False, capture_output=True, timeout=NOTIFY_TIMEOUT)
+        subprocess.run(
+            [str(USER_NOTIFICATION), "message", agent, preview],
+            check=False,
+            capture_output=True,
+            timeout=USER_NOTIFICATION_TIMEOUT,
+        )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        _log(f"notify failed: {exc}")
+        _log(f"user notification failed: {exc}")
 
 
 def cmd_serve(args: argparse.Namespace) -> None:
@@ -180,7 +185,7 @@ async def _handle_socket_conn(state: DaemonState, reader: asyncio.StreamReader, 
                 event: StoredEvent = {"type": "chat", "ts": datetime.now(UTC).isoformat(), "text": message}
                 state.service.store.append(event)
                 state.service.emit(event)
-                await asyncio.to_thread(_notify_reply, message)
+                await asyncio.to_thread(_send_user_notification, message)
                 response = {"ok": True, "message": message, "id": event["id"]}
         elif command == "status":
             response = {"ok": True, "port": state.port, "clients": len(state.service.subscribers)}

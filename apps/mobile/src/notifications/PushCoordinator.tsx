@@ -33,9 +33,9 @@ Notifications.setNotificationHandler({
       notification.request.content.data,
     );
     return {
-      // Foreground presentation has one owner: while /sync is connected the alert delta shows the
-      // notification, so the push is suppressed here (foreground-policy). When sync is down the
-      // push is the fallback, suppressed only for the visible agent's healthy socket.
+      // Foreground presentation has one owner: while /sync is connected the user_notification delta
+      // shows the notification, so the push is suppressed here (foreground-policy). When sync is down
+      // the push is the fallback, suppressed only for the visible agent's healthy socket.
       shouldShowBanner: present,
       shouldShowList: present,
       shouldPlaySound: present,

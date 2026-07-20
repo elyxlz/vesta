@@ -13,7 +13,7 @@ use crate::docker::{AgentStatus, BuildPhase, ListEntry};
 use crate::settings::ServiceEntry;
 use crate::state::{SharedState, WS_KEEPALIVE_INTERVAL_SECS};
 
-use super::hub::LiveAlert;
+use super::hub::UserNotification;
 use super::protocol::{
     AgentInfo, AgentNode, ClientFrame, Frame, GatewayInfo, GatewayLan, GatewayScope,
     NotificationsBranch, ServiceInfo, Tree,
@@ -81,9 +81,9 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
     let mut services_rx = state.agent_status_cache.subscribe_services();
     let mut invalidations_rx = state.agent_status_cache.subscribe_invalidations();
     let mut notifications_rx = state.sync_hub.subscribe_notifications();
-    // Alerts are live-only (no snapshot backlog), so subscribing before the snapshot send just avoids
-    // missing one that lands during setup; a broadcast receiver needs no borrow_and_update baseline.
-    let mut alerts_rx = state.sync_hub.subscribe_alerts();
+    // User notifications are live-only (no snapshot backlog), so subscribing before the snapshot send
+    // just avoids missing one that lands during setup; a broadcast receiver needs no borrow_and_update baseline.
+    let mut user_notifications_rx = state.sync_hub.subscribe_user_notifications();
     agents_rx.borrow_and_update();
     activity_rx.borrow_and_update();
     services_rx.borrow_and_update();
@@ -115,7 +115,7 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
             r = services_rx.changed() => { if r.is_err() { break } Wake::Roster }
             r = invalidations_rx.changed() => { if r.is_err() { break } Wake::Roster }
             r = notifications_rx.changed() => { if r.is_err() { break } Wake::Notifications }
-            alert = alerts_rx.recv() => Wake::Alert(alert),
+            user_notification = user_notifications_rx.recv() => Wake::UserNotification(user_notification),
             client = rx.next() => Wake::Client(client),
             _ = keepalive.tick() => Wake::Keepalive,
             () = expire(deadline) => Wake::Expire,
@@ -140,12 +140,12 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
                     break;
                 }
             }
-            Wake::Alert(Ok(alert)) => {
-                let frame = Frame::Alert {
-                    agent: alert.agent.clone(),
-                    kind: alert.kind.clone(),
-                    title: alert.title.clone(),
-                    body: alert.body.clone(),
+            Wake::UserNotification(Ok(user_notification)) => {
+                let frame = Frame::UserNotification {
+                    agent: user_notification.agent.clone(),
+                    kind: user_notification.kind.clone(),
+                    title: user_notification.title.clone(),
+                    body: user_notification.body.clone(),
                 };
                 if send_frame(&mut tx, &frame).await.is_err() {
                     break;
@@ -159,14 +159,14 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
                 }
             }
             // End the session: the peer closed, the stream ended, a transport error, the deadline, or
-            // the process-lifetime alert hub going away (Closed, which cannot happen in practice).
+            // the process-lifetime user-notification hub going away (Closed, which cannot happen in practice).
             Wake::Expire
             | Wake::Client(None | Some(Ok(Message::Close(_)) | Err(_)))
-            | Wake::Alert(Err(broadcast::error::RecvError::Closed)) => break,
-            // Ignore: any non-text control frame (ping/pong/binary) and a lagged alert (ephemeral,
-            // dropped by design).
+            | Wake::UserNotification(Err(broadcast::error::RecvError::Closed)) => break,
+            // Ignore: any non-text control frame (ping/pong/binary) and a lagged user notification
+            // (ephemeral, dropped by design).
             Wake::Client(Some(Ok(_)))
-            | Wake::Alert(Err(broadcast::error::RecvError::Lagged(_))) => {}
+            | Wake::UserNotification(Err(broadcast::error::RecvError::Lagged(_))) => {}
         }
     }
 }
@@ -175,7 +175,7 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
 enum Wake {
     Roster,
     Notifications,
-    Alert(Result<std::sync::Arc<LiveAlert>, broadcast::error::RecvError>),
+    UserNotification(Result<std::sync::Arc<UserNotification>, broadcast::error::RecvError>),
     Client(Option<Result<Message, axum::Error>>),
     Keepalive,
     Expire,

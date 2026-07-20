@@ -52,18 +52,19 @@ async def _request_lifecycle(action: str) -> bool:
         return False
 
 
-async def notify(kind: str, title: str, body: str) -> None:
-    """POST /agents/{me}/notify to vestad, which fans an `alert` delta to connected clients and an
-    Expo push to backgrounded mobile. Best-effort: any missing identity, transport failure, non-2xx,
-    or timeout is logged and swallowed, so surfacing an alert never disrupts the turn that emitted it
-    (the durable work the alert describes already happened). `kind` is one of "message"/"rate_limited"."""
+async def send_user_notification(kind: str, title: str, body: str) -> None:
+    """POST /agents/{me}/user-notification to vestad, which fans a `user_notification` delta to
+    connected clients and an Expo push to backgrounded mobile. Best-effort: any missing identity,
+    transport failure, non-2xx, or timeout is logged and swallowed, so surfacing a user notification
+    never disrupts the turn that emitted it (the durable work it describes already happened). `kind` is
+    one of "message"/"rate_limited"."""
     port = os.environ["VESTAD_PORT"] if "VESTAD_PORT" in os.environ else ""
     name = os.environ["AGENT_NAME"] if "AGENT_NAME" in os.environ else ""
     token = os.environ["AGENT_TOKEN"] if "AGENT_TOKEN" in os.environ else ""
     if not (port and name and token):
-        logger.error("cannot notify vestad: missing VESTAD_PORT/AGENT_NAME/AGENT_TOKEN")
+        logger.error("cannot send user notification to vestad: missing VESTAD_PORT/AGENT_NAME/AGENT_TOKEN")
         return
-    url = f"https://localhost:{port}/agents/{name}/notify"
+    url = f"https://localhost:{port}/agents/{name}/user-notification"
     payload = {"kind": kind, "title": title, "body": body}
     connector = aiohttp.TCPConnector(ssl=False)
     try:
@@ -71,9 +72,9 @@ async def notify(kind: str, title: str, body: str) -> None:
             resp = await session.post(url, headers={"X-Agent-Token": token}, json=payload)
             resp.raise_for_status()
     except aiohttp.ClientError as exc:
-        logger.warning(f"notify to vestad failed ({kind}): {exc}")
+        logger.warning(f"user notification to vestad failed ({kind}): {exc}")
     except TimeoutError:
-        logger.warning(f"notify to vestad timed out ({kind})")
+        logger.warning(f"user notification to vestad timed out ({kind})")
 
 
 async def request_restart() -> bool:

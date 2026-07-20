@@ -105,8 +105,8 @@ pub struct AppState {
     pub(crate) dev_mode: bool,
     pub(crate) agent_status_cache: Arc<agent_status::AgentStatusCache>,
     /// The client-protocol aggregator's fan-out state: the per-agent pending-notifications
-    /// projection (fed by the tap in `agent_status.rs`) and the always-on alert edge (fed by the
-    /// notify handler), both read by the `/sync` handler.
+    /// projection (fed by the tap in `agent_status.rs`) and the always-on user-notification edge (fed
+    /// by the user-notification handler), both read by the `/sync` handler.
     pub(crate) sync_hub: Arc<crate::sync::SyncHub>,
     /// Agents whose container is mid-rebuild; shared with the boot reconcile and the
     /// status poll so they report `Rebuilding` and mutating handlers refuse to race it.

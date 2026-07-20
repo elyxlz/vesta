@@ -198,7 +198,7 @@ describe("NotificationProvider", () => {
 
     act(() => {
       emit({
-        type: "alert",
+        type: "user_notification",
         agent: "bob",
         kind: "message",
         title: "bob",
@@ -221,7 +221,7 @@ describe("NotificationProvider", () => {
 
     act(() => {
       emit({
-        type: "alert",
+        type: "user_notification",
         agent: "ada",
         kind: "message",
         title: "ada",
@@ -240,7 +240,7 @@ describe("NotificationProvider", () => {
 
     act(() => {
       emit({
-        type: "alert",
+        type: "user_notification",
         agent: "ada",
         kind: "message",
         title: "ada",
@@ -259,7 +259,7 @@ describe("NotificationProvider", () => {
 
     act(() => {
       emit({
-        type: "alert",
+        type: "user_notification",
         agent: "ada",
         kind: "rate_limited",
         title: "ada",

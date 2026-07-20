@@ -85,7 +85,7 @@ pub(crate) enum Frame {
     Agent { name: String, info: AgentInfo },
     AgentRemoved { name: String },
     Notifications { agent: String, pending: Vec<serde_json::Value> },
-    Alert { agent: String, kind: String, title: String, body: String },
+    UserNotification { agent: String, kind: String, title: String, body: String },
 }
 
 impl Frame {
@@ -153,9 +153,9 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
             "agent": to_value(Frame::Agent { name: "sample-agent".into(), info }).expect("serialize agent"),
             "agent_removed": to_value(Frame::AgentRemoved { name: "stopped-agent".into() }).expect("serialize agent_removed"),
             "notifications": to_value(Frame::Notifications { agent: "sample-agent".into(), pending: vec![notification] }).expect("serialize notifications"),
-            "alert": to_value(Frame::Alert {
+            "user_notification": to_value(Frame::UserNotification {
                 agent: "sample-agent".into(), kind: "message".into(), title: "sample-agent".into(), body: "hello".into(),
-            }).expect("serialize alert"),
+            }).expect("serialize user_notification"),
         }
     })
 }
@@ -224,7 +224,7 @@ mod tests {
             (Frame::Agent { name: "scout".into(), info: sample_agent_info() }, "agent"),
             (Frame::AgentRemoved { name: "scout".into() }, "agent_removed"),
             (Frame::Notifications { agent: "scout".into(), pending: vec![] }, "notifications"),
-            (Frame::Alert { agent: "scout".into(), kind: "message".into(), title: "scout".into(), body: "hi".into() }, "alert"),
+            (Frame::UserNotification { agent: "scout".into(), kind: "message".into(), title: "scout".into(), body: "hi".into() }, "user_notification"),
         ];
         for (frame, tag) in cases {
             let value = serde_json::to_value(&frame).expect("serialize frame");

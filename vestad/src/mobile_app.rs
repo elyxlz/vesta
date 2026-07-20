@@ -265,11 +265,11 @@ impl MobileApp {
         )
     }
 
-    /// Enqueue a mobile push for an agent-injected alert (`POST /agents/{name}/notify`). Only a new
-    /// message pushes: it reuses the existing `chat` device subscription, so registered devices need
-    /// no change. A `rate_limited` alert toasts on connected clients but is never a mobile push, so
-    /// it is skipped here (chat-only device subscriptions dropped it before too).
-    pub(crate) fn push_alert(&self, agent: &str, kind: &str, title: &str, body: &str) {
+    /// Enqueue a mobile push for an agent-injected user notification (`POST /agents/{name}/user-notification`).
+    /// Only a new message pushes: it reuses the existing `chat` device subscription, so registered
+    /// devices need no change. A `rate_limited` user notification toasts on connected clients but is
+    /// never a mobile push, so it is skipped here (chat-only device subscriptions dropped it before too).
+    pub(crate) fn push_user_notification(&self, agent: &str, kind: &str, title: &str, body: &str) {
         if kind != "message" {
             return;
         }

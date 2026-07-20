@@ -20,13 +20,6 @@
       "name": "stopped-agent",
       "type": "agent_removed"
     },
-    "alert": {
-      "agent": "sample-agent",
-      "body": "hello",
-      "kind": "message",
-      "title": "sample-agent",
-      "type": "alert"
-    },
     "notifications": {
       "agent": "sample-agent",
       "pending": [
@@ -57,6 +50,13 @@
         "updateAvailable": true,
         "version": "0.1.0"
       }
+    },
+    "user_notification": {
+      "agent": "sample-agent",
+      "body": "hello",
+      "kind": "message",
+      "title": "sample-agent",
+      "type": "user_notification"
     }
   },
   "hello": {

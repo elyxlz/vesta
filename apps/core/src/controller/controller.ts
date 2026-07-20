@@ -15,8 +15,8 @@ export interface Controller {
   replica: Replica
   http: HttpClient
   reauth: (token: string) => void
-  // The server's always-on `alert` delta is not tree state, so the notification funnel subscribes
-  // to it here. Every delta flows through; callers that want branch state read the replica instead.
+  // The server's always-on `user_notification` delta is not tree state, so the notification funnel
+  // subscribes to it here. Every delta flows through; callers that want branch state read the replica instead.
   subscribeDeltas: (listener: (delta: Delta) => void) => () => void
   getSyncState: () => SyncState
   subscribeSyncState: (listener: () => void) => () => void

@@ -27,8 +27,14 @@ describe("parseServerFrame", () => {
       { raw: { type: "agent_removed", name: "scout" }, type: "agent_removed" },
       { raw: { type: "notifications", agent: "scout", pending: [] }, type: "notifications" },
       {
-        raw: { type: "alert", agent: "scout", kind: "message", title: "scout", body: "hi" },
-        type: "alert",
+        raw: {
+          type: "user_notification",
+          agent: "scout",
+          kind: "message",
+          title: "scout",
+          body: "hi",
+        },
+        type: "user_notification",
       },
     ]
     for (const entry of cases) {
@@ -38,10 +44,10 @@ describe("parseServerFrame", () => {
     }
   })
 
-  it("carries the alert agent, kind, title, and body through", () => {
+  it("carries the user_notification agent, kind, title, and body through", () => {
     const parsed = parseServerFrame(
       JSON.stringify({
-        type: "alert",
+        type: "user_notification",
         agent: "scout",
         kind: "message",
         title: "scout",
@@ -49,7 +55,7 @@ describe("parseServerFrame", () => {
       }),
     )
     expect(parsed.kind).toBe("delta")
-    if (parsed.kind === "delta" && parsed.delta.type === "alert") {
+    if (parsed.kind === "delta" && parsed.delta.type === "user_notification") {
       expect(parsed.delta.agent).toBe("scout")
       expect(parsed.delta.kind).toBe("message")
       expect(parsed.delta.title).toBe("scout")
@@ -57,11 +63,16 @@ describe("parseServerFrame", () => {
     }
   })
 
-  it("ignores an alert missing its kind, title, or body", () => {
+  it("ignores a user_notification missing its kind, title, or body", () => {
     const inputs = [
-      JSON.stringify({ type: "alert", agent: "scout", title: "scout", body: "hi" }),
-      JSON.stringify({ type: "alert", agent: "scout", kind: "message", body: "hi" }),
-      JSON.stringify({ type: "alert", agent: "scout", kind: "message", title: "scout" }),
+      JSON.stringify({ type: "user_notification", agent: "scout", title: "scout", body: "hi" }),
+      JSON.stringify({ type: "user_notification", agent: "scout", kind: "message", body: "hi" }),
+      JSON.stringify({
+        type: "user_notification",
+        agent: "scout",
+        kind: "message",
+        title: "scout",
+      }),
     ]
     for (const raw of inputs) expect(parseServerFrame(raw)).toEqual({ kind: "unknown" })
   })

@@ -32,10 +32,10 @@ describe("sync protocol contract (vestad fixtures)", () => {
     }
   })
 
-  it("carries the server-decided kind, title, and body through the alert delta", () => {
-    const parsed = parseServerFrame(JSON.stringify(fixtures.deltas.alert))
+  it("carries the server-decided kind, title, and body through the user_notification delta", () => {
+    const parsed = parseServerFrame(JSON.stringify(fixtures.deltas.user_notification))
     expect(parsed.kind).toBe("delta")
-    if (parsed.kind === "delta" && parsed.delta.type === "alert") {
+    if (parsed.kind === "delta" && parsed.delta.type === "user_notification") {
       expect(parsed.delta.agent).toBe("sample-agent")
       expect(parsed.delta.kind).toBe("message")
       expect(parsed.delta.title).toBe("sample-agent")

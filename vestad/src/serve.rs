@@ -1587,20 +1587,20 @@ fn resolve_public(requested: Option<bool>, cached: Option<ServiceEntry>) -> bool
     requested.unwrap_or_else(|| cached.is_some_and(|entry| entry.public))
 }
 
-/// Longest title/body carried in an agent-injected alert; longer text is truncated with an ellipsis.
-const NOTIFY_TITLE_MAX_CHARS: usize = 120;
-const NOTIFY_BODY_MAX_CHARS: usize = 180;
+/// Longest title/body carried in an agent-injected user notification; longer text is truncated with an ellipsis.
+const USER_NOTIFICATION_TITLE_MAX_CHARS: usize = 120;
+const USER_NOTIFICATION_BODY_MAX_CHARS: usize = 180;
 
 #[derive(Deserialize)]
-struct NotifyBody {
+struct UserNotificationBody {
     kind: String,
     title: String,
     body: String,
 }
 
-/// Notify kinds are a closed set: `message` (a new agent reply) and `rate_limited`. An unknown kind
-/// is rejected so the alert surface cannot drift open.
-fn valid_notify_kind(kind: &str) -> bool {
+/// User-notification kinds are a closed set: `message` (a new agent reply) and `rate_limited`. An
+/// unknown kind is rejected so the user-notification surface cannot drift open.
+fn valid_user_notification_kind(kind: &str) -> bool {
     matches!(kind, "message" | "rate_limited")
 }
 
@@ -1615,23 +1615,24 @@ fn truncate_chars(value: &str, max: usize) -> String {
     out
 }
 
-/// `POST /agents/{name}/notify`: an agent-injected user-facing alert. Agent-token authed and
-/// self-scoped by the middleware, so an agent can only notify as itself. Fans an `alert` delta to
-/// connected `/sync` sessions and an Expo push to backgrounded mobile. Kinds are a closed set.
-async fn notify_handler(
+/// `POST /agents/{name}/user-notification`: an agent-injected user-facing notification. Agent-token
+/// authed and self-scoped by the middleware, so an agent can only notify as itself. Fans a
+/// `user_notification` delta to connected `/sync` sessions and an Expo push to backgrounded mobile.
+/// Kinds are a closed set.
+async fn user_notification_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
-    Json(body): Json<NotifyBody>,
+    Json(body): Json<UserNotificationBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    if !valid_notify_kind(&body.kind) {
-        return Err(err_response(StatusCode::BAD_REQUEST, "unknown notify kind"));
+    if !valid_user_notification_kind(&body.kind) {
+        return Err(err_response(StatusCode::BAD_REQUEST, "unknown user notification kind"));
     }
-    let title = truncate_chars(&body.title, NOTIFY_TITLE_MAX_CHARS);
-    let preview = truncate_chars(&body.body, NOTIFY_BODY_MAX_CHARS);
+    let title = truncate_chars(&body.title, USER_NOTIFICATION_TITLE_MAX_CHARS);
+    let preview = truncate_chars(&body.body, USER_NOTIFICATION_BODY_MAX_CHARS);
     state
         .sync_hub
-        .publish_alert(&name, body.kind.clone(), title.clone(), preview.clone());
-    state.mobile_app.push_alert(&name, &body.kind, &title, &preview);
+        .publish_user_notification(&name, body.kind.clone(), title.clone(), preview.clone());
+    state.mobile_app.push_user_notification(&name, &body.kind, &title, &preview);
     Ok(ok_json())
 }
 
@@ -2458,7 +2459,7 @@ pub fn build_router(state: SharedState) -> Router {
             post(agent_status::invalidate_service_handler),
         )
         .route("/agents/{name}/account-token", post(account_token_handler))
-        .route("/agents/{name}/notify", post(notify_handler))
+        .route("/agents/{name}/user-notification", post(user_notification_handler))
         .route(
             "/agents/{name}/workspace.bundle",
             get(workspace_bundle_handler),
@@ -3028,16 +3029,16 @@ async fn shutdown_signal() {
 mod tests {
     use super::{
         allocate_service_port, ensure_not_rebuilding, is_cached_port_reusable, resolve_public,
-        spawn_pipeline_sse, truncate_chars, valid_notify_kind, RegisterServiceBody,
+        spawn_pipeline_sse, truncate_chars, valid_user_notification_kind, RegisterServiceBody,
     };
 
     #[test]
-    fn notify_kind_is_a_closed_set() {
-        assert!(valid_notify_kind("message"));
-        assert!(valid_notify_kind("rate_limited"));
-        assert!(!valid_notify_kind("chat"));
-        assert!(!valid_notify_kind("status"));
-        assert!(!valid_notify_kind(""));
+    fn user_notification_kind_is_a_closed_set() {
+        assert!(valid_user_notification_kind("message"));
+        assert!(valid_user_notification_kind("rate_limited"));
+        assert!(!valid_user_notification_kind("chat"));
+        assert!(!valid_user_notification_kind("status"));
+        assert!(!valid_user_notification_kind(""));
     }
 
     #[test]

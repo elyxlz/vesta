@@ -226,7 +226,7 @@ async def _note_rate_limit(msg: RateLimitEvent, *, state: vm.State) -> None:
     """Surface a rejected rate limit from the structured classification: the CLI's synthesized text
     for the same event misnames the window (issue #1071), so this event is what consumers trust.
     Once per window; the type/resets_at pair changes when a different limit trips. The internal event
-    is kept for history; a best-effort notify raises a user-facing alert toast + push."""
+    is kept for history; a best-effort user notification raises a user-facing toast + push."""
     info = msg.rate_limit_info
     notice = sdk_parsing.rate_limit_notice(info, now=time.time())
     window_key = (info.rate_limit_type, info.resets_at)
@@ -234,7 +234,7 @@ async def _note_rate_limit(msg: RateLimitEvent, *, state: vm.State) -> None:
         state.rate_limit_noticed = window_key
         state.event_bus.emit({"type": "rate_limited", "text": notice, "window": info.rate_limit_type, "resets_at": info.resets_at})
         agent_name = os.environ["AGENT_NAME"] if "AGENT_NAME" in os.environ else "Vesta"
-        await vestad_client.notify("rate_limited", agent_name, notice)
+        await vestad_client.send_user_notification("rate_limited", agent_name, notice)
 
 
 async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaConfig) -> None:

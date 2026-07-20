@@ -16,7 +16,7 @@ export type {
   Tree,
 } from "./protocol/tree"
 export type { InputMethod, NotificationEvent, VestaEvent } from "./protocol/events"
-export type { AlertDelta, Delta } from "./protocol/deltas"
+export type { UserNotificationDelta, Delta } from "./protocol/deltas"
 
 export { createReplica } from "./replica/store"
 export type { Replica } from "./replica/store"

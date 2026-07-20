@@ -439,7 +439,7 @@ impl Client {
 
     /// Read an agent's `AGENT_TOKEN` from its in-container env (`/run/vestad-env`), the self-scoping
     /// secret loopback `X-Agent-Token` calls carry. Docker-exec (the env file is not client-exposed),
-    /// so a scenario can drive `notify` exactly as the agent would from inside its container.
+    /// so a scenario can drive `send_user_notification` exactly as the agent would from inside its container.
     pub fn read_agent_token(&self, name: &str) -> Result<String, String> {
         let container = crate::agent_container_name(name);
         let token =
@@ -450,12 +450,12 @@ impl Client {
         Ok(token)
     }
 
-    /// Post an agent-injected user-facing alert via `POST /agents/{name}/notify` carrying the agent's
-    /// own `X-Agent-Token` (self-scoped, the loopback path the app-chat reply hook and the rate-limit
-    /// notice use). `kind` is the closed set `message`/`rate_limited`; an unknown kind is a 400
-    /// (surfaced here as the mapped error string). On success vestad fans an `alert` delta
-    /// `{agent,kind,title,body}` to every connected `/sync` session.
-    pub fn notify(
+    /// Post an agent-injected user-facing notification via `POST /agents/{name}/user-notification`
+    /// carrying the agent's own `X-Agent-Token` (self-scoped, the loopback path the app-chat reply hook
+    /// and the rate-limit notice use). `kind` is the closed set `message`/`rate_limited`; an unknown
+    /// kind is a 400 (surfaced here as the mapped error string). On success vestad fans a
+    /// `user_notification` delta `{agent,kind,title,body}` to every connected `/sync` session.
+    pub fn send_user_notification(
         &self,
         name: &str,
         agent_token: &str,
@@ -466,7 +466,7 @@ impl Client {
         let payload = serde_json::json!({ "kind": kind, "title": title, "body": body });
         let resp = self
             .agent
-            .post(&format!("{}/agents/{}/notify", self.base_url, name))
+            .post(&format!("{}/agents/{}/user-notification", self.base_url, name))
             .header("X-Agent-Token", agent_token)
             .send_json(&payload)
             .map_err(|e| map_error(&e))?;

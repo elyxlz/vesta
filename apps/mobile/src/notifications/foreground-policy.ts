@@ -16,8 +16,8 @@ export function setVisibleAgentSocket(
   };
 }
 
-// The agent whose chat is on screen, or null. AlertNotifications defers a foreground alert for
-// this agent (its chat already shows the message).
+// The agent whose chat is on screen, or null. UserNotifications defers a foreground user notification
+// for this agent (its chat already shows the message).
 export function activeAgentName(): string | null {
   return visibleAgentSocket?.agent ?? null;
 }
@@ -29,9 +29,9 @@ export function setSyncConnected(connected: boolean): void {
 export function shouldPresentForegroundNotification(
   data: Record<string, unknown> | null | undefined,
 ): boolean {
-  // While /sync is connected the `alert` delta is the single owner of foreground presentation;
-  // suppressing the Expo push here prevents a double-notify. When sync is down, the push is the
-  // fallback and the visible-agent suppression (a subset) still applies.
+  // While /sync is connected the `user_notification` delta is the single owner of foreground
+  // presentation; suppressing the Expo push here prevents a double-notify. When sync is down, the push
+  // is the fallback and the visible-agent suppression (a subset) still applies.
   if (syncConnected) return false;
   const agent = typeof data?.agent === "string" ? data.agent : null;
   const gateway = typeof data?.gateway === "string" ? data.gateway : null;

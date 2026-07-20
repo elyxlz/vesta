@@ -300,15 +300,15 @@ def test_status_command_reports_port_and_connected_client_count(tmp_path):
     state.service.store.close()
 
 
-def test_notify_reply_shells_the_notify_script_with_kind_agent_and_preview(tmp_path, monkeypatch):
-    script = tmp_path / "notify"
+def test_send_user_notification_shells_the_script_with_kind_agent_and_preview(tmp_path, monkeypatch):
+    script = tmp_path / "user-notification"
     script.write_text("#!/usr/bin/env bash\ntrue\n")
-    monkeypatch.setattr(daemon, "NOTIFY", script)
+    monkeypatch.setattr(daemon, "USER_NOTIFICATION", script)
     monkeypatch.setenv("AGENT_NAME", "aria")
     calls = []
     monkeypatch.setattr(daemon.subprocess, "run", lambda cmd, **kwargs: calls.append(cmd))
 
-    daemon._notify_reply("a long reply " * 40)
+    daemon._send_user_notification("a long reply " * 40)
 
     assert len(calls) == 1
     argv = calls[0]
@@ -316,10 +316,10 @@ def test_notify_reply_shells_the_notify_script_with_kind_agent_and_preview(tmp_p
     assert len(argv[3]) == 180  # the body preview is truncated
 
 
-def test_notify_reply_swallows_a_spawn_error(tmp_path, monkeypatch):
-    script = tmp_path / "notify"
+def test_send_user_notification_swallows_a_spawn_error(tmp_path, monkeypatch):
+    script = tmp_path / "user-notification"
     script.write_text("#!/usr/bin/env bash\ntrue\n")
-    monkeypatch.setattr(daemon, "NOTIFY", script)
+    monkeypatch.setattr(daemon, "USER_NOTIFICATION", script)
     monkeypatch.setenv("AGENT_NAME", "aria")
 
     def raising_run(cmd, **kwargs):
@@ -329,34 +329,34 @@ def test_notify_reply_swallows_a_spawn_error(tmp_path, monkeypatch):
 
     # a spawn failure must never propagate: persist + emit already happened, so the send response
     # must still be written
-    daemon._notify_reply("hello")
+    daemon._send_user_notification("hello")
 
 
-def test_notify_reply_swallows_a_timeout(tmp_path, monkeypatch):
-    script = tmp_path / "notify"
+def test_send_user_notification_swallows_a_timeout(tmp_path, monkeypatch):
+    script = tmp_path / "user-notification"
     script.write_text("#!/usr/bin/env bash\ntrue\n")
-    monkeypatch.setattr(daemon, "NOTIFY", script)
+    monkeypatch.setattr(daemon, "USER_NOTIFICATION", script)
     monkeypatch.setenv("AGENT_NAME", "aria")
 
     def timing_out_run(cmd, **kwargs):
-        raise daemon.subprocess.TimeoutExpired(cmd, daemon.NOTIFY_TIMEOUT)
+        raise daemon.subprocess.TimeoutExpired(cmd, daemon.USER_NOTIFICATION_TIMEOUT)
 
     monkeypatch.setattr(daemon.subprocess, "run", timing_out_run)
 
-    daemon._notify_reply("hello")
+    daemon._send_user_notification("hello")
 
 
-def test_notify_reply_is_a_noop_when_agent_name_or_script_is_absent(tmp_path, monkeypatch):
+def test_send_user_notification_is_a_noop_when_agent_name_or_script_is_absent(tmp_path, monkeypatch):
     monkeypatch.setattr(daemon.subprocess, "run", lambda *a, **k: pytest.fail("must not shell when a guard fails"))
 
     # script missing, AGENT_NAME set
-    monkeypatch.setattr(daemon, "NOTIFY", tmp_path / "missing-notify")
+    monkeypatch.setattr(daemon, "USER_NOTIFICATION", tmp_path / "missing-user-notification")
     monkeypatch.setenv("AGENT_NAME", "aria")
-    daemon._notify_reply("hello")
+    daemon._send_user_notification("hello")
 
     # script present, AGENT_NAME unset
-    script = tmp_path / "notify"
+    script = tmp_path / "user-notification"
     script.write_text("#!/usr/bin/env bash\ntrue\n")
-    monkeypatch.setattr(daemon, "NOTIFY", script)
+    monkeypatch.setattr(daemon, "USER_NOTIFICATION", script)
     monkeypatch.delenv("AGENT_NAME", raising=False)
-    daemon._notify_reply("hello")
+    daemon._send_user_notification("hello")

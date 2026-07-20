@@ -110,23 +110,23 @@ describe("createController", () => {
     expect(listener).not.toHaveBeenCalled()
   })
 
-  it("fans out every delta to subscribeDeltas, including the alert the reducer ignores", () => {
+  it("fans out every delta to subscribeDeltas, including the user_notification the reducer ignores", () => {
     const h = harness()
     const seen: Delta[] = []
     h.controller.subscribeDeltas((delta) => seen.push(delta))
     const socket = h.sockets[0]
     socket?.onopen?.()
     socket?.onmessage?.(JSON.stringify({ type: "snapshot", tree: baseTree() }))
-    const alert: Delta = {
-      type: "alert",
+    const userNotification: Delta = {
+      type: "user_notification",
       agent: "scout",
       kind: "message",
       title: "scout",
       body: "hi",
     }
-    socket?.onmessage?.(JSON.stringify(alert))
-    expect(seen).toEqual([alert])
-    // The alert is a transient user-facing delta: it never mutates the tree.
+    socket?.onmessage?.(JSON.stringify(userNotification))
+    expect(seen).toEqual([userNotification])
+    // The user notification is a transient user-facing delta: it never mutates the tree.
     expect(h.controller.replica.getState()?.agents.scout).toBeUndefined()
   })
 
@@ -139,7 +139,7 @@ describe("createController", () => {
     socket?.onopen?.()
     socket?.onmessage?.(
       JSON.stringify({
-        type: "alert",
+        type: "user_notification",
         agent: "scout",
         kind: "message",
         title: "scout",

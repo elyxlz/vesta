@@ -24,16 +24,17 @@ export interface NotificationsDelta {
   pending: NotificationEvent[]
 }
 
-// The always-on, server-decided user-facing alert (a new chat reply or a rate limit), carrying the
-// display triple directly. Chat leaves the event union, so the alert no longer embeds an event: the
-// client routes on `kind` and renders `title`/`body`. Independent of any subscription; clients toast
-// it. Additive: an old client on the pre-alert union simply ignores it.
-export interface AlertDelta {
-  type: "alert"
+// The always-on, server-decided user-facing notification (a new chat reply or a rate limit), carrying
+// the display triple directly. Chat leaves the event union, so the user notification no longer embeds
+// an event: the client routes on `kind` and renders `title`/`body`. Independent of any subscription;
+// clients toast it. Additive: an old client on the pre-user-notification union simply ignores it.
+export interface UserNotificationDelta {
+  type: "user_notification"
   agent: string
   kind: string
   title: string
   body: string
 }
 
-export type Delta = StateDelta | AgentDelta | AgentRemovedDelta | NotificationsDelta | AlertDelta
+export type Delta =
+  StateDelta | AgentDelta | AgentRemovedDelta | NotificationsDelta | UserNotificationDelta

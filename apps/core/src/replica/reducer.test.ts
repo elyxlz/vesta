@@ -102,11 +102,11 @@ describe("reduceDelta", () => {
     expect(next.agents.scout?.notifications.pending).toHaveLength(1)
   })
 
-  it("returns the same tree for the alert delta", () => {
+  it("returns the same tree for the user_notification delta", () => {
     const tree = baseTree()
     expect(
       reduceDelta(tree, {
-        type: "alert",
+        type: "user_notification",
         agent: "scout",
         kind: "message",
         title: "scout",
@@ -166,9 +166,9 @@ describe("reduceDelta", () => {
       freshReference: true,
     },
     {
-      name: "alert",
+      name: "user_notification",
       delta: {
-        type: "alert",
+        type: "user_notification",
         agent: "scout",
         kind: "message",
         title: "scout",

@@ -50,9 +50,9 @@ async function focusAndOpen(
   openAgent(agentName);
 }
 
-// The controller-driven half of the provider: it toasts the server's always-on `alert` deltas and
-// lights the unseen badge from the replica's fleet-wide pending branch. Rendered only once the
-// controller exists, so its hooks always have a live replica.
+// The controller-driven half of the provider: it toasts the server's always-on `user_notification`
+// deltas and lights the unseen badge from the replica's fleet-wide pending branch. Rendered only once
+// the controller exists, so its hooks always have a live replica.
 function ReplicaNotifications({
   controller,
   chattingAgentRef,
@@ -66,13 +66,13 @@ function ReplicaNotifications({
   notifyRateLimited: (agentName: string, text: string) => void;
   markUnseen: () => void;
 }) {
-  // Toasts come from vestad's server-decided `alert` deltas (each carries a display triple:
-  // kind/title/body), independent of any subscription. A rate limit alerts even while focused; a
+  // Toasts come from vestad's server-decided `user_notification` deltas (each carries a display triple:
+  // kind/title/body), independent of any subscription. A rate limit toasts even while focused; a
   // chat lights the unseen badge and toasts, deferring the actively-chatted agent to
   // AgentSocketProvider (which fires after the typing delay so it lines up with the visible bubble).
   useEffect(() => {
     return controller.subscribeDeltas((delta: Delta) => {
-      if (delta.type !== "alert") return;
+      if (delta.type !== "user_notification") return;
       const { agent, kind, body } = delta;
       if (kind === "rate_limited") {
         notifyRateLimited(agent, body);
