@@ -1,70 +1,50 @@
-"""Tests for `app-chat history` recent-message paging (no --search)."""
+"""Tests for `app-chat history`: recent-list and --search projections read from the skill's own store."""
 
+import argparse
+import json
+
+import pytest
 from app_chat_cli import commands
+from app_chat_cli.store import Store, store_path
 
 
-def _make_api_get(pages: list[dict[str, object]], calls: list[dict[str, str]]):
-    def fake(base_url: str, path: str, params: dict[str, str]) -> dict[str, object]:
-        calls.append(params)
-        return pages[len(calls) - 1]
+def _seed(tmp_path) -> None:
+    store = Store(store_path(tmp_path))
+    store.append({"type": "user", "ts": "2026-01-01T00:00:00", "text": "hello world"})
+    store.append({"type": "chat", "ts": "2026-01-01T00:00:01", "text": "goodbye moon"})
+    store.close()
 
-    return fake
+
+def _args(tmp_path, *, search=None, limit=20) -> argparse.Namespace:
+    return argparse.Namespace(data_dir=str(tmp_path), search=search, limit=limit)
 
 
-def test_recent_messages_returns_last_n_messages(monkeypatch):
-    events: list[object] = [{"ts": f"t{i}", "type": "user", "text": f"m{i}"} for i in range(5)]
-    page: dict[str, object] = {"events": events, "cursor": None}
-    monkeypatch.setattr(commands, "_api_get", _make_api_get([page], []))
+def test_history_lists_recent_conversation(tmp_path, capsys):
+    _seed(tmp_path)
 
-    result = commands._recent_messages("http://x", 3)
+    commands.cmd_history(_args(tmp_path))
 
-    assert result == [
-        {"timestamp": "t2", "role": "user", "content": "m2"},
-        {"timestamp": "t3", "role": "user", "content": "m3"},
-        {"timestamp": "t4", "role": "user", "content": "m4"},
+    assert json.loads(capsys.readouterr().out) == [
+        {"timestamp": "2026-01-01T00:00:00", "role": "user", "content": "hello world"},
+        {"timestamp": "2026-01-01T00:00:01", "role": "chat", "content": "goodbye moon"},
     ]
 
 
-def test_recent_messages_pages_past_non_message_events(monkeypatch):
-    page1: dict[str, object] = {
-        "events": [
-            {"ts": "t5", "type": "tool_start", "tool": "x"},
-            {"ts": "t6", "type": "tool_end", "tool": "x"},
-        ],
-        "cursor": 10,
-    }
-    page2: dict[str, object] = {
-        "events": [
-            {"ts": "t1", "type": "user", "text": "hello"},
-            {"ts": "t2", "type": "assistant", "text": "hi"},
-        ],
-        "cursor": None,
-    }
-    calls: list[dict[str, str]] = []
-    monkeypatch.setattr(commands, "_api_get", _make_api_get([page1, page2], calls))
+def test_history_search_projects_matches(tmp_path, capsys):
+    _seed(tmp_path)
 
-    result = commands._recent_messages("http://x", 2)
+    commands.cmd_history(_args(tmp_path, search="goodbye"))
 
-    assert result == [
-        {"timestamp": "t1", "role": "user", "content": "hello"},
-        {"timestamp": "t2", "role": "assistant", "content": "hi"},
+    assert json.loads(capsys.readouterr().out) == [
+        {"timestamp": "2026-01-01T00:00:01", "role": "chat", "content": "goodbye moon"},
     ]
-    assert calls[1]["cursor"] == "10"
 
 
-def test_recent_messages_stops_when_no_older_events(monkeypatch):
-    page: dict[str, object] = {"events": [{"ts": "t1", "type": "chat", "text": "only"}], "cursor": None}
-    monkeypatch.setattr(commands, "_api_get", _make_api_get([page], []))
+def test_history_reports_invalid_search_query(tmp_path, capsys):
+    _seed(tmp_path)
 
-    result = commands._recent_messages("http://x", 20)
+    with pytest.raises(SystemExit) as exc:
+        commands.cmd_history(_args(tmp_path, search='"bad'))
 
-    assert result == [{"timestamp": "t1", "role": "chat", "content": "only"}]
-
-
-def test_recent_messages_propagates_error(monkeypatch):
-    page: dict[str, object] = {"error": "boom"}
-    monkeypatch.setattr(commands, "_api_get", _make_api_get([page], []))
-
-    result = commands._recent_messages("http://x", 5)
-
-    assert result == {"error": "boom"}
+    assert exc.value.code == 1
+    assert "error" in json.loads(capsys.readouterr().out)

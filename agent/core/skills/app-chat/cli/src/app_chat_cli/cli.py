@@ -1,10 +1,10 @@
 """App Chat CLI entry point.
 
 Commands:
-  serve   — daemon: holds a WS connection to the agent, accepts CLI commands via Unix socket to send replies
+  serve   — daemon: runs the app-chat HTTP service, holds a WS connection to the agent, accepts CLI commands via Unix socket
   daemon  — daemon lifecycle: start|stop|restart|status (idempotent start, status reports WS state)
   send    — send a message to the app (via daemon Unix socket)
-  history — search/list chat history via agent API
+  history — search/list chat history from the skill's own store
 """
 
 import argparse
@@ -25,17 +25,18 @@ def _require_ws_port() -> str:
     return port
 
 
-def _build_parser(ws_default: str, http_default: str) -> argparse.ArgumentParser:
+def _build_parser(ws_default: str) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="app-chat", description="Vesta app chat skill")
     sub = parser.add_subparsers(dest="command")
 
     serve_p = sub.add_parser("serve", help="Run the app-chat daemon in the foreground")
     # LEGACY(remove-when: no running agent's restart-skill `## Daemons` line still passes
-    # --notifications-dir): accepted and ignored. Intake moved to core/api.py (#809); kept so
+    # --notifications-dir): accepted and ignored. Intake moved to the HTTP service; kept so
     # existing launch lines don't break argparse.
     serve_p.add_argument("--notifications-dir", default=None, help=argparse.SUPPRESS)
     serve_p.add_argument("--ws-url", default=ws_default, help=f"Agent WebSocket URL (default: {ws_default})")
     serve_p.add_argument("--data-dir", default=None, help="Data directory (default: ~/.app-chat)")
+    serve_p.add_argument("--port", type=int, default=None, help="Service port (default: resolved via register-service)")
 
     daemon_p = sub.add_parser("daemon", help="Manage the background daemon: start|stop|restart|status")
     daemon_sub = daemon_p.add_subparsers(dest="daemon_command")
@@ -60,20 +61,19 @@ def _build_parser(ws_default: str, http_default: str) -> argparse.ArgumentParser
     history_p = sub.add_parser("history", help="Search or list chat history")
     history_p.add_argument("--search", "-s", default=None, help="FTS5 search query")
     history_p.add_argument("--limit", "-n", type=int, default=20, help="Max results")
-    history_p.add_argument("--url", default=None, help=f"Agent HTTP base URL (default: {http_default})")
+    history_p.add_argument("--data-dir", default=None, help="Data directory (default: ~/.app-chat)")
 
     return parser
 
 
 def main() -> None:
     if len(sys.argv) < 2 or sys.argv[1] in _HELP_ARGS:
-        _build_parser("ws://localhost:<port>/ws", "http://localhost:<port>").print_help()
+        _build_parser("ws://localhost:<port>/ws").print_help()
         sys.exit(0)
 
     port = _require_ws_port()
     ws_default = f"ws://localhost:{port}/ws"
-    http_default = f"http://localhost:{port}"
-    parser = _build_parser(ws_default, http_default)
+    parser = _build_parser(ws_default)
 
     args = parser.parse_args()
 
