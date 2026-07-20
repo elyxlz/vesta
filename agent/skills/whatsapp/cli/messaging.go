@@ -57,13 +57,46 @@ func (wac *WhatsAppClient) isManaged() bool {
 // hasInboundMessage reports whether this chat was opened by an inbound message, the
 // reply-first precondition. Under the managed gate every chat's first recorded
 // message is inbound, so the oldest message being inbound proves the peer messaged
-// first; a chat with no messages yet has nothing to reply to.
+// first; a chat with no messages yet has nothing to reply to. Incoming messages are
+// keyed by the peer's LID (privacy addressing) while a reply resolves a saved contact
+// to its phone JID (or the reverse), so it also checks the mapped counterpart: without
+// this a managed number can never reply to anyone who messaged under their LID.
 func (wac *WhatsAppClient) hasInboundMessage(jid types.JID) bool {
 	if wac.store == nil {
 		return false
 	}
+	if wac.oldestIsInbound(jid) {
+		return true
+	}
+	if alt := wac.mappedJID(jid); !alt.IsEmpty() && wac.oldestIsInbound(alt) {
+		return true
+	}
+	return false
+}
+
+// oldestIsInbound reports whether the oldest stored message in jid's chat is inbound.
+func (wac *WhatsAppClient) oldestIsInbound(jid types.JID) bool {
 	_, _, isFromMe, _, err := wac.store.GetOldestMessage(jid.String())
 	return err == nil && !isFromMe
+}
+
+// mappedJID returns the phone JID for a LID, or the LID for a phone JID, via whatsmeow's
+// LID<->PN store, so reply-first can find an inbound stored under the peer's other address.
+// Empty when there is no mapping.
+func (wac *WhatsAppClient) mappedJID(jid types.JID) types.JID {
+	ctx := context.Background()
+	if isLIDServer(jid.Server) {
+		if pn, err := wac.client.Store.LIDs.GetPNForLID(ctx, jid); err == nil {
+			return pn
+		}
+		return types.JID{}
+	}
+	if jid.Server == types.DefaultUserServer {
+		if lid, err := wac.client.Store.LIDs.GetLIDForPN(ctx, jid); err == nil {
+			return lid
+		}
+	}
+	return types.JID{}
 }
 
 // requireReplyFirst enforces reply-first onboarding on a managed (pooled) number: it

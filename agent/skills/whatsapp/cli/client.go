@@ -712,10 +712,13 @@ func (wac *WhatsAppClient) SetProfilePhoto(imageBytes []byte) error {
 	return nil
 }
 
-// SetProfileName sets the agent's own WhatsApp display name (push name) from the
-// companion client via an app-state mutation (setting_pushName), the same path
-// WhatsApp Web uses. Requires the app-state keys the primary shares on link, so
-// it works only on a synced, logged-in companion.
+// SetProfileName sets the agent's own WhatsApp display name (push name). The
+// account-wide name goes through an app-state mutation (setting_pushName, the path
+// WhatsApp Web uses), which needs the app-state keys the primary shares on link. A
+// managed/bare number often has none yet, so that leg is best-effort: the LOCAL push
+// name set below is what presence (online, typing, read receipts) actually requires,
+// so it is set regardless. Without it a freshly-registered number can never broadcast
+// presence ("can't send presence without PushName set") and shows no online/read state.
 func (wac *WhatsAppClient) SetProfileName(name string) error {
 	if strings.TrimSpace(name) == "" {
 		return fmt.Errorf("name is required")
@@ -724,15 +727,14 @@ func (wac *WhatsAppClient) SetProfileName(name string) error {
 		return err
 	}
 	if err := wac.client.SendAppState(context.Background(), appstate.BuildSettingPushName(name)); err != nil {
-		return fmt.Errorf("failed to set profile name: %w", err)
+		wac.logger.Warnf("set-profile-name: account-wide name skipped (no app-state keys yet, normal for a fresh managed number): %v", err)
 	}
-	// The app-state push name is account-wide, but contacts keep showing the old
-	// one until we next broadcast it, so push it out now (as WhatsApp Web does)
-	// instead of waiting for the next message.
 	wac.client.Store.PushName = name
-	_ = wac.client.Store.Save(context.Background())
+	if err := wac.client.Store.Save(context.Background()); err != nil {
+		return fmt.Errorf("failed to persist push name: %w", err)
+	}
 	if err := wac.client.SendPresence(context.Background(), types.PresenceAvailable); err != nil {
-		wac.logger.Warnf("set-profile-name: name set, but broadcasting it failed: %v", err)
+		wac.logger.Warnf("set-profile-name: name set locally, but broadcasting presence failed: %v", err)
 	}
 	return nil
 }
