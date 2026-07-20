@@ -6,12 +6,12 @@ import { parseServerFrame } from "./parse"
 // The fixtures are produced by vestad's real serde path (vestad/src/sync/protocol.rs,
 // REGEN_API_FIXTURES=1). Parsing every one with the canonical types proves the Rust->TS seam.
 describe("sync protocol contract (vestad fixtures)", () => {
-  it("parses the hello frame vestad emits", () => {
+  it("parses the hello frame vestad emits, carrying the served version window", () => {
     const parsed = parseServerFrame(JSON.stringify(fixtures.hello))
     expect(parsed.kind).toBe("hello")
     if (parsed.kind === "hello") {
-      expect(parsed.frame.protocol).toBe(1)
-      expect(parsed.frame.floor).toBe(1)
+      expect(typeof parsed.frame.version).toBe("string")
+      expect(parsed.frame.minSupported).toBe("0.0.0")
     }
   })
 

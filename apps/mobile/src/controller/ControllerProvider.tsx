@@ -9,7 +9,7 @@ import { controllerGateAction, type GateInput } from "./controller-gate";
 import { ControllerContext } from "./context";
 import { createAppStateForegroundSignal } from "./foreground-signal";
 import { runReauthCheck } from "./reauth-poll";
-import { IncompatibleScreen } from "./IncompatibleScreen";
+import { AppBehindScreen } from "./AppBehindScreen";
 import { GatewayBehindScreen } from "./GatewayBehindScreen";
 
 // This app's own release version, used to block running ahead of the gateway. Undefined (or
@@ -108,7 +108,7 @@ function LiveController({
 
 // The two blocking sync states take over in place of the app; every other state renders it.
 function routeTakeover(syncState: string): ReactNode {
-  if (syncState === "incompatible") return <IncompatibleScreen />;
+  if (syncState === "app_behind") return <AppBehindScreen />;
   if (syncState === "gateway_behind") return <GatewayBehindScreen />;
   return null;
 }

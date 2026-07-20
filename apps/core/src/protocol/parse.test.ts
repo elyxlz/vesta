@@ -3,13 +3,19 @@ import { describe, expect, it } from "vitest"
 import { parseServerFrame } from "./parse"
 
 describe("parseServerFrame", () => {
-  it("parses a hello frame", () => {
+  it("parses a hello frame, mapping min_supported off the wire", () => {
     const parsed = parseServerFrame(
-      JSON.stringify({ type: "hello", version: "0.2.0", protocol: 1, floor: 1 }),
+      JSON.stringify({ type: "hello", version: "0.2.0", min_supported: "0.0.0" }),
     )
     expect(parsed).toEqual({
       kind: "hello",
-      frame: { type: "hello", version: "0.2.0", protocol: 1, floor: 1 },
+      frame: { type: "hello", version: "0.2.0", minSupported: "0.0.0" },
+    })
+  })
+
+  it("ignores a hello frame missing its version window", () => {
+    expect(parseServerFrame(JSON.stringify({ type: "hello", version: "0.2.0" }))).toEqual({
+      kind: "unknown",
     })
   })
 

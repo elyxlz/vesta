@@ -11,7 +11,7 @@ export type ParsedFrame =
 
 const UNKNOWN: ParsedFrame = { kind: "unknown" }
 
-// Core trusts vestad's serialization within a protocol version (additive-only,
+// Core trusts vestad's serialization (additive-only within the served version window,
 // contract-tested at the fixture seam), so the parser routes on `type` and the
 // fields it keys on, then asserts the trusted sub-shapes. Anything it cannot
 // classify becomes `unknown`, which the reducer skips by rule.
@@ -21,10 +21,6 @@ function record(value: unknown): Record<string, unknown> | null {
 
 function str(value: unknown): string | null {
   return typeof value === "string" ? value : null
-}
-
-function num(value: unknown): number | null {
-  return typeof value === "number" ? value : null
 }
 
 function arr(value: unknown): unknown[] | null {
@@ -60,10 +56,9 @@ export function parseServerFrame(raw: string): ParsedFrame {
 
 function parseHello(frame: Record<string, unknown>): ParsedFrame {
   const version = str(frame.version)
-  const protocol = num(frame.protocol)
-  const floor = num(frame.floor)
-  if (version === null || protocol === null || floor === null) return UNKNOWN
-  return { kind: "hello", frame: { type: "hello", version, protocol, floor } }
+  const minSupported = str(frame.min_supported)
+  if (version === null || minSupported === null) return UNKNOWN
+  return { kind: "hello", frame: { type: "hello", version, minSupported } }
 }
 
 function parseSnapshot(frame: Record<string, unknown>): ParsedFrame {

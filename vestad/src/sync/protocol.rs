@@ -79,7 +79,7 @@ pub(crate) enum GatewayScope {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum Frame {
-    Hello { version: String, protocol: u32, floor: u32 },
+    Hello { version: String, min_supported: String },
     Snapshot { tree: Tree },
     State { scope: GatewayScope, value: GatewayInfo },
     Agent { name: String, info: AgentInfo },
@@ -144,8 +144,7 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
     serde_json::json!({
         "hello": to_value(Frame::Hello {
             version: "0.1.0".into(),
-            protocol: super::PROTOCOL_VERSION,
-            floor: super::PROTOCOL_FLOOR,
+            min_supported: super::MIN_SUPPORTED_CLIENT_VERSION.into(),
         }).expect("serialize hello"),
         "snapshot": to_value(Frame::Snapshot { tree }).expect("serialize snapshot"),
         "deltas": {
@@ -218,7 +217,7 @@ mod tests {
     #[test]
     fn every_frame_variant_uses_its_wire_tag() {
         let cases = [
-            (Frame::Hello { version: "0.1.0".into(), protocol: 1, floor: 1 }, "hello"),
+            (Frame::Hello { version: "0.1.0".into(), min_supported: "0.0.0".into() }, "hello"),
             (Frame::Snapshot { tree: Tree { gateway: sample_gateway(), agents: Default::default() } }, "snapshot"),
             (Frame::State { scope: GatewayScope::Gateway, value: sample_gateway() }, "state"),
             (Frame::Agent { name: "scout".into(), info: sample_agent_info() }, "agent"),

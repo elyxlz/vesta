@@ -26,9 +26,16 @@ export function compareReleaseVersions(a: string, b: string): number | null {
   return 0
 }
 
-// True only when the client is strictly newer than the gateway (the blocked direction).
-// Fails open: an unparseable version on either side is never treated as ahead.
+// True only when the client is strictly newer than the gateway (the recoverable direction:
+// the gateway can update to catch up). Fails open: an unparseable version is never ahead.
 export function clientAheadOfGateway(clientVersion: string, gatewayVersion: string): boolean {
   const cmp = compareReleaseVersions(clientVersion, gatewayVersion)
   return cmp !== null && cmp > 0
+}
+
+// True only when the client is older than the gateway's minimum supported client (the terminal
+// direction: the app itself must update). Fails open: an unparseable version is never below.
+export function clientBelowMinimum(clientVersion: string, minSupported: string): boolean {
+  const cmp = compareReleaseVersions(clientVersion, minSupported)
+  return cmp !== null && cmp < 0
 }

@@ -60,8 +60,7 @@
     }
   },
   "hello": {
-    "floor": 1,
-    "protocol": 1,
+    "min_supported": "0.0.0",
     "type": "hello",
     "version": "0.1.0"
   },

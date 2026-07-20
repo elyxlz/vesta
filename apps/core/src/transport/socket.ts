@@ -1,16 +1,17 @@
 import { encodeFrame, reauthFrame } from "../protocol/frames"
 import { parseServerFrame } from "../protocol/parse"
-import { clientAheadOfGateway } from "../protocol/release-version"
-import { PROTOCOL_FLOOR, PROTOCOL_VERSION } from "../protocol/version"
+import { clientAheadOfGateway, clientBelowMinimum } from "../protocol/release-version"
 import type { ClientFrame, HelloFrame } from "../protocol/frames"
 import type { Delta } from "../protocol/deltas"
 import type { Tree } from "../protocol/tree"
 
-// "gateway_behind" is a recoverable block, not a terminal error: the app runs a newer release
-// than the gateway (drift ahead is disallowed; drift behind stays fine via the floor). The
-// socket stays live, so once the gateway restarts newer the reconnect re-hellos into "open".
+// The hello's served window (min_supported <= client <= version) drives two blocked states.
+// "app_behind" is terminal for the session: the client is older than the gateway's minimum, so
+// only the app updating resolves it (no retry storm). "gateway_behind" is recoverable: the
+// client is newer than the gateway, so the socket stays live and re-hellos into "open" once the
+// gateway restarts newer.
 export type SyncState =
-  "connecting" | "open" | "reconnecting" | "incompatible" | "gateway_behind" | "closed"
+  "connecting" | "open" | "reconnecting" | "app_behind" | "gateway_behind" | "closed"
 
 export interface SocketLike {
   send: (data: string) => void
@@ -43,13 +44,6 @@ export interface SyncSocket {
   close: () => void
 }
 
-// Compatible when the client's supported protocol range overlaps the server's:
-// the client is not below the server's floor and the server is not below the
-// client's floor. Otherwise the socket is terminally incompatible.
-function compatible(hello: HelloFrame): boolean {
-  return hello.floor <= PROTOCOL_VERSION && PROTOCOL_FLOOR <= hello.protocol
-}
-
 export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCallbacks): SyncSocket {
   const base = deps.baseDelayMs ?? 1000
   const max = deps.maxDelayMs ?? 30000
@@ -79,7 +73,7 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
     delay = Math.min(delay * 2, max)
   }
 
-  const goIncompatible = (): void => {
+  const goAppBehind = (): void => {
     terminal = true
     open = false
     if (socket) {
@@ -87,19 +81,28 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
       socket.close()
       socket = null
     }
-    callbacks.onStateChange("incompatible")
+    callbacks.onStateChange("app_behind")
   }
 
-  const gatewayBehind = (hello: HelloFrame): boolean =>
-    deps.clientVersion !== undefined && clientAheadOfGateway(deps.clientVersion, hello.version)
+  // Compare this client's own build version to the hello's served window. Fails open when the
+  // client version is unknown (dev builds), and app_behind (terminal) wins over gateway_behind.
+  const classifyHello = (hello: HelloFrame): SyncState | null => {
+    const client = deps.clientVersion
+    if (client === undefined) return null
+    if (clientBelowMinimum(client, hello.minSupported)) return "app_behind"
+    if (clientAheadOfGateway(client, hello.version)) return "gateway_behind"
+    return null
+  }
 
   const handleMessage = (data: string): void => {
     const parsed = parseServerFrame(data)
     switch (parsed.kind) {
-      case "hello":
-        if (!compatible(parsed.frame)) goIncompatible()
-        else if (gatewayBehind(parsed.frame)) callbacks.onStateChange("gateway_behind")
+      case "hello": {
+        const outcome = classifyHello(parsed.frame)
+        if (outcome === "app_behind") goAppBehind()
+        else if (outcome === "gateway_behind") callbacks.onStateChange("gateway_behind")
         return
+      }
       case "snapshot":
         callbacks.onSnapshot(parsed.frame.tree)
         return

@@ -12,7 +12,7 @@ const API_LATEST = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/
 
 /**
  * Self-update to the latest published release. The app is a drifting client of vestad
- * (compatibility is decided by the /sync protocol floor, not version equality), so it
+ * (compatibility is decided by the /sync served version window, not version equality), so it
  * tracks the latest release on its own, up only, independent of the gateway's version.
  * On macOS/Windows the download happens in the background and installs on the next quit;
  * Linux resolves and installs the matching package in place.

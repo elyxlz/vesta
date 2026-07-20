@@ -6,8 +6,8 @@ import { useSession } from "@/session/SessionProvider";
 import { updateGateway } from "@/api/endpoints";
 
 // Shown when the sync socket reports "gateway_behind": this app runs a newer release than the
-// gateway. Drifting behind the gateway is fine (the protocol floor handles it); running ahead is
-// not. Unlike IncompatibleScreen this recovers with no app restart: the button asks the gateway
+// gateway. Drifting behind the gateway is fine (the served version window handles it); running
+// ahead is not. Unlike AppBehindScreen this recovers with no app restart: the button asks the gateway
 // to self-update, and the live socket re-hellos into "open" once the gateway restarts newer (its
 // reconnect backoff is the retry cadence), so no explicit reconnect is issued here.
 export function GatewayBehindScreen() {

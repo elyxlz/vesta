@@ -13,9 +13,9 @@
 //! by hand (`start_app_chat_daemon`, docker exec); that daemon owns the skill service the sends target
 //! and fans the live echo the chat socket reads, so no real model is needed.
 //!
-//! Two spec sub-scenarios are deliberately absent: sub-floor client rejection (D2, dropped, since the
-//! server always speaks protocol 1 and never rejects; the floor is a client-side gate) and the
-//! reauth deadline-expiry timer (D3, covered in the handler unit tier via `token_deadline`/`expire`).
+//! Two spec sub-scenarios are deliberately absent: below-window client rejection (D2, dropped, since
+//! the server never rejects; the served version window is a client-side gate) and the reauth
+//! deadline-expiry timer (D3, covered in the handler unit tier via `token_deadline`/`expire`).
 //! This module owns the socket-observable behaviors only.
 
 use std::time::{Duration, Instant};
@@ -37,11 +37,10 @@ const USER_NOTIFICATION_TIMEOUT: Duration = Duration::from_secs(20);
 /// How long to poll (via reconnect) for a fresh agent to surface in a snapshot.
 const SNAPSHOT_POLL_TIMEOUT: Duration = Duration::from_secs(30);
 
-// D2: the wire protocol version + floor, mirrored from apps/core/src/protocol/version.ts and
-// vestad's crate-private `sync::PROTOCOL_VERSION` / `sync::PROTOCOL_FLOOR` (not importable from an
-// integration crate, so pinned to the contract literals here).
-const EXPECT_PROTOCOL: u64 = 1;
-const EXPECT_FLOOR: u64 = 1;
+// D2: the served compatibility window's low end, mirrored from vestad's crate-private
+// `sync::MIN_SUPPORTED_CLIENT_VERSION` (not importable from an integration crate, so pinned to the
+// contract literal here). "0.0.0" accepts every client; a wire break bumps it (see release.sh).
+const EXPECT_MIN_SUPPORTED: &str = "0.0.0";
 
 /// Create a fake-token agent and bring it up to a live tap. Fake-token agents settle at
 /// `unprovisioned`/`not_authenticated`, enough to exercise frame plumbing (no real model needed). The
@@ -58,14 +57,14 @@ fn running_agent<'a>(c: &'a Client, prefix: &str) -> TestAgent<'a> {
     agent
 }
 
-/// Read the mandatory hello (asserting the protocol/floor contract) then the immediate snapshot,
+/// Read the mandatory hello (asserting the served version window) then the immediate snapshot,
 /// returning the snapshot frame. Frames 1 and 2 are deterministically hello then snapshot (the
 /// handler sends both before entering its select loop).
 async fn handshake(sock: &mut SyncSocket) -> serde_json::Value {
     let hello = sock.recv_frame(HANDSHAKE_TIMEOUT).await.expect("hello frame");
     assert_eq!(hello["type"].as_str(), Some("hello"), "first frame is hello");
-    assert_eq!(hello["protocol"].as_u64(), Some(EXPECT_PROTOCOL), "hello protocol per D2");
-    assert_eq!(hello["floor"].as_u64(), Some(EXPECT_FLOOR), "hello floor per D2");
+    assert!(hello["version"].as_str().is_some(), "hello carries the gateway version");
+    assert_eq!(hello["min_supported"].as_str(), Some(EXPECT_MIN_SUPPORTED), "hello min_supported per D2");
     let snapshot = sock.recv_frame(HANDSHAKE_TIMEOUT).await.expect("snapshot frame");
     assert_eq!(snapshot["type"].as_str(), Some("snapshot"), "second frame is snapshot");
     snapshot
@@ -144,7 +143,7 @@ async fn send_user_notification_and_expect_delta(c: &Client, sock: &mut SyncSock
     .expect("a user_notification delta for the user notification");
 }
 
-/// (1) The first two frames are `hello` (with the D2 protocol/floor constants) then a `snapshot`
+/// (1) The first two frames are `hello` (carrying the D2 served version window) then a `snapshot`
 /// whose `tree.agents` carries the agent with an `info` branch. Uses the shared read-only agent
 /// (created, never mutated) and polls via reconnect until the status cache has surfaced it.
 #[tokio::test]

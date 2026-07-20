@@ -25,8 +25,8 @@ export interface Controller {
 
 // The single client-side orchestrator: one replica, one sync socket feeding it, one http
 // client. Socket frames land in the replica (snapshot replace, delta reduce); connection
-// state is its own tiny sub-store so views can render "reconnecting"/"incompatible" without
-// polling. Mobile constructs the same controller with its own adapters in Stage 6.
+// state is its own tiny sub-store so views can render "reconnecting"/"app_behind"/"gateway_behind"
+// without polling. Mobile constructs the same controller with its own adapters in Stage 6.
 export function createController(deps: ControllerDeps): Controller {
   const replica = createReplica()
   const http = createHttpClient(deps.http)

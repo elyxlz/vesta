@@ -1,5 +1,8 @@
-export { PROTOCOL_VERSION } from "./protocol/version"
-export { clientAheadOfGateway, compareReleaseVersions } from "./protocol/release-version"
+export {
+  clientAheadOfGateway,
+  clientBelowMinimum,
+  compareReleaseVersions,
+} from "./protocol/release-version"
 
 export { parseAnsi, resolveAnsiColor, stripAnsi } from "./ansi/ansi"
 export type { AnsiColor, AnsiSpan, AnsiStyle } from "./ansi/ansi"

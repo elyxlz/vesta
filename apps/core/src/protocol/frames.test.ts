@@ -16,9 +16,9 @@ describe("client frame constructors", () => {
 })
 
 describe("server frame and tree shapes", () => {
-  it("types a hello frame with version, protocol, and floor", () => {
-    const hello: HelloFrame = { type: "hello", version: "0.2.0", protocol: 1, floor: 1 }
-    expect(hello.protocol).toBe(1)
+  it("types a hello frame with the served version window", () => {
+    const hello: HelloFrame = { type: "hello", version: "0.2.0", minSupported: "0.0.0" }
+    expect(hello.minSupported).toBe("0.0.0")
   })
 
   it("types a snapshot frame carrying the state tree", () => {

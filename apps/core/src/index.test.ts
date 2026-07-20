@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest"
 
 import {
   ApiError,
+  compareReleaseVersions,
   createController,
   createReplica,
-  PROTOCOL_VERSION,
   readSse,
   rosterFromTree,
   sendMessage,
@@ -15,6 +15,7 @@ import type { ForegroundSignal, SyncState, Tree } from "./index"
 describe("@vesta/core barrel", () => {
   it("re-exports the runtime surface the apps import", () => {
     const runtime = [
+      compareReleaseVersions,
       createController,
       createReplica,
       readSse,
@@ -24,7 +25,7 @@ describe("@vesta/core barrel", () => {
     ]
     for (const value of runtime) expect(value).toBeTypeOf("function")
     expect(ApiError).toBeTypeOf("function")
-    expect(PROTOCOL_VERSION).toBe(1)
+    expect(compareReleaseVersions("0.2.0", "0.1.0")).toBe(1)
   })
 
   it("re-exports the type surface", () => {

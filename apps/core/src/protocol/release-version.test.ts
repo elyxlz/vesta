@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { clientAheadOfGateway, compareReleaseVersions } from "./release-version"
+import { clientAheadOfGateway, clientBelowMinimum, compareReleaseVersions } from "./release-version"
 
 describe("compareReleaseVersions", () => {
   it.each([
@@ -36,5 +36,20 @@ describe("clientAheadOfGateway", () => {
   it("fails open when a version is unparseable so dev builds never block", () => {
     expect(clientAheadOfGateway("dev", "0.1.0")).toBe(false)
     expect(clientAheadOfGateway("0.2.0", "gateway-dev")).toBe(false)
+  })
+})
+
+describe("clientBelowMinimum", () => {
+  it("blocks only when the client is older than the served minimum", () => {
+    expect(clientBelowMinimum("0.1.178", "0.1.179")).toBe(true)
+    expect(clientBelowMinimum("0.1.179", "0.1.179")).toBe(false)
+    expect(clientBelowMinimum("0.2.0", "0.1.179")).toBe(false)
+    // the default "accept everything" window never blocks a real build
+    expect(clientBelowMinimum("0.1.0", "0.0.0")).toBe(false)
+  })
+
+  it("fails open when a version is unparseable so dev builds never block", () => {
+    expect(clientBelowMinimum("dev", "0.1.0")).toBe(false)
+    expect(clientBelowMinimum("0.1.0", "min-dev")).toBe(false)
   })
 })

@@ -18,7 +18,7 @@ use super::protocol::{
     AgentInfo, AgentNode, ClientFrame, Frame, GatewayInfo, GatewayLan, GatewayScope,
     NotificationsBranch, ServiceInfo, Tree,
 };
-use super::{PROTOCOL_FLOOR, PROTOCOL_VERSION};
+use super::MIN_SUPPORTED_CLIENT_VERSION;
 
 type Tx = futures_util::stream::SplitSink<WebSocket, Message>;
 
@@ -62,11 +62,10 @@ fn token_deadline(token: &str, api_key: &str) -> Option<tokio::time::Instant> {
 async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Option<String>) {
     let (mut tx, mut rx) = socket.split();
 
-    // 1. hello
+    // 1. hello: the served compatibility window (this gateway's version + the oldest client it accepts)
     let hello = Frame::Hello {
         version: env!("CARGO_PKG_VERSION").to_string(),
-        protocol: PROTOCOL_VERSION,
-        floor: PROTOCOL_FLOOR,
+        min_supported: MIN_SUPPORTED_CLIENT_VERSION.to_string(),
     };
     if send_frame(&mut tx, &hello).await.is_err() {
         return;

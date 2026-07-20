@@ -43,6 +43,21 @@ case "$MOBILE_DELIVERY" in
   *) echo "MOBILE_DELIVERY must be testflight or skip"; exit 1 ;;
 esac
 
+# Client-compatibility guard: the gateway we ship must accept the client bundled with it. The
+# smallest version any bump can produce is a patch bump of the current version; if
+# MIN_SUPPORTED_CLIENT_VERSION sits at or below that, it sits below every possible release, so a
+# value above it would ship a gateway that locks out every client (see the Client compatibility
+# contract in CLAUDE.md). Parse both from the vestad source and refuse to release on violation.
+MIN_SUPPORTED=$(sed -n 's/.*MIN_SUPPORTED_CLIENT_VERSION: &str = "\([^"]*\)".*/\1/p' vestad/src/sync/mod.rs)
+CURRENT_VERSION=$(sed -n 's/^version = "\([^"]*\)".*/\1/p' vestad/Cargo.toml | head -1)
+IFS='.' read -r VMAJ VMIN VPATCH <<<"$CURRENT_VERSION"
+SMALLEST_NEXT="${VMAJ}.${VMIN}.$((VPATCH + 1))"
+if [ "$(printf '%s\n%s\n' "$MIN_SUPPORTED" "$SMALLEST_NEXT" | sort -V | tail -n1)" != "$SMALLEST_NEXT" ]; then
+  echo "MIN_SUPPORTED_CLIENT_VERSION (${MIN_SUPPORTED}) is above the next release (${SMALLEST_NEXT});" >&2
+  echo "releasing would lock out every client. Fix it in vestad/src/sync/mod.rs." >&2
+  exit 1
+fi
+
 echo "Triggering Release workflow (bump=${BUMP}, mobile=${MOBILE_DELIVERY})..."
 gh workflow run release.yml -f bump="$BUMP" -f message="$MESSAGE" -f mobile_delivery="$MOBILE_DELIVERY"
 

@@ -46,6 +46,7 @@ function harness(): Harness {
       return timers.length - 1
     },
     clearTimer: () => undefined,
+    clientVersion: "0.1.179",
   }
   return { sockets, timers, states, snapshots, deltas, deps }
 }
@@ -58,8 +59,8 @@ function start(h: Harness): ReturnType<typeof createSyncSocket> {
   })
 }
 
-function hello(floor: number, protocol: number): string {
-  return JSON.stringify({ type: "hello", version: "0.2.0", protocol, floor })
+function hello(version: string, minSupported: string): string {
+  return JSON.stringify({ type: "hello", version, min_supported: minSupported })
 }
 
 describe("createSyncSocket", () => {
@@ -90,16 +91,30 @@ describe("createSyncSocket", () => {
     expect(h.deltas).toHaveLength(0)
   })
 
-  it("enters the terminal incompatible state below floor", () => {
+  it("enters the terminal app_behind state below the served minimum", () => {
     const h = harness()
     start(h)
     const socket = h.sockets[0]
     socket?.onopen?.()
-    socket?.onmessage?.(hello(2, 2))
-    expect(h.states.at(-1)).toBe("incompatible")
+    socket?.onmessage?.(hello("0.2.0", "0.2.0"))
+    expect(h.states.at(-1)).toBe("app_behind")
     expect(socket?.closed).toBe(true)
     socket?.onclose?.()
     expect(h.timers).toHaveLength(0)
+  })
+
+  it("enters the recoverable gateway_behind state when ahead of the gateway", () => {
+    const h = harness()
+    start(h)
+    const socket = h.sockets[0]
+    socket?.onopen?.()
+    socket?.onmessage?.(hello("0.0.1", "0.0.0"))
+    expect(h.states.at(-1)).toBe("gateway_behind")
+    // Recoverable: the socket stays live and a later close reconnects, so it self-heals once the
+    // gateway restarts newer (its reconnect backoff is the retry cadence).
+    expect(socket?.closed).toBe(false)
+    socket?.onclose?.()
+    expect(h.timers).toHaveLength(1)
   })
 
   it("grows the reconnect backoff from 1s toward the cap", () => {

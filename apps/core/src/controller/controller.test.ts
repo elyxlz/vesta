@@ -65,8 +65,8 @@ function harness(): Harness {
   return { sockets, controller }
 }
 
-function hello(floor: number, protocol: number): string {
-  return JSON.stringify({ type: "hello", version: "0.2.0", protocol, floor })
+function hello(version: string, minSupported: string): string {
+  return JSON.stringify({ type: "hello", version, min_supported: minSupported })
 }
 
 describe("createController", () => {
@@ -74,7 +74,7 @@ describe("createController", () => {
     const h = harness()
     const socket = h.sockets[0]
     socket?.onopen?.()
-    socket?.onmessage?.(hello(1, 1))
+    socket?.onmessage?.(hello("0.2.0", "0.0.0"))
     expect(h.controller.replica.getState()).toBeNull()
     socket?.onmessage?.(JSON.stringify({ type: "snapshot", tree: baseTree() }))
     expect(h.controller.replica.getState()?.gateway.port).toBe(4111)

@@ -1,10 +1,12 @@
 import type { Tree } from "./tree"
 
+// The served compatibility window: the gateway's own release `version` and the oldest client
+// release it still accepts (`minSupported`, wire `min_supported`). A client compares its own
+// build version to decide app_behind / gateway_behind / proceed (see transport/socket.ts).
 export interface HelloFrame {
   type: "hello"
   version: string
-  protocol: number
-  floor: number
+  minSupported: string
 }
 
 export interface SnapshotFrame {

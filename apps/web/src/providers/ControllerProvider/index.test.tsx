@@ -37,8 +37,8 @@ vi.mock("@/providers/AuthProvider", () => ({
 
 // The screens are their own tested units pulling in the navbar / router; here we only assert
 // ControllerProvider's choice to render them, so stub them to markers.
-vi.mock("@/components/IncompatibleScreen", () => ({
-  IncompatibleScreen: () => <div>incompatible</div>,
+vi.mock("@/components/AppBehindScreen", () => ({
+  AppBehindScreen: () => <div>app behind</div>,
 }));
 vi.mock("@/components/GatewayBehindScreen", () => ({
   GatewayBehindScreen: () => <div>gateway behind</div>,
@@ -87,23 +87,21 @@ function Probe({ onReady }: { onReady: (controller: Controller) => void }) {
 const helloFrame = JSON.stringify({
   type: "hello",
   version: "0.2.0",
-  protocol: 1,
-  floor: 1,
+  min_supported: "0.0.0",
 });
-// floor 2 sits above the client's supported protocol (1), so the handshake is incompatible.
-const incompatibleHelloFrame = JSON.stringify({
+// min_supported (9.9.9) sits above the client (__APP_VERSION__), so the client is below the
+// served window and must update the app (terminal).
+const appBehindHelloFrame = JSON.stringify({
   type: "hello",
   version: "9.9.9",
-  protocol: 2,
-  floor: 2,
+  min_supported: "9.9.9",
 });
-// protocol-compatible but the gateway release (0.0.1) is older than the client (__APP_VERSION__),
-// so the client runs ahead and must block.
+// within the window's floor but the gateway release (0.0.1) is older than the client
+// (__APP_VERSION__), so the client runs ahead and must block on a gateway update.
 const gatewayBehindHelloFrame = JSON.stringify({
   type: "hello",
   version: "0.0.1",
-  protocol: 1,
-  floor: 1,
+  min_supported: "0.0.0",
 });
 const snapshotFrame = JSON.stringify({
   type: "snapshot",
@@ -121,7 +119,7 @@ afterEach(() => {
 });
 
 describe("ControllerProvider", () => {
-  it("takes over with IncompatibleScreen when the handshake floor is incompatible", async () => {
+  it("takes over with AppBehindScreen when the client is below the served window", async () => {
     const { findByText } = render(
       <ControllerProvider>
         <div>app body</div>
@@ -136,10 +134,10 @@ describe("ControllerProvider", () => {
 
     act(() => {
       socket.onopen?.();
-      socket.onmessage?.({ data: incompatibleHelloFrame });
+      socket.onmessage?.({ data: appBehindHelloFrame });
     });
 
-    expect(await findByText("incompatible")).toBeTruthy();
+    expect(await findByText("app behind")).toBeTruthy();
   });
 
   it("takes over with GatewayBehindScreen when the client is newer than the gateway", async () => {

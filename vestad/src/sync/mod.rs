@@ -8,11 +8,13 @@ mod handler;
 pub(crate) mod hub;
 pub(crate) mod protocol;
 
-/// The protocol version vestad speaks and the minimum it still accepts. Mirrors
-/// `apps/core/src/protocol/version.ts` (`PROTOCOL_VERSION` / `PROTOCOL_FLOOR`); the contract fixture
-/// pins them equal on both seams.
-pub(crate) const PROTOCOL_VERSION: u32 = 1;
-pub(crate) const PROTOCOL_FLOOR: u32 = 1;
+/// The oldest client release this gateway still accepts, serialized into the `/sync` hello as
+/// `min_supported` (the window's low end; the high end is the gateway's own `CARGO_PKG_VERSION`).
+/// A client older than this hits the terminal `app_behind` screen in `@vesta/core`. "0.0.0" accepts
+/// every client ever built; the first wire break bumps it (see release.sh's guard and the Client
+/// compatibility contract in CLAUDE.md). Additive changes never move it, thanks to the
+/// ignore-unknown-frames rule.
+pub(crate) const MIN_SUPPORTED_CLIENT_VERSION: &str = "0.0.0";
 
 pub(crate) use events::{activity_state, notification_change};
 pub(crate) use handler::sync_ws_handler;
