@@ -53,55 +53,6 @@ function Pagination({
   );
 }
 
-// Centers the given item index with no animation, once the carousel has
-// measured its items. On first mount the rendered offset is still "attached" to
-// targetOffset, so setting targetOffset jumps instantly instead of springing.
-// Runs a single time; horizontal axis means sign is 1.
-function CenterOnMount({ index }: { index: number }) {
-  const { targetOffset } = useCarousel();
-  const { itemPositions, clampOffset } = useTicker();
-  const centered = useRef(false);
-
-  useEffect(() => {
-    if (centered.current || index <= 0) return;
-    const position = itemPositions[index];
-    if (!position) return;
-    centered.current = true;
-    targetOffset.set(clampOffset(-position.start));
-  }, [targetOffset, clampOffset, itemPositions, index]);
-
-  return null;
-}
-
-function CarouselCard({ agent }: { agent: AgentRow }) {
-  const { offset } = useTickerItem();
-  const [isCentered, setIsCentered] = useState(
-    () => Math.abs(offset.get()) < AGENT_CAROUSEL_ITEM_STRIDE / 2,
-  );
-
-  const scale = useTransform(offset, scaleForCarouselItemOffset);
-
-  useMotionValueEvent(offset, "change", (v) => {
-    const centered = Math.abs(v) < AGENT_CAROUSEL_ITEM_STRIDE / 2;
-    queueMicrotask(() => {
-      setIsCentered((prev) => (prev === centered ? prev : centered));
-    });
-  });
-
-  return (
-    <motion.div
-      className="flex h-full items-center justify-center"
-      style={{
-        width: `${String(AGENT_CAROUSEL_CARD_WIDTH)}px`,
-        aspectRatio: "1/1",
-        scale,
-      }}
-    >
-      <AgentCard agent={agent} enableTracking={isCentered} />
-    </motion.div>
-  );
-}
-
 export function AgentsCarousel({
   agents,
   initialIndex = -1,
