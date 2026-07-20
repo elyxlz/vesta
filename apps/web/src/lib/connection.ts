@@ -41,9 +41,8 @@ export interface ConnectionConfig {
 
 // ── Storage backend ────────────────────────────────────────────
 // The bridge owns persistence (Electron: json in userData via the preload;
-// browser: localStorage). `cached` gives the sync accessors (authHeaders,
-// apiUrl) their value; AuthProvider awaits initConnection before
-// anything reads it.
+// browser: localStorage). `cached` gives the sync accessors their value;
+// AuthProvider awaits initConnection before anything reads it.
 let cached: ConnectionConfig | null | undefined;
 
 // ── Public API ─────────────────────────────────────────────────
@@ -128,16 +127,4 @@ export function isTokenExpiringSoon(): boolean {
   const conn = getConnection();
   if (!conn) return false;
   return Date.now() > conn.expiresAt - 5 * 60 * 1000; // 5 min buffer
-}
-
-export function authHeaders(): Record<string, string> {
-  const conn = getConnection();
-  if (!conn) return {};
-  return { Authorization: `Bearer ${conn.accessToken}` };
-}
-
-export function apiUrl(path: string): string {
-  const conn = getConnection();
-  if (!conn) throw new Error("not connected to vestad");
-  return `${conn.url}${path}`;
 }
