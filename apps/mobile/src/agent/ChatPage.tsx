@@ -504,32 +504,6 @@ const ChatEvent = memo(function ChatEvent({
     const text = event.type === "rate_limited" ? "Rate limited. Vesta will be back soon." : "This message may not have gone through.";
     return <Text style={[styles.systemMessage, { color: colors.tertiaryText }]}>{text}</Text>;
   }
-  if (event.type === "tool_start") {
-    return (
-      <View
-        style={[
-          styles.messageRow,
-          startsNewBubbleGroup ? styles.newBubbleGroup : null,
-          styles.agentRow,
-        ]}
-      >
-        <View style={[styles.tool, { backgroundColor: colors.input }]}>
-          <Ionicons
-            name="hammer-outline"
-            size={11}
-            color={colors.secondaryText}
-          />
-          <Text
-            family="mono"
-            numberOfLines={1}
-            style={[styles.toolText, { color: colors.secondaryText }]}
-          >
-            {event.tool}: {event.input}
-          </Text>
-        </View>
-      </View>
-    );
-  }
   if (event.type !== "user" && event.type !== "chat") return null;
   const bubbleColor = user ? colors.accent : colors.card;
   const bubble = (
@@ -991,13 +965,7 @@ export default function ChatPage() {
   const { api } = useSession();
   const preferences = usePreferences();
   const { colors } = preferences;
-  const showToolCalls = preferences.showToolCallsForAgent(name);
-  const [input, setInputState] = useState("");
-  const inputValueRef = useRef("");
-  const setInput = useCallback((value: string) => {
-    inputValueRef.current = value;
-    setInputState(value);
-  }, []);
+  const [input, setInput] = useState("");
   const [replyTarget, setReplyTarget] = useState<ReplyTarget | null>(null);
   const [voiceError, setVoiceError] = useState("");
   const notifyTranscriptWords = useTranscriptWordHaptics();
@@ -1019,13 +987,8 @@ export default function ChatPage() {
     scrollToLatest,
   } = useInvertedChatScroll<ChatRow>(composerInset);
   const rows = useMemo(
-    () =>
-      createInvertedChatRows(
-        socket.events,
-        showToolCalls,
-        socket.isTyping,
-      ),
-    [showToolCalls, socket.events, socket.isTyping],
+    () => createInvertedChatRows(socket.events, socket.isTyping),
+    [socket.events, socket.isTyping],
   );
 
   const handleComposerLayout = useCallback(
@@ -1355,18 +1318,6 @@ const styles = StyleSheet.create({
     marginTop: 3,
     marginRight: 4,
   },
-  tool: {
-    alignSelf: "flex-start",
-    flexDirection: "row",
-    alignItems: "center",
-    maxWidth: "72%",
-    borderRadius: 8,
-    borderCurve: "continuous",
-    paddingHorizontal: 7,
-    paddingVertical: 4,
-    gap: 4,
-  },
-  toolText: { flexShrink: 1, fontSize: 10, lineHeight: 13 },
   loadingMore: { height: 44, alignItems: "center", justifyContent: "center" },
   empty: { minHeight: 300, justifyContent: "center", alignItems: "center", gap: 7, padding: 30 },
   emptyTitle: { fontSize: 21, fontWeight: "500" },

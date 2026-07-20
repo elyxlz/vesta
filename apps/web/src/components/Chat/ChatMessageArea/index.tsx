@@ -18,11 +18,8 @@ import { stepTransition } from "@/lib/motion";
 import { ChatBubble, type RetryHandler } from "../ChatBubble";
 import { buildDecorated } from "./virtual";
 
-// First-paint estimates per row kind (actual heights are measured). Tool-call rows are
-// much shorter than message bubbles; estimating them all at the message height made the
-// virtualizer over-correct on every tool row that scrolled into view, which read as jank.
+// First-paint estimate per row (actual heights are measured).
 const ESTIMATED_MESSAGE_HEIGHT = 64;
-const ESTIMATED_TOOL_HEIGHT = 30;
 // How close to the bottom (px) still counts as "pinned" — drives follow-on-append and
 // gates the load-older check (don't page up while sitting at the bottom).
 const AT_BOTTOM_THRESHOLD_PX = 80;
@@ -143,13 +140,7 @@ export function ChatMessageArea({
     [decorated],
   );
 
-  const estimateSize = useCallback(
-    (index: number) =>
-      decorated[index]?.event.type === "tool_start"
-        ? ESTIMATED_TOOL_HEIGHT
-        : ESTIMATED_MESSAGE_HEIGHT,
-    [decorated],
-  );
+  const estimateSize = useCallback(() => ESTIMATED_MESSAGE_HEIGHT, []);
 
   const virtualizer = useVirtualizer({
     count,
@@ -157,8 +148,8 @@ export function ChatMessageArea({
     estimateSize,
     getItemKey,
     // End-anchored chat scrolling: TanStack captures the visible keyed row before a data
-    // change and re-pins it after — keeping scroll stable across prepends (load older),
-    // streaming growth, and the show-tools toggle's mid-list inserts/removes.
+    // change and re-pins it after — keeping scroll stable across prepends (load older)
+    // and streaming growth.
     anchorTo: "end",
     followOnAppend: "smooth",
     scrollEndThreshold: AT_BOTTOM_THRESHOLD_PX,

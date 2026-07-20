@@ -3,10 +3,8 @@ export interface MenuState {
   isRunning: boolean;
   showAliveActions: boolean | undefined;
   isBusy: boolean;
-  showToolCalls: boolean;
   onToggle: () => void;
   onLogs: () => void;
-  onToolCalls: () => void;
   onAppSettings: () => void;
   onAgentSettings: () => void;
   onRestart: () => void;

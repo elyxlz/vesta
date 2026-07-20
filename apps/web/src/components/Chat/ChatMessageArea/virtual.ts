@@ -22,10 +22,6 @@ function rowGap(
 ): string {
   if (showDayStamp) return "mt-2";
   if (index === 0) return "";
-  const isTool = msg.type === "tool_start";
-  const prevIsTool = prev?.type === "tool_start";
-  if (isTool && prevIsTool) return "mt-1";
-  if (isTool || prevIsTool) return "mt-2";
   return prev?.type === msg.type ? "mt-1.5" : "mt-5";
 }
 

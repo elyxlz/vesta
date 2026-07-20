@@ -71,6 +71,18 @@ describe("chat-stream-model", () => {
     expect(state.messages.map((m) => m.type)).toEqual(["error"])
   })
 
+  it("filters tool events out of the live fold so no tool row ever enters messages", () => {
+    const toolStart: VestaEvent = { type: "tool_start", tool: "Bash", input: "ls", id: 11 }
+    const toolEnd: VestaEvent = { type: "tool_end", tool: "Bash", id: 12 }
+    let { state, paced } = foldLiveEvent(initialChatState(), toolStart)
+    expect(paced).toBe(false)
+    expect(state.messages).toHaveLength(0)
+    expect(state.shownIds.has(11)).toBe(false)
+    ;({ state, paced } = foldLiveEvent(state, toolEnd))
+    expect(paced).toBe(false)
+    expect(state.messages).toHaveLength(0)
+  })
+
   it("seedTail keeps an in-flight optimistic bubble and a raced live row, merging not replacing", () => {
     let state = beginSend(initialChatState(), "hi", "typed", "i-1")
     const raced = foldLiveEvent(state, chat(99, "raced"))

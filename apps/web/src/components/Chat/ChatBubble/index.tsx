@@ -5,7 +5,6 @@ import { Markdown } from "@/lib/markdown";
 import type { InputMethod } from "@vesta/core";
 import type { ChatMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { ToolCallLabel } from "../ToolCallLabel";
 
 export type RetryHandler = (
   intentId: string,
@@ -57,16 +56,6 @@ export const ChatBubble = memo(function ChatBubble({
   onRetry?: RetryHandler;
 }) {
   if (event.type === "status") return null;
-
-  if (event.type === "tool_start") {
-    return (
-      <ToolCallLabel
-        tool={event.tool}
-        input={event.input}
-        className={className}
-      />
-    );
-  }
 
   if (event.type === "error" || event.type === "rate_limited") {
     return (

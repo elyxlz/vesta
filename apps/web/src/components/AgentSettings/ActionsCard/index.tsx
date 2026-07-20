@@ -6,7 +6,6 @@ import { AgentActions } from "@/components/AgentMenu/AgentActions";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useGateway } from "@/providers/GatewayProvider";
 import { useModals } from "@/providers/ModalsProvider";
-import { useAgentSocket } from "@/providers/AgentSocketProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 
 export function ActionsCard() {
@@ -21,7 +20,6 @@ export function ActionsCard() {
     backup,
   } = useSelectedAgent();
   const { handleOpenAuth, setDeleteDialogOpen } = useModals();
-  const { showToolCalls, setShowToolCalls } = useAgentSocket();
 
   const isRunning =
     agent.status !== "stopped" &&
@@ -57,11 +55,9 @@ export function ActionsCard() {
           isRunning={isRunning}
           showAliveActions={showAliveActions}
           isBusy={isBusy}
-          showToolCalls={showToolCalls}
           onLogs={() => {
             void navigate(`/agent/${encodeURIComponent(agentName)}/logs`);
           }}
-          onToolCalls={() => setShowToolCalls((value) => !value)}
           onToggle={() => {
             if (isRunning) stop();
             else start();

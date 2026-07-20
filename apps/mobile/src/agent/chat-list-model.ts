@@ -26,7 +26,7 @@ const BUBBLE_GROUP_TIME_GAP_MS = 5 * 60 * 1000;
 
 function eventChatSide(event: ChatMessage): ChatSide | null {
   if (event.type === "user") return "user";
-  if (event.type === "chat" || event.type === "tool_start") return "agent";
+  if (event.type === "chat") return "agent";
   return null;
 }
 
@@ -41,25 +41,13 @@ function calendarDay(timestamp: string | undefined): string | null {
   ].join("-");
 }
 
-function timestampMillis(timestamp: string | undefined): number | null {
-  if (!timestamp) return null;
-  const value = new Date(timestamp).getTime();
-  return Number.isNaN(value) ? null : value;
-}
-
-function eventRows(
-  events: ChatMessage[],
-  showToolCalls: boolean,
-): EventChatRow[] {
+function eventRows(events: ChatMessage[]): EventChatRow[] {
   const visible = events.filter(
     (event) =>
       event.type === "user" ||
       event.type === "chat" ||
       event.type === "error" ||
-      event.type === "rate_limited" ||
-      (showToolCalls &&
-        event.type === "tool_start" &&
-        !(event.tool === "Bash" && event.input.includes("app-chat"))),
+      event.type === "rate_limited",
   );
   const seen = new Map<string, number>();
   let previousSide: ChatSide | null = null;
@@ -140,10 +128,9 @@ function addDateRows(rows: EventChatRow[]): ChatRow[] {
 
 export function createInvertedChatRows(
   events: ChatMessage[],
-  showToolCalls: boolean,
   isTyping: boolean,
 ): ChatRow[] {
-  const rows = addDateRows(eventRows(events, showToolCalls));
+  const rows = addDateRows(eventRows(events));
   if (isTyping) {
     let latestSide: ChatSide | null = null;
     for (let index = rows.length - 1; index >= 0; index -= 1) {

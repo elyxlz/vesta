@@ -41,22 +41,4 @@ describe("buildDecorated", () => {
     expect(new Set(keys).size).toBe(3);
     expect(keys[0]).toBe("2026-06-08T10:00:00Z-user");
   });
-
-  it("uses a tight gap between consecutive tool calls", () => {
-    const rows = buildDecorated([
-      {
-        type: "tool_start",
-        tool: "Bash",
-        input: "ls",
-        ts: "2026-06-08T10:00:00Z",
-      },
-      {
-        type: "tool_start",
-        tool: "Bash",
-        input: "pwd",
-        ts: "2026-06-08T10:00:01Z",
-      },
-    ]);
-    expect(rows[1]?.gap).toBe("mt-1");
-  });
 });
