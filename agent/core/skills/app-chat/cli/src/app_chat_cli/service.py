@@ -125,10 +125,14 @@ async def history_handler(request: web.Request) -> web.Response:
     return web.json_response({"events": events, "cursor": next_cursor})
 
 
+async def health_handler(_: web.Request) -> web.Response:
+    return web.Response(text="ok")
+
+
 def create_app(state: ServiceState) -> web.Application:
     app = web.Application()
     app[_STATE_KEY] = state
     app.router.add_post("/message", message_handler)
     app.router.add_get("/history", history_handler)
-    app.router.add_get("/health", lambda _: web.Response(text="ok"))
+    app.router.add_get("/health", health_handler)
     return app

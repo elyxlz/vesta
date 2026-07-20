@@ -7,11 +7,11 @@ import json
 
 from aiohttp.test_utils import TestClient, TestServer
 from app_chat_cli.service import ServiceState, create_app
-from app_chat_cli.store import Store, store_path
+from app_chat_cli.store import Store, StoredEvent, store_path
 
 
 def _service_state(tmp_path):
-    emitted: list[dict[str, object]] = []
+    emitted: list[StoredEvent] = []
     store = Store(store_path(tmp_path / "data"))
     notif_dir = tmp_path / "notifications"
     return ServiceState(store, notif_dir, emitted.append), emitted, notif_dir
