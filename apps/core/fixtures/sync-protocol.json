@@ -22,12 +22,9 @@
     },
     "alert": {
       "agent": "sample-agent",
-      "event": {
-        "id": 5,
-        "text": "hello",
-        "type": "chat"
-      },
-      "preview": "hello",
+      "body": "hello",
+      "kind": "message",
+      "title": "sample-agent",
       "type": "alert"
     },
     "append": {

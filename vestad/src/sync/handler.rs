@@ -152,8 +152,9 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
             Wake::Alert(Ok(alert)) => {
                 let frame = Frame::Alert {
                     agent: alert.agent.clone(),
-                    event: alert.event.clone(),
-                    preview: alert.preview.clone(),
+                    kind: alert.kind.clone(),
+                    title: alert.title.clone(),
+                    body: alert.body.clone(),
                 };
                 if send_frame(&mut tx, &frame).await.is_err() {
                     break;

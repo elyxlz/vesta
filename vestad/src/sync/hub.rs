@@ -22,14 +22,15 @@ pub(crate) enum LiveMessage {
     Resync,
 }
 
-/// One notification-worthy live event fanned out to every `/sync` session: the source agent, the
-/// full event (opaque JSON, so clients read whatever fields they need), and the server-decided
-/// preview from `alerts::alert_for`.
+/// One user-facing alert fanned out to every `/sync` session: the source agent plus the notify
+/// triple (`kind` in `message`/`rate_limited`, a title, and a body). Injected by the agent through
+/// `POST /agents/{name}/notify`; the client routes the toast on `kind`.
 #[derive(Clone, Debug)]
 pub(crate) struct LiveAlert {
     pub agent: String,
-    pub event: Value,
-    pub preview: String,
+    pub kind: String,
+    pub title: String,
+    pub body: String,
 }
 
 struct AgentChannel {
@@ -133,10 +134,10 @@ impl SyncHub {
         self.alerts_tx.subscribe()
     }
 
-    /// Fan a notification-worthy live event out to every `/sync` session. A send with no subscribers,
-    /// or one dropped by a lagging receiver, is an accepted no-op: alerts are ephemeral.
-    pub fn publish_alert(&self, agent: &str, event: Value, preview: String) {
-        let _ = self.alerts_tx.send(Arc::new(LiveAlert { agent: agent.to_string(), event, preview }));
+    /// Fan a user-facing alert out to every `/sync` session. A send with no subscribers, or one
+    /// dropped by a lagging receiver, is an accepted no-op: alerts are ephemeral.
+    pub fn publish_alert(&self, agent: &str, kind: String, title: String, body: String) {
+        let _ = self.alerts_tx.send(Arc::new(LiveAlert { agent: agent.to_string(), kind, title, body }));
     }
 
     fn bump_notifications(&self) {
@@ -177,12 +178,13 @@ mod tests {
         let hub = SyncHub::new();
         let mut first = hub.subscribe_alerts();
         let mut second = hub.subscribe_alerts();
-        hub.publish_alert("scout", serde_json::json!({"id": 5, "type": "chat", "text": "hi"}), "hi".into());
+        hub.publish_alert("scout", "message".into(), "scout".into(), "hi".into());
         for rx in [&mut first, &mut second] {
             let alert = rx.recv().await.expect("alert");
             assert_eq!(alert.agent, "scout");
-            assert_eq!(alert.preview, "hi");
-            assert_eq!(alert.event["text"], serde_json::json!("hi"));
+            assert_eq!(alert.kind, "message");
+            assert_eq!(alert.title, "scout");
+            assert_eq!(alert.body, "hi");
         }
     }
 

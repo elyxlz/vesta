@@ -15,7 +15,7 @@ use crate::docker::{self, ListEntry};
 use crate::mobile_app::MobileApp;
 use crate::settings::ServiceEntry;
 use crate::state::{err_response, ok_json, SharedState};
-use crate::sync::{activity_state, alert_for, notification_change, SyncHub};
+use crate::sync::{activity_state, notification_change, SyncHub};
 
 const POLL_INTERVAL_SECS: u64 = 3;
 
@@ -404,11 +404,10 @@ pub fn spawn_agent_status_task(deps: AgentStatusTaskDeps) {
                 let port = *ws_port;
                 let tx = activity_event_tx.clone();
                 let dir = agents_dir.clone();
-                let mobile_app = mobile_app.clone();
                 let hub = sync_hub.clone();
 
                 let join_handle = tokio::spawn(async move {
-                    agent_event_listener(agent_name, port, dir, tx, mobile_app, hub).await;
+                    agent_event_listener(agent_name, port, dir, tx, hub).await;
                 });
 
                 agent_ws_handles.insert(
@@ -458,14 +457,13 @@ fn apply_agent_update(cache: &AgentStatusCache, name: String, update: AgentUpdat
 }
 
 /// Connects to a single agent's WebSocket as a read-only tap, relays activity/timezone to the cache,
-/// and feeds the mobile push module and the sync hub's live edge. Reconnects on failure; a reconnect
+/// and feeds the sync hub's live edge + notifications projection. Reconnects on failure; a reconnect
 /// emits a `resync` because the live edge had a gap.
 async fn agent_event_listener(
     name: String,
     ws_port: u16,
     agents_dir: PathBuf,
     tx: tokio::sync::mpsc::Sender<(String, AgentUpdate)>,
-    mobile_app: MobileApp,
     hub: Arc<SyncHub>,
 ) {
     const RECONNECT_BASE_MS: u64 = 1000;
@@ -535,16 +533,13 @@ async fn agent_event_listener(
                         continue;
                     }
 
-                    // A live event: feed the watch fan-out, the notifications projection, the always-on
-                    // alert edge, and mobile push.
+                    // A live event: feed the watch fan-out and the notifications projection. Alerts +
+                    // mobile push no longer ride the tap; they come from the agent's `notify` primitive
+                    // (POST /agents/{name}/notify), which fans an `alert` delta and an Expo push.
                     hub.publish_event(&name, std::sync::Arc::new(parsed.clone()));
                     if let Some(change) = notification_change(&parsed) {
                         hub.apply_notification(&name, change);
                     }
-                    if let Some(preview) = alert_for(&parsed) {
-                        hub.publish_alert(&name, parsed.clone(), preview);
-                    }
-                    mobile_app.observe_agent_event(&name, parsed);
                 }
 
                 // Connection lost: reset activity to idle so the frontend does not stay stuck on the
@@ -647,7 +642,6 @@ mod tests {
         assert!(cache.service_revs().is_empty());
     }
 
-    use crate::mobile_app::MobileApp;
     use crate::sync::hub::LiveMessage;
     use crate::sync::SyncHub;
     use futures_util::{SinkExt, StreamExt};
@@ -680,14 +674,13 @@ mod tests {
         let hub = std::sync::Arc::new(SyncHub::new());
         let mut watcher = hub.subscribe_events("fake");
         let dir = tempfile::tempdir().expect("tempdir");
-        let (app, _worker) = MobileApp::new(dir.path().to_path_buf(), reqwest::Client::new());
         let port = fake_agent().await;
 
         let listener = tokio::spawn({
             let hub = hub.clone();
             let (tx, _rx) = tokio::sync::mpsc::channel::<(String, AgentUpdate)>(16);
             let dir = dir.path().to_path_buf();
-            async move { agent_event_listener("fake".into(), port, dir, tx, app, hub).await }
+            async move { agent_event_listener("fake".into(), port, dir, tx, hub).await }
         });
 
         // The first (and only) live-edge message is the live chat, never the snapshot backlog.

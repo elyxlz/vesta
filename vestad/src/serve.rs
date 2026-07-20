@@ -1587,6 +1587,54 @@ fn resolve_public(requested: Option<bool>, cached: Option<ServiceEntry>) -> bool
     requested.unwrap_or_else(|| cached.is_some_and(|entry| entry.public))
 }
 
+/// Longest title/body carried in an agent-injected alert; longer text is truncated with an ellipsis.
+const NOTIFY_TITLE_MAX_CHARS: usize = 120;
+const NOTIFY_BODY_MAX_CHARS: usize = 180;
+
+#[derive(Deserialize)]
+struct NotifyBody {
+    kind: String,
+    title: String,
+    body: String,
+}
+
+/// Notify kinds are a closed set: `message` (a new agent reply) and `rate_limited`. An unknown kind
+/// is rejected so the alert surface cannot drift open.
+fn valid_notify_kind(kind: &str) -> bool {
+    matches!(kind, "message" | "rate_limited")
+}
+
+/// Truncate to at most `max` chars on a char boundary, appending an ellipsis when it cut. Counting by
+/// `char` keeps multibyte text from being split mid-codepoint.
+fn truncate_chars(value: &str, max: usize) -> String {
+    if value.chars().count() <= max {
+        return value.to_string();
+    }
+    let mut out: String = value.chars().take(max).collect();
+    out.push('…');
+    out
+}
+
+/// `POST /agents/{name}/notify`: an agent-injected user-facing alert. Agent-token authed and
+/// self-scoped by the middleware, so an agent can only notify as itself. Fans an `alert` delta to
+/// connected `/sync` sessions and an Expo push to backgrounded mobile. Kinds are a closed set.
+async fn notify_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+    Json(body): Json<NotifyBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if !valid_notify_kind(&body.kind) {
+        return Err(err_response(StatusCode::BAD_REQUEST, "unknown notify kind"));
+    }
+    let title = truncate_chars(&body.title, NOTIFY_TITLE_MAX_CHARS);
+    let preview = truncate_chars(&body.body, NOTIFY_BODY_MAX_CHARS);
+    state
+        .sync_hub
+        .publish_alert(&name, body.kind.clone(), title.clone(), preview.clone());
+    state.mobile_app.push_alert(&name, &body.kind, &title, &preview);
+    Ok(ok_json())
+}
+
 async fn register_service_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
@@ -2410,6 +2458,7 @@ pub fn build_router(state: SharedState) -> Router {
             post(agent_status::invalidate_service_handler),
         )
         .route("/agents/{name}/account-token", post(account_token_handler))
+        .route("/agents/{name}/notify", post(notify_handler))
         .route(
             "/agents/{name}/workspace.bundle",
             get(workspace_bundle_handler),
@@ -2979,8 +3028,29 @@ async fn shutdown_signal() {
 mod tests {
     use super::{
         allocate_service_port, ensure_not_rebuilding, is_cached_port_reusable, resolve_public,
-        spawn_pipeline_sse, RegisterServiceBody,
+        spawn_pipeline_sse, truncate_chars, valid_notify_kind, RegisterServiceBody,
     };
+
+    #[test]
+    fn notify_kind_is_a_closed_set() {
+        assert!(valid_notify_kind("message"));
+        assert!(valid_notify_kind("rate_limited"));
+        assert!(!valid_notify_kind("chat"));
+        assert!(!valid_notify_kind("status"));
+        assert!(!valid_notify_kind(""));
+    }
+
+    #[test]
+    fn truncate_chars_cuts_on_char_boundaries_with_an_ellipsis() {
+        // Under the cap: unchanged, no ellipsis.
+        assert_eq!(truncate_chars("hello", 10), "hello");
+        assert_eq!(truncate_chars("hello", 5), "hello");
+        // Over the cap: multibyte text is counted and cut by char, never mid-codepoint.
+        let multibyte = "éé😀é"; // 4 chars, each multiple bytes
+        assert_eq!(truncate_chars(multibyte, 2), "éé…");
+        assert_eq!(truncate_chars(multibyte, 3), "éé😀…");
+        assert_eq!(truncate_chars(multibyte, 4), "éé😀é");
+    }
 
     #[test]
     fn mutating_agent_ops_conflict_while_rebuilding() {

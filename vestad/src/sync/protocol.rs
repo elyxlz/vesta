@@ -87,7 +87,7 @@ pub(crate) enum Frame {
     Append { agent: String, events: Vec<serde_json::Value> },
     Notifications { agent: String, pending: Vec<serde_json::Value> },
     Resync { agent: String },
-    Alert { agent: String, event: serde_json::Value, preview: String },
+    Alert { agent: String, kind: String, title: String, body: String },
 }
 
 impl Frame {
@@ -160,7 +160,9 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
             "append": to_value(Frame::Append { agent: "sample-agent".into(), events: vec![chat.clone()] }).expect("serialize append"),
             "notifications": to_value(Frame::Notifications { agent: "sample-agent".into(), pending: vec![notification] }).expect("serialize notifications"),
             "resync": to_value(Frame::Resync { agent: "sample-agent".into() }).expect("serialize resync"),
-            "alert": to_value(Frame::Alert { agent: "sample-agent".into(), event: chat, preview: "hello".into() }).expect("serialize alert"),
+            "alert": to_value(Frame::Alert {
+                agent: "sample-agent".into(), kind: "message".into(), title: "sample-agent".into(), body: "hello".into(),
+            }).expect("serialize alert"),
         }
     })
 }
@@ -231,7 +233,7 @@ mod tests {
             (Frame::Append { agent: "scout".into(), events: vec![] }, "append"),
             (Frame::Notifications { agent: "scout".into(), pending: vec![] }, "notifications"),
             (Frame::Resync { agent: "scout".into() }, "resync"),
-            (Frame::Alert { agent: "scout".into(), event: serde_json::json!({"type": "chat", "text": "hi"}), preview: "hi".into() }, "alert"),
+            (Frame::Alert { agent: "scout".into(), kind: "message".into(), title: "scout".into(), body: "hi".into() }, "alert"),
         ];
         for (frame, tag) in cases {
             let value = serde_json::to_value(&frame).expect("serialize frame");

@@ -265,20 +265,15 @@ impl MobileApp {
         )
     }
 
-    /// Accept a frame from vestad's existing agent WebSocket without delaying that
-    /// socket on remote push IO. Eligibility is deliberately decided here, not by
-    /// core or the socket listener, so this module remains the single policy owner.
-    pub(crate) fn observe_agent_event(&self, agent: &str, event: serde_json::Value) {
-        let Some(event_type) = text_field(&event, "type").map(str::to_owned) else {
-            return;
-        };
-        // The shared alert decision owns push-worthiness. Per-device subscriptions (chat/status only,
-        // enforced at registration) filter delivery, so a `rate_limited` alert enqueued here reaches
-        // no device and Expo push stays chat-only.
-        if crate::sync::alert_for(&event).is_none() {
+    /// Enqueue a mobile push for an agent-injected alert (`POST /agents/{name}/notify`). Only a new
+    /// message pushes: it reuses the existing `chat` device subscription, so registered devices need
+    /// no change. A `rate_limited` alert toasts on connected clients but is never a mobile push, so
+    /// it is skipped here (chat-only device subscriptions dropped it before too).
+    pub(crate) fn push_alert(&self, agent: &str, kind: &str, title: &str, body: &str) {
+        if kind != "message" {
             return;
         }
-        self.queue_event(agent, &event_type, event);
+        self.queue_event(agent, "chat", serde_json::json!({"type": "chat", "title": title, "body": body}));
     }
 
     /// Compare two gateway-owned lifecycle snapshots and enqueue only real status
@@ -453,12 +448,12 @@ fn message_for(
 ) -> ExpoPushMessage {
     let (title, body, route) = match event_type {
         "chat" => {
-            let body = if device.previews {
-                crate::sync::alert_for(event).unwrap_or_else(|| format!("{agent} sent a new message."))
-            } else {
-                format!("{agent} sent a new message.")
+            let title = text_field(event, "title").unwrap_or(agent).to_string();
+            let body = match text_field(event, "body") {
+                Some(text) if device.previews && !text.is_empty() => text.to_string(),
+                _ => format!("{agent} sent a new message."),
             };
-            (agent.to_string(), body, format!("/agent/{agent}/chat"))
+            (title, body, format!("/agent/{agent}/chat"))
         }
         "status" => {
             let state = text_field(event, "state").unwrap_or("updated");
@@ -644,7 +639,7 @@ mod tests {
 
     #[test]
     fn private_chat_push_does_not_contain_message_text() {
-        let event = serde_json::json!({"type": "chat", "text": "Private reply"});
+        let event = serde_json::json!({"type": "chat", "title": "alex", "body": "Private reply"});
         let message = message_for(&device(false, &["chat"]), "alex", "chat", &event);
         assert_eq!(message.title, "alex");
         assert_eq!(message.body, "alex sent a new message.");
@@ -653,7 +648,7 @@ mod tests {
 
     #[test]
     fn preview_chat_push_contains_bounded_message_text() {
-        let event = serde_json::json!({"type": "chat", "text": "Hello from Vesta"});
+        let event = serde_json::json!({"type": "chat", "title": "alex", "body": "Hello from Vesta"});
         let message = message_for(&device(true, &["chat"]), "alex", "chat", &event);
         assert_eq!(message.body, "Hello from Vesta");
         assert_eq!(message.data["eventType"], "chat");
