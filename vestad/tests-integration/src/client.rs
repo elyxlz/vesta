@@ -432,7 +432,7 @@ impl Client {
         let container = crate::agent_container_name(name);
         crate::exec_in_container(
             &container,
-            ". /run/vestad-env && uv tool install --force --editable /root/agent/core/skills/app-chat/cli && app-chat daemon start",
+            ". /run/vestad-env && uv tool install --force --editable /root/agent/skills/app-chat/cli && app-chat daemon start",
         )?;
         Ok(())
     }

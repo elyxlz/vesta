@@ -19,7 +19,7 @@ Client/server: the `vestad` daemon runs on the host (manages Docker containers, 
 - **Web App** (`apps/web/`): React + TypeScript SPA served by vestad at `/app` and embedded in the desktop app. Components in `apps/web/src/components/`, providers in `apps/web/src/providers/`; the providers are thin views over the `@vesta/core` controller. Runtime detection and every native capability live in one bridge (`apps/web/src/lib/native/`) with `electron` and `browser` implementations.
 - **Mobile App** (`apps/mobile/`): Expo/React Native app for iOS and Android, a native view over the same `@vesta/core` controller (RN socket + AppState adapters, stale-while-reconnecting roster/chat holds so backgrounding never blanks the UI). Deliberately outside the npm workspace with its own lockfile; the dashboard renders in a WebView on the service plane.
 - **Desktop App** (`apps/desktop/`): Electron wrapper around `@vesta/web` for macOS/Windows/Linux; a TypeScript main process (`src/`: window chrome, preload bridge, connection store, PKCE loopback, exact-version updater), no frontend code of its own. The app is a client of vestad and always conforms to the gateway's exact version (updating itself up or down to match, via the exact-version updater); updating the gateway is a separate, deliberate action (the UpdatePill). On a version mismatch the whole app is replaced by `VersionMismatchScreen`, which updates the app to the gateway version.
-- **Skills** (`agent/skills/` + `agent/core/skills/`): each skill directory has `SKILL.md` + scripts. `agent/core/skills/` holds built-ins shipped with the agent (e.g. `app-chat`, `upstream-sync`); `agent/skills/` holds the rest. On a box, skills are installed via the sparse-checkout cone of the local workspace checkout (`skills-install` = `git sparse-checkout add`, `skills-remove` drops the cone entry; instant and offline, content comes from local branch history). Skills are plain directories, not MCP servers; the only MCP server is the agent's own native tool registry (`core/tools.py`), exposed in-process via the SDK's `create_sdk_mcp_server`.
+- **Skills** (`agent/skills/` + `agent/core/skills/`): each skill directory has `SKILL.md` + scripts. `agent/core/skills/` holds built-ins shipped with the agent (e.g. `upstream-sync`); `agent/skills/` holds the rest. On a box, skills are installed via the sparse-checkout cone of the local workspace checkout (`skills-install` = `git sparse-checkout add`, `skills-remove` drops the cone entry; instant and offline, content comes from local branch history). Skills are plain directories, not MCP servers; the only MCP server is the agent's own native tool registry (`core/tools.py`), exposed in-process via the SDK's `create_sdk_mcp_server`.
 
 ### Key Flows
 
@@ -225,7 +225,7 @@ CI (`./check.sh guards` + the per-suite checks) enforces the conventions below; 
 
 ## Adding a skill
 
-Skills are how Vesta reaches the world; each is a directory the agent (and Claude Code) loads natively. Two locations: `agent/skills/{name}/` for most skills, `agent/core/skills/{name}/` for built-ins shipped with the agent (e.g. `app-chat`). Every skill has a `SKILL.md` with YAML frontmatter (`name` + `description`):
+Skills are how Vesta reaches the world; each is a directory the agent (and Claude Code) loads natively. Two locations: `agent/skills/{name}/` for most skills, `agent/core/skills/{name}/` for built-ins shipped with the agent (e.g. `upstream-sync`). Every skill has a `SKILL.md` with YAML frontmatter (`name` + `description`):
 
 ```markdown
 ---
