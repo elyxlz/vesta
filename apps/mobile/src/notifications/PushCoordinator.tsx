@@ -28,7 +28,10 @@ import {
 } from "./notification-routing";
 import {
   gatewayHandoffDecision,
+  isSameRegistration,
   pushRegistrationDecision,
+  resolveHydratedSnapshot,
+  type RegistrationTarget,
 } from "./registration-policy";
 
 const PUSH_TOKEN_KEY = "vesta.expo-push-token.v1";
@@ -78,6 +81,14 @@ async function removeStoredRegistration(api: ApiClient): Promise<void> {
   await AsyncStorage.removeItem(PUSH_TOKEN_KEY);
 }
 
+function registrationTarget(
+  snapshot: PushRegistrationSnapshot | null,
+): RegistrationTarget | null {
+  return snapshot
+    ? { gatewayUrl: snapshot.connection.url, token: snapshot.token }
+    : null;
+}
+
 function EnabledPushCoordinator() {
   const router = useRouter();
   const pathname = usePathname();
@@ -116,8 +127,13 @@ function EnabledPushCoordinator() {
   useEffect(() => {
     let active = true;
     void readPushRegistration()
-      .then((snapshot) => {
-        if (active) registrationSnapshot.current = snapshot;
+      .then((stored) => {
+        if (active) {
+          registrationSnapshot.current = resolveHydratedSnapshot(
+            registrationSnapshot.current,
+            stored,
+          );
+        }
       })
       .catch((cause: unknown) => {
         console.warn("Could not restore push registration:", cause);
@@ -236,12 +252,23 @@ function EnabledPushCoordinator() {
         onSessionExpired: async () => undefined,
       });
       await unregisterMobileDevice(oldApi, snapshot.token);
-      await AsyncStorage.removeItem(PUSH_TOKEN_KEY);
-      await clearPushRegistration();
+      // Clear the persisted snapshot only if it still names the gateway we just tore down: the
+      // registration effect may have written a newer one for the current gateway (both are
+      // device-global singletons), and PUSH_TOKEN_KEY belongs to that current registration, so this
+      // path never touches it. A thrown DELETE skips this tail, leaving the snapshot to retry next
+      // launch.
+      const stored = registrationTarget(await readPushRegistration());
+      if (isSameRegistration(stored, registrationTarget(snapshot))) {
+        await clearPushRegistration();
+      }
     });
   }, [enqueue, snapshotHydrated, session.status, session.connection?.url]);
 
   useEffect(() => {
+    // Gate on the snapshot restore so the handoff's DELETE(old) is always enqueued before this
+    // effect's PUT(new): both share the serial registrationChain, and restoring first makes the
+    // ordering deterministic across a relaunch instead of a race between two async reads.
+    if (!snapshotHydrated) return;
     const registrationDecision = pushRegistrationDecision({
       preferencesHydrated: preferences.hydrated,
       sessionStatus: session.status,
@@ -280,17 +307,20 @@ function EnabledPushCoordinator() {
       if (!active) return;
       const installationId = await pushInstallationId();
       if (!active) return;
+      // Snapshot the exact connection we are about to register with, captured before the network
+      // call, so an in-flight gateway switch can never leave the server row untracked: whatever we
+      // PUT here is exactly what a later handoff will DELETE.
+      const connection = connectionRef.current;
+      if (!connection) return;
       await registerMobileDevice(session.api, {
         installationId,
         token: result.data,
         platform,
-        gateway,
+        gateway: connection.url,
         eventTypes,
         previews: preferences.notificationPreviews,
       });
       await AsyncStorage.setItem(PUSH_TOKEN_KEY, result.data);
-      const connection = connectionRef.current;
-      if (!connection || connection.url !== gateway) return;
       const snapshot: PushRegistrationSnapshot = {
         connection,
         token: result.data,
@@ -340,6 +370,7 @@ function EnabledPushCoordinator() {
     session.api,
     session.connection?.url,
     session.status,
+    snapshotHydrated,
   ]);
 
   return null;

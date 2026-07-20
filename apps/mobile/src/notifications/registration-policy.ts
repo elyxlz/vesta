@@ -27,3 +27,32 @@ export function gatewayHandoffDecision(input: {
   if (input.previousGatewayUrl === input.currentGatewayUrl) return "keep";
   return "unregister-previous";
 }
+
+export interface RegistrationTarget {
+  gatewayUrl: string;
+  token: string;
+}
+
+// A push registration is identified by the gateway it targets plus the device token; the token is
+// a device-global singleton shared across gateways, so both fields are needed to tell one
+// registration from another.
+export function isSameRegistration(
+  a: RegistrationTarget | null,
+  b: RegistrationTarget | null,
+): boolean {
+  return (
+    a !== null &&
+    b !== null &&
+    a.gatewayUrl === b.gatewayUrl &&
+    a.token === b.token
+  );
+}
+
+// Restoring the persisted snapshot on mount must never clobber a registration that already landed
+// during the async restore window; a live in-memory snapshot wins over the disk one.
+export function resolveHydratedSnapshot<Snapshot>(
+  current: Snapshot | null,
+  stored: Snapshot | null,
+): Snapshot | null {
+  return current ?? stored;
+}

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   gatewayHandoffDecision,
+  isSameRegistration,
   pushRegistrationDecision,
+  resolveHydratedSnapshot,
 } from "./registration-policy";
 
 describe("push registration readiness", () => {
@@ -93,4 +95,47 @@ describe("gateway handoff", () => {
       ).toBe(expected);
     },
   );
+});
+
+describe("registration identity", () => {
+  const target = { gatewayUrl: "https://a.test", token: "tok-1" };
+
+  it("matches an identical gateway and token", () => {
+    expect(isSameRegistration(target, { ...target })).toBe(true);
+  });
+
+  it("differs when the token was replaced by a newer registration", () => {
+    expect(
+      isSameRegistration(target, { gatewayUrl: "https://a.test", token: "tok-2" }),
+    ).toBe(false);
+  });
+
+  it("differs when the gateway differs", () => {
+    expect(
+      isSameRegistration(target, { gatewayUrl: "https://b.test", token: "tok-1" }),
+    ).toBe(false);
+  });
+
+  it("never matches when either side is absent", () => {
+    expect(isSameRegistration(null, target)).toBe(false);
+    expect(isSameRegistration(target, null)).toBe(false);
+    expect(isSameRegistration(null, null)).toBe(false);
+  });
+});
+
+describe("snapshot hydration merge", () => {
+  const live = { id: "live" };
+  const stored = { id: "stored" };
+
+  it("keeps a registration that landed during the restore window", () => {
+    expect(resolveHydratedSnapshot(live, stored)).toBe(live);
+  });
+
+  it("adopts the persisted snapshot when the ref is still empty", () => {
+    expect(resolveHydratedSnapshot(null, stored)).toBe(stored);
+  });
+
+  it("stays empty when neither exists", () => {
+    expect(resolveHydratedSnapshot(null, null)).toBeNull();
+  });
 });
