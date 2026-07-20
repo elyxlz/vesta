@@ -25,11 +25,6 @@ vi.mock("@/lib/token-refresh", () => ({
   ensureFreshToken: () => Promise.resolve("ok"),
 }));
 
-const fetchVersionInfo = vi.fn<() => Promise<{ version: string }>>();
-vi.mock("@/api/gateway", () => ({
-  fetchVersionInfo: () => fetchVersionInfo(),
-}));
-
 vi.mock("@/providers/AuthProvider", () => ({
   useAuth: () => ({
     initialized: true,
@@ -42,10 +37,8 @@ vi.mock("@/providers/AuthProvider", () => ({
 
 // The screens are their own tested units pulling in the navbar / router; here we only assert
 // ControllerProvider's choice to render them, so stub them to markers.
-vi.mock("@/components/VersionMismatchScreen", () => ({
-  VersionMismatchScreen: ({ gatewayVersion }: { gatewayVersion: string }) => (
-    <div>version mismatch: {gatewayVersion}</div>
-  ),
+vi.mock("@/components/IncompatibleScreen", () => ({
+  IncompatibleScreen: () => <div>incompatible</div>,
 }));
 vi.mock("@/components/DisconnectedOverlay", () => ({
   DisconnectedOverlay: () => <div>disconnected</div>,
@@ -94,6 +87,13 @@ const helloFrame = JSON.stringify({
   protocol: 1,
   floor: 1,
 });
+// floor 2 sits above the client's supported protocol (1), so the handshake is incompatible.
+const incompatibleHelloFrame = JSON.stringify({
+  type: "hello",
+  version: "9.9.9",
+  protocol: 2,
+  floor: 2,
+});
 const snapshotFrame = JSON.stringify({
   type: "snapshot",
   tree: { gateway: { version: "9.9.9" }, agents: {} },
@@ -101,7 +101,6 @@ const snapshotFrame = JSON.stringify({
 
 beforeEach(() => {
   FakeWebSocket.instances = [];
-  fetchVersionInfo.mockReset();
   mockConn.tokenExpiring = false;
   vi.stubGlobal("WebSocket", FakeWebSocket);
 });
@@ -111,23 +110,28 @@ afterEach(() => {
 });
 
 describe("ControllerProvider", () => {
-  it("shows VersionMismatchScreen and opens no socket when versions differ", async () => {
-    fetchVersionInfo.mockResolvedValue({ version: `${__APP_VERSION__}-other` });
-
+  it("takes over with IncompatibleScreen when the handshake floor is incompatible", async () => {
     const { findByText } = render(
       <ControllerProvider>
         <div>app body</div>
       </ControllerProvider>,
     );
 
-    expect(
-      await findByText(`version mismatch: ${__APP_VERSION__}-other`),
-    ).toBeTruthy();
-    expect(FakeWebSocket.instances).toHaveLength(0);
+    await waitFor(() => {
+      expect(FakeWebSocket.instances).toHaveLength(1);
+    });
+    const socket = FakeWebSocket.instances[0];
+    if (!socket) throw new Error("socket not constructed");
+
+    act(() => {
+      socket.onopen?.();
+      socket.onmessage?.({ data: incompatibleHelloFrame });
+    });
+
+    expect(await findByText("incompatible")).toBeTruthy();
   });
 
   it("builds the controller and reduces hello+snapshot into the replica", async () => {
-    fetchVersionInfo.mockResolvedValue({ version: __APP_VERSION__ });
     let controller: Controller | null = null;
 
     render(
@@ -159,7 +163,6 @@ describe("ControllerProvider", () => {
 
   it("rotates the token in-band when it is expiring", async () => {
     mockConn.tokenExpiring = true;
-    fetchVersionInfo.mockResolvedValue({ version: __APP_VERSION__ });
     vi.useFakeTimers();
     try {
       render(
@@ -167,7 +170,7 @@ describe("ControllerProvider", () => {
           <div>app body</div>
         </ControllerProvider>,
       );
-      // Flush the async version gate and the controller-build effect so the socket exists.
+      // Let the controller-build effect run so the socket exists.
       await act(async () => {
         await vi.advanceTimersByTimeAsync(1);
       });
@@ -192,8 +195,6 @@ describe("ControllerProvider", () => {
   });
 
   it("closes the controller socket on unmount", async () => {
-    fetchVersionInfo.mockResolvedValue({ version: __APP_VERSION__ });
-
     const { unmount } = render(
       <ControllerProvider>
         <div>app body</div>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { selectLinuxAsset } from "./updater";
+import { isNewerVersion, selectLinuxAsset } from "./updater";
 
 const asset = (name: string) => ({
   name,
@@ -27,4 +27,20 @@ describe("linux release asset selection", () => {
   ])("$arch $ext -> $expected", ({ assets, arch, ext, expected }) => {
     expect(selectLinuxAsset(assets, arch, ext)?.name).toBe(expected);
   });
+});
+
+describe("latest-channel version comparison", () => {
+  it.each([
+    { candidate: "0.1.180", current: "0.1.179", expected: true },
+    { candidate: "0.2.0", current: "0.1.179", expected: true },
+    { candidate: "1.0.0", current: "0.9.9", expected: true },
+    { candidate: "0.1.179", current: "0.1.179", expected: false },
+    { candidate: "0.1.178", current: "0.1.179", expected: false },
+    { candidate: "0.1.9", current: "0.1.10", expected: false },
+  ])(
+    "$candidate newer than $current -> $expected",
+    ({ candidate, current, expected }) => {
+      expect(isNewerVersion(candidate, current)).toBe(expected);
+    },
+  );
 });

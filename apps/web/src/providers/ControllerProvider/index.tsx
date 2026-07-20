@@ -3,9 +3,8 @@ import { createController, type Controller } from "@vesta/core";
 import { useSyncState } from "@vesta/core/react";
 import { getConnection, isTokenExpiringSoon } from "@/lib/connection";
 import { ensureFreshToken } from "@/lib/token-refresh";
-import { fetchVersionInfo } from "@/api/gateway";
 import { useAuth } from "@/providers/AuthProvider";
-import { VersionMismatchScreen } from "@/components/VersionMismatchScreen";
+import { IncompatibleScreen } from "@/components/IncompatibleScreen";
 import { DisconnectedOverlay } from "@/components/DisconnectedOverlay";
 import { createBrowserSocket } from "./browser-socket";
 import { ControllerContext, ControllerReconnectContext } from "./context";
@@ -17,12 +16,9 @@ export {
 } from "./context";
 export { useSyncState };
 
-// Brief grace before the disconnect overlay appears, so quick socket blips and the
-// gap between the version gate and the first socket open don't flash it.
+// Brief grace before the disconnect overlay appears, so quick socket blips don't flash it.
 const DISCONNECT_GRACE_MS = 750;
 const REAUTH_POLL_MS = 60000;
-
-type GateState = "checking" | "ready" | "mismatch";
 
 function syncUrl(): string {
   const conn = getConnection();
@@ -48,9 +44,8 @@ function buildController(): Controller {
   });
 }
 
-// The controller (and its socket) is constructed only once the version gate passes, so a
-// mismatch never opens a socket. `reconnect` bumps `connectEpoch`, remounting the session with
-// a fresh controller (the gateway-update path forces a reconnect this way).
+// `reconnect` bumps `connectEpoch`, remounting the session with a fresh controller (the
+// gateway-update path forces a reconnect this way).
 function ActiveController({ children }: { children: ReactNode }) {
   const [connectEpoch, setConnectEpoch] = useState(0);
   const reconnect = useCallback(
@@ -68,7 +63,10 @@ function ActiveController({ children }: { children: ReactNode }) {
 // One live controller for the lifetime of a session mount. Built once via a lazy useState
 // initializer (run exactly once per mount and never discarded, so it avoids the
 // useMemo-side-effect-in-render caveat), closed on unmount. Reauth rotates the socket's token
-// in-band before it expires; the overlay tracks the sync sub-store.
+// in-band before it expires; the overlay tracks the sync sub-store. Like mobile, the desktop
+// app is a drifting client: it opens /sync and the tolerant-floor handshake decides
+// compatibility, so an incompatible gateway protocol takes over with IncompatibleScreen
+// instead of a pre-socket version gate.
 function ControllerSession({ children }: { children: ReactNode }) {
   const [controller] = useState(buildController);
   const syncState = useSyncState(controller);
@@ -99,7 +97,7 @@ function ControllerSession({ children }: { children: ReactNode }) {
   }, [controller]);
 
   useEffect(() => {
-    if (syncState === "open") {
+    if (syncState !== "connecting" && syncState !== "reconnecting") {
       setShowDisconnected(false);
       return;
     }
@@ -114,51 +112,10 @@ function ControllerSession({ children }: { children: ReactNode }) {
 
   return (
     <ControllerContext.Provider value={controller}>
-      {children}
+      {syncState === "incompatible" ? <IncompatibleScreen /> : children}
       {showDisconnected && <DisconnectedOverlay />}
     </ControllerContext.Provider>
   );
-}
-
-// Pre-connect gate: refresh the token (bail to the connect screen on a dead session) and
-// fetch the gateway version over HTTP before any socket opens. On a version mismatch the
-// whole app is replaced by VersionMismatchScreen and no controller is built.
-function ConnectedController({ children }: { children: ReactNode }) {
-  const { expireSession } = useAuth();
-  const [gate, setGate] = useState<GateState>("checking");
-  const [gatewayVersion, setGatewayVersion] = useState("");
-
-  useEffect(() => {
-    let cancelled = false;
-    const runGate = async (): Promise<void> => {
-      if ((await ensureFreshToken()) === "expired") {
-        if (!cancelled) expireSession();
-        return;
-      }
-      const data = await fetchVersionInfo();
-      if (cancelled) return;
-      if (data?.version) {
-        setGatewayVersion(data.version);
-        if (data.version !== __APP_VERSION__) {
-          setGate("mismatch");
-          return;
-        }
-      }
-      setGate("ready");
-    };
-    void runGate();
-    return () => {
-      cancelled = true;
-    };
-  }, [expireSession]);
-
-  if (gate === "mismatch") {
-    return <VersionMismatchScreen gatewayVersion={gatewayVersion} />;
-  }
-  if (gate === "ready") {
-    return <ActiveController>{children}</ActiveController>;
-  }
-  return <>{children}</>;
 }
 
 export function ControllerProvider({ children }: { children: ReactNode }) {
@@ -168,7 +125,7 @@ export function ControllerProvider({ children }: { children: ReactNode }) {
   // without a controller: GatewayProvider keeps its own disconnected split for the
   // connect screen, and no consumer reads useController() until then.
   if (initialized && connected) {
-    return <ConnectedController>{children}</ConnectedController>;
+    return <ActiveController>{children}</ActiveController>;
   }
   return <>{children}</>;
 }
