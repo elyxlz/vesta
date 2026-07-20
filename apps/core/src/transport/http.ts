@@ -1,10 +1,16 @@
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
 
 export interface HttpDeps {
-  baseUrl: string
+  baseUrl: () => string
   fetch: FetchLike
   token: () => string | null
   refresh: () => Promise<boolean>
+  // Optional pre-flight: apps that track their own token expiry refresh once before the
+  // first send when this returns true. Omitted callers refresh only reactively on a 401.
+  isExpiring?: () => boolean
+  // Optional error-body shaping (the mobile gateway hides HTML bodies). Defaults to the
+  // server's `{error}` field, else the raw body.
+  formatError?: (response: Response, body: string) => string
 }
 
 export class ApiError extends Error {
@@ -47,14 +53,21 @@ export function createHttpClient(deps: HttpDeps): HttpClient {
   }
 
   const send = (path: string, init?: RequestInit): Promise<Response> =>
-    deps.fetch(`${deps.baseUrl}${path}`, { ...init, headers: headers(init) })
+    deps.fetch(`${deps.baseUrl()}${path}`, { ...init, headers: headers(init) })
 
   const request = async (path: string, init?: RequestInit): Promise<Response> => {
+    if (deps.isExpiring?.()) await deps.refresh()
     let response = await send(path, init)
     if (response.status === 401 && (await deps.refresh())) {
       response = await send(path, init)
     }
-    if (!response.ok) throw new ApiError(response.status, errorMessage(await response.text()))
+    if (!response.ok) {
+      const body = await response.text()
+      throw new ApiError(
+        response.status,
+        deps.formatError ? deps.formatError(response, body) : errorMessage(body),
+      )
+    }
     return response
   }
 

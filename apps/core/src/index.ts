@@ -21,7 +21,7 @@ export type { AlertDelta, Delta } from "./protocol/deltas"
 export { createReplica } from "./replica/store"
 export type { Replica } from "./replica/store"
 
-export { ApiError } from "./transport/http"
+export { ApiError, createHttpClient } from "./transport/http"
 export type { FetchLike, HttpClient, HttpDeps } from "./transport/http"
 export type { SocketLike, SyncSocketDeps, SyncState } from "./transport/socket"
 export { readSse } from "./transport/sse"

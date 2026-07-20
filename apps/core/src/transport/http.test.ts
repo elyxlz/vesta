@@ -12,7 +12,7 @@ function jsonResponse(status: number, body: unknown): Response {
 
 function deps(fetch: FetchLike, over: Partial<HttpDeps> = {}): HttpDeps {
   return {
-    baseUrl: "https://vestad.test",
+    baseUrl: () => "https://vestad.test",
     fetch,
     token: () => "tok",
     refresh: () => Promise.resolve(true),
@@ -76,6 +76,36 @@ describe("createHttpClient", () => {
     await expect(client.request("/agents")).rejects.toMatchObject({
       status: 409,
       message: "name taken",
+    })
+  })
+
+  it("refreshes before sending when the token is expiring", async () => {
+    const fetch = vi.fn<FetchLike>().mockResolvedValue(jsonResponse(200, {}))
+    const refresh = vi.fn<() => Promise<boolean>>().mockResolvedValue(true)
+    const client = createHttpClient(deps(fetch, { refresh, isExpiring: () => true }))
+    await client.request("/agents")
+    expect(refresh).toHaveBeenCalledTimes(1)
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it("does not refresh before sending when the token is fresh", async () => {
+    const fetch = vi.fn<FetchLike>().mockResolvedValue(jsonResponse(200, {}))
+    const refresh = vi.fn<() => Promise<boolean>>().mockResolvedValue(true)
+    const client = createHttpClient(deps(fetch, { refresh, isExpiring: () => false }))
+    await client.request("/agents")
+    expect(refresh).not.toHaveBeenCalled()
+  })
+
+  it("shapes the error message through an injected formatter", async () => {
+    const fetch = vi
+      .fn<FetchLike>()
+      .mockResolvedValue(new Response("<html>oops</html>", { status: 502 }))
+    const client = createHttpClient(
+      deps(fetch, { formatError: (response) => `gateway ${String(response.status)}` }),
+    )
+    await expect(client.request("/agents")).rejects.toMatchObject({
+      status: 502,
+      message: "gateway 502",
     })
   })
 })

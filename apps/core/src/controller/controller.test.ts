@@ -56,7 +56,7 @@ function harness(): Harness {
       clearTimer: () => undefined,
     },
     http: {
-      baseUrl: "https://vestad.test",
+      baseUrl: () => "https://vestad.test",
       fetch: () => Promise.resolve(new Response(null, { status: 200 })),
       token: () => null,
       refresh: () => Promise.resolve(false),
