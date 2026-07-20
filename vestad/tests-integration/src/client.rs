@@ -399,9 +399,9 @@ impl Client {
     /// Deliver a chat message to the agent's `app-chat` skill service via `POST
     /// /agents/{name}/app-chat/message` (the generic authenticated proxy), the same path the web/mobile
     /// clients use. A `200` means the daemon durably intook it (persisted, echoed, notification
-    /// written); delivery truth is still the `append` echo carrying `intent_id`. Pass `intent_id` to
-    /// correlate that echo; omit with `None`. Requires the agent's app-chat daemon to be running
-    /// (`start_app_chat_daemon` for model-less fake-token agents).
+    /// written); delivery truth is the echo carrying `intent_id` on the app-chat chat socket
+    /// (`open_app_chat_socket`). Pass `intent_id` to correlate that echo; omit with `None`. Requires the
+    /// agent's app-chat daemon to be running (`start_app_chat_daemon` for model-less fake-token agents).
     pub fn send_message(&self, name: &str, text: &str, intent_id: Option<&str>) -> Result<(), String> {
         let mut body = serde_json::json!({ "text": text });
         if let Some(id) = intent_id {
@@ -437,6 +437,43 @@ impl Client {
         Ok(())
     }
 
+    /// Read an agent's `AGENT_TOKEN` from its in-container env (`/run/vestad-env`), the self-scoping
+    /// secret loopback `X-Agent-Token` calls carry. Docker-exec (the env file is not client-exposed),
+    /// so a scenario can drive `notify` exactly as the agent would from inside its container.
+    pub fn read_agent_token(&self, name: &str) -> Result<String, String> {
+        let container = crate::agent_container_name(name);
+        let token =
+            crate::exec_in_container(&container, ". /run/vestad-env && printf %s \"$AGENT_TOKEN\"")?;
+        if token.is_empty() {
+            return Err(format!("{name}: AGENT_TOKEN missing from /run/vestad-env"));
+        }
+        Ok(token)
+    }
+
+    /// Post an agent-injected user-facing alert via `POST /agents/{name}/notify` carrying the agent's
+    /// own `X-Agent-Token` (self-scoped, the loopback path the app-chat reply hook and the rate-limit
+    /// notice use). `kind` is the closed set `message`/`rate_limited`; an unknown kind is a 400
+    /// (surfaced here as the mapped error string). On success vestad fans an `alert` delta
+    /// `{agent,kind,title,body}` to every connected `/sync` session.
+    pub fn notify(
+        &self,
+        name: &str,
+        agent_token: &str,
+        kind: &str,
+        title: &str,
+        body: &str,
+    ) -> Result<(), String> {
+        let payload = serde_json::json!({ "kind": kind, "title": title, "body": body });
+        let resp = self
+            .agent
+            .post(&format!("{}/agents/{}/notify", self.base_url, name))
+            .header("X-Agent-Token", agent_token)
+            .send_json(&payload)
+            .map_err(|e| map_error(&e))?;
+        check_response(resp)?;
+        Ok(())
+    }
+
     /// Mint a JWT access token (+ rotating refresh token) via `POST /auth/session`, exchanging the
     /// raw API key. Use the returned `access_token` for `open_sync_with_token` to exercise the `/sync`
     /// deadline/`reauth` path a raw-key connect never hits.
@@ -459,18 +496,35 @@ impl Client {
         self.connect_sync(jwt).await
     }
 
+    /// Connect the app-chat live chat socket `GET /agents/{name}/app-chat/ws` through the generic
+    /// authenticated proxy, API-key authed via `?token=` (the path web/mobile chat use). Replay-free
+    /// by contract: only events appended after connect arrive, each frame one `StoredEvent` JSON
+    /// object. Delivery truth for a send is the echo carrying its `intent_id` on this socket. Requires
+    /// the agent's app-chat daemon running (`start_app_chat_daemon` for model-less fake-token agents).
+    pub async fn open_app_chat_socket(&self, name: &str) -> Result<SyncSocket, String> {
+        self.connect_ws(&format!(
+            "/agents/{}/app-chat/ws?token={}",
+            urlencod(name),
+            urlencod(&self.api_key)
+        ))
+        .await
+    }
+
     async fn connect_sync(&self, token: &str) -> Result<SyncSocket, String> {
-        let url = format!(
-            "{}/sync?token={}",
-            ws_base_url(&self.base_url),
-            urlencod(token)
-        );
+        self.connect_ws(&format!("/sync?token={}", urlencod(token)))
+            .await
+    }
+
+    /// Open a WebSocket to `path_and_query` (already `?token=`-authed) over the fingerprint-pinned
+    /// TLS the harness uses everywhere. Shared by the `/sync` state plane and the app-chat chat socket.
+    async fn connect_ws(&self, path_and_query: &str) -> Result<SyncSocket, String> {
+        let url = format!("{}{}", ws_base_url(&self.base_url), path_and_query);
         let tls = make_ws_rustls_config(self.cert_fingerprint.clone());
         let connector = tokio_tungstenite::Connector::Rustls(tls);
         let (ws, _resp) =
             tokio_tungstenite::connect_async_tls_with_config(&url, None, false, Some(connector))
                 .await
-                .map_err(|e| format!("sync connect failed: {e}"))?;
+                .map_err(|e| format!("ws connect failed: {e}"))?;
         Ok(SyncSocket { ws })
     }
 
@@ -534,30 +588,21 @@ impl Client {
 type WsStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
-/// A live `/sync` connection. Frames are parsed as `serde_json::Value` keyed on `type` (lighter than
-/// mirroring the server's protocol enum here); ping/pong are drained transparently on `recv_frame`.
+/// A live WebSocket carrying JSON frames: the `/sync` state plane, or the app-chat chat socket. Frames
+/// are parsed as `serde_json::Value` keyed on `type` (lighter than mirroring the server's protocol
+/// enum here); ping/pong are drained transparently on `recv_frame`.
 pub struct SyncSocket {
     ws: WsStream,
 }
 
 impl SyncSocket {
-    /// Send a raw client frame (`watch`/`unwatch`/`reauth`, or an arbitrary one to probe the
-    /// server's ignore-unknown rule).
+    /// Send a raw client frame (`reauth`, or an arbitrary one to probe the server's ignore-unknown
+    /// rule).
     pub async fn send_client_frame(&mut self, frame: &serde_json::Value) -> Result<(), String> {
         self.ws
             .send(Message::Text(frame.to_string().into()))
             .await
             .map_err(|e| format!("send frame: {e}"))
-    }
-
-    pub async fn watch(&mut self, agent: &str) -> Result<(), String> {
-        self.send_client_frame(&serde_json::json!({ "type": "watch", "agent": agent }))
-            .await
-    }
-
-    pub async fn unwatch(&mut self, agent: &str) -> Result<(), String> {
-        self.send_client_frame(&serde_json::json!({ "type": "unwatch", "agent": agent }))
-            .await
     }
 
     pub async fn reauth(&mut self, token: &str) -> Result<(), String> {

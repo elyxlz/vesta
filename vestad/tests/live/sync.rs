@@ -1,68 +1,65 @@
-//! Live `/sync` e2e against a REAL, settled Claude agent (release-gated tier). Bridges the two
+//! Live chat-socket e2e against a REAL, settled Claude agent (release-gated tier). Bridges the two
 //! halves the fake-token server suite (`tests/server/sync.rs`) can only test apart: an app-chat
-//! `send_message` carrying an `intent_id` echoes that id back on the watch (the delivery-truth
-//! contract), AND the real model round-trip that follows streams a genuine `assistant` text event
-//! onto the same watch. Skips with no `CLAUDE_CREDENTIALS` (the pool is unprovisioned, so the lock
-//! returns None), matching every other live test.
+//! `send_message` carrying an `intent_id` echoes that id back on the chat socket (the delivery-truth
+//! contract), AND the real model round-trip that follows streams a genuine agent reply (a `chat`
+//! event the skill's `app-chat send` persists and fans) onto the same socket. Skips with no
+//! `CLAUDE_CREDENTIALS` (the pool is unprovisioned, so the lock returns None), matching every other
+//! live test.
 
 use std::time::{Duration, Instant};
 
-use vesta_tests::client::SyncSocket;
+use vesta_tests::client::{Client, SyncSocket};
 use vesta_tests::SERVER;
 
 use super::common::lock_live_agent_a;
 
-const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
 /// The app-chat daemon writes the user echo the instant it intakes the send, so it lands fast. The
-/// bounded resends close two races: the watch frame may reach vestad a hair after the first echo was
-/// broadcast (the live edge never replays, so a lost echo needs another send), and a real agent's
-/// daemon may still be coming up on the first send (the send 502s and retries).
+/// bounded resends close two races: the chat socket's subscriber may register a hair after the first
+/// echo was fanned (the socket is replay-free, so a missed echo needs another send with a fresh id),
+/// and a real agent's daemon may still be coming up on the first send (the send 502s and retries).
 const ECHO_TIMEOUT: Duration = Duration::from_secs(45);
 const ECHO_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(4);
-/// A full real-model round-trip: the app-chat notification is delivered, the SDK query runs, and
-/// the assistant text streams back. Generous like the first-start settle budget; it only has to
-/// not be hit in practice.
-const ASSISTANT_TIMEOUT: Duration = Duration::from_secs(300);
+/// The proxy 404s the chat-socket upgrade until the daemon's service is registered, so the open is
+/// retried briefly over this window (a settled pool agent's daemon is normally already up).
+const CHAT_SOCKET_OPEN_TIMEOUT: Duration = Duration::from_secs(30);
+/// A full real-model round-trip: the app-chat notification is delivered, the SDK query runs, and the
+/// agent's reply streams back as a `chat` event on the socket. Generous like the first-start settle
+/// budget; it only has to not be hit in practice.
+const REPLY_TIMEOUT: Duration = Duration::from_secs(300);
 
-/// Read the mandatory hello then the immediate snapshot (deterministically frames 1 and 2 before
-/// the handler enters its select loop). Contract details are asserted in the server suite; here we
-/// only need past the handshake to the watch.
-async fn handshake(sock: &mut SyncSocket) {
-    let hello = sock.recv_frame(HANDSHAKE_TIMEOUT).await.expect("hello frame");
-    assert_eq!(hello["type"].as_str(), Some("hello"), "first frame is hello");
-    let snapshot = sock.recv_frame(HANDSHAKE_TIMEOUT).await.expect("snapshot frame");
-    assert_eq!(snapshot["type"].as_str(), Some("snapshot"), "second frame is snapshot");
+/// True when `frame` is the app-chat user echo carrying our `intent` (a `StoredEvent` on the chat
+/// socket, no envelope). Only the intake event carries an `intent_id`.
+fn is_echo(frame: &serde_json::Value, intent: &str) -> bool {
+    frame["type"].as_str() == Some("user") && frame["intent_id"].as_str() == Some(intent)
 }
 
-/// True when `frame` is an `append` for `agent` carrying the user-echo event with our `intent`.
-fn is_echo(frame: &serde_json::Value, agent: &str, intent: &str) -> bool {
-    frame["type"].as_str() == Some("append")
-        && frame["agent"].as_str() == Some(agent)
-        && frame["events"].as_array().is_some_and(|events| {
-            events
-                .iter()
-                .any(|e| e["type"].as_str() == Some("user") && e["intent_id"].as_str() == Some(intent))
-        })
+/// True when `frame` is a non-empty agent reply (`chat`): the real model's response the skill
+/// persisted and fanned on its socket, not the user echo.
+fn is_agent_reply(frame: &serde_json::Value) -> bool {
+    frame["type"].as_str() == Some("chat")
+        && frame["text"].as_str().is_some_and(|text| !text.trim().is_empty())
 }
 
-/// True when `frame` is an `append` for `agent` carrying a non-empty `assistant` text event: the
-/// real model's response, not the in-process user echo.
-fn is_assistant_text(frame: &serde_json::Value, agent: &str) -> bool {
-    frame["type"].as_str() == Some("append")
-        && frame["agent"].as_str() == Some(agent)
-        && frame["events"].as_array().is_some_and(|events| {
-            events.iter().any(|e| {
-                e["type"].as_str() == Some("assistant")
-                    && e["text"].as_str().is_some_and(|text| !text.trim().is_empty())
-            })
-        })
+/// Open the live agent's app-chat chat socket, retrying briefly past a still-registering service.
+async fn open_chat_socket(c: &Client, agent: &str) -> SyncSocket {
+    let deadline = Instant::now() + CHAT_SOCKET_OPEN_TIMEOUT;
+    loop {
+        match c.open_app_chat_socket(agent).await {
+            Ok(sock) => return sock,
+            Err(e) => assert!(
+                Instant::now() < deadline,
+                "the app-chat chat socket never opened for {agent}: {e}"
+            ),
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
 }
 
-/// End-to-end: connect `/sync`, watch a real settled agent, send one app-chat message with an
-/// intent id, observe the echo append carrying that id, then observe the real assistant response
-/// event arriving on the same watch. No-ops (returns) without `CLAUDE_CREDENTIALS`.
+/// End-to-end: open the app-chat chat socket for a real settled agent, send one message with an intent
+/// id, observe the echo carrying that id, then observe the real agent reply arriving on the same
+/// socket. No-ops (returns) without `CLAUDE_CREDENTIALS`.
 #[tokio::test]
-async fn live_send_echoes_intent_then_streams_a_real_assistant_response() {
+async fn live_send_echoes_intent_then_streams_a_real_agent_reply() {
     let Some((shared, _container)) = lock_live_agent_a() else {
         return;
     };
@@ -74,21 +71,21 @@ async fn live_send_echoes_intent_then_streams_a_real_assistant_response() {
         .clone();
 
     let c = SERVER.client();
-    let mut sock = c.open_sync().await.expect("open sync");
-    handshake(&mut sock).await;
-    sock.watch(&name).await.expect("watch the live agent");
+    let mut chat = open_chat_socket(&c, &name).await;
 
-    let intent = "i-live-sync-e2e";
     let text = "Please reply with a short one-line greeting.";
 
-    // Resend on a bounded cadence until the daemon's echo lands, closing the watch-subscribe and
-    // daemon-warmup races. Once the echo is in hand the watch is proven subscribed, so the later
-    // assistant event needs no resend.
+    // Resend on a bounded cadence with a fresh intent each attempt until the daemon's echo lands,
+    // closing the subscriber-registration and daemon-warmup races (a duplicate intent is deduped, so
+    // each attempt carries a new id). Once an echo is in hand the socket is proven subscribed, so the
+    // later reply needs no resend.
     let echo_deadline = Instant::now() + ECHO_TIMEOUT;
+    let mut attempt = 0u32;
     loop {
-        let _ = c.send_message(&name, text, Some(intent));
-        if sock
-            .expect_frame_matching(|f| is_echo(f, &name, intent), ECHO_ATTEMPT_TIMEOUT)
+        let intent = format!("i-live-chat-e2e-{attempt}");
+        let _ = c.send_message(&name, text, Some(&intent));
+        if chat
+            .expect_frame_matching(|f| is_echo(f, &intent), ECHO_ATTEMPT_TIMEOUT)
             .await
             .is_ok()
         {
@@ -96,15 +93,17 @@ async fn live_send_echoes_intent_then_streams_a_real_assistant_response() {
         }
         assert!(
             Instant::now() < echo_deadline,
-            "no user-echo append carrying {intent} within {ECHO_TIMEOUT:?}"
+            "no user-echo carrying an intent on the chat socket within {ECHO_TIMEOUT:?}"
         );
+        attempt += 1;
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
 
-    // The real model round-trip streams a genuine assistant text event onto the same watch.
-    sock.expect_frame_matching(|f| is_assistant_text(f, &name), ASSISTANT_TIMEOUT)
+    // The real model round-trip: the agent's `app-chat send` reply streams a non-empty `chat` event
+    // onto the same socket.
+    chat.expect_frame_matching(is_agent_reply, REPLY_TIMEOUT)
         .await
-        .expect("a real assistant response event on the watch within the round-trip budget");
+        .expect("a real agent reply event on the chat socket within the round-trip budget");
 
-    sock.close().await.ok();
+    chat.close().await.ok();
 }
