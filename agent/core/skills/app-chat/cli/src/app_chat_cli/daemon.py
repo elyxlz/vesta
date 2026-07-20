@@ -38,6 +38,7 @@ STOP_MARKER_NAME = "stop-requested"
 DAEMON_START_TIMEOUT = 15.0
 DAEMON_STOP_TIMEOUT = 15.0
 DAEMON_POLL_INTERVAL = 0.5
+NOTIFY_TIMEOUT = 10.0
 
 REGISTER_SERVICE = pl.Path.home() / "agent" / "skills" / "vestad" / "scripts" / "register-service"
 NOTIFY = pl.Path.home() / "agent" / "skills" / "vestad" / "scripts" / "notify"
@@ -78,13 +79,17 @@ class DaemonState:
 
 def _notify_reply(text: str) -> None:
     """Best-effort: tell vestad an app reply went out so it alerts + pushes. A failure here never fails
-    the reply (durability + the live echo already happened); it only skips the toast/push. The notify
-    script lands with the notify primitive, so the NOTIFY.exists() guard no-ops until then."""
+    the reply (durability + the live echo already happened); it only skips the toast/push, so swallow a
+    spawn error and cap a hung script. The notify script lands with the notify primitive, so the
+    NOTIFY.exists() guard no-ops until then."""
     agent = os.environ.get("AGENT_NAME")
     if agent is None or not NOTIFY.exists():
         return
     preview = text[:180]
-    subprocess.run([str(NOTIFY), "message", agent, preview], check=False, capture_output=True)
+    try:
+        subprocess.run([str(NOTIFY), "message", agent, preview], check=False, capture_output=True, timeout=NOTIFY_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        _log(f"notify failed: {exc}")
 
 
 def cmd_serve(args: argparse.Namespace) -> None:

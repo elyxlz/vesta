@@ -165,6 +165,12 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
                 break
     finally:
         sender.cancel()
+        try:
+            await sender
+        except asyncio.CancelledError:
+            pass
+        except (ConnectionResetError, RuntimeError) as exc:
+            logger.debug("chat-socket pump ended on a dead client: %s", exc)
         state.subscribers.discard(queue)
     return ws
 

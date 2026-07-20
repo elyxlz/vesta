@@ -316,6 +316,36 @@ def test_notify_reply_shells_the_notify_script_with_kind_agent_and_preview(tmp_p
     assert len(argv[3]) == 180  # the body preview is truncated
 
 
+def test_notify_reply_swallows_a_spawn_error(tmp_path, monkeypatch):
+    script = tmp_path / "notify"
+    script.write_text("#!/usr/bin/env bash\ntrue\n")
+    monkeypatch.setattr(daemon, "NOTIFY", script)
+    monkeypatch.setenv("AGENT_NAME", "aria")
+
+    def raising_run(cmd, **kwargs):
+        raise OSError("exec format error")
+
+    monkeypatch.setattr(daemon.subprocess, "run", raising_run)
+
+    # a spawn failure must never propagate: persist + emit already happened, so the send response
+    # must still be written
+    daemon._notify_reply("hello")
+
+
+def test_notify_reply_swallows_a_timeout(tmp_path, monkeypatch):
+    script = tmp_path / "notify"
+    script.write_text("#!/usr/bin/env bash\ntrue\n")
+    monkeypatch.setattr(daemon, "NOTIFY", script)
+    monkeypatch.setenv("AGENT_NAME", "aria")
+
+    def timing_out_run(cmd, **kwargs):
+        raise daemon.subprocess.TimeoutExpired(cmd, daemon.NOTIFY_TIMEOUT)
+
+    monkeypatch.setattr(daemon.subprocess, "run", timing_out_run)
+
+    daemon._notify_reply("hello")
+
+
 def test_notify_reply_is_a_noop_when_agent_name_or_script_is_absent(tmp_path, monkeypatch):
     monkeypatch.setattr(daemon.subprocess, "run", lambda *a, **k: pytest.fail("must not shell when a guard fails"))
 
