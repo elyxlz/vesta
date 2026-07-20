@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Platform } from "react-native";
 import Constants from "expo-constants";
 import * as Crypto from "expo-crypto";
@@ -7,10 +7,17 @@ import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import { usePathname, useRouter } from "expo-router";
 import { registerMobileDevice, unregisterMobileDevice } from "@/api/endpoints";
-import type { ApiClient } from "@/api/client";
+import { createApiClient, type ApiClient } from "@/api/client";
+import type { ConnectionConfig } from "@/api/types";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useRoster } from "@/session/RosterProvider";
 import { useSession } from "@/session/SessionProvider";
+import {
+  clearPushRegistration,
+  readPushRegistration,
+  writePushRegistration,
+  type PushRegistrationSnapshot,
+} from "@/storage/push-registration";
 import { designTokens } from "@/theme/generated";
 import { shouldPresentForegroundNotification } from "./foreground-policy";
 import {
@@ -19,7 +26,10 @@ import {
   readPendingNotification,
   type PendingNotification,
 } from "./notification-routing";
-import { pushRegistrationDecision } from "./registration-policy";
+import {
+  gatewayHandoffDecision,
+  pushRegistrationDecision,
+} from "./registration-policy";
 
 const PUSH_TOKEN_KEY = "vesta.expo-push-token.v1";
 const PUSH_INSTALLATION_ID_KEY = "vesta.push-installation-id.v1";
@@ -77,6 +87,48 @@ function EnabledPushCoordinator() {
   const [pending, setPending] = useState<PendingNotification | null>(null);
   const processingNotification = useRef<string | null>(null);
   const registrationChain = useRef<Promise<void>>(Promise.resolve());
+  // The gateway (with the credentials to reach it later) this device last registered a push token
+  // with. Persisted so a switch or disconnect that spans an app restart can still unregister at the
+  // old gateway; the ref alone would die with the process and strand it pushing. Set on every
+  // successful registration, cleared once the old gateway's registration is torn down.
+  const registrationSnapshot = useRef<PushRegistrationSnapshot | null>(null);
+  const [snapshotHydrated, setSnapshotHydrated] = useState(false);
+  // Latest full connection (creds and all) tracked out of band so the registration effect can
+  // snapshot it without depending on the connection object identity, which churns on every token
+  // refresh; the effect keys on the stable gateway url instead.
+  const connectionRef = useRef<ConnectionConfig | null>(session.connection);
+
+  const enqueue = useCallback((operation: () => Promise<void>): void => {
+    const next = registrationChain.current.then(operation);
+    registrationChain.current = next.catch(() => undefined);
+    void next.catch((cause: unknown) => {
+      console.warn(
+        "Could not update remote notifications:",
+        cause instanceof Error ? cause.message : cause,
+      );
+    });
+  }, []);
+
+  useEffect(() => {
+    connectionRef.current = session.connection;
+  }, [session.connection]);
+
+  useEffect(() => {
+    let active = true;
+    void readPushRegistration()
+      .then((snapshot) => {
+        if (active) registrationSnapshot.current = snapshot;
+      })
+      .catch((cause: unknown) => {
+        console.warn("Could not restore push registration:", cause);
+      })
+      .finally(() => {
+        if (active) setSnapshotHydrated(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -168,6 +220,28 @@ function EnabledPushCoordinator() {
   ]);
 
   useEffect(() => {
+    if (!snapshotHydrated) return;
+    const snapshot = registrationSnapshot.current;
+    const decision = gatewayHandoffDecision({
+      previousGatewayUrl: snapshot?.connection.url ?? null,
+      currentGatewayUrl: session.connection?.url ?? null,
+      sessionStatus: session.status,
+    });
+    if (decision === "keep" || !snapshot) return;
+    registrationSnapshot.current = null;
+    enqueue(async () => {
+      const oldApi = createApiClient({
+        getConnection: () => snapshot.connection,
+        onConnectionChange: async () => undefined,
+        onSessionExpired: async () => undefined,
+      });
+      await unregisterMobileDevice(oldApi, snapshot.token);
+      await AsyncStorage.removeItem(PUSH_TOKEN_KEY);
+      await clearPushRegistration();
+    });
+  }, [enqueue, snapshotHydrated, session.status, session.connection?.url]);
+
+  useEffect(() => {
     const registrationDecision = pushRegistrationDecision({
       preferencesHydrated: preferences.hydrated,
       sessionStatus: session.status,
@@ -175,16 +249,6 @@ function EnabledPushCoordinator() {
     });
     if (registrationDecision === "wait") return;
     let active = true;
-    const enqueue = (operation: () => Promise<void>): void => {
-      const next = registrationChain.current.then(operation);
-      registrationChain.current = next.catch(() => undefined);
-      void next.catch((cause: unknown) => {
-        console.warn(
-          "Could not update remote notifications:",
-          cause instanceof Error ? cause.message : cause,
-        );
-      });
-    };
     if (registrationDecision === "unregister") {
       enqueue(async () => {
         await removeStoredRegistration(session.api);
@@ -225,6 +289,14 @@ function EnabledPushCoordinator() {
         previews: preferences.notificationPreviews,
       });
       await AsyncStorage.setItem(PUSH_TOKEN_KEY, result.data);
+      const connection = connectionRef.current;
+      if (!connection || connection.url !== gateway) return;
+      const snapshot: PushRegistrationSnapshot = {
+        connection,
+        token: result.data,
+      };
+      registrationSnapshot.current = snapshot;
+      await writePushRegistration(snapshot);
     };
     enqueue(async () => {
       if (!active) return;
@@ -259,6 +331,7 @@ function EnabledPushCoordinator() {
       tokenSubscription.remove();
     };
   }, [
+    enqueue,
     preferences.hydrated,
     preferences.notificationPreviews,
     preferences.pushChatReplies,
