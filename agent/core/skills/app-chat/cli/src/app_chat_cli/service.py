@@ -63,9 +63,10 @@ def _write_notification(state: ServiceState, text: str, intent_id: str | None) -
 
 
 async def message_handler(request: web.Request) -> web.Response:
-    """Intake one app message: dedup by intent_id, persist the user event (skill-assigned id), emit the
-    live echo, write the notification. A repeat intent_id is a retry (client resends on 502/503/504);
-    drop it whole (no second echo, no second intake) so the model never acts on it twice."""
+    """Intake one app message: dedup by intent_id, write the notification (the fallible step), then
+    persist the user event (skill-assigned id) and emit the live echo, recording the intent last. A
+    repeat intent_id is a retry (client resends on 5xx/timeout): a deduped repeat is dropped whole (no
+    second echo, no second intake), and a repeat after a failed write re-runs the intake exactly once."""
     state = request.app[_STATE_KEY]
     try:
         body = await request.json()
@@ -78,11 +79,9 @@ async def message_handler(request: web.Request) -> web.Response:
         return web.json_response({"error": "empty message"}, status=400)
 
     intent_id = body["intent_id"] if "intent_id" in body and isinstance(body["intent_id"], str) else None
-    if intent_id is not None:
-        if intent_id in state.seen_intent_ids:
-            logger.debug("dropping duplicate app-chat message intent_id=%s", intent_id)
-            return web.json_response({"ok": True, "deduped": True})
-        state.remember(intent_id)
+    if intent_id is not None and intent_id in state.seen_intent_ids:
+        logger.debug("dropping duplicate app-chat message intent_id=%s", intent_id)
+        return web.json_response({"ok": True, "deduped": True})
 
     event: StoredEvent = {"type": "user", "ts": dt.datetime.now(dt.UTC).isoformat(), "text": text}
     method = body["input_method"] if "input_method" in body else None
@@ -90,14 +89,20 @@ async def message_handler(request: web.Request) -> web.Response:
         event["input_method"] = method
     if intent_id is not None:
         event["intent_id"] = intent_id
-    state.store.append(event)
-    state.emit(event)
+
+    # The notification file is the only fallible side effect (file IO), so write it first: on failure
+    # nothing is persisted, echoed, or remembered, and with no await between here and the return the
+    # client's retry (same intent_id) re-runs the whole intake exactly once. Only a successful write
+    # persists + echoes + records the intent, keeping intake at-most-once.
     try:
         _write_notification(state, text, intent_id)
     except OSError as exc:
-        # A lost intake write must surface loudly, never masquerade as delivered.
         logger.error("failed to write app-chat notification: %s", exc)
         return web.json_response({"error": "intake write failed"}, status=500)
+    state.store.append(event)
+    state.emit(event)
+    if intent_id is not None:
+        state.remember(intent_id)
     return web.json_response({"ok": True, "id": event["id"]})
 
 

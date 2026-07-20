@@ -125,6 +125,29 @@ def test_invalid_json_body_is_rejected(tmp_path):
     state.store.close()
 
 
+def test_failed_notification_write_is_recoverable_on_retry(tmp_path):
+    state, emitted, _ = _service_state(tmp_path)
+    blocker = tmp_path / "blocker"
+    blocker.write_text("")  # a regular file, so mkdir of a dir under it raises OSError
+    state.notifications_dir = blocker / "notifications"
+
+    async def scenario(client):
+        first = await client.post("/message", json={"text": "hi", "intent_id": "abc"})
+        first_result = (first.status, await first.json())
+        state.notifications_dir = tmp_path / "notifications"
+        second = await client.post("/message", json={"text": "hi", "intent_id": "abc"})
+        return first_result, (second.status, await second.json())
+
+    (first_status, _), (second_status, second_body) = asyncio.run(_with_client(state, scenario))
+
+    assert first_status == 500  # the failed write persisted, echoed, and remembered nothing
+    assert second_status == 200 and second_body["ok"] is True and second_body["id"] == 1
+    assert len(state.store.page()[0]) == 1  # persisted exactly once
+    assert len(emitted) == 1  # echoed exactly once
+    assert len(list((tmp_path / "notifications").glob("*-app-chat-message.json"))) == 1
+    state.store.close()
+
+
 def test_history_returns_events_and_cursor(tmp_path):
     state, _, _ = _service_state(tmp_path)
     for i in range(3):

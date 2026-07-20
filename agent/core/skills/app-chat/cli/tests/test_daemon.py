@@ -3,10 +3,12 @@ contract, and the start/stop/status subcommands."""
 
 import argparse
 import asyncio
+import functools
 import json
 
 import pytest
 from app_chat_cli import daemon
+from app_chat_cli.store import Store, store_path
 
 
 def test_default_notifications_dir_defaults_to_agent_notifications(monkeypatch, tmp_path):
@@ -231,3 +233,76 @@ def test_daemon_status_reports_ws_connection_state_when_running(tmp_path, monkey
         "ws_connected": True,
         "ws_url": "ws://localhost:1234/ws",
     }
+
+
+def _daemon_state(tmp_path) -> daemon.DaemonState:
+    return daemon.DaemonState(
+        ws_url="ws://localhost/ws",
+        sock_path=tmp_path / "app-chat.sock",
+        data_dir=tmp_path,
+        notifications_dir=tmp_path / "notifications",
+        port=1,
+        store=Store(store_path(tmp_path)),
+    )
+
+
+def test_emit_drops_oldest_when_queue_full(tmp_path):
+    state = _daemon_state(tmp_path)
+    total = daemon._EMIT_QUEUE_MAX + 5
+    for i in range(total):
+        daemon._emit(state, {"type": "chat", "ts": "t", "text": f"m{i}", "id": i})
+
+    assert state.out.qsize() == daemon._EMIT_QUEUE_MAX
+    queued = [json.loads(state.out.get_nowait())["event"]["id"] for _ in range(daemon._EMIT_QUEUE_MAX)]
+    # the oldest 5 aged out; the queue holds the most recent MAX, in order
+    assert queued[0] == 5
+    assert queued[-1] == total - 1
+    state.store.close()
+
+
+def test_send_command_persists_chat_event_and_returns_id(tmp_path):
+    state = _daemon_state(tmp_path)
+
+    async def scenario() -> dict[str, object]:
+        server = await asyncio.start_unix_server(functools.partial(daemon._handle_socket_conn, state), path=str(state.sock_path))
+        async with server:
+            reader, writer = await asyncio.open_unix_connection(str(state.sock_path))
+            writer.write(json.dumps({"command": "send", "message": "hey there"}).encode())
+            writer.write_eof()
+            data = await asyncio.wait_for(reader.read(65536), timeout=5.0)
+            writer.close()
+            await writer.wait_closed()
+            return json.loads(data.decode())
+
+    response = asyncio.run(scenario())
+
+    assert response == {"ok": True, "message": "hey there", "id": 1}
+    events, _ = state.store.page()
+    assert [(e["type"], e["text"]) for e in events] == [("chat", "hey there")]
+    assert state.out.qsize() == 1
+    frame = json.loads(state.out.get_nowait())
+    assert frame["type"] == "emit"
+    assert frame["event"]["id"] == 1 and frame["event"]["type"] == "chat"
+    state.store.close()
+
+
+def test_send_command_rejects_empty_message(tmp_path):
+    state = _daemon_state(tmp_path)
+
+    async def scenario() -> dict[str, object]:
+        server = await asyncio.start_unix_server(functools.partial(daemon._handle_socket_conn, state), path=str(state.sock_path))
+        async with server:
+            reader, writer = await asyncio.open_unix_connection(str(state.sock_path))
+            writer.write(json.dumps({"command": "send", "message": "   "}).encode())
+            writer.write_eof()
+            data = await asyncio.wait_for(reader.read(65536), timeout=5.0)
+            writer.close()
+            await writer.wait_closed()
+            return json.loads(data.decode())
+
+    response = asyncio.run(scenario())
+
+    assert response == {"error": "empty message"}
+    assert state.store.page()[0] == []
+    assert state.out.qsize() == 0
+    state.store.close()
