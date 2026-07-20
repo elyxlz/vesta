@@ -8,8 +8,6 @@ import pathlib as pl
 import sqlite3
 import typing as tp
 
-from .redact import redact_data
-
 PAGE_SIZE = 50
 
 # The conversation the app renders: the user's messages and the agent's replies. Tool events are not
@@ -155,39 +153,6 @@ class Store:
             max_id = max(max_id, row_id)
         self._conn.commit()
         return count, max_id
-
-    def redact(self) -> int:
-        """Scrub every secret pattern hit from the stored rows in place and return the number changed.
-        The FTS index is kept in sync by insert/delete triggers only, so an in-place UPDATE must resync
-        the conversation rows itself: delete the old text_content, rewrite the data, re-index the new
-        text (skipping this leaves the pre-redaction secret searchable). Idempotent: a re-run over
-        already-scrubbed rows finds no new hits and rewrites nothing."""
-        changed: dict[int, str] = {}
-        for row_id, data in self._conn.execute("SELECT id, data FROM events"):
-            if not data:
-                continue
-            new_data = redact_data(data)
-            if new_data is not None:
-                changed[row_id] = new_data
-        if not changed:
-            return 0
-        changed_ids = list(changed)
-        id_marks = ",".join("?" * len(changed_ids))
-        type_marks = ",".join("?" * len(_CONVERSATION_TYPES))
-        fts_where = f"id IN ({id_marks}) AND json_extract(data, '$.type') IN ({type_marks})"
-        self._conn.execute(
-            "INSERT INTO events_fts(events_fts, rowid, text_content) "
-            f"SELECT 'delete', id, json_extract(data, '$.text') FROM events WHERE {fts_where}",
-            (*changed_ids, *_CONVERSATION_TYPES),
-        )
-        for row_id, new_data in changed.items():
-            self._conn.execute("UPDATE events SET data = ? WHERE id = ?", (new_data, row_id))
-        self._conn.execute(
-            f"INSERT INTO events_fts(rowid, text_content) SELECT id, json_extract(data, '$.text') FROM events WHERE {fts_where}",
-            (*changed_ids, *_CONVERSATION_TYPES),
-        )
-        self._conn.commit()
-        return len(changed)
 
     def bump_sequence_above(self, max_id: int) -> None:
         """Keep AUTOINCREMENT strictly above an imported id set (D3): a freshly imported store must

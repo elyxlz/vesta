@@ -64,24 +64,6 @@ def cmd_history(args: argparse.Namespace) -> None:
     print(json.dumps(results, indent=2))
 
 
-def cmd_redact(args: argparse.Namespace) -> None:
-    """Scrub API keys, tokens, passwords, and connection strings from the chat store in place, the same
-    scrub the dream flow's `redact_secrets` applies to events.db. User-typed secrets live here, out
-    of that scan's reach. Idempotent: a re-run rewrites
-    nothing."""
-    data_dir = pl.Path(args.data_dir or (pl.Path.home() / ".app-chat"))
-    db_path = store_path(data_dir)
-    if not db_path.exists():
-        print(json.dumps({"status": "no_store", "path": str(db_path)}))
-        return
-    store = Store(db_path)
-    try:
-        changed = store.redact()
-    finally:
-        store.close()
-    print(json.dumps({"status": "redacted", "rows": changed}))
-
-
 def _default_events_db() -> pl.Path:
     """Core's events.db on box: `$AGENT_DIR/data/events.db` (default `~/agent`), mirroring config.data_dir."""
     agent_dir = os.environ.get("AGENT_DIR")
