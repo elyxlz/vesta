@@ -131,7 +131,13 @@ async def _ws_loop(state: DaemonState) -> None:
             if agent_token:
                 sep = "&" if "?" in url else "?"
                 url = f"{url}{sep}agent_token={agent_token}"
-            async with state.session.ws_connect(url) as ws:
+            # max_msg_size=0 (unlimited): the core pushes a full history/state frame on connect that
+            # grows without bound, and this daemon only drains+discards inbound frames (the agent owns
+            # intake). aiohttp's default 4MB cap makes ws_connect raise on the oversized frame, so the
+            # socket connects then immediately errors and reconnects in a tight loop, and the send path
+            # (which needs a live ws) reports "not connected to agent". A bigger finite cap only defers
+            # the same failure as history grows; unlimited is safe here precisely because frames are dropped.
+            async with state.session.ws_connect(url, max_msg_size=0) as ws:
                 state.ws = ws
                 _log(f"connected to {state.ws_url}")
                 # Drain inbound frames only to keep the connection live and notice a close; the

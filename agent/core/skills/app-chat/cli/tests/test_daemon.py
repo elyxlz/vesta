@@ -231,3 +231,46 @@ def test_daemon_status_reports_ws_connection_state_when_running(tmp_path, monkey
         "ws_connected": True,
         "ws_url": "ws://localhost:1234/ws",
     }
+
+
+def test_ws_loop_connects_with_unlimited_max_msg_size(monkeypatch, tmp_path):
+    """Regression: the core pushes an unbounded history/state frame on connect and the daemon
+    only drains+discards inbound frames, so ws_connect must set max_msg_size=0. A finite cap
+    (aiohttp's 4MB default) makes the socket error on the oversized frame and reconnect forever,
+    breaking the send path with 'not connected to agent'."""
+    monkeypatch.delenv("AGENT_TOKEN", raising=False)
+    state = daemon.DaemonState(
+        ws_url="ws://localhost/ws",
+        sock_path=tmp_path / "s.sock",
+        data_dir=tmp_path,
+        notifications_dir=tmp_path / "notifications",
+    )
+    captured_kwargs: dict[str, object] = {}
+
+    class _FakeWS:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise StopAsyncIteration
+
+    class _FakeWSCtx:
+        async def __aenter__(self):
+            state.shutdown.set()  # exit the loop after this single iteration
+            return _FakeWS()
+
+        async def __aexit__(self, *_exc):
+            return False
+
+    def _fake_ws_connect(url, **kwargs):
+        captured_kwargs.update(kwargs)
+        return _FakeWSCtx()
+
+    class _FakeSession:
+        ws_connect = staticmethod(_fake_ws_connect)
+
+    monkeypatch.setattr(state, "session", _FakeSession())
+
+    asyncio.run(daemon._ws_loop(state))
+
+    assert captured_kwargs.get("max_msg_size") == 0
