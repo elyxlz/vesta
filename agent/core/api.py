@@ -30,7 +30,6 @@ import aiohttp as _aiohttp
 import pydantic as pyd
 from aiohttp import web
 
-from .app_chat_intake import handle_app_message
 from .config import (
     ClaudeConfig,
     VestaConfig,
@@ -40,7 +39,7 @@ from .config import (
     update_config_store,
     validate_config_updates,
 )
-from .events import ChatEvent, EventBus, SnapshotChat, SnapshotEvent, VestaEvent
+from .events import EventBus, SnapshotChat, SnapshotEvent, StreamEvent, VestaEvent
 from .helpers import get_memory_path
 from .models import State
 from .provider import ProviderAuthState, UsageError, clear_provider, get_usage, set_claude, set_openrouter
@@ -61,11 +60,10 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     """Bidirectional event bus WebSocket.
 
     Send: all events from the event bus are pushed to connected clients.
-    Recv: clients can emit events (e.g. user messages, chat replies).
+    Recv: in-container skills push pre-formed events to broadcast (see _recv_loop).
     On connect: sends a `snapshot` seed (state + chat + pending notifications)."""
     event_bus: EventBus = request.app["event_bus"]
     config: VestaConfig = request.app["config"]
-    state: State = request.app["state"]
 
     ws = web.WebSocketResponse()
     await ws.prepare(request)
@@ -75,14 +73,13 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     recv_task: asyncio.Task[None] | None = None
     send_task: asyncio.Task[None] | None = None
     try:
-        # The connect snapshot: one event seeding the client with current agent state. `chat` is the
-        # app-chat conversation (notifications/internal events still arrive live but never bury the
-        # capped recent window). `notifications` carries the ids still on disk so the view can mark
-        # pending without polling. Always sent, even empty, so the client can tell "still loading" from
-        # "no messages". Reads run off the loop: a slow scan must not freeze the agent (it would starve
-        # vestad's status poll and flap "starting").
-        events, cursor = await asyncio.to_thread(event_bus.recent, channel="app-chat")
-        chat = SnapshotChat(events=events, cursor=cursor)
+        # The connect snapshot: one event seeding the client with current agent state. `chat` is empty
+        # now (chat is live-only + unpersisted; the client merges history from the app-chat skill
+        # service). `notifications` carries the ids still on disk so the view can mark pending without
+        # polling. Always sent so the client can tell "still loading" from "no messages". Reads run off
+        # the loop: a slow scan must not freeze the agent (it would starve vestad's status poll and flap
+        # "starting").
+        chat = SnapshotChat(events=[], cursor=None)
         pending = await asyncio.to_thread(_pending_notification_ids, config)
         await ws.send_json(
             SnapshotEvent(
@@ -93,7 +90,7 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
                 config={"timezone": config.timezone},
             )
         )
-        recv_task = asyncio.create_task(_recv_loop(ws, event_bus, config, state))
+        recv_task = asyncio.create_task(_recv_loop(ws, event_bus))
         send_task = asyncio.create_task(_send_loop(ws, sub))
         await asyncio.wait([recv_task, send_task], return_when=asyncio.FIRST_COMPLETED)
     finally:
@@ -107,26 +104,27 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
-async def _recv_loop(ws: web.WebSocketResponse, event_bus: EventBus, config: VestaConfig, state: State) -> None:
-    """Receive events from clients and emit to event bus."""
+_EMITTABLE_TYPES = ("user", "chat")
+
+
+async def _recv_loop(ws: web.WebSocketResponse, event_bus: EventBus) -> None:
+    """Receive frames from in-container skills. The only accepted frame is `emit`: a pre-formed live
+    event (with its own id) a skill pushes for broadcast (app-chat owns chat durability + ids now).
+    Unknown or malformed frames are dropped, same posture as before."""
     async for msg in ws:
         if msg.type == web.WSMsgType.TEXT:
             try:
                 data = json.loads(msg.data)
             except (json.JSONDecodeError, TypeError):
                 continue
-            if not isinstance(data, dict) or "type" not in data:
+            if not isinstance(data, dict) or "type" not in data or data["type"] != "emit":
                 continue
-            msg_type = data["type"]
-            if msg_type in ("message", "chat"):
-                if "text" not in data or not isinstance(data["text"], str):
-                    continue
-                text = data["text"].strip()
-                if text:
-                    if msg_type == "message":
-                        await handle_app_message(data, text, event_bus, config, state)
-                    else:
-                        event_bus.emit(ChatEvent(type="chat", text=text))
+            event = data["event"] if "event" in data and isinstance(data["event"], dict) else None
+            if event is None or "type" not in event or event["type"] not in _EMITTABLE_TYPES:
+                continue
+            if "id" not in event or not isinstance(event["id"], int):
+                continue
+            event_bus.emit_preformed(tp.cast("StreamEvent", event))
         elif msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):
             break
 
@@ -155,6 +153,21 @@ async def _send_loop(ws: web.WebSocketResponse, sub: asyncio.Queue[VestaEvent]) 
         logger.info("ws send_loop exited: %s: %s", type(e).__name__, e)
 
 
+async def _search_response(event_bus: EventBus, query: str, limit: int | None) -> web.Response:
+    """Full-text search branch of /history: matching events ranked by relevance, no cursor."""
+    try:
+        events = await asyncio.to_thread(event_bus.search, query, limit=limit if limit is not None else 20)
+    except sqlite3.OperationalError as e:
+        # FTS5 raises OperationalError for a malformed MATCH expression: that's a client error.
+        logger.warning("search query rejected: %s", e)
+        return web.json_response({"error": "invalid search query"}, status=400)
+    except sqlite3.Error as e:
+        # A genuine SQLite fault (locked db, disk full, corrupted FTS) must surface, not masquerade as a bad query.
+        logger.error("search failed for query=%r: %s", query, e)
+        return web.json_response({"error": "search failed"}, status=500)
+    return web.json_response({"events": events, "cursor": None})
+
+
 async def _history_handler(request: web.Request) -> web.Response:
     """Paginated event history, or full-text search when `q` is given (both return matching events in
     the same shape; search has no cursor).
@@ -163,7 +176,8 @@ async def _history_handler(request: web.Request) -> web.Response:
       q       (str, optional): FTS5 search; returns events ranked by relevance (cursor is null).
       cursor  (int, optional): fetch events before this id. Omit for most recent. Ignored with `q`.
       limit   (int, optional): max events to return (default: EventBus.PAGE_SIZE; 20 for search).
-      channel (str, optional): "app-chat" filters to the conversation event types. Ignored with `q`.
+      channel (str, optional): "notifications" filters to the arrivals list. "app-chat" is gone (410,
+              moved to the app-chat skill service). Ignored with `q`.
     """
     event_bus: EventBus = request.app["event_bus"]
 
@@ -175,20 +189,12 @@ async def _history_handler(request: web.Request) -> web.Response:
 
     query = request.query.get("q", "").strip()
     if query:
-        try:
-            events = await asyncio.to_thread(event_bus.search, query, limit=limit if limit is not None else 20)
-        except sqlite3.OperationalError as e:
-            # FTS5 raises OperationalError for a malformed MATCH expression: that's a client error.
-            logger.warning("search query rejected: %s", e)
-            return web.json_response({"error": "invalid search query"}, status=400)
-        except sqlite3.Error as e:
-            # A genuine SQLite fault (locked db, disk full, corrupted FTS) must surface, not masquerade as a bad query.
-            logger.error("search failed for query=%r: %s", query, e)
-            return web.json_response({"error": "search failed"}, status=500)
-        return web.json_response({"events": events, "cursor": None})
+        return await _search_response(event_bus, query, limit)
 
     kwargs = {"limit": limit} if limit is not None else {}
     channel = request.query.get("channel", "") or None
+    if channel == "app-chat":
+        return web.json_response({"error": "app-chat history moved to the app-chat service"}, status=410)
 
     cursor_raw = request.query.get("cursor", "")
     if cursor_raw:

@@ -17,7 +17,7 @@ from wait_util import wait_for_condition
 import core.config as cfg
 import core.models as vm
 from core.api import _ws_handler, start_ws_server
-from core.events import ChatEvent, NotificationEvent, UserEvent
+from core.events import AssistantEvent, ChatEvent
 
 
 def _pick_port() -> int:
@@ -59,7 +59,9 @@ async def _drain_until(ws, predicate, timeout=1.0):
 
 
 @pytest.mark.anyio
-async def test_ws_sends_snapshot_by_default(event_bus):
+async def test_ws_sends_snapshot_with_empty_chat_seed(event_bus):
+    """The connect snapshot is sent, and its chat seed is always empty now: chat is live-only and
+    unpersisted, so core can't seed it (the client merges history from the app-chat skill service)."""
     event_bus.emit(ChatEvent(type="chat", text="hello"))
     runner, base = await _start_server(event_bus)
     try:
@@ -67,7 +69,8 @@ async def test_ws_sends_snapshot_by_default(event_bus):
             msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
             data = json.loads(msg.data)
             assert data["type"] == "snapshot"
-            assert any(e["type"] == "chat" and e["text"] == "hello" for e in data["chat"]["events"])
+            assert data["chat"]["events"] == []
+            assert data["chat"]["cursor"] is None
     finally:
         await runner.cleanup()
 
@@ -115,74 +118,27 @@ async def test_ws_sends_empty_snapshot_when_no_events(event_bus):
 
 
 @pytest.mark.anyio
-async def test_ws_history_survives_notification_storm(event_bus):
-    """Regression: a burst of notifications used to fill the recent window and the
-    seeded history rendered empty. The WS now seeds the app-chat channel, so the
-    conversation comes through and notifications are excluded from history."""
-    event_bus.emit(UserEvent(type="user", text="are you there"))
-    event_bus.emit(ChatEvent(type="chat", text="i am here"))
-    for i in range(200):
-        event_bus.emit(NotificationEvent(type="notification", source="core", summary=f"spam {i}"))
+async def test_ws_emit_frame_broadcasts_preformed(event_bus):
+    """The one accepted recv frame is `emit`: a skill's pre-formed live event (its own int id) is
+    broadcast verbatim to subscribers, id preserved, nothing persisted."""
     runner, base = await _start_server(event_bus)
     try:
         async with ClientSession() as session, session.ws_connect(f"{base}/ws") as ws:
-            msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
-            data = json.loads(msg.data)
-            assert data["type"] == "snapshot"
-            history_types = {e["type"] for e in data["chat"]["events"]}
-            assert history_types == {"user", "chat"}
-            assert any(e["type"] == "chat" and e["text"] == "i am here" for e in data["chat"]["events"])
-    finally:
-        await runner.cleanup()
-
-
-async def _start_server_with_config(event_bus, config):
-    """Like _start_server but with a caller-supplied config, so the test can read the
-    notifications_dir the recv loop writes intake into."""
-    app = web.Application()
-    app["event_bus"] = event_bus
-    app["config"] = config
-    app["state"] = vm.State()
-    app["websockets"] = weakref.WeakSet()
-    app.router.add_get("/ws", _ws_handler)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = _pick_port()
-    await web.TCPSite(runner, "127.0.0.1", port).start()
-    return runner, f"http://127.0.0.1:{port}"
-
-
-@pytest.mark.anyio
-async def test_ws_message_writes_app_chat_notification(event_bus, tmp_path):
-    """Regression (#809): an inbound app `message` is turned into a `source=app-chat` notification
-    by the agent itself, in-process — not by a sidecar subscriber that could die and silently drop
-    it. A `chat` frame (the agent's own reply path) broadcasts but writes no intake."""
-    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
-    runner, base = await _start_server_with_config(event_bus, config)
-    try:
-        async with ClientSession() as session, session.ws_connect(f"{base}/ws") as ws:
             await asyncio.wait_for(ws.receive(), timeout=1.0)  # snapshot
-            await ws.send_json({"type": "chat", "text": "a reply, not intake"})
-            await ws.send_json({"type": "message", "text": "  deliver me  "})
-            await wait_for_condition(
-                lambda: len(list(config.notifications_dir.glob("*.json"))) == 1,
-                message="expected exactly one intake notification",
-            )
-        files = list(config.notifications_dir.glob("*-app-chat-message.json"))
-        assert len(files) == 1
-        notif = json.loads(files[0].read_text())
-        assert notif["source"] == "app-chat"
-        assert notif["type"] == "message"
-        assert notif["message"] == "deliver me"  # stripped
-        assert notif["interrupt"] is True
+            await ws.send_json({"type": "emit", "event": {"type": "chat", "id": 77, "text": "from the skill"}})
+            received = await _drain_until(ws, lambda r: any(e.get("type") == "chat" for e in r))
+            chat = next(e for e in received if e.get("type") == "chat")
+            assert chat["id"] == 77
+            assert chat["text"] == "from the skill"
     finally:
         await runner.cleanup()
 
 
 @pytest.mark.anyio
-async def test_ws_survives_non_dict_json_frame(event_bus):
-    """A frame whose JSON is not an object (a number, list, or null) is ignored, not a connection
-    killer: a later valid message on the same socket still comes through."""
+async def test_ws_drops_garbage_and_unemittable_frames(event_bus):
+    """Malformed or unaccepted frames are dropped, not connection killers: a non-object JSON frame, a
+    non-`emit` type, an emit of a non-emittable type, and an emit missing an int id all pass silently,
+    and a valid emit on the same socket still comes through."""
     runner, base = await _start_server(event_bus)
     try:
         async with ClientSession() as session, session.ws_connect(f"{base}/ws") as ws:
@@ -190,12 +146,18 @@ async def test_ws_survives_non_dict_json_frame(event_bus):
             await ws.send_str("123")
             await ws.send_str("[]")
             await ws.send_str("null")
-            await ws.send_json({"type": "chat", "text": "still alive"})
+            await ws.send_json({"type": "message", "text": "old frame"})
+            await ws.send_json({"type": "emit", "event": {"type": "status", "id": 1, "state": "idle"}})
+            await ws.send_json({"type": "emit", "event": {"type": "chat", "text": "no id"}})
+            await ws.send_json({"type": "emit", "event": {"type": "user", "id": 5, "text": "still alive"}})
             received = await _drain_until(
                 ws,
-                lambda r: any(e.get("type") == "chat" and e.get("text") == "still alive" for e in r),
+                lambda r: any(e.get("type") == "user" and e.get("text") == "still alive" for e in r),
             )
-            assert any(e.get("type") == "chat" and e.get("text") == "still alive" for e in received)
+            users = [e for e in received if e.get("type") == "user"]
+            assert len(users) == 1
+            assert users[0]["id"] == 5
+            assert not any(e.get("type") in ("status", "message") for e in received)
     finally:
         await runner.cleanup()
 
@@ -523,9 +485,9 @@ async def test_history_q_returns_matching_events_in_history_shape(event_bus):
     # as recency (cursor null), replacing the old /search endpoint.
     from core.api import _history_handler
 
-    event_bus.emit(UserEvent(type="user", text="what about paris"))
-    event_bus.emit(ChatEvent(type="chat", text="paris is lovely"))
-    event_bus.emit(ChatEvent(type="chat", text="london is grey"))
+    event_bus.emit(AssistantEvent(type="assistant", text="what about paris"))
+    event_bus.emit(AssistantEvent(type="assistant", text="paris is lovely"))
+    event_bus.emit(AssistantEvent(type="assistant", text="london is grey"))
 
     app = web.Application()
     app["event_bus"] = event_bus
@@ -560,107 +522,25 @@ async def test_memory_put_rejects_non_dict_body(event_bus, tmp_path):
 
 
 @pytest.mark.anyio
-async def test_ws_message_threads_intent_id_to_user_event_and_notification(event_bus, tmp_path):
-    """A send-message carrying an intent_id echoes it back on the UserEvent (so the client dedups
-    its optimistic echo by id) and stores it on the intake notification (idempotency seam)."""
-    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
-    runner, base = await _start_server_with_config(event_bus, config)
+async def test_history_rejects_app_chat_channel_with_410(event_bus):
+    """app-chat history moved to the app-chat skill service: core /history rejects channel=app-chat
+    with 410 so a stale client fails loud rather than silently getting the full stream. Other channels
+    are untouched."""
+    from core.api import _history_handler
+
+    app = web.Application()
+    app["event_bus"] = event_bus
+    app.router.add_get("/history", _history_handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = _pick_port()
+    await web.TCPSite(runner, "127.0.0.1", port).start()
     try:
-        async with ClientSession() as session, session.ws_connect(f"{base}/ws") as ws:
-            await asyncio.wait_for(ws.receive(), timeout=1.0)  # snapshot
-            await ws.send_json({"type": "message", "text": "hi there", "intent_id": "intent-abc"})
-            received = await _drain_until(ws, lambda got: any(e["type"] == "user" for e in got))
-            user = next(e for e in received if e["type"] == "user")
-            assert user["intent_id"] == "intent-abc"
-            await wait_for_condition(
-                lambda: len(list(config.notifications_dir.glob("*.json"))) == 1,
-                message="expected one intake notification",
-            )
-        notif = json.loads(next(iter(config.notifications_dir.glob("*-app-chat-message.json"))).read_text())
-        assert notif["intent_id"] == "intent-abc"
+        async with ClientSession() as session:
+            async with session.get(f"http://127.0.0.1:{port}/history?channel=app-chat") as resp:
+                assert resp.status == 410
+            async with session.get(f"http://127.0.0.1:{port}/history?channel=notifications") as resp:
+                assert resp.status == 200
     finally:
         await runner.cleanup()
 
-
-@pytest.mark.anyio
-async def test_ws_message_without_intent_id_stays_absent(event_bus, tmp_path):
-    """intent_id is tolerant: a send-message without one yields a UserEvent and a notification with
-    no intent_id key at all, not a null."""
-    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
-    runner, base = await _start_server_with_config(event_bus, config)
-    try:
-        async with ClientSession() as session, session.ws_connect(f"{base}/ws") as ws:
-            await asyncio.wait_for(ws.receive(), timeout=1.0)  # snapshot
-            await ws.send_json({"type": "message", "text": "no intent"})
-            received = await _drain_until(ws, lambda got: any(e["type"] == "user" for e in got))
-            user = next(e for e in received if e["type"] == "user")
-            assert "intent_id" not in user
-            await wait_for_condition(
-                lambda: len(list(config.notifications_dir.glob("*.json"))) == 1,
-                message="expected one intake notification",
-            )
-        notif = json.loads(next(iter(config.notifications_dir.glob("*-app-chat-message.json"))).read_text())
-        assert "intent_id" not in notif
-    finally:
-        await runner.cleanup()
-
-
-@pytest.mark.anyio
-async def test_ws_message_dedups_a_retried_intent_id(event_bus, tmp_path):
-    """A retried send-message (same intent_id, the client resending on a 503/timeout) is idempotent:
-    exactly one echo event and one intake notification, so the model never acts on it twice."""
-    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
-    runner, base = await _start_server_with_config(event_bus, config)
-    try:
-        async with ClientSession() as session, session.ws_connect(f"{base}/ws") as ws:
-            await asyncio.wait_for(ws.receive(), timeout=1.0)  # snapshot
-            await ws.send_json({"type": "message", "text": "pay bob", "intent_id": "dup-1"})
-            await ws.send_json({"type": "message", "text": "pay bob", "intent_id": "dup-1"})
-            # Drain long enough that an erroneous second echo would have arrived.
-            received = await _drain_until(ws, lambda _got: False, timeout=0.5)
-        user_events = [e for e in received if e.get("type") == "user"]
-        assert len(user_events) == 1
-        assert len(list(config.notifications_dir.glob("*.json"))) == 1
-    finally:
-        await runner.cleanup()
-
-
-@pytest.mark.anyio
-async def test_ws_message_distinct_intent_ids_are_not_deduped(event_bus, tmp_path):
-    """Distinct intent_ids are distinct messages: both echo and both write intake."""
-    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
-    runner, base = await _start_server_with_config(event_bus, config)
-    try:
-        async with ClientSession() as session, session.ws_connect(f"{base}/ws") as ws:
-            await asyncio.wait_for(ws.receive(), timeout=1.0)  # snapshot
-            await ws.send_json({"type": "message", "text": "one", "intent_id": "i-1"})
-            await ws.send_json({"type": "message", "text": "two", "intent_id": "i-2"})
-            received = await _drain_until(ws, lambda got: len([e for e in got if e.get("type") == "user"]) >= 2)
-            await wait_for_condition(
-                lambda: len(list(config.notifications_dir.glob("*.json"))) == 2,
-                message="expected two intake notifications",
-            )
-        assert len([e for e in received if e.get("type") == "user"]) == 2
-        assert len(list(config.notifications_dir.glob("*.json"))) == 2
-    finally:
-        await runner.cleanup()
-
-
-@pytest.mark.anyio
-async def test_ws_message_without_intent_id_is_never_deduped(event_bus, tmp_path):
-    """Two identical messages carrying no intent_id are both delivered: dedup is intent-id only."""
-    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
-    runner, base = await _start_server_with_config(event_bus, config)
-    try:
-        async with ClientSession() as session, session.ws_connect(f"{base}/ws") as ws:
-            await asyncio.wait_for(ws.receive(), timeout=1.0)  # snapshot
-            await ws.send_json({"type": "message", "text": "same text"})
-            await ws.send_json({"type": "message", "text": "same text"})
-            received = await _drain_until(ws, lambda got: len([e for e in got if e.get("type") == "user"]) >= 2)
-            await wait_for_condition(
-                lambda: len(list(config.notifications_dir.glob("*.json"))) == 2,
-                message="expected two intake notifications (no dedup without intent_id)",
-            )
-        assert len([e for e in received if e.get("type") == "user"]) == 2
-    finally:
-        await runner.cleanup()

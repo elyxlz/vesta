@@ -8,6 +8,7 @@ import json
 import typing as tp
 
 from core.events import (
+    _LIVE_ONLY_TYPES,
     AssistantEvent,
     ChatEvent,
     ErrorEvent,
@@ -74,9 +75,9 @@ def test_eventbus_roundtrip_all_types(tmp_path):
     """Emit each persistable event type, read back, verify the type tag survives."""
     bus = EventBus(data_dir=tmp_path)
 
-    # `status` and `notification_cleared` are transient live signals, intentionally not persisted
-    # (see EventBus.emit).
-    persistable = [event for event in _STREAM_FIXTURES if event["type"] not in ("status", "notification_cleared")]
+    # The live-only types (status, notification_cleared, user, chat) are transient live signals,
+    # intentionally not persisted (see EventBus.emit and _LIVE_ONLY_TYPES).
+    persistable = [event for event in _STREAM_FIXTURES if event["type"] not in _LIVE_ONLY_TYPES]
     for event in persistable:
         bus.emit(event)
 

@@ -10,12 +10,11 @@ from core.events import (
     _EVENTS_SCHEMA,
     _SCHEMA_VERSION,
     SUBSCRIBER_QUEUE_MAXSIZE,
+    AssistantEvent,
     ChatEvent,
     EventBus,
     NotificationClearedEvent,
-    NotificationEvent,
     SubagentStartEvent,
-    ToolStartEvent,
     UserEvent,
 )
 
@@ -36,13 +35,13 @@ def test_emit_subagent_start(event_bus):
 
 
 def test_all_types_persisted(event_bus):
-    """All non-status event types are persisted."""
-    event_bus.emit(ChatEvent(type="chat", text="hello"))
+    """Event types outside the live-only set are persisted."""
+    event_bus.emit(AssistantEvent(type="assistant", text="hello"))
     event_bus.emit(SubagentStartEvent(type="subagent_start", agent_id="a", agent_type="browser"))
 
     events, _ = event_bus.recent()
     types = {e["type"] for e in events}
-    assert "chat" in types
+    assert "assistant" in types
     assert "subagent_start" in types
 
 
@@ -57,13 +56,38 @@ def test_status_not_persisted(event_bus):
     assert len(events) == 0
 
 
+def test_user_and_chat_are_live_only(event_bus):
+    """user and chat are broadcast transport only now (the app-chat skill owns their durability): they
+    reach subscribers but are never persisted to events.db."""
+    q = event_bus.subscribe()
+    event_bus.emit(UserEvent(type="user", text="a message"))
+    event_bus.emit(ChatEvent(type="chat", text="a reply"))
+    assert q.get_nowait()["type"] == "user"
+    assert q.get_nowait()["type"] == "chat"
+    events, _ = event_bus.recent()
+    assert events == []
+
+
+def test_emit_preformed_broadcasts_without_persisting(event_bus):
+    """emit_preformed pushes a skill's fully-formed event to every subscriber verbatim: its
+    skill-assigned positive id and ts pass straight through, and nothing is persisted."""
+    q = event_bus.subscribe()
+    event_bus.emit_preformed(ChatEvent(type="chat", id=42, ts="2026-01-01T00:00:00+00:00", text="from the skill"))
+    received = q.get_nowait()
+    assert received["id"] == 42
+    assert received["ts"] == "2026-01-01T00:00:00+00:00"
+    assert received["text"] == "from the skill"
+    events, _ = event_bus.recent()
+    assert events == []
+
+
 def test_emit_survives_history_write_failure(event_bus):
     """A failed history write never crashes the emitting coroutine: any sqlite3.Error (a closed or
     corrupt db, not only a locked one) drops the row with a warning and live subscribers still
     receive the event."""
     q = event_bus.subscribe()
     event_bus._conn.close()
-    event_bus.emit(ChatEvent(type="chat", text="still delivered"))
+    event_bus.emit(AssistantEvent(type="assistant", text="still delivered"))
     assert q.get_nowait()["text"] == "still delivered"
 
 
@@ -82,8 +106,8 @@ def test_no_data_dir():
 def test_persists_across_instances(tmp_path):
     """Events survive EventBus recreation (simulating container restart)."""
     bus = EventBus(data_dir=tmp_path)
-    bus.emit(UserEvent(type="user", text="before restart"))
-    bus.emit(ChatEvent(type="chat", text="reply"))
+    bus.emit(AssistantEvent(type="assistant", text="before restart"))
+    bus.emit(AssistantEvent(type="assistant", text="reply"))
     bus.close()
 
     bus2 = EventBus(data_dir=tmp_path)
@@ -165,7 +189,7 @@ def test_draining_subscriber_is_never_evicted(event_bus):
 def test_recent_pagination(event_bus):
     """recent() returns last N events and a cursor when there are more."""
     for i in range(150):
-        event_bus.emit(UserEvent(type="user", text=f"msg {i}"))
+        event_bus.emit(AssistantEvent(type="assistant", text=f"msg {i}"))
 
     events, cursor = event_bus.recent(limit=50)
     assert len(events) == 50
@@ -177,7 +201,7 @@ def test_recent_pagination(event_bus):
 def test_cursor_pagination(event_bus):
     """before(cursor) returns the previous page of events."""
     for i in range(80):
-        event_bus.emit(UserEvent(type="user", text=f"msg {i}"))
+        event_bus.emit(AssistantEvent(type="assistant", text=f"msg {i}"))
 
     events, cursor = event_bus.recent(limit=30)
     assert len(events) == 30
@@ -202,65 +226,10 @@ def test_recent_runs_off_the_connection_home_thread(event_bus):
     thread raises sqlite3.ProgrammingError here; to_thread uses exactly such a pool."""
     import concurrent.futures
 
-    event_bus.emit(UserEvent(type="user", text="hi"))
+    event_bus.emit(AssistantEvent(type="assistant", text="hi"))
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
         events, _ = pool.submit(event_bus.recent).result()
     assert [tp.cast(tp.Any, e)["text"] for e in events] == ["hi"]
-
-
-def test_app_chat_keeps_conversation_and_tools_drops_notifications(event_bus):
-    """app-chat history keeps the conversation and the tool calls within its window (so the
-    show-tools toggle has history to reveal), but drops notification noise — the regression
-    that blanked the chat. Notifications never appear; tool_start rides along in range."""
-    event_bus.emit(UserEvent(type="user", text="my real message"))
-    event_bus.emit(ChatEvent(type="chat", text="my real reply"))
-    for i in range(200):
-        event_bus.emit(NotificationEvent(type="notification", source="core", summary=f"spam {i}"))
-        event_bus.emit(ToolStartEvent(type="tool_start", tool="Bash", input=f"cmd {i}", subagent=False))
-
-    events, _ = event_bus.recent(limit=50, channel="app-chat")
-    types = {tp.cast(tp.Any, e)["type"] for e in events}
-    assert "notification" not in types
-    assert types == {"user", "chat", "tool_start"}
-    convo = [tp.cast(tp.Any, e)["text"] for e in events if tp.cast(tp.Any, e)["type"] in ("user", "chat")]
-    assert convo == ["my real message", "my real reply"]
-
-    # Unfiltered recent() still returns the raw tail (other consumers untouched).
-    raw, _ = event_bus.recent(limit=50)
-    assert {tp.cast(tp.Any, e)["type"] for e in raw} == {"notification", "tool_start"}
-
-
-def test_app_chat_window_keeps_tool_calls_without_spending_the_cap(event_bus):
-    """The cap counts conversation messages; tool calls within the window's id range ride
-    along (for the show-tools toggle) without pushing real messages out of the capped window."""
-    for i in range(5):
-        event_bus.emit(UserEvent(type="user", text=f"msg {i}"))
-        for j in range(10):
-            event_bus.emit(ToolStartEvent(type="tool_start", tool="Bash", input=f"cmd {i}-{j}", subagent=False))
-
-    events, _ = event_bus.recent(limit=3, channel="app-chat")
-    convo = [tp.cast(tp.Any, e)["text"] for e in events if tp.cast(tp.Any, e)["type"] == "user"]
-    # Cap = 3 conversation messages: the newest 3, not crowded out by the 50 tool calls.
-    assert convo == ["msg 2", "msg 3", "msg 4"]
-    # Tool calls inside the window's range are present so the toggle has history to reveal.
-    tools = [e for e in events if tp.cast(tp.Any, e)["type"] == "tool_start"]
-    assert len(tools) == 30  # the 10 after each of msg 2, 3, 4
-
-
-def test_app_chat_channel_paginates_across_notification_runs(event_bus):
-    """before(cursor, channel) skips notification noise between conversation pages."""
-    for i in range(5):
-        event_bus.emit(UserEvent(type="user", text=f"msg {i}"))
-        for j in range(20):
-            event_bus.emit(NotificationEvent(type="notification", source="core", summary=f"noise {i}-{j}"))
-
-    page, cursor = event_bus.recent(limit=3, channel="app-chat")
-    assert [tp.cast(tp.Any, e)["text"] for e in page] == ["msg 2", "msg 3", "msg 4"]
-    assert cursor is not None
-
-    older, cursor2 = event_bus.before(cursor, limit=3, channel="app-chat")
-    assert [tp.cast(tp.Any, e)["text"] for e in older] == ["msg 0", "msg 1"]
-    assert cursor2 is None
 
 
 # --- Search ---
@@ -268,10 +237,10 @@ def test_app_chat_channel_paginates_across_notification_runs(event_bus):
 
 def test_search(event_bus):
     """EventBus.search() finds text-bearing events via FTS5."""
-    event_bus.emit(UserEvent(type="user", text="what is the weather in paris"))
-    event_bus.emit(ChatEvent(type="chat", text="it is sunny in paris today"))
-    event_bus.emit(UserEvent(type="user", text="how about london"))
-    event_bus.emit(ChatEvent(type="chat", text="london is rainy as usual"))
+    event_bus.emit(AssistantEvent(type="assistant", text="what is the weather in paris"))
+    event_bus.emit(AssistantEvent(type="assistant", text="it is sunny in paris today"))
+    event_bus.emit(AssistantEvent(type="assistant", text="how about london"))
+    event_bus.emit(AssistantEvent(type="assistant", text="london is rainy as usual"))
 
     results = event_bus.search("paris")
     assert len(results) == 2
@@ -282,17 +251,17 @@ def test_search(event_bus):
 
     results = event_bus.search("sunny")
     assert len(results) == 1
-    assert results[0]["type"] == "chat"
+    assert results[0]["type"] == "assistant"
 
 
 def test_search_no_results(event_bus):
-    event_bus.emit(UserEvent(type="user", text="hello world"))
+    event_bus.emit(AssistantEvent(type="assistant", text="hello world"))
     assert event_bus.search("nonexistent") == []
 
 
 def test_search_limit(event_bus):
     for i in range(10):
-        event_bus.emit(UserEvent(type="user", text=f"message number {i} about python"))
+        event_bus.emit(AssistantEvent(type="assistant", text=f"message number {i} about python"))
     results = event_bus.search("python", limit=3)
     assert len(results) == 3
 
@@ -304,7 +273,7 @@ def test_search_runs_off_the_connection_home_thread(event_bus):
     raises sqlite3.ProgrammingError here; to_thread uses exactly such a pool."""
     import concurrent.futures
 
-    event_bus.emit(UserEvent(type="user", text="what is the weather in paris"))
+    event_bus.emit(AssistantEvent(type="assistant", text="what is the weather in paris"))
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
         results = pool.submit(event_bus.search, "paris").result()
     assert len(results) == 1
@@ -359,7 +328,7 @@ def test_corrupt_db_is_quarantined_and_boots_fresh(tmp_path):
         events, _ = bus.recent()
         assert events == []
 
-        bus.emit(ChatEvent(type="chat", text="alive after recovery"))
+        bus.emit(AssistantEvent(type="assistant", text="alive after recovery"))
         events, _ = bus.recent()
         assert len(events) == 1
         assert tp.cast(tp.Any, events[0])["text"] == "alive after recovery"
@@ -377,7 +346,7 @@ def test_transient_open_error_propagates_without_quarantine(tmp_path):
     it must crash for Docker's on-failure retry, never quarantine the healthy db."""
     db_path = tmp_path / "events.db"
     bus = EventBus(data_dir=tmp_path)
-    bus.emit(ChatEvent(type="chat", text="precious history"))
+    bus.emit(AssistantEvent(type="assistant", text="precious history"))
     bus.close()
     original_bytes = db_path.read_bytes()
 
@@ -401,7 +370,7 @@ def test_emit_stamps_rowid_as_id(event_bus):
     """A persisted event carries its events.db rowid as a positive, stable id on both the live
     broadcast and the history read-back (same id from both paths)."""
     q = event_bus.subscribe()
-    event_bus.emit(ChatEvent(type="chat", text="first"))
+    event_bus.emit(AssistantEvent(type="assistant", text="first"))
     live = q.get_nowait()
     assert live["id"] == 1
     stored, _ = event_bus.recent()
@@ -410,21 +379,21 @@ def test_emit_stamps_rowid_as_id(event_bus):
 
 def test_ids_track_rowid_in_order(event_bus):
     for i in range(3):
-        event_bus.emit(ChatEvent(type="chat", text=f"m{i}"))
+        event_bus.emit(AssistantEvent(type="assistant", text=f"m{i}"))
     stored, _ = event_bus.recent()
     assert [e["id"] for e in stored] == [1, 2, 3]
 
 
 def test_id_is_not_stored_in_the_data_blob(event_bus):
     """id is derived from the rowid, never persisted into the JSON blob, so legacy rows stay valid."""
-    event_bus.emit(ChatEvent(type="chat", text="hi"))
+    event_bus.emit(AssistantEvent(type="assistant", text="hi"))
     row = event_bus._conn.execute("SELECT data FROM events").fetchone()
     assert "id" not in json.loads(row[0])
 
 
 def test_live_only_events_get_negative_ids(event_bus):
-    """status and notification_cleared skip persistence but still carry an id: a per-session
-    counter running negative, which can never collide with a positive rowid."""
+    """The live-only types (status, notification_cleared, user, chat) skip persistence but still carry
+    an id: a per-session counter running negative, which can never collide with a positive rowid."""
     q = event_bus.subscribe()
     event_bus.set_state("thinking")
     first = q.get_nowait()
@@ -432,6 +401,10 @@ def test_live_only_events_get_negative_ids(event_bus):
     assert first["id"] == -1
     event_bus.emit(NotificationClearedEvent(type="notification_cleared", notif_id="x"))
     assert q.get_nowait()["id"] == -2
+    event_bus.emit(UserEvent(type="user", text="hi"))
+    assert q.get_nowait()["id"] == -3
+    event_bus.emit(ChatEvent(type="chat", text="yo"))
+    assert q.get_nowait()["id"] == -4
 
 
 def test_legacy_row_without_id_gets_rowid_on_read(tmp_path):
@@ -450,11 +423,11 @@ def test_legacy_row_without_id_gets_rowid_on_read(tmp_path):
     assert tp.cast(tp.Any, events[0])["text"] == "legacy"
 
 
-def test_app_chat_and_search_reads_carry_ids(event_bus):
-    event_bus.emit(UserEvent(type="user", text="weather in paris"))
-    event_bus.emit(ChatEvent(type="chat", text="sunny in paris"))
-    chat, _ = event_bus.recent(channel="app-chat")
-    assert all(e["id"] > 0 for e in chat)
+def test_recent_and_search_reads_carry_ids(event_bus):
+    event_bus.emit(AssistantEvent(type="assistant", text="weather in paris"))
+    event_bus.emit(AssistantEvent(type="assistant", text="sunny in paris"))
+    recent, _ = event_bus.recent()
+    assert all(e["id"] > 0 for e in recent)
     results = event_bus.search("paris")
     assert all(e["id"] > 0 for e in results)
 
@@ -464,7 +437,7 @@ def test_emit_without_persistence_still_ids(event_bus):
     gets a live id, never a bare event with no id."""
     q = event_bus.subscribe()
     event_bus._conn.close()
-    event_bus.emit(ChatEvent(type="chat", text="still delivered"))
+    event_bus.emit(AssistantEvent(type="assistant", text="still delivered"))
     delivered = q.get_nowait()
     assert delivered["text"] == "still delivered"
     assert delivered["id"] < 0

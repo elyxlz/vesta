@@ -148,7 +148,10 @@ type StreamEvent = (
 # new connect-time state is added within a domain (or as a new domain) without disturbing readers;
 # consumers read only the domains they care about (web: all; CLI: chat; vestad: state).
 class SnapshotChat(tp.TypedDict):
-    events: list[StreamEvent]  # recent app-chat seed
+    # Always empty now: chat is live-only and unpersisted, so core can't seed it; the client merges
+    # history from the app-chat skill service (see the app-chat wave). Kept as a domain so readers and
+    # the wire shape are undisturbed.
+    events: list[StreamEvent]
     cursor: int | None  # load-older pagination cursor
 
 
@@ -178,15 +181,11 @@ type VestaEvent = StreamEvent | SnapshotEvent | EvictedEvent
 
 PAGE_SIZE = 50
 
-# The conversation the chat surface shows by default: the user's messages and the agent's
-# replies. The app-chat history window's cap and cursor count *these* (see _conversation_page),
-# so notifications and other noise never push the conversation out of the capped window.
-APP_CHAT_TYPES: tuple[str, ...] = ("user", "chat")
-
-# Hidden-by-default events that ride along inside the window's id range (revealed by the
-# chat's show-tools toggle) without counting toward the cap — so a burst of tool calls can't
-# crowd the conversation out of the window, yet the toggle still has history to reveal.
-APP_CHAT_OVERLAY_TYPES: tuple[str, ...] = ("tool_start",)
+# Live-only event types: broadcast to subscribers but never persisted to events.db. status (activity
+# flips) and notification_cleared (pending deltas) have no place in history; user/chat are broadcast
+# transport only now, with the app-chat skill service owning their durability + ids (see the app-chat
+# wave). A live-only event gets a negative session-local id (see _next_live_id).
+_LIVE_ONLY_TYPES: tuple[str, ...] = ("status", "notification_cleared", "user", "chat")
 
 
 _EVENTS_SCHEMA = """
@@ -312,17 +311,15 @@ class EventBus:
         self._subscribers.discard(q)
 
     def _next_live_id(self) -> int:
-        """An ephemeral id for a live-only event (status, notification_cleared) or one whose history
-        write was dropped: a per-session counter running negative so it can never collide with a real
-        events.db rowid, which is always positive."""
+        """An ephemeral id for a live-only event (see _LIVE_ONLY_TYPES) or one whose history write was
+        dropped: a per-session counter running negative so it can never collide with a real events.db
+        rowid, which is always positive."""
         self._live_id -= 1
         return self._live_id
 
     def emit(self, event: StreamEvent) -> None:
         event["ts"] = dt.datetime.now(dt.UTC).isoformat()
-        # status (activity flips) and notification_cleared (pending deltas) are live-only signals with
-        # no place in history: broadcast them but don't persist.
-        if event["type"] not in ("status", "notification_cleared") and self._conn:
+        if event["type"] not in _LIVE_ONLY_TYPES and self._conn:
             # Event-logging is best-effort: a failed history write must NEVER crash the
             # agent loop. Without this guard, a transient "database is locked" (the db
             # held by a long maintenance op past the busy timeout) propagated out of emit
@@ -341,6 +338,13 @@ class EventBus:
                 event["id"] = self._next_live_id()
         else:
             event["id"] = self._next_live_id()
+        for q in list(self._subscribers):
+            self._offer(q, event)
+
+    def emit_preformed(self, event: StreamEvent) -> None:
+        """Broadcast a fully-formed event from a skill (its id + ts already set), never persisting and
+        never re-stamping. The skill owns app-chat durability now; core is only the live transport, so a
+        skill-assigned positive id passes straight through to every subscriber (see the app-chat wave)."""
         for q in list(self._subscribers):
             self._offer(q, event)
 
@@ -407,53 +411,12 @@ class EventBus:
             events.append(event)
         return events, rows[-1][0] if has_older else None
 
-    def _conversation_page(self, limit: int, before_cursor: int | None) -> tuple[list[StreamEvent], int | None]:
-        """The app-chat page: cap and cursor count conversation messages (APP_CHAT_TYPES),
-        while tool-call overlay events (APP_CHAT_OVERLAY_TYPES) within the window's id range
-        ride along — hidden until the show-tools toggle, but present so it has history to
-        reveal — without ever spending the cap. Two steps: find the id of the oldest of the
-        last `limit` conversation messages, then return everything visible from there up.
-        Short-lived read connection so it can run off the event loop (see _page)."""
-        if not self._db_path or limit <= 0:
-            return [], None
-        upper = "AND id < ? " if before_cursor is not None else ""
-        upper_params: tuple[object, ...] = (before_cursor,) if before_cursor is not None else ()
-        conv_ph = ",".join("?" for _ in APP_CHAT_TYPES)
-        visible = (*APP_CHAT_TYPES, *APP_CHAT_OVERLAY_TYPES)
-        vis_ph = ",".join("?" for _ in visible)
-        conn = sqlite3.connect(str(self._db_path), timeout=30)
-        try:
-            conv_rows = conn.execute(
-                f"SELECT id FROM events WHERE json_extract(data, '$.type') IN ({conv_ph}) {upper}ORDER BY id DESC LIMIT ?",
-                (*APP_CHAT_TYPES, *upper_params, limit + 1),
-            ).fetchall()
-            if not conv_rows:
-                return [], None
-            has_older = len(conv_rows) > limit
-            boundary = conv_rows[:limit][-1][0]
-            rows = conn.execute(
-                f"SELECT id, data FROM events WHERE json_extract(data, '$.type') IN ({vis_ph}) AND id >= ? {upper}ORDER BY id ASC",
-                (*visible, boundary, *upper_params),
-            ).fetchall()
-        finally:
-            conn.close()
-        events: list[StreamEvent] = []
-        for row in rows:
-            event: StreamEvent = json.loads(row[1])
-            event["id"] = row[0]
-            events.append(event)
-        return events, boundary if has_older else None
-
     def recent(self, limit: int = PAGE_SIZE, *, channel: str | None = None) -> tuple[list[StreamEvent], int | None]:
-        if channel == "app-chat":
-            return self._conversation_page(limit, None)
         if channel == "notifications":
             return self._page((_NOTIFICATION_CONDITION,), (), limit)
         return self._page((), (), limit)
 
     def before(self, cursor: int, limit: int = PAGE_SIZE, *, channel: str | None = None) -> tuple[list[StreamEvent], int | None]:
-        if channel == "app-chat":
-            return self._conversation_page(limit, cursor)
         if channel == "notifications":
             return self._page((_NOTIFICATION_CONDITION, "id < ?"), (cursor,), limit)
         return self._page(("id < ?",), (cursor,), limit)

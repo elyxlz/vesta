@@ -7,7 +7,7 @@ import pytest
 
 import core.config as cfg
 from core.default_skills import default_skill_sync_turn, missing_default_skills
-from core.events import ChatEvent, EventBus, UserEvent
+from core.events import AssistantEvent, EventBus
 
 
 @pytest.fixture
@@ -88,9 +88,9 @@ def _load_recall():
 
 def test_recall_finds_events_written_by_eventbus(tmp_path):
     bus = EventBus(data_dir=tmp_path)
-    bus.emit(UserEvent(type="user", text="what is the weather in paris"))
-    bus.emit(ChatEvent(type="chat", text="it is sunny in paris today"))
-    bus.emit(UserEvent(type="user", text="how about london"))
+    bus.emit(AssistantEvent(type="assistant", text="what is the weather in paris"))
+    bus.emit(AssistantEvent(type="assistant", text="it is sunny in paris today"))
+    bus.emit(AssistantEvent(type="assistant", text="how about london"))
     bus.close()
 
     recall = _load_recall()
