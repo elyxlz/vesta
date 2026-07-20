@@ -117,7 +117,13 @@ describe("createController", () => {
     const socket = h.sockets[0]
     socket?.onopen?.()
     socket?.onmessage?.(JSON.stringify({ type: "snapshot", tree: baseTree() }))
-    const alert: Delta = { type: "alert", agent: "scout", kind: "message", title: "scout", body: "hi" }
+    const alert: Delta = {
+      type: "alert",
+      agent: "scout",
+      kind: "message",
+      title: "scout",
+      body: "hi",
+    }
     socket?.onmessage?.(JSON.stringify(alert))
     expect(seen).toEqual([alert])
     // The alert is a transient user-facing delta: it never mutates the tree.
@@ -132,7 +138,13 @@ describe("createController", () => {
     const socket = h.sockets[0]
     socket?.onopen?.()
     socket?.onmessage?.(
-      JSON.stringify({ type: "alert", agent: "scout", kind: "message", title: "scout", body: "hi" }),
+      JSON.stringify({
+        type: "alert",
+        agent: "scout",
+        kind: "message",
+        title: "scout",
+        body: "hi",
+      }),
     )
     expect(seen).toEqual([])
   })

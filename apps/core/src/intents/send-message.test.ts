@@ -25,14 +25,11 @@ describe("sendMessage", () => {
     expect(await outcome).toBeNull()
   })
 
-  it.each([502, 503, 504])(
-    "maps a daemon-down %i to a retryable outcome",
-    async (status) => {
-      const json = vi.fn().mockRejectedValue(new ApiError(status, "unavailable"))
-      const { outcome } = sendMessage(httpWith(json), "scout", { text: "hi" }, () => "i-2")
-      expect(await outcome).toBe("retry")
-    },
-  )
+  it.each([502, 503, 504])("maps a daemon-down %i to a retryable outcome", async (status) => {
+    const json = vi.fn().mockRejectedValue(new ApiError(status, "unavailable"))
+    const { outcome } = sendMessage(httpWith(json), "scout", { text: "hi" }, () => "i-2")
+    expect(await outcome).toBe("retry")
+  })
 
   it("maps a network/timeout failure (no HTTP status) to a retryable outcome", async () => {
     const json = vi.fn().mockRejectedValue(new Error("network down"))

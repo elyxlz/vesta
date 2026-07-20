@@ -36,9 +36,4 @@ export interface AlertDelta {
   body: string
 }
 
-export type Delta =
-  | StateDelta
-  | AgentDelta
-  | AgentRemovedDelta
-  | NotificationsDelta
-  | AlertDelta
+export type Delta = StateDelta | AgentDelta | AgentRemovedDelta | NotificationsDelta | AlertDelta
