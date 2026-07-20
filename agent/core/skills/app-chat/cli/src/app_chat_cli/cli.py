@@ -1,8 +1,8 @@
 """App Chat CLI entry point.
 
 Commands:
-  serve   — daemon: runs the app-chat HTTP service, holds a WS connection to the agent, accepts CLI commands via Unix socket
-  daemon  — daemon lifecycle: start|stop|restart|status (idempotent start, status reports WS state)
+  serve   — daemon: runs the app-chat HTTP service (intake, history, live chat socket), accepts CLI commands via Unix socket
+  daemon  — daemon lifecycle: start|stop|restart|status (idempotent start, status reports port + connected client count)
   send    — send a message to the app (via daemon Unix socket)
   history — search/list chat history from the skill's own store
   import  — one-time copy of pre-existing app-chat history from core's events.db into the skill store
@@ -36,7 +36,10 @@ def _build_parser(ws_default: str) -> argparse.ArgumentParser:
     # --notifications-dir): accepted and ignored. Intake moved to the HTTP service; kept so
     # existing launch lines don't break argparse.
     serve_p.add_argument("--notifications-dir", default=None, help=argparse.SUPPRESS)
-    serve_p.add_argument("--ws-url", default=ws_default, help=f"Agent WebSocket URL (default: {ws_default})")
+    # LEGACY(remove-when: no running agent's restart-skill `## Daemons` line still passes --ws-url):
+    # accepted and ignored. The daemon no longer connects to core's /ws; the live echo fans out
+    # in-process to the service's /ws subscribers. Kept so an existing launch line doesn't break argparse.
+    serve_p.add_argument("--ws-url", default=ws_default, help=argparse.SUPPRESS)
     serve_p.add_argument("--data-dir", default=None, help="Data directory (default: ~/.app-chat)")
     serve_p.add_argument("--port", type=int, default=None, help="Service port (default: resolved via register-service)")
 
@@ -46,7 +49,7 @@ def _build_parser(ws_default: str) -> argparse.ArgumentParser:
         ("start", "Start the daemon if it is not already running (idempotent)"),
         ("stop", "Stop the daemon; suppresses the daemon_died notification"),
         ("restart", "Stop then start the daemon"),
-        ("status", "Report daemon process + WS connection state as JSON"),
+        ("status", "Report daemon process state + service port + connected client count as JSON"),
     ):
         daemon_action_p = daemon_sub.add_parser(name, help=help_text)
         daemon_action_p.add_argument("--data-dir", default=None, help="Data directory (default: ~/.app-chat)")

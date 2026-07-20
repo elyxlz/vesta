@@ -1,15 +1,17 @@
-"""The app-chat service: POST /message (intake) and GET /history (paged conversation). Registered with
-vestad as the `app-chat` service, reached by clients through the authenticated proxy. Intake here (not
-a core sidecar) keeps the `user` echo an honest delivery receipt: persist + echo + notification happen
-in the request coroutine, so a client that got a 200 knows its message is durable and delivered."""
+"""The app-chat service: POST /message (intake), GET /history (paged conversation), and GET /ws (the
+replay-free live chat stream). Registered with vestad as the `app-chat` service, reached by clients
+through the authenticated proxy. Intake here (not a core sidecar) keeps the `user` echo an honest
+delivery receipt: persist + echo + notification happen in the request coroutine, so a client that got
+a 200 knows its message is durable and delivered. The echo fans out to /ws subscribers in-process, so
+the skill owns the chat plane end to end with no dependency on core's bus."""
 
+import asyncio
 import collections
 import datetime as dt
 import json
 import logging
 import pathlib as pl
 import time
-import typing as tp
 
 from aiohttp import web
 
@@ -21,20 +23,32 @@ logger = logging.getLogger("app-chat.service")
 # ones age out (a retry that far behind is not a real double-send). Moved here from core State.
 _SEEN_INTENT_IDS_CAP = 256
 
-EmitFn = tp.Callable[[StoredEvent], None]
+# Per-connection outbound buffer for a chat-socket client. Bounded because the store holds the durable
+# copy: a stalled client's oldest queued event is dropped rather than grow without limit; the client
+# refetches the tail by id on its next reconnect (the socket is replay-free by design).
+_WS_QUEUE_MAX = 256
 
 
 class ServiceState:
-    def __init__(self, store: Store, notifications_dir: pl.Path, emit: EmitFn) -> None:
+    def __init__(self, store: Store, notifications_dir: pl.Path) -> None:
         self.store = store
         self.notifications_dir = notifications_dir
-        self.emit = emit
         self.seen_intent_ids: collections.OrderedDict[str, None] = collections.OrderedDict()
+        self.subscribers: set[asyncio.Queue[StoredEvent]] = set()
 
     def remember(self, intent_id: str) -> None:
         self.seen_intent_ids[intent_id] = None
         while len(self.seen_intent_ids) > _SEEN_INTENT_IDS_CAP:
             self.seen_intent_ids.popitem(last=False)
+
+    def emit(self, event: StoredEvent) -> None:
+        """Fan a freshly persisted event (user echo or chat reply) to every connected chat socket. A
+        full queue drops its oldest so a wedged client never blocks intake; that client re-syncs by
+        refetching history on reconnect."""
+        for queue in list(self.subscribers):
+            if queue.full():
+                queue.get_nowait()
+            queue.put_nowait(event)
 
 
 _STATE_KEY: web.AppKey[ServiceState] = web.AppKey("state", ServiceState)
@@ -129,10 +143,37 @@ async def health_handler(_: web.Request) -> web.Response:
     return web.Response(text="ok")
 
 
+async def ws_handler(request: web.Request) -> web.WebSocketResponse:
+    """Per-connection live chat stream: every event appended after connect (user echo, agent reply),
+    no replay. Clients seed history over GET /history and reconcile this live edge by id. The inbound
+    half is drained only to notice a client close."""
+    state = request.app[_STATE_KEY]
+    ws = web.WebSocketResponse(heartbeat=30.0)
+    await ws.prepare(request)
+    queue: asyncio.Queue[StoredEvent] = asyncio.Queue(maxsize=_WS_QUEUE_MAX)
+    state.subscribers.add(queue)
+
+    async def pump() -> None:
+        while True:
+            event = await queue.get()
+            await ws.send_json(event)
+
+    sender = asyncio.create_task(pump())
+    try:
+        async for msg in ws:
+            if msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):
+                break
+    finally:
+        sender.cancel()
+        state.subscribers.discard(queue)
+    return ws
+
+
 def create_app(state: ServiceState) -> web.Application:
     app = web.Application()
     app[_STATE_KEY] = state
     app.router.add_post("/message", message_handler)
     app.router.add_get("/history", history_handler)
+    app.router.add_get("/ws", ws_handler)
     app.router.add_get("/health", health_handler)
     return app

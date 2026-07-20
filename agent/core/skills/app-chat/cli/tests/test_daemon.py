@@ -8,7 +8,8 @@ import json
 
 import pytest
 from app_chat_cli import daemon
-from app_chat_cli.store import Store, store_path
+from app_chat_cli.service import ServiceState
+from app_chat_cli.store import Store, StoredEvent, store_path
 
 
 def test_default_notifications_dir_defaults_to_agent_notifications(monkeypatch, tmp_path):
@@ -67,7 +68,7 @@ def test_socket_request_round_trips_through_a_real_unix_socket(tmp_path):
     async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         data = await reader.read(65536)
         request = json.loads(data.decode())
-        writer.write(json.dumps({"ok": True, "connected": True, "ws_url": request["command"]}).encode())
+        writer.write(json.dumps({"ok": True, "port": 4321, "clients": 0, "echo": request["command"]}).encode())
         await writer.drain()
         writer.close()
         await writer.wait_closed()
@@ -78,7 +79,7 @@ def test_socket_request_round_trips_through_a_real_unix_socket(tmp_path):
             return await daemon.socket_request(sock_path, {"command": "status"})
 
     result = asyncio.run(scenario())
-    assert result == {"ok": True, "connected": True, "ws_url": "status"}
+    assert result == {"ok": True, "port": 4321, "clients": 0, "echo": "status"}
 
 
 def test_daemon_alive_false_when_socket_missing(tmp_path):
@@ -90,7 +91,7 @@ def test_daemon_alive_reflects_socket_request_result(tmp_path, monkeypatch):
     sock_path.write_text("")
 
     async def fake_ok(sock_path, request, timeout=daemon.SOCKET_TIMEOUT):
-        return {"ok": True, "connected": False, "ws_url": "ws://x"}
+        return {"ok": True, "port": 4321, "clients": 0}
 
     async def fake_error(sock_path, request, timeout=daemon.SOCKET_TIMEOUT):
         return {"error": "connection refused"}
@@ -214,14 +215,14 @@ def test_daemon_status_reports_not_running_when_socket_absent(tmp_path, capsys):
     assert json.loads(capsys.readouterr().out) == {"running": False, "session": "app-chat"}
 
 
-def test_daemon_status_reports_ws_connection_state_when_running(tmp_path, monkeypatch, capsys):
+def test_daemon_status_reports_port_and_client_count_when_running(tmp_path, monkeypatch, capsys):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     sock_path = daemon._sock_path(data_dir)
     sock_path.write_text("")
 
     async def fake_status(sock_path, request, timeout=daemon.SOCKET_TIMEOUT):
-        return {"ok": True, "connected": True, "ws_url": "ws://localhost:1234/ws"}
+        return {"ok": True, "port": 1234, "clients": 2}
 
     monkeypatch.setattr(daemon, "socket_request", fake_status)
 
@@ -230,79 +231,102 @@ def test_daemon_status_reports_ws_connection_state_when_running(tmp_path, monkey
     assert json.loads(capsys.readouterr().out) == {
         "running": True,
         "session": "app-chat",
-        "ws_connected": True,
-        "ws_url": "ws://localhost:1234/ws",
+        "port": 1234,
+        "clients": 2,
     }
 
 
 def _daemon_state(tmp_path) -> daemon.DaemonState:
+    service = ServiceState(Store(store_path(tmp_path)), tmp_path / "notifications")
     return daemon.DaemonState(
-        ws_url="ws://localhost/ws",
         sock_path=tmp_path / "app-chat.sock",
         data_dir=tmp_path,
         notifications_dir=tmp_path / "notifications",
         port=1,
-        store=Store(store_path(tmp_path)),
+        service=service,
     )
 
 
-def test_emit_drops_oldest_when_queue_full(tmp_path):
+async def _socket_command(state: daemon.DaemonState, request: dict[str, str]) -> dict[str, object]:
+    server = await asyncio.start_unix_server(functools.partial(daemon._handle_socket_conn, state), path=str(state.sock_path))
+    async with server:
+        reader, writer = await asyncio.open_unix_connection(str(state.sock_path))
+        writer.write(json.dumps(request).encode())
+        writer.write_eof()
+        data = await asyncio.wait_for(reader.read(65536), timeout=5.0)
+        writer.close()
+        await writer.wait_closed()
+        return json.loads(data.decode())
+
+
+def test_send_command_persists_chat_event_and_fans_it_to_subscribers(tmp_path, monkeypatch):
+    monkeypatch.delenv("AGENT_NAME", raising=False)
     state = _daemon_state(tmp_path)
-    total = daemon._EMIT_QUEUE_MAX + 5
-    for i in range(total):
-        daemon._emit(state, {"type": "chat", "ts": "t", "text": f"m{i}", "id": i})
+    queue: asyncio.Queue[StoredEvent] = asyncio.Queue()
+    state.service.subscribers.add(queue)
 
-    assert state.out.qsize() == daemon._EMIT_QUEUE_MAX
-    queued = [json.loads(state.out.get_nowait())["event"]["id"] for _ in range(daemon._EMIT_QUEUE_MAX)]
-    # the oldest 5 aged out; the queue holds the most recent MAX, in order
-    assert queued[0] == 5
-    assert queued[-1] == total - 1
-    state.store.close()
-
-
-def test_send_command_persists_chat_event_and_returns_id(tmp_path):
-    state = _daemon_state(tmp_path)
-
-    async def scenario() -> dict[str, object]:
-        server = await asyncio.start_unix_server(functools.partial(daemon._handle_socket_conn, state), path=str(state.sock_path))
-        async with server:
-            reader, writer = await asyncio.open_unix_connection(str(state.sock_path))
-            writer.write(json.dumps({"command": "send", "message": "hey there"}).encode())
-            writer.write_eof()
-            data = await asyncio.wait_for(reader.read(65536), timeout=5.0)
-            writer.close()
-            await writer.wait_closed()
-            return json.loads(data.decode())
-
-    response = asyncio.run(scenario())
+    response = asyncio.run(_socket_command(state, {"command": "send", "message": "hey there"}))
 
     assert response == {"ok": True, "message": "hey there", "id": 1}
-    events, _ = state.store.page()
+    events, _ = state.service.store.page()
     assert [(e["type"], e["text"]) for e in events] == [("chat", "hey there")]
-    assert state.out.qsize() == 1
-    frame = json.loads(state.out.get_nowait())
-    assert frame["type"] == "emit"
-    assert frame["event"]["id"] == 1 and frame["event"]["type"] == "chat"
-    state.store.close()
+    assert queue.qsize() == 1
+    fanned = queue.get_nowait()
+    assert fanned["id"] == 1 and fanned["type"] == "chat"
+    state.service.store.close()
 
 
 def test_send_command_rejects_empty_message(tmp_path):
     state = _daemon_state(tmp_path)
+    queue: asyncio.Queue[StoredEvent] = asyncio.Queue()
+    state.service.subscribers.add(queue)
 
-    async def scenario() -> dict[str, object]:
-        server = await asyncio.start_unix_server(functools.partial(daemon._handle_socket_conn, state), path=str(state.sock_path))
-        async with server:
-            reader, writer = await asyncio.open_unix_connection(str(state.sock_path))
-            writer.write(json.dumps({"command": "send", "message": "   "}).encode())
-            writer.write_eof()
-            data = await asyncio.wait_for(reader.read(65536), timeout=5.0)
-            writer.close()
-            await writer.wait_closed()
-            return json.loads(data.decode())
-
-    response = asyncio.run(scenario())
+    response = asyncio.run(_socket_command(state, {"command": "send", "message": "   "}))
 
     assert response == {"error": "empty message"}
-    assert state.store.page()[0] == []
-    assert state.out.qsize() == 0
-    state.store.close()
+    assert state.service.store.page()[0] == []
+    assert queue.qsize() == 0
+    state.service.store.close()
+
+
+def test_status_command_reports_port_and_connected_client_count(tmp_path):
+    state = _daemon_state(tmp_path)
+    state.service.subscribers.add(asyncio.Queue())
+    state.service.subscribers.add(asyncio.Queue())
+
+    response = asyncio.run(_socket_command(state, {"command": "status"}))
+
+    assert response == {"ok": True, "port": 1, "clients": 2}
+    state.service.store.close()
+
+
+def test_notify_reply_shells_the_notify_script_with_kind_agent_and_preview(tmp_path, monkeypatch):
+    script = tmp_path / "notify"
+    script.write_text("#!/usr/bin/env bash\ntrue\n")
+    monkeypatch.setattr(daemon, "NOTIFY", script)
+    monkeypatch.setenv("AGENT_NAME", "aria")
+    calls = []
+    monkeypatch.setattr(daemon.subprocess, "run", lambda cmd, **kwargs: calls.append(cmd))
+
+    daemon._notify_reply("a long reply " * 40)
+
+    assert len(calls) == 1
+    argv = calls[0]
+    assert argv[:3] == [str(script), "message", "aria"]
+    assert len(argv[3]) == 180  # the body preview is truncated
+
+
+def test_notify_reply_is_a_noop_when_agent_name_or_script_is_absent(tmp_path, monkeypatch):
+    monkeypatch.setattr(daemon.subprocess, "run", lambda *a, **k: pytest.fail("must not shell when a guard fails"))
+
+    # script missing, AGENT_NAME set
+    monkeypatch.setattr(daemon, "NOTIFY", tmp_path / "missing-notify")
+    monkeypatch.setenv("AGENT_NAME", "aria")
+    daemon._notify_reply("hello")
+
+    # script present, AGENT_NAME unset
+    script = tmp_path / "notify"
+    script.write_text("#!/usr/bin/env bash\ntrue\n")
+    monkeypatch.setattr(daemon, "NOTIFY", script)
+    monkeypatch.delenv("AGENT_NAME", raising=False)
+    daemon._notify_reply("hello")

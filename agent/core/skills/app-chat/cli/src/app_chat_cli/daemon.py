@@ -1,15 +1,15 @@
 """App Chat daemon.
 
-Owns the app-chat channel: it runs the skill's HTTP service (POST /message intake, GET /history),
-holds a kept-alive connection to the agent's /ws endpoint (over which it emits the live echo for
-persisted user + chat events), and accepts CLI commands via a Unix socket to send replies
-(`app-chat send` -> persist a `chat` event, then emit it). Durability is the skill's own store, so a
-reply succeeds even with the socket down; the live echo ships when the ws reconnects.
+Owns the app-chat channel: it runs the skill's HTTP service (POST /message intake, GET /history, and
+GET /ws, the replay-free live chat stream), and accepts CLI commands via a Unix socket to send replies
+(`app-chat send` -> persist a `chat` event, fan it to the /ws subscribers, notify vestad so a
+backgrounded client gets an alert). Durability is the skill's own store, so a reply succeeds even with
+no client connected; the live echo fans out in-process to whoever is on /ws.
 
 `app-chat daemon start|stop|restart|status` owns the process lifecycle: start is idempotent
 (a live daemon is a no-op), stop marks the shutdown as intentional so it does not fire the
-`daemon_died` notification a crash would, and status reports the daemon's WS connection state
-to the agent in one JSON blob.
+`daemon_died` notification a crash would, and status reports the service port + connected chat-socket
+client count to the agent in one JSON blob.
 """
 
 import argparse
@@ -27,25 +27,20 @@ import typing as tp
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-import aiohttp
 from aiohttp import web
 
 from .service import ServiceState, create_app
 from .store import Store, StoredEvent, store_path
 
-RECONNECT_DELAY = 2.0
 SOCKET_TIMEOUT = 10.0
 SESSION_NAME = "app-chat"
 STOP_MARKER_NAME = "stop-requested"
 DAEMON_START_TIMEOUT = 15.0
 DAEMON_STOP_TIMEOUT = 15.0
 DAEMON_POLL_INTERVAL = 0.5
-# Undelivered live-echo frames wait here while the ws is down and ship on reconnect. Bounded because
-# the store already holds the durable copy: the oldest queued echo is dropped rather than grow without
-# limit, only ever delaying an echo the client can still fetch from history.
-_EMIT_QUEUE_MAX = 1024
 
 REGISTER_SERVICE = pl.Path.home() / "agent" / "skills" / "vestad" / "scripts" / "register-service"
+NOTIFY = pl.Path.home() / "agent" / "skills" / "vestad" / "scripts" / "notify"
 
 
 def resolve_port() -> int:
@@ -73,41 +68,37 @@ def _stop_marker_path(data_dir: pl.Path) -> pl.Path:
 
 @dataclass
 class DaemonState:
-    ws_url: str
     sock_path: pl.Path
     data_dir: pl.Path
     notifications_dir: pl.Path
     port: int
-    store: Store
+    service: ServiceState
     shutdown: asyncio.Event = field(default_factory=asyncio.Event)
-    out: "asyncio.Queue[str]" = field(default_factory=lambda: asyncio.Queue(maxsize=_EMIT_QUEUE_MAX))
-    ws: aiohttp.ClientWebSocketResponse | None = None
-    session: aiohttp.ClientSession | None = None
 
 
-def _emit(state: DaemonState, event: StoredEvent) -> None:
-    """Queue a pre-formed live event for core's bus. The ws-loop drains `out`; if the socket is down
-    the frame waits in the bounded queue and ships on reconnect (the store already holds the durable
-    copy, so a dropped live frame only delays the echo, never loses the message)."""
-    frame = json.dumps({"type": "emit", "event": event})
-    if state.out.full():
-        state.out.get_nowait()
-    state.out.put_nowait(frame)
+def _notify_reply(text: str) -> None:
+    """Best-effort: tell vestad an app reply went out so it alerts + pushes. A failure here never fails
+    the reply (durability + the live echo already happened); it only skips the toast/push. The notify
+    script lands with the notify primitive, so the NOTIFY.exists() guard no-ops until then."""
+    agent = os.environ.get("AGENT_NAME")
+    if agent is None or not NOTIFY.exists():
+        return
+    preview = text[:180]
+    subprocess.run([str(NOTIFY), "message", agent, preview], check=False, capture_output=True)
 
 
 def cmd_serve(args: argparse.Namespace) -> None:
-    ws_url = args.ws_url
     data_dir = pl.Path(args.data_dir or default_data_dir())
     data_dir.mkdir(parents=True, exist_ok=True)
     port = args.port if args.port is not None else resolve_port()
 
+    service = ServiceState(Store(store_path(data_dir)), default_notifications_dir())
     state = DaemonState(
-        ws_url=ws_url,
         sock_path=_sock_path(data_dir),
         data_dir=data_dir,
         notifications_dir=default_notifications_dir(),
         port=port,
-        store=Store(store_path(data_dir)),
+        service=service,
     )
     asyncio.run(_run(state))
 
@@ -117,26 +108,19 @@ async def _run(state: DaemonState) -> None:
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, state.shutdown.set)
 
-    state.session = aiohttp.ClientSession()
-    service = ServiceState(state.store, state.notifications_dir, functools.partial(_emit, state))
-    runner = web.AppRunner(create_app(service))
+    runner = web.AppRunner(create_app(state.service))
     await runner.setup()
     site = web.TCPSite(runner, host="0.0.0.0", port=state.port)
     await site.start()
     _log(f"service on port {state.port}")
+    socket_task = asyncio.create_task(_socket_server(state))
     try:
-        tasks = [
-            asyncio.create_task(_ws_loop(state)),
-            asyncio.create_task(_socket_server(state)),
-        ]
         await state.shutdown.wait()
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        socket_task.cancel()
+        await asyncio.gather(socket_task, return_exceptions=True)
     finally:
         await runner.cleanup()
-        await state.session.close()
-        state.store.close()
+        state.service.store.close()
         state.sock_path.unlink(missing_ok=True)
         _consume_stop_marker_or_report_death(state.data_dir, state.notifications_dir)
 
@@ -161,50 +145,6 @@ def write_death_notification(notifications_dir: pl.Path) -> None:
     }
     path = notifications_dir / f"{int(time.time() * 1e6)}-app-chat-daemon_died.json"
     path.write_text(json.dumps(notification))
-
-
-async def _ws_loop(state: DaemonState) -> None:
-    while not state.shutdown.is_set():
-        try:
-            if state.session is None:
-                break
-            url = state.ws_url
-            agent_token = os.environ.get("AGENT_TOKEN")
-            if agent_token:
-                sep = "&" if "?" in url else "?"
-                url = f"{url}{sep}agent_token={agent_token}"
-            async with state.session.ws_connect(url) as ws:
-                state.ws = ws
-                _log(f"connected to {state.ws_url}")
-                drain = asyncio.create_task(_drain_out(state, ws))
-                try:
-                    # Drain inbound frames only to keep the connection live and notice a close; intake
-                    # is the HTTP service now, so nothing here reacts to them.
-                    async for msg in ws:
-                        if msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSED):
-                            break
-                finally:
-                    drain.cancel()
-                    await asyncio.gather(drain, return_exceptions=True)
-        except (aiohttp.ClientError, OSError) as exc:
-            _log(f"ws error: {exc}")
-        finally:
-            state.ws = None
-        if not state.shutdown.is_set():
-            await asyncio.sleep(RECONNECT_DELAY)
-
-
-async def _drain_out(state: DaemonState, ws: aiohttp.ClientWebSocketResponse) -> None:
-    """Ship queued live-echo frames over the connected ws. On a send error, stop so `_ws_loop`
-    reconnects; the frame in flight is dropped (the store holds the durable copy), and frames queued
-    while disconnected wait until the next connection drains them."""
-    while True:
-        frame = await state.out.get()
-        try:
-            await ws.send_str(frame)
-        except (aiohttp.ClientError, OSError) as exc:
-            _log(f"emit send failed: {exc}")
-            return
 
 
 async def _socket_server(state: DaemonState) -> None:
@@ -233,11 +173,12 @@ async def _handle_socket_conn(state: DaemonState, reader: asyncio.StreamReader, 
                 response: dict[str, object] = {"error": "empty message"}
             else:
                 event: StoredEvent = {"type": "chat", "ts": datetime.now(UTC).isoformat(), "text": message}
-                state.store.append(event)
-                _emit(state, event)
+                state.service.store.append(event)
+                state.service.emit(event)
+                await asyncio.to_thread(_notify_reply, message)
                 response = {"ok": True, "message": message, "id": event["id"]}
         elif command == "status":
-            response = {"ok": True, "connected": bool(state.ws and not state.ws.closed), "ws_url": state.ws_url}
+            response = {"ok": True, "port": state.port, "clients": len(state.service.subscribers)}
         else:
             response = {"error": f"unknown command: {command}"}
 
@@ -351,8 +292,8 @@ def cmd_daemon_status(args: argparse.Namespace) -> None:
 
     result: dict[str, object] = {"running": running, "session": SESSION_NAME}
     if running:
-        result["ws_connected"] = status["connected"]
-        result["ws_url"] = status["ws_url"]
+        result["port"] = status["port"]
+        result["clients"] = status["clients"]
     _print(result)
 
 
