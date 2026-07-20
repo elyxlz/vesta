@@ -1,6 +1,9 @@
 //! `/sync` WebSocket integration scenarios, driven end-to-end against a real vestad + agent
-//! container through the T1 harness `SyncSocket`. Fake-token agents settle unprovisioned yet still
-//! emit the in-process app-chat echo these appends ride on, so no real model is needed.
+//! container through the T1 harness `SyncSocket`. Fake-token agents settle unprovisioned and run no
+//! model, so a helper starts their app-chat daemon by hand (`start_app_chat_daemon`, docker exec);
+//! that daemon owns the skill service the sends target and emits the live echo these appends ride on,
+//! so no real model is needed. A container restart kills the daemon, so scenarios that restart an
+//! agent start it again before driving the next append.
 //!
 //! Two spec sub-scenarios are deliberately absent: sub-floor client rejection (D2, dropped — the
 //! server always speaks protocol 1 and never rejects; the floor is a client-side gate) and the
@@ -33,14 +36,17 @@ const EXPECT_PROTOCOL: u64 = 1;
 const EXPECT_FLOOR: u64 = 1;
 
 /// Create a fake-token agent and bring it up to a live tap. Fake-token agents settle at
-/// `unprovisioned`/`not_authenticated`, enough to exercise frame plumbing (no real model needed):
-/// the app-chat echo the appends ride on is emitted in-process, independent of provider auth.
+/// `unprovisioned`/`not_authenticated`, enough to exercise frame plumbing (no real model needed).
+/// The app-chat echo the appends ride on is emitted by the skill daemon, which a model-less agent
+/// never boots itself, so start it by hand once the agent is up.
 fn running_agent<'a>(c: &'a Client, prefix: &str) -> TestAgent<'a> {
     let agent = TestAgent::create(c, &unique_agent(prefix)).expect("create agent");
     inject_fake_token(c, &agent.name);
     c.start_agent(&agent.name).expect("start agent");
     c.wait_until_running(&agent.name, AGENT_RUNNING_TIMEOUT_SECS)
         .expect("agent running");
+    c.start_app_chat_daemon(&agent.name)
+        .expect("start app-chat daemon");
     agent
 }
 
@@ -234,8 +240,10 @@ async fn resync_drops_watch_while_second_agent_streams() {
     // B keeps streaming across A's restart (remove-on-resync scopes to A's watch only).
     drive_and_expect_append(&c, &mut sock, &b.name, "b2", "b-after").await;
 
-    // The resync dropped A's server-side watch; re-watch and appends resume once A is back up.
+    // The resync dropped A's server-side watch; re-watch and appends resume once A is back up. The
+    // restart killed A's daemon with its process tree, so start it again before driving the append.
     c.wait_until_running(&a.name, AGENT_RUNNING_TIMEOUT_SECS).expect("a back up");
+    c.start_app_chat_daemon(&a.name).expect("restart a's app-chat daemon");
     sock.watch(&a.name).await.expect("re-watch a");
     drive_and_expect_append(&c, &mut sock, &a.name, "a2", "a-after").await;
     sock.close().await.ok();
@@ -371,8 +379,11 @@ async fn restart_reseeds_without_duplicate_ids() {
     .await
     .expect("a resync after the restart");
 
+    // The restart killed the daemon with the container's process tree; start it again before driving.
     c.wait_until_running(&agent.name, AGENT_RUNNING_TIMEOUT_SECS)
         .expect("agent back up");
+    c.start_app_chat_daemon(&agent.name)
+        .expect("restart the app-chat daemon");
     sock.watch(&agent.name).await.expect("re-watch");
     ids.push(driven_event_id(&c, &mut sock, &agent.name, "after-1", "ka-1").await);
     ids.push(driven_event_id(&c, &mut sock, &agent.name, "after-2", "ka-2").await);
@@ -408,6 +419,8 @@ async fn watch_before_create_is_held_until_the_agent_materializes() {
     c.start_agent(&agent.name).expect("start agent");
     c.wait_until_running(&agent.name, AGENT_RUNNING_TIMEOUT_SECS)
         .expect("agent running");
+    c.start_app_chat_daemon(&agent.name)
+        .expect("start app-chat daemon");
 
     // The roster upsert for the freshly created agent reaches this held session.
     sock.expect_frame_matching(

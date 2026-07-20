@@ -13,10 +13,10 @@ use vesta_tests::SERVER;
 use super::common::lock_live_agent_a;
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
-/// The user echo is written in-process the instant the send is relayed, so it lands fast. The
-/// bounded resends only close the watch-subscribe race: the watch frame may reach vestad a hair
-/// after the first echo was broadcast, and the live edge never replays, so a lost echo needs
-/// another send, not a longer read.
+/// The app-chat daemon writes the user echo the instant it intakes the send, so it lands fast. The
+/// bounded resends close two races: the watch frame may reach vestad a hair after the first echo was
+/// broadcast (the live edge never replays, so a lost echo needs another send), and a real agent's
+/// daemon may still be coming up on the first send (the send 502s and retries).
 const ECHO_TIMEOUT: Duration = Duration::from_secs(45);
 const ECHO_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(4);
 /// A full real-model round-trip: the app-chat notification is delivered, the SDK query runs, and
@@ -81,9 +81,9 @@ async fn live_send_echoes_intent_then_streams_a_real_assistant_response() {
     let intent = "i-live-sync-e2e";
     let text = "Please reply with a short one-line greeting.";
 
-    // Resend on a bounded cadence until the in-process echo lands, closing the watch-subscribe
-    // race. Once the echo is in hand the watch is proven subscribed, so the later assistant event
-    // needs no resend.
+    // Resend on a bounded cadence until the daemon's echo lands, closing the watch-subscribe and
+    // daemon-warmup races. Once the echo is in hand the watch is proven subscribed, so the later
+    // assistant event needs no resend.
     let echo_deadline = Instant::now() + ECHO_TIMEOUT;
     loop {
         let _ = c.send_message(&name, text, Some(intent));

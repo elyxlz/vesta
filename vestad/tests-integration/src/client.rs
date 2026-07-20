@@ -396,15 +396,44 @@ impl Client {
         Ok(())
     }
 
-    /// Relay a chat message to a running agent via `POST /agents/{name}/message`. A `200` ack means
-    /// the frame was queued onto the live tap, not that the agent read it (delivery truth is the
-    /// `append` echo carrying `intent_id`). Pass `intent_id` to correlate that echo; omit with `None`.
+    /// Deliver a chat message to the agent's `app-chat` skill service via `POST
+    /// /agents/{name}/app-chat/message` (the generic authenticated proxy), the same path the web/mobile
+    /// clients use. A `200` means the daemon durably intook it (persisted, echoed, notification
+    /// written); delivery truth is still the `append` echo carrying `intent_id`. Pass `intent_id` to
+    /// correlate that echo; omit with `None`. Requires the agent's app-chat daemon to be running
+    /// (`start_app_chat_daemon` for model-less fake-token agents).
     pub fn send_message(&self, name: &str, text: &str, intent_id: Option<&str>) -> Result<(), String> {
         let mut body = serde_json::json!({ "text": text });
         if let Some(id) = intent_id {
             body["intent_id"] = serde_json::Value::String(id.to_string());
         }
-        self.post_json(&format!("/agents/{name}/message"), &body)?;
+        self.post_json(&format!("/agents/{name}/app-chat/message"), &body)?;
+        Ok(())
+    }
+
+    /// Fetch the agent's app-chat conversation tail via `GET /agents/{name}/app-chat/history` (the
+    /// skill service through the proxy), the same `{events, cursor}` page the clients read. `limit`
+    /// caps the page size.
+    pub fn fetch_app_chat_history(&self, name: &str, limit: u32) -> Result<serde_json::Value, String> {
+        let resp = self.get(&format!("/agents/{name}/app-chat/history?limit={limit}"))?;
+        resp.into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {e}"))
+    }
+
+    /// Start the agent's `app-chat` daemon in-container, idempotently. Model-less fake-token agents
+    /// never run the skill's setup or the restart daemon block, so send/history scenarios install the
+    /// CLI and start the daemon by hand before the service can accept a request. Docker-exec, not HTTP:
+    /// the daemon owns the service the proxy targets. Sources `/run/vestad-env` (`WS_PORT`,
+    /// `AGENT_TOKEN`, `VESTAD_PORT`, `AGENT_NAME`) that register-service and `serve` read; `PATH`
+    /// carries uv and `/root/.local/bin` from the image env. Re-runnable across a restart (the daemon dies with the
+    /// container's process tree): `--force` reinstall is a no-op and `daemon start` is idempotent.
+    pub fn start_app_chat_daemon(&self, name: &str) -> Result<(), String> {
+        let container = crate::agent_container_name(name);
+        crate::exec_in_container(
+            &container,
+            ". /run/vestad-env && uv tool install --force --editable /root/agent/core/skills/app-chat/cli && app-chat daemon start",
+        )?;
         Ok(())
     }
 
