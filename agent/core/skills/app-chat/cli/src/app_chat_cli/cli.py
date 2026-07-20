@@ -10,7 +10,6 @@ Commands:
 """
 
 import argparse
-import os
 import sys
 
 from app_chat_cli.commands import cmd_history, cmd_import, cmd_redact, cmd_send
@@ -19,15 +18,7 @@ from app_chat_cli.daemon import cmd_daemon_restart, cmd_daemon_start, cmd_daemon
 _HELP_ARGS = ("--help", "-h", "help")
 
 
-def _require_ws_port() -> str:
-    port = os.environ.get("WS_PORT")
-    if not port:
-        print("error: WS_PORT environment variable is not set", file=sys.stderr)
-        sys.exit(1)
-    return port
-
-
-def _build_parser(ws_default: str) -> argparse.ArgumentParser:
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="app-chat", description="Vesta app chat skill")
     sub = parser.add_subparsers(dest="command")
 
@@ -39,7 +30,7 @@ def _build_parser(ws_default: str) -> argparse.ArgumentParser:
     # LEGACY(remove-when: no running agent's restart-skill `## Daemons` line still passes --ws-url):
     # accepted and ignored. The daemon no longer connects to core's /ws; the live echo fans out
     # in-process to the service's /ws subscribers. Kept so an existing launch line doesn't break argparse.
-    serve_p.add_argument("--ws-url", default=ws_default, help=argparse.SUPPRESS)
+    serve_p.add_argument("--ws-url", default=None, help=argparse.SUPPRESS)
     serve_p.add_argument("--data-dir", default=None, help="Data directory (default: ~/.app-chat)")
     serve_p.add_argument("--port", type=int, default=None, help="Service port (default: resolved via register-service)")
 
@@ -80,13 +71,10 @@ def _build_parser(ws_default: str) -> argparse.ArgumentParser:
 
 def main() -> None:
     if len(sys.argv) < 2 or sys.argv[1] in _HELP_ARGS:
-        _build_parser("ws://localhost:<port>/ws").print_help()
+        _build_parser().print_help()
         sys.exit(0)
 
-    port = _require_ws_port()
-    ws_default = f"ws://localhost:{port}/ws"
-    parser = _build_parser(ws_default)
-
+    parser = _build_parser()
     args = parser.parse_args()
 
     if args.command == "serve":
