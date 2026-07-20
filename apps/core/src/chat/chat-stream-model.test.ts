@@ -57,6 +57,17 @@ describe("chat-stream-model", () => {
     expect(committed.messages.map((m) => m.type)).toEqual(["chat"])
   })
 
+  it("does not re-add a paced chat whose id a reseed already merged before the delay elapsed", () => {
+    // A live chat is folded (paced, queued) but not yet committed; then a reconnect tail refetch
+    // merges the same id into the tail. The later paced commit must not duplicate that row.
+    const { state: folded, paced } = foldLiveEvent(initialChatState(), chat(7, "pong"))
+    expect(paced).toBe(true)
+    const reseeded = seedTail(folded, { events: [chat(7, "pong")], cursor: null })
+    expect(reseeded.messages).toHaveLength(1)
+    const committed = commitPacedChat(reseeded, chat(7, "pong"))
+    expect(committed.messages.map((m) => m.type)).toEqual(["chat"])
+  })
+
   it("drops a persisted row whose id was already shown", () => {
     const seeded = seedTail(initialChatState(), { events: [chat(2, "b")], cursor: null })
     const { state, paced } = foldLiveEvent(seeded, chat(2, "b"))

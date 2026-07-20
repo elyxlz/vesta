@@ -133,9 +133,12 @@ export function foldLiveEvent(
   return { state: { ...state, messages: capTail([...state.messages, event]) }, paced: false }
 }
 
-// Commit a paced `chat` to the tail once the hook's typing delay has elapsed. Its dedup entry was
-// already recorded by foldLiveEvent, so this only appends (the twin of web's drain append).
+// Commit a paced `chat` to the tail once the hook's typing delay has elapsed (the twin of web's drain
+// append). A reconnect tail refetch can merge this event by id while it still sits in the pacing
+// queue, so skip the append when the id is already present in the merged tail: that reseed row is the
+// same message, and re-adding it would duplicate the bubble.
 export function commitPacedChat(state: ChatState, event: ChatMessage): ChatState {
+  if (event.id != null && state.messages.some((message) => message.id === event.id)) return state
   return { ...state, messages: capTail([...state.messages, event]) }
 }
 
