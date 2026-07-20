@@ -40,6 +40,9 @@ vi.mock("@/providers/AuthProvider", () => ({
 vi.mock("@/components/IncompatibleScreen", () => ({
   IncompatibleScreen: () => <div>incompatible</div>,
 }));
+vi.mock("@/components/GatewayBehindScreen", () => ({
+  GatewayBehindScreen: () => <div>gateway behind</div>,
+}));
 vi.mock("@/components/DisconnectedOverlay", () => ({
   DisconnectedOverlay: () => <div>disconnected</div>,
 }));
@@ -94,6 +97,14 @@ const incompatibleHelloFrame = JSON.stringify({
   protocol: 2,
   floor: 2,
 });
+// protocol-compatible but the gateway release (0.0.1) is older than the client (__APP_VERSION__),
+// so the client runs ahead and must block.
+const gatewayBehindHelloFrame = JSON.stringify({
+  type: "hello",
+  version: "0.0.1",
+  protocol: 1,
+  floor: 1,
+});
 const snapshotFrame = JSON.stringify({
   type: "snapshot",
   tree: { gateway: { version: "9.9.9" }, agents: {} },
@@ -129,6 +140,27 @@ describe("ControllerProvider", () => {
     });
 
     expect(await findByText("incompatible")).toBeTruthy();
+  });
+
+  it("takes over with GatewayBehindScreen when the client is newer than the gateway", async () => {
+    const { findByText } = render(
+      <ControllerProvider>
+        <div>app body</div>
+      </ControllerProvider>,
+    );
+
+    await waitFor(() => {
+      expect(FakeWebSocket.instances).toHaveLength(1);
+    });
+    const socket = FakeWebSocket.instances[0];
+    if (!socket) throw new Error("socket not constructed");
+
+    act(() => {
+      socket.onopen?.();
+      socket.onmessage?.({ data: gatewayBehindHelloFrame });
+    });
+
+    expect(await findByText("gateway behind")).toBeTruthy();
   });
 
   it("builds the controller and reduces hello+snapshot into the replica", async () => {

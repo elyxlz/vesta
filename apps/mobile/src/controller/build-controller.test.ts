@@ -74,6 +74,15 @@ describe("buildController", () => {
     expect(refreshAccessToken).toHaveBeenCalledOnce();
   });
 
+  it("passes the client version through to the sync socket for the drift check", () => {
+    buildController(
+      { getConnection: () => fakeConnection(), refreshAccessToken: vi.fn() },
+      "0.1.179",
+    );
+
+    expect(deps().sync.clientVersion).toBe("0.1.179");
+  });
+
   it("throws when building the sync URL without a connection", () => {
     buildController({ getConnection: () => null, refreshAccessToken: vi.fn() });
 

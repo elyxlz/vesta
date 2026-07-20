@@ -5,6 +5,7 @@ import { getConnection, isTokenExpiringSoon } from "@/lib/connection";
 import { ensureFreshToken } from "@/lib/token-refresh";
 import { useAuth } from "@/providers/AuthProvider";
 import { IncompatibleScreen } from "@/components/IncompatibleScreen";
+import { GatewayBehindScreen } from "@/components/GatewayBehindScreen";
 import { DisconnectedOverlay } from "@/components/DisconnectedOverlay";
 import { createBrowserSocket } from "./browser-socket";
 import { ControllerContext, ControllerReconnectContext } from "./context";
@@ -34,6 +35,7 @@ function buildController(): Controller {
       createSocket: createBrowserSocket,
       setTimer: (fn, ms) => window.setTimeout(fn, ms),
       clearTimer: (handle) => window.clearTimeout(handle),
+      clientVersion: __APP_VERSION__,
     },
     http: {
       baseUrl: () => getConnection()?.url ?? "",
@@ -60,13 +62,21 @@ function ActiveController({ children }: { children: ReactNode }) {
   );
 }
 
+// The two blocking sync states take over the whole app in place of children; every other
+// state renders the app (a transient disconnect shows the overlay on top instead).
+function routeTakeover(syncState: string): ReactNode {
+  if (syncState === "incompatible") return <IncompatibleScreen />;
+  if (syncState === "gateway_behind") return <GatewayBehindScreen />;
+  return null;
+}
+
 // One live controller for the lifetime of a session mount. Built once via a lazy useState
 // initializer (run exactly once per mount and never discarded, so it avoids the
 // useMemo-side-effect-in-render caveat), closed on unmount. Reauth rotates the socket's token
 // in-band before it expires; the overlay tracks the sync sub-store. Like mobile, the desktop
 // app is a drifting client: it opens /sync and the tolerant-floor handshake decides
-// compatibility, so an incompatible gateway protocol takes over with IncompatibleScreen
-// instead of a pre-socket version gate.
+// compatibility. An incompatible protocol floor takes over with IncompatibleScreen; a client
+// newer than the gateway (drift ahead is disallowed) takes over with GatewayBehindScreen.
 function ControllerSession({ children }: { children: ReactNode }) {
   const [controller] = useState(buildController);
   const syncState = useSyncState(controller);
@@ -112,7 +122,7 @@ function ControllerSession({ children }: { children: ReactNode }) {
 
   return (
     <ControllerContext.Provider value={controller}>
-      {syncState === "incompatible" ? <IncompatibleScreen /> : children}
+      {routeTakeover(syncState) ?? children}
       {showDisconnected && <DisconnectedOverlay />}
     </ControllerContext.Provider>
   );

@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import Constants from "expo-constants";
 import type { Controller } from "@vesta/core";
 import { useSyncState } from "@vesta/core/react";
 import { useSession } from "@/session/SessionProvider";
@@ -9,6 +10,11 @@ import { ControllerContext } from "./context";
 import { createAppStateForegroundSignal } from "./foreground-signal";
 import { runReauthCheck } from "./reauth-poll";
 import { IncompatibleScreen } from "./IncompatibleScreen";
+import { GatewayBehindScreen } from "./GatewayBehindScreen";
+
+// This app's own release version, used to block running ahead of the gateway. Undefined (or
+// non-semver) fails open in core, so a dev build never blocks.
+const CLIENT_VERSION = Constants.expoConfig?.version ?? undefined;
 
 export { useController } from "./context";
 export { useSyncState };
@@ -34,10 +40,13 @@ function ConnectedController({ children }: { children: ReactNode }) {
       const action = controllerGateAction(prev, next);
       prev = next;
       if (action === "build") {
-        current = buildController({
-          getConnection: api.getConnection,
-          refreshAccessToken,
-        });
+        current = buildController(
+          {
+            getConnection: api.getConnection,
+            refreshAccessToken,
+          },
+          CLIENT_VERSION,
+        );
         setController(current);
       } else if (action === "close") {
         current?.close();
@@ -92,9 +101,16 @@ function LiveController({
   const syncState = useSyncState(controller);
   return (
     <ControllerContext.Provider value={controller}>
-      {syncState === "incompatible" ? <IncompatibleScreen /> : children}
+      {routeTakeover(syncState) ?? children}
     </ControllerContext.Provider>
   );
+}
+
+// The two blocking sync states take over in place of the app; every other state renders it.
+function routeTakeover(syncState: string): ReactNode {
+  if (syncState === "incompatible") return <IncompatibleScreen />;
+  if (syncState === "gateway_behind") return <GatewayBehindScreen />;
+  return null;
 }
 
 // Before connect (and on the connect screens) there is no gateway to talk to: render children

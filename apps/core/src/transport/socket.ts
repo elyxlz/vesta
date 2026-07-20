@@ -1,11 +1,16 @@
 import { encodeFrame, reauthFrame } from "../protocol/frames"
 import { parseServerFrame } from "../protocol/parse"
+import { clientAheadOfGateway } from "../protocol/release-version"
 import { PROTOCOL_FLOOR, PROTOCOL_VERSION } from "../protocol/version"
 import type { ClientFrame, HelloFrame } from "../protocol/frames"
 import type { Delta } from "../protocol/deltas"
 import type { Tree } from "../protocol/tree"
 
-export type SyncState = "connecting" | "open" | "reconnecting" | "incompatible" | "closed"
+// "gateway_behind" is a recoverable block, not a terminal error: the app runs a newer release
+// than the gateway (drift ahead is disallowed; drift behind stays fine via the floor). The
+// socket stays live, so once the gateway restarts newer the reconnect re-hellos into "open".
+export type SyncState =
+  "connecting" | "open" | "reconnecting" | "incompatible" | "gateway_behind" | "closed"
 
 export interface SocketLike {
   send: (data: string) => void
@@ -20,6 +25,9 @@ export interface SyncSocketDeps {
   createSocket: (url: string) => SocketLike
   setTimer: (fn: () => void, ms: number) => number
   clearTimer: (handle: number) => void
+  // This client's own release version, used to block running ahead of the gateway. Omitted (or
+  // unparseable) fails open, so a dev build with a non-semver version never blocks.
+  clientVersion?: string
   baseDelayMs?: number
   maxDelayMs?: number
 }
@@ -82,11 +90,15 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
     callbacks.onStateChange("incompatible")
   }
 
+  const gatewayBehind = (hello: HelloFrame): boolean =>
+    deps.clientVersion !== undefined && clientAheadOfGateway(deps.clientVersion, hello.version)
+
   const handleMessage = (data: string): void => {
     const parsed = parseServerFrame(data)
     switch (parsed.kind) {
       case "hello":
         if (!compatible(parsed.frame)) goIncompatible()
+        else if (gatewayBehind(parsed.frame)) callbacks.onStateChange("gateway_behind")
         return
       case "snapshot":
         callbacks.onSnapshot(parsed.frame.tree)

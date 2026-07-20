@@ -3,6 +3,7 @@ import type { Controller, Tree } from "@vesta/core";
 import { rosterFromTree, rostersEqual } from "@vesta/core";
 import { useReplica, useSyncState } from "@vesta/core/react";
 import { apiFetch } from "@/api/client";
+import { requestGatewayUpdate } from "@/api/gateway";
 import { useAuth } from "@/providers/AuthProvider";
 import {
   ControllerContext,
@@ -54,15 +55,10 @@ function ReplicaGateway({
   }, [agents]);
 
   const triggerGatewayUpdate = useCallback(async (): Promise<boolean> => {
-    try {
-      await apiFetch("/gateway/update", { method: "POST" });
-    } catch (err) {
-      console.warn("[gateway] update request failed:", err);
-      return false;
-    }
+    const ok = await requestGatewayUpdate();
     // Force a fresh controller/socket so the app re-attaches to the restarting gateway.
-    reconnect();
-    return true;
+    if (ok) reconnect();
+    return ok;
   }, [reconnect]);
 
   const checkForUpdate = useCallback(async (): Promise<void> => {

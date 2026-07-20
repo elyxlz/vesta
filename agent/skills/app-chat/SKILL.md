@@ -1,9 +1,11 @@
 ---
 name: app-chat
-description: Reply to notifications with `source=app-chat` via `app-chat send`. Requires daemon.
+description: The user's chat screen in the Vesta app (web, desktop, mobile). Reply to `source=app-chat` notifications via `app-chat send`. Requires daemon.
 ---
 
 # App Chat - CLI: app-chat
+
+App chat is the built-in chat screen of the Vesta app on web, desktop, and mobile: the user's direct line to you, no third-party account involved. Messages the user types there arrive as `source=app-chat` notifications; replies sent with `app-chat send` appear in their chat live (and as a push notification when they are away). Treat it as a first-class messaging channel with the texting style below.
 
 ## Setup
 ```bash

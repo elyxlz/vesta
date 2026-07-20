@@ -11,7 +11,10 @@ export interface ControllerSession {
   refreshAccessToken: () => Promise<boolean>;
 }
 
-export function buildController(session: ControllerSession): Controller {
+export function buildController(
+  session: ControllerSession,
+  clientVersion?: string,
+): Controller {
   const conn = () => session.getConnection();
   const syncUrl = () => {
     const current = conn();
@@ -25,6 +28,7 @@ export function buildController(session: ControllerSession): Controller {
       createSocket: createRnSocket,
       setTimer: (fn, ms) => setTimeout(fn, ms) as unknown as number,
       clearTimer: (handle) => clearTimeout(handle),
+      clientVersion,
     },
     http: {
       baseUrl: () => conn()?.url ?? "",

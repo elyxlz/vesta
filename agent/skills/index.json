@@ -13,7 +13,7 @@
   },
   {
     "name": "app-chat",
-    "description": "Reply to notifications with `source=app-chat` via `app-chat send`. Requires daemon."
+    "description": "The user's chat screen in the Vesta app (web, desktop, mobile). Reply to `source=app-chat` notifications via `app-chat send`. Requires daemon."
   },
   {
     "name": "birth",

@@ -99,11 +99,11 @@ if (!gotLock) {
     // Drift toward the latest release on our own: check on launch, download in the
     // background, install on the next quit. Packaged only (dev has no update feed).
     if (app.isPackaged) {
-      void import("./updater.js").then(({ checkForAppUpdate }) =>
-        checkForAppUpdate().catch((err: unknown) => {
+      void import("./updater.js")
+        .then(({ checkForAppUpdate }) => checkForAppUpdate())
+        .catch((err: unknown) => {
           console.error("app update check failed:", err);
-        }),
-      );
+        });
     }
   });
 }

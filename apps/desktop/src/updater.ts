@@ -27,6 +27,12 @@ export async function checkForAppUpdate(): Promise<void> {
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.allowDowngrade = false;
+  // With autoDownload, checkForUpdates() resolves at the metadata fetch and the download runs
+  // in the background; its failure surfaces only as an EventEmitter "error" event, which throws
+  // if unhandled. Swallow it so a mid-download network blip (or an offline launch) stays silent.
+  autoUpdater.on("error", (err) => {
+    console.error("app auto-update failed:", err);
+  });
   autoUpdater.setFeedURL({
     provider: "github",
     owner: GITHUB_OWNER,
