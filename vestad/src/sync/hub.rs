@@ -82,8 +82,8 @@ impl SyncHub {
         self.notifications_rx.clone()
     }
 
-    /// Subscribe to the always-on alert edge shared by every `/sync` session. Independent of watches:
-    /// a session forwards every alert regardless of which agents it is watching.
+    /// Subscribe to the always-on alert edge shared by every `/sync` session. Every session forwards
+    /// every alert to its client; the edge is not scoped to any agent.
     pub fn subscribe_alerts(&self) -> broadcast::Receiver<Arc<LiveAlert>> {
         self.alerts_tx.subscribe()
     }
@@ -104,7 +104,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn an_alert_fans_out_to_every_session_regardless_of_watches() {
+    async fn an_alert_fans_out_to_every_session() {
         let hub = SyncHub::new();
         let mut first = hub.subscribe_alerts();
         let mut second = hub.subscribe_alerts();

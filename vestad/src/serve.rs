@@ -485,8 +485,8 @@ async fn create_agent_handler(
     let result = create_and_start(&state, &name, manage_core_code, &progress).await;
     // On success, retire the bridging build phase only once the poll lists the new container, so the
     // synthetic mid-build roster row is replaced in place. Clearing it while the container is not yet
-    // listed drops the row entirely for a poll, emitting a spurious `agent_removed` that tears down a
-    // /sync watch registered before create (watch-before-create must survive materialization).
+    // listed drops the row entirely for a poll, emitting a spurious `agent_removed` that flaps the
+    // agent out of the roster before it materializes.
     if result.is_ok() {
         wait_for_agent_listed(&state, &name).await;
     }
