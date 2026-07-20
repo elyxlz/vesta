@@ -1,8 +1,9 @@
-"""CLI commands: send and history."""
+"""CLI commands: send, history, and import."""
 
 import argparse
 import asyncio
 import json
+import os
 import pathlib as pl
 import sqlite3
 import sys
@@ -61,3 +62,36 @@ def cmd_history(args: argparse.Namespace) -> None:
         store.close()
     results = [{"timestamp": e["ts"], "role": e["type"], "content": e["text"]} for e in events]
     print(json.dumps(results, indent=2))
+
+
+def _default_events_db() -> pl.Path:
+    """Core's events.db on box: `$AGENT_DIR/data/events.db` (default `~/agent`), mirroring config.data_dir."""
+    agent_dir = os.environ.get("AGENT_DIR")
+    base = pl.Path(agent_dir).expanduser() if agent_dir else pl.Path.home() / "agent"
+    return base / "data" / "events.db"
+
+
+def cmd_import(args: argparse.Namespace) -> None:
+    """Copy channel=app-chat conversation rows from core's events.db into the skill store, preserving ids
+    and bumping the sequence above them (D3). Idempotent (INSERT OR IGNORE); the store's AFTER INSERT
+    trigger indexes each imported row so `history --search` covers old conversations."""
+    events_db = pl.Path(args.events_db) if args.events_db else _default_events_db()
+    data_dir = pl.Path(args.data_dir or (pl.Path.home() / ".app-chat"))
+    if not events_db.exists():
+        print(json.dumps({"status": "no_events_db", "path": str(events_db)}))
+        return
+    src = sqlite3.connect(str(events_db), timeout=30)
+    try:
+        rows = src.execute(
+            "SELECT id, ts, data FROM events WHERE json_extract(data, '$.type') IN ('user', 'chat') ORDER BY id ASC"
+        ).fetchall()
+    finally:
+        src.close()
+    store = Store(store_path(data_dir))
+    try:
+        count, max_id = store.import_rows(rows)
+        if max_id:
+            store.bump_sequence_above(max_id)
+    finally:
+        store.close()
+    print(json.dumps({"status": "imported", "rows": count, "max_id": max_id}))

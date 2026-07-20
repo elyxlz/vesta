@@ -19,10 +19,10 @@ uv tool install --editable ~/agent/core/skills/app-chat/cli
 Manage the daemon through these commands, not raw `screen`.
 **Restart**: Add to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
 ```
-app-chat daemon start
+running app-chat || { app-chat daemon start; sleep 1; }
 ```
-(The older `screen -dmS app-chat app-chat serve` line still works if a box hasn't picked up the
-new subcommand yet.)
+`app-chat daemon start` registers the `app-chat` service (getting its port) and starts the HTTP
+server plus the ws connection.
 
 ## Quick Reference
 ```bash
@@ -33,9 +33,11 @@ app-chat history --limit 20
 ```
 
 ## How it works
-- When the app user sends a message, the agent receives it and writes the notification itself
-- You receive the notification and reply with `app-chat send`
-- The daemon holds a `/ws` connection so `app-chat send` can deliver your replies to the app
+- The daemon is a registered service: it owns the `app-chat` channel, serving `POST /message` (intake) and `GET /history` on its registered port, backed by its own store (`~/.app-chat/app-chat.db`)
+- When the app user sends a message, the service persists it and writes the `source=app-chat` notification itself, so a dead process never drops a message the app already showed as delivered
+- You receive the notification and reply with `app-chat send`: the reply is persisted to the store, then emitted over the `/ws` connection so the app sees it live
+- Durability is the store, not the socket: a reply succeeds even with the ws down and the live echo ships on reconnect
+- History and search read the same store: `app-chat history` and `app-chat history --search`
 
 ## Notes
 - Always reply to app messages using `app-chat send`, not through any other channel
