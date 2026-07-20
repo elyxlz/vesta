@@ -216,6 +216,22 @@ def account_profile(account: str) -> tuple[str, dict]:
         # win. Returning early here would silently drop them.
         _, profile = resolve_provider(dict(os.environ))
         profile = dict(profile)
+    # If the resolved profile has no IMAP host (e.g. the 'generic' provider)
+    # but the account's email domain maps to a known provider, backfill just
+    # the host/port so an app-password account on a known domain (e.g. a Gmail
+    # address saved as 'generic') works without hand-editing imap_host. The
+    # auth strategy and stored credentials are deliberately left untouched.
+    if not profile.get("imap_host"):
+        user = cfg.get("user") or (tok.get("user") if tok else "") or _env("EMAIL_CLIENT_USER")
+        detected = detect_provider(user or "")
+        if detected:
+            try:
+                dp = get_profile(detected)
+            except KeyError:
+                dp = {}
+            for hk in ("imap_host", "imap_port", "smtp_host", "smtp_port"):
+                if dp.get(hk) and not profile.get(hk):
+                    profile[hk] = dp[hk]
     # Layer per-account config overrides, then env overrides, on top.
     for key in ("imap_host", "smtp_host", "smtp_port", "oauth_client_id", "oauth_authority", "caldav_url"):
         if cfg.get(key):
