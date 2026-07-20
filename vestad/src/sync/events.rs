@@ -93,7 +93,7 @@ fn stub_notification(notif_id: &str) -> Value {
 mod tests {
     use super::*;
 
-    /// Loads Stage 3's committed union. Returns None (test no-ops) in a standalone vestad checkout
+    /// Loads the committed tap-read fixture. Returns None (test no-ops) in a standalone vestad checkout
     /// without the sibling `agent/` tree, mirroring `sync_fixture_file`'s skip-when-absent rule.
     fn union_fixture() -> Option<Value> {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../agent/tests/fixtures/event-union.json");
@@ -105,7 +105,7 @@ mod tests {
     fn every_union_event_yields_meta_with_the_right_id_sign() {
         let Some(fixture) = union_fixture() else { return };
         let events = fixture["events"].as_array().expect("events array");
-        assert_eq!(events.len(), 13, "the union covers all 13 stream variants");
+        assert_eq!(events.len(), 3, "the fixture covers the tap-read subset");
         for event in events {
             let id = event.get("id").and_then(Value::as_i64).expect("every event carries an id");
             let kind = event.get("type").and_then(Value::as_str).expect("every event carries a type");

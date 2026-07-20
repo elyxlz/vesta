@@ -7,67 +7,11 @@
       "type": "status"
     },
     {
-      "id": 1000,
-      "input_method": "typed",
-      "intent_id": "intent-abc",
-      "text": "hello",
-      "ts": "2026-01-01T00:00:00+00:00",
-      "type": "user"
-    },
-    {
-      "id": 1,
-      "text": "hi",
-      "ts": "2026-01-01T00:00:00+00:00",
-      "type": "assistant"
-    },
-    {
-      "id": 2,
-      "signature": "sig",
-      "text": "hmm",
-      "ts": "2026-01-01T00:00:00+00:00",
-      "type": "thinking"
-    },
-    {
-      "id": 1001,
-      "text": "yo",
-      "ts": "2026-01-01T00:00:00+00:00",
-      "type": "chat"
-    },
-    {
-      "id": 3,
-      "input": "ls",
-      "subagent": false,
-      "tool": "Bash",
-      "ts": "2026-01-01T00:00:00+00:00",
-      "type": "tool_start"
-    },
-    {
-      "id": 4,
-      "subagent": false,
-      "tool": "Bash",
-      "ts": "2026-01-01T00:00:00+00:00",
-      "type": "tool_end"
-    },
-    {
-      "id": 5,
-      "text": "oops",
-      "ts": "2026-01-01T00:00:00+00:00",
-      "type": "error"
-    },
-    {
-      "id": 6,
-      "resets_at": 1767225600,
-      "text": "Claude rate limit hit",
-      "ts": "2026-01-01T00:00:00+00:00",
-      "type": "rate_limited",
-      "window": "five_hour"
-    },
-    {
       "decided": "interrupt",
       "fields": {
         "chat_name": "Bride squad"
       },
-      "id": 7,
+      "id": 1,
       "notif_id": "whatsapp-123",
       "notif_type": "message",
       "sender": "Alex",
@@ -81,27 +25,9 @@
       "notif_id": "whatsapp-123",
       "ts": "2026-01-01T00:00:00+00:00",
       "type": "notification_cleared"
-    },
-    {
-      "agent_id": "abc",
-      "agent_type": "browser",
-      "id": 8,
-      "ts": "2026-01-01T00:00:00+00:00",
-      "type": "subagent_start"
-    },
-    {
-      "agent_id": "abc",
-      "agent_type": "browser",
-      "id": 9,
-      "ts": "2026-01-01T00:00:00+00:00",
-      "type": "subagent_stop"
     }
   ],
   "snapshot": {
-    "chat": {
-      "cursor": null,
-      "events": []
-    },
     "config": {
       "timezone": "America/New_York"
     },

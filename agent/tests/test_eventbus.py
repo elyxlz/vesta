@@ -11,11 +11,9 @@ from core.events import (
     _SCHEMA_VERSION,
     SUBSCRIBER_QUEUE_MAXSIZE,
     AssistantEvent,
-    ChatEvent,
     EventBus,
     NotificationClearedEvent,
     SubagentStartEvent,
-    UserEvent,
 )
 
 # --- Emit & persist ---
@@ -56,31 +54,6 @@ def test_status_not_persisted(event_bus):
     assert len(events) == 0
 
 
-def test_user_and_chat_are_live_only(event_bus):
-    """user and chat are broadcast transport only now (the app-chat skill owns their durability): they
-    reach subscribers but are never persisted to events.db."""
-    q = event_bus.subscribe()
-    event_bus.emit(UserEvent(type="user", text="a message"))
-    event_bus.emit(ChatEvent(type="chat", text="a reply"))
-    assert q.get_nowait()["type"] == "user"
-    assert q.get_nowait()["type"] == "chat"
-    events, _ = event_bus.recent()
-    assert events == []
-
-
-def test_emit_preformed_broadcasts_without_persisting(event_bus):
-    """emit_preformed pushes a skill's fully-formed event to every subscriber verbatim: its
-    skill-assigned positive id and ts pass straight through, and nothing is persisted."""
-    q = event_bus.subscribe()
-    event_bus.emit_preformed(ChatEvent(type="chat", id=42, ts="2026-01-01T00:00:00+00:00", text="from the skill"))
-    received = q.get_nowait()
-    assert received["id"] == 42
-    assert received["ts"] == "2026-01-01T00:00:00+00:00"
-    assert received["text"] == "from the skill"
-    events, _ = event_bus.recent()
-    assert events == []
-
-
 def test_emit_survives_history_write_failure(event_bus):
     """A failed history write never crashes the emitting coroutine: any sqlite3.Error (a closed or
     corrupt db, not only a locked one) drops the row with a warning and live subscribers still
@@ -95,9 +68,9 @@ def test_no_data_dir():
     """EventBus works without persistence (no data_dir)."""
     bus = EventBus()
     q = bus.subscribe()
-    bus.emit(UserEvent(type="user", text="hello"))
+    bus.emit(AssistantEvent(type="assistant", text="hello"))
     received = q.get_nowait()
-    assert received["type"] == "user"
+    assert received["type"] == "assistant"
     events, _ = bus.recent()
     assert events == []
     bus.close()
@@ -129,12 +102,12 @@ def test_stalled_subscriber_is_evicted_on_overflow(event_bus):
     (regression: issue #1160's unbounded drop-oldest storm)."""
     q = event_bus.subscribe()
     for i in range(SUBSCRIBER_QUEUE_MAXSIZE + 1):
-        event_bus.emit(UserEvent(type="user", text=f"msg {i}"))
+        event_bus.emit(AssistantEvent(type="assistant", text=f"msg {i}"))
 
     assert q.qsize() == 1
     assert q.get_nowait()["type"] == "evicted"
 
-    event_bus.emit(UserEvent(type="user", text="after eviction"))
+    event_bus.emit(AssistantEvent(type="assistant", text="after eviction"))
     assert q.qsize() == 0
 
 
@@ -144,7 +117,7 @@ def test_eviction_logs_one_warning_not_a_storm(event_bus, caplog):
     q = event_bus.subscribe()
     with caplog.at_level("WARNING", logger="vesta.events"):
         for i in range(SUBSCRIBER_QUEUE_MAXSIZE + 200):
-            event_bus.emit(UserEvent(type="user", text=f"msg {i}"))
+            event_bus.emit(AssistantEvent(type="assistant", text=f"msg {i}"))
 
     assert q.qsize() == 1  # the sentinel; the post-eviction flood never reached it
     warnings = [r for r in caplog.records if r.levelname == "WARNING"]
@@ -158,7 +131,7 @@ def test_eviction_does_not_affect_other_subscribers(event_bus):
     total = SUBSCRIBER_QUEUE_MAXSIZE + 10
     delivered = []
     for i in range(total):
-        event_bus.emit(UserEvent(type="user", text=f"msg {i}"))
+        event_bus.emit(AssistantEvent(type="assistant", text=f"msg {i}"))
         delivered.append(tp.cast(tp.Any, fast.get_nowait())["text"])  # fast keeps draining
 
     assert delivered == [f"msg {i}" for i in range(total)]
@@ -171,15 +144,15 @@ def test_draining_subscriber_is_never_evicted(event_bus):
     every event and is never evicted."""
     q = event_bus.subscribe()
     for i in range(SUBSCRIBER_QUEUE_MAXSIZE):
-        event_bus.emit(UserEvent(type="user", text=f"fill {i}"))
+        event_bus.emit(AssistantEvent(type="assistant", text=f"fill {i}"))
     for i in range(50):
         q.get_nowait()  # make one slot of room
-        event_bus.emit(UserEvent(type="user", text=f"paced {i}"))
+        event_bus.emit(AssistantEvent(type="assistant", text=f"paced {i}"))
 
     assert q.qsize() == SUBSCRIBER_QUEUE_MAXSIZE
     drained = [tp.cast(tp.Any, q.get_nowait())["text"] for _ in range(q.qsize())]
     assert drained[-1] == "paced 49"
-    event_bus.emit(UserEvent(type="user", text="still subscribed"))
+    event_bus.emit(AssistantEvent(type="assistant", text="still subscribed"))
     assert tp.cast(tp.Any, q.get_nowait())["text"] == "still subscribed"
 
 
@@ -392,8 +365,8 @@ def test_id_is_not_stored_in_the_data_blob(event_bus):
 
 
 def test_live_only_events_get_negative_ids(event_bus):
-    """The live-only types (status, notification_cleared, user, chat) skip persistence but still carry
-    an id: a per-session counter running negative, which can never collide with a positive rowid."""
+    """The live-only types (status, notification_cleared) skip persistence but still carry an id: a
+    per-session counter running negative, which can never collide with a positive rowid."""
     q = event_bus.subscribe()
     event_bus.set_state("thinking")
     first = q.get_nowait()
@@ -401,10 +374,8 @@ def test_live_only_events_get_negative_ids(event_bus):
     assert first["id"] == -1
     event_bus.emit(NotificationClearedEvent(type="notification_cleared", notif_id="x"))
     assert q.get_nowait()["id"] == -2
-    event_bus.emit(UserEvent(type="user", text="hi"))
+    event_bus.emit(NotificationClearedEvent(type="notification_cleared", notif_id="y"))
     assert q.get_nowait()["id"] == -3
-    event_bus.emit(ChatEvent(type="chat", text="yo"))
-    assert q.get_nowait()["id"] == -4
 
 
 def test_legacy_row_without_id_gets_rowid_on_read(tmp_path):

@@ -17,7 +17,7 @@ from wait_util import wait_for_condition
 import core.config as cfg
 import core.models as vm
 from core.api import _ws_handler, start_ws_server
-from core.events import AssistantEvent, ChatEvent
+from core.events import AssistantEvent
 
 
 def _pick_port() -> int:
@@ -59,18 +59,17 @@ async def _drain_until(ws, predicate, timeout=1.0):
 
 
 @pytest.mark.anyio
-async def test_ws_sends_snapshot_with_empty_chat_seed(event_bus):
-    """The connect snapshot is sent, and its chat seed is always empty now: chat is live-only and
-    unpersisted, so core can't seed it (the client merges history from the app-chat skill service)."""
-    event_bus.emit(ChatEvent(type="chat", text="hello"))
+async def test_ws_snapshot_omits_chat(event_bus):
+    """The connect snapshot carries state + notifications + config, never chat: the app-chat skill owns
+    chat end to end on its own service socket, so core neither transports nor seeds it."""
     runner, base = await _start_server(event_bus)
     try:
         async with ClientSession() as session, session.ws_connect(f"{base}/ws") as ws:
             msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
             data = json.loads(msg.data)
             assert data["type"] == "snapshot"
-            assert data["chat"]["events"] == []
-            assert data["chat"]["cursor"] is None
+            assert "chat" not in data
+            assert set(data) == {"type", "state", "notifications", "config"}
     finally:
         await runner.cleanup()
 
@@ -110,54 +109,28 @@ async def test_ws_sends_empty_snapshot_when_no_events(event_bus):
             msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
             data = json.loads(msg.data)
             assert data["type"] == "snapshot"
-            assert data["chat"]["events"] == []
-            assert data["chat"]["cursor"] is None
+            assert "chat" not in data
             assert data["notifications"]["pending"] == []
     finally:
         await runner.cleanup()
 
 
 @pytest.mark.anyio
-async def test_ws_emit_frame_broadcasts_preformed(event_bus):
-    """The one accepted recv frame is `emit`: a skill's pre-formed live event (its own int id) is
-    broadcast verbatim to subscribers, id preserved, nothing persisted."""
-    runner, base = await _start_server(event_bus)
-    try:
-        async with ClientSession() as session, session.ws_connect(f"{base}/ws") as ws:
-            await asyncio.wait_for(ws.receive(), timeout=1.0)  # snapshot
-            await ws.send_json({"type": "emit", "event": {"type": "chat", "id": 77, "text": "from the skill"}})
-            received = await _drain_until(ws, lambda r: any(e.get("type") == "chat" for e in r))
-            chat = next(e for e in received if e.get("type") == "chat")
-            assert chat["id"] == 77
-            assert chat["text"] == "from the skill"
-    finally:
-        await runner.cleanup()
-
-
-@pytest.mark.anyio
-async def test_ws_drops_garbage_and_unemittable_frames(event_bus):
-    """Malformed or unaccepted frames are dropped, not connection killers: a non-object JSON frame, a
-    non-`emit` type, an emit of a non-emittable type, and an emit missing an int id all pass silently,
-    and a valid emit on the same socket still comes through."""
+async def test_ws_recv_drain_survives_garbage_and_keeps_the_socket_live(event_bus):
+    """Nothing injects events over the WS anymore: the recv loop is a pure drain. Inbound frames
+    (garbage, a stale emit frame) are ignored without killing the connection, and the socket still
+    receives bus events afterwards."""
     runner, base = await _start_server(event_bus)
     try:
         async with ClientSession() as session, session.ws_connect(f"{base}/ws") as ws:
             await asyncio.wait_for(ws.receive(), timeout=1.0)  # snapshot
             await ws.send_str("123")
-            await ws.send_str("[]")
-            await ws.send_str("null")
-            await ws.send_json({"type": "message", "text": "old frame"})
-            await ws.send_json({"type": "emit", "event": {"type": "status", "id": 1, "state": "idle"}})
-            await ws.send_json({"type": "emit", "event": {"type": "chat", "text": "no id"}})
-            await ws.send_json({"type": "emit", "event": {"type": "user", "id": 5, "text": "still alive"}})
-            received = await _drain_until(
-                ws,
-                lambda r: any(e.get("type") == "user" and e.get("text") == "still alive" for e in r),
-            )
-            users = [e for e in received if e.get("type") == "user"]
-            assert len(users) == 1
-            assert users[0]["id"] == 5
-            assert not any(e.get("type") in ("status", "message") for e in received)
+            await ws.send_json({"type": "emit", "event": {"type": "chat", "id": 77, "text": "ignored"}})
+            event_bus.emit(AssistantEvent(type="assistant", text="still alive"))
+            received = await _drain_until(ws, lambda r: any(e.get("type") == "assistant" for e in r))
+            assistants = [e for e in received if e.get("type") == "assistant"]
+            assert [e["text"] for e in assistants] == ["still alive"]
+            assert not any(e.get("type") == "chat" for e in received)
     finally:
         await runner.cleanup()
 
@@ -215,7 +188,7 @@ async def test_send_loop_closes_when_send_stalls(event_bus, monkeypatch):
             await asyncio.Event().wait()
 
     sub = event_bus.subscribe()
-    event_bus.emit(ChatEvent(type="chat", text="never delivered"))
+    event_bus.emit(AssistantEvent(type="assistant", text="never delivered"))
     await asyncio.wait_for(api._send_loop(typing.cast("web.WebSocketResponse", _StalledWs()), sub), timeout=1.0)
 
 
@@ -543,4 +516,3 @@ async def test_history_rejects_app_chat_channel_with_410(event_bus):
                 assert resp.status == 200
     finally:
         await runner.cleanup()
-

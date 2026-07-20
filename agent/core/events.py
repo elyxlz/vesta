@@ -57,15 +57,6 @@ class ThinkingEvent(_BaseEvent):
     signature: str
 
 
-class UserEvent(_BaseEvent):
-    type: tp.Literal["user"]
-    text: str
-    input_method: tp.NotRequired[tp.Literal["voice", "typed"]]
-    # The client-generated send-message id, echoed back so the optimistic UI dedups by id (not text)
-    # and a replayed send stays idempotent. Absent when the client sent none.
-    intent_id: tp.NotRequired[str]
-
-
 class ErrorEvent(_BaseEvent):
     type: tp.Literal["error"]
     text: str
@@ -121,40 +112,26 @@ class SubagentStopEvent(_BaseEvent):
     agent_type: str
 
 
-class ChatEvent(_BaseEvent):
-    type: tp.Literal["chat"]
-    text: str
-
-
 type StreamEvent = (
     StatusEvent
     | ToolStartEvent
     | ToolEndEvent
     | AssistantEvent
     | ThinkingEvent
-    | UserEvent
     | ErrorEvent
     | RateLimitedEvent
     | NotificationEvent
     | NotificationClearedEvent
     | SubagentStartEvent
     | SubagentStopEvent
-    | ChatEvent
 )
 
 
 # The connect handshake: one event sent directly to a client on a successful WS connect (not via
 # the bus, so never persisted/broadcast). Each top-level key except `state` is a domain object so
 # new connect-time state is added within a domain (or as a new domain) without disturbing readers;
-# consumers read only the domains they care about (web: all; CLI: chat; vestad: state).
-class SnapshotChat(tp.TypedDict):
-    # Always empty now: chat is live-only and unpersisted, so core can't seed it; the client merges
-    # history from the app-chat skill service (see the app-chat wave). Kept as a domain so readers and
-    # the wire shape are undisturbed.
-    events: list[StreamEvent]
-    cursor: int | None  # load-older pagination cursor
-
-
+# consumers read only the domains they care about (web: all; vestad: state). Chat is not here: the
+# app-chat skill owns it end to end on its own service socket.
 class SnapshotNotifications(tp.TypedDict):
     pending: list[str]  # notification file stems still on disk (received but not yet processed)
 
@@ -166,7 +143,6 @@ class SnapshotConfig(tp.TypedDict):
 class SnapshotEvent(tp.TypedDict):
     type: tp.Literal["snapshot"]
     state: AgentState
-    chat: SnapshotChat
     notifications: SnapshotNotifications
     config: SnapshotConfig
 
@@ -182,10 +158,9 @@ type VestaEvent = StreamEvent | SnapshotEvent | EvictedEvent
 PAGE_SIZE = 50
 
 # Live-only event types: broadcast to subscribers but never persisted to events.db. status (activity
-# flips) and notification_cleared (pending deltas) have no place in history; user/chat are broadcast
-# transport only now, with the app-chat skill service owning their durability + ids (see the app-chat
-# wave). A live-only event gets a negative session-local id (see _next_live_id).
-_LIVE_ONLY_TYPES: tuple[str, ...] = ("status", "notification_cleared", "user", "chat")
+# flips) and notification_cleared (pending deltas) have no place in history. A live-only event gets a
+# negative session-local id (see _next_live_id).
+_LIVE_ONLY_TYPES: tuple[str, ...] = ("status", "notification_cleared")
 
 
 _EVENTS_SCHEMA = """
@@ -338,13 +313,6 @@ class EventBus:
                 event["id"] = self._next_live_id()
         else:
             event["id"] = self._next_live_id()
-        for q in list(self._subscribers):
-            self._offer(q, event)
-
-    def emit_preformed(self, event: StreamEvent) -> None:
-        """Broadcast a fully-formed event from a skill (its id + ts already set), never persisting and
-        never re-stamping. The skill owns app-chat durability now; core is only the live transport, so a
-        skill-assigned positive id passes straight through to every subscriber (see the app-chat wave)."""
         for q in list(self._subscribers):
             self._offer(q, event)
 

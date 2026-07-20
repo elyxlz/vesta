@@ -39,7 +39,7 @@ from .config import (
     update_config_store,
     validate_config_updates,
 )
-from .events import EventBus, SnapshotChat, SnapshotEvent, StreamEvent, VestaEvent
+from .events import EventBus, SnapshotEvent, VestaEvent
 from .helpers import get_memory_path
 from .models import State
 from .provider import ProviderAuthState, UsageError, clear_provider, get_usage, set_claude, set_openrouter
@@ -57,11 +57,11 @@ def _pending_notification_ids(config: VestaConfig) -> list[str]:
 
 
 async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
-    """Bidirectional event bus WebSocket.
+    """Event bus WebSocket.
 
     Send: all events from the event bus are pushed to connected clients.
-    Recv: in-container skills push pre-formed events to broadcast (see _recv_loop).
-    On connect: sends a `snapshot` seed (state + chat + pending notifications)."""
+    Recv: drained only to keep the socket live and notice a close (see _recv_loop); nothing injects
+    events anymore. On connect: sends a `snapshot` seed (state + pending notifications + config)."""
     event_bus: EventBus = request.app["event_bus"]
     config: VestaConfig = request.app["config"]
 
@@ -73,24 +73,21 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     recv_task: asyncio.Task[None] | None = None
     send_task: asyncio.Task[None] | None = None
     try:
-        # The connect snapshot: one event seeding the client with current agent state. `chat` is empty
-        # now (chat is live-only + unpersisted; the client merges history from the app-chat skill
-        # service). `notifications` carries the ids still on disk so the view can mark pending without
-        # polling. Always sent so the client can tell "still loading" from "no messages". Reads run off
-        # the loop: a slow scan must not freeze the agent (it would starve vestad's status poll and flap
-        # "starting").
-        chat = SnapshotChat(events=[], cursor=None)
+        # The connect snapshot: one event seeding the client with current agent state. Chat is not
+        # here (the app-chat skill owns it end to end on its own service socket). `notifications`
+        # carries the ids still on disk so the view can mark pending without polling. Always sent so the
+        # client can tell "still loading" from "no messages". Reads run off the loop: a slow scan must
+        # not freeze the agent (it would starve vestad's status poll and flap "starting").
         pending = await asyncio.to_thread(_pending_notification_ids, config)
         await ws.send_json(
             SnapshotEvent(
                 type="snapshot",
                 state=event_bus.state,
-                chat=chat,
                 notifications={"pending": pending},
                 config={"timezone": config.timezone},
             )
         )
-        recv_task = asyncio.create_task(_recv_loop(ws, event_bus))
+        recv_task = asyncio.create_task(_recv_loop(ws))
         send_task = asyncio.create_task(_send_loop(ws, sub))
         await asyncio.wait([recv_task, send_task], return_when=asyncio.FIRST_COMPLETED)
     finally:
@@ -104,28 +101,11 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
-_EMITTABLE_TYPES = ("user", "chat")
-
-
-async def _recv_loop(ws: web.WebSocketResponse, event_bus: EventBus) -> None:
-    """Receive frames from in-container skills. The only accepted frame is `emit`: a pre-formed live
-    event (with its own id) a skill pushes for broadcast (app-chat owns chat durability + ids now).
-    Unknown or malformed frames are dropped, same posture as before."""
+async def _recv_loop(ws: web.WebSocketResponse) -> None:
+    """Drain inbound frames. Nothing injects events into the bus anymore (app-chat owns chat on its own
+    service socket); this only keeps the connection live and notices a close."""
     async for msg in ws:
-        if msg.type == web.WSMsgType.TEXT:
-            try:
-                data = json.loads(msg.data)
-            except (json.JSONDecodeError, TypeError):
-                continue
-            if not isinstance(data, dict) or "type" not in data or data["type"] != "emit":
-                continue
-            event = data["event"] if "event" in data and isinstance(data["event"], dict) else None
-            if event is None or "type" not in event or event["type"] not in _EMITTABLE_TYPES:
-                continue
-            if "id" not in event or not isinstance(event["id"], int):
-                continue
-            event_bus.emit_preformed(tp.cast("StreamEvent", event))
-        elif msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):
+        if msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):
             break
 
 

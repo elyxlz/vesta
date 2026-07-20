@@ -201,7 +201,6 @@ async def _run_one_turn(
     try:
         if user:
             logger.user(text)
-            state.event_bus.emit({"type": "user", "text": text})
         else:
             preview = text[:1000] + "..." if len(text) > 1000 else text
             log = logger.notification if is_notification else logger.system

@@ -10,7 +10,6 @@ import typing as tp
 from core.events import (
     _LIVE_ONLY_TYPES,
     AssistantEvent,
-    ChatEvent,
     ErrorEvent,
     EventBus,
     NotificationClearedEvent,
@@ -23,7 +22,6 @@ from core.events import (
     ThinkingEvent,
     ToolEndEvent,
     ToolStartEvent,
-    UserEvent,
 )
 
 # One representative instance of every StreamEvent variant, then HistoryEvent (which nests them).
@@ -31,10 +29,8 @@ from core.events import (
 # catches both field-name and field-type drift.
 _STREAM_FIXTURES: list[tp.Any] = [
     StatusEvent(type="status", ts="2026-01-01T00:00:00Z", state="thinking"),
-    UserEvent(type="user", ts="2026-01-01T00:00:00Z", text="hello", input_method="typed"),
     AssistantEvent(type="assistant", ts="2026-01-01T00:00:00Z", text="hi"),
     ThinkingEvent(type="thinking", ts="2026-01-01T00:00:00Z", text="hmm", signature="sig"),
-    ChatEvent(type="chat", ts="2026-01-01T00:00:00Z", text="yo"),
     ToolStartEvent(type="tool_start", ts="2026-01-01T00:00:00Z", tool="Bash", input="ls", subagent=False),
     ToolEndEvent(type="tool_end", ts="2026-01-01T00:00:00Z", tool="Bash", subagent=False),
     ErrorEvent(type="error", ts="2026-01-01T00:00:00Z", text="oops"),
@@ -45,18 +41,12 @@ _STREAM_FIXTURES: list[tp.Any] = [
     SubagentStopEvent(type="subagent_stop", ts="2026-01-01T00:00:00Z", agent_id="abc", agent_type="browser"),
 ]
 
-# The connect snapshot wraps the stream events under domain objects; it has no `ts` (not a streamed
-# event). `chat.events` nests StreamEvents; `notifications.pending` is the on-disk id seed.
+# The connect snapshot wraps current state under domain objects; it has no `ts` (not a streamed
+# event). Chat is not on the snapshot (the app-chat skill owns it); `notifications.pending` is the
+# on-disk id seed.
 _SNAPSHOT_FIXTURE: SnapshotEvent = SnapshotEvent(
     type="snapshot",
     state="idle",
-    chat={
-        "events": [
-            StatusEvent(type="status", ts="2026-01-01T00:00:00Z", state="idle"),
-            AssistantEvent(type="assistant", ts="2026-01-01T00:00:00Z", text="hi"),
-        ],
-        "cursor": 42,
-    },
     notifications={"pending": ["email-123"]},
     config={"timezone": "America/New_York"},
 )
@@ -75,8 +65,8 @@ def test_eventbus_roundtrip_all_types(tmp_path):
     """Emit each persistable event type, read back, verify the type tag survives."""
     bus = EventBus(data_dir=tmp_path)
 
-    # The live-only types (status, notification_cleared, user, chat) are transient live signals,
-    # intentionally not persisted (see EventBus.emit and _LIVE_ONLY_TYPES).
+    # The live-only types (status, notification_cleared) are transient live signals, intentionally not
+    # persisted (see EventBus.emit and _LIVE_ONLY_TYPES).
     persistable = [event for event in _STREAM_FIXTURES if event["type"] not in _LIVE_ONLY_TYPES]
     for event in persistable:
         bus.emit(event)
