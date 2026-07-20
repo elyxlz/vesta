@@ -1,9 +1,9 @@
 import type { InputMethod } from "../protocol/events"
 import { ApiError, type HttpClient } from "../transport/http"
 
-// Every send carries a client-generated id. It threads through the app-chat SERVICE into the
-// UserEvent and returns on the append, making optimistic-echo dedup exact and HTTP retries
-// idempotent. The id generator is injected (crypto.randomUUID in production) for testability.
+// Every send carries a client-generated id. The app-chat service stores it on the user event and
+// echoes it on the chat socket, making optimistic-echo dedup exact and HTTP retries idempotent.
+// The id generator is injected (crypto.randomUUID in production) for testability.
 export type IdGenerator = () => string
 
 export interface SendMessageBody {
@@ -11,8 +11,8 @@ export interface SendMessageBody {
   input_method?: InputMethod
 }
 
-// The send POST's disposition once it settles. `null` means accepted (queued-on-tap; delivery truth
-// is the append echo, which clears the bubble). A daemon-down signal (502/503/504 from the proxy, or
+// The send POST's disposition once it settles. `null` means accepted (persisted by the service;
+// the chat-socket echo clears the bubble). A daemon-down signal (502/503/504 from the proxy, or
 // a network/timeout failure with no HTTP status) leaves the bubble retryable; any other error fails
 // it. A retry re-posts the SAME id (idempotent, deduped on the echo).
 export type SendFailure = "retry" | "failed"
