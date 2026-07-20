@@ -19,19 +19,28 @@ describe("sendMessage", () => {
     expect(id).toBe("i-1")
     const call = json.mock.calls[0]
     if (!call) throw new Error("no POST")
-    expect(call[0]).toBe("/agents/scout/message")
+    expect(call[0]).toBe("/agents/scout/app-chat/message")
     const body = JSON.parse((call[1] as { body: string }).body) as unknown
     expect(body).toEqual({ text: "hi", input_method: "typed", intent_id: "i-1" })
     expect(await outcome).toBeNull()
   })
 
-  it("maps a 503 to a retryable outcome", async () => {
-    const json = vi.fn().mockRejectedValue(new ApiError(503, "unavailable"))
-    const { outcome } = sendMessage(httpWith(json), "scout", { text: "hi" }, () => "i-2")
+  it.each([502, 503, 504])(
+    "maps a daemon-down %i to a retryable outcome",
+    async (status) => {
+      const json = vi.fn().mockRejectedValue(new ApiError(status, "unavailable"))
+      const { outcome } = sendMessage(httpWith(json), "scout", { text: "hi" }, () => "i-2")
+      expect(await outcome).toBe("retry")
+    },
+  )
+
+  it("maps a network/timeout failure (no HTTP status) to a retryable outcome", async () => {
+    const json = vi.fn().mockRejectedValue(new Error("network down"))
+    const { outcome } = sendMessage(httpWith(json), "scout", { text: "hi" }, () => "i-net")
     expect(await outcome).toBe("retry")
   })
 
-  it("maps any other error to a failed outcome", async () => {
+  it("maps any other HTTP error to a failed outcome", async () => {
     const json = vi.fn().mockRejectedValue(new ApiError(500, "boom"))
     const { outcome } = sendMessage(httpWith(json), "scout", { text: "hi" }, () => "i-3")
     expect(await outcome).toBe("failed")

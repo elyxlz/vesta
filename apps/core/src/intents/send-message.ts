@@ -1,8 +1,8 @@
 import type { InputMethod } from "../protocol/events"
 import { ApiError, type HttpClient } from "../transport/http"
 
-// Every send carries a client-generated id. It threads through the app-chat notification file into
-// the UserEvent and returns on the append, making optimistic-echo dedup exact and HTTP retries
+// Every send carries a client-generated id. It threads through the app-chat SERVICE into the
+// UserEvent and returns on the append, making optimistic-echo dedup exact and HTTP retries
 // idempotent. The id generator is injected (crypto.randomUUID in production) for testability.
 export type IdGenerator = () => string
 
@@ -12,8 +12,9 @@ export interface SendMessageBody {
 }
 
 // The send POST's disposition once it settles. `null` means accepted (queued-on-tap; delivery truth
-// is the append echo, which clears the bubble). A retryable 503 leaves the bubble retryable; any
-// other error fails it. A retry re-posts the SAME id (idempotent, deduped on the echo).
+// is the append echo, which clears the bubble). A daemon-down signal (502/503/504 from the proxy, or
+// a network/timeout failure with no HTTP status) leaves the bubble retryable; any other error fails
+// it. A retry re-posts the SAME id (idempotent, deduped on the echo).
 export type SendFailure = "retry" | "failed"
 
 export interface SentMessage {
@@ -32,14 +33,18 @@ export function sendMessage(
 ): SentMessage {
   const id = newId()
   const outcome = http
-    .json(`/agents/${encodeURIComponent(agent)}/message`, {
+    .json(`/agents/${encodeURIComponent(agent)}/app-chat/message`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: body.text, input_method: body.input_method, intent_id: id }),
     })
     .then((): SendFailure | null => null)
     .catch((error: unknown): SendFailure =>
-      error instanceof ApiError && error.status === 503 ? "retry" : "failed",
+      error instanceof ApiError
+        ? error.status === 502 || error.status === 503 || error.status === 504
+          ? "retry"
+          : "failed"
+        : "retry",
     )
   return { id, outcome }
 }

@@ -382,8 +382,15 @@ export async function fetchHistory(
   channel: "app-chat" | "internals",
   cursor?: number,
 ): Promise<{ events: VestaEvent[]; cursor: number | null }> {
-  const params = new URLSearchParams({ channel });
+  const params = new URLSearchParams();
   if (cursor != null) params.set("cursor", String(cursor));
+  const qs = params.toString();
+  if (channel === "app-chat") {
+    return apiJson(
+      `/agents/${encodeURIComponent(name)}/app-chat/history${qs ? `?${qs}` : ""}`,
+    );
+  }
+  params.set("channel", "internals");
   return apiJson(
     `/agents/${encodeURIComponent(name)}/history?${params.toString()}`,
   );

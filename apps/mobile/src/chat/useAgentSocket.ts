@@ -170,10 +170,11 @@ export function useAgentSocket(name: string, active: boolean) {
 
   const fetchPage = useCallback(
     (cursor?: number): Promise<HistoryPage> => {
-      const parameters = new URLSearchParams({ channel: "app-chat" });
+      const parameters = new URLSearchParams();
       if (cursor !== undefined) parameters.set("cursor", String(cursor));
+      const qs = parameters.toString();
       return controller.http.json<HistoryPage>(
-        `/agents/${encodeURIComponent(name)}/history?${parameters.toString()}`,
+        `/agents/${encodeURIComponent(name)}/app-chat/history${qs ? `?${qs}` : ""}`,
       );
     },
     [controller, name],
