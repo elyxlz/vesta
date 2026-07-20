@@ -3,7 +3,7 @@
 this skill is a standalone uv project and cannot import across the skill-project boundary without a
 sys.path hack, so the patterns are mirrored here and MUST stay in sync with that owner. User-typed
 messages now live in this store, out of the events.db scrubber's reach, so `app-chat redact` gives the
-store the same scrub, wired into the dream flow's redaction step alongside the events.db pass."""
+store the same scrub."""
 
 import json
 import re

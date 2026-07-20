@@ -66,8 +66,8 @@ def cmd_history(args: argparse.Namespace) -> None:
 
 def cmd_redact(args: argparse.Namespace) -> None:
     """Scrub API keys, tokens, passwords, and connection strings from the chat store in place, the same
-    scrub the dream flow's `redact_secrets` applies to events.db. User-typed secrets now live here, out
-    of that scan's reach, so the nightly dream runs this alongside it. Idempotent: a re-run rewrites
+    scrub the dream flow's `redact_secrets` applies to events.db. User-typed secrets live here, out
+    of that scan's reach. Idempotent: a re-run rewrites
     nothing."""
     data_dir = pl.Path(args.data_dir or (pl.Path.home() / ".app-chat"))
     db_path = store_path(data_dir)

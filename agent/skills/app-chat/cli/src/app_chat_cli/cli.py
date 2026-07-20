@@ -6,7 +6,7 @@ Commands:
   send    — send a message to the app (via daemon Unix socket)
   history — search/list chat history from the skill's own store
   import  — one-time copy of pre-existing app-chat history from core's events.db into the skill store
-  redact  — scrub secrets from the skill store in place (the dream flow runs this alongside events.db)
+  redact  — scrub secrets from the skill store in place
 """
 
 import argparse
@@ -63,7 +63,7 @@ def _build_parser() -> argparse.ArgumentParser:
     import_p.add_argument("--events-db", default=None, help="Path to core's events.db (default: $AGENT_DIR/data/events.db)")
     import_p.add_argument("--data-dir", default=None, help="Data directory (default: ~/.app-chat)")
 
-    redact_p = sub.add_parser("redact", help="Scrub API keys, tokens, and passwords from the chat store in place (nightly dream)")
+    redact_p = sub.add_parser("redact", help="Scrub API keys, tokens, and passwords from the chat store in place")
     redact_p.add_argument("--data-dir", default=None, help="Data directory (default: ~/.app-chat)")
 
     return parser
