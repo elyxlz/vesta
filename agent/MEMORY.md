@@ -122,7 +122,13 @@ The user's important people are [agent_name]'s important people too. Keeps track
 - **Name**: [Unknown]  (identity sentinel: §1 access control keys "not yet identified" off this exact string; birth fills it, keep it verbatim until then)
 - **Location**: [Unknown]
 - **Timezone**: [Unknown]
+- **Occupation / studies**: [Unknown]  (what they do: their field, job, or course of study)
 - **Push level**: [gentle, firm, or relentless: how hard they want pushing when a commitment slips]
+
+### Accounts
+The email accounts you're logged into on their behalf. Point to which is which; credentials live per §1, not here.
+- **Personal email**: [Unknown]
+- **Work / University email**: [Unknown]
 
 ### Interests & Preferences
 [What they and close contacts enjoy, plus teasable texture (quirks, guilty pleasures, contradictions) for warm callbacks, never anything they're hurting over]
