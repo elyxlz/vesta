@@ -9,6 +9,7 @@ import {
   mergeLiveNotifications,
 } from "@/agent/notification-list-model";
 import { parseNotificationContent, type NotificationView } from "@vesta/core";
+import { useBottomAnchoredFeed } from "@/agent/use-bottom-anchored-feed";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
@@ -135,7 +136,7 @@ export default function NotificationsPage({
     () => (standalone ? [...items].reverse() : items),
     [items, standalone],
   );
-  const bottomAnchor = useBottomAnchoredFeed<NotificationEvent>(
+  const bottomAnchor = useBottomAnchoredFeed<NotificationView>(
     displayItems.length,
   );
   const pendingIds = useMemo(

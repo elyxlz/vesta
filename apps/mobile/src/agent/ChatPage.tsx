@@ -965,7 +965,12 @@ export default function ChatPage() {
   const { api } = useSession();
   const preferences = usePreferences();
   const { colors } = preferences;
-  const [input, setInput] = useState("");
+  const [input, setInputState] = useState("");
+  const inputValueRef = useRef("");
+  const setInput = useCallback((value: string) => {
+    inputValueRef.current = value;
+    setInputState(value);
+  }, []);
   const [replyTarget, setReplyTarget] = useState<ReplyTarget | null>(null);
   const [voiceError, setVoiceError] = useState("");
   const notifyTranscriptWords = useTranscriptWordHaptics();

@@ -1,11 +1,12 @@
 import { readSse } from "@vesta/core";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { FlatList, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { ApiClient } from "@/api/client";
 import { useAgent } from "@/agent/AgentProvider";
 import { addLatestLogLine, type LogLine } from "@/agent/log-list-model";
 import { subscribeLogs } from "@/agent/log-stream-subscription";
+import { useBottomAnchoredFeed } from "@/agent/use-bottom-anchored-feed";
 import { AnsiText } from "@/components/ui/AnsiText";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
@@ -14,7 +15,11 @@ import { useSession } from "@/session/SessionProvider";
 
 const LOG_RETRY_DELAY_MS = 1_000;
 
-export default function LogsPage() {
+interface LogsPageProps {
+  presentation?: "pager" | "standalone";
+}
+
+export default function LogsPage({ presentation = "pager" }: LogsPageProps) {
   const { api } = useSession();
   const { reachable } = useRoster();
   const { name } = useAgent();

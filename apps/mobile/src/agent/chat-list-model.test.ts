@@ -48,6 +48,63 @@ describe("inverted chat rows", () => {
     });
   });
 
+  it("starts a new same-sender bubble group after five minutes", () => {
+    const rows = createInvertedChatRows(
+      [
+        { type: "chat", text: "first", ts: "2026-07-15T10:00:00Z" },
+        { type: "chat", text: "nearby", ts: "2026-07-15T10:04:59Z" },
+        { type: "chat", text: "later", ts: "2026-07-15T10:09:59Z" },
+      ],
+      false,
+    );
+
+    expect(
+      [...rows].reverse().flatMap((row) =>
+        row.kind === "event"
+          ? [
+              {
+                text: row.event.type === "chat" ? row.event.text : "",
+                startsNewBubbleGroup: row.startsNewBubbleGroup,
+                endsBubbleGroup: row.endsBubbleGroup,
+              },
+            ]
+          : [],
+      ),
+    ).toEqual([
+      {
+        text: "first",
+        startsNewBubbleGroup: false,
+        endsBubbleGroup: false,
+      },
+      {
+        text: "nearby",
+        startsNewBubbleGroup: false,
+        endsBubbleGroup: true,
+      },
+      {
+        text: "later",
+        startsNewBubbleGroup: true,
+        endsBubbleGroup: true,
+      },
+    ]);
+  });
+
+  it("keeps same-sender bubbles grouped without usable timestamps", () => {
+    const rows = createInvertedChatRows(
+      [
+        { type: "user", text: "first" },
+        { type: "user", text: "second", ts: "not-a-date" },
+      ],
+      false,
+    );
+
+    expect(
+      rows
+        .filter((row) => row.kind === "event")
+        .map((row) => row.startsNewBubbleGroup),
+    ).toEqual([false, false]);
+  });
+
   it("inserts a header above each local calendar day", () => {
     const rows = createInvertedChatRows(
       [

@@ -41,6 +41,12 @@ function calendarDay(timestamp: string | undefined): string | null {
   ].join("-");
 }
 
+function timestampMillis(timestamp: string | undefined): number | null {
+  if (!timestamp) return null;
+  const value = new Date(timestamp).getTime();
+  return Number.isNaN(value) ? null : value;
+}
+
 function eventRows(events: ChatMessage[]): EventChatRow[] {
   const visible = events.filter(
     (event) =>
