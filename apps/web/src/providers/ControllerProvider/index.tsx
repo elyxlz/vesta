@@ -40,7 +40,7 @@ function buildController(): Controller {
       clearTimer: (handle) => window.clearTimeout(handle),
     },
     http: {
-      baseUrl: getConnection()?.url ?? "",
+      baseUrl: () => getConnection()?.url ?? "",
       fetch: (input, init) => fetch(input, init),
       token: () => getConnection()?.accessToken ?? null,
       refresh: async () => (await ensureFreshToken(true)) === "ok",
