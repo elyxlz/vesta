@@ -56,7 +56,7 @@ def test_skill_frontmatter():
 def test_default_skills_are_real_and_include_runtime_deps():
     """Every default skill named in the version-pinned core list (core/default-skills.txt) must have
     a matching directory under skills/, and the skills the core runtime points at (proactive-check,
-    personality) must ship by default. link-skills.sh seeds/unions this list into installed-skills.txt,
+    personality) must ship by default. link-skills.sh seeds/unions this list into active-skills.txt,
     so a missing entry means the runtime references a skill that can never activate."""
     skills_dir = Path(__file__).parent.parent / "skills"
     default_skills_path = Path(__file__).parent.parent / "core" / "default-skills.txt"

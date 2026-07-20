@@ -1,12 +1,13 @@
 ---
 name: skills-registry
-description: Discover and install new capabilities from the local skill registry.
+description: Discover and activate new capabilities from the local skill registry.
 ---
 
 # Skills Manager
 
-Every Vesta skill ships on disk under `~/agent/skills/`. Installing one doesn't download
-anything; it activates the skill (links it so you can use it). Uninstalling deactivates it.
+Every Vesta skill ships on disk under `~/agent/skills/`. There is no download step: a skill
+is either active (linked so you can use it) or inactive. Activating one links it; deactivating
+one unlinks it.
 
 ## Search the registry
 
@@ -15,20 +16,26 @@ anything; it activates the skill (links it so you can use it). Uninstalling deac
 ~/agent/skills/skills-registry/scripts/skills-search email            # search by keyword
 ```
 
-Installed skills are marked `[installed]`.
+Active skills are marked `[active]`.
 
-## Install a skill
+## Activate a skill
 
 ```bash
-~/agent/skills/skills-registry/scripts/skills-install <name>
+~/agent/skills/skills-registry/scripts/skills-activate <name>
 ```
 
-After installing, restart yourself with the `restart_vesta` tool to load the new skill into context.
+After activating, restart yourself with the `restart_vesta` tool to load the new skill into context.
 
-## Check what's installed
+## Deactivate a skill
 
 ```bash
-cat ~/agent/data/installed-skills.txt
+~/agent/skills/skills-registry/scripts/skills-deactivate <name>
+```
+
+## Check what's active
+
+```bash
+cat ~/agent/data/active-skills.txt
 ```
 
 ## Installing or updating a skill's CLI
@@ -50,6 +57,6 @@ isolated and on `~/.local/bin`, so use it every time.
 ## Notes
 
 - A skill is activated by linking it into `~/.claude/skills` (see `link-skills.sh`); its files are always on disk
-- Installed skills receive updates automatically during upstream sync
+- Active skills receive updates automatically during upstream sync
 - Core skills are always active; optional skills are activated on demand
-- After installing a skill that requires setup, read its `SETUP.md`
+- After activating a skill that requires setup, read its `SETUP.md`

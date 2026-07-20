@@ -2,11 +2,11 @@
 
 The box's ``~`` is a plain FULL git checkout of the agent-upstream snapshot (all skills +
 MEMORY.md; the engine ``agent/core`` is a read-only mount, gitignored, never in the tree).
-Which skills are ACTIVE is recorded in ``data/installed-skills.txt`` and materialized as the
+Which skills are ACTIVE is recorded in ``data/active-skills.txt`` and materialized as the
 ``~/.claude/skills`` symlink farm by ``link-skills.sh``; every optional skill sits on disk
 regardless. These tests build an upstream repo with the REAL build-upstream.sh (the script
 vestad runs), then drive the REAL attach.sh / fetch-upstream.sh / sync.sh / link-skills.sh /
-skills-install / skills-remove scripts in a fake ``$HOME``, pinning the flat-checkout
+skills-activate / skills-deactivate scripts in a fake ``$HOME``, pinning the flat-checkout
 contract: clean attach, version-pinned rebase, offline activation, and the cone->flat
 migration spine.
 """
@@ -28,8 +28,8 @@ SYNC = AGENT_ROOT / "core/skills/upstream-sync/scripts/sync.sh"
 STATUS = AGENT_ROOT / "core/skills/upstream-sync/scripts/status.sh"
 LINK_SKILLS = AGENT_ROOT / "core/skills/upstream-sync/scripts/link-skills.sh"
 SET_CONE = AGENT_ROOT / "core/skills/upstream-sync/scripts/set-cone.sh"  # LEGACY no-op for released migrations
-SKILLS_INSTALL = AGENT_ROOT / "skills/skills-registry/scripts/skills-install"
-SKILLS_REMOVE = AGENT_ROOT / "skills/skills-registry/scripts/skills-remove"
+SKILLS_ACTIVATE = AGENT_ROOT / "skills/skills-registry/scripts/skills-activate"
+SKILLS_DEACTIVATE = AGENT_ROOT / "skills/skills-registry/scripts/skills-deactivate"
 SKILLS_SEARCH = AGENT_ROOT / "skills/skills-registry/scripts/skills-search"
 BRANCH = "agent-upstream"
 # The optional skills every fixture snapshot ships on disk (a full checkout carries them all).
@@ -146,7 +146,7 @@ def _write_core_mount(home, version="0.1.170"):
 def _fresh_box(tmp_path, version="0.1.170", skills=ALL_SKILLS):
     """A fake $HOME as the image ships it: snapshot content on disk (every skill), no .git.
 
-    Which skills are active lives in data/installed-skills.txt, not on disk (every skill is
+    Which skills are active lives in data/active-skills.txt, not on disk (every skill is
     present regardless)."""
     home = tmp_path / "home"
     _write_core_mount(home, version)
@@ -169,8 +169,8 @@ def _attach(home, source):
     return _run(ATTACH, home, extra_env=_box_env(source))
 
 
-def _installed(home):
-    f = home / "agent/data/installed-skills.txt"
+def _active(home):
+    f = home / "agent/data/active-skills.txt"
     return sorted(name for name in f.read_text().split() if name) if f.exists() else []
 
 
@@ -311,89 +311,89 @@ def test_downgrade_transplants_delta_onto_older_snapshot(tmp_path):
     assert "0.1.170" in (home / "agent/skills/tasks/SKILL.md").read_text()
 
 
-# --- skills: installed-skills.txt + the ~/.claude/skills symlink farm --------------------
+# --- skills: active-skills.txt + the ~/.claude/skills symlink farm --------------------
 
 
-def test_install_activates_offline_without_touching_git(tmp_path):
+def test_activate_is_offline_without_touching_git(tmp_path):
     source = _upstream_fixture(tmp_path)
     home = _fresh_box(tmp_path)
     env = _box_env(source)
     assert _attach(home, source).returncode == 0
     shutil.rmtree(source)  # sever the source: activation is local, no fetch
-    r = _run(SKILLS_INSTALL, home, args=("whatsapp",), extra_env=env)
+    r = _run(SKILLS_ACTIVATE, home, args=("whatsapp",), extra_env=env)
     assert r.returncode == 0, r.stdout + r.stderr
-    assert "Restart Vesta to activate it" in r.stdout
-    assert "whatsapp" in _installed(home)  # recorded active
+    assert "Restart Vesta to load it" in r.stdout
+    assert "whatsapp" in _active(home)  # recorded active
     assert (home / ".claude/skills/whatsapp").is_symlink()  # linked into the farm
     assert (home / "agent/skills/whatsapp/SKILL.md").exists()  # was always on disk
     assert _git(["status", "--porcelain"], home, env) == ""  # activation is not a git change
 
 
-def test_install_unknown_skill_errors(tmp_path):
+def test_activate_unknown_skill_errors(tmp_path):
     source = _upstream_fixture(tmp_path)
     home = _fresh_box(tmp_path)
     env = _box_env(source)
     assert _attach(home, source).returncode == 0
-    r = _run(SKILLS_INSTALL, home, args=("nope",), extra_env=env)
+    r = _run(SKILLS_ACTIVATE, home, args=("nope",), extra_env=env)
     assert r.returncode == 1
     assert "no skill 'nope'" in r.stderr
-    assert "nope" not in _installed(home)
+    assert "nope" not in _active(home)
 
 
-def test_remove_deactivates_but_keeps_the_files_on_disk(tmp_path):
+def test_deactivate_but_keeps_the_files_on_disk(tmp_path):
     source = _upstream_fixture(tmp_path)
     home = _fresh_box(tmp_path)
     env = _box_env(source)
     assert _attach(home, source).returncode == 0
-    assert _run(SKILLS_INSTALL, home, args=("whatsapp",), extra_env=env).returncode == 0
-    r = _run(SKILLS_REMOVE, home, args=("whatsapp",), extra_env=env)
+    assert _run(SKILLS_ACTIVATE, home, args=("whatsapp",), extra_env=env).returncode == 0
+    r = _run(SKILLS_DEACTIVATE, home, args=("whatsapp",), extra_env=env)
     assert r.returncode == 0, r.stdout + r.stderr
-    assert "Restart Vesta to deactivate it" in r.stdout
-    assert "whatsapp" not in _installed(home)  # dropped from the active list
+    assert "Restart Vesta to unload it" in r.stdout
+    assert "whatsapp" not in _active(home)  # dropped from the active list
     assert not (home / ".claude/skills/whatsapp").exists()  # symlink gone
     assert (home / "agent/skills/whatsapp/SKILL.md").exists()  # files stay (full checkout)
 
 
-def test_remove_not_installed_is_reported(tmp_path):
+def test_deactivate_inactive_is_reported(tmp_path):
     source = _upstream_fixture(tmp_path)
     home = _fresh_box(tmp_path)
     env = _box_env(source)
     assert _attach(home, source).returncode == 0
-    r = _run(SKILLS_REMOVE, home, args=("whatsapp",), extra_env=env)
+    r = _run(SKILLS_DEACTIVATE, home, args=("whatsapp",), extra_env=env)
     assert r.returncode == 0
-    assert "is not installed" in r.stdout
+    assert "is not active" in r.stdout
 
 
-def test_remove_default_is_honest_and_keeps_it_active(tmp_path):
-    """A default skill reactivates on every relink, so removing it is a no-op; the command must
+def test_deactivate_default_is_honest_and_keeps_it_active(tmp_path):
+    """A default skill reactivates on every relink, so deactivating it is a no-op; the command must
     say so instead of claiming it was deactivated."""
     source = _upstream_fixture(tmp_path)
     home = _fresh_box(tmp_path)
     env = _box_env(source)
     assert _attach(home, source).returncode == 0
-    _run(LINK_SKILLS, home, extra_env=env)  # seed installed-skills.txt with the defaults
-    assert "tasks" in _installed(home)
-    r = _run(SKILLS_REMOVE, home, args=("tasks",), extra_env=env)
+    _run(LINK_SKILLS, home, extra_env=env)  # seed active-skills.txt with the defaults
+    assert "tasks" in _active(home)
+    r = _run(SKILLS_DEACTIVATE, home, args=("tasks",), extra_env=env)
     assert r.returncode == 0
     assert "can't be deactivated" in r.stdout
-    assert "Restart Vesta to deactivate it" not in r.stdout
-    assert "tasks" in _installed(home)  # still active, no false "Removed"
+    assert "Restart Vesta to unload it" not in r.stdout
+    assert "tasks" in _active(home)  # still active, no false "Deactivated"
 
 
-def test_search_lists_local_catalog_and_marks_installed(tmp_path):
+def test_search_lists_local_catalog_and_marks_active(tmp_path):
     source = _upstream_fixture(tmp_path)
     home = _fresh_box(tmp_path)
     env = _box_env(source)
     assert _attach(home, source).returncode == 0
-    assert _run(SKILLS_INSTALL, home, args=("whatsapp",), extra_env=env).returncode == 0
+    assert _run(SKILLS_ACTIVATE, home, args=("whatsapp",), extra_env=env).returncode == 0
     r = subprocess.run([sys.executable, str(SKILLS_SEARCH)], cwd=str(home), env=_env(home, env), capture_output=True, text=True, check=False)
     assert r.returncode == 0, r.stdout + r.stderr
     lines = {line.split(":")[0]: line for line in r.stdout.splitlines()}
     assert set(ALL_SKILLS) <= lines.keys()  # every on-disk skill is in the catalog
-    assert "[installed]" in lines["whatsapp"]  # activation is marked from installed-skills.txt
+    assert "[active]" in lines["whatsapp"]  # activation is marked from active-skills.txt
 
 
-# --- link-skills.sh: the one gate turning the installed list into the symlink farm -------
+# --- link-skills.sh: the one gate turning the active list into the symlink farm -------
 
 
 def _link_skills_box(tmp_path, defaults=DEFAULT_SKILLS, optional=("tasks", "dream", "whatsapp", "microsoft")):
@@ -415,8 +415,8 @@ def _link_skills_box(tmp_path, defaults=DEFAULT_SKILLS, optional=("tasks", "drea
 def test_link_skills_seeds_defaults_and_always_links_core(tmp_path):
     home, script = _link_skills_box(tmp_path)
     assert _run(script, home).returncode == 0
-    assert _installed(home) == sorted(DEFAULT_SKILLS)  # seeded from the shipped defaults
-    # Defaults + every core skill are linked; an uninstalled optional (whatsapp) is not.
+    assert _active(home) == sorted(DEFAULT_SKILLS)  # seeded from the shipped defaults
+    # Defaults + every core skill are linked; an inactive optional (whatsapp) is not.
     assert set(_links(home)) == {*DEFAULT_SKILLS, "app-chat", "upstream-sync"}
     assert "whatsapp" not in _links(home)
 
@@ -426,39 +426,39 @@ def test_link_skills_unions_a_newly_shipped_default(tmp_path):
     assert _run(script, home).returncode == 0
     (home / "agent/core/default-skills.txt").write_text("\n".join((*DEFAULT_SKILLS, "whatsapp")) + "\n")  # an upgrade's new default
     assert _run(script, home).returncode == 0
-    assert "whatsapp" in _installed(home) and "whatsapp" in _links(home)
+    assert "whatsapp" in _active(home) and "whatsapp" in _links(home)
 
 
 def test_link_skills_drops_a_deactivated_optional(tmp_path):
     home, script = _link_skills_box(tmp_path)
     assert _run(script, home).returncode == 0
-    installed = home / "agent/data/installed-skills.txt"
-    installed.write_text(installed.read_text() + "microsoft\n")  # activate a non-default
+    active = home / "agent/data/active-skills.txt"
+    active.write_text(active.read_text() + "microsoft\n")  # activate a non-default
     assert _run(script, home).returncode == 0
     assert "microsoft" in _links(home)
-    installed.write_text("\n".join(DEFAULT_SKILLS) + "\n")  # deactivate it again
+    active.write_text("\n".join(DEFAULT_SKILLS) + "\n")  # deactivate it again
     assert _run(script, home).returncode == 0
-    assert "microsoft" not in _links(home)  # removed leaves no dangling link
+    assert "microsoft" not in _links(home)  # deactivated leaves no dangling link
     assert set(DEFAULT_SKILLS) <= set(_links(home))  # defaults still linked
 
 
 def test_link_skills_bridges_the_cone_on_first_flat_boot(tmp_path):
     """A cone box's first flat boot (before the migration converts it): link-skills seeds
-    installed-skills.txt from the still-present cone so the user's installed skills stay active,
+    active-skills.txt from the still-present cone so the user's active skills stay active,
     instead of collapsing to defaults-only."""
     source = _upstream_fixture(tmp_path)
     # whatsapp is NOT a default, so only the cone bridge (not default-seeding) can preserve it.
-    home, env = _legacy_cone_box(tmp_path, source, installed=("tasks", "whatsapp"))
-    assert not (home / "agent/data/installed-skills.txt").exists()
+    home, env = _legacy_cone_box(tmp_path, source, active=("tasks", "whatsapp"))
+    assert not (home / "agent/data/active-skills.txt").exists()
     assert _run(LINK_SKILLS, home, extra_env=env).returncode == 0
-    assert "whatsapp" in _installed(home)  # captured from the cone, not from defaults
+    assert "whatsapp" in _active(home)  # captured from the cone, not from defaults
     assert "whatsapp" in _links(home)  # and linked (on disk in the cone)
 
 
 # --- the cone->flat boot migration spine (2026-08-flat-checkout.md) ----------------------
 
 
-def _legacy_cone_box(tmp_path, source, installed=("tasks", "dream")):
+def _legacy_cone_box(tmp_path, source, active=("tasks", "dream")):
     """A pre-flat box: a sparse cone-mode checkout with only some skills active (on disk),
     carrying a personalization in MEMORY.md."""
     home = _fresh_box(tmp_path)
@@ -470,7 +470,7 @@ def _legacy_cone_box(tmp_path, source, installed=("tasks", "dream")):
     _git(["add", "-A"], home, env)
     _git(["commit", "-m", "init"], home, env)
     _git(["sparse-checkout", "init", "--cone"], home, env)
-    _git(["sparse-checkout", "set", *(f"agent/skills/{name}" for name in installed)], home, env)
+    _git(["sparse-checkout", "set", *(f"agent/skills/{name}" for name in active)], home, env)
     _write_core_mount(home)  # the cone strips the untracked dir; a real bind mount always persists
     memory = home / "agent/MEMORY.md"
     memory.write_text(memory.read_text() + "my personal notes\n")
@@ -479,10 +479,10 @@ def _legacy_cone_box(tmp_path, source, installed=("tasks", "dream")):
 
 def test_flat_checkout_migration_converts_cone_to_flat(tmp_path):
     """The 2026-08-flat-checkout spine: probe (attach refuses the cone, exit 4), capture the
-    installed skills, retire the old repo, attach the flat one, reconcile personalizations."""
+    active skills, retire the old repo, attach the flat one, reconcile personalizations."""
     source = _upstream_fixture(tmp_path)
-    home, env = _legacy_cone_box(tmp_path, source, installed=("tasks", "dream"))
-    # An uninstalled skill is off disk in the cone; a full checkout will restore it.
+    home, env = _legacy_cone_box(tmp_path, source, active=("tasks", "dream"))
+    # An inactive skill is off disk in the cone; a full checkout will restore it.
     assert not (home / "agent/skills/whatsapp").exists()
 
     # 1. Probe: attach refuses to touch the cone.
@@ -492,7 +492,7 @@ def test_flat_checkout_migration_converts_cone_to_flat(tmp_path):
     (home / "agent/data").mkdir(parents=True, exist_ok=True)
     cone = _git(["sparse-checkout", "list"], home, env)
     active = sorted(line[len("agent/skills/") :] for line in cone.splitlines() if line.startswith("agent/skills/"))
-    (home / "agent/data/installed-skills.txt").write_text("\n".join(active) + "\n")
+    (home / "agent/data/active-skills.txt").write_text("\n".join(active) + "\n")
     (home / ".git").rename(home / ".git-legacy")
     assert _attach(home, source).returncode == 0
 
@@ -502,7 +502,7 @@ def test_flat_checkout_migration_converts_cone_to_flat(tmp_path):
         ["git", "config", "--get", "core.sparseCheckout"], cwd=str(home), env=_env(home, env), capture_output=True, text=True, check=False
     )
     assert sparse.stdout.strip() != "true"  # unset (exit 1) or false: the flat repo is not sparse
-    assert _installed(home) == ["dream", "tasks"]  # active set captured
+    assert _active(home) == ["dream", "tasks"]  # active set captured
     status = _git(["status", "--porcelain"], home, env)
     assert "agent/MEMORY.md" in status  # personalization surfaced, not lost
     assert "my personal notes" in (home / "agent/MEMORY.md").read_text()

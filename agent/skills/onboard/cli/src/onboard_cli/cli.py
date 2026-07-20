@@ -227,7 +227,7 @@ def _cmd_claude_finish(args: argparse.Namespace, client: Client, _cfg: Config) -
 # --- reference data ---------------------------------------------------------
 
 
-def _installable_skills() -> list[str]:
+def _available_skills() -> list[str]:
     """Best-effort list of skill names from the on-box skills dir (every skill ships on disk)."""
     for skills_dir in (
         Path.home() / "agent" / "skills",
@@ -259,7 +259,7 @@ def _cmd_presets(_args: argparse.Namespace, client: Client, _cfg: Config) -> int
     _print(
         {
             "personalities": [p["name"] for p in client.fetch_personalities()],
-            "skills": _installable_skills(),
+            "skills": _available_skills(),
             "plan_floor_usd": client.fetch_floor_usd(),
             "claude_models": [m["id"] for m in client.fetch_claude_models()],
             "default_personality": defaults["personality"],
@@ -314,7 +314,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_cfinish.add_argument("--name", help="Agent name (defaults to the one from create-agent).")
     p_cfinish.add_argument("--model", help="Claude model (defaults to the box's configured default).")
 
-    sub.add_parser("presets", help="Personality presets + installable skills + models.")
+    sub.add_parser("presets", help="Personality presets + available skills + models.")
     sub.add_parser("links", help="Marketing + desktop/mobile install URLs.")
     return parser
 

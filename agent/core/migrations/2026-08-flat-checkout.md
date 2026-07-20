@@ -1,6 +1,6 @@
 Your workspace (`~`) is a git repo in the old sparse-checkout (cone) shape. Convert it once
 to the flat shape: a plain full checkout of your skills + `MEMORY.md`, with which skills are
-active recorded in `~/agent/data/installed-skills.txt` instead of the cone. The engine
+active recorded in `~/agent/data/active-skills.txt` instead of the cone. The engine
 (`agent/core`) is a read-only mount and no longer lives in the checkout. Run step 1; its exit
 code tells you what to do next. Re-running is safe: a converted workspace no longer matches
 the old shape, so attach just no-ops.
@@ -14,12 +14,12 @@ cd ~ && bash agent/core/skills/upstream-sync/scripts/attach.sh; echo "exit: $?"
 - Exit 3, or a failed fetch: this version's snapshot isn't available from Vesta's daemon yet. Not yours to fix; you're done, and the next boot converts once it is.
 
 ### 2. Convert
-Record which skills the cone had installed, then retire the old repo and attach the new flat
+Record which skills the cone had active, then retire the old repo and attach the new flat
 one, putting the old one back if the attach fails so you are never left without a working repo:
 ```bash
 cd ~
 mkdir -p agent/data
-git sparse-checkout list 2>/dev/null | sed -n 's#^agent/skills/##p' | sort -u > agent/data/installed-skills.txt
+git sparse-checkout list 2>/dev/null | sed -n 's#^agent/skills/##p' | sort -u > agent/data/active-skills.txt
 tar czf ~/agent-backup.tar.gz agent        # safety net, keep until verified
 mv ~/.git ~/.git-legacy                     # retire the old repo (delete on a later dream)
 if ! bash agent/core/skills/upstream-sync/scripts/attach.sh; then
@@ -41,5 +41,5 @@ Then commit, and relink so your recorded skills are active from the next restart
 git add -A && git commit -m "my customizations"
 bash ~/agent/core/skills/upstream-sync/scripts/link-skills.sh
 ```
-Your active skill set (`data/installed-skills.txt` plus the shipped defaults) takes effect on
+Your active skill set (`data/active-skills.txt` plus the shipped defaults) takes effect on
 your next restart.

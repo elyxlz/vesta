@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Activate a skill: mark it in data/active-skills.txt and relink ~/.claude/skills. Every
+# optional skill already sits on disk (the workspace is a full checkout), so activating
+# only lists it. Instant, offline, no git.
+set -euo pipefail
+SKILL_NAME="${1:?Usage: skills-activate <skill-name>}"
+cd ~
+DEST="agent/skills/$SKILL_NAME"
+ACTIVE="agent/data/active-skills.txt"
+
+if [ ! -f "$DEST/SKILL.md" ]; then
+    echo "Error: no skill '$SKILL_NAME' (run skills-search to list available skills)." >&2
+    exit 1
+fi
+
+mkdir -p agent/data
+if grep -qxF "$SKILL_NAME" "$ACTIVE" 2>/dev/null; then
+    echo "Skill '$SKILL_NAME' is already active."
+else
+    printf '%s\n' "$SKILL_NAME" >> "$ACTIVE"
+fi
+bash ~/agent/core/skills/upstream-sync/scripts/link-skills.sh
+
+echo "Activated '$SKILL_NAME'. Restart Vesta to load it."
+if [ -f "$DEST/SETUP.md" ]; then
+    echo "This skill requires setup, read $DEST/SETUP.md for instructions."
+fi

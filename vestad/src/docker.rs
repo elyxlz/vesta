@@ -131,8 +131,8 @@ pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
         "command -v tmux >/dev/null 2>&1 || (apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tmux) || true".into(),
         "UV_PROJECT_ENVIRONMENT=/root/agent/.venv uv sync --frozen --project /root/agent/core".into(),
         // ~/.claude/skills is the symlink farm Claude Code discovers skills from, rebuilt
-        // every boot (before the SDK session starts) from data/installed-skills.txt: core
-        // skills always, optional skills only when installed. See link-skills.sh.
+        // every boot (before the SDK session starts) from data/active-skills.txt: core
+        // skills always, optional skills only when active. See link-skills.sh.
         "bash /root/agent/core/skills/upstream-sync/scripts/link-skills.sh".into(),
         "test -f ~/.claude/settings.json || printf '{\"permissions\":{\"allow\":[]}}\\n' > ~/.claude/settings.json".into(),
         "cd /root/agent && exec .venv/bin/python -m core.main".into(),

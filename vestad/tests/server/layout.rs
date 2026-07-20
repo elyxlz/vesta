@@ -38,14 +38,14 @@ fn fresh_agent_has_expected_directory_structure() {
 
     // Root-level directories created by entrypoint / image COPY. Git state
     // (/root/.git, branch, .gitignore) is not asserted here: the flat workspace
-    // attaches lazily (first skills-install or upstream sync), which fetches from
+    // attaches lazily (first skills-activate or upstream sync), which fetches from
     // the mounted upstream repo (outside this test's scope).
     for dir in ["/root/.claude", "/root/agent"] {
         wait_for_path(&cid, 'd', dir);
     }
 
     // .claude/skills is a directory of per-skill symlinks (built by link-skills.sh):
-    // every core skill always, plus each optional skill listed in installed-skills.txt
+    // every core skill always, plus each optional skill listed in active-skills.txt
     // (seeded from default-skills.txt). The image ships ALL skills on disk, but only the
     // active ones are linked; assert a default optional (tasks) and a core skill are linked.
     wait_for_path(&cid, 'd', "/root/.claude/skills");
