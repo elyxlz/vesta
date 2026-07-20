@@ -17,5 +17,5 @@ pub(crate) const PROTOCOL_FLOOR: u32 = 1;
 
 pub(crate) use alerts::alert_for;
 pub(crate) use events::{activity_state, notification_change};
-pub(crate) use handler::{send_message_handler, sync_ws_handler};
+pub(crate) use handler::sync_ws_handler;
 pub(crate) use hub::SyncHub;

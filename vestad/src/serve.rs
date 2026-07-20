@@ -2304,7 +2304,6 @@ pub fn build_router(state: SharedState) -> Router {
                 .delete(destroy_agent_handler)
                 .patch(rename_agent_handler),
         )
-        .route("/agents/{name}/message", post(crate::sync::send_message_handler))
         .route("/agents/{name}/start", post(start_agent_handler))
         .route(
             "/agents/{name}/config",

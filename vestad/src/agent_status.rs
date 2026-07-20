@@ -457,9 +457,9 @@ fn apply_agent_update(cache: &AgentStatusCache, name: String, update: AgentUpdat
     }
 }
 
-/// Connects to a single agent's WebSocket, relays activity/timezone to the cache, feeds the mobile
-/// push module and the sync hub's live edge, and keeps the write-half for send-message relay.
-/// Reconnects on failure; a reconnect emits a `resync` because the live edge had a gap.
+/// Connects to a single agent's WebSocket as a read-only tap, relays activity/timezone to the cache,
+/// and feeds the mobile push module and the sync hub's live edge. Reconnects on failure; a reconnect
+/// emits a `resync` because the live edge had a gap.
 async fn agent_event_listener(
     name: String,
     ws_port: u16,
@@ -470,7 +470,6 @@ async fn agent_event_listener(
 ) {
     const RECONNECT_BASE_MS: u64 = 1000;
     const RECONNECT_MAX_MS: u64 = 15000;
-    const SEND_RELAY_CAPACITY: usize = 16;
     let mut delay_ms = RECONNECT_BASE_MS;
     let mut connected_before = false;
 
@@ -494,13 +493,7 @@ async fn agent_event_listener(
         match tokio_tungstenite::connect_async(&url).await {
             Ok((ws, _)) => {
                 delay_ms = RECONNECT_BASE_MS;
-                let (write, mut read) = ws.split();
-
-                // Keep the write-half for the send-message relay (today's tap discarded it). A small
-                // mpsc feeds a writer task so the read loop never blocks on a slow socket.
-                let (out_tx, out_rx) = tokio::sync::mpsc::channel::<String>(SEND_RELAY_CAPACITY);
-                hub.install_writer(&name, out_tx);
-                let writer = tokio::spawn(forward_outbound(write, out_rx));
+                let (_, mut read) = ws.split();
 
                 // A reconnect means the live edge had a gap; tell watchers to refetch the tail by id.
                 if connected_before {
@@ -554,11 +547,8 @@ async fn agent_event_listener(
                     mobile_app.observe_agent_event(&name, parsed);
                 }
 
-                // Connection lost: tear down the write-half so a send-message now fails retryably
-                // instead of vanishing into a dead socket, and reset activity to idle so the
-                // frontend does not stay stuck on the last state.
-                hub.clear_writer(&name);
-                writer.abort();
+                // Connection lost: reset activity to idle so the frontend does not stay stuck on the
+                // last state.
                 let _ = tx.send((name.clone(), AgentUpdate::Activity("idle".into()))).await;
             }
             Err(err) => {
@@ -568,21 +558,6 @@ async fn agent_event_listener(
 
         tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
         delay_ms = (delay_ms * 2).min(RECONNECT_MAX_MS);
-    }
-}
-
-/// Forward relayed send-message frames onto the tap's write-half. Ends when the socket errors or the
-/// relay channel closes (the read side tore the connection down).
-async fn forward_outbound<S>(mut write: S, mut out_rx: tokio::sync::mpsc::Receiver<String>)
-where
-    S: futures_util::Sink<tokio_tungstenite::tungstenite::Message> + Unpin,
-{
-    use futures_util::SinkExt;
-    use tokio_tungstenite::tungstenite::Message;
-    while let Some(frame) = out_rx.recv().await {
-        if write.send(Message::Text(frame.into())).await.is_err() {
-            break;
-        }
     }
 }
 
@@ -679,16 +654,14 @@ mod tests {
     use tokio_tungstenite::tungstenite::Message as WsMessage;
 
     /// A fake agent WS server: on connect it sends a snapshot (backlog + one pending id) and one live
-    /// chat event, then records the first frame the tap relays back (the send-message). Returns its
-    /// bound port and a receiver for the relayed frame.
-    async fn fake_agent() -> (u16, tokio::sync::oneshot::Receiver<String>) {
+    /// chat event. Returns its bound port.
+    async fn fake_agent() -> u16 {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let port = listener.local_addr().expect("addr").port();
-        let (relay_tx, relay_rx) = tokio::sync::oneshot::channel::<String>();
         tokio::spawn(async move {
             let (stream, _) = listener.accept().await.expect("accept");
             let ws = tokio_tungstenite::accept_async(stream).await.expect("handshake");
-            let (mut write, mut read) = ws.split();
+            let (mut write, _read) = ws.split();
             let snapshot = serde_json::json!({
                 "type": "snapshot", "state": "idle",
                 "chat": {"events": [{"id": 1, "type": "chat", "text": "backlog"}], "cursor": null},
@@ -698,20 +671,17 @@ mod tests {
             let chat = serde_json::json!({"id": 5, "type": "chat", "text": "live"});
             write.send(WsMessage::Text(snapshot.to_string().into())).await.expect("send snapshot");
             write.send(WsMessage::Text(chat.to_string().into())).await.expect("send chat");
-            if let Some(Ok(WsMessage::Text(relayed))) = read.next().await {
-                let _ = relay_tx.send(relayed.to_string());
-            }
         });
-        (port, relay_rx)
+        port
     }
 
     #[tokio::test]
-    async fn tap_feeds_live_edge_excludes_backlog_and_relays_send_message() {
+    async fn tap_feeds_live_edge_excludes_backlog() {
         let hub = std::sync::Arc::new(SyncHub::new());
         let mut watcher = hub.subscribe_events("fake");
         let dir = tempfile::tempdir().expect("tempdir");
         let (app, _worker) = MobileApp::new(dir.path().to_path_buf(), reqwest::Client::new());
-        let (port, relay_rx) = fake_agent().await;
+        let port = fake_agent().await;
 
         let listener = tokio::spawn({
             let hub = hub.clone();
@@ -730,11 +700,6 @@ mod tests {
         }
         // The snapshot seeded one pending notification (as a stub, since none was seen live).
         assert_eq!(hub.pending_all()["fake"].len(), 1);
-
-        // The writer is installed by now, so a send-message relays to the fake agent.
-        hub.send_message("fake", r#"{"type":"message","text":"hey","intent_id":"i-1"}"#.into()).expect("relay");
-        let relayed = relay_rx.await.expect("relayed frame");
-        assert!(relayed.contains("\"intent_id\":\"i-1\""));
 
         listener.abort();
     }

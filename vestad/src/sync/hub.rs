@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
-use tokio::sync::{broadcast, mpsc, watch};
+use tokio::sync::{broadcast, watch};
 
 use super::events::{NotificationChange, PendingNotifications};
 
@@ -34,39 +34,25 @@ pub(crate) struct LiveAlert {
 
 struct AgentChannel {
     events: broadcast::Sender<LiveMessage>,
-    writer: Option<mpsc::Sender<String>>,
     pending: PendingNotifications,
 }
 
 impl AgentChannel {
     fn new() -> Self {
         let (events, _rx) = broadcast::channel(AGENT_BROADCAST_CAPACITY);
-        Self { events, writer: None, pending: PendingNotifications::default() }
+        Self { events, pending: PendingNotifications::default() }
     }
 }
 
-/// The aggregator's shared fan-out state. The tap (in `agent_status.rs`) publishes live events,
-/// seeds notifications, and registers a write-half here; `/sync` connections subscribe for the live
-/// edge and read the notifications projection. One instance lives on `AppState`.
+/// The aggregator's shared fan-out state. The tap (in `agent_status.rs`) publishes live events and
+/// seeds notifications here; `/sync` connections subscribe for the live edge and read the
+/// notifications projection. One instance lives on `AppState`.
 pub(crate) struct SyncHub {
     agents: Mutex<HashMap<String, AgentChannel>>,
     notifications_tx: watch::Sender<u64>,
     notifications_rx: watch::Receiver<u64>,
     alerts_tx: broadcast::Sender<Arc<LiveAlert>>,
 }
-
-/// Send-message relay failed because the agent's tap is down (restarting, evicted). Retryable: the
-/// client keeps its composer state and retries; an ack means the agent's intake accepted it.
-#[derive(Debug)]
-pub(crate) struct TapUnavailable;
-
-impl std::fmt::Display for TapUnavailable {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("agent tap is unavailable; retry")
-    }
-}
-
-impl std::error::Error for TapUnavailable {}
 
 impl Default for SyncHub {
     fn default() -> Self {
@@ -105,24 +91,6 @@ impl SyncHub {
         if let Some(channel) = self.lock().get(agent) {
             let _ = channel.events.send(LiveMessage::Resync);
         }
-    }
-
-    pub fn install_writer(&self, agent: &str, writer: mpsc::Sender<String>) {
-        self.lock().entry(agent.to_string()).or_insert_with(AgentChannel::new).writer = Some(writer);
-    }
-
-    pub fn clear_writer(&self, agent: &str) {
-        if let Some(channel) = self.lock().get_mut(agent) {
-            channel.writer = None;
-        }
-    }
-
-    /// Relay a send-message frame over the agent's tap write-half. Errors (retryable) when the tap is
-    /// down or its relay queue is full.
-    pub fn send_message(&self, agent: &str, frame: String) -> Result<(), TapUnavailable> {
-        let agents = self.lock();
-        let writer = agents.get(agent).and_then(|c| c.writer.as_ref()).ok_or(TapUnavailable)?;
-        writer.try_send(frame).map_err(|_| TapUnavailable)
     }
 
     /// Reconcile an agent's pending notifications to the snapshot's authoritative id set; wakes
@@ -179,22 +147,6 @@ impl SyncHub {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn send_message_without_a_writer_is_retryable() {
-        let hub = SyncHub::new();
-        let error = hub.send_message("ghost", "{}".into()).expect_err("no tap => retryable error");
-        assert_eq!(error.to_string(), "agent tap is unavailable; retry");
-    }
-
-    #[tokio::test]
-    async fn installed_writer_receives_the_relayed_frame() {
-        let hub = SyncHub::new();
-        let (tx, mut rx) = mpsc::channel::<String>(4);
-        hub.install_writer("scout", tx);
-        hub.send_message("scout", r#"{"type":"message","text":"hi"}"#.into()).expect("relay");
-        assert_eq!(rx.recv().await.expect("frame"), r#"{"type":"message","text":"hi"}"#);
-    }
 
     #[tokio::test]
     async fn watch_before_create_then_publish_delivers() {
