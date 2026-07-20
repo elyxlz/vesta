@@ -1,4 +1,10 @@
+import { ApiError, createHttpClient } from "@vesta/core";
 import type { ConnectionConfig } from "./types";
+
+// The Bearer-auth + refresh-on-401 + retry mechanics live once in @vesta/core; this module
+// injects mobile's connection accessors, its 5-min-buffer refresh, and its gateway error
+// shaping. `ApiError` is re-exported so endpoints and consumers keep importing it from here.
+export { ApiError };
 
 const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
 
@@ -7,16 +13,6 @@ export function isTokenExpiringSoon(
   now: number = Date.now(),
 ): boolean {
   return now >= connection.expiresAt - TOKEN_REFRESH_BUFFER_MS;
-}
-
-export class ApiError extends Error {
-  readonly status: number;
-
-  constructor(status: number, message: string) {
-    super(message);
-    this.name = "ApiError";
-    this.status = status;
-  }
 }
 
 interface ClientOptions {
@@ -114,42 +110,34 @@ export function createApiClient(options: ClientOptions): ApiClient {
     }
   };
 
+  const http = createHttpClient({
+    baseUrl: () => options.getConnection()?.url ?? "",
+    fetch: (input, init) => fetch(input, init),
+    token: () => options.getConnection()?.accessToken ?? null,
+    refresh: async () => (await refresh(true)) !== null,
+    isExpiring: () => {
+      const current = options.getConnection();
+      return (
+        current !== null &&
+        Date.now() >= current.expiresAt - TOKEN_REFRESH_BUFFER_MS
+      );
+    },
+    formatError: apiErrorMessage,
+  });
+
   const request = async (
     path: string,
     init?: RequestInit,
   ): Promise<Response> => {
-    let connection = await refresh(false);
-    if (!connection) throw new Error("Not connected to a Vesta gateway.");
-
-    const send = (active: ConnectionConfig) =>
-      fetch(`${active.url}${path}`, {
-        ...init,
-        headers: {
-          Authorization: `Bearer ${active.accessToken}`,
-          ...init?.headers,
-        },
-      });
-
-    let response = await send(connection);
-    if (response.status === 401) {
-      connection = await refresh(true);
-      if (!connection) throw new ApiError(401, "Your session expired.");
-      response = await send(connection);
-    }
-    if (!response.ok) {
-      const body = await response.text();
-      throw new ApiError(response.status, apiErrorMessage(response, body));
-    }
-    return response;
+    if (!options.getConnection())
+      throw new Error("Not connected to a Vesta gateway.");
+    return http.request(path, init);
   };
 
-  const json = async <ResponseBody>(
+  const json = <ResponseBody>(
     path: string,
     init?: RequestInit,
-  ): Promise<ResponseBody> => {
-    const response = await request(path, init);
-    return response.json();
-  };
+  ): Promise<ResponseBody> => http.json<ResponseBody>(path, init);
 
   const withToken = (
     path: string,

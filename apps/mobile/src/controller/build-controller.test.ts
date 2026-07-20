@@ -47,7 +47,7 @@ describe("buildController", () => {
       refreshAccessToken: vi.fn(),
     });
 
-    expect(deps().http.baseUrl).toBe("https://gateway.test");
+    expect(deps().http.baseUrl()).toBe("https://gateway.test");
     expect(deps().http.token()).toBe("tok en");
   });
 

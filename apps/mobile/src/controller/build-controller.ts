@@ -27,7 +27,7 @@ export function buildController(session: ControllerSession): Controller {
       clearTimer: (handle) => clearTimeout(handle),
     },
     http: {
-      baseUrl: conn()?.url ?? "",
+      baseUrl: () => conn()?.url ?? "",
       fetch: (input, init) => fetch(input, init),
       token: () => conn()?.accessToken ?? null,
       refresh: () => session.refreshAccessToken(),
