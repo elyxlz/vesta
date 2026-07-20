@@ -3,20 +3,16 @@ import type { AlertDelta } from "@vesta/core";
 import { shouldPresentAlert } from "./alert-presentation";
 
 function chatAlert(agent: string): AlertDelta {
-  return {
-    type: "alert",
-    agent,
-    event: { id: 1, type: "assistant", text: "hi" },
-    preview: "hi",
-  };
+  return { type: "alert", agent, kind: "message", title: agent, body: "hi" };
 }
 
 function rateLimitedAlert(agent: string): AlertDelta {
   return {
     type: "alert",
     agent,
-    event: { id: 2, type: "rate_limited", text: "throttled", window: null, resets_at: null },
-    preview: "throttled",
+    kind: "rate_limited",
+    title: agent,
+    body: "throttled",
   };
 }
 

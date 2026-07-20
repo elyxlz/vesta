@@ -2,13 +2,50 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
 import { ApiError, createReplica } from "@vesta/core";
-import type { Controller, Delta, Tree, VestaEvent } from "@vesta/core";
+import type {
+  Controller,
+  Delta,
+  SocketLike,
+  Tree,
+  VestaEvent,
+} from "@vesta/core";
 import { ControllerContext } from "@/providers/ControllerProvider";
 import { useChatPacing } from "@/stores/use-chat-pacing";
 import { fetchHistory } from "@/api/agents";
 import { useAgentSocketState } from "./use-agent-socket";
 
 vi.mock("@/api/agents", () => ({ fetchHistory: vi.fn() }));
+vi.mock("@/lib/connection", () => ({
+  getConnection: () => ({ url: "https://vestad.test", accessToken: "tok" }),
+}));
+
+// A controllable chat socket: createChatSocket sets its handlers, and each test drives them. The
+// factory records every instance so a test can open it, feed a frame, or assert its URL.
+class FakeChatSocket implements SocketLike {
+  onopen: (() => void) | null = null;
+  onmessage: ((data: string) => void) | null = null;
+  onclose: (() => void) | null = null;
+  closed = false;
+  readonly url: string;
+  constructor(url: string) {
+    this.url = url;
+  }
+  send(): void {
+    // The chat socket is read-only.
+  }
+  close(): void {
+    this.closed = true;
+  }
+}
+
+const chatSockets: FakeChatSocket[] = [];
+vi.mock("@/providers/ControllerProvider/browser-socket", () => ({
+  createBrowserSocket: (url: string) => {
+    const socket = new FakeChatSocket(url);
+    chatSockets.push(socket);
+    return socket;
+  },
+}));
 
 const fetchHistoryMock = vi.mocked(fetchHistory);
 
@@ -47,12 +84,9 @@ function makeController() {
   replica.applySnapshot(tree());
   const listeners = new Set<(delta: Delta) => void>();
   const json = vi.fn().mockResolvedValue({});
-  const watch = vi.fn();
   const controller: Controller = {
     replica,
     http: { request: vi.fn(), json },
-    watch,
-    unwatch: vi.fn(),
     reauth: vi.fn(),
     subscribeDeltas: (listener) => {
       listeners.add(listener);
@@ -62,11 +96,7 @@ function makeController() {
     subscribeSyncState: () => () => undefined,
     close: () => undefined,
   };
-  const emit = (delta: Delta): void => {
-    replica.applyDelta(delta);
-    for (const listener of listeners) listener(delta);
-  };
-  return { controller, json, watch, emit };
+  return { controller, json };
 }
 
 function wrapper(controller: Controller) {
@@ -80,19 +110,26 @@ function render(controller: Controller) {
   });
 }
 
-// Flush the pending microtasks (the async history seed) so the hook settles.
-async function flush() {
+// Open the newest chat socket (the reseed trigger) and flush the async history seed so the hook
+// settles.
+async function openAndFlush() {
   await act(async () => {
+    chatSockets.at(-1)?.onopen?.();
     await Promise.resolve();
     await Promise.resolve();
   });
+}
+
+// Deliver one live event on the chat socket, as a JSON text frame.
+function deliver(event: VestaEvent): void {
+  chatSockets.at(-1)?.onmessage?.(JSON.stringify(event));
 }
 
 function chat(id: number, text: string): VestaEvent {
   return { type: "chat", text, id, ts: new Date().toISOString() };
 }
 
-// The append echo of a send: a wire `user` event that carries `intent_id` (core's event type does
+// The chat-socket echo of a send: a wire `user` event carrying `intent_id` (core's event type does
 // not model that client-only field, so assert past it as the runtime frame does).
 function userEcho(id: number, text: string, intentId: string): VestaEvent {
   return {
@@ -104,6 +141,7 @@ function userEcho(id: number, text: string, intentId: string): VestaEvent {
 }
 
 beforeEach(() => {
+  chatSockets.length = 0;
   fetchHistoryMock.mockReset();
   useChatPacing.setState({ natural: true });
 });
@@ -114,17 +152,20 @@ afterEach(() => {
 });
 
 describe("useAgentSocketState", () => {
-  it("watches the active agent and hydrates the newest history page", async () => {
+  it("opens a chat socket and hydrates the newest history page on open", async () => {
     fetchHistoryMock.mockResolvedValue({
       events: [chat(1, "hello")],
       cursor: null,
     });
-    const { controller, watch } = makeController();
+    const { controller } = makeController();
 
     const { result } = render(controller);
-    expect(watch.mock.calls).toEqual([[AGENT]]);
+    expect(chatSockets).toHaveLength(1);
+    expect(chatSockets[0]?.url).toBe(
+      "wss://vestad.test/agents/ada/app-chat/ws?token=tok",
+    );
 
-    await flush();
+    await openAndFlush();
 
     expect(fetchHistoryMock).toHaveBeenCalledWith(AGENT, "app-chat");
     expect(result.current.historyLoaded).toBe(true);
@@ -132,16 +173,18 @@ describe("useAgentSocketState", () => {
     expect(result.current.connected).toBe(true);
   });
 
-  it("sends an optimistic bubble and confirms it on the append echo", async () => {
+  it("sends an optimistic bubble and confirms it on the chat-socket echo", async () => {
     fetchHistoryMock.mockResolvedValue({ events: [], cursor: null });
-    const { controller, json, emit } = makeController();
+    const { controller, json } = makeController();
     const { result } = render(controller);
-    await flush();
+    await openAndFlush();
 
     act(() => {
       expect(result.current.send("hi")).toBe(true);
     });
-    await flush();
+    await act(async () => {
+      await Promise.resolve();
+    });
 
     // Delivery truth is the echo, so the bubble is optimistic ("sending") until it returns.
     const users = () =>
@@ -156,28 +199,27 @@ describe("useAgentSocketState", () => {
     };
 
     act(() => {
-      emit({
-        type: "append",
-        agent: AGENT,
-        events: [userEcho(5, "hi", body.intent_id)],
-      });
+      deliver(userEcho(5, "hi", body.intent_id));
     });
-    await flush();
 
     // The echo confirms the existing bubble rather than appending a second.
     expect(users()).toHaveLength(1);
     expect(users()[0]?.send_state).toBeUndefined();
   });
 
-  it("paces a live chat append and toggles isTyping", async () => {
+  it("paces a live chat event and toggles isTyping", async () => {
     fetchHistoryMock.mockResolvedValue({ events: [], cursor: null });
     vi.useFakeTimers();
-    const { controller, emit } = makeController();
+    const { controller } = makeController();
     const { result } = render(controller);
-    await flush();
+    await act(async () => {
+      chatSockets.at(-1)?.onopen?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
 
     act(() => {
-      emit({ type: "append", agent: AGENT, events: [chat(7, "pong")] });
+      deliver(chat(7, "pong"));
     });
 
     // Paced: typing indicator on, message withheld until the typing delay elapses.
@@ -197,12 +239,14 @@ describe("useAgentSocketState", () => {
     const { controller, json } = makeController();
     json.mockRejectedValueOnce(new ApiError(503, "unavailable"));
     const { result } = render(controller);
-    await flush();
+    await openAndFlush();
 
     act(() => {
       expect(result.current.send("retryable")).toBe(true);
     });
-    await flush();
+    await act(async () => {
+      await Promise.resolve();
+    });
 
     const users = result.current.messages.filter((m) => m.type === "user");
     expect(users).toHaveLength(1);

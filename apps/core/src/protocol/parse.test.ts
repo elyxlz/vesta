@@ -25,16 +25,9 @@ describe("parseServerFrame", () => {
       { raw: { type: "state", scope: "gateway", value: { version: "1" } }, type: "state" },
       { raw: { type: "agent", name: "scout", info: { status: "alive" } }, type: "agent" },
       { raw: { type: "agent_removed", name: "scout" }, type: "agent_removed" },
-      { raw: { type: "append", agent: "scout", events: [] }, type: "append" },
       { raw: { type: "notifications", agent: "scout", pending: [] }, type: "notifications" },
-      { raw: { type: "resync", agent: "scout" }, type: "resync" },
       {
-        raw: {
-          type: "alert",
-          agent: "scout",
-          event: { id: 1, type: "chat", text: "hi" },
-          preview: "hi",
-        },
+        raw: { type: "alert", agent: "scout", kind: "message", title: "scout", body: "hi" },
         type: "alert",
       },
     ]
@@ -45,27 +38,30 @@ describe("parseServerFrame", () => {
     }
   })
 
-  it("carries the alert agent, event, and preview through", () => {
+  it("carries the alert agent, kind, title, and body through", () => {
     const parsed = parseServerFrame(
       JSON.stringify({
         type: "alert",
         agent: "scout",
-        event: { id: 9, type: "chat", text: "hello there" },
-        preview: "hello there",
+        kind: "message",
+        title: "scout",
+        body: "hello there",
       }),
     )
     expect(parsed.kind).toBe("delta")
     if (parsed.kind === "delta" && parsed.delta.type === "alert") {
       expect(parsed.delta.agent).toBe("scout")
-      expect(parsed.delta.preview).toBe("hello there")
-      expect(parsed.delta.event.id).toBe(9)
+      expect(parsed.delta.kind).toBe("message")
+      expect(parsed.delta.title).toBe("scout")
+      expect(parsed.delta.body).toBe("hello there")
     }
   })
 
-  it("ignores an alert missing its preview or event", () => {
+  it("ignores an alert missing its kind, title, or body", () => {
     const inputs = [
-      JSON.stringify({ type: "alert", agent: "scout", event: { id: 1, type: "chat", text: "hi" } }),
-      JSON.stringify({ type: "alert", agent: "scout", preview: "hi" }),
+      JSON.stringify({ type: "alert", agent: "scout", title: "scout", body: "hi" }),
+      JSON.stringify({ type: "alert", agent: "scout", kind: "message", body: "hi" }),
+      JSON.stringify({ type: "alert", agent: "scout", kind: "message", title: "scout" }),
     ]
     for (const raw of inputs) expect(parseServerFrame(raw)).toEqual({ kind: "unknown" })
   })
@@ -86,7 +82,7 @@ describe("parseServerFrame", () => {
   it("ignores a delta missing a required field", () => {
     const inputs = [
       JSON.stringify({ type: "agent", name: "scout" }),
-      JSON.stringify({ type: "append", agent: "scout" }),
+      JSON.stringify({ type: "notifications", agent: "scout" }),
       JSON.stringify({ type: "state", scope: "other", value: {} }),
     ]
     for (const raw of inputs) expect(parseServerFrame(raw)).toEqual({ kind: "unknown" })

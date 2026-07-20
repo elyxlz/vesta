@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   ChatMessage,
   ChatState,
-  Delta,
   InputMethod,
   SendFailure,
   Tree,
@@ -11,6 +10,7 @@ import {
   PACING,
   beginSend,
   commitPacedChat,
+  createChatSocket,
   foldLiveEvent,
   initialChatState,
   markSend,
@@ -20,12 +20,23 @@ import {
   typingDelay,
 } from "@vesta/core";
 import { useController } from "@/providers/ControllerProvider";
-import { useReplica, useSyncState, useWatch } from "@vesta/core/react";
+import { useReplica, useSyncState } from "@vesta/core/react";
+import { createBrowserSocket } from "@/providers/ControllerProvider/browser-socket";
+import { getConnection } from "@/lib/connection";
 import { fetchHistory } from "@/api/agents";
 import { useChatPacing } from "@/stores/use-chat-pacing";
 
 function idsEqual(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((value, i) => value === b[i]);
+}
+
+// The app-chat live socket URL through vestad's authenticated proxy, mirroring the /sync URL builder:
+// swap http->ws and carry the access token as a query param.
+function chatSocketUrl(agent: string): string {
+  const conn = getConnection();
+  if (!conn) throw new Error("not connected to vesta gateway");
+  const base = conn.url.replace(/^http/, "ws");
+  return `${base}/agents/${encodeURIComponent(agent)}/app-chat/ws?token=${encodeURIComponent(conn.accessToken)}`;
 }
 
 interface UseAgentSocketOptions {
@@ -35,14 +46,13 @@ interface UseAgentSocketOptions {
   onPrefetch?: (text: string) => void;
 }
 
-// The chat view-model over the core controller and the shared chat-stream model. useWatch turns the
-// agent's live edge on; controller.subscribeDeltas feeds the chat tail (append/resync are not tree
-// state, so they arrive here, not through the replica). agentState + pending come from the replica;
-// connectedness from the single sync socket. There is no per-agent WS: the tail is the HTTP history
-// page plus live appends, deduped at the seam by event id, and sends are POST intents confirmed by
-// their append echo. ChatState (mirrored into React state for rendering) is the single source of
-// truth; every fold runs synchronously against the ref so a batch of appends dedups against the
-// running accumulation.
+// The chat view-model over the core controller and the shared chat-stream model. The chat tail is a
+// per-agent app-chat socket (replay-free: it streams only events appended after connect) joined to
+// the HTTP history page, deduped at the seam by event id; on every socket open the hook refetches the
+// tail so a reconnect gap self-heals. agentState + pending come from the replica; gateway
+// connectedness from the single sync socket. Sends are POST intents confirmed by their chat-socket
+// echo. ChatState (mirrored into React state for rendering) is the single source of truth; every fold
+// runs synchronously against the ref so a batch of appends dedups against the running accumulation.
 export function useAgentSocketState({
   name,
   active,
@@ -70,7 +80,6 @@ export function useAgentSocketState({
   const drainingRef = useRef(false);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useWatch(controller, active ? name : null);
   const connected = useSyncState(controller) === "open";
 
   const activitySelector = useCallback(
@@ -173,8 +182,9 @@ export function useAgentSocketState({
     setState(stateRef.current);
     resetTyping();
 
-    // Reseed the tail from the newest history page and MERGE, never replace. Serves the initial load
-    // and a resync alike; the shared model dedups by id and reconciles pending sends against the page.
+    // Reseed the tail from the newest history page and MERGE, never replace. Runs on every socket
+    // open (initial connect and each reconnect), so a replay-free gap self-heals; the shared model
+    // dedups by id and reconciles pending sends against the page.
     const seed = async () => {
       const page = await fetchHistory(agent, "app-chat");
       if (cancelled) return;
@@ -185,31 +195,34 @@ export function useAgentSocketState({
       const { state: next, paced } = foldLiveEvent(stateRef.current, event);
       commit(() => next);
       if (paced) enqueueChatMessage(event);
-      else if (event.type === "error" || event.type === "rate_limited")
-        resetTyping();
     };
 
-    void seed().catch((err: unknown) => {
-      console.warn("chat: history load failed", err);
-    });
-
-    const unsubscribe = controller.subscribeDeltas((delta: Delta) => {
-      if (delta.type === "append" && delta.agent === agent) {
-        for (const event of delta.events) addLiveEvent(event);
-      } else if (delta.type === "resync" && delta.agent === agent) {
-        resetTyping();
-        void seed().catch((err: unknown) => {
-          console.warn("chat: resync refetch failed", err);
-        });
-      }
-    });
+    const socket = createChatSocket(
+      {
+        buildUrl: () => chatSocketUrl(agent),
+        createSocket: createBrowserSocket,
+        setTimer: (fn, ms) => window.setTimeout(fn, ms),
+        clearTimer: (handle) => window.clearTimeout(handle),
+      },
+      {
+        onEvent: addLiveEvent,
+        onStateChange: (socketState) => {
+          if (socketState === "open") {
+            resetTyping();
+            void seed().catch((err: unknown) => {
+              console.warn("chat: history load failed", err);
+            });
+          }
+        },
+      },
+    );
 
     return () => {
       cancelled = true;
-      unsubscribe();
+      socket.close();
       resetTyping();
     };
-  }, [active, name, controller, commit, enqueueChatMessage]);
+  }, [active, name, commit, enqueueChatMessage]);
 
   const send = useCallback(
     (text: string, inputMethod: InputMethod = "typed"): boolean => {

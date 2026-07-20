@@ -32,21 +32,14 @@ describe("sync protocol contract (vestad fixtures)", () => {
     }
   })
 
-  it("carries event ids through the append delta for by-id dedup", () => {
-    const parsed = parseServerFrame(JSON.stringify(fixtures.deltas.append))
-    expect(parsed.kind).toBe("delta")
-    if (parsed.kind === "delta" && parsed.delta.type === "append") {
-      expect(parsed.delta.events[0]?.id).toBe(5)
-    }
-  })
-
-  it("carries the server-decided preview and event through the alert delta", () => {
+  it("carries the server-decided kind, title, and body through the alert delta", () => {
     const parsed = parseServerFrame(JSON.stringify(fixtures.deltas.alert))
     expect(parsed.kind).toBe("delta")
     if (parsed.kind === "delta" && parsed.delta.type === "alert") {
       expect(parsed.delta.agent).toBe("sample-agent")
-      expect(parsed.delta.preview).toBe("hello")
-      expect(parsed.delta.event.type).toBe("chat")
+      expect(parsed.delta.kind).toBe("message")
+      expect(parsed.delta.title).toBe("sample-agent")
+      expect(parsed.delta.body).toBe("hello")
     }
   })
 })

@@ -23,7 +23,7 @@ function LiveAlertNotifications({ controller }: { controller: Controller }) {
       if (delta.type !== "alert") return;
       if (!shouldPresentAlert(delta, activeAgentName())) return;
       void Notifications.scheduleNotificationAsync({
-        content: { title: delta.agent, body: delta.preview },
+        content: { title: delta.title, body: delta.body },
         trigger: null,
       });
     });

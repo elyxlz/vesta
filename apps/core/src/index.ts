@@ -48,6 +48,14 @@ export {
 } from "./chat/chat-stream-model"
 export type { ChatMessage, ChatState, HistoryPage, SendState } from "./chat/chat-stream-model"
 
+export { createChatSocket } from "./chat/chat-socket"
+export type {
+  ChatSocket,
+  ChatSocketCallbacks,
+  ChatSocketDeps,
+  ChatSocketState,
+} from "./chat/chat-socket"
+
 export { sendMessage } from "./intents/send-message"
 export type { IdGenerator, SendFailure, SendMessageBody, SentMessage } from "./intents/send-message"
 

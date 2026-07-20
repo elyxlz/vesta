@@ -1,5 +1,5 @@
 import type { Delta } from "./deltas"
-import type { NotificationEvent, VestaEvent } from "./events"
+import type { NotificationEvent } from "./events"
 import type { HelloFrame, SnapshotFrame } from "./frames"
 import type { AgentInfo, GatewayInfo, Tree } from "./tree"
 
@@ -50,9 +50,7 @@ export function parseServerFrame(raw: string): ParsedFrame {
     case "state":
     case "agent":
     case "agent_removed":
-    case "append":
     case "notifications":
-    case "resync":
     case "alert":
       return parseDelta(type, frame)
     default:
@@ -92,12 +90,6 @@ function parseDelta(type: string, frame: Record<string, unknown>): ParsedFrame {
       if (name === null) return UNKNOWN
       return { kind: "delta", delta: { type: "agent_removed", name } }
     }
-    case "append": {
-      const agent = str(frame.agent)
-      const events = arr(frame.events)
-      if (agent === null || events === null) return UNKNOWN
-      return { kind: "delta", delta: { type: "append", agent, events: events as VestaEvent[] } }
-    }
     case "notifications": {
       const agent = str(frame.agent)
       const pending = arr(frame.pending)
@@ -107,19 +99,13 @@ function parseDelta(type: string, frame: Record<string, unknown>): ParsedFrame {
         delta: { type: "notifications", agent, pending: pending as NotificationEvent[] },
       }
     }
-    case "resync": {
-      const agent = str(frame.agent)
-      if (agent === null) return UNKNOWN
-      return { kind: "delta", delta: { type: "resync", agent } }
-    }
     case "alert": {
       const agent = str(frame.agent)
-      const preview = str(frame.preview)
-      if (agent === null || preview === null || record(frame.event) === null) return UNKNOWN
-      return {
-        kind: "delta",
-        delta: { type: "alert", agent, event: frame.event as VestaEvent, preview },
-      }
+      const kind = str(frame.kind)
+      const title = str(frame.title)
+      const body = str(frame.body)
+      if (agent === null || kind === null || title === null || body === null) return UNKNOWN
+      return { kind: "delta", delta: { type: "alert", agent, kind, title, body } }
     }
     default:
       return UNKNOWN

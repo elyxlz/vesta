@@ -1,7 +1,6 @@
-import { encodeFrame, reauthFrame, unwatchFrame, watchFrame } from "../protocol/frames"
+import { encodeFrame, reauthFrame } from "../protocol/frames"
 import { parseServerFrame } from "../protocol/parse"
 import { PROTOCOL_FLOOR, PROTOCOL_VERSION } from "../protocol/version"
-import { createWatchManager } from "../replica/watch"
 import type { ClientFrame, HelloFrame } from "../protocol/frames"
 import type { Delta } from "../protocol/deltas"
 import type { Tree } from "../protocol/tree"
@@ -32,8 +31,6 @@ export interface SyncSocketCallbacks {
 }
 
 export interface SyncSocket {
-  watch: (agent: string) => void
-  unwatch: (agent: string) => void
   reauth: (token: string) => void
   close: () => void
 }
@@ -48,7 +45,6 @@ function compatible(hello: HelloFrame): boolean {
 export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCallbacks): SyncSocket {
   const base = deps.baseDelayMs ?? 1000
   const max = deps.maxDelayMs ?? 30000
-  const watches = createWatchManager()
   let socket: SocketLike | null = null
   let timer: number | null = null
   let delay = base
@@ -61,8 +57,8 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
     target.onclose = null
   }
 
-  // Only send on an open socket: a browser WebSocket throws before OPEN, and the
-  // onopen replay delivers the desired watches, so the connecting window sends nothing.
+  // Only send on an open socket: a browser WebSocket throws before OPEN, so the connecting
+  // window sends nothing (a reauth issued then is simply dropped; the next rotation resends).
   const emit = (frame: ClientFrame): void => {
     if (open && socket) socket.send(encodeFrame(frame))
   }
@@ -96,7 +92,6 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
         callbacks.onSnapshot(parsed.frame.tree)
         return
       case "delta":
-        if (parsed.delta.type === "agent_removed") watches.drop(parsed.delta.name)
         callbacks.onDelta(parsed.delta)
         return
       case "unknown":
@@ -122,7 +117,6 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
       open = true
       delay = base
       callbacks.onStateChange("open")
-      for (const agent of watches.desired()) current.send(encodeFrame(watchFrame(agent)))
     }
     current.onmessage = (data) => {
       if (socket === current) handleMessage(data)
@@ -139,12 +133,6 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
   connect()
 
   return {
-    watch: (agent) => {
-      if (watches.watch(agent)) emit(watchFrame(agent))
-    },
-    unwatch: (agent) => {
-      if (watches.unwatch(agent)) emit(unwatchFrame(agent))
-    },
     reauth: (token) => {
       emit(reauthFrame(token))
     },

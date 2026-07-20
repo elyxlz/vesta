@@ -95,8 +95,6 @@ function makeController(statuses: Record<string, AgentRow["status"]>) {
   const controller: Controller = {
     replica,
     http: { request: vi.fn(), json: vi.fn() },
-    watch: vi.fn(),
-    unwatch: vi.fn(),
     reauth: vi.fn(),
     subscribeDeltas: (listener) => {
       listeners.add(listener);
@@ -202,8 +200,9 @@ describe("NotificationProvider", () => {
       emit({
         type: "alert",
         agent: "bob",
-        event: { type: "chat", text: "the full turn text", id: 1 },
-        preview: "pong",
+        kind: "message",
+        title: "bob",
+        body: "pong",
       });
     });
 
@@ -224,8 +223,9 @@ describe("NotificationProvider", () => {
       emit({
         type: "alert",
         agent: "ada",
-        event: { type: "chat", text: "hi", id: 2 },
-        preview: "hi",
+        kind: "message",
+        title: "ada",
+        body: "hi",
       });
     });
 
@@ -242,8 +242,9 @@ describe("NotificationProvider", () => {
       emit({
         type: "alert",
         agent: "ada",
-        event: { type: "chat", text: "hi", id: 3 },
-        preview: "hi",
+        kind: "message",
+        title: "ada",
+        body: "hi",
       });
     });
 
@@ -260,14 +261,9 @@ describe("NotificationProvider", () => {
       emit({
         type: "alert",
         agent: "ada",
-        event: {
-          type: "rate_limited",
-          text: "resets at 3pm",
-          id: 4,
-          window: null,
-          resets_at: null,
-        },
-        preview: "resets at 3pm",
+        kind: "rate_limited",
+        title: "ada",
+        body: "resets at 3pm",
       });
     });
 

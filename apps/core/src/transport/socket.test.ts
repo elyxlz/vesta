@@ -77,9 +77,9 @@ describe("createSyncSocket", () => {
     const socket = h.sockets[0]
     socket?.onopen?.()
     socket?.onmessage?.(JSON.stringify({ type: "snapshot", tree: { gateway: {}, agents: {} } }))
-    socket?.onmessage?.(JSON.stringify({ type: "resync", agent: "scout" }))
+    socket?.onmessage?.(JSON.stringify({ type: "notifications", agent: "scout", pending: [] }))
     expect(h.snapshots).toHaveLength(1)
-    expect(h.deltas).toEqual([{ type: "resync", agent: "scout" }])
+    expect(h.deltas).toEqual([{ type: "notifications", agent: "scout", pending: [] }])
   })
 
   it("ignores unknown frames", () => {
@@ -100,58 +100,6 @@ describe("createSyncSocket", () => {
     expect(socket?.closed).toBe(true)
     socket?.onclose?.()
     expect(h.timers).toHaveLength(0)
-  })
-
-  it("defers a watch requested before open, then replays it once", () => {
-    const h = harness()
-    const sync = start(h)
-    sync.watch("a")
-    expect(h.sockets[0]?.sent).toEqual([])
-    h.sockets[0]?.onopen?.()
-    expect(h.sockets[0]?.sent).toEqual([JSON.stringify({ type: "watch", agent: "a" })])
-  })
-
-  it("replays desired watches on reconnect", () => {
-    const h = harness()
-    const sync = start(h)
-    h.sockets[0]?.onopen?.()
-    sync.watch("scout")
-    expect(h.sockets[0]?.sent).toEqual([JSON.stringify({ type: "watch", agent: "scout" })])
-    h.sockets[0]?.onclose?.()
-    expect(h.timers).toHaveLength(1)
-    h.timers[0]?.fn()
-    h.sockets[1]?.onopen?.()
-    expect(h.sockets[1]?.sent).toEqual([JSON.stringify({ type: "watch", agent: "scout" })])
-  })
-
-  it("emits WATCH once per agent and UNWATCH only on the last reference", () => {
-    const h = harness()
-    const sync = start(h)
-    h.sockets[0]?.onopen?.()
-    sync.watch("scout")
-    sync.watch("scout")
-    // A second watcher of the same agent sends nothing new: one WATCH covers both.
-    expect(h.sockets[0]?.sent).toEqual([JSON.stringify({ type: "watch", agent: "scout" })])
-    sync.unwatch("scout")
-    // One watcher gone but another remains: no UNWATCH yet.
-    expect(h.sockets[0]?.sent).toEqual([JSON.stringify({ type: "watch", agent: "scout" })])
-    sync.unwatch("scout")
-    expect(h.sockets[0]?.sent).toEqual([
-      JSON.stringify({ type: "watch", agent: "scout" }),
-      JSON.stringify({ type: "unwatch", agent: "scout" }),
-    ])
-  })
-
-  it("drops a watch when its agent is removed", () => {
-    const h = harness()
-    const sync = start(h)
-    h.sockets[0]?.onopen?.()
-    sync.watch("scout")
-    h.sockets[0]?.onmessage?.(JSON.stringify({ type: "agent_removed", name: "scout" }))
-    h.sockets[0]?.onclose?.()
-    h.timers[0]?.fn()
-    h.sockets[1]?.onopen?.()
-    expect(h.sockets[1]?.sent).toEqual([])
   })
 
   it("grows the reconnect backoff from 1s toward the cap", () => {

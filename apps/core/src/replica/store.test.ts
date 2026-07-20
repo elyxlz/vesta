@@ -52,7 +52,7 @@ describe("createReplica", () => {
     const replica = createReplica()
     const listener = vi.fn()
     replica.subscribe(listener)
-    replica.applyDelta({ type: "resync", agent: "scout" })
+    replica.applyDelta({ type: "agent_removed", name: "scout" })
     expect(listener).not.toHaveBeenCalled()
     expect(replica.getState()).toBeNull()
   })

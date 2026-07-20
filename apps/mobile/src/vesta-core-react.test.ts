@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { useReplica, useSyncState, useWatch } from "@vesta/core/react";
+import { useReplica, useSyncState } from "@vesta/core/react";
 
 // Resolution gate for the `./react` subpath export of the file: dependency.
 // Resolved config that makes this pass:
@@ -13,7 +13,6 @@ import { useReplica, useSyncState, useWatch } from "@vesta/core/react";
 describe("@vesta/core/react resolution", () => {
   it("resolves the react subpath export", () => {
     expect(typeof useReplica).toBe("function");
-    expect(typeof useWatch).toBe("function");
     expect(typeof useSyncState).toBe("function");
   });
 });

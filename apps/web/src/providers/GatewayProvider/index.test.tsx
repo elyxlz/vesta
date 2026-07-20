@@ -60,8 +60,6 @@ function stubController(replica: ReturnType<typeof createReplica>): Controller {
   return {
     replica,
     http: {} as Controller["http"],
-    watch: () => undefined,
-    unwatch: () => undefined,
     reauth: () => undefined,
     subscribeDeltas: () => () => undefined,
     getSyncState: () => "open",

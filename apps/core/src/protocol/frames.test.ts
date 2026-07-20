@@ -1,19 +1,17 @@
 import { describe, expect, it } from "vitest"
 
-import { encodeFrame, reauthFrame, unwatchFrame, watchFrame } from "./frames"
+import { encodeFrame, reauthFrame } from "./frames"
 import type { HelloFrame, SnapshotFrame } from "./frames"
 import type { NotificationEvent } from "./events"
 import type { Tree } from "./tree"
 
 describe("client frame constructors", () => {
-  it("builds watch, unwatch, and reauth frames", () => {
-    expect(watchFrame("scout")).toEqual({ type: "watch", agent: "scout" })
-    expect(unwatchFrame("scout")).toEqual({ type: "unwatch", agent: "scout" })
+  it("builds a reauth frame", () => {
     expect(reauthFrame("tok")).toEqual({ type: "reauth", token: "tok" })
   })
 
   it("encodes a client frame as JSON", () => {
-    expect(encodeFrame(watchFrame("scout"))).toBe('{"type":"watch","agent":"scout"}')
+    expect(encodeFrame(reauthFrame("tok"))).toBe('{"type":"reauth","token":"tok"}')
   })
 })
 

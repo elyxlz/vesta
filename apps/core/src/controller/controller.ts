@@ -14,12 +14,9 @@ export interface ControllerDeps {
 export interface Controller {
   replica: Replica
   http: HttpClient
-  watch: (agent: string) => void
-  unwatch: (agent: string) => void
   reauth: (token: string) => void
-  // Live chat edge: append/resync deltas are NOT reduced into the tree (chat tails are not
-  // tree state, by spec), so the chat view-model subscribes to them here. Every delta flows
-  // through; callers that want branch state read the replica instead.
+  // The server's always-on `alert` delta is not tree state, so the notification funnel subscribes
+  // to it here. Every delta flows through; callers that want branch state read the replica instead.
   subscribeDeltas: (listener: (delta: Delta) => void) => () => void
   getSyncState: () => SyncState
   subscribeSyncState: (listener: () => void) => () => void
@@ -58,12 +55,6 @@ export function createController(deps: ControllerDeps): Controller {
   return {
     replica,
     http,
-    watch: (agent) => {
-      socket.watch(agent)
-    },
-    unwatch: (agent) => {
-      socket.unwatch(agent)
-    },
     reauth: (token) => {
       socket.reauth(token)
     },

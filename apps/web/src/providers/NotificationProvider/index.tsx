@@ -66,21 +66,21 @@ function ReplicaNotifications({
   notifyRateLimited: (agentName: string, text: string) => void;
   markUnseen: () => void;
 }) {
-  // Toasts come from vestad's server-decided `alert` deltas (each carries the notification-worthy
-  // event plus a ready preview), independent of any watch. A rate limit alerts even while focused; a
+  // Toasts come from vestad's server-decided `alert` deltas (each carries a display triple:
+  // kind/title/body), independent of any subscription. A rate limit alerts even while focused; a
   // chat lights the unseen badge and toasts, deferring the actively-chatted agent to
   // AgentSocketProvider (which fires after the typing delay so it lines up with the visible bubble).
   useEffect(() => {
     return controller.subscribeDeltas((delta: Delta) => {
       if (delta.type !== "alert") return;
-      const { agent, event, preview } = delta;
-      if (event.type === "rate_limited") {
-        notifyRateLimited(agent, preview);
+      const { agent, kind, body } = delta;
+      if (kind === "rate_limited") {
+        notifyRateLimited(agent, body);
         return;
       }
       markUnseen();
       if (chattingAgentRef.current === agent) return;
-      notifyAssistant(agent, preview);
+      notifyAssistant(agent, body);
     });
   }, [
     controller,

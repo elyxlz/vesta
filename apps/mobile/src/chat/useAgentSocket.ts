@@ -4,6 +4,7 @@ import {
   PACING,
   beginSend,
   commitPacedChat,
+  createChatSocket,
   foldLiveEvent,
   initialChatState,
   markSend,
@@ -13,14 +14,14 @@ import {
   typingDelay,
   type ChatMessage,
   type ChatState,
-  type Delta,
   type InputMethod,
   type SendFailure,
   type Tree,
   type VestaEvent,
 } from "@vesta/core";
-import { useReplica, useSyncState, useWatch } from "@vesta/core/react";
+import { useReplica, useSyncState } from "@vesta/core/react";
 import { useController } from "@/controller/context";
+import { createRnSocket } from "@/controller/rn-socket";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
 import { connectionKeyOf } from "@/session/session-model";
@@ -40,16 +41,18 @@ interface HistoryPage {
   cursor: number | null;
 }
 
-// The chat view-model over the core controller. useWatch turns the agent's live edge on;
-// controller.subscribeDeltas feeds the chat tail (append/resync are not tree state, so they arrive
-// here, not through the replica). agentState + pending come from the replica; connectedness from the
-// single sync socket. There is no per-agent WS: the tail is the HTTP history page plus live appends,
-// deduped at the seam by event id, and sends are POST intents confirmed by their append echo. The
-// socket lifecycle (connect, backoff, background teardown) is the controller's; this hook only reads.
+// The chat view-model over the core controller. The chat tail is a per-agent app-chat socket
+// (replay-free: only events appended after connect) joined to the HTTP history page, deduped at the
+// seam by event id; on every socket open the hook refetches the tail so a reconnect gap self-heals.
+// agentState + pending come from the replica; gateway connectedness from the single sync socket.
+// Sends are POST intents confirmed by their chat-socket echo. The stale-while-reconnecting hold gives
+// an instant render across a controller epoch; backgrounding never blanks the chat.
 export function useAgentSocket(name: string, active: boolean) {
   const controller = useController();
   const preferences = usePreferences();
   const { connection } = useSession();
+  const connectionRef = useRef(connection);
+  connectionRef.current = connection;
   const holdStore = useChatHold();
   const key = chatHoldKey(name, connectionKeyOf(connection) ?? "");
   const keyRef = useRef(key);
@@ -58,8 +61,16 @@ export function useAgentSocket(name: string, active: boolean) {
   const naturalPacingRef = useRef(naturalPacing);
   naturalPacingRef.current = naturalPacing;
 
-  useWatch(controller, active && name ? name : null);
   const connected = useSyncState(controller) === "open";
+
+  // The app-chat live socket URL through vestad's authenticated proxy, mirroring the /sync URL
+  // builder: swap http->ws and carry the (freshest-rendered) access token as a query param.
+  const chatSocketUrl = useCallback((): string => {
+    const current = connectionRef.current;
+    if (!current) throw new Error("not connected to a Vesta gateway");
+    const base = current.url.replace(/^http/, "ws");
+    return `${base}/agents/${encodeURIComponent(name)}/app-chat/ws?token=${encodeURIComponent(current.accessToken)}`;
+  }, [name]);
 
   const activitySelector = useCallback(
     (tree: Tree | null) =>
@@ -182,7 +193,6 @@ export function useAgentSocket(name: string, active: boolean) {
 
   useEffect(() => {
     if (!active || !name) return;
-    const agent = name;
     let cancelled = false;
 
     // Seed from the hold for this key (survives the controller epoch); a mismatched key clears to
@@ -192,8 +202,9 @@ export function useAgentSocket(name: string, active: boolean) {
     setState(seeded);
     resetTyping();
 
-    // Reseed the tail from the newest history page and MERGE, never replace. Serves the initial load
-    // and a resync alike, bumping reseedRevision so the notifications page refetches its own history.
+    // Reseed the tail from the newest history page and MERGE, never replace. Runs on every socket
+    // open (initial connect and each reconnect), so a replay-free gap self-heals, bumping
+    // reseedRevision so the notifications page refetches its own history.
     const seed = async () => {
       const page = await fetchPage();
       if (cancelled) return;
@@ -205,39 +216,43 @@ export function useAgentSocket(name: string, active: boolean) {
       const { state: next, paced } = foldLiveEvent(stateRef.current, event);
       commit(() => next);
       if (paced) enqueueChat(event);
-      else if (event.type === "error" || event.type === "rate_limited") resetTyping();
     };
 
-    void seed().catch((error: unknown) => {
-      console.warn("chat: history load failed", error);
-    });
-
-    const unsubscribe = controller.subscribeDeltas((delta: Delta) => {
-      if (delta.type === "append" && delta.agent === agent) {
-        for (const event of delta.events) addLiveEvent(event);
-      } else if (delta.type === "resync" && delta.agent === agent) {
-        resetTyping();
-        void seed().catch((error: unknown) => {
-          console.warn("chat: resync refetch failed", error);
-        });
-      }
-    });
+    const socket = createChatSocket(
+      {
+        buildUrl: chatSocketUrl,
+        createSocket: createRnSocket,
+        setTimer: (fn, ms) => setTimeout(fn, ms) as unknown as number,
+        clearTimer: (handle) => clearTimeout(handle),
+      },
+      {
+        onEvent: addLiveEvent,
+        onStateChange: (socketState) => {
+          if (socketState === "open") {
+            resetTyping();
+            void seed().catch((error: unknown) => {
+              console.warn("chat: history load failed", error);
+            });
+          }
+        },
+      },
+    );
 
     return () => {
       cancelled = true;
-      unsubscribe();
+      socket.close();
       resetTyping();
     };
   }, [
     active,
     name,
-    controller,
     key,
     holdStore,
     commit,
     resetTyping,
     enqueueChat,
     fetchPage,
+    chatSocketUrl,
   ]);
 
   // Reflect the POST's settled disposition into the bubble. A null outcome means queued-on-tap:

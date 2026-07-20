@@ -1,5 +1,5 @@
 import type { AgentInfo, GatewayInfo } from "./tree"
-import type { NotificationEvent, VestaEvent } from "./events"
+import type { NotificationEvent } from "./events"
 
 export interface StateDelta {
   type: "state"
@@ -18,38 +18,27 @@ export interface AgentRemovedDelta {
   name: string
 }
 
-export interface AppendDelta {
-  type: "append"
-  agent: string
-  events: VestaEvent[]
-}
-
 export interface NotificationsDelta {
   type: "notifications"
   agent: string
   pending: NotificationEvent[]
 }
 
-export interface ResyncDelta {
-  type: "resync"
-  agent: string
-}
-
-// The always-on, server-decided notification-worthy event (chat / rate_limited), carrying the full
-// event plus vestad's preview. Independent of watches; clients toast it. Additive: an old client on
-// the pre-alert union simply ignored it.
+// The always-on, server-decided user-facing alert (a new chat reply or a rate limit), carrying the
+// display triple directly. Chat leaves the event union, so the alert no longer embeds an event: the
+// client routes on `kind` and renders `title`/`body`. Independent of any subscription; clients toast
+// it. Additive: an old client on the pre-alert union simply ignores it.
 export interface AlertDelta {
   type: "alert"
   agent: string
-  event: VestaEvent
-  preview: string
+  kind: string
+  title: string
+  body: string
 }
 
 export type Delta =
   | StateDelta
   | AgentDelta
   | AgentRemovedDelta
-  | AppendDelta
   | NotificationsDelta
-  | ResyncDelta
   | AlertDelta

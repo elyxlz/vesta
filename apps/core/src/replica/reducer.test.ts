@@ -102,16 +102,15 @@ describe("reduceDelta", () => {
     expect(next.agents.scout?.notifications.pending).toHaveLength(1)
   })
 
-  it("returns the same tree for append, resync, and alert deltas", () => {
+  it("returns the same tree for the alert delta", () => {
     const tree = baseTree()
-    expect(reduceDelta(tree, { type: "append", agent: "scout", events: [] })).toBe(tree)
-    expect(reduceDelta(tree, { type: "resync", agent: "scout" })).toBe(tree)
     expect(
       reduceDelta(tree, {
         type: "alert",
         agent: "scout",
-        event: { id: 1, type: "chat", text: "hi" },
-        preview: "hi",
+        kind: "message",
+        title: "scout",
+        body: "hi",
       }),
     ).toBe(tree)
   })
@@ -167,22 +166,13 @@ describe("reduceDelta", () => {
       freshReference: true,
     },
     {
-      name: "append",
-      delta: { type: "append", agent: "scout", events: [] },
-      freshReference: false,
-    },
-    {
-      name: "resync",
-      delta: { type: "resync", agent: "scout" },
-      freshReference: false,
-    },
-    {
       name: "alert",
       delta: {
         type: "alert",
         agent: "scout",
-        event: { id: 1, type: "chat", text: "hi" },
-        preview: "hi",
+        kind: "message",
+        title: "scout",
+        body: "hi",
       },
       freshReference: false,
     },

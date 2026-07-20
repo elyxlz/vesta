@@ -110,25 +110,17 @@ describe("createController", () => {
     expect(listener).not.toHaveBeenCalled()
   })
 
-  it("sends a watch frame when watch is called", () => {
-    const h = harness()
-    h.sockets[0]?.onopen?.()
-    h.controller.watch("scout")
-    expect(h.sockets[0]?.sent).toEqual([JSON.stringify({ type: "watch", agent: "scout" })])
-  })
-
-  it("fans out every delta to subscribeDeltas, including append the reducer ignores", () => {
+  it("fans out every delta to subscribeDeltas, including the alert the reducer ignores", () => {
     const h = harness()
     const seen: Delta[] = []
     h.controller.subscribeDeltas((delta) => seen.push(delta))
     const socket = h.sockets[0]
     socket?.onopen?.()
     socket?.onmessage?.(JSON.stringify({ type: "snapshot", tree: baseTree() }))
-    const append: Delta = { type: "append", agent: "scout", events: [] }
-    socket?.onmessage?.(JSON.stringify(append))
-    socket?.onmessage?.(JSON.stringify({ type: "resync", agent: "scout" }))
-    expect(seen).toEqual([append, { type: "resync", agent: "scout" }])
-    // The append is a transient chat-edge delta: it never mutates the tree.
+    const alert: Delta = { type: "alert", agent: "scout", kind: "message", title: "scout", body: "hi" }
+    socket?.onmessage?.(JSON.stringify(alert))
+    expect(seen).toEqual([alert])
+    // The alert is a transient user-facing delta: it never mutates the tree.
     expect(h.controller.replica.getState()?.agents.scout).toBeUndefined()
   })
 
@@ -139,7 +131,9 @@ describe("createController", () => {
     off()
     const socket = h.sockets[0]
     socket?.onopen?.()
-    socket?.onmessage?.(JSON.stringify({ type: "resync", agent: "scout" }))
+    socket?.onmessage?.(
+      JSON.stringify({ type: "alert", agent: "scout", kind: "message", title: "scout", body: "hi" }),
+    )
     expect(seen).toEqual([])
   })
 
