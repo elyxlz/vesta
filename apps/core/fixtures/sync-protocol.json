@@ -27,17 +27,6 @@
       "title": "sample-agent",
       "type": "alert"
     },
-    "append": {
-      "agent": "sample-agent",
-      "events": [
-        {
-          "id": 5,
-          "text": "hello",
-          "type": "chat"
-        }
-      ],
-      "type": "append"
-    },
     "notifications": {
       "agent": "sample-agent",
       "pending": [
@@ -50,10 +39,6 @@
         }
       ],
       "type": "notifications"
-    },
-    "resync": {
-      "agent": "sample-agent",
-      "type": "resync"
     },
     "state": {
       "scope": "gateway",

@@ -74,7 +74,7 @@ pub(crate) enum GatewayScope {
 }
 
 /// Every server -> client frame in one tagged union, matching the flat `type` routing in
-/// `apps/core/src/protocol/parse.ts`. hello/snapshot plus the six delta types share one wire
+/// `apps/core/src/protocol/parse.ts`. hello/snapshot plus the delta types share one wire
 /// discriminator space; on one ordered TCP socket there are no sequence numbers.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -84,9 +84,7 @@ pub(crate) enum Frame {
     State { scope: GatewayScope, value: GatewayInfo },
     Agent { name: String, info: AgentInfo },
     AgentRemoved { name: String },
-    Append { agent: String, events: Vec<serde_json::Value> },
     Notifications { agent: String, pending: Vec<serde_json::Value> },
-    Resync { agent: String },
     Alert { agent: String, kind: String, title: String, body: String },
 }
 
@@ -103,8 +101,6 @@ impl Frame {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum ClientFrame {
-    Watch { agent: String },
-    Unwatch { agent: String },
     Reauth { token: String },
 }
 
@@ -138,7 +134,6 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
         "id": 7, "type": "notification", "source": "whatsapp", "summary": "new message",
         "notif_id": "whatsapp-123",
     });
-    let chat = serde_json::json!({ "id": 5, "type": "chat", "text": "hello" });
     let mut agents = BTreeMap::new();
     agents.insert(
         "sample-agent".to_string(),
@@ -157,9 +152,7 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
             "state": to_value(Frame::State { scope: GatewayScope::Gateway, value: gateway }).expect("serialize state"),
             "agent": to_value(Frame::Agent { name: "sample-agent".into(), info }).expect("serialize agent"),
             "agent_removed": to_value(Frame::AgentRemoved { name: "stopped-agent".into() }).expect("serialize agent_removed"),
-            "append": to_value(Frame::Append { agent: "sample-agent".into(), events: vec![chat.clone()] }).expect("serialize append"),
             "notifications": to_value(Frame::Notifications { agent: "sample-agent".into(), pending: vec![notification] }).expect("serialize notifications"),
-            "resync": to_value(Frame::Resync { agent: "sample-agent".into() }).expect("serialize resync"),
             "alert": to_value(Frame::Alert {
                 agent: "sample-agent".into(), kind: "message".into(), title: "sample-agent".into(), body: "hello".into(),
             }).expect("serialize alert"),
@@ -230,9 +223,7 @@ mod tests {
             (Frame::State { scope: GatewayScope::Gateway, value: sample_gateway() }, "state"),
             (Frame::Agent { name: "scout".into(), info: sample_agent_info() }, "agent"),
             (Frame::AgentRemoved { name: "scout".into() }, "agent_removed"),
-            (Frame::Append { agent: "scout".into(), events: vec![] }, "append"),
             (Frame::Notifications { agent: "scout".into(), pending: vec![] }, "notifications"),
-            (Frame::Resync { agent: "scout".into() }, "resync"),
             (Frame::Alert { agent: "scout".into(), kind: "message".into(), title: "scout".into(), body: "hi".into() }, "alert"),
         ];
         for (frame, tag) in cases {
@@ -253,8 +244,6 @@ mod tests {
 
     #[test]
     fn client_frames_round_trip() {
-        let watch: ClientFrame = serde_json::from_str(r#"{"type":"watch","agent":"scout"}"#).expect("parse watch");
-        assert_eq!(watch, ClientFrame::Watch { agent: "scout".into() });
         let reauth: ClientFrame = serde_json::from_str(r#"{"type":"reauth","token":"tok"}"#).expect("parse reauth");
         assert_eq!(reauth, ClientFrame::Reauth { token: "tok".into() });
         // An unknown client frame is a parse error the handler treats as "ignore".

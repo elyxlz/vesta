@@ -7,21 +7,18 @@ use axum::extract::{RawQuery, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
 use futures_util::{SinkExt, StreamExt};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::broadcast;
 
 use crate::docker::{AgentStatus, BuildPhase, ListEntry};
 use crate::settings::ServiceEntry;
 use crate::state::{SharedState, WS_KEEPALIVE_INTERVAL_SECS};
 
-use super::hub::{LiveAlert, LiveMessage, SyncHub};
+use super::hub::LiveAlert;
 use super::protocol::{
     AgentInfo, AgentNode, ClientFrame, Frame, GatewayInfo, GatewayLan, GatewayScope,
     NotificationsBranch, ServiceInfo, Tree,
 };
 use super::{PROTOCOL_FLOOR, PROTOCOL_VERSION};
-
-/// Per-connection buffer for the fan-in of every watch's live edge into the one socket writer.
-const WATCH_FANIN_CAPACITY: usize = 128;
 
 type Tx = futures_util::stream::SplitSink<WebSocket, Message>;
 
@@ -102,11 +99,6 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
         return;
     }
 
-    // Each watch spawns a task forwarding the hub's live edge into this per-connection mpsc; the one
-    // socket writer drains it, so a chatty agent never blocks the others.
-    let (watch_tx, mut watch_rx) = mpsc::channel::<Frame>(WATCH_FANIN_CAPACITY);
-    let mut watches: HashMap<String, tokio::task::AbortHandle> = HashMap::new();
-
     let mut deadline = connect_token.as_deref().and_then(|t| token_deadline(t, &state.api_key));
 
     // The ping keeps an idle socket alive through the Cloudflare tunnel (reaps ~100s silence), same
@@ -124,7 +116,6 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
             r = invalidations_rx.changed() => { if r.is_err() { break } Wake::Roster }
             r = notifications_rx.changed() => { if r.is_err() { break } Wake::Notifications }
             alert = alerts_rx.recv() => Wake::Alert(alert),
-            frame = watch_rx.recv() => Wake::Watch(frame),
             client = rx.next() => Wake::Client(client),
             _ = keepalive.tick() => Wake::Keepalive,
             () = expire(deadline) => Wake::Expire,
@@ -135,12 +126,12 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
                 if tx.send(Message::Ping(bytes::Bytes::new())).await.is_err() {
                     break;
                 }
-                if emit_roster_and_gateway(&state, &mut tx, &mut last_roster, &mut last_gateway, &mut watches).await.is_err() {
+                if emit_roster_and_gateway(&state, &mut tx, &mut last_roster, &mut last_gateway).await.is_err() {
                     break;
                 }
             }
             Wake::Roster => {
-                if emit_roster_and_gateway(&state, &mut tx, &mut last_roster, &mut last_gateway, &mut watches).await.is_err() {
+                if emit_roster_and_gateway(&state, &mut tx, &mut last_roster, &mut last_gateway).await.is_err() {
                     break;
                 }
             }
@@ -160,19 +151,9 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
                     break;
                 }
             }
-            Wake::Watch(Some(delta)) => {
-                // A resync from a watch task means that watch ended (overflow or a tap gap); drop it
-                // so the client re-watches.
-                if let Frame::Resync { agent } = &delta {
-                    watches.remove(agent);
-                }
-                if send_frame(&mut tx, &delta).await.is_err() {
-                    break;
-                }
-            }
             Wake::Client(Some(Ok(Message::Text(text)))) => {
                 if let ControlFlow::Break(()) =
-                    handle_client_frame(&state.sync_hub, &state.api_key, text.as_str(), &mut watches, &watch_tx, &mut deadline)
+                    handle_client_frame(&state.api_key, text.as_str(), &mut deadline)
                 {
                     break;
                 }
@@ -182,16 +163,11 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
             Wake::Expire
             | Wake::Client(None | Some(Ok(Message::Close(_)) | Err(_)))
             | Wake::Alert(Err(broadcast::error::RecvError::Closed)) => break,
-            // Ignore: an empty watch wake, any non-text control frame (ping/pong/binary), and a lagged
-            // alert (ephemeral, dropped by design).
-            Wake::Watch(None)
-            | Wake::Client(Some(Ok(_)))
+            // Ignore: any non-text control frame (ping/pong/binary) and a lagged alert (ephemeral,
+            // dropped by design).
+            Wake::Client(Some(Ok(_)))
             | Wake::Alert(Err(broadcast::error::RecvError::Lagged(_))) => {}
         }
-    }
-
-    for (_, handle) in watches {
-        handle.abort();
     }
 }
 
@@ -200,7 +176,6 @@ enum Wake {
     Roster,
     Notifications,
     Alert(Result<std::sync::Arc<LiveAlert>, broadcast::error::RecvError>),
-    Watch(Option<Frame>),
     Client(Option<Result<Message, axum::Error>>),
     Keepalive,
     Expire,
@@ -226,21 +201,15 @@ async fn send_frame(tx: &mut Tx, frame: &Frame) -> Result<(), ()> {
 }
 
 /// Diff the roster against last-sent and emit `agent`/`agent_removed`, then the gateway `state`
-/// delta if the host branch changed. An `agent_removed` also cancels that agent's watch.
+/// delta if the host branch changed.
 async fn emit_roster_and_gateway(
     state: &SharedState,
     tx: &mut Tx,
     last_roster: &mut BTreeMap<String, AgentInfo>,
     last_gateway: &mut GatewayInfo,
-    watches: &mut HashMap<String, tokio::task::AbortHandle>,
 ) -> Result<(), ()> {
     let current = current_roster(state);
     for delta in roster_deltas(last_roster, &current) {
-        if let Frame::AgentRemoved { name } = &delta {
-            if let Some(handle) = watches.remove(name) {
-                handle.abort();
-            }
-        }
         send_frame(tx, &delta).await?;
     }
     *last_roster = current;
@@ -294,28 +263,14 @@ fn notifications_deltas(
 /// Handle one client frame. Unknown/malformed frames are ignored by rule. Returns Break only on a
 /// failed reauth (the loop then closes the socket).
 fn handle_client_frame(
-    sync_hub: &SyncHub,
     api_key: &str,
     text: &str,
-    watches: &mut HashMap<String, tokio::task::AbortHandle>,
-    watch_tx: &mpsc::Sender<Frame>,
     deadline: &mut Option<tokio::time::Instant>,
 ) -> ControlFlow<()> {
     let Ok(frame) = serde_json::from_str::<ClientFrame>(text) else {
         return ControlFlow::Continue(());
     };
     match frame {
-        ClientFrame::Watch { agent } => {
-            if let std::collections::hash_map::Entry::Vacant(slot) = watches.entry(agent) {
-                let handle = spawn_watch(sync_hub, slot.key(), watch_tx.clone());
-                slot.insert(handle);
-            }
-        }
-        ClientFrame::Unwatch { agent } => {
-            if let Some(handle) = watches.remove(&agent) {
-                handle.abort();
-            }
-        }
         ClientFrame::Reauth { token } => {
             if crate::auth::verify_token(&token, api_key) {
                 *deadline = token_deadline(&token, api_key);
@@ -326,33 +281,6 @@ fn handle_client_frame(
         }
     }
     ControlFlow::Continue(())
-}
-
-/// Spawn the forward task for one watch: the hub's live edge becomes `append` deltas. Any live-edge
-/// gap becomes one `resync` delta that ends the watch (the client re-watches and refetches the tail by
-/// id): an explicit resync (tap reconnect), a lagging receiver (overflow), or the channel being
-/// forgotten when the agent's tap drops on a restart (`Closed`), which is a gap just like the others.
-fn spawn_watch(sync_hub: &SyncHub, agent: &str, watch_tx: mpsc::Sender<Frame>) -> tokio::task::AbortHandle {
-    let mut events = sync_hub.subscribe_events(agent);
-    let agent = agent.to_string();
-    let task = tokio::spawn(async move {
-        loop {
-            match events.recv().await {
-                Ok(LiveMessage::Event(event)) => {
-                    let delta = Frame::Append { agent: agent.clone(), events: vec![(*event).clone()] };
-                    if watch_tx.send(delta).await.is_err() {
-                        break;
-                    }
-                }
-                Ok(LiveMessage::Resync)
-                | Err(broadcast::error::RecvError::Lagged(_) | broadcast::error::RecvError::Closed) => {
-                    let _ = watch_tx.send(Frame::Resync { agent: agent.clone() }).await;
-                    break;
-                }
-            }
-        }
-    });
-    task.abort_handle()
 }
 
 fn current_roster(state: &SharedState) -> BTreeMap<String, AgentInfo> {
@@ -625,113 +553,18 @@ mod tests {
         assert!(token_deadline(&token, "other-key").is_none()); // fails validation -> no deadline
     }
 
-    fn abort_all(watches: HashMap<String, tokio::task::AbortHandle>) {
-        for (_, handle) in watches {
-            handle.abort();
-        }
-    }
-
-    // The four tests below drive handle_client_frame/spawn_watch against a bare SyncHub (no
-    // SharedState), the hermetic seam the explicit-deps refactor unlocks. Current-thread runtime: a
-    // spawned forward task does not run until the test awaits, which is what makes the flood-then-lag
-    // path deterministic.
-
-    #[tokio::test]
-    async fn watch_then_publish_delivers_an_append_delta() {
-        let hub = SyncHub::new();
-        let (watch_tx, mut watch_rx) = mpsc::channel::<Frame>(WATCH_FANIN_CAPACITY);
-        let mut watches = HashMap::new();
-        let mut deadline = None;
-
-        let flow = handle_client_frame(&hub, "key", r#"{"type":"watch","agent":"scout"}"#, &mut watches, &watch_tx, &mut deadline);
-        assert!(matches!(flow, ControlFlow::Continue(())));
-        assert!(watches.contains_key("scout"));
-
-        hub.publish_event("scout", std::sync::Arc::new(serde_json::json!({"id": 1, "text": "hi"})));
-        match watch_rx.recv().await.expect("append delta") {
-            Frame::Append { agent, events } => {
-                assert_eq!(agent, "scout");
-                assert_eq!(events[0]["text"], serde_json::json!("hi"));
-            }
-            other => panic!("expected an append, got {other:?}"),
-        }
-        abort_all(watches);
-    }
-
-    #[tokio::test]
-    async fn unwatch_aborts_delivery() {
-        let hub = SyncHub::new();
-        let (watch_tx, mut watch_rx) = mpsc::channel::<Frame>(WATCH_FANIN_CAPACITY);
-        let mut watches = HashMap::new();
-        let mut deadline = None;
-
-        let _ = handle_client_frame(&hub, "key", r#"{"type":"watch","agent":"scout"}"#, &mut watches, &watch_tx, &mut deadline);
-        let _ = handle_client_frame(&hub, "key", r#"{"type":"unwatch","agent":"scout"}"#, &mut watches, &watch_tx, &mut deadline);
-        assert!(watches.is_empty());
-
-        hub.publish_event("scout", std::sync::Arc::new(serde_json::json!({"id": 1})));
-        // Let the runtime cancel the aborted forward task, then confirm it never forwarded the event.
-        for _ in 0..8 {
-            tokio::task::yield_now().await;
-        }
-        assert!(matches!(watch_rx.try_recv(), Err(mpsc::error::TryRecvError::Empty)));
-    }
-
-    #[tokio::test]
-    async fn overflow_yields_one_resync_and_ends_the_watch() {
-        let hub = SyncHub::new();
-        let (watch_tx, mut watch_rx) = mpsc::channel::<Frame>(WATCH_FANIN_CAPACITY);
-        let mut watches = HashMap::new();
-        let mut deadline = None;
-
-        let _ = handle_client_frame(&hub, "key", r#"{"type":"watch","agent":"chatty"}"#, &mut watches, &watch_tx, &mut deadline);
-
-        // The forward task has not been polled yet, so its broadcast receiver sits at the initial
-        // version; flooding well past the buffer forces Lagged on its first recv.
-        for id in 0..2048 {
-            hub.publish_event("chatty", std::sync::Arc::new(serde_json::json!({"id": id})));
-        }
-        assert!(matches!(watch_rx.recv().await, Some(Frame::Resync { agent }) if agent == "chatty"));
-
-        // The watch ended on the resync: further live events deliver nothing.
-        hub.publish_event("chatty", std::sync::Arc::new(serde_json::json!({"id": 9999})));
-        for _ in 0..8 {
-            tokio::task::yield_now().await;
-        }
-        assert!(matches!(watch_rx.try_recv(), Err(mpsc::error::TryRecvError::Empty)));
-        abort_all(watches);
-    }
-
-    #[tokio::test]
-    async fn a_forgotten_channel_yields_one_resync_and_ends_the_watch() {
-        // A watched agent whose tap drops on a restart has its channel forgotten (the broadcast
-        // sender dropped); the watch must surface that gap as a resync, not die silently.
-        let hub = SyncHub::new();
-        let (watch_tx, mut watch_rx) = mpsc::channel::<Frame>(WATCH_FANIN_CAPACITY);
-        let mut watches = HashMap::new();
-        let mut deadline = None;
-
-        let _ = handle_client_frame(&hub, "key", r#"{"type":"watch","agent":"scout"}"#, &mut watches, &watch_tx, &mut deadline);
-        hub.forget_agent("scout");
-        assert!(matches!(watch_rx.recv().await, Some(Frame::Resync { agent }) if agent == "scout"));
-        abort_all(watches);
-    }
-
-    #[tokio::test]
-    async fn reauth_extends_on_valid_token_and_breaks_on_invalid() {
-        let hub = SyncHub::new();
-        let (watch_tx, _watch_rx) = mpsc::channel::<Frame>(WATCH_FANIN_CAPACITY);
-        let mut watches = HashMap::new();
+    #[test]
+    fn reauth_extends_on_valid_token_and_breaks_on_invalid() {
         let mut deadline: Option<tokio::time::Instant> = None;
 
         let token = crate::jwt::create_token("secret", "access", crate::jwt::ACCESS_TOKEN_TTL);
         let valid = format!(r#"{{"type":"reauth","token":"{token}"}}"#);
-        let flow = handle_client_frame(&hub, "secret", &valid, &mut watches, &watch_tx, &mut deadline);
+        let flow = handle_client_frame("secret", &valid, &mut deadline);
         assert!(matches!(flow, ControlFlow::Continue(())));
         assert!(deadline.is_some(), "a valid reauth extends the deadline");
 
         let before = deadline;
-        let flow = handle_client_frame(&hub, "secret", r#"{"type":"reauth","token":"bad.token.here"}"#, &mut watches, &watch_tx, &mut deadline);
+        let flow = handle_client_frame("secret", r#"{"type":"reauth","token":"bad.token.here"}"#, &mut deadline);
         assert!(matches!(flow, ControlFlow::Break(())), "a bad reauth breaks the loop");
         assert_eq!(deadline, before, "a failed reauth leaves the deadline unchanged");
     }

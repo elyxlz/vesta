@@ -457,8 +457,7 @@ fn apply_agent_update(cache: &AgentStatusCache, name: String, update: AgentUpdat
 }
 
 /// Connects to a single agent's WebSocket as a read-only tap, relays activity/timezone to the cache,
-/// and feeds the sync hub's live edge + notifications projection. Reconnects on failure; a reconnect
-/// emits a `resync` because the live edge had a gap.
+/// and feeds the sync hub's notifications projection. Reconnects on failure.
 async fn agent_event_listener(
     name: String,
     ws_port: u16,
@@ -469,7 +468,6 @@ async fn agent_event_listener(
     const RECONNECT_BASE_MS: u64 = 1000;
     const RECONNECT_MAX_MS: u64 = 15000;
     let mut delay_ms = RECONNECT_BASE_MS;
-    let mut connected_before = false;
 
     loop {
         // Read the agent token fresh each attempt (it may rotate).
@@ -492,12 +490,6 @@ async fn agent_event_listener(
             Ok((ws, _)) => {
                 delay_ms = RECONNECT_BASE_MS;
                 let (_, mut read) = ws.split();
-
-                // A reconnect means the live edge had a gap; tell watchers to refetch the tail by id.
-                if connected_before {
-                    hub.publish_resync(&name);
-                }
-                connected_before = true;
 
                 while let Some(Ok(msg)) = read.next().await {
                     let text = match &msg {
@@ -526,17 +518,15 @@ async fn agent_event_listener(
                         {
                             let _ = tx.send((name.clone(), AgentUpdate::Timezone(zone.to_string()))).await;
                         }
-                        // Reseed pending notifications from the snapshot's authoritative id set. The
-                        // snapshot's chat backlog is deliberately NOT published as an append and NOT
-                        // pushed: watchers load the tail through paged HTTP history, deduped by id.
+                        // Reseed pending notifications from the snapshot's authoritative id set,
+                        // deduped by id against later live changes.
                         hub.seed_notifications(&name, &pending_ids(&parsed));
                         continue;
                     }
 
-                    // A live event: feed the watch fan-out and the notifications projection. Alerts +
-                    // mobile push no longer ride the tap; they come from the agent's `notify` primitive
+                    // A live event: feed the notifications projection. Alerts + mobile push no longer
+                    // ride the tap; they come from the agent's `notify` primitive
                     // (POST /agents/{name}/notify), which fans an `alert` delta and an Expo push.
-                    hub.publish_event(&name, std::sync::Arc::new(parsed.clone()));
                     if let Some(change) = notification_change(&parsed) {
                         hub.apply_notification(&name, change);
                     }
@@ -642,13 +632,12 @@ mod tests {
         assert!(cache.service_revs().is_empty());
     }
 
-    use crate::sync::hub::LiveMessage;
     use crate::sync::SyncHub;
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message as WsMessage;
 
-    /// A fake agent WS server: on connect it sends a snapshot (backlog + one pending id) and one live
-    /// chat event. Returns its bound port.
+    /// A fake agent WS server: on connect it sends a snapshot (one pending id) and one live chat
+    /// event. Returns its bound port.
     async fn fake_agent() -> u16 {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let port = listener.local_addr().expect("addr").port();
@@ -658,7 +647,6 @@ mod tests {
             let (mut write, _read) = ws.split();
             let snapshot = serde_json::json!({
                 "type": "snapshot", "state": "idle",
-                "chat": {"events": [{"id": 1, "type": "chat", "text": "backlog"}], "cursor": null},
                 "notifications": {"pending": ["n1"]},
                 "config": {"timezone": "America/New_York"},
             });
@@ -670,9 +658,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tap_feeds_live_edge_excludes_backlog() {
+    async fn tap_seeds_pending_from_the_snapshot() {
         let hub = std::sync::Arc::new(SyncHub::new());
-        let mut watcher = hub.subscribe_events("fake");
         let dir = tempfile::tempdir().expect("tempdir");
         let port = fake_agent().await;
 
@@ -683,16 +670,17 @@ mod tests {
             async move { agent_event_listener("fake".into(), port, dir, tx, hub).await }
         });
 
-        // The first (and only) live-edge message is the live chat, never the snapshot backlog.
-        match watcher.recv().await.expect("live message") {
-            LiveMessage::Event(event) => {
-                assert_eq!(event["id"], serde_json::json!(5));
-                assert_eq!(event["text"], serde_json::json!("live"));
+        // The tap seeds one pending notification from the snapshot's authoritative id set; the live
+        // chat event that follows is not a notification change, so pending stays at one.
+        let mut seeded = false;
+        for _ in 0..100 {
+            if hub.pending_all().get("fake").is_some_and(|p| p.len() == 1) {
+                seeded = true;
+                break;
             }
-            LiveMessage::Resync => panic!("first message should be the live event"),
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
-        // The snapshot seeded one pending notification (as a stub, since none was seen live).
-        assert_eq!(hub.pending_all()["fake"].len(), 1);
+        assert!(seeded, "the snapshot's pending id should seed the notifications projection");
 
         listener.abort();
     }
