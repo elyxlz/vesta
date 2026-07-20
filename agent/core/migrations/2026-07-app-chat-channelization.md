@@ -36,8 +36,11 @@ running app-chat || { app-chat daemon start; sleep 1; }
 `app-chat daemon start` now registers the `app-chat` service and starts the HTTP server plus ws.
 If the line already matches, this step is done.
 
-### 4. Restart so the daemon comes up as a service
+### 4. Bring the daemon up as the registered service
 
 ```bash
-restart_vesta
+app-chat daemon restart
 ```
+
+This re-registers the `app-chat` service and restarts the HTTP server plus ws on its registered
+port, replacing the old in-place daemon without a container restart.
