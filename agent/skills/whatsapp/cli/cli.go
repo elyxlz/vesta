@@ -1121,7 +1121,7 @@ func managedLinkedResult(number string) map[string]any {
 		"status": "linked",
 		"number": number,
 		"next": fmt.Sprintf(
-			"Linked as %s. Share this number with the user and ask them to message you FIRST: send them the click-to-chat link %s, then reply only once they say hi. A fresh number must never cold-initiate.",
+			"Linked as %s. First set up your identity: run `whatsapp set-profile-name \"<your name>\"` (REQUIRED, a fresh number has no name and cannot broadcast online status or read receipts until it is set), and ask the user what profile photo they'd like you to use, then set it with `whatsapp set-profile-photo <file>`. Then share this number with the user and ask them to message you FIRST: send them the click-to-chat link %s, and reply only once they say hi. A fresh number must never cold-initiate.",
 			number, waMeLink(number, ""),
 		),
 	}

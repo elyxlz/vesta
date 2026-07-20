@@ -249,7 +249,7 @@ func (wac *WhatsAppClient) handleReceipt(evt *events.Receipt) {
 		}
 	}
 
-	chatJID := evt.Chat.String()
+	chatJID := wac.canonicalChatKey(evt.Chat)
 	for _, msgID := range evt.MessageIDs {
 		if err := wac.store.UpdateDeliveryStatus(string(msgID), chatJID, status, evt.Timestamp); err != nil {
 			wac.logger.Warnf("Failed to update delivery status for %s: %v", msgID, err)
@@ -273,6 +273,9 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 
 	resolvedSender, senderDisplay, contactName, contactPhone, contactSaved, isDirectChat := wac.prepareNotificationInfo(info.MessageSource)
 	chatName := wac.getChatName(info.Chat)
+	// Canonical storage key: resolve the peer LID to its phone JID so this chat is keyed the same
+	// whether the message arrived under the peer's LID or a reply resolves them to their number.
+	chatKey := wac.canonicalChatKey(info.Chat)
 
 	// Track message sender for reaction routing
 	wac.sendersMutex.Lock()
@@ -290,11 +293,11 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 	}
 	wac.sendersMutex.Unlock()
 
-	if err := wac.store.StoreChat(info.Chat.String(), chatName, info.Timestamp); err != nil {
+	if err := wac.store.StoreChat(chatKey, chatName, info.Timestamp); err != nil {
 		wac.logger.Warnf("Failed to store chat: %v", err)
 	}
 	if err := wac.store.StoreMessage(StoreMessageParams{
-		ID: info.ID, ChatJID: info.Chat.String(), Sender: senderDisplay, Content: content,
+		ID: info.ID, ChatJID: chatKey, Sender: senderDisplay, Content: content,
 		Timestamp: info.Timestamp, IsFromMe: info.IsFromMe, IsForwarded: isForwarded,
 		MediaType: mediaType, Filename: filename, URL: url,
 		MediaKey: mediaKey, FileSHA256: fileSHA256, FileEncSHA256: fileEncSHA256, FileLength: fileLength,
@@ -307,7 +310,7 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 	// "delivered". This prevents false-positive stale-message alerts for
 	// contacts who have delivery receipts turned off.
 	if !info.IsFromMe && isDirectChat && wac.store != nil {
-		if n, err := wac.store.UpgradeSentToDelivered(info.Chat.String(), info.Timestamp); err != nil {
+		if n, err := wac.store.UpgradeSentToDelivered(chatKey, info.Timestamp); err != nil {
 			wac.logger.Warnf("Failed to upgrade sent→delivered for %s: %v", info.Chat, err)
 		} else if n > 0 {
 			wac.logger.Infof("Upgraded %d sent→delivered for %s (contact replied)", n, info.Chat)
@@ -324,7 +327,7 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 	// Audio messages: transcribe asynchronously, then send notification
 	if mediaType == MediaTypeAudio && !info.IsFromMe {
 		msgID := info.ID
-		chatJIDStr := info.Chat.String()
+		chatJIDStr := chatKey
 		go func() {
 			wac.transcribeSem <- struct{}{} // acquire
 			defer func() { <-wac.transcribeSem }()
@@ -465,7 +468,7 @@ func (wac *WhatsAppClient) handleEdit(evt *events.Message, targetID string, edit
 	// notification, and an edit to a message we never stored just reads as empty.
 	oldText := wac.storedContent(targetID)
 	if wac.store != nil {
-		if err := wac.store.UpdateMessageContent(targetID, evt.Info.Chat.String(), newText); err != nil {
+		if err := wac.store.UpdateMessageContent(targetID, wac.canonicalChatKey(evt.Info.Chat), newText); err != nil {
 			wac.logger.Warnf("Failed to apply edit to message %s: %v", targetID, err)
 		}
 	}
@@ -536,11 +539,12 @@ func (wac *WhatsAppClient) handleHistorySync(evt *events.HistorySync) {
 			continue
 		}
 
-		chatJID := *conversation.ID
-		jid, err := types.ParseJID(chatJID)
+		jid, err := types.ParseJID(*conversation.ID)
 		if err != nil {
 			continue
 		}
+		// Key history the same way live messages are keyed: canonical phone JID, not the raw LID.
+		chatJID := wac.canonicalChatKey(jid)
 
 		err = func() error {
 			tx, err := wac.store.Begin()

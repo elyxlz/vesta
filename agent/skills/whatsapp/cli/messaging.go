@@ -84,6 +84,9 @@ func (wac *WhatsAppClient) oldestIsInbound(jid types.JID) bool {
 // LID<->PN store, so reply-first can find an inbound stored under the peer's other address.
 // Empty when there is no mapping.
 func (wac *WhatsAppClient) mappedJID(jid types.JID) types.JID {
+	if wac.client == nil {
+		return types.JID{}
+	}
 	ctx := context.Background()
 	if isLIDServer(jid.Server) {
 		if pn, err := wac.client.Store.LIDs.GetPNForLID(ctx, jid); err == nil {
