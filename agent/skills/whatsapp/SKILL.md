@@ -39,6 +39,22 @@ just do what it says:
   `{status:"linking", url, next:...}`. Send the user the URL to scan in WhatsApp >
   Settings > Linked Devices. See [SETUP.md](SETUP.md) / [MANAGED_AUTH.md](MANAGED_AUTH.md).
 
+## Other ways to connect
+
+- **User owns the number (`whatsapp connect --own-number`):** the pool hands you a
+  fresh number and its verification code to relay; the USER registers that number on
+  their OWN phone and owns it, and you link only as a companion. Use this only when the
+  user wants the WhatsApp account to live on their own device: they keep their phone
+  online and re-link it themselves if it drops. Normal messaging applies (no reply-first
+  restriction, since the number is theirs, not a fresh pooled one).
+- **Direct token (no vesta.run needed):** the number service is a standalone API, not
+  only reachable through vesta.run. If the box operator set `WHATSAPP_API_URL` and
+  `WHATSAPP_API_KEY` (a per-account `wak_` token they minted for you), `whatsapp
+  connect` uses them automatically: the same managed number and pairing, straight to the
+  home box, no membership gate and no control plane in the loop. You do nothing
+  different, it is transparent. This is how a non-managed agent gets a pooled number
+  when the operator has handed them a token.
+
 ## Check state
 
 `whatsapp status` is your one diagnostic:
