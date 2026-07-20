@@ -9,8 +9,6 @@ import os
 import typing as tp
 from pathlib import Path
 
-import pytest
-
 from core.events import (
     AssistantEvent,
     ChatEvent,
@@ -33,6 +31,13 @@ from core.events import (
 # ts is a wall-clock value stamped inside emit; normalize it so the committed fixture is stable. The
 # ids are the contract under test and are kept exactly as the real emit/read path produced them.
 _FIXED_TS = "2026-01-01T00:00:00+00:00"
+
+# user/chat are live-only in core now (Task 2); their durability moved to the app-chat skill, which
+# stamps them with positive ids from its own store and broadcasts via emit_preformed. The fixture
+# mirrors that real wire by emitting them through emit_preformed with explicit positive ids set well
+# clear of the persisted rowid range so they read as skill-stamped, not core rowids.
+_CHAT_ID_BASE = 1000
+_PASS_THROUGH_TYPES: tuple[str, ...] = ("user", "chat")
 
 
 def _variants() -> list[StreamEvent]:
@@ -65,28 +70,33 @@ def _variants() -> list[StreamEvent]:
 
 
 def _emit_all(bus: EventBus, variants: list[StreamEvent]) -> list[StreamEvent]:
-    """Emit each variant through the real bus so id is stamped by the production path (a rowid for
-    persisted variants, the negative live counter for status/notification_cleared), then normalize
-    ts for a stable fixture."""
+    """Emit each variant so id is stamped the way the real wire does it: persisted variants through
+    bus.emit (a positive rowid), status/notification_cleared through bus.emit (the negative live
+    counter), and user/chat through bus.emit_preformed with a monotonic positive id (the app-chat
+    skill's own stamp, passing straight through core). Normalize ts for a stable fixture."""
     emitted: list[StreamEvent] = []
+    pass_through_id = _CHAT_ID_BASE
     for event in variants:
-        bus.emit(event)
-        event["ts"] = _FIXED_TS
+        if event["type"] in _PASS_THROUGH_TYPES:
+            event["id"] = pass_through_id
+            event["ts"] = _FIXED_TS
+            bus.emit_preformed(event)
+            pass_through_id += 1
+        else:
+            bus.emit(event)
+            event["ts"] = _FIXED_TS
         emitted.append(event)
     return emitted
 
 
-def _snapshot(bus: EventBus) -> SnapshotEvent:
-    """Build the connect snapshot the way api.py does, reading chat.events back through the paged
-    read path so they carry their rowids, then normalizing ts. The snapshot is a frame, not an
-    event, so it has no id of its own."""
-    events, cursor = bus.recent(channel="app-chat")
-    for event in events:
-        event["ts"] = _FIXED_TS
+def _snapshot() -> SnapshotEvent:
+    """Build the connect snapshot the way api.py does. app-chat is live-only in core now, so core no
+    longer seeds the chat channel: the snapshot carries an empty chat page and the skill replays its
+    own history. The snapshot is a frame, not an event, so it has no id of its own."""
     return SnapshotEvent(
         type="snapshot",
         state="idle",
-        chat={"events": events, "cursor": cursor},
+        chat={"events": [], "cursor": None},
         notifications={"pending": ["whatsapp-123"]},
         config={"timezone": "America/New_York"},
     )
@@ -96,7 +106,7 @@ def _fixture_content(tmp_path: Path) -> str:
     bus = EventBus(data_dir=tmp_path)
     try:
         events = _emit_all(bus, _variants())
-        snapshot = _snapshot(bus)
+        snapshot = _snapshot()
     finally:
         bus.close()
     payload = {"events": events, "snapshot": snapshot}
@@ -107,11 +117,6 @@ def _fixture_path() -> Path:
     return Path(__file__).resolve().parent / "fixtures" / "event-union.json"
 
 
-# Interim: the app-chat channelization wave made user/chat live-only (negative ids, unpersisted) and
-# emptied the snapshot chat seed, so both the committed fixture and the id assertion below are stale.
-# The event-union emitter (_variants/_emit_all/_snapshot) is rewritten in a later task of the wave,
-# which regenerates the fixture and removes these markers.
-@pytest.mark.xfail(reason="event-union emitter rewrite pending in the app-chat channelization wave", strict=False)
 def test_event_union_fixture_up_to_date(tmp_path):
     """Emit every event variant plus a snapshot through the real path and fail if the committed
     fixture is stale. Regenerate with REGEN_EVENT_FIXTURES=1."""
@@ -129,10 +134,12 @@ def test_event_union_fixture_up_to_date(tmp_path):
     )
 
 
-@pytest.mark.xfail(reason="event-union emitter rewrite pending in the app-chat channelization wave", strict=False)
 def test_every_variant_carries_a_stable_id(tmp_path):
-    """The union covers all 13 variants and every one carries an id: persisted variants a positive
-    rowid, the two live-only variants a negative session id."""
+    """The union covers all 13 variants and every one carries an id. status/notification_cleared are
+    live-only through core's own emit (negative session ids); user/chat are stamped by the app-chat
+    skill in the real wire, so the fixture emits them via emit_preformed with explicit positive ids
+    (passed straight through, not core rowids); every remaining variant is persisted and carries a
+    positive rowid."""
     bus = EventBus(data_dir=tmp_path)
     try:
         emitted = _emit_all(bus, _variants())
@@ -140,9 +147,12 @@ def test_every_variant_carries_a_stable_id(tmp_path):
         bus.close()
     assert len(emitted) == 13
     assert all("id" in event for event in emitted)
-    live = [e for e in emitted if e["type"] in ("status", "notification_cleared")]
-    assert all(e["id"] < 0 for e in live)
-    persisted = [e for e in emitted if e["type"] not in ("status", "notification_cleared")]
+    by_type = {event["type"]: event for event in emitted}
+    assert by_type["status"]["id"] < 0
+    assert by_type["notification_cleared"]["id"] < 0
+    assert by_type["user"]["id"] == _CHAT_ID_BASE
+    assert by_type["chat"]["id"] == _CHAT_ID_BASE + 1
+    persisted = [e for e in emitted if e["type"] not in ("status", "notification_cleared", *_PASS_THROUGH_TYPES)]
     assert all(e["id"] > 0 for e in persisted)
 
 
