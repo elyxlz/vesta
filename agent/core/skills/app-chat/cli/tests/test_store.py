@@ -107,6 +107,35 @@ def test_import_rows_preserves_ids_idempotently_and_indexes_fts(tmp_path):
     store.close()
 
 
+def test_redact_scrubs_a_secret_and_drops_it_from_search(tmp_path):
+    store = _store(tmp_path)
+    secret_token = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    store.append({"type": "user", "ts": "2026-01-01T00:00:00", "text": f"my key is sk-{secret_token}"})
+    store.append({"type": "chat", "ts": "2026-01-01T00:00:01", "text": "nothing sensitive here"})
+    assert len(store.search(secret_token)) == 1  # searchable before the scrub
+
+    changed = store.redact()
+    assert changed == 1
+
+    events, _ = store.page()
+    assert secret_token not in events[0]["text"]
+    assert "[REDACTED]" in events[0]["text"]
+    assert events[1]["text"] == "nothing sensitive here"
+    assert store.search(secret_token) == []  # the redacted text is no longer indexed
+
+    assert store.redact() == 0  # idempotent: a re-run finds nothing to change
+    store.close()
+
+
+def test_redact_leaves_a_clean_store_untouched(tmp_path):
+    store = _store(tmp_path)
+    store.append({"type": "user", "ts": "2026-01-01T00:00:00", "text": "just a normal message"})
+    assert store.redact() == 0
+    events, _ = store.page()
+    assert events[0]["text"] == "just a normal message"
+    store.close()
+
+
 def test_bump_sequence_above_keeps_new_ids_above_imported(tmp_path):
     store = _store(tmp_path)
     store.import_rows([(100, "2026-01-01T00:00:00", json.dumps({"type": "user", "text": "old"}))])

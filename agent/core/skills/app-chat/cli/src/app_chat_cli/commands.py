@@ -64,6 +64,24 @@ def cmd_history(args: argparse.Namespace) -> None:
     print(json.dumps(results, indent=2))
 
 
+def cmd_redact(args: argparse.Namespace) -> None:
+    """Scrub API keys, tokens, passwords, and connection strings from the chat store in place, the same
+    scrub the dream flow's `redact_secrets` applies to events.db. User-typed secrets now live here, out
+    of that scan's reach, so the nightly dream runs this alongside it. Idempotent: a re-run rewrites
+    nothing."""
+    data_dir = pl.Path(args.data_dir or (pl.Path.home() / ".app-chat"))
+    db_path = store_path(data_dir)
+    if not db_path.exists():
+        print(json.dumps({"status": "no_store", "path": str(db_path)}))
+        return
+    store = Store(db_path)
+    try:
+        changed = store.redact()
+    finally:
+        store.close()
+    print(json.dumps({"status": "redacted", "rows": changed}))
+
+
 def _default_events_db() -> pl.Path:
     """Core's events.db on box: `$AGENT_DIR/data/events.db` (default `~/agent`), mirroring config.data_dir."""
     agent_dir = os.environ.get("AGENT_DIR")
@@ -82,9 +100,7 @@ def cmd_import(args: argparse.Namespace) -> None:
         return
     src = sqlite3.connect(str(events_db), timeout=30)
     try:
-        rows = src.execute(
-            "SELECT id, ts, data FROM events WHERE json_extract(data, '$.type') IN ('user', 'chat') ORDER BY id ASC"
-        ).fetchall()
+        rows = src.execute("SELECT id, ts, data FROM events WHERE json_extract(data, '$.type') IN ('user', 'chat') ORDER BY id ASC").fetchall()
     finally:
         src.close()
     store = Store(store_path(data_dir))
