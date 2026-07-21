@@ -48,8 +48,8 @@ export function GatewayRestart() {
         <AlertDialogHeader>
           <AlertDialogTitle>restart the gateway?</AlertDialogTitle>
           <AlertDialogDescription>
-            this briefly drops every agent connection while the gateway restarts.
-            the app reconnects on its own once it's back.
+            this briefly drops every agent connection while the gateway
+            restarts. the app reconnects on its own once it's back.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
