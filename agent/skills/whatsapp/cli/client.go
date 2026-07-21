@@ -215,7 +215,19 @@ func (wac *WhatsAppClient) enqueueWork(fn func()) {
 // bare datacenter IP. The lease is cached for the process (sticky per account);
 // SetProxyAddress must run before Connect to take effect.
 func (wac *WhatsAppClient) ensureManagedProxy() error {
-	if wac.managed == nil || !wac.managed.usesResidentialProxy() {
+	if wac.managed == nil {
+		return nil
+	}
+	// A bring-your-own egress override (WHATSAPP_PROXY_URL) takes precedence over the
+	// cloud lease and applies in every mode, direct included: the box supplies its own
+	// egress, so route through it and skip the lease entirely.
+	if direct := wac.managed.cfg.proxyURL; direct != "" {
+		if err := wac.client.SetProxyAddress(direct); err != nil {
+			return fmt.Errorf("apply direct proxy: %w", err)
+		}
+		return nil
+	}
+	if !wac.managed.usesResidentialProxy() {
 		return nil
 	}
 	wac.proxyMu.Lock()

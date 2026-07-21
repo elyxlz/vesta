@@ -36,6 +36,13 @@ either way.
 
 The home box owns all number/session state, keyed by that account id.
 
+**Egress override (both modes):** set `WHATSAPP_PROXY_URL` to a full
+`http(s)://` or `socks5://` URL (with optional `user:pass@`) to route the
+companion's WhatsApp egress through your own proxy. It takes precedence over the
+cloud residential lease and applies in every mode, direct included; a self-hosted
+box that wants to egress somewhere other than its home IP supplies it here. Unset,
+nothing changes (cloud leases as before, direct egresses from the home IP).
+
 The flow:
 
 1. Auth per the mode above (mint a token, or just use the direct key).
@@ -71,8 +78,11 @@ the plumbing. So the managed strategy MUST be reply-first:
 1. **Never cold-initiate.** Do not send the first message in a thread to someone
    who has not messaged first. Onboarding surfaces the agent's number with the
    instruction that **the user texts the agent first**; the agent only replies
-   inside an established thread. `managedState.WaMeLink(text)` builds the
-   `https://wa.me/<number>?text=...` link the agent surfaces for that.
+   inside an established thread. `waMeLink(number, text)` builds the
+   `https://wa.me/<number>?text=...` link the agent surfaces for that; it now
+   carries a prefilled opener (default "Hey! It's me, connecting here on
+   WhatsApp.", overridable via `WHATSAPP_WELCOME_TEXT`) so the user just taps and
+   sends.
 2. **Warm before use.** Treat the first days as warm-up (light, human-paced,
    reply-only) before any volume.
 3. **Prefer aged numbers** in the pool over fresh SIMs (a fresh SIM is itself a

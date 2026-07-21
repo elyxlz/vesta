@@ -125,6 +125,11 @@ type managedConfig struct {
 	// container, so its presence tells a cloud tenant from a plain self-hosted box
 	// (whose identity env is otherwise identical).
 	cloudManaged bool
+	// proxyURL is a bring-your-own egress override (WHATSAPP_PROXY_URL): an explicit
+	// http(s)://user:pass@host:port or socks5:// URL the companion egresses through
+	// in every mode, taking precedence over the cloud residential lease. Empty on a
+	// box that supplies no proxy, which preserves the fail-closed default.
+	proxyURL string
 }
 
 // loadManagedConfig reads the managed-auth environment (mirrors the account skill).
@@ -141,6 +146,7 @@ func loadManagedConfig() managedConfig {
 		agentName:    strings.TrimSpace(os.Getenv("AGENT_NAME")),
 		agentToken:   strings.TrimSpace(os.Getenv("AGENT_TOKEN")),
 		cloudManaged: strings.TrimSpace(os.Getenv("VESTA_CLOUD_CONTROL_URL")) != "",
+		proxyURL:     strings.TrimSpace(os.Getenv("WHATSAPP_PROXY_URL")),
 	}
 }
 
@@ -165,6 +171,16 @@ type managedState struct {
 	MSISDN    string
 	DirectURL string
 	DirectKey string
+}
+
+// defaultWelcomeText is the prefilled opener the wa.me link carries so the user just
+// taps and sends (reply-first onboarding): a warm, natural first inbound message.
+const defaultWelcomeText = "Hey! It's me, connecting here on WhatsApp."
+
+// welcomeText is the prefilled first message embedded in the surfaced wa.me link,
+// overridable via WHATSAPP_WELCOME_TEXT.
+func welcomeText() string {
+	return envOrDefault("WHATSAPP_WELCOME_TEXT", defaultWelcomeText)
 }
 
 // waMeLink builds the click-to-chat URL that gets the USER to message this agent
