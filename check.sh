@@ -15,8 +15,11 @@ Suites:
   vestad         cargo clippy -p vestad -D warnings + cargo test -p vestad
   vestad-docker  vestad #[ignore] Docker tests (needs Docker + an agent image:
                  set VESTAD_AGENT_IMAGE or docker pull ghcr.io/elyxlz/vesta:latest)
-  web            eslint + prettier --check + tsc + vitest (web), eslint + tsc + vitest (desktop),
-                 and Expo dependency validation + eslint + tsc + vitest (mobile)
+  web            all four app slices below (core, web, desktop, mobile); CI runs them as separate jobs
+  app-core       @vesta/core: eslint + prettier --check + tsc + vitest
+  app-web        design-token sync check + @vesta/web: eslint + prettier --check + tsc + vitest
+  app-desktop    @vesta/desktop: eslint + tsc + vitest
+  app-mobile     Expo dependency validation + @vesta/mobile: eslint + tsc + vitest + clean-prebuild verify
   mobile-ios     clean Expo prebuild + unsigned iOS simulator compile
   mobile-android clean Expo prebuild + Android debug compile
   guards         repo-wide ruff check + format, convention guards (lint escapes,
@@ -92,33 +95,65 @@ check_vestad_docker() {
   )
 }
 
-check_web() {
+check_app_core() {
+  (
+    cd apps
+    if [ ! -d node_modules ]; then
+      npm install
+    fi
+    npm -w @vesta/core run lint
+    npm -w @vesta/core run format:check
+    npm -w @vesta/core run check
+    npm -w @vesta/core run test
+  )
+}
+
+check_app_web() {
   python3 scripts/sync-design-tokens.py --check
   (
     cd apps
     if [ ! -d node_modules ]; then
       npm install
     fi
-    if [ ! -d mobile/node_modules ]; then
-      npm --prefix mobile install
-    fi
-    npm -w @vesta/core run lint
-    npm -w @vesta/core run format:check
-    npm -w @vesta/core run check
-    npm -w @vesta/core run test
     npm -w @vesta/web run lint
     npm -w @vesta/web run format:check
     npm -w @vesta/web run check
     npm -w @vesta/web run test
+  )
+}
+
+check_app_desktop() {
+  (
+    cd apps
+    if [ ! -d node_modules ]; then
+      npm install
+    fi
     npm -w @vesta/desktop run lint
     npm -w @vesta/desktop run check
     npm -w @vesta/desktop run test
+  )
+}
+
+check_app_mobile() {
+  (
+    cd apps
+    if [ ! -d mobile/node_modules ]; then
+      npm --prefix mobile install
+    fi
     (cd mobile && npx expo install --check)
     npm --prefix mobile run lint
     npm --prefix mobile run check
     npm --prefix mobile run test
     bash ../scripts/check-mobile-prebuild.sh
   )
+}
+
+# Local run-everything entry: CI runs the four app-* slices as separate jobs.
+check_web() {
+  check_app_core
+  check_app_web
+  check_app_desktop
+  check_app_mobile
 }
 
 check_guards() {
@@ -277,6 +312,10 @@ for suite in "$@"; do
     vestad) check_vestad ;;
     vestad-docker) check_vestad_docker ;;
     web) check_web ;;
+    app-core) check_app_core ;;
+    app-web) check_app_web ;;
+    app-desktop) check_app_desktop ;;
+    app-mobile) check_app_mobile ;;
     mobile-ios) check_mobile_native ios ;;
     mobile-android) check_mobile_native android ;;
     guards) check_guards ;;

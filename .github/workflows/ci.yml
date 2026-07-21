@@ -52,7 +52,9 @@ jobs:
     timeout-minutes: 5
     outputs:
       vestad: ${{ steps.filter.outputs.vestad }}
-      app: ${{ steps.filter.outputs.app }}
+      core: ${{ steps.filter.outputs.core }}
+      web: ${{ steps.filter.outputs.web }}
+      desktop: ${{ steps.filter.outputs.desktop }}
       mobile: ${{ steps.filter.outputs.mobile }}
       mobile_native: ${{ steps.filter.outputs.mobile_native }}
       agent: ${{ steps.filter.outputs.agent }}
@@ -92,16 +94,23 @@ jobs:
               - 'agent/ruff.toml'
               - '.github/workflows/ci.yml'
               - 'check.sh'
-            app:
-              - 'apps/**'
+            core:
+              - 'apps/core/**'
+              - '.github/workflows/ci.yml'
+              - 'check.sh'
+            web:
+              - 'apps/web/**'
               - 'design/**'
               - 'scripts/sync-design-tokens.py'
               - 'scripts/sync-dashboard.sh'
               - '.github/workflows/ci.yml'
               - 'check.sh'
+            desktop:
+              - 'apps/desktop/**'
+              - '.github/workflows/ci.yml'
+              - 'check.sh'
             mobile:
               - 'apps/mobile/**'
-              - 'apps/core/**'
               - '.github/workflows/ci.yml'
               - '.github/workflows/mobile-build.yml'
               - 'check.sh'
@@ -323,11 +332,13 @@ jobs:
       - name: Run telegram checks
         run: ./check.sh telegram
 
-  # ── Frontend unit tests ──────────────────────────────────────────────
-  test-frontend:
-    name: Apps · Lint, typecheck, and test
+  # ── Frontend unit tests (one job per app, gated on its dependency closure) ──
+  # @vesta/core is the shared controller: web bundles it, desktop bundles web,
+  # mobile consumes it via file:. So each downstream job's gate includes core.
+  test-app-core:
+    name: Apps · core
     needs: detect-changes
-    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.app == 'true'
+    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.core == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -339,12 +350,80 @@ jobs:
           node-version: 22
 
       - name: Install deps
-        run: |
-          npm --prefix apps ci
-          npm --prefix apps/mobile ci
+        run: npm --prefix apps ci
+
+      - name: Run core checks
+        run: ./check.sh app-core
+
+  test-app-web:
+    name: Apps · web
+    needs: detect-changes
+    if: >-
+      github.event_name != 'pull_request' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Install deps
+        run: npm --prefix apps ci
 
       - name: Run web checks
-        run: ./check.sh web
+        run: ./check.sh app-web
+
+  test-app-desktop:
+    name: Apps · desktop
+    needs: detect-changes
+    if: >-
+      github.event_name != 'pull_request' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.web == 'true' ||
+      needs.detect-changes.outputs.desktop == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Install deps
+        run: npm --prefix apps ci
+
+      - name: Run desktop checks
+        run: ./check.sh app-desktop
+
+  test-app-mobile:
+    name: Apps · mobile
+    needs: detect-changes
+    if: >-
+      github.event_name != 'pull_request' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.mobile == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Install deps
+        run: npm --prefix apps/mobile ci
+
+      - name: Run mobile checks
+        run: ./check.sh app-mobile
 
   # ── EAS workflow schema validation (mobile PRs only) ─────────────────
   # This is local schema validation only. It neither authenticates to Expo nor
@@ -507,7 +586,9 @@ jobs:
   build-vestad:
     name: vestad · Build (${{ matrix.label }})
     needs: [version-check, detect-changes]
-    if: needs.detect-changes.outputs.vestad == 'true' || needs.detect-changes.outputs.app == 'true' || github.event_name != 'pull_request'
+    # vestad's build.rs embeds only the web bundle, so its app-side trigger is the
+    # web closure (core || web), not desktop or mobile.
+    if: needs.detect-changes.outputs.vestad == 'true' || needs.detect-changes.outputs.core == 'true' || needs.detect-changes.outputs.web == 'true' || github.event_name != 'pull_request'
     strategy:
       fail-fast: false
       matrix:
@@ -601,12 +682,17 @@ jobs:
   # ── Build Electron app (macOS) ───────────────────────────────────────
   build-electron-macos:
     name: Desktop · Build (macOS)
-    needs: [test-frontend, detect-changes]
+    # Builds the desktop bundle from source (web + electron), consuming no test
+    # outputs, so it gates on the desktop closure (core || web || desktop), not
+    # on the app test jobs.
+    needs: detect-changes
     if: >-
       !failure() && !cancelled() &&
       needs.detect-changes.result == 'success' && (
       github.event_name != 'pull_request' ||
-      needs.detect-changes.outputs.app == 'true'
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.web == 'true' ||
+      needs.detect-changes.outputs.desktop == 'true'
       )
     runs-on: macos-latest
     # Release builds sign and notarize; Apple's notarytool can wait well past an
@@ -695,12 +781,14 @@ jobs:
   # ── Build Electron app (Linux) ────────────────────────────────────────
   build-electron-linux:
     name: Desktop · Build (${{ matrix.label }})
-    needs: [test-frontend, detect-changes]
+    needs: detect-changes
     if: >-
       !failure() && !cancelled() &&
       needs.detect-changes.result == 'success' && (
       github.event_name != 'pull_request' ||
-      needs.detect-changes.outputs.app == 'true'
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.web == 'true' ||
+      needs.detect-changes.outputs.desktop == 'true'
       )
     strategy:
       fail-fast: false
@@ -755,12 +843,14 @@ jobs:
   # ── Build Electron app (Windows) ──────────────────────────────────────
   build-electron-windows:
     name: Desktop · Build (Windows x64)
-    needs: [test-frontend, detect-changes]
+    needs: detect-changes
     if: >-
       !failure() && !cancelled() &&
       needs.detect-changes.result == 'success' && (
       github.event_name != 'pull_request' ||
-      needs.detect-changes.outputs.app == 'true'
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.web == 'true' ||
+      needs.detect-changes.outputs.desktop == 'true'
       )
     runs-on: windows-latest
     timeout-minutes: 60
@@ -851,7 +941,10 @@ jobs:
       - dependency-review
       - agent-tests
       - go-checks
-      - test-frontend
+      - test-app-core
+      - test-app-web
+      - test-app-desktop
+      - test-app-mobile
       - test-integration
       - check-vestad
       - build-vestad

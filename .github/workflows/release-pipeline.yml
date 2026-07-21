@@ -63,6 +63,9 @@ jobs:
 
   test-linux:
     name: Release binaries · Run Linux smoke test
+    # Needs the whole reusable CI call, not a standalone builder: the smoke test
+    # must validate the exact release-built vestad binary that publish-release
+    # ships, and only validate-and-build (release_artifacts: true) produces it.
     needs: [validate-and-build]
     runs-on: ubuntu-latest
     timeout-minutes: 10
