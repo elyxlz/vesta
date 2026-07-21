@@ -122,6 +122,13 @@ The agent can read/search that account on demand (`whatsapp list-chats --instanc
 
 - **Never re-link / re-pair without the user's explicit go-ahead.** Pairing is rate-limited because repeated attempts get WhatsApp numbers flagged and banned. If linking fails, report it and wait; don't retry-loop.
 
+- **One `connect` per event, then STOP. Never build a background/scheduled reconnect loop.** Two caps
+  stack: a soft 2/hour AND a HARD 3-per-24h that is NOT override-able for a managed number. A
+  "pairing code accepted but companion did not finish linking" still burns an attempt. On a
+  logout/unpaired notification run `connect` exactly once; if it returns `rate_limited` or a
+  linking-timeout, do NOT schedule retries, wait out the FULL cooldown it names, then a single attempt
+  (a `tasks remind` at the cooldown time is the right tool, not a `screen` sleep-loop).
+
 - **Before sending to an unknown phone number, save it first with `add-contact`.**
   *Why:* Sending to a raw JID with no saved contact row triggers the `requireManualContact` guard and blocks the send.
 
