@@ -1,7 +1,7 @@
 import { ActivityIndicator, Alert, Linking, StyleSheet } from "react-native";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
-import { checkForGatewayUpdate, triggerGatewayUpdate } from "@vesta/core";
+import { checkForGatewayUpdate, triggerGatewayRestart, triggerGatewayUpdate } from "@vesta/core";
 import { fetchGatewayInfo, fetchGatewaySettings } from "@/api/endpoints";
 import { Screen } from "@/components/layout/Screen";
 import { FormRow, FormSection, SwitchRow } from "@/components/ui/Form";
@@ -34,6 +34,11 @@ export default function SettingsScreen() {
   const gatewayUpdate = useMutation({
     mutationFn: () => triggerGatewayUpdate(session.api),
   });
+  // A restart drops every agent connection briefly like an update; the live socket self-heals on
+  // its own once the gateway comes back, so nothing forces a reconnect here.
+  const gatewayRestart = useMutation({
+    mutationFn: () => triggerGatewayRestart(session.api),
+  });
   const updateAvailable = roster.updateAvailable;
 
   const confirmGatewayUpdate = () => {
@@ -42,6 +47,16 @@ export default function SettingsScreen() {
       {
         text: "Update",
         onPress: () => gatewayUpdate.mutate(),
+      },
+    ]);
+  };
+
+  const confirmGatewayRestart = () => {
+    Alert.alert("Restart gateway?", "Agent connections drop briefly and reconnect on their own.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Restart",
+        onPress: () => gatewayRestart.mutate(),
       },
     ]);
   };
@@ -163,6 +178,16 @@ export default function SettingsScreen() {
             onPress={() => updateCheck.mutate()}
           />
         )}
+        <FormRow
+          label="Restart gateway"
+          icon="reload-outline"
+          onPress={gatewayRestart.isPending ? undefined : confirmGatewayRestart}
+          trailing={
+            gatewayRestart.isPending ? (
+              <ActivityIndicator color={preferences.colors.interactive} />
+            ) : undefined
+          }
+        />
       </FormSection>
 
       {roster.managed ? (

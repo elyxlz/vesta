@@ -51,7 +51,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      cli: ${{ steps.filter.outputs.cli }}
+      vestad: ${{ steps.filter.outputs.vestad }}
       app: ${{ steps.filter.outputs.app }}
       mobile: ${{ steps.filter.outputs.mobile }}
       mobile_native: ${{ steps.filter.outputs.mobile_native }}
@@ -79,14 +79,12 @@ jobs:
         id: filter
         with:
           filters: |
-            cli:
-              - 'cli/**'
+            vestad:
               - 'vestad/**'
               - 'install.sh'
               - 'install.ps1'
               # vestad embeds the agent home (build.rs EMBED_DIRS/EMBED_FILES), so
-              # Agent-only changes can break the CLI or vestad and must trigger
-              # their checks on PRs.
+              # Agent-only changes can break vestad and must trigger its checks on PRs.
               - 'agent/core/**'
               - 'agent/skills/**'
               - 'agent/MEMORY.md'
@@ -145,7 +143,6 @@ jobs:
         run: |
           AGENT=$(grep '^version = ' agent/core/pyproject.toml | cut -d'"' -f2)
           VESTAD=$(grep '^version = ' vestad/Cargo.toml | head -1 | cut -d'"' -f2)
-          CLI=$(grep '^version = ' cli/Cargo.toml | head -1 | cut -d'"' -f2)
           TESTS=$(grep '^version = ' vestad/tests-integration/Cargo.toml | head -1 | cut -d'"' -f2)
           DESKTOP_PKG=$(python3 -c "import json; print(json.load(open('apps/desktop/package.json'))['version'])")
           MOBILE_PKG=$(python3 -c "import json; print(json.load(open('apps/mobile/package.json'))['version'])")
@@ -154,7 +151,6 @@ jobs:
 
           echo "agent:         $AGENT"
           echo "vestad:        $VESTAD"
-          echo "cli:           $CLI"
           echo "tests:         $TESTS"
           echo "desktop pkg:   $DESKTOP_PKG"
           echo "mobile pkg:    $MOBILE_PKG"
@@ -162,7 +158,7 @@ jobs:
           echo "app:           $APP"
 
           FAIL=0
-          for name_val in "vestad:$VESTAD" "cli:$CLI" "tests:$TESTS" "desktop-pkg:$DESKTOP_PKG" "mobile-pkg:$MOBILE_PKG" "mobile-app:$MOBILE_APP" "app:$APP"; do
+          for name_val in "vestad:$VESTAD" "tests:$TESTS" "desktop-pkg:$DESKTOP_PKG" "mobile-pkg:$MOBILE_PKG" "mobile-app:$MOBILE_APP" "app:$APP"; do
             name="${name_val%%:*}"
             val="${name_val#*:}"
             if [ "$AGENT" != "$val" ]; then
@@ -385,7 +381,7 @@ jobs:
   test-integration:
     name: vestad · Run end-to-end integration tests
     needs: [version-check, detect-changes]
-    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.cli == 'true' || needs.detect-changes.outputs.agent == 'true'
+    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.vestad == 'true' || needs.detect-changes.outputs.agent == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -464,50 +460,11 @@ jobs:
             echo "Check the failed attempt's logs above — the retry masked a real race or Docker flake."
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # ── Check the vesta CLI on every platform it ships on ────────────────
-  check-cli:
-    name: CLI · Lint and test (${{ matrix.label }})
-    needs: [version-check, detect-changes]
-    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.cli == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - label: Linux x64
-            target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-          - label: macOS ARM64
-            target: aarch64-apple-darwin
-            os: macos-latest
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install Rust
-        uses: ./.github/actions/install-rust
-        with:
-          targets: ${{ matrix.target }}
-          components: clippy
-
-      - uses: Swatinem/rust-cache@v2
-        # Caching is best-effort: a transient cache-service outage must not fail the
-        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
-        continue-on-error: true
-        with:
-          workspaces: |
-            cli
-            vestad
-          key: ${{ matrix.target }}
-
-      - name: Check cli (clippy + tests)
-        run: TARGET=${{ matrix.target }} ./check.sh cli
-
   # ── Check vestad (clippy, unit tests, and Docker tests) ───────────────
   check-vestad:
     name: vestad · Lint, unit, and Docker tests (Linux x64)
     needs: [version-check, detect-changes]
-    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.cli == 'true'
+    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.vestad == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -550,7 +507,7 @@ jobs:
   build-vestad:
     name: vestad · Build (${{ matrix.label }})
     needs: [version-check, detect-changes]
-    if: needs.detect-changes.outputs.cli == 'true' || needs.detect-changes.outputs.app == 'true' || github.event_name != 'pull_request'
+    if: needs.detect-changes.outputs.vestad == 'true' || needs.detect-changes.outputs.app == 'true' || github.event_name != 'pull_request'
     strategy:
       fail-fast: false
       matrix:
@@ -607,38 +564,20 @@ jobs:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}.tar.gz
 
-  # ── Windows CLI checks and release packaging ─────────────────────────
-  # PRs run the same lint/tests as Linux and macOS. The reusable release call
-  # additionally builds and uploads the optimized Windows package in this same
-  # job, avoiding a second Windows checkout/toolchain setup.
+  # ── Verify the Windows installer script parses ───────────────────────
+  # install.ps1 is delivered via `irm ... | iex`, so a parse error would break
+  # every Windows install. Validate it against PowerShell 5.1 (the version that
+  # ships with Windows) without running it.
   check-windows:
-    name: CLI · Lint and test (Windows x64)
+    name: Windows · Verify install.ps1
     needs: [version-check, detect-changes]
     if: >-
       github.event_name != 'pull_request' ||
-      needs.detect-changes.outputs.cli == 'true'
+      needs.detect-changes.outputs.vestad == 'true'
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-
-      - name: Install Rust
-        uses: ./.github/actions/install-rust
-        with:
-          targets: x86_64-pc-windows-msvc
-          components: clippy
-
-      - uses: Swatinem/rust-cache@v2
-        # Caching is best-effort: a transient cache-service outage must not fail the
-        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
-        continue-on-error: true
-        with:
-          workspaces: cli
-          key: x86_64-pc-windows-msvc
-
-      - name: Check cli (clippy + tests)
-        shell: bash
-        run: TARGET=x86_64-pc-windows-msvc ./check.sh cli
 
       - name: Verify install.ps1 with PowerShell 5.1
         shell: powershell
@@ -659,39 +598,6 @@ jobs:
           }
           Write-Host "✅ install.ps1 is compatible with PowerShell 5.1"
 
-      - name: Build release CLI
-        if: inputs.release_artifacts
-        working-directory: cli
-        run: cargo build --release --target x86_64-pc-windows-msvc
-
-      - name: Smoke test release CLI
-        if: inputs.release_artifacts
-        shell: bash
-        run: |
-          CLI="cli/target/x86_64-pc-windows-msvc/release/vesta.exe"
-          "$CLI" --version
-          "$CLI" --help
-
-      - name: Package Windows CLI zip
-        if: inputs.release_artifacts
-        shell: bash
-        run: |
-          mkdir vesta-windows
-          cp cli/target/x86_64-pc-windows-msvc/release/vesta.exe vesta-windows/
-          7z a vesta-x86_64-pc-windows-msvc.zip vesta-windows/
-
-      - uses: actions/upload-artifact@v7
-        if: inputs.release_artifacts
-        with:
-          name: vesta-x86_64-pc-windows-msvc
-          path: vesta-x86_64-pc-windows-msvc.zip
-
-      - uses: actions/upload-artifact@v7
-        if: inputs.release_artifacts
-        with:
-          name: windows-cli-exe
-          path: cli/target/x86_64-pc-windows-msvc/release/vesta.exe
-
   # ── Build Electron app (macOS) ───────────────────────────────────────
   build-electron-macos:
     name: Desktop · Build (macOS)
@@ -700,7 +606,6 @@ jobs:
       !failure() && !cancelled() &&
       needs.detect-changes.result == 'success' && (
       github.event_name != 'pull_request' ||
-      needs.detect-changes.outputs.cli == 'true' ||
       needs.detect-changes.outputs.app == 'true'
       )
     runs-on: macos-latest
@@ -795,7 +700,6 @@ jobs:
       !failure() && !cancelled() &&
       needs.detect-changes.result == 'success' && (
       github.event_name != 'pull_request' ||
-      needs.detect-changes.outputs.cli == 'true' ||
       needs.detect-changes.outputs.app == 'true'
       )
     strategy:
@@ -949,7 +853,6 @@ jobs:
       - go-checks
       - test-frontend
       - test-integration
-      - check-cli
       - check-vestad
       - build-vestad
       - check-windows

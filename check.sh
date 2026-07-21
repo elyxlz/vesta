@@ -12,7 +12,6 @@ Usage: ./check.sh <suite> [<suite> ...]
 Suites:
   agent          ty check + pytest (ruff runs repo-wide in guards)
                  (cc_sdk transport tests need tmux; they skip locally without it)
-  cli            cargo clippy -D warnings + cargo test
   vestad         cargo clippy -p vestad -D warnings + cargo test -p vestad
   vestad-docker  vestad #[ignore] Docker tests (needs Docker + an agent image:
                  set VESTAD_AGENT_IMAGE or docker pull ghcr.io/elyxlz/vesta:latest)
@@ -37,11 +36,11 @@ Suites:
                  target is this build, push your branch first (else the agent's migration sync
                  can't fetch it). The release gate builds in release mode and uses the version
                  tag, so it needs no push.
-  all            guards + agent + cli + vestad + web
+  all            guards + agent + vestad + web
 
 Environment:
   TARGET=<triple>  cross-compilation target for cargo suites, e.g.
-                   TARGET=x86_64-pc-windows-msvc ./check.sh cli
+                   TARGET=x86_64-unknown-linux-gnu ./check.sh vestad
   VESTA_UPGRADE_FROM / VESTA_UPGRADE_TO  release tags for the upgrade suite
                    (the `upgrade` subcommand's --from/--to set these)
 EOF
@@ -73,14 +72,6 @@ check_agent() {
         fi
       done
     )
-  )
-}
-
-check_cli() {
-  (
-    cd cli
-    cargo clippy ${TARGET:+--target "$TARGET"} -- -D warnings
-    cargo test ${TARGET:+--target "$TARGET"}
   )
 }
 
@@ -283,7 +274,6 @@ fi
 for suite in "$@"; do
   case "$suite" in
     agent) check_agent ;;
-    cli) check_cli ;;
     vestad) check_vestad ;;
     vestad-docker) check_vestad_docker ;;
     web) check_web ;;
@@ -294,7 +284,7 @@ for suite in "$@"; do
     telegram) check_telegram ;;
     integration) check_integration ;;
     live) check_live ;;
-    all) check_guards && check_agent && check_cli && check_vestad && check_web ;;
+    all) check_guards && check_agent && check_vestad && check_web ;;
     *)
       echo "error: unknown suite '$suite'" >&2
       usage

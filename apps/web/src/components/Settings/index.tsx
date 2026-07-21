@@ -33,6 +33,7 @@ import { useAppMode, type AppMode } from "@/stores/use-app-mode";
 import { openExternalUrl } from "@/lib/open-external-url";
 import { KeybindsCard } from "@/components/Settings/KeybindsSection";
 import { ConnectionControls } from "@/components/ConnectionControls";
+import { GatewayRestart } from "@/components/GatewayRestart";
 import {
   useGatewaySetup,
   type GatewaySetup,
@@ -177,6 +178,7 @@ export function AppSettings() {
                   view logs
                 </Button>
               )}
+              {reachable && <GatewayRestart />}
               <Button
                 variant="destructive"
                 className="w-full shrink-0 whitespace-nowrap sm:w-auto"
