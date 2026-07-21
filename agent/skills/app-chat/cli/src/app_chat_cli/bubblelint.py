@@ -15,59 +15,65 @@ import re
 
 # A bubble is "a few words to one line, rarely two" (personality SKILL.md).
 BUBBLE_MAX_CHARS = 220  # a genuinely long single bubble
-BUBBLE_MAX_SENTENCES = 1  # 2+ sentence-enders in one send = a paragraph, split it
 
 _URL_RE = re.compile(r"https?://\S+")  # urls
 _DECIMAL_RE = re.compile(r"\b\d+[.,]\d+\b")  # decimals: 8.6, 86,5
 _INITIALISM_RE = re.compile(r"\b(?:[A-Za-z]\.){2,}")  # initialisms: W.A.S.T.E., U.K.
+# Abbreviations, an allowlist, so an unlisted one reads as a full stop. Every entry is a word
+# that is always followed by more, never one that can end a thought: protecting "etc." or "min."
+# would blank the stop in "eggs, milk, etc. also bread" and let the wall through. Dotted forms
+# (e.g., a.m., U.K.) are absent because _INITIALISM_RE already covers them.
 _ABBR_RE = re.compile(
-    r"\b(?:mr|mrs|ms|dr|prof|st|vs|etc|e\.g|i\.e|a\.m|p\.m|u\.k|u\.s|approx|no|fig)\.",
+    r"\b(?:mr|mrs|ms|dr|prof|jr|sr|st|vs|approx|fig"
+    r"|jan|feb|mar|apr|jun|jul|aug|sept|sep|oct|nov|dec"
+    r"|inc|ltd|co|corp|ave|rd|blvd|vol|ch|pp)\.",
     re.IGNORECASE,
 )
+_ELLIPSIS_RE = re.compile(r"\.{3,}")  # ellipsis: a texting beat, not a full stop
 _ENDER_RE = re.compile(r"[.!?]+")
+
+_SPACE = " \t\r\n\v\f"
 
 
 def _strip_protected(text: str) -> str:
     """Blank out spans whose '.', '?' or '!' are not sentence boundaries."""
-    for rx in (_URL_RE, _DECIMAL_RE, _INITIALISM_RE, _ABBR_RE):
+    for rx in (_URL_RE, _DECIMAL_RE, _INITIALISM_RE, _ABBR_RE, _ELLIPSIS_RE):
         text = rx.sub(" ", text)
     return text
 
 
-def count_sentences(text: str) -> int:
-    """Count sentence-ending runs: terminal punctuation followed by whitespace
-    then an ASCII alphanumeric, or sitting at the end of the text."""
+def text_after_full_stop(text: str) -> bool:
+    """True when a '.', '!' or '?' has anything after it: the tell of a second
+    thought crammed into the same bubble.
+
+    A mark only reads as a full stop when whitespace follows it, so "main.py"
+    and "example.com" stay single thoughts.
+    """
     cleaned = _strip_protected(text).strip()
-    count = 0
     for match in _ENDER_RE.finditer(cleaned):
         rest = cleaned[match.end() :]
-        if rest == "":
-            count += 1
-            continue
-        trimmed = rest.lstrip(" \t\r\n\v\f")
-        if len(trimmed) == len(rest) or trimmed == "":
-            continue  # no whitespace gap, or nothing after it
-        first = trimmed[0]
-        if first.isascii() and first.isalnum():
-            count += 1
-    return count
+        trimmed = rest.lstrip(_SPACE)
+        if trimmed == "" or len(trimmed) == len(rest):
+            continue  # the mark ends the bubble, or no whitespace gap follows it
+        return True
+    return False
 
 
 def bubble_lint_reason(message: str) -> str:
     """Return a non-empty explanation when message is a wall (too many
-    characters, or too many sentences in one bubble), or "" if it passes."""
+    characters, or text carrying on past a full stop), or "" if it passes."""
     n_chars = len(message)
-    n_sent = count_sentences(message)
-    if n_chars <= BUBBLE_MAX_CHARS and n_sent <= BUBBLE_MAX_SENTENCES:
-        return ""
     why = []
     if n_chars > BUBBLE_MAX_CHARS:
         why.append(f"{n_chars} chars")
-    if n_sent > BUBBLE_MAX_SENTENCES:
-        why.append(f"{n_sent} sentences in one bubble")
+    if text_after_full_stop(message):
+        why.append("text after a full stop")
+    if not why:
+        return ""
     return (
-        "bubble lint: this send is a wall (" + ", ".join(why) + "). texting rule: short bubbles, one thought per send. split it into "
-        "several separate send calls, a beat between each, one idea each. if this "
-        "is genuine reference material (a brief, a code block, a list they asked "
-        "for), resend the same command with --longform to bypass."
+        "bubble lint: this send is a wall (" + ", ".join(why) + "). texting rule: short bubbles, one thought per send, and don't use "
+        "full stops at all. split it into several separate send calls, a beat between "
+        "each, one idea each. if this is genuine reference material (a brief, a code "
+        "block, a list they asked for), resend the same command with --longform to "
+        "bypass."
     )

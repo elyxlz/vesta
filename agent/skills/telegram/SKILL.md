@@ -63,7 +63,7 @@ Notification types written for the agent: `message`, `callback_query` (button ta
 reactions via `react` works). Aliases: `send`/`edit`/`del`/`voice`/`action`/`pin`/`unpin`.
 
 ## Notes
-- `send-message` enforces short-bubble texting: a wall (over ~220 chars, or 3+ sentences in one bubble) is rejected so you re-send as several short calls, one thought each. For genuine reference material the user asked for (a brief, a code block, a list), pass `--longform` to bypass. `--message-file` sends are linted too, so `--longform` is the only escape hatch.
+- `send-message` enforces short-bubble texting: a wall (over ~220 chars, or any text after a full stop) is rejected so you re-send as several short calls, one thought each. Don't use full stops at all: a `.`, `!` or `?` may only close a bubble, never carry text after it. Ellipses stay free, they're a beat rather than a stop. For genuine reference material the user asked for (a brief, a code block, a list), pass `--longform` to bypass. `--message-file` sends are linted too, so `--longform` is the only escape hatch.
 - Chat IDs are numeric (e.g., `123456789` for private, `-1001234567890` for groups)
 - Users must `/start` the bot before it can message them
 - Recipients can be resolved by: contact name, @username, or numeric chat ID
