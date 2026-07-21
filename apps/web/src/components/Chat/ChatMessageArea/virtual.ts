@@ -1,3 +1,4 @@
+import { startsNewBubbleGroup } from "@vesta/core";
 import { calendarDayKey, formatChatDayStampLabel } from "@/lib/chat-day-stamp";
 import type { ChatMessage } from "@/lib/types";
 
@@ -22,7 +23,9 @@ function rowGap(
 ): string {
   if (showDayStamp) return "mt-2";
   if (index === 0) return "";
-  return prev?.type === msg.type ? "mt-1.5" : "mt-5";
+  if (prev?.type !== msg.type) return "mt-5";
+  // Same sender: tight, unless a >= 5-minute pause splits them into a fresh bubble group.
+  return startsNewBubbleGroup(prev, msg) ? "mt-5" : "mt-1.5";
 }
 
 export function buildDecorated(chatMessages: ChatMessage[]): DecoratedRow[] {

@@ -41,4 +41,28 @@ describe("buildDecorated", () => {
     expect(new Set(keys).size).toBe(3);
     expect(keys[0]).toBe("2026-06-08T10:00:00Z-user");
   });
+
+  it("splits same-sender bubbles after a five-minute pause", () => {
+    const rows = buildDecorated([
+      userMsg("2026-06-08T10:00:00"),
+      userMsg("2026-06-08T10:05:00"),
+    ]);
+    expect(rows[1]?.gap).toBe("mt-5");
+  });
+
+  it("keeps same-sender bubbles tight within five minutes", () => {
+    const rows = buildDecorated([
+      userMsg("2026-06-08T10:00:00"),
+      userMsg("2026-06-08T10:04:00"),
+    ]);
+    expect(rows[1]?.gap).toBe("mt-1.5");
+  });
+
+  it("keeps same-sender bubbles tight when a timestamp is unparseable", () => {
+    const rows = buildDecorated([
+      userMsg("2026-06-08T10:00:00"),
+      userMsg("not-a-date"),
+    ]);
+    expect(rows[1]?.gap).toBe("mt-1.5");
+  });
 });

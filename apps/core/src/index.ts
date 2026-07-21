@@ -52,6 +52,13 @@ export {
 } from "./chat/chat-stream-model"
 export type { ChatMessage, ChatState, HistoryPage, SendState } from "./chat/chat-stream-model"
 
+export {
+  BUBBLE_GROUP_TIME_GAP_MS,
+  chatMessageSide,
+  startsNewBubbleGroup,
+} from "./chat/bubble-grouping"
+export type { ChatMessageSide } from "./chat/bubble-grouping"
+
 export { createChatSocket } from "./chat/chat-socket"
 export type {
   ChatSocket,

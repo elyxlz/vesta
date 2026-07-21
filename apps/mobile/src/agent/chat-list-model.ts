@@ -1,4 +1,9 @@
-import type { ChatMessage } from "@vesta/core";
+import {
+  chatMessageSide,
+  startsNewBubbleGroup,
+  type ChatMessage,
+  type ChatMessageSide,
+} from "@vesta/core";
 
 export interface EventChatRow {
   kind: "event";
@@ -21,14 +26,6 @@ export interface DateChatRow {
 }
 
 export type ChatRow = EventChatRow | TypingChatRow | DateChatRow;
-type ChatSide = "user" | "agent";
-const BUBBLE_GROUP_TIME_GAP_MS = 5 * 60 * 1000;
-
-function eventChatSide(event: ChatMessage): ChatSide | null {
-  if (event.type === "user") return "user";
-  if (event.type === "chat") return "agent";
-  return null;
-}
 
 function calendarDay(timestamp: string | undefined): string | null {
   if (!timestamp) return null;
@@ -41,12 +38,6 @@ function calendarDay(timestamp: string | undefined): string | null {
   ].join("-");
 }
 
-function timestampMillis(timestamp: string | undefined): number | null {
-  if (!timestamp) return null;
-  const value = new Date(timestamp).getTime();
-  return Number.isNaN(value) ? null : value;
-}
-
 function eventRows(events: ChatMessage[]): EventChatRow[] {
   const visible = events.filter(
     (event) =>
@@ -56,33 +47,18 @@ function eventRows(events: ChatMessage[]): EventChatRow[] {
       event.type === "rate_limited",
   );
   const seen = new Map<string, number>();
-  let previousSide: ChatSide | null = null;
-  let previousTimestamp: number | null = null;
+  let previousSided: ChatMessage | null = null;
   const rows = visible.map((event) => {
     const base = `${event.ts ?? "live"}-${event.type}`;
     const count = seen.get(base) ?? 0;
     seen.set(base, count + 1);
-    const side = eventChatSide(event);
-    const timestamp = timestampMillis(event.ts);
-    const exceedsTimeGap = Boolean(
-      side &&
-      side === previousSide &&
-      timestamp !== null &&
-      previousTimestamp !== null &&
-      timestamp - previousTimestamp >= BUBBLE_GROUP_TIME_GAP_MS,
-    );
-    const startsNewBubbleGroup = Boolean(
-      side && previousSide && (side !== previousSide || exceedsTimeGap),
-    );
-    if (side) {
-      previousSide = side;
-      previousTimestamp = timestamp;
-    }
+    const startsNew = startsNewBubbleGroup(previousSided, event);
+    if (chatMessageSide(event)) previousSided = event;
     return {
       kind: "event" as const,
       key: count === 0 ? base : `${base}#${count}`,
       event,
-      startsNewBubbleGroup,
+      startsNewBubbleGroup: startsNew,
       endsBubbleGroup: false,
     };
   });
@@ -138,11 +114,11 @@ export function createInvertedChatRows(
 ): ChatRow[] {
   const rows = addDateRows(eventRows(events));
   if (isTyping) {
-    let latestSide: ChatSide | null = null;
+    let latestSide: ChatMessageSide | null = null;
     for (let index = rows.length - 1; index >= 0; index -= 1) {
       const row = rows[index];
       if (!row || row.kind !== "event") continue;
-      const side = eventChatSide(row.event);
+      const side = chatMessageSide(row.event);
       if (side) {
         latestSide = side;
         if (row.event.type === "chat") row.endsBubbleGroup = false;
