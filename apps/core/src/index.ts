@@ -63,7 +63,11 @@ export type {
 export { sendMessage } from "./intents/send-message"
 export type { IdGenerator, SendFailure, SendMessageBody, SentMessage } from "./intents/send-message"
 
-export { checkForGatewayUpdate, triggerGatewayUpdate } from "./intents/gateway-update"
+export {
+  checkForGatewayUpdate,
+  triggerGatewayRestart,
+  triggerGatewayUpdate,
+} from "./intents/gateway-update"
 
 export { rosterFromTree, rostersEqual } from "./tree/roster"
 export type { AgentRow } from "./tree/roster"
