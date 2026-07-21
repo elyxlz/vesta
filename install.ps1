@@ -36,7 +36,7 @@ New-Item -ItemType Directory -Path $TmpDir -Force | Out-Null
 
 try {
     # --- Desktop app ---
-    $AppArtifact = "Vesta_${Version}_x64-setup.exe"
+    $AppArtifact = "Vesta_${Version}_x64.exe"
     $AppExe = Join-Path $TmpDir $AppArtifact
     $AppUrl = "https://github.com/$Repo/releases/download/v$Version/$AppArtifact"
 
