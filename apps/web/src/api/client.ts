@@ -9,7 +9,7 @@ export { ApiError };
 
 // The single web-side gateway HTTP client. `apiFetch`/`apiJson` wrap it for the ~10 api/* modules;
 // it is exported directly for the @vesta/core wire calls that take an `HttpClient` (e.g. the gateway
-// update calls used from the gateway-behind screen, which has no controller in scope).
+// update calls), matching the app's component-to-api convention.
 export const httpClient = createHttpClient({
   baseUrl: () => {
     const conn = getConnection();
