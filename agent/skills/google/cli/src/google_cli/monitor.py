@@ -1,5 +1,10 @@
+import json
 import re
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from functools import partial
+from pathlib import Path
+from typing import TypedDict
 from zoneinfo import ZoneInfo
 
 from googleapiclient.errors import HttpError
@@ -12,10 +17,18 @@ from .gmail import _get_header
 _INVISIBLE = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]")
 _WHITESPACE_RUN = re.compile(r"\s+")
 
-# Cap how far back a first-run catch-up reaches. A long offline gap (e.g. the
-# daemon restarting with a fresh token after the old one expired) otherwise
-# replays weeks of unread email and past calendar events as notifications.
+# Cap how far back a catch-up reaches. A long offline gap (e.g. the daemon
+# restarting with a fresh token after the old one expired, or a token that was
+# dead for a day) otherwise replays weeks of unread email and past calendar
+# events as notifications.
 MAX_CATCHUP_LOOKBACK = timedelta(hours=24)
+
+# A gap wider than this means the unit missed a window (process down or token
+# dead), so its recovered items are tagged `missed`.
+_CATCHUP_GAP_SECONDS = 90
+
+# A unit polled for the first time (fresh install or legacy state) resumes from here.
+_FRESH_START_LOOKBACK = timedelta(hours=1)
 
 # One-shot markers for terminal failures the user must act on: notify the agent
 # once, then stay quiet until the failure clears (success removes the marker,
@@ -26,6 +39,51 @@ CALENDAR_BROKEN_MARKER = "calendar_broken.notified"
 
 def clamp_catchup_start(last_check_dt: datetime, now: datetime) -> datetime:
     return max(last_check_dt, now - MAX_CATCHUP_LOOKBACK)
+
+
+class MonitorState(TypedDict):
+    """last_cycle seeds a unit polled for the first time; units maps "mail"/"calendar" to the end of
+    the last window that unit read successfully, so a failed poll parks its own watermark alone."""
+
+    last_cycle: str
+    units: dict[str, str]
+
+
+def _read_state(path: Path, now: datetime) -> MonitorState:
+    """A legacy bare-timestamp file reads as a last_cycle with no units, so mail and calendar each
+    resume from where the old single-watermark monitor left off."""
+    raw = path.read_text().strip() if path.exists() else ""
+    if not raw:
+        return MonitorState(last_cycle=(now - _FRESH_START_LOOKBACK).isoformat(), units={})
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return MonitorState(last_cycle=raw, units={})
+    match parsed:
+        case {"last_cycle": str(last_cycle), "units": dict(units)}:
+            return MonitorState(last_cycle=last_cycle, units={str(unit): str(watermark) for unit, watermark in units.items()})
+        case _:
+            raise ValueError(f"Malformed monitor state in {path}: {raw[:100]}")
+
+
+def _write_state(path: Path, state: MonitorState) -> None:
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state))
+    tmp.rename(path)
+
+
+def _poll_unit(ctx: GoogleContext, state: MonitorState, unit: str, new_check_time: datetime, poll: Callable[[datetime, bool], bool]) -> None:
+    """Advance the unit's watermark only when the poll read its window, so a failed poll (an outage)
+    parks the watermark and the next healthy cycle re-reads the window instead of skipping it."""
+    units = state["units"]
+    seed = units[unit] if unit in units else state["last_cycle"]
+    query_since = clamp_catchup_start(datetime.fromisoformat(seed), new_check_time)
+    gap_seconds = (new_check_time - query_since).total_seconds()
+    catching_up = gap_seconds > _CATCHUP_GAP_SECONDS
+    if catching_up:
+        ctx.monitor_logger.info("Catching up %s from %s, %.0fs behind", unit, query_since.isoformat(), gap_seconds)
+    read = poll(query_since, catching_up)
+    units[unit] = new_check_time.isoformat() if read else query_since.isoformat()
 
 
 def notify_broken_once(ctx: GoogleContext, marker_name: str, notif_type: str, error: Exception) -> None:
@@ -86,7 +144,10 @@ def _parse_event_time(event: dict) -> datetime:
     return datetime.fromisoformat(date_str).replace(tzinfo=UTC)
 
 
-def _poll_gmail(ctx: GoogleContext, gmail, query_since: datetime, catching_up: bool) -> None:
+def _poll_gmail(ctx: GoogleContext, gmail, query_since: datetime, catching_up: bool) -> bool:
+    """Notify on Gmail arriving since query_since, returning True when the window was read. A failed
+    list parks the watermark; a single message that cannot be fetched stays best-effort (the window was
+    read, so re-reading would re-notify everything else)."""
     logger = ctx.monitor_logger
     try:
         epoch_seconds = int(query_since.timestamp())
@@ -94,37 +155,38 @@ def _poll_gmail(ctx: GoogleContext, gmail, query_since: datetime, catching_up: b
         results = gmail.users().messages().list(userId="me", q=query, labelIds=["INBOX"], maxResults=50).execute()
         messages = results["messages"] if "messages" in results else []
         logger.info("Found %d new emails", len(messages))
-
-        for msg_ref in messages:
-            try:
-                msg = (
-                    gmail.users()
-                    .messages()
-                    .get(userId="me", id=msg_ref["id"], format="metadata", metadataHeaders=["Subject", "From", "Date"])
-                    .execute()
-                )
-                msg_payload = msg["payload"] if "payload" in msg else {}
-                headers = msg_payload["headers"] if "headers" in msg_payload else []
-                sender = _get_header(headers, "From")
-                subject = _get_header(headers, "Subject")
-                snippet = msg["snippet"] if "snippet" in msg else ""
-
-                notifications.write_notification(
-                    ctx.notif_dir,
-                    "email",
-                    # Email pools by default (calendar reminders keep interrupting); the user adds
-                    # interrupt rules for the senders/keywords that should reach them right away.
-                    interrupt=False,
-                    sender=sender,
-                    subject=subject,
-                    preview=clean_preview(snippet)[:200],
-                    missed=catching_up or None,
-                )
-            except HttpError as e:
-                logger.error("Error processing email %s: %s", msg_ref["id"] if "id" in msg_ref else "?", e)
-
     except HttpError as e:
         logger.error("Error fetching Gmail: %s", e)
+        return False
+
+    for msg_ref in messages:
+        try:
+            msg = (
+                gmail.users()
+                .messages()
+                .get(userId="me", id=msg_ref["id"], format="metadata", metadataHeaders=["Subject", "From", "Date"])
+                .execute()
+            )
+            msg_payload = msg["payload"] if "payload" in msg else {}
+            headers = msg_payload["headers"] if "headers" in msg_payload else []
+            sender = _get_header(headers, "From")
+            subject = _get_header(headers, "Subject")
+            snippet = msg["snippet"] if "snippet" in msg else ""
+
+            notifications.write_notification(
+                ctx.notif_dir,
+                "email",
+                # Email pools by default (calendar reminders keep interrupting); the user adds
+                # interrupt rules for the senders/keywords that should reach them right away.
+                interrupt=False,
+                sender=sender,
+                subject=subject,
+                preview=clean_preview(snippet)[:200],
+                missed=catching_up or None,
+            )
+        except HttpError as e:
+            logger.error("Error processing email %s: %s", msg_ref["id"] if "id" in msg_ref else "?", e)
+    return True
 
 
 def _notify_event_reminders(ctx: GoogleContext, event: dict, query_since: datetime, new_check_time: datetime, catching_up: bool) -> None:
@@ -161,7 +223,10 @@ def _notify_event_reminders(ctx: GoogleContext, event: dict, query_since: dateti
         )
 
 
-def _poll_calendar(ctx: GoogleContext, query_since: datetime, new_check_time: datetime, catching_up: bool) -> None:
+def _poll_calendar(ctx: GoogleContext, new_check_time: datetime, query_since: datetime, catching_up: bool) -> bool:
+    """Emit calendar reminders crossing a threshold this cycle, returning True when the calendar was
+    read. A failure parks the calendar watermark alone: mail carries its own, so a terminally broken
+    calendar never re-notifies mail."""
     config = ctx.config
     logger = ctx.monitor_logger
     try:
@@ -187,50 +252,31 @@ def _poll_calendar(ctx: GoogleContext, query_since: datetime, new_check_time: da
         # Gmail still works: tell the agent once, keep polling mail.
         logger.error("Error fetching calendar: %s", e)
         notify_broken_once(ctx, CALENDAR_BROKEN_MARKER, "calendar_auth_broken", e)
-        return
+        return False
     except Exception as e:
         # A calendar failure must not sink the whole poll cycle (Gmail still ran).
         logger.error("Error fetching calendar: %s", e)
-        return
+        return False
     clear_broken_marker(ctx, CALENDAR_BROKEN_MARKER)
+    return True
 
 
 def run(ctx: GoogleContext):
     config = ctx.config
     logger = ctx.monitor_logger
     logger.info("Monitor thread started")
-    first_run = True
 
     while not ctx.monitor_stop_event.is_set():
         try:
-            if ctx.monitor_state_file.exists():
-                last_check_str = ctx.monitor_state_file.read_text().strip()
-            else:
-                last_check_str = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
-
-            last_check_dt = datetime.fromisoformat(last_check_str)
             new_check_time = datetime.now(UTC)
-
-            catching_up = False
-            if first_run:
-                gap_seconds = (new_check_time - last_check_dt).total_seconds()
-                if gap_seconds > 90:
-                    logger.info("Detected offline period of %.0fs, catching up from %s", gap_seconds, last_check_str)
-                    catching_up = True
-            first_run = False
-
-            query_since = clamp_catchup_start(last_check_dt, new_check_time)
-            if query_since != last_check_dt:
-                logger.info("Clamping catch-up window from %s to %s", last_check_str, query_since.isoformat())
-
-            logger.info("Checking for updates since %s", query_since.isoformat())
+            state = _read_state(ctx.monitor_state_file, new_check_time)
 
             try:
                 gmail = api.gmail_service(config)
             except ValueError as e:
                 # Terminal auth failure (no token, dead refresh): every poll would
-                # fail, so tell the agent once and keep polling without advancing
-                # the state file; recovery replays the gap (clamped above).
+                # fail, so tell the agent once and leave every watermark parked; the
+                # next healthy cycle re-reads the gap (clamped to MAX_CATCHUP_LOOKBACK).
                 logger.error("Google auth is broken: %s", e)
                 notify_broken_once(ctx, AUTH_BROKEN_MARKER, "auth_broken", e)
                 if ctx.monitor_stop_event.wait(45):
@@ -238,12 +284,11 @@ def run(ctx: GoogleContext):
                 continue
             clear_broken_marker(ctx, AUTH_BROKEN_MARKER)
 
-            _poll_gmail(ctx, gmail, query_since, catching_up)
-            _poll_calendar(ctx, query_since, new_check_time, catching_up)
+            _poll_unit(ctx, state, "mail", new_check_time, partial(_poll_gmail, ctx, gmail))
+            _poll_unit(ctx, state, "calendar", new_check_time, partial(_poll_calendar, ctx, new_check_time))
 
-            tmp = ctx.monitor_state_file.with_suffix(".tmp")
-            tmp.write_text(new_check_time.isoformat())
-            tmp.rename(ctx.monitor_state_file)
+            state["last_cycle"] = new_check_time.isoformat()
+            _write_state(ctx.monitor_state_file, state)
             logger.info("Completed check cycle, sleeping for 45 seconds")
             if ctx.monitor_stop_event.wait(45):
                 break
