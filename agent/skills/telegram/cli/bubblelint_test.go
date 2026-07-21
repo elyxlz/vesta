@@ -28,6 +28,10 @@ func TestBubbleLintPasses(t *testing.T) {
 		"hmm... ok",                                     // ellipsis is a beat, not a full stop
 		"it's in main.py",                               // no whitespace gap, so not a full stop
 		"check example.com later",                       // no whitespace gap, so not a full stop
+		"1. eggs\n2. milk",                              // multiline numbered list: line-leading markers are not full stops
+		"1. eggs\n2) milk",                              // "2)" marker style is also exempt
+		"here are steps:\n1. open\n2. run",              // list under a lead-in line
+		"- eggs\n- milk",                                // bullets carry no dot, so they always passed
 	}
 	for _, msg := range cases {
 		if reason := bubbleLintReason(msg); reason != "" {
@@ -54,6 +58,10 @@ func TestBubbleLintBlocks(t *testing.T) {
 		{"etc. is not protected", "eggs, milk, etc. also bread"},
 		{"sec. is not protected", "one sec. i'll check"},
 		{"min. is not protected", "takes 20 min. i'll wait"},
+		// Only a line-leading marker is exempt: a single-line "1. x 2. y" has a mid-line
+		// "2." that still reads as a wall, and a real full stop inside an item still trips.
+		{"mid-line marker on one line is a wall", "1. Hello 2. Hi"},
+		{"real full stop inside a list item", "1. one thought. and another"},
 		{"long single sentence", "so the thing about the deploy is that it kept timing out on the build step and i had to bump the worker memory and also tweak the cache config and re-run it twice and then clear the layer cache before it finally went green for us this afternoon"},
 	}
 	for _, c := range cases {
@@ -81,6 +89,11 @@ func TestTextAfterFullStop(t *testing.T) {
 		{"e.g. this should not count", false},
 		{"wait... what", false},
 		{"wait...", false},
+		{"1. eggs\n2. milk", false},
+		{"here are steps:\n1. open\n2. run", false},
+		{"1.", false},
+		{"1. one thought. and another", true},
+		{"1. Hello 2. Hi", true},
 	}
 	for _, c := range cases {
 		if got := textAfterFullStop(c.msg); got != c.want {

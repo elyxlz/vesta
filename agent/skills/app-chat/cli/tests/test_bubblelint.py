@@ -28,6 +28,12 @@ def test_bubble_lint_passes():
         "hmm... ok",
         "it's in main.py",
         "check example.com later",
+        # A multiline list is one send, each item a short thought: the line-leading
+        # marker ("1.", "2)") must not read as a full stop.
+        "1. eggs\n2. milk",
+        "1. eggs\n2) milk",
+        "here are steps:\n1. open\n2. run",
+        "- eggs\n- milk",
     ]:
         assert bubble_lint_reason(msg) == "", msg
 
@@ -45,6 +51,10 @@ def test_bubble_lint_blocks():
         "eggs, milk, etc. also bread",
         "one sec. i'll check",
         "takes 20 min. i'll wait",
+        # Only a line-leading marker is exempt: a single-line "1. x 2. y" has a mid-line
+        # "2." that still reads as a wall, and a real full stop inside an item still trips.
+        "1. Hello 2. Hi",
+        "1. one thought. and another",
         (
             "so the thing about the deploy is that it kept timing out on the build step "
             "and i had to bump the worker memory and also tweak the cache config and re-run "
@@ -67,5 +77,10 @@ def test_text_after_full_stop():
         ("e.g. this should not count", False),
         ("wait... what", False),
         ("wait...", False),
+        ("1. eggs\n2. milk", False),
+        ("here are steps:\n1. open\n2. run", False),
+        ("1.", False),
+        ("1. one thought. and another", True),
+        ("1. Hello 2. Hi", True),
     ]:
         assert text_after_full_stop(msg) is want, msg

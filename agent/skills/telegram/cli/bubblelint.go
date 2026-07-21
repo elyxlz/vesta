@@ -34,13 +34,16 @@ var (
 		`|jan|feb|mar|apr|jun|jul|aug|sept|sep|oct|nov|dec` +
 		`|inc|ltd|co|corp|ave|rd|blvd|vol|ch|pp)\.`)
 	bubbleEllipsisRe = regexp.MustCompile(`\.{3,}`) // ellipsis: a texting beat, not a full stop
-	bubbleEnderRe    = regexp.MustCompile(`[.!?]+`)
+	// A line-leading ordered-list marker ("1.", "2)") is not a full stop: each item is one
+	// short thought. Only the marker is blanked, so a real wall inside an item still trips.
+	bubbleListMarkerRe = regexp.MustCompile(`(?m)^[ \t]*\d+[.)][ \t]`)
+	bubbleEnderRe      = regexp.MustCompile(`[.!?]+`)
 )
 
 // stripProtected blanks out spans whose '.', '?' or '!' are not full stops, so
 // they cannot trip the lint.
 func stripProtected(text string) string {
-	for _, re := range []*regexp.Regexp{bubbleURLRe, bubbleDecimalRe, bubbleInitialismRe, bubbleAbbrRe, bubbleEllipsisRe} {
+	for _, re := range []*regexp.Regexp{bubbleListMarkerRe, bubbleURLRe, bubbleDecimalRe, bubbleInitialismRe, bubbleAbbrRe, bubbleEllipsisRe} {
 		text = re.ReplaceAllString(text, " ")
 	}
 	return text

@@ -30,6 +30,9 @@ _ABBR_RE = re.compile(
     re.IGNORECASE,
 )
 _ELLIPSIS_RE = re.compile(r"\.{3,}")  # ellipsis: a texting beat, not a full stop
+# A line-leading ordered-list marker ("1.", "2)") is not a full stop: each item is one
+# short thought. Only the marker is blanked, so a real wall inside an item still trips.
+_LIST_MARKER_RE = re.compile(r"^[ \t]*\d+[.)][ \t]", re.MULTILINE)
 _ENDER_RE = re.compile(r"[.!?]+")
 
 _SPACE = " \t\r\n\v\f"
@@ -37,7 +40,7 @@ _SPACE = " \t\r\n\v\f"
 
 def _strip_protected(text: str) -> str:
     """Blank out spans whose '.', '?' or '!' are not sentence boundaries."""
-    for rx in (_URL_RE, _DECIMAL_RE, _INITIALISM_RE, _ABBR_RE, _ELLIPSIS_RE):
+    for rx in (_LIST_MARKER_RE, _URL_RE, _DECIMAL_RE, _INITIALISM_RE, _ABBR_RE, _ELLIPSIS_RE):
         text = rx.sub(" ", text)
     return text
 
