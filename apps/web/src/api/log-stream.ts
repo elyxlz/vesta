@@ -1,36 +1,32 @@
+import { readSse, type SseHandle } from "@vesta/core";
 import type { LogEvent } from "@/lib/types";
 
-// The one owner of the SSE log protocol shared by per-agent logs and the gateway stream:
-// "error:"-prefixed lines become Error events, others Line; the "<x>_stopped" event or a
-// transport error ends it. `onClose` lets the caller drop its handle and resolve its promise.
+// The one owner of the SSE log protocol shared by per-agent logs and the gateway stream, over core's
+// readSse (the same fetch-based reader mobile drives). readSse already maps "error:"-prefixed payloads
+// to error and the caller's stopped event to end; this only adapts core's lowercase StreamEvent to the
+// viewer's LogEvent. `onClose` fires on a clean end so the caller drops its handle and resolves its
+// promise; a transport error surfaces as an Error the viewer's policy reconnects on (see Console).
 export function openLogStream(
   url: string,
   stoppedEvent: string,
   onEvent: (event: LogEvent) => void,
   onClose: () => void,
-): EventSource {
-  const es = new EventSource(url);
-
-  es.onmessage = (e: MessageEvent<string>) => {
-    const text = e.data;
-    onEvent(
-      text.startsWith("error:")
-        ? { kind: "Error", message: text }
-        : { kind: "Line", text },
-    );
-  };
-
-  es.addEventListener(stoppedEvent, () => {
-    onEvent({ kind: "End" });
-    es.close();
-    onClose();
-  });
-
-  es.onerror = () => {
-    onEvent({ kind: "Error", message: "log stream disconnected" });
-    es.close();
-    onClose();
-  };
-
-  return es;
+): SseHandle {
+  return readSse(
+    { fetch: (input, init) => fetch(input, init), url, stoppedEvent },
+    (event) => {
+      switch (event.kind) {
+        case "line":
+          onEvent({ kind: "Line", text: event.text });
+          break;
+        case "error":
+          onEvent({ kind: "Error", message: event.message });
+          break;
+        case "end":
+          onEvent({ kind: "End" });
+          onClose();
+          break;
+      }
+    },
+  );
 }

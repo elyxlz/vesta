@@ -51,8 +51,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      cli: ${{ steps.filter.outputs.cli }}
-      app: ${{ steps.filter.outputs.app }}
+      vestad: ${{ steps.filter.outputs.vestad }}
+      core: ${{ steps.filter.outputs.core }}
+      web: ${{ steps.filter.outputs.web }}
+      desktop: ${{ steps.filter.outputs.desktop }}
       mobile: ${{ steps.filter.outputs.mobile }}
       mobile_native: ${{ steps.filter.outputs.mobile_native }}
       agent: ${{ steps.filter.outputs.agent }}
@@ -79,14 +81,12 @@ jobs:
         id: filter
         with:
           filters: |
-            cli:
-              - 'cli/**'
+            vestad:
               - 'vestad/**'
               - 'install.sh'
               - 'install.ps1'
               # vestad embeds the agent home (build.rs EMBED_DIRS/EMBED_FILES), so
-              # Agent-only changes can break the CLI or vestad and must trigger
-              # their checks on PRs.
+              # Agent-only changes can break vestad and must trigger its checks on PRs.
               - 'agent/core/**'
               - 'agent/skills/**'
               - 'agent/MEMORY.md'
@@ -94,11 +94,19 @@ jobs:
               - 'agent/ruff.toml'
               - '.github/workflows/ci.yml'
               - 'check.sh'
-            app:
-              - 'apps/**'
+            core:
+              - 'apps/core/**'
+              - '.github/workflows/ci.yml'
+              - 'check.sh'
+            web:
+              - 'apps/web/**'
               - 'design/**'
               - 'scripts/sync-design-tokens.py'
               - 'scripts/sync-dashboard.sh'
+              - '.github/workflows/ci.yml'
+              - 'check.sh'
+            desktop:
+              - 'apps/desktop/**'
               - '.github/workflows/ci.yml'
               - 'check.sh'
             mobile:
@@ -144,7 +152,6 @@ jobs:
         run: |
           AGENT=$(grep '^version = ' agent/core/pyproject.toml | cut -d'"' -f2)
           VESTAD=$(grep '^version = ' vestad/Cargo.toml | head -1 | cut -d'"' -f2)
-          CLI=$(grep '^version = ' cli/Cargo.toml | head -1 | cut -d'"' -f2)
           TESTS=$(grep '^version = ' vestad/tests-integration/Cargo.toml | head -1 | cut -d'"' -f2)
           DESKTOP_PKG=$(python3 -c "import json; print(json.load(open('apps/desktop/package.json'))['version'])")
           MOBILE_PKG=$(python3 -c "import json; print(json.load(open('apps/mobile/package.json'))['version'])")
@@ -153,7 +160,6 @@ jobs:
 
           echo "agent:         $AGENT"
           echo "vestad:        $VESTAD"
-          echo "cli:           $CLI"
           echo "tests:         $TESTS"
           echo "desktop pkg:   $DESKTOP_PKG"
           echo "mobile pkg:    $MOBILE_PKG"
@@ -161,7 +167,7 @@ jobs:
           echo "app:           $APP"
 
           FAIL=0
-          for name_val in "vestad:$VESTAD" "cli:$CLI" "tests:$TESTS" "desktop-pkg:$DESKTOP_PKG" "mobile-pkg:$MOBILE_PKG" "mobile-app:$MOBILE_APP" "app:$APP"; do
+          for name_val in "vestad:$VESTAD" "tests:$TESTS" "desktop-pkg:$DESKTOP_PKG" "mobile-pkg:$MOBILE_PKG" "mobile-app:$MOBILE_APP" "app:$APP"; do
             name="${name_val%%:*}"
             val="${name_val#*:}"
             if [ "$AGENT" != "$val" ]; then
@@ -326,11 +332,13 @@ jobs:
       - name: Run telegram checks
         run: ./check.sh telegram
 
-  # ── Frontend unit tests ──────────────────────────────────────────────
-  test-frontend:
-    name: Apps · Lint, typecheck, and test
+  # ── Frontend unit tests (one job per app, gated on its dependency closure) ──
+  # @vesta/core is the shared controller: web bundles it, desktop bundles web,
+  # mobile consumes it via file:. So each downstream job's gate includes core.
+  test-app-core:
+    name: Apps · core
     needs: detect-changes
-    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.app == 'true'
+    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.core == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -340,14 +348,96 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: apps/package-lock.json
 
+      - name: Install deps
+        run: npm --prefix apps ci
+
+      - name: Run core checks
+        run: ./check.sh app-core
+
+  test-app-web:
+    name: Apps · web
+    needs: detect-changes
+    if: >-
+      github.event_name != 'pull_request' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/package-lock.json
+
+      - name: Install deps
+        run: npm --prefix apps ci
+
+      - name: Run web checks
+        run: ./check.sh app-web
+
+  test-app-desktop:
+    name: Apps · desktop
+    needs: detect-changes
+    if: >-
+      github.event_name != 'pull_request' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.web == 'true' ||
+      needs.detect-changes.outputs.desktop == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/package-lock.json
+
+      - name: Install deps
+        run: npm --prefix apps ci
+
+      - name: Run desktop checks
+        run: ./check.sh app-desktop
+
+  test-app-mobile:
+    name: Apps · mobile
+    needs: detect-changes
+    if: >-
+      github.event_name != 'pull_request' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.mobile == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            apps/package-lock.json
+            apps/mobile/package-lock.json
+
+      # Mobile type-checks against @vesta/core's source (the file: dependency),
+      # which resolves its react types from the apps workspace install.
       - name: Install deps
         run: |
           npm --prefix apps ci
           npm --prefix apps/mobile ci
 
-      - name: Run web checks
-        run: ./check.sh web
+      - name: Run mobile checks
+        run: ./check.sh app-mobile
 
   # ── EAS workflow schema validation (mobile PRs only) ─────────────────
   # This is local schema validation only. It neither authenticates to Expo nor
@@ -380,11 +470,39 @@ jobs:
             jq --exit-status '.data' > "$schema"
           uvx check-jsonschema==0.36.2 --schemafile "$schema" "${workflows[@]}"
 
+  # ── Warm the agent image build cache (shared by the Docker consumers) ──
+  # test-integration and check-vestad each build the agent image from their own
+  # checkout for hermeticity, and used to cold-build it twice in parallel without
+  # seeing each other's cache. Building it once here and exporting a mode=max gha
+  # cache under the agent-image-amd64 scope lets both consumers hit warm layers.
+  # This never pushes anywhere: the consumers still build from checkout, they just
+  # reuse these layers. The gate is the union of both consumers' gates so this job
+  # runs whenever either consumer does.
+  build-agent-image:
+    name: Agent image · Warm build cache
+    needs: detect-changes
+    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.vestad == 'true' || needs.detect-changes.outputs.agent == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build agent image and export cache
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: vestad/Dockerfile
+          cache-from: type=gha,scope=agent-image-amd64
+          cache-to: type=gha,mode=max,scope=agent-image-amd64
+
   # ── Integration tests (real vestad + real client, Docker required) ─────
   test-integration:
     name: vestad · Run end-to-end integration tests
-    needs: [version-check, detect-changes]
-    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.cli == 'true' || needs.detect-changes.outputs.agent == 'true'
+    needs: [version-check, detect-changes, build-agent-image]
+    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.vestad == 'true' || needs.detect-changes.outputs.agent == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -415,10 +533,17 @@ jobs:
         # Caching is best-effort: a transient cache-service outage must not fail the
         # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
         continue-on-error: true
+        # There is no root Cargo.lock, so rust-cache with no workspaces caches nothing
+        # and vestad rebuilds cold every run. Point it at the vestad workspace and share
+        # check-vestad's cache key so the two Linux x64 jobs reuse each other's entries.
+        with:
+          workspaces: vestad
+          key: x86_64-unknown-linux-gnu
 
       # Hermetic: the agent image is built from THIS checkout (GHA layer cache keeps it
       # fast), so integration tests exercise the PR's agent code and Dockerfile — never
-      # the previously released ghcr.io :latest image.
+      # the previously released ghcr.io :latest image. build-agent-image warms the shared
+      # agent-image-amd64 cache first so this build hits warm layers instead of cold.
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
@@ -429,8 +554,8 @@ jobs:
           file: vestad/Dockerfile
           load: true
           tags: vesta:local
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=agent-image-amd64
+          cache-to: type=gha,mode=max,scope=agent-image-amd64
 
       - name: Build vestad
         working-directory: vestad
@@ -463,50 +588,11 @@ jobs:
             echo "Check the failed attempt's logs above — the retry masked a real race or Docker flake."
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # ── Check the vesta CLI on every platform it ships on ────────────────
-  check-cli:
-    name: CLI · Lint and test (${{ matrix.label }})
-    needs: [version-check, detect-changes]
-    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.cli == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - label: Linux x64
-            target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-          - label: macOS ARM64
-            target: aarch64-apple-darwin
-            os: macos-latest
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install Rust
-        uses: ./.github/actions/install-rust
-        with:
-          targets: ${{ matrix.target }}
-          components: clippy
-
-      - uses: Swatinem/rust-cache@v2
-        # Caching is best-effort: a transient cache-service outage must not fail the
-        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
-        continue-on-error: true
-        with:
-          workspaces: |
-            cli
-            vestad
-          key: ${{ matrix.target }}
-
-      - name: Check cli (clippy + tests)
-        run: TARGET=${{ matrix.target }} ./check.sh cli
-
   # ── Check vestad (clippy, unit tests, and Docker tests) ───────────────
   check-vestad:
     name: vestad · Lint, unit, and Docker tests (Linux x64)
-    needs: [version-check, detect-changes]
-    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.cli == 'true'
+    needs: [version-check, detect-changes, build-agent-image]
+    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.vestad == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -528,7 +614,8 @@ jobs:
         run: TARGET=x86_64-unknown-linux-gnu ./check.sh vestad
 
       # Hermetic: the #[ignore] Docker tests run against an image built from this
-      # checkout, not the released ghcr.io :latest.
+      # checkout, not the released ghcr.io :latest. build-agent-image warms the shared
+      # agent-image-amd64 cache first so this build hits warm layers instead of cold.
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
@@ -539,8 +626,8 @@ jobs:
           file: vestad/Dockerfile
           load: true
           tags: vesta:local
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=agent-image-amd64
+          cache-to: type=gha,mode=max,scope=agent-image-amd64
 
       - name: Docker integration tests (vestad, Linux only)
         run: VESTAD_AGENT_IMAGE=vesta:local ./check.sh vestad-docker
@@ -549,7 +636,9 @@ jobs:
   build-vestad:
     name: vestad · Build (${{ matrix.label }})
     needs: [version-check, detect-changes]
-    if: needs.detect-changes.outputs.cli == 'true' || needs.detect-changes.outputs.app == 'true' || github.event_name != 'pull_request'
+    # vestad's build.rs embeds only the web bundle, so its app-side trigger is the
+    # web closure (core || web), not desktop or mobile.
+    if: needs.detect-changes.outputs.vestad == 'true' || needs.detect-changes.outputs.core == 'true' || needs.detect-changes.outputs.web == 'true' || github.event_name != 'pull_request'
     strategy:
       fail-fast: false
       matrix:
@@ -606,38 +695,20 @@ jobs:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}.tar.gz
 
-  # ── Windows CLI checks and release packaging ─────────────────────────
-  # PRs run the same lint/tests as Linux and macOS. The reusable release call
-  # additionally builds and uploads the optimized Windows package in this same
-  # job, avoiding a second Windows checkout/toolchain setup.
+  # ── Verify the Windows installer script parses ───────────────────────
+  # install.ps1 is delivered via `irm ... | iex`, so a parse error would break
+  # every Windows install. Validate it against PowerShell 5.1 (the version that
+  # ships with Windows) without running it.
   check-windows:
-    name: CLI · Lint and test (Windows x64)
+    name: Windows · Verify install.ps1
     needs: [version-check, detect-changes]
     if: >-
       github.event_name != 'pull_request' ||
-      needs.detect-changes.outputs.cli == 'true'
+      needs.detect-changes.outputs.vestad == 'true'
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-
-      - name: Install Rust
-        uses: ./.github/actions/install-rust
-        with:
-          targets: x86_64-pc-windows-msvc
-          components: clippy
-
-      - uses: Swatinem/rust-cache@v2
-        # Caching is best-effort: a transient cache-service outage must not fail the
-        # build (it just rebuilds uncached) the way it did during the v0.1.158 release.
-        continue-on-error: true
-        with:
-          workspaces: cli
-          key: x86_64-pc-windows-msvc
-
-      - name: Check cli (clippy + tests)
-        shell: bash
-        run: TARGET=x86_64-pc-windows-msvc ./check.sh cli
 
       - name: Verify install.ps1 with PowerShell 5.1
         shell: powershell
@@ -658,49 +729,61 @@ jobs:
           }
           Write-Host "✅ install.ps1 is compatible with PowerShell 5.1"
 
-      - name: Build release CLI
-        if: inputs.release_artifacts
-        working-directory: cli
-        run: cargo build --release --target x86_64-pc-windows-msvc
-
-      - name: Smoke test release CLI
-        if: inputs.release_artifacts
-        shell: bash
-        run: |
-          CLI="cli/target/x86_64-pc-windows-msvc/release/vesta.exe"
-          "$CLI" --version
-          "$CLI" --help
-
-      - name: Package Windows CLI zip
-        if: inputs.release_artifacts
-        shell: bash
-        run: |
-          mkdir vesta-windows
-          cp cli/target/x86_64-pc-windows-msvc/release/vesta.exe vesta-windows/
-          7z a vesta-x86_64-pc-windows-msvc.zip vesta-windows/
-
-      - uses: actions/upload-artifact@v7
-        if: inputs.release_artifacts
-        with:
-          name: vesta-x86_64-pc-windows-msvc
-          path: vesta-x86_64-pc-windows-msvc.zip
-
-      - uses: actions/upload-artifact@v7
-        if: inputs.release_artifacts
-        with:
-          name: windows-cli-exe
-          path: cli/target/x86_64-pc-windows-msvc/release/vesta.exe
-
-  # ── Build Electron app (macOS) ───────────────────────────────────────
-  build-electron-macos:
-    name: Desktop · Build (macOS)
-    needs: [test-frontend, detect-changes]
+  # ── Build the web bundle once for all desktop platforms ───────────────
+  # electron-builder embeds apps/web/dist as extraResources. Rather than rebuild
+  # that identical bundle on macOS, Linux, and Windows, build it once here and
+  # hand it to the three desktop jobs as an artifact. Gated on the same desktop
+  # closure (core || web || desktop) with the same always-run-on-push semantics.
+  build-web-bundle:
+    name: Desktop · Build web bundle
+    needs: detect-changes
     if: >-
       !failure() && !cancelled() &&
       needs.detect-changes.result == 'success' && (
       github.event_name != 'pull_request' ||
-      needs.detect-changes.outputs.cli == 'true' ||
-      needs.detect-changes.outputs.app == 'true'
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.web == 'true' ||
+      needs.detect-changes.outputs.desktop == 'true'
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/package-lock.json
+
+      - name: Install frontend deps
+        run: npm --prefix apps ci
+
+      - name: Build web app
+        working-directory: apps
+        run: npm -w @vesta/web run build
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: web-bundle
+          path: apps/web/dist
+          retention-days: 1
+
+  # ── Build Electron app (macOS) ───────────────────────────────────────
+  build-electron-macos:
+    name: Desktop · Build (macOS)
+    # Packages the electron bundle (embedding the prebuilt web bundle), consuming
+    # no test outputs, so it gates on the desktop closure (core || web || desktop),
+    # not on the app test jobs. build-web-bundle produces the web dist it embeds.
+    needs: [detect-changes, build-web-bundle]
+    if: >-
+      !failure() && !cancelled() &&
+      needs.detect-changes.result == 'success' && (
+      github.event_name != 'pull_request' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.web == 'true' ||
+      needs.detect-changes.outputs.desktop == 'true'
       )
     runs-on: macos-latest
     # Release builds sign and notarize; Apple's notarytool can wait well past an
@@ -714,14 +797,25 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: apps/package-lock.json
+
+      - name: Cache electron downloads
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+          key: electron-macos-${{ hashFiles('apps/package-lock.json') }}
 
       - name: Install frontend deps
-        working-directory: apps
-        run: npm install
+        run: npm --prefix apps ci
 
-      - name: Build web app
-        working-directory: apps
-        run: npm -w @vesta/web run build
+      - name: Download web bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: web-bundle
+          path: apps/web/dist
 
       - name: Resolve macOS build arch
         env:
@@ -789,13 +883,14 @@ jobs:
   # ── Build Electron app (Linux) ────────────────────────────────────────
   build-electron-linux:
     name: Desktop · Build (${{ matrix.label }})
-    needs: [test-frontend, detect-changes]
+    needs: [detect-changes, build-web-bundle]
     if: >-
       !failure() && !cancelled() &&
       needs.detect-changes.result == 'success' && (
       github.event_name != 'pull_request' ||
-      needs.detect-changes.outputs.cli == 'true' ||
-      needs.detect-changes.outputs.app == 'true'
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.web == 'true' ||
+      needs.detect-changes.outputs.desktop == 'true'
       )
     strategy:
       fail-fast: false
@@ -816,17 +911,28 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: apps/package-lock.json
+
+      - name: Cache electron downloads
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+          key: electron-linux-${{ matrix.arch }}-${{ hashFiles('apps/package-lock.json') }}
 
       - name: Install packaging deps
         run: sudo apt-get update && sudo apt-get install -y rpm
 
       - name: Install frontend deps
-        working-directory: apps
-        run: npm install
+        run: npm --prefix apps ci
 
-      - name: Build web app
-        working-directory: apps
-        run: npm -w @vesta/web run build
+      - name: Download web bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: web-bundle
+          path: apps/web/dist
 
       - name: Build Electron app
         working-directory: apps/desktop
@@ -850,12 +956,14 @@ jobs:
   # ── Build Electron app (Windows) ──────────────────────────────────────
   build-electron-windows:
     name: Desktop · Build (Windows x64)
-    needs: [test-frontend, detect-changes]
+    needs: [detect-changes, build-web-bundle]
     if: >-
       !failure() && !cancelled() &&
       needs.detect-changes.result == 'success' && (
       github.event_name != 'pull_request' ||
-      needs.detect-changes.outputs.app == 'true'
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.web == 'true' ||
+      needs.detect-changes.outputs.desktop == 'true'
       )
     runs-on: windows-latest
     timeout-minutes: 60
@@ -866,14 +974,25 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: apps/package-lock.json
+
+      - name: Cache electron downloads
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~\AppData\Local\electron\Cache
+            ~\AppData\Local\electron-builder\Cache
+          key: electron-windows-${{ hashFiles('apps/package-lock.json') }}
 
       - name: Install frontend deps
-        working-directory: apps
-        run: npm install
+        run: npm --prefix apps ci
 
-      - name: Build web app
-        working-directory: apps
-        run: npm -w @vesta/web run build
+      - name: Download web bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: web-bundle
+          path: apps/web/dist
 
       - name: Build Electron app
         working-directory: apps/desktop
@@ -946,10 +1065,14 @@ jobs:
       - dependency-review
       - agent-tests
       - go-checks
-      - test-frontend
+      - test-app-core
+      - test-app-web
+      - test-app-desktop
+      - test-app-mobile
+      - build-agent-image
       - test-integration
-      - check-cli
       - check-vestad
+      - build-web-bundle
       - build-vestad
       - check-windows
       - build-electron-macos

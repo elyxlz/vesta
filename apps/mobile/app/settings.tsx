@@ -1,22 +1,19 @@
 import { ActivityIndicator, Alert, Linking, StyleSheet } from "react-native";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
-import {
-  checkForGatewayUpdate,
-  fetchGatewayInfo,
-  fetchGatewaySettings,
-  updateGateway,
-} from "@/api/endpoints";
-import { AgentPagesSettingsSection } from "@/components/AgentPagesSettingsSection";
+import { checkForGatewayUpdate, triggerGatewayRestart, triggerGatewayUpdate } from "@vesta/core";
+import { fetchGatewayInfo, fetchGatewaySettings } from "@/api/endpoints";
 import { Screen } from "@/components/layout/Screen";
 import { FormRow, FormSection, SwitchRow } from "@/components/ui/Form";
 import { unregisterCurrentMobileDevice } from "@/notifications/PushCoordinator";
 import { usePreferences, type ThemePreference } from "@/preferences/PreferencesProvider";
+import { useRoster } from "@/session/RosterProvider";
 import { useSession } from "@/session/SessionProvider";
 
 export default function SettingsScreen() {
   const router = useRouter();
   const session = useSession();
+  const roster = useRoster();
   const preferences = usePreferences();
   const gateway = useQuery({
     queryKey: ["gateway", session.connection?.url],
@@ -29,14 +26,20 @@ export default function SettingsScreen() {
     },
     enabled: session.status === "connected",
   });
+  // The check just asks vestad to refresh; the fresh updateAvailable/latestVersion land in the
+  // replica (roster) as a /sync gateway delta, so the UI reads them from there, never the POST body.
   const updateCheck = useMutation({
     mutationFn: () => checkForGatewayUpdate(session.api),
   });
   const gatewayUpdate = useMutation({
-    mutationFn: () => updateGateway(session.api),
+    mutationFn: () => triggerGatewayUpdate(session.api),
   });
-  const checkedVersion = updateCheck.data ?? session.version;
-  const updateAvailable = checkedVersion?.update_available === true;
+  // A restart drops every agent connection briefly like an update; the live socket self-heals on
+  // its own once the gateway comes back, so nothing forces a reconnect here.
+  const gatewayRestart = useMutation({
+    mutationFn: () => triggerGatewayRestart(session.api),
+  });
+  const updateAvailable = roster.updateAvailable;
 
   const confirmGatewayUpdate = () => {
     Alert.alert("Update gateway?", "Agents will briefly restart.", [
@@ -44,6 +47,16 @@ export default function SettingsScreen() {
       {
         text: "Update",
         onPress: () => gatewayUpdate.mutate(),
+      },
+    ]);
+  };
+
+  const confirmGatewayRestart = () => {
+    Alert.alert("Restart gateway?", "Agent connections drop briefly and reconnect on their own.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Restart",
+        onPress: () => gatewayRestart.mutate(),
       },
     ]);
   };
@@ -70,8 +83,6 @@ export default function SettingsScreen() {
           onPress={chooseTheme}
         />
       </FormSection>
-
-      <AgentPagesSettingsSection />
 
       <FormSection title="Notifications">
         <SwitchRow
@@ -119,10 +130,10 @@ export default function SettingsScreen() {
         <FormRow
           label="Status"
           icon="radio-outline"
-          value={session.reachable ? "connected" : "reconnecting"}
+          value={roster.reachable ? "connected" : "reconnecting"}
         />
         <FormRow label="Host" icon="cloud-outline" value={session.connection ? new URL(session.connection.url).hostname : ""} />
-        <FormRow label="Version" icon="git-branch-outline" value={session.version?.version ?? "unknown"} />
+        <FormRow label="Version" icon="git-branch-outline" value={roster.gatewayVersion ?? "unknown"} />
         <FormRow label="Channel" icon="flask-outline" value={gateway.data?.settings.channel ?? "unknown"} />
         <FormRow
           label="Public tunnel"
@@ -149,7 +160,7 @@ export default function SettingsScreen() {
           <FormRow
             label="Update available"
             icon="arrow-up-circle-outline"
-            value={checkedVersion?.latest_version ?? "available"}
+            value={roster.latestVersion ?? "available"}
             onPress={confirmGatewayUpdate}
           />
         ) : updateCheck.isError ? (
@@ -167,9 +178,19 @@ export default function SettingsScreen() {
             onPress={() => updateCheck.mutate()}
           />
         )}
+        <FormRow
+          label="Restart gateway"
+          icon="reload-outline"
+          onPress={gatewayRestart.isPending ? undefined : confirmGatewayRestart}
+          trailing={
+            gatewayRestart.isPending ? (
+              <ActivityIndicator color={preferences.colors.interactive} />
+            ) : undefined
+          }
+        />
       </FormSection>
 
-      {session.managed ? (
+      {roster.managed ? (
         <FormSection title="Account">
           <FormRow
             label="Manage account and billing"

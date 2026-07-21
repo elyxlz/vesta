@@ -1,9 +1,5 @@
 [
   {
-    "name": "app-chat",
-    "description": "Reply to notifications with `source=app-chat` via `app-chat send`. Requires daemon."
-  },
-  {
     "name": "upstream-sync",
     "description": "Sync your workspace after a Vesta upgrade, rebasing your own changes onto the new version's stock snapshot. Use during the upgrade boot turn, or when the user asks you to get up to date or get the latest changes."
   },
@@ -14,6 +10,10 @@
   {
     "name": "agentmail",
     "description": "Send and receive email as the agent via AgentMail (managed inbox-per-agent, free tier). Use for \"email\", \"send email\", or \"agent inbox\" without a custom domain; inbound mail arrives as a notification."
+  },
+  {
+    "name": "app-chat",
+    "description": "The user's chat screen in the Vesta app (web, desktop, mobile). Reply to `source=app-chat` notifications via `app-chat send`. Requires daemon."
   },
   {
     "name": "birth",

@@ -8,8 +8,8 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "aiohttp>=3.14.1",
-    "claude-agent-sdk>=0.2.122",
+    "aiohttp>=3.14.2",
+    "claude-agent-sdk>=0.2.124",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.2",
     "rich>=15.0.0",
@@ -25,6 +25,6 @@ dev = [
     "ruff>=0.15.22",
     "pytest>=9.1.1",
     "pytest-timeout>=2.4.0",
-    "hypothesis>=6.156.7",
+    "hypothesis>=6.158.0",
     "ty>=0.0.61",
 ]

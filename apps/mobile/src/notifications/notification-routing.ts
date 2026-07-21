@@ -45,7 +45,6 @@ export function notificationNavigationDecision(input: {
   agentsReady: boolean;
   agentNames: readonly string[];
   routeReady: boolean;
-  compatible: boolean | null;
   currentGateway: string | null;
 }): NotificationNavigationDecision {
   if (
@@ -56,7 +55,6 @@ export function notificationNavigationDecision(input: {
   ) {
     return "wait";
   }
-  if (input.compatible === false) return "discard";
   if (input.pending.gateway && input.pending.gateway !== input.currentGateway) {
     return "discard";
   }

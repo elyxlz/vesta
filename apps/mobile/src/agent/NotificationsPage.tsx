@@ -3,13 +3,13 @@ import { FlatList, StyleSheet, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { getNotificationHistory } from "@/api/endpoints";
-import type { NotificationEvent } from "@/api/types";
 import { useAgent } from "@/agent/AgentProvider";
 import {
   getPendingNotificationIds,
   mergeLiveNotifications,
 } from "@/agent/notification-list-model";
-import { parseNotificationContent } from "@/agent/notification-content";
+import { parseNotificationContent, type NotificationView } from "@vesta/core";
+import { useBottomAnchoredFeed } from "@/agent/use-bottom-anchored-feed";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
@@ -19,7 +19,7 @@ function NotificationRow({
   event,
   pending,
 }: {
-  event: NotificationEvent;
+  event: NotificationView;
   pending: boolean;
 }) {
   const { colors } = usePreferences();
@@ -107,7 +107,13 @@ function NotificationRow({
   );
 }
 
-export default function NotificationsPage() {
+interface NotificationsPageProps {
+  presentation?: "pager" | "standalone";
+}
+
+export default function NotificationsPage({
+  presentation = "pager",
+}: NotificationsPageProps) {
   const { api } = useSession();
   const { name, socket } = useAgent();
   const { colors } = usePreferences();
@@ -116,7 +122,7 @@ export default function NotificationsPage() {
     queryKey: ["notifications", name],
     queryFn: () => getNotificationHistory(api, name),
   });
-  const lastSnapshotRevision = useRef(0);
+  const lastReseedRevision = useRef(0);
   const items = useMemo(
     () =>
       mergeLiveNotifications(
@@ -124,6 +130,14 @@ export default function NotificationsPage() {
         socket.events,
       ),
     [data?.notifications, socket.events],
+  );
+  const standalone = presentation === "standalone";
+  const displayItems = useMemo(
+    () => (standalone ? [...items].reverse() : items),
+    [items, standalone],
+  );
+  const bottomAnchor = useBottomAnchoredFeed<NotificationView>(
+    displayItems.length,
   );
   const pendingIds = useMemo(
     () =>
@@ -133,21 +147,27 @@ export default function NotificationsPage() {
 
   useEffect(() => {
     if (
-      socket.snapshotRevision === 0 ||
-      socket.snapshotRevision === lastSnapshotRevision.current
+      socket.reseedRevision === 0 ||
+      socket.reseedRevision === lastReseedRevision.current
     ) {
       return;
     }
-    lastSnapshotRevision.current = socket.snapshotRevision;
+    lastReseedRevision.current = socket.reseedRevision;
     void refetch();
-  }, [refetch, socket.snapshotRevision]);
+  }, [refetch, socket.reseedRevision]);
 
   return (
     <View style={styles.screen}>
       <FlatList
-        style={styles.list}
-        data={items}
-        inverted
+        ref={standalone ? bottomAnchor.listRef : undefined}
+        style={[
+          styles.list,
+          standalone && !bottomAnchor.contentVisible
+            ? styles.positioningList
+            : null,
+        ]}
+        data={displayItems}
+        inverted={!standalone}
         keyExtractor={(event, index) =>
           `${event.notif_id ?? `${event.ts}-${event.source}`}-${index}`
         }
@@ -158,15 +178,24 @@ export default function NotificationsPage() {
           />
         )}
         ItemSeparatorComponent={() => <View style={styles.separator} />}
-        automaticallyAdjustContentInsets={false}
-        contentInsetAdjustmentBehavior="never"
-        contentContainerStyle={[
-          styles.listContent,
-          {
-            paddingTop: insets.bottom,
-            paddingBottom: insets.top + 104,
-          },
-        ]}
+        automaticallyAdjustContentInsets={standalone}
+        contentInsetAdjustmentBehavior={standalone ? "automatic" : "never"}
+        contentContainerStyle={
+          standalone
+            ? styles.listContent
+            : [
+                styles.listContent,
+                {
+                  paddingTop: insets.bottom,
+                  paddingBottom: insets.top + 104,
+                },
+              ]
+        }
+        onContentSizeChange={
+          standalone ? bottomAnchor.onContentSizeChange : undefined
+        }
+        onScroll={standalone ? bottomAnchor.onScroll : undefined}
+        scrollEventThrottle={standalone ? 16 : undefined}
         ListEmptyComponent={
           isLoading ? null : (
             <Text style={[styles.empty, { color: colors.secondaryText }]}>
@@ -182,6 +211,7 @@ export default function NotificationsPage() {
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   list: { flex: 1 },
+  positioningList: { opacity: 0 },
   listContent: { paddingHorizontal: 12 },
   notification: {
     borderRadius: 17,

@@ -140,6 +140,14 @@ pub async fn agent_proxy_handler(
     let is_registered_service = service.is_some();
 
     if is_ws_upgrade {
+        // The raw agent port carries the internal event bus, which is not client-exposed.
+        // Only registered-service WS (voice STT, dashboard-registered services) may upgrade.
+        if service.is_none() {
+            return Err(err_response(
+                StatusCode::NOT_FOUND,
+                "the raw agent event bus is not client-exposed; use /sync",
+            ));
+        }
         let (mut parts, _body) = request.into_parts();
         let ws = match WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
             Ok(ws) => ws,

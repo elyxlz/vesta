@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Platform } from "react-native";
 import Constants from "expo-constants";
 import * as Crypto from "expo-crypto";
@@ -7,9 +7,17 @@ import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import { usePathname, useRouter } from "expo-router";
 import { registerMobileDevice, unregisterMobileDevice } from "@/api/endpoints";
-import type { ApiClient } from "@/api/client";
+import { createApiClient, type ApiClient } from "@/api/client";
+import type { ConnectionConfig } from "@/api/types";
 import { usePreferences } from "@/preferences/PreferencesProvider";
+import { useRoster } from "@/session/RosterProvider";
 import { useSession } from "@/session/SessionProvider";
+import {
+  clearPushRegistration,
+  readPushRegistration,
+  writePushRegistration,
+  type PushRegistrationSnapshot,
+} from "@/storage/push-registration";
 import { designTokens } from "@/theme/generated";
 import { shouldPresentForegroundNotification } from "./foreground-policy";
 import {
@@ -18,7 +26,13 @@ import {
   readPendingNotification,
   type PendingNotification,
 } from "./notification-routing";
-import { pushRegistrationDecision } from "./registration-policy";
+import {
+  gatewayHandoffDecision,
+  isSameRegistration,
+  pushRegistrationDecision,
+  resolveHydratedSnapshot,
+  type RegistrationTarget,
+} from "./registration-policy";
 
 const PUSH_TOKEN_KEY = "vesta.expo-push-token.v1";
 const PUSH_INSTALLATION_ID_KEY = "vesta.push-installation-id.v1";
@@ -32,9 +46,9 @@ Notifications.setNotificationHandler({
       notification.request.content.data,
     );
     return {
-      // Hide only when this exact agent is visible and its canonical socket is
-      // healthy. Home, settings, another agent, and reconnecting states still
-      // receive the notification normally.
+      // Foreground presentation has one owner: while /sync is connected the user_notification delta
+      // shows the notification, so the push is suppressed here (foreground-policy). When sync is down
+      // the push is the fallback, suppressed only for the visible agent's healthy socket.
       shouldShowBanner: present,
       shouldShowList: present,
       shouldPlaySound: present,
@@ -67,14 +81,70 @@ async function removeStoredRegistration(api: ApiClient): Promise<void> {
   await AsyncStorage.removeItem(PUSH_TOKEN_KEY);
 }
 
+function registrationTarget(
+  snapshot: PushRegistrationSnapshot | null,
+): RegistrationTarget | null {
+  return snapshot
+    ? { gatewayUrl: snapshot.connection.url, token: snapshot.token }
+    : null;
+}
+
 function EnabledPushCoordinator() {
   const router = useRouter();
   const pathname = usePathname();
   const session = useSession();
+  const { reachable, agentsReady, agents } = useRoster();
   const preferences = usePreferences();
   const [pending, setPending] = useState<PendingNotification | null>(null);
   const processingNotification = useRef<string | null>(null);
   const registrationChain = useRef<Promise<void>>(Promise.resolve());
+  // The gateway (with the credentials to reach it later) this device last registered a push token
+  // with. Persisted so a switch or disconnect that spans an app restart can still unregister at the
+  // old gateway; the ref alone would die with the process and strand it pushing. Set on every
+  // successful registration, cleared once the old gateway's registration is torn down.
+  const registrationSnapshot = useRef<PushRegistrationSnapshot | null>(null);
+  const [snapshotHydrated, setSnapshotHydrated] = useState(false);
+  // Latest full connection (creds and all) tracked out of band so the registration effect can
+  // snapshot it without depending on the connection object identity, which churns on every token
+  // refresh; the effect keys on the stable gateway url instead.
+  const connectionRef = useRef<ConnectionConfig | null>(session.connection);
+
+  const enqueue = useCallback((operation: () => Promise<void>): void => {
+    const next = registrationChain.current.then(operation);
+    registrationChain.current = next.catch(() => undefined);
+    void next.catch((cause: unknown) => {
+      console.warn(
+        "Could not update remote notifications:",
+        cause instanceof Error ? cause.message : cause,
+      );
+    });
+  }, []);
+
+  useEffect(() => {
+    connectionRef.current = session.connection;
+  }, [session.connection]);
+
+  useEffect(() => {
+    let active = true;
+    void readPushRegistration()
+      .then((stored) => {
+        if (active) {
+          registrationSnapshot.current = resolveHydratedSnapshot(
+            registrationSnapshot.current,
+            stored,
+          );
+        }
+      })
+      .catch((cause: unknown) => {
+        console.warn("Could not restore push registration:", cause);
+      })
+      .finally(() => {
+        if (active) setSnapshotHydrated(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -128,11 +198,10 @@ function EnabledPushCoordinator() {
     const decision = notificationNavigationDecision({
       pending,
       sessionStatus: session.status,
-      reachable: session.reachable,
-      agentsReady: session.agentsReady,
-      agentNames: session.agents.map((agent) => agent.name),
+      reachable,
+      agentsReady,
+      agentNames: agents.map((agent) => agent.name),
       routeReady,
-      compatible: session.compatibility?.compatible ?? null,
       currentGateway: session.connection?.url ?? null,
     });
     if (decision === "wait") return;
@@ -156,9 +225,50 @@ function EnabledPushCoordinator() {
           processingNotification.current = null;
         }
       });
-  }, [pathname, pending, router, session]);
+  }, [
+    pathname,
+    pending,
+    router,
+    session,
+    reachable,
+    agentsReady,
+    agents,
+  ]);
 
   useEffect(() => {
+    if (!snapshotHydrated) return;
+    const snapshot = registrationSnapshot.current;
+    const decision = gatewayHandoffDecision({
+      previousGatewayUrl: snapshot?.connection.url ?? null,
+      currentGatewayUrl: session.connection?.url ?? null,
+      sessionStatus: session.status,
+    });
+    if (decision === "keep" || !snapshot) return;
+    registrationSnapshot.current = null;
+    enqueue(async () => {
+      const oldApi = createApiClient({
+        getConnection: () => snapshot.connection,
+        onConnectionChange: async () => undefined,
+        onSessionExpired: async () => undefined,
+      });
+      await unregisterMobileDevice(oldApi, snapshot.token);
+      // Clear the persisted snapshot only if it still names the gateway we just tore down: the
+      // registration effect may have written a newer one for the current gateway (both are
+      // device-global singletons), and PUSH_TOKEN_KEY belongs to that current registration, so this
+      // path never touches it. A thrown DELETE skips this tail, leaving the snapshot to retry next
+      // launch.
+      const stored = registrationTarget(await readPushRegistration());
+      if (isSameRegistration(stored, registrationTarget(snapshot))) {
+        await clearPushRegistration();
+      }
+    });
+  }, [enqueue, snapshotHydrated, session.status, session.connection?.url]);
+
+  useEffect(() => {
+    // Gate on the snapshot restore so the handoff's DELETE(old) is always enqueued before this
+    // effect's PUT(new): both share the serial registrationChain, and restoring first makes the
+    // ordering deterministic across a relaunch instead of a race between two async reads.
+    if (!snapshotHydrated) return;
     const registrationDecision = pushRegistrationDecision({
       preferencesHydrated: preferences.hydrated,
       sessionStatus: session.status,
@@ -166,16 +276,6 @@ function EnabledPushCoordinator() {
     });
     if (registrationDecision === "wait") return;
     let active = true;
-    const enqueue = (operation: () => Promise<void>): void => {
-      const next = registrationChain.current.then(operation);
-      registrationChain.current = next.catch(() => undefined);
-      void next.catch((cause: unknown) => {
-        console.warn(
-          "Could not update remote notifications:",
-          cause instanceof Error ? cause.message : cause,
-        );
-      });
-    };
     if (registrationDecision === "unregister") {
       enqueue(async () => {
         await removeStoredRegistration(session.api);
@@ -207,15 +307,26 @@ function EnabledPushCoordinator() {
       if (!active) return;
       const installationId = await pushInstallationId();
       if (!active) return;
+      // Snapshot the exact connection we are about to register with, captured before the network
+      // call, so an in-flight gateway switch can never leave the server row untracked: whatever we
+      // PUT here is exactly what a later handoff will DELETE.
+      const connection = connectionRef.current;
+      if (!connection) return;
       await registerMobileDevice(session.api, {
         installationId,
         token: result.data,
         platform,
-        gateway,
+        gateway: connection.url,
         eventTypes,
         previews: preferences.notificationPreviews,
       });
       await AsyncStorage.setItem(PUSH_TOKEN_KEY, result.data);
+      const snapshot: PushRegistrationSnapshot = {
+        connection,
+        token: result.data,
+      };
+      registrationSnapshot.current = snapshot;
+      await writePushRegistration(snapshot);
     };
     enqueue(async () => {
       if (!active) return;
@@ -250,6 +361,7 @@ function EnabledPushCoordinator() {
       tokenSubscription.remove();
     };
   }, [
+    enqueue,
     preferences.hydrated,
     preferences.notificationPreviews,
     preferences.pushChatReplies,
@@ -258,6 +370,7 @@ function EnabledPushCoordinator() {
     session.api,
     session.connection?.url,
     session.status,
+    snapshotHydrated,
   ]);
 
   return null;

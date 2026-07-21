@@ -3,9 +3,13 @@
   "private": true,
   "workspaces": [
     "web",
-    "desktop"
+    "desktop",
+    "core"
   ],
   "scripts": {
+    "core:lint": "npm -w @vesta/core run lint",
+    "core:check": "npm -w @vesta/core run check",
+    "core:test": "npm -w @vesta/core run test",
     "web:dev": "npm -w @vesta/web run dev",
     "web:build": "npm -w @vesta/web run build",
     "web:check": "npm -w @vesta/web run check",

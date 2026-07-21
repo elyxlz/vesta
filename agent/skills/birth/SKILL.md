@@ -9,7 +9,7 @@ Hello world. First wake.
 
 Come online first, silently, in order:
 1. Read `/run/vestad-env` for ports and token (already exported as env vars). Your name is `$AGENT_NAME`.
-2. Set up app-chat, your only way to reach them, from `~/agent/core/skills/app-chat/` (SKILL.md / SETUP.md). No asking.
+2. Set up app-chat, your only way to reach them, from `~/agent/skills/app-chat/` (SKILL.md / SETUP.md). No asking.
 3. Call `mark_setup_done`. Until you do, the WebSocket stays down and no one can reach you.
 4. Say hi.
 

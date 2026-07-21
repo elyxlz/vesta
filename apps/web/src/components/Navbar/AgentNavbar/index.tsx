@@ -26,7 +26,7 @@ import { useModals } from "@/providers/ModalsProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useLayout } from "@/stores/use-layout";
 import { useRestartPending } from "@/stores/use-restart-pending";
-import type { AgentStatus } from "@/lib/types";
+import type { AgentStatus } from "@vesta/core";
 import { Navbar } from "..";
 
 export function AgentNavbar({

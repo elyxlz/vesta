@@ -33,6 +33,7 @@ import { useAppMode, type AppMode } from "@/stores/use-app-mode";
 import { openExternalUrl } from "@/lib/open-external-url";
 import { KeybindsCard } from "@/components/Settings/KeybindsSection";
 import { ConnectionControls } from "@/components/ConnectionControls";
+import { GatewayRestart } from "@/components/GatewayRestart";
 import {
   useGatewaySetup,
   type GatewaySetup,
@@ -49,7 +50,7 @@ export function AppSettings() {
   const { theme, setTheme } = useTheme();
   const { isDesktopApp } = useRuntime();
   const { disconnect } = useAuth();
-  const { reachable, managed, gatewayVersion, gatewayBranch } = useGateway();
+  const { reachable, managed, gatewayVersion } = useGateway();
   const naturalPacing = useChatPacing((s) => s.natural);
   const setNaturalPacing = useChatPacing((s) => s.setNatural);
   const appMode = useAppMode((s) => s.mode);
@@ -148,11 +149,9 @@ export function AppSettings() {
           <MenuSection
             title="gateway"
             trailing={
-              (gatewayVersion || gatewayBranch) && (
+              gatewayVersion && (
                 <span className="shrink-0 text-xs font-medium text-muted-foreground">
-                  {gatewayVersion && <>v{gatewayVersion}</>}
-                  {gatewayVersion && gatewayBranch && " "}
-                  {gatewayBranch && <>({gatewayBranch})</>}
+                  v{gatewayVersion}
                 </span>
               )
             }
@@ -179,6 +178,7 @@ export function AppSettings() {
                   view logs
                 </Button>
               )}
+              {reachable && <GatewayRestart />}
               <Button
                 variant="destructive"
                 className="w-full shrink-0 whitespace-nowrap sm:w-auto"

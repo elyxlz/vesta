@@ -1,9 +1,14 @@
-import type { VestaEvent } from "../api/types";
+import {
+  chatMessageSide,
+  startsNewBubbleGroup,
+  type ChatMessage,
+  type ChatMessageSide,
+} from "@vesta/core";
 
 export interface EventChatRow {
   kind: "event";
   key: string;
-  event: VestaEvent;
+  event: ChatMessage;
   startsNewBubbleGroup: boolean;
   endsBubbleGroup: boolean;
 }
@@ -21,13 +26,6 @@ export interface DateChatRow {
 }
 
 export type ChatRow = EventChatRow | TypingChatRow | DateChatRow;
-type ChatSide = "user" | "agent";
-
-function eventChatSide(event: VestaEvent): ChatSide | null {
-  if (event.type === "user") return "user";
-  if (event.type === "chat" || event.type === "tool_start") return "agent";
-  return null;
-}
 
 function calendarDay(timestamp: string | undefined): string | null {
   if (!timestamp) return null;
@@ -40,42 +38,34 @@ function calendarDay(timestamp: string | undefined): string | null {
   ].join("-");
 }
 
-function eventRows(
-  events: VestaEvent[],
-  showToolCalls: boolean,
-): EventChatRow[] {
+function eventRows(events: ChatMessage[]): EventChatRow[] {
   const visible = events.filter(
     (event) =>
       event.type === "user" ||
       event.type === "chat" ||
       event.type === "error" ||
-      event.type === "rate_limited" ||
-      (showToolCalls &&
-        event.type === "tool_start" &&
-        !(event.tool === "Bash" && event.input.includes("app-chat"))),
+      event.type === "rate_limited",
   );
   const seen = new Map<string, number>();
-  let previousSide: ChatSide | null = null;
+  let previousSided: ChatMessage | null = null;
   const rows = visible.map((event) => {
     const base = `${event.ts ?? "live"}-${event.type}`;
     const count = seen.get(base) ?? 0;
     seen.set(base, count + 1);
-    const side = eventChatSide(event);
-    const startsNewBubbleGroup = Boolean(
-      side && previousSide && side !== previousSide,
-    );
-    if (side) previousSide = side;
+    const startsNew = startsNewBubbleGroup(previousSided, event);
+    if (chatMessageSide(event)) previousSided = event;
     return {
       kind: "event" as const,
       key: count === 0 ? base : `${base}#${count}`,
       event,
-      startsNewBubbleGroup,
+      startsNewBubbleGroup: startsNew,
       endsBubbleGroup: false,
     };
   });
 
   let nextBubbleType: "user" | "chat" | null = null;
   let nextBubbleDay: string | null = null;
+  let nextBubbleStartsNewGroup = false;
   for (let index = rows.length - 1; index >= 0; index -= 1) {
     const row = rows[index];
     if (!row) continue;
@@ -88,9 +78,11 @@ function eventRows(
     row.endsBubbleGroup =
       nextBubbleType === null ||
       bubbleType !== nextBubbleType ||
-      bubbleDay !== nextBubbleDay;
+      bubbleDay !== nextBubbleDay ||
+      nextBubbleStartsNewGroup;
     nextBubbleType = bubbleType;
     nextBubbleDay = bubbleDay;
+    nextBubbleStartsNewGroup = row.startsNewBubbleGroup;
   }
   return rows;
 }
@@ -117,17 +109,16 @@ function addDateRows(rows: EventChatRow[]): ChatRow[] {
 }
 
 export function createInvertedChatRows(
-  events: VestaEvent[],
-  showToolCalls: boolean,
+  events: ChatMessage[],
   isTyping: boolean,
 ): ChatRow[] {
-  const rows = addDateRows(eventRows(events, showToolCalls));
+  const rows = addDateRows(eventRows(events));
   if (isTyping) {
-    let latestSide: ChatSide | null = null;
+    let latestSide: ChatMessageSide | null = null;
     for (let index = rows.length - 1; index >= 0; index -= 1) {
       const row = rows[index];
       if (!row || row.kind !== "event") continue;
-      const side = eventChatSide(row.event);
+      const side = chatMessageSide(row.event);
       if (side) {
         latestSide = side;
         if (row.event.type === "chat") row.endsBubbleGroup = false;

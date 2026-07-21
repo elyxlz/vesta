@@ -25,7 +25,7 @@ CREDENTIALS_PATH = pl.Path.home() / ".claude" / ".credentials.json"
 
 # The hand-authored provider/setup catalog + new-agent defaults. It is the single source of that
 # reference data: the Python model reads it for its field defaults (below), vestad embeds + serves it at
-# GET /manifest (merging in the personality presets), and web/cli read it. No generation step.
+# GET /manifest (merging in the personality presets), and the web app reads it. No generation step.
 MANIFEST_PATH = pl.Path(__file__).parent / "manifest.json"
 
 # A tiny floor so a corrupt/missing manifest can never crash-loop the boot path (it never happens in

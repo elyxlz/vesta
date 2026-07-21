@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { LoadingScreen } from "@/components/LoadingScreen";
 import { AuthProvider, useAuth } from "@/providers/AuthProvider";
+import { ControllerProvider } from "@/providers/ControllerProvider";
 import { GatewayProvider, useGateway } from "@/providers/GatewayProvider";
 import { NotificationProvider } from "@/providers/NotificationProvider";
 import { InsetFrame } from "@/components/InsetFrame";
@@ -55,11 +56,13 @@ export default function App() {
         <ErrorBoundary>
           <TooltipProvider delayDuration={300}>
             <AuthProvider>
-              <GatewayProvider>
-                <NotificationProvider onOpenAgent={openAgent}>
-                  <AppContent />
-                </NotificationProvider>
-              </GatewayProvider>
+              <ControllerProvider>
+                <GatewayProvider>
+                  <NotificationProvider onOpenAgent={openAgent}>
+                    <AppContent />
+                  </NotificationProvider>
+                </GatewayProvider>
+              </ControllerProvider>
             </AuthProvider>
           </TooltipProvider>
         </ErrorBoundary>

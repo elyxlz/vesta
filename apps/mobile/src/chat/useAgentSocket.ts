@@ -1,58 +1,122 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AppState } from "react-native";
-import type {
-  AgentActivityState,
-  InputMethod,
-  VestaEvent,
-} from "@/api/types";
+import * as Crypto from "expo-crypto";
+import {
+  PACING,
+  beginSend,
+  commitPacedChat,
+  createChatSocket,
+  foldLiveEvent,
+  initialChatState,
+  markSend,
+  prependPage,
+  seedTail,
+  sendMessage,
+  typingDelay,
+  type ChatMessage,
+  type ChatState,
+  type InputMethod,
+  type SendFailure,
+  type Tree,
+  type VestaEvent,
+} from "@vesta/core";
+import { useReplica, useSyncState } from "@vesta/core/react";
+import { useController } from "@/controller/context";
+import { createRnSocket } from "@/controller/rn-socket";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
+import { connectionKeyOf } from "@/session/session-model";
+import { useChatHold } from "./ChatHoldProvider";
+import {
+  captureChatHold,
+  chatHoldKey,
+  heldChatState,
+} from "./chat-hold-model";
 
-const MAX_EVENTS = 5000;
-const RECONNECT_MAX_MS = 30_000;
-const TYPING_DELAY_PER_CHARACTER_MS = 25;
-const TYPING_DELAY_MIN_MS = 1500;
-const TYPING_DELAY_MAX_MS = 6000;
-const TYPING_DELAY_VARIANCE = 0.2;
-
-function capped(events: VestaEvent[]): VestaEvent[] {
-  return events.length > MAX_EVENTS ? events.slice(-MAX_EVENTS) : events;
+function idsEqual(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
-function typingDelay(characterCount: number): number {
-  const base = Math.min(
-    TYPING_DELAY_MIN_MS + TYPING_DELAY_PER_CHARACTER_MS * characterCount,
-    TYPING_DELAY_MAX_MS,
-  );
-  const variance = Math.floor(base * TYPING_DELAY_VARIANCE);
-  return base + Math.floor(Math.random() * variance * 2) - variance;
+interface HistoryPage {
+  events: VestaEvent[];
+  cursor: number | null;
 }
 
+// The chat view-model over the core controller. The chat tail is a per-agent app-chat socket
+// (replay-free: only events appended after connect) joined to the HTTP history page, deduped at the
+// seam by event id; on every socket open the hook refetches the tail so a reconnect gap self-heals.
+// agentState + pending come from the replica; gateway connectedness from the single sync socket.
+// Sends are POST intents confirmed by their chat-socket echo. The stale-while-reconnecting hold gives
+// an instant render across a controller epoch; backgrounding never blanks the chat.
 export function useAgentSocket(name: string, active: boolean) {
-  const { api } = useSession();
+  const controller = useController();
   const preferences = usePreferences();
-  const naturalChatPacing = preferences.naturalChatPacingForAgent(name);
-  const [events, setEvents] = useState<VestaEvent[]>([]);
-  const [agentState, setAgentState] = useState<AgentActivityState>("idle");
-  const [isTyping, setIsTyping] = useState(false);
-  const [connected, setConnected] = useState(false);
-  const [historyLoaded, setHistoryLoaded] = useState(false);
-  const [pendingNotifications, setPendingNotifications] = useState<string[]>([]);
-  const [snapshotRevision, setSnapshotRevision] = useState(0);
-  const [latestLiveChat, setLatestLiveChat] = useState<string | null>(null);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [cursor, setCursor] = useState<number | null>(null);
-  const socketRef = useRef<WebSocket | null>(null);
-  const pendingEchoesRef = useRef<string[]>([]);
-  const chatQueueRef = useRef<VestaEvent[]>([]);
-  const drainingChatQueueRef = useRef(false);
-  const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const naturalChatPacingRef = useRef(naturalChatPacing);
-  naturalChatPacingRef.current = naturalChatPacing;
+  const { connection } = useSession();
+  const connectionRef = useRef(connection);
+  connectionRef.current = connection;
+  const holdStore = useChatHold();
+  const key = chatHoldKey(name, connectionKeyOf(connection) ?? "");
+  const keyRef = useRef(key);
+  keyRef.current = key;
+  const naturalPacing = preferences.naturalChatPacingForAgent(name);
+  const naturalPacingRef = useRef(naturalPacing);
+  naturalPacingRef.current = naturalPacing;
 
-  const append = useCallback((event: VestaEvent) => {
-    setEvents((current) => capped([...current, event]));
-  }, []);
+  const connected = useSyncState(controller) === "open";
+
+  // The app-chat live socket URL through vestad's authenticated proxy, mirroring the /sync URL
+  // builder: swap http->ws and carry the (freshest-rendered) access token as a query param.
+  const chatSocketUrl = useCallback((): string => {
+    const current = connectionRef.current;
+    if (!current) throw new Error("not connected to a Vesta gateway");
+    const base = current.url.replace(/^http/, "ws");
+    return `${base}/agents/${encodeURIComponent(name)}/app-chat/ws?token=${encodeURIComponent(current.accessToken)}`;
+  }, [name]);
+
+  const activitySelector = useCallback(
+    (tree: Tree | null) =>
+      active && name ? (tree?.agents[name]?.info.activityState ?? "idle") : "idle",
+    [active, name],
+  );
+  const agentState = useReplica(controller.replica, activitySelector);
+
+  const pendingSelector = useCallback(
+    (tree: Tree | null): string[] =>
+      name
+        ? (tree?.agents[name]?.notifications.pending ?? []).flatMap((notif) =>
+            notif.notif_id ? [notif.notif_id] : [],
+          )
+        : [],
+    [name],
+  );
+  const pendingNotifications = useReplica(controller.replica, pendingSelector, idsEqual);
+
+  // ChatState is the model's single source of truth. It lives in a ref (synchronous, so a batch of
+  // appends dedups against the running accumulation) mirrored into React state for rendering. It is
+  // seeded from the hold so a conversation renders immediately (stale) across a controller epoch
+  // instead of blanking to a skeleton; seedTail refetches and merges by id. Every commit persists the
+  // render slice back to the hold under the current key, so a background/foreground survives it.
+  const [state, setState] = useState<ChatState>(
+    () => heldChatState(holdStore.read(), key) ?? initialChatState(),
+  );
+  const stateRef = useRef<ChatState>(state);
+  const commit = useCallback(
+    (fold: (current: ChatState) => ChatState) => {
+      stateRef.current = fold(stateRef.current);
+      setState(stateRef.current);
+      holdStore.persist(captureChatHold(keyRef.current, stateRef.current));
+    },
+    [holdStore],
+  );
+
+  const [isTyping, setIsTyping] = useState(false);
+  const [latestLiveChat, setLatestLiveChat] = useState<string | null>(null);
+  const [reseedRevision, setReseedRevision] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const loadingMoreRef = useRef(false);
+
+  const chatQueueRef = useRef<ChatMessage[]>([]);
+  const drainingRef = useRef(false);
+  const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearTypingTimer = useCallback(() => {
     if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
@@ -62,230 +126,207 @@ export function useAgentSocket(name: string, active: boolean) {
   const resetTyping = useCallback(() => {
     clearTypingTimer();
     chatQueueRef.current = [];
-    drainingChatQueueRef.current = false;
+    drainingRef.current = false;
     setIsTyping(false);
   }, [clearTypingTimer]);
 
-  const flushChatQueue = useCallback(() => {
+  const flushQueue = useCallback(() => {
     clearTypingTimer();
     const queued = chatQueueRef.current;
     chatQueueRef.current = [];
-    drainingChatQueueRef.current = false;
+    drainingRef.current = false;
     for (const event of queued) {
-      append(event);
+      commit((current) => commitPacedChat(current, event));
       if (event.type === "chat") setLatestLiveChat(event.text);
     }
     setIsTyping(false);
-  }, [append, clearTypingTimer]);
+  }, [clearTypingTimer, commit]);
 
-  const drainChatQueue = useCallback(function drainChatQueue() {
-    if (drainingChatQueueRef.current) return;
+  const drainQueue = useCallback(function drainQueue() {
+    if (drainingRef.current) return;
     const queue = chatQueueRef.current;
-    if (queue.length === 0) {
+    const next = queue[0];
+    if (next === undefined) {
       setIsTyping(false);
       return;
     }
-    if (queue.length > 3 || !naturalChatPacingRef.current) {
-      flushChatQueue();
+    if (queue.length > PACING.flushThreshold || !naturalPacingRef.current) {
+      flushQueue();
       return;
     }
-
-    const next = queue[0];
-    if (!next) return;
-    drainingChatQueueRef.current = true;
+    drainingRef.current = true;
     setIsTyping(true);
     const delay = typingDelay(next.type === "chat" ? next.text.length : 0);
     typingTimerRef.current = setTimeout(() => {
       typingTimerRef.current = null;
       queue.shift();
-      append(next);
+      commit((current) => commitPacedChat(current, next));
       if (next.type === "chat") setLatestLiveChat(next.text);
-      drainingChatQueueRef.current = false;
-      drainChatQueue();
+      drainingRef.current = false;
+      drainQueue();
     }, delay);
-  }, [append, flushChatQueue]);
+  }, [commit, flushQueue]);
 
-  const enqueueChatMessage = useCallback(
-    (event: VestaEvent) => {
+  const enqueueChat = useCallback(
+    (event: ChatMessage) => {
       chatQueueRef.current.push(event);
-      drainChatQueue();
+      drainQueue();
     },
-    [drainChatQueue],
+    [drainQueue],
   );
 
   useEffect(() => {
-    if (!naturalChatPacing) flushChatQueue();
-  }, [flushChatQueue, naturalChatPacing]);
+    if (!naturalPacing) flushQueue();
+  }, [flushQueue, naturalPacing]);
+
+  const fetchPage = useCallback(
+    (cursor?: number): Promise<HistoryPage> => {
+      const parameters = new URLSearchParams();
+      if (cursor !== undefined) parameters.set("cursor", String(cursor));
+      const qs = parameters.toString();
+      return controller.http.json<HistoryPage>(
+        `/agents/${encodeURIComponent(name)}/app-chat/history${qs ? `?${qs}` : ""}`,
+      );
+    },
+    [controller, name],
+  );
 
   useEffect(() => {
-    if (!active) {
-      resetTyping();
-      return;
-    }
-    let mounted = true;
-    let socket: WebSocket | null = null;
-    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-    let reconnectDelay = 750;
-    let appActive = AppState.currentState === "active";
+    if (!active || !name) return;
+    let cancelled = false;
 
-    const close = () => {
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-      socket?.close();
-      socket = null;
-      socketRef.current = null;
-      setConnected(false);
+    // Seed from the hold for this key (survives the controller epoch); a mismatched key clears to
+    // empty at the read, so a switched agent or gateway never renders the prior conversation.
+    const seeded = heldChatState(holdStore.read(), key) ?? initialChatState();
+    stateRef.current = seeded;
+    setState(seeded);
+    resetTyping();
+
+    // Reseed the tail from the newest history page and MERGE, never replace. Runs on every socket
+    // open (initial connect and each reconnect), so a replay-free gap self-heals, bumping
+    // reseedRevision so the notifications page refetches its own history.
+    const seed = async () => {
+      const page = await fetchPage();
+      if (cancelled) return;
+      commit((current) => seedTail(current, page));
+      setReseedRevision((revision) => revision + 1);
     };
 
-    const scheduleReconnect = () => {
-      if (!mounted || !appActive || reconnectTimer) return;
-      reconnectTimer = setTimeout(() => {
-        reconnectTimer = null;
-        connect();
-      }, reconnectDelay);
-      reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
+    const addLiveEvent = (event: ChatMessage) => {
+      const { state: next, paced } = foldLiveEvent(stateRef.current, event);
+      commit(() => next);
+      if (paced) enqueueChat(event);
     };
 
-    const handleEvent = (event: VestaEvent) => {
-      if (event.type === "snapshot") {
-        resetTyping();
-        setEvents(capped(event.chat.events));
-        setAgentState(event.state);
-        setPendingNotifications(event.notifications.pending);
-        setSnapshotRevision((current) => current + 1);
-        setCursor(event.chat.cursor);
-        pendingEchoesRef.current = [];
-        setHistoryLoaded(true);
-        return;
-      }
-      if (event.type === "user") {
-        const echoIndex = pendingEchoesRef.current.indexOf(event.text);
-        if (echoIndex !== -1) {
-          pendingEchoesRef.current.splice(echoIndex, 1);
-          return;
-        }
-      }
-      if (event.type === "status") setAgentState(event.state);
-      if (event.type === "notification_cleared") {
-        setPendingNotifications((current) =>
-          current.filter((identifier) => identifier !== event.notif_id),
-        );
-      }
-      if (event.type === "chat") {
-        enqueueChatMessage(event);
-      } else {
-        append(event);
-        if (event.type === "error" || event.type === "rate_limited") {
-          resetTyping();
-        }
-      }
-    };
-
-    const connect = () => {
-      if (!mounted || !appActive || socket) return;
-      const next = new WebSocket(
-        api.websocketUrl(`/agents/${encodeURIComponent(name)}/ws`),
-      );
-      socket = next;
-      socketRef.current = next;
-      next.onopen = () => {
-        reconnectDelay = 750;
-        setConnected(true);
-        setHistoryLoaded(false);
-      };
-      next.onmessage = (message) => {
-        if (typeof message.data !== "string") return;
-        try {
-          const event: VestaEvent = JSON.parse(message.data);
-          handleEvent(event);
-        } catch {
-          // Ignore one malformed agent frame without dropping the stream.
-        }
-      };
-      next.onerror = () => next.close();
-      next.onclose = () => {
-        if (socket === next) socket = null;
-        if (socketRef.current === next) socketRef.current = null;
-        setConnected(false);
-        setAgentState("idle");
-        resetTyping();
-        scheduleReconnect();
-      };
-    };
-
-    const appStateSubscription = AppState.addEventListener("change", (state) => {
-      appActive = state === "active";
-      if (appActive) connect();
-      else close();
-    });
-    connect();
+    const socket = createChatSocket(
+      {
+        buildUrl: chatSocketUrl,
+        createSocket: createRnSocket,
+        setTimer: (fn, ms) => setTimeout(fn, ms) as unknown as number,
+        clearTimer: (handle) => clearTimeout(handle),
+      },
+      {
+        onEvent: addLiveEvent,
+        onStateChange: (socketState) => {
+          if (socketState === "open") {
+            resetTyping();
+            void seed().catch((error: unknown) => {
+              console.warn("chat: history load failed", error);
+            });
+          }
+        },
+      },
+    );
 
     return () => {
-      mounted = false;
-      appStateSubscription.remove();
+      cancelled = true;
+      socket.close();
       resetTyping();
-      close();
     };
-  }, [active, api, append, enqueueChatMessage, name, resetTyping]);
+  }, [
+    active,
+    name,
+    key,
+    holdStore,
+    commit,
+    resetTyping,
+    enqueueChat,
+    fetchPage,
+    chatSocketUrl,
+  ]);
 
-  const sendEvent = useCallback((event: Record<string, unknown>): boolean => {
-    const socket = socketRef.current;
-    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
-    socket.send(JSON.stringify(event));
-    return true;
-  }, []);
+  // Reflect the POST's settled disposition into the bubble. A null outcome means queued-on-tap:
+  // delivery truth is the append echo (which clears send_state), so only a failure marks the bubble.
+  const applyOutcome = useCallback(
+    (intentId: string, outcome: Promise<SendFailure | null>) => {
+      void outcome.then((failure) => {
+        if (failure) commit((current) => markSend(current, intentId, failure));
+      });
+    },
+    [commit],
+  );
 
   const send = useCallback(
     (text: string, inputMethod: InputMethod = "typed"): boolean => {
-      if (!sendEvent({ type: "message", text, input_method: inputMethod })) {
-        return false;
-      }
-      pendingEchoesRef.current.push(text);
-      append({
-        type: "user",
-        text,
-        input_method: inputMethod,
-        ts: new Date().toISOString(),
-      });
+      if (!name) return false;
+      const { id, outcome } = sendMessage(
+        controller.http,
+        name,
+        { text, input_method: inputMethod },
+        () => Crypto.randomUUID(),
+      );
+      commit((current) => beginSend(current, text, inputMethod, id));
+      applyOutcome(id, outcome);
       return true;
     },
-    [append, sendEvent],
+    [name, controller, commit, applyOutcome],
   );
 
+  // Re-post a failed/retryable bubble under its ORIGINAL intent id (idempotent): the bubble returns
+  // to "sending" and confirms on the same echo. Text + input method come from the bubble tapped.
+  const retry = useCallback(
+    (intentId: string, text: string, inputMethod: InputMethod = "typed") => {
+      if (!name) return;
+      commit((current) => markSend(current, intentId, "sending"));
+      const { outcome } = sendMessage(
+        controller.http,
+        name,
+        { text, input_method: inputMethod },
+        () => intentId,
+      );
+      applyOutcome(intentId, outcome);
+    },
+    [name, controller, commit, applyOutcome],
+  );
+
+  const hasMore = state.cursor !== null;
+
   const loadMore = useCallback(async (): Promise<void> => {
-    if (cursor === null || loadingMore) return;
+    if (!name || loadingMoreRef.current || stateRef.current.cursor === null) return;
+    loadingMoreRef.current = true;
     setLoadingMore(true);
     try {
-      const parameters = new URLSearchParams({
-        channel: "app-chat",
-        cursor: String(cursor),
-      });
-      const response = await api.json<{
-        events: VestaEvent[];
-        cursor: number | null;
-      }>(
-        `/agents/${encodeURIComponent(name)}/history?${parameters.toString()}`,
-      );
-      setEvents((current) => [...response.events, ...current]);
-      setCursor(response.cursor);
+      const page = await fetchPage(stateRef.current.cursor);
+      commit((current) => prependPage(current, page.events, page.cursor));
     } finally {
+      loadingMoreRef.current = false;
       setLoadingMore(false);
     }
-  }, [api, cursor, loadingMore, name]);
+  }, [name, fetchPage, commit]);
 
   return {
-    events,
+    events: state.messages,
     agentState,
     isTyping,
     connected,
-    historyLoaded,
+    historyLoaded: state.historyLoaded,
     pendingNotifications,
-    snapshotRevision,
     latestLiveChat,
-    hasMore: cursor !== null,
+    hasMore,
     loadingMore,
     loadMore,
     send,
-    sendEvent,
+    retry,
+    reseedRevision,
   };
 }
