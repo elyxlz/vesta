@@ -425,10 +425,16 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: apps/mobile/package-lock.json
+          cache-dependency-path: |
+            apps/package-lock.json
+            apps/mobile/package-lock.json
 
+      # Mobile type-checks against @vesta/core's source (the file: dependency),
+      # which resolves its react types from the apps workspace install.
       - name: Install deps
-        run: npm --prefix apps/mobile ci
+        run: |
+          npm --prefix apps ci
+          npm --prefix apps/mobile ci
 
       - name: Run mobile checks
         run: ./check.sh app-mobile
