@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
-import type { VestaEvent } from "@/lib/types";
+import type { ChatMessage } from "@/lib/types";
 import { buildDecorated, rowKey } from "./virtual";
 
-function userMsg(ts: string): VestaEvent {
+function userMsg(ts: string): ChatMessage {
   return { type: "user", text: "hi", ts };
 }
 
@@ -40,23 +40,5 @@ describe("buildDecorated", () => {
     const keys = rows.map((r) => r.key);
     expect(new Set(keys).size).toBe(3);
     expect(keys[0]).toBe("2026-06-08T10:00:00Z-user");
-  });
-
-  it("uses a tight gap between consecutive tool calls", () => {
-    const rows = buildDecorated([
-      {
-        type: "tool_start",
-        tool: "Bash",
-        input: "ls",
-        ts: "2026-06-08T10:00:00Z",
-      },
-      {
-        type: "tool_start",
-        tool: "Bash",
-        input: "pwd",
-        ts: "2026-06-08T10:00:01Z",
-      },
-    ]);
-    expect(rows[1]?.gap).toBe("mt-1");
   });
 });

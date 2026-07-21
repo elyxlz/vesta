@@ -2,6 +2,11 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    Json,
+};
 use bollard::Docker;
 use futures_util::StreamExt;
 use tokio::sync::watch;
@@ -9,8 +14,34 @@ use tokio::sync::watch;
 use crate::docker::{self, ListEntry};
 use crate::mobile_app::MobileApp;
 use crate::settings::ServiceEntry;
+use crate::state::{err_response, ok_json, SharedState};
+use crate::sync::{activity_state, notification_change, SyncHub};
 
 const POLL_INTERVAL_SECS: u64 = 3;
+
+pub async fn invalidate_service_handler(
+    State(state): State<SharedState>,
+    Path((name, service_name)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let settings = state.settings.read().await;
+    let exists = settings
+        .services
+        .get(&name)
+        .is_some_and(|s| s.contains_key(&service_name));
+    if !exists {
+        return Err(err_response(
+            StatusCode::NOT_FOUND,
+            &format!("service '{service_name}' not registered for agent '{name}'"),
+        ));
+    }
+    drop(settings);
+
+    state
+        .agent_status_cache
+        .invalidate_service(&name, &service_name);
+    tracing::debug!(agent = %name, service = %service_name, "service invalidated");
+    Ok(ok_json())
+}
 
 // --- High-level status queries (used by serve.rs handlers and the poll task) ---
 
@@ -157,6 +188,11 @@ pub struct AgentStatusCache {
     /// Monotonic per-service revision counters (agent -> service -> rev).
     /// Bumped when a service's state changes; clients refetch on a higher rev.
     revs: Mutex<HashMap<String, HashMap<String, u64>>>,
+    /// Coarse, in-flight build phase per agent, keyed by normalized name. Written by the create
+    /// handler as `create_agent` progresses; the roster unions these in so onboarding shows the
+    /// phase even before the container exists (Pulling/Building run first). Entries exist only for
+    /// the duration of a create and are removed when it settles.
+    build_phases: Mutex<HashMap<String, docker::BuildPhase>>,
 }
 
 impl AgentStatusCache {
@@ -178,6 +214,7 @@ impl AgentStatusCache {
             invalidations_tx,
             invalidations_rx,
             revs: Mutex::new(HashMap::new()),
+            build_phases: Mutex::new(HashMap::new()),
         }
     }
 
@@ -237,6 +274,35 @@ impl AgentStatusCache {
         let _ = self.invalidations_tx.send(());
     }
 
+    /// Record the current build phase for `name` (normalized) and wake WS loops so the transition
+    /// reaches onboarding within a tick. Lock poisoning is recovered in place: a panic mid-build
+    /// must not wedge later creates.
+    pub fn set_build_phase(&self, name: &str, phase: docker::BuildPhase) {
+        self.build_phases
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(name.to_string(), phase);
+        let _ = self.invalidations_tx.send(());
+    }
+
+    /// Drop the build-phase entry for `name` once a create settles (success or error) and wake WS
+    /// loops so the synthetic mid-build row retires promptly.
+    pub fn clear_build_phase(&self, name: &str) {
+        self.build_phases
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(name);
+        let _ = self.invalidations_tx.send(());
+    }
+
+    /// Snapshot of every in-flight build phase (normalized name -> phase).
+    pub fn build_phases(&self) -> HashMap<String, docker::BuildPhase> {
+        self.build_phases
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
     /// Current revision for each agent+service.
     pub fn service_revs(&self) -> HashMap<String, HashMap<String, u64>> {
         self.revs
@@ -246,17 +312,33 @@ impl AgentStatusCache {
     }
 }
 
+/// The collaborators the agent-status poll task owns for its lifetime: the shared cache, a docker
+/// handle and HTTP client for polling, and the roster/rebuild/mobile/sync collaborators it
+/// reconciles each tick.
+pub struct AgentStatusTaskDeps {
+    pub cache: Arc<AgentStatusCache>,
+    pub docker: Docker,
+    pub http_client: reqwest::Client,
+    pub agents_dir: PathBuf,
+    pub on_agents_changed: OnAgentsChanged,
+    pub rebuilding: docker::RebuildTracker,
+    pub mobile_app: MobileApp,
+    pub sync_hub: Arc<SyncHub>,
+}
+
 /// Spawns the background polling loop that keeps the cache fresh and manages
 /// internal WebSocket connections to observe live events from alive agents.
-pub fn spawn_agent_status_task(
-    cache: Arc<AgentStatusCache>,
-    docker: Docker,
-    http_client: reqwest::Client,
-    agents_dir: PathBuf,
-    on_agents_changed: OnAgentsChanged,
-    rebuilding: docker::RebuildTracker,
-    mobile_app: MobileApp,
-) {
+pub fn spawn_agent_status_task(deps: AgentStatusTaskDeps) {
+    let AgentStatusTaskDeps {
+        cache,
+        docker,
+        http_client,
+        agents_dir,
+        on_agents_changed,
+        rebuilding,
+        mobile_app,
+        sync_hub,
+    } = deps;
     tokio::spawn(async move {
         let mut agent_ws_handles: HashMap<String, AgentWsHandle> = HashMap::new();
         let mut previous_agents: Option<Vec<ListEntry>> = None;
@@ -287,16 +369,17 @@ pub fn spawn_agent_status_task(
                 on_agents_changed(&agents);
             }
 
-            // Reconcile internal WS connections for activity and mobile app events.
-            let alive_agents: HashMap<String, u16> = agents
+            // Reconcile internal WS connections (the tap: activity, mobile push, and the sync live
+            // edge) for every agent whose WS server is up, not just the fully-provisioned ones.
+            let tappable_agents: HashMap<String, u16> = agents
                 .iter()
-                .filter(|a| a.status == docker::AgentStatus::Alive)
+                .filter(|a| a.status.serves_ws())
                 .map(|a| (a.name.clone(), a.ws_port))
                 .collect();
 
-            // Close connections for agents that are no longer alive
+            // Close connections for agents whose WS is no longer reachable
             agent_ws_handles.retain(|name, handle| {
-                if alive_agents.contains_key(name) {
+                if tappable_agents.contains_key(name) {
                     true
                 } else {
                     handle.abort_handle.abort();
@@ -307,12 +390,13 @@ pub fn spawn_agent_status_task(
                     cache.timezones_tx.send_modify(|zones| {
                         zones.remove(name);
                     });
+                    sync_hub.forget_agent(name);
                     false
                 }
             });
 
-            // Open connections for newly alive agents
-            for (name, ws_port) in &alive_agents {
+            // Open connections for newly reachable agents
+            for (name, ws_port) in &tappable_agents {
                 if agent_ws_handles.contains_key(name) {
                     continue;
                 }
@@ -320,10 +404,10 @@ pub fn spawn_agent_status_task(
                 let port = *ws_port;
                 let tx = activity_event_tx.clone();
                 let dir = agents_dir.clone();
-                let mobile_app = mobile_app.clone();
+                let hub = sync_hub.clone();
 
                 let join_handle = tokio::spawn(async move {
-                    agent_event_listener(agent_name, port, dir, tx, mobile_app).await;
+                    agent_event_listener(agent_name, port, dir, tx, hub).await;
                 });
 
                 agent_ws_handles.insert(
@@ -372,21 +456,21 @@ fn apply_agent_update(cache: &AgentStatusCache, name: String, update: AgentUpdat
     }
 }
 
-/// Connects to a single agent's WebSocket, relays activity and timezone changes
-/// to the cache, and hands all parsed frames to the mobile app module. Reconnects on failure.
+/// Connects to a single agent's WebSocket as a read-only tap, relays activity/timezone to the cache,
+/// and feeds the sync hub's notifications projection. Reconnects on failure.
 async fn agent_event_listener(
     name: String,
     ws_port: u16,
     agents_dir: PathBuf,
     tx: tokio::sync::mpsc::Sender<(String, AgentUpdate)>,
-    mobile_app: MobileApp,
+    hub: Arc<SyncHub>,
 ) {
     const RECONNECT_BASE_MS: u64 = 1000;
     const RECONNECT_MAX_MS: u64 = 15000;
     let mut delay_ms = RECONNECT_BASE_MS;
 
     loop {
-        // Read the agent token fresh each attempt (it may rotate)
+        // Read the agent token fresh each attempt (it may rotate).
         let agent_name = name.clone();
         let dir = agents_dir.clone();
         let token = tokio::task::spawn_blocking(move || {
@@ -405,7 +489,7 @@ async fn agent_event_listener(
         match tokio_tungstenite::connect_async(&url).await {
             Ok((ws, _)) => {
                 delay_ms = RECONNECT_BASE_MS;
-                let (_write, mut read) = ws.split();
+                let (_, mut read) = ws.split();
 
                 while let Some(Ok(msg)) = read.next().await {
                     let text = match &msg {
@@ -417,43 +501,59 @@ async fn agent_event_listener(
                         Err(_) => continue,
                     };
                     let msg_type = parsed.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
                     // `state` is top-level on both the live `status` event and the connect `snapshot`.
                     if msg_type == "status" || msg_type == "snapshot" {
-                        if let Some(state) = parsed.get("state").and_then(|v| v.as_str()) {
-                            let _ = tx
-                                .send((name.clone(), AgentUpdate::Activity(state.to_string())))
-                                .await;
+                        if let Some(state) = activity_state(&parsed) {
+                            let _ = tx.send((name.clone(), AgentUpdate::Activity(state))).await;
                         }
                     }
-                    // The agent's IANA timezone rides the connect snapshot under `config`.
+
                     if msg_type == "snapshot" {
+                        // Timezone rides the snapshot's `config` (unchanged behavior).
                         if let Some(zone) = parsed
                             .get("config")
                             .and_then(|config| config.get("timezone"))
                             .and_then(|value| value.as_str())
                         {
-                            let _ = tx
-                                .send((name.clone(), AgentUpdate::Timezone(zone.to_string())))
-                                .await;
+                            let _ = tx.send((name.clone(), AgentUpdate::Timezone(zone.to_string()))).await;
                         }
+                        // Reseed pending notifications from the snapshot's authoritative id set,
+                        // deduped by id against later live changes.
+                        hub.seed_notifications(&name, &pending_ids(&parsed));
+                        continue;
                     }
-                    mobile_app.observe_agent_event(&name, parsed);
+
+                    // A live event: feed the notifications projection. User notifications + mobile push
+                    // no longer ride the tap; they come from the agent's user-notification primitive
+                    // (POST /agents/{name}/user-notification), which fans a `user_notification` delta and an Expo push.
+                    if let Some(change) = notification_change(&parsed) {
+                        hub.apply_notification(&name, change);
+                    }
                 }
 
-                // Connection lost -- reset to idle so the frontend doesn't
-                // stay stuck on the last activity state (e.g. "thinking").
-                let _ = tx
-                    .send((name.clone(), AgentUpdate::Activity("idle".into())))
-                    .await;
+                // Connection lost: reset activity to idle so the frontend does not stay stuck on the
+                // last state.
+                let _ = tx.send((name.clone(), AgentUpdate::Activity("idle".into()))).await;
             }
             Err(err) => {
-                tracing::debug!(agent = %name, port = ws_port, error = %err, "agent activity ws connect failed");
+                tracing::debug!(agent = %name, port = ws_port, error = %err, "agent tap connect failed");
             }
         }
 
         tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
         delay_ms = (delay_ms * 2).min(RECONNECT_MAX_MS);
     }
+}
+
+/// The pending notification ids on a connect snapshot (`notifications.pending`, file stems).
+fn pending_ids(snapshot: &serde_json::Value) -> Vec<String> {
+    snapshot
+        .get("notifications")
+        .and_then(|n| n.get("pending"))
+        .and_then(|p| p.as_array())
+        .map(|items| items.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -530,5 +630,58 @@ mod tests {
     fn empty_revs_when_nothing_invalidated() {
         let cache = AgentStatusCache::new();
         assert!(cache.service_revs().is_empty());
+    }
+
+    use crate::sync::SyncHub;
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message as WsMessage;
+
+    /// A fake agent WS server: on connect it sends a snapshot (one pending id) and one live chat
+    /// event. Returns its bound port.
+    async fn fake_agent() -> u16 {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            let ws = tokio_tungstenite::accept_async(stream).await.expect("handshake");
+            let (mut write, _read) = ws.split();
+            let snapshot = serde_json::json!({
+                "type": "snapshot", "state": "idle",
+                "notifications": {"pending": ["n1"]},
+                "config": {"timezone": "America/New_York"},
+            });
+            let chat = serde_json::json!({"id": 5, "type": "chat", "text": "live"});
+            write.send(WsMessage::Text(snapshot.to_string().into())).await.expect("send snapshot");
+            write.send(WsMessage::Text(chat.to_string().into())).await.expect("send chat");
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn tap_seeds_pending_from_the_snapshot() {
+        let hub = std::sync::Arc::new(SyncHub::new());
+        let dir = tempfile::tempdir().expect("tempdir");
+        let port = fake_agent().await;
+
+        let listener = tokio::spawn({
+            let hub = hub.clone();
+            let (tx, _rx) = tokio::sync::mpsc::channel::<(String, AgentUpdate)>(16);
+            let dir = dir.path().to_path_buf();
+            async move { agent_event_listener("fake".into(), port, dir, tx, hub).await }
+        });
+
+        // The tap seeds one pending notification from the snapshot's authoritative id set; the live
+        // chat event that follows is not a notification change, so pending stays at one.
+        let mut seeded = false;
+        for _ in 0..100 {
+            if hub.pending_all().get("fake").is_some_and(|p| p.len() == 1) {
+                seeded = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert!(seeded, "the snapshot's pending id should seed the notifications projection");
+
+        listener.abort();
     }
 }

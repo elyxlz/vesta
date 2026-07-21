@@ -58,9 +58,5 @@ export function createBrowserBridge(): NativeBridge {
     },
     oauthLoopback: null,
     windowControls: null,
-    installAppUpdate() {
-      window.location.reload();
-      return Promise.resolve();
-    },
   };
 }

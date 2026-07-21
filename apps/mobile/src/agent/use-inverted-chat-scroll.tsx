@@ -55,6 +55,7 @@ export function useInvertedChatScroll<Row>(
 ) {
   const listRef = useRef<FlatList<Row>>(null);
   const isAtLatestRef = useRef(true);
+  const hasInitialInsetAnchorRef = useRef(false);
   const latestOffsetRef = useRef(0);
   const [isAwayFromLatest, setIsAwayFromLatest] = useState(false);
 
@@ -64,10 +65,26 @@ export function useInvertedChatScroll<Row>(
 
   const handleContentInsetChange = useCallback<ContentInsetChange>(
     (insets) => {
-      latestOffsetRef.current = getLatestMessageOffset(
+      const latestOffset = getLatestMessageOffset(
         process.env.EXPO_OS,
         insets.top,
       );
+      latestOffsetRef.current = latestOffset;
+
+      if (
+        process.env.EXPO_OS !== "ios" ||
+        hasInitialInsetAnchorRef.current ||
+        insets.top <= 0 ||
+        !isAtLatestRef.current
+      ) {
+        return;
+      }
+
+      hasInitialInsetAnchorRef.current = true;
+      listRef.current?.scrollToOffset({
+        offset: latestOffset,
+        animated: false,
+      });
     },
     [],
   );

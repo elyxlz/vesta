@@ -203,6 +203,23 @@ impl AgentStatus {
             AgentStatus::NotFound => "not found",
         }
     }
+
+    /// True while the container is up with its WS/HTTP server bound and serving. The sync tap
+    /// connects in every one of these states: the app-chat echo and the event stream are
+    /// credential-independent, so an unauthenticated or unprovisioned agent still streams events and
+    /// accepts relayed chat (the raw per-agent WS proxy this hub replaced served it regardless of
+    /// auth). The push projection rides the same tap, so it too observes these states, wider than
+    /// the old Alive-only listener, bounded by the same alert-worthiness gate.
+    /// Excludes `Starting` (port not yet bound) and every down/rebuilding state.
+    pub fn serves_ws(self) -> bool {
+        matches!(
+            self,
+            AgentStatus::Alive
+                | AgentStatus::SettingUp
+                | AgentStatus::NotAuthenticated
+                | AgentStatus::Unprovisioned
+        )
+    }
 }
 
 /// Live registry of agents whose container is mid-rebuild (stop → snapshot → remove → create).
@@ -1754,7 +1771,7 @@ pub(crate) async fn docker_cp_content(
 /// Coarse, user-facing stage of first-time agent creation, emitted in order so the
 /// onboarding UI can show honest status instead of a decorative loop. The dominant
 /// wait is the image step (`Pulling` on a release, `Building` from a local checkout).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BuildPhase {
     Pulling,
@@ -1765,7 +1782,7 @@ pub enum BuildPhase {
 }
 
 /// A cheap, clonable sink for `BuildPhase` updates. The create handler wires one
-/// that records into shared state for the build-phase endpoint.
+/// that records into shared state, which the roster (and the replica tree) carries.
 #[derive(Clone)]
 pub struct BuildProgress {
     sink: std::sync::Arc<dyn Fn(BuildPhase) + Send + Sync>,
@@ -2553,6 +2570,27 @@ pub async fn rename_agent(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn serves_ws_covers_every_running_reachable_state() {
+        for status in [
+            AgentStatus::Alive,
+            AgentStatus::SettingUp,
+            AgentStatus::NotAuthenticated,
+            AgentStatus::Unprovisioned,
+        ] {
+            assert!(status.serves_ws(), "{} should be tappable", status.human_text());
+        }
+        for status in [
+            AgentStatus::Starting,
+            AgentStatus::Rebuilding,
+            AgentStatus::Stopped,
+            AgentStatus::Dead,
+            AgentStatus::NotFound,
+        ] {
+            assert!(!status.serves_ws(), "{} must not be tapped", status.human_text());
+        }
+    }
 
     #[test]
     fn rebuild_tracker_marks_agent_while_guard_held() {

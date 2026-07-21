@@ -1,7 +1,8 @@
 import { createContext, useContext } from "react";
 import type { BackupInfo } from "@/api";
 import type { AgentOperation } from "@/stores/use-agent-ops";
-import type { AgentInfo, AgentActivityState } from "@/lib/types";
+import type { AgentActivityState } from "@vesta/core";
+import type { AgentRow } from "@/lib/types";
 import type { OrbVisualState } from "@/components/Orb/styles";
 
 // Context + hook live here, separate from the SelectedAgentProvider component, so
@@ -11,7 +12,7 @@ import type { OrbVisualState } from "@/components/Orb/styles";
 // reload).
 export interface SelectedAgentContextValue {
   name: string;
-  agent: AgentInfo;
+  agent: AgentRow;
   agentState: AgentActivityState;
   setAgentState: (state: AgentActivityState) => void;
 

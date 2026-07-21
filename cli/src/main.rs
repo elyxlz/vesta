@@ -143,11 +143,6 @@ enum Command {
         #[arg(long)]
         token: Option<String>,
     },
-    /// Interactive chat with an agent
-    Chat {
-        /// Agent name
-        name: String,
-    },
     /// Tail agent logs
     Logs {
         /// Agent name
@@ -1419,11 +1414,6 @@ fn run(cli: Cli) {
             c.update_settings(&name, client::SettingsUpdate { auth: Some(client::claude_auth(&credentials)), ..Default::default() })
                 .or_die();
             eprintln!("{name}: authenticated");
-        }
-
-        Command::Chat { name } => {
-            let c = get_client(host_ref, token_ref);
-            client::chat(&c, &name).or_die();
         }
 
         Command::Logs { name, tail } => {

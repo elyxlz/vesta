@@ -52,7 +52,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     loadingMore,
     loadMore,
     send,
-    showToolCalls,
+    retry,
   } = useAgentSocket();
 
   const [input, setInput] = useState("");
@@ -72,12 +72,9 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
           m.type === "user" ||
           m.type === "chat" ||
           m.type === "error" ||
-          m.type === "rate_limited" ||
-          (showToolCalls &&
-            m.type === "tool_start" &&
-            !(m.tool === "Bash" && m.input.includes("app-chat"))),
+          m.type === "rate_limited",
       ),
-    [messages, showToolCalls],
+    [messages],
   );
 
   const scrollToBottom = useCallback(() => {
@@ -147,6 +144,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
           notAuthenticated={notAuthenticated}
           isTyping={isTyping}
           isMobile={isMobile}
+          onRetry={retry}
         />
 
         <div className="relative">

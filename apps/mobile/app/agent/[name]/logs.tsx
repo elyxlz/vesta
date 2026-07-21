@@ -5,7 +5,7 @@ function LogsContent() {
   return (
     <>
       <Stack.Title>Logs</Stack.Title>
-      <LogsPage />
+      <LogsPage presentation="standalone" />
     </>
   );
 }

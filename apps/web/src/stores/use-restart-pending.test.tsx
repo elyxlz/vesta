@@ -59,7 +59,7 @@ describe("useRestartPending", () => {
 
   it("ignores agents with no reported boot time", () => {
     useRestartPending.getState().markPending("ada", "files", BOOT_T0);
-    useRestartPending.getState().reconcile([{ name: "ada" }]);
+    useRestartPending.getState().reconcile([{ name: "ada", startedAt: null }]);
     expect(useRestartPending.getState().pending.ada?.reasons).toEqual([
       "files",
     ]);
@@ -76,7 +76,7 @@ describe("useRestartPending", () => {
 
   it("keeps a known baseline when a later reason is flagged with no boot time", () => {
     useRestartPending.getState().markPending("ada", "files", BOOT_T0);
-    useRestartPending.getState().markPending("ada", "settings", undefined);
+    useRestartPending.getState().markPending("ada", "settings", null);
     expect(useRestartPending.getState().pending.ada?.since).toBe(BOOT_T0);
   });
 

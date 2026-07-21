@@ -9,7 +9,6 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { useAgentSocket } from "@/providers/AgentSocketProvider";
 import { useModals } from "@/providers/ModalsProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useGateway } from "@/providers/GatewayProvider";
@@ -30,7 +29,6 @@ export function AgentMenu() {
   const { name, agent, isBusy, start, stop, restart, backup } =
     useSelectedAgent();
   const { setDeleteDialogOpen, handleOpenAuth } = useModals();
-  const { showToolCalls, setShowToolCalls } = useAgentSocket();
   const gateway = useGateway();
   const appMode = useAppMode((s) => s.mode);
 
@@ -48,13 +46,11 @@ export function AgentMenu() {
     isRunning,
     showAliveActions: agent.status === "alive",
     isBusy,
-    showToolCalls,
     onToggle: () => {
       if (isRunning) stop();
       else start();
     },
     onLogs: () => goTo(`/agent/${encodeURIComponent(name)}/logs`),
-    onToolCalls: () => setShowToolCalls((v) => !v),
     onAppSettings: () => {
       void navigate("/settings");
     },

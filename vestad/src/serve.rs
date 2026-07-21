@@ -19,7 +19,7 @@ use crate::settings::{
 };
 use crate::state::{err_response, map_docker_err, ok_json, AppState, SharedState};
 use crate::{
-    agent_provider, agent_proxy, agent_status, auth, backup, control_ws, docker, mobile_app,
+    agent_provider, agent_proxy, agent_status, auth, backup, docker, mobile_app,
     self_update, systemd, update_check, update_window,
 };
 
@@ -466,19 +466,46 @@ async fn create_agent_handler(
     // Create + start an empty agent. Credentials and preferences arrive via a separate
     // PUT /agents/{name}/config once the agent is up — the agent owns its own credential
     // files now, vestad only orchestrates. `create_agent` reports coarse phases into shared
-    // state so GET /agents/{name}/build-phase can drive honest onboarding status while this
-    // synchronous call is in flight.
-    let phases = state.clone();
+    // state so the roster (and the replica tree it feeds) shows honest onboarding status while
+    // this synchronous call is in flight.
+    let phases = state.agent_status_cache.clone();
     let progress_name = name.clone();
     let progress = docker::BuildProgress::new(Arc::new(move |phase| {
         phases.set_build_phase(&progress_name, phase);
     }));
 
     let result = create_and_start(&state, &name, manage_core_code, &progress).await;
-    state.clear_build_phase(&name);
+    // On success, retire the bridging build phase only once the poll lists the new container, so the
+    // synthetic mid-build roster row is replaced in place. Clearing it while the container is not yet
+    // listed drops the row entirely for a poll, emitting a spurious `agent_removed` that flaps the
+    // agent out of the roster before it materializes.
+    if result.is_ok() {
+        wait_for_agent_listed(&state, &name).await;
+    }
+    state.agent_status_cache.clear_build_phase(&name);
     let name = result?;
 
     Ok((StatusCode::CREATED, Json(serde_json::json!({"name": name}))))
+}
+
+/// Block until `name` appears in the agent-status roster, bounded so a container that never lists
+/// (a create racing a destroy) still returns and lets the caller clear the phase as a fail-safe.
+async fn wait_for_agent_listed(state: &SharedState, name: &str) {
+    const LISTED_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+    let mut agents_rx = state.agent_status_cache.subscribe_agents();
+    let deadline = tokio::time::Instant::now() + LISTED_TIMEOUT;
+    loop {
+        if agents_rx
+            .borrow_and_update()
+            .iter()
+            .any(|entry| crate::docker::normalize_name(&entry.name) == name)
+        {
+            return;
+        }
+        if tokio::time::timeout_at(deadline, agents_rx.changed()).await.is_err() {
+            return;
+        }
+    }
 }
 
 /// Run the create then the start, reporting `Starting` between them. Split out so
@@ -499,14 +526,6 @@ async fn create_and_start(
         .map_err(map_docker_err)?;
 
     Ok(name)
-}
-
-async fn build_phase_handler(
-    State(state): State<SharedState>,
-    Path(name): Path<String>,
-) -> Json<serde_json::Value> {
-    let phase = state.build_phase(&docker::normalize_name(&name));
-    Json(serde_json::json!({ "phase": phase }))
 }
 
 async fn agent_status_handler(
@@ -1554,6 +1573,55 @@ fn resolve_public(requested: Option<bool>, cached: Option<ServiceEntry>) -> bool
     requested.unwrap_or_else(|| cached.is_some_and(|entry| entry.public))
 }
 
+/// Longest title/body carried in an agent-injected user notification; longer text is truncated with an ellipsis.
+const USER_NOTIFICATION_TITLE_MAX_CHARS: usize = 120;
+const USER_NOTIFICATION_BODY_MAX_CHARS: usize = 180;
+
+#[derive(Deserialize)]
+struct UserNotificationBody {
+    kind: String,
+    title: String,
+    body: String,
+}
+
+/// User-notification kinds are a closed set: `message` (a new agent reply) and `rate_limited`. An
+/// unknown kind is rejected so the user-notification surface cannot drift open.
+fn valid_user_notification_kind(kind: &str) -> bool {
+    matches!(kind, "message" | "rate_limited")
+}
+
+/// Truncate to at most `max` chars on a char boundary, appending an ellipsis when it cut. Counting by
+/// `char` keeps multibyte text from being split mid-codepoint.
+fn truncate_chars(value: &str, max: usize) -> String {
+    if value.chars().count() <= max {
+        return value.to_string();
+    }
+    let mut out: String = value.chars().take(max).collect();
+    out.push('…');
+    out
+}
+
+/// `POST /agents/{name}/user-notification`: an agent-injected user-facing notification. Agent-token
+/// authed and self-scoped by the middleware, so an agent can only notify as itself. Fans a
+/// `user_notification` delta to connected `/sync` sessions and an Expo push to backgrounded mobile.
+/// Kinds are a closed set.
+async fn user_notification_handler(
+    State(state): State<SharedState>,
+    Path(name): Path<String>,
+    Json(body): Json<UserNotificationBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if !valid_user_notification_kind(&body.kind) {
+        return Err(err_response(StatusCode::BAD_REQUEST, "unknown user notification kind"));
+    }
+    let title = truncate_chars(&body.title, USER_NOTIFICATION_TITLE_MAX_CHARS);
+    let preview = truncate_chars(&body.body, USER_NOTIFICATION_BODY_MAX_CHARS);
+    state
+        .sync_hub
+        .publish_user_notification(&name, body.kind.clone(), title.clone(), preview.clone());
+    state.mobile_app.push_user_notification(&name, &body.kind, &title, &preview);
+    Ok(ok_json())
+}
+
 async fn register_service_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
@@ -2265,7 +2333,6 @@ pub fn build_router(state: SharedState) -> Router {
                 .delete(destroy_agent_handler)
                 .patch(rename_agent_handler),
         )
-        .route("/agents/{name}/build-phase", get(build_phase_handler))
         .route("/agents/{name}/start", post(start_agent_handler))
         .route(
             "/agents/{name}/config",
@@ -2343,7 +2410,7 @@ pub fn build_router(state: SharedState) -> Router {
             "/agents/{name}/backups/{backup_id}/restore",
             post(restore_backup_handler),
         )
-        .route("/ws", get(control_ws::control_ws_handler))
+        .route("/sync", get(crate::sync::sync_ws_handler))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware,
@@ -2369,9 +2436,10 @@ pub fn build_router(state: SharedState) -> Router {
         )
         .route(
             "/agents/{name}/services/{service}/invalidate",
-            post(control_ws::invalidate_service_handler),
+            post(agent_status::invalidate_service_handler),
         )
         .route("/agents/{name}/account-token", post(account_token_handler))
+        .route("/agents/{name}/user-notification", post(user_notification_handler))
         .route(
             "/agents/{name}/workspace.bundle",
             get(workspace_bundle_handler),
@@ -2835,15 +2903,16 @@ pub async fn run_server(cfg: ServerConfig) {
     // Keep a docker handle for the shutdown hook: vestad stops every agent when it exits, so a
     // vestad update/restart hands off with nothing running on a stale container.
     let shutdown_docker = docker.clone();
-    agent_status::spawn_agent_status_task(
-        state.agent_status_cache.clone(),
+    agent_status::spawn_agent_status_task(agent_status::AgentStatusTaskDeps {
+        cache: state.agent_status_cache.clone(),
         docker,
-        state.http_client.clone(),
-        state.env_config.agents_dir.clone(),
+        http_client: state.http_client.clone(),
+        agents_dir: state.env_config.agents_dir.clone(),
         on_agents_changed,
-        state.rebuilding.clone(),
-        state.mobile_app.clone(),
-    );
+        rebuilding: state.rebuilding.clone(),
+        mobile_app: state.mobile_app.clone(),
+        sync_hub: state.sync_hub.clone(),
+    });
     let app = build_router(state.clone());
     spawn_auto_backup_task(state.clone());
     if dev_mode {
@@ -2938,8 +3007,29 @@ async fn shutdown_signal() {
 mod tests {
     use super::{
         allocate_service_port, ensure_not_rebuilding, is_cached_port_reusable, resolve_public,
-        spawn_pipeline_sse, RegisterServiceBody,
+        spawn_pipeline_sse, truncate_chars, valid_user_notification_kind, RegisterServiceBody,
     };
+
+    #[test]
+    fn user_notification_kind_is_a_closed_set() {
+        assert!(valid_user_notification_kind("message"));
+        assert!(valid_user_notification_kind("rate_limited"));
+        assert!(!valid_user_notification_kind("chat"));
+        assert!(!valid_user_notification_kind("status"));
+        assert!(!valid_user_notification_kind(""));
+    }
+
+    #[test]
+    fn truncate_chars_cuts_on_char_boundaries_with_an_ellipsis() {
+        // Under the cap: unchanged, no ellipsis.
+        assert_eq!(truncate_chars("hello", 10), "hello");
+        assert_eq!(truncate_chars("hello", 5), "hello");
+        // Over the cap: multibyte text is counted and cut by char, never mid-codepoint.
+        let multibyte = "éé😀é"; // 4 chars, each multiple bytes
+        assert_eq!(truncate_chars(multibyte, 2), "éé…");
+        assert_eq!(truncate_chars(multibyte, 3), "éé😀…");
+        assert_eq!(truncate_chars(multibyte, 4), "éé😀é");
+    }
 
     #[test]
     fn mutating_agent_ops_conflict_while_rebuilding() {
@@ -3379,8 +3469,7 @@ mod tests {
         .map(|status| serde_json::to_value(status).expect("serialize AgentStatus"))
         .collect();
 
-        // Feeds both the plain GET /agents response (Vec<ListEntry>, the CLI's `vesta list`)
-        // and, further below, the control WS "agents" message built by the production code path.
+        // The plain GET /agents response (Vec<ListEntry>, the CLI's `vesta list`).
         let agents = vec![
             ListEntry {
                 name: "sample-agent".into(),
@@ -3396,24 +3485,6 @@ mod tests {
             },
         ];
         let agents_json = serde_json::to_value(&agents).expect("serialize ListEntry list");
-        let mut activity = HashMap::new();
-        activity.insert("sample-agent".to_string(), "thinking".to_string());
-        let mut agent_services = HashMap::new();
-        agent_services.insert(
-            "dashboard".to_string(),
-            ServiceEntry {
-                port: 8080,
-                public: true,
-            },
-        );
-        let mut services = HashMap::new();
-        services.insert("sample-agent".to_string(), agent_services);
-        let mut agent_revs = HashMap::new();
-        agent_revs.insert("dashboard".to_string(), 3u64);
-        let mut revs = HashMap::new();
-        revs.insert("sample-agent".to_string(), agent_revs);
-        let agents_ws_message =
-            crate::control_ws::build_agents_message(&agents, &activity, &services, &revs);
 
         let backups: Vec<serde_json::Value> = [
             BackupType::Manual,
@@ -3479,7 +3550,6 @@ mod tests {
         serde_json::json!({
             "agent_statuses": agent_statuses,
             "agents": agents_json,
-            "agents_ws_message": agents_ws_message,
             "agent_status_json": agent_status_json,
             "backups": backups,
             "auth_start": auth_start,
@@ -3533,6 +3603,15 @@ mod tests {
         let cli_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../cli/tests/fixtures/vestad-api.json");
         sync_fixture_file(&cli_path, &cli_content, regen);
+
+        // Sync-protocol fixtures (Stage 4): the /sync frames the @vesta/core contract test parses.
+        // Additive beside the web/cli fixtures above, which retire when those clients migrate.
+        let sync_json = serde_json::to_string_pretty(&crate::sync::protocol::protocol_fixtures())
+            .expect("serialize sync fixtures");
+        let sync_content = format!("{sync_json}\n");
+        let sync_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../apps/core/fixtures/sync-protocol.json");
+        sync_fixture_file(&sync_path, &sync_content, regen);
     }
 }
 

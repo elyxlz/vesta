@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { VestaEvent } from "../api/types";
+import type { ChatMessage } from "@vesta/core";
 import { createInvertedChatRows } from "./chat-list-model";
 
-const events: VestaEvent[] = [
+const events: ChatMessage[] = [
   { type: "user", text: "first", ts: "2026-07-15T10:00:00Z" },
   { type: "chat", text: "second", ts: "2026-07-15T10:00:01Z" },
   { type: "chat", text: "latest", ts: "2026-07-15T10:00:02Z" },
@@ -10,7 +10,7 @@ const events: VestaEvent[] = [
 
 describe("inverted chat rows", () => {
   it("puts the latest message at the native list origin", () => {
-    const rows = createInvertedChatRows(events, false, false);
+    const rows = createInvertedChatRows(events, false);
 
     expect(
       rows.map((row) => (row.kind === "event" ? row.event.type : row.kind)),
@@ -19,13 +19,12 @@ describe("inverted chat rows", () => {
   });
 
   it("appends older pages without moving the existing latest rows", () => {
-    const initialRows = createInvertedChatRows(events, false, false);
+    const initialRows = createInvertedChatRows(events, false);
     const paginatedRows = createInvertedChatRows(
       [
         { type: "chat", text: "older", ts: "2026-07-15T09:59:59Z" },
         ...events,
       ],
-      false,
       false,
     );
 
@@ -37,7 +36,7 @@ describe("inverted chat rows", () => {
   });
 
   it("places typing at the latest edge and joins consecutive agent bubbles", () => {
-    const rows = createInvertedChatRows(events, false, true);
+    const rows = createInvertedChatRows(events, true);
 
     expect(rows[0]).toMatchObject({
       kind: "typing",
@@ -49,25 +48,13 @@ describe("inverted chat rows", () => {
     });
   });
 
-  it("starts agent spacing on the first tool after a user", () => {
+  it("starts a new same-sender bubble group after five minutes", () => {
     const rows = createInvertedChatRows(
       [
-        { type: "user", text: "do this", ts: "2026-07-15T10:00:00Z" },
-        {
-          type: "tool_start",
-          tool: "Read",
-          input: "first.txt",
-          ts: "2026-07-15T10:00:01Z",
-        },
-        {
-          type: "tool_start",
-          tool: "Read",
-          input: "second.txt",
-          ts: "2026-07-15T10:00:02Z",
-        },
-        { type: "chat", text: "done", ts: "2026-07-15T10:00:03Z" },
+        { type: "chat", text: "first", ts: "2026-07-15T10:00:00Z" },
+        { type: "chat", text: "nearby", ts: "2026-07-15T10:04:59Z" },
+        { type: "chat", text: "later", ts: "2026-07-15T10:09:59Z" },
       ],
-      true,
       false,
     );
 
@@ -76,43 +63,46 @@ describe("inverted chat rows", () => {
         row.kind === "event"
           ? [
               {
-                type: row.event.type,
+                text: row.event.type === "chat" ? row.event.text : "",
                 startsNewBubbleGroup: row.startsNewBubbleGroup,
+                endsBubbleGroup: row.endsBubbleGroup,
               },
             ]
           : [],
       ),
     ).toEqual([
-      { type: "user", startsNewBubbleGroup: false },
-      { type: "tool_start", startsNewBubbleGroup: true },
-      { type: "tool_start", startsNewBubbleGroup: false },
-      { type: "chat", startsNewBubbleGroup: false },
+      {
+        text: "first",
+        startsNewBubbleGroup: false,
+        endsBubbleGroup: false,
+      },
+      {
+        text: "nearby",
+        startsNewBubbleGroup: false,
+        endsBubbleGroup: true,
+      },
+      {
+        text: "later",
+        startsNewBubbleGroup: true,
+        endsBubbleGroup: true,
+      },
     ]);
   });
 
-  it("keeps typing grouped with a visible tool", () => {
+  it("keeps same-sender bubbles grouped without usable timestamps", () => {
     const rows = createInvertedChatRows(
       [
-        { type: "user", text: "do this", ts: "2026-07-15T10:00:00Z" },
-        {
-          type: "tool_start",
-          tool: "Read",
-          input: "file.txt",
-          ts: "2026-07-15T10:00:01Z",
-        },
+        { type: "user", text: "first" },
+        { type: "user", text: "second", ts: "not-a-date" },
       ],
-      true,
-      true,
+      false,
     );
 
-    expect(rows[0]).toMatchObject({
-      kind: "typing",
-      startsNewBubbleGroup: false,
-    });
-    expect(rows[1]).toMatchObject({
-      kind: "event",
-      startsNewBubbleGroup: true,
-    });
+    expect(
+      rows
+        .filter((row) => row.kind === "event")
+        .map((row) => row.startsNewBubbleGroup),
+    ).toEqual([false, false]);
   });
 
   it("inserts a header above each local calendar day", () => {
@@ -122,7 +112,6 @@ describe("inverted chat rows", () => {
         { type: "chat", text: "day one reply", ts: "2026-07-14T10:01:00" },
         { type: "chat", text: "day two", ts: "2026-07-15T10:00:00" },
       ],
-      false,
       false,
     );
 

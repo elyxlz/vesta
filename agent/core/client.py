@@ -23,7 +23,7 @@ from claude_agent_sdk import (
 from claude_agent_sdk.types import PermissionResultAllow, SdkBeta, ThinkingConfigDisabled, ToolPermissionContext
 
 from . import config as cfg
-from . import diagnostics, logger, sdk_parsing, state_store
+from . import diagnostics, logger, sdk_parsing, state_store, vestad_client
 from . import models as vm
 from .config import CONTEXT_1M_BETA, DEFAULT_CONTEXT_WINDOW
 from .helpers import get_constitution_path, get_memory_path
@@ -222,16 +222,19 @@ def _emit_parsed_content(texts: list[str], thinking_blocks: list[ThinkingBlock],
         state.event_bus.emit({"type": "error", "text": f"Turn failed upstream: {error_text[:500]}"})
 
 
-def _note_rate_limit(msg: RateLimitEvent, *, state: vm.State) -> None:
+async def _note_rate_limit(msg: RateLimitEvent, *, state: vm.State) -> None:
     """Surface a rejected rate limit from the structured classification: the CLI's synthesized text
     for the same event misnames the window (issue #1071), so this event is what consumers trust.
-    Once per window; the type/resets_at pair changes when a different limit trips."""
+    Once per window; the type/resets_at pair changes when a different limit trips. The internal event
+    is kept for history; a best-effort user notification raises a user-facing toast + push."""
     info = msg.rate_limit_info
     notice = sdk_parsing.rate_limit_notice(info, now=time.time())
     window_key = (info.rate_limit_type, info.resets_at)
     if notice and window_key != state.rate_limit_noticed:
         state.rate_limit_noticed = window_key
         state.event_bus.emit({"type": "rate_limited", "text": notice, "window": info.rate_limit_type, "resets_at": info.resets_at})
+        agent_name = os.environ["AGENT_NAME"] if "AGENT_NAME" in os.environ else "Vesta"
+        await vestad_client.send_user_notification("rate_limited", agent_name, notice)
 
 
 async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaConfig) -> None:
@@ -264,7 +267,7 @@ async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaC
         await persist_session_id(session_id, state=state, config=config)
     _emit_parsed_content(texts, thinking_blocks, error_texts, state=state)
     if isinstance(msg, RateLimitEvent):
-        _note_rate_limit(msg, state=state)
+        await _note_rate_limit(msg, state=state)
     # OpenRouter's upstream 401/402 is caught by its cache proxy. Claude bypasses that proxy,
     # so a terminal auth/billing failure surfaces through the SDK either as the assistant
     # turn's classified error (authentication_failed / billing_error) OR as the result's HTTP

@@ -1,0 +1,107 @@
+import { describe, expect, it } from "vitest"
+
+import { parseServerFrame } from "./parse"
+
+describe("parseServerFrame", () => {
+  it("parses a hello frame, mapping min_supported off the wire", () => {
+    const parsed = parseServerFrame(
+      JSON.stringify({ type: "hello", version: "0.2.0", min_supported: "0.0.0" }),
+    )
+    expect(parsed).toEqual({
+      kind: "hello",
+      frame: { type: "hello", version: "0.2.0", minSupported: "0.0.0" },
+    })
+  })
+
+  it("ignores a hello frame missing its version window", () => {
+    expect(parseServerFrame(JSON.stringify({ type: "hello", version: "0.2.0" }))).toEqual({
+      kind: "unknown",
+    })
+  })
+
+  it("parses a snapshot frame and preserves the tree", () => {
+    const tree = { gateway: {}, agents: {} }
+    const parsed = parseServerFrame(JSON.stringify({ type: "snapshot", tree }))
+    expect(parsed.kind).toBe("snapshot")
+    if (parsed.kind === "snapshot") expect(parsed.frame.tree).toEqual(tree)
+  })
+
+  it("classifies each delta type", () => {
+    const cases: { raw: Record<string, unknown>; type: string }[] = [
+      { raw: { type: "state", scope: "gateway", value: { version: "1" } }, type: "state" },
+      { raw: { type: "agent", name: "scout", info: { status: "alive" } }, type: "agent" },
+      { raw: { type: "agent_removed", name: "scout" }, type: "agent_removed" },
+      { raw: { type: "notifications", agent: "scout", pending: [] }, type: "notifications" },
+      {
+        raw: {
+          type: "user_notification",
+          agent: "scout",
+          kind: "message",
+          title: "scout",
+          body: "hi",
+        },
+        type: "user_notification",
+      },
+    ]
+    for (const entry of cases) {
+      const parsed = parseServerFrame(JSON.stringify(entry.raw))
+      expect(parsed.kind).toBe("delta")
+      if (parsed.kind === "delta") expect(parsed.delta.type).toBe(entry.type)
+    }
+  })
+
+  it("carries the user_notification agent, kind, title, and body through", () => {
+    const parsed = parseServerFrame(
+      JSON.stringify({
+        type: "user_notification",
+        agent: "scout",
+        kind: "message",
+        title: "scout",
+        body: "hello there",
+      }),
+    )
+    expect(parsed.kind).toBe("delta")
+    if (parsed.kind === "delta" && parsed.delta.type === "user_notification") {
+      expect(parsed.delta.agent).toBe("scout")
+      expect(parsed.delta.kind).toBe("message")
+      expect(parsed.delta.title).toBe("scout")
+      expect(parsed.delta.body).toBe("hello there")
+    }
+  })
+
+  it("ignores a user_notification missing its kind, title, or body", () => {
+    const inputs = [
+      JSON.stringify({ type: "user_notification", agent: "scout", title: "scout", body: "hi" }),
+      JSON.stringify({ type: "user_notification", agent: "scout", kind: "message", body: "hi" }),
+      JSON.stringify({
+        type: "user_notification",
+        agent: "scout",
+        kind: "message",
+        title: "scout",
+      }),
+    ]
+    for (const raw of inputs) expect(parseServerFrame(raw)).toEqual({ kind: "unknown" })
+  })
+
+  it("ignores unknown frame and delta types", () => {
+    const inputs = [
+      JSON.stringify({ type: "future_frame", data: 1 }),
+      JSON.stringify({ type: "future_delta", agent: "scout" }),
+    ]
+    for (const raw of inputs) expect(parseServerFrame(raw)).toEqual({ kind: "unknown" })
+  })
+
+  it("ignores malformed input", () => {
+    const inputs = ["not json", "null", "123", JSON.stringify({ noType: true })]
+    for (const raw of inputs) expect(parseServerFrame(raw)).toEqual({ kind: "unknown" })
+  })
+
+  it("ignores a delta missing a required field", () => {
+    const inputs = [
+      JSON.stringify({ type: "agent", name: "scout" }),
+      JSON.stringify({ type: "notifications", agent: "scout" }),
+      JSON.stringify({ type: "state", scope: "other", value: {} }),
+    ]
+    for (const raw of inputs) expect(parseServerFrame(raw)).toEqual({ kind: "unknown" })
+  })
+})

@@ -2,8 +2,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { apiFetch, ApiError } from "./client";
 
 vi.mock("@/lib/connection", () => ({
-  apiUrl: (path: string) => `https://box.example${path}`,
-  authHeaders: () => ({ Authorization: "Bearer token" }),
+  getConnection: () => ({
+    url: "https://box.example",
+    accessToken: "token",
+    refreshToken: "refresh",
+    expiresAt: Date.now() + 60 * 60 * 1000,
+  }),
+  isTokenExpiringSoon: () => false,
 }));
 vi.mock("@/lib/token-refresh", () => ({
   ensureFreshToken: vi.fn().mockResolvedValue("ok"),

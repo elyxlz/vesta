@@ -72,7 +72,6 @@ describe("electron bridge", () => {
       oauthStart: vi.fn(() => Promise.resolve(4242)),
       onOauthCallback: vi.fn(() => noopUnsubscribe),
       oauthCancel: vi.fn(() => Promise.resolve()),
-      installUpdate: vi.fn(() => Promise.resolve()),
       onWindowFocus: vi.fn(() => noopUnsubscribe),
       windowMinimize: vi.fn(() => Promise.resolve()),
       windowToggleMaximize: vi.fn(() => Promise.resolve()),
@@ -109,18 +108,13 @@ describe("electron bridge", () => {
     expect(await bridge.oauthLoopback?.start()).toBe(4242);
   });
 
-  it("routes theme, focus, and update calls to the preload api", async () => {
+  it("routes theme and focus calls to the preload api", async () => {
     const setTheme = vi.fn();
     const focusWindow = vi.fn(() => Promise.resolve());
-    const installUpdate = vi.fn(() => Promise.resolve());
-    const bridge = createElectronBridge(
-      fakeApi({ setTheme, focusWindow, installUpdate }),
-    );
+    const bridge = createElectronBridge(fakeApi({ setTheme, focusWindow }));
     bridge.setNativeTheme("dark");
     await bridge.focusWindow();
-    await bridge.installAppUpdate("0.1.176");
     expect(setTheme).toHaveBeenCalledWith("dark");
     expect(focusWindow).toHaveBeenCalled();
-    expect(installUpdate).toHaveBeenCalledWith("0.1.176");
   });
 });

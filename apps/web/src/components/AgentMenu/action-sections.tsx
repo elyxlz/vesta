@@ -9,16 +9,13 @@ import {
   SlidersHorizontal,
   Square,
   Trash2,
-  Wrench,
 } from "lucide-react";
 
 export interface AgentActionsInput {
   isRunning: boolean;
   showAliveActions?: boolean;
   isBusy: boolean;
-  showToolCalls: boolean;
   onLogs: () => void;
-  onToolCalls: () => void;
   onToggle: () => void;
   onRestart: () => void;
   onBackup: () => void;
@@ -48,22 +45,20 @@ export interface ActionSection {
 export function buildActionSections(input: AgentActionsInput): ActionSection[] {
   const sections: ActionSection[] = [];
 
-  const viewItems: ActionItem[] = [];
   if (input.isRunning) {
-    viewItems.push({
-      key: "logs",
-      icon: <ScrollText data-icon="inline-start" />,
-      label: "logs",
-      onClick: input.onLogs,
+    sections.push({
+      key: "view",
+      title: "Tools",
+      items: [
+        {
+          key: "logs",
+          icon: <ScrollText data-icon="inline-start" />,
+          label: "logs",
+          onClick: input.onLogs,
+        },
+      ],
     });
   }
-  viewItems.push({
-    key: "tool-calls",
-    icon: <Wrench data-icon="inline-start" />,
-    label: input.showToolCalls ? "hide tool calls" : "show tool calls",
-    onClick: input.onToolCalls,
-  });
-  sections.push({ key: "view", title: "Tools", items: viewItems });
 
   const controlItems: ActionItem[] = [
     {

@@ -870,7 +870,7 @@ def test_history_notifications_channel_filters_and_paginates(tmp_path):
 
     bus = EventBus(data_dir=tmp_path / "data")
     try:
-        bus.emit({"type": "user", "text": "hello"})  # must be excluded
+        bus.emit({"type": "assistant", "text": "hello"})  # must be excluded
         for i in range(3):
             bus.emit(
                 {
@@ -888,7 +888,7 @@ def test_history_notifications_channel_filters_and_paginates(tmp_path):
         assert cursor is not None  # 3 notifs > limit 2, so an older page exists
         older, _ = bus.before(cursor, limit=2, channel="notifications")
         assert all(e["type"] == "notification" for e in older)
-        assert len(page) + len(older) == 3  # all 3 notifs, user event never returned
+        assert len(page) + len(older) == 3  # all 3 notifs, assistant event never returned
     finally:
         bus.close()
 
@@ -900,7 +900,7 @@ def test_notifications_channel_is_arrivals_only(tmp_path):
 
     bus = EventBus(data_dir=tmp_path / "data")
     try:
-        bus.emit({"type": "user", "text": "ignored"})  # excluded: not a notification
+        bus.emit({"type": "assistant", "text": "ignored"})  # excluded: not a notification
         bus.emit({"type": "notification", "source": "s", "summary": "x", "notif_id": "n0"})
         bus.emit({"type": "notification_cleared", "notif_id": "n0"})  # broadcast-only, not persisted
 

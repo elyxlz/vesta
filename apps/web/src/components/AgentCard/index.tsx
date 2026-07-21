@@ -12,7 +12,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Orb } from "@/components/Orb";
-import type { AgentInfo } from "@/lib/types";
+import type { AgentRow } from "@/lib/types";
 import { useNavigate } from "react-router-dom";
 import { useAgentOps, getOpLabel } from "@/stores/use-agent-ops";
 import { useOrbStatus } from "@/hooks/use-orb-state";
@@ -20,7 +20,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
 
 interface AgentCardProps {
-  agent: AgentInfo;
+  agent: AgentRow;
   enableTracking?: boolean;
 }
 

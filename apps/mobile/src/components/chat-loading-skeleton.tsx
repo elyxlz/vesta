@@ -93,7 +93,7 @@ const styles = StyleSheet.create({
   stack: {
     position: "absolute",
     right: 8,
-    bottom: 18,
+    bottom: 0,
     left: 8,
     gap: 10,
   },

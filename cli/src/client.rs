@@ -1,6 +1,6 @@
-use std::io::{BufRead, IsTerminal, Write};
+use std::io::BufRead;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 use ureq::http::Response;
 use ureq::Body;
 
@@ -15,105 +15,6 @@ const HTTP_RESPONSE_TIMEOUT: Duration = Duration::from_mins(5);
 #[derive(serde::Serialize, serde::Deserialize)]
 struct MountsBody {
     mounts: Vec<MountEntry>,
-}
-
-// ── TLS fingerprint verification ────────────────────────────────
-
-fn make_rustls_config(fingerprint: String) -> Arc<rustls::ClientConfig> {
-    Arc::new(
-        rustls::ClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(FingerprintVerifier {
-                expected: fingerprint,
-            }))
-            .with_no_client_auth(),
-    )
-}
-
-#[derive(Debug)]
-struct FingerprintVerifier {
-    expected: String,
-}
-
-impl rustls::client::danger::ServerCertVerifier for FingerprintVerifier {
-    fn verify_server_cert(
-        &self,
-        end_entity: &rustls::pki_types::CertificateDer<'_>,
-        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
-        _server_name: &rustls::pki_types::ServerName<'_>,
-        _ocsp_response: &[u8],
-        _now: rustls::pki_types::UnixTime,
-    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        let actual = cert_fingerprint(end_entity.as_ref());
-
-        match fingerprint_match(&self.expected, &actual) {
-            Ok(()) => Ok(rustls::client::danger::ServerCertVerified::assertion()),
-            Err(msg) => Err(rustls::Error::General(msg)),
-        }
-    }
-    fn verify_tls12_signature(
-        &self,
-        message: &[u8],
-        cert: &rustls::pki_types::CertificateDer<'_>,
-        dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls12_signature(
-            message,
-            cert,
-            dss,
-            &rustls::crypto::ring::default_provider().signature_verification_algorithms,
-        )
-    }
-    fn verify_tls13_signature(
-        &self,
-        message: &[u8],
-        cert: &rustls::pki_types::CertificateDer<'_>,
-        dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls13_signature(
-            message,
-            cert,
-            dss,
-            &rustls::crypto::ring::default_provider().signature_verification_algorithms,
-        )
-    }
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        rustls::crypto::ring::default_provider()
-            .signature_verification_algorithms
-            .supported_schemes()
-    }
-}
-
-/// Compare a pinned (expected) certificate fingerprint against the actual one
-/// computed from the presented cert. Returns the mismatch error message on
-/// rejection. Kept pure (string-only) so the pin comparison is unit-testable
-/// without opening a TLS connection.
-fn fingerprint_match(expected: &str, actual: &str) -> Result<(), String> {
-    if actual == expected {
-        Ok(())
-    } else {
-        Err(format!(
-            "certificate fingerprint mismatch: expected {expected}, got {actual}"
-        ))
-    }
-}
-
-fn cert_fingerprint(der: &[u8]) -> String {
-    let digest = ring::digest::digest(&ring::digest::SHA256, der);
-    format!(
-        "sha256:{}",
-        digest
-            .as_ref()
-            .iter()
-            .map(|b| format!("{b:02X}"))
-            .collect::<Vec<_>>()
-            .join(":")
-    )
-}
-
-fn ws_base_url(url: &str) -> String {
-    url.replace("https://", "wss://")
-        .replace("http://", "ws://")
 }
 
 // ── HTTP client ─────────────────────────────────────────────────
@@ -252,7 +153,6 @@ pub struct Client {
     agent: ureq::Agent,
     base_url: String,
     api_key: String,
-    cert_fingerprint: Option<String>,
 }
 
 /// `OpenRouter` creation args, set when an agent runs on an `OpenRouter` API key instead of a Claude account.
@@ -355,16 +255,7 @@ impl Client {
             agent,
             base_url: config.url.clone(),
             api_key: config.api_key.clone(),
-            cert_fingerprint: config.cert_fingerprint.clone(),
         })
-    }
-
-    pub fn api_key(&self) -> &str {
-        &self.api_key
-    }
-
-    pub fn cert_fingerprint(&self) -> Option<&str> {
-        self.cert_fingerprint.as_deref()
     }
 
     fn url(&self, path: &str) -> String {
@@ -778,6 +669,7 @@ impl Client {
         self.put_json(&format!("/agents/{name}/config"), &serde_json::json!({ "notification_rules": rules }))?;
         Ok(())
     }
+
 }
 
 fn consume_sse_log_stream(reader: impl BufRead, stop_event: &str, stop_message: Option<&str>) -> Result<(), String> {
@@ -797,246 +689,6 @@ fn consume_sse_log_stream(reader: impl BufRead, stop_event: &str, stop_message: 
     Err("log stream closed unexpectedly".into())
 }
 
-// ── WebSocket chat (CLI-only) ──────────────────────────────────
-
-const CHAT_READ_TIMEOUT_MS: u64 = 100;
-
-/// How long to keep retrying the chat WebSocket after an unexpected drop before giving up.
-/// The agent bounces its in-container WS server on every self-restart (e.g. installing a
-/// skill), so a transient drop usually heals within a few seconds once it boots back up.
-const CHAT_RECONNECT_WINDOW_SECS: u64 = 90;
-/// Delay between reconnect attempts within the window.
-const CHAT_RECONNECT_DELAY_MS: u64 = 1500;
-
-const ANSI_RESET: &str = "\x1b[0m";
-const ANSI_TS: &str = "\x1b[90m";
-const ANSI_YOU: &str = "\x1b[1;36m";
-const ANSI_AGENT: &str = "\x1b[1;35m";
-
-fn time_from_ts(ts: &str) -> String {
-    if ts.len() >= 16 && ts.is_char_boundary(11) && ts.is_char_boundary(16) {
-        ts[11..16].to_string()
-    } else {
-        ts.to_string()
-    }
-}
-
-fn time_now_utc() -> String {
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
-    format!("{:02}:{:02}", (secs / 3600) % 24, (secs / 60) % 60)
-}
-
-fn render_line(time: &str, nick: &str, nick_color: &str, text: &str, color: bool) {
-    if color {
-        println!(
-            "{ANSI_TS}[{time}]{ANSI_RESET} {nick_color}<{nick}>{ANSI_RESET} {text}",
-        );
-    } else {
-        println!("[{time}] <{nick}> {text}");
-    }
-}
-
-type ChatSocket = tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>;
-
-/// How a single chat session ended.
-enum SessionEnd {
-    /// The server closed the stream cleanly (agent stopped) — exit without retrying.
-    Closed,
-    /// The connection dropped unexpectedly — the agent is likely restarting, so reconnect.
-    /// `unsent` carries a message the drop swallowed mid-send, already rendered on screen,
-    /// so the reconnect loop can deliver it on the fresh socket.
-    Lost { reason: String, unsent: Option<String> },
-}
-
-fn chat_message_frame(text: &str) -> tungstenite::Message {
-    tungstenite::Message::Text(serde_json::json!({"type": "message", "text": text}).to_string().into())
-}
-
-/// Open one chat WebSocket. A pinned fingerprint gets the same verification as the HTTP
-/// client; without one, tungstenite's default connector verifies against native roots.
-fn connect_chat_socket(client: &Client, url: &str) -> Result<ChatSocket, String> {
-    // Both ring and aws-lc-rs are compiled in, so tungstenite's default rustls config
-    // needs a process-level provider picked before the handshake.
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    let parsed: url::Url = url.parse().map_err(|e| format!("invalid ws url: {e}"))?;
-    let host = parsed.host_str().unwrap_or("localhost");
-    let port = parsed.port_or_known_default().unwrap_or(443);
-    let tcp = std::net::TcpStream::connect((host, port))
-        .map_err(|e| format!("ws tcp connect failed: {e}"))?;
-    // The read timeout is for the chat read loop (so socket.read() returns to poll typed input),
-    // not the handshake. Applying it before client_tls_with_config kills the blocking TLS+WS
-    // handshake over any non-local link (e.g. a cloudflare tunnel): a handshake read that exceeds
-    // CHAT_READ_TIMEOUT_MS returns WouldBlock and tungstenite aborts with "Interrupted handshake".
-    // So hand the handshake a timeout-free socket, then set the timeout via a clone (the dup'd fd
-    // shares the same kernel socket, so SO_RCVTIMEO applies to the moved-in stream too).
-    let timeout_handle = tcp
-        .try_clone()
-        .map_err(|e| format!("failed to clone ws socket: {e}"))?;
-    let connector = client
-        .cert_fingerprint()
-        .map(|fp| tungstenite::Connector::Rustls(make_rustls_config(fp.to_string())));
-    let (socket, _) = tungstenite::client_tls_with_config(url.to_string(), tcp, None, connector)
-        .map_err(|e| format!("ws connect failed: {e}"))?;
-    timeout_handle
-        .set_read_timeout(Some(Duration::from_millis(CHAT_READ_TIMEOUT_MS)))
-        .map_err(|e| format!("failed to set read timeout: {e}"))?;
-    Ok(socket)
-}
-
-/// Pump one connected socket until it ends. `render_history` is false on reconnect so the
-/// replayed backlog isn't printed twice. Input typed while disconnected stays buffered in `rx`
-/// and is flushed here once the socket is live again.
-fn run_chat_session(
-    socket: &mut ChatSocket,
-    rx: &std::sync::mpsc::Receiver<String>,
-    name: &str,
-    color: bool,
-    render_history: bool,
-) -> SessionEnd {
-    loop {
-        if let Ok(input) = rx.try_recv() {
-            if !input.is_empty() {
-                if color {
-                    print!("\x1b[1A\x1b[2K\r");
-                }
-                render_line(&time_now_utc(), "you", ANSI_YOU, &input, color);
-                std::io::stdout().flush().ok();
-                if let Err(send_err) = socket.send(chat_message_frame(&input)) {
-                    return SessionEnd::Lost {
-                        reason: format!("connection lost while sending: {send_err}"),
-                        unsent: Some(input),
-                    };
-                }
-            }
-        }
-
-        match socket.read() {
-            Ok(tungstenite::Message::Text(text)) => {
-                if let Ok(msg) = serde_json::from_str::<serde_json::Value>(text.as_ref()) {
-                    match msg["type"].as_str() {
-                        Some("chat") => {
-                            if let Some(content) = msg["text"].as_str() {
-                                let time = time_from_ts(msg["ts"].as_str().unwrap_or(""));
-                                render_line(&time, name, ANSI_AGENT, content.trim_end(), color);
-                                std::io::stdout().flush().ok();
-                            }
-                        }
-                        Some("snapshot") if render_history => {
-                            if let Some(events) = msg["chat"]["events"].as_array() {
-                                for event in events {
-                                    let event_type = event["type"].as_str().unwrap_or("");
-                                    let time = time_from_ts(event["ts"].as_str().unwrap_or(""));
-                                    if event_type == "user" {
-                                        if let Some(content) = event["text"].as_str() {
-                                            render_line(&time, "you", ANSI_YOU, content.trim_end(), color);
-                                        }
-                                    } else if event_type == "chat" {
-                                        if let Some(content) = event["text"].as_str() {
-                                            render_line(&time, name, ANSI_AGENT, content.trim_end(), color);
-                                        }
-                                    }
-                                }
-                                std::io::stdout().flush().ok();
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            Ok(tungstenite::Message::Close(_)) | Err(tungstenite::Error::ConnectionClosed) => {
-                return SessionEnd::Closed;
-            }
-            Ok(_) => {}
-            Err(tungstenite::Error::Io(ref e))
-                if e.kind() == std::io::ErrorKind::WouldBlock
-                    || e.kind() == std::io::ErrorKind::TimedOut => {}
-            Err(read_err) => {
-                return SessionEnd::Lost {
-                    reason: format!("connection lost: {read_err}"),
-                    unsent: None,
-                }
-            }
-        }
-    }
-}
-
-/// Retry connecting for up to `CHAT_RECONNECT_WINDOW_SECS` after a drop. Returns the fresh
-/// socket once the agent is reachable again, or `None` if the window elapses first.
-fn reconnect_chat_socket(client: &Client, url: &str, name: &str, reason: &str) -> Option<ChatSocket> {
-    eprintln!("{reason}; agent may be restarting, reconnecting to {name}...");
-    let deadline = Instant::now() + Duration::from_secs(CHAT_RECONNECT_WINDOW_SECS);
-    while Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(CHAT_RECONNECT_DELAY_MS));
-        if let Ok(socket) = connect_chat_socket(client, url) {
-            eprintln!("reconnected to {name}.");
-            return Some(socket);
-        }
-    }
-    None
-}
-
-/// Connect to Chat WebSocket and run interactive chat (CLI-only).
-pub fn chat(client: &Client, name: &str) -> Result<(), String> {
-    let url = format!(
-        "{}/agents/{}/ws?token={}",
-        ws_base_url(&client.base_url),
-        name,
-        client.api_key()
-    );
-
-    let mut socket = connect_chat_socket(client, &url)?;
-
-    let color = std::io::stdout().is_terminal();
-
-    eprintln!("connected to {name}. type a message and press enter.");
-
-    let (tx, rx) = std::sync::mpsc::channel::<String>();
-
-    let _stdin_handle = std::thread::spawn(move || {
-        let stdin = std::io::stdin();
-        let mut line = String::new();
-        loop {
-            line.clear();
-            match stdin.lock().read_line(&mut line) {
-                Ok(0) | Err(_) => break,
-                Ok(_) => {
-                    if tx.send(line.trim().to_string()).is_err() {
-                        break;
-                    }
-                }
-            }
-        }
-    });
-
-    // The agent bounces its WS server on every self-restart. Rather than crash on the drop,
-    // keep the session alive across restarts: run until the socket ends, then reconnect within
-    // a bounded window. Only a clean server close (agent stopped) or an exhausted window exits.
-    let mut render_history = true;
-    loop {
-        match run_chat_session(&mut socket, &rx, name, color, render_history) {
-            SessionEnd::Closed => return Ok(()),
-            SessionEnd::Lost { reason, unsent } => loop {
-                match reconnect_chat_socket(client, &url, name, &reason) {
-                    Some(fresh) => socket = fresh,
-                    None => return Err(reason),
-                }
-                render_history = false;
-                // The lost message is already on screen as sent; deliver it silently on the
-                // fresh socket, and if that send also dies, retry through another reconnect.
-                let resent = match &unsent {
-                    Some(text) => socket.send(chat_message_frame(text)).is_ok(),
-                    None => true,
-                };
-                if resent {
-                    break;
-                }
-            },
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1049,44 +701,6 @@ mod tests {
             cert_pem: None,
         })
         .expect("client builds")
-    }
-
-    #[test]
-    fn connect_chat_socket_rejects_invalid_url() {
-        let err = connect_chat_socket(&test_client(), "not a ws url").unwrap_err();
-        assert!(err.contains("invalid ws url"), "got: {err}");
-    }
-
-    #[test]
-    fn connect_chat_socket_errors_on_unreachable_port_without_panicking() {
-        // Port 1 on loopback refuses fast — the helper must surface an Err, never panic,
-        // so the reconnect loop can keep retrying.
-        let err = connect_chat_socket(&test_client(), "wss://127.0.0.1:1/agents/x/ws?token=tok").unwrap_err();
-        assert!(err.contains("ws tcp connect failed") || err.contains("ws connect failed"), "got: {err}");
-    }
-
-    #[test]
-    fn connect_chat_socket_survives_a_slow_handshake() {
-        // Regression: the chat read-loop timeout (CHAT_READ_TIMEOUT_MS) must not be applied to the
-        // socket until *after* the handshake. A server slower than that timeout (here a cloudflare
-        // tunnel's worth of latency, simulated) used to make the handshake read return WouldBlock,
-        // surfacing as "ws connect failed: Interrupted handshake (WouldBlock)".
-        let handshake_delay = Duration::from_millis(CHAT_READ_TIMEOUT_MS * 3);
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
-        let port = listener.local_addr().expect("local addr").port();
-        let server = std::thread::spawn(move || {
-            let (stream, _) = listener.accept().expect("accept");
-            // Stall before reading/answering the upgrade, longer than the read-loop timeout.
-            std::thread::sleep(handshake_delay);
-            // tungstenite drives the server side of the handshake (correct Sec-WebSocket-Accept).
-            let _ws = tungstenite::accept(stream).expect("server handshake");
-            std::thread::sleep(Duration::from_millis(50));
-        });
-
-        let url = format!("ws://127.0.0.1:{port}/agents/x/ws?token=tok");
-        let socket = connect_chat_socket(&test_client(), &url).expect("handshake should survive a slow server");
-        drop(socket);
-        server.join().expect("server thread");
     }
 
     #[test]
@@ -1118,30 +732,6 @@ mod tests {
             let result = consume_sse_log_stream(case.stream.as_bytes(), "agent_stopped", None);
             assert_eq!(result.is_ok(), case.ok, "stream: {:?} got: {result:?}", case.stream);
         }
-    }
-
-    #[test]
-    fn ws_base_url_converts_schemes() {
-        assert_eq!(ws_base_url("https://example.com"), "wss://example.com");
-        assert_eq!(ws_base_url("http://localhost:8080"), "ws://localhost:8080");
-        assert_eq!(ws_base_url("http://127.0.0.1:9001"), "ws://127.0.0.1:9001");
-    }
-
-    #[test]
-    fn chat_url_uses_ws_route() {
-        // The URL must use /ws, not /ws/app-chat (agent only exposes /ws).
-        let base = "http://127.0.0.1:9001";
-        let name = "myagent";
-        let token = "mytoken";
-        let url = format!(
-            "{}/agents/{}/ws?token={}",
-            ws_base_url(base),
-            name,
-            token
-        );
-        assert!(url.contains("/ws?"), "chat URL must use /ws, got: {url}");
-        assert!(!url.contains("/ws/app-chat"), "chat URL must not use /ws/app-chat, got: {url}");
-        assert_eq!(url, "ws://127.0.0.1:9001/agents/myagent/ws?token=mytoken");
     }
 
     #[test]
@@ -1231,31 +821,4 @@ mod tests {
         let _start_all: StartAllResponse = serde_json::from_value(fixtures["start_all"].clone()).expect("StartAllResponse");
     }
 
-    #[test]
-    fn fingerprint_match_accepts_matching_pin() {
-        let pin = "sha256:AA:BB:CC";
-        assert!(fingerprint_match(pin, pin).is_ok());
-    }
-
-    #[test]
-    fn fingerprint_match_rejects_mismatched_pin() {
-        let expected = "sha256:AA:BB:CC";
-        let actual = "sha256:DD:EE:FF";
-        let err = fingerprint_match(expected, actual).expect_err("mismatched pin must be rejected");
-        assert!(err.contains("fingerprint mismatch"), "got: {err}");
-        assert!(err.contains(expected), "error must name expected pin, got: {err}");
-        assert!(err.contains(actual), "error must name actual pin, got: {err}");
-    }
-
-    #[test]
-    fn cert_fingerprint_is_stable_sha256_hex() {
-        // SHA-256 of the empty input, formatted as the pin string.
-        let fp = cert_fingerprint(&[]);
-        assert_eq!(
-            fp,
-            "sha256:E3:B0:C4:42:98:FC:1C:14:9A:FB:F4:C8:99:6F:B9:24:27:AE:41:E4:64:9B:93:4C:A4:95:99:1B:78:52:B8:55"
-        );
-        // A matching computed fingerprint is accepted by the pin comparison.
-        assert!(fingerprint_match(&fp, &cert_fingerprint(&[])).is_ok());
-    }
 }

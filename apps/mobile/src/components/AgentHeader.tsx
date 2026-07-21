@@ -3,7 +3,7 @@ import { useRouter } from "expo-router";
 import Stack from "expo-router/stack";
 import { Ionicons } from "@expo/vector-icons";
 import { GlassView, isGlassEffectAPIAvailable } from "expo-glass-effect";
-import type { AgentActivityState, AgentStatus } from "@/api/types";
+import type { AgentActivityState, AgentStatus } from "@vesta/core";
 import { useAgent } from "@/agent/AgentProvider";
 import { AgentOrb } from "@/components/AgentOrb";
 import { BootTransitionTarget } from "@/components/BootTransition";
@@ -42,7 +42,7 @@ export function AgentStackHeader({ hidden = false }: { hidden?: boolean }) {
         }}
       />
       <Stack.Title asChild>
-        <AgentHeaderTitle
+        <AgentIsland
           name={name}
           status={status}
           activityState={socket.agentState}
@@ -67,7 +67,7 @@ export function AgentStackHeader({ hidden = false }: { hidden?: boolean }) {
   );
 }
 
-export function AgentHeaderTitle({
+export function AgentIsland({
   name,
   status,
   activityState,
