@@ -61,8 +61,38 @@ jobs:
     secrets:
       CLAUDE_CREDENTIALS: ${{ secrets.CLAUDE_CREDENTIALS }}
 
+  # Pre-warm the arm64 agent image cache in parallel with the gates so the
+  # post-gate arm64 push is nearly cache-only. amd64 is already warmed by
+  # validate-and-build's inner jobs (agent-image-amd64 scope); this warms the
+  # matching agent-image-arm64 scope from the same tag checkout. It never pushes.
+  # continue-on-error: a cache-warming failure must never fail the release; the
+  # arm64 push just cold-builds if this misses.
+  warm-agent-image-arm64:
+    name: Agent image · Warm arm64 build cache
+    needs: verify-release
+    continue-on-error: true
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build arm64 agent image and export cache
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: vestad/Dockerfile
+          platforms: linux/arm64
+          cache-from: type=gha,scope=agent-image-arm64
+          cache-to: type=gha,mode=max,scope=agent-image-arm64
+
   test-linux:
     name: Release binaries · Run Linux smoke test
+    # Needs the whole reusable CI call, not a standalone builder: the smoke test
+    # must validate the exact release-built vestad binary that publish-release
+    # ships, and only validate-and-build (release_artifacts: true) produces it.
     needs: [validate-and-build]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -79,11 +109,28 @@ jobs:
           chmod +x vestad
           ./vestad --version
 
+  # Build each arch NATIVELY (no QEMU) and push by digest. Nothing publishes
+  # before the gates, so this needs both [test-linux, test-live]. cache-from only:
+  # a green run must never publish an image assembled from a poisoned cross-run
+  # cache, so these never cache-to. The pre-gate warm jobs (validate-and-build's
+  # amd64 inner builds, warm-agent-image-arm64) populate the read-only caches.
   push-image:
-    name: Agent image · Publish to GHCR
+    name: Agent image · Build and push (${{ matrix.label }})
     needs: [test-linux, test-live]
     if: ${{ !failure() && !cancelled() }}
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: linux/amd64
+            platform: linux/amd64
+            os: ubuntu-latest
+            scope: agent-image-amd64
+          - label: linux/arm64
+            platform: linux/arm64
+            os: ubuntu-24.04-arm
+            scope: agent-image-arm64
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -101,20 +148,76 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and publish versioned agent image
+      - name: Build and push agent image by digest
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: .
           file: vestad/Dockerfile
-          push: true
-          platforms: linux/amd64,linux/arm64
-          tags: ghcr.io/${{ github.repository }}:${{ github.event.release.tag_name }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          platforms: ${{ matrix.platform }}
+          cache-from: type=gha,scope=${{ matrix.scope }}
+          outputs: type=image,name=ghcr.io/${{ github.repository }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: agent-image-digest-${{ matrix.scope }}
+          path: /tmp/digests/*
+          retention-days: 1
+          if-no-files-found: error
+
+  # Assemble the per-arch digests into the single multi-arch versioned tag.
+  push-image-manifest:
+    name: Agent image · Publish multi-arch tag
+    needs: push-image
+    if: ${{ !failure() && !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download digests
+        uses: actions/download-artifact@v8
+        with:
+          path: /tmp/digests
+          pattern: agent-image-digest-*
+          merge-multiple: true
+
+      - name: Create and push multi-arch manifest
+        working-directory: /tmp/digests
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          tags=()
+          for digest in *; do
+            tags+=("ghcr.io/${GITHUB_REPOSITORY}@sha256:${digest}")
+          done
+          docker buildx imagetools create -t "ghcr.io/${GITHUB_REPOSITORY}:${TAG}" "${tags[@]}"
+
+      - name: Inspect published tag
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: docker buildx imagetools inspect "ghcr.io/${GITHUB_REPOSITORY}:${TAG}"
 
   publish-release:
     name: Release · Upload artifacts
-    needs: [validate-and-build, test-live, test-linux, push-image]
+    needs: [validate-and-build, test-live, test-linux, push-image-manifest]
     if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -167,9 +270,16 @@ jobs:
             gh release upload "${{ github.event.release.tag_name }}" "$asset" --clobber
           done
 
+  # Gated on the release gates (test-live + test-linux, the same pair push-image
+  # waits on), not on publish-release: this job reads only the release event's body
+  # and builds mobile from the tag checkout, so it needs no uploaded GitHub assets.
+  # Decoupling lets TestFlight delivery run in parallel with the GHCR push and asset
+  # upload. Accepted tradeoff: if publish-release later fails and revert-failed-release
+  # fires, a TestFlight build of a since-reverted release may already be delivered to
+  # the internal (beta) group. The user accepted this beta-channel risk.
   mobile-testflight:
     name: Mobile · Build and upload to TestFlight
-    needs: publish-release
+    needs: [test-live, test-linux]
     if: >-
       ${{ !failure() && !cancelled() &&
       contains(github.event.release.body, '<!-- mobile-delivery: testflight -->') }}
@@ -216,6 +326,7 @@ jobs:
         test-live,
         test-linux,
         push-image,
+        push-image-manifest,
         publish-release,
         mobile-testflight,
       ]

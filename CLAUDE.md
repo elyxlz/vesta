@@ -131,7 +131,11 @@ CI runs these exact subcommands, so passing locally means passing CI:
 ./check.sh guards         # repo-wide ruff + format, convention guards (lint escapes, comment length, import cycles), shellcheck, skills index, uv.lock, dashboard-sync freshness
 ./check.sh vestad         # cargo clippy -p vestad -D warnings + cargo test -p vestad
 ./check.sh vestad-docker  # vestad #[ignore] Docker tests (needs Docker + agent image)
-./check.sh web            # the JS/TS suite: @vesta/core (lint + format + tsc + vitest) then web, desktop, mobile
+./check.sh web            # the whole JS/TS suite locally: chains app-core, app-web, app-desktop, app-mobile
+./check.sh app-core       # @vesta/core lint + format + tsc + vitest (CI runs this as its own job)
+./check.sh app-web        # design-token sync check + @vesta/web lint + format + tsc + vitest
+./check.sh app-desktop    # @vesta/desktop lint + tsc + vitest
+./check.sh app-mobile     # Expo dep validation + @vesta/mobile lint + tsc + vitest + clean-prebuild verify
 ./check.sh integration    # vestad integration tests (needs Docker)
 ./check.sh live           # live agent e2e (Docker + CLAUDE_CREDENTIALS; real Claude)
 ./check.sh all            # guards + agent + vestad + web
@@ -265,7 +269,7 @@ If the skill ships a CLI, put it in a `cli/` subdirectory as its **own standalon
 
 ## CI
 
-`ci.yml` runs shared validation on pushes to `master` and PRs; jobs are path-filtered on PRs. `release-pipeline.yml` is triggered only by a published prerelease, calls the same reusable CI workflow, then runs the live gate and publishing jobs. Keeping delivery separate means PRs do not show irrelevant skipped release checks. The check/test jobs call `./check.sh` subcommands, so CI and local checks are identical by construction. Checks include version sync across sources, workflow syntax, dependency review when GitHub's dependency graph is enabled, ruff, ty, cargo clippy, pytest (including cc_sdk transport tests under tmux), `uv.lock` freshness, and native iOS/Android mobile compiles when native inputs change. Mobile PRs also validate every EAS workflow against Expo's public schema without authenticating or queuing a cloud build. Electron PR packages are explicitly unsigned and never receive Apple signing credentials; signing and notarization remain release-only. The single required branch-protection check is `merge-gate-ci`.
+`ci.yml` runs shared validation on pushes to `master` and PRs; jobs are path-filtered on PRs. `release-pipeline.yml` is triggered only by a published prerelease, calls the same reusable CI workflow, then runs the live gate and publishing jobs. Keeping delivery separate means PRs do not show irrelevant skipped release checks. The check/test jobs call `./check.sh` subcommands, so CI and local checks are identical by construction. The frontend runs as four per-app jobs (`app-core`, `app-web`, `app-desktop`, `app-mobile`), each path-filtered on its dependency closure (web needs core, desktop needs core + web, mobile needs core); `./check.sh web` chains all four for a local run-everything. Checks include version sync across sources, workflow syntax, dependency review when GitHub's dependency graph is enabled, ruff, ty, cargo clippy, pytest (including cc_sdk transport tests under tmux), `uv.lock` freshness, and native iOS/Android mobile compiles when native inputs change. Mobile PRs also validate every EAS workflow against Expo's public schema without authenticating or queuing a cloud build. Electron PR packages are explicitly unsigned and never receive Apple signing credentials; signing and notarization remain release-only. The single required branch-protection check is `merge-gate-ci`.
 
 Docker-based jobs (integration tests, vestad Docker unit tests, live tests) build the agent image **from the checkout** (GHA layer cache) and run with `VESTAD_AGENT_IMAGE=vesta:local`, so PRs are validated against their own agent code and Dockerfile, never the previously released image.
 
