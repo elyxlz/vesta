@@ -6,7 +6,6 @@ import type {
   FileTreeEntry,
   GatewayInfo,
   GatewaySettings,
-  GatewayVersionInfo,
   HostMount,
   Manifest,
   NotificationInterruptRule,
@@ -446,16 +445,6 @@ export async function fetchGatewaySettings(
   api: ApiClient,
 ): Promise<GatewaySettings> {
   return api.json("/gateway/settings");
-}
-
-export async function checkForGatewayUpdate(
-  api: ApiClient,
-): Promise<GatewayVersionInfo> {
-  return api.json("/version/check", { method: "POST" });
-}
-
-export async function updateGateway(api: ApiClient): Promise<void> {
-  await api.request("/gateway/update", { method: "POST" });
 }
 
 export async function registerMobileDevice(

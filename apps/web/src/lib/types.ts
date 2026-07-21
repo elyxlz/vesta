@@ -1,4 +1,4 @@
-import type { ReleaseChannel, VestaEvent } from "@vesta/core";
+import type { VestaEvent } from "@vesta/core";
 
 // The roster row: core is the one owner (`AgentInfo & { name }`); re-exported so web consumers keep
 // their `@/lib/types` import path.
@@ -20,13 +20,3 @@ export type LogEvent =
   | { kind: "Line"; text: string }
   | { kind: "End" }
   | { kind: "Error"; message: string };
-
-export interface GatewayVersionInfo {
-  version: string;
-  api_compat: string;
-  dev_mode: boolean;
-  latest_version: string | null;
-  update_available: boolean | null;
-  channel?: ReleaseChannel;
-  auto_update?: boolean;
-}

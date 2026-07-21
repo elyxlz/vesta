@@ -1,9 +1,12 @@
 import { useCallback, useContext, useEffect, type ReactNode } from "react";
 import type { Controller, Tree } from "@vesta/core";
-import { rosterFromTree, rostersEqual } from "@vesta/core";
+import {
+  checkForGatewayUpdate,
+  rosterFromTree,
+  rostersEqual,
+  triggerGatewayUpdate as requestGatewayUpdate,
+} from "@vesta/core";
 import { useReplica, useSyncState } from "@vesta/core/react";
-import { apiFetch } from "@/api/client";
-import { requestGatewayUpdate } from "@/api/gateway";
 import { useAuth } from "@/providers/AuthProvider";
 import {
   ControllerContext,
@@ -18,10 +21,6 @@ import {
 } from "./context";
 
 export { useGateway } from "./context";
-
-// A manual check fetches from GitHub server-side, so allow longer than the
-// cached /version read (vestad's own fetch timeout is 10s).
-const VERSION_CHECK_TIMEOUT_MS = 15000;
 
 // Before the version gate passes, ControllerProvider renders children with no controller;
 // hold the loading screen (versionChecked false) rather than flashing the connect screen.
@@ -55,23 +54,20 @@ function ReplicaGateway({
   }, [agents]);
 
   const triggerGatewayUpdate = useCallback(async (): Promise<boolean> => {
-    const ok = await requestGatewayUpdate();
+    const ok = await requestGatewayUpdate(controller.http);
     // Force a fresh controller/socket so the app re-attaches to the restarting gateway.
     if (ok) reconnect();
     return ok;
-  }, [reconnect]);
+  }, [controller, reconnect]);
 
   const checkForUpdate = useCallback(async (): Promise<void> => {
     try {
-      await apiFetch("/version/check", {
-        method: "POST",
-        signal: AbortSignal.timeout(VERSION_CHECK_TIMEOUT_MS),
-      });
+      await checkForGatewayUpdate(controller.http);
     } catch (err) {
       console.warn("[gateway] update check request failed:", err);
     }
     // The refreshed update info flows back as a gateway `state` delta into the replica.
-  }, []);
+  }, [controller]);
 
   const value: GatewayContextValue = {
     reachable: syncState === "open",

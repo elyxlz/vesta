@@ -3,7 +3,7 @@ import { StyleSheet, View } from "react-native";
 import { EmptyState } from "@/components/ui/States";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
-import { updateGateway } from "@/api/endpoints";
+import { triggerGatewayUpdate } from "@vesta/core";
 
 // Shown when the sync socket reports "gateway_behind": this app runs a newer release than the
 // gateway. Drifting behind the gateway is fine (the served version window handles it); running
@@ -18,8 +18,8 @@ export function GatewayBehindScreen() {
   const handleUpdate = () => {
     if (updating) return;
     setUpdating(true);
-    void updateGateway(api).catch(() => {
-      setUpdating(false);
+    void triggerGatewayUpdate(api).then((ok) => {
+      if (!ok) setUpdating(false);
     });
   };
 

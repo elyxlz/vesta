@@ -7,7 +7,10 @@ import { ensureFreshToken } from "@/lib/token-refresh";
 // so the ~10 api/* modules and create-flow keep importing it from here.
 export { ApiError };
 
-const client = createHttpClient({
+// The single web-side gateway HTTP client. `apiFetch`/`apiJson` wrap it for the ~10 api/* modules;
+// it is exported directly for the @vesta/core wire calls that take an `HttpClient` (e.g. the gateway
+// update calls used from the gateway-behind screen, which has no controller in scope).
+export const httpClient = createHttpClient({
   baseUrl: () => {
     const conn = getConnection();
     if (!conn) throw new Error("not connected to vestad");
@@ -20,11 +23,11 @@ const client = createHttpClient({
 });
 
 export function apiFetch(path: string, init?: RequestInit): Promise<Response> {
-  return client.request(path, init);
+  return httpClient.request(path, init);
 }
 
 export function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
-  return client.json<T>(path, init);
+  return httpClient.json<T>(path, init);
 }
 
 // The one place that owns the JSON request shape (method + Content-Type + serialized body),

@@ -6,7 +6,8 @@ import { Navbar } from "@/components/Navbar";
 import { StatusPill } from "@/components/StatusPill";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
-import { requestGatewayUpdate } from "@/api/gateway";
+import { triggerGatewayUpdate } from "@vesta/core";
+import { httpClient } from "@/api/client";
 import { useAuth } from "@/providers/AuthProvider";
 import {
   Empty,
@@ -31,7 +32,7 @@ export function GatewayBehindScreen() {
   const handleUpdate = async () => {
     setUpdating(true);
     setError(null);
-    if (!(await requestGatewayUpdate())) {
+    if (!(await triggerGatewayUpdate(httpClient))) {
       setError("gateway update request failed");
       setUpdating(false);
     }

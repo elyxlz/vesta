@@ -52,8 +52,13 @@ MIN_SUPPORTED=$(sed -n 's/.*MIN_SUPPORTED_CLIENT_VERSION: &str = "\([^"]*\)".*/\
 CURRENT_VERSION=$(sed -n 's/^version = "\([^"]*\)".*/\1/p' vestad/Cargo.toml | head -1)
 IFS='.' read -r VMAJ VMIN VPATCH <<<"$CURRENT_VERSION"
 SMALLEST_NEXT="${VMAJ}.${VMIN}.$((VPATCH + 1))"
+case "$BUMP" in
+  major) NEXT_VERSION="$((VMAJ + 1)).0.0" ;;
+  minor) NEXT_VERSION="${VMAJ}.$((VMIN + 1)).0" ;;
+  *) NEXT_VERSION="$SMALLEST_NEXT" ;;
+esac
 if [ "$(printf '%s\n%s\n' "$MIN_SUPPORTED" "$SMALLEST_NEXT" | sort -V | tail -n1)" != "$SMALLEST_NEXT" ]; then
-  echo "MIN_SUPPORTED_CLIENT_VERSION (${MIN_SUPPORTED}) is above the next release (${SMALLEST_NEXT});" >&2
+  echo "MIN_SUPPORTED_CLIENT_VERSION (${MIN_SUPPORTED}) would lock out the client shipped with the next ${BUMP} release (${NEXT_VERSION});" >&2
   echo "releasing would lock out every client. Fix it in vestad/src/sync/mod.rs." >&2
   exit 1
 fi

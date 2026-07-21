@@ -66,7 +66,7 @@ pub(crate) struct Tree {
     pub agents: BTreeMap<String, AgentNode>,
 }
 
-/// The `state` delta's scope; always `gateway` in protocol 1 (a whole-branch replace).
+/// The `state` delta's scope: the gateway branch is the only one, replaced whole.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum GatewayScope {

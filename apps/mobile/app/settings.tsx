@@ -1,12 +1,8 @@
 import { ActivityIndicator, Alert, Linking, StyleSheet } from "react-native";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
-import {
-  checkForGatewayUpdate,
-  fetchGatewayInfo,
-  fetchGatewaySettings,
-  updateGateway,
-} from "@/api/endpoints";
+import { checkForGatewayUpdate, triggerGatewayUpdate } from "@vesta/core";
+import { fetchGatewayInfo, fetchGatewaySettings } from "@/api/endpoints";
 import { Screen } from "@/components/layout/Screen";
 import { FormRow, FormSection, SwitchRow } from "@/components/ui/Form";
 import { unregisterCurrentMobileDevice } from "@/notifications/PushCoordinator";
@@ -30,16 +26,15 @@ export default function SettingsScreen() {
     },
     enabled: session.status === "connected",
   });
+  // The check just asks vestad to refresh; the fresh updateAvailable/latestVersion land in the
+  // replica (roster) as a /sync gateway delta, so the UI reads them from there, never the POST body.
   const updateCheck = useMutation({
     mutationFn: () => checkForGatewayUpdate(session.api),
   });
   const gatewayUpdate = useMutation({
-    mutationFn: () => updateGateway(session.api),
+    mutationFn: () => triggerGatewayUpdate(session.api),
   });
-  const freshCheck = updateCheck.data;
-  const updateAvailable = freshCheck
-    ? freshCheck.update_available === true
-    : roster.updateAvailable;
+  const updateAvailable = roster.updateAvailable;
 
   const confirmGatewayUpdate = () => {
     Alert.alert("Update gateway?", "Agents will briefly restart.", [
@@ -150,7 +145,7 @@ export default function SettingsScreen() {
           <FormRow
             label="Update available"
             icon="arrow-up-circle-outline"
-            value={freshCheck?.latest_version ?? roster.latestVersion ?? "available"}
+            value={roster.latestVersion ?? "available"}
             onPress={confirmGatewayUpdate}
           />
         ) : updateCheck.isError ? (

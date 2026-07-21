@@ -84,7 +84,11 @@ export function selectLinuxAsset(
 }
 
 /** True when `candidate` is a strictly newer dotted version than `current`. Prerelease
- * suffixes are ignored; the latest-release feed only serves stable versions. */
+ * suffixes are ignored; the latest-release feed only serves stable versions.
+ * Deliberately duplicated from @vesta/core's compareReleaseVersions across the process boundary
+ * (like the preload dual-declaration): the Electron main process ships only electron-updater and is
+ * compiled with plain tsc into app.asar, so a @vesta/core workspace dependency would not resolve at
+ * runtime, and core's fail-open-to-null semantics differ from this feed's lenient parse. */
 export function isNewerVersion(candidate: string, current: string): boolean {
   const parts = (version: string): number[] =>
     version.split(".").map((token) => Number.parseInt(token, 10) || 0);

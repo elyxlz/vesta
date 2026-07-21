@@ -1,21 +1,8 @@
 import { getConnection } from "@/lib/connection";
 import type { ReleaseChannel, SseHandle } from "@vesta/core";
 import type { LogEvent } from "@/lib/types";
-import { apiFetch, apiJson } from "./client";
+import { apiJson } from "./client";
 import { openLogStream } from "./log-stream";
-
-// The one owner of the gateway self-update request. Returns whether vestad accepted it; the
-// caller decides how to re-attach (the UpdatePill forces a reconnect, the gateway-behind
-// screen lets the live socket self-heal once the gateway restarts newer).
-export async function requestGatewayUpdate(): Promise<boolean> {
-  try {
-    await apiFetch("/gateway/update", { method: "POST" });
-    return true;
-  } catch (err) {
-    console.warn("[gateway] update request failed:", err);
-    return false;
-  }
-}
 
 let gatewayLogSource: SseHandle | null = null;
 

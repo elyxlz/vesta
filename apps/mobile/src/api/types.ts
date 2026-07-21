@@ -1,16 +1,5 @@
 import type { ReleaseChannel } from "@vesta/core";
 
-export interface GatewayVersionInfo {
-  version: string;
-  api_compat: string;
-  dev_mode: boolean;
-  latest_version: string | null;
-  update_available: boolean | null;
-  branch?: string | null;
-  channel?: ReleaseChannel;
-  auto_update?: boolean;
-}
-
 export interface ConnectionConfig {
   url: string;
   accessToken: string;
