@@ -2916,7 +2916,7 @@ pub async fn run_server(cfg: ServerConfig) {
                     .is_none_or(|s| s.user_desired == UserDesired::Running)
             },
             // Mount grants are also read LIVE so a grant added/removed during the reconcile window
-            // (or via a later `vesta restart`) is reflected without needing a fresh vestad boot.
+            // (or via a later agent restart) is reflected without needing a fresh vestad boot.
             &|name| load_settings().agent_mounts(name),
             &reconcile_rebuilding,
         ))
@@ -3491,7 +3491,7 @@ mod tests {
         .map(|status| serde_json::to_value(status).expect("serialize AgentStatus"))
         .collect();
 
-        // The plain GET /agents response (Vec<ListEntry>, the CLI's `vesta list`).
+        // The plain GET /agents response (Vec<ListEntry>).
         let agents = vec![
             ListEntry {
                 name: "sample-agent".into(),
@@ -3542,7 +3542,7 @@ mod tests {
         })
         .expect("serialize OAuthStartResponse");
 
-        // The POST /agents/start-all response body (the CLI's `vesta start --all`).
+        // The POST /agents/start-all response body.
         let start_all = serde_json::json!({
             "results": [
                 StartAllResult { name: "sample-agent".into(), ok: true, error: None },
@@ -3619,15 +3619,8 @@ mod tests {
             .join("../apps/web/src/lib/vestad-api-fixtures.ts");
         sync_fixture_file(&ts_path, &ts_content, regen);
 
-        // Same fixtures, plain JSON: cli/src/client.rs deserializes it into the CLI's own
-        // response types so a wire rename breaks CI there too, not just for the web app.
-        let cli_content = format!("{json}\n");
-        let cli_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../cli/tests/fixtures/vestad-api.json");
-        sync_fixture_file(&cli_path, &cli_content, regen);
-
         // Sync-protocol fixtures (Stage 4): the /sync frames the @vesta/core contract test parses.
-        // Additive beside the web/cli fixtures above, which retire when those clients migrate.
+        // Additive beside the web fixtures above, which retire when those clients migrate.
         let sync_json = serde_json::to_string_pretty(&crate::sync::protocol::protocol_fixtures())
             .expect("serialize sync fixtures");
         let sync_content = format!("{sync_json}\n");

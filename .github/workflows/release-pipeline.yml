@@ -42,8 +42,8 @@ jobs:
           echo "Release tag matches source version ${VERSION}"
 
   # Reuse the same validation and platform builds as PR/master CI. Release
-  # mode additionally uploads the vestad, Windows CLI, and desktop artifacts
-  # for the publishing jobs below.
+  # mode additionally uploads the vestad and desktop artifacts for the
+  # publishing jobs below.
   validate-and-build:
     name: Release · Validate and build shared artifacts
     needs: verify-release
@@ -51,72 +51,6 @@ jobs:
     with:
       release_artifacts: true
     secrets: inherit
-
-  build-vesta:
-    name: CLI · Build release (${{ matrix.label }})
-    needs: verify-release
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - label: Linux x64
-            target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-            artifact: vesta-x86_64-unknown-linux-gnu
-          - label: Linux ARM64
-            target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            artifact: vesta-aarch64-unknown-linux-gnu
-            cross: true
-          - label: macOS ARM64
-            target: aarch64-apple-darwin
-            os: macos-latest
-            artifact: vesta-aarch64-apple-darwin
-          - label: macOS x64
-            target: x86_64-apple-darwin
-            os: macos-latest
-            artifact: vesta-x86_64-apple-darwin
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install Rust
-        uses: ./.github/actions/install-rust
-        with:
-          targets: ${{ matrix.target }}
-
-      - uses: Swatinem/rust-cache@v2
-        continue-on-error: true
-        with:
-          workspaces: |
-            cli
-            vestad
-          key: ${{ matrix.target }}
-
-      - name: Install Linux cross-compile dependencies
-        if: matrix.cross
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          mkdir -p cli/.cargo
-          echo '[target.aarch64-unknown-linux-gnu]' >> cli/.cargo/config.toml
-          echo 'linker = "aarch64-linux-gnu-gcc"' >> cli/.cargo/config.toml
-
-      - name: Build CLI
-        working-directory: cli
-        run: cargo build --release --target ${{ matrix.target }}
-
-      - name: Package CLI
-        run: |
-          mkdir staging
-          cp cli/target/${{ matrix.target }}/release/vesta staging/
-          tar -czf ${{ matrix.artifact }}.tar.gz -C staging .
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}.tar.gz
 
   test-live:
     name: Agent · Run live release gate
@@ -129,22 +63,21 @@ jobs:
 
   test-linux:
     name: Release binaries · Run Linux smoke test
-    needs: [validate-and-build, build-vesta]
+    needs: [validate-and-build]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Download Linux release artifacts
         uses: actions/download-artifact@v8
         with:
-          pattern: "{vestad-x86_64-unknown-linux-gnu,vesta-x86_64-unknown-linux-gnu}"
+          pattern: vestad-x86_64-unknown-linux-gnu
           merge-multiple: true
 
       - name: Smoke test release binaries
         run: |
           for archive in *.tar.gz; do tar -xzf "$archive"; done
-          chmod +x vestad vesta
+          chmod +x vestad
           ./vestad --version
-          ./vesta --version
 
   push-image:
     name: Agent image · Publish to GHCR
@@ -181,7 +114,7 @@ jobs:
 
   publish-release:
     name: Release · Upload artifacts
-    needs: [validate-and-build, build-vesta, test-live, test-linux, push-image]
+    needs: [validate-and-build, test-live, test-linux, push-image]
     if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -280,7 +213,6 @@ jobs:
       [
         verify-release,
         validate-and-build,
-        build-vesta,
         test-live,
         test-linux,
         push-image,

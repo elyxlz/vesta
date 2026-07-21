@@ -170,7 +170,7 @@ def test_set_claude_replaces_openrouter_provider(prov):
 
 
 def test_reauth_preserves_model_and_context(prov):
-    # `vesta auth` re-auth sends no model/context; they must be preserved, not reset to defaults.
+    # A re-auth sends no model/context; they must be preserved, not reset to defaults.
     update_config_store({"provider": {"kind": "claude", "model": "sonnet", "max_context_tokens": 500_000}})
     set_claude(_CREDS, None, None, config=prov)
     assert read_config_store()["provider"] == {"kind": "claude", "model": "sonnet", "max_context_tokens": 500_000}

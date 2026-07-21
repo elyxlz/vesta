@@ -9,14 +9,6 @@ updates:
         patterns: ["*"]
 
   - package-ecosystem: cargo
-    directory: /cli
-    schedule:
-      interval: weekly
-    groups:
-      rust-deps:
-        patterns: ["*"]
-
-  - package-ecosystem: cargo
     directory: /vestad
     schedule:
       interval: weekly
