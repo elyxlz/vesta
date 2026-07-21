@@ -5,7 +5,7 @@ import {
   replayTailLines,
   LOG_SCROLLBACK_LINES,
 } from "./log-stream-policy";
-import type { AgentStatus } from "./types";
+import type { AgentStatus } from "@vesta/core";
 
 describe("logStreamAction", () => {
   it("appends a line with its text", () => {

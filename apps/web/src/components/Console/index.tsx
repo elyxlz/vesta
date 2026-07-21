@@ -7,14 +7,14 @@ import {
 } from "react";
 import { useLayout } from "@/stores/use-layout";
 import { streamLogs, stopLogs } from "@/api";
-import { renderAnsiHtml } from "@/lib/ansi";
+import { renderAnsiHtml } from "@/lib/ansi-html";
 import { linkify } from "@/lib/linkify";
 import {
   logStreamAction,
   isAgentContainerUp,
   LOG_SCROLLBACK_LINES,
 } from "@/lib/log-stream-policy";
-import type { AgentStatus } from "@/lib/types";
+import type { AgentStatus } from "@vesta/core";
 import { cn } from "@/lib/utils";
 
 const RECONNECT_BASE = 1000;

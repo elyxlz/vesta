@@ -39,8 +39,6 @@ export interface NativeBridge {
   oauthLoopback: OauthLoopback | null;
   /** Custom title-bar controls; null when the OS draws them (browser, macOS). */
   windowControls: WindowControls | null;
-  /** Converge the app onto the gateway's exact version. */
-  installAppUpdate(version: string): Promise<void>;
 }
 
 /**
@@ -58,7 +56,6 @@ export interface VestaNativeApi {
   oauthStart(): Promise<number>;
   onOauthCallback(cb: (url: string) => void): () => void;
   oauthCancel(port: number): Promise<void>;
-  installUpdate(version: string): Promise<void>;
   onWindowFocus(cb: (focused: boolean) => void): () => void;
   windowMinimize(): Promise<void>;
   windowToggleMaximize(): Promise<void>;

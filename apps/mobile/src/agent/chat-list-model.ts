@@ -1,9 +1,9 @@
-import type { VestaEvent } from "../api/types";
+import type { ChatMessage } from "@vesta/core";
 
 export interface EventChatRow {
   kind: "event";
   key: string;
-  event: VestaEvent;
+  event: ChatMessage;
   startsNewBubbleGroup: boolean;
   endsBubbleGroup: boolean;
 }
@@ -24,9 +24,9 @@ export type ChatRow = EventChatRow | TypingChatRow | DateChatRow;
 type ChatSide = "user" | "agent";
 const BUBBLE_GROUP_TIME_GAP_MS = 5 * 60 * 1000;
 
-function eventChatSide(event: VestaEvent): ChatSide | null {
+function eventChatSide(event: ChatMessage): ChatSide | null {
   if (event.type === "user") return "user";
-  if (event.type === "chat" || event.type === "tool_start") return "agent";
+  if (event.type === "chat") return "agent";
   return null;
 }
 
@@ -47,19 +47,13 @@ function timestampMillis(timestamp: string | undefined): number | null {
   return Number.isNaN(value) ? null : value;
 }
 
-function eventRows(
-  events: VestaEvent[],
-  showToolCalls: boolean,
-): EventChatRow[] {
+function eventRows(events: ChatMessage[]): EventChatRow[] {
   const visible = events.filter(
     (event) =>
       event.type === "user" ||
       event.type === "chat" ||
       event.type === "error" ||
-      event.type === "rate_limited" ||
-      (showToolCalls &&
-        event.type === "tool_start" &&
-        !(event.tool === "Bash" && event.input.includes("app-chat"))),
+      event.type === "rate_limited",
   );
   const seen = new Map<string, number>();
   let previousSide: ChatSide | null = null;
@@ -139,11 +133,10 @@ function addDateRows(rows: EventChatRow[]): ChatRow[] {
 }
 
 export function createInvertedChatRows(
-  events: VestaEvent[],
-  showToolCalls: boolean,
+  events: ChatMessage[],
   isTyping: boolean,
 ): ChatRow[] {
-  const rows = addDateRows(eventRows(events, showToolCalls));
+  const rows = addDateRows(eventRows(events));
   if (isTyping) {
     let latestSide: ChatSide | null = null;
     for (let index = rows.length - 1; index >= 0; index -= 1) {

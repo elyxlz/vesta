@@ -13,7 +13,6 @@ import { useColorScheme } from "react-native";
 import { darkColors, lightColors, type AppColors } from "@/theme/colors";
 import {
   getNaturalChatPacingForAgent,
-  getShowToolCallsForAgent,
   initialPreferences,
   readStoredPreferences,
   type PreferencesState,
@@ -28,11 +27,6 @@ interface PreferencesValue extends PreferencesState {
   dark: boolean;
   colors: AppColors;
   update: (patch: Partial<PreferencesState>) => Promise<void>;
-  showToolCallsForAgent: (agentName: string) => boolean;
-  setShowToolCallsForAgent: (
-    agentName: string,
-    showToolCalls: boolean,
-  ) => Promise<void>;
   naturalChatPacingForAgent: (agentName: string) => boolean;
   setNaturalChatPacingForAgent: (
     agentName: string,
@@ -89,23 +83,6 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  const showToolCallsForAgent = useCallback(
-    (agentName: string) =>
-      getShowToolCallsForAgent(preferencesRef.current, agentName),
-    [],
-  );
-
-  const setShowToolCallsForAgent = useCallback(
-    (agentName: string, showToolCalls: boolean) =>
-      update({
-        showToolCallsByAgent: {
-          ...preferencesRef.current.showToolCallsByAgent,
-          [agentName]: showToolCalls,
-        },
-      }),
-    [update],
-  );
-
   const naturalChatPacingForAgent = useCallback(
     (agentName: string) =>
       getNaturalChatPacingForAgent(preferencesRef.current, agentName),
@@ -134,8 +111,6 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       dark,
       colors: dark ? darkColors : lightColors,
       update,
-      showToolCallsForAgent,
-      setShowToolCallsForAgent,
       naturalChatPacingForAgent,
       setNaturalChatPacingForAgent,
     }),
@@ -144,8 +119,6 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       hydrated,
       dark,
       update,
-      showToolCallsForAgent,
-      setShowToolCallsForAgent,
       naturalChatPacingForAgent,
       setNaturalChatPacingForAgent,
     ],

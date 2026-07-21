@@ -12,4 +12,5 @@ mod file_ops;
 mod interrupt;
 mod lifecycle;
 mod mcp_tools;
+mod sync;
 mod upgrade;

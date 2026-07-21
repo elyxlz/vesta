@@ -12,7 +12,8 @@ import {
 } from "@/api";
 import { useAgentOps, type AgentOperation } from "@/stores/use-agent-ops";
 import { useRestartPending } from "@/stores/use-restart-pending";
-import type { AgentInfo, AgentActivityState } from "@/lib/types";
+import type { AgentActivityState } from "@vesta/core";
+import type { AgentRow } from "@/lib/types";
 import { errorMessage } from "@/lib/utils";
 import { getAgentVisualStatus } from "@/components/Orb/styles";
 import { SelectedAgentContext } from "./context";
@@ -24,7 +25,7 @@ export function SelectedAgentProvider({
   agent,
   children,
 }: {
-  agent: AgentInfo;
+  agent: AgentRow;
   children: ReactNode;
 }) {
   const name = agent.name;

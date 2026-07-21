@@ -7,7 +7,7 @@ import {
   useState,
 } from "react";
 import { AgentCard } from "@/components/AgentCard";
-import type { AgentInfo } from "@/lib/types";
+import type { AgentRow } from "@/lib/types";
 import {
   AGENT_CAROUSEL_GAP,
   AGENT_CAROUSEL_CARD_WIDTH,
@@ -57,7 +57,7 @@ export function AgentsCarousel({
   agents,
   initialIndex = -1,
 }: {
-  agents: AgentInfo[];
+  agents: AgentRow[];
   initialIndex?: number;
 }) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);

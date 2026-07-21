@@ -91,15 +91,6 @@ function AgentSettingsContent() {
             void preferences.setNaturalChatPacingForAgent(name, value)
           }
         />
-        <SwitchRow
-          label="Show tool activity"
-          detail="Include this agent's live tool calls in chat."
-          icon="hammer-outline"
-          value={preferences.showToolCallsForAgent(name)}
-          onValueChange={(value) =>
-            void preferences.setShowToolCallsForAgent(name, value)
-          }
-        />
       </FormSection>
       <AgentPagesSettingsSection />
       <FormSection title="Attention">

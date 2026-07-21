@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { StyleSheet, View, type StyleProp, type ViewStyle } from "react-native";
-import type { AgentActivityState, AgentStatus } from "@/api/types";
+import type { AgentActivityState, AgentStatus } from "@vesta/core";
 import { AgentOrb } from "@/components/AgentOrb";
 import { AgentStatusBadge } from "@/components/AgentStatus";
 import { Text } from "@/components/ui/Typography";

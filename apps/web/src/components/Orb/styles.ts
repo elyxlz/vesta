@@ -1,4 +1,4 @@
-import type { AgentActivityState } from "@/lib/types";
+import type { AgentActivityState } from "@vesta/core";
 import type { AgentOperation } from "@/stores/use-agent-ops";
 export { orbColors } from "@/design-tokens";
 

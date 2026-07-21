@@ -7,7 +7,7 @@ import sqlite3
 
 import pytest
 
-from core.events import ChatEvent, UserEvent
+from core.events import AssistantEvent
 
 SCRIPT = pl.Path(__file__).resolve().parents[1] / "skills" / "dream" / "scripts" / "redact_secrets.py"
 
@@ -27,7 +27,7 @@ def db_conn(tmp_path, event_bus):
 
 
 def test_scan_masks_the_secret_but_keeps_context(event_bus, db_conn):
-    event_bus.emit(ChatEvent(type="chat", text=f"the aws key is {SECRET} for backups"))
+    event_bus.emit(AssistantEvent(type="assistant", text=f"the aws key is {SECRET} for backups"))
 
     matches = redact.scan(db_conn)
 
@@ -39,7 +39,7 @@ def test_scan_masks_the_secret_but_keeps_context(event_bus, db_conn):
 
 
 def test_scan_reports_every_match_in_an_event(event_bus, db_conn):
-    event_bus.emit(ChatEvent(type="chat", text="first AKIAABCDEFGHIJKLMNOP then xoxb-1234-abcdef in one message"))
+    event_bus.emit(AssistantEvent(type="assistant", text="first AKIAABCDEFGHIJKLMNOP then xoxb-1234-abcdef in one message"))
 
     matches = redact.scan(db_conn)
 
@@ -48,7 +48,7 @@ def test_scan_reports_every_match_in_an_event(event_bus, db_conn):
 
 
 def test_scrub_redacts_the_secret_in_place_and_keeps_context(event_bus, db_conn):
-    event_bus.emit(ChatEvent(type="chat", text=f"leaked {SECRET} during backup"))
+    event_bus.emit(AssistantEvent(type="assistant", text=f"leaked {SECRET} during backup"))
     ids = sorted({row_id for row_id, _ in redact.scan(db_conn)})
 
     assert redact.scrub(db_conn, ids) == 1
@@ -59,7 +59,7 @@ def test_scrub_redacts_the_secret_in_place_and_keeps_context(event_bus, db_conn)
 
 
 def test_scrub_keeps_fts_in_sync(event_bus, db_conn):
-    event_bus.emit(ChatEvent(type="chat", text=f"leaked {SECRET} during backup"))
+    event_bus.emit(AssistantEvent(type="assistant", text=f"leaked {SECRET} during backup"))
 
     redact.scrub(db_conn, [row_id for row_id, _ in redact.scan(db_conn)])
 
@@ -78,7 +78,7 @@ def test_scrub_keeps_blob_valid_json_when_secret_abuts_escaped_quote(event_bus, 
     # secret abuts an escape boundary. A raw text .sub over the stored blob splices [REDACTED]
     # across that \" and produces invalid JSON, which breaks the FTS json_extract and rolls the
     # whole scrub back. The JSON-aware scrub redacts the decoded value and re-serializes cleanly.
-    event_bus.emit(ChatEvent(type="chat", text='mongo "mongodb://user:secretpass@cluster0.example.net/db"'))
+    event_bus.emit(AssistantEvent(type="assistant", text='mongo "mongodb://user:secretpass@cluster0.example.net/db"'))
     raw = db_conn.execute("SELECT data FROM events").fetchone()[0]
     with pytest.raises(json.JSONDecodeError):
         json.loads(redact.REGEX.sub(redact.mask, raw))
@@ -95,8 +95,8 @@ def test_scrub_keeps_blob_valid_json_when_secret_abuts_escaped_quote(event_bus, 
 
 
 def test_scrub_only_touches_the_given_events(event_bus, db_conn):
-    event_bus.emit(ChatEvent(type="chat", text=f"real leak {SECRET}"))
-    event_bus.emit(ChatEvent(type="chat", text=f"benign discussion of {SECRET} to keep"))
+    event_bus.emit(AssistantEvent(type="assistant", text=f"real leak {SECRET}"))
+    event_bus.emit(AssistantEvent(type="assistant", text=f"benign discussion of {SECRET} to keep"))
     rows = list(db_conn.execute("SELECT id FROM events ORDER BY id"))
     keep_id = rows[1][0]
 
@@ -107,11 +107,11 @@ def test_scrub_only_touches_the_given_events(event_bus, db_conn):
 
 
 def test_scan_and_scrub_converge_when_secret_reseeds(event_bus, db_conn):
-    event_bus.emit(ChatEvent(type="chat", text=f"original leak {SECRET}"))
+    event_bus.emit(AssistantEvent(type="assistant", text=f"original leak {SECRET}"))
     redact.scrub(db_conn, [row_id for row_id, _ in redact.scan(db_conn)])
     assert redact.scan(db_conn) == []
 
-    event_bus.emit(ChatEvent(type="chat", text=f"last night I redacted {SECRET} from history"))
+    event_bus.emit(AssistantEvent(type="assistant", text=f"last night I redacted {SECRET} from history"))
     reseeded = redact.scan(db_conn)
     assert len(reseeded) == 1
     redact.scrub(db_conn, [row_id for row_id, _ in reseeded])
@@ -120,14 +120,14 @@ def test_scan_and_scrub_converge_when_secret_reseeds(event_bus, db_conn):
 
 
 def test_scrub_is_noop_on_events_without_secrets(event_bus, db_conn):
-    event_bus.emit(ChatEvent(type="chat", text="nothing sensitive here"))
+    event_bus.emit(AssistantEvent(type="assistant", text="nothing sensitive here"))
     row_id = db_conn.execute("SELECT id FROM events").fetchone()[0]
 
     assert redact.scrub(db_conn, [row_id]) == 0
 
 
 def test_scan_skips_already_redacted_values(event_bus, db_conn):
-    event_bus.emit(ChatEvent(type="chat", text=f"password={SECRET}"))
+    event_bus.emit(AssistantEvent(type="assistant", text=f"password={SECRET}"))
     ids = [row_id for row_id, _ in redact.scan(db_conn)]
 
     redact.scrub(db_conn, ids)
@@ -145,7 +145,7 @@ def test_scan_skips_already_redacted_values(event_bus, db_conn):
     ],
 )
 def test_scan_ignores_benign_prose_with_bare_space(event_bus, db_conn, text):
-    event_bus.emit(ChatEvent(type="chat", text=text))
+    event_bus.emit(AssistantEvent(type="assistant", text=text))
 
     assert redact.scan(db_conn) == []
 
@@ -164,7 +164,7 @@ def test_scan_ignores_benign_prose_with_bare_space(event_bus, db_conn, text):
     ],
 )
 def test_scan_catches_space_padded_credential_assignments(event_bus, db_conn, text):
-    event_bus.emit(ChatEvent(type="chat", text=text))
+    event_bus.emit(AssistantEvent(type="assistant", text=text))
 
     matches = redact.scan(db_conn)
 
@@ -173,8 +173,8 @@ def test_scan_catches_space_padded_credential_assignments(event_bus, db_conn, te
 
 
 def test_main_scan_then_scrub_end_to_end(tmp_path, event_bus, db_conn, monkeypatch, capsys):
-    event_bus.emit(ChatEvent(type="chat", text=f"my key is {SECRET}"))
-    event_bus.emit(UserEvent(type="user", text="just a normal message"))
+    event_bus.emit(AssistantEvent(type="assistant", text=f"my key is {SECRET}"))
+    event_bus.emit(AssistantEvent(type="assistant", text="just a normal message"))
     monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
 
     monkeypatch.setattr("sys.argv", ["redact_secrets.py"])

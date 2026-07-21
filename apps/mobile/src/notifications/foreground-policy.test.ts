@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   resetForegroundNotificationPolicyForTests,
+  setSyncConnected,
   setVisibleAgentSocket,
   shouldPresentForegroundNotification,
 } from "./foreground-policy";
@@ -8,6 +9,19 @@ import {
 afterEach(resetForegroundNotificationPolicyForTests);
 
 describe("foreground notification presentation", () => {
+  it("suppresses the push for any agent while sync is connected", () => {
+    setSyncConnected(true);
+    expect(shouldPresentForegroundNotification({ agent: "alex" })).toBe(false);
+    expect(shouldPresentForegroundNotification({ agent: "other" })).toBe(false);
+    expect(shouldPresentForegroundNotification(null)).toBe(false);
+  });
+
+  it("presents the push as a fallback once sync goes down", () => {
+    setSyncConnected(true);
+    setSyncConnected(false);
+    expect(shouldPresentForegroundNotification({ agent: "alex" })).toBe(true);
+  });
+
   it("hides a duplicate only for the visible agent with a healthy socket", () => {
     setVisibleAgentSocket("https://first.vesta.run", "alex", true);
     expect(

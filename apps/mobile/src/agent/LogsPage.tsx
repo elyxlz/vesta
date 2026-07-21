@@ -1,14 +1,16 @@
+import { readSse } from "@vesta/core";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FlatList, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { ApiClient } from "@/api/client";
-import { streamLogs, type LogEvent } from "@/api/log-stream";
 import { useAgent } from "@/agent/AgentProvider";
 import { addLatestLogLine, type LogLine } from "@/agent/log-list-model";
+import { subscribeLogs } from "@/agent/log-stream-subscription";
 import { useBottomAnchoredFeed } from "@/agent/use-bottom-anchored-feed";
 import { AnsiText } from "@/components/ui/AnsiText";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
+import { useRoster } from "@/session/RosterProvider";
 import { useSession } from "@/session/SessionProvider";
 
 const LOG_RETRY_DELAY_MS = 1_000;
@@ -18,7 +20,8 @@ interface LogsPageProps {
 }
 
 export default function LogsPage({ presentation = "pager" }: LogsPageProps) {
-  const { api, reachable } = useSession();
+  const { api } = useSession();
+  const { reachable } = useRoster();
   const { name } = useAgent();
 
   return reachable ? (
@@ -46,46 +49,32 @@ function LiveLogs({
   const nextLogId = useRef(0);
   const [logError, setLogError] = useState("");
 
-  useEffect(() => {
-    const abort = new AbortController();
-    let retryTimer: ReturnType<typeof setTimeout> | null = null;
-    let receivedLine = false;
-
-    const openStream = async (): Promise<void> => {
-      let agentStopped = false;
-      const tail = receivedLine ? "?tail=0" : "";
-      await streamLogs(
-        api,
-        `/agents/${encodeURIComponent(name)}/logs${tail}`,
-        "agent_stopped",
-        abort.signal,
-        (event: LogEvent) => {
-          if (event.kind === "Line") {
-            receivedLine = true;
-            setLogError("");
-            const id = nextLogId.current;
-            nextLogId.current += 1;
-            setLogs((current) =>
-              addLatestLogLine(current, { id, text: event.text }),
-            );
-          } else if (event.kind === "Error") {
-            setLogError(event.message);
-          } else {
-            agentStopped = true;
-          }
+  useEffect(
+    () =>
+      subscribeLogs({
+        open: (reconnect, onEvent) =>
+          readSse(
+            {
+              fetch: (url, init) => fetch(url, init),
+              url: api.mediaUrl(
+                `/agents/${encodeURIComponent(name)}/logs`,
+                reconnect ? new URLSearchParams({ tail: "0" }) : undefined,
+              ),
+              stoppedEvent: "agent_stopped",
+            },
+            onEvent,
+          ),
+        onLine: (text) => {
+          setLogError("");
+          const id = nextLogId.current;
+          nextLogId.current += 1;
+          setLogs((current) => addLatestLogLine(current, { id, text }));
         },
-      );
-
-      if (abort.signal.aborted || agentStopped) return;
-      retryTimer = setTimeout(() => void openStream(), LOG_RETRY_DELAY_MS);
-    };
-
-    void openStream();
-    return () => {
-      abort.abort();
-      if (retryTimer) clearTimeout(retryTimer);
-    };
-  }, [api, name]);
+        onError: setLogError,
+        retryDelayMs: LOG_RETRY_DELAY_MS,
+      }),
+    [api, name],
+  );
 
   return (
     <LogList

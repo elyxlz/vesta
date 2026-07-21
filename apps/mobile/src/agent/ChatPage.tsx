@@ -40,7 +40,7 @@ import * as Haptics from "expo-haptics";
 import * as WebBrowser from "expo-web-browser";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Path } from "react-native-svg";
-import type { VestaEvent } from "@/api/types";
+import type { ChatMessage } from "@vesta/core";
 import { fetchVoiceStatus } from "@/api/endpoints";
 import { useAgent } from "@/agent/AgentProvider";
 import {
@@ -225,14 +225,16 @@ const ChatEvent = memo(function ChatEvent({
   onReply,
   onEditAndResend,
   onReadAloud,
+  onRetry,
 }: {
-  event: VestaEvent;
+  event: ChatMessage;
   startsNewBubbleGroup: boolean;
   endsBubbleGroup: boolean;
   canSpeak: boolean;
   onReply: (text: string, user: boolean) => void;
   onEditAndResend: (text: string) => void;
   onReadAloud: (text: string) => void;
+  onRetry: (intentId: string, text: string) => void;
 }) {
   const { colors } = usePreferences();
   const timestamp = event.ts
@@ -464,6 +466,8 @@ const ChatEvent = memo(function ChatEvent({
     [colors],
   );
   const user = event.type === "user";
+  const sendState = event.type === "user" ? event.send_state : undefined;
+  const intentId = event.type === "user" ? event.intent_id : undefined;
   const messageText = "text" in event ? event.text : "";
   const actions = useMemo<MessageMenuAction[]>(
     () =>
@@ -499,32 +503,6 @@ const ChatEvent = memo(function ChatEvent({
   if (event.type === "error" || event.type === "rate_limited") {
     const text = event.type === "rate_limited" ? "Rate limited. Vesta will be back soon." : "This message may not have gone through.";
     return <Text style={[styles.systemMessage, { color: colors.tertiaryText }]}>{text}</Text>;
-  }
-  if (event.type === "tool_start") {
-    return (
-      <View
-        style={[
-          styles.messageRow,
-          startsNewBubbleGroup ? styles.newBubbleGroup : null,
-          styles.agentRow,
-        ]}
-      >
-        <View style={[styles.tool, { backgroundColor: colors.input }]}>
-          <Ionicons
-            name="hammer-outline"
-            size={11}
-            color={colors.secondaryText}
-          />
-          <Text
-            family="mono"
-            numberOfLines={1}
-            style={[styles.toolText, { color: colors.secondaryText }]}
-          >
-            {event.tool}: {event.input}
-          </Text>
-        </View>
-      </View>
-    );
   }
   if (event.type !== "user" && event.type !== "chat") return null;
   const bubbleColor = user ? colors.accent : colors.card;
@@ -584,6 +562,7 @@ const ChatEvent = memo(function ChatEvent({
       ) : null}
     </View>
   );
+  const failed = sendState === "failed" || sendState === "retry";
   return (
     <View
       style={[
@@ -607,6 +586,25 @@ const ChatEvent = memo(function ChatEvent({
       >
         {bubble}
       </MessageContextMenu>
+      {sendState === "sending" ? (
+        <Text style={[styles.sendStatus, { color: colors.tertiaryText }]}>
+          Sending…
+        </Text>
+      ) : null}
+      {failed && intentId ? (
+        <Pressable
+          accessibilityLabel="Retry sending message"
+          accessibilityRole="button"
+          hitSlop={6}
+          onPress={() => onRetry(intentId, messageText)}
+          style={styles.sendRetry}
+        >
+          <Ionicons name="alert-circle" size={13} color={colors.danger} />
+          <Text style={[styles.sendStatus, { color: colors.danger }]}>
+            Not delivered. Tap to retry
+          </Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 });
@@ -967,7 +965,6 @@ export default function ChatPage() {
   const { api } = useSession();
   const preferences = usePreferences();
   const { colors } = preferences;
-  const showToolCalls = preferences.showToolCallsForAgent(name);
   const [input, setInputState] = useState("");
   const inputValueRef = useRef("");
   const setInput = useCallback((value: string) => {
@@ -995,13 +992,8 @@ export default function ChatPage() {
     scrollToLatest,
   } = useInvertedChatScroll<ChatRow>(composerInset);
   const rows = useMemo(
-    () =>
-      createInvertedChatRows(
-        socket.events,
-        showToolCalls,
-        socket.isTyping,
-      ),
-    [showToolCalls, socket.events, socket.isTyping],
+    () => createInvertedChatRows(socket.events, socket.isTyping),
+    [socket.events, socket.isTyping],
   );
 
   const handleComposerLayout = useCallback(
@@ -1104,6 +1096,7 @@ export default function ChatPage() {
           onReply={replyToMessage}
           onEditAndResend={editAndResend}
           onReadAloud={readAloud}
+          onRetry={socket.retry}
         />
       ),
     [
@@ -1111,6 +1104,7 @@ export default function ChatPage() {
       name,
       readAloud,
       replyToMessage,
+      socket.retry,
       speechEnabled,
     ],
   );
@@ -1321,18 +1315,14 @@ const styles = StyleSheet.create({
   markdownBlockquote: { paddingRight: 9 },
   markdownBlockquoteParagraph: { marginTop: 0, marginBottom: 0 },
   systemMessage: { textAlign: "center", fontSize: 12, marginVertical: 10 },
-  tool: {
-    alignSelf: "flex-start",
+  sendStatus: { fontSize: 11, marginTop: 3, marginRight: 4 },
+  sendRetry: {
     flexDirection: "row",
     alignItems: "center",
-    maxWidth: "72%",
-    borderRadius: 8,
-    borderCurve: "continuous",
-    paddingHorizontal: 7,
-    paddingVertical: 4,
-    gap: 4,
+    gap: 3,
+    marginTop: 3,
+    marginRight: 4,
   },
-  toolText: { flexShrink: 1, fontSize: 10, lineHeight: 13 },
   loadingMore: { height: 44, alignItems: "center", justifyContent: "center" },
   empty: { minHeight: 300, justifyContent: "center", alignItems: "center", gap: 7, padding: 30 },
   emptyTitle: { fontSize: 21, fontWeight: "500" },

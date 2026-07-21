@@ -27,8 +27,6 @@ contextBridge.exposeInMainWorld("vestaNative", {
       cb(url);
     }),
   oauthCancel: (port: number) => ipcRenderer.invoke("oauth:cancel", port),
-  installUpdate: (version: string) =>
-    ipcRenderer.invoke("update:install", version),
   onWindowFocus: (cb: (focused: boolean) => void) =>
     subscribe("window-focus", (_event, focused: boolean) => {
       cb(focused);

@@ -1,0 +1,44 @@
+{
+  "name": "@vesta/core",
+  "private": true,
+  "version": "0.0.0",
+  "description": "The Vesta client controller: protocol types, replica, transport, intents",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./react": "./src/react/index.ts"
+  },
+  "scripts": {
+    "lint": "eslint src",
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "format": "prettier --write src",
+    "format:check": "prettier --check src"
+  },
+  "peerDependencies": {
+    "react": ">=19"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.0.0",
+    "eslint": "^9.30.0",
+    "eslint-config-prettier": "^9.1.0",
+    "fast-check": "^4.9.0",
+    "jsdom": "^29.1.1",
+    "prettier": "^3.9.5",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.35.0",
+    "vitest": "^3.2.4"
+  }
+}

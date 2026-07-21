@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-import type { AgentInfo } from "@/lib/types";
+import type { AgentRow } from "@/lib/types";
 
 // Tracks agents with a saved change that only applies after a restart. Features flag their agent
 // here (each under its own reason key) so the navbar can offer a single restart action, and a
@@ -23,7 +23,7 @@ export type RestartReason = (typeof ALL_REASONS)[number];
 // mere restart (see the header). host-access qualifies: bind mounts are fixed at container create.
 const RECREATE_ONLY_REASONS: readonly RestartReason[] = ["host-access"];
 
-// `since` is the agent's container start time (AgentInfo.startedAt) captured when the change was
+// `since` is the agent's container start time (AgentRow.startedAt) captured when the change was
 // saved; null when it wasn't known. Only the restart-applied reasons consult it — host-access
 // threads it too (so a later mixed entry has a baseline) but clears via the button regardless.
 interface PendingEntry {
@@ -31,15 +31,15 @@ interface PendingEntry {
   since: string | null;
 }
 
-// A restart observation: the subset of AgentInfo reconcile needs, kept coupled to the wire type.
-type AgentBoot = Pick<AgentInfo, "name" | "startedAt">;
+// A restart observation: the subset of AgentRow reconcile needs, kept coupled to the roster type.
+type AgentBoot = Pick<AgentRow, "name" | "startedAt">;
 
 interface RestartPendingState {
   pending: Record<string, PendingEntry>;
   markPending: (
     agent: string,
     reason: RestartReason,
-    startedAt: string | undefined,
+    startedAt: string | null,
   ) => void;
   clearReason: (agent: string, reason: RestartReason) => void;
   clearPending: (agent: string) => void;

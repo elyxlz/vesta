@@ -62,11 +62,6 @@ if (!gotLock) {
     ipcMain.handle("oauth:cancel", (_event, port: unknown) => {
       if (typeof port === "number") cancelLoopback(port);
     });
-    ipcMain.handle("update:install", async (_event, version: unknown) => {
-      if (typeof version !== "string") throw new Error("version must be a string");
-      const { installAppUpdate } = await import("./updater.js");
-      await installAppUpdate(version);
-    });
   };
 
   app.on("second-instance", () => {
@@ -101,5 +96,14 @@ if (!gotLock) {
         mainWindow?.hide();
       }
     });
+    // Drift toward the latest release on our own: check on launch, download in the
+    // background, install on the next quit. Packaged only (dev has no update feed).
+    if (app.isPackaged) {
+      void import("./updater.js")
+        .then(({ checkForAppUpdate }) => checkForAppUpdate())
+        .catch((err: unknown) => {
+          console.error("app update check failed:", err);
+        });
+    }
   });
 }
