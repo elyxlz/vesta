@@ -5,6 +5,12 @@ active recorded in `~/agent/data/active-skills.txt` instead of the cone. The eng
 code tells you what to do next. Re-running is safe: a converted workspace no longer matches
 the old shape, so attach just no-ops.
 
+If you were created with the removed `--no-manage-core-code` option, `agent/core` used to be
+tracked, writable content in your checkout. Vestad now mounts core read-only for every agent
+(it remounts on this boot), so the conversion below drops that tracked copy: the flat snapshot
+gitignores `agent/core`, leaving the read-only mount as the only source of the engine. Any core
+edits you had made stop taking effect; that is intended, core is now always vestad-managed.
+
 ### 1. Probe
 ```bash
 cd ~ && bash agent/core/skills/upstream-sync/scripts/attach.sh; echo "exit: $?"

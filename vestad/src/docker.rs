@@ -1600,13 +1600,10 @@ fn assemble_binds(
     env_mount: String,
     constitution_mount: String,
     upstream_mount: String,
-    core_mount: Option<String>,
+    core_mount: String,
     user_mounts: &[crate::mounts::HostMount],
 ) -> Vec<String> {
-    let mut binds = vec![env_mount, constitution_mount, upstream_mount];
-    if let Some(core) = core_mount {
-        binds.push(core);
-    }
+    let mut binds = vec![env_mount, constitution_mount, upstream_mount, core_mount];
     for m in user_mounts {
         binds.push(crate::mounts::bind_string(m));
     }
@@ -1620,9 +1617,6 @@ pub struct ContainerSpec<'a> {
     pub image: &'a str,
     pub port: u16,
     pub agent_name: &'a str,
-    /// Mount vestad-managed core code read-only over the image's baked core. An unmanaged
-    /// box (`--no-manage-core-code`) omits it and runs the image's writable core instead.
-    pub manage_core_code: bool,
     pub user_mounts: &'a [crate::mounts::HostMount],
 }
 
@@ -1636,7 +1630,6 @@ pub async fn create_container(
         image,
         port,
         agent_name,
-        manage_core_code,
         user_mounts,
     } = spec;
     let agent_token = generate_agent_token();
@@ -1668,12 +1661,11 @@ pub async fn create_container(
     labels.insert(LABEL_USER.to_string(), crate::paths::current_user());
     labels.insert(LABEL_AGENT_NAME.to_string(), agent_name.to_string());
 
-    let core_mount_opt = if manage_core_code { Some(core_mount) } else { None };
     let binds = assemble_binds(
         env_mount,
         constitution_mount,
         upstream_mount,
-        core_mount_opt,
+        core_mount,
         user_mounts,
     );
 
@@ -1693,7 +1685,7 @@ pub async fn create_container(
         GpuStatus::NoGpu => {}
     }
 
-    tracing::info!(agent = %agent_name, image = %image, manage_core_code, "creating container");
+    tracing::info!(agent = %agent_name, image = %image, "creating container");
 
     let host_config = bollard::models::HostConfig {
         binds: Some(binds),
@@ -1808,7 +1800,6 @@ pub async fn create_agent(
     docker: &Docker,
     name: &str,
     env_config: &AgentEnvConfig,
-    manage_core_code: bool,
     progress: &BuildProgress,
 ) -> Result<String, DockerError> {
     let name = if name == "ignisinextinctus" {
@@ -1847,7 +1838,6 @@ pub async fn create_agent(
             image: &image,
             port,
             agent_name: name,
-            manage_core_code,
             user_mounts: &[],
         },
     )
@@ -2242,15 +2232,6 @@ pub async fn destroy_agent(
     Ok(())
 }
 
-/// Whether a container's mount list includes the core-code bind mount. The container's
-/// mount config is the source of truth for `manage_core_code` post-creation, so rebuild
-/// and rename preserve the mount topology the agent was created with.
-fn mounts_have_core_code(mounts: &[bollard::models::MountPoint]) -> bool {
-    mounts
-        .iter()
-        .any(|m| m.destination.as_deref() == Some(CORE_MOUNT_DEST))
-}
-
 /// Check if a container's config diverges from what `create_container` would produce.
 /// Operates on a pre-fetched inspect response so callers can do one Docker round-trip
 /// even when they also need other fields (mount topology, port, status). Mount
@@ -2311,6 +2292,18 @@ fn needs_rebuild(
         .any(|m| m.destination.as_deref() == Some(UPSTREAM_MOUNT_DEST));
     if !has_upstream_mount {
         tracing::info!(container = %cname, "rebuild needed: missing upstream mount");
+        return true;
+    }
+
+    // Core is always a vestad-managed read-only mount. A legacy box created with the removed
+    // `--no-manage-core-code` escape hatch lacks it; rebuilding here mounts it, converging the
+    // fleet to managed core on the next vestad boot (the flat-checkout migration then drops the
+    // box's now-shadowed writable agent/core from its checkout).
+    let has_core_mount = mounts
+        .iter()
+        .any(|m| m.destination.as_deref() == Some(CORE_MOUNT_DEST));
+    if !has_core_mount {
+        tracing::info!(container = %cname, "rebuild needed: missing core-code mount");
         return true;
     }
 
@@ -2415,8 +2408,6 @@ pub async fn rebuild_agent(
     // the container below. Captured before removal so we can drop it afterwards.
     let prev_image = raw.config.as_ref().and_then(|c| c.image.clone());
 
-    let manage_core_code = mounts_have_core_code(raw.mounts.as_deref().unwrap_or(&[]));
-
     let port = resolve_existing_port(docker, &cname, &info, name, &env_config.agents_dir).await?;
 
     let ts = crate::time_utils::now_epoch_secs();
@@ -2449,7 +2440,6 @@ pub async fn rebuild_agent(
             image: &backup_tag,
             port,
             agent_name: name,
-            manage_core_code,
             user_mounts,
         },
     )
@@ -2512,8 +2502,6 @@ pub async fn rename_agent(
         )));
     }
 
-    let manage_core_code = mounts_have_core_code(raw.mounts.as_deref().unwrap_or(&[]));
-
     let port =
         resolve_existing_port(docker, &old_container, &info, old_name, &env_config.agents_dir).await?;
 
@@ -2555,7 +2543,6 @@ pub async fn rename_agent(
             image: &snapshot_tag,
             port,
             agent_name: new_name,
-            manage_core_code,
             user_mounts,
         },
     )
@@ -2676,23 +2663,12 @@ mod tests {
             "/e:/run/vestad-env:ro,z".into(),
             "/c:/root/agent/constitution.md:ro,z".into(),
             "/u/upstream:/run/vesta-upstream:ro,z".into(),
-            None,
+            "/code/core:/root/agent/core:ro,z".into(),
             std::slice::from_ref(&m),
         );
-        assert_eq!(binds.len(), 4);
-        assert_eq!(binds[3], "/mnt/media:/mnt/media:ro");
-    }
-
-    #[test]
-    fn mounts_have_core_code_detects_core_mount() {
-        let mount_with_dest = |dest: &str| bollard::models::MountPoint {
-            destination: Some(dest.to_string()),
-            ..Default::default()
-        };
-        let with_core = vec![mount_with_dest(CORE_MOUNT_DEST)];
-        let without_core = vec![mount_with_dest(ENV_MOUNT_DEST)];
-        assert!(mounts_have_core_code(&with_core));
-        assert!(!mounts_have_core_code(&without_core));
+        assert_eq!(binds.len(), 5);
+        assert_eq!(binds[3], "/code/core:/root/agent/core:ro,z");
+        assert_eq!(binds[4], "/mnt/media:/mnt/media:ro");
     }
 
     #[test]
