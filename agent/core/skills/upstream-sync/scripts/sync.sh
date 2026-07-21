@@ -26,8 +26,12 @@ if git merge-base --is-ancestor "$TAG" HEAD; then
   exit 0
 fi
 
-if [ -n "$(git status --porcelain)" ]; then
-  git add -A
+# Checkpoint local work before rebasing, but exclude agent/core: on a managed box it is a read-only
+# mount outside the sparse cone, so a bare "git add -A" errors on its out-of-cone (or ignored) paths
+# and set -e would abort here, silently, before the rebase. "|| true" swallows the harmless notice git
+# still prints for the excluded dir; a real staging failure is caught by the rebase's dirty-tree guard.
+if [ -n "$(git status --porcelain -- . ':(exclude)agent/core')" ]; then
+  git add -A -- . ':(exclude)agent/core' || true
   git diff --cached --quiet || git commit -q -m checkpoint
 fi
 
