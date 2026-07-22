@@ -153,15 +153,19 @@ const (
 )
 
 // decideRemoval routes a device removal. A fresh episode (decidePreserve ==
-// preserveReconnect) always reconnects once. A give-up PARKS when the episode began as a
-// self-inflicted on-connect "another device" conflict (the device is fine; a real other
-// holder is handled like a StreamReplaced yield, never a clear), and otherwise CLEARS for a
-// deliberate re-provision (a genuine phone-side unlink). Pure, unit-tested.
-func decideRemoval(preserve preserveDecision, conflictEpisode bool) removalAction {
+// preserveReconnect) always reconnects once. On give-up the CURRENT event is authoritative:
+// a genuine/terminal logout (onConnectConflict == false: a stream:error device_removed or
+// another on-connect reason like primary-gone/ban) CLEARS for a deliberate re-provision,
+// even over a stale conflict episode. A current on-connect "another device" conflict PARKS
+// with the device preserved (never a clear-to-unpaired) when it opens a fresh episode (none
+// armed yet, so even a first 401 with no snapshot is preserved) or continues a
+// conflict-origin one; a genuine episode whose restore re-dropped as an on-connect 401
+// still clears. Pure, unit-tested.
+func decideRemoval(preserve preserveDecision, onConnectConflict, conflictEpisode, episodeArmed bool) removalAction {
 	if preserve == preserveReconnect {
 		return removalReconnect
 	}
-	if conflictEpisode {
+	if onConnectConflict && (conflictEpisode || !episodeArmed) {
 		return removalPark
 	}
 	return removalClear
@@ -199,9 +203,15 @@ func (wac *WhatsAppClient) reExecDaemon() {
 	}
 }
 
-// maybeSnapshotGoodDevice takes a good-device snapshot in the background,
-// throttled to at most one per SnapshotMinInterval.
+// maybeSnapshotGoodDevice takes a good-device snapshot in the background, throttled to at
+// most one per SnapshotMinInterval. It snapshots only a LINKED store (Store.ID != nil):
+// the pre-pair events.Connected and a post-401 poisoned client would otherwise publish an
+// unpaired/deleted store as the last-good snapshot, which recovery would then restore into
+// an unpaired daemon.
 func (wac *WhatsAppClient) maybeSnapshotGoodDevice() {
+	if wac.client.Store.ID == nil {
+		return
+	}
 	wac.preserveMu.Lock()
 	if !wac.lastSnapshot.IsZero() && time.Since(wac.lastSnapshot) < SnapshotMinInterval {
 		wac.preserveMu.Unlock()
@@ -212,16 +222,20 @@ func (wac *WhatsAppClient) maybeSnapshotGoodDevice() {
 	go snapshotGoodDevice(wac.dataDir, wac.logger)
 }
 
-// snapshotGoodDeviceNow forces a good-device snapshot immediately, bypassing the
-// throttle. Used on a fresh link: the pre-pair events.Connected fires while the device
-// is still unpaired (Store.ID nil) and snapshots an UNPAIRED store, so without an
-// unthrottled snapshot of the now-paired device a conflict within SnapshotMinInterval of
-// linking would restore an unpaired device and land unpaired anyway.
+// snapshotGoodDeviceNow takes a good-device snapshot SYNCHRONOUSLY, bypassing the throttle.
+// Used on a fresh link: the pre-pair events.Connected fires while the device is still
+// unpaired, so the good snapshot must be (re)taken from the now-paired store the moment of
+// link. Synchronous so a valid restore point provably exists before the handler returns
+// (a conflict cannot arrive mid-snapshot), and guarded on Store.ID so it never captures an
+// unpaired store.
 func (wac *WhatsAppClient) snapshotGoodDeviceNow() {
+	if wac.client.Store.ID == nil {
+		return
+	}
 	wac.preserveMu.Lock()
 	wac.lastSnapshot = time.Now()
 	wac.preserveMu.Unlock()
-	go snapshotGoodDevice(wac.dataDir, wac.logger)
+	snapshotGoodDevice(wac.dataDir, wac.logger)
 }
 
 // armStableTimer (re)starts the stability timer: after StableConnDuration of

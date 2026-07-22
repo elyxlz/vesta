@@ -34,23 +34,30 @@ func TestDecidePreserve(t *testing.T) {
 	}
 }
 
-// TestDecideRemoval pins the give-up routing: a fresh episode always reconnects once;
-// on give-up a self-inflicted on-connect conflict PARKS (device preserved) while a genuine
-// removal CLEARS for a deliberate re-provision.
+// TestDecideRemoval pins the give-up routing. A fresh episode always reconnects. On give-up
+// the current event is authoritative: a current on-connect conflict is preserved (parked,
+// never cleared) even as a first event with no snapshot yet armed, while a genuine/terminal
+// event clears, including a genuine unlink arriving mid conflict-episode. A genuine episode
+// whose restore re-drops as an on-connect 401 still clears.
 func TestDecideRemoval(t *testing.T) {
 	cases := []struct {
-		name            string
-		preserve        preserveDecision
-		conflictEpisode bool
-		want            removalAction
+		name              string
+		preserve          preserveDecision
+		onConnectConflict bool
+		conflictEpisode   bool
+		episodeArmed      bool
+		want              removalAction
 	}{
-		{"fresh episode reconnects (genuine)", preserveReconnect, false, removalReconnect},
-		{"fresh episode reconnects (conflict)", preserveReconnect, true, removalReconnect},
-		{"give-up on a conflict parks", preserveGiveUp, true, removalPark},
-		{"give-up on a genuine removal clears", preserveGiveUp, false, removalClear},
+		{"fresh episode reconnects (genuine)", preserveReconnect, false, false, false, removalReconnect},
+		{"fresh episode reconnects (conflict)", preserveReconnect, true, false, false, removalReconnect},
+		{"first conflict with no snapshot parks (not clear)", preserveGiveUp, true, false, false, removalPark},
+		{"first genuine removal with no snapshot clears", preserveGiveUp, false, false, false, removalClear},
+		{"conflict episode give-up parks", preserveGiveUp, true, true, true, removalPark},
+		{"genuine episode re-drop (on-connect 401) clears", preserveGiveUp, true, false, true, removalClear},
+		{"genuine unlink mid conflict-episode clears", preserveGiveUp, false, true, true, removalClear},
 	}
 	for _, tc := range cases {
-		if got := decideRemoval(tc.preserve, tc.conflictEpisode); got != tc.want {
+		if got := decideRemoval(tc.preserve, tc.onConnectConflict, tc.conflictEpisode, tc.episodeArmed); got != tc.want {
 			t.Errorf("%s: decideRemoval = %d, want %d", tc.name, got, tc.want)
 		}
 	}

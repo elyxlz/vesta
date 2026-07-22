@@ -180,7 +180,14 @@ func (wac *WhatsAppClient) applyConnAction(action connEventAction, reason string
 // side-effects are testable without a live socket.
 func (wac *WhatsAppClient) applyYield(reason string) {
 	wac.setConnMode(connParked)
-	wac.state.update(func(s *daemonState) { s.ConnParked = true })
+	// Parking is terminal for any in-flight preserve episode: close it (clear the guard
+	// and the conflict origin) so a later logout is judged fresh, not against a stale
+	// conflict episode that would wrongly park a genuine unlink.
+	wac.state.update(func(s *daemonState) {
+		s.ConnParked = true
+		s.PreserveRetryAt = time.Time{}
+		s.ConflictEpisode = false
+	})
 	wac.recordExit("stream_replaced", reason)
 	wac.presenceMutex.Lock()
 	wac.presenceActive = false
@@ -196,7 +203,8 @@ func (wac *WhatsAppClient) applyYield(reason string) {
 // `whatsapp provision` (a genuine phone-side unlink).
 func (wac *WhatsAppClient) handleDeviceRemoved(reason string, onConnectConflict bool) {
 	st := wac.state.snapshot()
-	switch decideRemoval(decidePreserve(hasGoodDevice(wac.dataDir), st.PreserveRetryAt, time.Now()), st.ConflictEpisode) {
+	episodeArmed := !st.PreserveRetryAt.IsZero()
+	switch decideRemoval(decidePreserve(hasGoodDevice(wac.dataDir), st.PreserveRetryAt, time.Now()), onConnectConflict, st.ConflictEpisode, episodeArmed) {
 	case removalReconnect:
 		wac.logger.Warnf("Device removed (%s). Restoring last-good device and reconnecting once to avoid a re-pair.", reason)
 		wac.markPreserveReconnect(onConnectConflict)

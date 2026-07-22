@@ -1052,6 +1052,10 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 			if err := wac.EnsureConnected(); err != nil {
 				return nil, fmt.Errorf("reconnect the parked session: %w", err)
 			}
+			// EnsureConnected reconnects but never clears the PERSISTED park (only the
+			// boot/onConnected paths do), so without this a reclaimed session would boot
+			// parked again on the next restart. The reconnect succeeded, so drop it.
+			wac.state.update(func(s *daemonState) { s.ConnParked = false })
 		}
 		// Store.ID is set (guaranteed non-nil here), so the device number is
 		// authoritative; daemon-status formats it the same way. An already-linked

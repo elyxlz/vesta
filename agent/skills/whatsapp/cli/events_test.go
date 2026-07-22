@@ -168,6 +168,11 @@ func TestMarkConflictParkPreservesTheDevice(t *testing.T) {
 func TestApplyYieldParksAndPersists(t *testing.T) {
 	wac := &WhatsAppClient{state: newStateStore(t.TempDir())}
 	wac.presenceActive = true
+	// A yield after a conflict recovery must close the stale episode, not carry it.
+	wac.state.update(func(s *daemonState) {
+		s.PreserveRetryAt = time.Now().UTC()
+		s.ConflictEpisode = true
+	})
 
 	wac.applyYield("another connection took over this device session")
 
@@ -177,6 +182,9 @@ func TestApplyYieldParksAndPersists(t *testing.T) {
 	st := wac.state.snapshot()
 	if !st.ConnParked {
 		t.Fatal("yield must persist the parked posture so a restart does not steal the session back")
+	}
+	if !st.PreserveRetryAt.IsZero() || st.ConflictEpisode {
+		t.Fatal("yield must close any in-flight preserve episode so a later logout is judged fresh")
 	}
 	if st.ExitStatus != "stream_replaced" || st.ExitReason != "another connection took over this device session" {
 		t.Fatalf("yield must record the exit reason: %+v", st)
