@@ -5,9 +5,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	meowcaller "github.com/purpshell/meowcaller"
+	"go.mau.fi/whatsmeow/types"
 )
 
 func TestPCM16RoundTripPreservesSamples(t *testing.T) {
@@ -80,6 +82,30 @@ func TestSayWithoutActiveCallErrors(t *testing.T) {
 	cm := &CallManager{}
 	if _, err := cm.Say("hello"); err == nil {
 		t.Fatal("expected an error saying into a call with no active call")
+	}
+}
+
+// TestPlaceBlocksManagedColdCall proves an outbound call from a managed number is
+// refused before it dials when the peer has never messaged first (reply-first), and
+// goes through once an inbound exists. The gate runs before meowcaller is touched, so
+// a nil mc never dereferences on the blocked path.
+func TestPlaceBlocksManagedColdCall(t *testing.T) {
+	wac := newGateTestClient(t, true)
+	cm := &CallManager{wac: wac}
+
+	_, err := cm.Place(gateTestPhone)
+	if err == nil {
+		t.Fatal("managed number must not cold-call a peer that has not messaged first")
+	}
+	if !strings.Contains(err.Error(), "reply-first") {
+		t.Errorf("block must cite reply-first, got: %v", err)
+	}
+
+	// After an inbound the gate passes; the call then fails on the nil meowcaller
+	// client, which proves dialing was reached (the gate no longer blocks).
+	storeInbound(t, wac)
+	if err := wac.requireSendAllowed(types.NewJID("15557654321", types.DefaultUserServer)); err != nil {
+		t.Errorf("managed number must be allowed to call once the peer has messaged first: %v", err)
 	}
 }
 

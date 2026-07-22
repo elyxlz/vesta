@@ -114,6 +114,33 @@ and links between them and the CLI.
    sign in with their email (already verified), and their vesta `<name>` is right
    there waiting.
 
+## Onboarding straight onto WhatsApp (hand back a wa.me link, not the app)
+
+When you're doing all this **in a WhatsApp chat** and they'd rather live on WhatsApp
+than the app, the hand-off in step 8 changes: you give them a wa.me link to their
+*own* vesta's WhatsApp number. The catch: the new vesta can't message them first (they
+have no way to reach the user until the user taps that link), so the link has to come back to
+**you** to relay. Nothing new is needed for this; the new vesta uses skills already
+installed (`whatsapp` to get the number, `file-host` to publish the link), and you
+coordinate the whole thing through the seed context you write at create-agent.
+
+At **create-agent** (step 6), put three things in `--context`:
+
+1. **The user's WhatsApp number**, so the new vesta knows who to expect: "your owner
+   will message you from +1..., greet them by name when they arrive."
+2. **Set up WhatsApp first**: "Before anything else, set up and authenticate your own
+   WhatsApp number using the `whatsapp` skill."
+3. **Leave the link where you'll fetch it**: "Then write your wa.me connect link to
+   `~/.file-host/connect.txt` and serve it with the `file-host` skill." That publishes
+   it at a fixed public URL you can construct yourself, no channel from them to you
+   required.
+
+Then **poll** `https://<subdomain>.vesta.run/agents/<name>/file-host/connect.txt` (the
+`subdomain` from `checkout`, the `name` from `create-agent`) until it returns the link.
+Give it a few minutes, and tell the user you're setting their vesta up so the wait makes
+sense. When the link appears, send it to them as a tappable link. They tap it, and
+they're talking to their own vesta on WhatsApp. Done, without ever leaving the chat.
+
 ## Pricing
 
 **One plan, one box**: a dedicated server (2 vCPU / 4 GB / 40 GB) running their

@@ -45,6 +45,87 @@ func (wac *WhatsAppClient) classifySendError(action string, err error) string {
 	return sendErrorMessage(action, err, SendTimeout)
 }
 
+// isManaged reports whether this box drives a managed (pooled) WhatsApp number
+// rather than the user's own QR-linked account. The paradigm is fixed once at
+// construction (chooseLinker), so ban-avoidance gating reads the constructed linker
+// instead of re-deriving the mode: the managed linker is the single source of truth.
+func (wac *WhatsAppClient) isManaged() bool {
+	_, ok := wac.linker.(*managedLinker)
+	return ok
+}
+
+// hasInboundMessage reports whether this chat was opened by an inbound message, the
+// reply-first precondition. Under the managed gate every chat's first recorded
+// message is inbound, so the oldest message being inbound proves the peer messaged
+// first; a chat with no messages yet has nothing to reply to. Incoming messages are
+// keyed by the peer's LID (privacy addressing) while a reply resolves a saved contact
+// to its phone JID (or the reverse), so it also checks the mapped counterpart: without
+// this a managed number can never reply to anyone who messaged under their LID.
+func (wac *WhatsAppClient) hasInboundMessage(jid types.JID) bool {
+	if wac.store == nil {
+		return false
+	}
+	if wac.oldestIsInbound(jid) {
+		return true
+	}
+	if alt := wac.mappedJID(jid); !alt.IsEmpty() && wac.oldestIsInbound(alt) {
+		return true
+	}
+	return false
+}
+
+// oldestIsInbound reports whether the oldest stored message in jid's chat is inbound.
+func (wac *WhatsAppClient) oldestIsInbound(jid types.JID) bool {
+	_, _, isFromMe, _, err := wac.store.GetOldestMessage(jid.String())
+	return err == nil && !isFromMe
+}
+
+// mappedJID returns the phone JID for a LID, or the LID for a phone JID, via whatsmeow's
+// LID<->PN store, so reply-first can find an inbound stored under the peer's other address.
+// Empty when there is no mapping.
+func (wac *WhatsAppClient) mappedJID(jid types.JID) types.JID {
+	if wac.client == nil {
+		return types.JID{}
+	}
+	ctx := context.Background()
+	if isLIDServer(jid.Server) {
+		if pn, err := wac.client.Store.LIDs.GetPNForLID(ctx, jid); err == nil {
+			return pn
+		}
+		return types.JID{}
+	}
+	if jid.Server == types.DefaultUserServer {
+		if lid, err := wac.client.Store.LIDs.GetLIDForPN(ctx, jid); err == nil {
+			return lid
+		}
+	}
+	return types.JID{}
+}
+
+// requireReplyFirst enforces reply-first onboarding on a managed (pooled) number: it
+// must never cold-initiate, so the first outbound to any peer or group requires a
+// prior inbound from that chat. A self-hosted (QR-linked) number carries no such rule.
+func (wac *WhatsAppClient) requireReplyFirst(jid types.JID) error {
+	if !wac.isManaged() || wac.hasInboundMessage(jid) {
+		return nil
+	}
+	return fmt.Errorf(
+		"cannot message %s first: this is a managed WhatsApp number and must never start a conversation (reply-first). Share your wa.me click-to-chat link, wait for them to message you, then reply",
+		wac.getChatName(jid),
+	)
+}
+
+// requireSendAllowed is the ban-avoidance gate every outbound (text, media, and voice
+// call) passes before it leaves the device. It layers the saved-contact requirement
+// the send path already used with reply-first: a managed number additionally needs a
+// prior inbound from the peer, so a fresh pooled number can never cold-initiate.
+func (wac *WhatsAppClient) requireSendAllowed(jid types.JID) error {
+	if err := wac.requireManualContact(jid); err != nil {
+		return err
+	}
+	return wac.requireReplyFirst(jid)
+}
+
 func (wac *WhatsAppClient) SendMessageWithPresence(recipient, message string, quotedMessageID string) (bool, string) {
 	if recipient == "" || message == "" {
 		return false, "Recipient and message are required. Provide a contact name, phone number, or group name plus the message text"
@@ -61,7 +142,7 @@ func (wac *WhatsAppClient) SendMessageWithPresence(recipient, message string, qu
 		return false, err.Error()
 	}
 
-	if err := wac.requireManualContact(jid); err != nil {
+	if err := wac.requireSendAllowed(jid); err != nil {
 		return false, err.Error()
 	}
 
@@ -149,7 +230,7 @@ func (wac *WhatsAppClient) SendFile(recipient, filePath, caption, displayName st
 	if err != nil {
 		return false, err.Error()
 	}
-	if err := wac.requireManualContact(jid); err != nil {
+	if err := wac.requireSendAllowed(jid); err != nil {
 		return false, err.Error()
 	}
 	if err := wac.EnsureConnected(); err != nil {
@@ -250,7 +331,7 @@ func (wac *WhatsAppClient) SendAudioMessage(recipient, filePath string) (bool, s
 	if err != nil {
 		return false, err.Error()
 	}
-	if err := wac.requireManualContact(jid); err != nil {
+	if err := wac.requireSendAllowed(jid); err != nil {
 		return false, err.Error()
 	}
 	if err := wac.EnsureConnected(); err != nil {

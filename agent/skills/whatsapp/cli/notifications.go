@@ -232,15 +232,63 @@ func writeCallNotification(notifDir, instance string, n callNotif) error {
 	return writeNotificationFile(notifDir, n, n.Type)
 }
 
+// managedParadigm reports whether this box runs a managed (pooled) WhatsApp number,
+// mirroring the resolution runConnect and chooseLinker use: env creds first, filled
+// from persisted state so an env scrub still resolves the managed path. The auth
+// notifications read it because they run without a *WhatsAppClient (so without the
+// constructed linker) yet must still tell a managed agent to reauth autonomously.
+func managedParadigm() bool {
+	cfg := loadManagedConfig()
+	if cfg.directURL == "" || cfg.directKey == "" {
+		st := loadStateFromDisk(stateDataDir())
+		if cfg.directURL == "" {
+			cfg.directURL = st.DirectURL
+		}
+		if cfg.directKey == "" {
+			cfg.directKey = st.DirectKey
+		}
+	}
+	return newManagedAuth(cfg).isHosted()
+}
+
 // WriteUnpairedNotification tells the agent the WhatsApp daemon came up without a
-// device session and needs re-pairing. Called once per unpaired daemon boot.
+// device session and needs re-pairing. Called once per unpaired daemon boot. A
+// managed number reclaims itself autonomously (no user step), so only self-hosted QR
+// linking, which needs the human to scan, is gated on the user being ready.
 func WriteUnpairedNotification(notifDir, instance string) error {
+	message := "WhatsApp daemon started without a paired device session. Run `whatsapp connect` to link (when the user is ready)."
+	if managedParadigm() {
+		message = "WhatsApp daemon started without a paired device session. Run `whatsapp connect` now to re-link your managed number; it reclaims the number autonomously and needs no user step."
+	}
 	n := authNotif{
 		Source:    "whatsapp",
 		Type:      "unpaired",
 		Instance:  instance,
-		Message:   "WhatsApp daemon started without a paired device session. Re-pairing is required: follow the whatsapp skill SETUP.md to scan a new QR code or use pair-phone.",
+		Message:   message,
 		Timestamp: time.Now().Format(time.RFC3339),
 	}
 	return writeNotificationFile(notifDir, n, "unpaired")
+}
+
+// WriteLoggedOutNotification tells the agent WhatsApp logged this device out.
+// Re-linking is deliberate (`whatsapp connect`), never an automatic loop, so
+// this notifies once and stops rather than re-pairing.
+func WriteLoggedOutNotification(notifDir, instance, reason string) error {
+	message := "WhatsApp logged this device out"
+	if reason != "" {
+		message += " (" + reason + ")"
+	}
+	if managedParadigm() {
+		message += ". This is NOT re-linked automatically, but a managed number reauthorizes autonomously: run `whatsapp connect` now to re-link the SAME number, no user step needed. Do not retry-loop pairing."
+	} else {
+		message += ". This is NOT re-linked automatically. When the user is ready, run `whatsapp connect` to re-link. Do not retry-loop pairing."
+	}
+	n := authNotif{
+		Source:    "whatsapp",
+		Type:      "logged_out",
+		Instance:  instance,
+		Message:   message,
+		Timestamp: time.Now().Format(time.RFC3339),
+	}
+	return writeNotificationFile(notifDir, n, "logged_out")
 }
