@@ -468,21 +468,37 @@ func (wac *WhatsAppClient) flushReadReceipt(key string) {
 		return
 	}
 
-	if err := wac.EnsureOnline(); err != nil {
-		wac.logger.Warnf("Failed to set online status for read receipt: %v", err)
-		return
+	presenceErr, receiptErr := sendReadAfterPresence(
+		wac.EnsureOnline,
+		func() error {
+			return wac.client.MarkRead(
+				context.Background(),
+				batch.msgIDs,
+				time.Now(),
+				batch.chatJID,
+				batch.sender,
+				types.ReceiptTypeRead,
+			)
+		},
+	)
+	if presenceErr != nil {
+		// Presence improves the foreground semantics, but it is not a prerequisite
+		// for the receipt stanza itself. In particular, a missing push name must not
+		// turn "can't send presence" into "never send read".
+		wac.logger.Warnf("Failed to set online status for read receipt: %v", presenceErr)
 	}
+	if receiptErr != nil {
+		wac.logger.Warnf("Failed to send read receipt: %v", receiptErr)
+	}
+}
 
-	if err := wac.client.MarkRead(
-		context.Background(),
-		batch.msgIDs,
-		time.Now(),
-		batch.chatJID,
-		batch.sender,
-		types.ReceiptTypeRead,
-	); err != nil {
-		wac.logger.Warnf("Failed to send read receipt: %v", err)
-	}
+// sendReadAfterPresence deliberately attempts the read receipt even when the
+// best-effort presence broadcast fails. Kept as a small seam so the failure
+// ordering is testable without a live WhatsApp socket.
+func sendReadAfterPresence(ensureOnline, markRead func() error) (presenceErr, receiptErr error) {
+	presenceErr = ensureOnline()
+	receiptErr = markRead()
+	return
 }
 
 func (wac *WhatsAppClient) handleReaction(evt *events.Message) {

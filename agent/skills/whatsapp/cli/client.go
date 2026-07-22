@@ -149,6 +149,12 @@ func NewWhatsAppClient(dataDir, notificationsDir, instance string, readOnly bool
 		store.Close()
 		return nil, fmt.Errorf("failed to create WhatsApp client")
 	}
+	// whatsmeow otherwise labels automatic delivery receipts as "inactive" until
+	// presence has successfully gone online. Official clients don't render those
+	// receipts as a second tick, and a freshly provisioned account may not have a
+	// push name yet (which makes SendPresence fail). A writable agent is actively
+	// consuming messages, so its delivery receipts must always be visible.
+	client.SetForceActiveDeliveryReceipts(forceActiveDeliveryReceipts(readOnly))
 
 	state := newStateStore(dataDir)
 	boxLinker := chooseLinker(loadManagedConfig(), state)
@@ -182,6 +188,8 @@ func NewWhatsAppClient(dataDir, notificationsDir, instance string, readOnly bool
 
 	return wac, nil
 }
+
+func forceActiveDeliveryReceipts(readOnly bool) bool { return !readOnly }
 
 // runMsgWorker drains the data-plane work queue on a single goroutine, so
 // message/receipt handlers keep per-chat FIFO order while running off
