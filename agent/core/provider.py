@@ -1,7 +1,4 @@
-"""Per-agent LLM-provider auth (Claude OAuth, OpenRouter, Z.AI, or Kimi). The provider choice and API
-keys live in the config store; the Claude OAuth blob lives in `.credentials.json` (the `claude` CLI
-reads it). On-disk state is the single source of truth: status is re-derived from disk on every boot,
-and a runtime auth failure is an in-memory flip only (no separate persisted auth flag)."""
+"""Per-agent LLM-provider auth and subscription credentials."""
 
 import dataclasses as dc
 import enum
@@ -16,11 +13,15 @@ import pydantic as pyd
 from . import logger
 from .config import (
     CREDENTIALS_PATH,
+    ClaudeConfig,
     ClaudeOAuth,
     KimiConfig,
+    OpenAIConfig,
     OpenRouterConfig,
     VestaConfig,
     ZaiConfig,
+    atomic_write_text,
+    codex_proxy_auth_path,
     merge_provider,
     read_claude_oauth,
     update_config_store,
@@ -44,7 +45,7 @@ class ProviderAuthState(enum.StrEnum):
     NOT_AUTHENTICATED = "not_authenticated"
 
 
-ProviderKind = tp.Literal["claude", "openrouter", "zai", "kimi", "none"]
+ProviderKind = tp.Literal["claude", "openrouter", "zai", "kimi", "openai", "none"]
 
 # What counts as a terminal provider error — the credential is rejected (401) or the account can't
 # pay (402) — owned here for every provider's reactive detector. Transient errors (5xx, 429 rate
@@ -148,11 +149,31 @@ def set_kimi(key: str, model: str, max_context_tokens: int | None, *, config: Ve
     return ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="kimi", model=reported)
 
 
+class _OpenAICredentials(pyd.BaseModel):
+    access: str = pyd.Field(min_length=1)
+    refresh: str = pyd.Field(min_length=1)
+    expires: int = pyd.Field(gt=0)
+    account_id: str | None = pyd.Field(default=None, alias="accountId")
+
+    model_config = pyd.ConfigDict(populate_by_name=True)
+
+
+def set_openai(credentials_json: str, model: str, max_context_tokens: int | None, *, config: VestaConfig) -> ProviderStatus:
+    """Store refreshable ChatGPT OAuth for the local Claude-harness bridge."""
+    credentials = _OpenAICredentials.model_validate_json(credentials_json)
+    path = codex_proxy_auth_path()
+    atomic_write_text(path, credentials.model_dump_json(by_alias=True, exclude_none=True))
+    reported = _sign_in("openai", model=model, max_context_tokens=max_context_tokens, key=None, config=config)
+    logger.startup(f"Provider set to openai model={model}")
+    return ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="openai", model=reported)
+
+
 def clear_provider() -> ProviderStatus:
     """Sign out: remove the Claude OAuth blob and clear the stored provider to None (no provider
     chosen), leaving the agent unprovisioned. General config (personality, timezone, ...) survives.
     Vestad restarts the agent."""
     CREDENTIALS_PATH.unlink(missing_ok=True)
+    codex_proxy_auth_path().unlink(missing_ok=True)
     update_config_store({"provider": None})
     logger.startup("Provider cleared (signed out)")
     return ProviderStatus(state=ProviderAuthState.NOT_AUTHENTICATED, kind="none", model=None)
@@ -179,16 +200,20 @@ def _derive_kind_and_auth(config: VestaConfig) -> tuple[ProviderKind, bool]:
     provider = config.provider
     if provider is None:
         return "none", False
-    if isinstance(provider, OpenRouterConfig):
-        return "openrouter", bool(provider.key.get_secret_value())
-    if isinstance(provider, ZaiConfig):
-        return "zai", bool(provider.key.get_secret_value())
-    if isinstance(provider, KimiConfig):
-        return "kimi", bool(provider.key.get_secret_value())
+    if isinstance(provider, (OpenRouterConfig, ZaiConfig, KimiConfig)):
+        return provider.kind, bool(provider.key.get_secret_value())
+    if isinstance(provider, OpenAIConfig):
+        try:
+            _OpenAICredentials.model_validate_json(codex_proxy_auth_path().read_text())
+        except (OSError, pyd.ValidationError):
+            return "openai", False
+        return "openai", True  # the validated refresh token can replace an expired access token
     # A config built outside load_config (validation paths never hydrate) carries oauth=None;
     # read the blob from disk here so status derivation stays an honest reading of what's on disk.
-    oauth = provider.oauth if provider.oauth is not None else read_claude_oauth()
-    return "claude", oauth is not None and _check_claude_oauth(oauth)
+    if isinstance(provider, ClaudeConfig):
+        oauth = provider.oauth if provider.oauth is not None else read_claude_oauth()
+        return "claude", oauth is not None and _check_claude_oauth(oauth)
+    return "none", False
 
 
 def _check_claude_oauth(oauth: ClaudeOAuth) -> bool:

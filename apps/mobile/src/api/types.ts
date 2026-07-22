@@ -26,6 +26,7 @@ export interface ProviderEntry {
   models: string[] | "live";
   default_model: string | null;
   context: ProviderContext;
+  context_by_model?: Record<string, ProviderContext>;
 }
 
 export interface Personality {
@@ -45,7 +46,7 @@ export interface Manifest {
 }
 
 export interface ProviderInfo {
-  kind: "claude" | "openrouter" | "zai" | "kimi" | "none";
+  kind: "claude" | "openrouter" | "zai" | "kimi" | "openai" | "none";
   model: string | null;
   max_context_tokens: number | null;
   authed: boolean;

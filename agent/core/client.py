@@ -552,11 +552,13 @@ def _provider_sdk_settings(provider: cfg.Provider, state: vm.State) -> tuple[dic
         sdk_env["ANTHROPIC_AUTH_TOKEN"] = provider.key.get_secret_value()
         if provider.max_context_tokens is not None:
             sdk_env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(provider.max_context_tokens)
+            sdk_env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = str(provider.max_context_tokens)
     elif isinstance(provider, cfg.KimiConfig):
         sdk_env["ANTHROPIC_BASE_URL"] = KIMI_ANTHROPIC_URL
         sdk_env["ANTHROPIC_API_KEY"] = provider.key.get_secret_value()
         sdk_env["CLAUDE_CODE_EFFORT_LEVEL"] = "high"
         # Kimi's Claude Code guide maps every internal model role to the selected Kimi model.
+        harness_model = _harness_model(provider)
         for name in (
             "ANTHROPIC_MODEL",
             "ANTHROPIC_DEFAULT_FABLE_MODEL",
@@ -565,10 +567,25 @@ def _provider_sdk_settings(provider: cfg.Provider, state: vm.State) -> tuple[dic
             "ANTHROPIC_DEFAULT_HAIKU_MODEL",
             "CLAUDE_CODE_SUBAGENT_MODEL",
         ):
-            sdk_env[name] = provider.model
+            sdk_env[name] = harness_model
         context = provider.max_context_tokens or 262_144
         sdk_env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = str(context)
         sdk_env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(context)
+    elif isinstance(provider, cfg.OpenAIConfig):
+        if not state.codex_proxy_url:
+            raise RuntimeError("OpenAI subscription bridge not started before building client options")
+        context = provider.max_context_tokens or 272_000
+        sdk_env.update(
+            {
+                "ANTHROPIC_BASE_URL": state.codex_proxy_url,
+                "ANTHROPIC_AUTH_TOKEN": "unused",
+                "ANTHROPIC_SMALL_FAST_MODEL": _harness_model(provider),
+                "CLAUDE_CODE_AUTO_COMPACT_WINDOW": str(context),
+                "CLAUDE_CODE_MAX_CONTEXT_TOKENS": str(context),
+                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+                "CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK": "1",
+            }
+        )
     else:
         chosen = provider.max_context_tokens
         if chosen is None or chosen > DEFAULT_CONTEXT_WINDOW:
@@ -577,6 +594,18 @@ def _provider_sdk_settings(provider: cfg.Provider, state: vm.State) -> tuple[dic
             sdk_env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(chosen)
         thinking_config = provider.thinking
     return sdk_env, betas, thinking_config
+
+
+def _harness_model(provider: cfg.Provider) -> str:
+    """Apply Claude Code's local 1M hint only where the selected transport documents it."""
+    model = provider.model.removesuffix("[1m]")
+    if isinstance(provider, cfg.ZaiConfig) and model == "glm-5.2" and (provider.max_context_tokens or 0) > 200_000:
+        return f"{model}[1m]"
+    if isinstance(provider, cfg.KimiConfig) and model == "k3" and (provider.max_context_tokens or 0) > 262_144:
+        return f"{model}[1m]"
+    if isinstance(provider, cfg.OpenAIConfig):
+        return f"{model}[1m]"
+    return model
 
 
 def build_client_options(config: cfg.VestaConfig, state: vm.State) -> ClaudeAgentOptions:
@@ -623,7 +652,7 @@ def build_client_options(config: cfg.VestaConfig, state: vm.State) -> ClaudeAgen
     # ClaudeAgentOptions has no context_window field, so nothing is passed here.
     return ClaudeAgentOptions(
         system_prompt=system_prompt,
-        model=provider.model,
+        model=_harness_model(provider),
         betas=betas,
         hooks=sdk_parsing.make_hooks(state),
         permission_mode="bypassPermissions",

@@ -49,7 +49,7 @@ import {
   type Usage,
   type UsageMeter,
 } from "@/api/agents";
-import type { Manifest } from "@/api/manifest";
+import { contextForModel, type Manifest } from "@/api/manifest";
 import type { OpenRouterModelOption } from "@/api/providers/openrouter";
 import { formatTokens } from "@/lib/format";
 import { errorMessage } from "@/lib/utils";
@@ -129,7 +129,7 @@ function NotConnectedCard({
         </div>
         <p className="text-xs text-muted-foreground">
           {name} needs a provider before it can respond. Connect Claude, Z.AI,
-          Kimi, or OpenRouter to get started.
+          Kimi, OpenAI, or OpenRouter to get started.
         </p>
         <Button size="sm" className="self-start" onClick={onSetup}>
           <Plug className="size-4" />
@@ -155,13 +155,18 @@ function ProviderIdentity({
 }) {
   const isClaude = kind === "claude";
   const { Logo } = providerMeta(kind);
-  const defaultContext = manifest?.providers[kind]?.context.default;
+  const defaultContext = contextForModel(
+    manifest?.providers[kind],
+    provider.model ?? "",
+  )?.default;
   const contextLabel =
     provider.max_context_tokens != null
       ? `${formatTokens(provider.max_context_tokens)} context`
-      : defaultContext != null
-        ? `${formatTokens(defaultContext)} context`
-        : "default context";
+      : kind === "openrouter"
+        ? "model context"
+        : defaultContext != null && defaultContext > 0
+          ? `${formatTokens(defaultContext)} context`
+          : "default context";
 
   return (
     <div className="flex items-center gap-3">
@@ -283,14 +288,24 @@ function ModelDialog({
         ? catalog.map((slug) => ({
             slug,
             label: slug.toUpperCase(),
-            author: provider.kind === "kimi" ? "Kimi" : "Z.AI",
+            author:
+              provider.kind === "kimi"
+                ? "Kimi"
+                : provider.kind === "openai"
+                  ? "OpenAI"
+                  : "Z.AI",
           }))
         : provider.kind !== "openrouter" && provider.model
           ? [
               {
                 slug: provider.model,
                 label: provider.model.toUpperCase(),
-                author: provider.kind === "kimi" ? "Kimi" : "Z.AI",
+                author:
+                  provider.kind === "kimi"
+                    ? "Kimi"
+                    : provider.kind === "openai"
+                      ? "OpenAI"
+                      : "Z.AI",
               },
             ]
           : undefined;
@@ -375,7 +390,10 @@ function ContextDialog({
         ) : (
           <div className="flex flex-col items-center gap-4 py-2">
             {(() => {
-              const context = manifest.providers[provider.kind]?.context;
+              const context = contextForModel(
+                manifest.providers[provider.kind],
+                provider.model ?? "",
+              );
               const { presets, initial } = context
                 ? planContextOptions(context, provider.plan)
                 : { presets: [], initial: 0 };
@@ -555,14 +573,16 @@ export function ProviderCard() {
               >
                 change model
               </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="flex-1"
-                onClick={() => setContextOpen(true)}
-              >
-                change context
-              </Button>
+              {provider.kind !== "openrouter" && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="flex-1"
+                  onClick={() => setContextOpen(true)}
+                >
+                  change context
+                </Button>
+              )}
             </>
           ) : (
             <Button

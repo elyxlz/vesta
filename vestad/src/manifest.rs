@@ -109,6 +109,7 @@ mod tests {
         assert!(providers.get("openrouter").is_some());
         assert!(providers.get("zai").is_some());
         assert!(providers.get("kimi").is_some());
+        assert!(providers.get("openai").is_some());
         assert_eq!(
             manifest.get("default_provider").and_then(Value::as_str),
             Some("claude")

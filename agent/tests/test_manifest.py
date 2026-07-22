@@ -7,7 +7,7 @@ import json
 import pydantic as pyd
 import pytest
 
-from core.config import MANIFEST_PATH, ClaudeConfig, KimiConfig, OpenRouterConfig, VestaConfig, ZaiConfig
+from core.config import MANIFEST_PATH, ClaudeConfig, KimiConfig, OpenAIConfig, OpenRouterConfig, VestaConfig, ZaiConfig
 
 
 def _manifest():
@@ -18,12 +18,13 @@ def test_manifest_has_both_providers_and_defaults():
     manifest = _manifest()
     assert manifest["default_provider"] == "claude"
     assert manifest["default_personality"] == "dry"
-    assert sorted(manifest["providers"]) == ["claude", "kimi", "openrouter", "zai"]
+    assert sorted(manifest["providers"]) == ["claude", "kimi", "openai", "openrouter", "zai"]
     assert manifest["providers"]["claude"]["models"] == ["opus", "sonnet"]
     assert manifest["providers"]["claude"]["context"]["presets"]  # the picker's curated suggestions
     assert manifest["providers"]["openrouter"]["models"] == "live"  # free-form, fetched separately
-    assert manifest["providers"]["zai"]["default_model"] == "glm-4.7"
+    assert manifest["providers"]["zai"]["default_model"] == "glm-5.2"
     assert manifest["providers"]["kimi"]["default_model"] == "kimi-for-coding"
+    assert manifest["providers"]["openai"]["default_model"] == "gpt-5.6-sol"
 
 
 def test_model_defaults_come_from_the_manifest():
@@ -37,6 +38,11 @@ def test_openrouter_requires_a_key():
     # The union keeps the credential-shape invariant: openrouter without a key is unrepresentable.
     with pytest.raises(pyd.ValidationError):
         OpenRouterConfig.model_validate({"model": "some/model"})
+
+
+def test_openrouter_context_is_not_provider_capped_at_200k():
+    provider = OpenRouterConfig(model="vendor/million-token-model", key="key", max_context_tokens=1_000_000)
+    assert provider.max_context_tokens == 1_000_000
 
 
 def test_zai_requires_a_key():
@@ -55,6 +61,23 @@ def test_provider_shape_invariants():
     assert "thinking" not in OpenRouterConfig.model_fields  # openrouter can't set thinking
     assert "thinking" not in ZaiConfig.model_fields  # Z.AI uses its endpoint's native reasoning
     assert "thinking" not in KimiConfig.model_fields  # Kimi uses its endpoint's native reasoning
+    assert "key" not in OpenAIConfig.model_fields  # ChatGPT uses OAuth, never an API key
+
+
+def test_subscription_contexts_are_model_specific():
+    providers = _manifest()["providers"]
+    assert providers["zai"]["context_by_model"]["glm-5.2"]["default"] == 1_000_000
+    assert providers["zai"]["context_by_model"]["glm-4.7"]["default"] == 200_000
+    assert providers["kimi"]["context_by_model"]["k3"]["default"] == 1_048_576
+    assert providers["kimi"]["context_by_model"]["kimi-for-coding"]["default"] == 262_144
+    assert providers["openrouter"]["context"]["presets"] == []
+
+
+def test_subscription_configs_reject_context_beyond_the_selected_model():
+    with pytest.raises(pyd.ValidationError, match=r"glm-4\.7 supports at most 200000"):
+        ZaiConfig(model="glm-4.7", key="key", max_context_tokens=1_000_000)
+    with pytest.raises(pyd.ValidationError, match="kimi-for-coding supports at most 262144"):
+        KimiConfig(model="kimi-for-coding", key="key", max_context_tokens=1_048_576)
 
 
 def test_claude_context_gates_large_windows_by_plan():

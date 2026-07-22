@@ -1,5 +1,11 @@
 import type { FC } from "react";
-import { ClaudeLogo, KimiLogo, OpenRouterLogo, ZaiLogo } from "./logos";
+import {
+  ClaudeLogo,
+  KimiLogo,
+  OpenAILogo,
+  OpenRouterLogo,
+  ZaiLogo,
+} from "./logos";
 import type { ProviderMode } from "./types";
 
 // Brand art + UI copy that isn't in the manifest (logo, tagline). The provider's display NAME comes
@@ -26,6 +32,11 @@ export const PROVIDERS: ProviderMeta[] = [
     id: "kimi",
     tagline: "use your Kimi membership",
     Logo: KimiLogo,
+  },
+  {
+    id: "openai",
+    tagline: "sign in with your ChatGPT subscription",
+    Logo: OpenAILogo,
   },
 ];
 

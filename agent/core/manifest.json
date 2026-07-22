@@ -21,25 +21,46 @@
       "models": "live",
       "default_model": null,
       "context": {
-        "default": 200000,
-        "presets": [
-          { "tokens": 200000, "label": "200K", "note": "full window" },
-          { "tokens": 128000, "label": "128K", "note": "balanced" },
-          { "tokens": 64000, "label": "64K", "note": "cheapest prompt-cache reads" }
-        ]
+        "default": 0,
+        "presets": []
       }
     },
     "zai": {
       "display": "Z.AI Coding Plan",
-      "models": ["glm-4.7", "glm-5.1", "glm-5-turbo", "glm-4.5-air"],
-      "default_model": "glm-4.7",
+      "models": ["glm-5.2", "glm-5-turbo", "glm-4.7"],
+      "default_model": "glm-5.2",
       "context": {
-        "default": 200000,
+        "default": 1000000,
         "presets": [
-          { "tokens": 200000, "label": "200K", "note": "full window" },
-          { "tokens": 128000, "label": "128K", "note": "balanced" },
-          { "tokens": 64000, "label": "64K", "note": "compacts sooner" }
+          { "tokens": 1000000, "label": "1M", "note": "full GLM-5.2 window" }
         ]
+      },
+      "context_by_model": {
+        "glm-5.2": {
+          "default": 1000000,
+          "presets": [
+            { "tokens": 1000000, "label": "1M", "note": "full window" },
+            { "tokens": 200000, "label": "200K", "note": "compacts sooner" },
+            { "tokens": 128000, "label": "128K", "note": "balanced" },
+            { "tokens": 64000, "label": "64K", "note": "lowest cache use" }
+          ]
+        },
+        "glm-5-turbo": {
+          "default": 200000,
+          "presets": [
+            { "tokens": 200000, "label": "200K", "note": "full window" },
+            { "tokens": 128000, "label": "128K", "note": "balanced" },
+            { "tokens": 64000, "label": "64K", "note": "compacts sooner" }
+          ]
+        },
+        "glm-4.7": {
+          "default": 200000,
+          "presets": [
+            { "tokens": 200000, "label": "200K", "note": "full window" },
+            { "tokens": 128000, "label": "128K", "note": "balanced" },
+            { "tokens": 64000, "label": "64K", "note": "compacts sooner" }
+          ]
+        }
       }
     },
     "kimi": {
@@ -52,6 +73,46 @@
           { "tokens": 262144, "label": "256K", "note": "full standard window" },
           { "tokens": 128000, "label": "128K", "note": "balanced" },
           { "tokens": 64000, "label": "64K", "note": "compacts sooner" }
+        ]
+      },
+      "context_by_model": {
+        "k3": {
+          "default": 1048576,
+          "presets": [
+            { "tokens": 1048576, "label": "1M", "note": "Allegretto and above" },
+            { "tokens": 262144, "label": "256K", "note": "Moderato and above" },
+            { "tokens": 128000, "label": "128K", "note": "compacts sooner" },
+            { "tokens": 64000, "label": "64K", "note": "lowest cache use" }
+          ]
+        },
+        "kimi-for-coding": {
+          "default": 262144,
+          "presets": [
+            { "tokens": 262144, "label": "256K", "note": "full window" },
+            { "tokens": 128000, "label": "128K", "note": "balanced" },
+            { "tokens": 64000, "label": "64K", "note": "compacts sooner" }
+          ]
+        },
+        "kimi-for-coding-highspeed": {
+          "default": 262144,
+          "presets": [
+            { "tokens": 262144, "label": "256K", "note": "full window" },
+            { "tokens": 128000, "label": "128K", "note": "balanced" },
+            { "tokens": 64000, "label": "64K", "note": "compacts sooner" }
+          ]
+        }
+      }
+    },
+    "openai": {
+      "display": "OpenAI Codex",
+      "models": ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
+      "default_model": "gpt-5.6-sol",
+      "context": {
+        "default": 272000,
+        "presets": [
+          { "tokens": 272000, "label": "272K", "note": "ChatGPT subscription window" },
+          { "tokens": 128000, "label": "128K", "note": "compacts sooner" },
+          { "tokens": 64000, "label": "64K", "note": "lowest cache use" }
         ]
       }
     }

@@ -7,7 +7,17 @@ import json
 import pytest
 
 import core.config as cfg
-from core.config import ClaudeConfig, ClaudeOAuth, KimiConfig, OpenRouterConfig, ZaiConfig, read_config_store, update_config_store
+from core.config import (
+    ClaudeConfig,
+    ClaudeOAuth,
+    KimiConfig,
+    OpenAIConfig,
+    OpenRouterConfig,
+    ZaiConfig,
+    codex_proxy_auth_path,
+    read_config_store,
+    update_config_store,
+)
 from core.provider import (
     ProviderAuthState,
     UsageCredits,
@@ -21,6 +31,7 @@ from core.provider import (
     observed_provider_failure,
     set_claude,
     set_kimi,
+    set_openai,
     set_openrouter,
     set_zai,
 )
@@ -64,6 +75,7 @@ def test_derive_kimi_authenticated_with_key():
 
 
 _CREDS = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 2**62}})
+_OPENAI_CREDS = json.dumps({"access": "access", "refresh": "refresh", "expires": 2**62, "accountId": "acct"})
 
 
 # --- Terminal auth-error classification (Claude path) ---
@@ -177,6 +189,21 @@ def test_set_kimi_writes_nested_provider_to_store(prov):
     assert derive_status(fresh).kind == "kimi"
 
 
+def test_set_openai_writes_oauth_outside_config_store(prov):
+    status = set_openai(_OPENAI_CREDS, "gpt-5.6-sol", 272_000, config=prov)
+    assert status.state == ProviderAuthState.AUTHENTICATED
+    assert status.kind == "openai"
+    assert json.loads(codex_proxy_auth_path().read_text()) == json.loads(_OPENAI_CREDS)
+    assert read_config_store()["provider"] == {
+        "kind": "openai",
+        "model": "gpt-5.6-sol",
+        "max_context_tokens": 272_000,
+    }
+    fresh = cfg.VestaConfig()
+    assert isinstance(fresh.provider, OpenAIConfig)
+    assert derive_status(fresh).kind == "openai"
+
+
 @pytest.mark.parametrize(
     "provider",
     [
@@ -206,13 +233,16 @@ def test_clear_provider_removes_creds_and_resets_state(prov):
 
     set_openrouter("sk-or-v1-secret", "deepseek/deepseek-v4-flash", None, config=prov)
     set_claude(_CREDS, "opus", None, config=prov)
+    set_openai(_OPENAI_CREDS, "gpt-5.6-sol", None, config=prov)
     assert provider_mod.CREDENTIALS_PATH.exists()
+    assert codex_proxy_auth_path().exists()
 
     status = clear_provider()
     assert status.state == ProviderAuthState.NOT_AUTHENTICATED
     assert status.kind == "none"
     assert status.model is None
     assert not provider_mod.CREDENTIALS_PATH.exists()
+    assert not codex_proxy_auth_path().exists()
     # Sign-out clears the provider entirely (no provider chosen), not a fake default.
     assert "provider" not in read_config_store()
     # A fresh boot re-derives unprovisioned from disk (no provider, creds removed).

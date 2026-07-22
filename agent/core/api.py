@@ -36,6 +36,7 @@ from .config import (
     atomic_write_text,
     load_active_skills,
     load_notification_rules,
+    read_manifest,
     stored_config,
     update_config_store,
     validate_config_updates,
@@ -43,7 +44,7 @@ from .config import (
 from .events import EventBus, SnapshotEvent, VestaEvent
 from .helpers import get_memory_path
 from .models import State
-from .provider import ProviderAuthState, UsageError, clear_provider, get_usage, set_claude, set_kimi, set_openrouter, set_zai
+from .provider import ProviderAuthState, UsageError, clear_provider, get_usage, set_claude, set_kimi, set_openai, set_openrouter, set_zai
 
 logger = logging.getLogger("vesta.api")
 
@@ -274,8 +275,20 @@ class _KimiSignIn(pyd.BaseModel):
     key: str
 
 
-_ProviderSignIn = tp.Annotated[_ClaudeSignIn | _OpenRouterSignIn | _ZaiSignIn | _KimiSignIn, pyd.Field(discriminator="kind")]
-_SIGN_IN_ADAPTER: pyd.TypeAdapter[_ClaudeSignIn | _OpenRouterSignIn | _ZaiSignIn | _KimiSignIn] = pyd.TypeAdapter(_ProviderSignIn)
+class _OpenAISignIn(pyd.BaseModel):
+    kind: tp.Literal["openai"]
+    model: str
+    max_context_tokens: int | None = None
+    credentials: str
+
+
+_ProviderSignIn = tp.Annotated[
+    _ClaudeSignIn | _OpenRouterSignIn | _ZaiSignIn | _KimiSignIn | _OpenAISignIn,
+    pyd.Field(discriminator="kind"),
+]
+_SIGN_IN_ADAPTER: pyd.TypeAdapter[_ClaudeSignIn | _OpenRouterSignIn | _ZaiSignIn | _KimiSignIn | _OpenAISignIn] = pyd.TypeAdapter(
+    _ProviderSignIn
+)
 
 
 class _ProviderPrefs(pyd.BaseModel):
@@ -341,9 +354,13 @@ async def _provider_put_handler(request: web.Request) -> web.Response:
             state.provider_status = await asyncio.to_thread(set_openrouter, signin.key, signin.model, signin.max_context_tokens, config=config)
         elif isinstance(signin, _ZaiSignIn):
             state.provider_status = await asyncio.to_thread(set_zai, signin.key, signin.model, signin.max_context_tokens, config=config)
-        else:
+        elif isinstance(signin, _KimiSignIn):
             state.provider_status = await asyncio.to_thread(set_kimi, signin.key, signin.model, signin.max_context_tokens, config=config)
-    except (json.JSONDecodeError, TypeError) as e:
+        else:
+            state.provider_status = await asyncio.to_thread(
+                set_openai, signin.credentials, signin.model, signin.max_context_tokens, config=config
+            )
+    except (json.JSONDecodeError, TypeError, pyd.ValidationError) as e:
         return web.json_response({"error": f"invalid credentials: {e}"}, status=400)
     except OSError as e:
         return web.json_response({"error": f"auth write failed: {e}"}, status=500)
@@ -365,6 +382,16 @@ async def _provider_patch_handler(request: web.Request) -> web.Response:
     patch = prefs.model_dump(exclude_unset=True)
     if not patch:
         return web.json_response({"error": "no provider fields provided"}, status=400)
+    # Z.AI and Kimi have model-specific ceilings. Reset the context to that model's catalog default
+    # when a model-only edit would otherwise carry an invalid window over from the previous model.
+    if "model" in patch and "max_context_tokens" not in patch and config.provider is not None:
+        providers = read_manifest().get("providers")
+        entry = providers.get(config.provider.kind) if isinstance(providers, dict) else None
+        by_model = entry.get("context_by_model") if isinstance(entry, dict) else None
+        model_context = by_model.get(patch["model"]) if isinstance(by_model, dict) else None
+        default_context = model_context.get("default") if isinstance(model_context, dict) else None
+        if isinstance(default_context, int) and default_context > 0:
+            patch["max_context_tokens"] = default_context
     return await _validate_and_store(config, {"provider": patch}, label="provider")
 
 

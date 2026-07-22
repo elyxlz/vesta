@@ -73,9 +73,9 @@ CONTEXT_1M_BETA: SdkBeta = "context-1m-2025-08-07"
 # Per-provider context bounds enforced by the Field constraints (the catalog's presets live in the manifest).
 _CTX_MIN = 1_000
 _CLAUDE_CTX_MAX = 1_000_000
-_OPENROUTER_CTX_MAX = 200_000
-_ZAI_CTX_MAX = 200_000
-_KIMI_CTX_MAX = 262_144
+_ZAI_CTX_MAX = 1_000_000
+_KIMI_CTX_MAX = 1_048_576
+_OPENAI_CTX_MAX = 272_000
 
 ADAPTIVE_THINKING = ThinkingConfigAdaptive(type="adaptive", display="summarized")
 
@@ -90,6 +90,11 @@ def _resolve_agent_dir() -> pl.Path:
 def config_store_path() -> pl.Path:
     """The writable per-agent config store (the nested config, written by PUT /config)."""
     return _resolve_agent_dir() / "data" / "config.json"
+
+
+def codex_proxy_auth_path() -> pl.Path:
+    """Proxy-owned ChatGPT OAuth file, kept with the agent's persisted private data."""
+    return _resolve_agent_dir() / "data" / "claude-code-proxy" / "codex" / "auth.json"
 
 
 def read_config_store() -> dict[str, pyd.JsonValue]:
@@ -242,7 +247,10 @@ class ClaudeConfig(pyd.BaseModel):
 class OpenRouterConfig(pyd.BaseModel):
     kind: tp.Literal["openrouter"] = "openrouter"
     model: str
-    max_context_tokens: int | None = pyd.Field(default=None, ge=_CTX_MIN, le=_OPENROUTER_CTX_MAX)
+    # OpenRouter exposes the selected model's real window from /models. There is deliberately no
+    # provider-wide upper bound here: the runtime resolves that model-specific ceiling and treats
+    # this field only as an optional user cap.
+    max_context_tokens: int | None = pyd.Field(default=None, ge=_CTX_MIN)
     # SecretStr redacts it in GET /config; client.py injects the real value into the SDK env. Required:
     # an openrouter provider structurally cannot exist without a key. No thinking field (forced disabled).
     key: pyd.SecretStr
@@ -256,6 +264,21 @@ class ZaiConfig(pyd.BaseModel):
     max_context_tokens: int | None = pyd.Field(default=None, ge=_CTX_MIN, le=_ZAI_CTX_MAX)
     key: pyd.SecretStr
 
+    @pyd.model_validator(mode="after")
+    def _context_fits_model(self) -> "ZaiConfig":
+        limits = {
+            "glm-5.2": 1_000_000,
+            "glm-5.1": 200_000,
+            "glm-5": 200_000,
+            "glm-5-turbo": 200_000,
+            "glm-4.7": 200_000,
+            "glm-4.5-air": 128_000,
+        }
+        limit = limits.get(self.model.removesuffix("[1m]").lower())
+        if limit is not None and self.max_context_tokens is not None and self.max_context_tokens > limit:
+            raise ValueError(f"{self.model} supports at most {limit} context tokens")
+        return self
+
 
 class KimiConfig(pyd.BaseModel):
     """A Kimi Code membership key used through its Claude Code-compatible endpoint."""
@@ -265,8 +288,24 @@ class KimiConfig(pyd.BaseModel):
     max_context_tokens: int | None = pyd.Field(default=None, ge=_CTX_MIN, le=_KIMI_CTX_MAX)
     key: pyd.SecretStr
 
+    @pyd.model_validator(mode="after")
+    def _context_fits_model(self) -> "KimiConfig":
+        model = self.model.removesuffix("[1m]").lower()
+        limit = 1_048_576 if model == "k3" else 262_144 if model in {"kimi-for-coding", "kimi-for-coding-highspeed"} else None
+        if limit is not None and self.max_context_tokens is not None and self.max_context_tokens > limit:
+            raise ValueError(f"{self.model} supports at most {limit} context tokens")
+        return self
 
-Provider = tp.Annotated[ClaudeConfig | OpenRouterConfig | ZaiConfig | KimiConfig, pyd.Field(discriminator="kind")]
+
+class OpenAIConfig(pyd.BaseModel):
+    """A ChatGPT subscription used through the local Anthropic-compatible bridge."""
+
+    kind: tp.Literal["openai"] = "openai"
+    model: str
+    max_context_tokens: int | None = pyd.Field(default=None, ge=_CTX_MIN, le=_OPENAI_CTX_MAX)
+
+
+Provider = tp.Annotated[ClaudeConfig | OpenRouterConfig | ZaiConfig | KimiConfig | OpenAIConfig, pyd.Field(discriminator="kind")]
 
 
 def _coerce_thinking(value: object) -> object:

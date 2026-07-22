@@ -21,6 +21,12 @@ export type ProviderResult =
       kind: "openrouter" | "zai" | "kimi";
       config: KeyProviderConfig;
       maxContextTokens?: number;
+    }
+  | {
+      kind: "openai";
+      credentials: string;
+      model: string;
+      maxContextTokens?: number;
     };
 
 /// The nested provider body for `PUT /provider` (sign in / switch). The claude OAuth blob travels as
@@ -36,6 +42,12 @@ type ProviderBody =
       kind: "openrouter" | "zai" | "kimi";
       model: string;
       key: string;
+      max_context_tokens?: number;
+    }
+  | {
+      kind: "openai";
+      credentials: string;
+      model: string;
       max_context_tokens?: number;
     };
 
@@ -59,14 +71,23 @@ export async function setProvider(
             ? { max_context_tokens: result.maxContextTokens }
             : {}),
         }
-      : {
-          kind: result.kind,
-          model: result.config.model,
-          key: result.config.key,
-          ...(result.maxContextTokens != null
-            ? { max_context_tokens: result.maxContextTokens }
-            : {}),
-        };
+      : result.kind === "openai"
+        ? {
+            kind: "openai",
+            credentials: result.credentials,
+            model: result.model,
+            ...(result.maxContextTokens != null
+              ? { max_context_tokens: result.maxContextTokens }
+              : {}),
+          }
+        : {
+            kind: result.kind,
+            model: result.config.model,
+            key: result.config.key,
+            ...(result.maxContextTokens != null
+              ? { max_context_tokens: result.maxContextTokens }
+              : {}),
+          };
   await apiFetch(`/agents/${enc}/provider`, jsonInit("PUT", body));
   const prefs: Record<string, string> = {};
   if (personality) prefs.agent_personality = personality;
@@ -89,7 +110,7 @@ export async function signOutProvider(name: string): Promise<void> {
 export interface ProviderInfo {
   /// "none" means no provider chosen (fresh agent, or signed out). A concrete kind with
   /// `authed: false` means a provider IS chosen but its credential is invalid/expired (re-auth).
-  kind: "claude" | "openrouter" | "zai" | "kimi" | "none";
+  kind: "claude" | "openrouter" | "zai" | "kimi" | "openai" | "none";
   model: string | null;
   max_context_tokens: number | null;
   authed: boolean;
@@ -103,7 +124,7 @@ export interface ProviderInfo {
 /// "no provider yet" (kind "none") apart from "chosen but credential expired" (kind set, authed false).
 export async function getProvider(name: string): Promise<ProviderInfo> {
   const provider = await apiJson<{
-    kind?: "claude" | "openrouter" | "zai" | "kimi";
+    kind?: "claude" | "openrouter" | "zai" | "kimi" | "openai";
     model: string | null;
     max_context_tokens: number | null;
     authed?: boolean;

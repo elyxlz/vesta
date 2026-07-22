@@ -22,6 +22,15 @@ export interface ProviderEntry {
   models: string[] | "live";
   default_model: string | null;
   context: ProviderContext;
+  // Providers whose models have different ceilings override the shared fallback here.
+  context_by_model?: Record<string, ProviderContext>;
+}
+
+export function contextForModel(
+  entry: ProviderEntry | undefined,
+  model: string,
+): ProviderContext | undefined {
+  return entry?.context_by_model?.[model] ?? entry?.context;
 }
 
 export interface Personality {

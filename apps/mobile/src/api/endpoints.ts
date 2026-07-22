@@ -26,6 +26,12 @@ export type ProviderSelection =
       key: string;
       model: string;
       maxContextTokens?: number;
+    }
+  | {
+      kind: "openai";
+      credentials: string;
+      model: string;
+      maxContextTokens?: number;
     };
 
 export interface OpenRouterModelOption {
@@ -93,14 +99,23 @@ export async function provisionAgent(
             ? { max_context_tokens: provider.maxContextTokens }
             : {}),
         }
-      : {
-          kind: provider.kind,
-          key: provider.key,
-          model: provider.model,
-          ...(provider.maxContextTokens !== undefined
-            ? { max_context_tokens: provider.maxContextTokens }
-            : {}),
-        };
+      : provider.kind === "openai"
+        ? {
+            kind: "openai",
+            credentials: provider.credentials,
+            model: provider.model,
+            ...(provider.maxContextTokens !== undefined
+              ? { max_context_tokens: provider.maxContextTokens }
+              : {}),
+          }
+        : {
+            kind: provider.kind,
+            key: provider.key,
+            model: provider.model,
+            ...(provider.maxContextTokens !== undefined
+              ? { max_context_tokens: provider.maxContextTokens }
+              : {}),
+          };
   const encoded = encodeURIComponent(name);
   await api.request(
     `/agents/${encoded}/provider`,
@@ -136,6 +151,23 @@ export async function completeClaudeOAuth(
   return result.credentials;
 }
 
+export async function startOpenAIOAuth(
+  api: ApiClient,
+): Promise<{ auth_url: string; user_code: string; session_id: string }> {
+  return api.json("/providers/openai/oauth/start", { method: "POST" });
+}
+
+export async function completeOpenAIOAuth(
+  api: ApiClient,
+  sessionId: string,
+): Promise<string> {
+  const result = await api.json<{ credentials: string }>(
+    "/providers/openai/oauth/complete",
+    api.jsonInit("POST", { session_id: sessionId }),
+  );
+  return result.credentials;
+}
+
 export async function fetchOpenRouterModels(
   api: ApiClient,
 ): Promise<OpenRouterModelOption[]> {
@@ -157,7 +189,7 @@ export async function getProvider(
   name: string,
 ): Promise<ProviderInfo> {
   const provider = await api.json<{
-    kind?: "claude" | "openrouter" | "zai" | "kimi";
+    kind?: "claude" | "openrouter" | "zai" | "kimi" | "openai";
     model: string | null;
     max_context_tokens: number | null;
     authed?: boolean;

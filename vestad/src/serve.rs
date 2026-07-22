@@ -2306,6 +2306,14 @@ pub fn build_router(state: SharedState) -> Router {
             post(crate::providers::claude::oauth_complete_handler),
         )
         .route(
+            "/providers/openai/oauth/start",
+            post(crate::providers::openai::oauth_start_handler),
+        )
+        .route(
+            "/providers/openai/oauth/complete",
+            post(crate::providers::openai::oauth_complete_handler),
+        )
+        .route(
             "/providers/openrouter/models/top",
             get(crate::providers::openrouter::list_top_models_handler),
         )
