@@ -755,6 +755,11 @@ fn start_tunnel(
             "tunnel",
             "--protocol",
             "http2",
+            // The supervisor reports connectivity changes and recovery itself.
+            // cloudflared's info stream repeats per-connection lifecycle details
+            // and overwhelms `vestad logs`; retain only actionable diagnostics.
+            "--loglevel",
+            "warn",
             "--metrics",
             &metrics_addr,
             "--config",
@@ -770,10 +775,8 @@ fn start_tunnel(
         .spawn()
         .map_err(|e| format!("failed to start cloudflared: {e}"))?;
 
-    // cloudflared logs its connection lifecycle (registering/registered/lost connections)
-    // to stderr. Forward it into vestad's tracing so `vestad logs` shows tunnel state —
-    // otherwise a reconnecting tunnel looks like silence and a transient 502 has no trail.
-    // This also drains the piped stderr, which would otherwise fill and stall cloudflared.
+    // Forward cloudflared's remaining warnings/errors into vestad's tracing. This
+    // also drains the piped stderr, which would otherwise fill and stall it.
     if let Some(stderr) = child.stderr.take() {
         tokio::spawn(async move {
             use tokio::io::AsyncBufReadExt;
@@ -781,13 +784,52 @@ fn start_tunnel(
             while let Ok(Some(line)) = lines.next_line().await {
                 let line = line.trim();
                 if !line.is_empty() {
-                    tracing::info!(target: "tunnel", "{line}");
+                    let (message, is_error) = clean_cloudflared_log(line);
+                    if is_error {
+                        tracing::error!(target: "tunnel", "{message}");
+                    } else {
+                        tracing::warn!(target: "tunnel", "{message}");
+                    }
                 }
             }
         });
     }
 
     Ok((child, metrics_port))
+}
+
+/// cloudflared output varies between plain and JSON across builds. Keep the human
+/// message and error detail, and discard connector ids and other metadata when
+/// structured output is available.
+fn clean_cloudflared_log(line: &str) -> (String, bool) {
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
+        let level = value["level"].as_str().unwrap_or("warn");
+        let is_error = matches!(level, "error" | "fatal" | "panic");
+        let mut message = value["message"].as_str().unwrap_or(line).to_string();
+        if let Some(error) = value["error"].as_str() {
+            if !error.is_empty() && !message.contains(error) {
+                message.push_str(": ");
+                message.push_str(error);
+            }
+        }
+        return (message, is_error);
+    }
+
+    let first = line.split_whitespace().next().unwrap_or("");
+    let rest = line.strip_prefix(first).unwrap_or(line).trim_start();
+    let level = rest.split_whitespace().next().unwrap_or("");
+    let normalized_level = level.trim_matches(|c: char| !c.is_ascii_alphabetic());
+    let is_cloudflared_level = matches!(
+        normalized_level,
+        "INF" | "WRN" | "ERR" | "FTL" | "INFO" | "WARN" | "ERROR" | "FATAL"
+    );
+    let is_error = matches!(normalized_level, "ERR" | "FTL" | "ERROR" | "FATAL");
+    let message = if is_cloudflared_level {
+        rest.strip_prefix(level).unwrap_or(rest).trim_start()
+    } else {
+        line
+    };
+    (message.to_string(), is_error)
 }
 
 /// Bind-and-drop an ephemeral loopback port for cloudflared's metrics server.
@@ -1137,6 +1179,33 @@ mod tests {
         let a = animal_for_user("alice", 0);
         let b = animal_for_user("alice", 1);
         assert_ne!(a, b, "different offsets should give different animals");
+    }
+
+    #[test]
+    fn cloudflared_json_is_reduced_to_an_actionable_message() {
+        let line = r#"{"level":"error","connIndex":2,"message":"connection failed","error":"edge timeout"}"#;
+        assert_eq!(
+            clean_cloudflared_log(line),
+            ("connection failed: edge timeout".to_string(), true)
+        );
+    }
+
+    #[test]
+    fn cloudflared_plain_warnings_keep_their_text_and_severity() {
+        let line = "2026-07-23T12:34:56Z WRN reconnecting to edge";
+        assert_eq!(
+            clean_cloudflared_log(line),
+            ("reconnecting to edge".to_string(), false)
+        );
+    }
+
+    #[test]
+    fn cloudflared_plain_errors_are_cleaned_and_promoted() {
+        let line = "2026-07-23T12:34:56Z ERR failed to proxy error=\"context canceled\"";
+        assert_eq!(
+            clean_cloudflared_log(line),
+            ("failed to proxy error=\"context canceled\"".to_string(), true)
+        );
     }
 
     #[test]
