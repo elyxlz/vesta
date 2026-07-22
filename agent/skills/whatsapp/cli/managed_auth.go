@@ -179,6 +179,7 @@ type managedAuth struct {
 // into the consolidated state.json (state.go), not a file of its own.
 type managedState struct {
 	MSISDN    string
+	State     string
 	DirectURL string
 	DirectKey string
 }
@@ -420,11 +421,12 @@ func (m *managedAuth) claim() (managedState, error) {
 	for {
 		var out struct {
 			MSISDN string `json:"msisdn"`
+			State  string `json:"state"`
 		}
 		err := m.callWith(base, auth, http.MethodPost, "/provision", map[string]string{}, &out)
 		switch {
 		case err == nil && out.MSISDN != "":
-			return managedState{MSISDN: out.MSISDN, DirectURL: m.cfg.directURL, DirectKey: m.cfg.directKey}, nil
+			return managedState{MSISDN: out.MSISDN, State: out.State, DirectURL: m.cfg.directURL, DirectKey: m.cfg.directKey}, nil
 		case err == nil:
 			// A 2xx with no number is off-contract; treat it as "still filling" and
 			// keep polling rather than returning a bare success.
@@ -459,7 +461,11 @@ func (m *managedAuth) reauth(st managedState, pairPhone func(msisdn string) (str
 	var out struct {
 		State string `json:"state"`
 	}
-	if err := m.call(http.MethodPost, "/pair", map[string]string{"code": code}, &out); err != nil {
+	body := struct {
+		Code   string `json:"code"`
+		Reauth bool   `json:"reauth"`
+	}{Code: code, Reauth: st.State == "linked"}
+	if err := m.call(http.MethodPost, "/pair", body, &out); err != nil {
 		if blocked := classifyBlock(err); blocked != nil {
 			return blocked
 		}

@@ -52,7 +52,7 @@ func TestProvision_claimsPairsAndSaves(t *testing.T) {
 	m := managedFor(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/integrations/whatsapp/provision":
-			_ = json.NewEncoder(w).Encode(map[string]any{"msisdn": "+447700900001", "state": "linked"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"msisdn": "+447700900001", "state": "pending"})
 		case "/integrations/whatsapp/pair":
 			gotAuth = r.Header.Get("Authorization")
 			var b map[string]string
@@ -217,23 +217,54 @@ func TestProvision_directKeyHitsHomeBoxNatively(t *testing.T) {
 
 func TestReauth_postsFreshCode(t *testing.T) {
 	var gotCode string
+	var gotReauth bool
 	m := managedFor(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/integrations/whatsapp/pair" {
-			var b map[string]string
+			var b struct {
+				Code   string `json:"code"`
+				Reauth bool   `json:"reauth"`
+			}
 			_ = json.NewDecoder(r.Body).Decode(&b)
-			gotCode = b["code"]
+			gotCode, gotReauth = b.Code, b.Reauth
 			_ = json.NewEncoder(w).Encode(map[string]string{"state": "linked"})
 			return
 		}
 		http.Error(w, "no", http.StatusNotFound)
 	})
 
-	err := m.reauth(managedState{MSISDN: "+44"}, func(string) (string, error) { return "FRSH-0001", nil })
+	err := m.reauth(managedState{MSISDN: "+44", State: "linked"}, func(string) (string, error) { return "FRSH-0001", nil })
 	if err != nil {
 		t.Fatalf("reauth: %v", err)
 	}
 	if gotCode != "FRSH-0001" {
 		t.Fatalf("reauth code = %q", gotCode)
+	}
+	if !gotReauth {
+		t.Fatal("an already-linked session must request stale-companion replacement")
+	}
+}
+
+func TestReauth_firstPairDoesNotRequestReplacement(t *testing.T) {
+	var gotReauth bool
+	m := managedFor(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/integrations/whatsapp/pair" {
+			var body struct {
+				Reauth bool `json:"reauth"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			gotReauth = body.Reauth
+			_ = json.NewEncoder(w).Encode(map[string]string{"state": "linked"})
+			return
+		}
+		http.Error(w, "no", http.StatusNotFound)
+	})
+
+	err := m.reauth(managedState{MSISDN: "+44", State: "pending"}, func(string) (string, error) { return "FRSH-0001", nil })
+	if err != nil {
+		t.Fatalf("first pair: %v", err)
+	}
+	if gotReauth {
+		t.Fatal("a pending first pair must preserve the normal arm-and-add path")
 	}
 }
 
@@ -263,7 +294,7 @@ func TestProvision_picksUpHealedNumber(t *testing.T) {
 	m := managedFor(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/integrations/whatsapp/provision":
-			_ = json.NewEncoder(w).Encode(map[string]any{"msisdn": "+447700900099", "state": "linked"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"msisdn": "+447700900099", "state": "pending"})
 		case "/integrations/whatsapp/pair":
 			_ = json.NewEncoder(w).Encode(map[string]string{"state": "linked"})
 		default:
