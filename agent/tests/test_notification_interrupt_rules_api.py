@@ -149,3 +149,16 @@ async def test_rules_put_after_prefs_put_keeps_both(tmp_path, monkeypatch):
         assert cfg.load_notification_rules()[0].source == "twitter"
     finally:
         await client.close()
+
+
+@pytest.mark.anyio
+async def test_active_skills_put_then_get_round_trips_live(tmp_path, monkeypatch):
+    client, _config = await _client(tmp_path, monkeypatch)
+    try:
+        resp = await client.put("/config", json={"active_skills": ["whatsapp", "tasks", "tasks"]})
+        assert resp.status == 200
+
+        resp = await client.get("/config")
+        assert (await resp.json())["active_skills"] == ["tasks", "whatsapp"]
+    finally:
+        await client.close()

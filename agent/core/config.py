@@ -171,6 +171,23 @@ def load_notification_rules() -> list[NotificationInterruptRule]:
     return drop_expired(rules, dt.datetime.now(dt.UTC))
 
 
+def load_active_skills(config: "VestaConfig") -> list[str]:
+    """The current active skill list, read live from the store so CLI edits and PUT /config
+    are visible to GET /config before the next restart."""
+    try:
+        store = read_config_store()
+    except OSError as exc:
+        logger.error(f"config store unreadable ({exc}); using boot-time active_skills")
+        return config.active_skills
+    if "active_skills" not in store:
+        return config.active_skills
+    try:
+        return VestaConfig.model_validate({"active_skills": store["active_skills"]}).active_skills
+    except pyd.ValidationError as exc:
+        logger.error(f"config store active_skills is invalid; using boot-time active_skills ({exc})")
+        return config.active_skills
+
+
 class ClaudeOAuth(pyd.BaseModel):
     """Mirrors the `claudeAiOauth` blob in the SDK credentials file (aliases carry the on-disk
     camelCase). Tolerates extra keys: the `claude` CLI owns the file and adds fields we don't model.
