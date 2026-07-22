@@ -72,6 +72,7 @@ type WhatsAppClient struct {
 	managed       *managedAuth
 	proxyMu       sync.Mutex
 	proxyURL      string // cached residential proxy lease for the process lifetime
+	egressCache   map[string]egressInfo
 	authStatus    AuthStatus
 	authMutex     sync.RWMutex
 	qrPath        string
@@ -270,8 +271,8 @@ func datacenterEgress(info egressInfo) bool {
 // ensureManagedProxy selects and validates companion egress before Connect. Explicit
 // bring-your-own proxy wins, managed mode leases automatically, and an otherwise
 // direct connection is inspected and upgraded to a lease if it is a datacenter exit.
-// Every selected path is inspected through that path and fails closed if it is not
-// residential/mobile.
+// Every selected path is inspected through that path. Managed and proxy paths fail
+// closed when inspection is unavailable; plain QR boxes may connect with a warning.
 func (wac *WhatsAppClient) ensureManagedProxy() error {
 	if wac.managed == nil {
 		wac.managed = newManagedAuth(loadManagedConfig())
@@ -291,9 +292,17 @@ func (wac *WhatsAppClient) ensureManagedProxy() error {
 			selected = leased
 		}
 	}
-	info, err := lookupEgress(selected)
-	if err != nil {
-		return fmt.Errorf("cannot verify safe WhatsApp egress; obtain a residential proxy and set WHATSAPP_PROXY_URL: %w", err)
+	info, cached := wac.egressCache[selected]
+	var err error
+	if !cached {
+		info, err = lookupEgress(selected)
+		if err != nil {
+			if selected == "" && !wac.managed.isHosted() {
+				wac.logger.Warnf("Could not inspect direct WhatsApp egress; proceeding with plain QR connection: %v", err)
+				return nil
+			}
+			return fmt.Errorf("cannot verify safe WhatsApp egress; obtain a residential proxy and set WHATSAPP_PROXY_URL: %w", err)
+		}
 	}
 	if selected == "" && datacenterEgress(info) {
 		if !wac.managed.isHosted() {
@@ -313,6 +322,10 @@ func (wac *WhatsAppClient) ensureManagedProxy() error {
 	if datacenterEgress(info) {
 		return fmt.Errorf("WhatsApp egress IP %s is still a datacenter/hosting exit; obtain a residential proxy and set WHATSAPP_PROXY_URL", info.Query)
 	}
+	if wac.egressCache == nil {
+		wac.egressCache = make(map[string]egressInfo)
+	}
+	wac.egressCache[selected] = info
 	if selected != "" {
 		if err := wac.client.SetProxyAddress(selected); err != nil {
 			return fmt.Errorf("apply residential proxy: %w", err)

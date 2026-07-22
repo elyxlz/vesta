@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
 // fakeVestad is a stand-in for this box's vestad: it mints a server-identity
@@ -466,6 +468,53 @@ func TestEnsureManagedProxy_allowsResidentialDirectEgress(t *testing.T) {
 	direct := &WhatsAppClient{managed: newManagedAuth(managedConfig{directURL: "https://box", directKey: "wak_x"})}
 	if err := direct.ensureManagedProxy(); err != nil {
 		t.Fatalf("residential direct ensureManagedProxy = %v", err)
+	}
+}
+
+func TestEnsureManagedProxy_allowsPlainQRWhenInspectionFails(t *testing.T) {
+	oldLookup := lookupEgress
+	lookupEgress = func(string) (egressInfo, error) {
+		return egressInfo{}, errors.New("inspector unavailable")
+	}
+	t.Cleanup(func() { lookupEgress = oldLookup })
+	wac := &WhatsAppClient{managed: newManagedAuth(managedConfig{}), logger: waLog.Noop}
+	if err := wac.ensureManagedProxy(); err != nil {
+		t.Fatalf("plain QR ensureManagedProxy = %v, want inspection error ignored", err)
+	}
+}
+
+func TestEnsureManagedProxy_rejectsManagedDatacenterEgress(t *testing.T) {
+	oldLookup := lookupEgress
+	lookupEgress = func(string) (egressInfo, error) {
+		return egressInfo{Status: "success", Query: "198.51.100.3", Hosting: true}, nil
+	}
+	t.Cleanup(func() { lookupEgress = oldLookup })
+	wac := &WhatsAppClient{
+		managed: newManagedAuth(managedConfig{directURL: "https://box", directKey: "wak_x", proxyURL: "http://proxy:8080"}),
+	}
+	if err := wac.ensureManagedProxy(); err == nil || !strings.Contains(err.Error(), "datacenter/hosting") {
+		t.Fatalf("managed datacenter ensureManagedProxy = %v, want hard failure", err)
+	}
+}
+
+func TestEnsureManagedProxy_cachesGoodVerdictPerProxy(t *testing.T) {
+	oldLookup := lookupEgress
+	var calls atomic.Int32
+	lookupEgress = func(string) (egressInfo, error) {
+		calls.Add(1)
+		return egressInfo{Status: "success", Query: "198.51.100.4"}, nil
+	}
+	t.Cleanup(func() { lookupEgress = oldLookup })
+	wac := newLinkedTestClient(t)
+	wac.managed = newManagedAuth(managedConfig{proxyURL: "http://proxy:8080"})
+	if err := wac.ensureManagedProxy(); err != nil {
+		t.Fatalf("first ensureManagedProxy: %v", err)
+	}
+	if err := wac.ensureManagedProxy(); err != nil {
+		t.Fatalf("second ensureManagedProxy: %v", err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("lookupEgress calls = %d, want 1", got)
 	}
 }
 
