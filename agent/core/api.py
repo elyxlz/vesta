@@ -34,6 +34,7 @@ from .config import (
     ClaudeConfig,
     VestaConfig,
     atomic_write_text,
+    load_active_skills,
     load_notification_rules,
     stored_config,
     update_config_store,
@@ -207,6 +208,7 @@ async def _config_get_handler(request: web.Request) -> web.Response:
     config: VestaConfig = request.app["config"]
     data = stored_config(config)
     data.pop("provider", None)
+    data["active_skills"] = load_active_skills(config)
     data["notification_rules"] = [rule.model_dump(mode="json") for rule in load_notification_rules()]
     return web.json_response(data)
 

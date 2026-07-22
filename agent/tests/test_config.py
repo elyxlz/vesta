@@ -3,6 +3,7 @@
 import os
 import pathlib as pl
 
+import pydantic as pyd
 import pytest
 
 import core.config as cfg
@@ -29,6 +30,7 @@ def test_config_default_values():
     config = cfg.VestaConfig()
     assert config.monitor_tick_interval > 0
     assert config.response_timeout > 0
+    assert config.active_skills == []
 
 
 def test_memory_paths(config):
@@ -148,6 +150,11 @@ def test_update_merges_and_clear_reverts(agentdir):
     assert cfg.VestaConfig().agent_personality == "dry"
 
 
+def test_active_skills_load_from_config_store(agentdir):
+    update_config_store({"active_skills": ["whatsapp", "tasks"]})
+    assert cfg.VestaConfig().active_skills == ["tasks", "whatsapp"]
+
+
 def test_update_rejects_keys_that_are_not_config_fields(agentdir):
     with pytest.raises(ValueError):
         update_config_store({"not_a_field": "x"})
@@ -219,10 +226,18 @@ def test_validate_config_rejects_non_pref_keys(config, key):
         ("agent_personality", "playful"),
         ("timezone", "Europe/London"),
         ("seed_context", "they like terse replies"),
+        ("active_skills", ["whatsapp", "tasks", "tasks"]),
     ],
 )
 def test_validate_config_accepts_every_preference(config, key, value):
-    assert validate_config_updates(config, {key: value}) == {key: value}
+    expected = ["tasks", "whatsapp"] if key == "active_skills" else value
+    assert validate_config_updates(config, {key: value}) == {key: expected}
+
+
+@pytest.mark.parametrize("value", ["whatsapp", ["../core"], ["has/slash"], [""], [1]])
+def test_validate_config_rejects_bad_active_skills(config, value):
+    with pytest.raises((pyd.ValidationError, ValueError)):
+        validate_config_updates(config, {"active_skills": value})
 
 
 def test_validate_provider_partial_deep_merges(config):

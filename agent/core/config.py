@@ -3,6 +3,7 @@ import datetime as dt
 import json
 import os
 import pathlib as pl
+import re
 import tempfile
 import typing as tp
 import uuid
@@ -17,6 +18,7 @@ from .notification_interrupt_policy import NotificationInterruptRule, drop_expir
 
 _DEFAULT_AGENT_DIR = pl.Path.home() / "agent"
 _THINKING_ENABLED_BUDGET_TOKENS = 10000
+_SKILL_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 # The Claude OAuth blob lives at the SDK-owned path: the `claude` CLI reads AND refreshes it in place,
 # so it is never persisted into the config store. Owned here (config.py is the lower-level module);
@@ -169,6 +171,23 @@ def load_notification_rules() -> list[NotificationInterruptRule]:
     return drop_expired(rules, dt.datetime.now(dt.UTC))
 
 
+def load_active_skills(config: "VestaConfig") -> list[str]:
+    """The current active skill list, read live from the store so CLI edits and PUT /config
+    are visible to GET /config before the next restart."""
+    try:
+        store = read_config_store()
+    except OSError as exc:
+        logger.error(f"config store unreadable ({exc}); using boot-time active_skills")
+        return config.active_skills
+    if "active_skills" not in store:
+        return config.active_skills
+    try:
+        return VestaConfig.model_validate({"active_skills": store["active_skills"]}).active_skills
+    except pyd.ValidationError as exc:
+        logger.error(f"config store active_skills is invalid; using boot-time active_skills ({exc})")
+        return config.active_skills
+
+
 class ClaudeOAuth(pyd.BaseModel):
     """Mirrors the `claudeAiOauth` blob in the SDK credentials file (aliases carry the on-disk
     camelCase). Tolerates extra keys: the `claude` CLI owns the file and adds fields we don't model.
@@ -282,6 +301,9 @@ class VestaConfig(pyd_settings.BaseSettings):
     # When True, a reply containing an em dash, en dash, or ' - ' separator triggers a resend-without-them
     # correction turn (see client.process_message). Off lets the model use dashes freely.
     block_dashes: bool = True
+    # Optional skills linked into Claude Code at boot. The entrypoint unions shipped defaults from
+    # core/default-skills.txt into this list before core.main starts.
+    active_skills: list[str] = pyd.Field(default_factory=list)
 
     ephemeral: bool = False
     log_level: tp.Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
@@ -302,6 +324,25 @@ class VestaConfig(pyd_settings.BaseSettings):
     timezone: str = pyd.Field(default="UTC", validation_alias=pyd.AliasChoices("timezone", "TZ"))
     # One-shot freeform setup notes; materialized to data/seed-context.md on boot, read once at first wake.
     seed_context: str = pyd.Field(default="")
+
+    @pyd.field_validator("active_skills", mode="before")
+    @classmethod
+    def _normalize_active_skills(cls, value: object) -> list[str]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise ValueError("active_skills must be a list of skill names")
+        names: set[str] = set()
+        for item in value:
+            if not isinstance(item, str):
+                raise ValueError("active_skills entries must be strings")
+            name = item.strip()
+            if not name:
+                raise ValueError("active_skills entries must not be blank")
+            if _SKILL_NAME_RE.fullmatch(name) is None:
+                raise ValueError(f"invalid skill name: {name!r}")
+            names.add(name)
+        return sorted(names)
 
     @pyd.field_validator("agent_dir", mode="before")
     @classmethod
@@ -422,6 +463,8 @@ def validate_config_updates(config: "VestaConfig", data: object) -> dict[str, py
             if not rule.id:
                 rule.id = uuid.uuid4().hex
         updates["notification_rules"] = [rule.model_dump(mode="json") for rule in validated.notification_rules]
+    if "active_skills" in updates:
+        updates["active_skills"] = validated.active_skills
     return updates
 
 

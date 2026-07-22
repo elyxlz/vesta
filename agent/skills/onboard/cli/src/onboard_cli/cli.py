@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -226,30 +227,39 @@ def _cmd_claude_finish(args: argparse.Namespace, client: Client, _cfg: Config) -
 # --- reference data ---------------------------------------------------------
 
 
-def _installable_skills() -> list[str]:
-    """Best-effort list of skill names from the on-box skills index."""
-    for p in (
-        Path.home() / "agent" / "skills" / "index.json",
-        Path("/root/agent/skills/index.json"),
-        Path(__file__).resolve().parents[4] / "index.json",
+def _available_skills() -> list[str]:
+    """Best-effort list of skill names from the on-box skills dir (every skill ships on disk)."""
+    for skills_dir in (
+        Path.home() / "agent" / "skills",
+        Path("/root/agent/skills"),
+        Path(__file__).resolve().parents[4],
     ):
         try:
-            if p.exists():
-                data = json.loads(p.read_text())
-                return sorted(s["name"] for s in data if s.get("name"))
-        except (OSError, ValueError):
+            skill_mds = sorted(skills_dir.glob("*/SKILL.md"))
+        except OSError:
             continue
+        names = []
+        for skill_md in skill_mds:
+            try:
+                text = skill_md.read_text()
+            except OSError:
+                continue
+            match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+            fm = dict(re.findall(r"^(\w[\w-]*)\s*:\s*(.+)$", match.group(1), re.MULTILINE)) if match else {}
+            names.append(fm["name"] if "name" in fm else skill_md.parent.name)
+        if names:
+            return sorted(names)
     return []
 
 
 def _cmd_presets(_args: argparse.Namespace, client: Client, _cfg: Config) -> int:
     # Read the live reference data from this box's vestad (the one source of truth) rather
-    # than keeping hardcoded copies; skills still come from the on-box index.
+    # than keeping hardcoded copies; skills come from the on-box skills dir.
     defaults = client.fetch_agent_defaults()
     _print(
         {
             "personalities": [p["name"] for p in client.fetch_personalities()],
-            "skills": _installable_skills(),
+            "skills": _available_skills(),
             "plan_floor_usd": client.fetch_floor_usd(),
             "claude_models": [m["id"] for m in client.fetch_claude_models()],
             "default_personality": defaults["personality"],
@@ -304,7 +314,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_cfinish.add_argument("--name", help="Agent name (defaults to the one from create-agent).")
     p_cfinish.add_argument("--model", help="Claude model (defaults to the box's configured default).")
 
-    sub.add_parser("presets", help="Personality presets + installable skills + models.")
+    sub.add_parser("presets", help="Personality presets + available skills + models.")
     sub.add_parser("links", help="Marketing + desktop/mobile install URLs.")
     return parser
 

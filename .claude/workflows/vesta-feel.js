@@ -313,7 +313,7 @@ Charter invariants stay intact (peer not servant; green-light gate; no em/en das
 2. ${pr.kind === "mechanism"
         ? "Implement the mechanism exactly as specified: the smallest design that produces the behavior. Functional Python only (pure functions + dataclasses, no getattr/.get fallback/hasattr, no blocking calls in coroutines). Add a behavioral test in agent/tests/."
         : "Apply ONLY the listed edits, surgical, matching surrounding tone (mostly markdown: Charter/presets/prompts/skills)."} No version bumps, no private data anywhere.
-3. If any .py changed: \`./check.sh agent\` until green (never weaken a test). If SKILL.md frontmatter changed: \`uv run python agent/skills/generate-index.py\` and commit agent/skills/index.json.
+3. If any .py changed: \`./check.sh agent\` until green (never weaken a test).
 4. Commit (Co-Authored-By trailer), push -u, \`gh pr create --base master\` with title "${pr.title}" and a body citing the theory behind the change (no private data), ending with the Generated with Claude Code line.
 Return the PR url or an error string.`,
       { label: `pr:feel-${pr.kind}-${i}`, phase: "Emit", isolation: "worktree" },

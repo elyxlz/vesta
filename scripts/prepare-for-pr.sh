@@ -88,24 +88,6 @@ else
   ) && pass "uv.lock up to date" || fail "uv.lock stale — run 'cd agent && uv lock --project core' and commit"
 fi
 
-# ── skills-index-check ────────────────────────────────────────
-section "skills-index-check"
-if [ "${SKIP_AGENT:-0}" = "1" ]; then
-  skip "skills index"
-else
-  before=$(sha256sum agent/skills/index.json | cut -d' ' -f1)
-  if uv run python agent/skills/generate-index.py >/dev/null 2>&1; then
-    after=$(sha256sum agent/skills/index.json | cut -d' ' -f1)
-    if [ "$before" = "$after" ]; then
-      pass "skills/index.json up to date"
-    else
-      fail "skills/index.json stale — regenerated (commit the change)"
-    fi
-  else
-    fail "generate-index.py failed"
-  fi
-fi
-
 # ── design-token-check ────────────────────────────────────────
 section "design-token-check"
 if python3 scripts/sync-design-tokens.py --check >/dev/null 2>&1; then
