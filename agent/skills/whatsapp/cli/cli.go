@@ -1057,7 +1057,7 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 			// parked again on the next restart. The reconnect succeeded, so drop it.
 			wac.state.update(func(s *daemonState) { s.ConnParked = false })
 		}
-		if err := wac.completeFreshPhotoWipe(); err != nil {
+		if err := wac.completeFreshProfile(); err != nil {
 			return nil, err
 		}
 		// Store.ID is set (guaranteed non-nil here), so the device number is
@@ -1115,13 +1115,41 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 	// A new number (first claim or a healed replacement) gets the reply-first
 	// onboarding; re-linking the same established number is a quiet resume.
 	if priorMSISDN == "" || priorMSISDN != res.MSISDN {
-		wac.state.update(func(s *daemonState) { s.FreshPhotoWipePending = true })
-		if err := wac.completeFreshPhotoWipe(); err != nil {
+		wac.state.update(func(s *daemonState) {
+			s.FreshNameSetPending = true
+			s.FreshPhotoWipePending = true
+		})
+		if err := wac.completeFreshProfile(); err != nil {
 			return nil, err
 		}
 		return managedLinkedResult(res.MSISDN), nil
 	}
 	return managedResumeResult(res.MSISDN), nil
+}
+
+func managedProfileName(agentName string) string {
+	if name := strings.TrimSpace(agentName); name != "" {
+		return name
+	}
+	return "Vesta"
+}
+
+// completeFreshProfile owns the one-time managed identity initialization. Name
+// comes first because it unlocks presence immediately; each operation clears its
+// own bit only after success, so a partial failure resumes precisely where it left
+// off on the next explicit connect.
+func (wac *WhatsAppClient) completeFreshProfile() error {
+	if wac.state.snapshot().FreshNameSetPending {
+		agentName := ""
+		if wac.managed != nil {
+			agentName = wac.managed.cfg.agentName
+		}
+		if err := wac.SetProfileName(managedProfileName(agentName)); err != nil {
+			return fmt.Errorf("initialize fresh managed profile: %w", err)
+		}
+		wac.state.update(func(s *daemonState) { s.FreshNameSetPending = false })
+	}
+	return wac.completeFreshPhotoWipe()
 }
 
 // completeFreshPhotoWipe retries only a wipe that was armed by the successful
@@ -1146,7 +1174,7 @@ func managedLinkedResult(number string) map[string]any {
 		"status": "linked",
 		"number": number,
 		"next": fmt.Sprintf(
-			"Linked as %s. First set up your identity: run `whatsapp set-profile-name \"<your name>\"` (REQUIRED, a fresh number has no name and cannot broadcast online status or read receipts until it is set), and ask the user what profile photo they'd like you to use, then set it with `whatsapp set-profile-photo <file>`. Then share this number with the user and ask them to message you FIRST: send them the click-to-chat link %s, and reply only once they say hi. A fresh number must never cold-initiate.",
+			"Linked as %s with your agent name and a clean profile photo. Share this number with the user and ask them to message you FIRST: send them the click-to-chat link %s, and reply only once they say hi. You can later set a chosen photo with `whatsapp set-profile-photo <file>`. A fresh number must never cold-initiate.",
 			number, waMeLink(number, welcomeText()),
 		),
 	}

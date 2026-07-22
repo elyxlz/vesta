@@ -22,8 +22,26 @@ func TestOwnProfilePictureIQRemove(t *testing.T) {
 func TestFreshPhotoWipeStateRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	store := newStateStore(dir)
-	store.update(func(s *daemonState) { s.FreshPhotoWipePending = true })
-	if !loadStateFromDisk(dir).FreshPhotoWipePending {
-		t.Fatal("fresh photo wipe pending bit was not persisted")
+	store.update(func(s *daemonState) {
+		s.FreshPhotoWipePending = true
+		s.FreshNameSetPending = true
+	})
+	got := loadStateFromDisk(dir)
+	if !got.FreshPhotoWipePending || !got.FreshNameSetPending {
+		t.Fatalf("fresh profile pending bits were not persisted: %+v", got)
+	}
+}
+
+func TestManagedProfileName(t *testing.T) {
+	for _, tc := range []struct {
+		in, want string
+	}{
+		{" Ada ", "Ada"},
+		{"", "Vesta"},
+		{"   ", "Vesta"},
+	} {
+		if got := managedProfileName(tc.in); got != tc.want {
+			t.Errorf("managedProfileName(%q) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }

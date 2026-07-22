@@ -28,6 +28,9 @@ type daemonState struct {
 	// replacement) managed number. It survives an IQ failure so the next explicit
 	// connect retries the idempotent wipe, but routine reconnects never touch it.
 	FreshPhotoWipePending bool `json:"fresh_photo_wipe_pending,omitempty"`
+	// FreshNameSetPending independently tracks the automatic push-name setup, so
+	// either profile operation can retry without repeating the other.
+	FreshNameSetPending bool `json:"fresh_name_set_pending,omitempty"`
 
 	// Auth-status cache, truthful for a cold read when the daemon is down.
 	AuthStatus string `json:"auth_status,omitempty"`
