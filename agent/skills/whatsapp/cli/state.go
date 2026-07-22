@@ -58,6 +58,14 @@ type daemonState struct {
 	// preserve-reconnect was attempted (the single-retry guard).
 	RestorePending  bool      `json:"restore_pending,omitempty"`
 	PreserveRetryAt time.Time `json:"preserve_retry_at,omitempty"`
+
+	// ConflictEpisode records that the in-flight preserve episode began as a
+	// self-inflicted on-connect "another device" (401) conflict rather than a genuine
+	// device_removed. It decides the give-up posture: a conflict episode PARKS with the
+	// device preserved (a real other holder is transient), a genuine one CLEARS for a
+	// deliberate re-provision. Cleared alongside PreserveRetryAt once the connection
+	// proves stable.
+	ConflictEpisode bool `json:"conflict_episode,omitempty"`
 }
 
 func statePath(dataDir string) string { return filepath.Join(dataDir, stateFile) }

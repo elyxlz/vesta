@@ -333,6 +333,11 @@ func (wac *WhatsAppClient) onConnected() {
 func (wac *WhatsAppClient) onLinked() {
 	wac.onConnected()
 	wac.markLinkedNow()
+	// Capture a good-device snapshot of the freshly PAIRED store immediately, bypassing
+	// the throttle: the pre-pair events.Connected already snapshotted an unpaired store,
+	// so a conflict within SnapshotMinInterval of linking would otherwise restore an
+	// unpaired device. This gives recovery a valid restore point from the moment of link.
+	wac.snapshotGoodDeviceNow()
 }
 
 func (wac *WhatsAppClient) Disconnect() {

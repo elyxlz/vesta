@@ -79,25 +79,43 @@ const (
 	// reconnect, do not exit) so an auto-restarted daemon can't steal the session
 	// back and ping-pong with the other holder.
 	connYield
-	// connNeedsProvision: a genuine logout (the phone unlinked the device). Clear
-	// the dead device and exit, so the next command restarts into a fresh device
-	// for a deliberate `whatsapp provision`; never re-pair automatically.
+	// connNeedsProvision: a genuine logout (the phone unlinked the device, a
+	// stream:error device_removed). Try device preservation, then clear the dead
+	// device and exit for a deliberate `whatsapp provision`; never re-pair automatically.
 	connNeedsProvision
+	// connRecoverConflict: a self-inflicted "logged out from another device" (401)
+	// raised ON CONNECT, i.e. a transient session overlap (our own reconnect racing
+	// the old socket's teardown), not a genuine unlink. Restore the kept device and
+	// reconnect; on a persisting conflict park (a real other holder), never clear.
+	connRecoverConflict
 )
 
 // classifyConnEvent maps a whatsmeow connection-lifecycle event to the daemon's
 // response. It is the single source of truth for how a disconnect, a stream
 // replacement, and a logout are treated differently.
 func classifyConnEvent(evt any) connEventAction {
-	switch evt.(type) {
+	switch e := evt.(type) {
 	case *events.Disconnected:
 		return connIgnore
 	case *events.StreamReplaced:
 		return connYield
 	case *events.LoggedOut:
+		if isConflictLogout(e) {
+			return connRecoverConflict
+		}
 		return connNeedsProvision
 	}
 	return connIgnore
+}
+
+// isConflictLogout reports whether a LoggedOut is a self-inflicted "logged out from
+// another device" (401) conflict raised ON CONNECT: a transient session overlap (our own
+// reconnect racing the old socket's teardown), recoverable by reconnecting the kept
+// device. A genuine phone-side unlink is a stream:error device_removed (OnConnect=false),
+// and other on-connect logouts (primary gone, ban) carry a different reason; both stay
+// terminal. Matched on the typed reason, so it never depends on a message string.
+func isConflictLogout(evt *events.LoggedOut) bool {
+	return evt.OnConnect && evt.Reason == events.ConnectFailureLoggedOut
 }
 
 // loggedOutReason renders a human-readable reason for a LoggedOut event, using
@@ -144,10 +162,15 @@ func (wac *WhatsAppClient) applyConnAction(action connEventAction, reason string
 		wac.logger.Warnf("Yielding: %s. Parking (no reconnect, no exit).", reason)
 		wac.applyYield(reason)
 	case connNeedsProvision:
-		// A device removal (mid-session or on-connect). Try device preservation
-		// first (restore last-good + reconnect once); fall back to today's exact
-		// clear-and-exit when preservation is not available or a retry just failed.
-		wac.handleDeviceRemoved(reason)
+		// A genuine device removal (stream:error device_removed). Try device
+		// preservation first (restore last-good + reconnect once); fall back to
+		// clear-and-exit when preservation is unavailable or a retry just failed.
+		wac.handleDeviceRemoved(reason, false)
+	case connRecoverConflict:
+		// A self-inflicted on-connect "another device" (401) conflict. Same preserve
+		// machinery, but a persisting conflict PARKS with the device preserved instead
+		// of clearing it, so a transient overlap can never churn the daemon to unpaired.
+		wac.handleDeviceRemoved(reason, true)
 	}
 }
 
@@ -164,26 +187,62 @@ func (wac *WhatsAppClient) applyYield(reason string) {
 	wac.presenceMutex.Unlock()
 }
 
-// handleDeviceRemoved responds to a whatsmeow device removal. When a last-good
-// snapshot exists and the single-retry guard is clear, it restores the snapshot
-// and reconnects once (NOT a re-pair, so no ban risk). Otherwise it falls back to
-// today's exact park+provision give-up: record the logout, notify, drop the dead
-// device, and exit for a deliberate `whatsapp provision`.
-func (wac *WhatsAppClient) handleDeviceRemoved(reason string) {
+// handleDeviceRemoved responds to a whatsmeow device removal (whatsmeow has already
+// deleted the device store by the time this runs). When a last-good snapshot exists and
+// the single-retry guard is clear, it restores the snapshot and reconnects once via a
+// clean re-exec (NOT a re-pair, so no ban risk). On give-up it PARKS with the device
+// preserved when the episode began as a self-inflicted on-connect conflict
+// (onConnectConflict), and otherwise CLEARS the dead device and exits for a deliberate
+// `whatsapp provision` (a genuine phone-side unlink).
+func (wac *WhatsAppClient) handleDeviceRemoved(reason string, onConnectConflict bool) {
 	st := wac.state.snapshot()
-	switch decidePreserve(hasGoodDevice(wac.dataDir), st.PreserveRetryAt, time.Now()) {
-	case preserveReconnect:
+	switch decideRemoval(decidePreserve(hasGoodDevice(wac.dataDir), st.PreserveRetryAt, time.Now()), st.ConflictEpisode) {
+	case removalReconnect:
 		wac.logger.Warnf("Device removed (%s). Restoring last-good device and reconnecting once to avoid a re-pair.", reason)
-		wac.state.update(func(s *daemonState) {
-			s.RestorePending = true
-			s.PreserveRetryAt = time.Now().UTC()
-		})
+		wac.markPreserveReconnect(onConnectConflict)
 		wac.reExecDaemon() // does not return
-	default: // preserveGiveUp: today's exact behavior (unchanged)
+	case removalPark:
+		wac.logger.Warnf("Logout conflict persisted (%s). Preserving the device and parking (no re-pair, no clear).", reason)
+		wac.markConflictPark(reason)
+		wac.reExecDaemon() // comes back parked on the restored device; does not return
+	default: // removalClear: a genuine logout, or a preserve retry that just re-dropped
 		wac.logger.Warnf("Device logged out (%s). Clearing dead device and exiting; run `whatsapp connect` to re-link.", reason)
 		wac.recordDeviceLoggedOut(reason)
 		wac.dropDeadDevice()
 		os.Exit(0)
+	}
+}
+
+// markPreserveReconnect persists the intent to restore the last-good device and reconnect
+// once at the next boot: RestorePending drives the boot restore, PreserveRetryAt arms the
+// single-retry guard, and ConflictEpisode records whether this episode began as a
+// self-inflicted on-connect conflict (park on give-up) or a genuine removal (clear).
+// Split from the re-exec so the persisted side-effect is testable without a live socket.
+func (wac *WhatsAppClient) markPreserveReconnect(onConnectConflict bool) {
+	wac.state.update(func(s *daemonState) {
+		s.RestorePending = true
+		s.PreserveRetryAt = time.Now().UTC()
+		s.ConflictEpisode = onConnectConflict
+	})
+}
+
+// markConflictPark persists the parked-but-preserved posture for a self-inflicted conflict
+// that survived one reconnect (a real other device holds the session): restore the device
+// whatsmeow deleted on the 401 and come back PARKED (not cleared), so a deliberate
+// `whatsapp connect` reconnects the kept device instead of re-pairing. Notifies the agent
+// once. Split from the re-exec so the persisted side-effect is testable.
+func (wac *WhatsAppClient) markConflictPark(reason string) {
+	wac.state.update(func(s *daemonState) {
+		s.RestorePending = true
+		s.ConnParked = true
+		s.ExitStatus, s.ExitReason, s.ExitTime = "stream_replaced", reason, time.Now().UTC()
+		s.PreserveRetryAt = time.Time{}
+		s.ConflictEpisode = false
+	})
+	if wac.notificationsDir != "" {
+		if err := WriteLoggedOutNotification(wac.notificationsDir, wac.instance, reason); err != nil {
+			wac.logger.Warnf("Failed to write parked notification: %v", err)
+		}
 	}
 }
 
@@ -197,6 +256,7 @@ func (wac *WhatsAppClient) recordDeviceLoggedOut(reason string) {
 		s.AuthStatus = "logged_out"
 		s.AuthNote = "WhatsApp logged this device out. Re-linking is a deliberate `whatsapp connect`, never an automatic retry loop."
 		s.PreserveRetryAt = time.Time{} // episode closed
+		s.ConflictEpisode = false
 	})
 	if wac.notificationsDir != "" {
 		if err := WriteLoggedOutNotification(wac.notificationsDir, wac.instance, reason); err != nil {

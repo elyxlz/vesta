@@ -143,12 +143,42 @@ func decidePreserve(hasSnapshot bool, lastRetry, now time.Time) preserveDecision
 	return preserveGiveUp
 }
 
+// removalAction routes a device removal to its terminal action once decidePreserve has run.
+type removalAction int
+
+const (
+	removalReconnect removalAction = iota // restore the last-good device and reconnect once
+	removalPark                           // preserve the device and park (a persisted on-connect conflict)
+	removalClear                          // clear the dead device and exit for a deliberate re-provision
+)
+
+// decideRemoval routes a device removal. A fresh episode (decidePreserve ==
+// preserveReconnect) always reconnects once. A give-up PARKS when the episode began as a
+// self-inflicted on-connect "another device" conflict (the device is fine; a real other
+// holder is handled like a StreamReplaced yield, never a clear), and otherwise CLEARS for a
+// deliberate re-provision (a genuine phone-side unlink). Pure, unit-tested.
+func decideRemoval(preserve preserveDecision, conflictEpisode bool) removalAction {
+	if preserve == preserveReconnect {
+		return removalReconnect
+	}
+	if conflictEpisode {
+		return removalPark
+	}
+	return removalClear
+}
+
 // reExecDaemon restarts the serve process in place (same PID, so the surrounding
 // `screen` session survives) after a preserve-reconnect flag has been set. The
 // re-exec'd process runs runServe again, which restores the last-good device
 // before opening the store, then reconnects. Does not return on success.
 func (wac *WhatsAppClient) reExecDaemon() {
 	wac.client.Disconnect()
+	// Let WhatsApp register the old socket's teardown before the re-exec'd process
+	// reconnects: re-connecting into a still-live server-side session is what re-fires
+	// the "logged out from another device" (401) conflict and churns the daemon to
+	// unpaired. A short settle removes that overlap (a no-op for a re-exec that comes
+	// back parked and never reconnects).
+	time.Sleep(ReExecSettleDelay)
 	if serveDaemonLock != nil {
 		serveDaemonLock.Close()
 	}
@@ -182,6 +212,18 @@ func (wac *WhatsAppClient) maybeSnapshotGoodDevice() {
 	go snapshotGoodDevice(wac.dataDir, wac.logger)
 }
 
+// snapshotGoodDeviceNow forces a good-device snapshot immediately, bypassing the
+// throttle. Used on a fresh link: the pre-pair events.Connected fires while the device
+// is still unpaired (Store.ID nil) and snapshots an UNPAIRED store, so without an
+// unthrottled snapshot of the now-paired device a conflict within SnapshotMinInterval of
+// linking would restore an unpaired device and land unpaired anyway.
+func (wac *WhatsAppClient) snapshotGoodDeviceNow() {
+	wac.preserveMu.Lock()
+	wac.lastSnapshot = time.Now()
+	wac.preserveMu.Unlock()
+	go snapshotGoodDevice(wac.dataDir, wac.logger)
+}
+
 // armStableTimer (re)starts the stability timer: after StableConnDuration of
 // continued connection it clears the single-retry guard, proving the last
 // preserve-reconnect recovered the session.
@@ -192,7 +234,10 @@ func (wac *WhatsAppClient) armStableTimer() {
 		wac.stableTimer.Stop()
 	}
 	wac.stableTimer = time.AfterFunc(StableConnDuration, func() {
-		wac.state.update(func(s *daemonState) { s.PreserveRetryAt = time.Time{} })
+		wac.state.update(func(s *daemonState) {
+			s.PreserveRetryAt = time.Time{}
+			s.ConflictEpisode = false
+		})
 	})
 }
 

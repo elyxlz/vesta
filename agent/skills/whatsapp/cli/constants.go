@@ -13,6 +13,14 @@ const (
 	ConnectRetryAttempts = 10
 	ConnectRetryDelay    = 1 * time.Second
 
+	// ReExecSettleDelay holds the daemon after it drops the old socket, before a
+	// preserve-reconnect re-exec, so WhatsApp registers the old server-side session's
+	// teardown first. Re-execing straight into a still-live session is what makes the
+	// server fire a fresh "logged out from another device" (401) conflict, which
+	// churned a freshly-linked companion to unpaired. A short settle removes that
+	// overlap so the re-exec'd process reconnects onto a clean session.
+	ReExecSettleDelay = 5 * time.Second
+
 	// ManagedLinkTimeout bounds the wait for whatsmeow to register the companion
 	// link after the control plane has accepted the pairing code (POST /pair is
 	// synchronous, so this is just the PairSuccess round-trip). Well inside

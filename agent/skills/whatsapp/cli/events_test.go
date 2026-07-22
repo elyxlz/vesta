@@ -48,8 +48,9 @@ func TestEnqueueWorkOffloadsSlowHandler(t *testing.T) {
 }
 
 // TestClassifyConnEvent pins the churn-free logout policy: a transient disconnect
-// is ignored (whatsmeow auto-reconnects), a stream replacement yields, and a
-// genuine logout needs a deliberate re-provision, never an auto re-pair loop.
+// is ignored (whatsmeow auto-reconnects), a stream replacement yields, a genuine
+// logout needs a deliberate re-provision, and a self-inflicted on-connect "another
+// device" (401) conflict recovers in place instead of re-pairing.
 func TestClassifyConnEvent(t *testing.T) {
 	cases := []struct {
 		name string
@@ -58,13 +59,107 @@ func TestClassifyConnEvent(t *testing.T) {
 	}{
 		{"disconnected is transient", &events.Disconnected{}, connIgnore},
 		{"stream replaced yields", &events.StreamReplaced{}, connYield},
-		{"logged out needs provision", &events.LoggedOut{}, connNeedsProvision},
+		{"stream:error logout needs provision", &events.LoggedOut{OnConnect: false}, connNeedsProvision},
+		{"on-connect 401 conflict recovers", &events.LoggedOut{OnConnect: true, Reason: events.ConnectFailureLoggedOut}, connRecoverConflict},
+		{"on-connect primary-gone needs provision", &events.LoggedOut{OnConnect: true, Reason: events.ConnectFailureMainDeviceGone}, connNeedsProvision},
 		{"unknown event is ignored", &events.Connected{}, connIgnore},
 	}
 	for _, tc := range cases {
 		if got := classifyConnEvent(tc.evt); got != tc.want {
 			t.Errorf("%s: classifyConnEvent = %d, want %d", tc.name, got, tc.want)
 		}
+	}
+}
+
+// TestIsConflictLogout pins the conflict discriminator: only an ON-CONNECT 401 "logged
+// out from another device" is the recoverable self-inflicted overlap; a stream:error
+// logout (OnConnect=false) and any other on-connect reason stay terminal.
+func TestIsConflictLogout(t *testing.T) {
+	cases := []struct {
+		name string
+		evt  *events.LoggedOut
+		want bool
+	}{
+		{"on-connect 401 is a conflict", &events.LoggedOut{OnConnect: true, Reason: events.ConnectFailureLoggedOut}, true},
+		{"stream:error 401 is genuine", &events.LoggedOut{OnConnect: false, Reason: events.ConnectFailureLoggedOut}, false},
+		{"on-connect primary-gone is genuine", &events.LoggedOut{OnConnect: true, Reason: events.ConnectFailureMainDeviceGone}, false},
+		{"on-connect ban is genuine", &events.LoggedOut{OnConnect: true, Reason: events.ConnectFailureUnknownLogout}, false},
+	}
+	for _, tc := range cases {
+		if got := isConflictLogout(tc.evt); got != tc.want {
+			t.Errorf("%s: isConflictLogout = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestMarkPreserveReconnectPersists proves the preserve-reconnect side-effect arms the
+// boot restore + single-retry guard and records the episode origin, so the give-up posture
+// (park for a conflict, clear for a genuine removal) survives the re-exec.
+func TestMarkPreserveReconnectPersists(t *testing.T) {
+	for _, conflict := range []bool{true, false} {
+		wac := &WhatsAppClient{state: newStateStore(t.TempDir())}
+		wac.markPreserveReconnect(conflict)
+		st := wac.state.snapshot()
+		if !st.RestorePending {
+			t.Fatal("preserve-reconnect must arm the boot restore")
+		}
+		if st.PreserveRetryAt.IsZero() {
+			t.Fatal("preserve-reconnect must arm the single-retry guard")
+		}
+		if st.ConflictEpisode != conflict {
+			t.Fatalf("preserve-reconnect must record the episode origin: got %v, want %v", st.ConflictEpisode, conflict)
+		}
+	}
+}
+
+// TestMarkConflictParkPreservesTheDevice proves a persisted on-connect conflict PARKS with
+// the device preserved: it arms the boot restore, parks (so no reconnect steals the
+// session), records the reason, closes the episode, and notifies once. Crucially it never
+// clears the device, so a transient overlap cannot churn a linked companion to unpaired.
+func TestMarkConflictParkPreservesTheDevice(t *testing.T) {
+	notifDir := t.TempDir()
+	wac := &WhatsAppClient{
+		state:            newStateStore(t.TempDir()),
+		notificationsDir: notifDir,
+		instance:         "personal",
+		logger:           waLog.Noop,
+	}
+	wac.state.update(func(s *daemonState) {
+		s.PreserveRetryAt = time.Now().UTC()
+		s.ConflictEpisode = true
+	})
+
+	wac.markConflictPark("logged out on connect: logged out from another device")
+
+	st := wac.state.snapshot()
+	if !st.RestorePending {
+		t.Fatal("conflict park must arm the boot restore so the deleted device is brought back")
+	}
+	if !st.ConnParked {
+		t.Fatal("conflict park must park so no reconnect steals the session back")
+	}
+	if st.AuthStatus == "logged_out" {
+		t.Fatal("conflict park must NOT record the logged_out (cleared) posture; the device is preserved")
+	}
+	if st.ExitReason == "" {
+		t.Fatal("conflict park must record why the session ended")
+	}
+	if !st.PreserveRetryAt.IsZero() || st.ConflictEpisode {
+		t.Fatalf("conflict park must close the episode: %+v", st)
+	}
+
+	entries, err := os.ReadDir(notifDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loggedOut := 0
+	for _, e := range entries {
+		if strings.Contains(e.Name(), "logged_out") {
+			loggedOut++
+		}
+	}
+	if loggedOut != 1 {
+		t.Fatalf("conflict park must notify the agent exactly once to reconnect, got %d", loggedOut)
 	}
 }
 

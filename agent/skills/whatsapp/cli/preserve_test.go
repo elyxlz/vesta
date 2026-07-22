@@ -34,6 +34,28 @@ func TestDecidePreserve(t *testing.T) {
 	}
 }
 
+// TestDecideRemoval pins the give-up routing: a fresh episode always reconnects once;
+// on give-up a self-inflicted on-connect conflict PARKS (device preserved) while a genuine
+// removal CLEARS for a deliberate re-provision.
+func TestDecideRemoval(t *testing.T) {
+	cases := []struct {
+		name            string
+		preserve        preserveDecision
+		conflictEpisode bool
+		want            removalAction
+	}{
+		{"fresh episode reconnects (genuine)", preserveReconnect, false, removalReconnect},
+		{"fresh episode reconnects (conflict)", preserveReconnect, true, removalReconnect},
+		{"give-up on a conflict parks", preserveGiveUp, true, removalPark},
+		{"give-up on a genuine removal clears", preserveGiveUp, false, removalClear},
+	}
+	for _, tc := range cases {
+		if got := decideRemoval(tc.preserve, tc.conflictEpisode); got != tc.want {
+			t.Errorf("%s: decideRemoval = %d, want %d", tc.name, got, tc.want)
+		}
+	}
+}
+
 // TestSnapshotRestoreRoundTrip proves a snapshot captures the live device store
 // and a restore brings the original rows back while dropping the WAL/SHM sidecars
 // (so SQLite cannot replay the removal that lives in the WAL).
