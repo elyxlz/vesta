@@ -24,6 +24,10 @@ type daemonState struct {
 	MSISDN    string `json:"msisdn,omitempty"`
 	DirectURL string `json:"api_url,omitempty"`
 	DirectKey string `json:"api_key,omitempty"`
+	// FreshPhotoWipePending is armed only after linking a newly claimed (or
+	// replacement) managed number. It survives an IQ failure so the next explicit
+	// connect retries the idempotent wipe, but routine reconnects never touch it.
+	FreshPhotoWipePending bool `json:"fresh_photo_wipe_pending,omitempty"`
 
 	// Auth-status cache, truthful for a cold read when the daemon is down.
 	AuthStatus string `json:"auth_status,omitempty"`

@@ -737,6 +737,42 @@ func (wac *WhatsAppClient) SetProfilePhoto(imageBytes []byte) error {
 	return nil
 }
 
+// RemoveProfilePhoto removes the account's own profile picture. An empty
+// w:profile:picture set is WhatsApp's removal operation; as with setting the own
+// photo, it must not carry a target attribute.
+func (wac *WhatsAppClient) RemoveProfilePhoto() error {
+	if err := wac.EnsureConnected(); err != nil {
+		return err
+	}
+	if wac.client.Store.ID == nil {
+		return fmt.Errorf("WhatsApp is not authenticated")
+	}
+	_, err := wac.client.DangerousInternals().SendIQ(context.Background(), ownProfilePictureIQ(nil))
+	if err != nil {
+		return fmt.Errorf("failed to remove profile photo: %w", err)
+	}
+	return nil
+}
+
+// ownProfilePictureIQ builds the account-self picture mutation. A nil avatar is
+// intentionally represented by nil content: that is the idempotent remove form.
+func ownProfilePictureIQ(avatar []byte) whatsmeow.DangerousInfoQuery {
+	var content any
+	if avatar != nil {
+		content = []waBinary.Node{{
+			Tag:     "picture",
+			Attrs:   waBinary.Attrs{"type": "image"},
+			Content: avatar,
+		}}
+	}
+	return whatsmeow.DangerousInfoQuery{
+		Namespace: "w:profile:picture",
+		Type:      "set",
+		To:        types.ServerJID,
+		Content:   content,
+	}
+}
+
 // SetProfileName sets the agent's own WhatsApp display name (push name). The
 // account-wide name goes through an app-state mutation (setting_pushName, the path
 // WhatsApp Web uses), which needs the app-state keys the primary shares on link. A

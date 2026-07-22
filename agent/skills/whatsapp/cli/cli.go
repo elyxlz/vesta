@@ -1057,6 +1057,9 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 			// parked again on the next restart. The reconnect succeeded, so drop it.
 			wac.state.update(func(s *daemonState) { s.ConnParked = false })
 		}
+		if err := wac.completeFreshPhotoWipe(); err != nil {
+			return nil, err
+		}
 		// Store.ID is set (guaranteed non-nil here), so the device number is
 		// authoritative; daemon-status formats it the same way. An already-linked
 		// device is a resume, not a first link, so it never re-emits the reply-first
@@ -1112,9 +1115,27 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 	// A new number (first claim or a healed replacement) gets the reply-first
 	// onboarding; re-linking the same established number is a quiet resume.
 	if priorMSISDN == "" || priorMSISDN != res.MSISDN {
+		wac.state.update(func(s *daemonState) { s.FreshPhotoWipePending = true })
+		if err := wac.completeFreshPhotoWipe(); err != nil {
+			return nil, err
+		}
 		return managedLinkedResult(res.MSISDN), nil
 	}
 	return managedResumeResult(res.MSISDN), nil
+}
+
+// completeFreshPhotoWipe retries only a wipe that was armed by the successful
+// first link of a new managed number. Clearing the bit only after server success
+// makes the operation idempotent across an interrupted provisioning command.
+func (wac *WhatsAppClient) completeFreshPhotoWipe() error {
+	if !wac.state.snapshot().FreshPhotoWipePending {
+		return nil
+	}
+	if err := wac.RemoveProfilePhoto(); err != nil {
+		return fmt.Errorf("initialize fresh managed profile: %w", err)
+	}
+	wac.state.update(func(s *daemonState) { s.FreshPhotoWipePending = false })
+	return nil
 }
 
 // managedLinkedResult is the terminal output for a genuinely NEW managed number: it
