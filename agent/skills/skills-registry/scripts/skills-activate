@@ -1,30 +1,63 @@
 #!/usr/bin/env bash
-# Activate a skill: mark it in agent/data/active-skills.txt. Every optional skill
+# Activate a skill: mark it in agent/data/config.json active_skills. Every optional skill
 # already sits on disk (the workspace is a full checkout), so activating only lists it.
 # The boot entrypoint rebuilds ~/.claude/skills from this list. Instant, offline, no git.
 set -euo pipefail
 SKILL_NAME="${1:?Usage: skills-activate <skill-name>}"
 cd ~
 DEST="agent/skills/$SKILL_NAME"
-ACTIVE="agent/data/active-skills.txt"
+CONFIG="agent/data/config.json"
+LEGACY_ACTIVE="agent/data/active-skills.txt"
 
+if ! [[ "$SKILL_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+    echo "Error: invalid skill name '$SKILL_NAME'." >&2
+    exit 1
+fi
 if [ ! -f "$DEST/SKILL.md" ]; then
     echo "Error: no skill '$SKILL_NAME' (run skills-search to list available skills)." >&2
     exit 1
 fi
 
-mkdir -p agent/data
-[ -f "$ACTIVE" ] || : > "$ACTIVE"
-if [ -s "$ACTIVE" ] && [ -n "$(tail -c 1 "$ACTIVE")" ]; then
-    printf '\n' >> "$ACTIVE"
-fi
-if grep -qxF "$SKILL_NAME" "$ACTIVE" 2>/dev/null; then
+RESULT="$(python3 - "$SKILL_NAME" "$CONFIG" "$LEGACY_ACTIVE" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+skill = sys.argv[1]
+config_path = pathlib.Path(sys.argv[2])
+legacy_path = pathlib.Path(sys.argv[3])
+skill_name_re = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+def legacy_names():
+    if not legacy_path.is_file():
+        return []
+    return [line.strip() for line in legacy_path.read_text().splitlines() if line.strip()]
+
+try:
+    loaded = json.loads(config_path.read_text()) if config_path.is_file() else {}
+except json.JSONDecodeError:
+    loaded = {}
+data = loaded if isinstance(loaded, dict) else {}
+configured = data["active_skills"] if isinstance(data.get("active_skills"), list) else None
+active = [name for name in configured if isinstance(name, str)] if configured is not None else legacy_names()
+active = [name.strip() for name in active if skill_name_re.fullmatch(name.strip())]
+already = skill in active
+data["active_skills"] = sorted({*active, skill})
+config_path.parent.mkdir(parents=True, exist_ok=True)
+tmp = config_path.with_name(f"{config_path.name}.tmp")
+tmp.write_text(json.dumps(data, indent=2) + "\n")
+tmp.replace(config_path)
+print("already" if already else "activated")
+PY
+)"
+if [ "$RESULT" = "already" ]; then
     echo "Skill '$SKILL_NAME' is already active."
-else
-    printf '%s\n' "$SKILL_NAME" >> "$ACTIVE"
 fi
 
-echo "Activated '$SKILL_NAME'. Restart Vesta to load it."
+if [ "$RESULT" != "already" ]; then
+    echo "Activated '$SKILL_NAME'. Restart Vesta to load it."
+fi
 if [ -f "$DEST/SETUP.md" ]; then
     echo "This skill requires setup, read $DEST/SETUP.md for instructions."
 fi

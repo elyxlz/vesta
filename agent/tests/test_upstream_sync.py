@@ -2,7 +2,7 @@
 
 The box's ``~`` is a plain FULL git checkout of the agent-upstream snapshot (all skills +
 MEMORY.md; the engine ``agent/core`` is a read-only mount, gitignored, never in the tree).
-Which skills are ACTIVE is recorded in ``agent/data/active-skills.txt`` and materialized as the
+Which skills are ACTIVE is recorded in ``agent/data/config.json`` and materialized as the
 ``~/.claude/skills`` symlink farm by the Docker entrypoint; every optional skill sits on disk
 regardless. These tests build an upstream repo with the REAL build-upstream.sh (the script
 vestad runs), then drive the REAL attach.sh / fetch-upstream.sh / sync.sh / entrypoint skill-link /
@@ -11,6 +11,7 @@ contract: clean attach, version-pinned rebase, offline activation, and the cone-
 migration spine.
 """
 
+import json
 import os
 import pathlib as pl
 import re
@@ -165,7 +166,7 @@ def _write_core_mount(home, version="0.1.170"):
 def _fresh_box(tmp_path, version="0.1.170", skills=ALL_SKILLS):
     """A fake $HOME as the image ships it: snapshot content on disk (every skill), no .git.
 
-    Which skills are active lives in agent/data/active-skills.txt, not merely on disk
+    Which skills are active lives in agent/data/config.json, not merely on disk
     (every skill is present regardless)."""
     home = tmp_path / "home"
     _write_core_mount(home, version)
@@ -189,8 +190,21 @@ def _attach(home, source):
 
 
 def _active(home):
-    f = home / "agent/data/active-skills.txt"
-    return sorted(name for name in f.read_text().split() if name) if f.exists() else []
+    f = home / "agent/data/config.json"
+    if not f.exists():
+        legacy = home / "agent/data/active-skills.txt"
+        return sorted(name for name in legacy.read_text().split() if name) if legacy.exists() else []
+    data = json.loads(f.read_text())
+    active = data["active_skills"] if isinstance(data, dict) and isinstance(data.get("active_skills"), list) else []
+    return sorted(name for name in active if isinstance(name, str) and name)
+
+
+def _write_active(home, names):
+    f = home / "agent/data/config.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    data = json.loads(f.read_text()) if f.exists() else {}
+    data["active_skills"] = sorted(names)
+    f.write_text(json.dumps(data, indent=2) + "\n")
 
 
 def _links(home):
@@ -330,7 +344,7 @@ def test_downgrade_transplants_delta_onto_older_snapshot(tmp_path):
     assert "0.1.170" in (home / "agent/skills/tasks/SKILL.md").read_text()
 
 
-# --- skills: active-skills.txt + the ~/.claude/skills symlink farm --------------------
+# --- skills: active_skills config + the ~/.claude/skills symlink farm -----------------
 
 
 def test_activate_is_offline_without_touching_git(tmp_path):
@@ -343,6 +357,7 @@ def test_activate_is_offline_without_touching_git(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     assert "Restart Vesta to load it" in r.stdout
     assert "whatsapp" in _active(home)  # recorded active
+    assert "active_skills" in json.loads((home / "agent/data/config.json").read_text())
     assert (home / "agent/skills/whatsapp/SKILL.md").exists()  # was always on disk
     assert _git(["status", "--porcelain"], home, env) == ""  # activation is not a git change
 
@@ -358,7 +373,7 @@ def test_activate_unknown_skill_errors(tmp_path):
     assert "nope" not in _active(home)
 
 
-def test_activate_appends_after_final_active_line_without_newline(tmp_path):
+def test_activate_imports_legacy_active_file(tmp_path):
     source = _upstream_fixture(tmp_path)
     home = _fresh_box(tmp_path)
     env = _box_env(source)
@@ -369,6 +384,7 @@ def test_activate_appends_after_final_active_line_without_newline(tmp_path):
     r = _run(SKILLS_ACTIVATE, home, args=("whatsapp",), extra_env=env)
     assert r.returncode == 0, r.stdout + r.stderr
     assert _active(home) == ["tasks", "whatsapp"]
+    assert "active_skills" in json.loads((home / "agent/data/config.json").read_text())
 
 
 def test_deactivate_but_keeps_the_files_on_disk(tmp_path):
@@ -401,7 +417,7 @@ def test_deactivate_default_is_honest_and_keeps_it_active(tmp_path):
     home = _fresh_box(tmp_path)
     env = _box_env(source)
     assert _attach(home, source).returncode == 0
-    _run_skill_entrypoint(home, extra_env=env)  # seed active-skills.txt with the defaults
+    _run_skill_entrypoint(home, extra_env=env)  # seed active_skills with the defaults
     assert "tasks" in _active(home)
     r = _run(SKILLS_DEACTIVATE, home, args=("tasks",), extra_env=env)
     assert r.returncode == 0
@@ -420,7 +436,7 @@ def test_search_lists_local_catalog_and_marks_active(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     lines = {line.split(":")[0]: line for line in r.stdout.splitlines()}
     assert set(ALL_SKILLS) <= lines.keys()  # every on-disk skill is in the catalog
-    assert "[active]" in lines["whatsapp"]  # activation is marked from active-skills.txt
+    assert "[active]" in lines["whatsapp"]  # activation is marked from config
 
 
 # --- entrypoint skill linking: the one gate turning the active list into the symlink farm ---
@@ -470,11 +486,10 @@ def test_entrypoint_reads_final_active_line_without_newline(tmp_path):
 def test_entrypoint_drops_a_deactivated_optional(tmp_path):
     home = _skill_link_box(tmp_path)
     assert _run_skill_entrypoint(home).returncode == 0
-    active = home / "agent/data/active-skills.txt"
-    active.write_text(active.read_text() + "microsoft\n")  # activate a non-default
+    _write_active(home, [*DEFAULT_SKILLS, "microsoft"])  # activate a non-default
     assert _run_skill_entrypoint(home).returncode == 0
     assert "microsoft" in _links(home)
-    active.write_text("\n".join(DEFAULT_SKILLS) + "\n")  # deactivate it again
+    _write_active(home, DEFAULT_SKILLS)  # deactivate it again
     assert _run_skill_entrypoint(home).returncode == 0
     assert "microsoft" not in _links(home)  # deactivated leaves no dangling link
     assert set(DEFAULT_SKILLS) <= set(_links(home))  # defaults still linked
@@ -482,12 +497,12 @@ def test_entrypoint_drops_a_deactivated_optional(tmp_path):
 
 def test_entrypoint_bridges_the_cone_on_first_flat_boot(tmp_path):
     """A cone box's first flat boot (before the migration converts it): the entrypoint seeds
-    active-skills.txt from the still-present cone so the user's active skills stay active,
+    active_skills from the still-present cone so the user's active skills stay active,
     instead of collapsing to defaults-only."""
     source = _upstream_fixture(tmp_path)
     # whatsapp is NOT a default, so only the cone bridge (not default-seeding) can preserve it.
     home, env = _legacy_cone_box(tmp_path, source, active=("tasks", "whatsapp"))
-    assert not (home / "agent/data/active-skills.txt").exists()
+    assert not (home / "agent/data/config.json").exists()
     assert _run_skill_entrypoint(home, extra_env=env).returncode == 0
     assert "whatsapp" in _active(home)  # captured from the cone, not from defaults
     assert "whatsapp" in _links(home)  # and linked (on disk in the cone)
@@ -529,8 +544,7 @@ def test_flat_checkout_migration_converts_cone_to_flat(tmp_path):
     # 2. Convert: record the active skills, retire the cone, attach flat.
     cone = _git(["sparse-checkout", "list"], home, env)
     active = sorted(line[len("agent/skills/") :] for line in cone.splitlines() if line.startswith("agent/skills/"))
-    (home / "agent/data").mkdir(parents=True, exist_ok=True)
-    (home / "agent/data/active-skills.txt").write_text("\n".join(active) + "\n")
+    _write_active(home, active)
     (home / ".git").rename(home / ".git-legacy")
     assert _attach(home, source).returncode == 0
 

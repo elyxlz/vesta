@@ -116,34 +116,50 @@ fn skill_link_entrypoint_step() -> String {
     r#"cd ~
 SKILLS_DIR="agent/skills"
 CORE_SKILLS_DIR="agent/core/skills"
-ACTIVE="agent/data/active-skills.txt"
+CONFIG="agent/data/config.json"
+LEGACY_ACTIVE="agent/data/active-skills.txt"
 DEFAULTS="agent/core/default-skills.txt"
 LINK_DIR="$HOME/.claude/skills"
 
 mkdir -p "$SKILLS_DIR" agent/data
 
 # LEGACY(remove-when: the 2026-08-flat-checkout migration is fleet-applied): a cone box on its
-# first flat boot has no active-skills.txt yet and only its coned skills on disk. Seed the list
-# from the cone so those skills stay active through the conversion boot, before the migration
-# captures them. A flat box has no sparse-checkout file, so this never fires there.
-if [ ! -f "$ACTIVE" ] && [ -f .git/info/sparse-checkout ]; then
-  git sparse-checkout list 2>/dev/null | sed -n 's#^agent/skills/##p' | sort -u > "$ACTIVE" || true
+# first flat boot has no active_skills config yet and only its coned skills on disk. Capture
+# that cone as legacy input before the config write below. A flat box has no sparse-checkout
+# file, so this never fires there.
+if [ ! -f "$CONFIG" ] && [ ! -f "$LEGACY_ACTIVE" ] && [ -f .git/info/sparse-checkout ]; then
+  git sparse-checkout list 2>/dev/null | sed -n 's#^agent/skills/##p' | sort -u > "$LEGACY_ACTIVE" || true
 fi
 
-# Seed the active list from the shipped defaults on first boot, then union any
-# newly-shipped default in on later boots, so an upgrade's new default activates before
-# the session starts (no boot turn, no restart). A default the user removed reappears -
-# same behavior as the old on-disk reconciler.
-[ -f "$ACTIVE" ] || : > "$ACTIVE"
-if [ -s "$ACTIVE" ] && [ -n "$(tail -c 1 "$ACTIVE")" ]; then
-  printf '\n' >> "$ACTIVE"
-fi
-if [ -f "$DEFAULTS" ]; then
-  while IFS= read -r name || [ -n "$name" ]; do
-    [ -n "$name" ] || continue
-    grep -qxF "$name" "$ACTIVE" || printf '%s\n' "$name" >> "$ACTIVE"
-  done < "$DEFAULTS"
-fi
+python3 - "$CONFIG" "$LEGACY_ACTIVE" "$DEFAULTS" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+config_path = pathlib.Path(sys.argv[1])
+legacy_path = pathlib.Path(sys.argv[2])
+defaults_path = pathlib.Path(sys.argv[3])
+skill_name_re = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+def text_names(path):
+    if not path.is_file():
+        return []
+    return [line.strip() for line in path.read_text().splitlines() if line.strip()]
+
+try:
+    loaded = json.loads(config_path.read_text()) if config_path.is_file() else {}
+except json.JSONDecodeError:
+    loaded = {}
+data = loaded if isinstance(loaded, dict) else {}
+configured = data["active_skills"] if isinstance(data.get("active_skills"), list) else None
+active = [name for name in configured if isinstance(name, str)] if configured is not None else text_names(legacy_path)
+names = [*active, *text_names(defaults_path)]
+data["active_skills"] = sorted({name.strip() for name in names if skill_name_re.fullmatch(name.strip())})
+tmp = config_path.with_name(f"{config_path.name}.tmp")
+tmp.write_text(json.dumps(data, indent=2) + "\n")
+tmp.replace(config_path)
+PY
 
 # Rebuilt from scratch each boot so a deactivated skill leaves no dangling link.
 rm -rf "$LINK_DIR"
@@ -156,10 +172,26 @@ link_skill() {
 
 # Active optional skills first, then core skills (linked last so they win any name
 # collision, as core is authoritative).
-while IFS= read -r name || [ -n "$name" ]; do
+python3 - "$CONFIG" <<'PY' | while IFS= read -r name || [ -n "$name" ]; do
+import json
+import pathlib
+import re
+import sys
+
+config_path = pathlib.Path(sys.argv[1])
+skill_name_re = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+try:
+    data = json.loads(config_path.read_text())
+except (json.JSONDecodeError, OSError):
+    data = {}
+active = data["active_skills"] if isinstance(data, dict) and isinstance(data.get("active_skills"), list) else []
+for name in active:
+    if isinstance(name, str) and skill_name_re.fullmatch(name.strip()):
+        print(name.strip())
+PY
   [ -n "$name" ] || continue
   link_skill "$SKILLS_DIR/$name"
-done < "$ACTIVE"
+done
 
 for d in "$CORE_SKILLS_DIR"/*/; do
   [ -d "$d" ] && link_skill "${d%/}"
@@ -186,7 +218,7 @@ pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
         "command -v tmux >/dev/null 2>&1 || (apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tmux) || true".into(),
         "UV_PROJECT_ENVIRONMENT=/root/agent/.venv uv sync --frozen --project /root/agent/core".into(),
         // ~/.claude/skills is the symlink farm Claude Code discovers skills from, rebuilt
-        // every boot (before the SDK session starts) from agent/data/active-skills.txt:
+        // every boot (before the SDK session starts) from config.active_skills:
         // core skills always, optional skills only when active.
         skill_link_entrypoint_step(),
         "test -f ~/.claude/settings.json || printf '{\"permissions\":{\"allow\":[]}}\\n' > ~/.claude/settings.json".into(),
@@ -2832,8 +2864,8 @@ mod tests {
         let cmd = agent_container_entrypoint_cmd();
         let script = cmd.last().expect("entrypoint script");
         assert!(
-            script.contains("ACTIVE=\"agent/data/active-skills.txt\""),
-            "entrypoint must read the runtime active list from agent/data: {script}"
+            script.contains("CONFIG=\"agent/data/config.json\""),
+            "entrypoint must read runtime active skills from agent config: {script}"
         );
         assert!(
             script.contains("DEFAULTS=\"agent/core/default-skills.txt\""),
