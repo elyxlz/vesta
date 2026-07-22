@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# Deactivate a skill: drop it from data/active-skills.txt and relink ~/.claude/skills.
-# The skill's files stay on disk (full checkout); deactivating only unlists it. A default
-# skill reactivates on the next relink (link-skills.sh unions the shipped defaults back in).
+# Deactivate a skill: drop it from agent/skills/active-skills.txt. The skill's files
+# stay on disk (full checkout); deactivating only unlists it. A default skill reactivates
+# on the next boot because the entrypoint unions the shipped defaults back in.
 set -euo pipefail
 SKILL_NAME="${1:?Usage: skills-deactivate <skill-name>}"
 cd ~
-ACTIVE="agent/data/active-skills.txt"
+ACTIVE="agent/skills/active-skills.txt"
+DEFAULTS="agent/skills/default-skills.txt"
 
-if grep -qxF "$SKILL_NAME" agent/core/default-skills.txt 2>/dev/null; then
-    echo "'$SKILL_NAME' is a default skill: it reactivates on every relink and can't be deactivated."
+if grep -qxF "$SKILL_NAME" "$DEFAULTS" 2>/dev/null; then
+    echo "'$SKILL_NAME' is a default skill: it reactivates on every boot and can't be deactivated."
     exit 0
 fi
 if ! grep -qxF "$SKILL_NAME" "$ACTIVE" 2>/dev/null; then
@@ -17,5 +18,4 @@ if ! grep -qxF "$SKILL_NAME" "$ACTIVE" 2>/dev/null; then
 fi
 { grep -vxF "$SKILL_NAME" "$ACTIVE" || true; } > "$ACTIVE.tmp"
 mv "$ACTIVE.tmp" "$ACTIVE"
-bash ~/agent/core/skills/upstream-sync/scripts/link-skills.sh
 echo "Deactivated '$SKILL_NAME'. Restart Vesta to unload it."

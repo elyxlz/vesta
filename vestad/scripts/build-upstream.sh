@@ -50,6 +50,7 @@ cat > "$STAGE/.gitignore" <<'EOF'
 !/.gitignore
 !/agent/
 /agent/core/
+/agent/skills/active-skills.txt
 EOF
 
 export GIT_DIR="$REPO" GIT_WORK_TREE="$STAGE" GIT_INDEX_FILE="$STAGE/.build-index"

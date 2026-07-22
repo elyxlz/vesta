@@ -44,7 +44,7 @@ fn fresh_agent_has_expected_directory_structure() {
         wait_for_path(&cid, 'd', dir);
     }
 
-    // .claude/skills is a directory of per-skill symlinks (built by link-skills.sh):
+    // .claude/skills is a directory of per-skill symlinks (built by the boot entrypoint):
     // every core skill always, plus each optional skill listed in active-skills.txt
     // (seeded from default-skills.txt). The image ships ALL skills on disk, but only the
     // active ones are linked; assert a default optional (tasks) and a core skill are linked.

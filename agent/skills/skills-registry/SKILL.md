@@ -6,8 +6,8 @@ description: Discover and activate new capabilities from the local skill registr
 # Skills Manager
 
 Every Vesta skill ships on disk under `~/agent/skills/`. There is no download step: a skill
-is either active (linked so you can use it) or inactive. Activating one links it; deactivating
-one unlinks it.
+is either active (linked so you can use it) or inactive. Activating one records it for the
+next restart; deactivating one removes that record.
 
 ## Search the registry
 
@@ -35,7 +35,7 @@ After activating, restart yourself with the `restart_vesta` tool to load the new
 ## Check what's active
 
 ```bash
-cat ~/agent/data/active-skills.txt
+cat ~/agent/skills/active-skills.txt
 ```
 
 ## Installing or updating a skill's CLI
@@ -56,7 +56,7 @@ isolated and on `~/.local/bin`, so use it every time.
 
 ## Notes
 
-- A skill is activated by linking it into `~/.claude/skills` (see `link-skills.sh`); its files are always on disk
+- A skill is activated by listing it in `~/agent/skills/active-skills.txt`; the boot entrypoint links it into `~/.claude/skills`
 - Active skills receive updates automatically during upstream sync
 - Core skills are always active; optional skills are activated on demand
 - After activating a skill that requires setup, read its `SETUP.md`

@@ -112,6 +112,61 @@ pub(crate) const MOUNT_DESTS: &[&str] = &[
     UPSTREAM_MOUNT_DEST,
 ];
 
+fn skill_link_entrypoint_step() -> String {
+    r#"cd ~
+SKILLS_DIR="agent/skills"
+CORE_SKILLS_DIR="agent/core/skills"
+ACTIVE="agent/skills/active-skills.txt"
+DEFAULTS="agent/skills/default-skills.txt"
+LINK_DIR="$HOME/.claude/skills"
+
+mkdir -p "$SKILLS_DIR"
+
+# LEGACY(remove-when: the 2026-08-flat-checkout migration is fleet-applied): a cone box on its
+# first flat boot has no active-skills.txt yet and only its coned skills on disk. Seed the list
+# from the cone so those skills stay active through the conversion boot, before the migration
+# captures them. A flat box has no sparse-checkout file, so this never fires there.
+if [ ! -f "$ACTIVE" ] && [ -f .git/info/sparse-checkout ]; then
+  git sparse-checkout list 2>/dev/null | sed -n 's#^agent/skills/##p' | sort -u > "$ACTIVE" || true
+fi
+
+# Seed the active list from the shipped defaults on first boot, then union any
+# newly-shipped default in on later boots, so an upgrade's new default activates before
+# the session starts (no boot turn, no restart). A default the user removed reappears -
+# same behavior as the old on-disk reconciler.
+[ -f "$ACTIVE" ] || : > "$ACTIVE"
+if [ -s "$ACTIVE" ] && [ -n "$(tail -c 1 "$ACTIVE")" ]; then
+  printf '\n' >> "$ACTIVE"
+fi
+if [ -f "$DEFAULTS" ]; then
+  while IFS= read -r name || [ -n "$name" ]; do
+    [ -n "$name" ] || continue
+    grep -qxF "$name" "$ACTIVE" || printf '%s\n' "$name" >> "$ACTIVE"
+  done < "$DEFAULTS"
+fi
+
+# Rebuilt from scratch each boot so a deactivated skill leaves no dangling link.
+rm -rf "$LINK_DIR"
+mkdir -p "$LINK_DIR"
+
+link_skill() {
+  [ -f "$1/SKILL.md" ] || return 0
+  ln -sfn "$HOME/$1" "$LINK_DIR/$(basename "$1")"
+}
+
+# Active optional skills first, then core skills (linked last so they win any name
+# collision, as core is authoritative).
+while IFS= read -r name || [ -n "$name" ]; do
+  [ -n "$name" ] || continue
+  link_skill "$SKILLS_DIR/$name"
+done < "$ACTIVE"
+
+for d in "$CORE_SKILLS_DIR"/*/; do
+  [ -d "$d" ] && link_skill "${d%/}"
+done"#
+        .into()
+}
+
 pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
     let steps: [String; 8] = [
         // The engine venv is reached via PATH, never an exported UV_PROJECT_ENVIRONMENT (nor `uv
@@ -131,9 +186,9 @@ pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
         "command -v tmux >/dev/null 2>&1 || (apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tmux) || true".into(),
         "UV_PROJECT_ENVIRONMENT=/root/agent/.venv uv sync --frozen --project /root/agent/core".into(),
         // ~/.claude/skills is the symlink farm Claude Code discovers skills from, rebuilt
-        // every boot (before the SDK session starts) from data/active-skills.txt: core
-        // skills always, optional skills only when active. See link-skills.sh.
-        "bash /root/agent/core/skills/upstream-sync/scripts/link-skills.sh".into(),
+        // every boot (before the SDK session starts) from agent/skills/active-skills.txt:
+        // core skills always, optional skills only when active.
+        skill_link_entrypoint_step(),
         "test -f ~/.claude/settings.json || printf '{\"permissions\":{\"allow\":[]}}\\n' > ~/.claude/settings.json".into(),
         "cd /root/agent && exec .venv/bin/python -m core.main".into(),
     ];
@@ -2769,6 +2824,33 @@ mod tests {
         assert!(
             script.contains("python -m core.main"),
             "entrypoint must launch core.main: {script}"
+        );
+    }
+
+    #[test]
+    fn entrypoint_inlines_skill_linking() {
+        let cmd = agent_container_entrypoint_cmd();
+        let script = cmd.last().expect("entrypoint script");
+        assert!(
+            script.contains("ACTIVE=\"agent/skills/active-skills.txt\""),
+            "entrypoint must read the runtime active list from agent/skills: {script}"
+        );
+        assert!(
+            script.contains("DEFAULTS=\"agent/skills/default-skills.txt\""),
+            "entrypoint must read default skills from agent/skills: {script}"
+        );
+        assert!(
+            script.contains("ln -sfn \"$HOME/$1\" \"$LINK_DIR/$(basename \"$1\")\""),
+            "entrypoint must rebuild the skill symlink farm inline: {script}"
+        );
+        assert!(
+            !script.contains("link-skills.sh"),
+            "entrypoint must not call the deleted link-skills.sh helper: {script}"
+        );
+        assert!(
+            !script.contains("agent/data/active-skills.txt")
+                && !script.contains("agent/core/default-skills.txt"),
+            "entrypoint must not use the old active/default skill paths: {script}"
         );
     }
 

@@ -1,6 +1,6 @@
 Your workspace (`~`) is a git repo in the old sparse-checkout (cone) shape. Convert it once
 to the flat shape: a plain full checkout of your skills + `MEMORY.md`, with which skills are
-active recorded in `~/agent/data/active-skills.txt` instead of the cone. The engine
+active recorded in `~/agent/skills/active-skills.txt` instead of the cone. The engine
 (`agent/core`) is a read-only mount and no longer lives in the checkout. Run step 1; its exit
 code tells you what to do next. Re-running is safe: a converted workspace no longer matches
 the old shape, so attach just no-ops.
@@ -24,8 +24,8 @@ Record which skills the cone had active, then retire the old repo and attach the
 one, putting the old one back if the attach fails so you are never left without a working repo:
 ```bash
 cd ~
-mkdir -p agent/data
-git sparse-checkout list 2>/dev/null | sed -n 's#^agent/skills/##p' | sort -u > agent/data/active-skills.txt
+mkdir -p agent/skills
+git sparse-checkout list 2>/dev/null | sed -n 's#^agent/skills/##p' | sort -u > agent/skills/active-skills.txt
 tar czf ~/agent-backup.tar.gz agent        # safety net, keep until verified
 mv ~/.git ~/.git-legacy                     # retire the old repo (delete on a later dream)
 if ! bash agent/core/skills/upstream-sync/scripts/attach.sh; then
@@ -42,10 +42,9 @@ works. Tell the user. Otherwise continue to step 3.
 skills, `MEMORY.md`). Judge each: keep yours, take stock (`git checkout -- <file>`), or
 integrate both. A file whose only diff is stock that moved or got deleted is not yours, take
 stock. For `agent/MEMORY.md`, keep your accumulated knowledge and adopt the stock structure.
-Then commit, and relink so your recorded skills are active from the next restart:
+Then commit. Your recorded skills are linked by the boot entrypoint on the next restart:
 ```bash
 git add -A && git commit -m "my customizations"
-bash ~/agent/core/skills/upstream-sync/scripts/link-skills.sh
 ```
-Your active skill set (`data/active-skills.txt` plus the shipped defaults) takes effect on
+Your active skill set (`agent/skills/active-skills.txt` plus the shipped defaults) takes effect on
 your next restart.

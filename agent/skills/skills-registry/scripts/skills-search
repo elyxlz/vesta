@@ -8,7 +8,7 @@ import sys
 
 query = " ".join(sys.argv[1:]).lower()
 skills_dir = pathlib.Path.home() / "agent" / "skills"
-active_file = pathlib.Path.home() / "agent" / "data" / "active-skills.txt"
+active_file = pathlib.Path.home() / "agent" / "skills" / "active-skills.txt"
 active = set(active_file.read_text().split()) if active_file.exists() else set()
 
 results = []

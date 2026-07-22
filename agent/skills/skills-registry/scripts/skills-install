@@ -5,5 +5,5 @@
 # migration files are immutable and call this path; keep the shim so they don't break mid-converge.
 # A skipped-version pre-flat box can still be a sparse cone when an old migration calls this; the
 # forwarded command may not see coned-out skill dirs, but today's legacy targets are all defaults
-# that link-skills.sh re-seeds into active-skills.txt during the flat conversion boot.
+# that the boot entrypoint re-seeds into active-skills.txt during the flat conversion boot.
 exec "$(dirname "$0")/skills-activate" "$@"

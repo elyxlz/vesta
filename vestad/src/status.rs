@@ -491,7 +491,7 @@ pub fn pid_is_live(pid: u32) -> bool {
 /// a stopped or previous daemon never shows a misleading box.
 pub fn print_status_banner(config: &Path, api_key: Option<&str>) {
     match Status::load(config) {
-        Some(status) if pid_is_live(status.pid) => if let Some(key) = api_key { status.print_banner(key) } else {
+        Some(status) if pid_is_live(status.pid) => if let Some(key) = api_key { status.print_banner(key); } else {
             eprintln!();
             eprintln!(
                 "  {}",
