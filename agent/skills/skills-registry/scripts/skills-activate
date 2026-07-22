@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# Activate a skill: mark it in agent/skills/active-skills.txt. Every optional skill
+# Activate a skill: mark it in agent/data/active-skills.txt. Every optional skill
 # already sits on disk (the workspace is a full checkout), so activating only lists it.
 # The boot entrypoint rebuilds ~/.claude/skills from this list. Instant, offline, no git.
 set -euo pipefail
 SKILL_NAME="${1:?Usage: skills-activate <skill-name>}"
 cd ~
 DEST="agent/skills/$SKILL_NAME"
-ACTIVE="agent/skills/active-skills.txt"
+ACTIVE="agent/data/active-skills.txt"
 
 if [ ! -f "$DEST/SKILL.md" ]; then
     echo "Error: no skill '$SKILL_NAME' (run skills-search to list available skills)." >&2
     exit 1
 fi
 
-mkdir -p agent/skills
+mkdir -p agent/data
 [ -f "$ACTIVE" ] || : > "$ACTIVE"
 if [ -s "$ACTIVE" ] && [ -n "$(tail -c 1 "$ACTIVE")" ]; then
     printf '\n' >> "$ACTIVE"

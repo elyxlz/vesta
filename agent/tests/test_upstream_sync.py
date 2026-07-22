@@ -2,7 +2,7 @@
 
 The box's ``~`` is a plain FULL git checkout of the agent-upstream snapshot (all skills +
 MEMORY.md; the engine ``agent/core`` is a read-only mount, gitignored, never in the tree).
-Which skills are ACTIVE is recorded in ``agent/skills/active-skills.txt`` and materialized as the
+Which skills are ACTIVE is recorded in ``agent/data/active-skills.txt`` and materialized as the
 ``~/.claude/skills`` symlink farm by the Docker entrypoint; every optional skill sits on disk
 regardless. These tests build an upstream repo with the REAL build-upstream.sh (the script
 vestad runs), then drive the REAL attach.sh / fetch-upstream.sh / sync.sh / entrypoint skill-link /
@@ -164,7 +164,7 @@ def _write_core_mount(home, version="0.1.170"):
 def _fresh_box(tmp_path, version="0.1.170", skills=ALL_SKILLS):
     """A fake $HOME as the image ships it: snapshot content on disk (every skill), no .git.
 
-    Which skills are active lives in agent/skills/active-skills.txt, not merely on disk
+    Which skills are active lives in agent/data/active-skills.txt, not merely on disk
     (every skill is present regardless)."""
     home = tmp_path / "home"
     _write_core_mount(home, version)
@@ -189,7 +189,7 @@ def _attach(home, source):
 
 
 def _active(home):
-    f = home / "agent/skills/active-skills.txt"
+    f = home / "agent/data/active-skills.txt"
     return sorted(name for name in f.read_text().split() if name) if f.exists() else []
 
 
@@ -363,7 +363,9 @@ def test_activate_appends_after_final_active_line_without_newline(tmp_path):
     home = _fresh_box(tmp_path)
     env = _box_env(source)
     assert _attach(home, source).returncode == 0
-    (home / "agent/skills/active-skills.txt").write_text("tasks")
+    active = home / "agent/data/active-skills.txt"
+    active.parent.mkdir(parents=True, exist_ok=True)
+    active.write_text("tasks")
     r = _run(SKILLS_ACTIVATE, home, args=("whatsapp",), extra_env=env)
     assert r.returncode == 0, r.stdout + r.stderr
     assert _active(home) == ["tasks", "whatsapp"]
@@ -458,7 +460,7 @@ def test_entrypoint_unions_a_newly_shipped_default(tmp_path):
 
 def test_entrypoint_reads_final_active_line_without_newline(tmp_path):
     home = _skill_link_box(tmp_path)
-    active = home / "agent/skills/active-skills.txt"
+    active = home / "agent/data/active-skills.txt"
     active.parent.mkdir(parents=True, exist_ok=True)
     active.write_text("whatsapp")
     assert _run_skill_entrypoint(home).returncode == 0
@@ -468,7 +470,7 @@ def test_entrypoint_reads_final_active_line_without_newline(tmp_path):
 def test_entrypoint_drops_a_deactivated_optional(tmp_path):
     home = _skill_link_box(tmp_path)
     assert _run_skill_entrypoint(home).returncode == 0
-    active = home / "agent/skills/active-skills.txt"
+    active = home / "agent/data/active-skills.txt"
     active.write_text(active.read_text() + "microsoft\n")  # activate a non-default
     assert _run_skill_entrypoint(home).returncode == 0
     assert "microsoft" in _links(home)
@@ -485,7 +487,7 @@ def test_entrypoint_bridges_the_cone_on_first_flat_boot(tmp_path):
     source = _upstream_fixture(tmp_path)
     # whatsapp is NOT a default, so only the cone bridge (not default-seeding) can preserve it.
     home, env = _legacy_cone_box(tmp_path, source, active=("tasks", "whatsapp"))
-    assert not (home / "agent/skills/active-skills.txt").exists()
+    assert not (home / "agent/data/active-skills.txt").exists()
     assert _run_skill_entrypoint(home, extra_env=env).returncode == 0
     assert "whatsapp" in _active(home)  # captured from the cone, not from defaults
     assert "whatsapp" in _links(home)  # and linked (on disk in the cone)
@@ -527,8 +529,8 @@ def test_flat_checkout_migration_converts_cone_to_flat(tmp_path):
     # 2. Convert: record the active skills, retire the cone, attach flat.
     cone = _git(["sparse-checkout", "list"], home, env)
     active = sorted(line[len("agent/skills/") :] for line in cone.splitlines() if line.startswith("agent/skills/"))
-    (home / "agent/skills").mkdir(parents=True, exist_ok=True)
-    (home / "agent/skills/active-skills.txt").write_text("\n".join(active) + "\n")
+    (home / "agent/data").mkdir(parents=True, exist_ok=True)
+    (home / "agent/data/active-skills.txt").write_text("\n".join(active) + "\n")
     (home / ".git").rename(home / ".git-legacy")
     assert _attach(home, source).returncode == 0
 

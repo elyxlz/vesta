@@ -35,7 +35,7 @@ After activating, restart yourself with the `restart_vesta` tool to load the new
 ## Check what's active
 
 ```bash
-cat ~/agent/skills/active-skills.txt
+cat ~/agent/data/active-skills.txt
 ```
 
 ## Installing or updating a skill's CLI
@@ -56,7 +56,7 @@ isolated and on `~/.local/bin`, so use it every time.
 
 ## Notes
 
-- A skill is activated by listing it in `~/agent/skills/active-skills.txt`; the boot entrypoint links it into `~/.claude/skills`
+- A skill is activated by listing it in `~/agent/data/active-skills.txt`; the boot entrypoint links it into `~/.claude/skills`
 - Active skills receive updates automatically during upstream sync
 - Core skills are always active; optional skills are activated on demand
 - After activating a skill that requires setup, read its `SETUP.md`

@@ -23,7 +23,6 @@ htmlcov/
 
 # Runtime data (local research, session state, secrets)
 data/
-skills/active-skills.txt
 
 # Runtime memory (created at startup, not tracked)
 memory/conversations/

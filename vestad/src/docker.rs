@@ -116,11 +116,11 @@ fn skill_link_entrypoint_step() -> String {
     r#"cd ~
 SKILLS_DIR="agent/skills"
 CORE_SKILLS_DIR="agent/core/skills"
-ACTIVE="agent/skills/active-skills.txt"
+ACTIVE="agent/data/active-skills.txt"
 DEFAULTS="agent/skills/default-skills.txt"
 LINK_DIR="$HOME/.claude/skills"
 
-mkdir -p "$SKILLS_DIR"
+mkdir -p "$SKILLS_DIR" agent/data
 
 # LEGACY(remove-when: the 2026-08-flat-checkout migration is fleet-applied): a cone box on its
 # first flat boot has no active-skills.txt yet and only its coned skills on disk. Seed the list
@@ -186,7 +186,7 @@ pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
         "command -v tmux >/dev/null 2>&1 || (apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tmux) || true".into(),
         "UV_PROJECT_ENVIRONMENT=/root/agent/.venv uv sync --frozen --project /root/agent/core".into(),
         // ~/.claude/skills is the symlink farm Claude Code discovers skills from, rebuilt
-        // every boot (before the SDK session starts) from agent/skills/active-skills.txt:
+        // every boot (before the SDK session starts) from agent/data/active-skills.txt:
         // core skills always, optional skills only when active.
         skill_link_entrypoint_step(),
         "test -f ~/.claude/settings.json || printf '{\"permissions\":{\"allow\":[]}}\\n' > ~/.claude/settings.json".into(),
@@ -2832,8 +2832,8 @@ mod tests {
         let cmd = agent_container_entrypoint_cmd();
         let script = cmd.last().expect("entrypoint script");
         assert!(
-            script.contains("ACTIVE=\"agent/skills/active-skills.txt\""),
-            "entrypoint must read the runtime active list from agent/skills: {script}"
+            script.contains("ACTIVE=\"agent/data/active-skills.txt\""),
+            "entrypoint must read the runtime active list from agent/data: {script}"
         );
         assert!(
             script.contains("DEFAULTS=\"agent/skills/default-skills.txt\""),
@@ -2848,7 +2848,7 @@ mod tests {
             "entrypoint must not call the deleted link-skills.sh helper: {script}"
         );
         assert!(
-            !script.contains("agent/data/active-skills.txt")
+            !script.contains("agent/skills/active-skills.txt")
                 && !script.contains("agent/core/default-skills.txt"),
             "entrypoint must not use the old active/default skill paths: {script}"
         );

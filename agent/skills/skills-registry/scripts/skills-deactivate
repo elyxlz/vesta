@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Deactivate a skill: drop it from agent/skills/active-skills.txt. The skill's files
+# Deactivate a skill: drop it from agent/data/active-skills.txt. The skill's files
 # stay on disk (full checkout); deactivating only unlists it. A default skill reactivates
 # on the next boot because the entrypoint unions the shipped defaults back in.
 set -euo pipefail
 SKILL_NAME="${1:?Usage: skills-deactivate <skill-name>}"
 cd ~
-ACTIVE="agent/skills/active-skills.txt"
+ACTIVE="agent/data/active-skills.txt"
 DEFAULTS="agent/skills/default-skills.txt"
 
 if grep -qxF "$SKILL_NAME" "$DEFAULTS" 2>/dev/null; then
