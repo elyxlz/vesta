@@ -74,6 +74,8 @@ CONTEXT_1M_BETA: SdkBeta = "context-1m-2025-08-07"
 _CTX_MIN = 1_000
 _CLAUDE_CTX_MAX = 1_000_000
 _OPENROUTER_CTX_MAX = 200_000
+_ZAI_CTX_MAX = 200_000
+_KIMI_CTX_MAX = 262_144
 
 ADAPTIVE_THINKING = ThinkingConfigAdaptive(type="adaptive", display="summarized")
 
@@ -219,10 +221,9 @@ def read_claude_oauth() -> "ClaudeOAuth | None":
     return None
 
 
-# The provider config is a discriminated union by `kind` — it carries the SHAPE invariants (openrouter
-# requires a key, claude carries thinking + its OAuth blob), while the catalog of model/context options
-# lives in the manifest (reference data). `model` is a free-form slug on both (the picker offers the
-# manifest's list; claude-code resolves it), so a typo fails at the SDK, same as openrouter.
+# The provider config is a discriminated union by `kind` — it carries the shape invariants (key-backed
+# providers require a key; Claude carries thinking + its OAuth blob), while the catalog of model/context
+# options lives in the manifest. `model` stays a free-form slug; the picker supplies each catalog.
 class ClaudeConfig(pyd.BaseModel):
     kind: tp.Literal["claude"] = "claude"
     model: str = _DEFAULT_CLAUDE_MODEL
@@ -247,7 +248,25 @@ class OpenRouterConfig(pyd.BaseModel):
     key: pyd.SecretStr
 
 
-Provider = tp.Annotated[ClaudeConfig | OpenRouterConfig, pyd.Field(discriminator="kind")]
+class ZaiConfig(pyd.BaseModel):
+    """A Z.AI Coding Plan key used through its Claude Code-compatible endpoint."""
+
+    kind: tp.Literal["zai"] = "zai"
+    model: str
+    max_context_tokens: int | None = pyd.Field(default=None, ge=_CTX_MIN, le=_ZAI_CTX_MAX)
+    key: pyd.SecretStr
+
+
+class KimiConfig(pyd.BaseModel):
+    """A Kimi Code membership key used through its Claude Code-compatible endpoint."""
+
+    kind: tp.Literal["kimi"] = "kimi"
+    model: str
+    max_context_tokens: int | None = pyd.Field(default=None, ge=_CTX_MIN, le=_KIMI_CTX_MAX)
+    key: pyd.SecretStr
+
+
+Provider = tp.Annotated[ClaudeConfig | OpenRouterConfig | ZaiConfig | KimiConfig, pyd.Field(discriminator="kind")]
 
 
 def _coerce_thinking(value: object) -> object:

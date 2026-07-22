@@ -26,13 +26,14 @@ import { ErrorState, LoadingState } from "@/components/ui/States";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
 
-type AuthKind = "claude" | "openrouter";
+type AuthKind = "claude" | "openrouter" | "zai" | "kimi";
 
 export function ProviderSection() {
   const queryClient = useQueryClient();
   const { api } = useSession();
   const { name } = useAgent();
   const { colors } = usePreferences();
+  const [authKind, setAuthKind] = useState<AuthKind>("claude");
   const provider = useQuery({
     queryKey: ["provider", name],
     queryFn: () => getProvider(api, name),
@@ -48,12 +49,11 @@ export function ProviderSection() {
   const openRouterModels = useQuery({
     queryKey: ["openrouter-models"],
     queryFn: () => fetchOpenRouterModels(api),
-    enabled: provider.data?.kind === "openrouter",
+    enabled: provider.data?.kind === "openrouter" || (provider.data?.kind === "none" && authKind === "openrouter"),
   });
-  const [authKind, setAuthKind] = useState<AuthKind>("claude");
   const [oauthSession, setOauthSession] = useState("");
   const [oauthCode, setOauthCode] = useState("");
-  const [openRouterKey, setOpenRouterKey] = useState("");
+  const [providerKey, setProviderKey] = useState("");
   const [authError, setAuthError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -132,14 +132,15 @@ export function ProviderSection() {
     }
   };
 
-  const connectOpenRouter = async () => {
+  const connectKeyProvider = async () => {
+    if (providerKind === "claude") return;
     setBusy(true);
     setAuthError("");
     try {
-      const key = openRouterKey.trim();
-      await validateOpenRouterKey(api, key);
+      const key = providerKey.trim();
+      if (providerKind === "openrouter") await validateOpenRouterKey(api, key);
       const selection: ProviderSelection = {
-        kind: "openrouter",
+        kind: providerKind,
         key,
         model: provider.data?.model ?? entry?.default_model ?? modelOptions[0]?.value ?? "",
         maxContextTokens: provider.data?.max_context_tokens ?? entry?.context.default,
@@ -147,7 +148,7 @@ export function ProviderSection() {
       await provisionAgent(api, name, selection);
       await queryClient.invalidateQueries({ queryKey: ["provider", name] });
     } catch (cause) {
-      setAuthError(cause instanceof Error ? cause.message : "OpenRouter sign-in failed.");
+      setAuthError(cause instanceof Error ? cause.message : "Provider sign-in failed.");
     } finally {
       setBusy(false);
     }
@@ -189,6 +190,8 @@ export function ProviderSection() {
           {provider.data.kind === "none" ? (
             <View style={styles.kindButtons}>
               <Button variant={authKind === "claude" ? "primary" : "secondary"} onPress={() => setAuthKind("claude")}>Claude</Button>
+              <Button variant={authKind === "zai" ? "primary" : "secondary"} onPress={() => setAuthKind("zai")}>Z.AI</Button>
+              <Button variant={authKind === "kimi" ? "primary" : "secondary"} onPress={() => setAuthKind("kimi")}>Kimi</Button>
               <Button variant={authKind === "openrouter" ? "primary" : "secondary"} onPress={() => setAuthKind("openrouter")}>OpenRouter</Button>
             </View>
           ) : null}
@@ -204,8 +207,8 @@ export function ProviderSection() {
             </>
           ) : (
             <>
-              <Field label="OpenRouter API key" value={openRouterKey} onChangeText={setOpenRouterKey} secureTextEntry autoCapitalize="none" autoCorrect={false} error={authError || undefined} />
-              <Button loading={busy} disabled={!openRouterKey.trim()} onPress={() => void connectOpenRouter()}>Connect OpenRouter</Button>
+              <Field label={`${entry?.display ?? providerKind} API key`} value={providerKey} onChangeText={setProviderKey} secureTextEntry autoCapitalize="none" autoCorrect={false} error={authError || undefined} />
+              <Button loading={busy} disabled={!providerKey.trim()} onPress={() => void connectKeyProvider()}>Connect {entry?.display ?? providerKind}</Button>
             </>
           )}
         </Card>
@@ -241,5 +244,5 @@ const styles = StyleSheet.create({
   track: { height: 6, borderRadius: 3, overflow: "hidden" },
   fill: { height: 6, borderRadius: 3 },
   authTitle: { fontSize: 19, fontWeight: "500" },
-  kindButtons: { flexDirection: "row", gap: 8 },
+  kindButtons: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
 });

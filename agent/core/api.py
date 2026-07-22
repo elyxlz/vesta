@@ -8,7 +8,7 @@ Routes:
   - GET  /config               prefs + notification_rules (personality, timezone, seed_context, operational)
   - PUT  /config               update prefs and/or notification_rules (provider is set via /provider)
   - GET  /provider             active provider (configured fields) + derived {authed}
-  - PUT  /provider             sign in / switch provider (claude credentials or openrouter key)
+  - PUT  /provider             sign in / switch provider (Claude OAuth or an API key)
   - PATCH /provider            change model / context / thinking on the active provider
   - DELETE /provider           sign out: clear credentials, leaving not_authenticated
   - GET  /memory               read MEMORY.md
@@ -43,7 +43,7 @@ from .config import (
 from .events import EventBus, SnapshotEvent, VestaEvent
 from .helpers import get_memory_path
 from .models import State
-from .provider import ProviderAuthState, UsageError, clear_provider, get_usage, set_claude, set_openrouter
+from .provider import ProviderAuthState, UsageError, clear_provider, get_usage, set_claude, set_kimi, set_openrouter, set_zai
 
 logger = logging.getLogger("vesta.api")
 
@@ -260,8 +260,22 @@ class _OpenRouterSignIn(pyd.BaseModel):
     key: str
 
 
-_ProviderSignIn = tp.Annotated[_ClaudeSignIn | _OpenRouterSignIn, pyd.Field(discriminator="kind")]
-_SIGN_IN_ADAPTER: pyd.TypeAdapter[_ClaudeSignIn | _OpenRouterSignIn] = pyd.TypeAdapter(_ProviderSignIn)
+class _ZaiSignIn(pyd.BaseModel):
+    kind: tp.Literal["zai"]
+    model: str
+    max_context_tokens: int | None = None
+    key: str
+
+
+class _KimiSignIn(pyd.BaseModel):
+    kind: tp.Literal["kimi"]
+    model: str
+    max_context_tokens: int | None = None
+    key: str
+
+
+_ProviderSignIn = tp.Annotated[_ClaudeSignIn | _OpenRouterSignIn | _ZaiSignIn | _KimiSignIn, pyd.Field(discriminator="kind")]
+_SIGN_IN_ADAPTER: pyd.TypeAdapter[_ClaudeSignIn | _OpenRouterSignIn | _ZaiSignIn | _KimiSignIn] = pyd.TypeAdapter(_ProviderSignIn)
 
 
 class _ProviderPrefs(pyd.BaseModel):
@@ -307,8 +321,7 @@ async def _status_handler(request: web.Request) -> web.Response:
 
 
 async def _provider_put_handler(request: web.Request) -> web.Response:
-    """Sign in / switch provider: `{kind:"claude", model, credentials}` (OAuth blob written to the SDK
-    file, never stored) or `{kind:"openrouter", model, key}`. Applied by the next restart."""
+    """Sign in / switch provider. Applied by the next restart."""
     state: State = request.app["state"]
     config: VestaConfig = request.app["config"]
     try:
@@ -324,8 +337,12 @@ async def _provider_put_handler(request: web.Request) -> web.Response:
             state.provider_status = await asyncio.to_thread(
                 set_claude, signin.credentials, signin.model, signin.max_context_tokens, config=config
             )
-        else:
+        elif isinstance(signin, _OpenRouterSignIn):
             state.provider_status = await asyncio.to_thread(set_openrouter, signin.key, signin.model, signin.max_context_tokens, config=config)
+        elif isinstance(signin, _ZaiSignIn):
+            state.provider_status = await asyncio.to_thread(set_zai, signin.key, signin.model, signin.max_context_tokens, config=config)
+        else:
+            state.provider_status = await asyncio.to_thread(set_kimi, signin.key, signin.model, signin.max_context_tokens, config=config)
     except (json.JSONDecodeError, TypeError) as e:
         return web.json_response({"error": f"invalid credentials: {e}"}, status=400)
     except OSError as e:

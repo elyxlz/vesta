@@ -7,7 +7,7 @@ import json
 import pydantic as pyd
 import pytest
 
-from core.config import MANIFEST_PATH, ClaudeConfig, OpenRouterConfig, VestaConfig
+from core.config import MANIFEST_PATH, ClaudeConfig, KimiConfig, OpenRouterConfig, VestaConfig, ZaiConfig
 
 
 def _manifest():
@@ -18,10 +18,12 @@ def test_manifest_has_both_providers_and_defaults():
     manifest = _manifest()
     assert manifest["default_provider"] == "claude"
     assert manifest["default_personality"] == "dry"
-    assert sorted(manifest["providers"]) == ["claude", "openrouter"]
+    assert sorted(manifest["providers"]) == ["claude", "kimi", "openrouter", "zai"]
     assert manifest["providers"]["claude"]["models"] == ["opus", "sonnet"]
     assert manifest["providers"]["claude"]["context"]["presets"]  # the picker's curated suggestions
     assert manifest["providers"]["openrouter"]["models"] == "live"  # free-form, fetched separately
+    assert manifest["providers"]["zai"]["default_model"] == "glm-4.7"
+    assert manifest["providers"]["kimi"]["default_model"] == "kimi-for-coding"
 
 
 def test_model_defaults_come_from_the_manifest():
@@ -37,10 +39,22 @@ def test_openrouter_requires_a_key():
         OpenRouterConfig.model_validate({"model": "some/model"})
 
 
+def test_zai_requires_a_key():
+    with pytest.raises(pyd.ValidationError):
+        ZaiConfig.model_validate({"model": "glm-4.7"})
+
+
+def test_kimi_requires_a_key():
+    with pytest.raises(pyd.ValidationError):
+        KimiConfig.model_validate({"model": "kimi-for-coding"})
+
+
 def test_provider_shape_invariants():
     assert "key" not in ClaudeConfig.model_fields  # claude has no key
     assert "thinking" in ClaudeConfig.model_fields  # claude carries the thinking knob
     assert "thinking" not in OpenRouterConfig.model_fields  # openrouter can't set thinking
+    assert "thinking" not in ZaiConfig.model_fields  # Z.AI uses its endpoint's native reasoning
+    assert "thinking" not in KimiConfig.model_fields  # Kimi uses its endpoint's native reasoning
 
 
 def test_claude_context_gates_large_windows_by_plan():

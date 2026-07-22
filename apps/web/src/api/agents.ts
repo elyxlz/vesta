@@ -5,7 +5,7 @@ export type { BuildPhase };
 
 export type { NotificationEvent };
 
-export interface OpenRouterConfig {
+export interface KeyProviderConfig {
   key: string;
   model: string;
 }
@@ -18,8 +18,8 @@ export type ProviderResult =
       maxContextTokens?: number;
     }
   | {
-      kind: "openrouter";
-      config: OpenRouterConfig;
+      kind: "openrouter" | "zai" | "kimi";
+      config: KeyProviderConfig;
       maxContextTokens?: number;
     };
 
@@ -33,7 +33,7 @@ type ProviderBody =
       max_context_tokens?: number;
     }
   | {
-      kind: "openrouter";
+      kind: "openrouter" | "zai" | "kimi";
       model: string;
       key: string;
       max_context_tokens?: number;
@@ -60,7 +60,7 @@ export async function setProvider(
             : {}),
         }
       : {
-          kind: "openrouter",
+          kind: result.kind,
           model: result.config.model,
           key: result.config.key,
           ...(result.maxContextTokens != null
@@ -89,7 +89,7 @@ export async function signOutProvider(name: string): Promise<void> {
 export interface ProviderInfo {
   /// "none" means no provider chosen (fresh agent, or signed out). A concrete kind with
   /// `authed: false` means a provider IS chosen but its credential is invalid/expired (re-auth).
-  kind: "claude" | "openrouter" | "none";
+  kind: "claude" | "openrouter" | "zai" | "kimi" | "none";
   model: string | null;
   max_context_tokens: number | null;
   authed: boolean;
@@ -103,7 +103,7 @@ export interface ProviderInfo {
 /// "no provider yet" (kind "none") apart from "chosen but credential expired" (kind set, authed false).
 export async function getProvider(name: string): Promise<ProviderInfo> {
   const provider = await apiJson<{
-    kind?: "claude" | "openrouter";
+    kind?: "claude" | "openrouter" | "zai" | "kimi";
     model: string | null;
     max_context_tokens: number | null;
     authed?: boolean;

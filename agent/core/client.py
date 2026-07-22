@@ -20,7 +20,14 @@ from claude_agent_sdk import (
     ResultMessage,
     ThinkingBlock,
 )
-from claude_agent_sdk.types import PermissionResultAllow, SdkBeta, ThinkingConfigDisabled, ToolPermissionContext
+from claude_agent_sdk.types import (
+    PermissionResultAllow,
+    SdkBeta,
+    ThinkingConfigAdaptive,
+    ThinkingConfigDisabled,
+    ThinkingConfigEnabled,
+    ToolPermissionContext,
+)
 
 from . import config as cfg
 from . import diagnostics, logger, sdk_parsing, state_store, vestad_client
@@ -37,11 +44,14 @@ from .provider import (
 from .tools import build_vesta_tools_server
 
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
+ZAI_ANTHROPIC_URL = "https://api.z.ai/api/anthropic"
+KIMI_ANTHROPIC_URL = "https://api.kimi.com/coding/"
 
 # The error surface of a dead or wedged CLI subprocess, caught by every consumer of the SDK seam
 # (the session open below, loops.py's turn and compaction error handlers). Owned here so loops.py
 # never imports claude_agent_sdk itself.
 SDK_ERRORS: tuple[type[Exception], ...] = (ClaudeSDKError, OSError, RuntimeError)
+ThinkingConfig = ThinkingConfigAdaptive | ThinkingConfigEnabled | ThinkingConfigDisabled
 
 
 async def resolve_openrouter_max_tokens(config: cfg.VestaConfig) -> int | None:
@@ -522,6 +532,53 @@ async def compact_session(*, state: vm.State, config: cfg.VestaConfig, prompt: s
         _close_turn(state, turn)
 
 
+def _provider_sdk_settings(provider: cfg.Provider, state: vm.State) -> tuple[dict[str, str], list[SdkBeta], ThinkingConfig]:
+    """Build the model transport settings scoped to the Claude Code subprocess."""
+    sdk_env: dict[str, str] = {}
+    betas: list[SdkBeta] = []
+    thinking_config: ThinkingConfig = ThinkingConfigAdaptive(type="adaptive", display="summarized")
+    if isinstance(provider, cfg.OpenRouterConfig):
+        # The SDK always routes through the local caching proxy, never OpenRouter directly.
+        if not state.openrouter_proxy_url:
+            raise RuntimeError("OpenRouter cache proxy not started before building client options")
+        sdk_env["ANTHROPIC_BASE_URL"] = state.openrouter_proxy_url
+        sdk_env["ANTHROPIC_AUTH_TOKEN"] = provider.key.get_secret_value()
+        sdk_env["ANTHROPIC_SMALL_FAST_MODEL"] = OPENROUTER_SMALL_FAST_MODEL
+        thinking_config = ThinkingConfigDisabled(type="disabled")
+        if state.openrouter_max_tokens:
+            sdk_env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(state.openrouter_max_tokens)
+    elif isinstance(provider, cfg.ZaiConfig):
+        sdk_env["ANTHROPIC_BASE_URL"] = ZAI_ANTHROPIC_URL
+        sdk_env["ANTHROPIC_AUTH_TOKEN"] = provider.key.get_secret_value()
+        if provider.max_context_tokens is not None:
+            sdk_env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(provider.max_context_tokens)
+    elif isinstance(provider, cfg.KimiConfig):
+        sdk_env["ANTHROPIC_BASE_URL"] = KIMI_ANTHROPIC_URL
+        sdk_env["ANTHROPIC_API_KEY"] = provider.key.get_secret_value()
+        sdk_env["CLAUDE_CODE_EFFORT_LEVEL"] = "high"
+        # Kimi's Claude Code guide maps every internal model role to the selected Kimi model.
+        for name in (
+            "ANTHROPIC_MODEL",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "CLAUDE_CODE_SUBAGENT_MODEL",
+        ):
+            sdk_env[name] = provider.model
+        context = provider.max_context_tokens or 262_144
+        sdk_env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = str(context)
+        sdk_env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(context)
+    else:
+        chosen = provider.max_context_tokens
+        if chosen is None or chosen > DEFAULT_CONTEXT_WINDOW:
+            betas = [CONTEXT_1M_BETA]
+        if chosen is not None:
+            sdk_env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(chosen)
+        thinking_config = provider.thinking
+    return sdk_env, betas, thinking_config
+
+
 def build_client_options(config: cfg.VestaConfig, state: vm.State) -> ClaudeAgentOptions:
     memory_path = get_memory_path(config)
     if not memory_path.exists():
@@ -559,34 +616,7 @@ def build_client_options(config: cfg.VestaConfig, state: vm.State) -> ClaudeAgen
     if provider is None:
         raise RuntimeError("build_client_options reached with no authenticated provider")
 
-    sdk_env: dict[str, str] = {}
-    betas: list[SdkBeta] = []
-    # 1M-context beta and thinking are Anthropic-only; openrouter forces thinking disabled.
-    thinking_config = ThinkingConfigDisabled(type="disabled")
-    if isinstance(provider, cfg.OpenRouterConfig):
-        # The SDK always routes through the local caching proxy, never OpenRouter
-        # directly. start_cache_proxy runs first in message_processor, so the URL is set.
-        if not state.openrouter_proxy_url:
-            raise RuntimeError("OpenRouter cache proxy not started before building client options")
-        sdk_env["ANTHROPIC_BASE_URL"] = state.openrouter_proxy_url
-        # The OpenRouter key + background model the subprocess talks to OpenRouter with, injected
-        # from the config store (no shell env inheritance). The union guarantees the key.
-        sdk_env["ANTHROPIC_AUTH_TOKEN"] = provider.key.get_secret_value()
-        sdk_env["ANTHROPIC_SMALL_FAST_MODEL"] = OPENROUTER_SMALL_FAST_MODEL
-        # Tell claude-code the model's real window so autocompact uses the right
-        # threshold instead of its 200k default for non-Anthropic models.
-        if state.openrouter_max_tokens:
-            sdk_env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(state.openrouter_max_tokens)
-    else:
-        # Claude. The 1M-context beta unlocks windows above claude-code's 200k default.
-        # Honor a user-chosen window: cap the autocompact threshold to it, and request the 1M
-        # beta only when the choice needs the larger window. Unset keeps 1M beta on, no cap.
-        chosen = provider.max_context_tokens
-        if chosen is None or chosen > DEFAULT_CONTEXT_WINDOW:
-            betas = [CONTEXT_1M_BETA]
-        if chosen is not None:
-            sdk_env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(chosen)
-        thinking_config = provider.thinking
+    sdk_env, betas, thinking_config = _provider_sdk_settings(provider, state)
 
     # Context-usage % is reported by the official client's get_context_usage(), which measures
     # against the CLI's own window (set via CLAUDE_CODE_MAX_CONTEXT_TOKENS above); the headless

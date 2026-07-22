@@ -7,7 +7,7 @@ import json
 import pytest
 
 import core.config as cfg
-from core.config import ClaudeConfig, ClaudeOAuth, OpenRouterConfig, read_config_store, update_config_store
+from core.config import ClaudeConfig, ClaudeOAuth, KimiConfig, OpenRouterConfig, ZaiConfig, read_config_store, update_config_store
 from core.provider import (
     ProviderAuthState,
     UsageCredits,
@@ -20,7 +20,9 @@ from core.provider import (
     is_terminal_auth_error,
     observed_provider_failure,
     set_claude,
+    set_kimi,
     set_openrouter,
+    set_zai,
 )
 
 
@@ -49,6 +51,16 @@ def test_derive_claude_authenticated_when_oauth_refreshable():
 def test_derive_openrouter_authenticated_with_key():
     cfg = _cfg(OpenRouterConfig.model_validate({"model": "m", "key": "sk-or-v1-x"}))
     assert _derive_kind_and_auth(cfg) == ("openrouter", True)
+
+
+def test_derive_zai_authenticated_with_key():
+    config = _cfg(ZaiConfig.model_validate({"model": "glm-4.7", "key": "zai-key"}))
+    assert _derive_kind_and_auth(config) == ("zai", True)
+
+
+def test_derive_kimi_authenticated_with_key():
+    config = _cfg(KimiConfig.model_validate({"model": "kimi-for-coding", "key": "kimi-key"}))
+    assert _derive_kind_and_auth(config) == ("kimi", True)
 
 
 _CREDS = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 2**62}})
@@ -133,6 +145,52 @@ def test_set_openrouter_writes_nested_provider_to_store(prov):
     assert isinstance(fresh.provider, OpenRouterConfig)
     assert fresh.provider.key.get_secret_value() == "sk-or-v1-secret"
     assert derive_status(fresh).kind == "openrouter"
+
+
+def test_set_zai_writes_nested_provider_to_store(prov):
+    status = set_zai("zai-secret", "glm-4.7", 128_000, config=prov)
+    assert status.state == ProviderAuthState.AUTHENTICATED
+    assert status.kind == "zai"
+    assert read_config_store()["provider"] == {
+        "kind": "zai",
+        "model": "glm-4.7",
+        "key": "zai-secret",
+        "max_context_tokens": 128_000,
+    }
+    fresh = cfg.VestaConfig()
+    assert isinstance(fresh.provider, ZaiConfig)
+    assert derive_status(fresh).kind == "zai"
+
+
+def test_set_kimi_writes_nested_provider_to_store(prov):
+    status = set_kimi("kimi-secret", "kimi-for-coding", 128_000, config=prov)
+    assert status.state == ProviderAuthState.AUTHENTICATED
+    assert status.kind == "kimi"
+    assert read_config_store()["provider"] == {
+        "kind": "kimi",
+        "model": "kimi-for-coding",
+        "key": "kimi-secret",
+        "max_context_tokens": 128_000,
+    }
+    fresh = cfg.VestaConfig()
+    assert isinstance(fresh.provider, KimiConfig)
+    assert derive_status(fresh).kind == "kimi"
+
+
+@pytest.mark.parametrize(
+    "provider",
+    [
+        ZaiConfig(model="glm-4.7", key="zai-secret"),
+        KimiConfig(model="kimi-for-coding", key="kimi-secret"),
+    ],
+)
+def test_subscription_provider_keys_are_redacted_on_the_wire(provider):
+    from core.config import stored_config
+
+    config = _cfg(provider)
+    dumped = stored_config(config)["provider"]
+    assert isinstance(dumped, dict)
+    assert dumped["key"] == "**********"
 
 
 def test_model_context_prefs_persist_to_store_and_reload(prov):

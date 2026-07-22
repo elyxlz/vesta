@@ -1,5 +1,5 @@
-"""Per-agent LLM-provider auth (Claude OAuth or OpenRouter key). The provider choice and OpenRouter
-key live in the config store; the Claude OAuth blob lives in `.credentials.json` (the `claude` CLI
+"""Per-agent LLM-provider auth (Claude OAuth, OpenRouter, Z.AI, or Kimi). The provider choice and API
+keys live in the config store; the Claude OAuth blob lives in `.credentials.json` (the `claude` CLI
 reads it). On-disk state is the single source of truth: status is re-derived from disk on every boot,
 and a runtime auth failure is an in-memory flip only (no separate persisted auth flag)."""
 
@@ -14,7 +14,17 @@ import aiohttp
 import pydantic as pyd
 
 from . import logger
-from .config import CREDENTIALS_PATH, ClaudeOAuth, OpenRouterConfig, VestaConfig, merge_provider, read_claude_oauth, update_config_store
+from .config import (
+    CREDENTIALS_PATH,
+    ClaudeOAuth,
+    KimiConfig,
+    OpenRouterConfig,
+    VestaConfig,
+    ZaiConfig,
+    merge_provider,
+    read_claude_oauth,
+    update_config_store,
+)
 
 CLAUDE_JSON_PATH = pl.Path.home() / ".claude.json"
 
@@ -34,7 +44,7 @@ class ProviderAuthState(enum.StrEnum):
     NOT_AUTHENTICATED = "not_authenticated"
 
 
-ProviderKind = tp.Literal["claude", "openrouter", "none"]
+ProviderKind = tp.Literal["claude", "openrouter", "zai", "kimi", "none"]
 
 # What counts as a terminal provider error — the credential is rejected (401) or the account can't
 # pay (402) — owned here for every provider's reactive detector. Transient errors (5xx, 429 rate
@@ -124,6 +134,20 @@ def set_openrouter(key: str, model: str, max_context_tokens: int | None, *, conf
     return ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="openrouter", model=reported)
 
 
+def set_zai(key: str, model: str, max_context_tokens: int | None, *, config: VestaConfig) -> ProviderStatus:
+    """Store a Z.AI Coding Plan key and model. Vestad restarts the agent to apply them."""
+    reported = _sign_in("zai", model=model, max_context_tokens=max_context_tokens, key=key, config=config)
+    logger.startup(f"Provider set to zai model={model}")
+    return ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="zai", model=reported)
+
+
+def set_kimi(key: str, model: str, max_context_tokens: int | None, *, config: VestaConfig) -> ProviderStatus:
+    """Store a Kimi Code membership key and model. Vestad restarts the agent to apply them."""
+    reported = _sign_in("kimi", model=model, max_context_tokens=max_context_tokens, key=key, config=config)
+    logger.startup(f"Provider set to kimi model={model}")
+    return ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="kimi", model=reported)
+
+
 def clear_provider() -> ProviderStatus:
     """Sign out: remove the Claude OAuth blob and clear the stored provider to None (no provider
     chosen), leaving the agent unprovisioned. General config (personality, timezone, ...) survives.
@@ -157,6 +181,10 @@ def _derive_kind_and_auth(config: VestaConfig) -> tuple[ProviderKind, bool]:
         return "none", False
     if isinstance(provider, OpenRouterConfig):
         return "openrouter", bool(provider.key.get_secret_value())
+    if isinstance(provider, ZaiConfig):
+        return "zai", bool(provider.key.get_secret_value())
+    if isinstance(provider, KimiConfig):
+        return "kimi", bool(provider.key.get_secret_value())
     # A config built outside load_config (validation paths never hydrate) carries oauth=None;
     # read the blob from disk here so status derivation stays an honest reading of what's on disk.
     oauth = provider.oauth if provider.oauth is not None else read_claude_oauth()
@@ -175,10 +203,9 @@ def _check_claude_oauth(oauth: ClaudeOAuth) -> bool:
 
 # --- Plan usage (provider-agnostic) ---
 #
-# Each provider reports usage in its own upstream shape — Claude as time-windowed rate-limit buckets
-# (/api/oauth/usage), OpenRouter as a spend balance (/api/v1/key). We normalize both to `meters`
-# (quota used as a %, optionally with a reset time) plus `credits` (a spend balance), so the API and
-# UI never special-case a provider. Dispatch mirrors derive_status.
+# Providers with upstream usage APIs report different shapes — Claude as time-windowed rate-limit
+# buckets and OpenRouter as a spend balance. We normalize those to `meters` plus `credits`; providers
+# without a usage endpoint return an empty result.
 
 
 @dc.dataclass

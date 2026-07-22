@@ -36,3 +36,44 @@ export function OpenRouterLogo({ className }: LogoProps) {
     </svg>
   );
 }
+
+export function ZaiLogo({ className }: LogoProps) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden
+      className={cn("size-10 text-[#246BFD]", className)}
+    >
+      <path
+        d="M5 5h13L6 19h13"
+        stroke="currentColor"
+        strokeWidth="3.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle cx="19" cy="5" r="2" fill="currentColor" />
+    </svg>
+  );
+}
+
+export function KimiLogo({ className }: LogoProps) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden
+      className={cn("size-10 text-[#7357FF]", className)}
+    >
+      <path
+        d="M5 4v16M19 4 8 12l11 8"
+        stroke="currentColor"
+        strokeWidth="3.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}

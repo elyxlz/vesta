@@ -128,8 +128,8 @@ function NotConnectedCard({
           </div>
         </div>
         <p className="text-xs text-muted-foreground">
-          {name} needs a provider before it can respond. Connect Claude or
-          OpenRouter to get started.
+          {name} needs a provider before it can respond. Connect Claude, Z.AI,
+          Kimi, or OpenRouter to get started.
         </p>
         <Button size="sm" className="self-start" onClick={onSetup}>
           <Plug className="size-4" />
@@ -153,28 +153,28 @@ function ProviderIdentity({
   manifest: Manifest | undefined;
   ready: boolean;
 }) {
-  const isOpenRouter = kind === "openrouter";
+  const isClaude = kind === "claude";
   const { Logo } = providerMeta(kind);
+  const defaultContext = manifest?.providers[kind]?.context.default;
   const contextLabel =
     provider.max_context_tokens != null
       ? `${formatTokens(provider.max_context_tokens)} context`
-      : isOpenRouter
-        ? "default context"
-        : "1M context";
+      : defaultContext != null
+        ? `${formatTokens(defaultContext)} context`
+        : "default context";
 
   return (
     <div className="flex items-center gap-3">
       <div
         className={`flex size-11 shrink-0 items-center justify-center rounded-2xl [corner-shape:squircle] ${
-          isOpenRouter ? "bg-muted" : "bg-[#D97757]/10"
+          isClaude ? "bg-[#D97757]/10" : "bg-muted"
         }`}
       >
         <Logo className="size-6" />
       </div>
       <div className="flex min-w-0 flex-col gap-0.5">
         <span className="text-xs text-muted-foreground">
-          {manifest?.providers[kind]?.display ??
-            (isOpenRouter ? "OpenRouter" : "Claude account")}
+          {manifest?.providers[kind]?.display ?? kind}
         </span>
         <div className="flex min-w-0 items-center gap-2">
           <span
@@ -262,6 +262,7 @@ function ModelDialog({
   error,
   provider,
   claudeModels,
+  manifest,
   onSubmit,
 }: {
   open: boolean;
@@ -270,9 +271,29 @@ function ModelDialog({
   error: string | null;
   provider: ProviderInfo;
   claudeModels: OpenRouterModelOption[];
+  manifest: Manifest | undefined;
   onSubmit: (model: string) => void;
 }) {
   const isOpenRouter = provider.kind === "openrouter";
+  const catalog = manifest?.providers[provider.kind]?.models;
+  const fixedModels =
+    provider.kind === "claude"
+      ? claudeModels
+      : Array.isArray(catalog)
+        ? catalog.map((slug) => ({
+            slug,
+            label: slug.toUpperCase(),
+            author: provider.kind === "kimi" ? "Kimi" : "Z.AI",
+          }))
+        : provider.kind !== "openrouter" && provider.model
+          ? [
+              {
+                slug: provider.model,
+                label: provider.model.toUpperCase(),
+                author: provider.kind === "kimi" ? "Kimi" : "Z.AI",
+              },
+            ]
+          : undefined;
   return (
     <Dialog
       open={open}
@@ -295,7 +316,7 @@ function ModelDialog({
           <div className="flex flex-col items-center gap-4 py-2">
             <ModelStep
               initialModel={provider.model ?? ""}
-              models={isOpenRouter ? undefined : claudeModels}
+              models={isOpenRouter ? undefined : fixedModels}
               allowCustom={isOpenRouter}
               submitLabel="switch model"
               onSubmit={onSubmit}
@@ -429,7 +450,7 @@ function SignOutDialog({
 }
 
 /// Provider hub for an agent: shows the current provider, model, context
-/// window, and plan usage; lets you switch between Claude and OpenRouter
+/// window, and plan usage; lets you switch between supported providers
 /// (reuses the reconfigure modal), change the model, and change the context
 /// window — each without re-entering credentials.
 export function ProviderCard() {
@@ -590,6 +611,7 @@ export function ProviderCard() {
         error={error}
         provider={provider}
         claudeModels={claudeModels}
+        manifest={manifest}
         onSubmit={(model) => void applyModel(model)}
       />
 

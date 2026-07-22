@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { ChevronLeftIcon } from "lucide-react";
-import { claudeProvider } from "@/api";
+import { claudeProvider, openrouterProvider } from "@/api";
 import type { ProviderResult } from "@/api/agents";
 
 type AuthStartResult = claudeProvider.OAuthStartResult;
@@ -10,14 +10,63 @@ import { ModelStep } from "./ModelStep";
 import { ContextStep } from "./ContextStep";
 import { planContextOptions, planFromCredentials } from "./context-plan";
 import { AuthStep } from "./AuthStep";
-import { ClaudeLogo, OpenRouterLogo } from "./logos";
+import { ClaudeLogo, KimiLogo, OpenRouterLogo, ZaiLogo } from "./logos";
 import type { ProviderMode } from "./types";
 import { useManifest } from "@/hooks/use-manifest";
 import { useClaudeModels } from "@/hooks/use-claude-models";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn, errorMessage } from "@/lib/utils";
+import type { Manifest } from "@/api/manifest";
+import type { OpenRouterModelOption } from "@/api/providers/openrouter";
 
 type InternalStep = "choice" | "auth" | "key" | "model" | "context";
+
+const KEY_STEP_COPY = {
+  openrouter: {
+    title: "OpenRouter API key",
+    subtitle: "paste a key from openrouter.ai/keys. it stays on this machine.",
+    placeholder: "sk-or-v1-...",
+  },
+  zai: {
+    title: "Z.AI API key",
+    subtitle: "paste your Coding Plan key. it stays on this machine.",
+    placeholder: "Z.AI API key",
+  },
+  kimi: {
+    title: "Kimi Code API key",
+    subtitle: "paste your Kimi Code key. it stays on this machine.",
+    placeholder: "Kimi Code API key",
+  },
+} as const;
+
+function modelOptions(
+  provider: ProviderMode | null,
+  manifest: Manifest | undefined,
+  claudeModels: OpenRouterModelOption[],
+): OpenRouterModelOption[] | undefined {
+  if (provider === "claude") return claudeModels;
+  if (provider === null || provider === "openrouter") return undefined;
+  const catalog = manifest?.providers[provider]?.models;
+  if (!Array.isArray(catalog)) return undefined;
+  return catalog.map((slug) => ({
+    slug,
+    label: slug.toUpperCase(),
+    author: provider === "kimi" ? "Kimi" : "Z.AI",
+  }));
+}
+
+function providerLogo(provider: ProviderMode | null) {
+  if (provider === "claude") return <ClaudeLogo />;
+  if (provider === "zai") return <ZaiLogo />;
+  if (provider === "kimi") return <KimiLogo />;
+  return <OpenRouterLogo />;
+}
+
+function keyStepCopy(provider: ProviderMode | null) {
+  if (provider === "claude" || provider === null)
+    return KEY_STEP_COPY.openrouter;
+  return KEY_STEP_COPY[provider];
+}
 
 export function ProviderPicker({
   onDone,
@@ -46,6 +95,9 @@ export function ProviderPicker({
   const manifest = useManifest();
   // Claude's fixed model list; fetched only while on the Claude path.
   const claudeModels = useClaudeModels(provider === "claude");
+  const providerModels = modelOptions(provider, manifest, claudeModels);
+  const stepLogo = providerLogo(provider);
+  const keyCopy = keyStepCopy(provider);
 
   // Kick off the standalone OAuth session once when entering the auth substep.
   // Owned here (not by AuthStep) so AuthStep remounts don't restart a fresh
@@ -85,7 +137,7 @@ export function ProviderPicker({
 
   const handleChoice = (next: ProviderMode) => {
     setProvider(next);
-    // Claude authenticates first; OpenRouter takes a key first. Both then walk
+    // Claude authenticates first; key-backed providers take a key first. All then walk
     // the shared model -> context steps.
     setStep(next === "claude" ? "auth" : "key");
   };
@@ -135,13 +187,14 @@ export function ProviderPicker({
       return;
     }
     onDone({
-      kind: "openrouter",
+      kind: provider,
       config: { key: apiKey, model: defaultModel },
       maxContextTokens: initial,
     });
   };
 
   const handleContextSubmit = (maxContextTokens: number) => {
+    if (provider === null) return;
     if (provider === "claude") {
       if (credentials === null) return;
       onDone({
@@ -152,7 +205,7 @@ export function ProviderPicker({
       });
       return;
     }
-    onDone({ kind: "openrouter", config: { key, model }, maxContextTokens });
+    onDone({ kind: provider, config: { key, model }, maxContextTokens });
   };
 
   const resetAuth = () => {
@@ -178,8 +231,6 @@ export function ProviderPicker({
     // auth and key both return to the choice screen.
     return cancelToChoice;
   })();
-
-  const stepLogo = provider === "claude" ? <ClaudeLogo /> : <OpenRouterLogo />;
 
   return (
     <div
@@ -215,8 +266,16 @@ export function ProviderPicker({
           <KeyStep
             initialKey={key}
             onNext={handleKeyNext}
-            logo={<OpenRouterLogo />}
+            logo={stepLogo}
             onCancel={cancelToChoice}
+            title={keyCopy.title}
+            subtitle={keyCopy.subtitle}
+            placeholder={keyCopy.placeholder}
+            validateKey={
+              provider === "openrouter"
+                ? openrouterProvider.validateKey
+                : undefined
+            }
           />
         )}
         {step === "model" && (
@@ -232,8 +291,8 @@ export function ProviderPicker({
               setModel(m);
               setStep("context");
             }}
-            models={provider === "claude" ? claudeModels : undefined}
-            allowCustom={provider !== "claude"}
+            models={provider === "openrouter" ? undefined : providerModels}
+            allowCustom={provider === "openrouter"}
             logo={stepLogo}
             onCancel={cancelToChoice}
           />

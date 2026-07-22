@@ -1,1 +1,1 @@
-export type ProviderMode = "claude" | "openrouter";
+export type ProviderMode = "claude" | "openrouter" | "zai" | "kimi";

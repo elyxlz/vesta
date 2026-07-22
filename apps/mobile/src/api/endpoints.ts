@@ -22,7 +22,7 @@ export type ProviderSelection =
       maxContextTokens?: number;
     }
   | {
-      kind: "openrouter";
+      kind: "openrouter" | "zai" | "kimi";
       key: string;
       model: string;
       maxContextTokens?: number;
@@ -94,7 +94,7 @@ export async function provisionAgent(
             : {}),
         }
       : {
-          kind: "openrouter",
+          kind: provider.kind,
           key: provider.key,
           model: provider.model,
           ...(provider.maxContextTokens !== undefined
@@ -157,7 +157,7 @@ export async function getProvider(
   name: string,
 ): Promise<ProviderInfo> {
   const provider = await api.json<{
-    kind?: "claude" | "openrouter";
+    kind?: "claude" | "openrouter" | "zai" | "kimi";
     model: string | null;
     max_context_tokens: number | null;
     authed?: boolean;

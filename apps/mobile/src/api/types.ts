@@ -45,7 +45,7 @@ export interface Manifest {
 }
 
 export interface ProviderInfo {
-  kind: "claude" | "openrouter" | "none";
+  kind: "claude" | "openrouter" | "zai" | "kimi" | "none";
   model: string | null;
   max_context_tokens: number | null;
   authed: boolean;

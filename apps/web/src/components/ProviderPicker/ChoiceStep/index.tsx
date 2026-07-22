@@ -24,7 +24,7 @@ export function ChoiceStep({
         description="choose how to power your agent."
       />
 
-      <div className="flex w-full gap-2">
+      <div className="grid w-full grid-cols-2 gap-2">
         {ordered.map(({ id, tagline, Logo }) => (
           <button
             key={id}

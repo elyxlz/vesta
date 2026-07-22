@@ -323,18 +323,29 @@ def test_config_update_rejects_bad_provider_values(config):
 
 
 def test_sign_in_body_parses_each_provider():
-    from core.api import _SIGN_IN_ADAPTER, _ClaudeSignIn, _OpenRouterSignIn
+    from core.api import _SIGN_IN_ADAPTER, _ClaudeSignIn, _KimiSignIn, _OpenRouterSignIn, _ZaiSignIn
 
     claude = _SIGN_IN_ADAPTER.validate_python({"kind": "claude", "model": "opus", "credentials": "{}"})
     assert isinstance(claude, _ClaudeSignIn) and claude.credentials == "{}"
     openrouter = _SIGN_IN_ADAPTER.validate_python({"kind": "openrouter", "model": "m", "key": "k"})
     assert isinstance(openrouter, _OpenRouterSignIn) and (openrouter.key, openrouter.model) == ("k", "m")
+    zai = _SIGN_IN_ADAPTER.validate_python({"kind": "zai", "model": "glm-4.7", "key": "k"})
+    assert isinstance(zai, _ZaiSignIn) and (zai.key, zai.model) == ("k", "glm-4.7")
+    kimi = _SIGN_IN_ADAPTER.validate_python({"kind": "kimi", "model": "kimi-for-coding", "key": "k"})
+    assert isinstance(kimi, _KimiSignIn) and (kimi.key, kimi.model) == ("k", "kimi-for-coding")
 
 
 def test_sign_in_body_rejects_invalid():
     from core.api import _SIGN_IN_ADAPTER
 
-    for bad in [{}, {"kind": "claude"}, {"kind": "openrouter", "model": "m"}, {"kind": "vllm"}]:
+    for bad in [
+        {},
+        {"kind": "claude"},
+        {"kind": "openrouter", "model": "m"},
+        {"kind": "zai", "model": "glm-4.7"},
+        {"kind": "kimi", "model": "kimi-for-coding"},
+        {"kind": "vllm"},
+    ]:
         with pytest.raises(pyd.ValidationError):
             _SIGN_IN_ADAPTER.validate_python(bad)
 
