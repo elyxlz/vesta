@@ -29,7 +29,7 @@ func runConnect() {
 		}
 	}
 	if newManagedAuth(cfg).isHosted() {
-		runProvision()
+		runProvision(extractFlag("opener"))
 		return
 	}
 	runLink()

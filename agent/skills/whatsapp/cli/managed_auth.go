@@ -96,17 +96,14 @@ const (
 	// this stays well under SocketTimeout so the whole synchronous handshake (claim +
 	// pair + link wait) always returns a terminal result within one socket call.
 	provisionPollMax = 60
-	// proxyLeasePath is the control-plane endpoint that hands the cloud companion a
-	// residential proxy lease. It sits outside /integrations/whatsapp, so leaseProxy
-	// builds the URL from controlURL directly rather than through call().
-	proxyLeasePath = "/integrations/proxy/lease"
+	proxyLeasePath   = "/proxy/lease"
 )
 
 // provisionPollInterval is a var so tests can shrink it.
 var provisionPollInterval = 3 * time.Second
 
 // managedConfig selects between two ways to reach the same pool API:
-//   - direct (self-hosted): WHATSAPP_API_URL + WHATSAPP_API_KEY, a per-account key
+//   - direct (self-hosted): DOUBLETICK_API_URL + DOUBLETICK_API_KEY, a per-account key
 //     straight to the home box, no vesta.run and no vestad;
 //   - cloud (vesta.run tenant): a server-identity token minted from vestad, sent to
 //     vesta.run's /api/integrations/whatsapp, which authenticates and forwards to the home box.
@@ -138,9 +135,19 @@ func loadManagedConfig() managedConfig {
 	if port := strings.TrimSpace(os.Getenv("VESTAD_PORT")); port != "" {
 		base = "https://localhost:" + port
 	}
+	directURL := strings.TrimSpace(os.Getenv("DOUBLETICK_API_URL"))
+	if directURL == "" {
+		// LEGACY(remove-when: all seed-contexts/env use DOUBLETICK_*): fall back to WHATSAPP_API_* env
+		directURL = strings.TrimSpace(os.Getenv("WHATSAPP_API_URL"))
+	}
+	directKey := strings.TrimSpace(os.Getenv("DOUBLETICK_API_KEY"))
+	if directKey == "" {
+		// LEGACY(remove-when: all seed-contexts/env use DOUBLETICK_*): fall back to WHATSAPP_API_* env
+		directKey = strings.TrimSpace(os.Getenv("WHATSAPP_API_KEY"))
+	}
 	return managedConfig{
-		directURL:    strings.TrimRight(strings.TrimSpace(os.Getenv("WHATSAPP_API_URL")), "/"),
-		directKey:    strings.TrimSpace(os.Getenv("WHATSAPP_API_KEY")),
+		directURL:    strings.TrimRight(directURL, "/"),
+		directKey:    directKey,
 		controlURL:   strings.TrimRight(envOrDefault("VESTA_CONTROL_URL", "https://vesta.run/api"), "/"),
 		vestadBase:   base,
 		agentName:    strings.TrimSpace(os.Getenv("AGENT_NAME")),
@@ -177,10 +184,11 @@ type managedState struct {
 // taps and sends (reply-first onboarding): a warm, natural first inbound message.
 const defaultWelcomeText = "Hey! It's me, connecting here on WhatsApp."
 
-// welcomeText is the prefilled first message embedded in the surfaced wa.me link,
-// overridable via WHATSAPP_WELCOME_TEXT.
-func welcomeText() string {
-	return envOrDefault("WHATSAPP_WELCOME_TEXT", defaultWelcomeText)
+func welcomeText(opener string) string {
+	if opener = strings.TrimSpace(opener); opener != "" {
+		return opener
+	}
+	return defaultWelcomeText
 }
 
 // waMeLink builds the click-to-chat URL that gets the USER to message this agent
@@ -284,29 +292,35 @@ func (m *managedAuth) usesResidentialProxy() bool {
 	return m.cfg.cloudManaged && !m.isDirect()
 }
 
-// leaseProxy fetches a residential proxy lease for the cloud companion, reusing the
-// same server-identity token the rest of managed auth mints. A 503 proxy_unconfigured
-// surfaces as a clear "not configured" error so the caller fails closed rather than
-// connecting to WhatsApp on the bare datacenter IP.
+// leaseProxy fetches a residential proxy from doubletick with the same authentication
+// used for /provision. Cloud requests also identify the Vesta account explicitly;
+// direct API-key mode derives the account from the key and sends no account header.
 func (m *managedAuth) leaseProxy() (string, error) {
-	token, err := m.mintToken()
+	base, auth, err := m.authorize()
 	if err != nil {
 		return "", err
 	}
 	var out struct {
-		URL string `json:"url"`
+		ProxyURL string `json:"proxy_url"`
+		Kind     string `json:"kind"`
 	}
-	headers := map[string]string{"Authorization": "Bearer " + token}
-	if err := m.do(m.control, http.MethodPost, m.cfg.controlURL+proxyLeasePath, headers, map[string]string{}, &out); err != nil {
+	headers := map[string]string{"Authorization": auth}
+	if !m.isDirect() {
+		headers["X-Vesta-Account"] = m.cfg.agentName
+	}
+	if err := m.do(m.control, http.MethodPost, base+proxyLeasePath, headers, map[string]string{}, &out); err != nil {
 		if status, ok := httpStatus(err); ok && status == http.StatusServiceUnavailable {
 			return "", fmt.Errorf("residential proxy not configured on the control plane: %w", err)
 		}
 		return "", fmt.Errorf("lease residential proxy: %w", err)
 	}
-	if out.URL == "" {
-		return "", fmt.Errorf("control plane returned an empty proxy lease")
+	if out.ProxyURL == "" {
+		return "", fmt.Errorf("doubletick returned an empty proxy lease")
 	}
-	return out.URL, nil
+	if out.Kind != "" && !strings.EqualFold(out.Kind, "residential") {
+		return "", fmt.Errorf("doubletick returned a non-residential proxy lease (%s)", out.Kind)
+	}
+	return out.ProxyURL, nil
 }
 
 // provisionSelf claims (idempotently) a pool number the USER will own on their own

@@ -23,7 +23,11 @@ daemon" any other way; connect is idempotent and safe to re-run.
 its own, so you never choose between modes. Every output carries a `next:` step, so
 just do what it says:
 
-- **Hosted (vesta.run) box:** it claims the agent's own managed number and links
+- **Hosted (vesta.run) box:** compose a warm, natural first-contact opener in your
+  own voice that says hi and introduces you by name, for example, "Hi, it's Nova,
+  nice to meet you!" Then run `whatsapp connect --opener '<your opener>'`. The
+  opener is prefilled for the USER to send TO you, so phrase it as the user reaching
+  out. The command claims the agent's own managed number and links
   it, returning `{status:"linked", number, next:...}`. Follow `next`: share the
   number and its `wa.me` link so the user messages you FIRST (reply-first: never
   cold-initiate), then reply only once they do.
@@ -47,13 +51,18 @@ just do what it says:
   user wants the WhatsApp account to live on their own device: they keep their phone
   online and re-link it themselves if it drops. Normal messaging applies (no reply-first
   restriction, since the number is theirs, not a fresh pooled one).
-- **Direct token (no vesta.run needed):** the number service is a standalone API, not
-  only reachable through vesta.run. If the box operator set `WHATSAPP_API_URL` and
-  `WHATSAPP_API_KEY` (a per-account `wak_` token they minted for you), `whatsapp
+- **Direct token (no vesta.run needed):** the doubletick number service is a standalone API, not
+  only reachable through vesta.run. If the box operator set `DOUBLETICK_API_URL` and
+  `DOUBLETICK_API_KEY` (a per-account `wak_` token they minted for you), `whatsapp
   connect` uses them automatically: the same managed number and pairing, straight to the
   home box, no membership gate and no control plane in the loop. You do nothing
   different, it is transparent. This is how a non-managed agent gets a pooled number
   when the operator has handed them a token.
+
+Before the companion connects, egress selection is `WHATSAPP_PROXY_URL`, then a
+doubletick residential lease, then direct. If you're managed or on a datacenter IP,
+the skill leases a residential proxy from doubletick automatically; it hardfails
+rather than run WhatsApp over a datacenter IP. A supplied proxy is validated too.
 
 ## Check state
 

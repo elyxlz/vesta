@@ -13,11 +13,15 @@ import (
 // returns a terminal {status:"linked", number, next} (or {status:"provisioning"} /
 // {status:"blocked"}). No daemon management, no readiness polling, no code
 // shuttling. Idempotent, so re-running is always safe.
-func runProvision() {
+func runProvision(opener string) {
 	if err := startDaemonProcess(linkServeArgs()); err != nil {
 		failJSON("%s", err.Error())
 	}
-	output, exitCode, connected := trySocketCommand(getSocketPath(), "provision", nil)
+	args := []string{}
+	if opener != "" {
+		args = append(args, "--opener", opener)
+	}
+	output, exitCode, connected := trySocketCommand(getSocketPath(), "provision", args)
 	if !connected {
 		failJSON("daemon not answering after start; check 'whatsapp daemon status'")
 	}

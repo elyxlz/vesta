@@ -368,16 +368,14 @@ func TestMintToken_missingCredentials(t *testing.T) {
 // token the rest of managed auth mints, and returns the url from the JSON body.
 func TestLeaseProxy_returnsURL(t *testing.T) {
 	const wantURL = "http://user-US-1234:pass@host:8080"
-	var gotAuth, gotMethod string
+	var gotAuth, gotMethod, gotAccount string
 	m := managedFor(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/integrations/proxy/lease" {
+		if r.URL.Path != "/integrations/whatsapp/proxy/lease" {
 			http.Error(w, "no", http.StatusNotFound)
 			return
 		}
-		gotAuth, gotMethod = r.Header.Get("Authorization"), r.Method
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"url": wantURL, "protocol": "http", "region": "US", "sticky_id": "1234", "expires_at": "2026-07-20T00:00:00Z",
-		})
+		gotAuth, gotMethod, gotAccount = r.Header.Get("Authorization"), r.Method, r.Header.Get("X-Vesta-Account")
+		_ = json.NewEncoder(w).Encode(map[string]string{"proxy_url": wantURL, "kind": "residential"})
 	})
 	got, err := m.leaseProxy()
 	if err != nil {
@@ -392,13 +390,34 @@ func TestLeaseProxy_returnsURL(t *testing.T) {
 	if gotAuth != "Bearer sit_minted" {
 		t.Fatalf("leaseProxy Authorization = %q, want the minted server-identity token", gotAuth)
 	}
+	if gotAccount != "alice" {
+		t.Fatalf("leaseProxy X-Vesta-Account = %q, want alice", gotAccount)
+	}
+}
+
+func TestLeaseProxy_directUsesDoubletickBaseWithoutAccountHeader(t *testing.T) {
+	var gotPath, gotAuth, gotAccount string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		gotAccount = r.Header.Get("X-Vesta-Account")
+		_ = json.NewEncoder(w).Encode(map[string]string{"proxy_url": "http://residential:8080", "kind": "residential"})
+	}))
+	t.Cleanup(server.Close)
+	m := newManagedAuth(managedConfig{directURL: server.URL, directKey: "wak_direct"})
+	if _, err := m.leaseProxy(); err != nil {
+		t.Fatalf("direct leaseProxy: %v", err)
+	}
+	if gotPath != "/proxy/lease" || gotAuth != "Bearer wak_direct" || gotAccount != "" {
+		t.Fatalf("direct lease request path=%q auth=%q account=%q", gotPath, gotAuth, gotAccount)
+	}
 }
 
 // A 503 proxy_unconfigured surfaces as a clear "not configured" error so the caller
 // fails closed rather than connecting on the datacenter IP.
 func TestLeaseProxy_unconfigured503(t *testing.T) {
 	m := managedFor(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/integrations/proxy/lease" {
+		if r.URL.Path != "/integrations/whatsapp/proxy/lease" {
 			http.Error(w, "no", http.StatusNotFound)
 			return
 		}
@@ -417,7 +436,7 @@ func TestLeaseProxy_unconfigured503(t *testing.T) {
 func TestEnsureManagedProxy_failsClosedWithoutLease(t *testing.T) {
 	vestad := fakeVestad(t, "atok")
 	ctrl := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/integrations/proxy/lease" {
+		if r.URL.Path != "/integrations/whatsapp/proxy/lease" {
 			http.Error(w, "no", http.StatusNotFound)
 			return
 		}
@@ -438,13 +457,15 @@ func TestEnsureManagedProxy_failsClosedWithoutLease(t *testing.T) {
 // A self-hosted (no managed client) and a direct box (own residential IP already)
 // both skip the proxy entirely, so a self-hosted/direct connect is unaffected. Both
 // return before touching the (here nil) whatsmeow client.
-func TestEnsureManagedProxy_noopWhenNotCloudManaged(t *testing.T) {
-	if err := (&WhatsAppClient{}).ensureManagedProxy(); err != nil {
-		t.Fatalf("self-hosted ensureManagedProxy = %v, want no-op nil", err)
+func TestEnsureManagedProxy_allowsResidentialDirectEgress(t *testing.T) {
+	oldLookup := lookupEgress
+	lookupEgress = func(string) (egressInfo, error) {
+		return egressInfo{Status: "success", Query: "198.51.100.2"}, nil
 	}
-	direct := &WhatsAppClient{managed: newManagedAuth(managedConfig{directURL: "https://box", directKey: "wak_x", cloudManaged: true})}
+	t.Cleanup(func() { lookupEgress = oldLookup })
+	direct := &WhatsAppClient{managed: newManagedAuth(managedConfig{directURL: "https://box", directKey: "wak_x"})}
 	if err := direct.ensureManagedProxy(); err != nil {
-		t.Fatalf("direct ensureManagedProxy = %v, want no-op nil", err)
+		t.Fatalf("residential direct ensureManagedProxy = %v", err)
 	}
 }
 
@@ -524,5 +545,36 @@ func TestWaMeLink(t *testing.T) {
 	}
 	if l := waMeLink("393511526318", ""); l != "https://wa.me/393511526318" {
 		t.Errorf("waMeLink no-text = %q", l)
+	}
+}
+
+func TestLoadManagedConfigPrefersDoubletickEnv(t *testing.T) {
+	t.Setenv("DOUBLETICK_API_URL", "https://doubletick.example/")
+	t.Setenv("DOUBLETICK_API_KEY", "wak_new")
+	t.Setenv("WHATSAPP_API_URL", "https://legacy.example")
+	t.Setenv("WHATSAPP_API_KEY", "wak_old")
+	cfg := loadManagedConfig()
+	if cfg.directURL != "https://doubletick.example" || cfg.directKey != "wak_new" {
+		t.Fatalf("loadManagedConfig() = url %q key %q, want doubletick env", cfg.directURL, cfg.directKey)
+	}
+}
+
+func TestLoadManagedConfigFallsBackToLegacyEnv(t *testing.T) {
+	t.Setenv("DOUBLETICK_API_URL", "")
+	t.Setenv("DOUBLETICK_API_KEY", "")
+	t.Setenv("WHATSAPP_API_URL", "https://legacy.example/")
+	t.Setenv("WHATSAPP_API_KEY", "wak_old")
+	cfg := loadManagedConfig()
+	if cfg.directURL != "https://legacy.example" || cfg.directKey != "wak_old" {
+		t.Fatalf("loadManagedConfig() = url %q key %q, want legacy fallback", cfg.directURL, cfg.directKey)
+	}
+}
+
+func TestWelcomeTextUsesAgentOpenerAndFallback(t *testing.T) {
+	if got := welcomeText("  Hi, it's Nova, nice to meet you!  "); got != "Hi, it's Nova, nice to meet you!" {
+		t.Fatalf("welcomeText(agent opener) = %q", got)
+	}
+	if got := welcomeText(""); got != defaultWelcomeText {
+		t.Fatalf("welcomeText(empty) = %q, want fallback %q", got, defaultWelcomeText)
 	}
 }

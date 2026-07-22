@@ -28,20 +28,28 @@ either way.
   passes the request through to the home box verbatim, injecting our upstream key
   and the Vesta account id (`X-Vesta-Account`). `/api/integrations/whatsapp/<x>` maps 1:1 to the
   home box's `/<x>`, so vesta.run adds no API of its own.
-- **Direct (self-hosted):** set `WHATSAPP_API_URL` (the home box base) and
-  `WHATSAPP_API_KEY` (a per-account `wak_…` key the box operator minted). The agent
+- **Direct (self-hosted):** set `DOUBLETICK_API_URL` (the doubletick base) and
+  `DOUBLETICK_API_KEY` (a per-account `wak_…` key the box operator minted). The agent
   calls the home box directly with `Authorization: Bearer <wak key>`, no vestad,
   no vesta.run. The home box derives the account from the key. Exactly the
   third-party-API-key model, pointed at our own box.
 
 The home box owns all number/session state, keyed by that account id.
 
-**Egress override (both modes):** set `WHATSAPP_PROXY_URL` to a full
+**Egress selection (all modes):** set `WHATSAPP_PROXY_URL` to a full
 `http(s)://` or `socks5://` URL (with optional `user:pass@`) to route the
-companion's WhatsApp egress through your own proxy. It takes precedence over the
-cloud residential lease and applies in every mode, direct included; a self-hosted
-box that wants to egress somewhere other than its home IP supplies it here. Unset,
-nothing changes (cloud leases as before, direct egresses from the home IP).
+companion's WhatsApp egress through your own proxy. Selection precedence is the
+explicit override, then a doubletick lease, then direct egress. The CLI checks the
+selected exit with ip-api.com before WhatsApp connects. If you're managed or on a
+datacenter IP, the skill leases a residential proxy from doubletick automatically;
+it hardfails rather than run WhatsApp over a datacenter IP. A supplied or leased
+proxy that still classifies as hosting/non-residential also hardfails. ip-api's
+`hosting` signal is the hard datacenter check; `mobile` is residential-safe, and
+a non-hosting fixed-line exit is inferred to be residential.
+
+The lease call is `POST {DOUBLETICK_API_URL}/proxy/lease`, authenticated exactly
+like `/provision`. Cloud mode also sends `X-Vesta-Account`; direct/self-hosted mode
+does not. Its response is `{"proxy_url":"http://user:pass@host:port","kind":"residential"}`.
 
 The flow:
 
@@ -78,11 +86,13 @@ the plumbing. So the managed strategy MUST be reply-first:
 1. **Never cold-initiate.** Do not send the first message in a thread to someone
    who has not messaged first. Onboarding surfaces the agent's number with the
    instruction that **the user texts the agent first**; the agent only replies
-   inside an established thread. `waMeLink(number, text)` builds the
-   `https://wa.me/<number>?text=...` link the agent surfaces for that; it now
-   carries a prefilled opener (default "Hey! It's me, connecting here on
-   WhatsApp.", overridable via `WHATSAPP_WELCOME_TEXT`) so the user just taps and
-   sends.
+   inside an established thread. Compose the opener yourself from your own name and
+   personality: a warm, natural first-contact greeting that says hi and introduces
+   you by name. Pass it with `whatsapp connect --opener '<text>'`.
+   `waMeLink(number, text)` builds the `https://wa.me/<number>?text=...` link. The
+   message is prefilled into the user's compose box and is what the USER sends TO
+   the agent, so keep that reaching-out perspective. If `--opener` is empty, the
+   existing generic greeting remains as a fallback.
 2. **Warm before use.** Treat the first days as warm-up (light, human-paced,
    reply-only) before any volume.
 3. **Prefer aged numbers** in the pool over fresh SIMs (a fresh SIM is itself a

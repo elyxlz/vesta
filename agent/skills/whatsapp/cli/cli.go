@@ -1039,7 +1039,10 @@ func cmdCheckDelivery(args []string, wac *WhatsAppClient) (any, error) {
 // cold-starts the daemon before dispatching this, so the agent runs one command
 // and never orchestrates the steps itself.
 func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
-	if err := parseNoFlags("provision", args); err != nil {
+	var opener string
+	fs := flag.NewFlagSet("provision", flag.ContinueOnError)
+	fs.StringVar(&opener, "opener", "", "Agent-authored first-contact greeting prefilled in the wa.me link")
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if wac.client.Store.ID != nil {
@@ -1122,7 +1125,7 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 		if err := wac.completeFreshProfile(); err != nil {
 			return nil, err
 		}
-		return managedLinkedResult(res.MSISDN), nil
+		return managedLinkedResult(res.MSISDN, opener), nil
 	}
 	return managedResumeResult(res.MSISDN), nil
 }
@@ -1169,13 +1172,13 @@ func (wac *WhatsAppClient) completeFreshPhotoWipe() error {
 // managedLinkedResult is the terminal output for a genuinely NEW managed number: it
 // names the number and spells out the reply-first onboarding (surface the wa.me link,
 // let the user message first, never cold-initiate from a fresh number).
-func managedLinkedResult(number string) map[string]any {
+func managedLinkedResult(number, opener string) map[string]any {
 	return map[string]any{
 		"status": "linked",
 		"number": number,
 		"next": fmt.Sprintf(
 			"Linked as %s with your agent name and a clean profile photo. Share this number with the user and ask them to message you FIRST: send them the click-to-chat link %s, and reply only once they say hi. You can later set a chosen photo with `whatsapp set-profile-photo <file>`. A fresh number must never cold-initiate.",
-			number, waMeLink(number, welcomeText()),
+			number, waMeLink(number, welcomeText(opener)),
 		),
 	}
 }

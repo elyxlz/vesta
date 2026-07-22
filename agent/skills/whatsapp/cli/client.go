@@ -5,12 +5,14 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
 	"image/jpeg"
 	_ "image/png" // register PNG decoder so a PNG upload can be re-encoded to JPEG
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -157,7 +159,8 @@ func NewWhatsAppClient(dataDir, notificationsDir, instance string, readOnly bool
 	client.SetForceActiveDeliveryReceipts(forceActiveDeliveryReceipts(readOnly))
 
 	state := newStateStore(dataDir)
-	boxLinker := chooseLinker(loadManagedConfig(), state)
+	managed := newManagedAuth(loadManagedConfig())
+	boxLinker := chooseLinker(managed.cfg, state)
 	wac := &WhatsAppClient{
 		client:           client,
 		store:            store,
@@ -177,8 +180,10 @@ func NewWhatsAppClient(dataDir, notificationsDir, instance string, readOnly bool
 		msgWork:          make(chan func(), MsgWorkBuffer),
 		workerDone:       make(chan struct{}),
 	}
-	// A managed box (direct or cloud) carries a pool-API client, reused for the
-	// residential proxy lease and the user-owned number flow; a QR box has none.
+	// Keep the doubletick client at the edge in every mode. Managed linkers reuse
+	// their reconciled client; QR mode still needs the config to inspect egress and,
+	// when credentials exist, lease residential egress before connecting.
+	wac.managed = managed
 	if ml, ok := boxLinker.(*managedLinker); ok {
 		wac.managed = ml.auth
 	}
@@ -216,39 +221,102 @@ func (wac *WhatsAppClient) enqueueWork(fn func()) {
 	}
 }
 
-// ensureManagedProxy routes the cloud-managed companion through a leased residential
-// proxy BEFORE it connects, so it never egresses from the datacenter IP (a ban
-// signal). No-op on self-hosted/direct boxes, which already egress from the user's
-// residential IP. Fails closed: on a lease error the caller must not connect on the
-// bare datacenter IP. The lease is cached for the process (sticky per account);
-// SetProxyAddress must run before Connect to take effect.
+type egressInfo struct {
+	Query   string `json:"query"`
+	Status  string `json:"status"`
+	Message string `json:"message"`
+	Hosting bool   `json:"hosting"`
+	Proxy   bool   `json:"proxy"`
+	Mobile  bool   `json:"mobile"`
+}
+
+var lookupEgress = inspectEgress
+
+func inspectEgress(proxyURL string) (egressInfo, error) {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if proxyURL != "" {
+		parsed, err := url.Parse(proxyURL)
+		if err != nil {
+			return egressInfo{}, fmt.Errorf("parse proxy URL: %w", err)
+		}
+		transport.Proxy = http.ProxyURL(parsed)
+	}
+	client := &http.Client{Timeout: 10 * time.Second, Transport: transport}
+	resp, err := client.Get("http://ip-api.com/json?fields=status,message,query,hosting,proxy,mobile")
+	if err != nil {
+		return egressInfo{}, fmt.Errorf("query egress IP intelligence: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return egressInfo{}, fmt.Errorf("query egress IP intelligence: HTTP %d", resp.StatusCode)
+	}
+	var out egressInfo
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return egressInfo{}, fmt.Errorf("decode egress IP intelligence: %w", err)
+	}
+	if out.Status != "success" {
+		return egressInfo{}, fmt.Errorf("query egress IP intelligence: %s", out.Message)
+	}
+	return out, nil
+}
+
+func datacenterEgress(info egressInfo) bool {
+	// ip-api has no separate residential boolean. A non-hosting exit is either
+	// mobile or inferred to be residential broadband. A residential lease may
+	// legitimately set proxy=true, so hosting is the hard datacenter signal.
+	return info.Hosting
+}
+
+// ensureManagedProxy selects and validates companion egress before Connect. Explicit
+// bring-your-own proxy wins, managed mode leases automatically, and an otherwise
+// direct connection is inspected and upgraded to a lease if it is a datacenter exit.
+// Every selected path is inspected through that path and fails closed if it is not
+// residential/mobile.
 func (wac *WhatsAppClient) ensureManagedProxy() error {
 	if wac.managed == nil {
-		return nil
-	}
-	// A bring-your-own egress override (WHATSAPP_PROXY_URL) takes precedence over the
-	// cloud lease and applies in every mode, direct included: the box supplies its own
-	// egress, so route through it and skip the lease entirely.
-	if direct := wac.managed.cfg.proxyURL; direct != "" {
-		if err := wac.client.SetProxyAddress(direct); err != nil {
-			return fmt.Errorf("apply direct proxy: %w", err)
-		}
-		return nil
-	}
-	if !wac.managed.usesResidentialProxy() {
-		return nil
+		wac.managed = newManagedAuth(loadManagedConfig())
 	}
 	wac.proxyMu.Lock()
 	defer wac.proxyMu.Unlock()
-	if wac.proxyURL == "" {
+
+	selected := wac.managed.cfg.proxyURL
+	if selected == "" && wac.managed.usesResidentialProxy() {
+		selected = wac.proxyURL
+		if selected == "" {
+			leased, err := wac.managed.leaseProxy()
+			if err != nil {
+				return err
+			}
+			wac.proxyURL = leased
+			selected = leased
+		}
+	}
+	info, err := lookupEgress(selected)
+	if err != nil {
+		return fmt.Errorf("cannot verify safe WhatsApp egress; obtain a residential proxy and set WHATSAPP_PROXY_URL: %w", err)
+	}
+	if selected == "" && datacenterEgress(info) {
+		if !wac.managed.isHosted() {
+			return fmt.Errorf("WhatsApp egress IP %s is a datacenter/hosting exit; obtain a residential proxy and set WHATSAPP_PROXY_URL", info.Query)
+		}
 		leased, err := wac.managed.leaseProxy()
 		if err != nil {
-			return err
+			return fmt.Errorf("datacenter egress detected and doubletick could not lease a residential proxy: %w", err)
 		}
 		wac.proxyURL = leased
+		selected = leased
+		info, err = lookupEgress(selected)
+		if err != nil {
+			return fmt.Errorf("cannot verify leased residential proxy; obtain a residential proxy and set WHATSAPP_PROXY_URL: %w", err)
+		}
 	}
-	if err := wac.client.SetProxyAddress(wac.proxyURL); err != nil {
-		return fmt.Errorf("apply residential proxy: %w", err)
+	if datacenterEgress(info) {
+		return fmt.Errorf("WhatsApp egress IP %s is still a datacenter/hosting exit; obtain a residential proxy and set WHATSAPP_PROXY_URL", info.Query)
+	}
+	if selected != "" {
+		if err := wac.client.SetProxyAddress(selected); err != nil {
+			return fmt.Errorf("apply residential proxy: %w", err)
+		}
 	}
 	return nil
 }
@@ -277,12 +345,10 @@ func (wac *WhatsAppClient) Connect() error {
 		return nil
 	}
 
-	// Fail closed on the connection, not the daemon: if the residential lease is
-	// unavailable, stay idle (socket server still comes up for `whatsapp status`)
-	// rather than connecting from the datacenter IP.
+	// Hard-fail before WhatsApp sees a datacenter exit. The caller surfaces the
+	// residential-proxy instruction and must not leave a seemingly healthy daemon.
 	if err := wac.ensureManagedProxy(); err != nil {
-		wac.logger.Errorf("Residential proxy lease unavailable; staying idle rather than connecting on the datacenter IP: %v", err)
-		return nil
+		return fmt.Errorf("refusing to connect WhatsApp without verified residential egress: %w", err)
 	}
 
 	wac.logger.Infof("Device already authenticated, connecting...")
