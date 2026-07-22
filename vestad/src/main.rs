@@ -725,7 +725,7 @@ fn main() {
         }
 
         Command::Logs { n, no_follow } => {
-            systemd::exec_journal(n, !no_follow);
+            systemd::stream_journal(n, !no_follow).unwrap_or_else(|e| die(e));
         }
 
         Command::Stop => {

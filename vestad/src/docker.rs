@@ -2402,7 +2402,8 @@ fn needs_rebuild(
                 && actual.iter().zip(expected_cmd.iter()).all(|(a, e)| a == e)
         });
     if !cmd_ok {
-        tracing::info!(container = %cname, actual = ?cmd, expected = ?expected_cmd, "rebuild needed: command mismatch");
+        tracing::info!(container = %cname, "rebuild needed: command mismatch");
+        tracing::debug!(container = %cname, actual = ?cmd, expected = ?expected_cmd, "command mismatch details");
         return true;
     }
 
