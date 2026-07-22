@@ -11,11 +11,11 @@ export const meta = {
 
 const fable = (prompt, opts) => agent(prompt, { model: 'fable', ...opts })
 
-const RULES = `Rubric: read root CLAUDE.md (Architecture Principles, code conventions, Karpathy Guidelines) first; it overrides external canon. Hard rules: functional Python (no getattr, no dict .get fallback, no hasattr, no classes-with-methods, no tp.Any/object loose typing, no silent exception swallowing); Rust returns Result (no panic/unwrap/expect on fallible paths), named constants, minimal clone; web says 'agent' never 'box'; prose has no dashes and Vesta is never 'she' or 'it'; never bump versions; tests ship with logic changes; skills index regenerated when SKILL.md frontmatter changes.`
+const RULES = `Rubric: read root CLAUDE.md (Architecture Principles, code conventions, Karpathy Guidelines) first; it overrides external canon. Hard rules: functional Python (no getattr, no dict .get fallback, no hasattr, no classes-with-methods, no tp.Any/object loose typing, no silent exception swallowing); Rust returns Result (no panic/unwrap/expect on fallible paths), named constants, minimal clone; web says 'agent' never 'box'; prose has no dashes and Vesta is never 'she' or 'it'; never bump versions; tests ship with logic changes.`
 
 const BRANCH_READ = `The PR branch may be checked out in another local worktree, so never check out the branch by name. To read branch code: git fetch origin <branch>, then git show FETCH_HEAD:<path> (or git diff master...FETCH_HEAD).`
 
-const CHECK_MAP = `Map changed paths to checks (run every one that applies, from the repo root): agent/ -> ./check.sh agent, cli/ -> ./check.sh cli, vestad/ -> ./check.sh vestad, apps/web/ -> ./check.sh web. If a SKILL.md name/description changed, run uv run python agent/skills/generate-index.py and commit agent/skills/index.json.`
+const CHECK_MAP = `Map changed paths to checks (run every one that applies, from the repo root): agent/ -> ./check.sh agent, vestad/ -> ./check.sh vestad, apps/ -> ./check.sh web.`
 
 const FINDINGS_SCHEMA = {
   type: 'object', additionalProperties: false,

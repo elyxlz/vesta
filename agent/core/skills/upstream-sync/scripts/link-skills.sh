@@ -29,8 +29,11 @@ fi
 # the session starts (no boot turn, no restart). A default the user removed reappears -
 # same behavior as the old on-disk reconciler.
 [ -f "$ACTIVE" ] || : > "$ACTIVE"
+if [ -s "$ACTIVE" ] && [ -n "$(tail -c 1 "$ACTIVE")" ]; then
+  printf '\n' >> "$ACTIVE"
+fi
 if [ -f "$DEFAULTS" ]; then
-  while IFS= read -r name; do
+  while IFS= read -r name || [ -n "$name" ]; do
     [ -n "$name" ] || continue
     grep -qxF "$name" "$ACTIVE" || printf '%s\n' "$name" >> "$ACTIVE"
   done < "$DEFAULTS"
@@ -47,7 +50,7 @@ link() {  # $1 = skill dir relative to ~
 
 # Active optional skills first, then core skills (linked last so they win any name
 # collision, as core is authoritative).
-while IFS= read -r name; do
+while IFS= read -r name || [ -n "$name" ]; do
   [ -n "$name" ] || continue
   link "$SKILLS_DIR/$name"
 done < "$ACTIVE"

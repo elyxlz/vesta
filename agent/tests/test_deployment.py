@@ -1,4 +1,4 @@
-"""Tests for deployment structure: skills directories, frontmatter, index."""
+"""Tests for deployment structure: skills directories and frontmatter."""
 
 import re
 from pathlib import Path

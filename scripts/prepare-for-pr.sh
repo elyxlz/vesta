@@ -49,14 +49,13 @@ run_in() {
 section "version-check"
 AGENT=$(grep '^version = ' agent/core/pyproject.toml | cut -d'"' -f2)
 VESTAD=$(grep '^version = ' vestad/Cargo.toml | head -1 | cut -d'"' -f2)
-CLI=$(grep '^version = ' cli/Cargo.toml | head -1 | cut -d'"' -f2)
 TESTS=$(grep '^version = ' vestad/tests-integration/Cargo.toml | head -1 | cut -d'"' -f2)
 DESKTOP_PKG=$(python3 -c "import json; print(json.load(open('apps/desktop/package.json'))['version'])")
 MOBILE_PKG=$(python3 -c "import json; print(json.load(open('apps/mobile/package.json'))['version'])")
 MOBILE_APP=$(sed -n 's/^  version: "\([^"]*\)",/\1/p' apps/mobile/app.config.ts)
 APP=$(python3 -c "import json; print(json.load(open('apps/web/package.json'))['version'])")
 MISMATCH=0
-for nv in "vestad:$VESTAD" "cli:$CLI" "tests:$TESTS" "desktop-pkg:$DESKTOP_PKG" "mobile-pkg:$MOBILE_PKG" "mobile-app:$MOBILE_APP" "app:$APP"; do
+for nv in "vestad:$VESTAD" "tests:$TESTS" "desktop-pkg:$DESKTOP_PKG" "mobile-pkg:$MOBILE_PKG" "mobile-app:$MOBILE_APP" "app:$APP"; do
   if [ "$AGENT" != "${nv#*:}" ]; then
     printf "  ${RED}✗${RESET} agent (%s) != %s (%s)\n" "$AGENT" "${nv%%:*}" "${nv#*:}"
     MISMATCH=1
@@ -137,13 +136,11 @@ else
   run_in apps "desktop types"    npm -w @vesta/desktop run check
 fi
 
-# ── check-vesta (clippy + unit tests, cli + vestad) ───────────
-section "check-vesta"
+# ── check-vestad (clippy + unit tests) ────────────────────────
+section "check-vestad"
 if [ "${SKIP_RUST:-0}" = "1" ]; then
   skip "cargo clippy/test"
 else
-  run_in cli    "cli clippy"    cargo clippy -- -D warnings
-  run_in cli    "cli tests"     cargo test
   run_in vestad "vestad clippy" env VESTAD_SKIP_APP_BUILD=1 cargo clippy -p vestad -- -D warnings
   run_in vestad "vestad tests"  env VESTAD_SKIP_APP_BUILD=1 cargo test -p vestad
 fi

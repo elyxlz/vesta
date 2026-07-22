@@ -3,6 +3,7 @@ import type { HttpClient } from "../transport/http"
 import {
   VERSION_CHECK_TIMEOUT_MS,
   checkForGatewayUpdate,
+  triggerGatewayRestart,
   triggerGatewayUpdate,
 } from "./gateway-update"
 
@@ -25,6 +26,24 @@ describe("triggerGatewayUpdate", () => {
   it("returns false when vestad rejects the request", async () => {
     const request = vi.fn().mockRejectedValue(new Error("down"))
     expect(await triggerGatewayUpdate(httpWith(request))).toBe(false)
+  })
+})
+
+describe("triggerGatewayRestart", () => {
+  it("POSTs /gateway/restart and returns true on accept", async () => {
+    const request = vi.fn().mockResolvedValue(new Response())
+    const ok = await triggerGatewayRestart(httpWith(request))
+
+    expect(ok).toBe(true)
+    const call = request.mock.calls[0]
+    if (!call) throw new Error("no request")
+    expect(call[0]).toBe("/gateway/restart")
+    expect((call[1] as RequestInit).method).toBe("POST")
+  })
+
+  it("returns false when vestad rejects the request", async () => {
+    const request = vi.fn().mockRejectedValue(new Error("down"))
+    expect(await triggerGatewayRestart(httpWith(request))).toBe(false)
   })
 })
 

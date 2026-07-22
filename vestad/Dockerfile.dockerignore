@@ -2,7 +2,6 @@
 
 # Anything outside agent/ that's large or irrelevant to the image
 apps/
-cli/
 node_modules/
 target/
 .git/

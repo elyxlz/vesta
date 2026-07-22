@@ -429,6 +429,15 @@ def test_link_skills_unions_a_newly_shipped_default(tmp_path):
     assert "whatsapp" in _active(home) and "whatsapp" in _links(home)
 
 
+def test_link_skills_reads_final_active_line_without_newline(tmp_path):
+    home, script = _link_skills_box(tmp_path)
+    active = home / "agent/data/active-skills.txt"
+    active.parent.mkdir(parents=True)
+    active.write_text("whatsapp")
+    assert _run(script, home).returncode == 0
+    assert "whatsapp" in _links(home)
+
+
 def test_link_skills_drops_a_deactivated_optional(tmp_path):
     home, script = _link_skills_box(tmp_path)
     assert _run(script, home).returncode == 0

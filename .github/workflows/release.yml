@@ -80,7 +80,6 @@ jobs:
           sed -i "s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" agent/core/pyproject.toml
           sed -i "0,/^version = \"${CURRENT}\"/s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" vestad/Cargo.toml
           sed -i "0,/^version = \"${CURRENT}\"/s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" vestad/tests-integration/Cargo.toml
-          sed -i "0,/^version = \"${CURRENT}\"/s|^version = \"${CURRENT}\"|version = \"${NEW}\"|" cli/Cargo.toml
           sed -i "s|\"version\": \"${CURRENT}\"|\"version\": \"${NEW}\"|" apps/web/package.json
           sed -i "s|\"version\": \"${CURRENT}\"|\"version\": \"${NEW}\"|" apps/desktop/package.json
           sed -i "s|\"version\": \"${CURRENT}\"|\"version\": \"${NEW}\"|" apps/mobile/package.json
@@ -89,7 +88,6 @@ jobs:
       - name: Refresh lockfiles
         run: |
           (cd vestad && cargo check --quiet) &
-          (cd cli && cargo check --quiet) &
           (cd agent && uv lock --project core --quiet) &
           (cd apps && npm install --package-lock-only --ignore-scripts --quiet) &
           wait

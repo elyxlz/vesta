@@ -20,6 +20,7 @@ export interface GatewayContextValue {
   agents: AgentRow[];
   agentsFetched: boolean;
   triggerGatewayUpdate: () => Promise<boolean>;
+  triggerGatewayRestart: () => Promise<boolean>;
   checkForUpdate: () => Promise<void>;
 }
 
@@ -38,6 +39,7 @@ export const disconnectedValue: GatewayContextValue = {
   agents: [],
   agentsFetched: false,
   triggerGatewayUpdate: () => Promise.resolve(false),
+  triggerGatewayRestart: () => Promise.resolve(false),
   checkForUpdate: () => Promise.resolve(),
 };
 

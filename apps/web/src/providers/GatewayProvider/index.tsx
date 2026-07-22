@@ -4,6 +4,7 @@ import {
   checkForGatewayUpdate,
   rosterFromTree,
   rostersEqual,
+  triggerGatewayRestart as requestGatewayRestart,
   triggerGatewayUpdate as requestGatewayUpdate,
 } from "@vesta/core";
 import { useReplica, useSyncState } from "@vesta/core/react";
@@ -60,6 +61,13 @@ function ReplicaGateway({
     return ok;
   }, [controller, reconnect]);
 
+  const triggerGatewayRestart = useCallback(async (): Promise<boolean> => {
+    const ok = await requestGatewayRestart(controller.http);
+    // A restart drops the gateway just like an update; re-attach the same way.
+    if (ok) reconnect();
+    return ok;
+  }, [controller, reconnect]);
+
   const checkForUpdate = useCallback(async (): Promise<void> => {
     try {
       await checkForGatewayUpdate(controller.http);
@@ -82,6 +90,7 @@ function ReplicaGateway({
     agents,
     agentsFetched: gateway !== null,
     triggerGatewayUpdate,
+    triggerGatewayRestart,
     checkForUpdate,
   };
 

@@ -3383,6 +3383,10 @@ mod tests {
         needs_rebuild(cname, &info, desired)
     }
 
+    fn temp_core_mount() -> tempfile::TempDir {
+        tempfile::TempDir::new().expect("core tempdir")
+    }
+
     /// Best-effort cleanup via docker CLI (safe to call from Drop inside tokio).
     fn docker_cleanup(args: &[&str]) {
         std::process::Command::new("docker")
@@ -3602,9 +3606,11 @@ mod tests {
         let tc = TestContainer::new("rebuild-fresh");
         let env_file = tempfile::NamedTempFile::new().expect("tempfile");
         std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
+        let core_dir = temp_core_mount();
         let upstream_dir = tempfile::TempDir::new().expect("tempdir");
         let mounts = [
             (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]),
+            (core_dir.path().to_str().unwrap(), CORE_MOUNT_DEST),
             (upstream_dir.path().to_str().unwrap(), UPSTREAM_MOUNT_DEST),
         ];
 
@@ -3633,12 +3639,14 @@ mod tests {
         let tc = TestContainer::new("rebuild-upstream");
         let env_file = tempfile::NamedTempFile::new().expect("tempfile");
         std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
+        let core_dir = temp_core_mount();
         let env_mount = (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]);
+        let core_mount = (core_dir.path().to_str().unwrap(), CORE_MOUNT_DEST);
 
         create_test_container_async(
             &docker,
             &tc,
-            &[env_mount],
+            &[env_mount, core_mount],
             agent_container_entrypoint_cmd(),
             NETWORK_MODE,
             RESTART_POLICY,
@@ -3696,9 +3704,11 @@ mod tests {
         let tc = TestContainer::new("rebuild-cmd");
         let env_file = tempfile::NamedTempFile::new().expect("tempfile");
         std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
+        let core_dir = temp_core_mount();
         let upstream_dir = tempfile::TempDir::new().expect("tempdir");
         let mounts = [
             (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]),
+            (core_dir.path().to_str().unwrap(), CORE_MOUNT_DEST),
             (upstream_dir.path().to_str().unwrap(), UPSTREAM_MOUNT_DEST),
         ];
 
@@ -3742,7 +3752,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore]
-    async fn test_needs_rebuild_false_on_missing_code_mounts() {
+    async fn test_needs_rebuild_true_on_missing_core_mount() {
         let docker = test_docker();
         let tc = TestContainer::new("rebuild-nocode");
         let env_file = tempfile::NamedTempFile::new().expect("tempfile");
@@ -3764,8 +3774,8 @@ mod tests {
         .await;
 
         assert!(
-            !inspect_then_needs_rebuild(&docker, &tc.name, &[]).await,
-            "missing core code mounts should NOT trigger rebuild"
+            inspect_then_needs_rebuild(&docker, &tc.name, &[]).await,
+            "missing core code mount SHOULD trigger rebuild"
         );
     }
 
@@ -3776,9 +3786,11 @@ mod tests {
         let tc = TestContainer::new("rebuild-net");
         let env_file = tempfile::NamedTempFile::new().expect("tempfile");
         std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
+        let core_dir = temp_core_mount();
         let upstream_dir = tempfile::TempDir::new().expect("tempdir");
         let mounts = [
             (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]),
+            (core_dir.path().to_str().unwrap(), CORE_MOUNT_DEST),
             (upstream_dir.path().to_str().unwrap(), UPSTREAM_MOUNT_DEST),
         ];
 
@@ -3808,9 +3820,11 @@ mod tests {
         let tc = TestContainer::new("rebuild-restart");
         let env_file = tempfile::NamedTempFile::new().expect("tempfile");
         std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
+        let core_dir = temp_core_mount();
         let upstream_dir = tempfile::TempDir::new().expect("tempdir");
         let mounts = [
             (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]),
+            (core_dir.path().to_str().unwrap(), CORE_MOUNT_DEST),
             (upstream_dir.path().to_str().unwrap(), UPSTREAM_MOUNT_DEST),
         ];
 
@@ -3850,9 +3864,11 @@ mod tests {
         let img = TestImage::new("rebuild-full");
         let env_file = tempfile::NamedTempFile::new().expect("tempfile");
         std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
+        let core_dir = temp_core_mount();
         let upstream_dir = tempfile::TempDir::new().expect("tempdir");
         let mounts = [
             (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]),
+            (core_dir.path().to_str().unwrap(), CORE_MOUNT_DEST),
             (upstream_dir.path().to_str().unwrap(), UPSTREAM_MOUNT_DEST),
         ];
 

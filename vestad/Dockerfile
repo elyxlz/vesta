@@ -9,10 +9,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY agent/skills/whatsapp/cli/go.mod agent/skills/whatsapp/cli/build-whisper.sh /build/
 RUN bash /build/build-whisper.sh /opt/whisper.cpp
 
-# Debian 13 (trixie) for git >=2.42. On git 2.39 (bookworm) `git sparse-checkout set` deletes an
-# out-of-cone directory that holds untracked files, taking the agent's untracked
-# ~/.claude/.credentials.json with it and de-authing the agent on a skills-install. git >=2.42
-# refuses to delete a directory containing untracked files, closing that hole at the root.
+# Debian 13 (trixie) for git >=2.42. The flat workspace no longer changes sparse-checkout cones,
+# but newer git still protects untracked auth/config files if a future migration or manual repair
+# operation tries to remove a directory that contains them.
 FROM debian:trixie-slim
 
 LABEL org.opencontainers.image.title="Vesta" \

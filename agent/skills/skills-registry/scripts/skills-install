@@ -3,4 +3,7 @@
 # 2026-06-rename-overgeneric-skills, 2026-06-service-default-skill, 2026-06-personality-out-of-core,
 # 2026-07-contacts-backfill - is fleet-applied): forwards to the renamed command. Those released
 # migration files are immutable and call this path; keep the shim so they don't break mid-converge.
+# A skipped-version pre-flat box can still be a sparse cone when an old migration calls this; the
+# forwarded command may not see coned-out skill dirs, but today's legacy targets are all defaults
+# that link-skills.sh re-seeds into active-skills.txt during the flat conversion boot.
 exec "$(dirname "$0")/skills-activate" "$@"
