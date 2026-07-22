@@ -315,6 +315,40 @@ def _ensure_headed_prefs(profile_dir: Path) -> None:
     (profile_dir / "user.js").write_text(_HEADED_PREFS)
 
 
+def _profile_has_live_owner(profile_dir: Path) -> bool:
+    """True if a live process is running Camoufox against this exact profile dir."""
+    target = str(profile_dir)
+    proc_root = Path("/proc")
+    if not proc_root.is_dir():
+        return False  # non-Linux: can't check, assume no owner (locks are our own stale ones)
+    for entry in proc_root.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            parts = [p for p in entry.joinpath("cmdline").read_bytes().split(b"\0") if p]
+        except OSError:
+            continue  # process vanished or unreadable
+        decoded = [p.decode("utf-8", "replace") for p in parts]
+        if any("camoufox" in p for p in decoded) and target in decoded:
+            return True
+    return False
+
+
+def _clear_stale_profile_locks(profile_dir: Path) -> None:
+    """Remove singleton locks left behind by a crashed or force-killed instance.
+
+    A stale lock makes Camoufox print "already running, but is not responding" and
+    never bring up its BiDi socket, so the daemon's browsingContext.create hangs the
+    full ready-timeout (seen Jul 21 2026: a shared-profile collision wedged launch
+    after a crash and the lock survived the container restart). Only clears when no
+    live process owns the profile, so it can never disrupt a running session.
+    """
+    if _profile_has_live_owner(profile_dir):
+        return
+    for lock in ("lock", ".parentlock", "SingletonLock", "SingletonCookie", "SingletonSocket"):
+        (profile_dir / lock).unlink(missing_ok=True)
+
+
 def launch(
     *,
     user_data_dir: Path | None = None,
@@ -332,6 +366,7 @@ def launch(
     exe = ensure_camoufox(executable)
     profile_dir = user_data_dir or PROFILE_ROOT
     profile_dir.mkdir(parents=True, exist_ok=True)
+    _clear_stale_profile_locks(profile_dir)
 
     # Headless is the stealthy default: Camoufox's fingerprint is spoofed in C++, so
     # headless leaks nothing. Only run headed when a real display exists and headless
