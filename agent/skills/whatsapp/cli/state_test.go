@@ -159,6 +159,17 @@ func TestCorruptStatePreservesAndSalvages(t *testing.T) {
 	})
 }
 
+func TestNewStateStoreWithStatePersistsCorruptSalvage(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().UTC().Truncate(time.Second)
+	initial := daemonState{PairAttempts: []time.Time{now}, LinkedAt: now}
+	newStateStoreWithState(dir, initial)
+	got := loadStateFromDisk(dir)
+	if len(got.PairAttempts) != 1 || !got.LinkedAt.Equal(now) {
+		t.Fatalf("initial salvaged state was discarded: %+v", got)
+	}
+}
+
 func TestDefaultNotificationsDir(t *testing.T) {
 	want := filepath.Join(os.Getenv("HOME"), "agent", "notifications")
 	if got := defaultNotificationsDir(); got != want {

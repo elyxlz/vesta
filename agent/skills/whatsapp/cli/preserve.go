@@ -175,6 +175,7 @@ func decideRemoval(preserve preserveDecision, onConnectConflict, conflictEpisode
 // re-exec'd process runs runServe again, which restores the last-good device
 // before opening the store, then reconnects. Does not return on success.
 func (wac *WhatsAppClient) reExecDaemon() {
+	reexecPending.Store(true)
 	wac.client.Disconnect()
 	// Let WhatsApp register the old socket's teardown before the re-exec'd process
 	// reconnects: re-connecting into a still-live server-side session is what re-fires

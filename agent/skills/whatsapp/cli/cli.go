@@ -209,9 +209,11 @@ func runServe() {
 	// Device preservation: a preserve-reconnect set RestorePending before re-exec.
 	// Restore the last-good device store BEFORE opening it (NewWhatsAppClient), so
 	// SQLite cannot replay the removal that lives in the WAL.
-	if loadStateFromDisk(dataDir).RestorePending {
+	initialState := loadStateFromDisk(dataDir)
+	if initialState.RestorePending {
 		if err := restoreGoodDevice(dataDir, logger); err != nil {
-			logger.Warnf("restore of last-good device failed: %v", err)
+			fmt.Fprintf(os.Stderr, "Failed to restore last-good WhatsApp device: %v\n", err)
+			os.Exit(1)
 		}
 	}
 
@@ -223,7 +225,7 @@ func runServe() {
 		}
 	}
 
-	wac, err := NewWhatsAppClient(dataDir, notifDir, extractInstance(), isReadOnly(), noNotify, extractSkipSenders(), logger)
+	wac, err := newWhatsAppClient(dataDir, notifDir, extractInstance(), isReadOnly(), noNotify, extractSkipSenders(), logger, &initialState)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to initialize WhatsApp client: %v\n", err)
 		os.Exit(1)
@@ -1063,6 +1065,16 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 		if err := wac.completeFreshProfile(); err != nil {
 			return nil, err
 		}
+		if pending := wac.state.snapshot(); pending.PendingLinkedResult {
+			result := managedLinkedResult("+"+wac.client.Store.ID.User, pending.PendingLinkedOpener)
+			wac.state.update(func(s *daemonState) {
+				s.OnboardedMSISDN = "+" + wac.client.Store.ID.User
+				s.PendingLinkedOpener = ""
+				s.PendingLinkedResult = false
+			})
+			return result, nil
+		}
+		wac.state.update(func(s *daemonState) { s.OnboardedMSISDN = "+" + wac.client.Store.ID.User })
 		// Store.ID is set (guaranteed non-nil here), so the device number is
 		// authoritative; daemon-status formats it the same way. An already-linked
 		// device is a resume, not a first link, so it never re-emits the reply-first
@@ -1078,7 +1090,7 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 	// number) or a control-plane heal onto a different number is a genuinely new
 	// number that needs onboarding; re-linking the same established number is a
 	// resume that must not tell Vesta to stop initiating mid-relationship.
-	priorMSISDN := wac.state.snapshot().MSISDN
+	priorOnboardedMSISDN := wac.state.snapshot().OnboardedMSISDN
 	res, err := wac.linker.provision(wac)
 	if err != nil {
 		// A still-filling pool and a banned number are normal outcomes, not
@@ -1117,15 +1129,23 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 	}
 	// A new number (first claim or a healed replacement) gets the reply-first
 	// onboarding; re-linking the same established number is a quiet resume.
-	if priorMSISDN == "" || priorMSISDN != res.MSISDN {
+	if priorOnboardedMSISDN == "" || priorOnboardedMSISDN != res.MSISDN {
 		wac.state.update(func(s *daemonState) {
 			s.FreshNameSetPending = true
 			s.FreshPhotoWipePending = true
+			s.PendingLinkedOpener = opener
+			s.PendingLinkedResult = true
 		})
 		if err := wac.completeFreshProfile(); err != nil {
 			return nil, err
 		}
-		return managedLinkedResult(res.MSISDN, opener), nil
+		result := managedLinkedResult(res.MSISDN, opener)
+		wac.state.update(func(s *daemonState) {
+			s.OnboardedMSISDN = res.MSISDN
+			s.PendingLinkedOpener = ""
+			s.PendingLinkedResult = false
+		})
+		return result, nil
 	}
 	return managedResumeResult(res.MSISDN), nil
 }
@@ -1147,7 +1167,11 @@ func (wac *WhatsAppClient) completeFreshProfile() error {
 		if wac.managed != nil {
 			agentName = wac.managed.cfg.agentName
 		}
-		if err := wac.SetProfileName(managedProfileName(agentName)); err != nil {
+		setName := wac.SetProfileName
+		if wac.setFreshProfileName != nil {
+			setName = wac.setFreshProfileName
+		}
+		if err := setName(managedProfileName(agentName)); err != nil {
 			return fmt.Errorf("initialize fresh managed profile: %w", err)
 		}
 		wac.state.update(func(s *daemonState) { s.FreshNameSetPending = false })
@@ -1162,7 +1186,11 @@ func (wac *WhatsAppClient) completeFreshPhotoWipe() error {
 	if !wac.state.snapshot().FreshPhotoWipePending {
 		return nil
 	}
-	if err := wac.RemoveProfilePhoto(); err != nil {
+	removePhoto := wac.RemoveProfilePhoto
+	if wac.removeFreshPhoto != nil {
+		removePhoto = wac.removeFreshPhoto
+	}
+	if err := removePhoto(); err != nil {
 		return fmt.Errorf("initialize fresh managed profile: %w", err)
 	}
 	wac.state.update(func(s *daemonState) { s.FreshPhotoWipePending = false })

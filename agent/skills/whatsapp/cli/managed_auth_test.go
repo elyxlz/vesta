@@ -518,6 +518,75 @@ func TestEnsureManagedProxy_cachesGoodVerdictPerProxy(t *testing.T) {
 	}
 }
 
+func TestEnsureManagedProxy_hostedLeaseFlowCachesLeaseAndVerdict(t *testing.T) {
+	vestad := fakeVestad(t, "atok")
+	var leases atomic.Int32
+	ctrl := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/integrations/whatsapp/proxy/lease" {
+			http.NotFound(w, r)
+			return
+		}
+		leases.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]string{"proxy_url": "http://residential:8080", "kind": "residential"})
+	}))
+	t.Cleanup(ctrl.Close)
+	oldLookup := lookupEgress
+	var inspected []string
+	lookupEgress = func(proxy string) (egressInfo, error) {
+		inspected = append(inspected, proxy)
+		return egressInfo{Status: "success", Query: "198.51.100.8"}, nil
+	}
+	t.Cleanup(func() { lookupEgress = oldLookup })
+	wac := newLinkedTestClient(t)
+	wac.managed = newManagedAuth(managedConfig{controlURL: ctrl.URL, vestadBase: vestad.URL, agentName: "alice", agentToken: "atok", cloudManaged: true})
+	if err := wac.ensureManagedProxy(); err != nil {
+		t.Fatalf("first hosted proxy setup: %v", err)
+	}
+	if err := wac.ensureManagedProxy(); err != nil {
+		t.Fatalf("cached hosted proxy setup: %v", err)
+	}
+	if leases.Load() != 1 || len(inspected) != 1 || inspected[0] != "http://residential:8080" || wac.proxyURL != inspected[0] {
+		t.Fatalf("lease flow leases=%d inspected=%v cached=%q", leases.Load(), inspected, wac.proxyURL)
+	}
+}
+
+func TestEnsureManagedProxy_directDatacenterUpgradesAndFailsClosed(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		leased    egressInfo
+		lookupErr error
+		wantError string
+	}{
+		{"residential lease", egressInfo{Status: "success", Query: "198.51.100.9"}, nil, ""},
+		{"inspector error", egressInfo{}, errors.New("inspector unavailable"), "cannot verify leased"},
+		{"datacenter lease", egressInfo{Status: "success", Query: "198.51.100.10", Hosting: true}, nil, "still a datacenter/hosting"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]string{"proxy_url": "http://leased:8080", "kind": "residential"})
+			}))
+			t.Cleanup(server.Close)
+			oldLookup := lookupEgress
+			lookupEgress = func(proxy string) (egressInfo, error) {
+				if proxy == "" {
+					return egressInfo{Status: "success", Query: "198.51.100.7", Hosting: true}, nil
+				}
+				return tc.leased, tc.lookupErr
+			}
+			t.Cleanup(func() { lookupEgress = oldLookup })
+			wac := newLinkedTestClient(t)
+			wac.managed = newManagedAuth(managedConfig{directURL: server.URL, directKey: "wak_direct"})
+			err := wac.ensureManagedProxy()
+			if tc.wantError == "" && err != nil {
+				t.Fatalf("proxy upgrade: %v", err)
+			}
+			if tc.wantError != "" && (err == nil || !strings.Contains(err.Error(), tc.wantError)) {
+				t.Fatalf("proxy upgrade error = %v, want %q", err, tc.wantError)
+			}
+		})
+	}
+}
+
 // provisionSelf POSTs /byo (idempotent) and returns the reserved user-owned number.
 func TestProvisionSelf_returnsNumber(t *testing.T) {
 	var gotMethod string
@@ -616,6 +685,20 @@ func TestLoadManagedConfigFallsBackToLegacyEnv(t *testing.T) {
 	cfg := loadManagedConfig()
 	if cfg.directURL != "https://legacy.example" || cfg.directKey != "wak_old" {
 		t.Fatalf("loadManagedConfig() = url %q key %q, want legacy fallback", cfg.directURL, cfg.directKey)
+	}
+}
+
+func TestLoadManagedConfigRejectsPartialDoubletickPair(t *testing.T) {
+	t.Setenv("DOUBLETICK_API_URL", "https://doubletick.example")
+	t.Setenv("DOUBLETICK_API_KEY", "")
+	t.Setenv("WHATSAPP_API_URL", "https://legacy.example")
+	t.Setenv("WHATSAPP_API_KEY", "wak_old")
+	cfg := loadManagedConfig()
+	if cfg.configError == "" || cfg.directURL != "" || cfg.directKey != "" {
+		t.Fatalf("partial doubletick pair must reject without legacy mixing: %+v", cfg)
+	}
+	if _, err := newManagedAuth(cfg).claim(); err == nil || !strings.Contains(err.Error(), "must be set together") {
+		t.Fatalf("partial doubletick claim error = %v", err)
 	}
 }
 

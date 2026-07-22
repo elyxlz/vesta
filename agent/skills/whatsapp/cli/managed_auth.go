@@ -126,7 +126,8 @@ type managedConfig struct {
 	// http(s)://user:pass@host:port or socks5:// URL the companion egresses through
 	// in every mode, taking precedence over the cloud residential lease. Empty on a
 	// box that supplies no proxy, which preserves the fail-closed default.
-	proxyURL string
+	proxyURL    string
+	configError string
 }
 
 // loadManagedConfig reads the managed-auth environment (mirrors the account skill).
@@ -136,13 +137,14 @@ func loadManagedConfig() managedConfig {
 		base = "https://localhost:" + port
 	}
 	directURL := strings.TrimSpace(os.Getenv("DOUBLETICK_API_URL"))
-	if directURL == "" {
-		// LEGACY(remove-when: all seed-contexts/env use DOUBLETICK_*): fall back to WHATSAPP_API_* env
-		directURL = strings.TrimSpace(os.Getenv("WHATSAPP_API_URL"))
-	}
 	directKey := strings.TrimSpace(os.Getenv("DOUBLETICK_API_KEY"))
-	if directKey == "" {
-		// LEGACY(remove-when: all seed-contexts/env use DOUBLETICK_*): fall back to WHATSAPP_API_* env
+	configError := ""
+	if (directURL == "") != (directKey == "") {
+		configError = "DOUBLETICK_API_URL and DOUBLETICK_API_KEY must be set together"
+		directURL, directKey = "", ""
+	} else if directURL == "" {
+		// LEGACY(remove-when: all seed-contexts/env use DOUBLETICK_*): use the legacy pair only when the new pair is absent.
+		directURL = strings.TrimSpace(os.Getenv("WHATSAPP_API_URL"))
 		directKey = strings.TrimSpace(os.Getenv("WHATSAPP_API_KEY"))
 	}
 	return managedConfig{
@@ -154,6 +156,7 @@ func loadManagedConfig() managedConfig {
 		agentToken:   strings.TrimSpace(os.Getenv("AGENT_TOKEN")),
 		cloudManaged: strings.TrimSpace(os.Getenv("VESTA_CLOUD_CONTROL_URL")) != "",
 		proxyURL:     strings.TrimSpace(os.Getenv("WHATSAPP_PROXY_URL")),
+		configError:  configError,
 	}
 }
 
@@ -224,7 +227,7 @@ func (m *managedAuth) isDirect() bool {
 // it, a plain box falls back to the QR strategy instead of dead-ending on a managed
 // path whose account-token mint would 404.
 func (m *managedAuth) isHosted() bool {
-	return m.isDirect() || (m.cfg.cloudManaged && m.cfg.vestadBase != "" && m.cfg.agentName != "" && m.cfg.agentToken != "")
+	return m.cfg.configError != "" || m.isDirect() || (m.cfg.cloudManaged && m.cfg.vestadBase != "" && m.cfg.agentName != "" && m.cfg.agentToken != "")
 }
 
 // newManagedAuth builds the pool-API HTTP client. Direct-mode cred reconciliation
@@ -397,6 +400,9 @@ func (m *managedAuth) provision(pairPhone func(msisdn string) (string, error)) (
 // never binds returns errPoolFilling and a banned number returns errBlocked, both
 // surfaced to the agent as a clean status rather than a raw error.
 func (m *managedAuth) claim() (managedState, error) {
+	if m.cfg.configError != "" {
+		return managedState{}, errors.New(m.cfg.configError)
+	}
 	// Resolve the credential ONCE for the whole poll: a dry-pool claim can make many
 	// /provision calls, and re-minting per call would be up to ~61 loopback token
 	// mints for one connect (the token easily outlives the poll window).

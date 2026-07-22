@@ -24,6 +24,11 @@ type daemonState struct {
 	MSISDN    string `json:"msisdn,omitempty"`
 	DirectURL string `json:"api_url,omitempty"`
 	DirectKey string `json:"api_key,omitempty"`
+	// OnboardedMSISDN marks the number whose first-link profile and result finished.
+	// PendingLinkedOpener preserves first-link output across profile-init retries.
+	OnboardedMSISDN     string `json:"onboarded_msisdn,omitempty"`
+	PendingLinkedOpener string `json:"pending_linked_opener,omitempty"`
+	PendingLinkedResult bool   `json:"pending_linked_result,omitempty"`
 	// FreshPhotoWipePending is armed only after linking a newly claimed (or
 	// replacement) managed number. It survives an IQ failure so the next explicit
 	// connect retries the idempotent wipe, but routine reconnects never touch it.
@@ -104,7 +109,11 @@ type stateStore struct {
 // converges it to a single state.json, deleting the legacy files. Call it only from
 // the serve process (which holds the single-instance lock, so it is the sole writer).
 func newStateStore(dataDir string) *stateStore {
-	s := &stateStore{path: statePath(dataDir), st: loadStateFromDisk(dataDir)}
+	return newStateStoreWithState(dataDir, loadStateFromDisk(dataDir))
+}
+
+func newStateStoreWithState(dataDir string, initial daemonState) *stateStore {
+	s := &stateStore{path: statePath(dataDir), st: initial}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.persistLocked(); err != nil {

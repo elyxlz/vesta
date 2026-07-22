@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"sync/atomic"
 	"time"
 )
+
+var reexecPending atomic.Bool
 
 type SocketRequest struct {
 	Command string   `json:"command"`
@@ -57,6 +60,10 @@ func handleSocketConn(conn net.Conn, wac *WhatsAppClient) {
 	var req SocketRequest
 	if err := json.NewDecoder(conn).Decode(&req); err != nil {
 		json.NewEncoder(conn).Encode(SocketResponse{Error: fmt.Sprintf("invalid request: %v", err)})
+		return
+	}
+	if reexecPending.Load() {
+		json.NewEncoder(conn).Encode(SocketResponse{Error: "WhatsApp daemon is restarting; retry in a moment"})
 		return
 	}
 

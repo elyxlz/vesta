@@ -99,8 +99,10 @@ type WhatsAppClient struct {
 	callMgr           *CallManager              // live voice calling; set in serve after Connect, nil for one-shot clients
 	// Data-plane offload (see enqueueWork): message/receipt handling runs on one
 	// FIFO worker so a slow store write never stalls whatsmeow's serial node loop.
-	msgWork    chan func()
-	workerDone chan struct{}
+	msgWork             chan func()
+	workerDone          chan struct{}
+	setFreshProfileName func(string) error
+	removeFreshPhoto    func() error
 	// Device preservation (see preserve.go): the good-device snapshot throttle and
 	// the connection-stability timer that clears the single-retry guard.
 	preserveMu   sync.Mutex
@@ -109,6 +111,10 @@ type WhatsAppClient struct {
 }
 
 func NewWhatsAppClient(dataDir, notificationsDir, instance string, readOnly bool, noNotify bool, skipSenders map[string]bool, logger waLog.Logger) (*WhatsAppClient, error) {
+	return newWhatsAppClient(dataDir, notificationsDir, instance, readOnly, noNotify, skipSenders, logger, nil)
+}
+
+func newWhatsAppClient(dataDir, notificationsDir, instance string, readOnly bool, noNotify bool, skipSenders map[string]bool, logger waLog.Logger, initialState *daemonState) (*WhatsAppClient, error) {
 	store, err := NewMessageStore(dataDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize message store: %v", err)
@@ -159,7 +165,12 @@ func NewWhatsAppClient(dataDir, notificationsDir, instance string, readOnly bool
 	// consuming messages, so its delivery receipts must always be visible.
 	client.SetForceActiveDeliveryReceipts(forceActiveDeliveryReceipts(readOnly))
 
-	state := newStateStore(dataDir)
+	var state *stateStore
+	if initialState == nil {
+		state = newStateStore(dataDir)
+	} else {
+		state = newStateStoreWithState(dataDir, *initialState)
+	}
 	managed := newManagedAuth(loadManagedConfig())
 	boxLinker := chooseLinker(managed.cfg, state)
 	wac := &WhatsAppClient{
