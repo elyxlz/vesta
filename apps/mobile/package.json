@@ -1,7 +1,7 @@
 {
   "name": "@vesta/mobile",
   "private": true,
-  "version": "0.1.180",
+  "version": "0.1.179",
   "description": "Vesta native mobile app for iOS and Android",
   "license": "MIT",
   "main": "expo-router/entry",
