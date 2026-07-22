@@ -49,7 +49,7 @@ From the `--stat`, carve your divergence into coherent areas: each installed ski
 group whatever else remains. Spawn a subagent per area, as many as it takes to cover
 everything, and run them in parallel.
 
-Prioritize the default skills. The names in `agent/skills/default-skills.txt` are the core
+Prioritize the default skills. The names in `agent/core/default-skills.txt` are the core
 set every agent ships with; they change the most upstream and matter the most, so review
 them first and most carefully (a subagent each), then sweep everything else. Nothing is
 skipped, but the defaults get the deepest attention. Give each subagent one instruction: read the full

@@ -247,7 +247,7 @@ The **`description` is discovery text**: it's what the agent sees when deciding 
 
 If the skill ships a CLI, put it in a `cli/` subdirectory as its **own standalone `uv` project** (`cli/pyproject.toml` + `cli/uv.lock`) with tests under `cli/tests/`; run them with `uv run pytest skills/{name}/cli/tests/` (from `agent/`).
 
-A new skill needs no index step: skills are discovered from disk. If it should be active on every box by default, add its name to `agent/skills/default-skills.txt`.
+A new skill needs no index step: skills are discovered from disk. If it should be active on every box by default, add its name to `agent/core/default-skills.txt`.
 
 ## Testing strategy
 

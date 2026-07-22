@@ -128,7 +128,7 @@ def _write_content(content, version):
         d = content / "skills" / skill
         d.mkdir(parents=True, exist_ok=True)
         (d / "SKILL.md").write_text(f"---\nname: {skill}\ndescription: {skill} at {version}\n---\n")
-    (content / "skills/default-skills.txt").write_text("\n".join(DEFAULT_SKILLS) + "\n")
+    (content / "core/default-skills.txt").write_text("\n".join(DEFAULT_SKILLS) + "\n")
     (content / "MEMORY.md").write_text(_memory_template(version))
     (content / ".gitignore").write_text((AGENT_ROOT / ".gitignore").read_text())
     (content / "ruff.toml").write_text("line-length = 144\n")  # box needs it (formatting); ships in the snapshot
@@ -158,6 +158,7 @@ def _write_core_mount(home, version="0.1.170"):
     core.mkdir(parents=True, exist_ok=True)
     (core / "pyproject.toml").write_text(f'[project]\nname = "vesta"\nversion = "{version}"\n')
     (core / "loops.py").write_text(f"# core at {version}\n")
+    (core / "default-skills.txt").write_text("\n".join(DEFAULT_SKILLS) + "\n")
     _copy_sync_scripts(core / "skills")
 
 
@@ -172,7 +173,6 @@ def _fresh_box(tmp_path, version="0.1.170", skills=ALL_SKILLS):
         d = home / "agent/skills" / skill
         d.mkdir(parents=True)
         (d / "SKILL.md").write_text(f"---\nname: {skill}\ndescription: {skill} at {version}\n---\n")
-    (home / "agent/skills/default-skills.txt").write_text("\n".join(DEFAULT_SKILLS) + "\n")
     (home / "agent/MEMORY.md").write_text(_memory_template(version))
     (home / "agent/.gitignore").write_text(_box_gitignore())
     (home / "agent/constitution.md").write_text("# user rules\n")  # bind-mounted read-only on real boxes
@@ -437,7 +437,7 @@ def _skill_link_box(tmp_path, defaults=DEFAULT_SKILLS, optional=("tasks", "dream
         d = home / "agent/skills" / skill
         d.mkdir(parents=True)
         (d / "SKILL.md").write_text(f"---\nname: {skill}\ndescription: opt\n---\n")
-    (home / "agent/skills/default-skills.txt").write_text("\n".join(defaults) + "\n")
+    (home / "agent/core/default-skills.txt").write_text("\n".join(defaults) + "\n")
     return home
 
 
@@ -453,7 +453,7 @@ def test_entrypoint_seeds_defaults_and_always_links_core(tmp_path):
 def test_entrypoint_unions_a_newly_shipped_default(tmp_path):
     home = _skill_link_box(tmp_path)
     assert _run_skill_entrypoint(home).returncode == 0
-    (home / "agent/skills/default-skills.txt").write_text("\n".join((*DEFAULT_SKILLS, "whatsapp")) + "\n")  # an upgrade's new default
+    (home / "agent/core/default-skills.txt").write_text("\n".join((*DEFAULT_SKILLS, "whatsapp")) + "\n")  # an upgrade's new default
     assert _run_skill_entrypoint(home).returncode == 0
     assert "whatsapp" in _active(home) and "whatsapp" in _links(home)
 

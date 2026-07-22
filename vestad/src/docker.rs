@@ -117,7 +117,7 @@ fn skill_link_entrypoint_step() -> String {
 SKILLS_DIR="agent/skills"
 CORE_SKILLS_DIR="agent/core/skills"
 ACTIVE="agent/data/active-skills.txt"
-DEFAULTS="agent/skills/default-skills.txt"
+DEFAULTS="agent/core/default-skills.txt"
 LINK_DIR="$HOME/.claude/skills"
 
 mkdir -p "$SKILLS_DIR" agent/data
@@ -2836,8 +2836,8 @@ mod tests {
             "entrypoint must read the runtime active list from agent/data: {script}"
         );
         assert!(
-            script.contains("DEFAULTS=\"agent/skills/default-skills.txt\""),
-            "entrypoint must read default skills from agent/skills: {script}"
+            script.contains("DEFAULTS=\"agent/core/default-skills.txt\""),
+            "entrypoint must read default skills from agent/core: {script}"
         );
         assert!(
             script.contains("ln -sfn \"$HOME/$1\" \"$LINK_DIR/$(basename \"$1\")\""),
@@ -2849,7 +2849,7 @@ mod tests {
         );
         assert!(
             !script.contains("agent/skills/active-skills.txt")
-                && !script.contains("agent/core/default-skills.txt"),
+                && !script.contains("agent/skills/default-skills.txt"),
             "entrypoint must not use the old active/default skill paths: {script}"
         );
     }

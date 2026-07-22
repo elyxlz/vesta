@@ -6,7 +6,7 @@ set -euo pipefail
 SKILL_NAME="${1:?Usage: skills-deactivate <skill-name>}"
 cd ~
 ACTIVE="agent/data/active-skills.txt"
-DEFAULTS="agent/skills/default-skills.txt"
+DEFAULTS="agent/core/default-skills.txt"
 
 if grep -qxF "$SKILL_NAME" "$DEFAULTS" 2>/dev/null; then
     echo "'$SKILL_NAME' is a default skill: it reactivates on every boot and can't be deactivated."
