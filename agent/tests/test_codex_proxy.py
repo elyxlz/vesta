@@ -11,7 +11,11 @@ from core.codex_proxy import _available_port, _wait_ready
 async def test_wait_ready_uses_bridge_healthz_endpoint():
     port = _available_port()
     app = web.Application()
-    app.router.add_get("/healthz", lambda _request: web.json_response({"ok": True}))
+
+    async def healthz(_request: web.Request) -> web.Response:
+        return web.json_response({"ok": True})
+
+    app.router.add_get("/healthz", healthz)
     runner = web.AppRunner(app)
     await runner.setup()
     await web.TCPSite(runner, "127.0.0.1", port).start()
