@@ -153,14 +153,13 @@ const (
 )
 
 // decideRemoval routes a device removal. A fresh episode (decidePreserve ==
-// preserveReconnect) always reconnects once. On give-up the CURRENT event is authoritative:
-// a genuine/terminal logout (onConnectConflict == false: a stream:error device_removed or
-// another on-connect reason like primary-gone/ban) CLEARS for a deliberate re-provision,
-// even over a stale conflict episode. A current on-connect "another device" conflict PARKS
-// with the device preserved (never a clear-to-unpaired) when it opens a fresh episode (none
-// armed yet, so even a first 401 with no snapshot is preserved) or continues a
-// conflict-origin one; a genuine episode whose restore re-dropped as an on-connect 401
-// still clears. Pure, unit-tested.
+// preserveReconnect) always reconnects once. On give-up the CURRENT event wins:
+// a genuine/terminal logout (onConnectConflict == false: stream:error device_removed,
+// or primary-gone/ban) CLEARS for a deliberate re-provision, even over a stale conflict
+// episode. A current on-connect "another device" conflict PARKS with the device preserved
+// when it opens a fresh episode (none armed, so even a first snapshot-less 401 is preserved)
+// or continues a conflict-origin one; a genuine episode whose restore re-dropped as an
+// on-connect 401 still clears. Pure, unit-tested.
 func decideRemoval(preserve preserveDecision, onConnectConflict, conflictEpisode, episodeArmed bool) removalAction {
 	if preserve == preserveReconnect {
 		return removalReconnect
