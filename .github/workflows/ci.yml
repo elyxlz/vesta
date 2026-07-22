@@ -195,7 +195,7 @@ jobs:
           fi
           echo "✓ Tag matches version"
 
-  # ── Fast repo-hygiene guards (skills index, uv.lock, dashboard sync, vite base) ──
+  # ── Fast repo-hygiene guards (uv.lock, dashboard sync, vite base) ──
   guards:
     name: Repository · Lint and guardrails
     runs-on: ubuntu-latest

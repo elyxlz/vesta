@@ -8,9 +8,6 @@ use rust_embed::RustEmbed;
 // (the box never runs pytest or ty) and are kept out of both the image and the snapshot.
 #[include = "core/**/*"]
 #[include = "skills/**/*"]
-// generate-index.py is dev tooling (CI index regen): not shipped in the image, so it
-// must not be in the workspace snapshot either or every fresh attach shows it deleted.
-#[exclude = "skills/generate-index.py"]
 #[include = "MEMORY.md"]
 #[include = ".gitignore"]
 #[include = "ruff.toml"]

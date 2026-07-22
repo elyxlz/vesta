@@ -20,10 +20,9 @@ def _authed_state() -> vm.State:
     return state
 
 
-def test_boot_turns_ordered_migrations_then_skill_then_config_then_greeting(tmp_path):
+def test_boot_turns_ordered_migrations_then_sync_then_config_then_greeting(tmp_path):
     config = _boot_config(tmp_path)
     (config.agent_dir / "core" / "migrations" / "001-x.md").write_text("do migration x")
-    (config.agent_dir / "core" / "default-skills.txt").write_text("alpha\n")  # alpha missing on disk
     # An out-of-date sync marker vs the running core version fires the upstream-sync turn.
     (config.agent_dir / "core" / "pyproject.toml").write_text('[project]\nname = "vesta"\nversion = "9.9.9"\n')
 
@@ -35,19 +34,18 @@ def test_boot_turns_ordered_migrations_then_skill_then_config_then_greeting(tmp_
         first_start=False,
     )
 
-    assert len(turns) == 5
+    assert len(turns) == 4
     # The first converge turn carries the daemon-restore orientation so a migration/upgrade boot
     # restores daemons via the restart skill first, exactly as a plain restart would.
     assert turns[0].startswith(BOOT_RESTORE_ORIENTATION)
     assert "[Migration: 001-x]" in turns[0]
     assert "[Upstream sync]" in turns[1]
-    assert "skills-install alpha" in turns[2]
-    assert "BAD=1" in turns[3]
-    assert "[System Restart]\nReason: routine restart, no specific reason" in turns[4]
+    assert "BAD=1" in turns[2]
+    assert "[System Restart]\nReason: routine restart, no specific reason" in turns[3]
     # The orientation rides only the first converge turn, never the restart greeting (it already
     # runs the restart skill) or the later converge turns.
     assert BOOT_RESTORE_ORIENTATION not in turns[1]
-    assert BOOT_RESTORE_ORIENTATION not in turns[4]
+    assert BOOT_RESTORE_ORIENTATION not in turns[3]
 
 
 def test_restart_only_boot_carries_no_daemon_orientation(tmp_path):

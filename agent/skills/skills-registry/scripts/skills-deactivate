@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Deactivate a skill: drop it from agent/data/config.json active_skills. The skill's files
+# stay on disk (full checkout); deactivating only unlists it. A default skill reactivates
+# on the next boot because the entrypoint unions the shipped defaults back in.
+set -euo pipefail
+SKILL_NAME="${1:?Usage: skills-deactivate <skill-name>}"
+cd ~
+CONFIG="agent/data/config.json"
+LEGACY_ACTIVE="agent/data/active-skills.txt"
+DEFAULTS="agent/core/default-skills.txt"
+
+if ! [[ "$SKILL_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+    echo "Error: invalid skill name '$SKILL_NAME'." >&2
+    exit 1
+fi
+if grep -qxF "$SKILL_NAME" "$DEFAULTS" 2>/dev/null; then
+    echo "'$SKILL_NAME' is a default skill: it reactivates on every boot and can't be deactivated."
+    exit 0
+fi
+RESULT="$(python3 - "$SKILL_NAME" "$CONFIG" "$LEGACY_ACTIVE" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+skill = sys.argv[1]
+config_path = pathlib.Path(sys.argv[2])
+legacy_path = pathlib.Path(sys.argv[3])
+skill_name_re = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+def legacy_names():
+    if not legacy_path.is_file():
+        return []
+    return [line.strip() for line in legacy_path.read_text().splitlines() if line.strip()]
+
+try:
+    loaded = json.loads(config_path.read_text()) if config_path.is_file() else {}
+except json.JSONDecodeError:
+    loaded = {}
+data = loaded if isinstance(loaded, dict) else {}
+configured = data["active_skills"] if isinstance(data.get("active_skills"), list) else None
+active = [name for name in configured if isinstance(name, str)] if configured is not None else legacy_names()
+active = [name.strip() for name in active if skill_name_re.fullmatch(name.strip())]
+if skill not in active:
+    print("inactive")
+    raise SystemExit
+data["active_skills"] = sorted(name for name in active if name != skill)
+config_path.parent.mkdir(parents=True, exist_ok=True)
+tmp = config_path.with_name(f"{config_path.name}.tmp")
+tmp.write_text(json.dumps(data, indent=2) + "\n")
+tmp.replace(config_path)
+print("deactivated")
+PY
+)"
+if [ "$RESULT" = "inactive" ]; then
+    echo "Skill '$SKILL_NAME' is not active."
+    exit 0
+fi
+echo "Deactivated '$SKILL_NAME'. Restart Vesta to unload it."

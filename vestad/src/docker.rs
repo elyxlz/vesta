@@ -100,8 +100,8 @@ pub(crate) const UPSTREAM_MOUNT_DEST: &str = "/run/vesta-upstream";
 // INVARIANT for any mount destination UNDER /root/agent/: the box's $HOME is a git
 // checkout of the upstream snapshot, and a mount puts a file/dir on disk that the
 // snapshot does not contain, so git reports it as untracked noise on every box unless
-// it is kept out of git status: a directory stays out of the sparse cone (agent/core),
-// a file is gitignored in agent/.gitignore (agent/constitution.md -> `/constitution.md`).
+// it is gitignored in the snapshot (agent/core -> the root .gitignore's `/agent/core/`,
+// agent/constitution.md -> agent/.gitignore's `/constitution.md`; both written by build-upstream.sh).
 // Adding a new /root/agent/ mount without doing this dirties every box's tree. The
 // upstream attach integration test (vestad/tests/server/upstream.rs) asserts a clean
 // tree after attach and fails if you forget. (ENV_MOUNT_DEST is under /run, so exempt.)
@@ -112,8 +112,95 @@ pub(crate) const MOUNT_DESTS: &[&str] = &[
     UPSTREAM_MOUNT_DEST,
 ];
 
+fn skill_link_entrypoint_step() -> String {
+    r#"cd ~
+SKILLS_DIR="agent/skills"
+CORE_SKILLS_DIR="agent/core/skills"
+CONFIG="agent/data/config.json"
+LEGACY_ACTIVE="agent/data/active-skills.txt"
+DEFAULTS="agent/core/default-skills.txt"
+LINK_DIR="$HOME/.claude/skills"
+
+mkdir -p "$SKILLS_DIR" agent/data
+
+# LEGACY(remove-when: the 2026-08-flat-checkout migration is fleet-applied): a cone box on its
+# first flat boot has no active_skills config yet and only its coned skills on disk. Capture
+# that cone as legacy input before the config write below. A flat box has no sparse-checkout
+# file, so this never fires there.
+if [ ! -f "$CONFIG" ] && [ ! -f "$LEGACY_ACTIVE" ] && [ -f .git/info/sparse-checkout ]; then
+  git sparse-checkout list 2>/dev/null | sed -n 's#^agent/skills/##p' | sort -u > "$LEGACY_ACTIVE" || true
+fi
+
+python3 - "$CONFIG" "$LEGACY_ACTIVE" "$DEFAULTS" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+config_path = pathlib.Path(sys.argv[1])
+legacy_path = pathlib.Path(sys.argv[2])
+defaults_path = pathlib.Path(sys.argv[3])
+skill_name_re = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+def text_names(path):
+    if not path.is_file():
+        return []
+    return [line.strip() for line in path.read_text().splitlines() if line.strip()]
+
+try:
+    loaded = json.loads(config_path.read_text()) if config_path.is_file() else {}
+except json.JSONDecodeError:
+    loaded = {}
+data = loaded if isinstance(loaded, dict) else {}
+configured = data["active_skills"] if isinstance(data.get("active_skills"), list) else None
+active = [name for name in configured if isinstance(name, str)] if configured is not None else text_names(legacy_path)
+names = [*active, *text_names(defaults_path)]
+data["active_skills"] = sorted({name.strip() for name in names if skill_name_re.fullmatch(name.strip())})
+tmp = config_path.with_name(f"{config_path.name}.tmp")
+tmp.write_text(json.dumps(data, indent=2) + "\n")
+tmp.replace(config_path)
+PY
+
+# Rebuilt from scratch each boot so a deactivated skill leaves no dangling link.
+rm -rf "$LINK_DIR"
+mkdir -p "$LINK_DIR"
+
+link_skill() {
+  [ -f "$1/SKILL.md" ] || return 0
+  ln -sfn "$HOME/$1" "$LINK_DIR/$(basename "$1")"
+}
+
+# Active optional skills first, then core skills (linked last so they win any name
+# collision, as core is authoritative).
+python3 - "$CONFIG" <<'PY' | while IFS= read -r name || [ -n "$name" ]; do
+import json
+import pathlib
+import re
+import sys
+
+config_path = pathlib.Path(sys.argv[1])
+skill_name_re = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+try:
+    data = json.loads(config_path.read_text())
+except (json.JSONDecodeError, OSError):
+    data = {}
+active = data["active_skills"] if isinstance(data, dict) and isinstance(data.get("active_skills"), list) else []
+for name in active:
+    if isinstance(name, str) and skill_name_re.fullmatch(name.strip()):
+        print(name.strip())
+PY
+  [ -n "$name" ] || continue
+  link_skill "$SKILLS_DIR/$name"
+done
+
+for d in "$CORE_SKILLS_DIR"/*/; do
+  [ -d "$d" ] && link_skill "${d%/}"
+done"#
+        .into()
+}
+
 pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
-    let steps: [String; 9] = [
+    let steps: [String; 8] = [
         // The engine venv is reached via PATH, never an exported UV_PROJECT_ENVIRONMENT (nor `uv
         // run`, which exports it): exported, it retargets every uv project, so a skill's `uv run`
         // re-syncs and can delete the engine venv. The core sync gets it scoped, since uv would
@@ -130,12 +217,10 @@ pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
         // persists across future rebuilds. `|| true` so a failed install never aborts boot.
         "command -v tmux >/dev/null 2>&1 || (apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tmux) || true".into(),
         "UV_PROJECT_ENVIRONMENT=/root/agent/.venv uv sync --frozen --project /root/agent/core".into(),
-        // ~/.claude/skills is a real directory of per-skill symlinks. Both
-        // /root/agent/skills/ and /root/agent/core/skills/ are flattened in;
-        // core entries are linked last so they win any name collision. Reset
-        // every boot so uninstalled skills don't leave dangling symlinks.
-        "rm -rf ~/.claude/skills && mkdir -p ~/.claude/skills".into(),
-        "for d in /root/agent/skills/*/SKILL.md /root/agent/core/skills/*/SKILL.md; do [ -f \"$d\" ] || continue; s=$(dirname \"$d\"); ln -sfn \"$s\" ~/.claude/skills/$(basename \"$s\"); done".into(),
+        // ~/.claude/skills is the symlink farm Claude Code discovers skills from, rebuilt
+        // every boot (before the SDK session starts) from config.active_skills:
+        // core skills always, optional skills only when active.
+        skill_link_entrypoint_step(),
         "test -f ~/.claude/settings.json || printf '{\"permissions\":{\"allow\":[]}}\\n' > ~/.claude/settings.json".into(),
         "cd /root/agent && exec .venv/bin/python -m core.main".into(),
     ];
@@ -1602,13 +1687,10 @@ fn assemble_binds(
     env_mount: String,
     constitution_mount: String,
     upstream_mount: String,
-    core_mount: Option<String>,
+    core_mount: String,
     user_mounts: &[crate::mounts::HostMount],
 ) -> Vec<String> {
-    let mut binds = vec![env_mount, constitution_mount, upstream_mount];
-    if let Some(core) = core_mount {
-        binds.push(core);
-    }
+    let mut binds = vec![env_mount, constitution_mount, upstream_mount, core_mount];
     for m in user_mounts {
         binds.push(crate::mounts::bind_string(m));
     }
@@ -1622,7 +1704,6 @@ pub struct ContainerSpec<'a> {
     pub image: &'a str,
     pub port: u16,
     pub agent_name: &'a str,
-    pub manage_core_code: bool,
     pub user_mounts: &'a [crate::mounts::HostMount],
 }
 
@@ -1636,7 +1717,6 @@ pub async fn create_container(
         image,
         port,
         agent_name,
-        manage_core_code,
         user_mounts,
     } = spec;
     let agent_token = generate_agent_token();
@@ -1668,16 +1748,11 @@ pub async fn create_container(
     labels.insert(LABEL_USER.to_string(), crate::paths::current_user());
     labels.insert(LABEL_AGENT_NAME.to_string(), agent_name.to_string());
 
-    let core_mount_opt = if manage_core_code {
-        Some(core_mount)
-    } else {
-        None
-    };
     let binds = assemble_binds(
         env_mount,
         constitution_mount,
         upstream_mount,
-        core_mount_opt,
+        core_mount,
         user_mounts,
     );
 
@@ -1697,7 +1772,7 @@ pub async fn create_container(
         GpuStatus::NoGpu => {}
     }
 
-    tracing::info!(agent = %agent_name, image = %image, manage_core_code, "creating container");
+    tracing::info!(agent = %agent_name, image = %image, "creating container");
 
     let host_config = bollard::models::HostConfig {
         binds: Some(binds),
@@ -1812,7 +1887,6 @@ pub async fn create_agent(
     docker: &Docker,
     name: &str,
     env_config: &AgentEnvConfig,
-    manage_core_code: bool,
     progress: &BuildProgress,
 ) -> Result<String, DockerError> {
     let name = if name == "ignisinextinctus" {
@@ -1837,11 +1911,9 @@ pub async fn create_agent(
     let image = resolve_image(docker, progress).await?;
 
     progress.set(BuildPhase::Preparing);
-    if manage_core_code {
-        tracing::info!(agent = %name, "ensuring agent code");
-        crate::agent_code::ensure_agent_code(&env_config.config_dir)
-            .map_err(|e| DockerError::Failed(format!("agent code: {e}")))?;
-    }
+    tracing::info!(agent = %name, "ensuring agent code");
+    crate::agent_code::ensure_agent_code(&env_config.config_dir)
+        .map_err(|e| DockerError::Failed(format!("agent code: {e}")))?;
 
     progress.set(BuildPhase::Creating);
     let port = allocate_port(&env_config.agents_dir)?;
@@ -1853,7 +1925,6 @@ pub async fn create_agent(
             image: &image,
             port,
             agent_name: name,
-            manage_core_code,
             user_mounts: &[],
         },
     )
@@ -2017,13 +2088,11 @@ fn reconcile_blocked_by_disk(available: Option<u64>) -> bool {
 /// Ensure all containers match expected config and running agents are restarted.
 /// Called once at startup after agent code and env files are ready.
 /// `agent_code_changed` is true when this boot re-extracted the embedded core (see
-/// `agent_code_is_stale`); running core-mounted agents are restarted to reload it.
-/// `manages_core_code` returns whether a given agent name has vestad-managed core code mounts (default true).
+/// `agent_code_is_stale`); running agents are restarted to reload it.
 pub async fn reconcile_containers(
     docker: &Docker,
     env_config: &AgentEnvConfig,
     agent_code_changed: bool,
-    manages_core_code: &(dyn Fn(&str) -> bool + Send + Sync),
     wants_running: &(dyn Fn(&str) -> bool + Send + Sync),
     mounts_for: &(dyn Fn(&str) -> Vec<crate::mounts::HostMount> + Send + Sync),
     rebuilding: &RebuildTracker,
@@ -2033,7 +2102,6 @@ pub async fn reconcile_containers(
         cname: &'a str,
         raw: bollard::models::ContainerInspectResponse,
         desired_mounts: Vec<crate::mounts::HostMount>,
-        has_core_mounts: bool,
         // Held for the agent's place in the queue; a rebuilt agent's mark is kept until
         // reconcile ends (phase 3 has started it), so it never dips back to `Stopped`
         // while a later agent's rebuild runs. Dropped early only when the batch is
@@ -2112,16 +2180,6 @@ pub async fn reconcile_containers(
                 continue;
             }
         };
-        let has_core_mounts = mounts_have_core_code(raw.mounts.as_deref().unwrap_or(&[]));
-        let settings_says = manages_core_code(name);
-        if has_core_mounts != settings_says {
-            tracing::warn!(
-                agent = %name,
-                settings_says,
-                container_has_core_mounts = has_core_mounts,
-                "settings.manage_agent_code disagrees with container, using container as source of truth. fix by destroying and recreating the agent."
-            );
-        }
         let desired_mounts = mounts_for(name);
         if !needs_rebuild(cname, &raw, &desired_mounts) {
             tracing::info!(agent = %name, "config ok, no rebuild needed");
@@ -2137,14 +2195,13 @@ pub async fn reconcile_containers(
             cname,
             raw,
             desired_mounts,
-            has_core_mounts,
             mark: rebuilding.mark(name),
         });
     }
     let mut agent_code_ok = false;
     let mut rebuilt_marks = Vec::new();
     for item in pending {
-        if item.has_core_mounts && !agent_code_ok {
+        if !agent_code_ok {
             match crate::agent_code::ensure_agent_code(&env_config.config_dir) {
                 Ok(_) => agent_code_ok = true,
                 Err(e) => {
@@ -2191,16 +2248,13 @@ pub async fn reconcile_containers(
             .and_then(|r| r.state.as_ref())
             .and_then(|s| s.running)
             .unwrap_or(false);
-        let has_core_mount = raw
-            .as_ref()
-            .is_some_and(|r| mounts_have_core_code(r.mounts.as_deref().unwrap_or(&[])));
         if wants_running(name) {
             if !running {
                 tracing::info!(agent = %name, "starting (desired running)");
                 if !start_container(docker, cname).await {
                     tracing::error!(agent = %name, "boot-start failed");
                 }
-            } else if agent_code_changed && has_core_mount {
+            } else if agent_code_changed {
                 // vestad re-extracted the embedded core this boot. A running agent still holds the
                 // old code in memory and its core mount points at the now-replaced dir, so restart
                 // it to reload the new core and re-bind the mount. (Boot-started agents above came
@@ -2265,15 +2319,6 @@ pub async fn destroy_agent(
     Ok(())
 }
 
-/// Returns whether the container's mount list includes the core-code bind mount. This
-/// is the source of truth for `manage_agent_code` post-creation: settings.json may drift
-/// via hand-edits, but the container's mount config reflects how it was actually created.
-fn mounts_have_core_code(mounts: &[bollard::models::MountPoint]) -> bool {
-    mounts
-        .iter()
-        .any(|m| m.destination.as_deref() == Some(CORE_MOUNT_DEST))
-}
-
 /// Check if a container's config diverges from what `create_container` would produce.
 /// Operates on a pre-fetched inspect response so callers can do one Docker round-trip
 /// even when they also need other fields (mount topology, port, status). Mount
@@ -2334,6 +2379,18 @@ fn needs_rebuild(
         .any(|m| m.destination.as_deref() == Some(UPSTREAM_MOUNT_DEST));
     if !has_upstream_mount {
         tracing::info!(container = %cname, "rebuild needed: missing upstream mount");
+        return true;
+    }
+
+    // Core is always a vestad-managed read-only mount. A legacy box created with the removed
+    // `--no-manage-core-code` escape hatch lacks it; rebuilding here mounts it, converging the
+    // fleet to managed core on the next vestad boot (the flat-checkout migration then drops the
+    // box's now-shadowed writable agent/core from its checkout).
+    let has_core_mount = mounts
+        .iter()
+        .any(|m| m.destination.as_deref() == Some(CORE_MOUNT_DEST));
+    if !has_core_mount {
+        tracing::info!(container = %cname, "rebuild needed: missing core-code mount");
         return true;
     }
 
@@ -2414,9 +2471,9 @@ async fn resolve_existing_port(
 
 /// Recreate a container with the latest container config (entrypoint, mounts, env file)
 /// while preserving the filesystem. Snapshots the old container, removes it, and creates
-/// a new one from the snapshot. Mount topology is preserved from the existing container,
-/// not re-derived from settings: `manage_agent_code` is fixed at create time, so the
-/// running container is the source of truth for which bind mounts to attach.
+/// a new one from the snapshot. User mount topology is preserved from the existing
+/// container, not re-derived from settings, so the running container is the source of
+/// truth for which bind mounts to attach.
 pub async fn rebuild_agent(
     docker: &Docker,
     name: &str,
@@ -2437,8 +2494,6 @@ pub async fn rebuild_agent(
     // The image this container runs on -- its previous snapshot, orphaned once we recreate
     // the container below. Captured before removal so we can drop it afterwards.
     let prev_image = raw.config.as_ref().and_then(|c| c.image.clone());
-
-    let manage_core_code = mounts_have_core_code(raw.mounts.as_deref().unwrap_or(&[]));
 
     let port = resolve_existing_port(docker, &cname, &info, name, &env_config.agents_dir).await?;
 
@@ -2472,7 +2527,6 @@ pub async fn rebuild_agent(
             image: &backup_tag,
             port,
             agent_name: name,
-            manage_core_code,
             user_mounts,
         },
     )
@@ -2535,8 +2589,6 @@ pub async fn rename_agent(
         )));
     }
 
-    let manage_core_code = mounts_have_core_code(raw.mounts.as_deref().unwrap_or(&[]));
-
     let port =
         resolve_existing_port(docker, &old_container, &info, old_name, &env_config.agents_dir).await?;
 
@@ -2578,7 +2630,6 @@ pub async fn rename_agent(
             image: &snapshot_tag,
             port,
             agent_name: new_name,
-            manage_core_code,
             user_mounts,
         },
     )
@@ -2699,11 +2750,12 @@ mod tests {
             "/e:/run/vestad-env:ro,z".into(),
             "/c:/root/agent/constitution.md:ro,z".into(),
             "/u/upstream:/run/vesta-upstream:ro,z".into(),
-            None,
+            "/code/core:/root/agent/core:ro,z".into(),
             std::slice::from_ref(&m),
         );
-        assert_eq!(binds.len(), 4);
-        assert_eq!(binds[3], "/mnt/media:/mnt/media:ro");
+        assert_eq!(binds.len(), 5);
+        assert_eq!(binds[3], "/code/core:/root/agent/core:ro,z");
+        assert_eq!(binds[4], "/mnt/media:/mnt/media:ro");
     }
 
     #[test]
@@ -2808,6 +2860,33 @@ mod tests {
     }
 
     #[test]
+    fn entrypoint_inlines_skill_linking() {
+        let cmd = agent_container_entrypoint_cmd();
+        let script = cmd.last().expect("entrypoint script");
+        assert!(
+            script.contains("CONFIG=\"agent/data/config.json\""),
+            "entrypoint must read runtime active skills from agent config: {script}"
+        );
+        assert!(
+            script.contains("DEFAULTS=\"agent/core/default-skills.txt\""),
+            "entrypoint must read default skills from agent/core: {script}"
+        );
+        assert!(
+            script.contains("ln -sfn \"$HOME/$1\" \"$LINK_DIR/$(basename \"$1\")\""),
+            "entrypoint must rebuild the skill symlink farm inline: {script}"
+        );
+        assert!(
+            !script.contains("link-skills.sh"),
+            "entrypoint must not call the deleted link-skills.sh helper: {script}"
+        );
+        assert!(
+            !script.contains("agent/skills/active-skills.txt")
+                && !script.contains("agent/skills/default-skills.txt"),
+            "entrypoint must not use the old active/default skill paths: {script}"
+        );
+    }
+
+    #[test]
     fn entrypoint_never_exports_uv_project_environment_into_the_agent() {
         let cmd = agent_container_entrypoint_cmd();
         let script = cmd.last().expect("entrypoint script");
@@ -2823,24 +2902,6 @@ mod tests {
             script.contains("export PATH=\"/root/agent/.venv/bin:"),
             "the engine venv must lead PATH so its tools resolve without uv: {script}"
         );
-    }
-
-    #[test]
-    fn mounts_have_core_code_accepts_legacy_and_single_mount_shapes() {
-        let mount_with_dest = |dest: &str| bollard::models::MountPoint {
-            destination: Some(dest.to_string()),
-            ..Default::default()
-        };
-        let single = vec![mount_with_dest(CORE_MOUNT_DEST)];
-        let legacy = vec![
-            mount_with_dest(CORE_MOUNT_DEST),
-            mount_with_dest("/root/agent/pyproject.toml"),
-            mount_with_dest("/root/agent/uv.lock"),
-        ];
-        let none = vec![mount_with_dest(ENV_MOUNT_DEST)];
-        assert!(mounts_have_core_code(&single));
-        assert!(mounts_have_core_code(&legacy));
-        assert!(!mounts_have_core_code(&none));
     }
 
     fn inspect_with_started_at(
@@ -3436,6 +3497,10 @@ mod tests {
         needs_rebuild(cname, &info, desired)
     }
 
+    fn temp_core_mount() -> tempfile::TempDir {
+        tempfile::TempDir::new().expect("core tempdir")
+    }
+
     /// Best-effort cleanup via docker CLI (safe to call from Drop inside tokio).
     fn docker_cleanup(args: &[&str]) {
         std::process::Command::new("docker")
@@ -3655,9 +3720,11 @@ mod tests {
         let tc = TestContainer::new("rebuild-fresh");
         let env_file = tempfile::NamedTempFile::new().expect("tempfile");
         std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
+        let core_dir = temp_core_mount();
         let upstream_dir = tempfile::TempDir::new().expect("tempdir");
         let mounts = [
             (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]),
+            (core_dir.path().to_str().unwrap(), CORE_MOUNT_DEST),
             (upstream_dir.path().to_str().unwrap(), UPSTREAM_MOUNT_DEST),
         ];
 
@@ -3686,12 +3753,14 @@ mod tests {
         let tc = TestContainer::new("rebuild-upstream");
         let env_file = tempfile::NamedTempFile::new().expect("tempfile");
         std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
+        let core_dir = temp_core_mount();
         let env_mount = (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]);
+        let core_mount = (core_dir.path().to_str().unwrap(), CORE_MOUNT_DEST);
 
         create_test_container_async(
             &docker,
             &tc,
-            &[env_mount],
+            &[env_mount, core_mount],
             agent_container_entrypoint_cmd(),
             NETWORK_MODE,
             RESTART_POLICY,
@@ -3749,9 +3818,11 @@ mod tests {
         let tc = TestContainer::new("rebuild-cmd");
         let env_file = tempfile::NamedTempFile::new().expect("tempfile");
         std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
+        let core_dir = temp_core_mount();
         let upstream_dir = tempfile::TempDir::new().expect("tempdir");
         let mounts = [
             (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]),
+            (core_dir.path().to_str().unwrap(), CORE_MOUNT_DEST),
             (upstream_dir.path().to_str().unwrap(), UPSTREAM_MOUNT_DEST),
         ];
 
@@ -3795,7 +3866,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore]
-    async fn test_needs_rebuild_false_on_missing_code_mounts() {
+    async fn test_needs_rebuild_true_on_missing_core_mount() {
         let docker = test_docker();
         let tc = TestContainer::new("rebuild-nocode");
         let env_file = tempfile::NamedTempFile::new().expect("tempfile");
@@ -3817,8 +3888,8 @@ mod tests {
         .await;
 
         assert!(
-            !inspect_then_needs_rebuild(&docker, &tc.name, &[]).await,
-            "missing core code mounts should NOT trigger rebuild"
+            inspect_then_needs_rebuild(&docker, &tc.name, &[]).await,
+            "missing core code mount SHOULD trigger rebuild"
         );
     }
 
@@ -3829,9 +3900,11 @@ mod tests {
         let tc = TestContainer::new("rebuild-net");
         let env_file = tempfile::NamedTempFile::new().expect("tempfile");
         std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
+        let core_dir = temp_core_mount();
         let upstream_dir = tempfile::TempDir::new().expect("tempdir");
         let mounts = [
             (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]),
+            (core_dir.path().to_str().unwrap(), CORE_MOUNT_DEST),
             (upstream_dir.path().to_str().unwrap(), UPSTREAM_MOUNT_DEST),
         ];
 
@@ -3861,9 +3934,11 @@ mod tests {
         let tc = TestContainer::new("rebuild-restart");
         let env_file = tempfile::NamedTempFile::new().expect("tempfile");
         std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
+        let core_dir = temp_core_mount();
         let upstream_dir = tempfile::TempDir::new().expect("tempdir");
         let mounts = [
             (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]),
+            (core_dir.path().to_str().unwrap(), CORE_MOUNT_DEST),
             (upstream_dir.path().to_str().unwrap(), UPSTREAM_MOUNT_DEST),
         ];
 
@@ -3903,9 +3978,11 @@ mod tests {
         let img = TestImage::new("rebuild-full");
         let env_file = tempfile::NamedTempFile::new().expect("tempfile");
         std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
+        let core_dir = temp_core_mount();
         let upstream_dir = tempfile::TempDir::new().expect("tempdir");
         let mounts = [
             (env_file.path().to_str().unwrap(), MOUNT_DESTS[0]),
+            (core_dir.path().to_str().unwrap(), CORE_MOUNT_DEST),
             (upstream_dir.path().to_str().unwrap(), UPSTREAM_MOUNT_DEST),
         ];
 

@@ -91,7 +91,7 @@ def _run(args: list[str], *, session: str | None = None, timeout: float = 120.0)
     try:
         result = subprocess.run(["browser", *args], capture_output=True, text=True, env=env, timeout=timeout, check=False)
     except FileNotFoundError as exc:
-        raise CaptureError("the `browser` skill is not installed; cannot capture Microsoft tokens on a locked tenant") from exc
+        raise CaptureError("the `browser` skill is not active; cannot capture Microsoft tokens on a locked tenant") from exc
     except subprocess.TimeoutExpired:
         return ""
     return result.stdout.strip()

@@ -5,7 +5,7 @@ use vesta_tests::{agent_container_name, exec_in_container, mark_first_start_done
 #[test]
 fn agent_attaches_to_the_upstream_through_the_mounted_repo() {
     let client = SERVER.client();
-    let agent = TestAgent::create_with_manage_agent_code(&client, &unique_agent("up-attach")).unwrap();
+    let agent = TestAgent::create(&client, &unique_agent("up-attach")).unwrap();
     mark_first_start_done(&agent.name).unwrap();
     client.restart_agent(&agent.name).unwrap();
     client.wait_until_running(&agent.name, 180).expect("agent up");
@@ -19,16 +19,17 @@ fn agent_attaches_to_the_upstream_through_the_mounted_repo() {
     assert!(attach.contains("attached:"), "attach output: {attach}");
 
     // Enforces the MOUNT_DESTS invariant (see docker.rs): anything mounted under
-    // /root/agent/ that isn't in the upstream snapshot must be kept out of git status
-    // (out-of-cone for a dir, or gitignored in agent/.gitignore for a file). An untracked
-    // path here means a new mount was added without doing that.
+    // /root/agent/ that isn't in the upstream snapshot must be gitignored in the snapshot
+    // (agent/core -> the root .gitignore's /agent/core/, constitution.md -> agent/.gitignore's
+    // /constitution.md), so the flat checkout stays clean. An untracked path here means a new
+    // mount was added without doing that.
     let status = exec_in_container(&container, "cd ~ && git status --porcelain").expect("status");
     assert_eq!(
         status.trim(),
         "",
         "fresh attach left a dirty tree: {status}\n\
-         A vestad-mounted path under /root/agent/ isn't handled. If it's a new mount, add it to \
-         the sparse cone (dir) or agent/.gitignore (file) -- see the MOUNT_DESTS invariant in docker.rs.",
+         A vestad-mounted path under /root/agent/ isn't handled. If it's a new mount, gitignore it \
+         in agent/.gitignore -- see the MOUNT_DESTS invariant in docker.rs.",
     );
 
     let tags = exec_in_container(&container, "cd ~ && git tag -l 'agent-v*'").expect("tags");

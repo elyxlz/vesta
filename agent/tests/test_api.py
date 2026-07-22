@@ -276,6 +276,9 @@ def test_config_update_accepts_general_fields_and_returns_sparse(config):
 
     # Any general (non-provider-owned) config field may be set, by its VestaConfig name.
     assert validate_config_updates(config, {"agent_personality": "playful"}) == {"agent_personality": "playful"}
+    assert validate_config_updates(config, {"active_skills": ["whatsapp", "tasks", "tasks"]}) == {
+        "active_skills": ["tasks", "whatsapp"],
+    }
     assert validate_config_updates(config, {"log_level": "DEBUG", "response_timeout": 30}) == {
         "log_level": "DEBUG",
         "response_timeout": 30,
@@ -285,8 +288,10 @@ def test_config_update_accepts_general_fields_and_returns_sparse(config):
 def test_config_update_null_clears_a_key(config):
     from core.config import validate_config_updates
 
-    # A null is preserved (not dropped) so the handler can clear that key in the store.
+    # Nullable fields preserve null so the handler can clear the store key; list fields
+    # canonicalize null to their empty value.
     assert validate_config_updates(config, {"nightly_memory_hour": None}) == {"nightly_memory_hour": None}
+    assert validate_config_updates(config, {"active_skills": None}) == {"active_skills": []}
 
 
 def test_config_update_rejects_unknown_field(config):
@@ -302,6 +307,7 @@ def test_config_update_rejects_bad_values(config):
     for bad in [
         {"nightly_memory_hour": 99},
         {"log_level": "LOUD"},
+        {"active_skills": ["../core"]},
     ]:
         with pytest.raises(pyd.ValidationError):
             validate_config_updates(config, bad)

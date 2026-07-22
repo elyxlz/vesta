@@ -1,28 +1,9 @@
 #!/usr/bin/env bash
-# Install a skill: add its directory to the sparse-checkout cone. Instant and offline -
-# the content is already in the local branch history from the last sync/attach.
-set -euo pipefail
-SKILL_NAME="${1:?Usage: skills-install <skill-name>}"
-cd ~
-DEST="agent/skills/$SKILL_NAME"
-
-if [ -d "$DEST" ]; then
-    echo "Skill '$SKILL_NAME' is already installed."
-    exit 0
-fi
-
-# Self-init a virgin workspace. Skipped when already attached: attach fetches, and
-# installs from local history must stay offline.
-[ -d .git ] || bash ~/agent/core/skills/upstream-sync/scripts/attach.sh
-
-# Validate before touching the cone; attach guarantees HEAD, the install source.
-git rev-parse -q --verify "HEAD:$DEST" >/dev/null || {
-    echo "Error: skill '$SKILL_NAME' not found in the registry (agent/skills/index.json lists all)." >&2
-    exit 1
-}
-bash ~/agent/core/skills/upstream-sync/scripts/set-cone.sh --add "$DEST"
-
-echo "Installed '$SKILL_NAME'. Restart Vesta to activate it."
-if [ -f "$DEST/SETUP.md" ]; then
-    echo "This skill requires setup, read $DEST/SETUP.md for instructions."
-fi
+# LEGACY(remove-when: every migration that references skills-install by path -
+# 2026-06-rename-overgeneric-skills, 2026-06-service-default-skill, 2026-06-personality-out-of-core,
+# 2026-07-contacts-backfill - is fleet-applied): forwards to the renamed command. Those released
+# migration files are immutable and call this path; keep the shim so they don't break mid-converge.
+# A skipped-version pre-flat box can still be a sparse cone when an old migration calls this; the
+# forwarded command may not see coned-out skill dirs, but today's legacy targets are all defaults
+# that the boot entrypoint imports into active_skills during the flat conversion boot.
+exec "$(dirname "$0")/skills-activate" "$@"

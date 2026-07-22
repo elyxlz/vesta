@@ -219,18 +219,7 @@ impl Client {
     }
 
     pub fn create_agent(&self, name: &str) -> Result<String, String> {
-        self.create_agent_ex(name, None)
-    }
-
-    pub fn create_agent_ex(
-        &self,
-        name: &str,
-        manage_agent_code: Option<bool>,
-    ) -> Result<String, String> {
-        let mut body = serde_json::json!({"name": name});
-        if let Some(m) = manage_agent_code {
-            body["manage_agent_code"] = serde_json::json!(m);
-        }
+        let body = serde_json::json!({"name": name});
         let resp = self.post_json("/agents", &body)?;
         let v: serde_json::Value = resp
             .into_body()

@@ -38,10 +38,14 @@ def test_first_build_creates_repo_tag_and_bundle(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     repo = ws / "upstream.git"
     files = _git(["ls-tree", "-r", "--name-only", BRANCH], repo)
-    assert "agent/core/pyproject.toml" in files
+    # The engine (agent/core) is a read-only mount, never snapshot content: stripped from the
+    # tree and gitignored so the mount is invisible on a box.
+    assert "agent/core/pyproject.toml" not in files
     assert "agent/skills/tasks/SKILL.md" in files
     assert "agent/MEMORY.md" in files
     assert ".gitignore" in files.splitlines()  # script-owned root scoping file
+    root_ignore = _git(["show", f"{BRANCH}:.gitignore"], repo)
+    assert "/agent/core/\n" in root_ignore  # root ignore scopes the mount out
     assert ".vestad-fingerprint" not in files and "agent/.vestad-fingerprint" not in files
     assert "agent-v0.1.170" in _git(["tag"], repo)
     assert (ws / "workspace.bundle").is_file()
@@ -62,8 +66,10 @@ def test_unchanged_content_is_noop(tmp_path):
 def test_new_version_appends_one_commit_with_new_tag(tmp_path):
     content = _content(tmp_path)
     _build(tmp_path, content, "0.1.170")
-    (content / "core/loops.py").write_text("# core at 0.1.171\n")
+    # The engine change alone is invisible (core is stripped); a release also moves tracked
+    # content, so bump a skill so the snapshot tree actually changes.
     (content / "core/pyproject.toml").write_text('[project]\nname = "vesta"\nversion = "0.1.171"\n')
+    (content / "skills/tasks/SKILL.md").write_text("---\nname: tasks\ndescription: t 0.1.171\n---\n")
     ws, r = _build(tmp_path, content, "0.1.171")
     assert r.returncode == 0, r.stdout + r.stderr
     repo = ws / "upstream.git"

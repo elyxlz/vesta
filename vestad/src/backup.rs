@@ -260,7 +260,6 @@ pub async fn restore_backup(
     name: &str,
     backup_id: &str,
     env_config: &AgentEnvConfig,
-    manage_core_code: bool,
     user_mounts: &[crate::mounts::HostMount],
 ) -> Result<(), DockerError> {
     validate_name(name)?;
@@ -322,7 +321,6 @@ pub async fn restore_backup(
             image: &image,
             port,
             agent_name: name,
-            manage_core_code,
             user_mounts,
         },
     )

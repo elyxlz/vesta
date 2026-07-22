@@ -444,7 +444,6 @@ async fn list_agents_handler(State(state): State<SharedState>) -> impl IntoRespo
 #[derive(Deserialize)]
 struct CreateBody {
     name: Option<String>,
-    manage_agent_code: Option<bool>,
 }
 
 async fn create_agent_handler(
@@ -456,20 +455,9 @@ async fn create_agent_handler(
     if name.is_empty() {
         return Err(err_response(StatusCode::BAD_REQUEST, "invalid agent name"));
     }
-    let manage_core_code = body.manage_agent_code.unwrap_or(true);
-    tracing::info!(name = %name, manage_core_code, "creating agent");
+    tracing::info!(name = %name, "creating agent");
 
     let _guard = agent_write_guard(&state, &name).await;
-
-    if !manage_core_code {
-        let mut settings = state.settings.write().await;
-        settings
-            .agents
-            .entry(name.clone())
-            .or_default()
-            .manage_agent_code = false;
-        save_settings(&settings);
-    }
 
     // Create + start an empty agent. Credentials and preferences arrive via a separate
     // PUT /agents/{name}/config once the agent is up — the agent owns its own credential
@@ -482,7 +470,7 @@ async fn create_agent_handler(
         phases.set_build_phase(&progress_name, phase);
     }));
 
-    let result = create_and_start(&state, &name, manage_core_code, &progress).await;
+    let result = create_and_start(&state, &name, &progress).await;
     // On success, retire the bridging build phase only once the poll lists the new container, so the
     // synthetic mid-build roster row is replaced in place. Clearing it while the container is not yet
     // listed drops the row entirely for a poll, emitting a spurious `agent_removed` that flaps the
@@ -521,18 +509,11 @@ async fn wait_for_agent_listed(state: &SharedState, name: &str) {
 async fn create_and_start(
     state: &SharedState,
     name: &str,
-    manage_core_code: bool,
     progress: &docker::BuildProgress,
 ) -> Result<String, (StatusCode, Json<serde_json::Value>)> {
-    let name = docker::create_agent(
-        &state.docker,
-        name,
-        &state.env_config,
-        manage_core_code,
-        progress,
-    )
-    .await
-    .map_err(map_docker_err)?;
+    let name = docker::create_agent(&state.docker, name, &state.env_config, progress)
+        .await
+        .map_err(map_docker_err)?;
 
     progress.set(docker::BuildPhase::Starting);
     docker::start_agent(&state.docker, &name)
@@ -1810,7 +1791,6 @@ async fn restore_backup_handler(
     spawn_pipeline_sse(async move {
         let _guard = agent_write_guard(&state, &path.name).await;
         let _file_lock = backup::agent_file_lock(&path.name)?;
-        let manage_core_code = state.settings.read().await.manages_core_code(&path.name);
         let user_mounts = {
             let settings = state.settings.read().await;
             settings.agent_mounts(&path.name)
@@ -1820,7 +1800,6 @@ async fn restore_backup_handler(
             &path.name,
             &path.backup_id,
             &state.env_config,
-            manage_core_code,
             &user_mounts,
         )
         .await?;
@@ -2034,17 +2013,6 @@ async fn gateway_info_handler(State(state): State<SharedState>) -> Json<serde_js
 }
 
 // --- Per-agent settings ---
-
-async fn get_agent_settings_handler(
-    State(state): State<SharedState>,
-    Path(name): Path<String>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let settings = state.settings.read().await;
-    let agent = settings.agents.get(&name).cloned().unwrap_or_default();
-    Ok(Json(serde_json::json!({
-        "manage_agent_code": agent.manage_agent_code,
-    })))
-}
 
 async fn get_agent_backup_settings_handler(
     State(state): State<SharedState>,
@@ -2382,7 +2350,6 @@ pub fn build_router(state: SharedState) -> Router {
             "/agents/{name}/constitution",
             axum::routing::put(set_constitution_handler),
         )
-        .route("/agents/{name}/settings", get(get_agent_settings_handler))
         .route(
             "/agents/{name}/settings/backup",
             get(get_agent_backup_settings_handler),
@@ -2881,7 +2848,6 @@ pub async fn run_server(cfg: ServerConfig) {
         tracing::error!(error = %e, "upstream repo build failed — aborting startup");
         std::process::exit(1);
     }
-    let agent_settings = load_settings().agents.clone();
     let (app_state, mobile_app_worker) = AppState::new(
         api_key,
         env_config,
@@ -2906,7 +2872,6 @@ pub async fn run_server(cfg: ServerConfig) {
             &reconcile_docker,
             &reconcile_env,
             agent_code_changed,
-            &move |name| agent_settings.get(name).is_none_or(|s| s.manage_agent_code),
             // Desired-run state is read LIVE (not a boot snapshot): a stop/start the user issues
             // during the slow reconcile window would otherwise be reverted by the start/stop step.
             &|name| {

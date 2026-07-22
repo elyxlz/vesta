@@ -2,7 +2,7 @@
 set -u
 
 # Dashboard daemon lifecycle: start|stop|status. Wraps the self-healing
-# `serve` script (which rebuilds node_modules/dist if a sparse-checkout prune
+# `serve` script (which rebuilds node_modules/dist if a checkout or clean
 # dropped them) under a screen session, so the agent manages the dashboard
 # through one command instead of raw screen incantations.
 
