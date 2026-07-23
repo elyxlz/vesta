@@ -44,5 +44,7 @@ if ! git rev-parse -q --verify HEAD >/dev/null; then
   git reset --mixed >/dev/null
   git checkout-index -f -- .gitignore
   git ls-files -z | while IFS= read -r -d '' f; do [ -e "$f" ] || git checkout-index -f -- "$f"; done
+  echo "attached: branch $NAME on $TAG"
+else
+  echo "upstream ready: $TAG"
 fi
-echo "attached: branch $NAME on $TAG"

@@ -174,7 +174,7 @@ def collect_boot_turns(
     BOOT_RESTORE_ORIENTATION to restore daemons first."""
     turns: list[str] = []
     turns.extend(pending_migration_turns(state=state, config=config, first_start=first_start))
-    sync_turn = upstream_sync_turn(state=state, config=config, first_start=first_start)
+    sync_turn = upstream_sync_turn(config=config, first_start=first_start)
     if sync_turn is not None:
         turns.append(sync_turn)
     config_turn = config_issues_turn(config_issues)
