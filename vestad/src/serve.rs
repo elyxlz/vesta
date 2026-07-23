@@ -19,8 +19,8 @@ use crate::settings::{
 };
 use crate::state::{err_response, map_docker_err, ok_json, AppState, SharedState};
 use crate::{
-    agent_provider, agent_proxy, agent_status, auth, backup, docker, mobile_app,
-    self_update, systemd, update_check, update_window,
+    agent_provider, agent_proxy, agent_status, auth, backup, docker, mobile_app, self_update,
+    systemd, update_check, update_window,
 };
 
 const GATEWAY_RESTART_DELAY_MS: u64 = 200;
@@ -498,7 +498,10 @@ async fn wait_for_agent_listed(state: &SharedState, name: &str) {
         {
             return;
         }
-        if tokio::time::timeout_at(deadline, agents_rx.changed()).await.is_err() {
+        if tokio::time::timeout_at(deadline, agents_rx.changed())
+            .await
+            .is_err()
+        {
             return;
         }
     }
@@ -1122,9 +1125,18 @@ const FILE_SIZE_LIMIT: u64 = 2 * 1024 * 1024; // 2 MiB
 const SENSITIVE_PATHS: &[&str] = &[
     "/root/agent/data/events.db",
     "/root/agent/data/session_id",
+    "/root/agent/data/config.json",
     "/root/.claude/.credentials.json",
     "/run/vestad-env",
 ];
+const SENSITIVE_PATH_PREFIXES: &[&str] = &["/root/agent/data/claude-code-proxy"];
+
+fn is_sensitive_path(p: &str) -> bool {
+    SENSITIVE_PATHS.contains(&p)
+        || SENSITIVE_PATH_PREFIXES
+            .iter()
+            .any(|prefix| p == *prefix || p.starts_with(&format!("{prefix}/")))
+}
 
 fn validate_file_path(p: &str) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
     if !p.starts_with("/root/")
@@ -1144,7 +1156,7 @@ fn is_readonly_path(p: &str) -> bool {
             return true;
         }
     }
-    SENSITIVE_PATHS.contains(&p)
+    is_sensitive_path(p)
 }
 
 fn shell_escape(s: &str) -> String {
@@ -1238,7 +1250,7 @@ async fn read_file_handler(
     docker::validate_name(&name).map_err(map_docker_err)?;
     validate_file_path(&q.path)?;
 
-    if SENSITIVE_PATHS.contains(&q.path.as_str()) {
+    if is_sensitive_path(&q.path) {
         return Err(err_response(StatusCode::FORBIDDEN, "file is not readable"));
     }
 
@@ -1461,6 +1473,9 @@ mod file_path_tests {
             ("/run/vestad-env", true),
             ("/root/agent/data/events.db", true),
             ("/root/agent/data/session_id", true),
+            ("/root/agent/data/config.json", true),
+            ("/root/agent/data/claude-code-proxy/codex/auth.json", true),
+            ("/root/agent/data/claude-code-proxy/other.json", true),
             ("/root/.claude/.credentials.json", true),
             ("/root/agent/data/foo.json", false),
             ("/root/agent/prompts/x.md", false),
@@ -1606,14 +1621,22 @@ async fn user_notification_handler(
     Json(body): Json<UserNotificationBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     if !valid_user_notification_kind(&body.kind) {
-        return Err(err_response(StatusCode::BAD_REQUEST, "unknown user notification kind"));
+        return Err(err_response(
+            StatusCode::BAD_REQUEST,
+            "unknown user notification kind",
+        ));
     }
     let title = truncate_chars(&body.title, USER_NOTIFICATION_TITLE_MAX_CHARS);
     let preview = truncate_chars(&body.body, USER_NOTIFICATION_BODY_MAX_CHARS);
+    state.sync_hub.publish_user_notification(
+        &name,
+        body.kind.clone(),
+        title.clone(),
+        preview.clone(),
+    );
     state
-        .sync_hub
-        .publish_user_notification(&name, body.kind.clone(), title.clone(), preview.clone());
-    state.mobile_app.push_user_notification(&name, &body.kind, &title, &preview);
+        .mobile_app
+        .push_user_notification(&name, &body.kind, &title, &preview);
     Ok(ok_json())
 }
 
@@ -2434,7 +2457,10 @@ pub fn build_router(state: SharedState) -> Router {
             post(agent_status::invalidate_service_handler),
         )
         .route("/agents/{name}/account-token", post(account_token_handler))
-        .route("/agents/{name}/user-notification", post(user_notification_handler))
+        .route(
+            "/agents/{name}/user-notification",
+            post(user_notification_handler),
+        )
         .route(
             "/agents/{name}/workspace.bundle",
             get(workspace_bundle_handler),

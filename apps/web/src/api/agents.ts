@@ -1,55 +1,20 @@
 import { apiJson, apiFetch, jsonInit } from "./client";
-import type { BuildPhase, NotificationEvent, VestaEvent } from "@vesta/core";
+import {
+  normalizeProviderInfo,
+  providerPutBody,
+  type BuildPhase,
+  type NotificationEvent,
+  type ProviderInfo,
+  type ProviderSelection,
+  type VestaEvent,
+} from "@vesta/core";
 
 export type { BuildPhase };
 
 export type { NotificationEvent };
 
-export interface KeyProviderConfig {
-  key: string;
-  model: string;
-}
-
-export type ProviderResult =
-  | {
-      kind: "claude";
-      credentials: string;
-      model?: string;
-      maxContextTokens?: number;
-    }
-  | {
-      kind: "openrouter" | "zai" | "kimi";
-      config: KeyProviderConfig;
-      maxContextTokens?: number;
-    }
-  | {
-      kind: "openai";
-      credentials: string;
-      model: string;
-      maxContextTokens?: number;
-    };
-
-/// The nested provider body for `PUT /provider` (sign in / switch). The claude OAuth blob travels as
-/// a transient `credentials` field (written to the SDK file, never stored); openrouter carries `key`.
-type ProviderBody =
-  | {
-      kind: "claude";
-      credentials: string;
-      model?: string;
-      max_context_tokens?: number;
-    }
-  | {
-      kind: "openrouter" | "zai" | "kimi";
-      model: string;
-      key: string;
-      max_context_tokens?: number;
-    }
-  | {
-      kind: "openai";
-      credentials: string;
-      model: string;
-      max_context_tokens?: number;
-    };
+export type ProviderResult = ProviderSelection;
+export type { ProviderInfo };
 
 /// Provision/attach a provider: map the chosen `ProviderResult` to the `PUT /provider` body, write any
 /// prefs (personality/timezone) to `PUT /config`, then restart once to apply. Re-provisioning an
@@ -61,33 +26,7 @@ export async function setProvider(
   timezone?: string,
 ): Promise<void> {
   const enc = encodeURIComponent(name);
-  const body: ProviderBody =
-    result.kind === "claude"
-      ? {
-          kind: "claude",
-          credentials: result.credentials,
-          ...(result.model ? { model: result.model } : {}),
-          ...(result.maxContextTokens != null
-            ? { max_context_tokens: result.maxContextTokens }
-            : {}),
-        }
-      : result.kind === "openai"
-        ? {
-            kind: "openai",
-            credentials: result.credentials,
-            model: result.model,
-            ...(result.maxContextTokens != null
-              ? { max_context_tokens: result.maxContextTokens }
-              : {}),
-          }
-        : {
-            kind: result.kind,
-            model: result.config.model,
-            key: result.config.key,
-            ...(result.maxContextTokens != null
-              ? { max_context_tokens: result.maxContextTokens }
-              : {}),
-          };
+  const body = providerPutBody(result);
   await apiFetch(`/agents/${enc}/provider`, jsonInit("PUT", body));
   const prefs: Record<string, string> = {};
   if (personality) prefs.agent_personality = personality;
@@ -107,36 +46,13 @@ export async function signOutProvider(name: string): Promise<void> {
   await restartAgent(name);
 }
 
-export interface ProviderInfo {
-  /// "none" means no provider chosen (fresh agent, or signed out). A concrete kind with
-  /// `authed: false` means a provider IS chosen but its credential is invalid/expired (re-auth).
-  kind: "claude" | "openrouter" | "zai" | "kimi" | "openai" | "none";
-  model: string | null;
-  max_context_tokens: number | null;
-  authed: boolean;
-  // Claude plan tier ("free" | "pro" | "max"), null for OpenRouter or when unknown; gates the
-  // context-window presets (the 1M beta is Max-only).
-  plan: string | null;
-}
-
 /// Read an agent's active provider from its `GET /provider`. The agent reports `kind` only when a
 /// provider is chosen (omitted when unprovisioned) plus an `authed` flag — so the UI can tell
 /// "no provider yet" (kind "none") apart from "chosen but credential expired" (kind set, authed false).
 export async function getProvider(name: string): Promise<ProviderInfo> {
-  const provider = await apiJson<{
-    kind?: "claude" | "openrouter" | "zai" | "kimi" | "openai";
-    model: string | null;
-    max_context_tokens: number | null;
-    authed?: boolean;
-    plan?: string | null;
-  }>(`/agents/${encodeURIComponent(name)}/provider`);
-  return {
-    kind: provider.kind ?? "none",
-    model: provider.model,
-    max_context_tokens: provider.max_context_tokens,
-    authed: provider.authed ?? false,
-    plan: provider.plan ?? null,
-  };
+  return normalizeProviderInfo(
+    await apiJson(`/agents/${encodeURIComponent(name)}/provider`),
+  );
 }
 
 /// Patch a provider preference (model / context) via `PATCH /provider`, then restart to apply.

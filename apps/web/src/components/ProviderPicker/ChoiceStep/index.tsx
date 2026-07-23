@@ -10,12 +10,11 @@ export function ChoiceStep({
   onPick: (mode: ProviderMode) => void;
   manifest: Manifest;
 }) {
-  // The default provider is offered first; each card's display name comes from the manifest, not a
-  // hardcoded label (only the logo + tagline are local presentation).
-  const ordered = [...PROVIDERS].sort(
-    (a, b) =>
-      Number(b.id === manifest.default_provider) -
-      Number(a.id === manifest.default_provider),
+  // Ordering and display names are catalog data; only logos + taglines are local presentation.
+  const ordered = PROVIDERS.filter(({ id }) => manifest.providers[id]).sort(
+    (left, right) =>
+      (manifest.providers[left.id]?.order ?? Number.MAX_SAFE_INTEGER) -
+      (manifest.providers[right.id]?.order ?? Number.MAX_SAFE_INTEGER),
   );
   return (
     <div className="flex w-full flex-col items-start gap-4">

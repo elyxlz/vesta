@@ -1,4 +1,10 @@
-import type { ReleaseChannel } from "@vesta/core";
+import type {
+  ProviderContextPolicy,
+  ProviderContextPreset,
+  ProviderManifest,
+  ProviderManifestEntry,
+  ReleaseChannel,
+} from "@vesta/core";
 
 export interface ConnectionConfig {
   url: string;
@@ -8,26 +14,9 @@ export interface ConnectionConfig {
   hosted: boolean;
 }
 
-export interface ContextPreset {
-  tokens: number;
-  label: string;
-  note: string;
-  plans?: string[];
-}
-
-export interface ProviderContext {
-  default: number;
-  presets: ContextPreset[];
-  defaults_by_plan?: Record<string, number>;
-}
-
-export interface ProviderEntry {
-  display: string;
-  models: string[] | "live";
-  default_model: string | null;
-  context: ProviderContext;
-  context_by_model?: Record<string, ProviderContext>;
-}
+export type ContextPreset = ProviderContextPreset;
+export type ProviderContext = ProviderContextPolicy;
+export type ProviderEntry = ProviderManifestEntry;
 
 export interface Personality {
   name: string;
@@ -38,19 +27,8 @@ export interface Personality {
   order: number;
 }
 
-export interface Manifest {
-  default_provider: string;
-  default_personality: string;
-  providers: Record<string, ProviderEntry>;
+export interface Manifest extends ProviderManifest {
   personalities: Personality[];
-}
-
-export interface ProviderInfo {
-  kind: "claude" | "openrouter" | "zai" | "kimi" | "openai" | "none";
-  model: string | null;
-  max_context_tokens: number | null;
-  authed: boolean;
-  plan: string | null;
 }
 
 export interface BackupInfo {

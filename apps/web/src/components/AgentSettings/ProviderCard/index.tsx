@@ -40,6 +40,7 @@ import { ModelStep } from "@/components/ProviderPicker/ModelStep";
 import { ContextStep } from "@/components/ProviderPicker/ContextStep";
 import { planContextOptions } from "@/components/ProviderPicker/context-plan";
 import { providerMeta } from "@/components/ProviderPicker/providers";
+import { providerModelOptions } from "@/components/ProviderPicker/model-options";
 import type { ProviderMode } from "@/components/ProviderPicker/types";
 import {
   setModel,
@@ -128,8 +129,8 @@ function NotConnectedCard({
           </div>
         </div>
         <p className="text-xs text-muted-foreground">
-          {name} needs a provider before it can respond. Connect Claude, Z.AI,
-          Kimi, OpenAI, or OpenRouter to get started.
+          {name} needs a provider before it can respond. Connect one to get
+          started.
         </p>
         <Button size="sm" className="self-start" onClick={onSetup}>
           <Plug className="size-4" />
@@ -280,35 +281,13 @@ function ModelDialog({
   onSubmit: (model: string) => void;
 }) {
   const isOpenRouter = provider.kind === "openrouter";
-  const catalog = manifest?.providers[provider.kind]?.models;
-  const fixedModels =
-    provider.kind === "claude"
-      ? claudeModels
-      : Array.isArray(catalog)
-        ? catalog.map((slug) => ({
-            slug,
-            label: slug.toUpperCase(),
-            author:
-              provider.kind === "kimi"
-                ? "Kimi"
-                : provider.kind === "openai"
-                  ? "OpenAI"
-                  : "Z.AI",
-          }))
-        : provider.kind !== "openrouter" && provider.model
-          ? [
-              {
-                slug: provider.model,
-                label: provider.model.toUpperCase(),
-                author:
-                  provider.kind === "kimi"
-                    ? "Kimi"
-                    : provider.kind === "openai"
-                      ? "OpenAI"
-                      : "Z.AI",
-              },
-            ]
-          : undefined;
+  const configuredKind = provider.kind === "none" ? null : provider.kind;
+  const fixedModels = providerModelOptions(
+    configuredKind,
+    manifest,
+    claudeModels,
+    provider.model,
+  );
   return (
     <Dialog
       open={open}
@@ -391,7 +370,9 @@ function ContextDialog({
           <div className="flex flex-col items-center gap-4 py-2">
             {(() => {
               const context = contextForModel(
-                manifest.providers[provider.kind],
+                provider.kind === "none"
+                  ? undefined
+                  : manifest.providers[provider.kind],
                 provider.model ?? "",
               );
               const { presets, initial } = context

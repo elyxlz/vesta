@@ -199,8 +199,35 @@ done"#
         .into()
 }
 
+fn claude_code_proxy_install_step() -> String {
+    // Fresh images bake this in, but fleet upgrades recreate old writable layers from a snapshot
+    // and never rerun the Dockerfile. Install the exact reviewed release on first boot of such a
+    // snapshot; the next snapshot then preserves it. Both supported architectures are digest-pinned.
+    let release = include_str!("../claude-code-proxy.env").trim();
+    format!(
+        r#"{release}
+PROVIDER_KIND="$(python3 -c 'import json; print(json.load(open("/root/agent/data/config.json")).get("provider", {{}}).get("kind", ""))' 2>/dev/null || true)"
+if [ "$PROVIDER_KIND" = "openai" ] && ! command -v claude-code-proxy >/dev/null 2>&1; then
+  ARCH="$(dpkg --print-architecture)"
+  case "$ARCH" in
+    amd64) SHA256="$CLAUDE_CODE_PROXY_AMD64_SHA256" ;;
+    arm64) SHA256="$CLAUDE_CODE_PROXY_ARM64_SHA256" ;;
+    *) echo "unsupported claude-code-proxy architecture: $ARCH" >&2; false ;;
+  esac
+  ASSET="claude-code-proxy-linux-${{ARCH}}.tar.gz"
+  TMP="$(mktemp)"
+  curl -fsSL --connect-timeout 10 --max-time 120 "https://github.com/raine/claude-code-proxy/releases/download/v${{CLAUDE_CODE_PROXY_VERSION}}/${{ASSET}}" -o "$TMP" &&
+    echo "${{SHA256}}  ${{TMP}}" | sha256sum -c - &&
+    tar -xzf "$TMP" -C /usr/local/bin claude-code-proxy
+  STATUS=$?
+  rm -f "$TMP"
+  [ "$STATUS" -eq 0 ]
+fi"#
+    )
+}
+
 pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
-    let steps: [String; 8] = [
+    let steps: [String; 9] = [
         // The engine venv is reached via PATH, never an exported UV_PROJECT_ENVIRONMENT (nor `uv
         // run`, which exports it): exported, it retargets every uv project, so a skill's `uv run`
         // re-syncs and can delete the engine venv. The core sync gets it scoped, since uv would
@@ -216,6 +243,7 @@ pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
         // network) once tmux is on PATH, and the next snapshot captures the install so it
         // persists across future rebuilds. `|| true` so a failed install never aborts boot.
         "command -v tmux >/dev/null 2>&1 || (apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tmux) || true".into(),
+        claude_code_proxy_install_step(),
         "UV_PROJECT_ENVIRONMENT=/root/agent/.venv uv sync --frozen --project /root/agent/core".into(),
         // ~/.claude/skills is the symlink farm Claude Code discovers skills from, rebuilt
         // every boot (before the SDK session starts) from config.active_skills:
@@ -319,7 +347,10 @@ pub struct RebuildTracker(std::sync::Arc<std::sync::Mutex<HashMap<String, u32>>>
 
 impl RebuildTracker {
     pub fn mark(&self, name: &str) -> RebuildMark {
-        let mut counts = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut counts = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         *counts.entry(name.to_string()).or_insert(0) += 1;
         RebuildMark {
             tracker: self.clone(),
@@ -354,7 +385,11 @@ pub struct RebuildMark {
 
 impl Drop for RebuildMark {
     fn drop(&mut self) {
-        let mut counts = self.tracker.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut counts = self
+            .tracker
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(count) = counts.get_mut(&self.name) {
             *count -= 1;
             if *count == 0 {
@@ -980,7 +1015,8 @@ pub(crate) fn env_file_names(agents_dir: &std::path::Path) -> Vec<String> {
                 return None;
             }
             let name = entry.file_name().to_str()?.to_string();
-            name.strip_suffix(".env").map(std::string::ToString::to_string)
+            name.strip_suffix(".env")
+                .map(std::string::ToString::to_string)
         })
         .collect()
 }
@@ -1119,9 +1155,7 @@ pub fn write_agent_env_file(
     );
     // The env carries only identity; the agent owns model/provider/personality, timezone, and provider
     // auth in its config store (preferences) and .credentials.json (Claude OAuth blob).
-    if std::fs::read_to_string(&env_path)
-        .is_ok_and(|prev| prev == content)
-    {
+    if std::fs::read_to_string(&env_path).is_ok_and(|prev| prev == content) {
         return Ok(env_path);
     }
     std::fs::write(&env_path, &content)
@@ -1620,7 +1654,10 @@ pub async fn snapshot_container(
 ) -> Result<(), DockerError> {
     let cname = cname.to_string();
     let tag = tag.to_string();
-    let changes: Vec<String> = changes.iter().map(std::string::ToString::to_string).collect();
+    let changes: Vec<String> = changes
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect();
 
     tokio::time::timeout(
         std::time::Duration::from_secs(SNAPSHOT_TIMEOUT_SECS),
@@ -2210,7 +2247,15 @@ pub async fn reconcile_containers(
                 }
             }
         }
-        match rebuild_agent(docker, item.name, env_config, &item.desired_mounts, rebuilding).await {
+        match rebuild_agent(
+            docker,
+            item.name,
+            env_config,
+            &item.desired_mounts,
+            rebuilding,
+        )
+        .await
+        {
             Ok(()) => {
                 tracing::info!(agent = %item.name, "rebuild complete");
                 // Grants can also land here (restart_agent defers to reconcile when disk is low or
@@ -2396,11 +2441,10 @@ fn needs_rebuild(
 
     let cmd = info.config.as_ref().and_then(|c| c.cmd.as_ref());
     let expected_cmd = agent_container_entrypoint_cmd();
-    let cmd_ok = cmd
-        .is_some_and(|actual| {
-            actual.len() == expected_cmd.len()
-                && actual.iter().zip(expected_cmd.iter()).all(|(a, e)| a == e)
-        });
+    let cmd_ok = cmd.is_some_and(|actual| {
+        actual.len() == expected_cmd.len()
+            && actual.iter().zip(expected_cmd.iter()).all(|(a, e)| a == e)
+    });
     if !cmd_ok {
         tracing::info!(container = %cname, actual = ?cmd, expected = ?expected_cmd, "rebuild needed: command mismatch");
         return true;
@@ -2463,7 +2507,9 @@ async fn resolve_existing_port(
     let baked = read_container_env(docker, cname, "WS_PORT")
         .await
         .and_then(|v| v.parse::<u16>().ok());
-    if let Some(port) = info.port.or(baked) { Ok(port) } else {
+    if let Some(port) = info.port.or(baked) {
+        Ok(port)
+    } else {
         tracing::warn!(agent = %name, "no port found in env file or container, allocating new port");
         allocate_port(agents_dir)
     }
@@ -2589,8 +2635,14 @@ pub async fn rename_agent(
         )));
     }
 
-    let port =
-        resolve_existing_port(docker, &old_container, &info, old_name, &env_config.agents_dir).await?;
+    let port = resolve_existing_port(
+        docker,
+        &old_container,
+        &info,
+        old_name,
+        &env_config.agents_dir,
+    )
+    .await?;
 
     // Stop cleanly so the snapshot captures a quiesced filesystem (SQLite mid-write would
     // be the main concern). Best-effort — snapshot will still proceed if stop fails.
@@ -2653,7 +2705,11 @@ mod tests {
             AgentStatus::NotAuthenticated,
             AgentStatus::Unprovisioned,
         ] {
-            assert!(status.serves_ws(), "{} should be tappable", status.human_text());
+            assert!(
+                status.serves_ws(),
+                "{} should be tappable",
+                status.human_text()
+            );
         }
         for status in [
             AgentStatus::Starting,
@@ -2662,7 +2718,11 @@ mod tests {
             AgentStatus::Dead,
             AgentStatus::NotFound,
         ] {
-            assert!(!status.serves_ws(), "{} must not be tapped", status.human_text());
+            assert!(
+                !status.serves_ws(),
+                "{} must not be tapped",
+                status.human_text()
+            );
         }
     }
 
@@ -2840,6 +2900,29 @@ mod tests {
         assert!(
             tmux_at < main_at,
             "tmux install must precede launching core.main"
+        );
+    }
+
+    #[test]
+    fn entrypoint_self_heals_missing_claude_code_proxy_with_pinned_digests() {
+        let cmd = agent_container_entrypoint_cmd();
+        let script = cmd.last().expect("entrypoint script");
+        assert!(script.contains("command -v claude-code-proxy"));
+        assert!(script.contains("PROVIDER_KIND"));
+        assert!(script.contains("[ \"$PROVIDER_KIND\" = \"openai\" ]"));
+        assert!(script.contains("releases/download/v${CLAUDE_CODE_PROXY_VERSION}/${ASSET}"));
+        assert!(script.contains("--connect-timeout 10 --max-time 120"));
+        for setting in include_str!("../claude-code-proxy.env").lines() {
+            assert!(script.contains(setting), "entrypoint must embed {setting}");
+        }
+        assert!(script.contains("sha256sum -c -"));
+        let install_at = script
+            .find("command -v claude-code-proxy")
+            .expect("proxy install present");
+        let main_at = script.find("core.main").expect("agent launch present");
+        assert!(
+            install_at < main_at,
+            "proxy install must precede launching core.main"
         );
     }
 

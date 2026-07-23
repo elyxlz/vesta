@@ -323,16 +323,16 @@ def test_config_update_rejects_bad_provider_values(config):
 
 
 def test_sign_in_body_parses_each_provider():
-    from core.api import _SIGN_IN_ADAPTER, _ClaudeSignIn, _KimiSignIn, _OpenAISignIn, _OpenRouterSignIn, _ZaiSignIn
+    from core.api import _SIGN_IN_ADAPTER, _ClaudeSignIn, _KeySignIn, _OpenAISignIn
 
     claude = _SIGN_IN_ADAPTER.validate_python({"kind": "claude", "model": "opus", "credentials": "{}"})
     assert isinstance(claude, _ClaudeSignIn) and claude.credentials == "{}"
     openrouter = _SIGN_IN_ADAPTER.validate_python({"kind": "openrouter", "model": "m", "key": "k"})
-    assert isinstance(openrouter, _OpenRouterSignIn) and (openrouter.key, openrouter.model) == ("k", "m")
+    assert isinstance(openrouter, _KeySignIn) and (openrouter.kind, openrouter.key, openrouter.model) == ("openrouter", "k", "m")
     zai = _SIGN_IN_ADAPTER.validate_python({"kind": "zai", "model": "glm-4.7", "key": "k"})
-    assert isinstance(zai, _ZaiSignIn) and (zai.key, zai.model) == ("k", "glm-4.7")
+    assert isinstance(zai, _KeySignIn) and (zai.kind, zai.key, zai.model) == ("zai", "k", "glm-4.7")
     kimi = _SIGN_IN_ADAPTER.validate_python({"kind": "kimi", "model": "kimi-for-coding", "key": "k"})
-    assert isinstance(kimi, _KimiSignIn) and (kimi.key, kimi.model) == ("k", "kimi-for-coding")
+    assert isinstance(kimi, _KeySignIn) and (kimi.kind, kimi.key, kimi.model) == ("kimi", "k", "kimi-for-coding")
     openai = _SIGN_IN_ADAPTER.validate_python({"kind": "openai", "model": "gpt-5.6-sol", "credentials": "{}"})
     assert isinstance(openai, _OpenAISignIn) and openai.credentials == "{}"
 
@@ -347,6 +347,8 @@ def test_sign_in_body_rejects_invalid():
         {"kind": "zai", "model": "glm-4.7"},
         {"kind": "kimi", "model": "kimi-for-coding"},
         {"kind": "openai", "model": "gpt-5.6-sol"},
+        {"kind": "openrouter", "model": "", "key": "key"},
+        {"kind": "openrouter", "model": "model", "key": " "},
         {"kind": "vllm"},
     ]:
         with pytest.raises(pyd.ValidationError):
@@ -405,6 +407,47 @@ async def test_provider_put_signs_in_then_delete_signs_out(config, monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_provider_put_rejects_invalid_model_context_without_persisting(config):
+    import core.api as api_mod
+    from core.config import read_config_store
+
+    state = vm.State()
+
+    class _Req:
+        def __init__(self) -> None:
+            self.app = {"state": state, "config": config}
+
+        async def json(self):
+            return {
+                "kind": "kimi",
+                "model": "kimi-for-coding",
+                "key": "membership-key",
+                "max_context_tokens": 1_048_576,
+            }
+
+    response = await api_mod._provider_put_handler(typing.cast("web.Request", _Req()))
+    assert response.status == 400
+    assert read_config_store() == {}
+
+
+@pytest.mark.anyio
+async def test_provider_put_maps_unusable_claude_credentials_to_bad_request(config):
+    import core.api as api_mod
+
+    state = vm.State()
+
+    class _Req:
+        def __init__(self) -> None:
+            self.app = {"state": state, "config": config}
+
+        async def json(self):
+            return {"kind": "claude", "model": "opus", "credentials": "{}"}
+
+    response = await api_mod._provider_put_handler(typing.cast("web.Request", _Req()))
+    assert response.status == 400
+
+
+@pytest.mark.anyio
 async def test_model_patch_resets_model_specific_context(config):
     import core.api as api_mod
     from core.config import read_config_store, update_config_store
@@ -435,6 +478,40 @@ async def test_model_patch_resets_model_specific_context(config):
         "model": "kimi-for-coding",
         "key": "membership-key",
         "max_context_tokens": 262_144,
+    }
+
+
+@pytest.mark.anyio
+async def test_openrouter_model_patch_preserves_explicit_user_cap(config):
+    import core.api as api_mod
+    from core.config import read_config_store, update_config_store
+
+    update_config_store(
+        {
+            "provider": {
+                "kind": "openrouter",
+                "model": "vendor/old-model",
+                "key": "key",
+                "max_context_tokens": 128_000,
+            }
+        }
+    )
+    current = cfg.VestaConfig()
+
+    class _Req:
+        def __init__(self) -> None:
+            self.app = {"config": current}
+
+        async def json(self):
+            return {"model": "vendor/new-model"}
+
+    response = await api_mod._provider_patch_handler(typing.cast("web.Request", _Req()))
+    assert response.status == 200
+    assert read_config_store()["provider"] == {
+        "kind": "openrouter",
+        "model": "vendor/new-model",
+        "key": "key",
+        "max_context_tokens": 128_000,
     }
 
 

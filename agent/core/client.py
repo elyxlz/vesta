@@ -36,8 +36,7 @@ from .config import CONTEXT_1M_BETA, DEFAULT_CONTEXT_WINDOW
 from .helpers import get_constitution_path, get_memory_path
 from .provider import (
     OPENROUTER_SMALL_FAST_MODEL,
-    TERMINAL_PROVIDER_ERRORS,
-    is_terminal_auth_error,
+    is_terminal_provider_error,
     is_unauthenticated,
     observed_provider_failure,
 )
@@ -59,8 +58,8 @@ async def resolve_openrouter_max_tokens(config: cfg.VestaConfig) -> int | None:
     200k window for non-Anthropic models (claude-code#46416), so the value passed
     via CLAUDE_CODE_MAX_CONTEXT_TOKENS must reflect what the model actually supports.
     The caller caps this at config.provider.max_context_tokens before passing it to the SDK
-    (cache-read cost scales with context size). Returns None on any failure, so
-    claude-code falls back to its default, same behavior as before."""
+    (cache-read cost scales with context size). Metadata failure is fatal for the session: guessing
+    can overrun a small model or silently expand an explicit user cap."""
     if not isinstance(config.provider, cfg.OpenRouterConfig):
         return None
     try:
@@ -73,18 +72,17 @@ async def resolve_openrouter_max_tokens(config: cfg.VestaConfig) -> int | None:
             ) as resp,
         ):
             if resp.status != 200:
-                return None
+                raise RuntimeError(f"OpenRouter model metadata returned HTTP {resp.status}")
             body = await resp.json()
     except (TimeoutError, aiohttp.ClientError, ValueError) as e:
-        logger.warning(f"OpenRouter context-window lookup failed: {e}")
-        return None
+        raise RuntimeError(f"OpenRouter context-window lookup failed: {e}") from e
     models = body["data"] if isinstance(body, dict) and "data" in body else []
     for entry in models:
         if "id" in entry and entry["id"] == config.provider.model and "context_length" in entry:
             ctx = entry["context_length"]
             if isinstance(ctx, int) and ctx > 0:
                 return ctx
-    return None
+    raise RuntimeError(f"OpenRouter model metadata has no valid context_length for {config.provider.model}")
 
 
 async def attempt_interrupt(state: vm.State, *, config: cfg.VestaConfig, reason: str) -> bool:
@@ -278,12 +276,15 @@ async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaC
     _emit_parsed_content(texts, thinking_blocks, error_texts, state=state)
     if isinstance(msg, RateLimitEvent):
         await _note_rate_limit(msg, state=state)
-    # OpenRouter's upstream 401/402 is caught by its cache proxy. Claude bypasses that proxy,
-    # so a terminal auth/billing failure surfaces through the SDK either as the assistant
-    # turn's classified error (authentication_failed / billing_error) OR as the result's HTTP
-    # status (api_error_status). Check BOTH so a token expiry can't stay invisible to the app.
-    auth_lost = (isinstance(msg, AssistantMessage) and is_terminal_auth_error(msg.error)) or (
-        isinstance(msg, ResultMessage) and msg.api_error_status in TERMINAL_PROVIDER_ERRORS
+    # The SDK can surface a provider failure either on the assistant classification or the result's
+    # HTTP status. Keep the decision provider-aware: Kimi uses 401 for tier/model/context permission
+    # errors and a temporary 402, neither of which means its subscription key is dead.
+    provider_kind = state.provider_status.kind if state.provider_status is not None else None
+    auth_lost = is_terminal_provider_error(
+        provider_kind,
+        assistant_error=msg.error if isinstance(msg, AssistantMessage) else None,
+        api_error_status=msg.api_error_status if isinstance(msg, ResultMessage) else None,
+        details=(*texts, *error_texts),
     )
     if auth_lost:
         # Flip to not_authenticated, stop the CLI's internal retries, and end the turn cleanly
@@ -532,80 +533,118 @@ async def compact_session(*, state: vm.State, config: cfg.VestaConfig, prompt: s
         _close_turn(state, turn)
 
 
-def _provider_sdk_settings(provider: cfg.Provider, state: vm.State) -> tuple[dict[str, str], list[SdkBeta], ThinkingConfig]:
-    """Build the model transport settings scoped to the Claude Code subprocess."""
-    sdk_env: dict[str, str] = {}
-    betas: list[SdkBeta] = []
-    thinking_config: ThinkingConfig = ThinkingConfigAdaptive(type="adaptive", display="summarized")
+_SDKSettings = tuple[dict[str, str], list[SdkBeta], ThinkingConfig]
+
+
+def _adaptive_thinking() -> ThinkingConfigAdaptive:
+    return ThinkingConfigAdaptive(type="adaptive", display="summarized")
+
+
+def _fixed_provider_context(provider: cfg.ZaiConfig | cfg.KimiConfig | cfg.OpenAIConfig) -> int:
+    """Resolve fixed-provider context exclusively from the selection or validated manifest."""
+    context = provider.max_context_tokens or cfg.provider_context_default(provider.kind, provider.model)
+    if context is None:
+        raise RuntimeError(f"provider manifest has no context policy for {provider.kind}/{provider.model}")
+    return context
+
+
+def _openrouter_sdk_settings(provider: cfg.OpenRouterConfig, state: vm.State) -> _SDKSettings:
+    if not state.openrouter_proxy_url:
+        raise RuntimeError("OpenRouter cache proxy not started before building client options")
+    env = {
+        "ANTHROPIC_BASE_URL": state.openrouter_proxy_url,
+        "ANTHROPIC_AUTH_TOKEN": provider.key.get_secret_value(),
+        "ANTHROPIC_SMALL_FAST_MODEL": OPENROUTER_SMALL_FAST_MODEL,
+    }
+    context = state.openrouter_max_tokens or provider.max_context_tokens
+    if context:
+        env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(context)
+    return env, [], ThinkingConfigDisabled(type="disabled")
+
+
+def _zai_sdk_settings(provider: cfg.ZaiConfig) -> _SDKSettings:
+    harness_model = _harness_model(provider)
+    env = {
+        "ANTHROPIC_BASE_URL": ZAI_ANTHROPIC_URL,
+        "ANTHROPIC_AUTH_TOKEN": provider.key.get_secret_value(),
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": harness_model,
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": harness_model,
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": harness_model,
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    }
+    context = _fixed_provider_context(provider)
+    env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(context)
+    env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = str(context)
+    return env, [], _adaptive_thinking()
+
+
+def _kimi_sdk_settings(provider: cfg.KimiConfig) -> _SDKSettings:
+    harness_model = _harness_model(provider)
+    env = {
+        "ANTHROPIC_BASE_URL": KIMI_ANTHROPIC_URL,
+        "ANTHROPIC_API_KEY": provider.key.get_secret_value(),
+        "CLAUDE_CODE_EFFORT_LEVEL": "high",
+    }
+    # Kimi's Claude Code guide maps every internal model role to the selected Kimi model.
+    for name in (
+        "ANTHROPIC_MODEL",
+        "ANTHROPIC_DEFAULT_FABLE_MODEL",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+        "CLAUDE_CODE_SUBAGENT_MODEL",
+    ):
+        env[name] = harness_model
+    context = _fixed_provider_context(provider)
+    env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = str(context)
+    env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(context)
+    return env, [], _adaptive_thinking()
+
+
+def _openai_sdk_settings(provider: cfg.OpenAIConfig, state: vm.State) -> _SDKSettings:
+    if not state.codex_proxy_url:
+        raise RuntimeError("OpenAI subscription bridge not started before building client options")
+    context = _fixed_provider_context(provider)
+    auxiliary_model = cfg.provider_auxiliary_model(provider.kind)
+    if auxiliary_model is None:
+        raise RuntimeError(f"provider manifest has no auxiliary model for {provider.kind}")
+    env = {
+        "ANTHROPIC_BASE_URL": state.codex_proxy_url,
+        "ANTHROPIC_AUTH_TOKEN": "unused",
+        "ANTHROPIC_SMALL_FAST_MODEL": cfg.provider_harness_model(provider.kind, auxiliary_model, context),
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW": str(context),
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS": str(context),
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        "CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK": "1",
+    }
+    return env, [], _adaptive_thinking()
+
+
+def _claude_sdk_settings(provider: cfg.ClaudeConfig) -> _SDKSettings:
+    chosen = provider.max_context_tokens
+    betas = [CONTEXT_1M_BETA] if chosen is None or chosen > DEFAULT_CONTEXT_WINDOW else []
+    env = {"CLAUDE_CODE_MAX_CONTEXT_TOKENS": str(chosen)} if chosen is not None else {}
+    return env, betas, provider.thinking
+
+
+def _provider_sdk_settings(provider: cfg.Provider, state: vm.State) -> _SDKSettings:
+    """Dispatch stable orchestration to one provider-specific Claude-harness adapter."""
     if isinstance(provider, cfg.OpenRouterConfig):
-        # The SDK always routes through the local caching proxy, never OpenRouter directly.
-        if not state.openrouter_proxy_url:
-            raise RuntimeError("OpenRouter cache proxy not started before building client options")
-        sdk_env["ANTHROPIC_BASE_URL"] = state.openrouter_proxy_url
-        sdk_env["ANTHROPIC_AUTH_TOKEN"] = provider.key.get_secret_value()
-        sdk_env["ANTHROPIC_SMALL_FAST_MODEL"] = OPENROUTER_SMALL_FAST_MODEL
-        thinking_config = ThinkingConfigDisabled(type="disabled")
-        if state.openrouter_max_tokens:
-            sdk_env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(state.openrouter_max_tokens)
-    elif isinstance(provider, cfg.ZaiConfig):
-        sdk_env["ANTHROPIC_BASE_URL"] = ZAI_ANTHROPIC_URL
-        sdk_env["ANTHROPIC_AUTH_TOKEN"] = provider.key.get_secret_value()
-        if provider.max_context_tokens is not None:
-            sdk_env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(provider.max_context_tokens)
-            sdk_env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = str(provider.max_context_tokens)
-    elif isinstance(provider, cfg.KimiConfig):
-        sdk_env["ANTHROPIC_BASE_URL"] = KIMI_ANTHROPIC_URL
-        sdk_env["ANTHROPIC_API_KEY"] = provider.key.get_secret_value()
-        sdk_env["CLAUDE_CODE_EFFORT_LEVEL"] = "high"
-        # Kimi's Claude Code guide maps every internal model role to the selected Kimi model.
-        harness_model = _harness_model(provider)
-        for name in (
-            "ANTHROPIC_MODEL",
-            "ANTHROPIC_DEFAULT_FABLE_MODEL",
-            "ANTHROPIC_DEFAULT_OPUS_MODEL",
-            "ANTHROPIC_DEFAULT_SONNET_MODEL",
-            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-            "CLAUDE_CODE_SUBAGENT_MODEL",
-        ):
-            sdk_env[name] = harness_model
-        context = provider.max_context_tokens or 262_144
-        sdk_env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = str(context)
-        sdk_env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(context)
-    elif isinstance(provider, cfg.OpenAIConfig):
-        if not state.codex_proxy_url:
-            raise RuntimeError("OpenAI subscription bridge not started before building client options")
-        context = provider.max_context_tokens or 272_000
-        sdk_env.update(
-            {
-                "ANTHROPIC_BASE_URL": state.codex_proxy_url,
-                "ANTHROPIC_AUTH_TOKEN": "unused",
-                "ANTHROPIC_SMALL_FAST_MODEL": _harness_model(provider),
-                "CLAUDE_CODE_AUTO_COMPACT_WINDOW": str(context),
-                "CLAUDE_CODE_MAX_CONTEXT_TOKENS": str(context),
-                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-                "CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK": "1",
-            }
-        )
-    else:
-        chosen = provider.max_context_tokens
-        if chosen is None or chosen > DEFAULT_CONTEXT_WINDOW:
-            betas = [CONTEXT_1M_BETA]
-        if chosen is not None:
-            sdk_env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(chosen)
-        thinking_config = provider.thinking
-    return sdk_env, betas, thinking_config
+        return _openrouter_sdk_settings(provider, state)
+    if isinstance(provider, cfg.ZaiConfig):
+        return _zai_sdk_settings(provider)
+    if isinstance(provider, cfg.KimiConfig):
+        return _kimi_sdk_settings(provider)
+    if isinstance(provider, cfg.OpenAIConfig):
+        return _openai_sdk_settings(provider, state)
+    return _claude_sdk_settings(provider)
 
 
 def _harness_model(provider: cfg.Provider) -> str:
-    """Apply Claude Code's local 1M hint only where the selected transport documents it."""
+    """Apply the manifest-declared Claude Code model hint for the selected context."""
     model = provider.model.removesuffix("[1m]")
-    if isinstance(provider, cfg.ZaiConfig) and model == "glm-5.2" and (provider.max_context_tokens or 0) > 200_000:
-        return f"{model}[1m]"
-    if isinstance(provider, cfg.KimiConfig) and model == "k3" and (provider.max_context_tokens or 0) > 262_144:
-        return f"{model}[1m]"
-    if isinstance(provider, cfg.OpenAIConfig):
-        return f"{model}[1m]"
-    return model
+    context = provider.max_context_tokens or cfg.provider_context_default(provider.kind, model) or 0
+    return cfg.provider_harness_model(provider.kind, model, context)
 
 
 def build_client_options(config: cfg.VestaConfig, state: vm.State) -> ClaudeAgentOptions:

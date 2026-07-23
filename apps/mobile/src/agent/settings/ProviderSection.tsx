@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { ProviderKind } from "@vesta/core";
 import { Alert, StyleSheet, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import * as WebBrowser from "expo-web-browser";
@@ -28,14 +29,18 @@ import { ErrorState, LoadingState } from "@/components/ui/States";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
 
-type AuthKind = "claude" | "openrouter" | "zai" | "kimi" | "openai";
+type KeyProviderKind = Extract<ProviderSelection, { key: string }>["kind"];
+
+function isKeyProviderKind(kind: ProviderKind): kind is KeyProviderKind {
+  return kind === "openrouter" || kind === "zai" || kind === "kimi";
+}
 
 export function ProviderSection() {
   const queryClient = useQueryClient();
   const { api } = useSession();
   const { name } = useAgent();
   const { colors } = usePreferences();
-  const [authKind, setAuthKind] = useState<AuthKind>("claude");
+  const [authKind, setAuthKind] = useState<ProviderKind>("claude");
   const provider = useQuery({
     queryKey: ["provider", name],
     queryFn: () => getProvider(api, name),
@@ -62,11 +67,12 @@ export function ProviderSection() {
   const [authError, setAuthError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const selectAuthKind = (kind: AuthKind) => {
+  const selectAuthKind = (kind: ProviderKind) => {
     setAuthKind(kind);
     setOauthSession("");
     setOauthCode("");
     setOpenAIUserCode("");
+    setProviderKey("");
     setAuthError("");
   };
 
@@ -103,6 +109,13 @@ export function ProviderSection() {
   const entry = manifest.data.providers[providerKind];
   const selectedModel = provider.data.model ?? entry?.default_model ?? "";
   const context = entry?.context_by_model?.[selectedModel] ?? entry?.context;
+  const advertisedProviders = (
+    Object.keys(manifest.data.providers) as ProviderKind[]
+  ).sort(
+    (left, right) =>
+      (manifest.data.providers[left]?.order ?? Number.MAX_SAFE_INTEGER) -
+      (manifest.data.providers[right]?.order ?? Number.MAX_SAFE_INTEGER),
+  );
   const modelOptions =
     providerKind === "openrouter"
       ? (openRouterModels.data ?? []).map((model) => ({
@@ -208,7 +221,12 @@ export function ProviderSection() {
   };
 
   const connectKeyProvider = async () => {
-    if (providerKind === "claude" || providerKind === "openai") return;
+    if (
+      entry?.auth_kind !== "api_key" &&
+      entry?.auth_kind !== "subscription_key"
+    )
+      return;
+    if (!isKeyProviderKind(providerKind)) return;
     setBusy(true);
     setAuthError("");
     try {
@@ -309,36 +327,15 @@ export function ProviderSection() {
           </Text>
           {provider.data.kind === "none" ? (
             <View style={styles.kindButtons}>
-              <Button
-                variant={authKind === "claude" ? "primary" : "secondary"}
-                onPress={() => selectAuthKind("claude")}
-              >
-                Claude
-              </Button>
-              <Button
-                variant={authKind === "zai" ? "primary" : "secondary"}
-                onPress={() => selectAuthKind("zai")}
-              >
-                Z.AI
-              </Button>
-              <Button
-                variant={authKind === "kimi" ? "primary" : "secondary"}
-                onPress={() => selectAuthKind("kimi")}
-              >
-                Kimi
-              </Button>
-              <Button
-                variant={authKind === "openai" ? "primary" : "secondary"}
-                onPress={() => selectAuthKind("openai")}
-              >
-                OpenAI
-              </Button>
-              <Button
-                variant={authKind === "openrouter" ? "primary" : "secondary"}
-                onPress={() => selectAuthKind("openrouter")}
-              >
-                OpenRouter
-              </Button>
+              {advertisedProviders.map((kind) => (
+                <Button
+                  key={kind}
+                  variant={authKind === kind ? "primary" : "secondary"}
+                  onPress={() => selectAuthKind(kind)}
+                >
+                  {manifest.data.providers[kind]?.display ?? kind}
+                </Button>
+              ))}
             </View>
           ) : null}
           {providerKind === "claude" ? (
