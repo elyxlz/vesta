@@ -112,117 +112,18 @@ pub(crate) const MOUNT_DESTS: &[&str] = &[
     UPSTREAM_MOUNT_DEST,
 ];
 
-fn skill_link_entrypoint_step() -> String {
-    r#"cd ~
-SKILLS_DIR="agent/skills"
-CORE_SKILLS_DIR="agent/core/skills"
-CONFIG="agent/data/config.json"
-LEGACY_ACTIVE="agent/data/active-skills.txt"
-DEFAULTS="agent/core/default-skills.txt"
-LINK_DIR="$HOME/.claude/skills"
-
-mkdir -p "$SKILLS_DIR" agent/data
-
-# LEGACY(remove-when: the 2026-08-flat-checkout migration is fleet-applied): a cone box on its
-# first flat boot has no active_skills config yet and only its coned skills on disk. Capture
-# that cone as legacy input before the config write below. A flat box has no sparse-checkout
-# file, so this never fires there.
-if [ ! -f "$CONFIG" ] && [ ! -f "$LEGACY_ACTIVE" ] && [ -f .git/info/sparse-checkout ]; then
-  git sparse-checkout list 2>/dev/null | sed -n 's#^agent/skills/##p' | sort -u > "$LEGACY_ACTIVE" || true
-fi
-
-python3 - "$CONFIG" "$LEGACY_ACTIVE" "$DEFAULTS" <<'PY'
-import json
-import pathlib
-import re
-import sys
-
-config_path = pathlib.Path(sys.argv[1])
-legacy_path = pathlib.Path(sys.argv[2])
-defaults_path = pathlib.Path(sys.argv[3])
-skill_name_re = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-
-def text_names(path):
-    if not path.is_file():
-        return []
-    return [line.strip() for line in path.read_text().splitlines() if line.strip()]
-
-try:
-    loaded = json.loads(config_path.read_text()) if config_path.is_file() else {}
-except json.JSONDecodeError:
-    loaded = {}
-data = loaded if isinstance(loaded, dict) else {}
-configured = data["active_skills"] if isinstance(data.get("active_skills"), list) else None
-active = [name for name in configured if isinstance(name, str)] if configured is not None else text_names(legacy_path)
-names = [*active, *text_names(defaults_path)]
-data["active_skills"] = sorted({name.strip() for name in names if skill_name_re.fullmatch(name.strip())})
-tmp = config_path.with_name(f"{config_path.name}.tmp")
-tmp.write_text(json.dumps(data, indent=2) + "\n")
-tmp.replace(config_path)
-PY
-
-# Rebuilt from scratch each boot so a deactivated skill leaves no dangling link.
-rm -rf "$LINK_DIR"
-mkdir -p "$LINK_DIR"
-
-link_skill() {
-  [ -f "$1/SKILL.md" ] || return 0
-  ln -sfn "$HOME/$1" "$LINK_DIR/$(basename "$1")"
-}
-
-# Active optional skills first, then core skills (linked last so they win any name
-# collision, as core is authoritative).
-python3 - "$CONFIG" <<'PY' | while IFS= read -r name || [ -n "$name" ]; do
-import json
-import pathlib
-import re
-import sys
-
-config_path = pathlib.Path(sys.argv[1])
-skill_name_re = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-try:
-    data = json.loads(config_path.read_text())
-except (json.JSONDecodeError, OSError):
-    data = {}
-active = data["active_skills"] if isinstance(data, dict) and isinstance(data.get("active_skills"), list) else []
-for name in active:
-    if isinstance(name, str) and skill_name_re.fullmatch(name.strip()):
-        print(name.strip())
-PY
-  [ -n "$name" ] || continue
-  link_skill "$SKILLS_DIR/$name"
-done
-
-for d in "$CORE_SKILLS_DIR"/*/; do
-  [ -d "$d" ] && link_skill "${d%/}"
-done"#
-        .into()
-}
-
-pub(crate) fn agent_container_entrypoint_cmd() -> Vec<String> {
-    let steps: [String; 8] = [
+pub(crate) fn agent_container_cmd() -> Vec<String> {
+    let steps = [
+        "set -e",
         // The engine venv is reached via PATH, never an exported UV_PROJECT_ENVIRONMENT (nor `uv
         // run`, which exports it): exported, it retargets every uv project, so a skill's `uv run`
         // re-syncs and can delete the engine venv. The core sync gets it scoped, since uv would
         // otherwise default to core/.venv, inside the read-only mount.
-        "export PATH=\"/root/agent/.venv/bin:/root/.local/bin:/root/.claude/local/bin:$PATH\"".into(),
-        ". /run/vestad-env".into(),
-        ". ~/.bashrc || true".into(),
-        // tmux is a hard runtime dependency of cc_sdk (it drives the real claude TUI in a
-        // private tmux server). Fresh images bake it in via the Dockerfile, but `rebuild`
-        // recreates a container from a `docker export|import` snapshot and never re-runs the
-        // Dockerfile, so an agent snapshotted before tmux was added boots without it and
-        // crash-loops on FileNotFoundError deep in cc_sdk. Self-heal at boot: a no-op (no
-        // network) once tmux is on PATH, and the next snapshot captures the install so it
-        // persists across future rebuilds. `|| true` so a failed install never aborts boot.
-        "command -v tmux >/dev/null 2>&1 || (apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tmux) || true".into(),
-        "UV_PROJECT_ENVIRONMENT=/root/agent/.venv uv sync --frozen --project /root/agent/core".into(),
-        // ~/.claude/skills is the symlink farm Claude Code discovers skills from, rebuilt
-        // every boot (before the SDK session starts) from config.active_skills:
-        // core skills always, optional skills only when active.
-        skill_link_entrypoint_step(),
-        "test -f ~/.claude/settings.json || printf '{\"permissions\":{\"allow\":[]}}\\n' > ~/.claude/settings.json".into(),
-        "cd /root/agent && exec .venv/bin/python -m core.main".into(),
+        "export PATH=\"/root/agent/.venv/bin:/root/.local/bin:/root/.claude/local/bin:$PATH\"",
+        ". /run/vestad-env",
+        ". ~/.bashrc || true",
+        "UV_PROJECT_ENVIRONMENT=/root/agent/.venv uv sync --frozen --project /root/agent/core",
+        "cd /root/agent && exec .venv/bin/python -m core.main",
     ];
     vec!["sh".into(), "-c".into(), steps.join("; \\\n")]
 }
@@ -1795,7 +1696,7 @@ pub async fn create_container(
         image: Some(image.to_string()),
         tty: Some(true),
         labels: Some(labels),
-        cmd: Some(agent_container_entrypoint_cmd()),
+        cmd: Some(agent_container_cmd()),
         working_dir: Some("/root".to_string()),
         host_config: Some(host_config),
         ..Default::default()
@@ -2395,7 +2296,7 @@ fn needs_rebuild(
     }
 
     let cmd = info.config.as_ref().and_then(|c| c.cmd.as_ref());
-    let expected_cmd = agent_container_entrypoint_cmd();
+    let expected_cmd = agent_container_cmd();
     let cmd_ok = cmd
         .is_some_and(|actual| {
             actual.len() == expected_cmd.len()
@@ -2470,7 +2371,7 @@ async fn resolve_existing_port(
     }
 }
 
-/// Recreate a container with the latest container config (entrypoint, mounts, env file)
+/// Recreate a container with the latest container config (command, mounts, env file)
 /// while preserving the filesystem. Snapshots the old container, removes it, and creates
 /// a new one from the snapshot. User mount topology is preserved from the existing
 /// container, not re-derived from settings, so the running container is the source of
@@ -2820,77 +2721,38 @@ mod tests {
     }
 
     #[test]
-    fn entrypoint_self_heals_missing_tmux() {
-        // cc_sdk hard-depends on tmux; the entrypoint must install it at boot when missing so
-        // containers rebuilt from a pre-tmux snapshot self-heal instead of crash-looping.
-        let cmd = agent_container_entrypoint_cmd();
-        let script = cmd.last().expect("entrypoint script");
-        assert!(
-            script.contains("command -v tmux"),
-            "entrypoint must guard on tmux presence: {script}"
-        );
-        assert!(
-            script.contains("apt-get install -y -qq tmux"),
-            "entrypoint must install tmux when absent: {script}"
-        );
-        // The install runs before the agent process so cc_sdk finds tmux on first launch.
-        let tmux_at = script.find("command -v tmux").expect("tmux step present");
-        let main_at = script
-            .find("python -m core.main")
-            .expect("main step present");
-        assert!(
-            tmux_at < main_at,
-            "tmux install must precede launching core.main"
-        );
-    }
-
-    #[test]
-    fn entrypoint_pins_venv_and_syncs_core() {
+    fn command_pins_venv_and_syncs_core() {
         // The venv must live outside the read-only core mount, and the sync/launch steps
         // target the core project (pyproject in core/).
-        let cmd = agent_container_entrypoint_cmd();
-        let script = cmd.last().expect("entrypoint script");
+        let cmd = agent_container_cmd();
+        let script = cmd.last().expect("container command");
         assert!(
             script.contains("UV_PROJECT_ENVIRONMENT=/root/agent/.venv uv sync --frozen --project /root/agent/core"),
-            "entrypoint must pin the core sync's venv outside core: {script}"
+            "command must pin the core sync's venv outside core: {script}"
         );
         assert!(
             script.contains("python -m core.main"),
-            "entrypoint must launch core.main: {script}"
+            "command must launch core.main: {script}"
         );
     }
 
     #[test]
-    fn entrypoint_inlines_skill_linking() {
-        let cmd = agent_container_entrypoint_cmd();
-        let script = cmd.last().expect("entrypoint script");
+    fn command_leaves_runtime_setup_to_agent_code() {
+        let cmd = agent_container_cmd();
+        let script = cmd.last().expect("container command");
         assert!(
-            script.contains("CONFIG=\"agent/data/config.json\""),
-            "entrypoint must read runtime active skills from agent config: {script}"
-        );
-        assert!(
-            script.contains("DEFAULTS=\"agent/core/default-skills.txt\""),
-            "entrypoint must read default skills from agent/core: {script}"
-        );
-        assert!(
-            script.contains("ln -sfn \"$HOME/$1\" \"$LINK_DIR/$(basename \"$1\")\""),
-            "entrypoint must rebuild the skill symlink farm inline: {script}"
-        );
-        assert!(
-            !script.contains("link-skills.sh"),
-            "entrypoint must not call the deleted link-skills.sh helper: {script}"
-        );
-        assert!(
-            !script.contains("agent/skills/active-skills.txt")
-                && !script.contains("agent/skills/default-skills.txt"),
-            "entrypoint must not use the old active/default skill paths: {script}"
+            !script.contains("active_skills")
+                && !script.contains("default-skills.txt")
+                && !script.contains("settings.json")
+                && !script.contains("ln -s"),
+            "agent-owned runtime setup must stay out of the container command: {script}"
         );
     }
 
     #[test]
-    fn entrypoint_never_exports_uv_project_environment_into_the_agent() {
-        let cmd = agent_container_entrypoint_cmd();
-        let script = cmd.last().expect("entrypoint script");
+    fn command_never_exports_uv_project_environment_into_the_agent() {
+        let cmd = agent_container_cmd();
+        let script = cmd.last().expect("container command");
         assert!(
             !script.contains("export UV_PROJECT_ENVIRONMENT"),
             "UV_PROJECT_ENVIRONMENT must never be exported: {script}"
@@ -3645,7 +3507,7 @@ mod tests {
             &docker,
             &tc,
             &[],
-            agent_container_entrypoint_cmd(),
+            agent_container_cmd(),
             NETWORK_MODE,
             RESTART_POLICY,
         )
@@ -3673,7 +3535,7 @@ mod tests {
             &docker,
             &tc,
             &[],
-            agent_container_entrypoint_cmd(),
+            agent_container_cmd(),
             NETWORK_MODE,
             RESTART_POLICY,
         )
@@ -3733,7 +3595,7 @@ mod tests {
             &docker,
             &tc,
             &mounts,
-            agent_container_entrypoint_cmd(),
+            agent_container_cmd(),
             NETWORK_MODE,
             RESTART_POLICY,
         )
@@ -3762,7 +3624,7 @@ mod tests {
             &docker,
             &tc,
             &[env_mount, core_mount],
-            agent_container_entrypoint_cmd(),
+            agent_container_cmd(),
             NETWORK_MODE,
             RESTART_POLICY,
         )
@@ -3800,7 +3662,7 @@ mod tests {
             &docker,
             &tc,
             &mounts,
-            agent_container_entrypoint_cmd(),
+            agent_container_cmd(),
             NETWORK_MODE,
             RESTART_POLICY,
         )
@@ -3853,7 +3715,7 @@ mod tests {
             &docker,
             &tc,
             &[],
-            agent_container_entrypoint_cmd(),
+            agent_container_cmd(),
             NETWORK_MODE,
             RESTART_POLICY,
         )
@@ -3882,7 +3744,7 @@ mod tests {
             &docker,
             &tc,
             &mounts,
-            agent_container_entrypoint_cmd(),
+            agent_container_cmd(),
             NETWORK_MODE,
             RESTART_POLICY,
         )
@@ -3913,7 +3775,7 @@ mod tests {
             &docker,
             &tc,
             &mounts,
-            agent_container_entrypoint_cmd(),
+            agent_container_cmd(),
             "bridge",
             RESTART_POLICY,
         )
@@ -3947,7 +3809,7 @@ mod tests {
             &docker,
             &tc,
             &mounts,
-            agent_container_entrypoint_cmd(),
+            agent_container_cmd(),
             NETWORK_MODE,
             "unless-stopped",
         )
@@ -3992,7 +3854,7 @@ mod tests {
             &docker,
             &tc,
             &mounts,
-            agent_container_entrypoint_cmd(),
+            agent_container_cmd(),
             "bridge",
             RESTART_POLICY,
         )
@@ -4013,7 +3875,7 @@ mod tests {
             &docker,
             &tc,
             &mounts,
-            agent_container_entrypoint_cmd(),
+            agent_container_cmd(),
             NETWORK_MODE,
             RESTART_POLICY,
         )
@@ -4037,7 +3899,7 @@ mod tests {
             &docker,
             &tc,
             &[env_mount],
-            agent_container_entrypoint_cmd(),
+            agent_container_cmd(),
             NETWORK_MODE,
             RESTART_POLICY,
         )

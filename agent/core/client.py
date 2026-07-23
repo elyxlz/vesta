@@ -599,8 +599,8 @@ def build_client_options(config: cfg.VestaConfig, state: vm.State) -> ClaudeAgen
         permission_mode="bypassPermissions",
         can_use_tool=_approve_all_tools,
         cwd=config.agent_dir,
-        # "user" enables discovery of ~/.claude/skills, where the entrypoint symlinks every
-        # installed skill (agent/skills/* + agent/core/skills/*); without it the Skill tool
+        # "user" enables discovery of ~/.claude/skills, where agent startup symlinks active
+        # optional skills plus every core skill; without it the Skill tool
         # never sees them. "project" stays for CLAUDE.md loading. skills="all" turns the
         # Skill tool on for every discovered skill (the single documented switch).
         setting_sources=["user", "project"],

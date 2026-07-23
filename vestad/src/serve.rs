@@ -2856,7 +2856,7 @@ pub async fn run_server(cfg: ServerConfig) {
     );
     let state = Arc::new(app_state);
     let mobile_app_handle = tokio::spawn(mobile_app_worker.run());
-    // Reconcile in the background so the API serves immediately: a rebuild (entrypoint/mount change)
+    // Reconcile in the background so the API serves immediately: a rebuild (command/mount change)
     // snapshots each container's filesystem (minutes), and awaiting it would leave vestad unreachable.
     let reconcile_docker = docker.clone();
     let reconcile_env = state.env_config.clone();
