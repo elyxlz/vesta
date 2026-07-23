@@ -191,7 +191,7 @@ def _blocking_processor():
 @pytest.mark.anyio
 async def test_watcher_delivery_consumes_item_and_clears_files(config, state, tmp_path):
     """A mid-turn item whose pre-send succeeds is consumed at delivery: files cleared,
-    notification_cleared emitted, and no turn ever runs for it."""
+    rendered in the notification log, notification_cleared emitted, and no turn ever runs for it."""
     from core.loops import _run_messages_with_preempts
 
     queue: asyncio.Queue = asyncio.Queue()
@@ -208,7 +208,11 @@ async def test_watcher_delivery_consumes_item_and_clears_files(config, state, tm
 
     state.event_bus.emit = tracking_emit
 
-    with patch("core.loops.process_message", fake_process), patch("core.loops.send_preempt", AsyncMock(return_value=True)):
+    with (
+        patch("core.loops.process_message", fake_process),
+        patch("core.loops.send_preempt", AsyncMock(return_value=True)),
+        patch("core.loops.logger.notification") as notification_log,
+    ):
         task = asyncio.create_task(_run_messages_with_preempts(vm.QueuedTurn("first", True, []), queue=queue, state=state, config=config))
         await first_started.wait()
         await queue.put(vm.QueuedTurn("urgent", False, [str(notif_file)]))
@@ -218,6 +222,7 @@ async def test_watcher_delivery_consumes_item_and_clears_files(config, state, tm
 
     assert cleared == ["urgent"]
     assert processed == ["first"], f"a delivered item must never run as a turn: {processed}"
+    notification_log.assert_called_once_with("urgent")
 
 
 @pytest.mark.anyio
