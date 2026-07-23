@@ -268,6 +268,7 @@ async def _watch_queue_during_turn(
                     user=arrived.is_user,
                     is_notification=arrived.interruptible and not arrived.is_user,
                 )
+                logger.debug("Preempt sent (priority=now)")
                 clear_notifications(state, arrived.file_paths)
             else:
                 pending.append(arrived)
