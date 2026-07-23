@@ -14,6 +14,7 @@ from . import config as cfg
 from . import logger, state_store
 from . import models as vm
 from .api import start_ws_server
+from .claude_runtime import reconcile_claude_runtime
 from .diagnostics import format_crash_detail
 from .events import EventBus
 from .loops import (
@@ -225,11 +226,13 @@ async def async_main() -> bool:
     # a PUT /config timezone change applies on the next restart, never mid-request.
     os.environ["TZ"] = config.timezone
     time.tzset()
-    logger.init("Config:")
-    print_json(data=config.model_dump(mode="json"))
 
     for path in [config.agent_dir, config.notifications_dir, config.logs_dir, config.data_dir, config.dreamer_dir]:
         path.mkdir(parents=True, exist_ok=True)
+
+    reconcile_claude_runtime(config)
+    logger.init("Config:")
+    print_json(data=config.model_dump(mode="json"))
 
     # seed_context (one-shot setup notes) is delivered through the config store; materialize it to the
     # file the first-wake prompt reads. Only when absent, so a re-delivery never clobbers notes the
