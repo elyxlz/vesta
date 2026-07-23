@@ -8,17 +8,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/States";
 import { Text } from "@/components/ui/Typography";
-import {
-  ThemeOverrideProvider,
-  usePreferences,
-} from "@/preferences/PreferencesProvider";
+import { usePreferences } from "@/preferences/PreferencesProvider";
 
 export default function ScanScreen() {
-  return (
-    <ThemeOverrideProvider theme="light">
-      <ScanContent />
-    </ThemeOverrideProvider>
-  );
+  return <ScanContent />;
 }
 
 function ScanContent() {
@@ -46,6 +39,7 @@ function ScanContent() {
     <ScannerBackButton
       top={Math.max(insets.top, 12) + 8}
       color={colors.text}
+      backgroundColor={colors.elevated}
       onPress={() => router.back()}
     />
   );
@@ -120,10 +114,12 @@ function ScanContent() {
 function ScannerBackButton({
   top,
   color,
+  backgroundColor,
   onPress,
 }: {
   top: number;
   color: string;
+  backgroundColor: string;
   onPress: () => void;
 }) {
   const button = (
@@ -145,7 +141,7 @@ function ScannerBackButton({
     return (
       <GlassView
         glassEffectStyle="regular"
-        colorScheme="light"
+        colorScheme="auto"
         isInteractive
         style={[styles.backButton, { top }]}
       >
@@ -155,7 +151,7 @@ function ScannerBackButton({
   }
 
   return (
-    <View style={[styles.backButton, styles.backButtonFallback, { top }]}>
+    <View style={[styles.backButton, { top, backgroundColor }]}>
       {button}
     </View>
   );
@@ -191,9 +187,6 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-  },
-  backButtonFallback: {
-    backgroundColor: "rgba(255, 255, 255, 0.72)",
   },
   state: {
     flex: 1,

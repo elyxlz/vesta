@@ -100,13 +100,12 @@ const config: ExpoConfig = {
     ],
     ...notificationPlugins,
     [
-      "./plugins/with-blank-launch-screen",
-      { backgroundColor: nativeConfigTokens.splashBackground },
-    ],
-    [
       "expo-splash-screen",
       {
         backgroundColor: nativeConfigTokens.splashBackground,
+        dark: {
+          backgroundColor: nativeConfigTokens.splashBackgroundDark,
+        },
         android: {
           // Expo's Android theme always references a splash drawable. Keep the
           // native launch screen visually blank while still generating the

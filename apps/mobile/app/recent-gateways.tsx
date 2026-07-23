@@ -13,19 +13,12 @@ import { useRouter } from "expo-router";
 import { GatewayCloseButton } from "@/components/GatewayCloseButton";
 import { NativeDeleteRow } from "@/components/NativeDeleteRow";
 import { Text } from "@/components/ui/Typography";
-import {
-  ThemeOverrideProvider,
-  usePreferences,
-} from "@/preferences/PreferencesProvider";
+import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
 import type { RecentGateway } from "@/storage/recent-gateway-model";
 
 export default function RecentGatewaysScreen() {
-  return (
-    <ThemeOverrideProvider theme="light">
-      <RecentGatewaysContent />
-    </ThemeOverrideProvider>
-  );
+  return <RecentGatewaysContent />;
 }
 
 function gatewayName(gateway: RecentGateway): string {

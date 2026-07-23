@@ -1,5 +1,12 @@
 import type { ComponentProps, ReactNode } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
+import {
+  ActivityIndicator,
+  Pressable,
+  StyleSheet,
+  View,
+  type StyleProp,
+  type TextStyle,
+} from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { usePreferences } from "@/preferences/PreferencesProvider";
@@ -7,8 +14,13 @@ import { radii } from "@/theme/layout";
 import { Text } from "./Typography";
 
 type IconName = ComponentProps<typeof Ionicons>["name"];
-type ButtonVariant = "primary" | "secondary" | "danger" | "plain";
-type ButtonSize = "default" | "small";
+type ButtonVariant =
+  | "primary"
+  | "secondary"
+  | "ghost"
+  | "danger"
+  | "plain";
+type ButtonSize = "default" | "small" | "compact";
 
 function withAlpha(color: string, opacity: number): string {
   if (!/^#[0-9a-f]{6}$/i.test(color)) return color;
@@ -24,10 +36,12 @@ interface ButtonProps {
   variant?: ButtonVariant;
   icon?: IconName;
   iconColor?: string;
+  iconSize?: number;
   disabled?: boolean;
   loading?: boolean;
   pill?: boolean;
   size?: ButtonSize;
+  labelStyle?: StyleProp<TextStyle>;
   accessibilityLabel?: string;
 }
 
@@ -43,10 +57,12 @@ export function Button({
   variant = "primary",
   icon,
   iconColor,
+  iconSize = 18,
   disabled = false,
   loading = false,
   pill = false,
   size = "default",
+  labelStyle,
   accessibilityLabel,
 }: ButtonProps) {
   const { colors } = usePreferences();
@@ -70,42 +86,61 @@ export function Button({
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       disabled={disabled || loading}
-      hitSlop={size === "small" ? 4 : undefined}
+      hitSlop={size === "compact" ? 13 : size === "small" ? 4 : undefined}
       onPress={() => {
         void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         onPress();
       }}
       style={({ pressed }) => [
         styles.button,
-        size === "small" ? styles.smallButton : null,
+        size === "small"
+          ? styles.smallButton
+          : size === "compact"
+            ? styles.compactButton
+            : null,
         pill ? styles.pill : null,
         {
           backgroundColor:
             variant === "danger" && pressed
               ? withAlpha(colors.danger, 0.8)
               : backgroundColor,
-          opacity: disabled ? 0.45 : pressed && variant !== "danger" ? 0.72 : 1,
+          opacity:
+            disabled
+              ? 0.45
+              : pressed && variant !== "danger" && variant !== "ghost"
+                ? 0.72
+                : 1,
         },
       ]}
     >
-      {loading ? (
-        <ActivityIndicator color={textColor} />
-      ) : (
-        <View style={styles.content}>
-          {icon ? (
-            <Ionicons name={icon} size={18} color={iconColor ?? textColor} />
-          ) : null}
-          <Text
-            style={[
-              styles.label,
-              size === "small" ? styles.smallLabel : null,
-              { color: textColor },
-            ]}
-          >
-            {children}
-          </Text>
-        </View>
-      )}
+      {({ pressed }) => {
+        const contentColor =
+          variant === "ghost" && pressed ? colors.interactive : textColor;
+
+        return loading ? (
+          <ActivityIndicator color={contentColor} />
+        ) : (
+          <View style={styles.content}>
+            {icon ? (
+              <Ionicons
+                name={icon}
+                size={iconSize}
+                color={iconColor ?? contentColor}
+              />
+            ) : null}
+            <Text
+              style={[
+                styles.label,
+                size !== "default" ? styles.smallLabel : null,
+                labelStyle,
+                { color: contentColor },
+              ]}
+            >
+              {children}
+            </Text>
+          </View>
+        );
+      }}
     </Pressable>
   );
 }
@@ -144,6 +179,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
   },
   smallButton: { minHeight: 40, paddingHorizontal: 14 },
+  compactButton: { minHeight: 18, paddingHorizontal: 14 },
   pill: { borderRadius: radii.pill },
   content: { flexDirection: "row", alignItems: "center", gap: 8 },
   label: { fontSize: 16, fontWeight: "700" },

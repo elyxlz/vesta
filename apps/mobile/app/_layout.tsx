@@ -49,7 +49,6 @@ import {
   type BootDestination,
   type BootTargetFrame,
 } from "@/components/BootTransition";
-import { lightColors } from "@/theme/colors";
 import { fontNames } from "@/theme/typography";
 
 WebBrowser.maybeCompleteAuthSession();
@@ -69,29 +68,28 @@ function SessionNavigation() {
   >({});
   const isConnectRoute =
     activeRoute === "connect" ||
+    activeRoute === "connect-actions" ||
     activeRoute === "connect-link" ||
     activeRoute === "recent-gateways" ||
     activeRoute === "scan";
   const isHomeRoute = !activeRoute;
   const routeNeedsAgents = isHomeRoute || activeRoute === "agent";
-  const activeColors = isConnectRoute ? lightColors : colors;
-  const navigationDark = !isConnectRoute && dark;
   const navigationTheme = useMemo(() => {
-    const base = navigationDark ? DarkTheme : DefaultTheme;
+    const base = dark ? DarkTheme : DefaultTheme;
     return {
       ...base,
-      dark: navigationDark,
+      dark,
       colors: {
         ...base.colors,
-        primary: activeColors.interactive,
-        background: activeColors.background,
-        card: activeColors.elevated,
-        text: activeColors.text,
-        border: activeColors.border,
-        notification: activeColors.danger,
+        primary: colors.interactive,
+        background: colors.background,
+        card: colors.elevated,
+        text: colors.text,
+        border: colors.border,
+        notification: colors.danger,
       },
     };
-  }, [activeColors, navigationDark]);
+  }, [colors, dark]);
   const routeMatchesSession =
     (status === "disconnected" && isConnectRoute) ||
     (status === "connected" &&
@@ -136,19 +134,16 @@ function SessionNavigation() {
     <BootTransitionProvider
       active={bootSplashVisible}
       onTarget={reportBootTarget}
+      pageRevealed={bootPageRevealed}
       targetVisible={bootTargetVisible}
     >
       <View
-        style={[
-          styles.appSurface,
-          { backgroundColor: activeColors.background },
-        ]}
+        style={[styles.appSurface, { backgroundColor: colors.background }]}
       >
         <ThemeProvider value={navigationTheme}>
           <StatusBar
             style={
               (bootSplashVisible && !bootPageRevealed) ||
-              isConnectRoute ||
               !dark
                 ? "dark"
                 : "light"
@@ -156,10 +151,10 @@ function SessionNavigation() {
           />
           <Stack
             screenOptions={{
-              contentStyle: { backgroundColor: activeColors.background },
+              contentStyle: { backgroundColor: colors.background },
               headerTransparent: true,
               headerStyle: { backgroundColor: "transparent" },
-              headerTintColor: activeColors.text,
+              headerTintColor: colors.text,
               headerTitleStyle: {
                 fontFamily: fontNames.heading.native["500"],
                 fontSize: 24,
@@ -180,6 +175,18 @@ function SessionNavigation() {
                   headerShown: false,
                   animation: "fade",
                   animationDuration: 500,
+                }}
+              />
+              <Stack.Screen
+                name="connect-actions"
+                options={{
+                  headerShown: false,
+                  presentation: "formSheet",
+                  sheetAllowedDetents: "fitToContents",
+                  sheetGrabberVisible: false,
+                  sheetLargestUndimmedDetentIndex: "last",
+                  gestureEnabled: false,
+                  contentStyle: { backgroundColor: colors.card },
                 }}
               />
               <Stack.Screen
@@ -234,7 +241,7 @@ function SessionNavigation() {
                       family="heading"
                       style={[
                         styles.settingsTitle,
-                        { color: activeColors.text },
+                        { color: colors.text },
                       ]}
                     >
                       Settings

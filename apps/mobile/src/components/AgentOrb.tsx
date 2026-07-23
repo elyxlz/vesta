@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Animated, Easing, StyleSheet, View } from "react-native";
+import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import type { AgentActivityState, AgentStatus } from "@vesta/core";
 import { useBootTransitionTargetFrozen } from "@/components/BootTransition";
@@ -12,6 +13,7 @@ interface AgentOrbProps {
   animated?: boolean;
   pulseScale?: number;
   pulseDuration?: number;
+  pulseHaptics?: boolean;
 }
 
 function orbColors(
@@ -47,6 +49,7 @@ export function AgentOrb({
   animated = true,
   pulseScale,
   pulseDuration,
+  pulseHaptics = false,
 }: AgentOrbProps) {
   const [rotation] = useState(() => new Animated.Value(0));
   const [pulse] = useState(() => new Animated.Value(1));
@@ -101,6 +104,33 @@ export function AgentOrb({
     breathe.start();
     return () => breathe.stop();
   }, [halfPulseDuration, maximumPulseScale, pulse, shouldAnimate, status]);
+
+  useEffect(() => {
+    if (
+      !pulseHaptics ||
+      !shouldAnimate ||
+      status !== "alive" ||
+      process.env.EXPO_OS !== "ios"
+    ) {
+      return;
+    }
+
+    let interval: ReturnType<typeof setInterval> | undefined;
+    const pulseAtPeak = () => {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft).catch(
+        () => undefined,
+      );
+    };
+    const timeout = setTimeout(() => {
+      pulseAtPeak();
+      interval = setInterval(pulseAtPeak, halfPulseDuration * 2);
+    }, halfPulseDuration);
+
+    return () => {
+      clearTimeout(timeout);
+      if (interval) clearInterval(interval);
+    };
+  }, [halfPulseDuration, pulseHaptics, shouldAnimate, status]);
 
   const rotate = rotation.interpolate({
     inputRange: [0, 1],

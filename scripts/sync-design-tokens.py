@@ -152,10 +152,12 @@ def _typescript(tokens: dict[str, Any]) -> str:
 
 
 def _native_config_json(tokens: dict[str, Any]) -> str:
+    light = tokens["colors"]["light"]
     dark = tokens["colors"]["dark"]
     payload = {
         "background": _native_color(dark["background"]),
-        "splashBackground": _native_color(tokens["launch"]["background"]),
+        "splashBackground": _native_color(light["background"]),
+        "splashBackgroundDark": _native_color(dark["background"]),
         "primary": _native_color(dark["primary"]),
     }
     return json.dumps(payload, indent=2) + "\n"
