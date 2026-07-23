@@ -67,8 +67,8 @@ function ConnectContent() {
             Vesta
           </Text>
           <Text style={[styles.tagline, { color: colors.secondaryText }]}>
-            an AI guardian angel that gives you back time and helps you achieve
-            your goals.
+            a guardian angel that gives you back time and helps you achieve your
+            goals.
           </Text>
         </View>
       </View>
