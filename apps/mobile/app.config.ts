@@ -86,6 +86,12 @@ const config: ExpoConfig = {
     "expo-status-bar",
     "expo-web-browser",
     [
+      "expo-local-authentication",
+      {
+        faceIDPermission: "Use Face ID to unlock Vesta.",
+      },
+    ],
+    [
       "expo-camera",
       {
         cameraPermission: "Scan a Vesta connection QR code.",

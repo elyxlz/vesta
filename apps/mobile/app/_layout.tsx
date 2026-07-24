@@ -31,6 +31,8 @@ import {
   PreferencesProvider,
   usePreferences,
 } from "@/preferences/PreferencesProvider";
+import { PrivacyGate } from "@/privacy/privacy-gate";
+import { PrivacyProvider } from "@/privacy/privacy-provider";
 import { UserNotifications } from "@/notifications/UserNotifications";
 import { PushCoordinator } from "@/notifications/PushCoordinator";
 import { WhatsNewAutoOpen } from "@/releases/whats-new-auto-open";
@@ -342,19 +344,23 @@ export default function RootLayout() {
       <KeyboardProvider>
         <QueryClientProvider client={queryClient}>
           <PreferencesProvider>
-            <SessionProvider>
-              <RosterHoldProvider>
-                <ChatHoldProvider>
-                  <ControllerProvider>
-                    <RosterProvider>
-                      <UserNotifications />
-                      <PushCoordinator />
-                      <SessionNavigation />
-                    </RosterProvider>
-                  </ControllerProvider>
-                </ChatHoldProvider>
-              </RosterHoldProvider>
-            </SessionProvider>
+            <PrivacyProvider>
+              <PrivacyGate>
+                <SessionProvider>
+                  <RosterHoldProvider>
+                    <ChatHoldProvider>
+                      <ControllerProvider>
+                        <RosterProvider>
+                          <UserNotifications />
+                          <PushCoordinator />
+                          <SessionNavigation />
+                        </RosterProvider>
+                      </ControllerProvider>
+                    </ChatHoldProvider>
+                  </RosterHoldProvider>
+                </SessionProvider>
+              </PrivacyGate>
+            </PrivacyProvider>
           </PreferencesProvider>
         </QueryClientProvider>
       </KeyboardProvider>

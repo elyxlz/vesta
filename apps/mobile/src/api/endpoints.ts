@@ -430,6 +430,13 @@ export async function fetchGatewaySettings(
   return api.json("/gateway/settings");
 }
 
+export async function updateGatewaySettings(
+  api: ApiClient,
+  patch: Partial<Pick<GatewaySettings, "auto_update" | "channel">>,
+): Promise<GatewaySettings> {
+  return api.json("/gateway/settings", api.jsonInit("PUT", patch));
+}
+
 export async function registerMobileDevice(
   api: ApiClient,
   input: {
