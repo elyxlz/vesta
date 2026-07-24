@@ -19,7 +19,6 @@ import { useSession } from "@/session/SessionProvider";
 
 const IS_IOS = process.env.EXPO_OS === "ios";
 const appearanceValueIcons = {
-  system: "phone-portrait-outline",
   light: "sunny-outline",
   dark: "moon-outline",
 } as const;
@@ -54,6 +53,10 @@ export default function SettingsScreen() {
     mutationFn: () => triggerGatewayRestart(session.api),
   });
   const updateAvailable = roster.updateAvailable;
+  const appearanceValueIcon =
+    preferences.theme === "system"
+      ? undefined
+      : appearanceValueIcons[preferences.theme];
 
   const confirmGatewayUpdate = () => {
     Alert.alert("Update gateway?", "Agents will briefly restart.", [
@@ -98,8 +101,12 @@ export default function SettingsScreen() {
           <FormRow
             label="Appearance"
             detail="Use the system setting or choose light or dark."
-            valueIcon={appearanceValueIcons[preferences.theme]}
-            valueIconLabel={`${preferences.theme} appearance`}
+            valueIcon={appearanceValueIcon}
+            valueIconLabel={
+              appearanceValueIcon
+                ? `${preferences.theme} appearance`
+                : undefined
+            }
             onPress={chooseTheme}
           />
         </FormSection>
