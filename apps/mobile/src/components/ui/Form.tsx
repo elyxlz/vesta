@@ -153,7 +153,7 @@ export function FormRow({
           {value}
         </Text>
       ) : null}
-      {trailing}
+      {trailing ? <View style={styles.rowTrailing}>{trailing}</View> : null}
       {onPress ? (
         <Ionicons
           name="chevron-forward"
@@ -261,6 +261,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   rowText: { flex: 1, gap: 2 },
+  rowTrailing: {
+    alignSelf: "stretch",
+    alignItems: "center",
+    justifyContent: "center",
+  },
   rowLabel: { fontSize: 16, fontWeight: "600" },
   rowDetail: { fontSize: 12, lineHeight: 16 },
   value: { fontSize: 15 },

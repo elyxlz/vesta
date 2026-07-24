@@ -78,7 +78,7 @@ export default function SettingsScreen() {
       <FormSection title="Experience">
         <FormRow
           label="Appearance"
-          icon="contrast-outline"
+          detail="Use the system setting or choose light or dark."
           value={preferences.theme}
           onPress={chooseTheme}
         />
@@ -88,14 +88,12 @@ export default function SettingsScreen() {
         <SwitchRow
           label="Allow notifications"
           detail="Receive selected agent updates when the app is closed."
-          icon="notifications-outline"
           value={preferences.remoteNotifications}
           onValueChange={(value) => void preferences.update({ remoteNotifications: value })}
         />
         <SwitchRow
           label="Chat replies"
           detail="Notify when an agent sends a completed chat reply."
-          icon="chatbubble-outline"
           value={
             preferences.remoteNotifications && preferences.pushChatReplies
           }
@@ -105,7 +103,6 @@ export default function SettingsScreen() {
         <SwitchRow
           label="Message previews"
           detail="Show chat text on the lock screen. Off keeps messages private."
-          icon="eye-outline"
           value={
             preferences.remoteNotifications &&
             preferences.pushChatReplies &&
@@ -117,7 +114,6 @@ export default function SettingsScreen() {
         <SwitchRow
           label="Status changes"
           detail="Notify when an agent starts, stops, or changes availability."
-          icon="pulse-outline"
           value={
             preferences.remoteNotifications && preferences.pushStatusChanges
           }
@@ -129,21 +125,18 @@ export default function SettingsScreen() {
       <FormSection title="Gateway">
         <FormRow
           label="Status"
-          icon="radio-outline"
           value={roster.reachable ? "connected" : "reconnecting"}
         />
-        <FormRow label="Host" icon="cloud-outline" value={session.connection ? new URL(session.connection.url).hostname : ""} />
-        <FormRow label="Version" icon="git-branch-outline" value={roster.gatewayVersion ?? "unknown"} />
-        <FormRow label="Channel" icon="flask-outline" value={gateway.data?.settings.channel ?? "unknown"} />
+        <FormRow label="Host" value={session.connection ? new URL(session.connection.url).hostname : ""} />
+        <FormRow label="Version" value={roster.gatewayVersion ?? "unknown"} />
+        <FormRow label="Channel" value={gateway.data?.settings.channel ?? "unknown"} />
         <FormRow
           label="Public tunnel"
-          icon="globe-outline"
           value={gateway.data?.info.tunnel_url ? "active" : "unavailable"}
         />
         {gatewayUpdate.isPending ? (
           <FormRow
             label="Updating gateway"
-            icon="arrow-up-circle-outline"
             trailing={
               <ActivityIndicator color={preferences.colors.interactive} />
             }
@@ -151,7 +144,6 @@ export default function SettingsScreen() {
         ) : updateCheck.isPending ? (
           <FormRow
             label="Checking for updates"
-            icon="refresh-outline"
             trailing={
               <ActivityIndicator color={preferences.colors.interactive} />
             }
@@ -159,28 +151,24 @@ export default function SettingsScreen() {
         ) : updateAvailable ? (
           <FormRow
             label="Update available"
-            icon="arrow-up-circle-outline"
             value={roster.latestVersion ?? "available"}
             onPress={confirmGatewayUpdate}
           />
         ) : updateCheck.isError ? (
           <FormRow
             label="Check failed"
-            icon="alert-circle-outline"
             value="try again"
             onPress={() => updateCheck.mutate()}
           />
         ) : (
           <FormRow
             label="Check for updates"
-            icon={updateCheck.isSuccess ? "checkmark-circle-outline" : "refresh-outline"}
             value={updateCheck.isSuccess ? "up to date" : undefined}
             onPress={() => updateCheck.mutate()}
           />
         )}
         <FormRow
           label="Restart gateway"
-          icon="reload-outline"
           onPress={gatewayRestart.isPending ? undefined : confirmGatewayRestart}
           trailing={
             gatewayRestart.isPending ? (
@@ -194,17 +182,15 @@ export default function SettingsScreen() {
         <FormSection title="Account">
           <FormRow
             label="Manage account and billing"
-            icon="person-circle-outline"
             onPress={() => void Linking.openURL("https://vesta.run/account")}
           />
         </FormSection>
       ) : null}
 
       <FormSection title="Support">
-        <FormRow label="Diagnostics" icon="pulse-outline" onPress={() => router.push("/debug")} />
+        <FormRow label="Diagnostics" onPress={() => router.push("/debug")} />
         <FormRow
           label="What's new"
-          icon="sparkles-outline"
           onPress={() => void Linking.openURL("https://github.com/elyxlz/vesta/releases")}
         />
       </FormSection>
@@ -212,8 +198,6 @@ export default function SettingsScreen() {
       <FormSection title="Other">
         <FormRow
           label="Disconnect"
-          icon="log-out-outline"
-          destructiveIcon
           onPress={() => {
             Alert.alert("Disconnect from Vesta?", "You can reconnect using your account or tunnel link.", [
               { text: "Cancel", style: "cancel" },
