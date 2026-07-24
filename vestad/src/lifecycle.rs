@@ -57,19 +57,19 @@ pub static DESTROY: LifecycleReason<'static> =
 
 pub static SCHEDULED_BACKUP: LifecycleReason<'static> = LifecycleReason::borrowed(
     "backup: scheduled",
-    "Vesta briefly paused you while it created a scheduled backup. No action is required.",
+    "The system briefly paused you while it created a scheduled backup. No action is required.",
 );
 pub static MANUAL_BACKUP: LifecycleReason<'static> = LifecycleReason::borrowed(
     "backup: manual",
-    "Vesta briefly paused you while it created a manual backup. No action is required.",
+    "The system briefly paused you while it created a manual backup. No action is required.",
 );
 pub static PRE_RESTORE_BACKUP: LifecycleReason<'static> = LifecycleReason::borrowed(
     "backup: pre-restore safety backup",
-    "Vesta briefly paused you while it created a safety backup before a restore. No action is required.",
+    "The system briefly paused you while it created a safety backup before a restore. No action is required.",
 );
 pub static BACKUP_EXPORT: LifecycleReason<'static> = LifecycleReason::borrowed(
     "backup: export",
-    "Vesta briefly paused you while it exported a backup. No action is required.",
+    "The system briefly paused you while it exported a backup. No action is required.",
 );
 pub static BACKUP_IMPORT: LifecycleReason<'static> = LifecycleReason::borrowed(
     "backup: import",
@@ -78,7 +78,7 @@ pub static BACKUP_IMPORT: LifecycleReason<'static> = LifecycleReason::borrowed(
 
 pub static RESTORE_SHUTDOWN: LifecycleReason<'static> = LifecycleReason::borrowed(
     "restore: preparing",
-    "Vesta stopped you to restore a backup.",
+    "The system stopped you to restore a backup.",
 );
 pub static RESTORE_BOOT: LifecycleReason<'static> =
     LifecycleReason::borrowed("restore: completed", "You were restored from a backup.");
@@ -89,15 +89,15 @@ pub static RESTORE_ABORTED: LifecycleReason<'static> = LifecycleReason::borrowed
 
 pub static VESTAD_SHUTDOWN: LifecycleReason<'static> = LifecycleReason::borrowed(
     "system: vestad shutdown",
-    "Vesta stopped you while its system service shut down.",
+    "The system stopped you while its service shut down.",
 );
 pub static VESTAD_RESUME: LifecycleReason<'static> = LifecycleReason::borrowed(
     "system: vestad restarted",
-    "You resumed after the Vesta system service restarted.",
+    "You resumed after the system service restarted.",
 );
 pub static CONFIG_WRITE_START: LifecycleReason<'static> = LifecycleReason::borrowed(
     "system: configuration write",
-    "You were started so Vesta could apply a configuration change.",
+    "You were started so the system could apply a configuration change.",
 );
 pub static CODE_UPDATE: LifecycleReason<'static> = LifecycleReason::borrowed(
     "update: agent code changed",
@@ -109,7 +109,7 @@ pub static CONTAINER_UPDATE: LifecycleReason<'static> = LifecycleReason::borrowe
 );
 pub static DESIRED_STOP: LifecycleReason<'static> = LifecycleReason::borrowed(
     "system: desired state is stopped",
-    "Vesta stopped you to match the requested state.",
+    "The system stopped you to match the requested state.",
 );
 
 pub fn rename(old_name: &str, new_name: &str) -> LifecycleReason<'static> {
@@ -181,7 +181,7 @@ mod tests {
             serde_json::json!({
                 "log_reason": "backup: scheduled",
                 "agent_message": concat!(
-                    "Vesta briefly paused you while it created a scheduled backup. ",
+                    "The system briefly paused you while it created a scheduled backup. ",
                     "No action is required."
                 ),
             }),

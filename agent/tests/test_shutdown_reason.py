@@ -93,7 +93,7 @@ def test_structured_boot_reason_keeps_log_and_agent_copy_separate(tmp_path):
             {
                 "log_reason": "backup: scheduled",
                 "agent_message": (
-                    "Vesta briefly paused you while it created a scheduled backup. "
+                    "The system briefly paused you while it created a scheduled backup. "
                     "No action is required."
                 ),
             }
@@ -104,7 +104,7 @@ def test_structured_boot_reason_keeps_log_and_agent_copy_separate(tmp_path):
 
     assert reason.log_reason == "backup: scheduled"
     assert reason.agent_message == (
-        "Vesta briefly paused you while it created a scheduled backup. "
+        "The system briefly paused you while it created a scheduled backup. "
         "No action is required."
     )
 
@@ -114,7 +114,7 @@ def test_restart_reason_always_gets_a_dedicated_startup_line():
         _log_startup_reason(
             lifecycle.RestartReason(
                 log_reason="backup: scheduled",
-                agent_message="Vesta briefly paused you for a scheduled backup.",
+                agent_message="The system briefly paused you for a scheduled backup.",
             ),
             first_start=False,
         )

@@ -64,5 +64,5 @@ AGENT_RESTART = RestartReason(
 )
 COMPACTION_RESTART = RestartReason(
     log_reason="compaction: context compacted",
-    agent_message="Your conversation context was compacted, so Vesta restarted your runtime.",
+    agent_message="Your conversation context was compacted, so the system restarted your runtime.",
 )
