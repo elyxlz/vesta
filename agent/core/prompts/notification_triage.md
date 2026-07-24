@@ -1,1 +1,0 @@
-These notifications came in while you were focused. Read the `notifications` skill and triage them: act on what genuinely needs you now, note anything worth surfacing to the user, and drop the rest. Spend effort proportional to value; you do not need to respond to each one.

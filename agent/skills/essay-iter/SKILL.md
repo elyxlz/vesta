@@ -17,8 +17,6 @@ User has academic writing to plan, draft, or refine. Triggers:
 . conference papers (with venue rubric or accepted-paper exemplars)
 . anything where there's a target rubric or set of in-distribution writing to fit
 
-The skill is generic. Inputs adapt to whatever the user can provide.
-
 ## The two phases
 
 ### Phase 1: approach session (with user)
@@ -76,7 +74,7 @@ for round = 1, 2, 3, ...:
 . **Rubric**: every criterion at user's target tier (default Distinction or 70%+ band).
 . **In-distribution**: reviewer's `guess_confidence` for the user's draft below 0.5, OR guess wrong.
 . **Citation**: zero hallucinations (no cited work that doesn't exist or doesn't say what's claimed), citation style 100% consistent.
-. **AI-detection**: AI-likelihood overall below 15% (or user-set threshold).
+. **AI-detection**: AI-likelihood overall below the threshold locked in Phase 1.
 
 ## File layout
 
@@ -103,66 +101,30 @@ for round = 1, 2, 3, ...:
   scores.json               (running tally, latest round at top)
 ```
 
-## Workflow steps
+## Running the skill
 
-### Step 1: approach session
+The two phases above are the whole workflow:
 
-Run the approach session described in Phase 1 above: gather what's available, surface the plan, and wait for user OK before drafting. If the user wants to edit the plan, iterate the plan first.
+- Run the approach session
+- Write the initial draft to `<task_id>_essay/draft.md` (or copy the user's existing draft in as v0)
+- Run the loop, saving each round's reviews and a `summary.md` under `iterations/round_<N>/`
+- Present the final draft with a round-by-round score table per axis and any residual gaps flagged honestly
 
-### Step 2: initial draft
-
-Write to `<task_id>_essay/draft.md`. If user provided an existing draft, copy it in and treat as v0.
-
-### Step 3: spawn four reviewers in parallel
-
-Each reviewer gets the current draft, the corpus or rubric needed for its job, and outputs strict JSON. See:
-
-. `rubric_prompt.md` for A
-. `adversarial_prompt.md` for B
-. `citation_prompt.md` for C
-. `gptzero.py` for D (function `score(text)` returning the JSON response)
-
-Save each reviewer's JSON output to `iterations/round_<N>/`.
-
-### Step 4: aggregate + edit
-
-Identify the weakest axis. Write the next draft addressing it first, then sweep the other axes. Save the diff and a `summary.md` per round describing what changed.
-
-### Step 5: convergence check
-
-If all four reviewers pass thresholds, present the final draft + summary of all rounds to the user. Otherwise loop.
-
-### Step 6: present to user
-
-Once converged or capped at 5 rounds:
-
-. final draft
-. table of round-by-round scores per axis
-. residual gaps (if any) flagged honestly
-. user submits, or asks for another round
+The user submits or asks for another round.
 
 ## Reviewer prompt templates
-
-See sibling files in this directory:
-
-. `rubric_prompt.md`
-. `adversarial_prompt.md`
-. `citation_prompt.md`
 
 The AI detector is a Python module, not a sub-agent: `python ~/agent/skills/essay-iter/gptzero.py <file.md>` returns the JSON.
 
 ## Notes for the agent running this skill
 
-. Always surface the plan to the user before drafting. Don't draft into a vacuum.
 . Anonymise rigorously before the in-distribution review. Strip:
   . name, candidate number, course handbook tics that mark a doc as the user's
   . first person "I" if only one essay uses it
   . **all citation dates** in both in-text citations and reference list. Replace `(Smith, 2024)` with `(Smith, YEAR)` and the reference list `Smith, J. (2024) Title.` with `Smith, J. (YEAR) Title.`. Apply consistently across user's draft AND every reference essay. This prevents the critic from cheating by picking the essay with the newest sources as the odd one out (which is a non-signal, not an actual quality differentiator).
   . any URL or DOI that gives away publication year or accessed date
   . file metadata if essays are PDFs (export as plain text first)
-. When real references aren't available, generate synthetic ones up front. Save them so the same corpus is used across rounds.
 . The citation reviewer can take a while (web lookups). Run it last in parallel, or accept that a round takes longer.
-. Cap iterations at 5. If unconverged, stop and surface honestly.
 . Save state every round. The loop should be resumable after a crash.
 . Do not modify the user's voice into something generic. Adversarial-fooling and AI-detection minimisation often pull toward "more human, more idiosyncratic". Lean into that.
 . Do not pad the draft to satisfy a metric. A 2:1 with integrity beats a Distinction with hallucinated citations.

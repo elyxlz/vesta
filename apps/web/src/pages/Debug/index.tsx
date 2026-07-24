@@ -2,7 +2,7 @@ import { ChatBubble } from "@/components/Chat/ChatBubble";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Orb } from "@/components/Orb";
 import { orbColors, type OrbVisualState } from "@/components/Orb/styles";
-import type { VestaEvent } from "@/lib/types";
+import type { ChatMessage } from "@/lib/types";
 
 const states: OrbVisualState[] = [
   "alive",
@@ -14,7 +14,7 @@ const states: OrbVisualState[] = [
 
 const ts = "2026-04-19T12:34:00Z";
 
-const mockChat: { label: string; events: VestaEvent[] }[] = [
+const mockChat: { label: string; events: ChatMessage[] }[] = [
   {
     label: "plain text",
     events: [

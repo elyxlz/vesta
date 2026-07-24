@@ -2,6 +2,7 @@
 
 import pytest
 
+import core.config as cfg
 import core.models as vm
 from core.migrations import list_pending, pending_migration_turns
 
@@ -9,7 +10,7 @@ from core.migrations import list_pending, pending_migration_turns
 @pytest.fixture
 def mig(tmp_path):
     """A config with an empty migrations dir on disk, plus a fresh State."""
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     migrations_dir = config.agent_dir / "core" / "migrations"
     migrations_dir.mkdir(parents=True)
     config.data_dir.mkdir(parents=True, exist_ok=True)
@@ -17,7 +18,7 @@ def mig(tmp_path):
 
 
 def test_no_migrations_dir_returns_empty(tmp_path):
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     config.data_dir.mkdir(parents=True, exist_ok=True)
     assert list_pending(state=vm.State(), config=config) == []
 
@@ -44,17 +45,32 @@ def test_skips_already_applied(mig):
     assert [name for name, _ in pending] == ["002-second"]
 
 
-def test_returns_one_turn_per_migration_in_order(mig):
+def test_returns_all_migrations_in_one_turn_in_order(mig):
     config, migrations_dir, state = mig
     (migrations_dir / "001-first.md").write_text("first body")
     (migrations_dir / "002-second.md").write_text("second body")
 
     turns = pending_migration_turns(state=state, config=config)
 
-    assert len(turns) == 2
+    assert len(turns) == 1
     assert "[Migration: 001-first]" in turns[0]
     assert "first body" in turns[0]
-    assert "[Migration: 002-second]" in turns[1]
+    assert "[Migration: 002-second]" in turns[0]
+    assert turns[0].index("[Migration: 001-first]") < turns[0].index("[Migration: 002-second]")
+
+
+def test_batch_instructions_keep_stop_local_and_later_boot_tasks_separate(mig):
+    config, migrations_dir, state = mig
+    (migrations_dir / "001-first.md").write_text("STOP HERE and do not mark applied")
+    (migrations_dir / "002-second.md").write_text("second body")
+
+    [turn] = pending_migration_turns(state=state, config=config)
+
+    assert "stop only that migration" in turn
+    assert "continue with the next migration section" in turn
+    assert "Defer any requested `restart_vesta`" in turn
+    assert "upstream sync yourself" in turn
+    assert "[Migration: 002-second]" in turn
 
 
 def test_appends_mark_applied_step_with_correct_name(mig):

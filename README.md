@@ -1,6 +1,6 @@
 # Vesta
 
-A personal AI agent that lives in a Docker container, powered by Claude.
+An AI guardian angel that gives you back time and helps you achieve your goals, living in a Docker container, powered by Claude.
 
 Don't want to run a server? [vesta.run](https://vesta.run) hosts one for you. Invite-only.
 
@@ -18,7 +18,7 @@ Don't want to run a server? [vesta.run](https://vesta.run) hosts one for you. In
 
 - Claude subscription or OpenRouter API key
 - **Server (vestad)**: Linux with Docker installed
-- **Client (CLI & app)**: Linux, macOS, or Windows — no additional dependencies
+- **Clients**: the web app (served by vestad), the desktop app (macOS, Windows, Linux), and mobile — no additional dependencies
 
 ## Install
 
@@ -39,9 +39,6 @@ irm https://raw.githubusercontent.com/elyxlz/vesta/master/install.ps1 | iex
 By default, all available components for your platform are installed. Use flags to install only what you need:
 
 ```bash
-# CLI only
-curl -fsSL https://raw.githubusercontent.com/elyxlz/vesta/master/install.sh | bash -s -- --cli
-
 # Server only (Linux)
 curl -fsSL https://raw.githubusercontent.com/elyxlz/vesta/master/install.sh | bash -s -- --server
 
@@ -52,14 +49,11 @@ curl -fsSL https://raw.githubusercontent.com/elyxlz/vesta/master/install.sh | ba
 curl -fsSL https://raw.githubusercontent.com/elyxlz/vesta/master/install.sh | bash -s -- --version=0.1.112
 ```
 
-Windows (PowerShell):
+Windows installs the desktop app:
 
 ```powershell
-# CLI only
-irm https://raw.githubusercontent.com/elyxlz/vesta/master/install.ps1 | iex -- --cli
-
-# Desktop app only
-irm https://raw.githubusercontent.com/elyxlz/vesta/master/install.ps1 | iex -- --app
+# Specific version
+irm https://raw.githubusercontent.com/elyxlz/vesta/master/install.ps1 | iex -- --version=0.1.112
 ```
 
 ## Setup
@@ -83,12 +77,8 @@ Use `vestad serve --standalone` to run in the foreground without systemd (for CI
 
 ### 2. Client
 
-Copy the connect link from the server output:
+Copy the connect link from the server output, then reach your agent one of three ways:
 
-```bash
-vesta connect <connect-link>
-vesta setup
-```
-
-Or in the desktop app, paste the connect link from the server output on the
-onboarding screen.
+- **Web app**: open the gateway URL from the server output in a browser (vestad serves the app at `/app`).
+- **Desktop app**: paste the connect link on the onboarding screen (macOS, Windows, Linux).
+- **Mobile app**: paste the connect link to connect to the same gateway.

@@ -10,7 +10,6 @@ $AGENTMAIL_WEBHOOK_SECRET. The handler rejects mismatches with 401.
 from __future__ import annotations
 
 import json
-import os
 import secrets as secrets_mod
 import time
 from datetime import UTC, datetime
@@ -24,7 +23,6 @@ from agentmail_bridge.config import (
     email_address,
     webhook_secret,
 )
-
 
 app = FastAPI(title="agentmail")
 
@@ -66,6 +64,9 @@ async def webhook(request: Request, secret: str = Query(default="")) -> dict:
     notification = {
         "source": "agentmail",
         "type": "message",
+        # Inbound mail pools by default so it doesn't preempt the agent mid-task; the user adds interrupt
+        # rules (e.g. --keyword urgent) for the mail that should reach them right away.
+        "interrupt": False,
         "message_id": _field(message, "message_id", _field(payload, "message_id", "")),
         "thread_id": _field(payload, "thread_id", _field(message, "thread_id", "")),
         "from": _field(message, "from", ""),
@@ -82,8 +83,24 @@ async def webhook(request: Request, secret: str = Query(default="")) -> dict:
     final = NOTIFICATIONS_DIR / fname
     tmp = NOTIFICATIONS_DIR / f"{fname}.tmp"
     tmp.write_text(json.dumps(notification, indent=2))
-    os.replace(tmp, final)
+    tmp.replace(final)
     return {"ok": True, "notification_path": str(final)}
+
+
+def _write_daemon_died() -> None:
+    """Record the mail service's exit so the agent restarts it: uvicorn.run returns on
+    SIGTERM/SIGINT and raises on a bind/fatal error, so a dead inbound-mail listener is
+    reported either way. interrupt defaults on (silent mail loss is urgent)."""
+    NOTIFICATIONS_DIR.mkdir(parents=True, exist_ok=True)
+    notif = {
+        "source": "agentmail",
+        "type": "daemon_died",
+        "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+    }
+    fname = f"{int(time.time() * 1e6)}-agentmail-daemon_died.json"
+    tmp = NOTIFICATIONS_DIR / f"{fname}.tmp"
+    tmp.write_text(json.dumps(notif, indent=2))
+    tmp.replace(NOTIFICATIONS_DIR / fname)
 
 
 @click.command("serve")
@@ -91,4 +108,7 @@ async def webhook(request: Request, secret: str = Query(default="")) -> dict:
 @click.option("--host", default="0.0.0.0", help="Bind address")
 def serve_cmd(port: int, host: str) -> None:
     """Run the local HTTP service that receives inbound mail from AgentMail."""
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    try:
+        uvicorn.run(app, host=host, port=port, log_level="info")
+    finally:
+        _write_daemon_died()

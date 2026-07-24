@@ -4,7 +4,7 @@
 # ruff/ty/clippy/lockfile" cases without waiting for CI.
 #
 # Skipped (out of scope for local): test-integration (Docker + slow),
-# Windows/macOS/iOS/Android builds, Tauri bundling, install-script-check
+# Windows/macOS builds, Electron bundling, install-script-check
 # (PowerShell-only).
 #
 # Usage:
@@ -16,7 +16,7 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$REPO_ROOT"
+cd "$REPO_ROOT" || exit 1
 
 BOLD=$'\033[1m'; RED=$'\033[31m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; DIM=$'\033[2m'; RESET=$'\033[0m'
 FAILED=()
@@ -47,15 +47,15 @@ run_in() {
 
 # ── version-check ─────────────────────────────────────────────
 section "version-check"
-AGENT=$(grep '^version = ' agent/pyproject.toml | cut -d'"' -f2)
+AGENT=$(grep '^version = ' agent/core/pyproject.toml | cut -d'"' -f2)
 VESTAD=$(grep '^version = ' vestad/Cargo.toml | head -1 | cut -d'"' -f2)
-CLI=$(grep '^version = ' cli/Cargo.toml | head -1 | cut -d'"' -f2)
 TESTS=$(grep '^version = ' vestad/tests-integration/Cargo.toml | head -1 | cut -d'"' -f2)
-TAURI_CONF=$(python3 -c "import json; print(json.load(open('apps/desktop/src-tauri/tauri.conf.json'))['version'])")
-TAURI_CARGO=$(grep '^version = ' apps/desktop/src-tauri/Cargo.toml | head -1 | cut -d'"' -f2)
+DESKTOP_PKG=$(python3 -c "import json; print(json.load(open('apps/desktop/package.json'))['version'])")
+MOBILE_PKG=$(python3 -c "import json; print(json.load(open('apps/mobile/package.json'))['version'])")
+MOBILE_APP=$(sed -n 's/^  version: "\([^"]*\)",/\1/p' apps/mobile/app.config.ts)
 APP=$(python3 -c "import json; print(json.load(open('apps/web/package.json'))['version'])")
 MISMATCH=0
-for nv in "vestad:$VESTAD" "cli:$CLI" "tests:$TESTS" "tauri.conf:$TAURI_CONF" "tauri-cargo:$TAURI_CARGO" "app:$APP"; do
+for nv in "vestad:$VESTAD" "tests:$TESTS" "desktop-pkg:$DESKTOP_PKG" "mobile-pkg:$MOBILE_PKG" "mobile-app:$MOBILE_APP" "app:$APP"; do
   if [ "$AGENT" != "${nv#*:}" ]; then
     printf "  ${RED}✗${RESET} agent (%s) != %s (%s)\n" "$AGENT" "${nv%%:*}" "${nv#*:}"
     MISMATCH=1
@@ -80,30 +80,20 @@ elif ! command -v uv >/dev/null 2>&1; then
 else
   (
     cd agent
-    cp uv.lock uv.lock.before
-    uv lock >/dev/null 2>&1 && diff -q uv.lock.before uv.lock >/dev/null
+    cp core/uv.lock core/uv.lock.before
+    uv lock --project core >/dev/null 2>&1 && diff -q core/uv.lock.before core/uv.lock >/dev/null
     status=$?
-    mv uv.lock.before uv.lock
+    mv core/uv.lock.before core/uv.lock
     exit $status
-  ) && pass "uv.lock up to date" || fail "uv.lock stale — run 'cd agent && uv lock' and commit"
+  ) && pass "uv.lock up to date" || fail "uv.lock stale — run 'cd agent && uv lock --project core' and commit"
 fi
 
-# ── skills-index-check ────────────────────────────────────────
-section "skills-index-check"
-if [ "${SKIP_AGENT:-0}" = "1" ]; then
-  skip "skills index"
+# ── design-token-check ────────────────────────────────────────
+section "design-token-check"
+if python3 scripts/sync-design-tokens.py --check >/dev/null 2>&1; then
+  pass "generated design tokens up to date"
 else
-  before=$(sha256sum agent/skills/index.json | cut -d' ' -f1)
-  if uv run python agent/skills/generate-index.py >/dev/null 2>&1; then
-    after=$(sha256sum agent/skills/index.json | cut -d' ' -f1)
-    if [ "$before" = "$after" ]; then
-      pass "skills/index.json up to date"
-    else
-      fail "skills/index.json stale — regenerated (commit the change)"
-    fi
-  else
-    fail "generate-index.py failed"
-  fi
+  fail "generated design tokens stale — run 'python3 scripts/sync-design-tokens.py' and commit"
 fi
 
 # ── dashboard-sync-check ──────────────────────────────────────
@@ -123,8 +113,8 @@ section "agent-tests"
 if [ "${SKIP_AGENT:-0}" = "1" ]; then
   skip "agent-tests"
 else
-  run_in agent "ruff check"          uv run ruff check
-  run_in agent "ruff format --check" uv run ruff format --check
+  run_in . "ruff check (repo-wide)"          uv run --project agent/core ruff check .
+  run_in . "ruff format --check (repo-wide)" uv run --project agent/core ruff format --check .
   run_in agent "ty check"            uv run ty check
   run_in agent "pytest"              uv run pytest tests/ --ignore=tests/test_e2e.py -q
 fi
@@ -142,15 +132,15 @@ else
   run_in apps "web format check" npm -w @vesta/web run format:check
   run_in apps "web type check"   npm -w @vesta/web run check
   run_in apps "web tests"        npm -w @vesta/web run test
+  run_in apps "desktop lint"     npm -w @vesta/desktop run lint
+  run_in apps "desktop types"    npm -w @vesta/desktop run check
 fi
 
-# ── check-vesta (clippy + unit tests, cli + vestad) ───────────
-section "check-vesta"
+# ── check-vestad (clippy + unit tests) ────────────────────────
+section "check-vestad"
 if [ "${SKIP_RUST:-0}" = "1" ]; then
   skip "cargo clippy/test"
 else
-  run_in cli    "cli clippy"    cargo clippy -- -D warnings
-  run_in cli    "cli tests"     cargo test
   run_in vestad "vestad clippy" env VESTAD_SKIP_APP_BUILD=1 cargo clippy -p vestad -- -D warnings
   run_in vestad "vestad tests"  env VESTAD_SKIP_APP_BUILD=1 cargo test -p vestad
 fi

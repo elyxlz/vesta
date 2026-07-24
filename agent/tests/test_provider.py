@@ -6,13 +6,13 @@ import json
 
 import pytest
 
-import core.models as vm
+import core.config as cfg
 from core.config import ClaudeConfig, ClaudeOAuth, OpenRouterConfig, read_config_store, update_config_store
 from core.provider import (
     ProviderAuthState,
     UsageCredits,
     UsageError,
-    _check_claude_auth,
+    _check_claude_oauth,
     _derive_kind_and_auth,
     clear_provider,
     derive_status,
@@ -25,7 +25,7 @@ from core.provider import (
 
 
 def _cfg(provider):
-    return vm.VestaConfig.model_construct(provider=provider)
+    return cfg.VestaConfig.model_construct(provider=provider)
 
 
 # --- Honest derivation: unprovisioned vs set-but-unauthenticated vs authenticated ---
@@ -77,18 +77,15 @@ def test_is_terminal_auth_error(error, expected):
 
 
 @pytest.mark.parametrize(
-    "creds,expected",
+    "oauth,expected",
     [
-        (json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 2**62}}), True),  # valid, unexpired
-        (json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 0, "refreshToken": "r"}}), True),  # expired but refreshable
-        (json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 0}}), False),  # expired, no refresh
-        ("not json", False),
-        ("{}", False),
-        (json.dumps({"claudeAiOauth": None}), False),
+        ({"accessToken": "a", "expiresAt": 2**62}, True),  # valid, unexpired
+        ({"accessToken": "a", "expiresAt": 0, "refreshToken": "r"}, True),  # expired but refreshable
+        ({"accessToken": "a", "expiresAt": 0}, False),  # expired, no refresh
     ],
 )
-def test_claude_auth(creds, expected):
-    assert _check_claude_auth(creds) is expected
+def test_claude_auth(oauth, expected):
+    assert _check_claude_oauth(ClaudeOAuth.model_validate(oauth)) is expected
 
 
 # --- State transitions (free functions) ---
@@ -118,7 +115,7 @@ def test_set_claude_writes_creds_and_store(prov):
     assert status.kind == "claude"
     assert provider_mod.CREDENTIALS_PATH.read_text() == _CREDS
     assert read_config_store()["provider"] == {"kind": "claude", "model": "opus"}
-    assert isinstance(vm.VestaConfig().provider, ClaudeConfig)
+    assert isinstance(cfg.VestaConfig().provider, ClaudeConfig)
 
 
 def test_set_openrouter_writes_nested_provider_to_store(prov):
@@ -132,7 +129,7 @@ def test_set_openrouter_writes_nested_provider_to_store(prov):
         "key": "sk-or-v1-secret",
     }
     # A fresh config (post-restart) reads the key as a SecretStr and re-derives as authenticated.
-    fresh = vm.VestaConfig()
+    fresh = cfg.VestaConfig()
     assert isinstance(fresh.provider, OpenRouterConfig)
     assert fresh.provider.key.get_secret_value() == "sk-or-v1-secret"
     assert derive_status(fresh).kind == "openrouter"
@@ -140,7 +137,7 @@ def test_set_openrouter_writes_nested_provider_to_store(prov):
 
 def test_model_context_prefs_persist_to_store_and_reload(prov):
     update_config_store({"provider": {"kind": "claude", "model": "opus", "max_context_tokens": 500_000}})
-    provider = vm.VestaConfig().provider
+    provider = cfg.VestaConfig().provider
     assert isinstance(provider, ClaudeConfig)
     assert provider.model == "opus"
     assert provider.max_context_tokens == 500_000
@@ -153,7 +150,7 @@ def test_clear_provider_removes_creds_and_resets_state(prov):
     set_claude(_CREDS, "opus", None, config=prov)
     assert provider_mod.CREDENTIALS_PATH.exists()
 
-    status = clear_provider(config=prov)
+    status = clear_provider()
     assert status.state == ProviderAuthState.NOT_AUTHENTICATED
     assert status.kind == "none"
     assert status.model is None
@@ -161,7 +158,7 @@ def test_clear_provider_removes_creds_and_resets_state(prov):
     # Sign-out clears the provider entirely (no provider chosen), not a fake default.
     assert "provider" not in read_config_store()
     # A fresh boot re-derives unprovisioned from disk (no provider, creds removed).
-    fresh = derive_status(vm.VestaConfig())
+    fresh = derive_status(cfg.VestaConfig())
     assert fresh.state == ProviderAuthState.NOT_AUTHENTICATED
     assert fresh.kind == "none"
 
@@ -173,7 +170,7 @@ def test_set_claude_replaces_openrouter_provider(prov):
 
 
 def test_reauth_preserves_model_and_context(prov):
-    # `vesta auth` re-auth sends no model/context; they must be preserved, not reset to defaults.
+    # A re-auth sends no model/context; they must be preserved, not reset to defaults.
     update_config_store({"provider": {"kind": "claude", "model": "sonnet", "max_context_tokens": 500_000}})
     set_claude(_CREDS, None, None, config=prov)
     assert read_config_store()["provider"] == {"kind": "claude", "model": "sonnet", "max_context_tokens": 500_000}
@@ -194,7 +191,7 @@ def test_patch_provider_preserves_openrouter_key(prov):
     from core.config import validate_config_updates
 
     set_openrouter("sk-or-v1-secret", "deepseek/deepseek-v4-flash", None, config=prov)
-    updates = validate_config_updates(vm.VestaConfig(), {"provider": {"model": "anthropic/claude-3"}})
+    updates = validate_config_updates(cfg.VestaConfig(), {"provider": {"model": "anthropic/claude-3"}})
     assert updates["provider"] == {"kind": "openrouter", "model": "anthropic/claude-3", "key": "sk-or-v1-secret"}
 
 
@@ -207,7 +204,7 @@ def test_observed_provider_failure_flips_in_memory_only(prov):
     flipped = observed_provider_failure(status)
     assert flipped is not None and flipped.state == ProviderAuthState.NOT_AUTHENTICATED
     # It does NOT persist: a fresh boot re-derives optimistically from disk (creds still present).
-    assert derive_status(vm.VestaConfig()).state == ProviderAuthState.AUTHENTICATED
+    assert derive_status(cfg.VestaConfig()).state == ProviderAuthState.AUTHENTICATED
 
 
 def test_boot_derives_authenticated_from_disk_when_no_persisted_state(prov):
@@ -217,13 +214,13 @@ def test_boot_derives_authenticated_from_disk_when_no_persisted_state(prov):
     update_config_store({"provider": {"kind": "claude", "model": "opus"}})
     provider_mod.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
     provider_mod.CREDENTIALS_PATH.write_text(_CREDS)
-    status = derive_status(vm.VestaConfig())
+    status = derive_status(cfg.VestaConfig())
     assert status.state == ProviderAuthState.AUTHENTICATED
     assert status.kind == "claude"
 
 
 def test_boot_with_no_credentials_at_all_is_not_authenticated(prov):
-    status = derive_status(vm.VestaConfig())
+    status = derive_status(cfg.VestaConfig())
     assert status.state == ProviderAuthState.NOT_AUTHENTICATED
     assert status.kind == "none"
 
@@ -245,7 +242,7 @@ def test_boot_derives_no_model_when_credentials_are_invalid(prov):
     update_config_store({"provider": {"kind": "claude", "model": "opus"}})
     provider_mod.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
     provider_mod.CREDENTIALS_PATH.write_text(json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 0}}))
-    status = derive_status(vm.VestaConfig())
+    status = derive_status(cfg.VestaConfig())
     assert status.state == ProviderAuthState.NOT_AUTHENTICATED
     assert status.kind == "claude"
     assert status.model is None
@@ -265,7 +262,7 @@ def test_runtime_failure_clears_reported_model(prov):
 @pytest.mark.anyio
 async def test_get_usage_empty_when_no_provider(prov):
     # No credentials on disk and no openrouter key -> kind none -> nothing to report (not an error).
-    usage = await get_usage(vm.VestaConfig())
+    usage = await get_usage(cfg.VestaConfig())
     assert usage.meters == []
     assert usage.credits is None
 
@@ -289,7 +286,7 @@ async def test_get_usage_claude_normalizes_buckets_and_credits(prov, monkeypatch
         return sample
 
     monkeypatch.setattr(provider_mod, "_fetch_usage_json", fake_fetch)
-    usage = await get_usage(vm.VestaConfig())
+    usage = await get_usage(cfg.VestaConfig())
     assert [m.label for m in usage.meters] == ["current session", "current week", "current week (opus)"]
     assert usage.meters[0].used_pct == 42
     assert usage.meters[0].resets_at == "2026-06-22T12:00:00Z"
@@ -307,7 +304,7 @@ async def test_get_usage_openrouter_normalizes_credits(prov, monkeypatch):
         return {"data": {"usage": 3.5, "limit": 10.0}}
 
     monkeypatch.setattr(provider_mod, "_fetch_usage_json", fake_fetch)
-    usage = await get_usage(vm.VestaConfig())
+    usage = await get_usage(cfg.VestaConfig())
     assert usage.meters == []
     assert usage.credits == UsageCredits(used=3.5, limit=10.0)
 
@@ -325,4 +322,4 @@ async def test_get_usage_propagates_fetch_error(prov, monkeypatch):
 
     monkeypatch.setattr(provider_mod, "_fetch_usage_json", fake_fetch)
     with pytest.raises(UsageError):
-        await get_usage(vm.VestaConfig())
+        await get_usage(cfg.VestaConfig())

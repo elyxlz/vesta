@@ -82,18 +82,25 @@ class Client:
 
     # --- control plane: account pre-create (authed as THIS vesta) ------------
 
-    def create_account(self, email: str, code: str | None = None) -> dict[str, Any]:
-        """POST /onboard/account -> {ok, email, code_applied}.
+    def create_account(self, email: str, referral_code: str | None = None) -> dict[str, Any]:
+        """POST /onboard/account -> {ok, email, referral_code_applied}.
 
         Public (issue #79): no server-identity token. Records a pending onboard
-        intent and, when `code` is given, attributes it; the account itself is
-        created when the invitee verifies their OTP. An unknown/revoked code never
-        blocks signup (code_applied:false). A 4xx body carries {error} to surface.
+        intent and, when `referral_code` is given, attributes it; the account itself
+        is created when the invitee verifies their OTP. An unknown/revoked code never
+        blocks signup (referral_code_applied:false). A 4xx body carries {error} to
+        surface. This is the REFERRAL code (attribution), not the checkout discount.
         """
         body: dict[str, Any] = {"email": email}
-        if code:
-            body["code"] = code
+        if referral_code:
+            body["referral_code"] = referral_code
         return self._json(self._post("/onboard/account", json=body))
+
+    def fetch_floor_usd(self) -> int:
+        """GET /onboard/pricing -> the live membership floor in USD. The control plane's
+        `listMonthlyCents` is the single source of truth; the skill reads it live so a
+        quote can't drift from what checkout enforces. Public (no token)."""
+        return int(self._json(self._get("/onboard/pricing"))["floor_usd"])
 
     # --- control plane: auth -------------------------------------------------
 
@@ -132,18 +139,20 @@ class Client:
         token: str,
         plan: str,
         price: float | None,
-        code: str | None,
+        discount_code: str | None,
     ) -> dict[str, Any]:
         """POST /onboard/checkout -> {url, subdomain, server_id}. Auto-assigns the subdomain.
 
-        Referral attribution no longer rides checkout (issue #79): it is bound at
-        account-create from the buyer's signup code, so no X-Vesta-Referral header.
+        `discount_code` is the DISCOUNT code (a Stripe coupon off month 1), distinct
+        from the referral code the buyer signed up with. Referral attribution no
+        longer rides checkout (issue #79): it is bound at account-create from the
+        buyer's signup code, so no X-Vesta-Referral header.
         """
         body: dict[str, Any] = {"plan": plan}
         if price is not None:
             body["price"] = price  # negotiated monthly USD; floor enforced server-side
-        if code:
-            body["code"] = code  # discount code; unknown -> {"error": "invalid code"}
+        if discount_code:
+            body["discount_code"] = discount_code  # unknown -> {"error": "invalid code"}
         return self._json(self._post("/onboard/checkout", json=body, headers=self._auth(token)))
 
     def me(self, token: str) -> dict[str, Any]:

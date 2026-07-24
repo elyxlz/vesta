@@ -12,16 +12,14 @@ import { AnimatePresence, motion } from "motion/react";
 import { ArrowDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CardContent } from "@/components/ui/card";
-import type { VestaEvent } from "@/lib/types";
+import type { ChatMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { ChatBubble } from "../ChatBubble";
+import { stepTransition } from "@/lib/motion";
+import { ChatBubble, type RetryHandler } from "../ChatBubble";
 import { buildDecorated } from "./virtual";
 
-// First-paint estimates per row kind (actual heights are measured). Tool-call rows are
-// much shorter than message bubbles; estimating them all at the message height made the
-// virtualizer over-correct on every tool row that scrolled into view, which read as jank.
+// First-paint estimate per row (actual heights are measured).
 const ESTIMATED_MESSAGE_HEIGHT = 64;
-const ESTIMATED_TOOL_HEIGHT = 30;
 // How close to the bottom (px) still counts as "pinned" — drives follow-on-append and
 // gates the load-older check (don't page up while sitting at the bottom).
 const AT_BOTTOM_THRESHOLD_PX = 80;
@@ -44,13 +42,14 @@ interface ChatMessageAreaProps {
   loadingMore: boolean;
   fullscreen?: boolean;
   navbarHeight: number;
-  chatMessages: VestaEvent[];
+  chatMessages: ChatMessage[];
   connected: boolean;
   historyLoaded: boolean;
   agentName: string;
   notAuthenticated: boolean;
   isTyping: boolean;
   isMobile: boolean;
+  onRetry?: RetryHandler;
 }
 
 // Placeholder bubbles shown while the first page of history is in flight, so a slow
@@ -80,7 +79,7 @@ function ChatSkeleton() {
     <div className="pointer-events-none absolute inset-0 flex flex-col justify-end px-4 pb-4">
       {SKELETON_ROWS.map((row, i) => {
         const isUser = row.side === "user";
-        const sameAsPrev = i > 0 && SKELETON_ROWS[i - 1].side === row.side;
+        const sameAsPrev = i > 0 && SKELETON_ROWS[i - 1]?.side === row.side;
         return (
           <div
             key={i}
@@ -120,26 +119,28 @@ export function ChatMessageArea({
   notAuthenticated,
   isTyping,
   isMobile,
+  onRetry,
 }: ChatMessageAreaProps) {
   const decorated = useMemo(() => buildDecorated(chatMessages), [chatMessages]);
   const count = decorated.length;
+  const lastAgentText = useMemo(() => {
+    for (let i = chatMessages.length - 1; i >= 0; i--) {
+      const event = chatMessages[i];
+      if (event?.type === "chat") return event.text;
+    }
+    return "";
+  }, [chatMessages]);
   const parentRef = useRef<HTMLDivElement>(null);
   // Drives the scroll-to-bottom button: true while pinned near the latest message, false once
   // the user scrolls up. Recomputed on scroll and on content resize (see below).
   const [atBottom, setAtBottom] = useState(true);
 
   const getItemKey = useCallback(
-    (index: number) => decorated[index].key,
+    (index: number) => decorated[index]?.key ?? String(index),
     [decorated],
   );
 
-  const estimateSize = useCallback(
-    (index: number) =>
-      decorated[index]?.event.type === "tool_start"
-        ? ESTIMATED_TOOL_HEIGHT
-        : ESTIMATED_MESSAGE_HEIGHT,
-    [decorated],
-  );
+  const estimateSize = useCallback(() => ESTIMATED_MESSAGE_HEIGHT, []);
 
   const virtualizer = useVirtualizer({
     count,
@@ -147,8 +148,8 @@ export function ChatMessageArea({
     estimateSize,
     getItemKey,
     // End-anchored chat scrolling: TanStack captures the visible keyed row before a data
-    // change and re-pins it after — keeping scroll stable across prepends (load older),
-    // streaming growth, and the show-tools toggle's mid-list inserts/removes.
+    // change and re-pins it after — keeping scroll stable across prepends (load older)
+    // and streaming growth.
     anchorTo: "end",
     followOnAppend: "smooth",
     scrollEndThreshold: AT_BOTTOM_THRESHOLD_PX,
@@ -175,6 +176,15 @@ export function ChatMessageArea({
     if (hasRows && !hadRowsRef.current) virtualizer.scrollToEnd();
     hadRowsRef.current = hasRows;
   }, [count, virtualizer]);
+
+  // Highest row index seen as of the last commit — read during render (holds the prior
+  // value, since this effect hasn't fired yet) to tell a genuine append from a history
+  // page landing or an unrelated re-render, then advanced after commit. Gated on
+  // hadRowsRef so the first page of history never plays the entrance animation.
+  const maxSeenIndexRef = useRef(-1);
+  useLayoutEffect(() => {
+    maxSeenIndexRef.current = count - 1;
+  }, [count]);
 
   const handleScroll = useCallback(() => {
     const el = parentRef.current;
@@ -214,6 +224,10 @@ export function ChatMessageArea({
 
   return (
     <CardContent className="flex-1 min-h-0 overflow-hidden p-0 relative">
+      {/* persistent live region so screen readers hear agent replies as they arrive */}
+      <span className="sr-only" aria-live="polite" aria-atomic="true">
+        {lastAgentText}
+      </span>
       {count === 0 &&
         (connected && !historyLoaded ? (
           <ChatSkeleton />
@@ -251,7 +265,7 @@ export function ChatMessageArea({
         onScroll={handleScroll}
         className="h-full overflow-y-auto overflow-x-hidden"
         style={{
-          maskImage: `linear-gradient(to bottom, transparent, black ${fullscreen ? navbarHeight : 48}px, black calc(100% - 20px), transparent)`,
+          maskImage: `linear-gradient(to bottom, transparent, black ${String(fullscreen ? navbarHeight : 48)}px, black calc(100% - 20px), transparent)`,
         }}
       >
         <div
@@ -260,7 +274,10 @@ export function ChatMessageArea({
         >
           {items.map((item) => {
             const row = decorated[item.index];
+            if (!row) return null;
             const isLast = item.index === count - 1;
+            const isNewAppend =
+              hadRowsRef.current && item.index > maxSeenIndexRef.current;
             return (
               <div
                 key={item.key}
@@ -297,21 +314,39 @@ export function ChatMessageArea({
                       </span>
                     </div>
                   )}
-                  <ChatBubble
-                    event={row.event}
-                    className={row.gap}
-                    fullscreen={fullscreen}
-                    isMobile={isMobile}
-                  />
+                  {isNewAppend ? (
+                    <motion.div
+                      initial={{ opacity: 0, y: 6, scale: 0.98 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      transition={stepTransition.transition}
+                    >
+                      <ChatBubble
+                        event={row.event}
+                        className={row.gap}
+                        fullscreen={fullscreen}
+                        isMobile={isMobile}
+                        onRetry={onRetry}
+                      />
+                    </motion.div>
+                  ) : (
+                    <ChatBubble
+                      event={row.event}
+                      className={row.gap}
+                      fullscreen={fullscreen}
+                      isMobile={isMobile}
+                      onRetry={onRetry}
+                    />
+                  )}
                 </div>
                 {isLast && (
                   <div className="px-4 pb-4">
                     {isTyping && (
                       <div className="flex justify-start mt-2">
                         <div className="flex items-center gap-1 bg-secondary text-secondary-foreground rounded-2xl rounded-bl-sm px-3.5 py-2.5">
-                          <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce [animation-delay:0ms]" />
-                          <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce [animation-delay:150ms]" />
-                          <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce [animation-delay:300ms]" />
+                          <span className="sr-only">typing...</span>
+                          <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce motion-reduce:animate-none [animation-delay:0ms]" />
+                          <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce motion-reduce:animate-none [animation-delay:150ms]" />
+                          <span className="size-1.5 rounded-full bg-secondary-foreground/45 animate-bounce motion-reduce:animate-none [animation-delay:300ms]" />
                         </div>
                       </div>
                     )}
@@ -325,13 +360,13 @@ export function ChatMessageArea({
       {count > 0 && (
         <Button
           type="button"
-          variant="secondary"
+          variant="outline"
           size="icon-sm"
           aria-label="Scroll to latest message"
           data-active={!atBottom}
           onClick={() => virtualizer.scrollToEnd({ behavior: "smooth" })}
           className={cn(
-            "absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full border border-border bg-background text-foreground shadow-sm transition-all duration-200 hover:bg-muted hover:text-foreground",
+            "absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full shadow-sm transition-all duration-200",
             "data-[active=false]:pointer-events-none data-[active=false]:translate-y-full data-[active=false]:scale-95 data-[active=false]:opacity-0 data-[active=false]:duration-150 data-[active=false]:ease-[cubic-bezier(0.7,0,0.84,0)]",
             "data-[active=true]:translate-y-0 data-[active=true]:scale-100 data-[active=true]:opacity-100 data-[active=true]:ease-[cubic-bezier(0.23,1,0.32,1)]",
           )}

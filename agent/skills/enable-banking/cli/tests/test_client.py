@@ -3,7 +3,6 @@
 import json
 
 import pytest
-
 from finance_cli import enablebanking as eb
 
 
@@ -32,7 +31,10 @@ def http(monkeypatch):
     responses: list[FakeResponse] = []
 
     def record(method, url, headers=None, params=None, json=None):
-        calls.append({"method": method, "url": url, "headers": headers, "params": params, "json": json})
+        # Snapshot params: get_transactions mutates the same dict across pagination
+        # calls, so storing the reference would make every recorded call reflect
+        # the dict's final state instead of what was sent at call time.
+        calls.append({"method": method, "url": url, "headers": headers, "params": dict(params) if params is not None else params, "json": json})
         return responses.pop(0)
 
     def fake_request(method, url, headers=None, params=None, json=None, timeout=None, **kw):
@@ -55,7 +57,7 @@ def http(monkeypatch):
     return calls, responses
 
 
-CONF = {"app_id": "app-1", "key_path": "/tmp/key.pem", "session_id": "sess-9"}
+CONF = {"app_id": "app-1", "key_path": "/tmp/key.pem", "session_id": "sess-9", "aspsp_name": "", "aspsp_country": ""}
 
 
 def test_get_balances_unwraps_list_response(http):
@@ -69,7 +71,7 @@ def test_get_balances_unwraps_list_response(http):
 
 
 def test_get_balances_unwraps_dict_response(http):
-    calls, responses = http
+    _calls, responses = http
     responses.append(FakeResponse({"balances": [{"x": 1}]}))
     out = eb.get_balances(CONF, "acct-1")
     assert out == [{"x": 1}]
@@ -82,7 +84,7 @@ def test_get_transactions_paginates_via_continuation_key(http):
     out = eb.get_transactions(CONF, "acct-1", date_from="2026-01-01", date_to="2026-02-01")
     assert out == [{"id": "a"}, {"id": "b"}]
     assert calls[0]["params"] == {"date_from": "2026-01-01", "date_to": "2026-02-01"}
-    assert calls[1]["params"] == {"continuation_key": "k1"}
+    assert calls[1]["params"] == {"date_from": "2026-01-01", "date_to": "2026-02-01", "continuation_key": "k1"}
     assert calls[0]["url"] == "https://api.enablebanking.com/accounts/acct-1/transactions"
 
 

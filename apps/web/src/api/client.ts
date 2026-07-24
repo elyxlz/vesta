@@ -1,45 +1,33 @@
-import { apiUrl, authHeaders } from "@/lib/connection";
+import { ApiError, createHttpClient } from "@vesta/core";
+import { getConnection, isTokenExpiringSoon } from "@/lib/connection";
 import { ensureFreshToken } from "@/lib/token-refresh";
 
-export async function apiFetch(
-  path: string,
-  init?: RequestInit,
-): Promise<Response> {
-  await ensureFreshToken();
+// The Bearer-auth + refresh-on-401 + error-shaping mechanics live once in @vesta/core; web
+// injects its own connection accessors and refresh implementation. `ApiError` is re-exported
+// so the ~10 api/* modules and create-flow keep importing it from here.
+export { ApiError };
 
-  let resp = await fetch(apiUrl(path), {
-    ...init,
-    headers: { ...authHeaders(), ...init?.headers },
-  });
+// The single web-side gateway HTTP client. `apiFetch`/`apiJson` wrap it for the ~10 api/* modules;
+// it is exported directly for the @vesta/core wire calls that take an `HttpClient` (e.g. the gateway
+// update calls), matching the app's component-to-api convention.
+export const httpClient = createHttpClient({
+  baseUrl: () => {
+    const conn = getConnection();
+    if (!conn) throw new Error("not connected to vestad");
+    return conn.url;
+  },
+  fetch: (input, init) => fetch(input, init),
+  token: () => getConnection()?.accessToken ?? null,
+  refresh: async () => (await ensureFreshToken(true)) === "ok",
+  isExpiring: () => isTokenExpiringSoon(),
+});
 
-  // If 401, force a refresh then retry (the token was rejected even if the
-  // local clock thinks it is still valid, e.g. server-side rotation/revocation)
-  if (resp.status === 401) {
-    const refreshed = await ensureFreshToken(true);
-    if (refreshed === "ok") {
-      resp = await fetch(apiUrl(path), {
-        ...init,
-        headers: { ...authHeaders(), ...init?.headers },
-      });
-    }
-  }
-
-  if (!resp.ok) {
-    const body = await resp.text();
-    let msg: string;
-    try {
-      msg = JSON.parse(body).error ?? body;
-    } catch {
-      msg = body;
-    }
-    throw new Error(msg);
-  }
-  return resp;
+export function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  return httpClient.request(path, init);
 }
 
-export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const resp = await apiFetch(path, init);
-  return resp.json();
+export function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
+  return httpClient.json<T>(path, init);
 }
 
 // The one place that owns the JSON request shape (method + Content-Type + serialized body),

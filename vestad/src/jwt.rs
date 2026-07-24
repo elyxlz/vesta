@@ -9,16 +9,12 @@ pub const REFRESH_TOKEN_TTL: u64 = 30 * 86400; // 30 days
 
 // --- Per-purpose key derivation (HKDF-SHA256) ---------------------------------
 //
-// Every token is HS256-signed, but NOT with the raw `api_key`: we derive a
-// distinct subkey per purpose so a token minted for one role cannot verify for
-// another, cryptographically (not merely because consumers check `typ`). The
-// `typ` claim is kept as defense-in-depth.
-//
-// CROSS-REPO CONTRACT: the vesta-cloud control plane derives the SAME subkeys
-// (functions/lib/tokens.ts) to mint access / verify server-identity tokens, so
-// these constants and the derivation (salt, label = PREFIX || typ, 32-byte
-// output) MUST stay byte-identical on both sides. The known-answer test below
-// pins the vector; its twin in vesta-cloud pins the same one.
+// Every token is HS256-signed, but NOT with the raw `api_key`: a distinct subkey per
+// purpose means a token minted for one role cannot verify for another, cryptographically
+// (the `typ` claim stays as defense-in-depth). CROSS-REPO CONTRACT: the vesta-cloud
+// control plane derives the SAME subkeys (functions/lib/tokens.ts), so these constants
+// and the derivation (salt, label = PREFIX || typ, 32-byte output) MUST stay
+// byte-identical on both sides. The known-answer test below pins the vector.
 const HKDF_SALT: &[u8] = b"vesta-auth-hkdf-v1";
 const KEY_LABEL_PREFIX: &[u8] = b"vesta/auth/";
 
@@ -40,7 +36,8 @@ fn signing_key(api_key: &str, typ: &str) -> [u8; 32] {
         .expand(&info, OkmLen)
         .expect("hkdf expand to 32 bytes is infallible");
     let mut out = [0u8; 32];
-    okm.fill(&mut out).expect("hkdf fill of matching length is infallible");
+    okm.fill(&mut out)
+        .expect("hkdf fill of matching length is infallible");
     out
 }
 
@@ -131,7 +128,11 @@ pub fn create_server_identity_token(api_key: &str, server_id: &str) -> String {
     .expect("HS256 encoding of a serializable struct is infallible")
 }
 
-pub fn validate_token(api_key: &str, token: &str, expected_typ: &str) -> Result<Claims, jsonwebtoken::errors::Error> {
+pub fn validate_token(
+    api_key: &str,
+    token: &str,
+    expected_typ: &str,
+) -> Result<Claims, jsonwebtoken::errors::Error> {
     let mut validation = Validation::new(Algorithm::HS256);
     // Tokens carry no audience claim; only `exp` (validated by default) is required.
     validation.validate_aud = false;

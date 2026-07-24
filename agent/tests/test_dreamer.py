@@ -7,13 +7,17 @@ import typing as tp
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from claude_agent_sdk import ClaudeSDKClient, ClaudeSDKError, ResultMessage, SystemMessage
+from conftest import consuming
+from wait_util import wait_for_condition
 
+import core.config as cfg
 import core.models as vm
-from claude_agent_sdk import ClaudeSDKClient, ClaudeSDKError, SystemMessage
+from core.notification import TYPE_COMPACTION_FOLLOWUP, Notification
 
 
 def _setup(tmp_path, *, dreamer_hour=4):
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent", nightly_memory_hour=dreamer_hour)
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent", nightly_memory_hour=dreamer_hour)
     config.data_dir.mkdir(parents=True, exist_ok=True)
     config.notifications_dir.mkdir(parents=True, exist_ok=True)
     return config
@@ -93,89 +97,221 @@ def test_nightly_memory_scheduling(tmp_path, dreamer_hour, last_dreamer_run, now
 # --- mark_dreamer_complete: keep the session, then compact + restart (not a hard reset) ---
 
 
-def _mark_dreamer_complete_handler(state, config):
+def _tool_handler(state, config, name):
     from core.tools import _vesta_tools
 
-    tools = _vesta_tools(state, config)
-    return next(t.handler for t in tools if t.name == "mark_dreamer_complete")
+    return next(t.handler for t in _vesta_tools(state, config) if t.name == name)
 
 
 @pytest.mark.anyio
-async def test_mark_dreamer_complete_keeps_session_and_defers_compact_restart(tmp_path):
-    """The session is kept (so the restart resumes the compacted conversation) and the restart
-    is deferred to the idle drain via compact_then_restart — not triggered inline mid-turn."""
+async def test_mark_dreamer_complete_stamps_timestamp_only(tmp_path):
+    """Pure recorder: stamps last_dreamer_run; touches no summary, restart, or compaction state.
+    The compaction/restart is composed separately via compact_context."""
     config = _setup(tmp_path)
     state = vm.State()
     state.persisted.session_id = "sess-abc"
 
-    await _mark_dreamer_complete_handler(state, config)({})
+    await _tool_handler(state, config, "mark_dreamer_complete")({})
 
-    assert state.persisted.session_id == "sess-abc", "session must be kept for a resuming restart"
-    assert state.compact_then_restart is True
-    assert state.persisted.show_dreamer_summary is True
     assert state.persisted.last_dreamer_run is not None
-    assert state.persisted.last_restart_reason == vm.NIGHTLY_RESTART
-    # The restart happens after compaction in the drain, so the tool itself must NOT shut down.
+    assert state.persisted.session_id == "sess-abc"
+    assert state.pending_compaction is None
     assert not state.graceful_shutdown.is_set()
 
 
-# --- compact_then_restart_if_requested drain ---
+# --- compact_context: the compaction primitive ---
 
 
 @pytest.mark.anyio
-async def test_drain_compacts_then_triggers_restart():
-    from core.loops import compact_then_restart_if_requested
-
-    async def compact_response():
-        yield SystemMessage(subtype="compact_boundary", data={"compact_metadata": {"pre_tokens": 1000, "trigger": "manual"}})
-
+async def test_compact_context_sets_nap_descriptor(tmp_path):
+    config = _setup(tmp_path)
     state = vm.State()
+
+    await _tool_handler(state, config, "compact_context")({"prompt": "keep threads", "followup": "reflect briefly"})
+
+    assert state.pending_compaction == vm.PendingCompaction(prompt="keep threads", followup="reflect briefly", restart=False)
+
+
+@pytest.mark.anyio
+async def test_compact_context_defaults_followup_none_and_restart_false(tmp_path):
+    config = _setup(tmp_path)
+    state = vm.State()
+
+    await _tool_handler(state, config, "compact_context")({"prompt": "keep threads"})
+
+    assert state.pending_compaction == vm.PendingCompaction(prompt="keep threads", followup=None, restart=False)
+
+
+@pytest.mark.anyio
+async def test_compact_context_rejects_empty_prompt(tmp_path):
+    config = _setup(tmp_path)
+    state = vm.State()
+
+    result = await _tool_handler(state, config, "compact_context")({"prompt": "   "})
+
+    assert state.pending_compaction is None
+    assert "error" in result["content"][0]["text"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "restart_arg,expected",
+    [(True, True), ("true", True), ("TRUE", True), (False, False), ("false", False), ("", False)],
+    ids=["bool-true", "str-true", "str-true-caps", "bool-false", "str-false", "str-empty"],
+)
+async def test_compact_context_restart_only_true_on_real_true(tmp_path, restart_arg, expected):
+    config = _setup(tmp_path)
+    state = vm.State()
+
+    await _tool_handler(state, config, "compact_context")({"prompt": "keep", "restart": restart_arg})
+
+    assert state.pending_compaction is not None
+    assert state.pending_compaction.restart is expected
+
+
+@pytest.mark.anyio
+async def test_compact_context_null_followup_treated_as_absent(tmp_path):
+    """A JSON null for the optional followup means absent, not the literal string 'None'."""
+    config = _setup(tmp_path)
+    state = vm.State()
+
+    await _tool_handler(state, config, "compact_context")({"prompt": "keep", "followup": None})
+
+    assert state.pending_compaction is not None
+    assert state.pending_compaction.followup is None
+
+
+@pytest.mark.anyio
+async def test_compact_context_rejects_followup_leaked_into_prompt(tmp_path):
+    """Malformed call (as seen in production): the model emits followup as an inline tool-call tag
+    inside the prompt string. The tool rejects it so the agent retries with proper args."""
+    config = _setup(tmp_path)
+    state = vm.State()
+    leaked = 'Preserve open threads.</prompt>\n<parameter name="followup">Tell the user you cleared your head.</parameter>'
+
+    result = await _tool_handler(state, config, "compact_context")({"prompt": leaked})
+
+    assert state.pending_compaction is None
+    assert "error" in result["content"][0]["text"]
+
+
+# --- drain_compaction_request: compact, then route the follow-up ---
+
+
+async def _run_with_compaction_stream(state, config, action, *, pre_tokens):
+    """Run `action` with the real stream consumer fed a compaction turn (boundary then result).
+
+    The stream waits for compact_session to open its turn (the real CLI only responds after the
+    /compact query), then yields the boundary and the turn-closing ResultMessage."""
+    state.persisted.session_id = state.persisted.session_id or "sess-compact"
     client = AsyncMock()
-    client.receive_response = MagicMock(return_value=compact_response())
+
+    async def stream():
+        await wait_for_condition(lambda: state.turn is not None, message="compact_session never opened a turn")
+        yield SystemMessage(subtype="compact_boundary", data={"compact_metadata": {"pre_tokens": pre_tokens, "trigger": "manual"}})
+        yield ResultMessage(
+            subtype="success", duration_ms=1, duration_api_ms=1, is_error=False, num_turns=1, session_id=state.persisted.session_id
+        )
+        await asyncio.Event().wait()
+
+    client.receive_messages = MagicMock(side_effect=stream)
     state.client = tp.cast(ClaudeSDKClient, client)
-    state.compact_then_restart = True
+    async with consuming(state, config):
+        await asyncio.wait_for(action(), timeout=5.0)
+    return client
 
-    with patch("core.loops.vestad_client.request_restart", new_callable=AsyncMock, return_value=True) as restart:
-        await compact_then_restart_if_requested(state=state)
 
-    client.query.assert_awaited_once_with("/compact")
-    assert state.compact_then_restart is False
-    assert state.compacting is False
-    # The restart is driven by vestad (docker restart), not a self-exit.
+def _mock_compact_client():
+    # These drain tests stub compact_session itself to isolate follow-up routing from the SDK stream.
+    return tp.cast(ClaudeSDKClient, AsyncMock())
+
+
+def _followup_files(config):
+    return list(config.notifications_dir.glob(f"{TYPE_COMPACTION_FOLLOWUP}-*.json"))
+
+
+async def _drain(tmp_path, *, followup, restart, restart_ok=True, compact_exc=None):
+    """Drive drain_compaction_request with compact_session and request_restart stubbed, returning
+    (state, config, restart_mock) for assertions. compact_exc simulates a failed compaction."""
+    from core.loops import drain_compaction_request
+
+    config = _setup(tmp_path)
+    state = vm.State()
+    state.client = _mock_compact_client()
+    state.pending_compaction = vm.PendingCompaction(prompt="keep", followup=followup, restart=restart)
+    with (
+        patch("core.loops.compact_session", new_callable=AsyncMock, side_effect=compact_exc),
+        patch("core.loops.vestad_client.request_restart", new_callable=AsyncMock, return_value=restart_ok) as restart_mock,
+    ):
+        await drain_compaction_request(state=state, config=config)
+    return state, config, restart_mock
+
+
+@pytest.mark.anyio
+async def test_drain_nap_drops_oriented_followup_notification(tmp_path):
+    state, config, restart = await _drain(tmp_path, followup="tell the user", restart=False)
+
+    restart.assert_not_awaited()
+    assert state.pending_compaction is None
+    assert state.persisted.pending_boot_message is None
+    files = _followup_files(config)
+    assert len(files) == 1
+    body = json.loads(files[0].read_text())["body"]
+    assert body.startswith("[Your context was just compacted; the summary is above.]")
+    assert "tell the user" in body
+
+
+@pytest.mark.anyio
+async def test_drain_nap_without_followup_drops_nothing(tmp_path):
+    _, config, _ = await _drain(tmp_path, followup=None, restart=False)
+
+    assert _followup_files(config) == []
+
+
+@pytest.mark.anyio
+async def test_drain_restart_boot_message_and_no_notification(tmp_path):
+    state, config, restart = await _drain(tmp_path, followup="new day, greet warmly", restart=True)
+
     restart.assert_awaited_once()
+    boot_msg = state.persisted.pending_boot_message
+    assert boot_msg is not None
+    assert boot_msg.startswith("[Your context was just compacted; the summary is above.]")
+    assert "new day, greet warmly" in boot_msg
+    assert _followup_files(config) == []
 
 
 @pytest.mark.anyio
-async def test_drain_is_noop_when_not_requested():
-    from core.loops import compact_then_restart_if_requested
+async def test_drain_restart_unreachable_delivers_followup_as_notification(tmp_path):
+    """When the restart cannot happen (vestad unreachable), the follow-up must not be lost: it is
+    cleared from the boot channel and delivered as a live notification on the session we stay on."""
+    state, config, _ = await _drain(tmp_path, followup="new day", restart=True, restart_ok=False)
 
-    state = vm.State()
-    client = AsyncMock()
-    state.client = tp.cast(ClaudeSDKClient, client)
-
-    await compact_then_restart_if_requested(state=state)
-
-    client.query.assert_not_awaited()
-    assert not state.graceful_shutdown.is_set()
+    assert state.persisted.pending_boot_message is None
+    files = _followup_files(config)
+    assert len(files) == 1
+    assert "new day" in json.loads(files[0].read_text())["body"]
 
 
 @pytest.mark.anyio
-async def test_drain_restarts_even_when_compaction_fails():
-    """A failed compaction must not strand the agent: it logs and restarts anyway (resume still
-    works on the un-compacted session)."""
-    from core.loops import compact_then_restart_if_requested
+async def test_drain_nap_failure_delivers_followup_without_false_orientation(tmp_path):
+    """A failed compaction is non-fatal and still delivers the follow-up, but must NOT prepend the
+    'summary is above' orientation, since no summary was produced."""
+    state, config, _ = await _drain(tmp_path, followup="reflect", restart=False, compact_exc=ClaudeSDKError("boom"))
 
-    state = vm.State()
-    client = AsyncMock()
-    client.query.side_effect = ClaudeSDKError("boom")
-    state.client = tp.cast(ClaudeSDKClient, client)
-    state.compact_then_restart = True
-
-    with patch("core.loops.vestad_client.request_restart", new_callable=AsyncMock, return_value=True) as restart:
-        await compact_then_restart_if_requested(state=state)
-
+    files = _followup_files(config)
+    assert len(files) == 1
+    assert json.loads(files[0].read_text())["body"] == "reflect", "no false 'summary above' claim when compaction failed"
     assert state.compacting is False
+
+
+@pytest.mark.anyio
+async def test_drain_restart_after_compaction_failure_still_restarts(tmp_path):
+    """Reliability invariant: a failed compaction on the restart path still restarts (resume works
+    on the un-compacted session), and the boot message omits the false orientation."""
+    state, _, restart = await _drain(tmp_path, followup="new day", restart=True, compact_exc=ClaudeSDKError("boom"))
+
     restart.assert_awaited_once()
+    assert state.persisted.pending_boot_message == "new day"
 
 
 @pytest.mark.anyio
@@ -183,18 +319,18 @@ async def test_notification_file_deleted_before_processing_is_lost_on_restart(tm
     """BUG: A notification arriving while compaction runs is silently lost on restart.
 
     process_batch deletes the file immediately after queue.put (loops.py line 124).
-    compact_then_restart_if_requested then compacts the session and sets graceful_shutdown.
+    drain_compaction_request then compacts the session and requests the restart.
     run_vesta cancels all tasks and the in-memory asyncio.Queue is dropped with the process.
     A restarted process finds an empty notifications dir and the message is gone with no trace.
     """
-    from core.loops import process_batch, compact_then_restart_if_requested, load_notifications
+    from core.loops import drain_compaction_request, load_notifications, process_batch
 
     config = _setup(tmp_path)
     state = vm.State()
 
     # Simulate a user notification arriving while the dreamer's compaction is running.
     notif_file = config.notifications_dir / "user-msg.json"
-    notif = vm.Notification(
+    notif = Notification(
         timestamp=dt.datetime(2025, 1, 1),
         source="telegram",
         type="message",
@@ -207,24 +343,18 @@ async def test_notification_file_deleted_before_processing_is_lost_on_restart(tm
 
     # monitor_loop calls process_batch on the interrupt notification.
     # process_batch queues the message and keeps the file on disk until processing completes.
-    with patch("core.loops.load_prompt", return_value=""), patch("core.loops.attempt_interrupt", new_callable=AsyncMock):
-        await process_batch([notif], queue=dying_queue, state=state, config=config)
+    with patch("core.loops.load_prompt", return_value=""):
+        await process_batch([notif], queue=dying_queue)
 
     # File is preserved on disk until after the message is fully processed (the fix).
     assert notif_file.exists(), "process_batch must not delete the file before processing completes"
     # Message sits in the queue waiting to be processed.
     assert dying_queue.qsize() == 1, "message is in the queue"
 
-    # Compaction finishes: compact_then_restart_if_requested sets graceful_shutdown.
-    async def compact_response():
-        yield SystemMessage(subtype="compact_boundary", data={"compact_metadata": {"pre_tokens": 1, "trigger": "manual"}})
-
-    state.compact_then_restart = True
-    client = AsyncMock()
-    client.receive_response = MagicMock(return_value=compact_response())
-    state.client = tp.cast(ClaudeSDKClient, client)
+    # Compaction finishes: the drain compacts, then requests the restart (via vestad).
+    state.pending_compaction = vm.PendingCompaction(prompt=None, followup="new day", restart=True)
     with patch("core.loops.vestad_client.request_restart", new_callable=AsyncMock, return_value=True) as restart:
-        await compact_then_restart_if_requested(state=state)
+        await _run_with_compaction_stream(state, config, lambda: drain_compaction_request(state=state, config=config), pre_tokens=1)
     restart.assert_awaited_once()  # restart fires after compaction (via vestad)
 
     # The process restarts: run_vesta creates a fresh queue and init_state loads from disk.
@@ -237,3 +367,54 @@ async def test_notification_file_deleted_before_processing_is_lost_on_restart(tm
         f"Message queued mid-compact must survive restart (recovered {len(recovered)})."
         f" dying_queue qsize={dying_queue.qsize()} is dropped on restart."
     )
+
+
+# --- the processor drains a turnless compaction request on its idle tick ---
+
+
+@pytest.mark.anyio
+async def test_processor_drains_turnless_compaction_on_idle_tick():
+    """A compaction can be requested by a turn the processor never ran: a delivered preempt
+    executing as its own CLI turn calls compact_context turnlessly while the processor is parked
+    on queue.get(). The idle tick must drain it, and only once the whole session is idle (the
+    bus state tracks turnless work), never mid-stream. Regression: the drain used to fire only
+    after queue items, stranding exactly this request (v0.1.177 release, live dreamer test)."""
+    from claude_agent_sdk import TextBlock
+    from conftest import assistant_msg, make_stream_harness, result_msg
+
+    from core.loops import message_processor
+
+    state, config, mock_client, _, message_queue, _ = make_stream_harness()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    queue: asyncio.Queue = asyncio.Queue()
+
+    with (
+        patch("core.client.ClaudeSDKClient", return_value=mock_client),
+        patch("core.client.build_client_options", return_value=MagicMock()),
+    ):
+        processor = asyncio.create_task(message_processor(queue, state=state, config=config))
+
+        # Turnless CLI work is streaming (a delivered preempt running as its own turn); during
+        # it the tool call lands the request. The bus reads thinking, so the drain must hold.
+        await message_queue.put(assistant_msg([TextBlock("turnless work")]))
+        await wait_for_condition(lambda: state.event_bus.state == "thinking", message="turnless activity never set thinking")
+        state.pending_compaction = vm.PendingCompaction(prompt="curate the open threads", followup=None, restart=False)
+        # Negative assertion: prove the drain does NOT fire mid-stream. Waiting for absence
+        # requires a real time window past the 1s idle tick; this sleep is intentional.
+        await asyncio.sleep(1.5)
+        assert state.pending_compaction is not None, "the drain must not fire while turnless work streams"
+        mock_client.query.assert_not_called()
+
+        # The turnless turn ends: bus flips idle, the next tick drains, /compact goes out.
+        await message_queue.put(result_msg())
+        await wait_for_condition(
+            lambda: any(call.args == ("/compact curate the open threads",) for call in mock_client.query.call_args_list),
+            timeout=5.0,
+            message="idle tick never drained the pending compaction",
+        )
+        await message_queue.put(result_msg())  # closes the compaction turn
+        await wait_for_condition(lambda: state.pending_compaction is None and not state.processor_busy, message="drain never completed")
+
+        state.shutdown_event.set()
+        await asyncio.wait_for(processor, timeout=5)

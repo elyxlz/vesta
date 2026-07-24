@@ -1,0 +1,23 @@
+#!/bin/bash
+# Launcher for the telegram CLI. Compiles cli/ from source on every invocation
+# so no stale binary can drift: the send-message handler (and its bubble lint)
+# runs inside the daemon, and a static /usr/local/bin/telegram left the daemon
+# executing weeks-old code after the source had changed. Installed as a symlink
+# at ~/.local/bin/telegram; never `go build` a static binary onto PATH.
+set -euo pipefail
+
+CLI_DIR="$(dirname "$(readlink -f "$0")")/cli"
+
+# Go lives at /usr/local/go; not every environment links it onto PATH.
+if ! command -v go >/dev/null; then export PATH="/usr/local/go/bin:$PATH"; fi
+. "$CLI_DIR/cgo-env.sh"
+
+# Build to a temp path then rename: writing over the binary the running daemon
+# executes would fail with ETXTBSY, and rename keeps the old inode alive for it.
+BIN_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/telegram"
+mkdir -p "$BIN_DIR"
+BIN="$BIN_DIR/telegram"
+TMP="$BIN.$$"
+(cd "$CLI_DIR" && go build -o "$TMP" .)
+mv -f "$TMP" "$BIN"
+exec "$BIN" "$@"

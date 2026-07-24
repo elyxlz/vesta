@@ -1,14 +1,14 @@
 ---
 name: voice
 description: Voice input/output, transcription, TTS, API keys; manages ~/.voice/voice_config.json.
-serve: PORT=$(~/agent/skills/service/scripts/register-service voice) && SKILL_PORT=$PORT PYTHONPATH=~/agent/skills screen -dmS voice uv run python -m voice.server
+serve: voice-keys daemon start
 ---
 
 # Voice setup (STT/TTS)
 
 Voice lets the user talk to you through the mic and hear your responses spoken aloud in the Vesta app.
 
-Once configured, the user can manage voice settings directly from the **agent settings page** in the app, including changing voices, listening to voice previews, toggling STT/TTS on or off, and adjusting sensitivity. Let them know this after setup.
+This skill is also your one voice backend: it owns the STT/TTS providers, keys, and chosen voice, so anything that speaks or listens on your behalf uses the same voice; setting it up here is what turns them on.
 
 ## When to offer setup
 
@@ -22,53 +22,54 @@ Once configured, the user can manage voice settings directly from the **agent se
 2. **Walk them through getting a key**: see [SETUP.md](SETUP.md) for the per-provider link and where to find the key.
 3. **Validate the key** before saving:
    ```bash
-   uv run ~/agent/skills/voice/scripts/voice_keys.py validate --provider deepgram --key <key>
+   voice-keys validate --provider deepgram --key <key>
    ```
 4. **Save the key**:
    ```bash
-   uv run ~/agent/skills/voice/scripts/voice_keys.py set-key --domain stt --provider deepgram --key <key>
+   voice-keys set-key --domain stt --provider deepgram --key <key>
    ```
 5. **Pick a voice** (TTS only). Ask the user if they'd prefer a male or female voice, then set an appropriate default:
    - Male voices: Roger (laid-back), Charlie (deep, Australian), George (warm, British), Liam (energetic), Chris (charming), Brian (deep, resonant), Daniel (steady, British)
    - Female voices: Sarah (mature), Laura (enthusiastic), Alice (clear, British), Matilda (professional), Jessica (playful), Lily (velvety, British)
    ```bash
-   uv run ~/agent/skills/voice/scripts/voice_keys.py set-voice --id <voice_id>
+   voice-keys set-voice --id <voice_id>
    ```
-   Let them know they can browse all voices and listen to previews in the app settings later.
-6. **Ensure the voice server is running.** The app fetches config from it. Check with `screen -ls | grep voice`. If it's not running, start it:
+6. **Ensure the voice server is running.** The app fetches config from it.
    ```bash
-   PORT=$(~/agent/skills/service/scripts/register-service voice)
-   SKILL_PORT=$PORT PYTHONPATH=~/agent/skills screen -dmS voice uv run python -m voice.server
+   voice-keys daemon start
    ```
+   Check with `voice-keys daemon status`.
 7. **Confirm**, e.g. "Voice is ready! You can use the mic button now. You can also change voices, listen to previews, and tweak settings from the settings page in the app."
 
 ## Commands
 
+**Daemon**: `voice-keys daemon start|stop|restart|status`. Start is idempotent (never stacks a duplicate) and owns the register-service call; status reports the port plus each domain's provider and enabled state. Manage the daemon only through these commands, never raw `screen`.
+
 ```bash
 # See current state
-uv run ~/agent/skills/voice/scripts/voice_keys.py status
+voice-keys status
 
 # Keys
-uv run ~/agent/skills/voice/scripts/voice_keys.py validate --provider {deepgram|elevenlabs} --key <k>
-uv run ~/agent/skills/voice/scripts/voice_keys.py set-key --domain {stt|tts} --provider {deepgram|elevenlabs} --key <k>
-uv run ~/agent/skills/voice/scripts/voice_keys.py clear --domain {stt|tts}   # removes provider + keys entirely
+voice-keys validate --provider {deepgram|elevenlabs} --key <k>
+voice-keys set-key --domain {stt|tts} --provider {deepgram|elevenlabs} --key <k>
+voice-keys clear --domain {stt|tts}   # removes provider + keys entirely
 
 # Enable/disable (keeps configuration intact, just toggles on/off)
-uv run ~/agent/skills/voice/scripts/voice_keys.py enable --domain {stt|tts}
-uv run ~/agent/skills/voice/scripts/voice_keys.py disable --domain {stt|tts}
+voice-keys enable --domain {stt|tts}
+voice-keys disable --domain {stt|tts}
 
 # TTS voice selection
-uv run ~/agent/skills/voice/scripts/voice_keys.py set-voice --id <voice_id>
-uv run ~/agent/skills/voice/scripts/voice_keys.py add-voice --id <voice_id> --name <name> --description "..."
-uv run ~/agent/skills/voice/scripts/voice_keys.py remove-voice --id <voice_id>
+voice-keys set-voice --id <voice_id>
+voice-keys add-voice --id <voice_id> --name <name> --description "..."
+voice-keys remove-voice --id <voice_id>
 
 # STT keyterms (words the transcription should bias toward)
-uv run ~/agent/skills/voice/scripts/voice_keys.py add-keyterm <term>
-uv run ~/agent/skills/voice/scripts/voice_keys.py remove-keyterm <term>
+voice-keys add-keyterm <term>
+voice-keys remove-keyterm <term>
 
 # STT end-of-turn tuning
-uv run ~/agent/skills/voice/scripts/voice_keys.py set-eot --threshold 0.8
-uv run ~/agent/skills/voice/scripts/voice_keys.py set-eot --timeout-ms 10000
+voice-keys set-eot --threshold 0.8
+voice-keys set-eot --timeout-ms 10000
 ```
 
 ## Common asks
@@ -77,7 +78,7 @@ uv run ~/agent/skills/voice/scripts/voice_keys.py set-eot --timeout-ms 10000
 - **"Enable TTS / start speaking again"** → `enable --domain tts`
 - **"Disable STT / turn off the mic"** → `disable --domain stt`
 - **"Remove voice completely"** → `clear --domain tts` (wipes provider + keys)
-- **"I want you to sound like <name>"** → `set-voice --id <matching voice_id from status>` (or tell them they can browse and preview voices in the app settings)
+- **"I want you to sound like <name>"** → `set-voice --id <matching voice_id from status>`
 - **"Make sure you recognize '{AGENT_NAME}'"** → `add-keyterm {AGENT_NAME}`
 - **"Finalize my turns faster"** → lower `--threshold` (e.g. 0.6)
 - **"Stop cutting me off"** → raise `--threshold` (e.g. 0.9) or raise `--timeout-ms`
@@ -90,7 +91,6 @@ uv run ~/agent/skills/voice/scripts/voice_keys.py set-eot --timeout-ms 10000
 - Model: `flux-general-en` (~$0.0048/min)
 - New accounts get $200 free credit
 - Keyterms bias the transcription toward specific words (e.g. the agent's name)
-- End-of-turn detection is tuned via `--threshold` (confidence, 0-1) and `--timeout-ms` (silence timeout)
 
 ### ElevenLabs (TTS, voice output)
 

@@ -3,23 +3,18 @@ import time
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-from .config import Config
 from . import auth
+from .config import Config
 
 
 def gmail_service(config: Config):
-    creds = auth.get_credentials(config.token_file, config.credentials_file, config.scopes)
+    creds = auth.get_credentials(config.token_file, config.scopes)
     return build("gmail", "v1", credentials=creds)
 
 
 def calendar_service(config: Config):
-    creds = auth.get_credentials(config.token_file, config.credentials_file, config.scopes)
+    creds = auth.get_credentials(config.token_file, config.scopes)
     return build("calendar", "v3", credentials=creds)
-
-
-def meet_service(config: Config):
-    creds = auth.get_credentials(config.token_file, config.credentials_file, config.scopes)
-    return build("meet", "v2", credentials=creds)
 
 
 def retry(func, *, max_retries: int = 3):
@@ -36,3 +31,4 @@ def retry(func, *, max_retries: int = 3):
                 time.sleep(2**attempt)
             else:
                 raise
+    return None

@@ -5,9 +5,12 @@ import contextlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from conftest import idle_message_stream
+from wait_util import wait_for_condition
+
+import core.config as cfg
 import core.models as vm
 from core.client import process_message
-from wait_util import wait_for_condition
 
 
 async def _run_processor_test(
@@ -20,10 +23,9 @@ async def _run_processor_test(
 ):
     """Shared helper for message_processor tests."""
     from core.loops import message_processor
-
     from core.provider import ProviderAuthState, ProviderStatus
 
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     config.data_dir.mkdir(parents=True, exist_ok=True)
     state = pre_state or vm.State()
     # These tests exercise the active processing path; an authenticated provider lets message_processor
@@ -41,12 +43,13 @@ async def _run_processor_test(
 
     original_side_effect = message_side_effect
 
-    async def tracking_process_message(msg, *, state, config, is_user):
+    async def tracking_process_message(msg, *, state, config):
         processed_messages.append(msg)
-        return await original_side_effect(msg, state=state, config=config, is_user=is_user)
+        return await original_side_effect(msg, state=state, config=config)
 
     mock_client = MagicMock()
     mock_client.return_value = mock_client
+    mock_client.receive_messages = idle_message_stream
 
     async def mock_enter(self):
         nonlocal session_count
@@ -67,14 +70,14 @@ async def _run_processor_test(
         state.shutdown_event.set()
 
     patches = {
-        "core.loops.ClaudeSDKClient": mock_client,
+        "core.client.ClaudeSDKClient": mock_client,
         "core.loops.process_message": tracking_process_message,
-        "core.loops.build_client_options": MagicMock(),
+        "core.client.build_client_options": MagicMock(),
     }
     if extra_patches:
         patches.update(extra_patches)
 
-    ctx_managers = [patch(k, v if not callable(v) or isinstance(v, MagicMock) else v) for k, v in patches.items()]
+    ctx_managers = [patch(k, v) for k, v in patches.items()]
     with contextlib.ExitStack() as stack:
         for cm in ctx_managers:
             stack.enter_context(cm)
@@ -88,10 +91,10 @@ async def _run_processor_test(
 
 @pytest.mark.anyio
 async def test_restarts_on_error(tmp_path):
-    async def side_effect(msg, *, state, config, is_user):
+    async def side_effect(msg, *, state, config):
         raise RuntimeError("Simulated SDK buffer overflow")
 
-    state, session_count, messages = await _run_processor_test(
+    state, _session_count, _messages = await _run_processor_test(
         tmp_path, message_side_effect=side_effect, initial_queue=[vm.QueuedTurn("first message - will fail", True, [])]
     )
     assert state.graceful_shutdown.is_set()
@@ -107,7 +110,7 @@ async def test_error_path_emits_error_event_and_resets_state_idle(tmp_path):
     state = vm.State()
     subscriber = state.event_bus.subscribe()
 
-    async def side_effect(msg, *, state, config, is_user):
+    async def side_effect(msg, *, state, config):
         raise RuntimeError("kaboom in the SDK")
 
     state, _, _ = await _run_processor_test(
@@ -134,17 +137,16 @@ async def test_restarts_on_timeout(tmp_path):
     reason, and that reason must classify as a CRASH so main() exits non-zero and Docker's
     on-failure policy restarts the container — under on-failure a clean exit 0 would leave the agent
     hung-then-permanently-down."""
-    from core.main import _is_crash_reason
 
-    async def side_effect(msg, *, state, config, is_user):
+    async def side_effect(msg, *, state, config):
         raise TimeoutError()
 
-    state, session_count, messages = await _run_processor_test(
+    state, _session_count, _messages = await _run_processor_test(
         tmp_path, message_side_effect=side_effect, initial_queue=[vm.QueuedTurn("slow request", True, [])]
     )
     assert state.graceful_shutdown.is_set()
     assert state.persisted.last_restart_reason == "error: Response timed out"
-    assert _is_crash_reason(state.persisted.last_restart_reason), "an SDK-hang timeout must classify as a crash so on-failure restarts it"
+    assert vm.is_crash_reason(state.persisted.last_restart_reason), "an SDK-hang timeout must classify as a crash so on-failure restarts it"
 
 
 def test_restart_reason_round_trip(tmp_path):
@@ -152,7 +154,7 @@ def test_restart_reason_round_trip(tmp_path):
     from core import state_store
     from core.main import _consume_restart_reason
 
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     config.data_dir.mkdir(parents=True, exist_ok=True)
 
     state = vm.State()
@@ -167,24 +169,118 @@ def test_restart_reason_round_trip(tmp_path):
     assert _consume_restart_reason(again, config, first_start=False) == vm.CRASH_RESTART
 
 
+def test_reason_constants_follow_category_detail_shape():
+    for const in (vm.CLEAN_RESTART, vm.CRASH_RESTART):
+        assert ": " in const, f"{const!r} must be 'category: detail'"
+        category = const.split(": ", 1)[0]
+        assert category in {"clean", "crash", "error"}, category
+        assert "—" not in const and "–" not in const
+    assert vm.CLEAN_RESTART == "clean: routine restart, no specific reason"
+
+
+def test_build_restart_context_renders_system_restart_header(tmp_path):
+    from core import helpers
+
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
+    # core_prompts_dir == agent_dir/core/prompts; write a stand-in restart.md so load_prompt resolves.
+    config.core_prompts_dir.mkdir(parents=True, exist_ok=True)
+    (config.core_prompts_dir / "restart.md").write_text("Read the `restart` skill and follow it.\n")
+
+    reason = "clean: routine restart, no specific reason"
+    out = helpers.build_restart_context(reason, config)
+    assert out.startswith("[System Restart]\nReason: routine restart, no specific reason")
+    assert out.endswith("Read the `restart` skill and follow it.")
+
+    # A reason without a category prefix renders whole.
+    out2 = helpers.build_restart_context("first start", config)
+    assert "Reason: first start" in out2
+
+    # Extras (e.g. a compaction boot message) slot between the header and the restart prompt.
+    out3 = helpers.build_restart_context(reason, config, extras=["[Boot Message]\nhello"])
+    header, summary, prompt = out3.split("\n\n")
+    assert header.startswith("[System Restart]")
+    assert summary.startswith("[Boot Message]")
+    assert prompt == "Read the `restart` skill and follow it."
+
+    # Crash/error reasons keep their marker: the restart skill branches on a crash boot
+    # ("crash -> mention it"), so the category must stay visible for dynamic crash strings.
+    out4 = helpers.build_restart_context("crash: JSONDecodeError: Expecting value", config)
+    assert "Reason: crash: JSONDecodeError: Expecting value" in out4
+    out5 = helpers.build_restart_context("error: Response timed out", config)
+    assert "Reason: error: Response timed out" in out5
+
+
+def test_consume_restart_reason_drains_pending_inbox(tmp_path):
+    from core.main import _consume_restart_reason
+
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
+    config.data_dir.mkdir(parents=True, exist_ok=True)
+
+    state = vm.State()
+    state.persisted.last_restart_reason = vm.CLEAN_RESTART
+
+    # No inbox -> existing behavior (returns the persisted reason).
+    assert _consume_restart_reason(state, config, first_start=False) == vm.CLEAN_RESTART
+
+    # Inbox present -> it wins over the persisted clean reason and the file is removed one-shot.
+    state.persisted.last_restart_reason = vm.CLEAN_RESTART
+    (config.data_dir / "pending_restart_reason").write_text("mounts: you now have read-only access to /media/Plex\n")
+    got = _consume_restart_reason(state, config, first_start=False)
+    assert got == "mounts: you now have read-only access to /media/Plex"
+    assert not (config.data_dir / "pending_restart_reason").exists()
+
+    # Drained: the next boot falls back to CRASH_RESTART like any consumed reason.
+    assert _consume_restart_reason(state, config, first_start=False) == vm.CRASH_RESTART
+
+
+def test_pending_inbox_never_masks_a_crash_reason(tmp_path):
+    from core.main import _consume_restart_reason
+
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
+    config.data_dir.mkdir(parents=True, exist_ok=True)
+
+    state = vm.State()
+    state.persisted.last_restart_reason = "crash: TypeError: boom"
+    (config.data_dir / "pending_restart_reason").write_text("backup: you were paused for a scheduled backup\n")
+
+    # The crash the prior run recorded wins over the external reason, and the inbox is still
+    # consumed so it can't fire stale on a later boot.
+    assert _consume_restart_reason(state, config, first_start=False) == "crash: TypeError: boom"
+    assert not (config.data_dir / "pending_restart_reason").exists()
+
+
+def test_first_start_drains_the_inbox_so_it_cannot_fire_later(tmp_path):
+    from core.main import _consume_restart_reason
+
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
+    config.data_dir.mkdir(parents=True, exist_ok=True)
+
+    state = vm.State()
+    (config.data_dir / "pending_restart_reason").write_text("mounts: you now have access to /media/Plex (read-only)\n")
+
+    assert _consume_restart_reason(state, config, first_start=True) == vm.FIRST_START_REASON
+    assert not (config.data_dir / "pending_restart_reason").exists(), "a stale inbox must not fire on a later boot"
+
+
 @pytest.mark.anyio
 async def test_client_cleared_on_cancellation(tmp_path):
     from core.loops import message_processor
     from core.provider import ProviderAuthState, ProviderStatus
 
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     state = vm.State()
     state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
     state.shutdown_event = asyncio.Event()
     queue: asyncio.Queue = asyncio.Queue()
 
     mock_client = MagicMock()
+    mock_client.receive_messages = idle_message_stream
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
     with (
-        patch("core.loops.ClaudeSDKClient", return_value=mock_client),
-        patch("core.loops.build_client_options", return_value=MagicMock()),
+        patch("core.client.ClaudeSDKClient", return_value=mock_client),
+        patch("core.client.build_client_options", return_value=MagicMock()),
     ):
         task = asyncio.create_task(message_processor(queue, state=state, config=config))
         await wait_for_condition(lambda: state.client is mock_client, message="processor never set state.client")
@@ -196,24 +292,71 @@ async def test_client_cleared_on_cancellation(tmp_path):
     assert state.client is None
 
 
+# --- Intentional restart mid-notification-turn: drop the file so it isn't re-delivered ---
+
+
+@pytest.mark.anyio
+async def test_notification_dropped_before_intentional_restart(tmp_path):
+    """A notification turn that ends with the agent calling restart_vesta must delete the
+    notification file before the restart, so it isn't re-delivered on the next boot.
+
+    At-least-once keeps the file until the turn completes (crash recovery), but an intentional
+    restart mid-turn means the notification was handled — dropping it here avoids the duplicate the
+    SIGTERM-beats-cleanup race would otherwise produce."""
+    from core.tools import _vesta_tools
+
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
+    config.notifications_dir.mkdir(parents=True, exist_ok=True)
+    notif_file = config.notifications_dir / "whatsapp-123.json"
+    notif_file.write_text("{}")
+
+    state = vm.State()
+    subscriber = state.event_bus.subscribe()
+
+    async def side_effect(msg, *, state, config):
+        # Mid-turn: the loop has exposed the in-flight notification; the agent handles it and
+        # asks to restart. The restart tool must drop the file here, not leave it for the loop's
+        # post-turn cleanup that the SIGTERM would beat.
+        assert state.in_flight_notification_paths == [str(notif_file)]
+        restart = next(t.handler for t in _vesta_tools(state, config) if t.name == "restart_vesta")
+        await restart({})
+
+    with patch("core.vestad_client.request_restart", new_callable=AsyncMock, return_value=True):
+        state, _, _ = await _run_processor_test(
+            tmp_path,
+            message_side_effect=side_effect,
+            pre_state=state,
+            initial_queue=[vm.QueuedTurn("<notification/>", False, [str(notif_file)])],
+        )
+
+    assert not notif_file.exists(), "handled notification must be gone before the restart, not re-delivered"
+    assert state.in_flight_notification_paths == []
+
+    drained = []
+    while not subscriber.empty():
+        drained.append(subscriber.get_nowait())
+    cleared = [e for e in drained if e["type"] == "notification_cleared"]
+    assert [e["notif_id"] for e in cleared] == ["whatsapp-123"], "clients must be told the notification cleared"
+
+
 # --- Em/en dash correction in process_message ---
 
 
 @pytest.mark.anyio
 async def test_process_message_sends_correction_on_em_dash(tmp_path):
     """process_message should call converse a second time when an em dash is detected."""
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     state = vm.State()
     converse_calls: list[str] = []
 
     async def mock_converse(prompt, *, state, config, show_output):
         converse_calls.append(prompt)
         if len(converse_calls) == 1:
-            return ["something \u2014 with an em dash"]
-        return ["corrected response"]
+            return vm.TurnSignals(texts=["something \u2014 with an em dash"])
+        return vm.TurnSignals(texts=["corrected response"])
 
     with patch("core.client.converse", side_effect=mock_converse):
-        responses, _ = await process_message("hello", state=state, config=config, is_user=True)
+        responses, _ = await process_message("hello", state=state, config=config)
 
     assert len(converse_calls) == 2
     assert "em dash" in converse_calls[1].lower()
@@ -228,18 +371,36 @@ async def test_process_message_sends_correction_on_em_dash(tmp_path):
 @pytest.mark.anyio
 async def test_process_message_no_correction(tmp_path, response):
     """process_message should not send a correction when no dashes are present (incl. an empty response)."""
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     state = vm.State()
     converse_calls: list[str] = []
 
     async def mock_converse(prompt, *, state, config, show_output):
         converse_calls.append(prompt)
-        return response
+        return vm.TurnSignals(texts=response)
 
     with patch("core.client.converse", side_effect=mock_converse):
-        await process_message("hello", state=state, config=config, is_user=True)
+        await process_message("hello", state=state, config=config)
 
     assert len(converse_calls) == 1
+
+
+@pytest.mark.anyio
+async def test_process_message_no_correction_when_block_dashes_off(tmp_path):
+    """With block_dashes disabled, a dashed reply is left as-is: no correction turn."""
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent", block_dashes=False)
+    state = vm.State()
+    converse_calls: list[str] = []
+
+    async def mock_converse(prompt, *, state, config, show_output):
+        converse_calls.append(prompt)
+        return vm.TurnSignals(texts=["something — with an em dash"])
+
+    with patch("core.client.converse", side_effect=mock_converse):
+        responses, _ = await process_message("hello", state=state, config=config)
+
+    assert len(converse_calls) == 1
+    assert responses == ["something — with an em dash"]
 
 
 @pytest.mark.anyio
@@ -250,7 +411,7 @@ async def test_unauthenticated_agent_idles_without_building_client(tmp_path):
     from core.loops import message_processor
     from core.provider import ProviderAuthState, ProviderStatus
 
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     config.data_dir.mkdir(parents=True, exist_ok=True)
     state = vm.State()
     state.shutdown_event = asyncio.Event()
@@ -259,8 +420,8 @@ async def test_unauthenticated_agent_idles_without_building_client(tmp_path):
 
     built = MagicMock()
     with (
-        patch("core.loops.build_client_options", built),
-        patch("core.loops.ClaudeSDKClient") as mock_client,
+        patch("core.client.build_client_options", built),
+        patch("core.client.ClaudeSDKClient") as mock_client,
     ):
         task = asyncio.create_task(message_processor(queue, state=state, config=config))
         await asyncio.sleep(0.05)
@@ -279,10 +440,10 @@ async def test_message_deferred_when_provider_not_authenticated(tmp_path):
     full retry budget) AND must not delete the notification file — it has to re-run after re-auth."""
     import asyncio
 
-    from core.loops import _run_messages_with_interrupts
+    from core.loops import _run_messages_with_preempts
     from core.provider import ProviderAuthState, ProviderStatus
 
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     state = vm.State()
     state.provider_status = ProviderStatus(state=ProviderAuthState.NOT_AUTHENTICATED, kind="claude", model=None)
     drove_claude = False
@@ -296,7 +457,7 @@ async def test_message_deferred_when_provider_not_authenticated(tmp_path):
     notif_file.write_text("{}")
     queue: asyncio.Queue = asyncio.Queue()
     with patch("core.loops.process_message", side_effect=mock_process_message):
-        await _run_messages_with_interrupts(vm.QueuedTurn("migration notif", False, [str(notif_file)]), queue=queue, state=state, config=config)
+        await _run_messages_with_preempts(vm.QueuedTurn("migration notif", False, [str(notif_file)]), queue=queue, state=state, config=config)
 
     assert drove_claude is False
     assert notif_file.exists(), "deferred notification file must survive for re-run after re-auth"
@@ -308,10 +469,10 @@ async def test_notification_file_kept_when_auth_lost_mid_turn(tmp_path):
     converse), that message's notification file must be kept so it re-runs after re-auth."""
     import asyncio
 
-    from core.loops import _run_messages_with_interrupts
+    from core.loops import _run_messages_with_preempts
     from core.provider import ProviderAuthState, ProviderStatus
 
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     state = vm.State()
     state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
 
@@ -324,7 +485,7 @@ async def test_notification_file_kept_when_auth_lost_mid_turn(tmp_path):
     notif_file.write_text("{}")
     queue: asyncio.Queue = asyncio.Queue()
     with patch("core.loops.process_message", side_effect=mock_process_message):
-        await _run_messages_with_interrupts(vm.QueuedTurn("notif", False, [str(notif_file)]), queue=queue, state=state, config=config)
+        await _run_messages_with_preempts(vm.QueuedTurn("notif", False, [str(notif_file)]), queue=queue, state=state, config=config)
 
     assert notif_file.exists(), "file for the turn that lost auth must survive for re-run after re-auth"
 
@@ -334,10 +495,10 @@ async def test_notification_file_deleted_on_normal_processing(tmp_path):
     """Sanity: an authenticated, normally-processed notification still has its file deleted."""
     import asyncio
 
-    from core.loops import _run_messages_with_interrupts
+    from core.loops import _run_messages_with_preempts
     from core.provider import ProviderAuthState, ProviderStatus
 
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     state = vm.State()
     state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
 
@@ -349,7 +510,7 @@ async def test_notification_file_deleted_on_normal_processing(tmp_path):
     sub = state.event_bus.subscribe()
     queue: asyncio.Queue = asyncio.Queue()
     with patch("core.loops.process_message", side_effect=mock_process_message):
-        await _run_messages_with_interrupts(vm.QueuedTurn("notif", False, [str(notif_file)]), queue=queue, state=state, config=config)
+        await _run_messages_with_preempts(vm.QueuedTurn("notif", False, [str(notif_file)]), queue=queue, state=state, config=config)
 
     assert not notif_file.exists(), "normally-processed notification file should be deleted"
     # The clear must also be announced on the stream, so live clients flip the row from pending to
@@ -366,32 +527,32 @@ async def test_cancellation_triggers_restart(tmp_path):
     Regression test for a silent-death bug: CancelledError used to propagate uncaught,
     bypassing the restart trigger and leaving the agent wedged until backup SIGTERM hours later.
     """
-    from core.loops import _run_messages_with_interrupts
+    from core.loops import _run_messages_with_preempts
 
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     config.data_dir.mkdir(parents=True, exist_ok=True)
     state = vm.State()
     queue: asyncio.Queue = asyncio.Queue()
 
-    async def cancel_side_effect(msg, *, state, config, is_user):
+    async def cancel_side_effect(msg, *, state, config):
         raise asyncio.CancelledError
 
-    with patch("core.loops.process_message", side_effect=cancel_side_effect):
-        with pytest.raises(asyncio.CancelledError):
-            await _run_messages_with_interrupts(vm.QueuedTurn("msg", True, []), queue=queue, state=state, config=config)
+    with patch("core.loops.process_message", side_effect=cancel_side_effect), pytest.raises(asyncio.CancelledError):
+        await _run_messages_with_preempts(vm.QueuedTurn("msg", True, []), queue=queue, state=state, config=config)
 
     assert state.graceful_shutdown.is_set()
-    assert state.persisted.last_restart_reason == "error: processing cancelled"
+    assert state.persisted.last_restart_reason == "error: a turn was cancelled unexpectedly"
 
 
 @pytest.mark.anyio
 async def test_cancellation_during_shutdown_is_silent(tmp_path):
-    """When the cancel arrives mid-process *while* shutdown is in progress, the inner handler must NOT log 'cancelled unexpectedly' or override restart_reason.
+    """When the cancel arrives mid-process *while* shutdown is in progress, the inner handler must
+    NOT log 'cancelled unexpectedly' or override restart_reason.
 
     Regression for a silent-death bug where shutdown-driven cancels were treated as crashes."""
-    from core.loops import _run_messages_with_interrupts
+    from core.loops import _run_messages_with_preempts
 
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     config.data_dir.mkdir(parents=True, exist_ok=True)
     state = vm.State()
     state.shutdown_event = asyncio.Event()
@@ -399,7 +560,7 @@ async def test_cancellation_during_shutdown_is_silent(tmp_path):
 
     processing_started = asyncio.Event()
 
-    async def hang(msg, *, state, config, is_user):
+    async def hang(msg, *, state, config):
         processing_started.set()
         await asyncio.sleep(60)
 
@@ -410,7 +571,7 @@ async def test_cancellation_during_shutdown_is_silent(tmp_path):
         task.cancel()
 
     with patch("core.loops.process_message", hang):
-        task = asyncio.create_task(_run_messages_with_interrupts(vm.QueuedTurn("msg", True, []), queue=queue, state=state, config=config))
+        task = asyncio.create_task(_run_messages_with_preempts(vm.QueuedTurn("msg", True, []), queue=queue, state=state, config=config))
         canceller = asyncio.create_task(shutdown_and_cancel(task))
         with pytest.raises(asyncio.CancelledError):
             await task
@@ -425,7 +586,7 @@ async def test_handle_processor_done_silent_cancel_triggers_restart(tmp_path):
     Now it must log + set restart_reason + set graceful_shutdown."""
     from core.main import handle_processor_done
 
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     config.data_dir.mkdir(parents=True, exist_ok=True)
     state = vm.State()
 
@@ -437,10 +598,10 @@ async def test_handle_processor_done_silent_cancel_triggers_restart(tmp_path):
     with contextlib.suppress(asyncio.CancelledError):
         await task
 
-    handle_processor_done(task, state=state, config=config)
+    handle_processor_done(task, name="processor", state=state, config=config)
 
     assert state.graceful_shutdown.is_set()
-    assert state.persisted.last_restart_reason == "crash: processor cancelled unexpectedly"
+    assert state.persisted.last_restart_reason == "crash: the processor was cancelled unexpectedly"
 
 
 @pytest.mark.anyio
@@ -448,7 +609,7 @@ async def test_handle_processor_done_exception_triggers_restart(tmp_path):
     """A crashed processor task should log the exception and set restart_reason."""
     from core.main import handle_processor_done
 
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     config.data_dir.mkdir(parents=True, exist_ok=True)
     state = vm.State()
 
@@ -459,7 +620,7 @@ async def test_handle_processor_done_exception_triggers_restart(tmp_path):
     with contextlib.suppress(RuntimeError):
         await task
 
-    handle_processor_done(task, state=state, config=config)
+    handle_processor_done(task, name="processor", state=state, config=config)
 
     assert state.graceful_shutdown.is_set()
     assert state.persisted.last_restart_reason is not None
@@ -471,7 +632,7 @@ async def test_handle_processor_done_silent_exit_triggers_restart(tmp_path):
     """A processor task that returns without error or cancellation should still trigger restart."""
     from core.main import handle_processor_done
 
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     config.data_dir.mkdir(parents=True, exist_ok=True)
     state = vm.State()
 
@@ -481,10 +642,10 @@ async def test_handle_processor_done_silent_exit_triggers_restart(tmp_path):
     task = asyncio.create_task(silent())
     await task
 
-    handle_processor_done(task, state=state, config=config)
+    handle_processor_done(task, name="processor", state=state, config=config)
 
     assert state.graceful_shutdown.is_set()
-    assert state.persisted.last_restart_reason == "crash: processor exited silently"
+    assert state.persisted.last_restart_reason == "crash: the processor exited silently"
 
 
 @pytest.mark.anyio
@@ -492,7 +653,7 @@ async def test_handle_processor_done_noop_during_shutdown(tmp_path):
     """If shutdown was already initiated, the callback must not override the restart_reason."""
     from core.main import handle_processor_done
 
-    config = vm.VestaConfig(agent_dir=tmp_path / "agent")
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     config.data_dir.mkdir(parents=True, exist_ok=True)
     state = vm.State()
     state.graceful_shutdown.set()
@@ -504,7 +665,7 @@ async def test_handle_processor_done_noop_during_shutdown(tmp_path):
     task = asyncio.create_task(silent())
     await task
 
-    handle_processor_done(task, state=state, config=config)
+    handle_processor_done(task, name="processor", state=state, config=config)
 
     assert state.persisted.last_restart_reason == "nightly: dreamer ran, session cleared for fresh context"
 

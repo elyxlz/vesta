@@ -5,38 +5,66 @@ description: Upstream elyxlz/vesta GitHub ops: branches, PRs, issues, CI, API.
 
 # Upstream PR
 
-Push contributions back to `elyxlz/vesta`. Authentication is handled by the `vesta-upstream` GitHub App, no personal tokens needed. PRs are always cut from `origin/master`, never from `$VESTA_UPSTREAM_REF` or local HEAD.
+Push contributions back to `elyxlz/vesta`. Authentication is handled by the `vesta-upstream` GitHub App, no personal tokens needed.
+
+## Setup
+
+```bash
+uv tool install --editable ~/agent/skills/upstream-pr/cli
+```
+
+## Discovering what to file (run this every night, in the dream's Upstream phase)
+
+Don't wait to stumble on things worth upstreaming: sweep for them. Your workspace (`~`) is a git repo whose stock baseline is the tag `agent-vX.Y.Z` matching the version you run. Diffing your branch against that tag surfaces **everything you've changed or added on top of stock**, i.e. the full contribution surface, in one command:
+
+```bash
+VER=$(grep '^version = ' ~/agent/core/pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+git -C ~ diff --stat "agent-v$VER"..HEAD -- agent/ ':(exclude)agent/core/**'
+```
+
+Walk the list and, for each changed/added file, decide with gate 1 below: generalizable → file it; user-specific → leave it local. Common finds: a hook, script, or SKILL.md improvement built for one task that any instance would want.
+
+**Go WITHIN each file, not just file-by-file.** The `--stat` view tempts you to sort at the whole-file level ("MEMORY.md is personal → skip", "a new skill → file"), but a file that is mostly user-specific almost always carries general improvements buried inside it: a restart SKILL.md that mixes a user-specific service list (local) with a hard-won "a migration prompt is a boot turn, restore daemons first" note (general); a skill doc where a *mechanism* is general but the specific names/addresses are personal. So for every changed file, `git -C ~ diff "agent-v$VER"..HEAD -- <file>` and read the actual hunks: split each into the general part (the rule, the mechanism, the fix) and the user-specific part (names, addresses, paths, one person's texting quirks). Upstream the general part with the personal part stripped or genericized; leave only the truly personal remainder local. The unit of contribution is the improvement, not the file.
+
+Two gotchas learned the hard way:
+- **Diff against the `agent-vX.Y.Z` tag, NOT `upstream/master`.** Vesta serves the workspace as a *subset* of the full monorepo (no `core/`, `tests/`, frontend), so a raw diff against `upstream/master` is polluted with thousands of phantom "deletions" for files that aren't in your workspace at all. The tag is your exact stock baseline, so its diff is purely your real changes.
+- **A local-only file that never existed upstream is the easiest thing to miss.** If you built a whole hook/script locally, there's nothing to "sync", so it silently never gets contributed. The sweep catches exactly these.
 
 ## Before filing (REQUIRED)
 
-Three gates before opening a worktree.
+Four gates before opening a worktree.
 
-**1. Is it worth filing?** Push upstream only what would benefit any vesta instance:
+**0. Does it already exist? (grep FIRST, in the natural layer.)** Before building or upstreaming any mechanism, `grep -rn` the codebase for an existing implementation, and look in the layer where it would naturally live, not just one spot. It's easy to check only one directory (e.g. a `hooks/` dir), conclude "not upstream yet", and file a redundant PR that duplicates a check already wired into a channel CLI or core. Duplicated logic is a smell that the solution isn't the right one. So: search by the FEATURE name across all skills + core, not by where you assume it lives; if it exists, improve that one, don't add a second.
+
+**1. Is it worth filing?** The rule for everything below: **generalizable goes upstream, user-specific stays local.** Everything is upstreamable unless it's personal information or super niche to one user; if a change would help any vesta instance, it belongs upstream. Concretely:
 - Bug fixes in agent code, skills, or prompts
 - New skills (strip personal config first) (can be specific skills, they are opt in for new vestas)
 - Prompt or SKILL.md or MEMORY.md improvements
+- **Personality / voice improvements** (the `personality` SKILL.md shared rules, the `presets/*.md` preset files, the bubble_lint hook). These ship with every vesta, so a sharpened rule that isn't glued to one user's specifics benefits everyone.
 - Infrastructure or tooling improvements
 
-Never file: personal config, memory files, credentials, user-specific customizations.
-
 **2. Issue, PR, or both?**
-- You have a fix: **PR + issue**. The PR **body** must contain a closing keyword + issue number (`fixes #N` / `closes #N` / `resolves #N`) on its own line. GitHub only auto-closes the linked issue on merge when that keyword is in the PR body, so without it the issue stays open after the PR merges and someone has to close it by hand. Put it in the body, NOT the commit message (per CLAUDE.md, commits carry no closing keywords). `pr.py --body "...fixes #N"` is enough.
+- You have a fix: **PR + issue**. The PR **body** must contain a closing keyword + issue number (`fixes #N` / `closes #N` / `resolves #N`) on its own line. GitHub only auto-closes the linked issue on merge when that keyword is in the PR body, so without it the issue stays open after the PR merges and someone has to close it by hand. Put it in the body, NOT the commit message (per CLAUDE.md, commits carry no closing keywords). `upstream-pr --body "...fixes #N"` is enough.
 - You don't have a fix yet: **issue only**.
 
-**3. Strip personal information.** Upstream is public; the user must not be identifiable. No names, contact details, private context, or specifics tied to the user or their data. Describe the pattern in general terms ("agent claimed inability to access calendar when google skill was installed"), not the specific instance ("user asked about tuesday's meeting with..."). When in doubt, leave it out.
+**3. Strip personal information.** Upstream is public, so the user must not be identifiable: never file personal config, their own memory content, credentials, or user-specific customizations (a rule that names the user or their contacts, a preset drifted to one person's texting quirks). Describe the pattern in general terms ("agent claimed inability to access calendar when google skill was installed"), not the specific instance ("user asked about tuesday's meeting with..."). When in doubt, leave it out.
+
+## Shaping the change (REQUIRED)
+
+When you add functionality to a skill that already ships a CLI (`cli/`), fold it in as a **subcommand of that CLI**, reusing its shared auth/client/helpers; do not drop a standalone script beside it. One entry point per skill: a loose script re-implements auth, escapes the skill's tests, and rots. Ship the subcommand with a test under `cli/tests/` and document it in `SKILL.md` alongside the others.
 
 ## Attribution (REQUIRED)
 
 Every PR and every issue must carry the agent name and vesta version, so maintainers know which agent on which version hit the bug or proposed the change.
 
 - Agent name: `$AGENT_NAME`
-- Vesta version: `$VESTA_UPSTREAM_REF` (e.g. `v0.1.148` in release builds, a branch name in dev)
+- Vesta version: read from `~/agent/core/pyproject.toml`
 
-`pr.py` automatically appends `Submitted by **<name>** on <version>` to PR bodies. For **issues**, append the same footer to the body yourself:
+`upstream-pr` automatically appends `Submitted by **<name>** on <version>` to PR bodies. For **issues**, append the same footer to the body yourself:
 
 ```
 ---
-Submitted by **$AGENT_NAME** on `$VESTA_UPSTREAM_REF`
+Submitted by **$AGENT_NAME** on vesta v<version>
 ```
 
 ## Creating a PR
@@ -57,34 +85,40 @@ The home `~` workspace ignores everything outside `agent/`, and local commits di
    ```bash
    cd /tmp/vesta-pr
    git add <files> && git commit -m "<description>"
-   uv run ~/agent/skills/upstream-pr/pr.py --title "..." --body "..."
+   upstream-pr --title "..." --body "..."
    ```
 
 5. **Clean up:** `git -C ~ worktree remove /tmp/vesta-pr`
 
-6. **Wait for CI to pass.** Get a token with `pr.py --token-only`, then poll the check-runs endpoint. If a check fails: diagnose, fix, commit to the same branch, push, the PR updates automatically. The `lockfile` check requires `uv lock` in `~/agent` if Python deps changed.
+6. **Wait for CI to pass.** Get a token with `upstream-pr --token-only`, then poll the check-runs endpoint. If a check fails: diagnose, fix, commit to the same branch, push, the PR updates automatically. The `lockfile` check requires `uv lock` in `~/agent` if Python deps changed.
 
 Only report a PR as done once every CI check is green.
 
 ## Filing an issue
 
-Get a token with `pr.py --token-only`, then POST to the GitHub Issues API. The title should name the pattern, not the specific instance. The body must include the attribution footer (see "Attribution").
+Get a token with `upstream-pr --token-only`, then POST to the GitHub Issues API. The title should name the pattern, not the specific instance. The body must include the attribution footer (see "Attribution").
 
-## pr.py reference
+## upstream-pr reference
 
 ```bash
 # Create a PR (auto branch, base=master)
-uv run ~/agent/skills/upstream-pr/pr.py --title "fix: ..." --body "..."
+upstream-pr --title "fix: ..." --body "..."
 
 # Custom branch and base
-uv run ~/agent/skills/upstream-pr/pr.py --title "..." --branch my-branch --base master
+upstream-pr --title "..." --branch my-branch --base master
 
 # Short-lived GitHub API token (for issues, check-runs, PR status)
-uv run ~/agent/skills/upstream-pr/pr.py --token-only
+upstream-pr --token-only
 ```
+
+## Running a skill's tests
+
+Each skill CLI is its own uv project, so run its tests from its own directory: `cd ~/agent/skills/<name>/cli && uv run pytest`. uv builds a local `.venv` there and leaves the engine venv at `~/agent/.venv` alone.
 
 ## Formatting Python before pushing
 
-CI's `agent-tests` runs `uv run ruff format --check` and `uv run ruff check` from `agent/`. Format new/changed `.py` the same way before pushing: `cd ~/agent && uv run ruff format <path>` then `uv run ruff check <path>`.
+Before pushing changed `.py`, format from `~/agent` so the pinned ruff and config match CI's `guards` ruff pass: `cd ~/agent && ruff format <path> && ruff check <path>`. Plain `ruff` from that dir is the engine venv's pinned ruff (its bin leads your PATH), never `uvx ruff` or another cwd: those ignore the lock (`agent/core/uv.lock`) and config (`agent/ruff.toml`) and can fail CI's `--check` on otherwise-correct code.
 
-Use `uv run ruff`, never `uvx ruff`. `uv run` uses the ruff version locked in `agent/uv.lock` and the `[tool.ruff]` config (line-length, etc.) in `agent/pyproject.toml`, so it matches CI exactly. `uvx ruff` pulls a standalone latest ruff that ignores both the lock and the config, so it can format a file differently (e.g. wrap a line CI would leave alone) and fail CI's `--check` on otherwise-correct code. Likewise, don't format from inside a sparse-checkout worktree unless `agent/pyproject.toml` is materialized, or ruff misses the config and falls back to defaults.
+## No em/en dashes in markdown
+
+Before pushing changed prompt or skill `.md`, check for em dashes (U+2014) and en dashes (U+2013): `grep -rnP '\x{2014}|\x{2013}' <paths>` must be empty. CI's `test_no_em_or_en_dashes_in_prompt_and_skill_files` (`agent-tests`) fails the build on either character in those files; use commas, colons, or hyphens instead. Watch this especially when a subagent did the editing: instruct it up front, since models reach for those dashes by default. (This note avoids the literal characters for the same reason.)

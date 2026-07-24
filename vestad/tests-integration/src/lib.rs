@@ -3,8 +3,8 @@ pub mod types;
 
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use client::Client;
@@ -72,16 +72,19 @@ impl TestServerBuilder {
 
     /// Set an explicit user name. Prefer `unique_user()` to avoid cross-test
     /// Docker container collisions.
+    #[must_use]
     pub fn user(mut self, user: &str) -> Self {
         self.user = Some(user.to_string());
         self
     }
 
+    #[must_use]
     pub fn home(mut self, home: PathBuf) -> Self {
         self.home = Some(home);
         self
     }
 
+    #[must_use]
     pub fn vestad_bin(mut self, vestad_bin: PathBuf) -> Self {
         self.vestad_bin = Some(vestad_bin);
         self
@@ -91,6 +94,7 @@ impl TestServerBuilder {
     /// clears `VESTAD_AGENT_IMAGE` for the OLD vestad so it falls back to its own released
     /// image (`ghcr.io/elyxlz/vesta:<tag>`), making the agent a faithful fleet member of that
     /// version rather than running on the checkout's image.
+    #[must_use]
     pub fn env_remove(mut self, key: &str) -> Self {
         self.env_remove.push(key.to_string());
         self
@@ -98,16 +102,23 @@ impl TestServerBuilder {
 
     pub fn start(self) -> Result<TestServer, String> {
         let user = self.user.unwrap_or_else(|| unique_user("test"));
-        TestServer::start_with_options(Some(user), self.home, self.vestad_bin, &self.env_remove)
+        TestServer::start_with_options(Some(&user), self.home, self.vestad_bin, &self.env_remove)
     }
 }
 
 /// Remove Docker containers left behind by previous test runs that crashed
-/// before TestAgent::drop could clean up. Targets containers from test users
-/// (unique_user generates names like "prefix-tPID-N") and e2e test containers.
+/// before `TestAgent::drop` could clean up. Targets containers from test users
+/// (`unique_user` generates names like "prefix-tPID-N") and e2e test containers.
 fn cleanup_orphan_test_containers() {
     let Ok(output) = Command::new("docker")
-        .args(["ps", "-a", "--filter", "label=vesta.managed=true", "--format", "{{.Names}}\t{{.Label \"vesta.user\"}}"])
+        .args([
+            "ps",
+            "-a",
+            "--filter",
+            "label=vesta.managed=true",
+            "--format",
+            "{{.Names}}\t{{.Label \"vesta.user\"}}",
+        ])
         .output()
     else {
         return;
@@ -119,10 +130,13 @@ fn cleanup_orphan_test_containers() {
             [n, u] => (n.trim(), u.trim()),
             _ => continue,
         };
-        if name.is_empty() { continue; }
+        if name.is_empty() {
+            continue;
+        }
         // Test users from unique_user() contain "-t{pid}-"
         // E2e containers use "test-e2e-" prefix
-        let is_test_user = user_label.contains("-t") && user_label.chars().any(|c| c.is_ascii_digit());
+        let is_test_user =
+            user_label.contains("-t") && user_label.chars().any(|c| c.is_ascii_digit());
         let is_e2e = name.contains("test-e2e-");
         if is_test_user || is_e2e {
             let _ = Command::new("docker").args(["rm", "-f", name]).output();
@@ -140,12 +154,18 @@ fn kill_orphan_vestads() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     for line in stdout.lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
-        let Some(pid_str) = parts.first() else { continue };
-        let Ok(pid) = pid_str.parse::<u32>() else { continue };
+        let Some(pid_str) = parts.first() else {
+            continue;
+        };
+        let Ok(pid) = pid_str.parse::<u32>() else {
+            continue;
+        };
 
         // Check if the process's HOME is a temp directory
         let environ_path = format!("/proc/{pid}/environ");
-        let Ok(environ) = std::fs::read(&environ_path) else { continue };
+        let Ok(environ) = std::fs::read(&environ_path) else {
+            continue;
+        };
         let is_tmp_home = environ
             .split(|&b| b == 0)
             .filter_map(|entry| std::str::from_utf8(entry).ok())
@@ -171,35 +191,37 @@ impl TestServer {
         Self::start_with_options(None, None, None, &[])
     }
 
-    fn start_with_options(user: Option<String>, home: Option<PathBuf>, vestad_bin: Option<PathBuf>, env_remove: &[String]) -> Result<Self, String> {
+    fn start_with_options(
+        user: Option<&str>,
+        home: Option<PathBuf>,
+        vestad_bin: Option<PathBuf>,
+        env_remove: &[String],
+    ) -> Result<Self, String> {
         rustls::crypto::ring::default_provider()
             .install_default()
             .ok();
 
-        let (tmpdir, home) = match home {
-            Some(home) => {
-                std::fs::create_dir_all(&home).map_err(|e| format!("create home: {e}"))?;
-                (None, home)
-            }
-            None => {
-                let tmpdir = tempfile::TempDir::new().map_err(|e| format!("tmpdir: {e}"))?;
-                let home = tmpdir.path().to_path_buf();
-                (Some(tmpdir), home)
-            }
+        let (tmpdir, home) = if let Some(home) = home {
+            std::fs::create_dir_all(&home).map_err(|e| format!("create home: {e}"))?;
+            (None, home)
+        } else {
+            let tmpdir = tempfile::TempDir::new().map_err(|e| format!("tmpdir: {e}"))?;
+            let home = tmpdir.path().to_path_buf();
+            (Some(tmpdir), home)
         };
         let vestad = vestad_bin.unwrap_or(find_vestad()?);
 
         let real_home = std::env::var("HOME").unwrap_or_default();
-        let docker_config = format!("{}/.docker", real_home);
+        let docker_config = format!("{real_home}/.docker");
 
         let stderr_path = home.join("vestad-stderr.log");
-        let stderr_file = std::fs::File::create(&stderr_path)
-            .map_err(|e| format!("create stderr log: {e}"))?;
+        let stderr_file =
+            std::fs::File::create(&stderr_path).map_err(|e| format!("create stderr log: {e}"))?;
         // Capture stdout too: vestad's tracing (reconcile/rebuild decisions) goes here, and the
         // upgrade e2e dumps it on failure to explain why an agent didn't come back after update.
         let stdout_path = home.join("vestad-stdout.log");
-        let stdout_file = std::fs::File::create(&stdout_path)
-            .map_err(|e| format!("create stdout log: {e}"))?;
+        let stdout_file =
+            std::fs::File::create(&stdout_path).map_err(|e| format!("create stdout log: {e}"))?;
 
         let mut cmd = Command::new(&vestad);
         cmd.args(["serve", "--standalone", "--no-tunnel"])
@@ -208,7 +230,7 @@ impl TestServer {
             .stdout(Stdio::from(stdout_file))
             .stderr(Stdio::from(stderr_file));
 
-        if let Some(ref user_name) = user {
+        if let Some(user_name) = user {
             cmd.env("USER", user_name);
         }
         for key in env_remove {
@@ -220,13 +242,15 @@ impl TestServer {
         let config_dir = home.join(".config/vesta/vestad");
         let port_path = config_dir.join("port");
 
-        let startup_timeout = Duration::from_secs(60);
+        let startup_timeout = Duration::from_mins(1);
         let deadline = std::time::Instant::now() + startup_timeout;
         let port = loop {
             if let Ok(content) = std::fs::read_to_string(&port_path) {
                 if let Ok(p) = content.trim().parse::<u16>() {
                     let addr: std::net::SocketAddr = ([127, 0, 0, 1], p).into();
-                    if std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok() {
+                    if std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(200))
+                        .is_ok()
+                    {
                         break p;
                     }
                 }
@@ -304,20 +328,6 @@ impl<'a> TestAgent<'a> {
         let name = client.create_agent(name)?;
         Ok(Self { name, client })
     }
-
-    pub fn create_with_manage_agent_code(client: &'a Client, name: &str) -> Result<Self, String> {
-        let _ = client.stop_agent(name);
-        let _ = client.destroy_agent(name);
-        let name = client.create_agent_ex(name, Some(true))?;
-        Ok(Self { name, client })
-    }
-
-    pub fn create_without_manage_agent_code(client: &'a Client, name: &str) -> Result<Self, String> {
-        let _ = client.stop_agent(name);
-        let _ = client.destroy_agent(name);
-        let name = client.create_agent_ex(name, Some(false))?;
-        Ok(Self { name, client })
-    }
 }
 
 impl Drop for TestAgent<'_> {
@@ -333,7 +343,7 @@ pub fn find_vestad() -> Result<PathBuf, String> {
     }
     let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .unwrap()
+        .expect("tests-integration lives inside the vestad crate dir")
         .to_path_buf();
     for profile in ["debug", "release"] {
         let p = workspace.join(format!("target/{profile}/vestad"));
@@ -344,7 +354,8 @@ pub fn find_vestad() -> Result<PathBuf, String> {
     Err("vestad not found. Run `cargo build -p vestad` first, or set VESTAD_BIN".into())
 }
 
-pub const FAKE_TOKEN: &str = r#"{"claudeAiOauth":{"accessToken":"test","refreshToken":"test","expiresAt":4102444800000}}"#;
+pub const FAKE_TOKEN: &str =
+    r#"{"claudeAiOauth":{"accessToken":"test","refreshToken":"test","expiresAt":4102444800000}}"#;
 
 /// Write fake Claude credentials straight into the container fs (works even
 /// while the agent is still booting, like the old docker-cp path). The agent
@@ -352,16 +363,17 @@ pub const FAKE_TOKEN: &str = r#"{"claudeAiOauth":{"accessToken":"test","refreshT
 /// the running agent to *report* authenticated must restart it after injecting.
 pub fn inject_fake_token(_c: &Client, name: &str) {
     let cname = agent_container_name(name);
-    let script = format!("mkdir -p /root/.claude && printf '%s' '{FAKE_TOKEN}' > /root/.claude/.credentials.json");
+    let script = format!(
+        "mkdir -p /root/.claude && printf '%s' '{FAKE_TOKEN}' > /root/.claude/.credentials.json"
+    );
     exec_in_container(&cname, &script).expect("write fake credentials");
 }
 
 /// Pre-mark first-start setup as done so the agent reports `alive` (not `setting_up`)
-/// on the next boot without waiting for the SDK to call `mark_setup_done`. Tests run
-/// with a fake token, so no real SDK session can drive that tool call.
-///
-/// Writing state.json while the agent is running isn't enough: the running agent
-/// holds `first_start_done=false` in memory and rewrites state.json on its graceful
+/// on the next boot without waiting for the SDK to call `mark_setup_done`; tests run
+/// with a fake token, so no real SDK session can drive that tool call. Writing
+/// state.json while the agent is running isn't enough: the running agent holds
+/// `first_start_done=false` in memory and rewrites state.json on its graceful
 /// shutdown, clobbering this write on the next restart. So write the flag, SIGKILL
 /// the agent (no graceful save), then start it fresh so the boot reads `true`; from
 /// then on the in-memory value survives normal restarts.
@@ -380,7 +392,7 @@ pub fn docker_cmd(args: &[&str]) -> Result<String, String> {
     let output = std::process::Command::new("docker")
         .args(args)
         .output()
-        .map_err(|e| format!("docker {:?}: {e}", args))?;
+        .map_err(|e| format!("docker {args:?}: {e}"))?;
     if !output.status.success() {
         return Err(format!(
             "docker {:?} failed: {}",
@@ -397,7 +409,7 @@ pub fn exec_in_container(container: &str, script: &str) -> Result<String, String
 
 pub fn agent_container_name(agent_name: &str) -> String {
     let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-    format!("vesta-{}-{}", user, agent_name)
+    format!("vesta-{user}-{agent_name}")
 }
 
 /// Print an agent container's state + logs to stderr. Called when a wait helper
@@ -410,9 +422,7 @@ pub fn dump_agent_diagnostics(agent_name: &str) {
     let cname = match docker_cmd(&["ps", "-a", "--format", "{{.Names}}"]) {
         Ok(list) => list
             .lines()
-            .find(|n| n.ends_with(&format!("-{agent_name}")) && n.starts_with("vesta-"))
-            .map(str::to_string)
-            .unwrap_or_else(|| agent_container_name(agent_name)),
+            .find(|n| n.ends_with(&format!("-{agent_name}")) && n.starts_with("vesta-")).map_or_else(|| agent_container_name(agent_name), str::to_string),
         Err(_) => agent_container_name(agent_name),
     };
     eprintln!("\n========== AGENT DIAGNOSTICS: {cname} ==========");
@@ -461,7 +471,10 @@ fn cp_container_file(cname: &str, container_path: &str) -> Option<String> {
 
 /// Container is up (regardless of auth/readiness state).
 pub fn is_up(status: &str) -> bool {
-    matches!(status, "not_authenticated" | "unprovisioned" | "starting" | "setting_up" | "alive" | "restarting")
+    matches!(
+        status,
+        "not_authenticated" | "unprovisioned" | "starting" | "setting_up" | "alive" | "restarting"
+    )
 }
 
 pub struct ReleasedVestad {
@@ -486,7 +499,11 @@ pub fn download_latest_released_vestad() -> Result<ReleasedVestad, String> {
 /// Returns `None` for tags that don't parse, so the upgrade test ignores any
 /// non-standard tag rather than mis-ordering it.
 pub fn parse_release_tag(tag: &str) -> Option<Vec<u64>> {
-    let parts: Option<Vec<u64>> = tag.trim_start_matches('v').split('.').map(|s| s.parse().ok()).collect();
+    let parts: Option<Vec<u64>> = tag
+        .trim_start_matches('v')
+        .split('.')
+        .map(|s| s.parse().ok())
+        .collect();
     parts.filter(|components| components.len() == 3)
 }
 
@@ -497,11 +514,14 @@ pub fn parse_release_tag(tag: &str) -> Option<Vec<u64>> {
 /// have been released. Returns `Ok(None)` when no older release exists (nothing to upgrade
 /// from). This is the version a fleet member actually runs before taking `current`.
 pub fn previous_released_tag(current: &str) -> Result<Option<String>, String> {
-    let current_parts = parse_release_tag(current).ok_or_else(|| format!("unparseable current version: {current}"))?;
+    let current_parts = parse_release_tag(current)
+        .ok_or_else(|| format!("unparseable current version: {current}"))?;
     let body = github_get("https://api.github.com/repos/elyxlz/vesta/releases?per_page=100")?;
     let releases: serde_json::Value =
         serde_json::from_str(&body).map_err(|e| format!("parse releases list: {e}"))?;
-    let entries = releases.as_array().ok_or_else(|| "releases response was not a list".to_string())?;
+    let entries = releases
+        .as_array()
+        .ok_or_else(|| "releases response was not a list".to_string())?;
     let mut best: Option<(Vec<u64>, String)> = None;
     for entry in entries {
         let Some(tag) = entry.get("tag_name").and_then(|value| value.as_str()) else {
@@ -513,7 +533,10 @@ pub fn previous_released_tag(current: &str) -> Result<Option<String>, String> {
         if parts >= current_parts {
             continue;
         }
-        if best.as_ref().is_none_or(|(best_parts, _)| parts > *best_parts) {
+        if best
+            .as_ref()
+            .is_none_or(|(best_parts, _)| parts > *best_parts)
+        {
             best = Some((parts, tag.to_string()));
         }
     }
@@ -524,7 +547,13 @@ fn github_get(url: &str) -> Result<String, String> {
     let output = Command::new("curl")
         .arg("-fsSL")
         .args(CURL_RETRY_ARGS)
-        .args(["-H", "Accept: application/vnd.github+json", "-H", "User-Agent: vesta-tests", url])
+        .args([
+            "-H",
+            "Accept: application/vnd.github+json",
+            "-H",
+            "User-Agent: vesta-tests",
+            url,
+        ])
         .output()
         .map_err(|e| format!("github GET {url}: {e}"))?;
     if !output.status.success() {
@@ -540,12 +569,15 @@ pub fn download_released_vestad(tag: &str) -> Result<ReleasedVestad, String> {
     let rust_target = match std::env::consts::ARCH {
         "x86_64" => "x86_64-unknown-linux-gnu",
         "aarch64" => "aarch64-unknown-linux-gnu",
-        other => return Err(format!("unsupported architecture for released vestad test: {other}")),
+        other => {
+            return Err(format!(
+                "unsupported architecture for released vestad test: {other}"
+            ))
+        }
     };
     let artifact = format!("vestad-{rust_target}.tar.gz");
     let url = format!(
-        "https://github.com/elyxlz/vesta/releases/download/{}/{}",
-        tag, artifact
+        "https://github.com/elyxlz/vesta/releases/download/{tag}/{artifact}"
     );
 
     let tmpdir = tempfile::TempDir::new().map_err(|e| format!("tmpdir: {e}"))?;
@@ -559,7 +591,9 @@ pub fn download_released_vestad(tag: &str) -> Result<ReleasedVestad, String> {
         .output()
         .map_err(|e| format!("download released vestad: {e}"))?;
     if !output.status.success() {
-        return Err(format!("failed to download released vestad artifact from {url}"));
+        return Err(format!(
+            "failed to download released vestad artifact from {url}"
+        ));
     }
 
     let output = Command::new("tar")

@@ -6,17 +6,17 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-import core.models as vm
 from core import config as cfg
 from core import notification_interrupt_policy as npn
 from core.api import _config_get_handler, _config_put_handler
+from core.notification import Notification
 
 
 async def _client(tmp_path, monkeypatch):
     # Drive the store path through AGENT_DIR so config_store_path() (env-resolved) and config.data_dir
     # (from the built config) point at the same file the loop reads.
     monkeypatch.setenv("AGENT_DIR", str(tmp_path / "agent"))
-    config = vm.VestaConfig()
+    config = cfg.VestaConfig()
     app = web.Application()
     app["config"] = config
     app.router.add_get("/config", _config_get_handler)
@@ -26,10 +26,10 @@ async def _client(tmp_path, monkeypatch):
     return client, config
 
 
-def _notif(**fields) -> vm.Notification:
+def _notif(**fields) -> Notification:
     base = {"timestamp": dt.datetime(2025, 1, 1), "source": "twitter", "type": "tweet"}
     base.update(fields)
-    return vm.Notification.model_validate(base)
+    return Notification.model_validate(base)
 
 
 @pytest.mark.anyio
@@ -45,70 +45,120 @@ async def test_get_returns_empty_rules_when_unset(tmp_path, monkeypatch):
 
 @pytest.mark.anyio
 async def test_put_then_get_round_trip_and_applies(tmp_path, monkeypatch):
-    client, config = await _client(tmp_path, monkeypatch)
+    client, _config = await _client(tmp_path, monkeypatch)
     try:
-        resp = await client.put("/config", json={"notification_rules": [{"source": "twitter", "action": "pool"}]})
+        resp = await client.put("/config", json={"notification_rules": [{"source": "twitter", "action": "snooze"}]})
         assert resp.status == 200
 
         resp = await client.get("/config")
         rules = (await resp.json())["notification_rules"]
         assert rules[0]["source"] == "twitter"
-        assert rules[0]["action"] == "pool"
+        assert rules[0]["action"] == "snooze"
         assert rules[0]["id"], "PUT must assign ids"
 
         # Persisted to the store for the loop to read, and it drives the decision.
-        loaded = cfg.load_notification_rules(config)
+        loaded = cfg.load_notification_rules()
         assert loaded[0].source == "twitter"
-        assert npn.should_interrupt(_notif(), loaded) is False
+        assert npn.notif_disposition(_notif(), loaded) == "snooze"
+    finally:
+        await client.close()
+
+
+@pytest.mark.anyio
+async def test_temporary_rule_round_trips_and_expired_one_is_dropped(tmp_path, monkeypatch):
+    client, _ = await _client(tmp_path, monkeypatch)
+    try:
+        future = (dt.datetime.now(dt.UTC) + dt.timedelta(hours=1)).isoformat()
+        past = (dt.datetime.now(dt.UTC) - dt.timedelta(hours=1)).isoformat()
+        resp = await client.put(
+            "/config",
+            json={
+                "notification_rules": [
+                    {"source": "twitter", "action": "snooze", "expires_at": future},
+                    {"source": "email", "action": "trash", "expires_at": past},
+                ]
+            },
+        )
+        assert resp.status == 200
+
+        # The live temporary rule survives (datetime serialized fine); the already-expired one is gone.
+        rules = (await (await client.get("/config")).json())["notification_rules"]
+        assert [rule["source"] for rule in rules] == ["twitter"]
+        assert dt.datetime.fromisoformat(rules[0]["expires_at"]) == dt.datetime.fromisoformat(future)
+    finally:
+        await client.close()
+
+
+@pytest.mark.anyio
+async def test_put_legacy_pool_action_is_stored_as_snooze(tmp_path, monkeypatch):
+    # LEGACY: pre-rename clients still send action="pool"; it validates and persists as "snooze".
+    client, _ = await _client(tmp_path, monkeypatch)
+    try:
+        resp = await client.put("/config", json={"notification_rules": [{"source": "twitter", "action": "pool"}]})
+        assert resp.status == 200
+        assert cfg.load_notification_rules()[0].action == "snooze"
     finally:
         await client.close()
 
 
 @pytest.mark.anyio
 async def test_put_invalid_action_is_400(tmp_path, monkeypatch):
-    client, config = await _client(tmp_path, monkeypatch)
+    client, _config = await _client(tmp_path, monkeypatch)
     try:
         resp = await client.put("/config", json={"notification_rules": [{"source": "x", "action": "nope"}]})
         assert resp.status == 400
-        assert cfg.load_notification_rules(config) == []
+        assert cfg.load_notification_rules() == []
     finally:
         await client.close()
 
 
 @pytest.mark.anyio
 async def test_put_rejects_core_source(tmp_path, monkeypatch):
-    client, config = await _client(tmp_path, monkeypatch)
+    client, _config = await _client(tmp_path, monkeypatch)
     try:
-        resp = await client.put("/config", json={"notification_rules": [{"source": "core", "action": "pool"}]})
+        resp = await client.put("/config", json={"notification_rules": [{"source": "core", "action": "snooze"}]})
         assert resp.status == 400
-        assert cfg.load_notification_rules(config) == []
+        assert cfg.load_notification_rules() == []
     finally:
         await client.close()
 
 
 @pytest.mark.anyio
 async def test_put_invalid_regex_predicate_is_400(tmp_path, monkeypatch):
-    client, config = await _client(tmp_path, monkeypatch)
+    client, _config = await _client(tmp_path, monkeypatch)
     try:
-        rule = {"match": [{"field": "x", "op": "regex", "value": "(unclosed"}], "action": "pool"}
+        rule = {"match": [{"field": "x", "op": "regex", "value": "(unclosed"}], "action": "snooze"}
         resp = await client.put("/config", json={"notification_rules": [rule]})
         assert resp.status == 400
-        assert cfg.load_notification_rules(config) == []
+        assert cfg.load_notification_rules() == []
     finally:
         await client.close()
 
 
 @pytest.mark.anyio
 async def test_rules_put_after_prefs_put_keeps_both(tmp_path, monkeypatch):
-    client, config = await _client(tmp_path, monkeypatch)
+    client, _config = await _client(tmp_path, monkeypatch)
     try:
         resp = await client.put("/config", json={"agent_personality": "warm"})
         assert resp.status == 200
         # A rules-only write must not wipe the personality pref saved above (store merge).
-        resp = await client.put("/config", json={"notification_rules": [{"source": "twitter", "action": "pool"}]})
+        resp = await client.put("/config", json={"notification_rules": [{"source": "twitter", "action": "snooze"}]})
         assert resp.status == 200
 
         assert cfg.read_config_store()["agent_personality"] == "warm"
-        assert cfg.load_notification_rules(config)[0].source == "twitter"
+        assert cfg.load_notification_rules()[0].source == "twitter"
+    finally:
+        await client.close()
+
+
+@pytest.mark.anyio
+async def test_active_skills_put_then_get_round_trips_live(tmp_path, monkeypatch):
+    client, _config = await _client(tmp_path, monkeypatch)
+    try:
+        resp = await client.put("/config", json={"active_skills": ["whatsapp", "tasks", "tasks"]})
+        assert resp.status == 200
+
+        resp = await client.get("/config")
+        assert (await resp.json())["active_skills"] == ["tasks", "whatsapp"]
     finally:
         await client.close()

@@ -1,47 +1,34 @@
-# Connection & Tab Visibility
+# Connection & Sessions
 
-## The omnibox popup problem
+## The daemon
 
-When Chrome opens fresh, the only CDP `type: "page"` targets are `chrome://inspect` and `chrome://omnibox-popup.top-chrome/` (a 1px invisible viewport). If the daemon attaches to the omnibox popup, all subsequent work — including `new_tab()` and `goto()` — happens on tabs that exist in CDP but may not be visible in the Chrome UI.
+Each `BROWSER_SESSION` runs one daemon holding a single WebDriver BiDi websocket to Camoufox.
+The CLI talks to it over `/tmp/vesta-browser-<session>.sock`. `browser launch` starts Camoufox
+and records its BiDi URL; the daemon connects on the next command via `ensure_daemon()`.
 
-The daemon's `attach_first_page()` handles this by creating an `about:blank` tab when no real pages exist. If you still end up on an invisible tab, use `switch_tab()` which calls `Target.activateTarget` to bring the tab to front.
+Unlike stock Chromium + CDP, there is no omnibox-popup / invisible-target problem: on connect the
+daemon opens a session and adopts the first top-level browsing context, and `browsingContext.getTree`
+only ever returns real contexts.
 
 ## Startup sequence
 
-1. Check if a daemon is already running with `daemon_alive()`
-2. If stale sockets exist but daemon is dead, clean them up
-3. List open tabs with `list_tabs()` to see what's available
-4. `ensure_real_tab()` attaches to a real page
-5. `switch_tab(target_id)` both attaches AND activates (brings to front)
-
-```python
-if not daemon_alive():
-    import os
-    for f in ["/tmp/bu-default.sock", "/tmp/bu-default.pid"]:
-        if os.path.exists(f): os.unlink(f)
-    ensure_daemon()
-
-tabs = list_tabs()
-for t in tabs:
-    print(t["url"][:60])
-
-tab = ensure_real_tab()
-```
-
-## Bringing Chrome to front
-
-If Chrome is behind other windows or on another desktop:
-
-```python
-import subprocess
-subprocess.run(["osascript", "-e", 'tell application "Google Chrome" to activate'])
-```
-
-## Navigating
-
-Prefer navigating an existing tab over `new_tab()`. Tabs created via CDP's `Target.createTarget` are visible but may open behind the active tab.
+1. Check whether a daemon is already healthy (`daemon_healthy()` in `admin.py`).
+2. If a stale socket exists but the daemon is dead, `ensure_daemon()` cleans it up and respawns.
+3. `list_tabs()` shows the open contexts.
+4. `ensure_real_tab()` switches to a real page if you're on an internal one.
 
 ```python
 tab = ensure_real_tab()
 goto("https://example.com")
 ```
+
+## Recovering a wedged session
+
+```bash
+browser doctor        # Camoufox install + per-session daemon health
+browser stop          # tear down this session's daemon + Camoufox + state files
+browser launch        # fresh
+```
+
+Session state lives under `/tmp/vesta-browser-<session>.*` (`.sock`, `.pid`, `.bidi-ws`, `.log`).
+`browser stop` cleans its own; `browser stop-all` clears every session.

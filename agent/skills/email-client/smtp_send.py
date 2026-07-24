@@ -54,11 +54,12 @@ from __future__ import annotations
 
 import argparse
 import base64
+import dataclasses
+import datetime as _dt
 import mimetypes
 import os
 import pathlib
 import re as _re
-import datetime as _dt
 import smtplib
 import sys
 import time
@@ -71,8 +72,10 @@ from imap_tools import AND, MailMessageFlags
 # clearly before SMTP rejects us mid-conversation.
 MAX_ATTACH_TOTAL_BYTES = 25 * 1024 * 1024
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from imap_client import (  # noqa: E402
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import contextlib
+
+from imap_client import (
     _env,
     _from_full,
     _to_full,
@@ -84,6 +87,13 @@ from imap_client import (  # noqa: E402
     resolve_account,
     resolve_special_folder,
 )
+
+_DRAFT_ONLY_MESSAGE = "draft-only mode (EMAIL_DRAFT_ONLY): sending is disabled. Create a draft instead (--draft / the draft command)."
+
+
+def _draft_only_enabled() -> bool:
+    """True when EMAIL_DRAFT_ONLY is set to a truthy value (1/true/yes, case-insensitive)."""
+    return os.environ.get("EMAIL_DRAFT_ONLY", "").strip().lower() in {"1", "true", "yes"}
 
 
 def _from_address(from_header: str) -> str:
@@ -131,7 +141,7 @@ def _forward_block(orig: dict) -> str:
 
 def _strip_html(html: str) -> str:
     """Crude HTML to plain-text fallback for the alt part of an HTML-only send."""
-    s = _re.sub(r"<\s*(br|/p|/div|/li|/h[1-6])\s*/?\s*>", "\n", html or "", flags=_re.I)
+    s = _re.sub(r"<\s*(br|/p|/div|/li|/h[1-6])\s*/?\s*>", "\n", html or "", flags=_re.IGNORECASE)
     s = _re.sub(r"<[^>]+>", "", s)
     s = s.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"').replace("&#39;", "'")
     return _re.sub(r"\n{3,}", "\n\n", s).strip()
@@ -194,10 +204,8 @@ def _append_message(
         except Exception as e:
             return False, f"APPEND to {folder!r} failed: {e}"
     finally:
-        try:
+        with contextlib.suppress(Exception):
             mb.logout()
-        except Exception:
-            pass
 
 
 def _load_attachments(paths: list[str] | None) -> list[dict]:
@@ -244,42 +252,69 @@ def _load_attachments(paths: list[str] | None) -> list[dict]:
     return out
 
 
-def _build_message(
-    *,
-    user: str,
-    display: str,
-    to: str,
-    subject: str,
-    body: str,
-    body_html: str | None,
-    cc: list[str] | None = None,
-    bcc: list[str] | None = None,
-    in_reply_to: str = "",
-    references: str = "",
-    attachments: list[dict] | None = None,
-) -> EmailMessage:
+@dataclasses.dataclass
+class SendRequest:
+    """One send/reply/forward/draft invocation's options (mirrors the CLI flags)."""
+
+    to: str | None
+    subject: str | None
+    body: str
+    from_name: str | None = None
+    account: str | None = None
+    cc: list[str] | None = None
+    bcc: list[str] | None = None
+    body_html: str | None = None
+    reply_to_uid: str | None = None
+    reply_folder: str = "INBOX"
+    forward_uid: str | None = None
+    forward_folder: str = "INBOX"
+    attach: list[str] | None = None
+    quote: bool = True
+    sent_sync: bool = True
+    dry_run: bool = False
+    draft: bool = False
+
+
+@dataclasses.dataclass
+class Outbound:
+    """Fully resolved message parts, ready to assemble into an EmailMessage."""
+
+    user: str
+    display: str
+    to: str
+    subject: str
+    body: str
+    body_html: str | None
+    cc: list[str]
+    bcc: list[str]
+    in_reply_to: str
+    references: str
+    attachments: list[dict]
+
+
+def _build_message(out: Outbound) -> EmailMessage:
     """Assemble the outbound EmailMessage from parts."""
     msg = EmailMessage()
-    msg["From"] = f"{display} <{user}>"
-    msg["To"] = to
-    if cc:
-        msg["Cc"] = ", ".join(cc)
-    if bcc:
-        msg["Bcc"] = ", ".join(bcc)
-    msg["Subject"] = subject
-    if in_reply_to:
-        msg["In-Reply-To"] = in_reply_to
-    if references:
-        msg["References"] = references
-    if body and body_html:
-        msg.set_content(body)
-        msg.add_alternative(body_html, subtype="html")
-    elif body_html:
-        msg.set_content(_strip_html(body_html) or " ")
-        msg.add_alternative(body_html, subtype="html")
+    msg["From"] = f"{out.display} <{out.user}>"
+    msg["To"] = out.to
+    if out.cc:
+        msg["Cc"] = ", ".join(out.cc)
+    if out.bcc:
+        msg["Bcc"] = ", ".join(out.bcc)
+    msg["Subject"] = out.subject
+    if out.in_reply_to:
+        msg["In-Reply-To"] = out.in_reply_to
+    if out.references:
+        msg["References"] = out.references
+    if out.body and out.body_html:
+        msg.set_content(out.body)
+        msg.add_alternative(out.body_html, subtype="html")
+    elif out.body_html:
+        msg.set_content(_strip_html(out.body_html) or " ")
+        msg.add_alternative(out.body_html, subtype="html")
     else:
-        msg.set_content(body or "")
-    for att in attachments or []:
+        msg.set_content(out.body or "")
+    for att in out.attachments:
         msg.add_attachment(
             att["data"],
             maintype=att["maintype"],
@@ -289,123 +324,89 @@ def _build_message(
     return msg
 
 
-def send(
-    to: str | None,
-    subject: str | None,
-    body: str,
-    from_name: str | None = None,
-    account: str | None = None,
-    *,
-    cc: list[str] | None = None,
-    bcc: list[str] | None = None,
-    body_html: str | None = None,
-    reply_to_uid: str | None = None,
-    reply_folder: str = "INBOX",
-    forward_uid: str | None = None,
-    forward_folder: str = "INBOX",
-    attach: list[str] | None = None,
-    quote: bool = True,
-    sent_sync: bool = True,
-    dry_run: bool = False,
-    draft: bool = False,
-) -> None:
-    if reply_to_uid and forward_uid:
-        sys.exit("--reply-to-uid and --forward-uid are mutually exclusive")
-    acc = resolve_account(account)
-    user = account_user(acc)
-    name, profile = account_profile(acc)
-    smtp_host = profile.get("smtp_host")
-    smtp_port = int(profile.get("smtp_port", 587))
-    if not smtp_host:
-        sys.exit(
-            f"provider {name} (account {acc!r}) has no SMTP host configured; "
-            "set smtp_host in the per-account config.json or EMAIL_CLIENT_SMTP_HOST"
-        )
-    display = from_name or _env("EMAIL_CLIENT_FROM_NAME", user.split("@", 1)[0])
+@dataclasses.dataclass
+class _Compose:
+    """Mutable compose state while reply/forward defaults are applied."""
 
-    cc_list = list(cc or [])
-    bcc_list = list(bcc or [])
-    cc_explicit = cc is not None and len(cc) > 0
+    to: str | None
+    subject: str | None
+    body: str
+    cc: list[str]
+    in_reply_to: str = ""
+    references: str = ""
 
-    in_reply_to = ""
-    references = ""
-    if reply_to_uid:
-        orig = fetch_original(acc, reply_folder, reply_to_uid)
-        if not orig["message_id"]:
-            sys.exit(f"original message uid={reply_to_uid} has no Message-ID header; cannot thread a reply")
-        in_reply_to = orig["message_id"]
-        chain = (orig["references"] + " " + orig["message_id"]).strip()
-        references = _re.sub(r"\s+", " ", chain)
-        if subject is None:
-            subject = _re_subject(orig["subject"])
-        if to is None:
-            sender_addr = _from_address(orig["from"])
-            if not sender_addr:
-                sys.exit("cannot default --to from the original message; no usable From header")
-            to = sender_addr
-        if not cc_explicit and orig.get("cc"):
-            cc_list = [c.strip() for c in orig["cc"].split(",") if c.strip()]
-        if quote:
-            body = (body or "") + _quote_body(orig["body"], orig["from"], orig["date"])
 
-    if forward_uid:
-        orig = fetch_original(acc, forward_folder, forward_uid)
-        if subject is None:
-            subject = _fwd_subject(orig["subject"])
-        if to is None:
-            sys.exit("--to is required when forwarding")
-        if quote:
-            body = (body or "") + _forward_block(orig)
+def _apply_reply(state: _Compose, req: SendRequest, acc: str | None, cc_explicit: bool) -> None:
+    orig = fetch_original(acc, req.reply_folder, req.reply_to_uid)
+    if not orig["message_id"]:
+        sys.exit(f"original message uid={req.reply_to_uid} has no Message-ID header; cannot thread a reply")
+    state.in_reply_to = orig["message_id"]
+    chain = (orig["references"] + " " + orig["message_id"]).strip()
+    state.references = _re.sub(r"\s+", " ", chain)
+    if state.subject is None:
+        state.subject = _re_subject(orig["subject"])
+    if state.to is None:
+        sender_addr = _from_address(orig["from"])
+        if not sender_addr:
+            sys.exit("cannot default --to from the original message; no usable From header")
+        state.to = sender_addr
+    if not cc_explicit and orig.get("cc"):
+        state.cc = [c.strip() for c in orig["cc"].split(",") if c.strip()]
+    if req.quote:
+        state.body = (state.body or "") + _quote_body(orig["body"], orig["from"], orig["date"])
 
-    if to is None:
+
+def _apply_forward(state: _Compose, req: SendRequest, acc: str | None) -> None:
+    orig = fetch_original(acc, req.forward_folder, req.forward_uid)
+    if state.subject is None:
+        state.subject = _fwd_subject(orig["subject"])
+    if state.to is None:
+        sys.exit("--to is required when forwarding")
+    if req.quote:
+        state.body = (state.body or "") + _forward_block(orig)
+
+
+def _compose(req: SendRequest, acc: str | None, user: str, display: str) -> Outbound:
+    """Resolve reply/forward defaults and validate into a complete Outbound."""
+    cc_explicit = req.cc is not None and len(req.cc) > 0
+    state = _Compose(to=req.to, subject=req.subject, body=req.body, cc=list(req.cc or []))
+    if req.reply_to_uid:
+        _apply_reply(state, req, acc, cc_explicit)
+    if req.forward_uid:
+        _apply_forward(state, req, acc)
+    if state.to is None:
         sys.exit("--to is required when not replying")
-    if subject is None:
+    if state.subject is None:
         sys.exit("--subject is required when not replying")
-    if not body and not body_html:
+    if not state.body and not req.body_html:
         sys.exit("at least one of --body / --body-html must produce content")
-
-    attachments = _load_attachments(attach)
-
-    msg = _build_message(
+    return Outbound(
         user=user,
         display=display,
-        to=to,
-        subject=subject,
-        body=body,
-        body_html=body_html,
-        cc=cc_list,
-        bcc=bcc_list,
-        in_reply_to=in_reply_to,
-        references=references,
-        attachments=attachments,
+        to=state.to,
+        subject=state.subject,
+        body=state.body,
+        body_html=req.body_html,
+        cc=state.cc,
+        bcc=list(req.bcc or []),
+        in_reply_to=state.in_reply_to,
+        references=state.references,
+        attachments=_load_attachments(req.attach),
     )
 
-    if dry_run:
-        verb = "saved as a draft" if draft else "sent"
-        print(f"--- DRY RUN: message that would be {verb} ---")
-        print(msg.as_string())
-        print("--- end dry run ---")
-        if draft:
-            print("--- DRY RUN: would IMAP APPEND to the Drafts folder ---")
-        elif sent_sync:
-            print("--- DRY RUN: would IMAP APPEND to the Sent folder ---")
-        return
 
-    if draft:
-        # Save to Drafts instead of sending. Reply/forward threading headers
-        # are kept so the user can review and send it from any mail client.
-        ok, info = _append_message(
-            acc,
-            msg.as_bytes(),
-            role="drafts",
-            profile_fallback=None,
-            flags=[MailMessageFlags.DRAFT, MailMessageFlags.SEEN],
-        )
-        if ok:
-            print(f"draft saved to {info}")
-            return
-        sys.exit(f"draft save failed: {info}")
+def _print_dry_run(msg: EmailMessage, req: SendRequest) -> None:
+    verb = "saved as a draft" if req.draft else "sent"
+    print(f"--- DRY RUN: message that would be {verb} ---")
+    print(msg.as_string())
+    print("--- end dry run ---")
+    if req.draft:
+        print("--- DRY RUN: would IMAP APPEND to the Drafts folder ---")
+    elif req.sent_sync:
+        print("--- DRY RUN: would IMAP APPEND to the Sent folder ---")
 
+
+def _smtp_deliver(acc: str | None, profile: dict, user: str, smtp_host: str, smtp_port: int, msg: EmailMessage) -> None:
     s = smtplib.SMTP(smtp_host, smtp_port)
     s.ehlo()
     if profile.get("smtp_starttls", True):
@@ -431,50 +432,85 @@ def send(
 
     s.send_message(msg)
     s.quit()
-    print("OK")
 
-    if reply_to_uid:
-        # Flag the original \Answered so every client shows the replied-to
-        # indicator. Non-fatal: the reply already went out.
-        try:
-            with connect(acc, initial_folder=None) as mb:
-                mb.folder.set(reply_folder)
-                mb.flag(reply_to_uid, MailMessageFlags.ANSWERED, True)
-            print(f"marked uid {reply_to_uid} \\Answered")
-        except Exception as e:
-            print(
-                f"warning: could not mark original \\Answered ({e})",
-                file=sys.stderr,
-            )
 
-    if sent_sync:
-        # Strip Bcc before APPEND (those addresses must not appear in
-        # the stored copy that the user can later read in their mail UI).
-        copy = _build_message(
-            user=user,
-            display=display,
-            to=to,
-            subject=subject,
-            body=body,
-            body_html=body_html,
-            cc=cc_list,
-            bcc=None,
-            in_reply_to=in_reply_to,
-            references=references,
-            attachments=attachments,
+def _mark_answered(acc: str | None, folder: str, uid: str) -> None:
+    # Flag the original \Answered so every client shows the replied-to
+    # indicator. Non-fatal: the reply already went out.
+    try:
+        with connect(acc, initial_folder=None) as mb:
+            mb.folder.set(folder)
+            mb.flag(uid, MailMessageFlags.ANSWERED, True)
+        print(f"marked uid {uid} \\Answered")
+    except Exception as e:
+        print(
+            f"warning: could not mark original \\Answered ({e})",
+            file=sys.stderr,
         )
-        sent_fallback = profile["sent_folder"] if "sent_folder" in profile else None
+
+
+def _sync_sent(acc: str | None, profile: dict, out: Outbound) -> None:
+    # Strip Bcc before APPEND (those addresses must not appear in
+    # the stored copy that the user can later read in their mail UI).
+    copy = _build_message(dataclasses.replace(out, bcc=[]))
+    sent_fallback = profile["sent_folder"] if "sent_folder" in profile else None
+    ok, info = _append_message(
+        acc,
+        copy.as_bytes(),
+        role="sent",
+        profile_fallback=sent_fallback,
+        flags=[MailMessageFlags.SEEN],
+    )
+    if ok:
+        print(f"appended to {info}")
+    else:
+        print(f"warning: sent-sync skipped ({info})", file=sys.stderr)
+
+
+def send(req: SendRequest) -> None:
+    if req.reply_to_uid and req.forward_uid:
+        sys.exit("--reply-to-uid and --forward-uid are mutually exclusive")
+    acc = resolve_account(req.account)
+    user = account_user(acc)
+    name, profile = account_profile(acc)
+    smtp_host = profile.get("smtp_host")
+    smtp_port = int(profile.get("smtp_port", 587))
+    if not smtp_host:
+        sys.exit(
+            f"provider {name} (account {acc!r}) has no SMTP host configured; "
+            "set smtp_host in the per-account config.json or EMAIL_CLIENT_SMTP_HOST"
+        )
+    display = req.from_name or _env("EMAIL_CLIENT_FROM_NAME", user.split("@", 1)[0])
+
+    out = _compose(req, acc, user, display)
+    msg = _build_message(out)
+
+    if req.dry_run:
+        _print_dry_run(msg, req)
+        return
+
+    if req.draft:
+        # Save to Drafts instead of sending. Reply/forward threading headers
+        # are kept so the user can review and send it from any mail client.
         ok, info = _append_message(
             acc,
-            copy.as_bytes(),
-            role="sent",
-            profile_fallback=sent_fallback,
-            flags=[MailMessageFlags.SEEN],
+            msg.as_bytes(),
+            role="drafts",
+            profile_fallback=None,
+            flags=[MailMessageFlags.DRAFT, MailMessageFlags.SEEN],
         )
         if ok:
-            print(f"appended to {info}")
-        else:
-            print(f"warning: sent-sync skipped ({info})", file=sys.stderr)
+            print(f"draft saved to {info}")
+            return
+        sys.exit(f"draft save failed: {info}")
+
+    _smtp_deliver(acc, profile, user, smtp_host, smtp_port, msg)
+    print("OK")
+
+    if req.reply_to_uid:
+        _mark_answered(acc, req.reply_folder, req.reply_to_uid)
+    if req.sent_sync:
+        _sync_sent(acc, profile, out)
 
 
 def main():
@@ -565,24 +601,31 @@ def main():
         help="save the composed message to the Drafts folder instead of sending; works with --reply-to-uid / --forward-uid to draft for review",
     )
     args = ap.parse_args()
+    # Hard draft-only guard: refuse any transmitting invocation (send/reply/forward)
+    # before touching SMTP. Drafting (--draft) and the no-network preview (--dry-run)
+    # stay allowed. Default off: no behavior change when EMAIL_DRAFT_ONLY is unset.
+    if _draft_only_enabled() and not args.draft and not args.dry_run:
+        sys.exit(_DRAFT_ONLY_MESSAGE)
     send(
-        args.to,
-        args.subject,
-        args.body,
-        args.from_name,
-        account=args.account,
-        cc=args.cc,
-        bcc=args.bcc,
-        body_html=args.body_html,
-        reply_to_uid=args.reply_to_uid,
-        reply_folder=args.reply_folder,
-        forward_uid=args.forward_uid,
-        forward_folder=args.forward_folder,
-        attach=args.attach,
-        quote=not args.no_quote,
-        sent_sync=not args.no_sent_sync,
-        dry_run=args.dry_run,
-        draft=args.draft,
+        SendRequest(
+            to=args.to,
+            subject=args.subject,
+            body=args.body,
+            from_name=args.from_name,
+            account=args.account,
+            cc=args.cc,
+            bcc=args.bcc,
+            body_html=args.body_html,
+            reply_to_uid=args.reply_to_uid,
+            reply_folder=args.reply_folder,
+            forward_uid=args.forward_uid,
+            forward_folder=args.forward_folder,
+            attach=args.attach,
+            quote=not args.no_quote,
+            sent_sync=not args.no_sent_sync,
+            dry_run=args.dry_run,
+            draft=args.draft,
+        )
     )
 
 

@@ -1,5 +1,6 @@
-import type { AgentActivityState } from "@/lib/types";
+import type { AgentActivityState } from "@vesta/core";
 import type { AgentOperation } from "@/stores/use-agent-ops";
+export { orbColors } from "@/design-tokens";
 
 export type OrbVisualState = "alive" | "thinking" | "busy" | "off" | "deleting";
 
@@ -31,8 +32,6 @@ function resolveStatus(
       return { label: "signing in...", orbState: "busy" };
     case "deleting":
       return { label: "deleting...", orbState: "deleting" };
-    case "rebuilding":
-      return { label: "rebuilding...", orbState: "busy" };
     case "backing-up":
       return { label: "backing up...", orbState: "alive" };
     case "restoring":
@@ -41,7 +40,14 @@ function resolveStatus(
 
   if (!agent) return { label: "", orbState: "off" };
 
-  switch (agent.status) {
+  return resolveAgentStatus(agent.status, activityState);
+}
+
+function resolveAgentStatus(
+  status: string,
+  activityState: AgentActivityState,
+): { label: string; orbState: OrbVisualState } {
+  switch (status) {
     case "alive":
       if (activityState === "thinking")
         return { label: "thinking", orbState: "thinking" };
@@ -56,19 +62,16 @@ function resolveStatus(
       return { label: "not set up", orbState: "busy" };
     case "restarting":
       return { label: "restarting...", orbState: "busy" };
+    case "rebuilding":
+      return { label: "updating...", orbState: "busy" };
     case "stopped":
       return { label: "stopped", orbState: "off" };
     case "dead":
-      return { label: "broken — delete and recreate", orbState: "off" };
+      return {
+        label: "broken, delete and recreate it in settings",
+        orbState: "off",
+      };
     default:
-      return { label: agent.status, orbState: "off" };
+      return { label: status, orbState: "off" };
   }
 }
-
-export const orbColors: Record<OrbVisualState, [string, string, string]> = {
-  alive: ["#b8ceb0", "#7a9e70", "#5a7e50"],
-  thinking: ["#e8d0a0", "#c4a060", "#a08040"],
-  busy: ["#c0d0e0", "#8a9eb0", "#6a8094"],
-  off: ["#c2c0ba", "#8e8c84", "#66645e"],
-  deleting: ["#e0a0a0", "#c45050", "#a03030"],
-};

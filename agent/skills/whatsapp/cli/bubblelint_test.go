@@ -3,20 +3,35 @@ package main
 import "testing"
 
 // TestBubbleLintPasses pins the sends that must reach the recipient untouched:
-// short bubbles, one or two sentences, and the protected spans (urls, decimals,
-// initialisms, abbreviations) whose dots must not read as sentence breaks.
+// short bubbles that end at their one mark (or carry none at all), and the
+// protected spans (urls, decimals, initialisms, abbreviations, ellipses) whose
+// dots must not read as full stops.
 func TestBubbleLintPasses(t *testing.T) {
 	cases := []string{
 		"nope, nothing",
 		"on it",
 		"yep",
 		"checked both folders, nothing from them either",
-		"running late, see you at 8",                    // a decimal-free single thought
-		"meet at 8.30 by the door",                      // decimal must not split into two sentences
+		"running late, see you at 8",
+		"done, anything else?",                          // a trailing mark ends the bubble
+		"one thought.",                                  // a trailing full stop ends the bubble
+		"meet at 8.30 by the door",                      // decimal must not read as a full stop
 		"the W.A.S.T.E. system is down",                 // initialism protected
 		"see https://example.com/a.b.c for the details", // url protected
 		"call Dr. Smith back today",                     // abbreviation protected
-		"done. anything else?",                          // exactly two sentences is allowed
+		"meet on Jan. 5",                                // month abbreviation protected
+		"call Acme Inc. tomorrow",                       // company abbreviation protected
+		"it's on Oxford Ave. somewhere",                 // street abbreviation protected
+		"ask Jr. about it",                              // name suffix protected
+		"see vol. 3 for that",                           // reference abbreviation protected
+		"wait... what",                                  // ellipsis is a beat, not a full stop
+		"hmm... ok",                                     // ellipsis is a beat, not a full stop
+		"it's in main.py",                               // no whitespace gap, so not a full stop
+		"check example.com later",                       // no whitespace gap, so not a full stop
+		"1. eggs\n2. milk",                              // multiline numbered list: line-leading markers are not full stops
+		"1. eggs\n2) milk",                              // "2)" marker style is also exempt
+		"here are steps:\n1. open\n2. run",              // list under a lead-in line
+		"- eggs\n- milk",                                // bullets carry no dot, so they always passed
 	}
 	for _, msg := range cases {
 		if reason := bubbleLintReason(msg); reason != "" {
@@ -26,13 +41,27 @@ func TestBubbleLintPasses(t *testing.T) {
 }
 
 // TestBubbleLintBlocks pins the walls that must be rejected so the agent re-sends
-// as several short bubbles.
+// as several short bubbles. Anything past a full stop is a second thought.
 func TestBubbleLintBlocks(t *testing.T) {
 	cases := []struct {
 		name string
 		msg  string
 	}{
+		{"text after a full stop", "hey. ok"},
+		{"two sentences in one bubble", "done. anything else?"},
 		{"three sentences in one bubble", "i checked the first folder. then the second one. nothing in either."},
+		{"text after a question mark", "hey! how are you?"},
+		{"text after an exclamation mark", "nice! on it"},
+		{"ellipsis does not license a later full stop", "wait... what. ok"},
+		// An abbreviation that can end a thought would hide these walls, so none is protected.
+		{"no. is not protected", "the answer is no. anyway i tried"},
+		{"etc. is not protected", "eggs, milk, etc. also bread"},
+		{"sec. is not protected", "one sec. i'll check"},
+		{"min. is not protected", "takes 20 min. i'll wait"},
+		// Only a line-leading marker is exempt: a single-line "1. x 2. y" has a mid-line
+		// "2." that still reads as a wall, and a real full stop inside an item still trips.
+		{"mid-line marker on one line is a wall", "1. Hello 2. Hi"},
+		{"real full stop inside a list item", "1. one thought. and another"},
 		{"long single sentence", "so the thing about the deploy is that it kept timing out on the build step and i had to bump the worker memory and also tweak the cache config and re-run it twice and then clear the layer cache before it finally went green for us this afternoon"},
 	}
 	for _, c := range cases {
@@ -42,25 +71,33 @@ func TestBubbleLintBlocks(t *testing.T) {
 	}
 }
 
-// TestCountSentences pins the sentence counter directly, including the protected
-// spans that must not inflate the count.
-func TestCountSentences(t *testing.T) {
+// TestTextAfterFullStop pins the detector directly, including the protected
+// spans that must not read as full stops.
+func TestTextAfterFullStop(t *testing.T) {
 	cases := []struct {
 		msg  string
-		want int
+		want bool
 	}{
-		{"one thought", 0},
-		{"one thought.", 1},
-		{"first. second.", 2},
-		{"first. second. third.", 3},
-		{"meet at 8.30 sharp", 0},
-		{"the U.K. office opens at 9", 0},
-		{"check https://a.com/x.y now", 0},
-		{"e.g. this should not count", 0},
+		{"one thought", false},
+		{"one thought.", false},
+		{"hey. ok", true},
+		{"first. second.", true},
+		{"first. second. third.", true},
+		{"meet at 8.30 sharp", false},
+		{"the U.K. office opens at 9", false},
+		{"check https://a.com/x.y now", false},
+		{"e.g. this should not count", false},
+		{"wait... what", false},
+		{"wait...", false},
+		{"1. eggs\n2. milk", false},
+		{"here are steps:\n1. open\n2. run", false},
+		{"1.", false},
+		{"1. one thought. and another", true},
+		{"1. Hello 2. Hi", true},
 	}
 	for _, c := range cases {
-		if got := countSentences(c.msg); got != c.want {
-			t.Errorf("countSentences(%q) = %d, want %d", c.msg, got, c.want)
+		if got := textAfterFullStop(c.msg); got != c.want {
+			t.Errorf("textAfterFullStop(%q) = %v, want %v", c.msg, got, c.want)
 		}
 	}
 }

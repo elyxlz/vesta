@@ -23,7 +23,7 @@ vestad/tests/                   (the actual suites — run via `cargo test -p ve
     backup.rs       create/list/restore/delete, safety snapshots
     websocket.rs    WS connect, auth rejection
     ports.rs        port uniqueness, env files, agent tokens
-    agent_code.rs   manage_agent_code mounts, rebuild
+    agent_code.rs   read-only core-code mount
     layout.rs       fresh agent container filesystem structure
 
   multi_user/     multi-user isolation (6 tests)

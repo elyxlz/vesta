@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { GripVertical, ListFilter, Sparkles } from "lucide-react";
+import { GripVertical, ListFilter } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -11,6 +21,14 @@ import {
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemTitle,
+} from "@/components/ui/item";
+import {
   getNotificationInterruptRules,
   setNotificationInterruptRules,
   type FieldPredicate,
@@ -20,6 +38,29 @@ import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { cn } from "@/lib/utils";
 
 const SAVE_DEBOUNCE_MS = 500;
+
+type RuleAction = NotificationInterruptRule["action"];
+
+// The action badge cycles on click. interrupt/snooze only change *timing*; trash is different in kind:
+// it drops the notification entirely (it never reaches the agent), so it reads as destructive.
+const ACTION_CYCLE: Record<RuleAction, RuleAction> = {
+  interrupt: "snooze",
+  snooze: "trash",
+  trash: "interrupt",
+};
+const ACTION_LABEL: Record<RuleAction, string> = {
+  interrupt: "interrupt",
+  snooze: "snooze",
+  trash: "trash",
+};
+const ACTION_BADGE_VARIANT: Record<
+  RuleAction,
+  "default" | "outline" | "destructive"
+> = {
+  interrupt: "default",
+  snooze: "outline",
+  trash: "destructive",
+};
 
 // One predicate -> a read-only badge. The sender/text aliases render under their friendly names;
 // any other field shows its name with a relation hint (~ regex, "not" when negated).
@@ -60,6 +101,10 @@ export function NotificationInterruptRulesCard() {
   const [saveError, setSaveError] = useState<string | null>(null);
   // The rule row currently being dragged, for reordering (null when not dragging).
   const [dragIndex, setDragIndex] = useState<number | null>(null);
+  // Index of the rule a click is about to move into trash, pending confirmation (null = no dialog).
+  const [confirmTrashIndex, setConfirmTrashIndex] = useState<number | null>(
+    null,
+  );
 
   useEffect(() => {
     if (!agentName) return;
@@ -72,8 +117,9 @@ export function NotificationInterruptRulesCard() {
         setRules(r);
         lastSaved.current = r;
       })
-      .catch((e: Error) => {
-        if (!cancelled) setLoadError(e.message);
+      .catch((e: unknown) => {
+        if (!cancelled)
+          setLoadError(e instanceof Error ? e.message : String(e));
       });
     return () => {
       cancelled = true;
@@ -122,17 +168,26 @@ export function NotificationInterruptRulesCard() {
     [save],
   );
 
-  const toggleAction = (index: number) =>
+  const applyAction = (index: number, action: RuleAction) =>
     commit(
       (rules ?? []).map((rule, i) =>
-        i === index
-          ? {
-              ...rule,
-              action: rule.action === "interrupt" ? "pool" : "interrupt",
-            }
-          : rule,
+        i === index ? { ...rule, action } : rule,
       ),
     );
+
+  const cycleAction = (index: number) => {
+    const rule = (rules ?? [])[index];
+    if (!rule) return;
+    const next = ACTION_CYCLE[rule.action];
+    // Trash drops matching notifications entirely (they never reach the agent) and auto-saves, so
+    // confirm before stepping into it. Every other transition — including downgrading out of trash —
+    // is only a timing change and applies immediately.
+    if (next === "trash") {
+      setConfirmTrashIndex(index);
+      return;
+    }
+    applyAction(index, next);
+  };
 
   const deleteRule = (index: number) =>
     commit((rules ?? []).filter((_, i) => i !== index));
@@ -143,6 +198,7 @@ export function NotificationInterruptRulesCard() {
     if (from === to || from < 0 || to < 0 || from >= current.length) return;
     const next = [...current];
     const [moved] = next.splice(from, 1);
+    if (moved === undefined) return;
     next.splice(to, 0, moved);
     commit(next);
   };
@@ -150,11 +206,11 @@ export function NotificationInterruptRulesCard() {
   return (
     <Card size="sm">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-sm font-medium">
+        <CardTitle>
           <ListFilter className="size-4 text-muted-foreground" />
           interrupt rules
         </CardTitle>
-        <CardDescription className="text-xs">
+        <CardDescription>
           what interrupts {agentName || "the agent"}, and what can wait for a
           quiet moment.
         </CardDescription>
@@ -182,15 +238,16 @@ export function NotificationInterruptRulesCard() {
               {/* Active rules in priority order (first match wins). Drag to reorder; read-only
                   summaries with a clickable action badge + delete. */}
               {rules.length > 0 ? (
-                <div className="flex flex-col gap-2">
+                <ItemGroup>
                   {rules.map((rule, index) => {
                     const conditions = ruleConditions(rule);
                     const draggable = rules.length > 1;
                     return (
-                      <div
+                      <Item
                         key={rule.id}
+                        variant="muted"
+                        size="sm"
                         className={cn(
-                          "flex items-center gap-2 rounded-md",
                           dragIndex !== null &&
                             dragIndex !== index &&
                             "outline-dashed outline-1 outline-border/60",
@@ -234,58 +291,53 @@ export function NotificationInterruptRulesCard() {
                             ))
                           )}
                         </div>
-                        <Badge
-                          asChild
-                          variant={
-                            rule.action === "interrupt"
-                              ? "default"
-                              : "secondary"
-                          }
-                        >
-                          <button
-                            type="button"
-                            onClick={() => toggleAction(index)}
-                            aria-label={`action: ${
-                              rule.action === "interrupt"
-                                ? "interrupt"
-                                : "snooze"
-                            }, click to toggle`}
+                        <ItemActions>
+                          <Badge
+                            asChild
+                            variant={ACTION_BADGE_VARIANT[rule.action]}
                           >
-                            {rule.action === "interrupt"
-                              ? "interrupt"
-                              : "snooze"}
-                          </button>
-                        </Badge>
-                        <Button
-                          size="icon-xs"
-                          variant="ghost"
-                          aria-label="delete rule"
-                          onClick={() => deleteRule(index)}
-                        >
-                          ✕
-                        </Button>
-                      </div>
+                            <button
+                              type="button"
+                              onClick={() => cycleAction(index)}
+                              aria-label={`action: ${ACTION_LABEL[rule.action]}, click to change`}
+                            >
+                              {ACTION_LABEL[rule.action]}
+                            </button>
+                          </Badge>
+                          <Button
+                            size="icon-xs"
+                            variant="ghost"
+                            aria-label="delete rule"
+                            onClick={() => deleteRule(index)}
+                          >
+                            ✕
+                          </Button>
+                        </ItemActions>
+                      </Item>
                     );
                   })}
-                </div>
+                </ItemGroup>
               ) : null}
 
               {/* Rules are authored by the agent: ask it in chat instead of a form. */}
-              <div className="flex items-start gap-2 rounded-xl border border-border/60 bg-muted/40 p-3">
-                <Sparkles className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                <p className="text-xs leading-relaxed text-muted-foreground">
-                  {rules.length === 0 ? "No rules yet. " : ""}
-                  To add a rule, just ask {agentName || "the agent"} — e.g.{" "}
-                  <span className="text-foreground">
-                    "don't let Twitter interrupt you"
-                  </span>{" "}
-                  or{" "}
-                  <span className="text-foreground">
-                    "snooze the Bride Squad group chat"
-                  </span>
-                  .
-                </p>
-              </div>
+              <Item variant="muted" size="sm" className="items-start">
+                <ItemContent className="gap-0.5">
+                  <ItemTitle>
+                    {rules.length === 0 ? "no rules yet" : "add a rule"}
+                  </ItemTitle>
+                  <ItemDescription className="line-clamp-none">
+                    just ask {agentName || "the agent"} — e.g.{" "}
+                    <span className="text-foreground">
+                      "don't let Twitter interrupt you"
+                    </span>{" "}
+                    or{" "}
+                    <span className="text-foreground">
+                      "snooze the Bride Squad group chat"
+                    </span>
+                    .
+                  </ItemDescription>
+                </ItemContent>
+              </Item>
 
               {saveError ? (
                 <p className="text-xs text-destructive">{saveError}</p>
@@ -294,6 +346,37 @@ export function NotificationInterruptRulesCard() {
           )}
         </div>
       </CardContent>
+      <AlertDialog
+        open={confirmTrashIndex !== null}
+        onOpenChange={(next) => {
+          if (!next) setConfirmTrashIndex(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>trash matching notifications?</AlertDialogTitle>
+            <AlertDialogDescription>
+              a trash rule drops every matching notification entirely — they
+              never reach {agentName || "the agent"} and create no turn. they
+              still show in history, and you can change the rule back anytime.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={(e) => {
+                e.preventDefault();
+                if (confirmTrashIndex !== null)
+                  applyAction(confirmTrashIndex, "trash");
+                setConfirmTrashIndex(null);
+              }}
+            >
+              trash them
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }

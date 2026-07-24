@@ -2,8 +2,8 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use vesta_tests::{
-    TestAgent, TestServerBuilder, SERVER, SHARED_RO_AGENT, agent_container_name, docker_cmd,
-    find_vestad, inject_fake_token, is_up, unique_agent,
+    agent_container_name, docker_cmd, find_vestad, inject_fake_token, is_up, unique_agent,
+    TestAgent, TestServerBuilder, SERVER, SHARED_RO_AGENT,
 };
 
 #[test]
@@ -35,25 +35,38 @@ fn start_stop_restart() {
     let c = SERVER.client();
     let agent = TestAgent::create(&c, &unique_agent("start-stop")).unwrap();
 
-    let desired = |name: &str| read_settings(SERVER.home_path())["agents"][name]["user_desired"].clone();
+    let desired =
+        |name: &str| read_settings(SERVER.home_path())["agents"][name]["user_desired"].clone();
 
     c.start_agent(&agent.name).unwrap();
     c.wait_until_running(&agent.name, 60)
         .expect("agent should come up after start");
-    assert_eq!(desired(&agent.name), "running", "start must record user_desired=running");
+    assert_eq!(
+        desired(&agent.name),
+        "running",
+        "start must record user_desired=running"
+    );
 
     // stop is asynchronous — wait for the container to wind down rather than reading
     // status immediately (the immediate read raced the still-running container).
     c.stop_agent(&agent.name).unwrap();
     c.wait_until_stopped(&agent.name, 60)
         .expect("agent should wind down after stop");
-    assert_eq!(desired(&agent.name), "stopped", "stop must record user_desired=stopped (survives reboots)");
+    assert_eq!(
+        desired(&agent.name),
+        "stopped",
+        "stop must record user_desired=stopped (survives reboots)"
+    );
 
     c.start_agent(&agent.name).unwrap();
     c.restart_agent(&agent.name).unwrap();
     c.wait_until_running(&agent.name, 60)
         .expect("agent should be up after restart");
-    assert_eq!(desired(&agent.name), "running", "restart must record user_desired=running");
+    assert_eq!(
+        desired(&agent.name),
+        "running",
+        "restart must record user_desired=running"
+    );
 }
 
 #[test]
@@ -91,7 +104,11 @@ fn stop_nonexistent_fails() {
 fn create_auto_starts() {
     let c = SERVER.client();
     let st = c.agent_status(&SHARED_RO_AGENT).unwrap();
-    assert!(is_up(&st.status), "expected up after create, got {}", st.status);
+    assert!(
+        is_up(&st.status),
+        "expected up after create, got {}",
+        st.status
+    );
 }
 
 #[test]
@@ -124,13 +141,19 @@ fn start_all_starts_authenticated_agents() {
 #[test]
 fn start_nonexistent_error_message() {
     let err = SERVER.client().start_agent("no-such-agent").unwrap_err();
-    assert!(err.contains("not found") || err.contains("not_found"), "error should mention not found: {err}");
+    assert!(
+        err.contains("not found") || err.contains("not_found"),
+        "error should mention not found: {err}"
+    );
 }
 
 #[test]
 fn destroy_nonexistent_error_message() {
     let err = SERVER.client().destroy_agent("no-such-agent").unwrap_err();
-    assert!(err.contains("not found") || err.contains("not_found"), "error should mention not found: {err}");
+    assert!(
+        err.contains("not found") || err.contains("not_found"),
+        "error should mention not found: {err}"
+    );
 }
 
 /// vestad owns the lifecycle via Docker's `on-failure:5` restart policy. Assert a freshly created
@@ -142,11 +165,24 @@ fn agent_container_uses_on_failure_policy() {
     let agent = TestAgent::create(&client, &unique_agent("policy")).unwrap();
     let container = agent_container_name(&agent.name);
 
-    let name = docker_cmd(&["inspect", "--format", "{{.HostConfig.RestartPolicy.Name}}", &container])
-        .expect("inspect restart policy");
-    assert_eq!(name, "on-failure", "agent container must use the on-failure restart policy");
-    let retries = docker_cmd(&["inspect", "--format", "{{.HostConfig.RestartPolicy.MaximumRetryCount}}", &container])
-        .expect("inspect retry count");
+    let name = docker_cmd(&[
+        "inspect",
+        "--format",
+        "{{.HostConfig.RestartPolicy.Name}}",
+        &container,
+    ])
+    .expect("inspect restart policy");
+    assert_eq!(
+        name, "on-failure",
+        "agent container must use the on-failure restart policy"
+    );
+    let retries = docker_cmd(&[
+        "inspect",
+        "--format",
+        "{{.HostConfig.RestartPolicy.MaximumRetryCount}}",
+        &container,
+    ])
+    .expect("inspect retry count");
     assert_eq!(retries, "5", "on-failure must be capped at 5 retries");
 }
 
@@ -162,7 +198,8 @@ fn user_desired_persists_and_boot_start_respects_it() {
     // init scans (a `-t{pid}-` user via unique_user, or a /tmp home), or that cleanup could wipe
     // them mid-test: a home under the cargo target tmpdir and a plain user name.
     let user = format!("lifecycle-e2e-{}", std::process::id());
-    let home = tempfile::TempDir::new_in(env!("CARGO_TARGET_TMPDIR")).expect("create persistent home");
+    let home =
+        tempfile::TempDir::new_in(env!("CARGO_TARGET_TMPDIR")).expect("create persistent home");
     let vestad = find_vestad().expect("locate vestad binary");
 
     let running_name;
@@ -176,14 +213,24 @@ fn user_desired_persists_and_boot_start_respects_it() {
             .expect("start vestad");
         let client = server.client();
 
-        running_name = client.create_agent(&unique_agent("desired-run")).expect("create running agent");
-        stopped_name = client.create_agent(&unique_agent("desired-stop")).expect("create stopped agent");
-        client.wait_until_running(&running_name, 90).expect("running agent should come up");
-        client.wait_until_running(&stopped_name, 90).expect("to-stop agent should come up first");
+        running_name = client
+            .create_agent(&unique_agent("desired-run"))
+            .expect("create running agent");
+        stopped_name = client
+            .create_agent(&unique_agent("desired-stop"))
+            .expect("create stopped agent");
+        client
+            .wait_until_running(&running_name, 90)
+            .expect("running agent should come up");
+        client
+            .wait_until_running(&stopped_name, 90)
+            .expect("to-stop agent should come up first");
 
         // User stops one agent -> user_desired=stopped, persisted in settings.json.
         client.stop_agent(&stopped_name).expect("stop agent");
-        client.wait_until_stopped(&stopped_name, 60).expect("stopped agent should wind down");
+        client
+            .wait_until_stopped(&stopped_name, 60)
+            .expect("stopped agent should wind down");
 
         let settings = read_settings(home.path());
         assert_eq!(
@@ -194,7 +241,8 @@ fn user_desired_persists_and_boot_start_respects_it() {
         // Take the running agent's container down WITHOUT touching user_desired (simulates a host
         // reboot: on-failure leaves it down, so vestad must boot-start it). The container name uses
         // THIS server's user (unique_user), not $USER, so build it explicitly.
-        docker_cmd(&["stop", &format!("vesta-{user}-{running_name}")]).expect("docker stop running agent");
+        docker_cmd(&["stop", &format!("vesta-{user}-{running_name}")])
+            .expect("docker stop running agent");
     }
     // Daemon is now down (server dropped). Restart it on the SAME home so reconcile runs.
 
@@ -207,28 +255,41 @@ fn user_desired_persists_and_boot_start_respects_it() {
     let client = server.client();
 
     // Boot reconcile must START the desired-running agent...
-    client.wait_until_running(&running_name, 120).expect("desired-running agent must be boot-started");
+    client
+        .wait_until_running(&running_name, 120)
+        .expect("desired-running agent must be boot-started");
     // ...and LEAVE the user-stopped one down. Reconcile is sequential and the running one is up by
     // now, so the stopped one's decision has been made; confirm it stayed down.
-    let stopped_state = docker_cmd(&["inspect", "--format", "{{.State.Status}}", &format!("vesta-{user}-{stopped_name}")])
-        .expect("inspect stopped agent");
-    assert_eq!(stopped_state, "exited", "user-stopped agent must stay down across a daemon restart");
+    let stopped_state = docker_cmd(&[
+        "inspect",
+        "--format",
+        "{{.State.Status}}",
+        &format!("vesta-{user}-{stopped_name}"),
+    ])
+    .expect("inspect stopped agent");
+    assert_eq!(
+        stopped_state, "exited",
+        "user-stopped agent must stay down across a daemon restart"
+    );
 
     let _ = client.destroy_agent(&running_name);
     let _ = client.destroy_agent(&stopped_name);
 }
 
-/// Entrypoint-UNCHANGED upgrade path: when vestad re-extracts new agent code without a container
+/// Command-UNCHANGED upgrade path: when vestad re-extracts new agent code without a container
 /// config change (so the container is NOT rebuilt), a RUNNING agent must be restarted to pick up
 /// the new core — its old code stays in memory and its core mount points at the now-replaced dir.
-/// The upgrade e2e only covers entrypoint-CHANGED upgrades (which force a rebuild), so this pins the
-/// gap that left agents serving stale code after a same-entrypoint upgrade.
+/// The upgrade e2e only covers command-CHANGED upgrades (which force a rebuild), so this pins the
+/// gap that left agents serving stale code after a same-command upgrade.
 #[test]
 fn running_agent_restarts_when_agent_code_changes() {
     let user = format!("codechange-e2e-{}", std::process::id());
-    let home = tempfile::TempDir::new_in(env!("CARGO_TARGET_TMPDIR")).expect("create persistent home");
+    let home =
+        tempfile::TempDir::new_in(env!("CARGO_TARGET_TMPDIR")).expect("create persistent home");
     let vestad = find_vestad().expect("locate vestad binary");
-    let marker = home.path().join(".config/vesta/vestad/agent-code/.vestad-fingerprint");
+    let marker = home
+        .path()
+        .join(".config/vesta/vestad/agent-code/.vestad-fingerprint");
 
     let name;
     let started_before;
@@ -241,13 +302,20 @@ fn running_agent_restarts_when_agent_code_changes() {
             .start()
             .expect("start vestad");
         let client = server.client();
-        name = client.create_agent(&unique_agent("code-change")).expect("create agent");
-        client.wait_until_running(&name, 90).expect("agent should come up");
+        name = client
+            .create_agent(&unique_agent("code-change"))
+            .expect("create agent");
+        client
+            .wait_until_running(&name, 90)
+            .expect("agent should come up");
         container = format!("vesta-{user}-{name}");
         started_before = started_at(&container);
-        assert!(!started_before.is_empty(), "agent should be running before the simulated upgrade");
+        assert!(
+            !started_before.is_empty(),
+            "agent should be running before the simulated upgrade"
+        );
 
-        // Simulate a vestad version bump WITHOUT an entrypoint change: corrupt the fingerprint so
+        // Simulate a vestad version bump WITHOUT a command change: corrupt the fingerprint so
         // the next boot re-extracts the core (agent_code_changed=true) while needs_rebuild stays
         // false. The agent stays running across the restart (TestServer SIGKILLs vestad, so its
         // stop-all-on-shutdown never runs) — exactly the case that left agents stale.
@@ -274,7 +342,9 @@ fn running_agent_restarts_when_agent_code_changes() {
         }
         sleep(Duration::from_millis(500));
     }
-    client.wait_until_running(&name, 90).expect("agent should be back up after the code-change restart");
+    client
+        .wait_until_running(&name, 90)
+        .expect("agent should be back up after the code-change restart");
 
     let _ = client.destroy_agent(&name);
 }
@@ -287,7 +357,7 @@ fn started_at(container: &str) -> String {
 /// Read an agent home's settings.json as JSON (panics if missing/invalid — the test created it).
 fn read_settings(home: &std::path::Path) -> serde_json::Value {
     let path = home.join(".config/vesta/vestad/settings.json");
-    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let text =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     serde_json::from_str(&text).expect("settings.json is valid JSON")
 }
-

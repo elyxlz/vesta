@@ -25,7 +25,7 @@ export function ContextStep({
     <ProviderStep
       logo={logo}
       title="context window"
-      subtitle="how much the agent keeps in context before it compacts. larger holds more at once; smaller is cheaper and compacts sooner."
+      subtitle="how much vesta keeps in mind. longer remembers more, uses more; shorter is cheaper."
       submitLabel={submitLabel}
       onSubmit={() => onSubmit(selected)}
       onCancel={onCancel}

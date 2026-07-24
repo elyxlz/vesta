@@ -6,7 +6,6 @@ import { AgentActions } from "@/components/AgentMenu/AgentActions";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useGateway } from "@/providers/GatewayProvider";
 import { useModals } from "@/providers/ModalsProvider";
-import { useAgentSocket } from "@/providers/AgentSocketProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 
 export function ActionsCard() {
@@ -18,22 +17,17 @@ export function ActionsCard() {
     start,
     stop,
     restart,
-    rebuild,
     backup,
   } = useSelectedAgent();
   const { handleOpenAuth, setDeleteDialogOpen } = useModals();
-  const { showToolCalls, setShowToolCalls } = useAgentSocket();
 
   const isRunning =
-    agent?.status !== "stopped" &&
-    agent?.status !== "dead" &&
-    agent?.status !== "not_found";
-  const showAliveActions = agent?.status === "alive";
-  const isAuthenticated = Boolean(
-    agent &&
-    agent.status !== "not_authenticated" &&
-    agent.status !== "unprovisioned",
-  );
+    agent.status !== "stopped" &&
+    agent.status !== "dead" &&
+    agent.status !== "not_found";
+  const showAliveActions = agent.status === "alive";
+  const isAuthenticated =
+    agent.status !== "not_authenticated" && agent.status !== "unprovisioned";
 
   // On mobile (no navbar sign-in button) an agent that needs auth is an urgent
   // action: lift "sign in" to a primary button at the top and drop the routine
@@ -51,7 +45,7 @@ export function ActionsCard() {
             variant="default"
             size="lg"
             className="mb-4 w-full"
-            onClick={() => void handleOpenAuth()}
+            onClick={() => handleOpenAuth()}
           >
             <KeyRound data-icon="inline-start" />
             sign in
@@ -61,15 +55,15 @@ export function ActionsCard() {
           isRunning={isRunning}
           showAliveActions={showAliveActions}
           isBusy={isBusy}
-          showToolCalls={showToolCalls}
-          onLogs={() =>
-            navigate(`/agent/${encodeURIComponent(agentName)}/logs`)
-          }
-          onToolCalls={() => setShowToolCalls((value) => !value)}
-          onToggle={() => void (isRunning ? stop() : start())}
+          onLogs={() => {
+            void navigate(`/agent/${encodeURIComponent(agentName)}/logs`);
+          }}
+          onToggle={() => {
+            if (isRunning) stop();
+            else start();
+          }}
           onRestart={() => void restart()}
-          onRebuild={() => void rebuild()}
-          onBackup={() => void backup()}
+          onBackup={() => backup()}
           onDelete={() => setDeleteDialogOpen(true)}
         />
       </CardContent>

@@ -15,6 +15,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
+import { ItemGroup } from "@/components/ui/item";
 import { getNotificationHistory, type NotificationEvent } from "@/api/agents";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { NotificationRow, NotificationRowSkeleton } from "./NotificationRow";
@@ -67,8 +68,9 @@ export function NotificationsCard() {
         setCursor(page.cursor);
         seenRef.current = new Set(page.notifications.map(rowKey));
       })
-      .catch((e: Error) => {
-        if (currentAgent.current === name) setError(e.message);
+      .catch((e: unknown) => {
+        if (currentAgent.current === name)
+          setError(e instanceof Error ? e.message : String(e));
       });
   }, []);
 
@@ -109,11 +111,11 @@ export function NotificationsCard() {
   return (
     <Card size="sm">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-sm font-medium">
+        <CardTitle>
           <BellRing className="size-4 text-muted-foreground" />
           recent notifications
         </CardTitle>
-        <CardDescription className="text-xs">
+        <CardDescription>
           everything the agent has received, and whether each interrupted the
           agent or was snoozed until it was free.
         </CardDescription>
@@ -122,11 +124,11 @@ export function NotificationsCard() {
         {error ? (
           <p className="text-xs text-destructive">failed to load: {error}</p>
         ) : items === null ? (
-          <div className="flex flex-col gap-2.5">
+          <ItemGroup>
             {Array.from({ length: 4 }).map((_, i) => (
               <NotificationRowSkeleton key={i} />
             ))}
-          </div>
+          </ItemGroup>
         ) : items.length === 0 ? (
           <Empty>
             <EmptyHeader>
@@ -141,23 +143,27 @@ export function NotificationsCard() {
           </Empty>
         ) : (
           <div className="flex flex-col gap-2.5">
-            {items.map((event, i) => (
-              <NotificationRow
-                key={event.notif_id ?? event.ts ?? `row-${i}`}
-                event={event}
-                // Pending = received but not yet processed (still on disk per the live pending set).
-                isPending={!!event.notif_id && pendingIds.has(event.notif_id)}
-              />
-            ))}
+            <ItemGroup>
+              {items.map((event, i) => (
+                <NotificationRow
+                  key={event.notif_id ?? event.ts ?? `row-${String(i)}`}
+                  event={event}
+                  // Pending = received but not yet processed (still on disk per the live pending set).
+                  isPending={!!event.notif_id && pendingIds.has(event.notif_id)}
+                />
+              ))}
+            </ItemGroup>
             {cursor !== null ? (
               <Button
                 size="xs"
                 variant="outline"
                 className="mt-1 self-center"
                 disabled={loadingMore}
-                onClick={loadMore}
+                onClick={() => {
+                  void loadMore();
+                }}
               >
-                {loadingMore ? "loading…" : "load older"}
+                {loadingMore ? "loading..." : "load older"}
               </Button>
             ) : null}
           </div>

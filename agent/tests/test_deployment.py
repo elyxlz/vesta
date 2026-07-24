@@ -1,6 +1,5 @@
-"""Tests for deployment structure: skills directories, frontmatter, index."""
+"""Tests for deployment structure: skills directories and frontmatter."""
 
-import json
 import re
 from pathlib import Path
 
@@ -14,7 +13,6 @@ def test_deployment_structure():
 
     expected_skills = [
         "tasks",
-        "upstream-sync",
         "upstream-pr",
         "dream",
         "what-day",
@@ -27,9 +25,14 @@ def test_deployment_structure():
         "zoom",
         "keeper",
         "onedrive",
+        "app-chat",
     ]
     for skill_name in expected_skills:
         assert (skills_dir / skill_name).is_dir(), f"Skill '{skill_name}' missing from skills/"
+
+    core_skills_dir = source_root / "core" / "skills"
+    for skill_name in ("upstream-sync",):
+        assert (core_skills_dir / skill_name).is_dir(), f"Core skill '{skill_name}' missing"
 
     for skill_name in ("tasks",):
         assert (skills_dir / skill_name / "cli" / "pyproject.toml").exists(), f"pyproject.toml missing for {skill_name}"
@@ -51,29 +54,11 @@ def test_skill_frontmatter():
         )
 
 
-def test_skills_index_valid():
-    skills_dir = Path(__file__).parent.parent / "skills"
-    index = json.loads((skills_dir / "index.json").read_text())
-    assert isinstance(index, list) and index, "skills/index.json must be a non-empty list"
-    skill_names = {s["name"] for s in index}
-    default_skills_path = skills_dir.parent / "core" / "default-skills.txt"
-    default_skills = set(default_skills_path.read_text().splitlines()) if default_skills_path.exists() else set()
-    for skill_md in skills_dir.glob("*/SKILL.md"):
-        text = skill_md.read_text()
-        match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
-        fm = dict(re.findall(r"^(\w[\w-]*)\s*:\s*(.+)$", match.group(1), re.MULTILINE)) if match else {}
-        skill_dir_name = skill_md.parent.name
-        name = fm.get("name", skill_dir_name)
-        if name in default_skills:
-            continue
-        assert name in skill_names, f"{skill_dir_name} missing from skills/index.json"
-
-
 def test_default_skills_are_real_and_include_runtime_deps():
-    """Every default skill named in the version-pinned core list (core/default-skills.txt) must have
+    """Every default skill named in the version-pinned list (core/default-skills.txt) must have
     a matching directory under skills/, and the skills the core runtime points at (proactive-check,
-    personality) must ship by default. The Dockerfile rm -rf's any skills/ dir not listed here, so a
-    missing entry deletes a skill the runtime references."""
+    personality) must ship by default. Agent startup seeds/unions this list into active_skills,
+    so a missing entry means the runtime references a skill that can never activate."""
     skills_dir = Path(__file__).parent.parent / "skills"
     default_skills_path = Path(__file__).parent.parent / "core" / "default-skills.txt"
     default_skills = [line for line in default_skills_path.read_text().splitlines() if line.strip()]
@@ -120,7 +105,8 @@ def test_no_em_or_en_dashes_in_prompt_and_skill_files():
 
 
 def test_no_space_dash_space_separator_in_prose():
-    """Prose lines must not use ' - ' as a separator (em-dash substitute). Allowed in code blocks, headings, CLI comments, and markdown tables."""
+    """Prose lines must not use ' - ' as a separator (em-dash substitute). Allowed in code blocks,
+    headings, CLI comments, and markdown tables."""
     agent_root = Path(__file__).resolve().parent.parent
 
     md_globs = [
@@ -157,7 +143,7 @@ def test_no_space_dash_space_separator_in_prose():
             if " - " not in stripped:
                 continue
             # Skip markdown headings and table rows
-            if stripped.startswith("#") or stripped.startswith("|"):
+            if stripped.startswith(("#", "|")):
                 continue
             # Skip lines that quote the literal pattern (e.g. the ban rule itself)
             if '" - "' in stripped or "' - '" in stripped:

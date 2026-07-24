@@ -13,8 +13,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-from . import admin, helpers, snapshot
-
+from . import admin, handover, helpers, snapshot
 
 SESSION_ENV = "BROWSER_SESSION"
 
@@ -22,7 +21,7 @@ SESSION_ENV = "BROWSER_SESSION"
 def _snapshot_banner(interactive_only: bool = False) -> str:
     """Take a snapshot and format it. Called after every mutating action."""
     try:
-        snap = snapshot.snapshot(interactive_only=interactive_only, compact=False)
+        snap = snapshot.snapshot(interactive_only=interactive_only)
     except (RuntimeError, OSError) as e:
         return f"(snapshot failed: {e})"
     header = f"# {snap['title'] or '(no title)'}\n# {snap['url']}\n# {snap['ref_count']} interactive refs"
@@ -38,29 +37,61 @@ def _print_snapshot(interactive_only: bool = False) -> None:
     print(_snapshot_banner(interactive_only=interactive_only))
 
 
+DEFAULT_VIEW_PATH = "/tmp/vesta-browser-view.png"
+
+
+def _print_view(with_header: bool = True) -> None:
+    """Capture a screenshot and print its path (+ optional url/title header)."""
+    try:
+        path = helpers.screenshot(path=DEFAULT_VIEW_PATH)
+    except (RuntimeError, OSError, ValueError) as e:
+        print(f"(screenshot failed: {e})")
+        return
+    if with_header:
+        try:
+            info = helpers.page_info()
+        except (RuntimeError, OSError):
+            info = {}
+        title = info["title"] if "title" in info else ""
+        url = info["url"] if "url" in info else ""
+        print(f"# {title or '(no title)'}\n# {url}".rstrip())
+    print(f"screenshot: {path}")
+
+
+def _print_feedback(interactive_only: bool = False) -> None:
+    """Report back after an action in the session's perception mode (a11y / screenshot / both)."""
+    mode = admin.read_mode()
+    if mode in ("a11y", "both"):
+        _print_snapshot(interactive_only=interactive_only)
+    if mode in ("screenshot", "both"):
+        _print_view(with_header=(mode == "screenshot"))
+
+
 # ── Commands ──────────────────────────────────────────────────
 
 
 def cmd_launch(args: argparse.Namespace) -> int:
     profile = Path(args.user_data_dir) if args.user_data_dir else None
-    running = admin.launch_chrome(
-        headless=args.headless,
-        stealth=args.stealth,
-        no_sandbox=args.no_sandbox,
+    # Camoufox is fully fingerprint-spoofed headless, so CLI launches are always headless: no
+    # display or Xvfb needed even when DISPLAY is set (e.g. callers that set DISPLAY=:99 out of
+    # a stock-Chromium habit). Headed is reserved for `handover`, which provisions its own Xvfb.
+    running = admin.launch_browser(
+        headless=True,
         user_data_dir=profile,
         executable=args.executable,
-        port=args.port,
     )
     admin.ensure_daemon()
+    if args.mode:
+        admin.set_mode(args.mode)
     print(
         json.dumps(
             {
                 "session": admin._session_name(),
-                "cdp_port": running.cdp_port,
+                "ws_url": running.ws_url,
                 "pid": running.pid,
                 "user_data_dir": str(running.user_data_dir),
-                "stealth": args.stealth,
-                "headless": args.headless,
+                "headless": True,
+                "mode": admin.read_mode(),
             },
             indent=2,
         )
@@ -68,35 +99,81 @@ def cmd_launch(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_connect(args: argparse.Namespace) -> int:
-    """Connect to an externally running Chrome via its /json/version URL."""
-    import os
-    import urllib.request
-
-    with urllib.request.urlopen(f"{args.url.rstrip('/')}/json/version", timeout=5) as r:
-        data = json.loads(r.read())
-    if "webSocketDebuggerUrl" not in data or not data["webSocketDebuggerUrl"]:
-        print(f"no webSocketDebuggerUrl at {args.url}/json/version", file=sys.stderr)
-        return 1
-    ws = data["webSocketDebuggerUrl"]
-    os.environ["VESTA_BROWSER_CDP_WS"] = ws
-    admin.ensure_daemon()
-    print(json.dumps({"session": admin._session_name(), "ws": ws}))
+def cmd_mode(args: argparse.Namespace) -> int:
+    """Get or set how action commands report back: a11y tree, screenshot, or both."""
+    if args.mode:
+        admin.set_mode(args.mode)
+    print(json.dumps({"mode": admin.read_mode()}))
     return 0
 
 
-def cmd_stop(args: argparse.Namespace) -> int:
+def cmd_connect(args: argparse.Namespace) -> int:
+    """Attach to an externally running browser, over a tunnel or LAN.
+
+    - http(s)://host:port     -> a Chrome DevTools endpoint (CDP); resolves /json/version
+    - ws(s)://host:port/session -> a Camoufox WebDriver BiDi endpoint
+    - ws(s)://host:port/...    -> a raw Chrome CDP browser websocket
+    """
+    import os
+    import urllib.request
+    from urllib.parse import urlparse, urlunparse
+
+    url = args.url
+    if url.startswith(("http://", "https://")):
+        with urllib.request.urlopen(f"{url.rstrip('/')}/json/version", timeout=5) as r:
+            data = json.loads(r.read())
+        if "webSocketDebuggerUrl" not in data or not data["webSocketDebuggerUrl"]:
+            print(f"no webSocketDebuggerUrl at {url}/json/version", file=sys.stderr)
+            return 1
+        # Chrome reports its own host in the ws url; rewrite it to the host we connected
+        # through so this works over a tunnel / across the internet.
+        ws_path = urlparse(data["webSocketDebuggerUrl"]).path
+        ws = urlunparse(("ws", urlparse(url).netloc, ws_path, "", "", ""))
+        admin.record_cdp_endpoint(ws)
+        os.environ["VESTA_BROWSER_CDP_WS"] = ws
+        backend = "cdp"
+    elif url.startswith(("ws://", "wss://")) and url.rstrip("/").endswith("/session"):
+        ws = url
+        admin.record_bidi_endpoint(ws)
+        os.environ["VESTA_BROWSER_BIDI_WS"] = ws
+        backend = "bidi"
+    elif url.startswith(("ws://", "wss://")):
+        ws = url
+        admin.record_cdp_endpoint(ws)
+        os.environ["VESTA_BROWSER_CDP_WS"] = ws
+        backend = "cdp"
+    else:
+        print(f"connect expects an http(s):// or ws(s):// url, got {url!r}", file=sys.stderr)
+        return 1
+    admin.ensure_daemon()
+    print(json.dumps({"session": admin._session_name(), "backend": backend, "ws": ws}))
+    return 0
+
+
+def cmd_stop(_args: argparse.Namespace) -> int:
     admin.shutdown()
     return 0
 
 
-def cmd_stop_all(args: argparse.Namespace) -> int:
+def cmd_stop_all(_args: argparse.Namespace) -> int:
     admin.stop_all()
     return 0
 
 
-def cmd_sessions(args: argparse.Namespace) -> int:
+def cmd_sessions(_args: argparse.Namespace) -> int:
     print(json.dumps(admin.list_sessions(), indent=2))
+    return 0
+
+
+def cmd_handover(args: argparse.Namespace) -> int:
+    """Hand the live browser to the user over a branded page so they sign in by hand."""
+    if args.action == "start":
+        result = handover.start(url=args.url, port=args.port, user_data_dir=args.user_data_dir)
+    elif args.action == "stop":
+        result = handover.stop()
+    else:
+        result = handover.status()
+    print(json.dumps(result, indent=2))
     return 0
 
 
@@ -104,7 +181,7 @@ def cmd_open(args: argparse.Namespace) -> int:
     admin.ensure_daemon()
     tid = helpers.new_tab(args.url)
     helpers.wait_for_load()
-    _print_snapshot()
+    _print_feedback()
     print(f"\n# target_id: {tid}")
     return 0
 
@@ -114,7 +191,7 @@ def _navigate(action: Callable[[], object]) -> int:
     admin.ensure_daemon()
     action()
     helpers.wait_for_load()
-    _print_snapshot()
+    _print_feedback()
     return 0
 
 
@@ -122,15 +199,15 @@ def cmd_navigate(args: argparse.Namespace) -> int:
     return _navigate(lambda: helpers.goto(args.url))
 
 
-def cmd_reload(args: argparse.Namespace) -> int:
+def cmd_reload(_args: argparse.Namespace) -> int:
     return _navigate(helpers.reload)
 
 
-def cmd_back(args: argparse.Namespace) -> int:
+def cmd_back(_args: argparse.Namespace) -> int:
     return _navigate(helpers.back)
 
 
-def cmd_forward(args: argparse.Namespace) -> int:
+def cmd_forward(_args: argparse.Namespace) -> int:
     return _navigate(helpers.forward)
 
 
@@ -159,7 +236,7 @@ def cmd_screenshot(args: argparse.Namespace) -> int:
             raise ValueError(f"--region expects 'x,y,w,h', got {args.region!r}")
         region = (float(parts[0]), float(parts[1]), float(parts[2]), float(parts[3]))
     path = args.path or f"/tmp/screenshot.{_SCREENSHOT_EXT[fmt]}"
-    print(helpers.screenshot(path=path, full_page=args.full_page, format=fmt, region=region, quality=args.quality))
+    print(helpers.screenshot(path=path, full_page=args.full_page, image_format=fmt, region=region, quality=args.quality))
     return 0
 
 
@@ -181,7 +258,7 @@ def cmd_click(args: argparse.Namespace) -> int:
             return 2
         helpers.click_ref(args.ref, button="right" if args.right else "left", clicks=2 if args.double else 1)
     helpers.wait(0.2)
-    _print_snapshot()
+    _print_feedback()
     return 0
 
 
@@ -189,7 +266,7 @@ def cmd_type(args: argparse.Namespace) -> int:
     admin.ensure_daemon()
     helpers.type_ref(args.ref, args.text, submit=args.submit, slowly=args.slowly)
     helpers.wait(0.2)
-    _print_snapshot()
+    _print_feedback()
     return 0
 
 
@@ -204,7 +281,7 @@ def cmd_press(args: argparse.Namespace) -> int:
         key = pieces[-1]
     helpers.press_key(key, modifiers=mods or 0)
     helpers.wait(0.2)
-    _print_snapshot()
+    _print_feedback()
     return 0
 
 
@@ -221,8 +298,7 @@ def cmd_scroll(args: argparse.Namespace) -> int:
     elif args.up is not None:
         helpers.scroll(100, 300, dy=-args.up)
     elif args.ref:
-        info = snapshot.read_ref(helpers.current_tab()["target_id"], args.ref)
-        helpers.cdp("DOM.scrollIntoViewIfNeeded", backendNodeId=info["backend_node_id"])
+        helpers.scroll_to_ref(args.ref)
     return 0
 
 
@@ -232,7 +308,7 @@ def cmd_wait(args: argparse.Namespace) -> int:
         ok = helpers.wait_for_text(args.text, timeout=args.timeout)
     elif args.url:
         ok = helpers.wait_for_url(args.url, timeout=args.timeout)
-    elif args.load_state == "networkidle" or args.load_state == "load":
+    elif args.load_state in {"networkidle", "load"}:
         ok = helpers.wait_for_load(timeout=args.timeout)
     elif args.time is not None:
         helpers.wait(args.time / 1000.0)
@@ -251,10 +327,10 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_cdp(args: argparse.Namespace) -> int:
+def cmd_bidi(args: argparse.Namespace) -> int:
     admin.ensure_daemon()
     params = json.loads(args.params) if args.params else {}
-    result = helpers.cdp(args.method, **params)
+    result = helpers.bidi(args.method, **params)
     print(json.dumps(result, default=str, indent=2))
     return 0
 
@@ -264,7 +340,43 @@ def cmd_http_get(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_tabs(args: argparse.Namespace) -> int:
+def cmd_fetch(args: argparse.Namespace) -> int:
+    if args.navigate_first:
+        admin.ensure_daemon()
+        print(helpers.fetch_navigate(args.url))
+    else:
+        print(helpers.http_get(args.url))
+    return 0
+
+
+def cmd_doctor(_args: argparse.Namespace) -> int:
+    import platform
+
+    from .launcher import CAMOUFOX_RELEASE_TAG, _asset_for_arch, camoufox_home, camoufox_installed, libs_readiness
+
+    report: dict = {
+        "arch": platform.machine(),
+        "camoufox_release": CAMOUFOX_RELEASE_TAG,
+        "camoufox_installed": camoufox_installed(),
+        "camoufox_home": str(camoufox_home()),
+        "shared_libs": libs_readiness(),
+        "sessions": admin.list_sessions(),
+        "handover": handover.readiness(),
+    }
+    try:
+        report["asset"] = _asset_for_arch()[0]
+    except RuntimeError as e:
+        report["asset_error"] = str(e)
+    if admin.daemon_healthy():
+        try:
+            report["contexts"] = len(helpers.bidi("browsingContext.getTree")["contexts"])
+        except RuntimeError as e:
+            report["probe_error"] = str(e)
+    print(json.dumps(report, indent=2, default=str))
+    return 0
+
+
+def cmd_tabs(_args: argparse.Namespace) -> int:
     admin.ensure_daemon()
     print(json.dumps(helpers.list_tabs(), indent=2))
     return 0
@@ -273,7 +385,7 @@ def cmd_tabs(args: argparse.Namespace) -> int:
 def cmd_focus(args: argparse.Namespace) -> int:
     admin.ensure_daemon()
     helpers.switch_tab(args.target_id)
-    _print_snapshot()
+    _print_feedback()
     return 0
 
 
@@ -285,17 +397,11 @@ def cmd_close(args: argparse.Namespace) -> int:
 
 def cmd_resize(args: argparse.Namespace) -> int:
     admin.ensure_daemon()
-    helpers.cdp(
-        "Emulation.setDeviceMetricsOverride",
-        width=args.width,
-        height=args.height,
-        deviceScaleFactor=1,
-        mobile=False,
-    )
+    helpers.set_viewport(args.width, args.height)
     return 0
 
 
-def cmd_stdin(args: argparse.Namespace) -> int:
+def cmd_stdin(_args: argparse.Namespace) -> int:
     """Run multi-line Python from stdin with helpers pre-imported, browser-harness style."""
     admin.ensure_daemon()
     if sys.stdin.isatty():
@@ -314,29 +420,42 @@ def cmd_stdin(args: argparse.Namespace) -> int:
 # ── Argparse wiring ───────────────────────────────────────────
 
 
-def _build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="browser", description="Vesta browser CLI.")
-    sub = p.add_subparsers(dest="cmd")
-
-    # Session lifecycle
-    lp = sub.add_parser("launch", help="Launch a Chromium for this session.")
+def _add_lifecycle_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    lp = sub.add_parser("launch", help="Launch Camoufox for this session.")
     lp.add_argument("--headless", action="store_true")
     lp.add_argument("--stealth", action="store_true")
     lp.add_argument("--no-sandbox", action="store_true")
+    lp.add_argument("--mode", choices=admin.PERCEPTION_MODES, default=None, help="Perception mode for this session: a11y | screenshot | both.")
     lp.add_argument("--user-data-dir", default=None)
     lp.add_argument("--executable", default=None)
     lp.add_argument("--port", type=int, default=None)
     lp.set_defaults(func=cmd_launch)
 
-    cp = sub.add_parser("connect", help="Connect to an externally running Chrome.")
-    cp.add_argument("url", help="Base URL, e.g. http://localhost:9222")
+    cp = sub.add_parser("connect", help="Connect to an externally running Camoufox.")
+    cp.add_argument("url", help="BiDi WebSocket URL, e.g. ws://localhost:9222/session")
     cp.set_defaults(func=cmd_connect)
+
+    mp = sub.add_parser("mode", help="Get/set how actions report back: a11y tree, screenshot, or both.")
+    mp.add_argument("mode", nargs="?", choices=admin.PERCEPTION_MODES, help="Omit to print the current mode.")
+    mp.set_defaults(func=cmd_mode)
+
+    sub.add_parser("doctor", help="Report Camoufox install + session health.").set_defaults(func=cmd_doctor)
 
     sub.add_parser("stop", help="Stop this session.").set_defaults(func=cmd_stop)
     sub.add_parser("stop-all", help="Stop all sessions.").set_defaults(func=cmd_stop_all)
     sub.add_parser("sessions", help="List active sessions.").set_defaults(func=cmd_sessions)
 
-    # Navigation
+    hv = sub.add_parser("handover", help="Hand the live browser to the user over a clean page so they sign in by hand.")
+    hv.add_argument("action", choices=["start", "stop", "status"])
+    hv.add_argument("--url", default=None, help="URL to open in the headed browser (e.g. the sign-in page).")
+    hv.add_argument(
+        "--port", type=int, default=None, help="Override the web-server port; by default start registers a public service and returns its URL."
+    )
+    hv.add_argument("--user-data-dir", default=None, help="Profile dir; its cookies persist for later reuse.")
+    hv.set_defaults(func=cmd_handover)
+
+
+def _add_navigation_and_read_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     op = sub.add_parser("open", help="Open a URL in a new tab.")
     op.add_argument("url")
     op.set_defaults(func=cmd_open)
@@ -349,7 +468,6 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("back").set_defaults(func=cmd_back)
     sub.add_parser("forward").set_defaults(func=cmd_forward)
 
-    # Reads
     sp = sub.add_parser("snapshot", help="Accessibility snapshot with refs.")
     sp.add_argument("--interactive", action="store_true")
     sp.set_defaults(func=cmd_snapshot)
@@ -368,7 +486,8 @@ def _build_parser() -> argparse.ArgumentParser:
     pp.add_argument("--path", default="/tmp/page.pdf")
     pp.set_defaults(func=cmd_pdf)
 
-    # Actions
+
+def _add_action_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     clp = sub.add_parser("click", help="Click a ref (e1) or --at X Y.")
     clp.add_argument("ref", nargs="?")
     clp.add_argument("--at", nargs=2, type=float, metavar=("X", "Y"))
@@ -406,18 +525,25 @@ def _build_parser() -> argparse.ArgumentParser:
     wp.add_argument("--timeout", type=float, default=20.0)
     wp.set_defaults(func=cmd_wait)
 
+
+def _add_misc_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     ep = sub.add_parser("evaluate", aliases=["js"])
     ep.add_argument("expression")
     ep.set_defaults(func=cmd_evaluate)
 
-    cdp_p = sub.add_parser("cdp", help="Raw CDP escape hatch.")
-    cdp_p.add_argument("method")
-    cdp_p.add_argument("params", nargs="?", help='JSON params, e.g. \'{"url":"..."}\'.')
-    cdp_p.set_defaults(func=cmd_cdp)
+    bidi_p = sub.add_parser("bidi", help="Raw WebDriver BiDi escape hatch.")
+    bidi_p.add_argument("method")
+    bidi_p.add_argument("params", nargs="?", help='JSON params, e.g. \'{"url":"..."}\'.')
+    bidi_p.set_defaults(func=cmd_bidi)
 
-    hg = sub.add_parser("http-get", aliases=["fetch"])
+    hg = sub.add_parser("http-get")
     hg.add_argument("url")
     hg.set_defaults(func=cmd_http_get)
+
+    fp2 = sub.add_parser("fetch", help="Fetch page text; --navigate-first renders it through the stealth browser.")
+    fp2.add_argument("url")
+    fp2.add_argument("--navigate-first", action="store_true")
+    fp2.set_defaults(func=cmd_fetch)
 
     sub.add_parser("tabs").set_defaults(func=cmd_tabs)
 
@@ -434,6 +560,14 @@ def _build_parser() -> argparse.ArgumentParser:
     rp.add_argument("height", type=int)
     rp.set_defaults(func=cmd_resize)
 
+
+def _build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="browser", description="Vesta browser CLI.")
+    sub = p.add_subparsers(dest="cmd")
+    _add_lifecycle_parsers(sub)
+    _add_navigation_and_read_parsers(sub)
+    _add_action_parsers(sub)
+    _add_misc_parsers(sub)
     return p
 
 

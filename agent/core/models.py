@@ -1,48 +1,21 @@
 import asyncio
 import collections
 import dataclasses as dc
-import datetime as dt
 import time
 import typing as tp
 
-import pydantic as pyd
 from aiohttp.web import AppRunner
 from claude_agent_sdk import ClaudeSDKClient
 
-from .config import ClaudeConfig, OpenRouterConfig, Provider, VestaConfig, load_config, migrate_legacy_config_to_store
 from .events import EventBus
-from .notification_interrupt_policy import CORE_SOURCE
 from .provider import ProviderStatus
 from .state_store import PersistedState
-
-__all__ = [
-    "State",
-    "Notification",
-    "VestaConfig",
-    "ClaudeConfig",
-    "OpenRouterConfig",
-    "Provider",
-    "PersistedState",
-    "CORE_SOURCE",
-    "load_config",
-    "migrate_legacy_config_to_store",
-]
-
-# Notification `type` values for the `source=core` notifications that remain notifications (periodic
-# control-flow). Boot-time control-flow (greeting, migrations, skill-sync, config issues) is delivered
-# as boot turns instead — see core/main.py collect_boot_turns — so it carries no notification type.
-TYPE_PROACTIVE_CHECK = "proactive_check"
-TYPE_NIGHTLY_DREAM = "nightly_dream"
-
-# Core notifications are exempt from the user's rules; loops.py derives their disposition from the type.
-# Types listed here pool (wait for idle); every other core type interrupts.
-CORE_POOL_TYPES = frozenset({TYPE_PROACTIVE_CHECK})
 
 
 class QueuedTurn(tp.NamedTuple):
     """One item in the agent's processing queue: a prompt plus how to handle it.
 
-    `interruptible=False` marks a boot turn — boot-time control-flow that must run to completion;
+    `interruptible=False` marks a boot turn: boot-time control-flow that must run to completion;
     a later-queued message waits its turn instead of preempting it."""
 
     text: str
@@ -51,10 +24,17 @@ class QueuedTurn(tp.NamedTuple):
     interruptible: bool = True
 
 
-CLEAN_RESTART = "restart: clean restart"
-NIGHTLY_RESTART = "nightly: dreamer ran, session compacted for continuous context"
-CRASH_RESTART = "crash: restarted after unexpected exit"
+CLEAN_RESTART = "clean: routine restart, no specific reason"
+CRASH_RESTART = "crash: restarted after an unexpected exit"
 FIRST_START_REASON = "first start"
+
+
+def is_crash_reason(reason: str | None) -> bool:
+    """Whether a restart reason marks an unexpected exit (the `crash:`/`error:` categories the
+    processor/loop error handlers write). The single owner of the crash-category vocabulary: it
+    drives the non-zero exit that lets Docker's on-failure policy recover the agent, the
+    inbox-override precedence on boot, and the render (crash reasons keep their marker)."""
+    return reason is not None and (reason.startswith(("crash:", "error:")))
 
 
 @dc.dataclass
@@ -63,6 +43,48 @@ class ActiveTool:
     summary: str
     started_at: float
     is_subagent: bool = False
+
+
+@dc.dataclass
+class TurnSignals:
+    """Bridge between the long-lived stream consumer (writer) and the turn driver (waiter).
+
+    The consumer accumulates the open turn's text and closes `done` when the turn's
+    ResultMessage arrives (or the stream dies, carried in `error`). Attribution is advisory:
+    the stream-json protocol has no query<->result correlation, so a ResultMessage closes
+    whichever turn is open and one arriving with no open turn is dropped."""
+
+    show_output: bool = True
+    texts: list[str] = dc.field(default_factory=list)
+    done: asyncio.Event = dc.field(default_factory=asyncio.Event)
+    error: Exception | None = None
+    # Set by send_preempt when a priority:"now" prompt is delivered while this turn runs: the
+    # reply is being cut short at the CLI's next step boundary, so followups that assume a
+    # complete reply (the dash-correction turn) are skipped.
+    preempted: bool = False
+    last_message_at: float = dc.field(default_factory=time.monotonic)
+    # Liveness for the turn's wait loop (owned by diagnostics.note_turn_liveness /
+    # note_thinking_tick): the CLI streams a thinking_tokens counter while the model reasons
+    # (tracked here, never logged per-delta), last_visible_at marks the last output the user
+    # could see (query sent, text, or thinking emitted), and the quiet_* pair rate-limits the
+    # notes to one per interval with a single escalation per quiet stretch.
+    thinking_tokens: int = 0
+    thinking_tokens_at: float | None = None
+    last_visible_at: float = dc.field(default_factory=time.monotonic)
+    quiet_noted_bucket: int = 0
+    quiet_escalated: bool = False
+
+
+@dc.dataclass(frozen=True)
+class PendingCompaction:
+    """A deferred /compact scheduled between turns (compact_session only runs on an idle
+    session). prompt guides the summarizer; followup is an optional turn delivered after
+    compacting; restart means restart into the compacted session afterward. The drain routes
+    the followup to a restart-safe channel."""
+
+    prompt: str | None
+    followup: str | None
+    restart: bool
 
 
 @dc.dataclass
@@ -84,17 +106,30 @@ class State:
     # so requests can be rewritten for prompt-cache hits. Both set once at boot.
     openrouter_proxy_url: str | None = None
     cache_proxy_runner: AppRunner | None = None
-    interrupt_event: asyncio.Event | None = None
+    # The currently open turn's signals; written by the stream consumer, waited on by converse /
+    # compact_session. None while no turn is open (results arriving then are dropped as advisory).
+    turn: TurnSignals | None = None
     compacting: bool = False
-    # True while a non-interruptible turn (a boot turn) is being processed. process_batch consults
-    # this before firing client.interrupt(), so a concurrent interrupt notification queues and waits
-    # rather than SDK-aborting the boot turn mid-stream (the queue-watcher's interruptible guard only
-    # covers the queue-driven path, not this direct SDK path).
+    # True while a non-interruptible turn (a boot turn) is being processed. send_preempt consults
+    # this, so a concurrent interrupting notification queues and waits rather than preempting the
+    # boot turn mid-stream.
     noninterruptible_turn_active: bool = False
-    # Set by mark_dreamer_complete; the message processor compacts the live session at the next
-    # idle point, then triggers the restart (which resumes the compacted session). Deferred rather
-    # than done inline because /compact only works while the session is idle, never mid-turn.
-    compact_then_restart: bool = False
+    # File paths of the notification the current turn is handling (empty for user-message turns).
+    # The message loop clears these after the turn; the restart/stop tools clear them first when an
+    # intentional restart fires mid-turn, since the notification is already handled and its file
+    # would otherwise survive the SIGTERM and be re-delivered on reboot.
+    in_flight_notification_paths: list[str] = dc.field(default_factory=list)
+    # Set by run_one when the current turn's query never reached the CLI (QueryNotDeliveredError): the
+    # message loop then keeps in_flight_notification_paths instead of clearing it, since the
+    # resumed session never saw the message. Reset at the start of every turn.
+    query_not_delivered: bool = False
+    # A deferred compaction scheduled by the compact_context tool, drained after the turn's
+    # batch (since /compact needs an idle session). In-memory only: a mid-turn crash drops it.
+    pending_compaction: PendingCompaction | None = None
+    # The last rejected rate-limit window surfaced as an error event, as (rate_limit_type,
+    # resets_at): the CLI re-reports the same rejection on every retry, so _dispatch_message
+    # announces each window once (issue #1071).
+    rate_limit_noticed: tuple[str | None, int | None] | None = None
     processor_busy: bool = False
     event_bus: EventBus = dc.field(default_factory=EventBus)
     stderr_buffer: collections.deque[str] = dc.field(default_factory=lambda: collections.deque(maxlen=50))
@@ -106,37 +141,3 @@ class State:
     # True while context usage is above the warning threshold, so log_context_usage emits
     # the warning event once on crossing rather than on every per-message check.
     context_warning_active: bool = False
-
-
-class Notification(pyd.BaseModel):
-    model_config = pyd.ConfigDict(extra="allow")
-
-    timestamp: dt.datetime
-    source: str
-    type: str
-    body: str | None = None
-    file_path: str | None = pyd.Field(default=None, exclude=True)
-
-    def format_for_display(self) -> str:
-        """Render the notification as an XML element for unambiguous parsing.
-
-        When `body` is set it becomes the inner text (used by multi-line system prompts).
-        Otherwise the remaining fields render as `key=value` attributes.
-
-        Drops empty strings, False bools, empty lists, and None since they cost tokens without
-        carrying information. Booleans should be named so True is the interesting case
-        (`contact_unknown`, `is_forwarded`, `missed`). Strips microsecond precision from any
-        datetime field.
-        """
-        if self.body is not None:
-            return f'<notification source="{self.source}" type="{self.type}">\n{self.body.strip()}\n</notification>'
-        data = self.model_dump(exclude={"file_path", "type", "source", "body"})
-        parts = []
-        for key, value in data.items():
-            if value is None or value == "" or value is False or value == []:
-                continue
-            if isinstance(value, dt.datetime):
-                value = value.replace(microsecond=0).isoformat()
-            parts.append(f"{key}={value}")
-        body = ", ".join(parts)
-        return f'<notification source="{self.source}" type="{self.type}">{body}</notification>'

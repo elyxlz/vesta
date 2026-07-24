@@ -14,12 +14,10 @@ from hypothesis import strategies as st
 
 from core.events import (
     AssistantEvent,
-    ChatEvent,
     ErrorEvent,
     EventBus,
     NotificationEvent,
     ThinkingEvent,
-    UserEvent,
 )
 
 # st.text() already excludes lone surrogates (category Cs), matching reality: event text
@@ -30,26 +28,23 @@ EVENT_TEXT = st.text(max_size=500)
 @settings(max_examples=50, deadline=None)
 @given(text=EVENT_TEXT)
 def test_text_events_roundtrip_exactly(text):
-    """Any UTF-8 text survives emit -> SQLite -> recent() byte for byte, for every text-bearing event type."""
+    """Any UTF-8 text survives emit -> SQLite -> recent() byte for byte, for every persisted
+    text-bearing event type (user/chat are live-only and never persisted, so excluded)."""
     with tempfile.TemporaryDirectory() as tmp:
         bus = EventBus(data_dir=pl.Path(tmp))
         try:
-            bus.emit(UserEvent(type="user", text=text))
             bus.emit(AssistantEvent(type="assistant", text=text))
             bus.emit(ThinkingEvent(type="thinking", text=text, signature=text))
             bus.emit(ErrorEvent(type="error", text=text))
-            bus.emit(ChatEvent(type="chat", text=text))
             bus.emit(NotificationEvent(type="notification", source=text, summary=text))
 
             stored, _ = bus.recent(limit=10)
             # dict() copies narrow the TypedDict union to plain dicts so per-type keys can be indexed.
             by_type = {e["type"]: dict(e) for e in stored}
-            assert by_type["user"]["text"] == text
             assert by_type["assistant"]["text"] == text
             assert by_type["thinking"]["text"] == text
             assert by_type["thinking"]["signature"] == text
             assert by_type["error"]["text"] == text
-            assert by_type["chat"]["text"] == text
             assert by_type["notification"]["source"] == text
             assert by_type["notification"]["summary"] == text
         finally:
@@ -65,7 +60,7 @@ def test_search_never_corrupts_the_bus(query):
     with tempfile.TemporaryDirectory() as tmp:
         bus = EventBus(data_dir=pl.Path(tmp))
         try:
-            bus.emit(UserEvent(type="user", text="the quick brown fox"))
+            bus.emit(ErrorEvent(type="error", text="the quick brown fox"))
 
             search_failed = False
             try:
@@ -77,7 +72,7 @@ def test_search_never_corrupts_the_bus(query):
 
             bus.emit(AssistantEvent(type="assistant", text="jumped over the lazy dog"))
             stored, _ = bus.recent(limit=2)
-            assert [e["type"] for e in stored] == ["user", "assistant"]
+            assert [e["type"] for e in stored] == ["error", "assistant"]
         finally:
             bus.close()
 
@@ -90,7 +85,7 @@ def test_search_with_phrase_quoting_never_raises(query):
     with tempfile.TemporaryDirectory() as tmp:
         bus = EventBus(data_dir=pl.Path(tmp))
         try:
-            bus.emit(UserEvent(type="user", text="hello world"))
+            bus.emit(AssistantEvent(type="assistant", text="hello world"))
             quoted = '"' + query.replace('"', '""') + '"'
             results = bus.search(quoted)
             assert isinstance(results, list)

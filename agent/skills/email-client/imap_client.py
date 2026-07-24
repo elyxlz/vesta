@@ -40,8 +40,12 @@ import urllib.request
 
 from imap_tools import AND, MailBox, MailMessageFlags
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from providers import (  # noqa: E402
+# resolve() follows the ~/.email-client/*.py symlinks SETUP.md creates back to the
+# skill's real directory: new sibling modules (e.g. daemon_lifecycle) become
+# importable without adding a new symlink for each one.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import daemon_lifecycle
+from providers import (
     apply_env_overrides,
     detect_provider,
     get_profile,
@@ -212,8 +216,24 @@ def account_profile(account: str) -> tuple[str, dict]:
         # win. Returning early here would silently drop them.
         _, profile = resolve_provider(dict(os.environ))
         profile = dict(profile)
+    # If the resolved profile has no IMAP host (e.g. the 'generic' provider)
+    # but the account's email domain maps to a known provider, backfill just
+    # the host/port so an app-password account on a known domain (e.g. a Gmail
+    # address saved as 'generic') works without hand-editing imap_host. The
+    # auth strategy and stored credentials are deliberately left untouched.
+    if not profile.get("imap_host"):
+        user = cfg.get("user") or (tok.get("user") if tok else "") or _env("EMAIL_CLIENT_USER")
+        detected = detect_provider(user or "")
+        if detected:
+            try:
+                dp = get_profile(detected)
+            except KeyError:
+                dp = {}
+            for hk in ("imap_host", "imap_port", "smtp_host", "smtp_port"):
+                if dp.get(hk) and not profile.get(hk):
+                    profile[hk] = dp[hk]
     # Layer per-account config overrides, then env overrides, on top.
-    for key in ("imap_host", "smtp_host", "smtp_port", "oauth_client_id", "oauth_authority"):
+    for key in ("imap_host", "smtp_host", "smtp_port", "oauth_client_id", "oauth_authority", "caldav_url"):
         if cfg.get(key):
             profile[key] = cfg[key]
     if cfg.get("oauth_scopes"):
@@ -242,13 +262,16 @@ def _refresh_google(tok: dict, profile: dict, account: str) -> dict:
     rt = tok.get("refresh_token")
     if not rt:
         sys.exit("no refresh_token in cached token; re-run auth")
-    data = urllib.parse.urlencode(
-        {
-            "client_id": profile["oauth_client_id"],
-            "refresh_token": rt,
-            "grant_type": "refresh_token",
-        }
-    ).encode()
+    refresh_params = {
+        "client_id": profile["oauth_client_id"],
+        "refresh_token": rt,
+        "grant_type": "refresh_token",
+    }
+    # Same published desktop-app secret the code exchange uses; Google's token
+    # endpoint requires it on refresh for this client too.
+    if profile.get("oauth_client_secret"):
+        refresh_params["client_secret"] = profile["oauth_client_secret"]
+    data = urllib.parse.urlencode(refresh_params).encode()
     req = urllib.request.Request(
         profile["oauth_token_url"],
         data=data,
@@ -517,10 +540,7 @@ def cmd_attachments(args):
         print(json.dumps({"saved": [], "uid": args.uid}, indent=2))
         return
 
-    if args.out_dir:
-        out_dir = pathlib.Path(args.out_dir).expanduser()
-    else:
-        out_dir = _state_dir() / "attachments" / str(args.uid)
+    out_dir = pathlib.Path(args.out_dir).expanduser() if args.out_dir else _state_dir() / "attachments" / str(args.uid)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     saved: list[dict] = []
@@ -532,10 +552,7 @@ def cmd_attachments(args):
         n = 1
         while candidate in used or (out_dir / candidate).exists():
             stem, _, ext = name.rpartition(".")
-            if ext and stem:
-                candidate = f"{stem}.{n}.{ext}"
-            else:
-                candidate = f"{name}.{n}"
+            candidate = f"{stem}.{n}.{ext}" if ext and stem else f"{name}.{n}"
             n += 1
         used.add(candidate)
         target = out_dir / candidate
@@ -584,10 +601,8 @@ def cmd_mark(args):
         actions.append((MailMessageFlags.DRAFT, True))
     if args.undraft:
         actions.append((MailMessageFlags.DRAFT, False))
-    for kw in args.keyword or []:
-        actions.append((kw, True))
-    for kw in args.unkeyword or []:
-        actions.append((kw, False))
+    actions.extend((kw, True) for kw in args.keyword or [])
+    actions.extend((kw, False) for kw in args.unkeyword or [])
     if not actions:
         sys.exit(
             "pick at least one flag action (--read/--unread/--flagged/"
@@ -736,10 +751,72 @@ def cmd_notify_remove(args):
     _save_notify_folders(acc, [f for f in notify_folders(acc) if f != args.folder])
 
 
+# -- daemon lifecycle (start/stop/restart/status of poll_daemon.py) -
+
+
+def _daemon_layout() -> tuple[pathlib.Path, pathlib.Path, pathlib.Path, pathlib.Path]:
+    """Return (state_dir, runtime_dir, poll_daemon_path, log_path) per SETUP.md's install layout."""
+    state_dir = _state_dir()
+    return state_dir, state_dir / "runtime", state_dir / "poll_daemon.py", state_dir / "poll_daemon.log"
+
+
+def _print_daemon_result(result: dict) -> None:
+    print(json.dumps(result, indent=2))
+    if "error" in result:
+        sys.exit(1)
+
+
+def cmd_daemon_start(args):
+    state_dir, runtime_dir, poll_daemon_path, log_path = _daemon_layout()
+    interval = (
+        args.interval
+        if args.interval is not None
+        else int(_env("EMAIL_CLIENT_POLL_INTERVAL", str(daemon_lifecycle.DEFAULT_POLL_INTERVAL_SECS)))
+    )
+    _print_daemon_result(
+        daemon_lifecycle.daemon_start(
+            state_dir=state_dir,
+            runtime_dir=runtime_dir,
+            poll_daemon_path=poll_daemon_path,
+            log_path=log_path,
+            interval=interval,
+        )
+    )
+
+
+def cmd_daemon_stop(_args):
+    state_dir, _, _, _ = _daemon_layout()
+    _print_daemon_result(daemon_lifecycle.daemon_stop(state_dir=state_dir))
+
+
+def cmd_daemon_restart(args):
+    state_dir, runtime_dir, poll_daemon_path, log_path = _daemon_layout()
+    _print_daemon_result(
+        daemon_lifecycle.daemon_restart(
+            state_dir=state_dir,
+            runtime_dir=runtime_dir,
+            poll_daemon_path=poll_daemon_path,
+            log_path=log_path,
+            interval=args.interval,
+        )
+    )
+
+
+def cmd_daemon_status(_args):
+    state_dir, _, _, _ = _daemon_layout()
+    accounts = []
+    for acc in list_accounts():
+        cfg = load_config(acc)
+        tok = load_token(acc)
+        provider, _ = account_profile(acc)
+        accounts.append(daemon_lifecycle.account_auth_summary(acc, cfg, tok, provider))
+    print(json.dumps(daemon_lifecycle.daemon_status(state_dir=state_dir, accounts=accounts), indent=2))
+
+
 # -- auth subcommands (multi-account management) -------------------
 
 
-def cmd_auth_list(args):
+def cmd_auth_list(_args):
     """Print registered accounts with public metadata only (no secrets)."""
     idx = load_accounts_index()
     accs = idx.get("accounts") or []
@@ -776,17 +853,37 @@ def cmd_auth_remove(args):
     print(f"removed account {name}")
 
 
-def main():
-    ap = argparse.ArgumentParser(prog="email-client")
-    sub = ap.add_subparsers(dest="cmd", required=True)
+def cmd_auth_probe(args):
+    """Health-probe the Google OAuth client for one or all Gmail accounts.
 
-    def _add_account_arg(p):
-        p.add_argument(
-            "--account",
-            default=None,
-            help="account name (defaults to accounts.json default)",
-        )
+    Exits non-zero if any account's client is found dead and could not be
+    self-healed, so it is scriptable as a monitor.
+    """
+    import google_health
 
+    notify = not args.no_notify
+    if args.account:
+        acc = resolve_account(args.account)
+        results = [google_health.run_probe(acc, notify=notify)]
+    else:
+        results = google_health.run_probe_all(notify=notify)
+        if not results:
+            print(json.dumps({"status": "skipped", "reason": "no Gmail accounts registered"}, indent=2))
+            return
+    print(json.dumps(results if len(results) != 1 else results[0], indent=2))
+    if any(r.get("status") == google_health.DEAD_CLIENT for r in results):
+        sys.exit(1)
+
+
+def _add_account_arg(p):
+    p.add_argument(
+        "--account",
+        default=None,
+        help="account name (defaults to accounts.json default)",
+    )
+
+
+def _add_read_parsers(sub):
     p = sub.add_parser("list-folders")
     _add_account_arg(p)
 
@@ -832,6 +929,15 @@ def main():
     _add_account_arg(p)
 
     p = sub.add_parser(
+        "status",
+        help="message counts for a folder via IMAP STATUS (no fetch)",
+    )
+    p.add_argument("--folder", default="INBOX")
+    _add_account_arg(p)
+
+
+def _add_mutate_parsers(sub):
+    p = sub.add_parser(
         "mark",
         help="set/clear flags (\\Seen \\Flagged \\Answered \\Draft) or custom keywords on one or more UIDs",
     )
@@ -861,13 +967,6 @@ def main():
         default=None,
         help="clear a custom IMAP keyword; repeatable",
     )
-    _add_account_arg(p)
-
-    p = sub.add_parser(
-        "status",
-        help="message counts for a folder via IMAP STATUS (no fetch)",
-    )
-    p.add_argument("--folder", default="INBOX")
     _add_account_arg(p)
 
     p = sub.add_parser(
@@ -901,6 +1000,8 @@ def main():
     )
     _add_account_arg(p)
 
+
+def _add_admin_parsers(sub):
     pf = sub.add_parser("folder", help="create / rename / delete / subscribe mailboxes")
     fsub = pf.add_subparsers(dest="folder_cmd", required=True)
     pf_c = fsub.add_parser("create", help="create a new mailbox")
@@ -951,56 +1052,121 @@ def main():
     asub.add_parser("list", help="show registered accounts")
     pa_rm = asub.add_parser("remove", help="delete an account dir")
     pa_rm.add_argument("--account", required=True)
+    pa_probe = asub.add_parser(
+        "probe",
+        help="health-check a Gmail account's OAuth client (no user interaction); self-heals + alerts on a dead client",
+    )
+    pa_probe.add_argument(
+        "--account",
+        default=None,
+        help="Gmail account to probe; omit to probe every registered Gmail account",
+    )
+    pa_probe.add_argument(
+        "--no-notify",
+        action="store_true",
+        help="do not write a notification even if the client is found dead",
+    )
 
-    args = ap.parse_args()
+    pd = sub.add_parser("daemon", help="manage the poll daemon: start|stop|restart|status")
+    dsub = pd.add_subparsers(dest="daemon_cmd", required=True)
+    pd_start = dsub.add_parser("start", help="start the poll daemon if not already running (idempotent)")
+    pd_start.add_argument(
+        "--interval",
+        type=int,
+        default=None,
+        help="poll seconds fallback (default $EMAIL_CLIENT_POLL_INTERVAL or 15)",
+    )
+    dsub.add_parser("stop", help="stop the poll daemon (marks the stop intentional first)")
+    pd_restart = dsub.add_parser("restart", help="stop then start, reusing the last --interval unless overridden")
+    pd_restart.add_argument("--interval", type=int, default=None)
+    dsub.add_parser("status", help="daemon process state plus per-account auth health, in one JSON blob")
 
+
+def _build_parser():
+    ap = argparse.ArgumentParser(prog="email-client")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    _add_read_parsers(sub)
+    _add_mutate_parsers(sub)
+    _add_admin_parsers(sub)
+
+    # Calendar over CalDAV (see calendar_client.py). Imported lazily because
+    # calendar_client imports this module; a top-level import would be circular.
+    import calendar_client
+
+    calendar_client.build_parser(sub)
+    return ap
+
+
+def _cmd_auth(args):
+    if args.auth_cmd == "add":
+        import auth as _auth_mod
+
+        _auth_mod.run_add(
+            account=args.account,
+            user=args.user,
+            provider=args.provider,
+            reauth=args.reauth,
+        )
+        return
+    {
+        "list": cmd_auth_list,
+        "remove": cmd_auth_remove,
+        "probe": cmd_auth_probe,
+    }[args.auth_cmd](args)
+
+
+def _cmd_calendar(args):
+    import calendar_client
+
+    calendar_client.dispatch(args)
+
+
+def _dispatch(args):
     if args.cmd == "auth":
-        if args.auth_cmd == "add":
-            import auth as _auth_mod
-
-            _auth_mod.run_add(
-                account=args.account,
-                user=args.user,
-                provider=args.provider,
-                reauth=args.reauth,
-            )
-            return
-        if args.auth_cmd == "list":
-            cmd_auth_list(args)
-            return
-        if args.auth_cmd == "remove":
-            cmd_auth_remove(args)
-            return
-
-    if args.cmd == "folder":
+        _cmd_auth(args)
+    elif args.cmd == "folder":
         {
             "create": cmd_folder_create,
             "rename": cmd_folder_rename,
             "delete": cmd_folder_delete,
             "subscribe": cmd_folder_subscribe,
         }[args.folder_cmd](args)
-        return
-
-    if args.cmd == "notify":
+    elif args.cmd == "notify":
         {
             "list": cmd_notify_list,
             "add": cmd_notify_add,
             "remove": cmd_notify_remove,
         }[args.notify_cmd](args)
-        return
+    elif args.cmd == "daemon":
+        {
+            "start": cmd_daemon_start,
+            "stop": cmd_daemon_stop,
+            "restart": cmd_daemon_restart,
+            "status": cmd_daemon_status,
+        }[args.daemon_cmd](args)
+    elif args.cmd == "calendar":
+        _cmd_calendar(args)
+    else:
+        {
+            "list-folders": cmd_folders,
+            "list": cmd_list,
+            "get": cmd_get,
+            "search": cmd_search,
+            "attachments": cmd_attachments,
+            "status": cmd_status,
+            "mark": cmd_mark,
+            "move": cmd_move,
+            "archive": cmd_archive,
+            "delete": cmd_delete,
+        }[args.cmd](args)
 
-    {
-        "list-folders": cmd_folders,
-        "list": cmd_list,
-        "get": cmd_get,
-        "search": cmd_search,
-        "attachments": cmd_attachments,
-        "status": cmd_status,
-        "mark": cmd_mark,
-        "move": cmd_move,
-        "archive": cmd_archive,
-        "delete": cmd_delete,
-    }[args.cmd](args)
+
+def main():
+    ap = _build_parser()
+    if len(sys.argv) == 1:
+        ap.print_help()
+        sys.exit(0)
+    _dispatch(ap.parse_args())
 
 
 if __name__ == "__main__":

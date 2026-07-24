@@ -4,7 +4,6 @@ export {
   stopAgent,
   restartAgent,
   deleteAgent,
-  rebuildAgent,
   createBackup,
   listBackups,
   restoreBackup,
@@ -15,4 +14,3 @@ export * as claudeProvider from "./providers/claude";
 export * as openrouterProvider from "./providers/openrouter";
 export { streamLogs, stopLogs } from "./logs";
 export { connectToServer } from "./server";
-export { isNewer } from "./updates";

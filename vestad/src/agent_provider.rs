@@ -17,11 +17,11 @@ const STATUS_TIMEOUT: Duration = Duration::from_secs(2);
 /// Longer timeout for config writes — the agent does file I/O.
 const SET_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// The agent's `GET /status`: the readiness slice vestad needs to gate Alive vs SettingUp vs
-/// NotAuthenticated. Distinct from the provider config it relays to the app via `GET /provider`.
+/// The agent's `GET /status`: the readiness slice vestad needs to gate Alive vs `SettingUp` vs
+/// `NotAuthenticated`. Distinct from the provider config it relays to the app via `GET /provider`.
 #[derive(Deserialize, Debug)]
 pub struct AgentStatusView {
-    /// Defaults to `true` so a response missing the field isn't mislabeled NotAuthenticated; a
+    /// Defaults to `true` so a response missing the field isn't mislabeled `NotAuthenticated`; a
     /// not-authenticated agent reports `authed: false` explicitly.
     #[serde(default = "default_true")]
     pub authed: bool,
@@ -46,7 +46,11 @@ pub struct AgentProvider<'a> {
 }
 
 impl<'a> AgentProvider<'a> {
-    pub fn new(http_client: &'a reqwest::Client, agents_dir: &'a Path, name: impl Into<String>) -> Self {
+    pub fn new(
+        http_client: &'a reqwest::Client,
+        agents_dir: &'a Path,
+        name: impl Into<String>,
+    ) -> Self {
         Self {
             http_client,
             agents_dir,
@@ -67,7 +71,8 @@ impl<'a> AgentProvider<'a> {
 
     /// GET the agent's /provider (active provider; vestad relays it to the app).
     pub async fn get_provider(&self) -> Result<serde_json::Value, String> {
-        self.get_json("/provider", STATUS_TIMEOUT, "/provider").await
+        self.get_json("/provider", STATUS_TIMEOUT, "/provider")
+            .await
     }
 
     /// PUT a prefs body to the agent's /config. Write only — caller restarts to apply.
@@ -91,7 +96,12 @@ impl<'a> AgentProvider<'a> {
     }
 
     /// Shared GET-and-parse helper for the relayed read endpoints.
-    async fn get_json<T: serde::de::DeserializeOwned>(&self, path: &str, timeout: Duration, label: &str) -> Result<T, String> {
+    async fn get_json<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        timeout: Duration,
+        label: &str,
+    ) -> Result<T, String> {
         let (port, token) = self.port_and_token()?;
         let resp = self
             .http_client
@@ -104,12 +114,19 @@ impl<'a> AgentProvider<'a> {
         if !resp.status().is_success() {
             return Err(format!("agent {label} returned HTTP {}", resp.status()));
         }
-        resp.json().await.map_err(|e| format!("agent {label} parse failed: {e}"))
+        resp.json()
+            .await
+            .map_err(|e| format!("agent {label} parse failed: {e}"))
     }
 
     /// Shared body for the write endpoints: send `method path` with the agent token and an optional
     /// JSON body, mapping any non-2xx (or transport error) to a descriptive string.
-    async fn write(&self, method: &str, path: &str, body: Option<&serde_json::Value>) -> Result<(), String> {
+    async fn write(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<&serde_json::Value>,
+    ) -> Result<(), String> {
         let (port, token) = self.port_and_token()?;
         let url = format!("http://127.0.0.1:{port}{path}");
         let mut req = match method {
@@ -123,7 +140,10 @@ impl<'a> AgentProvider<'a> {
         if let Some(body) = body {
             req = req.json(body);
         }
-        let resp = req.send().await.map_err(|e| format!("agent {path} request failed: {e}"))?;
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| format!("agent {path} request failed: {e}"))?;
         let status = resp.status();
         if status.is_success() {
             return Ok(());
@@ -136,7 +156,10 @@ impl<'a> AgentProvider<'a> {
         let (port, token) = read_agent_port_and_token(&self.name, self.agents_dir);
         match (port, token) {
             (Some(p), Some(t)) => Ok((p, t)),
-            _ => Err(format!("agent '{}' missing port/token (env file not yet written)", self.name)),
+            _ => Err(format!(
+                "agent '{}' missing port/token (env file not yet written)",
+                self.name
+            )),
         }
     }
 }
@@ -162,8 +185,10 @@ mod tests {
     #[test]
     fn parses_authed_and_setup_complete_ignoring_rest_of_provider() {
         // GET /status carries the two gating fields; vestad parses them and ignores any extras.
-        let s: AgentStatusView =
-            serde_json::from_str(r#"{"authed":true,"kind":"openrouter","setup_complete":false,"model":"deepseek/v4"}"#).unwrap();
+        let s: AgentStatusView = serde_json::from_str(
+            r#"{"authed":true,"kind":"openrouter","setup_complete":false,"model":"deepseek/v4"}"#,
+        )
+        .unwrap();
         assert!(s.authed && !s.setup_complete);
     }
 }

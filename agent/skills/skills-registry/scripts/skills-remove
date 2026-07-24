@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# LEGACY(remove-when: every migration that references skills-remove by path -
+# 2026-07-google-skill-byo-client, 2026-07-rename-account-skill, 2026-07-vestad-skill - is
+# fleet-applied): forwards to the renamed command. Those released migration files are immutable
+# and call this path; keep the shim so they don't break mid-converge.
+exec "$(dirname "$0")/skills-deactivate" "$@"

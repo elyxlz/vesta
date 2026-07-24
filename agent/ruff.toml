@@ -1,0 +1,31 @@
+line-length = 144
+indent-width = 4
+target-version = "py312"
+
+[lint]
+# E402/E702/E731/UP008/E712: house style. SIM401 suggests the banned dict.get() fallback.
+# PLR2004 flags every literal comparison. ISC001 conflicts with the formatter.
+# ASYNC109 flags timeout kwargs that are part of CLI/tool signatures.
+# DTZ (naive datetimes) is deferred: converting call sites changes runtime behavior.
+ignore = ["E402", "E702", "E731", "UP008", "E712", "SIM401", "PLR2004", "ISC001", "ASYNC109"]
+extend-select = [
+    "E", "W", "I", "N", "UP", "B", "A", "C4", "ISC", "G", "PIE", "T10", "RET", "SIM",
+    "ARG", "PTH", "PL", "C90", "PERF", "FURB", "RUF", "ASYNC", "S110", "S112", "TID",
+]
+
+[lint.pylint]
+max-args = 8
+
+[lint.mccabe]
+max-complexity = 15
+
+[lint.per-file-ignores]
+# Tests monkeypatch with fixed-signature lambdas, import inside test bodies, and embed
+# intentionally hostile unicode fixtures; size limits don't apply to test bodies.
+"**/tests/**" = ["ARG", "PLC0415", "PLR0913", "PLR0915", "PLR0912", "C901", "S110", "S112", "RUF001", "PLE2515", "PLE2502"]
+"**/conftest.py" = ["ARG", "PLC0415"]
+# Skill CLIs lazy-import heavy deps so cold CLI startup stays fast.
+"**/skills/**" = ["PLC0415"]
+# qBittorrent nova plugin contract: the class must be named like the file (lowercase)
+# and prettyPrinter is the engine's hook name.
+"**/skills/torrents/plugins/**" = ["N801", "N802"]

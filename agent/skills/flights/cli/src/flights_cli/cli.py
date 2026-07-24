@@ -13,10 +13,10 @@ Provides:
 """
 
 import argparse
+import dataclasses
 import json
 import sys
 from datetime import datetime, timedelta
-
 
 # Configure these to match your user's home airports.
 # Example: London airports. Replace with your own.
@@ -39,19 +39,18 @@ def _fmt_datetime(dt) -> str:
 
 def _flight_to_dict(flight) -> dict:
     """Convert a FlightResult to a plain dict."""
-    legs = []
-    for leg in flight.legs:
-        legs.append(
-            {
-                "airline": leg.airline.value,
-                "flight_number": leg.flight_number,
-                "from": leg.departure_airport.name,
-                "to": leg.arrival_airport.name,
-                "departs": _fmt_datetime(leg.departure_datetime),
-                "arrives": _fmt_datetime(leg.arrival_datetime),
-                "duration_min": leg.duration,
-            }
-        )
+    legs = [
+        {
+            "airline": leg.airline.value,
+            "flight_number": leg.flight_number,
+            "from": leg.departure_airport.name,
+            "to": leg.arrival_airport.name,
+            "departs": _fmt_datetime(leg.departure_datetime),
+            "arrives": _fmt_datetime(leg.arrival_datetime),
+            "duration_min": leg.duration,
+        }
+        for leg in flight.legs
+    ]
     return {
         "price_usd": round(flight.price, 2),
         "total_duration": _fmt_duration(flight.duration),
@@ -79,8 +78,8 @@ def _search_flights(
     max_results: int = 10,
 ) -> list[dict]:
     """Run a flight search for a single origin and return list of result dicts."""
+    from fli.core import build_flight_segments, parse_cabin_class, parse_max_stops, parse_sort_by, resolve_airport
     from fli.models import FlightSearchFilters, PassengerInfo
-    from fli.core import build_flight_segments, resolve_airport, parse_max_stops, parse_cabin_class, parse_sort_by
     from fli.search import SearchFlights
 
     try:
@@ -122,34 +121,37 @@ def _search_flights(
         return [{"error": str(e), "origin": origin}]
 
 
-def _search_dates(
-    origin: str,
-    destination: str,
-    from_date: str,
-    to_date: str,
-    round_trip: bool = False,
-    duration: int = 3,
-    stops: str = DEFAULT_STOPS,
-    cabin: str = DEFAULT_CABIN,
-    max_results: int = 20,
-) -> list[dict]:
+@dataclasses.dataclass
+class DateSearchQuery:
+    origin: str
+    destination: str
+    from_date: str
+    to_date: str
+    round_trip: bool = False
+    duration: int = 3
+    stops: str = DEFAULT_STOPS
+    cabin: str = DEFAULT_CABIN
+    max_results: int = 20
+
+
+def _search_dates(query: DateSearchQuery) -> list[dict]:
     """Search cheapest dates for a single origin."""
+    from fli.core import build_date_search_segments, parse_cabin_class, parse_max_stops, resolve_airport
     from fli.models import DateSearchFilters, PassengerInfo
-    from fli.core import build_date_search_segments, resolve_airport, parse_max_stops, parse_cabin_class
     from fli.search import SearchDates
 
     try:
-        origin_ap = resolve_airport(origin)
-        dest_ap = resolve_airport(destination)
-        seat_type = parse_cabin_class(cabin)
-        max_stops = parse_max_stops(stops)
+        origin_ap = resolve_airport(query.origin)
+        dest_ap = resolve_airport(query.destination)
+        seat_type = parse_cabin_class(query.cabin)
+        max_stops = parse_max_stops(query.stops)
 
         segments, trip_type = build_date_search_segments(
             origin=origin_ap,
             destination=dest_ap,
-            start_date=from_date,
-            trip_duration=duration,
-            is_round_trip=round_trip,
+            start_date=query.from_date,
+            trip_duration=query.duration,
+            is_round_trip=query.round_trip,
         )
 
         filters = DateSearchFilters(
@@ -158,9 +160,9 @@ def _search_dates(
             flight_segments=segments,
             stops=max_stops,
             seat_type=seat_type,
-            from_date=from_date,
-            to_date=to_date,
-            duration=duration if round_trip else None,
+            from_date=query.from_date,
+            to_date=query.to_date,
+            duration=query.duration if query.round_trip else None,
         )
 
         results = SearchDates().search(filters)
@@ -170,7 +172,7 @@ def _search_dates(
         # Sort by price and limit
         results.sort(key=lambda x: x.price)
         out = []
-        for r in results[:max_results]:
+        for r in results[: query.max_results]:
             if len(r.date) == 2:
                 entry = {
                     "price_usd": round(r.price, 2),
@@ -189,7 +191,7 @@ def _search_dates(
         return out
 
     except Exception as e:
-        return [{"error": str(e), "origin": origin}]
+        return [{"error": str(e), "origin": query.origin}]
 
 
 # ===========================================================================
@@ -239,15 +241,17 @@ def cmd_dates(args):
     all_results = []
     for origin in origins:
         results = _search_dates(
-            origin=origin.upper(),
-            destination=args.destination.upper(),
-            from_date=args.from_date,
-            to_date=args.to_date,
-            round_trip=args.round_trip,
-            duration=args.duration,
-            stops=args.stops,
-            cabin=args.cabin,
-            max_results=args.max_results,
+            DateSearchQuery(
+                origin=origin.upper(),
+                destination=args.destination.upper(),
+                from_date=args.from_date,
+                to_date=args.to_date,
+                round_trip=args.round_trip,
+                duration=args.duration,
+                stops=args.stops,
+                cabin=args.cabin,
+                max_results=args.max_results,
+            )
         )
         for r in results:
             r["origin"] = origin.upper()
@@ -270,15 +274,17 @@ def cmd_cheapest(args):
     all_results = []
     for origin in origins:
         results = _search_dates(
-            origin=origin,
-            destination=args.destination.upper(),
-            from_date=from_date,
-            to_date=to_date,
-            round_trip=args.round_trip,
-            duration=args.duration,
-            stops=DEFAULT_STOPS,
-            cabin=DEFAULT_CABIN,
-            max_results=5,  # top 5 per airport
+            DateSearchQuery(
+                origin=origin,
+                destination=args.destination.upper(),
+                from_date=from_date,
+                to_date=to_date,
+                round_trip=args.round_trip,
+                duration=args.duration,
+                stops=DEFAULT_STOPS,
+                cabin=DEFAULT_CABIN,
+                max_results=5,  # top 5 per airport
+            )
         )
         for r in results:
             r["origin"] = origin
@@ -466,9 +472,10 @@ def cmd_book(args):
             segs = []
             for seg in sl.get("segments", []):
                 carrier = seg.get("operating_carrier", {}) or seg.get("marketing_carrier", {})
+                flight_number = seg.get("operating_carrier_flight_number", seg.get("marketing_carrier_flight_number", "?"))
                 segs.append(
                     {
-                        "flight": f"{carrier.get('iata_code', '?')}{seg.get('operating_carrier_flight_number', seg.get('marketing_carrier_flight_number', '?'))}",
+                        "flight": f"{carrier.get('iata_code', '?')}{flight_number}",
                         "from": seg.get("origin", {}).get("iata_code", "?"),
                         "to": seg.get("destination", {}).get("iata_code", "?"),
                         "departs": seg.get("departing_at", "?"),
@@ -492,12 +499,8 @@ def cmd_orders(args):
     try:
         orders = duffel.list_orders(limit=args.limit)
 
-        # list_orders returns a list (sometimes nested in pagination)
-        if isinstance(orders, dict):
-            # Paginated response
-            order_list = orders if isinstance(orders, list) else [orders]
-        else:
-            order_list = orders
+        # list_orders returns a list (sometimes a single paginated response dict)
+        order_list = [orders] if isinstance(orders, dict) else orders
 
         formatted = []
         for order in order_list:
@@ -605,13 +608,7 @@ def cmd_passenger(args):
 # ===========================================================================
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        prog="flights",
-        description="Flight search (Google Flights) and booking (Duffel API). Output is JSON.",
-    )
-    sub = parser.add_subparsers(dest="command", required=True)
-
+def _add_google_parsers(sub) -> None:
     # --- search (Google Flights) ---
     p_search = sub.add_parser(
         "search",
@@ -709,6 +706,8 @@ def main():
     p_cheapest.add_argument("--top", type=int, default=10, help="Number of cheapest options to return (default: 10)")
     p_cheapest.set_defaults(func=cmd_cheapest)
 
+
+def _add_duffel_parsers(sub) -> None:
     # --- offer (Duffel search) ---
     p_offer = sub.add_parser(
         "offer",
@@ -803,7 +802,24 @@ def main():
     p_passenger.add_argument("--phone", default=None)
     p_passenger.set_defaults(func=cmd_passenger)
 
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="flights",
+        description="Flight search (Google Flights) and booking (Duffel API). Output is JSON.",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+    _add_google_parsers(sub)
+    _add_duffel_parsers(sub)
+
     args = parser.parse_args()
+    # The search/dates/cheapest commands scrape Google Flights via fli; a stale
+    # fli silently returns nothing (issue #822). The Duffel commands use a
+    # stable API and are exempt.
+    if args.command in ("search", "dates", "cheapest"):
+        from ._freshness import require_latest
+
+        require_latest("flights")
     args.func(args)
 
 

@@ -9,7 +9,7 @@
 ## Step 1: Install the CLI
 
 ```bash
-uv tool install --force --reinstall ~/agent/skills/exa/cli
+uv tool install --editable --force --reinstall ~/agent/skills/exa/cli
 ```
 
 ## Step 2: Configure the API key

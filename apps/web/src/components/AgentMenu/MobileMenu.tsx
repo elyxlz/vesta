@@ -37,12 +37,9 @@ export function MobileMenu({ state, open, onOpenChange, trigger }: MenuProps) {
             isRunning={state.isRunning}
             showAliveActions={state.showAliveActions}
             isBusy={state.isBusy}
-            showToolCalls={state.showToolCalls}
             onLogs={state.onLogs}
-            onToolCalls={state.onToolCalls}
             onToggle={state.onToggle}
             onRestart={state.onRestart}
-            onRebuild={state.onRebuild}
             onBackup={state.onBackup}
             onAppSettings={state.onAppSettings}
             onAgentSettings={state.onAgentSettings}

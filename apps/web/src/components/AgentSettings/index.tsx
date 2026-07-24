@@ -46,7 +46,7 @@ export function AgentSettings() {
         </TabsContent>
 
         <TabsContent value="files">
-          <div className="mx-auto w-full max-w-5xl">
+          <div className="mx-auto w-full max-w-6xl">
             <FilesTab />
           </div>
         </TabsContent>

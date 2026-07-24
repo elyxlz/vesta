@@ -2,6 +2,7 @@ import { useNavigate } from "react-router-dom";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
+  Empty,
   EmptyContent,
   EmptyDescription,
   EmptyHeader,
@@ -13,16 +14,22 @@ export function EmptyState() {
 
   return (
     <div className="flex h-full w-full items-center justify-center">
-      <EmptyHeader>
-        <EmptyTitle>no agents found</EmptyTitle>
-        <EmptyDescription>create an agent to get started</EmptyDescription>
+      <Empty className="border-none">
+        <EmptyHeader>
+          <EmptyTitle>no agents yet</EmptyTitle>
+          <EmptyDescription>create an agent to get started</EmptyDescription>
+        </EmptyHeader>
         <EmptyContent>
-          <Button onClick={() => navigate("/new")}>
+          <Button
+            onClick={() => {
+              void navigate("/new");
+            }}
+          >
             <Plus data-icon="inline-start" />
             new agent
           </Button>
         </EmptyContent>
-      </EmptyHeader>
+      </Empty>
     </div>
   );
 }

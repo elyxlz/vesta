@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
-import type { VestaEvent } from "@/lib/types";
+import type { ChatMessage } from "@/lib/types";
 import { buildDecorated, rowKey } from "./virtual";
 
-function userMsg(ts: string): VestaEvent {
+function userMsg(ts: string): ChatMessage {
   return { type: "user", text: "hi", ts };
 }
 
@@ -27,8 +27,8 @@ describe("buildDecorated", () => {
       userMsg("2026-06-08T00:30:00"),
     ]);
     expect(rows.map((r) => r.showDayStamp)).toEqual([true, false, true]);
-    expect(rows[0].dayLabel).not.toBe("");
-    expect(rows[1].dayLabel).toBe("");
+    expect(rows[0]?.dayLabel).not.toBe("");
+    expect(rows[1]?.dayLabel).toBe("");
   });
 
   it("produces unique keys when two events share a timestamp and type", () => {
@@ -42,21 +42,27 @@ describe("buildDecorated", () => {
     expect(keys[0]).toBe("2026-06-08T10:00:00Z-user");
   });
 
-  it("uses a tight gap between consecutive tool calls", () => {
+  it("splits same-sender bubbles after a five-minute pause", () => {
     const rows = buildDecorated([
-      {
-        type: "tool_start",
-        tool: "Bash",
-        input: "ls",
-        ts: "2026-06-08T10:00:00Z",
-      },
-      {
-        type: "tool_start",
-        tool: "Bash",
-        input: "pwd",
-        ts: "2026-06-08T10:00:01Z",
-      },
+      userMsg("2026-06-08T10:00:00"),
+      userMsg("2026-06-08T10:05:00"),
     ]);
-    expect(rows[1].gap).toBe("mt-1");
+    expect(rows[1]?.gap).toBe("mt-5");
+  });
+
+  it("keeps same-sender bubbles tight within five minutes", () => {
+    const rows = buildDecorated([
+      userMsg("2026-06-08T10:00:00"),
+      userMsg("2026-06-08T10:04:00"),
+    ]);
+    expect(rows[1]?.gap).toBe("mt-1.5");
+  });
+
+  it("keeps same-sender bubbles tight when a timestamp is unparseable", () => {
+    const rows = buildDecorated([
+      userMsg("2026-06-08T10:00:00"),
+      userMsg("not-a-date"),
+    ]);
+    expect(rows[1]?.gap).toBe("mt-1.5");
   });
 });

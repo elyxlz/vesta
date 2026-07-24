@@ -2,6 +2,7 @@ import { useNavigate } from "react-router-dom";
 import { Home } from "lucide-react";
 import { AppSettings } from "@/components/Settings";
 import { CheckForUpdates } from "@/components/CheckForUpdates";
+import { WhatsNewButton } from "@/components/WhatsNew";
 import { LogoText } from "@/components/Logo/LogoText";
 import { Navbar } from "@/components/Navbar";
 import { SettingsScrollArea } from "@/components/SettingsScrollArea";
@@ -21,7 +22,9 @@ export function AppSettingsPage() {
             variant="outline"
             size="icon-lg"
             aria-label="home"
-            onClick={() => navigate("/")}
+            onClick={() => {
+              void navigate("/");
+            }}
           >
             <Home />
           </Button>
@@ -30,6 +33,7 @@ export function AppSettingsPage() {
         trailing={
           <div className="flex items-center gap-2">
             <StatusPill showHostname={false} />
+            <WhatsNewButton />
             <CheckForUpdates />
           </div>
         }

@@ -6,12 +6,22 @@ import {
   FileText,
   Moon,
   ScrollText,
-  Sparkles,
   Wand2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemMedia,
+  ItemTitle,
+} from "@/components/ui/item";
 import type { FileTreeEntry } from "@/api/files";
+import { HostAccessCard } from "../HostAccessCard";
 import {
   collectDreamPaths,
   CONSTITUTION_PATH,
@@ -23,6 +33,7 @@ interface SimpleViewProps {
   entries: FileTreeEntry[];
   selected: string | null;
   dreamsActive: boolean;
+  agentName?: string;
   onSelect: (path: string) => void;
   onShowDreams: () => void;
 }
@@ -63,6 +74,7 @@ export function SimpleView({
   entries,
   selected,
   dreamsActive,
+  agentName,
   onSelect,
   onShowDreams,
 }: SimpleViewProps) {
@@ -71,24 +83,66 @@ export function SimpleView({
     () => collectDreamPaths(entries).length,
     [entries],
   );
+  const name = agentName ?? "the agent";
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4 p-1">
-      <MindCard
-        memorySelected={selected === MEMORY_PATH && !dreamsActive}
-        constitutionSelected={selected === CONSTITUTION_PATH && !dreamsActive}
-        dreamsActive={dreamsActive}
-        dreamCount={dreamCount}
-        onSelectMemory={() => onSelect(MEMORY_PATH)}
-        onSelectConstitution={() => onSelect(CONSTITUTION_PATH)}
-        onShowDreams={onShowDreams}
-      />
-      <SkillsCard skills={skills} selected={selected} onSelect={onSelect} />
+    // Mobile: one stacked column (mind → skills → shared folders), ordered via `order`. Desktop: a
+    // bento — the left column (mind + shared folders) is a continuous flex column, skills on the
+    // right. The wrappers use `display: contents` on mobile so all three sections flatten into one
+    // column and interleave; at lg they become the two real columns.
+    <div className="flex flex-col gap-3 p-1 lg:grid lg:grid-cols-2 lg:items-start lg:gap-x-6">
+      <div className="contents lg:flex lg:flex-col lg:gap-6">
+        <div className="flex flex-col gap-3">
+          <GroupLabel>who {name} is</GroupLabel>
+          <MindCard
+            name={name}
+            memorySelected={selected === MEMORY_PATH && !dreamsActive}
+            constitutionSelected={
+              selected === CONSTITUTION_PATH && !dreamsActive
+            }
+            dreamsActive={dreamsActive}
+            dreamCount={dreamCount}
+            onSelectMemory={() => onSelect(MEMORY_PATH)}
+            onSelectConstitution={() => onSelect(CONSTITUTION_PATH)}
+            onShowDreams={onShowDreams}
+          />
+        </div>
+        <div className="order-3 flex flex-col gap-3 lg:order-none">
+          <GroupLabel>shared folders</GroupLabel>
+          <HostAccessCard />
+        </div>
+      </div>
+      <div className="contents lg:flex lg:flex-col lg:gap-6">
+        <div className="order-2 flex flex-col gap-3 lg:order-none">
+          <GroupLabel>abilities</GroupLabel>
+          <SkillsCard skills={skills} selected={selected} onSelect={onSelect} />
+        </div>
+      </div>
     </div>
   );
 }
 
+function GroupLabel({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <p
+      className={cn(
+        "shrink-0 px-1 text-[11px] font-medium text-muted-foreground/70",
+        className,
+      )}
+    >
+      {children}
+    </p>
+  );
+}
+
 function MindCard({
+  name,
   memorySelected,
   constitutionSelected,
   dreamsActive,
@@ -97,6 +151,7 @@ function MindCard({
   onSelectConstitution,
   onShowDreams,
 }: {
+  name: string;
   memorySelected: boolean;
   constitutionSelected: boolean;
   dreamsActive: boolean;
@@ -106,55 +161,94 @@ function MindCard({
   onShowDreams: () => void;
 }) {
   return (
-    <Card size="sm" className="!py-0 !gap-0 flex shrink-0 flex-col">
-      <button
-        type="button"
-        onClick={onSelectMemory}
-        className={cn(
-          "flex w-full items-center gap-2.5 border-b border-border/60 px-4 py-3 text-left text-sm transition-colors",
-          memorySelected
-            ? "bg-muted text-foreground"
-            : "hover:bg-muted/60 active:bg-muted",
-        )}
-      >
-        <BookOpen className="size-4 text-muted-foreground" />
-        <span className="font-medium">memory</span>
-      </button>
-
-      <button
-        type="button"
-        onClick={onSelectConstitution}
-        className={cn(
-          "flex w-full items-center gap-2.5 border-b border-border/60 px-4 py-3 text-left text-sm transition-colors",
-          constitutionSelected
-            ? "bg-muted text-foreground"
-            : "hover:bg-muted/60 active:bg-muted",
-        )}
-      >
-        <ScrollText className="size-4 text-muted-foreground" />
-        <span className="font-medium">constitution</span>
-      </button>
-
-      <button
-        type="button"
-        onClick={onShowDreams}
-        className={cn(
-          "flex w-full items-center gap-2.5 px-4 py-3 text-left text-sm transition-colors",
-          dreamsActive
-            ? "bg-muted text-foreground"
-            : "hover:bg-muted/60 active:bg-muted",
-        )}
-      >
-        <Moon className="size-4 text-muted-foreground" />
-        <span className="font-medium">dreams</span>
-        {dreamCount > 0 && (
-          <span className="text-[10px] text-muted-foreground/60">
-            {dreamCount}
-          </span>
-        )}
-        <ChevronRight className="ml-auto size-4 shrink-0 text-muted-foreground/60" />
-      </button>
+    <Card size="sm" className="shrink-0">
+      <CardContent>
+        <ItemGroup>
+          <HubRow
+            onClick={onSelectMemory}
+            selected={memorySelected}
+            iconClass="bg-amber-500/12 text-amber-600 dark:text-amber-400"
+            icon={<BookOpen />}
+            title="memory"
+            description={`what ${name} remembers about you`}
+          />
+          <HubRow
+            onClick={onSelectConstitution}
+            selected={constitutionSelected}
+            iconClass="bg-emerald-500/12 text-emerald-600 dark:text-emerald-400"
+            icon={<ScrollText />}
+            title="constitution"
+            description={`the directives you set that ${name} follows`}
+          />
+          <HubRow
+            onClick={onShowDreams}
+            selected={dreamsActive}
+            iconClass="bg-indigo-500/12 text-indigo-500 dark:text-indigo-400"
+            icon={<Moon />}
+            title="dreams"
+            description="nightly reflections on the day"
+            trailing={
+              <>
+                {dreamCount > 0 && (
+                  <span className="text-[11px] text-muted-foreground">
+                    {dreamCount}
+                  </span>
+                )}
+                <ChevronRight className="size-4 text-muted-foreground/60" />
+              </>
+            }
+          />
+        </ItemGroup>
+      </CardContent>
     </Card>
+  );
+}
+
+// A soft, tappable "cell" inside a hub card, built on the shadcn Item primitive:
+// a tinted icon square, a title, an optional secondary line, optional trailing.
+function HubRow({
+  icon,
+  iconClass,
+  title,
+  description,
+  trailing,
+  selected = false,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  iconClass: string;
+  title: string;
+  description?: string;
+  trailing?: React.ReactNode;
+  selected?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Item
+      asChild
+      variant="muted"
+      size="sm"
+      className={cn(
+        "cursor-pointer text-left transition hover:brightness-95 dark:hover:brightness-110",
+        selected && "brightness-95 dark:brightness-110",
+      )}
+    >
+      <button type="button" onClick={onClick}>
+        <ItemMedia
+          variant="icon"
+          className={cn("size-9 rounded-[10px]", iconClass)}
+        >
+          {icon}
+        </ItemMedia>
+        <ItemContent className="gap-0.5">
+          <ItemTitle>{title}</ItemTitle>
+          {description ? (
+            <ItemDescription>{description}</ItemDescription>
+          ) : null}
+        </ItemContent>
+        {trailing ? <ItemActions>{trailing}</ItemActions> : null}
+      </button>
+    </Item>
   );
 }
 
@@ -168,7 +262,7 @@ function SkillsCard({
   onSelect: (path: string) => void;
 }) {
   const [nav, setNav] = useState<SkillNav>(() => {
-    if (selected && selected.startsWith(SKILLS_PREFIX)) {
+    if (selected?.startsWith(SKILLS_PREFIX)) {
       const skillName = selected.slice(SKILLS_PREFIX.length).split("/")[0];
       const skill = skills.find((s) => s.name === skillName);
       if (skill) return { view: "skill", skillPath: skill.path };
@@ -186,100 +280,107 @@ function SkillsCard({
     nav.view === "skill"
       ? (skills.find((s) => s.path === nav.skillPath) ?? null)
       : null;
-  const inSkillView = activeSkill !== null;
 
   return (
-    <Card size="sm" className="!py-0 !gap-0 flex flex-1 min-h-0 flex-col">
-      <CardHeader className="shrink-0 !flex !flex-row !items-center !gap-2.5 !px-5 !py-2.5 border-b border-border/60 [.border-b]:!pb-2.5">
-        {inSkillView && activeSkill ? (
-          <>
-            <button
-              type="button"
-              onClick={() => setNav({ view: "root" })}
-              className="flex items-center gap-0.5 text-sm hover:opacity-80"
-            >
-              <ChevronLeft className="size-4" />
-              skills
-            </button>
-            <span className="text-muted-foreground/60">/</span>
-            <CardTitle className="!text-sm !font-medium truncate">
-              {activeSkill.name}
-            </CardTitle>
-          </>
-        ) : (
-          <>
-            <Sparkles className="size-4 text-muted-foreground" />
-            <CardTitle className="!text-sm !font-medium">skills</CardTitle>
-          </>
-        )}
-      </CardHeader>
-
-      <CardContent className="flex-1 min-h-0 overflow-auto !px-0">
-        {inSkillView && activeSkill ? (
-          activeSkill.mdFiles.length === 0 ? (
-            <EmptyRow>no markdown files</EmptyRow>
+    <Card size="sm" className="!py-0">
+      <ScrollArea className="h-80">
+        <div className="flex flex-col gap-2 p-3">
+          {activeSkill ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setNav({ view: "root" })}
+                className="flex items-center gap-1 self-start px-1 py-0.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+              >
+                <ChevronLeft className="size-3.5" />
+                <span className="font-medium text-foreground">
+                  {activeSkill.name}
+                </span>
+              </button>
+              {activeSkill.mdFiles.length === 0 ? (
+                <EmptyRow>no markdown files</EmptyRow>
+              ) : (
+                <ItemGroup>
+                  {activeSkill.mdFiles.map((file) => (
+                    <Row
+                      key={file.path}
+                      icon={<FileText />}
+                      iconClass="bg-muted text-muted-foreground"
+                      label={file.name}
+                      selected={selected === file.path}
+                      onClick={() => onSelect(file.path)}
+                    />
+                  ))}
+                </ItemGroup>
+              )}
+            </>
+          ) : skills.length === 0 ? (
+            <EmptyRow>no skills installed</EmptyRow>
           ) : (
-            activeSkill.mdFiles.map((file) => (
-              <Row
-                key={file.path}
-                icon={<FileText className="size-4" />}
-                label={file.name}
-                selected={selected === file.path}
-                onClick={() => onSelect(file.path)}
-              />
-            ))
-          )
-        ) : skills.length === 0 ? (
-          <EmptyRow>no skills installed</EmptyRow>
-        ) : (
-          skills.map((skill) => (
-            <Row
-              key={skill.path}
-              icon={<Wand2 className="size-4" />}
-              label={skill.name}
-              hasChevron
-              selected={
-                selected !== null && selected.startsWith(`${skill.path}/`)
-              }
-              onClick={() => setNav({ view: "skill", skillPath: skill.path })}
-            />
-          ))
-        )}
-      </CardContent>
+            <ItemGroup>
+              {skills.map((skill) => (
+                <Row
+                  key={skill.path}
+                  icon={<Wand2 />}
+                  iconClass="bg-violet-500/12 text-violet-600 dark:text-violet-400"
+                  label={skill.name}
+                  hasChevron
+                  selected={selected?.startsWith(`${skill.path}/`) ?? false}
+                  onClick={() =>
+                    setNav({ view: "skill", skillPath: skill.path })
+                  }
+                />
+              ))}
+            </ItemGroup>
+          )}
+        </div>
+      </ScrollArea>
     </Card>
   );
 }
 
 function Row({
   icon,
+  iconClass,
   label,
   hasChevron = false,
   selected,
   onClick,
 }: {
   icon: React.ReactNode;
+  iconClass: string;
   label: string;
   hasChevron?: boolean;
   selected: boolean;
   onClick: () => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
+    <Item
+      asChild
+      variant="muted"
+      size="sm"
       className={cn(
-        "flex w-full items-center gap-2.5 border-b border-border/60 px-4 py-2.5 text-left text-sm transition-colors last:border-b-0",
-        selected
-          ? "bg-muted text-foreground"
-          : "hover:bg-muted/60 active:bg-muted",
+        "cursor-pointer text-left transition hover:brightness-95 dark:hover:brightness-110",
+        selected && "brightness-95 dark:brightness-110",
       )}
     >
-      <span className="text-muted-foreground">{icon}</span>
-      <span className="flex-1 truncate">{label}</span>
-      {hasChevron && (
-        <ChevronRight className="size-4 shrink-0 text-muted-foreground/60" />
-      )}
-    </button>
+      <button type="button" onClick={onClick}>
+        <ItemMedia
+          variant="icon"
+          className={cn("size-8 rounded-[9px]", iconClass)}
+        >
+          {icon}
+        </ItemMedia>
+        <ItemContent>
+          <ItemTitle>{label}</ItemTitle>
+        </ItemContent>
+        {hasChevron ? (
+          <ItemActions>
+            <ChevronRight className="size-4 text-muted-foreground/60" />
+          </ItemActions>
+        ) : null}
+      </button>
+    </Item>
   );
 }
 

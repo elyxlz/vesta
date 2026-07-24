@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -92,7 +93,7 @@ func (tc *TelegramClient) StartPolling() {
 		case update.Message != nil:
 			tc.handleMessage(update.Message)
 		case update.EditedMessage != nil:
-			tc.handleMessage(update.EditedMessage)
+			tc.handleEditedMessage(update.EditedMessage)
 		case update.CallbackQuery != nil:
 			tc.handleCallbackQuery(update.CallbackQuery)
 		}
@@ -130,6 +131,104 @@ func (tc *TelegramClient) handleCallbackQuery(cb *tgbotapi.CallbackQuery) {
 func (tc *TelegramClient) Stop() {
 	tc.bot.StopReceivingUpdates()
 	tc.store.Close()
+}
+
+// notifContext is who an inbound message is from, resolved identically for a new message and
+// for an edit of one.
+type notifContext struct {
+	chatName     string
+	contactName  string
+	username     string
+	sender       string
+	contactSaved bool
+	isDirectChat bool
+}
+
+func chatNameOf(msg *tgbotapi.Message) string {
+	if msg.Chat.Title != "" {
+		return msg.Chat.Title
+	}
+	if msg.Chat.FirstName != "" {
+		return strings.TrimSpace(msg.Chat.FirstName + " " + msg.Chat.LastName)
+	}
+	return ""
+}
+
+// notifContextFor resolves who to name in a notification about msg, and reports false when
+// nothing should be written for it at all: our own message, notifications off, or a skipped
+// sender. Shared so an edit stays exactly as quiet as the message it refers to.
+func (tc *TelegramClient) notifContextFor(msg *tgbotapi.Message) (notifContext, bool) {
+	isFromMe := msg.From != nil && int64(msg.From.ID) == tc.botUserID
+	if tc.notificationsDir == "" || isFromMe {
+		return notifContext{}, false
+	}
+
+	username := ""
+	senderID := ""
+	if msg.From != nil {
+		username = msg.From.UserName
+		senderID = strconv.FormatInt(int64(msg.From.ID), 10)
+	}
+	if tc.skipSenders[senderID] || tc.skipSenders[username] {
+		return notifContext{}, false
+	}
+
+	senderName := formatSenderName(msg.From)
+	contactName := ""
+	contactSaved := false
+	if contact, _ := tc.store.GetManualContact(msg.Chat.ID); contact != nil {
+		contactName = contact.Name
+		contactSaved = true
+	}
+	if contactName == "" {
+		contactName = senderName
+	}
+
+	return notifContext{
+		chatName:     chatNameOf(msg),
+		contactName:  contactName,
+		username:     username,
+		sender:       senderName,
+		contactSaved: contactSaved,
+		isDirectChat: msg.Chat.Type == "private",
+	}, true
+}
+
+// handleEditedMessage reports that a message the agent already read now says something else.
+// Telegram delivers the edit as a whole message carrying the new text under the original's ID,
+// so routing it through handleMessage would store it correctly but announce it as a brand new
+// message, and the agent would answer the same question twice.
+func (tc *TelegramClient) handleEditedMessage(msg *tgbotapi.Message) {
+	newText := msg.Text
+	if newText == "" {
+		newText = msg.Caption
+	}
+	if newText == "" {
+		return
+	}
+
+	// Read the old text before the update overwrites it: it is the whole point of the
+	// notification, and an edit to a message we never stored just reads as empty.
+	oldText, err := tc.store.GetMessageContent(int64(msg.MessageID))
+	if err != nil {
+		log.Printf("Failed to look up edited message %d: %v", msg.MessageID, err)
+	}
+	if err := tc.store.UpdateMessageContent(int64(msg.MessageID), msg.Chat.ID, newText); err != nil {
+		log.Printf("Failed to apply edit to message %d: %v", msg.MessageID, err)
+	}
+	if oldText == newText {
+		return
+	}
+
+	if ctx, ok := tc.notifContextFor(msg); ok {
+		if err := WriteEditNotification(
+			tc.notificationsDir, int64(msg.MessageID), ctx.chatName, ctx.contactName,
+			ctx.username, tc.instance, ctx.contactSaved, ctx.isDirectChat,
+			ctx.sender, oldText, newText,
+		); err != nil {
+			log.Printf("Failed to write edit notification for %d: %v", msg.MessageID, err)
+		}
+	}
 }
 
 func (tc *TelegramClient) handleMessage(msg *tgbotapi.Message) {
@@ -185,19 +284,9 @@ func (tc *TelegramClient) handleMessage(msg *tgbotapi.Message) {
 	}
 
 	senderName := formatSenderName(msg.From)
-	username := ""
-	if msg.From != nil {
-		username = msg.From.UserName
-	}
-
-	chatName := msg.Chat.Title
-	if chatName == "" && msg.Chat.FirstName != "" {
-		chatName = strings.TrimSpace(msg.Chat.FirstName + " " + msg.Chat.LastName)
-	}
-
+	chatName := chatNameOf(msg)
 	chatType := string(msg.Chat.Type)
 	isFromMe := msg.From != nil && int64(msg.From.ID) == tc.botUserID
-	isDirectChat := msg.Chat.Type == "private"
 	timestamp := msg.Time()
 
 	var replyToID int64
@@ -219,42 +308,94 @@ func (tc *TelegramClient) handleMessage(msg *tgbotapi.Message) {
 	}
 
 	// Write notification for incoming messages
-	if tc.notificationsDir != "" && !isFromMe {
-		contactName := ""
-		contactSaved := false
-		if contact, _ := tc.store.GetManualContact(msg.Chat.ID); contact != nil {
-			contactName = contact.Name
-			contactSaved = true
-		}
-		if contactName == "" {
-			contactName = senderName
-		}
-
-		senderPhone := ""
-		if msg.From != nil {
-			senderPhone = strconv.FormatInt(int64(msg.From.ID), 10)
-		}
-
-		if !tc.skipSenders[senderPhone] && !tc.skipSenders[username] {
-			WriteNotification(
-				tc.notificationsDir,
-				int64(msg.MessageID),
-				chatName,
-				contactName,
-				username,
-				tc.instance,
-				contactSaved,
-				isDirectChat,
-				senderName,
-				content,
-				mediaType,
-				replyToID,
-			)
-		}
+	if ctx, ok := tc.notifContextFor(msg); ok {
+		WriteNotification(
+			tc.notificationsDir,
+			int64(msg.MessageID),
+			ctx.chatName,
+			ctx.contactName,
+			ctx.username,
+			tc.instance,
+			ctx.contactSaved,
+			ctx.isDirectChat,
+			ctx.sender,
+			content,
+			mediaType,
+			replyToID,
+		)
 	}
 }
 
+// --- Telegram MarkdownV2 rendering -----------------------------------------
+//
+// Outbound messages are sent as MarkdownV2 with every reserved character in
+// literal text escaped: an unescaped underscore pair (as in `cs_live_...`)
+// reads as italics, silently corrupting a Stripe Checkout link into a dead pay
+// page. Explicit `[label](url)` links stay intact (label escaped; url needs
+// only `)`/`\` escaped) so a clickable pay link's session id survives
+// byte-for-byte. A bare URL is escaped as plain text and survives verbatim.
+
+// mdV2Escaper backslash-escapes every MarkdownV2 reserved character in a run of
+// literal text. Backslash is listed first so we never double-escape our own
+// escapes.
+var mdV2Escaper = strings.NewReplacer(
+	"\\", "\\\\",
+	"_", "\\_", "*", "\\*", "[", "\\[", "]", "\\]",
+	"(", "\\(", ")", "\\)", "~", "\\~", "`", "\\`",
+	">", "\\>", "#", "\\#", "+", "\\+", "-", "\\-",
+	"=", "\\=", "|", "\\|", "{", "\\{", "}", "\\}",
+	".", "\\.", "!", "\\!",
+)
+
+// mdV2LinkURLEscaper escapes the only two characters reserved inside a
+// MarkdownV2 `(...)` link destination.
+var mdV2LinkURLEscaper = strings.NewReplacer("\\", "\\\\", ")", "\\)")
+
+// mdLinkRe matches a Markdown inline link `[label](http(s)://url)` with a plain
+// label and a whitespace/paren-free URL -- the shape the skills emit.
+var mdLinkRe = regexp.MustCompile(`\[([^\[\]]*)\]\((https?://[^\s)]+)\)`)
+
+// toMarkdownV2 renders an agent message as safe Telegram MarkdownV2: literal
+// text is fully escaped (so a URL's underscores can never parse as italics)
+// while explicit [label](url) links are preserved with their URL byte-for-byte.
+func toMarkdownV2(text string) string {
+	var b strings.Builder
+	last := 0
+	for _, m := range mdLinkRe.FindAllStringSubmatchIndex(text, -1) {
+		b.WriteString(mdV2Escaper.Replace(text[last:m[0]]))
+		b.WriteString("[")
+		b.WriteString(mdV2Escaper.Replace(text[m[2]:m[3]]))
+		b.WriteString("](")
+		b.WriteString(mdV2LinkURLEscaper.Replace(text[m[4]:m[5]]))
+		b.WriteString(")")
+		last = m[1]
+	}
+	b.WriteString(mdV2Escaper.Replace(text[last:]))
+	return b.String()
+}
+
+// requireManualContact blocks sending to an individual user unless they are a
+// saved contact, mirroring the WhatsApp guard. Individual users have positive
+// chat IDs; groups and channels have non-positive IDs and are exempt. Stops the
+// agent from messaging strangers it was never told to contact.
+func (tc *TelegramClient) requireManualContact(chatID int64) error {
+	if chatID <= 0 {
+		return nil
+	}
+	contact, err := tc.store.GetManualContact(chatID)
+	if err != nil {
+		return fmt.Errorf("failed to verify saved contacts: %v", err)
+	}
+	if contact == nil {
+		return fmt.Errorf("no saved contact found for chat %d. Ask the user who this is, then run add-contact --name <name> --chat-id %d", chatID, chatID)
+	}
+	return nil
+}
+
 func (tc *TelegramClient) SendMessage(recipientID int64, text string) (int64, error) {
+	if err := tc.requireManualContact(recipientID); err != nil {
+		return 0, err
+	}
 	// Split long messages
 	if len(text) > MaxMessageLength {
 		chunks := splitMessage(text, MaxMessageLength)
@@ -264,11 +405,12 @@ func (tc *TelegramClient) SendMessage(recipientID int64, text string) (int64, er
 			if len(chunks) > 1 {
 				prefix = fmt.Sprintf("(%d/%d) ", i+1, len(chunks))
 			}
-			msg := tgbotapi.NewMessage(recipientID, prefix+chunk)
-			msg.ParseMode = "Markdown"
+			msg := tgbotapi.NewMessage(recipientID, toMarkdownV2(prefix+chunk))
+			msg.ParseMode = "MarkdownV2"
 			sent, err := tc.bot.Send(msg)
 			if err != nil {
-				// Retry without parse mode
+				// Retry as plain text (the unescaped original) if MarkdownV2 is rejected.
+				msg.Text = prefix + chunk
 				msg.ParseMode = ""
 				sent, err = tc.bot.Send(msg)
 				if err != nil {
@@ -285,11 +427,12 @@ func (tc *TelegramClient) SendMessage(recipientID int64, text string) (int64, er
 		return lastID, nil
 	}
 
-	msg := tgbotapi.NewMessage(recipientID, text)
-	msg.ParseMode = "Markdown"
+	msg := tgbotapi.NewMessage(recipientID, toMarkdownV2(text))
+	msg.ParseMode = "MarkdownV2"
 	sent, err := tc.bot.Send(msg)
 	if err != nil {
-		// Retry without parse mode
+		// Retry as plain text (the unescaped original) if MarkdownV2 is rejected.
+		msg.Text = text
 		msg.ParseMode = ""
 		sent, err = tc.bot.Send(msg)
 		if err != nil {
@@ -306,6 +449,9 @@ func (tc *TelegramClient) SendMessage(recipientID int64, text string) (int64, er
 }
 
 func (tc *TelegramClient) SendFile(recipientID int64, filePath, caption string) (int64, error) {
+	if err := tc.requireManualContact(recipientID); err != nil {
+		return 0, err
+	}
 	fileInfo, err := os.Stat(filePath)
 	if err != nil {
 		return 0, fmt.Errorf("file not found: %s", filePath)
@@ -447,14 +593,17 @@ func parseInlineKeyboard(spec string) (tgbotapi.InlineKeyboardMarkup, bool) {
 // reply-to. Used when buttons/reply are present (no chunking: a button message is a single unit).
 // Plain sends with neither option still go through SendMessage so long-text chunking is preserved.
 func (tc *TelegramClient) SendMessageWithOptions(recipientID int64, text, buttons string, replyTo int64) (int64, error) {
+	if err := tc.requireManualContact(recipientID); err != nil {
+		return 0, err
+	}
 	if buttons == "" && replyTo == 0 {
 		return tc.SendMessage(recipientID, text)
 	}
 	if len(text) > MaxMessageLength {
 		return 0, fmt.Errorf("message too long: %d chars (max %d for a message with buttons/reply)", len(text), MaxMessageLength)
 	}
-	msg := tgbotapi.NewMessage(recipientID, text)
-	msg.ParseMode = "Markdown"
+	msg := tgbotapi.NewMessage(recipientID, toMarkdownV2(text))
+	msg.ParseMode = "MarkdownV2"
 	if replyTo != 0 {
 		msg.ReplyToMessageID = int(replyTo)
 	}
@@ -463,6 +612,7 @@ func (tc *TelegramClient) SendMessageWithOptions(recipientID int64, text, button
 	}
 	sent, err := tc.bot.Send(msg)
 	if err != nil {
+		msg.Text = text
 		msg.ParseMode = ""
 		sent, err = tc.bot.Send(msg)
 		if err != nil {
@@ -480,18 +630,20 @@ func (tc *TelegramClient) SendMessageWithOptions(recipientID int64, text, button
 // This is the core of the "dynamic UI": update a status line, swap a menu, mark a choice taken.
 func (tc *TelegramClient) EditMessage(chatID, messageID int64, text, buttons string) error {
 	if kb, ok := parseInlineKeyboard(buttons); ok {
-		edit := tgbotapi.NewEditMessageTextAndMarkup(chatID, int(messageID), text, kb)
-		edit.ParseMode = "Markdown"
+		edit := tgbotapi.NewEditMessageTextAndMarkup(chatID, int(messageID), toMarkdownV2(text), kb)
+		edit.ParseMode = "MarkdownV2"
 		if _, err := tc.bot.Send(edit); err != nil {
+			edit.Text = text
 			edit.ParseMode = ""
 			if _, err = tc.bot.Send(edit); err != nil {
 				return fmt.Errorf("failed to edit message: %v", err)
 			}
 		}
 	} else {
-		edit := tgbotapi.NewEditMessageText(chatID, int(messageID), text)
-		edit.ParseMode = "Markdown"
+		edit := tgbotapi.NewEditMessageText(chatID, int(messageID), toMarkdownV2(text))
+		edit.ParseMode = "MarkdownV2"
 		if _, err := tc.bot.Send(edit); err != nil {
+			edit.Text = text
 			edit.ParseMode = ""
 			if _, err = tc.bot.Send(edit); err != nil {
 				return fmt.Errorf("failed to edit message: %v", err)
@@ -523,6 +675,9 @@ func (tc *TelegramClient) AnswerCallback(callbackID, text string, alert bool) er
 
 // SendVoice sends a voice note (best with .ogg/opus; other audio is sent as-is).
 func (tc *TelegramClient) SendVoice(recipientID int64, filePath, caption string) (int64, error) {
+	if err := tc.requireManualContact(recipientID); err != nil {
+		return 0, err
+	}
 	if _, err := os.Stat(filePath); err != nil {
 		return 0, fmt.Errorf("file not found: %s", filePath)
 	}

@@ -1,21 +1,24 @@
 import copy
+import datetime as dt
 import json
 import os
 import pathlib as pl
-import time
+import re
+import tempfile
 import typing as tp
 import uuid
 
 import pydantic as pyd
 import pydantic_settings as pyd_settings
+from claude_agent_sdk.types import SdkBeta, ThinkingConfigAdaptive, ThinkingConfigDisabled, ThinkingConfigEnabled
+
 from core import logger
-from claude_agent_sdk.types import ThinkingConfigAdaptive, ThinkingConfigDisabled, ThinkingConfigEnabled
 
-from .notification_interrupt_policy import NotificationInterruptRule
-
+from .notification_interrupt_policy import NotificationInterruptRule, drop_expired
 
 _DEFAULT_AGENT_DIR = pl.Path.home() / "agent"
 _THINKING_ENABLED_BUDGET_TOKENS = 10000
+_SKILL_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 # The Claude OAuth blob lives at the SDK-owned path: the `claude` CLI reads AND refreshes it in place,
 # so it is never persisted into the config store. Owned here (config.py is the lower-level module);
@@ -24,7 +27,7 @@ CREDENTIALS_PATH = pl.Path.home() / ".claude" / ".credentials.json"
 
 # The hand-authored provider/setup catalog + new-agent defaults. It is the single source of that
 # reference data: the Python model reads it for its field defaults (below), vestad embeds + serves it at
-# GET /manifest (merging in the personality presets), and web/cli read it. No generation step.
+# GET /manifest (merging in the personality presets), and the web app reads it. No generation step.
 MANIFEST_PATH = pl.Path(__file__).parent / "manifest.json"
 
 # A tiny floor so a corrupt/missing manifest can never crash-loop the boot path (it never happens in
@@ -65,7 +68,7 @@ _DEFAULT_CLAUDE_MODEL = _manifest_default("providers", "claude", "default_model"
 DEFAULT_CONTEXT_WINDOW = 200_000
 
 # The 1M-context beta. build_client_options enables it when the chosen window exceeds the 200k default.
-CONTEXT_1M_BETA = "context-1m-2025-08-07"
+CONTEXT_1M_BETA: SdkBeta = "context-1m-2025-08-07"
 
 # Per-provider context bounds enforced by the Field constraints (the catalog's presets live in the manifest).
 _CTX_MIN = 1_000
@@ -77,7 +80,7 @@ ADAPTIVE_THINKING = ThinkingConfigAdaptive(type="adaptive", display="summarized"
 
 def _resolve_agent_dir() -> pl.Path:
     # Mirrors the agent_dir field, but resolved from env before the config exists so the store path can be located.
-    if "AGENT_DIR" in os.environ and os.environ["AGENT_DIR"]:
+    if os.environ.get("AGENT_DIR"):
         return pl.Path(os.environ["AGENT_DIR"]).expanduser().resolve()
     return _DEFAULT_AGENT_DIR
 
@@ -100,12 +103,31 @@ def read_config_store() -> dict[str, pyd.JsonValue]:
     return data if isinstance(data, dict) else {}
 
 
-def _write_config_store(data: dict[str, pyd.JsonValue]) -> None:
-    path = config_store_path()
+def atomic_write_text(path: pl.Path, text: str) -> None:
+    """Write text to path atomically and durably: write a uniquely named sibling temp file, fsync it,
+    rename over the target, then fsync the directory so a power loss cannot land the rename ahead of
+    the data blocks and leave a zeroed file. The unique temp name keeps concurrent writers (coroutines
+    dispatch these writes to worker threads) last-write-wins instead of torn. The single owner of the
+    tmp-write + os.replace recipe (config.json here, state.json in state_store)."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2))
-    tmp.replace(path)
+    tmp_fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f"{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(tmp_fd, "w") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        pl.Path(tmp_name).replace(path)
+    finally:
+        pl.Path(tmp_name).unlink(missing_ok=True)  # no-op after a successful replace; removes the orphan on failure
+    dir_fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
+
+
+def _write_config_store(data: dict[str, pyd.JsonValue]) -> None:
+    atomic_write_text(config_store_path(), json.dumps(data, indent=2))
 
 
 def update_config_store(updates: dict[str, pyd.JsonValue]) -> None:
@@ -125,19 +147,18 @@ def update_config_store(updates: dict[str, pyd.JsonValue]) -> None:
     _write_config_store(current)
 
 
-def load_notification_rules(config: "VestaConfig") -> list[NotificationInterruptRule]:
-    """The current ruleset, read live from the store on disk (not the boot-time config) so monitor_loop
-    and edits stay in step without a restart. Reads config.data_dir/config.json — the same file the
-    config API writes. One malformed rule (e.g. an invalid regex from a newer skill) is dropped and the
-    rest kept; never raises."""
-    path = config.data_dir / "config.json"
-    if not path.is_file():
-        return []
+def load_notification_rules() -> list[NotificationInterruptRule]:
+    """The current ruleset, read live from the store on disk (not the boot-time config) via
+    read_config_store, so monitor_loop and edits stay in step without a restart. It runs on the
+    per-tick notification hot path, so a transient unreadable store (OSError) yields no rules rather
+    than raising; one malformed rule (e.g. an invalid regex from a newer skill) is dropped and the
+    rest kept."""
     try:
-        store = json.loads(path.read_text())
-    except json.JSONDecodeError:
+        store = read_config_store()
+    except OSError as exc:
+        logger.error(f"config store unreadable ({exc}); ignoring it")
         return []
-    section = store["notification_rules"] if isinstance(store, dict) and "notification_rules" in store else []
+    section = store["notification_rules"] if "notification_rules" in store else []
     if not isinstance(section, list):
         logger.error("config store notification_rules is not a list; ignoring")
         return []
@@ -147,21 +168,42 @@ def load_notification_rules(config: "VestaConfig") -> list[NotificationInterrupt
             rules.append(NotificationInterruptRule.model_validate(item))
         except pyd.ValidationError as exc:
             logger.error(f"dropping invalid notification rule {item} — keeping the rest ({exc})")
-    return rules
+    return drop_expired(rules, dt.datetime.now(dt.UTC))
+
+
+def load_active_skills(config: "VestaConfig") -> list[str]:
+    """The current active skill list, read live from the store so CLI edits and PUT /config
+    are visible to GET /config before the next restart."""
+    try:
+        store = read_config_store()
+    except OSError as exc:
+        logger.error(f"config store unreadable ({exc}); using boot-time active_skills")
+        return config.active_skills
+    if "active_skills" not in store:
+        return config.active_skills
+    try:
+        return VestaConfig.model_validate({"active_skills": store["active_skills"]}).active_skills
+    except pyd.ValidationError as exc:
+        logger.error(f"config store active_skills is invalid; using boot-time active_skills ({exc})")
+        return config.active_skills
 
 
 class ClaudeOAuth(pyd.BaseModel):
-    """Mirrors the `claudeAiOauth` blob in the SDK credentials file. Tolerates extra keys: the `claude`
-    CLI owns the file and adds fields we don't model. Loaded at boot, never persisted to the store."""
+    """Mirrors the `claudeAiOauth` blob in the SDK credentials file (aliases carry the on-disk
+    camelCase). Tolerates extra keys: the `claude` CLI owns the file and adds fields we don't model.
+    Loaded at boot, never persisted to the store."""
 
-    model_config = pyd.ConfigDict(extra="allow")
+    model_config = pyd.ConfigDict(extra="allow", populate_by_name=True, serialize_by_alias=True)
 
-    accessToken: str | None = None  # noqa: N815  (mirrors the on-disk camelCase verbatim)
-    refreshToken: str | None = None  # noqa: N815
-    expiresAt: int | None = None  # noqa: N815
+    access_token: str | None = pyd.Field(default=None, alias="accessToken")
+    refresh_token: str | None = pyd.Field(default=None, alias="refreshToken")
+    expires_at: int | None = pyd.Field(default=None, alias="expiresAt")
+    # The plan tier ("free" | "pro" | "max"); drives the context-window presets the picker offers,
+    # since the 1M-context beta is a Max-only entitlement.
+    subscription_type: str | None = pyd.Field(default=None, alias="subscriptionType")
 
 
-def _read_claude_oauth() -> "ClaudeOAuth | None":
+def read_claude_oauth() -> "ClaudeOAuth | None":
     """The `claudeAiOauth` blob from the SDK credentials file, or None when absent/unreadable. The
     file is the source of truth (the CLI refreshes it in place); we load it into the model at boot but
     never write it back through the config store."""
@@ -186,7 +228,8 @@ class ClaudeConfig(pyd.BaseModel):
     model: str = _DEFAULT_CLAUDE_MODEL
     max_context_tokens: int | None = pyd.Field(default=None, ge=_CTX_MIN, le=_CLAUDE_CTX_MAX)
     thinking: ThinkingConfigAdaptive | ThinkingConfigEnabled | ThinkingConfigDisabled = ADAPTIVE_THINKING
-    # Loaded from CREDENTIALS_PATH at construction (see VestaConfig._hydrate_claude_oauth); never persisted.
+    # Loaded from CREDENTIALS_PATH on the boot path only (load_config; provider.py reads the file
+    # itself when deriving status); never persisted, and never read during config validation.
     oauth: ClaudeOAuth | None = None
 
     @pyd.field_validator("thinking", mode="before")
@@ -255,12 +298,18 @@ class VestaConfig(pyd_settings.BaseSettings):
     # Ordered interrupt ruleset (first match wins; no match -> interrupt). Edited live via PUT /config
     # and the notifications skill; monitor_loop reads it from the store each tick (see load_notification_rules).
     notification_rules: list[NotificationInterruptRule] = pyd.Field(default_factory=list)
+    # When True, a reply containing an em dash, en dash, or ' - ' separator triggers a resend-without-them
+    # correction turn (see client.process_message). Off lets the model use dashes freely.
+    block_dashes: bool = True
+    # Optional skills linked into Claude Code at boot. Agent startup unions shipped defaults from
+    # core/default-skills.txt into this list before the first SDK session starts.
+    active_skills: list[str] = pyd.Field(default_factory=list)
 
     ephemeral: bool = False
     log_level: tp.Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     monitor_tick_interval: int = pyd.Field(default=2, ge=1)
     proactive_check_interval: int = pyd.Field(default=60, ge=1)
-    notif_pool_idle_grace_seconds: float = pyd.Field(default=30.0, gt=0)
+    notif_snooze_idle_grace_seconds: float = pyd.Field(default=30.0, gt=0)
     query_timeout: int = pyd.Field(default=120, ge=1)
     response_timeout: int = pyd.Field(default=600, ge=1)
     nightly_memory_hour: int | None = pyd.Field(default=3, ge=0, le=23)
@@ -270,19 +319,30 @@ class VestaConfig(pyd_settings.BaseSettings):
     agent_token: pyd.SecretStr | None = None
     agent_dir: pl.Path = pyd.Field(default=_DEFAULT_AGENT_DIR)
     agent_name: str = "vesta"
-    # IANA timezone, owned here (not env): clients deliver it via PUT /config. The TZ alias lets a
-    # legacy agent seed the field so _apply_timezone re-exports its real value.
+    # IANA timezone, owned here (not env): clients deliver it via PUT /config and main.py applies it
+    # to the process once at boot (tzset). The TZ alias lets a legacy agent seed the field.
     timezone: str = pyd.Field(default="UTC", validation_alias=pyd.AliasChoices("timezone", "TZ"))
     # One-shot freeform setup notes; materialized to data/seed-context.md on boot, read once at first wake.
     seed_context: str = pyd.Field(default="")
 
-    @pyd.model_validator(mode="after")
-    def _hydrate_claude_oauth(self) -> "VestaConfig":
-        # The store never persists the Claude OAuth blob (the SDK CLI owns/refreshes that file), so a
-        # claude provider arrives with oauth=None; load it from disk here. The one non-store injection.
-        if isinstance(self.provider, ClaudeConfig) and self.provider.oauth is None:
-            self.provider = self.provider.model_copy(update={"oauth": _read_claude_oauth()})
-        return self
+    @pyd.field_validator("active_skills", mode="before")
+    @classmethod
+    def _normalize_active_skills(cls, value: object) -> list[str]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise ValueError("active_skills must be a list of skill names")
+        names: set[str] = set()
+        for item in value:
+            if not isinstance(item, str):
+                raise ValueError("active_skills entries must be strings")
+            name = item.strip()
+            if not name:
+                raise ValueError("active_skills entries must not be blank")
+            if _SKILL_NAME_RE.fullmatch(name) is None:
+                raise ValueError(f"invalid skill name: {name!r}")
+            names.add(name)
+        return sorted(names)
 
     @pyd.field_validator("agent_dir", mode="before")
     @classmethod
@@ -294,6 +354,13 @@ class VestaConfig(pyd_settings.BaseSettings):
     @property
     def notifications_dir(self) -> pl.Path:
         return self.agent_dir / "notifications"
+
+    @property
+    def notif_trash_dir(self) -> pl.Path:
+        # Trashed notifications are moved here rather than deleted, so a too-aggressive trash rule stays
+        # recoverable/auditable. A subdir of notifications_dir is safe: the loader globs "*.json"
+        # non-recursively and the watcher is recursive=False, so files parked here are never re-scanned.
+        return self.notifications_dir / "trash"
 
     @property
     def data_dir(self) -> pl.Path:
@@ -314,14 +381,6 @@ class VestaConfig(pyd_settings.BaseSettings):
     @property
     def dreamer_dir(self) -> pl.Path:
         return self.agent_dir / "dreamer"
-
-    @pyd.model_validator(mode="after")
-    def _apply_timezone(self) -> "VestaConfig":
-        # The config object owns timezone, so applying it to the process env on construction means
-        # every consumer (shell `date`, calendar/reminders skills, tasks' tzlocal) inherits it.
-        os.environ["TZ"] = self.timezone
-        time.tzset()
-        return self
 
     @classmethod
     def settings_customise_sources(
@@ -403,8 +462,19 @@ def validate_config_updates(config: "VestaConfig", data: object) -> dict[str, py
         for rule in validated.notification_rules:
             if not rule.id:
                 rule.id = uuid.uuid4().hex
-        updates["notification_rules"] = [rule.model_dump() for rule in validated.notification_rules]
+        updates["notification_rules"] = [rule.model_dump(mode="json") for rule in validated.notification_rules]
+    if "active_skills" in updates:
+        updates["active_skills"] = validated.active_skills
     return updates
+
+
+def _hydrate_claude_oauth(config: VestaConfig) -> VestaConfig:
+    """The store never persists the Claude OAuth blob (the SDK CLI owns/refreshes that file), so a
+    claude provider arrives with oauth=None; boot loads it from disk here. Only load_config hydrates:
+    validating a config (PUT /config, PATCH /provider) is inert and never touches disk."""
+    if isinstance(config.provider, ClaudeConfig) and config.provider.oauth is None:
+        config.provider = config.provider.model_copy(update={"oauth": read_claude_oauth()})
+    return config
 
 
 def load_config() -> tuple[VestaConfig, list[str]]:
@@ -414,18 +484,12 @@ def load_config() -> tuple[VestaConfig, list[str]]:
     `on-failure` restart policy retries a few times before giving up and leaving the agent down. So
     drop each offending env override and rebuild, reverting only that field; if nothing is droppable,
     fall back to a default claude provider.
-
-    Legacy convergence runs first (before the config is built), so the loaded config reflects the
-    migrated nested provider rather than a stale default. This makes load_config the single owner of
-    "what config does the agent run on" — there is no separate boot step to sequence wrongly.
     """
-    migrate_legacy_config_to_store()
-    migrate_notification_policy_file()
     issues: list[str] = []
     dropped: set[str] = set()
     while True:
         try:
-            return VestaConfig(), issues
+            return _hydrate_claude_oauth(VestaConfig()), issues
         except pyd.ValidationError as exc:
             progressed = False
             for error in exc.errors():
@@ -445,148 +509,11 @@ def load_config() -> tuple[VestaConfig, list[str]]:
                 # rather than crash-loop. model_construct skips validators, so build provider by hand
                 # and preserve the agent token from env so the HTTP/WS API stays authenticated.
                 issues.append(f"configuration could not be validated, using all defaults: {exc}")
-                token = os.environ["AGENT_TOKEN"] if "AGENT_TOKEN" in os.environ and os.environ["AGENT_TOKEN"] else None
+                token = os.environ["AGENT_TOKEN"] if os.environ.get("AGENT_TOKEN") else None
                 return (
                     VestaConfig.model_construct(
-                        provider=ClaudeConfig(oauth=_read_claude_oauth()),
+                        provider=ClaudeConfig(oauth=read_claude_oauth()),
                         agent_token=pyd.SecretStr(token) if token is not None else None,
                     ),
                     issues,
                 )
-
-
-_LEGACY_PROVIDER_ENV = pl.Path.home() / ".claude" / "vesta-provider.env"
-_LEGACY_FLAT_KEYS = ("agent_model", "agent_provider", "openrouter_key", "max_context_tokens", "thinking")
-
-
-def _parse_legacy_export(content: str, key: str) -> str | None:
-    """Read a `[export ]KEY=value` line from a shell env file, unquoting once; None if absent/empty."""
-    for raw_line in content.splitlines():
-        line = raw_line.strip().removeprefix("export ")
-        name, _, value = line.partition("=")
-        if "=" not in line or name.strip() != key:
-            continue
-        value = value.strip()
-        if len(value) >= 2 and value.startswith("'") and value.endswith("'"):
-            value = value[1:-1]
-        return value or None
-    return None
-
-
-def migrate_legacy_config_to_store() -> None:
-    """Relocate a legacy agent's flat provider config into the nested `provider` object, draining the
-    old flat config.json keys, the legacy env vars, and vesta-provider.env. Idempotent: once the store
-    has a `provider` and no flat keys, it's a no-op. This is the only place flat->nested lives.
-
-    LEGACY(remove-when: no fleet agent boots with flat provider keys in config.json): this function,
-    its boot call site, _parse_legacy_export, and _LEGACY_FLAT_KEYS.
-    """
-    store = read_config_store()
-    content = _LEGACY_PROVIDER_ENV.read_text() if _LEGACY_PROVIDER_ENV.is_file() else ""
-    changed = False
-
-    def legacy(env_key: str, store_key: str) -> str | None:  # old flat store key wins, then env, then file
-        if store_key in store and store[store_key] not in (None, ""):
-            return str(store[store_key])
-        env = os.environ[env_key] if env_key in os.environ else ""
-        return env or _parse_legacy_export(content, env_key)
-
-    if "provider" not in store:
-        kind = legacy("AGENT_PROVIDER", "agent_provider")
-        model = legacy("AGENT_MODEL", "agent_model")
-        key = legacy("ANTHROPIC_AUTH_TOKEN", "openrouter_key")
-        ctx_raw = legacy("MAX_CONTEXT_TOKENS", "max_context_tokens")
-        ctx = int(ctx_raw) if ctx_raw and ctx_raw.isdigit() else None
-        provider: dict[str, pyd.JsonValue] | None = None
-        if kind == "openrouter" and key and model:
-            provider = {"kind": "openrouter", "model": model, "key": key}
-            if ctx is not None:
-                provider["max_context_tokens"] = ctx
-        elif model or kind == "claude":
-            provider = {"kind": "claude", "model": model or "opus"}
-            if ctx is not None:
-                provider["max_context_tokens"] = ctx
-            if "thinking" in store and store["thinking"] is not None:
-                provider["thinking"] = store["thinking"]
-        if provider is not None:
-            store["provider"] = provider
-            changed = True
-
-    for flat in _LEGACY_FLAT_KEYS:
-        if flat in store:
-            store.pop(flat, None)
-            changed = True
-
-    personality = os.environ["AGENT_PERSONALITY"] if "AGENT_PERSONALITY" in os.environ else _parse_legacy_export(content, "AGENT_PERSONALITY")
-    if personality and "agent_personality" not in store:
-        store["agent_personality"] = personality
-        changed = True
-    tz = os.environ["TZ"] if "TZ" in os.environ else None
-    if tz and tz != "UTC" and "timezone" not in store:
-        store["timezone"] = tz
-        changed = True
-
-    if changed:
-        logger.startup("migrated legacy flat config into the nested provider store")
-        _write_config_store(store)
-    _LEGACY_PROVIDER_ENV.unlink(missing_ok=True)
-
-
-_LEGACY_POLICY_FILE = "notification_policy.json"
-
-
-def _default_as_rule(default: object) -> dict[str, pyd.JsonValue]:
-    """A legacy per-source default -> an equivalent catch-all rule. An empty type (the no-type bucket)
-    becomes a source-only rule; a concrete type is preserved."""
-    if not isinstance(default, dict):
-        return {}
-    data = tp.cast("dict[str, pyd.JsonValue]", default)
-    type_ = data["type"] if "type" in data else None
-    rule: dict[str, pyd.JsonValue] = {
-        "source": data["source"] if "source" in data else None,
-        "action": data["action"] if "action" in data else None,
-    }
-    if isinstance(type_, str) and type_:
-        rule["type"] = type_
-    return rule
-
-
-def migrate_notification_policy_file() -> None:
-    """Fold a legacy agent's notification_policy.json (a separate file: rules + per-source defaults)
-    into config.json's notification_rules, then delete the file. Per-source defaults were consulted
-    after all rules, so they become trailing catch-all rules and first-match order is preserved. Runs
-    once — the file is deleted after — and only seeds when the store has no rules yet.
-
-    LEGACY(remove-when: no fleet agent has notification_policy.json on disk): this function,
-    _default_as_rule, _LEGACY_POLICY_FILE, and the boot call site.
-    """
-    path = _resolve_agent_dir() / "data" / _LEGACY_POLICY_FILE
-    if not path.is_file():
-        return
-    try:
-        policy = json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError):
-        path.unlink(missing_ok=True)
-        return
-    sections = tp.cast("dict[str, pyd.JsonValue]", policy) if isinstance(policy, dict) else {}
-
-    def _as_list(key: str) -> list[pyd.JsonValue]:
-        value = sections[key] if key in sections else None
-        return value if isinstance(value, list) else []
-
-    migrated: list[pyd.JsonValue] = []
-    rules_raw, defaults_raw = _as_list("rules"), _as_list("defaults")
-    for item in [*rules_raw, *(_default_as_rule(d) for d in defaults_raw)]:
-        try:
-            rule = NotificationInterruptRule.model_validate(item)
-        except pyd.ValidationError:
-            continue
-        if not rule.id:
-            rule.id = uuid.uuid4().hex
-        migrated.append(rule.model_dump())
-    store = read_config_store()
-    if migrated and "notification_rules" not in store:
-        store["notification_rules"] = migrated
-        _write_config_store(store)
-        logger.startup(f"migrated {len(migrated)} notification rule(s) from notification_policy.json into config")
-    path.unlink(missing_ok=True)

@@ -32,6 +32,15 @@ pub struct AuthFlowResponse {
     pub session_id: String,
 }
 
+/// The `POST /auth/session` response: a fresh JWT access token plus its rotating refresh token
+/// and the access token's TTL (`auth::SessionResponse`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct AccessToken {
+    pub access_token: String,
+    pub refresh_token: String,
+    pub expires_in: u64,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct StartAllResult {
     pub name: String,

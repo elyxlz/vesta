@@ -19,7 +19,7 @@ function SkeletonCard({ index, opacity }: { index: number; opacity: number }) {
     <motion.div
       className="flex shrink-0 items-center justify-center"
       style={{
-        width: `${AGENT_CAROUSEL_CARD_WIDTH}px`,
+        width: `${String(AGENT_CAROUSEL_CARD_WIDTH)}px`,
         aspectRatio: "1/1",
         scale,
       }}
@@ -46,7 +46,7 @@ function SkeletonList() {
       className="relative flex min-h-0 w-full flex-1 items-center overflow-hidden"
       style={{
         gap: AGENT_CAROUSEL_GAP,
-        paddingInline: `calc(50% - ${AGENT_CAROUSEL_CARD_WIDTH / 2}px)`,
+        paddingInline: `calc(50% - ${String(AGENT_CAROUSEL_CARD_WIDTH / 2)}px)`,
       }}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
@@ -57,7 +57,7 @@ function SkeletonList() {
         <SkeletonCard key={i} index={i} opacity={1 - i / SKELETON_COUNT} />
       ))}
       <p className="absolute bottom-12 left-0 right-0 text-center text-sm text-muted-foreground">
-        loading agents…
+        loading agents...
       </p>
     </motion.div>
   );

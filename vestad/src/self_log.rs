@@ -13,13 +13,15 @@ const MAX_LOG_FILES: usize = 7;
 /// A daily-rotating, self-pruning file appender for vestad's own logs, writing
 /// `vestad.log.<date>` under `dir`. Retains [`MAX_LOG_FILES`] days so the logs stay
 /// bounded without external rotation.
-pub fn build_appender(dir: &Path) -> Result<tracing_appender::rolling::RollingFileAppender, String> {
+pub fn build_appender(
+    dir: &Path,
+) -> Result<tracing_appender::rolling::RollingFileAppender, String> {
     tracing_appender::rolling::Builder::new()
         .rotation(tracing_appender::rolling::Rotation::DAILY)
         .filename_prefix(LOG_FILENAME_PREFIX)
         .max_log_files(MAX_LOG_FILES)
         .build(dir)
-        .map_err(|e| format!("failed to build log appender: {}", e))
+        .map_err(|e| format!("failed to build log appender: {e}"))
 }
 
 /// Newest log file in the log directory (rotation writes one dated file per day),
@@ -48,16 +50,20 @@ fn log_tail_argv(path: &Path, lines: usize, follow: bool) -> Vec<String> {
 }
 
 /// Spawn a `tail` over vestad's own log file, piping its stdout for the SSE reader.
-pub fn spawn_log_tail(path: &Path, lines: usize, follow: bool) -> Result<tokio::process::Child, String> {
+pub fn spawn_log_tail(
+    path: &Path,
+    lines: usize,
+    follow: bool,
+) -> Result<tokio::process::Child, String> {
     let argv = log_tail_argv(path, lines, follow);
-    let (program, args) = argv.split_first().expect("log_tail_argv is never empty");
+    let (program, tail_args) = argv.split_first().expect("log_tail_argv is never empty");
     tokio::process::Command::new(program)
-        .args(args)
+        .args(tail_args)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true)
         .spawn()
-        .map_err(|e| format!("failed to spawn log tail: {}", e))
+        .map_err(|e| format!("failed to spawn log tail: {e}"))
 }
 
 #[cfg(test)]

@@ -91,14 +91,18 @@ export function ConnectionControls() {
         description="receive prereleases first to test them before everyone else; switching off stops future betas (it never downgrades)"
         checked={gatewayChannel === "beta"}
         disabled={channelSaving}
-        onCheckedChange={onToggleBeta}
+        onCheckedChange={(checked) => {
+          void onToggleBeta(checked);
+        }}
       />
       <ConnectionToggle
         label="automatic updates"
         description="apply new releases automatically in the background; switching off keeps you on the current version until you update manually"
         checked={gatewayAutoUpdate}
         disabled={autoUpdateSaving}
-        onCheckedChange={onToggleAutoUpdate}
+        onCheckedChange={(checked) => {
+          void onToggleAutoUpdate(checked);
+        }}
       />
     </>
   );

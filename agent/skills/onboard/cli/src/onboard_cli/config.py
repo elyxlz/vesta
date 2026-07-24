@@ -9,7 +9,7 @@ Most of it is read from the environment:
   token, so a self-hosted box can onboard too.
 
 The non-secret referral code that attributes a completed signup to this account
-is the one exception: it comes from the shared on-disk file the `account` skill
+is the one exception: it comes from the shared on-disk file the `vesta-cloud-account` skill
 writes (see `referral_store.py`), not the environment, so a changed/reissued
 code takes effect without redeploying the box.
 
@@ -30,16 +30,10 @@ from . import referral_store
 # staging/testing (the control plane injects it into managed boxes).
 DEFAULT_CONTROL_URL = "https://vesta.run/api"
 
-# Hosted Vesta is ONE plan, one box — the control plane's `pro` tier (4 vCPU /
-# 8 GB). The control plane also defines starter/power for admin provisioning and
+# Hosted Vesta is ONE plan, one box — the control plane's `pro` tier (2 vCPU /
+# 4 GB). The control plane also defines starter/power for admin provisioning and
 # upgrades, but onboarding only ever sells this one.
 PLAN = "pro"
-
-# List MONTHLY price (USD) — the NEGOTIATION FLOOR. The agent can quote any price
-# >= it (uncapped above); the control plane enforces the floor server-side, so
-# this is for the agent's UX + a friendly local error. Keep in sync with the
-# control plane's listMonthlyCents("pro").
-PLAN_FLOOR_USD = 24
 
 # Public marketing + install links surfaced by `onboard links`.
 LINKS = {

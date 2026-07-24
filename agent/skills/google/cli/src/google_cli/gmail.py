@@ -1,10 +1,11 @@
 import base64
 import pathlib as pl
-from datetime import datetime, UTC
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from email.mime.base import MIMEBase
+import re
 from email import encoders
+from email.mime.base import MIMEBase
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from html.parser import HTMLParser
 from typing import Any
 
 from . import api
@@ -12,6 +13,33 @@ from .config import Config
 
 EMAIL_SAVE_SUBDIR = "emails"
 LONG_EMAIL_WARNING_THRESHOLD = 5000
+
+# Block-level tags that should force a line break when flattening HTML to text.
+_HTML_BLOCK_TAGS = {
+    "p",
+    "div",
+    "br",
+    "tr",
+    "li",
+    "ul",
+    "ol",
+    "table",
+    "thead",
+    "tbody",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "blockquote",
+    "section",
+    "article",
+    "header",
+    "footer",
+    "hr",
+    "pre",
+}
 
 
 def _sanitize_filename(value: str) -> str:
@@ -28,10 +56,11 @@ def _prepare_email_output_path(config: Config, message_id: str, subject: str | N
 
     base_dir = config.data_dir / EMAIL_SAVE_SUBDIR
     base_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%S")
+    # Deterministic filename keyed on the message id: re-fetching the same message
+    # OVERWRITES its file instead of accumulating a new timestamped copy each call.
     subject_fragment = _sanitize_filename(subject or "")
     id_fragment = _sanitize_filename(message_id)[:32]
-    filename = f"{timestamp}_{subject_fragment[:40]}_{id_fragment}.txt".strip("_")
+    filename = f"{subject_fragment[:40]}_{id_fragment}.txt".strip("_")
     return base_dir / filename
 
 
@@ -57,23 +86,104 @@ def _parse_message_snapshot(msg: dict) -> dict:
     }
 
 
+class _HTMLToText(HTMLParser):
+    """Flatten HTML to readable text while PRESERVING link targets.
+
+    Anchor text keeps its visible label and, when the ``href`` is a real URL not
+    already spelled out in the text, appends `` (href)`` so the destination
+    survives. ``<script>``/``<style>`` bodies are dropped; block tags become line
+    breaks. Entities are converted by HTMLParser (convert_charrefs defaults on).
+    """
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self._skip_depth = 0
+        self._href: str | None = None
+        self._anchor_start = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in ("script", "style"):
+            self._skip_depth += 1
+        elif tag == "a":
+            self._href = dict(attrs).get("href")
+            self._anchor_start = len(self.parts)
+        elif tag in _HTML_BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in ("script", "style") and self._skip_depth:
+            self._skip_depth -= 1
+        elif tag == "a":
+            href = self._href
+            self._href = None
+            if href and not href.startswith(("#", "javascript:", "mailto:")):
+                anchor_text = "".join(self.parts[self._anchor_start :])
+                if href not in anchor_text:
+                    self.parts.append(f" ({href})")
+        elif tag in _HTML_BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if not self._skip_depth:
+            self.parts.append(data)
+
+    def get_text(self) -> str:
+        text = "".join(self.parts)
+        # Collapse runs of spaces/tabs, trim each line, cap blank-line runs at one.
+        text = re.sub(r"[ \t]+", " ", text)
+        text = "\n".join(line.strip() for line in text.split("\n"))
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
+
+
+def _html_to_text(html: str) -> str:
+    parser = _HTMLToText()
+    parser.feed(html)
+    parser.close()
+    return parser.get_text()
+
+
+def _decode_body_data(body: dict) -> str:
+    data = body.get("data") if isinstance(body, dict) else None
+    if not data:
+        return ""
+    return base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
+
+
+def _collect_body_parts(payload: dict, plain: list[str], html: list[str]) -> None:
+    """Walk the MIME tree, gathering text/plain and text/html leaves separately.
+
+    Handles arbitrarily nested multipart/alternative and multipart/mixed. Skips
+    parts with a filename (attachments/inline images), which are not body text.
+    """
+    parts = payload.get("parts")
+    if parts:
+        for part in parts:
+            _collect_body_parts(part, plain, html)
+        return
+    if payload.get("filename"):
+        return
+    mime = payload.get("mimeType") or ""
+    if mime == "text/plain":
+        plain.append(_decode_body_data(payload.get("body", {})))
+    elif mime == "text/html":
+        html.append(_decode_body_data(payload.get("body", {})))
+
+
 def _get_body_text(payload: dict) -> str:
-    mime = payload["mimeType"] if "mimeType" in payload else None
-    body = payload["body"] if "body" in payload else {}
-    if mime == "text/plain" and ("data" in body and body["data"]):
-        return base64.urlsafe_b64decode(body["data"]).decode("utf-8", errors="replace")
+    """Best readable body: prefer text/plain, else text/html flattened with links."""
+    plain: list[str] = []
+    html: list[str] = []
+    _collect_body_parts(payload, plain, html)
 
-    parts = payload["parts"] if "parts" in payload else []
-    for part in parts:
-        part_body = part["body"] if "body" in part else {}
-        if ("mimeType" in part and part["mimeType"] == "text/plain") and ("data" in part_body and part_body["data"]):
-            return base64.urlsafe_b64decode(part_body["data"]).decode("utf-8", errors="replace")
+    plain_text = "\n".join(t for t in plain if t).strip()
+    if plain_text:
+        return plain_text
 
-    for part in parts:
-        result = _get_body_text(part)
-        if result:
-            return result
-
+    html_joined = "\n".join(t for t in html if t)
+    if html_joined.strip():
+        return _html_to_text(html_joined)
     return ""
 
 
@@ -81,7 +191,7 @@ def _get_attachments_info(payload: dict) -> list[dict]:
     attachments = []
     for part in payload["parts"] if "parts" in payload else []:
         part_body = part["body"] if "body" in part else {}
-        if ("filename" in part and part["filename"]) and ("attachmentId" in part_body):
+        if (part.get("filename")) and ("attachmentId" in part_body):
             attachments.append(
                 {
                     "id": part_body["attachmentId"],
@@ -90,7 +200,7 @@ def _get_attachments_info(payload: dict) -> list[dict]:
                     "mimeType": part["mimeType"] if "mimeType" in part else "application/octet-stream",
                 }
             )
-        if "parts" in part and part["parts"]:
+        if part.get("parts"):
             attachments.extend(_get_attachments_info(part))
     return attachments
 

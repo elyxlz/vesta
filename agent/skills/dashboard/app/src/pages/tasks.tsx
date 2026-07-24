@@ -12,6 +12,7 @@ import {
   CalendarIcon,
   InboxIcon,
   CheckCircle2Icon,
+  RepeatIcon,
 } from "lucide-react"
 
 interface Task {
@@ -22,6 +23,34 @@ interface Task {
   due_date: string | null
   created_at: string
   completed_at: string | null
+}
+
+interface Reminder {
+  id: string
+  task_id: string | null
+  message: string
+  schedule: string
+  next_run: string | null
+  auto_generated: boolean
+  status: string
+}
+
+// A "cron" is a recurring reminder: its schedule is not a one-shot ("once at ...")
+// and not an auto-generated task-due nudge ("auto: ...").
+function isRecurring(r: Reminder): boolean {
+  const s = (r.schedule || "").trim().toLowerCase()
+  return !r.auto_generated && !s.startsWith("once") && !s.startsWith("auto")
+}
+
+function relNext(next: string | null): string {
+  if (!next) return ""
+  const t = new Date(next).getTime()
+  const now = Date.now()
+  const diffH = (t - now) / 3600000
+  const abs = new Date(next).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
+  if (diffH < 1) return `${abs} · soon`
+  if (diffH < 24) return `${abs} · in ${Math.round(diffH)}h`
+  return `${abs} · in ${Math.round(diffH / 24)}d`
 }
 
 type GroupKey = "overdue" | "week" | "later" | "none"
@@ -69,6 +98,7 @@ const PRIORITY: Record<number, { label: string; cls: string } | undefined> = {
 
 export function TasksPage() {
   const [tasks, setTasks] = useState<Task[]>([])
+  const [reminders, setReminders] = useState<Reminder[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [completing, setCompleting] = useState<Set<string>>(new Set())
@@ -80,6 +110,17 @@ export function TasksPage() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data: Task[] = await res.json()
       setTasks(Array.isArray(data) ? data.filter((t) => t.status !== "done") : [])
+      // Reminders (crons) are best-effort: a failure here must not break tasks.
+      try {
+        const remRes = await apiFetch("tasks/reminders")
+        if (remRes.ok) {
+          const remData = await remRes.json()
+          const list: Reminder[] = Array.isArray(remData) ? remData : (remData?.reminders ?? [])
+          setReminders(list)
+        }
+      } catch {
+        /* ignore reminder load errors */
+      }
     } catch (e) {
       toast.error("Couldn't load tasks")
       console.error(e)
@@ -131,6 +172,14 @@ export function TasksPage() {
   })).filter((g) => g.items.length > 0)
 
   const overdueCount = tasks.filter((t) => classifyDue(t.due_date) === "overdue").length
+
+  const crons = reminders
+    .filter(isRecurring)
+    .sort((a, b) => {
+      if (!a.next_run) return 1
+      if (!b.next_run) return -1
+      return new Date(a.next_run).getTime() - new Date(b.next_run).getTime()
+    })
 
   return (
     <div className="space-y-3">
@@ -213,6 +262,30 @@ export function TasksPage() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {!loading && crons.length > 0 && (
+        <div className="space-y-1.5 pt-1">
+          <div className="flex items-center gap-1.5 text-xs font-medium text-violet-400">
+            <RepeatIcon className="size-3.5" />
+            <span>Recurring</span>
+            <span className="text-muted-foreground">({crons.length})</span>
+          </div>
+          <div className="space-y-1.5">
+            {crons.map((r) => (
+              <div key={r.id} className="flex items-start gap-2.5 rounded-xl bg-secondary p-2.5 text-sm">
+                <RepeatIcon className="mt-0.5 size-3.5 shrink-0 text-violet-400" />
+                <div className="min-w-0 flex-1">
+                  <p className="leading-snug">{r.message}</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {r.schedule}
+                    {r.next_run && <span className="text-violet-300"> · next {relNext(r.next_run)}</span>}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

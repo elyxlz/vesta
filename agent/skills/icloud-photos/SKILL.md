@@ -9,7 +9,7 @@ Read access to iCloud Photos. Designed around shared-album download.
 
 ## Setup
 
-See [SETUP.md](SETUP.md). Apple ID + password come from `~/.icloud/credentials.json` or a Keeper record titled `Apple ID` / `iCloud`. Cookies live in `~/.icloud/cookies/`. The session has to be re-trusted every ~30 days via SMS 2FA.
+See [SETUP.md](SETUP.md). Apple ID + password come from `~/.icloud/credentials.json` or a Keeper record titled `Apple ID` / `iCloud`. Cookies live in `~/.icloud/cookies/`.
 
 ## Authentication flow
 
@@ -80,8 +80,8 @@ Creates one subfolder per shared album. Same `--quality` and `--include-videos` 
 * Live Photos: the still image is downloaded; the paired video is fetched only when `--include-videos` is on (it shows up as a separate `.MOV` next to the `.HEIC`).
 * `pyicloud` returns HEIC for originals on iPhone-sourced albums. Use `--quality medium` for JPEG.
 * If the SMS step fails (phone not in trusted list), check `~/.icloud/state.json` for the candidate list under `candidates`.
-* Cookies are cached under `~/.icloud/cookies/`. Apple invalidates them roughly every 30 days; re-run `icloud auth login` when `auth status` reports `is_trusted_session: false`.
+* Apple invalidates the cached cookies roughly every 30 days; re-run `icloud auth login` when `auth status` reports `is_trusted_session: false`.
 
 ## Installed via
 
-`uv tool install ~/agent/skills/icloud-photos/cli`
+`uv tool install --editable ~/agent/skills/icloud-photos/cli`
