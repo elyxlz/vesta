@@ -10,12 +10,17 @@ import os
 
 import aiohttp
 
-from . import logger
+from . import lifecycle, logger
 
 _TIMEOUT = aiohttp.ClientTimeout(total=15)
+AGENT_RESTART_REASON = lifecycle.AGENT_RESTART
 
 
-async def _request_lifecycle(action: str) -> bool:
+async def _request_lifecycle(
+    action: str,
+    *,
+    reason: lifecycle.RestartReason | None = None,
+) -> bool:
     """POST /agents/{me}/{action} to vestad (action = "restart" | "stop"). Returns True when vestad
     accepted it — including the connection being cut mid-request, the expected path once vestad
     starts tearing the container down — and False only when vestad could not be reached at all."""
@@ -29,7 +34,16 @@ async def _request_lifecycle(action: str) -> bool:
     connector = aiohttp.TCPConnector(ssl=False)
     try:
         async with aiohttp.ClientSession(connector=connector, timeout=_TIMEOUT) as session:
-            resp = await session.post(url, headers={"X-Agent-Token": token})
+            resp = await session.post(
+                url,
+                headers={"X-Agent-Token": token},
+                json={
+                    "reason": reason.log_reason,
+                    "agent_message": reason.agent_message,
+                }
+                if reason is not None
+                else None,
+            )
             resp.raise_for_status()
         # vestad answered 2xx without tearing us down yet (rare — a real restart/stop usually cuts
         # the connection first, below). The action was accepted.
@@ -77,9 +91,11 @@ async def send_user_notification(kind: str, title: str, body: str) -> None:
         logger.warning(f"user notification to vestad timed out ({kind})")
 
 
-async def request_restart() -> bool:
+async def request_restart(
+    reason: lifecycle.RestartReason = AGENT_RESTART_REASON,
+) -> bool:
     """Ask vestad to restart this agent's container (graceful docker restart)."""
-    return await _request_lifecycle("restart")
+    return await _request_lifecycle("restart", reason=reason)
 
 
 async def request_stop() -> bool:

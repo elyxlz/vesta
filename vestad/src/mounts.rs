@@ -157,7 +157,7 @@ fn join_and(items: &[String]) -> String {
     }
 }
 
-/// A `mounts:` restart reason describing a grant change, or None if nothing changed.
+/// Separate operational and agent-facing copy describing a grant change, or None if unchanged.
 /// `actual` is the container's current user binds as (host, container, writable) tuples
 /// (`docker::actual_user_mounts`); `desired` is the new grant list. Classified per
 /// `container_path`: new path = granted, dropped path = removed, same path with a different
@@ -165,7 +165,7 @@ fn join_and(items: &[String]) -> String {
 pub fn mount_change_reason(
     actual: &[(String, String, bool)],
     desired: &[HostMount],
-) -> Option<String> {
+) -> Option<crate::lifecycle::LifecycleReason<'static>> {
     let actual_modes: std::collections::HashMap<&str, bool> = actual
         .iter()
         .map(|(_, container, writable)| (container.as_str(), *writable))
@@ -204,18 +204,27 @@ pub fn mount_change_reason(
 
     match (granted.is_empty(), removed.is_empty(), changed.is_empty()) {
         (true, true, true) => None,
-        (false, true, true) => Some(format!(
-            "mounts: you now have access to {}",
-            join_and(&granted)
-        )),
-        (true, false, true) => Some(format!(
-            "mounts: your access to {} was removed",
-            join_and(&removed)
-        )),
-        (true, true, false) => Some(format!(
-            "mounts: your access changed: {}",
-            join_and(&changed)
-        )),
+        (false, true, true) => {
+            let detail = join_and(&granted);
+            Some(crate::lifecycle::LifecycleReason::owned(
+                format!("mounts: granted {detail}"),
+                format!("You now have access to {detail}."),
+            ))
+        }
+        (true, false, true) => {
+            let detail = join_and(&removed);
+            Some(crate::lifecycle::LifecycleReason::owned(
+                format!("mounts: removed {detail}"),
+                format!("Your access to {detail} was removed."),
+            ))
+        }
+        (true, true, false) => {
+            let detail = join_and(&changed);
+            Some(crate::lifecycle::LifecycleReason::owned(
+                format!("mounts: changed {detail}"),
+                format!("Your access changed: {detail}."),
+            ))
+        }
         _ => {
             let mut segments: Vec<String> = Vec::new();
             if !granted.is_empty() {
@@ -227,22 +236,21 @@ pub fn mount_change_reason(
             if !changed.is_empty() {
                 segments.push(format!("changed: {}", changed.join(", ")));
             }
-            Some(format!(
-                "mounts: filesystem access changed. {}",
-                segments.join("; ")
+            let detail = segments.join("; ");
+            Some(crate::lifecycle::LifecycleReason::owned(
+                format!("mounts: {detail}"),
+                format!("Your filesystem access changed. {detail}."),
             ))
         }
     }
 }
 
-/// The reason a restart should hand the agent: an explicit caller reason wins; otherwise the
-/// mount delta the restart applies speaks for itself; no delta, no reason. Factored pure so the
-/// precedence is pinned by a fast test (`restart_agent` itself needs Docker).
+/// An explicit caller reason wins; otherwise the mount delta speaks for itself.
 pub fn effective_restart_reason(
-    caller: Option<String>,
+    caller: Option<crate::lifecycle::LifecycleReason<'static>>,
     actual: &[(String, String, bool)],
     desired: &[HostMount],
-) -> Option<String> {
+) -> Option<crate::lifecycle::LifecycleReason<'static>> {
     caller.or_else(|| mount_change_reason(actual, desired))
 }
 
@@ -313,42 +321,60 @@ mod tests {
         }
     }
 
+    fn assert_reason(
+        reason: Option<crate::lifecycle::LifecycleReason<'static>>,
+        log_reason: &str,
+        agent_message: &str,
+    ) {
+        let reason = reason.expect("expected a mount-change reason");
+        assert_eq!(reason.log_reason, log_reason);
+        assert_eq!(reason.agent_message, agent_message);
+    }
+
     #[test]
     fn mount_change_reason_grants_removals_and_mixed() {
-        // single grant
-        assert_eq!(
-            mount_change_reason(&[], &[m("/media/Plex", false)]).as_deref(),
-            Some("mounts: you now have access to /media/Plex (read-only)")
+        assert_reason(
+            mount_change_reason(&[], &[m("/media/Plex", false)]),
+            "mounts: granted /media/Plex (read-only)",
+            "You now have access to /media/Plex (read-only).",
         );
-        // multiple grants
-        assert_eq!(
-            mount_change_reason(&[], &[m("/media/Plex", false), m("/downloads", true)]).as_deref(),
-            Some("mounts: you now have access to /media/Plex (read-only) and /downloads (read-write)")
+        assert_reason(
+            mount_change_reason(&[], &[m("/media/Plex", false), m("/downloads", true)]),
+            "mounts: granted /media/Plex (read-only) and /downloads (read-write)",
+            "You now have access to /media/Plex (read-only) and /downloads (read-write).",
         );
-        // removal only
-        assert_eq!(
-            mount_change_reason(&[("/media/Plex".into(), "/media/Plex".into(), false)], &[])
-                .as_deref(),
-            Some("mounts: your access to /media/Plex was removed")
+        assert_reason(
+            mount_change_reason(&[("/media/Plex".into(), "/media/Plex".into(), false)], &[]),
+            "mounts: removed /media/Plex",
+            "Your access to /media/Plex was removed.",
         );
-        // mixed
-        assert_eq!(
-            mount_change_reason(&[("/old".into(), "/old".into(), false)], &[m("/media/Plex", false)]).as_deref(),
-            Some("mounts: filesystem access changed. granted: /media/Plex (read-only); removed: /old")
+        assert_reason(
+            mount_change_reason(
+                &[("/old".into(), "/old".into(), false)],
+                &[m("/media/Plex", false)],
+            ),
+            "mounts: granted: /media/Plex (read-only); removed: /old",
+            "Your filesystem access changed. granted: /media/Plex (read-only); removed: /old.",
         );
         // writable flips are mode changes, not fresh grants: a downgrade must not read as a gain
-        assert_eq!(
-            mount_change_reason(&[("/x".into(), "/x".into(), true)], &[m("/x", false)]).as_deref(),
-            Some("mounts: your access changed: /x (now read-only)")
+        assert_reason(
+            mount_change_reason(&[("/x".into(), "/x".into(), true)], &[m("/x", false)]),
+            "mounts: changed /x (now read-only)",
+            "Your access changed: /x (now read-only).",
         );
-        assert_eq!(
-            mount_change_reason(&[("/x".into(), "/x".into(), false)], &[m("/x", true)]).as_deref(),
-            Some("mounts: your access changed: /x (now read-write)")
+        assert_reason(
+            mount_change_reason(&[("/x".into(), "/x".into(), false)], &[m("/x", true)]),
+            "mounts: changed /x (now read-write)",
+            "Your access changed: /x (now read-write).",
         );
         // grant + mode change fold into the general branch
-        assert_eq!(
-            mount_change_reason(&[("/x".into(), "/x".into(), false)], &[m("/x", true), m("/new", false)]).as_deref(),
-            Some("mounts: filesystem access changed. granted: /new (read-only); changed: /x (now read-write)")
+        assert_reason(
+            mount_change_reason(
+                &[("/x".into(), "/x".into(), false)],
+                &[m("/x", true), m("/new", false)],
+            ),
+            "mounts: granted: /new (read-only); changed: /x (now read-write)",
+            "Your filesystem access changed. granted: /new (read-only); changed: /x (now read-write).",
         );
         // no change
         assert_eq!(
@@ -360,19 +386,19 @@ mod tests {
     #[test]
     fn effective_restart_reason_prefers_the_caller_reason() {
         // Caller intent wins over the synthesized delta...
+        let caller = crate::lifecycle::LifecycleReason::owned(
+            "manual: switching model",
+            "You changed models.",
+        );
         assert_eq!(
-            effective_restart_reason(
-                Some("manual: switching model".into()),
-                &[],
-                &[m("/new", false)]
-            )
-            .as_deref(),
-            Some("manual: switching model")
+            effective_restart_reason(Some(caller.clone()), &[], &[m("/new", false)]),
+            Some(caller),
         );
         // ...else the delta speaks, and no delta means no reason.
-        assert_eq!(
-            effective_restart_reason(None, &[], &[m("/new", false)]).as_deref(),
-            Some("mounts: you now have access to /new (read-only)")
+        assert_reason(
+            effective_restart_reason(None, &[], &[m("/new", false)]),
+            "mounts: granted /new (read-only)",
+            "You now have access to /new (read-only).",
         );
         assert_eq!(effective_restart_reason(None, &[], &[]), None);
     }

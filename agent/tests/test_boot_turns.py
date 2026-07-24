@@ -1,5 +1,7 @@
 """Tests for boot-turn assembly: boot-time control-flow delivered as ordered, non-interruptible turns."""
 
+from unittest.mock import patch
+
 import core.config as cfg
 import core.models as vm
 from core.main import BOOT_RESTORE_ORIENTATION, collect_boot_turns
@@ -31,7 +33,7 @@ def test_boot_turns_ordered_migrations_then_sync_then_config_then_greeting(tmp_p
         state=_authed_state(),
         config=config,
         config_issues=["BAD=1 is invalid; reverted to default"],
-        greeting_reason="clean: routine restart, no specific reason",
+        greeting_reason="You restarted after a routine shutdown.",
         first_start=False,
     )
 
@@ -43,7 +45,7 @@ def test_boot_turns_ordered_migrations_then_sync_then_config_then_greeting(tmp_p
     assert "[Migration: 002-y]" in turns[0]
     assert "[Upstream sync]" in turns[1]
     assert "BAD=1" in turns[2]
-    assert "[System Restart]\nReason: routine restart, no specific reason" in turns[3]
+    assert "[System Restart]\nReason: You restarted after a routine shutdown." in turns[3]
     # The orientation rides only the first converge turn, never the restart greeting (it already
     # runs the restart skill) or the later converge turns.
     assert BOOT_RESTORE_ORIENTATION not in turns[1]
@@ -58,10 +60,18 @@ def test_restart_only_boot_carries_no_daemon_orientation(tmp_path):
     state = _authed_state()
     state.persisted.last_synced_version = "9.9.9"  # current, so no upstream-sync turn fires
 
-    turns = collect_boot_turns(state=state, config=config, config_issues=[], greeting_reason="clean: routine restart", first_start=False)
+    with patch("core.loops.logger.startup") as startup_log:
+        turns = collect_boot_turns(
+            state=state,
+            config=config,
+            config_issues=[],
+            greeting_reason="You restarted after a routine shutdown.",
+            first_start=False,
+        )
 
     assert len(turns) == 1
     assert BOOT_RESTORE_ORIENTATION not in turns[0]
+    startup_log.assert_called_once_with("Boot turn: restart greeting")
 
 
 def test_first_start_pre_marks_migrations_and_greets_with_setup(tmp_path):
@@ -87,7 +97,13 @@ def test_restart_greeting_carries_pending_boot_message(tmp_path):
         "[Your context was just compacted; the summary is above.]\n\nnew day: greet warmly, summary at dreamer/x.md"
     )
 
-    turns = collect_boot_turns(state=state, config=config, config_issues=[], greeting_reason="clean: restarted", first_start=False)
+    turns = collect_boot_turns(
+        state=state,
+        config=config,
+        config_issues=[],
+        greeting_reason="You restarted.",
+        first_start=False,
+    )
 
     assert len(turns) == 1
     assert "new day: greet warmly" in turns[0]
@@ -104,7 +120,7 @@ def test_pending_boot_message_consumed_even_on_unauthenticated_boot(tmp_path):
     state = vm.State()  # no provider_status -> unauthenticated
     state.persisted.pending_boot_message = "[Your context was just compacted; the summary is above.]\n\nnew day"
 
-    result = greeting_turn(config=config, state=state, reason="clean: restarted")
+    result = greeting_turn(config=config, state=state, reason="You restarted.")
 
     assert result is None  # no greeting on an unauthenticated boot
     assert state.persisted.pending_boot_message is None  # but the one-shot message is still consumed
