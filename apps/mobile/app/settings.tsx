@@ -255,7 +255,7 @@ export default function SettingsScreen() {
           />
         </FormSection>
       </Screen>
-      <Stack.Toolbar placement="right">
+      <Stack.Toolbar placement="left">
         <Stack.Toolbar.Button
           accessibilityLabel="Close settings"
           icon={IS_IOS ? "xmark" : undefined}

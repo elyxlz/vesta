@@ -134,17 +134,17 @@ function RecentGatewaysContent() {
           style={[styles.headerSurface, { backgroundColor: colors.card }]}
         >
           <View style={styles.titleRow}>
+            <GatewayCloseButton
+              color={colors.text}
+              fallbackColor={colors.input}
+              onPress={() => router.back()}
+            />
             <Text
               family="heading"
               style={[styles.title, { color: colors.text }]}
             >
               Recent gateways
             </Text>
-            <GatewayCloseButton
-              color={colors.text}
-              fallbackColor={colors.input}
-              onPress={() => router.back()}
-            />
           </View>
           <Text style={[styles.subtitle, { color: colors.secondaryText }]}>
             Reconnect to a gateway previously used on this device.

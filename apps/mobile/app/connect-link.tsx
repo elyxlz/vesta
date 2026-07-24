@@ -104,14 +104,14 @@ function ConnectLinkContent({
     >
       <View style={styles.header}>
         <View style={styles.titleRow}>
-          <Text family="heading" style={[styles.title, { color: colors.text }]}>
-            Connect your gateway
-          </Text>
           <GatewayCloseButton
             color={colors.text}
             fallbackColor={colors.input}
             onPress={() => router.back()}
           />
+          <Text family="heading" style={[styles.title, { color: colors.text }]}>
+            Connect your gateway
+          </Text>
         </View>
         <Text style={[styles.subtitle, { color: colors.secondaryText }]}>
           Enter the connection link provided by your Vesta gateway.

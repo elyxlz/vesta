@@ -37,7 +37,7 @@ function ScanContent() {
   const header = (
     <>
       <Stack.Screen options={{ headerTintColor }} />
-      <Stack.Toolbar placement="right">
+      <Stack.Toolbar placement="left">
         <Stack.Toolbar.Button
           accessibilityLabel="Close scanner"
           icon={IS_IOS ? "xmark" : undefined}
