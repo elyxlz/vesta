@@ -27,9 +27,7 @@ def _config(tmp_path):
 def test_sigterm_hands_reason_to_usual_shutdown_log_without_extra_line(tmp_path):
     config = _config(tmp_path)
     state = vm.State()
-    state_store.pending_shutdown_reason_path(config).write_text(
-        "backup: scheduled"
-    )
+    state_store.pending_shutdown_reason_path(config).write_text("backup: scheduled")
 
     with patch("core.main.logger.shutdown") as shutdown_log:
         _make_signal_handler(state, config)(signal.SIGTERM, None)
@@ -65,18 +63,13 @@ async def test_usual_shutdown_log_includes_handed_reason(tmp_path):
         crashed = await run_vesta(config, state=state)
 
     assert crashed is False
-    assert any(
-        call.args == ("Shutting down (backup: scheduled)",)
-        for call in shutdown_log.call_args_list
-    )
+    assert any(call.args == ("Shutting down (backup: scheduled)",) for call in shutdown_log.call_args_list)
 
 
 def test_boot_discards_stale_shutdown_reason_without_using_it_as_restart_reason(tmp_path):
     config = _config(tmp_path)
     state = vm.State()
-    state_store.pending_shutdown_reason_path(config).write_text(
-        "backup: stale reason captured in a snapshot"
-    )
+    state_store.pending_shutdown_reason_path(config).write_text("backup: stale reason captured in a snapshot")
 
     reason = _consume_restart_reason(state, config, first_start=False)
 
@@ -92,10 +85,7 @@ def test_structured_boot_reason_keeps_log_and_agent_copy_separate(tmp_path):
         json.dumps(
             {
                 "log_reason": "backup: scheduled",
-                "agent_message": (
-                    "The system briefly paused you while it created a scheduled backup. "
-                    "No action is required."
-                ),
+                "agent_message": ("The system briefly paused you while it created a scheduled backup. No action is required."),
             }
         )
     )
@@ -103,10 +93,7 @@ def test_structured_boot_reason_keeps_log_and_agent_copy_separate(tmp_path):
     reason = _consume_restart_reason(state, config, first_start=False)
 
     assert reason.log_reason == "backup: scheduled"
-    assert reason.agent_message == (
-        "The system briefly paused you while it created a scheduled backup. "
-        "No action is required."
-    )
+    assert reason.agent_message == ("The system briefly paused you while it created a scheduled backup. No action is required.")
 
 
 def test_restart_reason_always_gets_a_dedicated_startup_line():

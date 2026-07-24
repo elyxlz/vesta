@@ -356,9 +356,7 @@ async def test_notification_file_deleted_before_processing_is_lost_on_restart(tm
     state.pending_compaction = vm.PendingCompaction(prompt=None, followup="new day", restart=True)
     with patch("core.loops.vestad_client.request_restart", new_callable=AsyncMock, return_value=True) as restart:
         await _run_with_compaction_stream(state, config, lambda: drain_compaction_request(state=state, config=config), pre_tokens=1)
-    restart.assert_awaited_once_with(
-        lifecycle.COMPACTION_RESTART
-    )  # restart fires after compaction (via vestad)
+    restart.assert_awaited_once_with(lifecycle.COMPACTION_RESTART)  # restart fires after compaction (via vestad)
 
     # The process restarts: run_vesta creates a fresh queue and init_state loads from disk.
     # A restarted process can only recover messages that are still on disk.
