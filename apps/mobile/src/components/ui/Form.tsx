@@ -287,7 +287,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   rowLabel: { fontSize: 16, fontWeight: "600" },
-  rowDetail: { fontSize: 13, lineHeight: 18 },
+  rowDetail: { fontSize: 14, lineHeight: 20 },
   value: { fontSize: 15 },
   valueWithIcon: {
     flexDirection: "row",
