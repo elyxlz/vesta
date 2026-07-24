@@ -1,13 +1,40 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { connectWithKey, resumeGatewaySession } from "./auth";
+import {
+  connectWithKey,
+  resumeGatewaySession,
+  signInWithVestaAccount,
+} from "./auth";
 
-vi.mock("expo-crypto", () => ({}));
-vi.mock("expo-web-browser", () => ({}));
+const { openAuthSessionAsync } = vi.hoisted(() => ({
+  openAuthSessionAsync: vi.fn(),
+}));
+
+vi.mock("expo-crypto", () => ({
+  randomUUID: () => "00000000-0000-4000-8000-000000000000",
+  digestStringAsync: () => Promise.resolve("challenge=="),
+  CryptoDigestAlgorithm: { SHA256: "SHA256" },
+  CryptoEncoding: { BASE64: "base64" },
+}));
+vi.mock("expo-web-browser", () => ({ openAuthSessionAsync }));
 
 describe("gateway connection", () => {
   afterEach(() => {
     vi.useRealTimers();
+    vi.clearAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("uses a private browser session for account sign-in", async () => {
+    vi.stubGlobal("__DEV__", true);
+    openAuthSessionAsync.mockResolvedValue({ type: "cancel" });
+
+    await expect(signInWithVestaAccount()).resolves.toBeNull();
+
+    expect(openAuthSessionAsync).toHaveBeenCalledWith(
+      expect.stringContaining("https://vesta.run/api/authorize?"),
+      "vesta://oauth/callback",
+      { preferEphemeralSession: true },
+    );
   });
 
   it("stops waiting when an unreachable gateway never responds", async () => {
