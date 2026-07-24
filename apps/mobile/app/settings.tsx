@@ -240,15 +240,13 @@ export default function SettingsScreen() {
         <FormSection
           title="Support"
           actions={
-            <ButtonGroup>
-              <Button
-                variant="cardGrouped"
-                onPress={() => router.push("/debug")}
-              >
+            <>
+              <Button pill variant="card" onPress={() => router.push("/debug")}>
                 Diagnostics
               </Button>
               <Button
-                variant="cardGrouped"
+                pill
+                variant="card"
                 onPress={() =>
                   void Linking.openURL(
                     "https://github.com/elyxlz/vesta/releases",
@@ -257,7 +255,7 @@ export default function SettingsScreen() {
               >
                 What’s new
               </Button>
-            </ButtonGroup>
+            </>
           }
         />
 
