@@ -39,6 +39,9 @@ interface ButtonProps {
   icon?: IconName;
   iconColor?: string;
   iconSize?: number;
+  trailingIcon?: IconName;
+  trailingIconColor?: string;
+  trailingIconSize?: number;
   disabled?: boolean;
   loading?: boolean;
   pill?: boolean;
@@ -60,6 +63,9 @@ export function Button({
   icon,
   iconColor,
   iconSize = 18,
+  trailingIcon,
+  trailingIconColor,
+  trailingIconSize = 17,
   disabled = false,
   loading = false,
   pill = false,
@@ -153,6 +159,13 @@ export function Button({
             >
               {children}
             </Text>
+            {trailingIcon && !loading ? (
+              <Ionicons
+                name={trailingIcon}
+                size={trailingIconSize}
+                color={trailingIconColor ?? colors.secondaryText}
+              />
+            ) : null}
             {usesCardSurface && loading ? (
               <ActivityIndicator color={contentColor} />
             ) : usesCardSurface ? (

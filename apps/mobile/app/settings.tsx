@@ -101,17 +101,22 @@ export default function SettingsScreen() {
   return (
     <>
       <Screen contentStyle={styles.content}>
-        <FormSection title="Experience">
-          <FormRow
-            label="Appearance"
-            detail="Use the system setting or choose light or dark."
-            onPress={chooseTheme}
-            valueIcon={appearanceValueIcon}
-            valueIconLabel={`${resolvedAppearance} appearance${
-              preferences.theme === "system" ? " from system setting" : ""
-            }`}
-          />
-        </FormSection>
+        <FormSection
+          title="Experience"
+          actions={
+            <Button
+              pill
+              variant="card"
+              trailingIcon={appearanceValueIcon}
+              accessibilityLabel={`Appearance, ${resolvedAppearance}${
+                preferences.theme === "system" ? " from system setting" : ""
+              }`}
+              onPress={chooseTheme}
+            >
+              Appearance
+            </Button>
+          }
+        />
 
         <FormSection title="Notifications">
           <SwitchRow
