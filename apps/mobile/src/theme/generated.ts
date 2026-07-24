@@ -170,7 +170,7 @@ export const designTokens = {
   },
   radii: {
     base: 10,
-    card: 22,
+    card: 28,
     control: 14,
     button: 15,
     bubble: 20,
