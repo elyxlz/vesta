@@ -62,33 +62,12 @@ fn running_agent<'a>(c: &'a Client, prefix: &str) -> TestAgent<'a> {
 /// returning the snapshot frame. Frames 1 and 2 are deterministically hello then snapshot (the
 /// handler sends both before entering its select loop).
 async fn handshake(sock: &mut SyncSocket) -> serde_json::Value {
-    let hello = sock
-        .recv_frame(HANDSHAKE_TIMEOUT)
-        .await
-        .expect("hello frame");
-    assert_eq!(
-        hello["type"].as_str(),
-        Some("hello"),
-        "first frame is hello"
-    );
-    assert!(
-        hello["version"].as_str().is_some(),
-        "hello carries the gateway version"
-    );
-    assert_eq!(
-        hello["min_supported"].as_str(),
-        Some(EXPECT_MIN_SUPPORTED),
-        "hello min_supported per D2"
-    );
-    let snapshot = sock
-        .recv_frame(HANDSHAKE_TIMEOUT)
-        .await
-        .expect("snapshot frame");
-    assert_eq!(
-        snapshot["type"].as_str(),
-        Some("snapshot"),
-        "second frame is snapshot"
-    );
+    let hello = sock.recv_frame(HANDSHAKE_TIMEOUT).await.expect("hello frame");
+    assert_eq!(hello["type"].as_str(), Some("hello"), "first frame is hello");
+    assert!(hello["version"].as_str().is_some(), "hello carries the gateway version");
+    assert_eq!(hello["min_supported"].as_str(), Some(EXPECT_MIN_SUPPORTED), "hello min_supported per D2");
+    let snapshot = sock.recv_frame(HANDSHAKE_TIMEOUT).await.expect("snapshot frame");
+    assert_eq!(snapshot["type"].as_str(), Some("snapshot"), "second frame is snapshot");
     snapshot
 }
 
@@ -155,15 +134,8 @@ async fn drive_and_expect_echo(
 /// Send a user notification to `agent` (kind `message`) over the loopback as the agent would, then
 /// assert the resulting `user_notification` delta reaches `sock`. Doubles as a liveness probe: a
 /// session still in its select loop receives the broadcast; a closed or wedged one never does.
-async fn send_user_notification_and_expect_delta(
-    c: &Client,
-    sock: &mut SyncSocket,
-    agent: &str,
-    token: &str,
-    body: &str,
-) {
-    c.send_user_notification(agent, token, "message", agent, body)
-        .expect("send user notification message");
+async fn send_user_notification_and_expect_delta(c: &Client, sock: &mut SyncSocket, agent: &str, token: &str, body: &str) {
+    c.send_user_notification(agent, token, "message", agent, body).expect("send user notification message");
     sock.expect_frame_matching(
         |f| f["type"].as_str() == Some("user_notification") && f["agent"].as_str() == Some(agent),
         USER_NOTIFICATION_TIMEOUT,
@@ -184,19 +156,10 @@ async fn hello_then_snapshot_carries_agent_info_branch() {
         let mut sock = c.open_sync().await.expect("open sync");
         let snapshot = handshake(&mut sock).await;
         if let Some(node) = snapshot["tree"]["agents"].get(agent.as_str()) {
-            assert!(
-                node.get("info").is_some(),
-                "agent node carries an info branch"
-            );
+            assert!(node.get("info").is_some(), "agent node carries an info branch");
             // The snapshot is tail-less by contract: roster + pending only, no event/chat tails.
-            assert!(
-                node.get("events").is_none(),
-                "snapshot node carries no event tail"
-            );
-            assert!(
-                node.get("chat").is_none(),
-                "snapshot node carries no chat tail"
-            );
+            assert!(node.get("events").is_none(), "snapshot node carries no event tail");
+            assert!(node.get("chat").is_none(), "snapshot node carries no chat tail");
             sock.close().await.ok();
             return;
         }
@@ -227,38 +190,20 @@ async fn user_notification_message_fans_a_delta_and_rejects_unknown_kinds() {
         .expect("send user notification message");
     let user_notification = sock
         .expect_frame_matching(
-            |f| {
-                f["type"].as_str() == Some("user_notification")
-                    && f["agent"].as_str() == Some(agent.name.as_str())
-            },
+            |f| f["type"].as_str() == Some("user_notification") && f["agent"].as_str() == Some(agent.name.as_str()),
             USER_NOTIFICATION_TIMEOUT,
         )
         .await
         .expect("a user_notification delta for the user notification");
-    assert_eq!(
-        user_notification["kind"].as_str(),
-        Some("message"),
-        "carries the kind"
-    );
-    assert_eq!(
-        user_notification["title"].as_str(),
-        Some(agent.name.as_str()),
-        "carries the title"
-    );
-    assert_eq!(
-        user_notification["body"].as_str(),
-        Some("a fresh reply"),
-        "carries the body"
-    );
+    assert_eq!(user_notification["kind"].as_str(), Some("message"), "carries the kind");
+    assert_eq!(user_notification["title"].as_str(), Some(agent.name.as_str()), "carries the title");
+    assert_eq!(user_notification["body"].as_str(), Some("a fresh reply"), "carries the body");
 
     // The kind is a closed set: an unknown kind is rejected with 400 (mapped to the error string).
     let err = c
         .send_user_notification(&agent.name, &token, "bogus", &agent.name, "nope")
         .expect_err("an unknown kind is rejected");
-    assert!(
-        err.contains("unknown user notification kind"),
-        "unexpected error for a bad kind: {err}"
-    );
+    assert!(err.contains("unknown user notification kind"), "unexpected error for a bad kind: {err}");
     sock.close().await.ok();
 }
 
@@ -280,14 +225,10 @@ async fn send_message_intent_id_echoes_on_the_chat_socket() {
     assert!(echo.get("id").is_some(), "the echoed event carries an id");
 
     // The durable copy is in the store: history returns the same message keyed by its intent id.
-    let history = c
-        .fetch_app_chat_history(&agent.name, 50)
-        .expect("fetch history");
+    let history = c.fetch_app_chat_history(&agent.name, 50).expect("fetch history");
     let events = history["events"].as_array().expect("history events array");
     assert!(
-        events
-            .iter()
-            .any(|e| e["intent_id"].as_str() == Some(intent.as_str())),
+        events.iter().any(|e| e["intent_id"].as_str() == Some(intent.as_str())),
         "history returns the sent message carrying {intent}: {history}"
     );
     chat.close().await.ok();
@@ -319,24 +260,15 @@ async fn reauth_extends_and_closes_on_bad() {
             Err(ref e) => break is_close_error(e),
         }
     };
-    assert!(
-        closed,
-        "a bad reauth must close the socket (a read timeout is not a close)"
-    );
+    assert!(closed, "a bad reauth must close the socket (a read timeout is not a close)");
 
     // (b) JWT socket + a valid reauth -> stays open and still fans a subsequent user notification.
     let jwt = c.mint_access_token().expect("mint jwt");
-    let mut tok = c
-        .open_sync_with_token(&jwt.access_token)
-        .await
-        .expect("open jwt sync");
+    let mut tok = c.open_sync_with_token(&jwt.access_token).await.expect("open jwt sync");
     handshake(&mut tok).await;
     let fresh = c.mint_access_token().expect("mint fresh jwt");
-    tok.reauth(&fresh.access_token)
-        .await
-        .expect("send valid reauth");
-    send_user_notification_and_expect_delta(&c, &mut tok, &agent.name, &token, "after reauth")
-        .await;
+    tok.reauth(&fresh.access_token).await.expect("send valid reauth");
+    send_user_notification_and_expect_delta(&c, &mut tok, &agent.name, &token, "after reauth").await;
     tok.close().await.ok();
 }
 
@@ -359,7 +291,6 @@ async fn unknown_client_frames_are_ignored() {
         .expect("send malformed frame");
 
     // The socket stayed live: a following user notification still fans its delta here.
-    send_user_notification_and_expect_delta(&c, &mut sock, &agent.name, &token, "still alive")
-        .await;
+    send_user_notification_and_expect_delta(&c, &mut sock, &agent.name, &token, "still alive").await;
     sock.close().await.ok();
 }

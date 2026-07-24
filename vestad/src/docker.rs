@@ -250,10 +250,7 @@ pub struct RebuildTracker(std::sync::Arc<std::sync::Mutex<HashMap<String, u32>>>
 
 impl RebuildTracker {
     pub fn mark(&self, name: &str) -> RebuildMark {
-        let mut counts = self
-            .0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut counts = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         *counts.entry(name.to_string()).or_insert(0) += 1;
         RebuildMark {
             tracker: self.clone(),
@@ -288,11 +285,7 @@ pub struct RebuildMark {
 
 impl Drop for RebuildMark {
     fn drop(&mut self) {
-        let mut counts = self
-            .tracker
-            .0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut counts = self.tracker.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(count) = counts.get_mut(&self.name) {
             *count -= 1;
             if *count == 0 {
@@ -918,8 +911,7 @@ pub(crate) fn env_file_names(agents_dir: &std::path::Path) -> Vec<String> {
                 return None;
             }
             let name = entry.file_name().to_str()?.to_string();
-            name.strip_suffix(".env")
-                .map(std::string::ToString::to_string)
+            name.strip_suffix(".env").map(std::string::ToString::to_string)
         })
         .collect()
 }
@@ -1058,7 +1050,9 @@ pub fn write_agent_env_file(
     );
     // The env carries only identity; the agent owns model/provider/personality, timezone, and provider
     // auth in its config store (preferences) and .credentials.json (Claude OAuth blob).
-    if std::fs::read_to_string(&env_path).is_ok_and(|prev| prev == content) {
+    if std::fs::read_to_string(&env_path)
+        .is_ok_and(|prev| prev == content)
+    {
         return Ok(env_path);
     }
     std::fs::write(&env_path, &content)
@@ -1557,10 +1551,7 @@ pub async fn snapshot_container(
 ) -> Result<(), DockerError> {
     let cname = cname.to_string();
     let tag = tag.to_string();
-    let changes: Vec<String> = changes
-        .iter()
-        .map(std::string::ToString::to_string)
-        .collect();
+    let changes: Vec<String> = changes.iter().map(std::string::ToString::to_string).collect();
 
     tokio::time::timeout(
         std::time::Duration::from_secs(SNAPSHOT_TIMEOUT_SECS),
@@ -2150,15 +2141,7 @@ pub async fn reconcile_containers(
                 }
             }
         }
-        match rebuild_agent(
-            docker,
-            item.name,
-            env_config,
-            &item.desired_mounts,
-            rebuilding,
-        )
-        .await
-        {
+        match rebuild_agent(docker, item.name, env_config, &item.desired_mounts, rebuilding).await {
             Ok(()) => {
                 tracing::info!(agent = %item.name, "rebuild complete");
                 // Grants can also land here (restart_agent defers to reconcile when disk is low or
@@ -2344,10 +2327,11 @@ fn needs_rebuild(
 
     let cmd = info.config.as_ref().and_then(|c| c.cmd.as_ref());
     let expected_cmd = agent_container_cmd();
-    let cmd_ok = cmd.is_some_and(|actual| {
-        actual.len() == expected_cmd.len()
-            && actual.iter().zip(expected_cmd.iter()).all(|(a, e)| a == e)
-    });
+    let cmd_ok = cmd
+        .is_some_and(|actual| {
+            actual.len() == expected_cmd.len()
+                && actual.iter().zip(expected_cmd.iter()).all(|(a, e)| a == e)
+        });
     if !cmd_ok {
         tracing::info!(container = %cname, "rebuild needed: command mismatch");
         tracing::debug!(container = %cname, actual = ?cmd, expected = ?expected_cmd, "command mismatch details");
@@ -2411,9 +2395,7 @@ async fn resolve_existing_port(
     let baked = read_container_env(docker, cname, "WS_PORT")
         .await
         .and_then(|v| v.parse::<u16>().ok());
-    if let Some(port) = info.port.or(baked) {
-        Ok(port)
-    } else {
+    if let Some(port) = info.port.or(baked) { Ok(port) } else {
         tracing::warn!(agent = %name, "no port found in env file or container, allocating new port");
         allocate_port(agents_dir)
     }
@@ -2539,14 +2521,8 @@ pub async fn rename_agent(
         )));
     }
 
-    let port = resolve_existing_port(
-        docker,
-        &old_container,
-        &info,
-        old_name,
-        &env_config.agents_dir,
-    )
-    .await?;
+    let port =
+        resolve_existing_port(docker, &old_container, &info, old_name, &env_config.agents_dir).await?;
 
     // Stop cleanly so the snapshot captures a quiesced filesystem (SQLite mid-write would
     // be the main concern). Best-effort — snapshot will still proceed if stop fails.
@@ -2609,11 +2585,7 @@ mod tests {
             AgentStatus::NotAuthenticated,
             AgentStatus::Unprovisioned,
         ] {
-            assert!(
-                status.serves_ws(),
-                "{} should be tappable",
-                status.human_text()
-            );
+            assert!(status.serves_ws(), "{} should be tappable", status.human_text());
         }
         for status in [
             AgentStatus::Starting,
@@ -2622,11 +2594,7 @@ mod tests {
             AgentStatus::Dead,
             AgentStatus::NotFound,
         ] {
-            assert!(
-                !status.serves_ws(),
-                "{} must not be tapped",
-                status.human_text()
-            );
+            assert!(!status.serves_ws(), "{} must not be tapped", status.human_text());
         }
     }
 

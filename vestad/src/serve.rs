@@ -19,8 +19,8 @@ use crate::settings::{
 };
 use crate::state::{err_response, map_docker_err, ok_json, AppState, SharedState};
 use crate::{
-    agent_provider, agent_proxy, agent_status, auth, backup, docker, mobile_app, self_update,
-    systemd, update_check, update_window,
+    agent_provider, agent_proxy, agent_status, auth, backup, docker, mobile_app,
+    self_update, systemd, update_check, update_window,
 };
 
 const GATEWAY_RESTART_DELAY_MS: u64 = 200;
@@ -498,10 +498,7 @@ async fn wait_for_agent_listed(state: &SharedState, name: &str) {
         {
             return;
         }
-        if tokio::time::timeout_at(deadline, agents_rx.changed())
-            .await
-            .is_err()
-        {
+        if tokio::time::timeout_at(deadline, agents_rx.changed()).await.is_err() {
             return;
         }
     }
@@ -1621,22 +1618,14 @@ async fn user_notification_handler(
     Json(body): Json<UserNotificationBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     if !valid_user_notification_kind(&body.kind) {
-        return Err(err_response(
-            StatusCode::BAD_REQUEST,
-            "unknown user notification kind",
-        ));
+        return Err(err_response(StatusCode::BAD_REQUEST, "unknown user notification kind"));
     }
     let title = truncate_chars(&body.title, USER_NOTIFICATION_TITLE_MAX_CHARS);
     let preview = truncate_chars(&body.body, USER_NOTIFICATION_BODY_MAX_CHARS);
-    state.sync_hub.publish_user_notification(
-        &name,
-        body.kind.clone(),
-        title.clone(),
-        preview.clone(),
-    );
     state
-        .mobile_app
-        .push_user_notification(&name, &body.kind, &title, &preview);
+        .sync_hub
+        .publish_user_notification(&name, body.kind.clone(), title.clone(), preview.clone());
+    state.mobile_app.push_user_notification(&name, &body.kind, &title, &preview);
     Ok(ok_json())
 }
 
@@ -2457,10 +2446,7 @@ pub fn build_router(state: SharedState) -> Router {
             post(agent_status::invalidate_service_handler),
         )
         .route("/agents/{name}/account-token", post(account_token_handler))
-        .route(
-            "/agents/{name}/user-notification",
-            post(user_notification_handler),
-        )
+        .route("/agents/{name}/user-notification", post(user_notification_handler))
         .route(
             "/agents/{name}/workspace.bundle",
             get(workspace_bundle_handler),
