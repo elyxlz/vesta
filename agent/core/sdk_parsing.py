@@ -237,8 +237,9 @@ def _subagent_prefix(input_data: Mapping[str, object]) -> tuple[str, bool]:
     """Extract sub-agent prefix from hook input. SDK adds agent_id/agent_type for sub-agent calls."""
     if "agent_id" not in input_data:
         return "", False
+    agent_id = input_data["agent_id"]
     agent_type = input_data["agent_type"] if "agent_type" in input_data else None
-    prefix = f"[SUB:{agent_type}] " if agent_type else "[SUB] "
+    prefix = f"[SUB:{agent_type}:{agent_id}] " if agent_type else f"[SUB:{agent_id}] "
     return prefix, True
 
 
