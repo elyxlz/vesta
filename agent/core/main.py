@@ -42,8 +42,6 @@ def _make_signal_handler(
             except OSError as exc:
                 # A broken handoff must never prevent the signal from initiating shutdown.
                 logger.warning(f"could not read shutdown reason: {exc}")
-            reason = f" ({state.shutdown_reason})" if state.shutdown_reason else ""
-            logger.shutdown(f"received {sig_name}, graceful shutdown{reason}")
             state.graceful_shutdown.set()
         elif allow_force_exit and state.shutdown_count > 2:
             logger.shutdown(f"received {sig_name} x{state.shutdown_count}, force exit")

@@ -18,7 +18,7 @@ def _config(tmp_path):
     return config
 
 
-def test_sigterm_logs_shutdown_reason_before_shutdown(tmp_path):
+def test_sigterm_hands_reason_to_usual_shutdown_log_without_extra_line(tmp_path):
     config = _config(tmp_path)
     state = vm.State()
     state_store.pending_shutdown_reason_path(config).write_text(
@@ -30,15 +30,12 @@ def test_sigterm_logs_shutdown_reason_before_shutdown(tmp_path):
 
     assert state.shutdown_reason == "backup: you were paused for a scheduled backup"
     assert state.graceful_shutdown.is_set()
-    shutdown_log.assert_called_once_with(
-        "received SIGTERM, graceful shutdown "
-        "(backup: you were paused for a scheduled backup)"
-    )
+    shutdown_log.assert_not_called()
     assert not state_store.pending_shutdown_reason_path(config).exists()
 
 
 @pytest.mark.anyio
-async def test_usual_shutdown_log_repeats_handed_reason(tmp_path):
+async def test_usual_shutdown_log_includes_handed_reason(tmp_path):
     config = _config(tmp_path)
     for path in [config.notifications_dir, config.logs_dir, config.dreamer_dir]:
         path.mkdir(parents=True, exist_ok=True)
