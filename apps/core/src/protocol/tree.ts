@@ -23,6 +23,7 @@ export type ReleaseChannel = "stable" | "beta"
 export interface ServiceInfo {
   port: number
   rev: number
+  key?: string
 }
 
 export interface AgentInfo {

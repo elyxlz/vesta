@@ -14,6 +14,7 @@ mod layout;
 mod lifecycle;
 mod ports;
 mod rename;
+mod service_proxy_auth;
 mod sync;
 mod upstream;
 mod websocket;

@@ -31,6 +31,7 @@ pub(crate) struct GatewayLan {
 pub(crate) struct ServiceInfo {
     pub port: u16,
     pub rev: u64,
+    pub key: String,
 }
 
 /// The per-agent `info` branch. camelCase to match `AgentInfo`. `activity_state` is a plain string
@@ -122,7 +123,10 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
         managed: false,
     };
     let mut services = BTreeMap::new();
-    services.insert("dashboard".to_string(), ServiceInfo { port: 8080, rev: 3 });
+    services.insert(
+        "dashboard".to_string(),
+        ServiceInfo { port: 8080, rev: 3, key: "0123456789abcdef".into() },
+    );
     let info = AgentInfo {
         status: AgentStatus::Alive,
         activity_state: "thinking".into(),

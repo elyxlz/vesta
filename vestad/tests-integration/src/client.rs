@@ -13,6 +13,16 @@ use crate::types::{
 
 // ── HTTP client ─────────────────────────────────────────────────
 
+/// How a proxied request authenticates, for `Client::proxy_status`.
+pub enum ProxyAuth<'a> {
+    /// No auth header at all — the browser's plain iframe request.
+    None,
+    /// The vestad API key as a Bearer token.
+    ApiKey,
+    /// An agent token via `X-Agent-Token`.
+    AgentToken(&'a str),
+}
+
 fn check_response(resp: Response<Body>) -> Result<Response<Body>, String> {
     let status = resp.status().as_u16();
     if (200..300).contains(&status) {
@@ -209,6 +219,47 @@ impl Client {
         resp.into_body()
             .read_json()
             .map_err(|e| format!("parse error: {e}"))
+    }
+
+    /// Register a background service exactly as the in-container skill does.
+    pub fn register_service_as_agent(
+        &self,
+        name: &str,
+        service: &str,
+        agent_token: &str,
+    ) -> Result<serde_json::Value, String> {
+        let resp = self
+            .agent
+            .post(&format!("{}/agents/{}/services", self.base_url, name))
+            .header("X-Agent-Token", agent_token)
+            .send_json(serde_json::json!({"name": service}))
+            .map_err(|e| map_error(&e))?;
+        check_response(resp)?
+            .into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {e}"))
+    }
+
+    /// Return the registered services for an agent as raw JSON.
+    pub fn services_json(&self, name: &str) -> Result<serde_json::Value, String> {
+        let resp = self.get(&format!("/agents/{name}/services"))?;
+        resp.into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {e}"))
+    }
+
+    /// GET a proxied path with a chosen authorization and return its status.
+    pub fn proxy_status(&self, path: &str, auth: ProxyAuth) -> Result<u16, String> {
+        let mut req = self.agent.get(&format!("{}{}", self.base_url, path));
+        match auth {
+            ProxyAuth::None => {}
+            ProxyAuth::ApiKey => {
+                req = req.header("Authorization", &format!("Bearer {}", self.api_key));
+            }
+            ProxyAuth::AgentToken(token) => req = req.header("X-Agent-Token", token),
+        }
+        let resp = req.call().map_err(|e| map_error(&e))?;
+        Ok(resp.status().as_u16())
     }
 
     pub fn agent_status(&self, name: &str) -> Result<StatusJson, String> {

@@ -11,7 +11,10 @@ export function rosterFromTree(tree: Tree | null): AgentRow[] {
 function servicesEqual(a: Record<string, ServiceInfo>, b: Record<string, ServiceInfo>): boolean {
   const keys = Object.keys(a)
   if (keys.length !== Object.keys(b).length) return false
-  return keys.every((key) => a[key]?.port === b[key]?.port && a[key]?.rev === b[key]?.rev)
+  return keys.every(
+    (key) =>
+      a[key]?.port === b[key]?.port && a[key]?.rev === b[key]?.rev && a[key]?.key === b[key]?.key,
+  )
 }
 
 // Structural compare so an unrelated tree delta (a notification landing on one agent) does not hand

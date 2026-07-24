@@ -56,7 +56,20 @@ async fn resolve_service(
         .services
         .get(agent_name)?
         .get(service_name)
-        .copied()
+        .cloned()
+}
+
+/// Split a `/k/{key}` service subpath into its key and the path forwarded upstream.
+fn split_key_subpath(subpath: &str) -> Option<(&str, String)> {
+    let rest = subpath.strip_prefix("/k/")?;
+    let (key, tail) = match rest.split_once('/') {
+        Some((key, tail)) => (key, format!("/{tail}")),
+        None => (rest, "/".to_string()),
+    };
+    if key.is_empty() {
+        return None;
+    }
+    Some((key, tail))
 }
 
 /// Split the axum-captured `{*path}` tail into `(first_segment, forwarded_subpath)`.
@@ -110,14 +123,22 @@ pub async fn agent_proxy_handler(
     } else {
         resolve_service(&state, &name, first_segment).await
     };
-    let (target_port, stripped_path, service) = match resolved {
-        Some(entry) => (entry.port, service_subpath.to_string(), Some(entry)),
-        None => (agent_port, format!("/{path}"), None),
+    let (target_port, stripped_path, service, via_key) = match resolved {
+        Some(entry) => match split_key_subpath(service_subpath) {
+            Some((key, forwarded)) => {
+                let valid = !entry.key.is_empty() && key == entry.key;
+                (entry.port, forwarded, Some(entry), valid)
+            }
+            None => (entry.port, service_subpath.to_string(), Some(entry), false),
+        },
+        None => (agent_port, format!("/{path}"), None, false),
     };
 
-    // Public services are fully open; everything else requires auth.
+    // Public services and a valid service path key authenticate without an API
+    // header. Everything else keeps the existing Bearer/query-token behavior.
     let is_public = service.as_ref().is_some_and(|s| s.public);
-    if !is_public && !auth::has_valid_api_auth(request.headers(), request.uri(), &state.api_key) {
+    let skip_auth = is_public || via_key;
+    if !skip_auth && !auth::has_valid_api_auth(request.headers(), request.uri(), &state.api_key) {
         return Err(err_response(
             StatusCode::UNAUTHORIZED,
             "unauthorized — pass a valid Bearer token or ?token= query parameter",
@@ -158,7 +179,7 @@ pub async fn agent_proxy_handler(
                 ));
             }
         };
-        let ws_token = if is_public { None } else { agent_token.clone() };
+        let ws_token = if skip_auth { None } else { agent_token.clone() };
         Ok(ws.on_upgrade(move |socket| async move {
             drop(guard);
             if is_registered_service {
@@ -168,7 +189,7 @@ pub async fn agent_proxy_handler(
         }))
     } else {
         drop(guard);
-        let token = if is_public {
+        let token = if skip_auth {
             None
         } else {
             agent_token.as_deref()
@@ -365,7 +386,7 @@ async fn forward_http_to_container(
 
 #[cfg(test)]
 mod tests {
-    use super::{pump_agent_to_client, split_service_subpath, wait_for_upstream};
+    use super::{pump_agent_to_client, split_key_subpath, split_service_subpath, wait_for_upstream};
     use axum::extract::ws::Message as AxumMsg;
     use futures_util::stream;
     use std::convert::Infallible;
@@ -469,6 +490,24 @@ mod tests {
                 "split_service_subpath({path:?})"
             );
         }
+    }
+
+    #[test]
+    fn splits_key_from_subpath() {
+        assert_eq!(
+            split_key_subpath("/k/abc123/assets/index.js"),
+            Some(("abc123", "/assets/index.js".to_string()))
+        );
+        assert_eq!(split_key_subpath("/k/abc123/"), Some(("abc123", "/".to_string())));
+        assert_eq!(split_key_subpath("/k/abc123"), Some(("abc123", "/".to_string())));
+    }
+
+    #[test]
+    fn key_subpath_rejects_missing_or_empty_keys() {
+        assert_eq!(split_key_subpath("/assets/index.js"), None);
+        assert_eq!(split_key_subpath("/"), None);
+        assert_eq!(split_key_subpath("/k/"), None);
+        assert_eq!(split_key_subpath("/k//assets/x.js"), None);
     }
 
     #[tokio::test]

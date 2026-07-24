@@ -8,11 +8,23 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) const DEFAULT_AUTO_BACKUP_HOUR: u8 = 4;
 
-#[derive(Serialize, Copy, Clone, PartialEq)]
+#[derive(Serialize, Clone, PartialEq)]
 pub(crate) struct ServiceEntry {
     pub(crate) port: u16,
     #[serde(default)]
     pub(crate) public: bool,
+    /// Random per-service access key. The iframe URL embeds it in
+    /// `/agents/{name}/{service}/k/{key}/`, so relative resource requests can
+    /// authenticate without cookies or headers.
+    #[serde(default = "gen_service_key")]
+    pub(crate) key: String,
+}
+
+const SERVICE_KEY_BYTES: usize = 32;
+
+pub(crate) fn gen_service_key() -> String {
+    let bytes: [u8; SERVICE_KEY_BYTES] = rand::random();
+    hex::encode(bytes)
 }
 
 impl<'de> serde::Deserialize<'de> for ServiceEntry {
@@ -21,11 +33,25 @@ impl<'de> serde::Deserialize<'de> for ServiceEntry {
         #[serde(untagged)]
         enum Raw {
             Legacy(u16),
-            Full { port: u16, #[serde(default)] public: bool },
+            Full {
+                port: u16,
+                #[serde(default)]
+                public: bool,
+                #[serde(default)]
+                key: Option<String>,
+            },
         }
         match Raw::deserialize(deserializer)? {
-            Raw::Legacy(port) => Ok(ServiceEntry { port, public: false }),
-            Raw::Full { port, public } => Ok(ServiceEntry { port, public }),
+            Raw::Legacy(port) => Ok(ServiceEntry {
+                port,
+                public: false,
+                key: gen_service_key(),
+            }),
+            Raw::Full { port, public, key } => Ok(ServiceEntry {
+                port,
+                public,
+                key: key.unwrap_or_else(gen_service_key),
+            }),
         }
     }
 }
@@ -273,6 +299,23 @@ mod tests {
         let s: Settings =
             serde_json::from_str(r#"{"expose_lan": true}"#).expect("valid Settings");
         assert!(s.expose_lan);
+    }
+
+    #[test]
+    fn legacy_service_entry_gets_a_random_256_bit_key() {
+        let entry: ServiceEntry = serde_json::from_str("8080").expect("legacy port entry");
+        assert_eq!(entry.port, 8080);
+        assert_eq!(entry.key.len(), SERVICE_KEY_BYTES * 2);
+        assert!(entry.key.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn service_entry_preserves_its_persisted_key() {
+        let entry: ServiceEntry = serde_json::from_str(
+            r#"{"port":8080,"public":false,"key":"0123456789abcdef"}"#,
+        )
+        .expect("full service entry");
+        assert_eq!(entry.key, "0123456789abcdef");
     }
 
     // --- user_desired drives vestad's boot-start; a wrong default would silently keep every

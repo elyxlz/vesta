@@ -343,7 +343,7 @@ fn agent_info(
             svc.iter()
                 .map(|(svc_name, e)| {
                     let rev = agent_revs.and_then(|m| m.get(svc_name)).copied().unwrap_or(0);
-                    (svc_name.clone(), ServiceInfo { port: e.port, rev })
+                    (svc_name.clone(), ServiceInfo { port: e.port, rev, key: e.key.clone() })
                 })
                 .collect()
         })
@@ -429,13 +429,22 @@ mod tests {
         let mut activity = HashMap::new();
         activity.insert("scout".to_string(), "thinking".to_string());
         let mut svc = HashMap::new();
-        svc.insert("scout".to_string(), HashMap::from([("dashboard".to_string(), ServiceEntry { port: 8080, public: true })]));
+        svc.insert(
+            "scout".to_string(),
+            HashMap::from([(
+                "dashboard".to_string(),
+                ServiceEntry { port: 8080, public: true, key: "0123456789abcdef".into() },
+            )]),
+        );
         let mut revs = HashMap::new();
         revs.insert("scout".to_string(), HashMap::from([("dashboard".to_string(), 3u64)]));
 
         let info = agent_info(&entry("scout", AgentStatus::Alive), &activity, &svc, &revs, None);
         assert_eq!(info.activity_state, "thinking");
-        assert_eq!(info.services["dashboard"], ServiceInfo { port: 8080, rev: 3 });
+        assert_eq!(
+            info.services["dashboard"],
+            ServiceInfo { port: 8080, rev: 3, key: "0123456789abcdef".into() }
+        );
 
         // An agent with no activity entry defaults to idle.
         let idle = agent_info(&entry("mona", AgentStatus::Alive), &HashMap::new(), &HashMap::new(), &HashMap::new(), None);

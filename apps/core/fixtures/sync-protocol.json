@@ -6,6 +6,7 @@
         "buildPhase": null,
         "services": {
           "dashboard": {
+            "key": "0123456789abcdef",
             "port": 8080,
             "rev": 3
           }
@@ -73,6 +74,7 @@
             "buildPhase": null,
             "services": {
               "dashboard": {
+                "key": "0123456789abcdef",
                 "port": 8080,
                 "rev": 3
               }

@@ -14,8 +14,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::settings::{
-    load_settings, save_settings, AgentBackupOverride, BackupGlobalSettings, ServiceEntry,
-    Settings, UserDesired,
+    gen_service_key, load_settings, save_settings, AgentBackupOverride, BackupGlobalSettings,
+    ServiceEntry, Settings, UserDesired,
 };
 use crate::state::{err_response, map_docker_err, ok_json, AppState, SharedState};
 use crate::{
@@ -1647,8 +1647,8 @@ async fn register_service_handler(
         .services
         .get(&name)
         .and_then(|services| services.get(&service_name))
-        .copied();
-    let port = match cached_entry.map(|entry| entry.port) {
+        .cloned();
+    let port = match cached_entry.as_ref().map(|entry| entry.port) {
         Some(cached_port) if is_cached_port_reusable(cached_port).await => cached_port,
         Some(stale_port) => {
             tracing::warn!(agent = %name, service = %service_name, stale_port, "cached service port is not bindable, allocating a fresh one");
@@ -1656,9 +1656,10 @@ async fn register_service_handler(
         }
         None => allocate_service_port(&settings.services).ok_or_else(no_free_ports_err)?,
     };
-    let public = resolve_public(body.public, cached_entry);
+    let public = resolve_public(body.public, cached_entry.clone());
+    let key = cached_entry.map_or_else(gen_service_key, |entry| entry.key);
 
-    let entry = ServiceEntry { port, public };
+    let entry = ServiceEntry { port, public, key };
     settings
         .services
         .entry(name.clone())
@@ -3285,6 +3286,7 @@ mod tests {
             ServiceEntry {
                 port: dead_port,
                 public: false,
+                key: "dead-port-key".into(),
             },
         );
 
@@ -3324,6 +3326,7 @@ mod tests {
             ServiceEntry {
                 port: p1,
                 public: false,
+                key: "resident-key".into(),
             },
         );
 
@@ -3356,15 +3359,17 @@ mod tests {
         let published = Some(ServiceEntry {
             port: 50000,
             public: true,
+            key: "published-key".into(),
         });
         let private = Some(ServiceEntry {
             port: 50001,
             public: false,
+            key: "private-key".into(),
         });
         let cases = [
             (
                 None,
-                published,
+                published.clone(),
                 true,
                 "omitting public keeps a published service public",
             ),
@@ -3376,7 +3381,7 @@ mod tests {
             ),
             (
                 None,
-                private,
+                private.clone(),
                 false,
                 "omitting public keeps a private service private",
             ),
