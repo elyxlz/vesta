@@ -37,23 +37,40 @@ def state_path(config: cfg.VestaConfig) -> pl.Path:
 
 
 PENDING_REASON_FILENAME = "pending_restart_reason"
+PENDING_SHUTDOWN_REASON_FILENAME = "pending_shutdown_reason"
 
 
 def pending_reason_path(config: cfg.VestaConfig) -> pl.Path:
     return config.data_dir / PENDING_REASON_FILENAME
 
 
-def take_pending_reason(config: cfg.VestaConfig) -> str | None:
-    """Read + delete the one-shot restart-reason inbox vestad may have written before this boot.
+def pending_shutdown_reason_path(config: cfg.VestaConfig) -> pl.Path:
+    return config.data_dir / PENDING_SHUTDOWN_REASON_FILENAME
 
-    The file is transport, not storage: it is drained into last_restart_reason and removed so it
-    never re-fires on a later boot. Returns the stripped reason, or None if absent/empty."""
-    path = pending_reason_path(config)
+
+def _take_reason(path: pl.Path) -> str | None:
+    """Read + delete a one-shot reason inbox, returning its stripped non-empty contents."""
     if not path.exists():
         return None
     reason = path.read_text(encoding="utf-8").strip()
     path.unlink(missing_ok=True)
     return reason or None
+
+
+def take_pending_reason(config: cfg.VestaConfig) -> str | None:
+    """Drain the restart reason vestad wrote for this boot.
+
+    The file is transport, not storage: it is drained into last_restart_reason and removed so it
+    never re-fires on a later boot. Returns the stripped reason, or None if absent/empty."""
+    return _take_reason(pending_reason_path(config))
+
+
+def take_pending_shutdown_reason(config: cfg.VestaConfig) -> str | None:
+    """Drain the reason vestad wrote before sending this process SIGTERM.
+
+    This inbox is separate from the boot inbox: backup/rebuild snapshots may capture it if the
+    process cannot remove it during shutdown, so every boot also drains it as stale transport."""
+    return _take_reason(pending_shutdown_reason_path(config))
 
 
 def load_state(config: cfg.VestaConfig) -> PersistedState:

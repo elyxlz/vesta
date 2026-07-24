@@ -1716,12 +1716,17 @@ pub async fn create_container(
     }
 }
 
-// --- Restart-reason inbox ---
+// --- Lifecycle-reason inboxes ---
 
 /// One-shot inbox the agent drains on its next boot (agent `state_store.take_pending_reason`).
 /// Written before a stop/recreate so the reason lands in the filesystem the next boot reads;
 /// plain text, no schema shared across the crate boundary.
 pub(crate) const PENDING_RESTART_REASON_PATH: &str = "/root/agent/data/pending_restart_reason";
+
+/// One-shot inbox the running agent drains when it receives SIGTERM. It is separate from the
+/// restart inbox because backup/rebuild writes this before stopping the container, while the boot
+/// reason must be written after snapshotting so a restore cannot replay a stale greeting.
+pub(crate) const PENDING_SHUTDOWN_REASON_PATH: &str = "/root/agent/data/pending_shutdown_reason";
 
 /// Write `reason` into the agent's boot inbox. Best-effort at every call site: a failed write
 /// only costs a missing greeting line, never the restart itself.
@@ -1731,6 +1736,15 @@ pub(crate) async fn write_pending_restart_reason(
     reason: &str,
 ) -> Result<(), DockerError> {
     docker_cp_content(docker, cname, reason, PENDING_RESTART_REASON_PATH).await
+}
+
+/// Write `reason` into the running agent's shutdown inbox before vestad sends SIGTERM.
+pub(crate) async fn write_pending_shutdown_reason(
+    docker: &Docker,
+    cname: &str,
+    reason: &str,
+) -> Result<(), DockerError> {
+    docker_cp_content(docker, cname, reason, PENDING_SHUTDOWN_REASON_PATH).await
 }
 
 // --- Credential injection ---
@@ -1930,6 +1944,7 @@ pub async fn restart_agent(
             // A caller-supplied reason wins; else describe the grant delta the rebuild applies.
             let effective =
                 crate::mounts::effective_restart_reason(reason, &actual_mounts, user_mounts);
+            write_shutdown_reason(docker, name, &cname, effective.as_deref()).await;
             rebuild_agent(docker, name, env_config, user_mounts, rebuilding).await?;
             // Written into the freshly created container AFTER the rebuild: a write before it
             // would survive a failed rebuild in the old container, claiming access that was
@@ -1942,6 +1957,7 @@ pub async fn restart_agent(
     }
     // The container's filesystem survives a plain restart, so the inbox written here is read on the
     // very next boot.
+    write_shutdown_reason(docker, name, &cname, reason.as_deref()).await;
     write_boot_reason(docker, name, &cname, reason).await;
     docker
         .restart_container(
@@ -1953,6 +1969,15 @@ pub async fn restart_agent(
         )
         .await?;
     Ok(())
+}
+
+/// Best-effort handoff of the reason to the process that is about to receive SIGTERM.
+async fn write_shutdown_reason(docker: &Docker, name: &str, cname: &str, reason: Option<&str>) {
+    if let Some(text) = reason {
+        if let Err(err) = write_pending_shutdown_reason(docker, cname, text).await {
+            tracing::warn!(agent = %name, error = %err, "failed to write shutdown reason");
+        }
+    }
 }
 
 /// Best-effort write of an optional boot reason to the agent's inbox: a failed write only costs a
@@ -2638,6 +2663,15 @@ mod tests {
         assert_eq!(
             PENDING_RESTART_REASON_PATH,
             "/root/agent/data/pending_restart_reason"
+        );
+    }
+
+    #[test]
+    fn pending_shutdown_reason_path_matches_agent_contract() {
+        // The running agent drains this exact path from its SIGTERM handler.
+        assert_eq!(
+            PENDING_SHUTDOWN_REASON_PATH,
+            "/root/agent/data/pending_shutdown_reason"
         );
     }
 

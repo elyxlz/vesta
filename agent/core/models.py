@@ -93,6 +93,9 @@ class State:
     shutdown_event: asyncio.Event = dc.field(default_factory=asyncio.Event)
     graceful_shutdown: asyncio.Event = dc.field(default_factory=asyncio.Event)
     shutdown_count: int = 0
+    # One-shot reason handed in by vestad immediately before SIGTERM. Kept in memory only: the
+    # separate restart inbox owns the next boot, so backup snapshots never replay shutdown intent.
+    shutdown_reason: str | None = None
     persisted: PersistedState = dc.field(default_factory=PersistedState)
     # Bound by run_vesta on every boot (mark_setup_done re-binds only as a fallback). The open WS port is the readiness signal vestad polls.
     ws_runner: AppRunner | None = None

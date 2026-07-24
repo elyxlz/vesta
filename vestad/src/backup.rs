@@ -6,7 +6,7 @@ use crate::docker::{
     container_created, container_name, container_size_root_fs, container_size_rw, container_status,
     create_container, ensure_container_removed, env_file_names, guard_alive, read_env_value,
     start_container, stop_container_with_timeout, validate_name, write_pending_restart_reason,
-    AgentEnvConfig, ContainerStatus, DockerError,
+    write_pending_shutdown_reason, AgentEnvConfig, ContainerStatus, DockerError,
 };
 use crate::types::{BackupInfo, BackupType, RetentionPolicy};
 
@@ -98,6 +98,9 @@ where
     let was_running = cs == ContainerStatus::Running;
     if was_running {
         tracing::info!(agent = %name, "stopping agent for backup");
+        if let Err(err) = write_pending_shutdown_reason(docker, &cname, resume_reason).await {
+            tracing::warn!(agent = %name, error = %err, "failed to write shutdown reason");
+        }
         // A failed stop can leave the container's events.db WAL mid-checkpoint; running the
         // snapshot against that live, inconsistent state would produce a backup that looks
         // fine but restores malformed. Bail here so the cycle is retried instead. The stop

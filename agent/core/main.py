@@ -27,12 +27,23 @@ from .provider import derive_status
 from .upstream_sync import upstream_sync_turn, vesta_version
 
 
-def _make_signal_handler(state: vm.State, *, allow_force_exit: bool = False) -> tp.Callable[[int, types.FrameType | None], None]:
+def _make_signal_handler(
+    state: vm.State,
+    config: cfg.VestaConfig,
+    *,
+    allow_force_exit: bool = False,
+) -> tp.Callable[[int, types.FrameType | None], None]:
     def handler(signum: int, _frame: types.FrameType | None) -> None:
         sig_name = signal.Signals(signum).name
         state.shutdown_count += 1
         if state.shutdown_count == 1:
-            logger.shutdown(f"received {sig_name}, graceful shutdown")
+            try:
+                state.shutdown_reason = state_store.take_pending_shutdown_reason(config)
+            except OSError as exc:
+                # A broken handoff must never prevent the signal from initiating shutdown.
+                logger.warning(f"could not read shutdown reason: {exc}")
+            reason = f" ({state.shutdown_reason})" if state.shutdown_reason else ""
+            logger.shutdown(f"received {sig_name}, graceful shutdown{reason}")
             state.graceful_shutdown.set()
         elif allow_force_exit and state.shutdown_count > 2:
             logger.shutdown(f"received {sig_name} x{state.shutdown_count}, force exit")
@@ -76,8 +87,8 @@ async def run_vesta(
     entry point can exit non-zero and let Docker's on-failure policy recover it (intentional
     restarts/stops are vestad-driven and return False)."""
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
-    signal.signal(signal.SIGINT, _make_signal_handler(state, allow_force_exit=True))
-    signal.signal(signal.SIGTERM, _make_signal_handler(state))
+    signal.signal(signal.SIGINT, _make_signal_handler(state, config, allow_force_exit=True))
+    signal.signal(signal.SIGTERM, _make_signal_handler(state, config))
 
     logger.init(f"{config.agent_name.upper()} started")
 
@@ -119,7 +130,7 @@ async def run_vesta(
     # a SIGTERM-driven shutdown carries no crash reason, so those exit 0 — vestad starts us back, or
     # leaves us down. Capture intent before the clean-restart default below overwrites a blank reason.
     crashed = vm.is_crash_reason(state.persisted.last_restart_reason)
-    reason = state.persisted.last_restart_reason or vm.CLEAN_RESTART
+    reason = state.persisted.last_restart_reason or state.shutdown_reason or vm.CLEAN_RESTART
     logger.shutdown(f"Shutting down ({reason})")
     if not state.persisted.last_restart_reason:
         state.persisted.last_restart_reason = vm.CLEAN_RESTART
@@ -193,7 +204,10 @@ def _consume_restart_reason(state: vm.State, config: cfg.VestaConfig, *, first_s
     """Return the reason to log for this boot and clear it from persisted state. On a never-run agent
     the absence of a stored reason is innocent; report FIRST_START_REASON instead of a misleading
     crash label."""
-    # Drain the inbox on every boot, including first start: a file left behind would fire stale
+    # A backup/rebuild snapshot can capture the shutdown inbox if the old process was force-killed
+    # before its signal handler drained it. It is never valid after boot, so discard it first.
+    state_store.take_pending_shutdown_reason(config)
+    # Drain the boot inbox on every boot, including first start: a file left behind would fire stale
     # on some later, unrelated boot.
     pending = state_store.take_pending_reason(config)
     if first_start:
