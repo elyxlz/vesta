@@ -169,6 +169,9 @@ export default function SettingsScreen() {
                 pill
                 variant="card"
                 loading={gatewayUpdate.isPending || updateCheck.isPending}
+                labelStyle={
+                  updateCheck.isPending ? styles.loadingActionLabel : undefined
+                }
                 onPress={
                   updateAvailable
                     ? confirmGatewayUpdate
@@ -303,4 +306,5 @@ export default function SettingsScreen() {
 
 const styles = StyleSheet.create({
   content: { gap: 24 },
+  loadingActionLabel: { fontWeight: "500" },
 });
