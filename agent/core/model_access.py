@@ -39,6 +39,20 @@ async def activate_rate_limit(
     return cooldown
 
 
+async def clear_model_access(*, state: vm.State, config: cfg.VestaConfig) -> None:
+    """Clear a cooldown when credentials or providers change.
+
+    Cooldowns intentionally survive ordinary restarts, but must not follow a user onto a newly
+    selected provider or credential.
+    """
+    if state.persisted.provider_cooldown is None:
+        return
+    state.persisted.provider_cooldown = None
+    state.current_turn_rate_limited = False
+    await state_store.save_state_async(state.persisted, config)
+    state.event_bus.emit(model_access_event(state))
+
+
 async def wait_for_model_access(*, state: vm.State, config: cfg.VestaConfig) -> bool:
     cooldown = active_cooldown(state.persisted.provider_cooldown)
     if cooldown is None:
