@@ -242,7 +242,7 @@ const styles = StyleSheet.create({
     borderCurve: "continuous",
     borderWidth: StyleSheet.hairlineWidth,
     overflow: "hidden",
-    paddingVertical: 4,
+    paddingVertical: 6,
   },
   footer: { fontSize: 13, lineHeight: 18, paddingHorizontal: 16 },
   row: {
