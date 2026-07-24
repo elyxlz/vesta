@@ -137,14 +137,11 @@ function SessionNavigation() {
       pageRevealed={bootPageRevealed}
       targetVisible={bootTargetVisible}
     >
-      <View
-        style={[styles.appSurface, { backgroundColor: colors.background }]}
-      >
+      <View style={[styles.appSurface, { backgroundColor: colors.background }]}>
         <ThemeProvider value={navigationTheme}>
           <StatusBar
             style={
-              (bootSplashVisible && !bootPageRevealed) ||
-              !dark
+              (bootSplashVisible && !bootPageRevealed) || !dark
                 ? "dark"
                 : "light"
             }
@@ -242,13 +239,15 @@ function SessionNavigation() {
                 name="settings"
                 options={{
                   title: "Settings",
+                  presentation: "formSheet",
+                  sheetAllowedDetents: [1],
+                  sheetGrabberVisible: false,
+                  sheetExpandsWhenScrolledToEdge: false,
+                  contentStyle: { backgroundColor: colors.background },
                   headerTitle: () => (
                     <Text
                       family="heading"
-                      style={[
-                        styles.settingsTitle,
-                        { color: colors.text },
-                      ]}
+                      style={[styles.settingsTitle, { color: colors.text }]}
                     >
                       Settings
                     </Text>
