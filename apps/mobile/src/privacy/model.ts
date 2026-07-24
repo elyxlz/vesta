@@ -36,3 +36,10 @@ export function protectsAppSwitcher(settings: PrivacySettings): boolean {
 export function locksApp(state: AppStateStatus): boolean {
   return state === "background";
 }
+
+export function blocksProtectedContent(
+  hydrated: boolean,
+  locked: boolean,
+): boolean {
+  return !hydrated || locked;
+}

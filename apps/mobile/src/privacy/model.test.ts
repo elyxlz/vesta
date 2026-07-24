@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  blocksProtectedContent,
   initialPrivacySettings,
   locksApp,
   protectsAppSwitcher,
@@ -46,5 +47,12 @@ describe("privacy settings", () => {
     expect(locksApp("active")).toBe(false);
     expect(locksApp("inactive")).toBe(false);
     expect(locksApp("background")).toBe(true);
+  });
+
+  it("blocks protected content until settings are hydrated and unlocked", () => {
+    expect(blocksProtectedContent(false, true)).toBe(true);
+    expect(blocksProtectedContent(false, false)).toBe(true);
+    expect(blocksProtectedContent(true, true)).toBe(true);
+    expect(blocksProtectedContent(true, false)).toBe(false);
   });
 });

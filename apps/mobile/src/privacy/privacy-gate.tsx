@@ -4,11 +4,13 @@ import { Ionicons } from "@expo/vector-icons";
 import { Button } from "@/components/ui/Button";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
+import { blocksProtectedContent } from "./model";
 import { usePrivacy } from "./privacy-provider";
 
 export function PrivacyGate({ children }: { children: ReactNode }) {
   const { colors } = usePreferences();
   const privacy = usePrivacy();
+  const blocked = blocksProtectedContent(privacy.hydrated, privacy.locked);
   const unlockLabel =
     privacy.authenticationName === "device authentication"
       ? "Unlock Vesta"
@@ -16,8 +18,14 @@ export function PrivacyGate({ children }: { children: ReactNode }) {
 
   return (
     <View style={styles.root}>
-      {children}
-      {privacy.hydrated && privacy.locked ? (
+      <View
+        accessibilityElementsHidden={blocked}
+        importantForAccessibility={blocked ? "no-hide-descendants" : "auto"}
+        style={styles.content}
+      >
+        {children}
+      </View>
+      {blocked ? (
         <View
           accessibilityViewIsModal
           importantForAccessibility="yes"
@@ -41,12 +49,14 @@ export function PrivacyGate({ children }: { children: ReactNode }) {
               family="heading"
               style={[styles.title, { color: colors.text }]}
             >
-              Vesta is locked
+              {privacy.hydrated ? "Vesta is locked" : "Opening Vesta"}
             </Text>
             <Text style={[styles.detail, { color: colors.secondaryText }]}>
-              Authenticate to return to your agents.
+              {privacy.hydrated
+                ? "Authenticate to return to your agents."
+                : "Checking your privacy settings."}
             </Text>
-            {privacy.unlockError ? (
+            {privacy.hydrated && privacy.unlockError ? (
               <Text
                 accessibilityRole="alert"
                 selectable
@@ -56,13 +66,15 @@ export function PrivacyGate({ children }: { children: ReactNode }) {
               </Text>
             ) : null}
           </View>
-          <Button
-            loading={privacy.authenticating}
-            disabled={privacy.authenticating}
-            onPress={() => void privacy.unlock()}
-          >
-            {unlockLabel}
-          </Button>
+          {privacy.hydrated ? (
+            <Button
+              loading={privacy.authenticating}
+              disabled={privacy.authenticating}
+              onPress={() => void privacy.unlock()}
+            >
+              {unlockLabel}
+            </Button>
+          ) : null}
         </View>
       ) : null}
     </View>
@@ -71,6 +83,7 @@ export function PrivacyGate({ children }: { children: ReactNode }) {
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  content: { flex: 1 },
   overlay: {
     position: "absolute",
     inset: 0,
