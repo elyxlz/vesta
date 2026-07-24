@@ -276,11 +276,11 @@ fn user_desired_persists_and_boot_start_respects_it() {
     let _ = client.destroy_agent(&stopped_name);
 }
 
-/// Entrypoint-UNCHANGED upgrade path: when vestad re-extracts new agent code without a container
+/// Command-UNCHANGED upgrade path: when vestad re-extracts new agent code without a container
 /// config change (so the container is NOT rebuilt), a RUNNING agent must be restarted to pick up
 /// the new core — its old code stays in memory and its core mount points at the now-replaced dir.
-/// The upgrade e2e only covers entrypoint-CHANGED upgrades (which force a rebuild), so this pins the
-/// gap that left agents serving stale code after a same-entrypoint upgrade.
+/// The upgrade e2e only covers command-CHANGED upgrades (which force a rebuild), so this pins the
+/// gap that left agents serving stale code after a same-command upgrade.
 #[test]
 fn running_agent_restarts_when_agent_code_changes() {
     let user = format!("codechange-e2e-{}", std::process::id());
@@ -315,7 +315,7 @@ fn running_agent_restarts_when_agent_code_changes() {
             "agent should be running before the simulated upgrade"
         );
 
-        // Simulate a vestad version bump WITHOUT an entrypoint change: corrupt the fingerprint so
+        // Simulate a vestad version bump WITHOUT a command change: corrupt the fingerprint so
         // the next boot re-extracts the core (agent_code_changed=true) while needs_rebuild stays
         // false. The agent stays running across the restart (TestServer SIGKILLs vestad, so its
         // stop-all-on-shutdown never runs) — exactly the case that left agents stale.

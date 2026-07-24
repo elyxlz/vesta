@@ -23,6 +23,7 @@ def _authed_state() -> vm.State:
 def test_boot_turns_ordered_migrations_then_sync_then_config_then_greeting(tmp_path):
     config = _boot_config(tmp_path)
     (config.agent_dir / "core" / "migrations" / "001-x.md").write_text("do migration x")
+    (config.agent_dir / "core" / "migrations" / "002-y.md").write_text("do migration y")
     # An out-of-date sync marker vs the running core version fires the upstream-sync turn.
     (config.agent_dir / "core" / "pyproject.toml").write_text('[project]\nname = "vesta"\nversion = "9.9.9"\n')
 
@@ -39,6 +40,7 @@ def test_boot_turns_ordered_migrations_then_sync_then_config_then_greeting(tmp_p
     # restores daemons via the restart skill first, exactly as a plain restart would.
     assert turns[0].startswith(BOOT_RESTORE_ORIENTATION)
     assert "[Migration: 001-x]" in turns[0]
+    assert "[Migration: 002-y]" in turns[0]
     assert "[Upstream sync]" in turns[1]
     assert "BAD=1" in turns[2]
     assert "[System Restart]\nReason: routine restart, no specific reason" in turns[3]

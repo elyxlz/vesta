@@ -2556,15 +2556,9 @@ pub fn build_router(state: SharedState) -> Router {
                 .make_span_with(|request: &axum::http::Request<_>| {
                     tracing::info_span!("request", method = %request.method(), path = %request.uri().path())
                 })
-                .on_request(
-                    |request: &axum::http::Request<_>, _span: &tracing::Span| {
-                        let is_noisy = request.method() == axum::http::Method::OPTIONS
-                            || request.uri().path().ends_with("/logs");
-                        if !is_noisy {
-                            tracing::info!("request");
-                        }
-                    },
-                )
+                // Successful request starts are high-volume access-log noise. Handler
+                // events still carry this span's method/path, and failures remain ERROR.
+                .on_request(tower_http::trace::DefaultOnRequest::new().level(tracing::Level::DEBUG))
                 .on_response(tower_http::trace::DefaultOnResponse::new().level(tracing::Level::DEBUG))
                 .on_failure(tower_http::trace::DefaultOnFailure::new().level(tracing::Level::DEBUG)),
         )
@@ -2896,7 +2890,7 @@ pub async fn run_server(cfg: ServerConfig) {
     );
     let state = Arc::new(app_state);
     let mobile_app_handle = tokio::spawn(mobile_app_worker.run());
-    // Reconcile in the background so the API serves immediately: a rebuild (entrypoint/mount change)
+    // Reconcile in the background so the API serves immediately: a rebuild (command/mount change)
     // snapshots each container's filesystem (minutes), and awaiting it would leave vestad unreachable.
     let reconcile_docker = docker.clone();
     let reconcile_env = state.env_config.clone();

@@ -496,8 +496,8 @@ class VestaConfig(pyd_settings.BaseSettings):
     # When True, a reply containing an em dash, en dash, or ' - ' separator triggers a resend-without-them
     # correction turn (see client.process_message). Off lets the model use dashes freely.
     block_dashes: bool = True
-    # Optional skills linked into Claude Code at boot. The entrypoint unions shipped defaults from
-    # core/default-skills.txt into this list before core.main starts.
+    # Optional skills linked into Claude Code at boot. Agent startup unions shipped defaults from
+    # core/default-skills.txt into this list before the first SDK session starts.
     active_skills: list[str] = pyd.Field(default_factory=list)
 
     ephemeral: bool = False

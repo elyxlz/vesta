@@ -1,3 +1,4 @@
+use std::io::{BufRead, IsTerminal, Write};
 use std::process::{self, Command};
 
 const SERVICE_NAME: &str = "vestad";
@@ -140,13 +141,17 @@ fn journal_args(lines: usize, follow: bool) -> Vec<String> {
         "--user".into(),
         "-u".into(),
         SERVICE_NAME.into(),
+        // `-u` also includes systemd's own start/stop and resource-accounting
+        // messages. Keep the stream focused on output from the daemon itself.
+        "SYSLOG_IDENTIFIER=vestad".into(),
         "-n".into(),
         lines.to_string(),
-        "--no-hostname".into(),
-        // short-iso (not `cat`) so each line carries a timestamp — essential when
-        // debugging "when did this happen".
+        "--no-pager".into(),
+        "--quiet".into(),
+        // tracing already puts an RFC 3339 timestamp on each event. `cat` avoids
+        // wrapping it in a second journald timestamp, hostname, and process id.
         "-o".into(),
-        "short-iso".into(),
+        "cat".into(),
     ];
     if follow {
         args.push("-f".into());
@@ -154,14 +159,110 @@ fn journal_args(lines: usize, follow: bool) -> Vec<String> {
     args
 }
 
-pub fn exec_journal(lines: usize, follow: bool) -> ! {
-    use std::os::unix::process::CommandExt;
-
-    let err = Command::new("journalctl")
+pub fn stream_journal(lines: usize, follow: bool) -> Result<(), String> {
+    let mut child = Command::new("journalctl")
         .args(journal_args(lines, follow))
-        .exec();
-    eprintln!("failed to exec journalctl: {err}");
-    process::exit(1);
+        .stdout(process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to run journalctl: {e}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or("failed to read journalctl output")?;
+    let color = std::io::stdout().is_terminal()
+        && std::env::var_os("NO_COLOR").is_none()
+        && std::env::var_os("TERM").is_none_or(|term| term != "dumb");
+    let mut output = std::io::stdout().lock();
+
+    for line in std::io::BufReader::new(stdout).lines() {
+        let line = line.map_err(|e| format!("failed to read journalctl output: {e}"))?;
+        if writeln!(output, "{}", format_log_line(&line, color)).is_err() {
+            // A downstream command such as `head` closed the pipe. This is a
+            // successful end to the stream, not an error worth printing.
+            child.kill().ok();
+            return Ok(());
+        }
+    }
+
+    let status = child
+        .wait()
+        .map_err(|e| format!("failed to wait for journalctl: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("journalctl exited with {status}"))
+    }
+}
+
+/// Remove ANSI already embedded by an older vestad, then give tracing's stable
+/// `<timestamp> <LEVEL> <message>` shape a compact, consistent terminal view.
+fn format_log_line(line: &str, color: bool) -> String {
+    let clean = strip_ansi(line);
+    let trimmed = clean.trim_start();
+    let Some(timestamp_end) = trimmed.find(char::is_whitespace) else {
+        return clean;
+    };
+    let timestamp = &trimmed[..timestamp_end];
+    let rest = trimmed[timestamp_end..].trim_start();
+    let level_end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+    let level = &rest[..level_end];
+    let message = rest[level_end..].trim_start();
+    let level_color = match level {
+        "TRACE" => "\x1b[2;37m",
+        "DEBUG" => "\x1b[36m",
+        "INFO" => "\x1b[32m",
+        "WARN" => "\x1b[33m",
+        "ERROR" => "\x1b[1;31m",
+        _ => return clean,
+    };
+    let timestamp = compact_timestamp(timestamp);
+
+    if color {
+        format!("\x1b[2m{timestamp}\x1b[0m {level_color}{level:>5}\x1b[0m {message}")
+    } else {
+        format!("{timestamp} {level:>5} {message}")
+    }
+}
+
+fn compact_timestamp(timestamp: &str) -> String {
+    // tracing's default timer is UTC RFC 3339. Keep second precision: fractions
+    // make a live operational stream harder to scan without adding useful context.
+    if timestamp.len() >= 20
+        && timestamp.as_bytes().get(10) == Some(&b'T')
+        && timestamp
+            .as_bytes()
+            .get(19)
+            .is_some_and(|c| *c == b'.' || *c == b'Z')
+    {
+        return format!("{} {}Z", &timestamp[..10], &timestamp[11..19]);
+    }
+    timestamp.to_string()
+}
+
+fn strip_ansi(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut output = String::with_capacity(input.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == 0x1b && bytes.get(index + 1) == Some(&b'[') {
+            index += 2;
+            while index < bytes.len() {
+                let byte = bytes[index];
+                index += 1;
+                if (0x40..=0x7e).contains(&byte) {
+                    break;
+                }
+            }
+        } else {
+            let ch = input[index..]
+                .chars()
+                .next()
+                .expect("index remains on a UTF-8 boundary");
+            output.push(ch);
+            index += ch.len_utf8();
+        }
+    }
+    output
 }
 
 pub fn main_pid() -> Option<u32> {
@@ -213,7 +314,7 @@ fn run_systemctl(args: &[&str]) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{journal_args, SERVICE_NAME};
+    use super::{format_log_line, journal_args, strip_ansi, SERVICE_NAME};
 
     #[test]
     fn journal_args_scope_the_vestad_unit_and_forward_follow() {
@@ -226,6 +327,8 @@ mod tests {
             args.iter().any(|arg| arg == "-f"),
             "follow flag must be forwarded"
         );
+        assert!(args.iter().any(|arg| arg == "SYSLOG_IDENTIFIER=vestad"));
+        assert!(args.windows(2).any(|pair| pair == ["-o", "cat"]));
     }
 
     #[test]
@@ -234,6 +337,38 @@ mod tests {
         assert!(
             !args.iter().any(|arg| arg == "-f"),
             "no follow flag without follow"
+        );
+    }
+
+    #[test]
+    fn log_lines_drop_fractional_seconds_and_align_levels() {
+        let line = "2026-07-23T12:34:56.123456Z  INFO server ready port=443";
+        assert_eq!(
+            format_log_line(line, false),
+            "2026-07-23 12:34:56Z  INFO server ready port=443"
+        );
+    }
+
+    #[test]
+    fn log_lines_color_levels_only_when_requested() {
+        let line = "2026-07-23T12:34:56Z ERROR tunnel failed";
+        let colored = format_log_line(line, true);
+        assert!(colored.contains("\x1b[1;31mERROR\x1b[0m"));
+        assert_eq!(strip_ansi(&colored), format_log_line(line, false));
+    }
+
+    #[test]
+    fn old_ansi_and_non_tracing_lines_are_cleaned() {
+        assert_eq!(
+            format_log_line(
+                "\x1b[2m2026-07-23T12:34:56Z\x1b[0m \x1b[33m WARN\x1b[0m retrying",
+                false
+            ),
+            "2026-07-23 12:34:56Z  WARN retrying"
+        );
+        assert_eq!(
+            format_log_line("\x1b[1;35mvestad\x1b[0m started", false),
+            "vestad started"
         );
     }
 }

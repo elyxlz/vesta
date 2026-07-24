@@ -364,7 +364,7 @@ fn dump_upgrade_diagnostics(home: &Path, container_name: &str) {
         Err(e) => eprintln!("container {container_name}: inspect failed ({e})"),
     }
     // `docker logs` works even when the container has exited, so it shows WHY it stopped
-    // (entrypoint `uv sync` failures, a crash on the new core, etc.).
+    // (container-command `uv sync` failures, a crash on the new core, etc.).
     match docker_cmd(&["logs", "--tail", "60", container_name]) {
         Ok(out) => eprintln!("--- container logs (tail 60) ---\n{out}"),
         Err(e) => eprintln!("container logs unavailable ({e})"),
