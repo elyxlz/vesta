@@ -4,8 +4,13 @@ paraphrase (which has misreported a five_hour rejection as a "monthly spend limi
 import pytest
 from claude_agent_sdk import RateLimitEvent, RateLimitInfo, RateLimitStatus, RateLimitType
 from conftest import consuming, make_stream_harness, result_msg
+from pydantic import SecretStr
 from wait_util import wait_for_condition
 
+import core.config as cfg
+from core.client import _note_rate_limit
+from core.model_access import clear_model_access
+from core.provider import ProviderAuthState, ProviderCooldown, ProviderStatus
 from core.sdk_parsing import rate_limit_notice
 
 NOW = 1_000_000.0
@@ -108,6 +113,42 @@ async def test_rejected_rate_limit_publishes_cooling_down_model_access():
     assert access[0]["reason"] == "rate_limit"
     assert access[0]["until"] == 4_000_000_000
     assert access[0]["window"] == "five_hour"
+
+
+@pytest.mark.anyio
+async def test_claude_window_event_is_not_applied_to_compatible_key_providers():
+    state, config, *_ = make_stream_harness()
+    config.provider = cfg.ZaiConfig(key=SecretStr("test-key"), model="glm-5")
+    state.provider_status = ProviderStatus(
+        state=ProviderAuthState.AUTHENTICATED,
+        kind="zai",
+        model="glm-5",
+    )
+    sub = state.event_bus.subscribe()
+
+    await _note_rate_limit(
+        _rate_limit_event("rejected", resets_at=4_000_000_000),
+        state=state,
+        config=config,
+    )
+
+    assert state.persisted.provider_cooldown is None
+    assert sub.empty()
+
+
+@pytest.mark.anyio
+async def test_provider_change_clears_persisted_cooldown(config, state):
+    state.persisted.provider_cooldown = ProviderCooldown(until=4_000_000_000, window="five_hour")
+    state.current_turn_rate_limited = True
+    sub = state.event_bus.subscribe()
+
+    await clear_model_access(state=state, config=config)
+
+    assert state.persisted.provider_cooldown is None
+    assert state.current_turn_rate_limited is False
+    event = sub.get_nowait()
+    assert event["type"] == "model_access"
+    assert event["state"] == "available"
 
 
 @pytest.mark.anyio

@@ -44,6 +44,7 @@ from .config import (
 )
 from .events import EventBus, SnapshotEvent, VestaEvent, model_access_info
 from .helpers import get_memory_path
+from .model_access import clear_model_access
 from .models import State
 from .provider import (
     ProviderAuthState,
@@ -357,6 +358,7 @@ async def _provider_put_handler(request: web.Request) -> web.Response:
             state.provider_status = await asyncio.to_thread(
                 set_openai, signin.credentials, signin.model, signin.max_context_tokens, config=config
             )
+        await clear_model_access(state=state, config=config)
     except (ValueError, TypeError, pyd.ValidationError) as e:
         return web.json_response({"error": f"invalid credentials: {e}"}, status=400)
     except OSError as e:
@@ -395,8 +397,10 @@ async def _provider_delete_handler(request: web.Request) -> web.Response:
     """Sign out: clear the provider credentials, resetting to a valid signed-out state. Idempotent.
     Applied by the next restart."""
     state: State = request.app["state"]
+    config: VestaConfig = request.app["config"]
     try:
         state.provider_status = await asyncio.to_thread(clear_provider)
+        await clear_model_access(state=state, config=config)
     except OSError as e:
         return web.json_response({"error": f"sign out failed: {e}"}, status=500)
     return web.json_response({"ok": True})

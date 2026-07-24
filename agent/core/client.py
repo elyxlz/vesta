@@ -236,10 +236,10 @@ async def _note_rate_limit(msg: RateLimitEvent, *, state: vm.State, config: cfg.
     for the same event misnames the window (issue #1071), so this event is what consumers trust.
     Once per window; the type/resets_at pair changes when a different limit trips. The internal event
     is kept for history; a best-effort user notification raises a user-facing toast + push."""
-    # OpenRouter's authoritative signal is the proxy's upstream HTTP 429. Ignore any SDK
-    # reinterpretation of that response: it lacks OpenRouter-specific reset semantics and
-    # would overwrite the cooldown already parsed from Retry-After.
-    if isinstance(config.provider, cfg.OpenRouterConfig):
+    # This structured window vocabulary is Claude-specific. OpenRouter's authoritative signal is
+    # its proxy's upstream HTTP 429, while the other Claude-compatible providers do not promise
+    # Claude's five-hour/weekly reset semantics.
+    if state.provider_status is None or state.provider_status.kind != "claude":
         return
     info = msg.rate_limit_info
     notice = sdk_parsing.rate_limit_notice(info, now=time.time())
