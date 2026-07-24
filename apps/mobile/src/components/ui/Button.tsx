@@ -17,6 +17,8 @@ type IconName = ComponentProps<typeof Ionicons>["name"];
 type ButtonVariant =
   | "primary"
   | "secondary"
+  | "card"
+  | "cardDanger"
   | "ghost"
   | "danger"
   | "plain";
@@ -66,20 +68,25 @@ export function Button({
   accessibilityLabel,
 }: ButtonProps) {
   const { colors } = usePreferences();
+  const usesCardSurface = variant === "card" || variant === "cardDanger";
   const backgroundColor =
     variant === "primary"
       ? colors.accent
       : variant === "danger"
         ? withAlpha(colors.danger, 0.7)
-        : variant === "secondary"
-          ? colors.input
-          : "transparent";
+        : usesCardSurface
+          ? colors.card
+          : variant === "secondary"
+            ? colors.input
+            : "transparent";
   const textColor =
     variant === "primary"
       ? colors.accentText
       : variant === "danger"
         ? "#ffffff"
-        : colors.text;
+        : variant === "cardDanger"
+          ? colors.danger
+          : colors.text;
 
   return (
     <Pressable
@@ -104,12 +111,13 @@ export function Button({
             variant === "danger" && pressed
               ? withAlpha(colors.danger, 0.8)
               : backgroundColor,
-          opacity:
-            disabled
-              ? 0.45
-              : pressed && variant !== "danger" && variant !== "ghost"
-                ? 0.72
-                : 1,
+          borderColor: usesCardSurface ? colors.border : "transparent",
+          borderWidth: usesCardSurface ? StyleSheet.hairlineWidth : 0,
+          opacity: disabled
+            ? 0.45
+            : pressed && variant !== "danger" && variant !== "ghost"
+              ? 0.72
+              : 1,
         },
       ]}
     >

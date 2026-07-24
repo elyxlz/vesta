@@ -77,10 +77,10 @@ function AgentSettingsContent() {
           title="Agent"
           actions={
             <>
-              <Button variant="secondary" onPress={() => open("provider")}>
+              <Button pill variant="card" onPress={() => open("provider")}>
                 Provider and model
               </Button>
-              <Button variant="secondary" onPress={() => open("voice")}>
+              <Button pill variant="card" onPress={() => open("voice")}>
                 Voice
               </Button>
             </>
@@ -101,24 +101,25 @@ function AgentSettingsContent() {
           actions={
             <>
               <Button
-                variant="secondary"
+                pill
+                variant="card"
                 onPress={() => openPage("notifications")}
               >
                 Notifications
               </Button>
-              <Button variant="secondary" onPress={() => openPage("logs")}>
+              <Button pill variant="card" onPress={() => openPage("logs")}>
                 Logs
               </Button>
-              <Button variant="secondary" onPress={() => open("notifications")}>
+              <Button pill variant="card" onPress={() => open("notifications")}>
                 Notification rules
               </Button>
-              <Button variant="secondary" onPress={() => open("files")}>
+              <Button pill variant="card" onPress={() => open("files")}>
                 Files
               </Button>
-              <Button variant="secondary" onPress={() => open("host-access")}>
+              <Button pill variant="card" onPress={() => open("host-access")}>
                 Host access
               </Button>
-              <Button variant="secondary" onPress={() => open("backups")}>
+              <Button pill variant="card" onPress={() => open("backups")}>
                 Backups
               </Button>
             </>
@@ -129,6 +130,8 @@ function AgentSettingsContent() {
           actions={
             <>
               <Button
+                pill
+                variant="card"
                 disabled={action.isPending}
                 loading={
                   action.isPending &&
@@ -141,7 +144,8 @@ function AgentSettingsContent() {
                 {agent?.status === "stopped" ? "Start agent" : "Stop agent"}
               </Button>
               <Button
-                variant="secondary"
+                pill
+                variant="card"
                 disabled={action.isPending}
                 loading={action.isPending && action.variables === "restart"}
                 onPress={() => action.mutate("restart")}
@@ -149,7 +153,8 @@ function AgentSettingsContent() {
                 Restart agent
               </Button>
               <Button
-                variant="secondary"
+                pill
+                variant="card"
                 disabled={action.isPending}
                 loading={action.isPending && action.variables === "backup"}
                 onPress={() => action.mutate("backup")}
@@ -163,7 +168,8 @@ function AgentSettingsContent() {
           title="Danger zone"
           actions={
             <Button
-              variant="danger"
+              pill
+              variant="cardDanger"
               disabled={action.isPending}
               loading={action.isPending && action.variables === "delete"}
               onPress={() => {

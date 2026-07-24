@@ -104,7 +104,7 @@ export default function SettingsScreen() {
         <FormSection
           title="Experience"
           actions={
-            <Button variant="secondary" onPress={chooseTheme}>
+            <Button pill variant="card" onPress={chooseTheme}>
               Change appearance
             </Button>
           }
@@ -172,7 +172,8 @@ export default function SettingsScreen() {
           actions={
             <>
               <Button
-                variant={updateAvailable ? "primary" : "secondary"}
+                pill
+                variant="card"
                 loading={gatewayUpdate.isPending || updateCheck.isPending}
                 onPress={
                   updateAvailable
@@ -189,7 +190,8 @@ export default function SettingsScreen() {
                       : "Check for updates"}
               </Button>
               <Button
-                variant="secondary"
+                pill
+                variant="card"
                 loading={gatewayRestart.isPending}
                 onPress={confirmGatewayRestart}
               >
@@ -224,7 +226,8 @@ export default function SettingsScreen() {
             title="Account"
             actions={
               <Button
-                variant="secondary"
+                pill
+                variant="card"
                 onPress={() =>
                   void Linking.openURL("https://vesta.run/account")
                 }
@@ -239,11 +242,12 @@ export default function SettingsScreen() {
           title="Support"
           actions={
             <>
-              <Button variant="secondary" onPress={() => router.push("/debug")}>
+              <Button pill variant="card" onPress={() => router.push("/debug")}>
                 Diagnostics
               </Button>
               <Button
-                variant="secondary"
+                pill
+                variant="card"
                 onPress={() =>
                   void Linking.openURL(
                     "https://github.com/elyxlz/vesta/releases",
@@ -260,7 +264,8 @@ export default function SettingsScreen() {
           title="Other"
           actions={
             <Button
-              variant="danger"
+              pill
+              variant="cardDanger"
               onPress={() => {
                 Alert.alert(
                   "Disconnect from Vesta?",
