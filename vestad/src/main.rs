@@ -14,6 +14,7 @@ mod backup;
 mod channel;
 mod docker;
 mod jwt;
+mod lifecycle;
 mod manifest;
 mod mobile_app;
 mod mounts;
@@ -775,6 +776,13 @@ fn main() {
                         let was_running = cs == docker::ContainerStatus::Running;
                         if was_running {
                             eprintln!("stopping agent...");
+                            docker::handoff_shutdown_reason(
+                                &docker,
+                                &name,
+                                &cname,
+                                lifecycle::BACKUP_EXPORT,
+                            )
+                            .await;
                             docker::stop_container_with_timeout(
                                 &docker,
                                 &cname,
@@ -790,12 +798,26 @@ fn main() {
                             docker::snapshot_container(&docker, &cname, &temp_tag, &[]).await
                         {
                             if was_running {
+                                docker::handoff_boot_reason(
+                                    &docker,
+                                    &name,
+                                    &cname,
+                                    lifecycle::BACKUP_EXPORT,
+                                )
+                                .await;
                                 docker::start_container(&docker, &cname).await;
                             }
                             die(format!("snapshot failed: {e}"));
                         }
 
                         if was_running {
+                            docker::handoff_boot_reason(
+                                &docker,
+                                &name,
+                                &cname,
+                                lifecycle::BACKUP_EXPORT,
+                            )
+                            .await;
                             docker::start_container(&docker, &cname).await;
                         }
 
@@ -862,6 +884,13 @@ fn main() {
                         .await
                         .unwrap_or_else(|e| die(&e));
 
+                        docker::handoff_boot_reason(
+                            &docker,
+                            &name,
+                            &cname,
+                            lifecycle::BACKUP_IMPORT,
+                        )
+                        .await;
                         if !docker::start_container(&docker, &cname).await {
                             die("failed to start imported agent");
                         }

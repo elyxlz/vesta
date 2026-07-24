@@ -182,7 +182,7 @@ def greeting_turn(*, config: cfg.VestaConfig, state: vm.State, reason: str) -> s
     if not prompt or not prompt.strip():
         return None
 
-    logger.startup(f"Boot turn: {reason} greeting")
+    logger.startup("Boot turn: restart greeting")
     return prompt.strip()
 
 
@@ -374,7 +374,9 @@ async def drain_compaction_request(*, state: vm.State, config: cfg.VestaConfig) 
         # vestad owns the restart and starts us back on the compacted session. If it is unreachable
         # we stay up on this session, so the boot channel is moot: clear it and fall back to the
         # live channel below instead of losing the follow-up.
-        if not await vestad_client.request_restart():
+        if not await vestad_client.request_restart(
+            "compaction: conversation context was compacted"
+        ):
             logger.warning("vestad unreachable for restart; continuing on the compacted session")
             if turn is not None:
                 state.persisted.pending_boot_message = None

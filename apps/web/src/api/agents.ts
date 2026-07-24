@@ -1,5 +1,10 @@
 import { apiJson, apiFetch, jsonInit } from "./client";
-import type { BuildPhase, NotificationEvent, VestaEvent } from "@vesta/core";
+import {
+  RESTART_REASONS,
+  type BuildPhase,
+  type NotificationEvent,
+  type VestaEvent,
+} from "@vesta/core";
 
 export type { BuildPhase };
 
@@ -74,7 +79,7 @@ export async function setProvider(
   if (Object.keys(prefs).length > 0) {
     await apiFetch(`/agents/${enc}/config`, jsonInit("PUT", prefs));
   }
-  await restartAgent(name);
+  await restartAgent(name, RESTART_REASONS.provider);
 }
 
 /// Sign out: clear the agent's provider credentials (`DELETE /provider`), then restart so it boots
@@ -83,7 +88,7 @@ export async function signOutProvider(name: string): Promise<void> {
   await apiFetch(`/agents/${encodeURIComponent(name)}/provider`, {
     method: "DELETE",
   });
-  await restartAgent(name);
+  await restartAgent(name, RESTART_REASONS.signOut);
 }
 
 export interface ProviderInfo {
@@ -122,17 +127,18 @@ export async function getProvider(name: string): Promise<ProviderInfo> {
 async function patchProvider(
   name: string,
   patch: Record<string, unknown>,
+  reason: string,
 ): Promise<void> {
   await apiFetch(
     `/agents/${encodeURIComponent(name)}/provider`,
     jsonInit("PATCH", patch),
   );
-  await restartAgent(name);
+  await restartAgent(name, reason);
 }
 
 /// Change only the model. Vestad restarts the agent so it takes effect.
 export async function setModel(name: string, model: string): Promise<void> {
-  await patchProvider(name, { model });
+  await patchProvider(name, { model }, RESTART_REASONS.model);
 }
 
 /// Change only the context window. Vestad restarts the agent so it takes effect.
@@ -140,7 +146,11 @@ export async function setContextWindow(
   name: string,
   maxContextTokens: number,
 ): Promise<void> {
-  await patchProvider(name, { max_context_tokens: maxContextTokens });
+  await patchProvider(
+    name,
+    { max_context_tokens: maxContextTokens },
+    RESTART_REASONS.context,
+  );
 }
 
 /// Create an empty agent container. Credentials and preferences (provider, model, personality,
@@ -239,10 +249,14 @@ export async function stopAgent(name: string): Promise<void> {
   });
 }
 
-export async function restartAgent(name: string): Promise<void> {
-  await apiJson(`/agents/${encodeURIComponent(name)}/restart`, {
-    method: "POST",
-  });
+export async function restartAgent(
+  name: string,
+  reason: string = RESTART_REASONS.manual,
+): Promise<void> {
+  await apiJson(
+    `/agents/${encodeURIComponent(name)}/restart`,
+    jsonInit("POST", { reason }),
+  );
 }
 
 export async function deleteAgent(name: string): Promise<void> {

@@ -9,7 +9,12 @@ import pytest
 import core.config as cfg
 import core.models as vm
 from core import state_store
-from core.main import _consume_restart_reason, _make_signal_handler, run_vesta
+from core.main import (
+    _consume_restart_reason,
+    _log_startup_reason,
+    _make_signal_handler,
+    run_vesta,
+)
 
 
 def _config(tmp_path):
@@ -76,3 +81,22 @@ def test_boot_discards_stale_shutdown_reason_without_using_it_as_restart_reason(
 
     assert reason == vm.CRASH_RESTART
     assert not state_store.pending_shutdown_reason_path(config).exists()
+
+
+def test_restart_reason_always_gets_a_dedicated_startup_line():
+    with patch("core.main.logger.startup") as startup_log:
+        _log_startup_reason(
+            "backup: you were paused for a scheduled backup",
+            first_start=False,
+        )
+
+    startup_log.assert_called_once_with(
+        "Restart reason: backup: you were paused for a scheduled backup"
+    )
+
+
+def test_first_start_uses_startup_reason_label():
+    with patch("core.main.logger.startup") as startup_log:
+        _log_startup_reason(vm.FIRST_START_REASON, first_start=True)
+
+    startup_log.assert_called_once_with("Startup reason: first start")

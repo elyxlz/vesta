@@ -272,7 +272,9 @@ async def test_drain_nap_without_followup_drops_nothing(tmp_path):
 async def test_drain_restart_boot_message_and_no_notification(tmp_path):
     state, config, restart = await _drain(tmp_path, followup="new day, greet warmly", restart=True)
 
-    restart.assert_awaited_once()
+    restart.assert_awaited_once_with(
+        "compaction: conversation context was compacted"
+    )
     boot_msg = state.persisted.pending_boot_message
     assert boot_msg is not None
     assert boot_msg.startswith("[Your context was just compacted; the summary is above.]")
@@ -310,7 +312,9 @@ async def test_drain_restart_after_compaction_failure_still_restarts(tmp_path):
     on the un-compacted session), and the boot message omits the false orientation."""
     state, _, restart = await _drain(tmp_path, followup="new day", restart=True, compact_exc=ClaudeSDKError("boom"))
 
-    restart.assert_awaited_once()
+    restart.assert_awaited_once_with(
+        "compaction: conversation context was compacted"
+    )
     assert state.persisted.pending_boot_message == "new day"
 
 
@@ -355,7 +359,9 @@ async def test_notification_file_deleted_before_processing_is_lost_on_restart(tm
     state.pending_compaction = vm.PendingCompaction(prompt=None, followup="new day", restart=True)
     with patch("core.loops.vestad_client.request_restart", new_callable=AsyncMock, return_value=True) as restart:
         await _run_with_compaction_stream(state, config, lambda: drain_compaction_request(state=state, config=config), pre_tokens=1)
-    restart.assert_awaited_once()  # restart fires after compaction (via vestad)
+    restart.assert_awaited_once_with(
+        "compaction: conversation context was compacted"
+    )  # restart fires after compaction (via vestad)
 
     # The process restarts: run_vesta creates a fresh queue and init_state loads from disk.
     # A restarted process can only recover messages that are still on disk.

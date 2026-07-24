@@ -1,5 +1,7 @@
 """Tests for boot-turn assembly: boot-time control-flow delivered as ordered, non-interruptible turns."""
 
+from unittest.mock import patch
+
 import core.config as cfg
 import core.models as vm
 from core.main import BOOT_RESTORE_ORIENTATION, collect_boot_turns
@@ -58,10 +60,18 @@ def test_restart_only_boot_carries_no_daemon_orientation(tmp_path):
     state = _authed_state()
     state.persisted.last_synced_version = "9.9.9"  # current, so no upstream-sync turn fires
 
-    turns = collect_boot_turns(state=state, config=config, config_issues=[], greeting_reason="clean: routine restart", first_start=False)
+    with patch("core.loops.logger.startup") as startup_log:
+        turns = collect_boot_turns(
+            state=state,
+            config=config,
+            config_issues=[],
+            greeting_reason="clean: routine restart",
+            first_start=False,
+        )
 
     assert len(turns) == 1
     assert BOOT_RESTORE_ORIENTATION not in turns[0]
+    startup_log.assert_called_once_with("Boot turn: restart greeting")
 
 
 def test_first_start_pre_marks_migrations_and_greets_with_setup(tmp_path):

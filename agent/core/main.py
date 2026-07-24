@@ -231,6 +231,11 @@ def init_state(*, config: cfg.VestaConfig) -> vm.State:
     return vm.State(persisted=persisted, event_bus=event_bus, provider_status=provider_status)
 
 
+def _log_startup_reason(reason: str, *, first_start: bool) -> None:
+    label = "Startup reason" if first_start else "Restart reason"
+    logger.startup(f"{label}: {reason}")
+
+
 async def async_main() -> bool:
     config, config_issues = cfg.load_config()
     # Apply the configured timezone to the process once, here at the entry point, so every consumer
@@ -259,7 +264,8 @@ async def async_main() -> bool:
     initial_state = init_state(config=config)
     first_start = not initial_state.persisted.first_start_done
     restart_reason = _consume_restart_reason(initial_state, config, first_start=first_start)
-    logger.init(f"Starting main loop ({restart_reason})...")
+    logger.init("Starting main loop...")
+    _log_startup_reason(restart_reason, first_start=first_start)
     return await run_vesta(config, state=initial_state, first_start=first_start, restart_reason=restart_reason, config_issues=config_issues)
 
 

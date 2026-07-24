@@ -1,4 +1,8 @@
-import type { NotificationEvent, VestaEvent } from "@vesta/core";
+import {
+  RESTART_REASONS,
+  type NotificationEvent,
+  type VestaEvent,
+} from "@vesta/core";
 import type { ApiClient } from "./client";
 import type {
   BackupInfo,
@@ -115,7 +119,7 @@ export async function provisionAgent(
       }),
     );
   }
-  await restartAgent(api, name);
+  await restartAgent(api, name, RESTART_REASONS.provider);
 }
 
 export async function startClaudeOAuth(
@@ -176,12 +180,13 @@ async function patchProvider(
   api: ApiClient,
   name: string,
   patch: Record<string, unknown>,
+  reason: string,
 ): Promise<void> {
   await api.request(
     `/agents/${encodeURIComponent(name)}/provider`,
     api.jsonInit("PATCH", patch),
   );
-  await restartAgent(api, name);
+  await restartAgent(api, name, reason);
 }
 
 export async function setModel(
@@ -189,7 +194,7 @@ export async function setModel(
   name: string,
   model: string,
 ): Promise<void> {
-  await patchProvider(api, name, { model });
+  await patchProvider(api, name, { model }, RESTART_REASONS.model);
 }
 
 export async function setContextWindow(
@@ -197,9 +202,14 @@ export async function setContextWindow(
   name: string,
   maxContextTokens: number,
 ): Promise<void> {
-  await patchProvider(api, name, {
-    max_context_tokens: maxContextTokens,
-  });
+  await patchProvider(
+    api,
+    name,
+    {
+      max_context_tokens: maxContextTokens,
+    },
+    RESTART_REASONS.context,
+  );
 }
 
 export async function signOutProvider(
@@ -209,7 +219,7 @@ export async function signOutProvider(
   await api.request(`/agents/${encodeURIComponent(name)}/provider`, {
     method: "DELETE",
   });
-  await restartAgent(api, name);
+  await restartAgent(api, name, RESTART_REASONS.signOut);
 }
 
 export async function startAgent(api: ApiClient, name: string): Promise<void> {
@@ -227,10 +237,12 @@ export async function stopAgent(api: ApiClient, name: string): Promise<void> {
 export async function restartAgent(
   api: ApiClient,
   name: string,
+  reason: string = RESTART_REASONS.manual,
 ): Promise<void> {
-  await api.request(`/agents/${encodeURIComponent(name)}/restart`, {
-    method: "POST",
-  });
+  await api.request(
+    `/agents/${encodeURIComponent(name)}/restart`,
+    api.jsonInit("POST", { reason }),
+  );
 }
 
 export async function deleteAgent(api: ApiClient, name: string): Promise<void> {

@@ -556,7 +556,7 @@ async fn start_agent_handler(
             .user_desired = UserDesired::Running;
         save_settings(&settings);
     }
-    docker::start_agent(&state.docker, &name)
+    docker::start_agent_with_reason(&state.docker, &name, crate::lifecycle::MANUAL_START)
         .await
         .map_err(map_docker_err)?;
     Ok(ok_json())
@@ -863,7 +863,7 @@ async fn write_to_agent(
 
     // Agent must be running to receive the proxy call; auto-start stopped agents.
     if docker::container_status(&state.docker, &cname).await != docker::ContainerStatus::Running {
-        docker::start_agent(&state.docker, name)
+        docker::start_agent_with_reason(&state.docker, name, crate::lifecycle::CONFIG_WRITE_START)
             .await
             .map_err(map_docker_err)?;
     }
