@@ -15,7 +15,7 @@ use crate::docker::{self, ListEntry};
 use crate::mobile_app::MobileApp;
 use crate::settings::ServiceEntry;
 use crate::state::{err_response, ok_json, SharedState};
-use crate::sync::{activity_state, notification_change, SyncHub};
+use crate::sync::{activity_state, notification_change, ModelAccess, SyncHub};
 
 const POLL_INTERVAL_SECS: u64 = 3;
 
@@ -176,6 +176,8 @@ pub struct AgentStatusCache {
     agents_rx: watch::Receiver<Vec<ListEntry>>,
     activity_tx: watch::Sender<HashMap<String, String>>,
     activity_rx: watch::Receiver<HashMap<String, String>>,
+    model_access_tx: watch::Sender<HashMap<String, ModelAccess>>,
+    model_access_rx: watch::Receiver<HashMap<String, ModelAccess>>,
     /// Per-agent IANA timezone (agent name -> zone), reported on each agent's connect snapshot.
     /// The auto-update scheduler reads it to aim the fleet restart at each agent's local quiet window.
     timezones_tx: watch::Sender<HashMap<String, String>>,
@@ -199,6 +201,7 @@ impl AgentStatusCache {
     pub fn new() -> Self {
         let (agents_tx, agents_rx) = watch::channel(Vec::new());
         let (activity_tx, activity_rx) = watch::channel(HashMap::new());
+        let (model_access_tx, model_access_rx) = watch::channel(HashMap::new());
         let (timezones_tx, timezones_rx) = watch::channel(HashMap::new());
         let (services_tx, services_rx) = watch::channel(HashMap::new());
         let (invalidations_tx, invalidations_rx) = watch::channel(());
@@ -207,6 +210,8 @@ impl AgentStatusCache {
             agents_rx,
             activity_tx,
             activity_rx,
+            model_access_tx,
+            model_access_rx,
             timezones_tx,
             timezones_rx,
             services_tx,
@@ -229,6 +234,10 @@ impl AgentStatusCache {
 
     pub fn subscribe_activity(&self) -> watch::Receiver<HashMap<String, String>> {
         self.activity_rx.clone()
+    }
+
+    pub fn subscribe_model_access(&self) -> watch::Receiver<HashMap<String, ModelAccess>> {
+        self.model_access_rx.clone()
     }
 
     /// Snapshot of each alive agent's IANA timezone, as last reported on its connect snapshot.
@@ -387,6 +396,9 @@ pub fn spawn_agent_status_task(deps: AgentStatusTaskDeps) {
                     cache.activity_tx.send_modify(|states| {
                         states.remove(name);
                     });
+                    cache.model_access_tx.send_modify(|states| {
+                        states.remove(name);
+                    });
                     cache.timezones_tx.send_modify(|zones| {
                         zones.remove(name);
                     });
@@ -442,6 +454,7 @@ struct AgentWsHandle {
 /// per connect on the snapshot). Multiplexed over one channel so the listener needs no second wire.
 enum AgentUpdate {
     Activity(String),
+    ModelAccess(ModelAccess),
     Timezone(String),
 }
 
@@ -449,6 +462,9 @@ fn apply_agent_update(cache: &AgentStatusCache, name: String, update: AgentUpdat
     match update {
         AgentUpdate::Activity(state) => cache.activity_tx.send_modify(|states| {
             states.insert(name, state);
+        }),
+        AgentUpdate::ModelAccess(access) => cache.model_access_tx.send_modify(|states| {
+            states.insert(name, access);
         }),
         AgentUpdate::Timezone(zone) => cache.timezones_tx.send_modify(|zones| {
             zones.insert(name, zone);
@@ -509,6 +525,17 @@ async fn agent_event_listener(
                         }
                     }
 
+                    let model_access = if msg_type == "snapshot" {
+                        parsed.get("model_access")
+                    } else if msg_type == "model_access" {
+                        Some(&parsed)
+                    } else {
+                        None
+                    };
+                    if let Some(access) = model_access.and_then(parse_model_access) {
+                        let _ = tx.send((name.clone(), AgentUpdate::ModelAccess(access))).await;
+                    }
+
                     if msg_type == "snapshot" {
                         // Timezone rides the snapshot's `config` (unchanged behavior).
                         if let Some(zone) = parsed
@@ -544,6 +571,10 @@ async fn agent_event_listener(
         tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
         delay_ms = (delay_ms * 2).min(RECONNECT_MAX_MS);
     }
+}
+
+fn parse_model_access(value: &serde_json::Value) -> Option<ModelAccess> {
+    serde_json::from_value(value.clone()).ok()
 }
 
 /// The pending notification ids on a connect snapshot (`notifications.pending`, file stems).

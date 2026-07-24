@@ -105,11 +105,11 @@ mod tests {
     fn every_union_event_yields_meta_with_the_right_id_sign() {
         let Some(fixture) = union_fixture() else { return };
         let events = fixture["events"].as_array().expect("events array");
-        assert_eq!(events.len(), 3, "the fixture covers the tap-read subset");
+        assert_eq!(events.len(), 4, "the fixture covers the tap-read subset");
         for event in events {
             let id = event.get("id").and_then(Value::as_i64).expect("every event carries an id");
             let kind = event.get("type").and_then(Value::as_str).expect("every event carries a type");
-            let live = kind == "status" || kind == "notification_cleared";
+            let live = kind == "status" || kind == "model_access" || kind == "notification_cleared";
             if live {
                 assert!(id < 0, "live-only {kind} uses a negative id");
             } else {

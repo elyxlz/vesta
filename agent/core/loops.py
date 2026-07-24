@@ -23,6 +23,7 @@ from .client import (
     process_message,
     resolve_openrouter_max_tokens,
     send_preempt,
+    wait_for_model_access,
 )
 from .config import DEFAULT_CONTEXT_WINDOW
 from .diagnostics import format_crash_detail
@@ -287,6 +288,9 @@ async def _run_messages_with_preempts(
                 break
 
             current = pending.pop(0)
+            if not await wait_for_model_access(state=state, config=config):
+                await queue.put(current)
+                break
             # Defer (don't drive claude, don't delete the file) while unauthenticated: a dead token
             # just burns the CLI's full retry budget per message. Keeping the notification file on
             # disk means it re-runs after the user re-authenticates — which restarts the agent, so
@@ -297,6 +301,7 @@ async def _run_messages_with_preempts(
             state.noninterruptible_turn_active = not current.interruptible
             state.in_flight_notification_paths = current.file_paths
             state.query_not_delivered = False
+            state.current_turn_rate_limited = False
             process_task = asyncio.create_task(
                 _run_one_turn(
                     current.text,
@@ -315,10 +320,13 @@ async def _run_messages_with_preempts(
             # restart. Operate on in_flight_notification_paths, not current.file_paths: an intentional
             # restart mid-turn already cleared and emptied it, so this stays a no-op instead of re-emitting.
             authenticated = state.provider_status is None or state.provider_status.state == ProviderAuthState.AUTHENTICATED
-            if authenticated and not state.query_not_delivered:
+            if authenticated and not state.query_not_delivered and not state.current_turn_rate_limited:
                 clear_notifications(state, state.in_flight_notification_paths)
+            if state.current_turn_rate_limited:
+                pending.append(current)
             state.in_flight_notification_paths = []
             state.query_not_delivered = False
+            state.current_turn_rate_limited = False
             process_task = None
     except asyncio.CancelledError:
         if process_task:
