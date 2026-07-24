@@ -126,7 +126,7 @@ export function Button({
         const contentColor =
           variant === "ghost" && pressed ? colors.interactive : textColor;
 
-        return loading ? (
+        return loading && !usesCardSurface ? (
           <ActivityIndicator color={contentColor} />
         ) : (
           <View
@@ -153,7 +153,9 @@ export function Button({
             >
               {children}
             </Text>
-            {usesCardSurface ? (
+            {usesCardSurface && loading ? (
+              <ActivityIndicator color={contentColor} />
+            ) : usesCardSurface ? (
               <Ionicons
                 name="chevron-forward"
                 size={17}

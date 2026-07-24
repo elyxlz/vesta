@@ -175,13 +175,15 @@ export default function SettingsScreen() {
                     : () => updateCheck.mutate()
                 }
               >
-                {updateAvailable
-                  ? "Update gateway"
-                  : updateCheck.isError
-                    ? "Retry update check"
-                    : updateCheck.isSuccess
-                      ? "Check again for updates"
-                      : "Check for updates"}
+                {updateCheck.isPending
+                  ? "Checking for updates"
+                  : updateAvailable
+                    ? "Update gateway"
+                    : updateCheck.isError
+                      ? "Retry update check"
+                      : updateCheck.isSuccess
+                        ? "Check again for updates"
+                        : "Check for updates"}
               </Button>
               <Button
                 pill
