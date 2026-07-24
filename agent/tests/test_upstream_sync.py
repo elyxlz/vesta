@@ -5,15 +5,16 @@ MEMORY.md; the engine ``agent/core`` is a read-only mount, gitignored, never in 
 Which skills are ACTIVE is recorded in ``agent/data/config.json`` and materialized as the
 ``~/.claude/skills`` symlink farm by agent startup; every optional skill sits on disk
 regardless. These tests build an upstream repo with the REAL build-upstream.sh (the script
-vestad runs), then drive the REAL attach.sh / fetch-upstream.sh / sync.sh / agent startup /
-skills-activate / skills-deactivate scripts in a fake ``$HOME``, pinning the flat-checkout
-contract: clean attach, version-pinned rebase, offline activation, and the cone->flat
-migration spine.
+vestad runs), then drive the REAL bootstrap/compatibility scripts, agent startup, and the
+standard Git commands documented for the agent in a fake ``$HOME``, pinning the
+flat-checkout contract: clean attach, version-pinned merge, offline activation, and the
+cone->flat migration spine.
 """
 
 import json
 import os
 import pathlib as pl
+import re
 import shutil
 import subprocess
 import sys
@@ -25,8 +26,7 @@ REPO_ROOT = AGENT_ROOT.parent
 BUILD = REPO_ROOT / "vestad/scripts/build-upstream.sh"
 ATTACH = AGENT_ROOT / "core/skills/upstream-sync/scripts/attach.sh"
 FETCH = AGENT_ROOT / "core/skills/upstream-sync/scripts/fetch-upstream.sh"
-SYNC = AGENT_ROOT / "core/skills/upstream-sync/scripts/sync.sh"
-STATUS = AGENT_ROOT / "core/skills/upstream-sync/scripts/status.sh"
+SYNC_SKILL = AGENT_ROOT / "core/skills/upstream-sync/SKILL.md"
 SET_CONE = AGENT_ROOT / "core/skills/upstream-sync/scripts/set-cone.sh"  # LEGACY no-op for released migrations
 SKILLS_ACTIVATE = AGENT_ROOT / "skills/skills-registry/scripts/skills-activate"
 SKILLS_DEACTIVATE = AGENT_ROOT / "skills/skills-registry/scripts/skills-deactivate"
@@ -35,9 +35,10 @@ BRANCH = "agent-upstream"
 # The optional skills every fixture snapshot ships on disk (a full checkout carries them all).
 ALL_SKILLS = ("tasks", "dream", "whatsapp")
 DEFAULT_SKILLS = ("tasks", "dream")
-# LEGACY(remove-when: no agent predating the rename release remains): the forwarding shims
-# old boxes' synced scripts and released migrations rely on (set-cone.sh is gone).
+# LEGACY(remove-when: no agent predating the rename release remains): forwarding shims
+# that old boxes' released migrations call by path.
 FORWARDING = AGENT_ROOT / "core/skills/workspace-sync/scripts"
+WORKSPACE_SYNC_SKILL = AGENT_ROOT / "core/skills/workspace-sync/SKILL.md"
 
 BASE_ENV = {
     "GIT_CONFIG_GLOBAL": "/dev/null",
@@ -97,7 +98,7 @@ def _copy_sync_scripts(core_skills):
     plus the forwarding workspace-sync shims at their old paths."""
     scripts = core_skills / "upstream-sync/scripts"
     scripts.mkdir(parents=True, exist_ok=True)
-    for script in (ATTACH, FETCH, SYNC, STATUS, SET_CONE):
+    for script in (ATTACH, FETCH, SET_CONE):
         shutil.copy(script, scripts / script.name)
     forwarding = core_skills / "workspace-sync/scripts"
     forwarding.mkdir(parents=True, exist_ok=True)
@@ -188,6 +189,35 @@ def _attach(home, source):
     return _run(ATTACH, home, extra_env=_box_env(source))
 
 
+def _git_result(args, home, env):
+    return subprocess.run(["git", *args], cwd=str(home), env=_env(home, env), capture_output=True, text=True, check=False)
+
+
+def _direct_sync(home, source):
+    """Execute the normal agent-facing update: fetch, checkpoint, merge. No product wrapper."""
+    env = _box_env(source)
+    _git(
+        [
+            "fetch",
+            "--no-tags",
+            str(source),
+            "+refs/tags/agent-v*:refs/tags/agent-v*",
+        ],
+        home,
+        env,
+    )
+    match = re.search(r'^version = "([^"]+)"$', (home / "agent/core/pyproject.toml").read_text(), re.MULTILINE)
+    assert match is not None
+    version = match.group(1)
+    tag = f"agent-v{version}"
+    if _git_result(["merge-base", "--is-ancestor", tag, "HEAD"], home, env).returncode == 0:
+        return None
+    _git(["add", "-A"], home, env)
+    if _git_result(["diff", "--cached", "--quiet"], home, env).returncode != 0:
+        _git(["commit", "-m", "checkpoint"], home, env)
+    return _git_result(["merge", "--no-ff", "--no-edit", tag], home, env)
+
+
 def _active(home):
     f = home / "agent/data/config.json"
     if not f.exists():
@@ -236,6 +266,20 @@ def test_attach_is_idempotent(tmp_path):
     assert _git(["status", "--porcelain"], home, _box_env(source)) == ""
 
 
+def test_attach_recovers_an_empty_repo_left_by_interrupted_bootstrap(tmp_path):
+    source = _upstream_fixture(tmp_path)
+    home = _fresh_box(tmp_path)
+    env = _box_env(source)
+    _git(["init", "-b", "testbox"], home, env)
+    assert _git_result(["rev-parse", "-q", "--verify", "HEAD"], home, env).returncode != 0
+
+    r = _attach(home, source)
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    _git(["merge-base", "--is-ancestor", "agent-v0.1.170", "HEAD"], home, env)
+    assert _git(["status", "--porcelain"], home, env) == ""
+
+
 def test_attach_materializes_the_core_scoping_gitignore_out_of_tree(tmp_path):
     """agent/core exists on disk (the mount) but the snapshot gitignores it (/core/), so a
     fresh attach never reports it as untracked and add -A never stages it."""
@@ -271,76 +315,105 @@ def test_attach_fails_loudly_when_snapshot_missing(tmp_path):
     assert "agent-v0.1.999" in r.stderr
 
 
-# --- sync: put HEAD on the running version's snapshot, local work rebased on top ---------
+# --- direct Git sync: merge the running snapshot into the agent's history ----------------
 
 
-def test_sync_rebases_local_changes_onto_the_new_snapshot(tmp_path):
+def test_direct_sync_merges_new_snapshot_without_rewriting_local_history(tmp_path):
     source = _upstream_fixture(tmp_path, versions=("0.1.170", "0.1.171"))
     home = _fresh_box(tmp_path)
     env = _box_env(source)
     assert _attach(home, source).returncode == 0
     memory = home / "agent/MEMORY.md"
-    memory.write_text(memory.read_text() + "my personal notes\n")  # uncommitted; sync.sh checkpoints it
+    memory.write_text(memory.read_text() + "my personal notes\n")
+    _git(["add", "-A"], home, env)
+    _git(["commit", "-m", "personal notes"], home, env)
+    old_tip = _git(["rev-parse", "HEAD"], home, env).strip()
     # The engine mount now runs 0.1.171; it is gitignored so this disk change is invisible to git.
     (home / "agent/core/pyproject.toml").write_text('[project]\nname = "vesta"\nversion = "0.1.171"\n')
-    r = _run(SYNC, home, extra_env=env)
-    assert r.returncode == 0, r.stdout + r.stderr
+    r = _direct_sync(home, source)
+    assert r is not None and r.returncode == 0, (r.stdout + r.stderr) if r else "unexpected no-op"
     assert "my personal notes" in memory.read_text()  # my work survives
     assert "0.1.171" in (home / "agent/skills/tasks/SKILL.md").read_text()  # stock moved
     _git(["merge-base", "--is-ancestor", "agent-v0.1.171", "HEAD"], home, env)  # what the boot turn re-fires on
+    _git(["merge-base", "--is-ancestor", old_tip, "HEAD"], home, env)  # the old history was not rewritten
+    assert len(_git(["rev-list", "--parents", "-n", "1", "HEAD"], home, env).split()) == 3
 
 
-def test_sync_is_idempotent_once_synced(tmp_path):
+def test_direct_sync_checkpoints_dirty_work_before_merging(tmp_path):
+    source = _upstream_fixture(tmp_path, versions=("0.1.170", "0.1.171"))
+    home = _fresh_box(tmp_path)
+    env = _box_env(source)
+    assert _attach(home, source).returncode == 0
+    memory = home / "agent/MEMORY.md"
+    memory.write_text(memory.read_text() + "uncommitted note\n")
+    (home / "agent/core/pyproject.toml").write_text('[project]\nname = "vesta"\nversion = "0.1.171"\n')
+
+    r = _direct_sync(home, source)
+
+    assert r is not None and r.returncode == 0, (r.stdout + r.stderr) if r else "unexpected no-op"
+    assert "uncommitted note" in memory.read_text()
+    assert _git(["show", "-s", "--format=%s", "HEAD^1"], home, env).strip() == "checkpoint"
+
+
+def test_direct_sync_is_idempotent_once_synced(tmp_path):
     source = _upstream_fixture(tmp_path)
     home = _fresh_box(tmp_path)
     env = _box_env(source)
     assert _attach(home, source).returncode == 0
     head = _git(["rev-parse", "HEAD"], home, env)
-    r = _run(SYNC, home, extra_env=env)
-    assert r.returncode == 0, r.stdout + r.stderr
-    assert "already synced" in r.stdout
+    assert _direct_sync(home, source) is None
     assert _git(["rev-parse", "HEAD"], home, env) == head
 
 
-def test_sync_conflict_stops_with_a_hint(tmp_path):
+def test_direct_sync_records_an_update_merge_even_without_local_changes(tmp_path):
+    source = _upstream_fixture(tmp_path, versions=("0.1.170", "0.1.171"))
+    home = _fresh_box(tmp_path)
+    env = _box_env(source)
+    assert _attach(home, source).returncode == 0
+    (home / "agent/core/pyproject.toml").write_text('[project]\nname = "vesta"\nversion = "0.1.171"\n')
+
+    r = _direct_sync(home, source)
+
+    assert r is not None and r.returncode == 0, (r.stdout + r.stderr) if r else "unexpected no-op"
+    assert len(_git(["rev-list", "--parents", "-n", "1", "HEAD"], home, env).split()) == 3
+
+
+def test_direct_sync_leaves_a_conflicted_merge_for_the_agent(tmp_path):
     source = _upstream_fixture(tmp_path, versions=("0.1.170", "0.1.171"))
     home = _fresh_box(tmp_path)
     env = _box_env(source)
     assert _attach(home, source).returncode == 0
     (home / "agent/skills/tasks/SKILL.md").write_text("mine\n")  # conflicts with 0.1.171's edit
     (home / "agent/core/pyproject.toml").write_text('[project]\nname = "vesta"\nversion = "0.1.171"\n')
-    r = _run(SYNC, home, extra_env=env)
-    assert r.returncode == 5
-    assert "rebase stopped" in r.stderr
+    r = _direct_sync(home, source)
+    assert r is not None and r.returncode != 0
+    assert (home / ".git/MERGE_HEAD").is_file()
+    assert _git_result(["diff", "--diff-filter=U", "--quiet"], home, env).returncode != 0
 
 
-def test_status_reports_the_authoritative_sync_answer(tmp_path):
+def test_skill_exposes_standard_git_and_recovery_instead_of_wrappers():
+    text = SYNC_SKILL.read_text()
+    assert "rev-parse -q --verify HEAD" in text
+    assert "git fetch --no-tags" in text
+    assert "git add -A" in text
+    assert "git commit -m checkpoint" in text
+    assert 'git merge --no-ff --no-edit "$TAG"' in text
+    assert "git merge --abort" in text
+    assert "git rebase --continue" in text and "git rebase --abort" in text
+    assert not (SYNC_SKILL.parent / "scripts/sync.sh").exists()
+    assert not (SYNC_SKILL.parent / "scripts/status.sh").exists()
+
+
+def test_git_ancestry_reports_the_authoritative_sync_answer(tmp_path):
     source = _upstream_fixture(tmp_path, versions=("0.1.170", "0.1.171"))
     home = _fresh_box(tmp_path)
     env = _box_env(source)
     assert _attach(home, source).returncode == 0  # attaches at 0.1.170
     (home / "agent/core/pyproject.toml").write_text('[project]\nname = "vesta"\nversion = "0.1.171"\n')
-    r = _run(STATUS, home, extra_env=env)
-    assert r.returncode == 0, r.stdout + r.stderr
-    assert "NOT synced" in r.stdout  # HEAD is on 0.1.170, running core is 0.1.171
-    assert _run(SYNC, home, extra_env=env).returncode == 0
-    r = _run(STATUS, home, extra_env=env)
-    assert r.returncode == 0, r.stdout + r.stderr
-    assert "NOT synced" not in r.stdout and "synced" in r.stdout
-
-
-def test_downgrade_transplants_delta_onto_older_snapshot(tmp_path):
-    source = _upstream_fixture(tmp_path, versions=("0.1.170", "0.1.171"))
-    home = _fresh_box(tmp_path, version="0.1.171")
-    env = _box_env(source)
-    assert _attach(home, source).returncode == 0
-    memory = home / "agent/MEMORY.md"
-    memory.write_text(memory.read_text() + "keep me\n")
-    _git(["add", "-A"], home, env)
-    _git(["commit", "-m", "checkpoint"], home, env)
-    _git(["rebase", "--onto", "agent-v0.1.170", "agent-v0.1.171"], home, env)
-    assert "keep me" in memory.read_text()
-    assert "0.1.170" in (home / "agent/skills/tasks/SKILL.md").read_text()
+    assert _git_result(["merge-base", "--is-ancestor", "agent-v0.1.171", "HEAD"], home, env).returncode != 0
+    r = _direct_sync(home, source)
+    assert r is not None and r.returncode == 0
+    assert _git_result(["merge-base", "--is-ancestor", "agent-v0.1.171", "HEAD"], home, env).returncode == 0
 
 
 # --- skills: active_skills config + the ~/.claude/skills symlink farm -----------------
@@ -593,6 +666,13 @@ def test_forwarding_workspace_sync_scripts_behave_identically(tmp_path):
     # the shim must forward to the no-op and exit cleanly, not error on a converted (flat) box.
     r = _run(home / "agent/core/skills/workspace-sync/scripts/set-cone.sh", home, extra_env=env)
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_legacy_workspace_skill_routes_released_migration_to_the_current_merge_flow():
+    text = WORKSPACE_SYNC_SKILL.read_text()
+    assert "summary is historical" in text
+    assert "current upstream-sync Sync section is authoritative" in text
+    assert "uses a merge" in text
 
 
 def test_fetch_from_the_legacy_bundle_lands_the_same_refs(tmp_path):

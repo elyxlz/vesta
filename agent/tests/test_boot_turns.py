@@ -1,5 +1,7 @@
 """Tests for boot-turn assembly: boot-time control-flow delivered as ordered, non-interruptible turns."""
 
+import subprocess
+
 import core.config as cfg
 import core.models as vm
 from core.main import BOOT_RESTORE_ORIENTATION, collect_boot_turns
@@ -20,11 +22,22 @@ def _authed_state() -> vm.State:
     return state
 
 
+def _record_snapshot(config, version):
+    home = config.agent_dir.parent
+    subprocess.run(["git", "init", "-q", "-b", "agent"], cwd=home, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=test", "-c", "user.email=test@vesta", "commit", "-q", "--allow-empty", "-m", "stock"],
+        cwd=home,
+        check=True,
+    )
+    subprocess.run(["git", "tag", f"agent-v{version}"], cwd=home, check=True)
+
+
 def test_boot_turns_ordered_migrations_then_sync_then_config_then_greeting(tmp_path):
     config = _boot_config(tmp_path)
     (config.agent_dir / "core" / "migrations" / "001-x.md").write_text("do migration x")
     (config.agent_dir / "core" / "migrations" / "002-y.md").write_text("do migration y")
-    # An out-of-date sync marker vs the running core version fires the upstream-sync turn.
+    # The running version's snapshot is absent from Git, so the upstream-sync turn fires.
     (config.agent_dir / "core" / "pyproject.toml").write_text('[project]\nname = "vesta"\nversion = "9.9.9"\n')
 
     turns = collect_boot_turns(
@@ -55,8 +68,8 @@ def test_restart_only_boot_carries_no_daemon_orientation(tmp_path):
     be prefixed with the converge-turn daemon-restore orientation."""
     config = _boot_config(tmp_path)
     (config.agent_dir / "core" / "pyproject.toml").write_text('[project]\nname = "vesta"\nversion = "9.9.9"\n')
+    _record_snapshot(config, "9.9.9")
     state = _authed_state()
-    state.persisted.last_synced_version = "9.9.9"  # current, so no upstream-sync turn fires
 
     turns = collect_boot_turns(state=state, config=config, config_issues=[], greeting_reason="clean: routine restart", first_start=False)
 
@@ -76,8 +89,7 @@ def test_first_start_pre_marks_migrations_and_greets_with_setup(tmp_path):
     assert len(turns) == 1
     assert "welcome, run setup" in turns[0]
     assert state.persisted.applied_migrations == ["001-x"]
-    # The fresh image is already current: the version marker is pre-marked, no sync turn fires.
-    assert state.persisted.last_synced_version == "9.9.9"
+    # Birth owns the initial attach, so no separate sync turn fires on first start.
 
 
 def test_restart_greeting_carries_pending_boot_message(tmp_path):
