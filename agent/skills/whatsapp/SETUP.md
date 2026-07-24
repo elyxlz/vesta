@@ -8,9 +8,10 @@ the agent image. Setup is one idempotent script:
 ```
 
 It links the launcher onto PATH, warms the build cache (compile errors surface
-here), downloads the whisper voice-transcription model, adds the daemon line to
-the restart skill, and starts the daemon. Re-run it any time; it only does
-what's missing.
+here), downloads the whisper voice-transcription model, registers `whatsapp start`
+in the restart skill (so the daemon comes back after a container restart, with
+notifications flowing before you send anything), and starts the daemon now.
+Re-run it any time; it only does what's missing.
 
 ## Linking an account
 
@@ -54,12 +55,15 @@ Sending is fine during the sync window; only stop/restart is locked.
 
 ## Troubleshooting
 
-- `whatsapp daemon status` is the one diagnostic: auth state, connection,
-  sync-window lock, pairing attempts, whatsmeow version.
+- `whatsapp status` is the one health check (linked, number, connected).
+  `whatsapp daemon status` adds the internals: sync-window lock, pairing attempts,
+  whatsmeow version.
+- Bring the daemon up (or confirm it is up) with `whatsapp start`; it is
+  idempotent and the restart skill runs it at boot.
 - Daemon won't start: run `whatsapp serve` in the foreground; the compile or
   serve error prints directly.
-- Auth state `not_authenticated` after a restore/restart: the device session
-  was lost; re-link (with the user's go-ahead) via `whatsapp link`.
+- Auth state not linked after a restore/restart: the device session was lost;
+  re-link (with the user's go-ahead) via `whatsapp link`.
 
 ## How transcription works
 

@@ -6,13 +6,13 @@ import {
   AgentSocketContext,
   type AgentSocketValue,
 } from "@/providers/AgentSocketProvider/context";
-import type { VestaEvent } from "@/lib/types";
+import type { ChatMessage } from "@/lib/types";
 import { NotificationsCard } from "./index";
 
 // A fake AgentSocket context: `pending` is the connect-snapshot seed; `messages` carries any live
 // notification / notification_cleared deltas the card folds on top of it.
 function socketValue(
-  messages: VestaEvent[],
+  messages: ChatMessage[],
   pending: string[] = [],
 ): AgentSocketValue {
   return {
@@ -24,11 +24,11 @@ function socketValue(
     pendingNotifications: pending,
     hasMore: false,
     loadingMore: false,
-    loadMore: async () => {},
+    loadMore: async () => {
+      /* noop */
+    },
     send: () => true,
-    sendEvent: () => true,
-    showToolCalls: false,
-    setShowToolCalls: () => {},
+    retry: () => undefined,
   };
 }
 
@@ -49,8 +49,9 @@ describe("NotificationsCard", () => {
           type: "notification",
           source: "twitter",
           summary:
-            '<notification source="twitter" type="tweet">a new tweet</notification>',
+            '<channel source="twitter" type="tweet">a new tweet</channel>',
           notif_type: "tweet",
+          id: 101,
           sender: "@bob",
           decided: "snooze",
           ts: new Date().toISOString(),
@@ -73,8 +74,9 @@ describe("NotificationsCard", () => {
           type: "notification",
           source: "whatsapp",
           summary:
-            '<notification source="whatsapp" type="message">status update</notification>',
+            '<channel source="whatsapp" type="message">status update</channel>',
           notif_type: "message",
+          id: 102,
           sender: "someone",
           decided: "trash",
           ts: new Date().toISOString(),
@@ -97,9 +99,9 @@ describe("NotificationsCard", () => {
           {
             type: "notification",
             source: "twitter",
-            summary:
-              '<notification source="twitter" type="tweet">first</notification>',
+            summary: '<channel source="twitter" type="tweet">first</channel>',
             notif_type: "tweet",
+            id: 103,
             ts: new Date().toISOString(),
           },
         ],
@@ -110,9 +112,9 @@ describe("NotificationsCard", () => {
           {
             type: "notification",
             source: "email",
-            summary:
-              '<notification source="email" type="message">older</notification>',
+            summary: '<channel source="email" type="message">older</channel>',
             notif_type: "message",
+            id: 104,
             ts: new Date().toISOString(),
           },
         ],
@@ -149,18 +151,18 @@ describe("NotificationsCard pending", () => {
         {
           type: "notification",
           source: "twitter",
-          summary:
-            '<notification source="twitter" type="tweet">a</notification>',
+          summary: '<channel source="twitter" type="tweet">a</channel>',
           notif_type: "tweet",
+          id: 105,
           notif_id: "n-pending",
           ts: new Date().toISOString(),
         },
         {
           type: "notification",
           source: "email",
-          summary:
-            '<notification source="email" type="message">b</notification>',
+          summary: '<channel source="email" type="message">b</channel>',
           notif_type: "message",
+          id: 106,
           notif_id: "n-cleared",
           ts: new Date().toISOString(),
         },
@@ -184,9 +186,9 @@ describe("NotificationsCard pending", () => {
         {
           type: "notification",
           source: "app-chat",
-          summary:
-            '<notification source="app-chat" type="message">hi</notification>',
+          summary: '<channel source="app-chat" type="message">hi</channel>',
           notif_type: "message",
+          id: 107,
           notif_id: "abc-app-chat-message",
           decided: "interrupt",
           ts: new Date().toISOString(),

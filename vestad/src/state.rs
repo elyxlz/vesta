@@ -1,23 +1,23 @@
 //! The HTTP layer's shared vocabulary, below every handler module: the daemon's
 //! `AppState`, the JSON response helpers, and the request-layer constants. Handler
-//! modules (serve.rs, auth.rs, control_ws.rs, agent_proxy.rs, providers/*) all
+//! modules (serve.rs, auth.rs, `agent_proxy.rs`, providers/*) all
 //! import from here; this module imports none of them.
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, atomic::AtomicBool};
+use std::sync::{atomic::AtomicBool, Arc};
 
 use axum::{http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 
 use crate::settings::{load_settings, Settings};
-use crate::{agent_status, docker, update_check};
+use crate::{agent_status, docker, mobile_app, update_check};
 
 pub(crate) const PROXY_MAX_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MB
 
-// Server-originated WebSocket ping cadence for the control (`/ws`) and agent-proxy
-// (`/agents/{name}/ws`) sockets. Idle connections through the Cloudflare tunnel are reaped
+// Server-originated WebSocket ping cadence for the `/sync` and registered-service proxy
+// sockets. Idle connections through the Cloudflare tunnel are reaped
 // by the edge after ~100s of silence; a periodic ping keeps frames flowing so the socket
 // survives an idle client. Must stay comfortably under that window.
 pub(crate) const WS_KEEPALIVE_INTERVAL_SECS: u64 = 30;
@@ -45,7 +45,7 @@ impl AuthSession {
 pub(crate) struct RefreshFamily {
     pub(crate) live: String,
     pub(crate) prev: Option<String>,
-    /// Idle expiry (unix secs) for pruning: set to now + REFRESH_TOKEN_TTL at
+    /// Idle expiry (unix secs) for pruning: set to now + `REFRESH_TOKEN_TTL` at
     /// registration and slid forward on every successful rotation, so an active
     /// client never expires and an idle one re-auths after the TTL.
     pub(crate) exp: u64,
@@ -76,7 +76,9 @@ fn load_refresh_live(config_dir: &Path) -> HashMap<String, RefreshFamily> {
 /// Persist the registry atomically (temp + rename). Best-effort: a write failure
 /// only means a restart re-auths, never a request failure.
 pub(crate) async fn persist_refresh_live(config_dir: &Path, map: &HashMap<String, RefreshFamily>) {
-    let Ok(json) = serde_json::to_vec(map) else { return };
+    let Ok(json) = serde_json::to_vec(map) else {
+        return;
+    };
     let path = refresh_store_path(config_dir);
     let tmp = path.with_extension("json.tmp");
     if tokio::fs::write(&tmp, json).await.is_ok() {
@@ -99,8 +101,13 @@ pub struct AppState {
     pub(crate) updating: AtomicBool,
     pub(crate) http_client: reqwest::Client,
     pub(crate) settings: RwLock<Settings>,
+    pub(crate) mobile_app: mobile_app::MobileApp,
     pub(crate) dev_mode: bool,
     pub(crate) agent_status_cache: Arc<agent_status::AgentStatusCache>,
+    /// The client-protocol aggregator's fan-out state: the per-agent pending-notifications
+    /// projection (fed by the tap in `agent_status.rs`) and the always-on user-notification edge (fed
+    /// by the user-notification handler), both read by the `/sync` handler.
+    pub(crate) sync_hub: Arc<crate::sync::SyncHub>,
     /// Agents whose container is mid-rebuild; shared with the boot reconcile and the
     /// status poll so they report `Rebuilding` and mutating handlers refuse to race it.
     pub(crate) rebuilding: docker::RebuildTracker,
@@ -110,78 +117,63 @@ pub struct AppState {
     /// `https://<lan-ip>:<port>` (only set when exposed and an IP was resolvable).
     pub(crate) expose_lan: bool,
     pub(crate) lan_url: Option<String>,
-    /// Coarse, in-flight build phase per agent, keyed by normalized name. Written
-    /// by the create handler as `create_agent` progresses and read by the
-    /// build-phase endpoint so onboarding shows honest status. Entries exist only
-    /// for the duration of a create and are removed when it settles.
-    build_phases: Arc<std::sync::Mutex<HashMap<String, docker::BuildPhase>>>,
+}
+
+/// Read-only serving facts fixed at startup (mode, port, LAN exposure), carried
+/// into `AppState::new` as one unit and stored as individual fields.
+pub(crate) struct GatewayFacts {
+    pub(crate) dev_mode: bool,
+    pub(crate) https_port: u16,
+    pub(crate) expose_lan: bool,
+    pub(crate) lan_url: Option<String>,
 }
 
 impl AppState {
-    // Single-call startup constructor: its params mirror the fields of
-    // ServerConfig (the caller), so grouping them into a param struct would just
-    // duplicate that type. Allow the arg count rather than add a redundant struct.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         api_key: String,
         env_config: docker::AgentEnvConfig,
         docker: bollard::Docker,
         tunnel_url: Option<String>,
-        dev_mode: bool,
-        https_port: u16,
-        expose_lan: bool,
-        lan_url: Option<String>,
-    ) -> Self {
+        facts: GatewayFacts,
+    ) -> (Self, mobile_app::MobileAppWorker) {
+        let GatewayFacts {
+            dev_mode,
+            https_port,
+            expose_lan,
+            lan_url,
+        } = facts;
         let settings = load_settings();
         // Restore the refresh-token registry from disk (dropping expired families)
         // so a restart/self-update doesn't log everyone out. Read before `env_config`
         // is moved into the struct below.
         let refresh_live = load_refresh_live(&env_config.config_dir);
-        Self {
-            api_key,
-            env_config,
-            docker,
-            auth_sessions: Mutex::new(HashMap::new()),
-            refresh_live: Mutex::new(refresh_live),
-            agent_locks: Mutex::new(HashMap::new()),
-            tunnel_url: Mutex::new(tunnel_url),
-            update_info: Mutex::new(None),
-            updating: AtomicBool::new(false),
-            http_client: reqwest::Client::new(),
-            settings: RwLock::new(settings),
-            dev_mode,
-            agent_status_cache: Arc::new(agent_status::AgentStatusCache::new()),
-            rebuilding: docker::RebuildTracker::default(),
-            https_port,
-            expose_lan,
-            lan_url,
-            build_phases: Arc::new(std::sync::Mutex::new(HashMap::new())),
-        }
-    }
-
-    /// Record the current build phase for `name` (normalized). Lock poisoning is
-    /// recovered in place: a panic mid-build must not wedge later creates.
-    pub(crate) fn set_build_phase(&self, name: &str, phase: docker::BuildPhase) {
-        self.build_phases
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(name.to_string(), phase);
-    }
-
-    /// Drop the build-phase entry for `name` once a create settles (success or error).
-    pub(crate) fn clear_build_phase(&self, name: &str) {
-        self.build_phases
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(name);
-    }
-
-    pub(crate) fn build_phase(&self, name: &str) -> Option<docker::BuildPhase> {
-        self.build_phases
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(name)
-            .copied()
+        let http_client = reqwest::Client::new();
+        let (mobile_app, mobile_app_worker) =
+            mobile_app::MobileApp::new(env_config.config_dir.clone(), http_client.clone());
+        (
+            Self {
+                api_key,
+                env_config,
+                docker,
+                auth_sessions: Mutex::new(HashMap::new()),
+                refresh_live: Mutex::new(refresh_live),
+                agent_locks: Mutex::new(HashMap::new()),
+                tunnel_url: Mutex::new(tunnel_url),
+                update_info: Mutex::new(None),
+                updating: AtomicBool::new(false),
+                http_client,
+                settings: RwLock::new(settings),
+                mobile_app,
+                dev_mode,
+                agent_status_cache: Arc::new(agent_status::AgentStatusCache::new()),
+                sync_hub: Arc::new(crate::sync::SyncHub::new()),
+                rebuilding: docker::RebuildTracker::default(),
+                https_port,
+                expose_lan,
+                lan_url,
+            },
+            mobile_app_worker,
+        )
     }
 
     pub(crate) async fn agent_lock(&self, name: &str) -> Arc<tokio::sync::RwLock<()>> {
@@ -214,14 +206,15 @@ pub fn err_response(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_js
 }
 
 pub(crate) fn map_docker_err(e: docker::DockerError) -> (StatusCode, Json<serde_json::Value>) {
-    use docker::DockerError::*;
-    let status = match &e {
-        NotFound(_) => StatusCode::NOT_FOUND,
-        AlreadyExists(_) => StatusCode::CONFLICT,
-        NotRunning(_) => StatusCode::SERVICE_UNAVAILABLE,
-        BrokenState(_) => StatusCode::INTERNAL_SERVER_ERROR,
-        InvalidName(_) | BuildRequired(_) => StatusCode::BAD_REQUEST,
-        Failed(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    use docker::DockerError::{
+        AlreadyExists, BrokenState, BuildRequired, Failed, InvalidName, NotFound, NotRunning,
     };
-    err_response(status, &e.to_string())
+    let (status, message) = match e {
+        NotFound(message) => (StatusCode::NOT_FOUND, message),
+        AlreadyExists(message) => (StatusCode::CONFLICT, message),
+        NotRunning(message) => (StatusCode::SERVICE_UNAVAILABLE, message),
+        BrokenState(message) | Failed(message) => (StatusCode::INTERNAL_SERVER_ERROR, message),
+        InvalidName(message) | BuildRequired(message) => (StatusCode::BAD_REQUEST, message),
+    };
+    err_response(status, &message)
 }

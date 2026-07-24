@@ -87,6 +87,17 @@ class NotificationInterruptRule(pyd.BaseModel):
     type: str | None = None
     match: list[FieldPredicate] = []
     action: tp.Literal["interrupt", "snooze", "trash"]
+    # When set, the rule stops applying once this instant passes (a temporary silence/trash), so
+    # notifications flow by their default again with no one having to remember to remove it. Filtered
+    # out of the live ruleset by drop_expired at the load boundary, then pruned on the next rule write.
+    expires_at: dt.datetime | None = None
+
+    def is_expired(self, now: dt.datetime) -> bool:
+        if self.expires_at is None:
+            return False
+        # A naive stored value (older write, hand edit) is read as UTC so the comparison never raises.
+        expiry = self.expires_at if self.expires_at.tzinfo is not None else self.expires_at.replace(tzinfo=dt.UTC)
+        return now >= expiry
 
     @pyd.model_validator(mode="before")
     @classmethod
@@ -99,32 +110,6 @@ class NotificationInterruptRule(pyd.BaseModel):
         data = dict(data)
         if data["action"] == "pool":
             data["action"] = "snooze"
-        return data
-
-    @pyd.model_validator(mode="before")
-    @classmethod
-    def _absorb_legacy_match_fields(cls, data: object) -> object:
-        # LEGACY(remove-when: no stored rule still carries flat sender/keyword keys — every agent
-        # rewrites its rules in canonical {source,type,match} shape on its next rule edit). Old rules
-        # (from notification_policy.json / the pre-update skill) wrote flat `sender`/`keyword` keys; fold
-        # them into `match` predicates so they keep working and extra="forbid" doesn't drop them. `sender`
-        # is a case-insensitive substring over the identity alias; `keyword` is a regex over the text alias.
-        if not isinstance(data, dict) or not ("sender" in data or "keyword" in data):
-            return data
-        data = dict(data)
-        legacy: list[dict[str, object]] = []
-        if "sender" in data:
-            sender = data["sender"]
-            del data["sender"]
-            if sender is not None:
-                legacy.append({"field": "sender", "op": "contains", "value": sender})
-        if "keyword" in data:
-            keyword = data["keyword"]
-            del data["keyword"]
-            if keyword is not None:
-                legacy.append({"field": "text", "op": "regex", "value": keyword})
-        existing = data["match"] if "match" in data and data["match"] is not None else []
-        data["match"] = legacy + list(existing)
         return data
 
     @pyd.field_validator("source")
@@ -226,6 +211,13 @@ def _matches(rule: NotificationInterruptRule, notif: Notification) -> bool:
     if rule.type is not None and rule.type.lower() != notif.type.lower():
         return False
     return all(_predicate_matches(predicate, notif) for predicate in rule.match)
+
+
+def drop_expired(rules: list[NotificationInterruptRule], now: dt.datetime) -> list[NotificationInterruptRule]:
+    """The live subset of a ruleset: temporary rules whose `expires_at` has passed are gone. Applied at
+    the load boundary (load_notification_rules) so matching, the GET /config view, and the skill's `list`
+    all see only active rules, and an expired rule is pruned the next time the ruleset is written."""
+    return [rule for rule in rules if not rule.is_expired(now)]
 
 
 def notif_disposition(notif: Notification, rules: list[NotificationInterruptRule]) -> tp.Literal["interrupt", "snooze", "trash"]:

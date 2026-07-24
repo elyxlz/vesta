@@ -14,10 +14,11 @@ import datetime as dt
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import core.models as vm
-from core.notification import Notification
 from conftest import assistant_msg, consuming, make_stream_harness, result_msg
 from wait_util import wait_for_condition
+
+import core.models as vm
+from core.notification import Notification
 
 
 async def _sent_messages(mock_client) -> list[dict]:
@@ -127,7 +128,7 @@ async def test_dash_correction_skipped_for_preempted_turn():
     state, config, mock_client, _, message_queue, _ = make_stream_harness()
 
     async with consuming(state, config):
-        task = asyncio.create_task(process_message("hi", state=state, config=config, is_user=False))
+        task = asyncio.create_task(process_message("hi", state=state, config=config))
         await wait_for_condition(lambda: state.turn is not None, message="converse never opened a turn")
         state.turn.preempted = True  # what send_preempt records when it delivers mid-turn
         await message_queue.put(assistant_msg([TextBlock("bad — dash")]))
@@ -160,7 +161,7 @@ async def test_process_batch_renders_and_queues_sections_plain(config, state, tm
     batch = [_notif(tmp_path, "sys", source=CORE_SOURCE), _notif(tmp_path, "ext")]
 
     with patch("core.loops.load_prompt", return_value=""):
-        await process_batch(batch, queue=queue, config=config)
+        await process_batch(batch, queue=queue)
 
     state.client.query.assert_not_called()
     first, second = queue.get_nowait(), queue.get_nowait()
@@ -177,7 +178,7 @@ def _blocking_processor():
     first_started = asyncio.Event()
     release_first = asyncio.Event()
 
-    async def fake_process(msg, *, state, config, is_user):
+    async def fake_process(msg, *, state, config):
         processed.append(msg)
         if msg == "first":
             first_started.set()
@@ -232,7 +233,7 @@ async def test_watcher_failed_delivery_queues_plain(config, state):
         task = asyncio.create_task(_run_messages_with_preempts(vm.QueuedTurn("first", True, []), queue=queue, state=state, config=config))
         await first_started.wait()
         await queue.put(vm.QueuedTurn("urgent", False, []))
-        await wait_for_condition(lambda: queue.empty(), message="watcher never collected the item")
+        await wait_for_condition(queue.empty, message="watcher never collected the item")
         release_first.set()
         await task
 
@@ -294,7 +295,7 @@ async def test_burst_of_preempts_with_merged_results_never_wedges(tmp_path):
         await wait_for_condition(lambda: state.turn is not None, message="first turn never opened")
 
         for notif in notifs:
-            await process_batch([notif], queue=queue, config=config)
+            await process_batch([notif], queue=queue)
         await wait_for_condition(
             lambda: all(not f.exists() for f in burst_files),
             message="delivered preempts must clear their files at delivery",

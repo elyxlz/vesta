@@ -1,0 +1,42 @@
+{
+  "events": [
+    {
+      "id": -1,
+      "state": "thinking",
+      "ts": "2026-01-01T00:00:00+00:00",
+      "type": "status"
+    },
+    {
+      "decided": "interrupt",
+      "fields": {
+        "chat_name": "Bride squad"
+      },
+      "id": 1,
+      "notif_id": "whatsapp-123",
+      "notif_type": "message",
+      "sender": "Alex",
+      "source": "whatsapp",
+      "summary": "new message",
+      "ts": "2026-01-01T00:00:00+00:00",
+      "type": "notification"
+    },
+    {
+      "id": -2,
+      "notif_id": "whatsapp-123",
+      "ts": "2026-01-01T00:00:00+00:00",
+      "type": "notification_cleared"
+    }
+  ],
+  "snapshot": {
+    "config": {
+      "timezone": "America/New_York"
+    },
+    "notifications": {
+      "pending": [
+        "whatsapp-123"
+      ]
+    },
+    "state": "idle",
+    "type": "snapshot"
+  }
+}

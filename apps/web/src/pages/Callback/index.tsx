@@ -47,7 +47,11 @@ export function Callback() {
       {error ? (
         <>
           <p className="text-xs text-destructive">{error}</p>
-          <Button onClick={() => navigate("/connect", { replace: true })}>
+          <Button
+            onClick={() => {
+              void navigate("/connect", { replace: true });
+            }}
+          >
             back to sign-in
           </Button>
         </>

@@ -29,7 +29,6 @@ and never touches the user's mailbox. EMAIL_DRAFT_ONLY is irrelevant here.
 from __future__ import annotations
 
 import json
-import os
 import pathlib
 import time
 import urllib.error
@@ -57,7 +56,7 @@ PROBE_STAMP_FILENAME = "last_google_probe.txt"
 # -- classification (pure, no I/O) ----------------------------------
 
 
-def classify_refresh_response(status_code: int | None, body: dict | None) -> str:
+def classify_refresh_response(_status_code: int | None, body: dict | None) -> str:
     """Classify a token-endpoint refresh response.
 
     A successful refresh carries an ``access_token``. Otherwise the ``error`` code
@@ -251,7 +250,7 @@ def write_dead_client_notification(account: str, result: dict) -> pathlib.Path:
     final = NOTIF_DIR / fname
     tmp = NOTIF_DIR / f"{fname}.tmp"
     tmp.write_text(json.dumps(notif, ensure_ascii=False, indent=2))
-    os.replace(tmp, final)
+    tmp.replace(final)
     return final
 
 

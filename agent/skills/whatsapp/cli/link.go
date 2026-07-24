@@ -11,10 +11,7 @@ import (
 	"time"
 )
 
-const (
-	vestadRequestTimeout = 10 * time.Second
-	linkPollInterval     = 2 * time.Second
-)
+const vestadRequestTimeout = 10 * time.Second
 
 // linkServiceName is the vestad service (and tunnel path segment) for the link
 // page: the shared "wa-link" for the default instance, suffixed per named
@@ -73,17 +70,6 @@ func registerVestadService(name string) (int, error) {
 	return payload.Port, nil
 }
 
-func socketResultField(output []byte, field string) string {
-	var result map[string]any
-	if err := json.Unmarshal(output, &result); err != nil {
-		return ""
-	}
-	if value, ok := result[field].(string); ok {
-		return value
-	}
-	return ""
-}
-
 // parsePortFlag parses a port flag value and returns an error if it is invalid.
 func parsePortFlag(value string) (int, error) {
 	if value == "" {
@@ -111,16 +97,12 @@ func linkServeArgs() []string {
 	return nil
 }
 
-func runLink() {
-	if phone, present := lookupFlag("phone"); present && phone != "" {
-		runLinkPhone(phone)
-		return
-	}
-
-	if err := startDaemonProcess(linkServeArgs()); err != nil {
-		failJSON("%s", err.Error())
-	}
-
+// serveAndRunQRLink resolves the scan-page port (an explicit --port, else a
+// vestad-registered public service), surfaces the scan URL to the user, then makes
+// the one blocking socket call that serves the page and waits for the scan.
+// socketCommand is the daemon verb that runs the link (self-hosted `link` or the
+// user-owned `own-number-link`). Returns the daemon's terminal output + exit code.
+func serveAndRunQRLink(socketCommand string) ([]byte, int) {
 	port := 0
 	if flagPort, present := lookupFlag("port"); present {
 		var err error
@@ -136,41 +118,42 @@ func runLink() {
 		}
 		port = registeredPort
 	}
-
-	startArgs := []string{"--port", fmt.Sprintf("%d", port)}
+	pageURL := linkPageURL(os.Getenv("VESTAD_TUNNEL"), os.Getenv("AGENT_NAME"), linkServiceName(), port)
+	printJSON(map[string]any{
+		"status": "linking",
+		"url":    pageURL,
+		"next":   "Send the user this URL to scan. On their phone: WhatsApp > Settings > Linked Devices > Link a Device, then scan the code on the page. The page keeps itself current; there is no rush.",
+	})
+	linkArgs := []string{"--port", fmt.Sprintf("%d", port)}
 	if hasBareFlag("acknowledge-ban-risk") {
-		startArgs = append(startArgs, "--acknowledge-ban-risk")
+		linkArgs = append(linkArgs, "--acknowledge-ban-risk")
 	}
-	output, exitCode, connected := trySocketCommand(getSocketPath(), "link-start", startArgs)
-	if !connected || exitCode != 0 {
+	output, exitCode, connected := trySocketCommand(getSocketPath(), socketCommand, linkArgs)
+	if !connected {
+		failJSON("daemon stopped answering during linking; check 'whatsapp daemon status'")
+	}
+	return output, exitCode
+}
+
+func runLink() {
+	if phone, present := lookupFlag("phone"); present && phone != "" {
+		runLinkPhone(phone)
+		return
+	}
+
+	if err := startDaemonProcess(linkServeArgs()); err != nil {
+		failJSON("%s", err.Error())
+	}
+
+	output, exitCode := serveAndRunQRLink("link")
+	if exitCode != 0 {
 		fmt.Println(string(output))
 		os.Exit(1)
 	}
-
-	pageURL := linkPageURL(os.Getenv("VESTAD_TUNNEL"), os.Getenv("AGENT_NAME"), linkServiceName(), port)
 	printJSON(map[string]any{
-		"status":       "linking",
-		"url":          pageURL,
-		"instructions": "Send the user this URL. On their phone: WhatsApp > Settings > Linked Devices > Link a Device, then scan the code on the page. The page keeps itself current; there is no rush.",
+		"status": "linked",
+		"note":   fmt.Sprintf("History sync is settling: daemon stop/restart are locked for %s. Log lines like 'can't send presence' or a brief websocket EOF in this window are NORMAL. Do not restart anything.", SyncWindowDuration),
 	})
-
-	deadline := time.Now().Add(LinkSessionTimeout)
-	for time.Now().Before(deadline) {
-		time.Sleep(linkPollInterval)
-		statusOutput, _, statusConnected := trySocketCommand(getSocketPath(), "link-status", nil)
-		if !statusConnected {
-			failJSON("daemon stopped answering during linking; check 'whatsapp daemon status'")
-		}
-		if socketResultField(statusOutput, "status") == string(AuthStatusAuthenticated) {
-			printJSON(map[string]any{
-				"status": "linked",
-				"note":   fmt.Sprintf("History sync is settling: daemon stop/restart are locked for %s. Log lines like 'can't send presence' or a brief websocket EOF in this window are NORMAL. Do not restart anything.", SyncWindowDuration),
-			})
-			return
-		}
-	}
-	trySocketCommand(getSocketPath(), "link-stop", nil)
-	failJSON("no device linked within %s; link mode stopped. Retry with 'whatsapp link' when the user is ready (attempts are rate-limited)", LinkSessionTimeout)
 }
 
 func runLinkPhone(phone string) {

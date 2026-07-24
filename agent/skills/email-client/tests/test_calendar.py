@@ -29,7 +29,7 @@ def _install_stubs():
     if "imap_tools" not in sys.modules:
         it = types.ModuleType("imap_tools")
 
-        def AND(*a, **k):  # noqa: N802 (mirrors imap_tools API name)
+        def _and(*_a, **_k):
             return None
 
         class MailBox:  # pragma: no cover (never instantiated in these tests)
@@ -41,18 +41,19 @@ def _install_stubs():
             ANSWERED = "\\Answered"
             FLAGGED = "\\Flagged"
 
-        it.AND = AND
+        # The attribute mirrors the imap_tools API name.
+        it.AND = _and
         it.MailBox = MailBox
         it.MailMessageFlags = MailMessageFlags
         sys.modules["imap_tools"] = it
 
 
 _install_stubs()
-import caldav_client  # noqa: E402
-import calendar_client  # noqa: E402
-import ics  # noqa: E402
-import imap_client  # noqa: E402
-import providers  # noqa: E402
+import caldav_client
+import calendar_client
+import ics
+import imap_client
+import providers
 
 GOOGLE_BASE = "https://apidata.googleusercontent.com/caldav/v2"
 

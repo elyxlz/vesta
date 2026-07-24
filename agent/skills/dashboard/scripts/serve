@@ -2,9 +2,9 @@
 set -e
 
 # Self-healing dashboard launcher. `vite preview` serves the prebuilt app, but
-# node_modules/ and dist/ are untracked build artifacts: a workspace
-# sparse-checkout prune (or a clean) can drop them while the box keeps running,
-# leaving `vite preview` to serve 404s with no rebuild. Ensuring both exist here,
+# node_modules/ and dist/ are untracked build artifacts: a checkout or clean
+# can drop them while the box keeps running, leaving `vite preview` to serve
+# 404s with no rebuild. Ensuring both exist here,
 # before every launch, lets the service rebuild itself on the next restart
 # instead of serving nothing. Idempotent: on a normal restart both dirs are
 # present and this goes straight to `vite preview`.

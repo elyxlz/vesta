@@ -5,6 +5,11 @@ description = "Full-text recall over the agent's conversation history"
 requires-python = ">=3.11"
 dependencies = []
 
+[dependency-groups]
+dev = [
+    "pytest>=8.4.0",
+]
+
 [project.scripts]
 recall = "recall_cli.cli:main"
 

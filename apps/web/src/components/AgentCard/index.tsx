@@ -12,7 +12,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Orb } from "@/components/Orb";
-import type { AgentInfo } from "@/lib/types";
+import type { AgentRow } from "@/lib/types";
 import { useNavigate } from "react-router-dom";
 import { useAgentOps, getOpLabel } from "@/stores/use-agent-ops";
 import { useOrbStatus } from "@/hooks/use-orb-state";
@@ -20,7 +20,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
 
 interface AgentCardProps {
-  agent: AgentInfo;
+  agent: AgentRow;
   enableTracking?: boolean;
 }
 
@@ -36,9 +36,9 @@ export function AgentCard({ agent, enableTracking = false }: AgentCardProps) {
       <button
         type="button"
         aria-label={`open ${agent.name}`}
-        onClick={() =>
-          navigate(`/agent/${agent.name}${isMobile ? "/chat" : ""}`)
-        }
+        onClick={() => {
+          void navigate(`/agent/${agent.name}${isMobile ? "/chat" : ""}`);
+        }}
         className="flex h-full w-full items-center justify-center rounded-squircle-md border border-transparent [corner-shape:squircle] outline-none transition-all hover:bg-muted/40 active:scale-[0.99] focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30"
       >
         <CardContent className="flex flex-col items-center gap-3 px-5 pt-0 pb-0">

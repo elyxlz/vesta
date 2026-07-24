@@ -28,7 +28,9 @@ function Leading() {
         <Button
           variant="ghost"
           size="lg"
-          onClick={() => navigate("/new")}
+          onClick={() => {
+            void navigate("/new");
+          }}
           className="max-sm:hidden"
         >
           <Plus data-icon="inline-start" />
@@ -39,7 +41,9 @@ function Leading() {
             <Button
               variant="outline"
               size="icon-lg"
-              onClick={() => navigate("/new")}
+              onClick={() => {
+                void navigate("/new");
+              }}
               className="sm:hidden"
             >
               <Plus />
@@ -58,7 +62,9 @@ function Leading() {
           <Button
             variant="outline"
             size="icon-lg"
-            onClick={() => navigate("/")}
+            onClick={() => {
+              void navigate("/");
+            }}
           >
             <Home />
           </Button>

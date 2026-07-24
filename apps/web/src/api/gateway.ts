@@ -1,9 +1,10 @@
 import { getConnection } from "@/lib/connection";
-import type { LogEvent, ReleaseChannel } from "@/lib/types";
+import type { ReleaseChannel, SseHandle } from "@vesta/core";
+import type { LogEvent } from "@/lib/types";
 import { apiJson } from "./client";
 import { openLogStream } from "./log-stream";
 
-let gatewayLogSource: EventSource | null = null;
+let gatewayLogSource: SseHandle | null = null;
 
 export function streamGatewayLogs(
   follow: boolean,
@@ -20,7 +21,7 @@ export function streamGatewayLogs(
     if (follow) params.set("follow", "true");
     const url = `${conn.url}/gateway/logs?${params.toString()}`;
 
-    gatewayLogSource?.close();
+    gatewayLogSource?.cancel();
     gatewayLogSource = openLogStream(url, "gateway_stopped", onEvent, () => {
       gatewayLogSource = null;
       resolve();
@@ -30,7 +31,7 @@ export function streamGatewayLogs(
 
 export function stopGatewayLogs(): void {
   if (gatewayLogSource) {
-    gatewayLogSource.close();
+    gatewayLogSource.cancel();
     gatewayLogSource = null;
   }
 }

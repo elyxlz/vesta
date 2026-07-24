@@ -55,6 +55,5 @@ export function createElectronBridge(api: VestaNativeApi): NativeBridge {
             onMaximizedChange: (cb) => api.onWindowMaximizedChange(cb),
           }
         : null,
-    installAppUpdate: (version) => api.installUpdate(version),
   };
 }

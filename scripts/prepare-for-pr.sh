@@ -16,7 +16,7 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$REPO_ROOT"
+cd "$REPO_ROOT" || exit 1
 
 BOLD=$'\033[1m'; RED=$'\033[31m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; DIM=$'\033[2m'; RESET=$'\033[0m'
 FAILED=()
@@ -49,12 +49,13 @@ run_in() {
 section "version-check"
 AGENT=$(grep '^version = ' agent/core/pyproject.toml | cut -d'"' -f2)
 VESTAD=$(grep '^version = ' vestad/Cargo.toml | head -1 | cut -d'"' -f2)
-CLI=$(grep '^version = ' cli/Cargo.toml | head -1 | cut -d'"' -f2)
 TESTS=$(grep '^version = ' vestad/tests-integration/Cargo.toml | head -1 | cut -d'"' -f2)
 DESKTOP_PKG=$(python3 -c "import json; print(json.load(open('apps/desktop/package.json'))['version'])")
+MOBILE_PKG=$(python3 -c "import json; print(json.load(open('apps/mobile/package.json'))['version'])")
+MOBILE_APP=$(sed -n 's/^  version: "\([^"]*\)",/\1/p' apps/mobile/app.config.ts)
 APP=$(python3 -c "import json; print(json.load(open('apps/web/package.json'))['version'])")
 MISMATCH=0
-for nv in "vestad:$VESTAD" "cli:$CLI" "tests:$TESTS" "desktop-pkg:$DESKTOP_PKG" "app:$APP"; do
+for nv in "vestad:$VESTAD" "tests:$TESTS" "desktop-pkg:$DESKTOP_PKG" "mobile-pkg:$MOBILE_PKG" "mobile-app:$MOBILE_APP" "app:$APP"; do
   if [ "$AGENT" != "${nv#*:}" ]; then
     printf "  ${RED}✗${RESET} agent (%s) != %s (%s)\n" "$AGENT" "${nv%%:*}" "${nv#*:}"
     MISMATCH=1
@@ -87,22 +88,12 @@ else
   ) && pass "uv.lock up to date" || fail "uv.lock stale — run 'cd agent && uv lock --project core' and commit"
 fi
 
-# ── skills-index-check ────────────────────────────────────────
-section "skills-index-check"
-if [ "${SKIP_AGENT:-0}" = "1" ]; then
-  skip "skills index"
+# ── design-token-check ────────────────────────────────────────
+section "design-token-check"
+if python3 scripts/sync-design-tokens.py --check >/dev/null 2>&1; then
+  pass "generated design tokens up to date"
 else
-  before=$(sha256sum agent/skills/index.json | cut -d' ' -f1)
-  if uv run python agent/skills/generate-index.py >/dev/null 2>&1; then
-    after=$(sha256sum agent/skills/index.json | cut -d' ' -f1)
-    if [ "$before" = "$after" ]; then
-      pass "skills/index.json up to date"
-    else
-      fail "skills/index.json stale — regenerated (commit the change)"
-    fi
-  else
-    fail "generate-index.py failed"
-  fi
+  fail "generated design tokens stale — run 'python3 scripts/sync-design-tokens.py' and commit"
 fi
 
 # ── dashboard-sync-check ──────────────────────────────────────
@@ -145,13 +136,11 @@ else
   run_in apps "desktop types"    npm -w @vesta/desktop run check
 fi
 
-# ── check-vesta (clippy + unit tests, cli + vestad) ───────────
-section "check-vesta"
+# ── check-vestad (clippy + unit tests) ────────────────────────
+section "check-vestad"
 if [ "${SKIP_RUST:-0}" = "1" ]; then
   skip "cargo clippy/test"
 else
-  run_in cli    "cli clippy"    cargo clippy -- -D warnings
-  run_in cli    "cli tests"     cargo test
   run_in vestad "vestad clippy" env VESTAD_SKIP_APP_BUILD=1 cargo clippy -p vestad -- -D warnings
   run_in vestad "vestad tests"  env VESTAD_SKIP_APP_BUILD=1 cargo test -p vestad
 fi

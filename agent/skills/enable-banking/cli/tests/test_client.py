@@ -3,7 +3,6 @@
 import json
 
 import pytest
-
 from finance_cli import enablebanking as eb
 
 
@@ -72,7 +71,7 @@ def test_get_balances_unwraps_list_response(http):
 
 
 def test_get_balances_unwraps_dict_response(http):
-    calls, responses = http
+    _calls, responses = http
     responses.append(FakeResponse({"balances": [{"x": 1}]}))
     out = eb.get_balances(CONF, "acct-1")
     assert out == [{"x": 1}]

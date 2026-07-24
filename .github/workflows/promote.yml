@@ -26,6 +26,7 @@ concurrency:
 
 jobs:
   promote:
+    name: Release · Promote to stable
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -116,4 +117,3 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git push --force origin HEAD:production
           echo "✓ production advanced to ${{ inputs.tag }}"
-

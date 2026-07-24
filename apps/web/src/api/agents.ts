@@ -1,7 +1,9 @@
 import { apiJson, apiFetch, jsonInit } from "./client";
-import type { VestaEvent } from "@/lib/types";
+import type { BuildPhase, NotificationEvent, VestaEvent } from "@vesta/core";
 
-export type NotificationEvent = Extract<VestaEvent, { type: "notification" }>;
+export type { BuildPhase };
+
+export type { NotificationEvent };
 
 export interface OpenRouterConfig {
   key: string;
@@ -147,12 +149,9 @@ export async function createAgent(name: string): Promise<void> {
   await apiJson("/agents", jsonInit("POST", { name }));
 }
 
-/// Coarse, ordered stages of first-time agent creation reported by vestad while
-/// the create POST is in flight. The image step (`pulling` on a release build,
-/// `building` from a local checkout) is the dominant wait.
-export type BuildPhase =
-  "pulling" | "building" | "preparing" | "creating" | "starting";
-
+// Coarse, ordered stages of first-time agent creation reported by vestad while the create POST is in
+// flight (core owns the type). The image step (`pulling` on a release build, `building` from a local
+// checkout) is the dominant wait.
 const BUILD_PHASE_MESSAGES: Record<BuildPhase, string> = {
   pulling: "downloading the agent image...",
   building: "building the agent image...",
@@ -168,13 +167,10 @@ export function buildPhaseMessage(phase: BuildPhase | null): string {
   return phase === null ? "setting things up..." : BUILD_PHASE_MESSAGES[phase];
 }
 
-/// Read the current in-flight build phase for an agent, or null when none is
-/// recorded. Best-effort status only; the create flow owns success and failure.
-export async function getBuildPhase(name: string): Promise<BuildPhase | null> {
-  const resp = await apiJson<{ phase: BuildPhase | null }>(
-    `/agents/${encodeURIComponent(name)}/build-phase`,
-  );
-  return resp.phase;
+interface StatusWait {
+  ready: readonly string[];
+  failed: readonly string[];
+  timeoutLabel: string;
 }
 
 /// Poll /agents/{name} until its status settles into one of `ready` (resolve) or `failed` (throw);
@@ -183,22 +179,20 @@ async function waitForStatus(
   name: string,
   timeoutMs: number,
   pollIntervalMs: number,
-  ready: readonly string[],
-  failed: readonly string[],
-  timeoutLabel: string,
+  wait: StatusWait,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const resp = await apiJson<{ status: string }>(
       `/agents/${encodeURIComponent(name)}`,
     );
-    if (ready.includes(resp.status)) return;
-    if (failed.includes(resp.status)) {
+    if (wait.ready.includes(resp.status)) return;
+    if (wait.failed.includes(resp.status)) {
       throw new Error(`${name}: ${resp.status}`);
     }
     await new Promise((r) => setTimeout(r, pollIntervalMs));
   }
-  throw new Error(`${name}: ${timeoutLabel}`);
+  throw new Error(`${name}: ${wait.timeoutLabel}`);
 }
 
 /// Poll /agents/{name} until it reports a settled HTTP-up status. A brand-new empty agent boots into
@@ -208,14 +202,11 @@ export async function waitUntilRunning(
   timeoutMs: number,
   pollIntervalMs = 500,
 ): Promise<void> {
-  await waitForStatus(
-    name,
-    timeoutMs,
-    pollIntervalMs,
-    ["alive", "not_authenticated", "unprovisioned"],
-    ["dead", "stopped", "not_found"],
-    "timed out waiting for HTTP server",
-  );
+  await waitForStatus(name, timeoutMs, pollIntervalMs, {
+    ready: ["alive", "not_authenticated", "unprovisioned"],
+    failed: ["dead", "stopped", "not_found"],
+    timeoutLabel: "timed out waiting for HTTP server",
+  });
 }
 
 export async function waitUntilAlive(
@@ -223,14 +214,17 @@ export async function waitUntilAlive(
   timeoutMs: number,
   pollIntervalMs = 500,
 ): Promise<void> {
-  await waitForStatus(
-    name,
-    timeoutMs,
-    pollIntervalMs,
-    ["alive"],
-    ["dead", "stopped", "not_found", "not_authenticated", "unprovisioned"],
-    "timed out waiting to become alive",
-  );
+  await waitForStatus(name, timeoutMs, pollIntervalMs, {
+    ready: ["alive"],
+    failed: [
+      "dead",
+      "stopped",
+      "not_found",
+      "not_authenticated",
+      "unprovisioned",
+    ],
+    timeoutLabel: "timed out waiting to become alive",
+  });
 }
 
 export async function startAgent(name: string): Promise<void> {
@@ -381,6 +375,25 @@ export async function getNotificationHistory(
   // Newest-first for the view; the history endpoint returns ascending within a page.
   items.reverse();
   return { notifications: items, cursor: resp.cursor };
+}
+
+export async function fetchHistory(
+  name: string,
+  channel: "app-chat" | "internals",
+  cursor?: number,
+): Promise<{ events: VestaEvent[]; cursor: number | null }> {
+  const params = new URLSearchParams();
+  if (cursor != null) params.set("cursor", String(cursor));
+  const qs = params.toString();
+  if (channel === "app-chat") {
+    return apiJson(
+      `/agents/${encodeURIComponent(name)}/app-chat/history${qs ? `?${qs}` : ""}`,
+    );
+  }
+  params.set("channel", "internals");
+  return apiJson(
+    `/agents/${encodeURIComponent(name)}/history?${params.toString()}`,
+  );
 }
 
 /// A user-granted host filesystem access: a host path bind-mounted into the agent's container at

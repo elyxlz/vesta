@@ -88,8 +88,8 @@ and links between them and the CLI.
    account (Pro or Max)?"* If not, don't take their money; tell them to grab one
    first; nothing here works without it.
 3. **Agree a name + a price.** What do they want it called / how should it feel
-   (`onboard presets` for personalities + skills)? Agree the monthly price (see
-   **Pricing**).
+   (`onboard presets` for personalities + skills, and the live `plan_floor_usd`)?
+   Agree the monthly price (see **Pricing**).
 4. **Send the Stripe link.** `onboard checkout --email <e> [--price <usd>] [--code
    <code>]` → `{ url, subdomain }`. Send the `url` as a tappable link, never bare
    text: where the channel renders Markdown links, format it as `[Complete your
@@ -114,15 +114,43 @@ and links between them and the CLI.
    sign in with their email (already verified), and their vesta `<name>` is right
    there waiting.
 
+## Onboarding straight onto WhatsApp (hand back a wa.me link, not the app)
+
+When you're doing all this **in a WhatsApp chat** and they'd rather live on WhatsApp
+than the app, the hand-off in step 8 changes: you give them a wa.me link to their
+*own* vesta's WhatsApp number. The catch: the new vesta can't message them first (they
+have no way to reach the user until the user taps that link), so the link has to come back to
+**you** to relay. Nothing new is needed for this; the new vesta uses skills already
+installed (`whatsapp` to get the number, `file-host` to publish the link), and you
+coordinate the whole thing through the seed context you write at create-agent.
+
+At **create-agent** (step 6), put three things in `--context`:
+
+1. **The user's WhatsApp number**, so the new vesta knows who to expect: "your owner
+   will message you from +1..., greet them by name when they arrive."
+2. **Set up WhatsApp first**: "Before anything else, set up and authenticate your own
+   WhatsApp number using the `whatsapp` skill."
+3. **Leave the link where you'll fetch it**: "Then write your wa.me connect link to
+   `~/.file-host/connect.txt` and serve it with the `file-host` skill." That publishes
+   it at a fixed public URL you can construct yourself, no channel from them to you
+   required.
+
+Then **poll** `https://<subdomain>.vesta.run/agents/<name>/file-host/connect.txt` (the
+`subdomain` from `checkout`, the `name` from `create-agent`) until it returns the link.
+Give it a few minutes, and tell the user you're setting their vesta up so the wait makes
+sense. When the link appears, send it to them as a tappable link. They tap it, and
+they're talking to their own vesta on WhatsApp. Done, without ever leaving the chat.
+
 ## Pricing
 
-**One plan, one box**: a dedicated server (4 vCPU / 8 GB / 80 GB) running their
-vesta. **From $24/month.** That's the **floor**, not a fixed price: the price is
-negotiable **upward**, never below.
+**One plan, one box**: a dedicated server (2 vCPU / 4 GB / 40 GB) running their
+vesta. There's a monthly **floor**; the price is negotiable **upward**, never
+below. The floor is whatever `onboard presets` reports as `plan_floor_usd` (the
+control plane owns that number): quote *that*, never a figure baked into this doc.
 
 **How to price:**
 
-- **Default to the floor ($24)** for a normal person who just wants in.
+- **Default to the floor** for a normal person who just wants in.
 - **Price to desire + status.** The whole point of the velvet rope is that people
   pay for exclusivity. If they fought to get in, gushed about it, or are clearly
   wealthy (a founder, an exec, "money's no object", a whale who wants a concierge
@@ -132,12 +160,12 @@ negotiable **upward**, never below.
 - **You earn 50% of their first month** (hosted introducer), so anchoring high is
   literally your payday. A $2,000 close earns you $1,000.
 
-Pass the agreed figure as `--price <usd>` (monthly). Omit it to charge the $24 floor.
+Pass the agreed figure as `--price <usd>` (monthly). Omit it to charge the floor.
 
 **Discount codes.** If the owner has given you a discount/invite code, pass it as
 `--code <code>` and it knocks a percentage off the first month at checkout (it
-composes with whatever `--price` you set: half off $24 or off $2,000 alike). You
-never invent codes: pass only what the owner hands you. An unknown code comes back
+composes with whatever `--price` you set: it discounts the floor and a high quote
+alike). You never invent codes: pass only what the owner hands you. An unknown code comes back
 `{"error": "invalid code"}`: relay that and continue without it. There is nothing
 to look up or reveal; the code's value and effect live entirely on the server.
 
@@ -156,7 +184,7 @@ onboard status       --email <e>                       # -> { status: reserved|a
 onboard create-agent --email <e> --name <n> [--personality <preset>] [--context "notes"]
 onboard claude-start  --email <e>                      # -> { auth_url }  (send it to them)
 onboard claude-finish --email <e> --code <pasted> [--model opus|sonnet|haiku]
-onboard presets                                        # personalities + skills + models
+onboard presets                                        # personalities + skills + models + plan_floor_usd
 onboard links                                          # marketing + app install URLs
 ```
 
@@ -174,15 +202,15 @@ onboard verify --email ada@example.com --code 123456
 
 # Someone who just wants in, the floor:
 onboard checkout --email ada@example.com
-# { "url": "https://checkout.stripe.com/c/pay/cs_test_...", "subdomain": "ada" }   ($24/mo)
+# { "url": "https://checkout.stripe.com/c/pay/cs_test_...", "subdomain": "ada" }   (the floor)
 
 # A whale who fought to get in, anchor high (uncapped):
 onboard checkout --email vc@example.com --price 2000
 # { "url": "https://...", "subdomain": "vc" }   ($2,000/mo)
 
-# Below the floor is rejected (the server enforces it too):
+# Below the floor is rejected server-side (the floor lives only on the control plane):
 onboard checkout --email x@example.com --price 5
-# { "error": "price $5 is below the $24 floor", "floor_usd": 24 }
+# { "error": "price below floor", "message": "...Quote at or above the floor.", "floor_usd": 12 }
 
 onboard status --email ada@example.com
 # { "status": "reserved", ... }   (paid? provisioning? not active yet)
@@ -214,7 +242,8 @@ The cases you'll actually hit, and the move for each:
   to the owner that their referral code changed.
 - `invalid code` (a bad discount `--code` at checkout): re-run `onboard checkout`
   **without** `--code`.
-- `price ... below the $24 floor`: re-quote at or above $24 and re-run.
+- `price below floor` (a `--price` under the server floor; carries `floor_usd`):
+  re-quote at or above that figure and re-run.
 - `already provisioned`: they already have a vesta. Send them `onboard links` to
   sign in; do not onboard them again.
 - `rate limited`: too many attempts from here today. Tell them you'll pick it back

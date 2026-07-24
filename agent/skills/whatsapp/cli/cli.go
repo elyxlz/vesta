@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -12,8 +14,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-
-	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
 // These parse os.Args directly rather than using flag.FlagSet because they are
@@ -122,34 +122,49 @@ func writeDeathNotification(notifDir string, sig string) {
 	os.WriteFile(filepath.Join(notifDir, filename), data, 0644)
 }
 
-func readAuthStatus(dataDir string) map[string]string {
-	statusPath := filepath.Join(dataDir, "auth-status.json")
-	data, err := os.ReadFile(statusPath)
-	if err != nil {
-		return map[string]string{"status": "not_started"}
+// liveAuthStatus maps a running daemon's daemon-status response to the
+// authenticate verdict. The live connection is the truth: a fresh (re)link
+// reports authenticated even when the on-disk auth-status.json still holds a
+// stale logged_out that a later reconnect never cleared.
+func liveAuthStatus(daemonStatus map[string]any, dataDir string) map[string]string {
+	if loggedIn, ok := daemonStatus["logged_in"].(bool); ok && loggedIn {
+		return map[string]string{"status": string(AuthStatusAuthenticated)}
 	}
-	var status map[string]string
-	if err := json.Unmarshal(data, &status); err != nil {
-		return map[string]string{"status": "not_started"}
+	// Daemon up but not logged in: surface its own auth_status (e.g. qr_ready).
+	if authStatus, ok := daemonStatus["auth_status"].(string); ok && authStatus != "" {
+		result := map[string]string{"status": authStatus}
+		if authStatus == string(AuthStatusQRReady) {
+			result["qr_image"] = "file://" + filepath.Join(dataDir, "qr-code.png")
+		}
+		return result
 	}
-	if status["status"] == string(AuthStatusQRReady) {
-		status["qr_image"] = "file://" + filepath.Join(dataDir, "qr-code.png")
+	return map[string]string{"status": string(AuthStatusNotAuthenticated)}
+}
+
+// authStatusResult reports the live daemon's connection state when a daemon is
+// answering on the socket, falling back to the cached auth-status.json only when
+// no daemon is running (the cache can lag the real session across a reconnect).
+func authStatusResult(sockPath, dataDir string) map[string]string {
+	if output, exitCode, connected := trySocketCommand(sockPath, "daemon-status", nil); connected && exitCode == 0 {
+		var live map[string]any
+		if err := json.Unmarshal(output, &live); err == nil {
+			return liveAuthStatus(live, dataDir)
+		}
 	}
-	return status
+	return authStatusMap(loadStateFromDisk(dataDir), dataDir)
 }
 
 func runAuthenticate() {
 	dataDir := stateDataDir()
-	var err error
-	dataDir, err = resolveDir(dataDir)
+	resolved, err := resolveDir(dataDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	printJSON(readAuthStatus(dataDir))
+	printJSON(authStatusResult(getSocketPath(), resolved))
 }
 
-func runServe(logger waLog.Logger) {
+func runServe() {
 	dataDir := stateDataDir()
 
 	notifDir := extractNotificationsDir()
@@ -164,7 +179,44 @@ func runServe(logger waLog.Logger) {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	writeDaemonInfo(dataDir, os.Args[1:])
+
+	// A stop-requested marker present at boot is stale: daemonStop only writes it
+	// against a live daemon, so this fresh boot can't own it. Clearing it means a
+	// marker leaked by a previous daemon (killed before it consumed it) can't
+	// suppress THIS boot's genuine death notification.
+	os.Remove(stopRequestedPath(dataDir))
+
+	// Single-instance guard: take the exclusive device-store lock BEFORE opening
+	// the whatsmeow store, so two daemons can never connect with the same device
+	// identity (the device-session conflict). A held lock means another daemon is
+	// already serving this store, so exit without connecting.
+	lock, ok, err := acquireDaemonLock(dataDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error acquiring daemon lock: %v\n", err)
+		os.Exit(1)
+	}
+	if !ok {
+		printJSON(map[string]string{"status": "already_running"})
+		os.Exit(0)
+	}
+	serveDaemonLock = lock
+
+	logger, logCloser := serveLogger(dataDir)
+	if logCloser != nil {
+		defer logCloser.Close()
+	}
+
+	// Device preservation: a preserve-reconnect set RestorePending before re-exec.
+	// Restore the last-good device store BEFORE opening it (NewWhatsAppClient), so
+	// SQLite cannot replay the removal that lives in the WAL.
+	initialState := loadStateFromDisk(dataDir)
+	if initialState.RestorePending {
+		if err := restoreGoodDevice(dataDir, logger); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to restore last-good WhatsApp device: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
 	if notifDir != "" {
 		notifDir, err = resolveDir(notifDir)
 		if err != nil {
@@ -173,11 +225,19 @@ func runServe(logger waLog.Logger) {
 		}
 	}
 
-	wac, err := NewWhatsAppClient(dataDir, notifDir, extractInstance(), isReadOnly(), noNotify, extractSkipSenders(), logger)
+	wac, err := newWhatsAppClient(dataDir, notifDir, extractInstance(), isReadOnly(), noNotify, extractSkipSenders(), logger, &initialState)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to initialize WhatsApp client: %v\n", err)
 		os.Exit(1)
 	}
+	// One boot write: clear RestorePending (the restore, if any, is done and the
+	// store is open, so a later ordinary boot does not restore a now-stale snapshot)
+	// and record this run's serve flags so `daemon restart` brings the daemon back
+	// faithfully (both survive stops and crashes via the persisted state).
+	wac.state.update(func(s *daemonState) {
+		s.RestorePending = false
+		s.Args, s.PID, s.StartedAt = os.Args[1:], os.Getpid(), time.Now().UTC()
+	})
 
 	if err := wac.Connect(); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to connect: %v\n", err)
@@ -263,27 +323,80 @@ func stripGlobalFlags(args []string) []string {
 
 func runOneShot(command string) {
 	sockPath := getSocketPath()
+	// Self-bootstrap the background daemon (idempotent no-op when it is already
+	// answering) so every agent command works cold, without the agent ever starting
+	// anything by hand.
+	if err := startDaemonProcess(linkServeArgs()); err != nil {
+		failJSON("could not start the whatsapp daemon: %v; run `whatsapp status`", err)
+	}
 	output, exitCode, connected := trySocketCommand(sockPath, command, stripGlobalFlags(os.Args[1:]))
 	if !connected {
-		hint := "daemon not running. Start with: whatsapp daemon start"
-		if instance := extractInstance(); instance != "" {
-			hint += " --instance " + instance
-		}
-		failJSON("%s", hint)
+		failJSON("whatsapp daemon is not answering; run `whatsapp status`")
 	}
 	fmt.Println(string(output))
 	os.Exit(exitCode)
 }
 
+// parseFlags parses a command's flags, returning what the FlagSet wrote about the problem: the
+// usage for `--help`, or the rejection plus the flag list for anything it does not accept. The
+// FlagSet writes that text to an io.Writer and returns an error that on its own says nothing,
+// so without capturing it the text lands on the daemon's stderr where nothing can read it.
+func parseFlags(fs *flag.FlagSet, args []string) error {
+	var written bytes.Buffer
+	fs.SetOutput(&written)
+	err := fs.Parse(args)
+	if err == nil {
+		return nil
+	}
+	text := strings.TrimSpace(written.String())
+	if errors.Is(err, flag.ErrHelp) && !declaresFlags(fs) {
+		// A FlagSet with nothing to list prints a bare "Usage of x:" header, which reads like the
+		// answer went missing rather than like there is nothing to say.
+		text = fs.Name() + " takes no flags"
+	}
+	if text == "" {
+		return err
+	}
+	return errors.New(text)
+}
+
+func declaresFlags(fs *flag.FlagSet) bool {
+	declared := false
+	fs.VisitAll(func(*flag.Flag) { declared = true })
+	return declared
+}
+
+// parseNoFlags gives a command that takes no flags a FlagSet anyway, so it reports that fact for
+// `--help` and rejects a flag it does not know instead of ignoring its arguments and running.
+func parseNoFlags(name string, args []string) error {
+	return parseFlags(flag.NewFlagSet(name, flag.ContinueOnError), args)
+}
+
 // command describes one socket subcommand in a single place: its canonical name,
 // short aliases, the leading positional args main rewrites into flags, whether it
-// mutates state (blocked in read-only mode), and its handler.
+// mutates state (blocked in read-only mode), an optional non-default socket
+// deadline (for the long, blocking pairing commands), and its handler.
 type command struct {
 	name        string
 	aliases     []string
 	positionals []string
-	write       bool
-	run         func([]string, *WhatsAppClient) (any, error)
+	// hidden keeps a command out of the usage list while it stays callable: the client-side
+	// provision/link/daemon wrappers drive these over the socket, and the header already documents
+	// them, so listing them again would only duplicate or invite a half-done call.
+	hidden  bool
+	write   bool
+	timeout time.Duration // 0 = SocketTimeout; longer for blocking pairing commands
+	run     func([]string, *WhatsAppClient) (any, error)
+}
+
+// commandTimeout is the socket deadline for a command: its own override, or the
+// default SocketTimeout. Both the daemon (handleSocketConn) and the client
+// (trySocketCommand) read it so a blocking `link` is not cut off mid-scan.
+func commandTimeout(name string) time.Duration {
+	if cmd, ok := lookupCommand(name); ok && cmd.timeout > 0 {
+		return cmd.timeout
+	}
+	return SocketTimeout
 }
 
 var commands = []command{
@@ -306,9 +419,12 @@ var commands = []command{
 	{name: "rename-group", aliases: []string{"rename"}, positionals: []string{"group", "name"}, write: true, run: cmdRenameGroup},
 	{name: "set-group-photo", write: true, run: cmdSetGroupPhoto},
 	{name: "set-group-description", positionals: []string{"group", "description"}, write: true, run: cmdSetGroupDescription},
+	{name: "set-profile-photo", positionals: []string{"file"}, write: true, run: cmdSetProfilePhoto},
+	{name: "set-profile-name", positionals: []string{"name"}, write: true, run: cmdSetProfileName},
 	{name: "get-group-invite-link", run: cmdGetGroupInviteLink},
 	{name: "check-delivery", aliases: []string{"delivery"}, positionals: []string{"message-id"}, run: cmdCheckDelivery},
 	{name: "pair-phone", run: cmdPairPhone},
+	{name: "provision", hidden: true, timeout: ProvisionSocketTimeout, run: cmdProvisionManaged},
 	{name: "list-received-contacts", run: cmdListReceivedContacts},
 	{name: "archive-chat", positionals: []string{"to"}, write: true, run: cmdArchiveChat},
 	{name: "archive-all-chats", write: true, run: cmdArchiveAllChats},
@@ -318,56 +434,85 @@ var commands = []command{
 	{name: "say", positionals: []string{"text"}, write: true, run: cmdSay},
 	{name: "hangup", write: true, run: cmdHangup},
 	{name: "call-status", run: cmdCallStatus},
-	{name: "daemon-status", run: cmdDaemonStatus},
-	{name: "link-start", run: cmdLinkStart},
-	{name: "link-status", run: cmdLinkStatus},
-	{name: "link-stop", run: cmdLinkStop},
+	{name: "daemon-status", hidden: true, run: cmdDaemonStatus},
+	{name: "link", hidden: true, timeout: LinkSocketTimeout, run: cmdLink},
+	{name: "own-number-link", hidden: true, timeout: LinkSocketTimeout, run: cmdOwnNumberLink},
 }
 
-func cmdLinkStart(args []string, wac *WhatsAppClient) (any, error) {
+// linkViaQR runs a QR companion-link socket command end to end: parse the shared
+// port + ban-override flags, gate on the linked fact, single-flight, record the
+// rate-limit attempt, then invoke link (the QR mechanism). Both self-hosted `link`
+// (through the linker) and user-owned `own-number-link` (direct, bypassing the
+// managed linker's own-number paradigm) share this body.
+func linkViaQR(name string, args []string, wac *WhatsAppClient, link func(port int) (linkResult, error), result map[string]any) (any, error) {
 	var port int
 	var acknowledged bool
-	fs := flag.NewFlagSet("link-start", flag.ContinueOnError)
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.IntVar(&port, "port", 0, "Serve the QR link page on this port (0 = no page)")
 	fs.BoolVar(&acknowledged, "acknowledge-ban-risk", false, "Override the pairing rate limit")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
-	if wac.IsAuthenticated() {
+	// Gate on the linked FACT (Store.ID), not transient connection status.
+	if wac.client.Store.ID != nil {
 		return nil, fmt.Errorf("already linked; to pair a different account the user must first unlink this device from their phone (Linked Devices)")
 	}
-	wac.pairGuardMu.Lock()
-	guardErr := guardPairAttempt(wac.dataDir, time.Now(), acknowledged)
-	wac.pairGuardMu.Unlock()
-	if guardErr != nil {
-		return nil, guardErr
+	release, ok := wac.beginPairing()
+	if !ok {
+		return nil, errPairingInProgress
 	}
-	wac.startLinkMode(port)
-	return map[string]any{"status": "linking", "page_port": port, "expires_in_seconds": int(LinkSessionTimeout.Seconds())}, nil
+	defer release()
+	if err := wac.state.tryRecordPairAttempt(time.Now(), acknowledged); err != nil {
+		return nil, err
+	}
+	if _, err := link(port); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
-func cmdLinkStatus(_ []string, wac *WhatsAppClient) (any, error) {
+// cmdLink runs the whole self-hosted QR pairing synchronously in one socket call:
+// serve the scan page on --port (when set), then block until the user scans or the
+// window elapses, returning a terminal status. Single-flighted with every other
+// pairing op, so a link during an in-flight provision is refused (never burns a
+// rate-limit slot or serves a blank QR). Replaces the old link-start/status/stop
+// trio and the client-side poll loop.
+func cmdLink(args []string, wac *WhatsAppClient) (any, error) {
+	return linkViaQR("link", args, wac, func(port int) (linkResult, error) {
+		return wac.linker.linkQR(wac, port)
+	}, map[string]any{"status": string(AuthStatusAuthenticated)})
+}
+
+// cmdOwnNumberLink links the agent as a COMPANION to a user-owned pool number the
+// user already registered on their own phone (see runConnectOwnNumber). It runs the
+// QR link DIRECTLY rather than through the linker: on a cloud box the linker owns the
+// agent's OWN number and rejects a QR link, but here the primary is the user's phone.
+func cmdOwnNumberLink(args []string, wac *WhatsAppClient) (any, error) {
+	return linkViaQR("own-number-link", args, wac, func(port int) (linkResult, error) {
+		return wac.runQRLink(port)
+	}, map[string]any{"status": string(AuthStatusAuthenticated), "owner": "user"})
+}
+
+func cmdDaemonStatus(args []string, wac *WhatsAppClient) (any, error) {
+	if err := parseNoFlags("daemon-status", args); err != nil {
+		return nil, err
+	}
 	status := wac.GetAuthStatus()
-	return map[string]any{"status": string(status), "link_active": wac.linkModeActive()}, nil
-}
-
-func cmdLinkStop(_ []string, wac *WhatsAppClient) (any, error) {
-	wac.stopLinkMode()
-	return map[string]any{"status": "link_stopped"}, nil
-}
-
-func cmdDaemonStatus(_ []string, wac *WhatsAppClient) (any, error) {
-	status := wac.GetAuthStatus()
-	info, _ := readDaemonInfo(wac.dataDir)
+	st := wac.state.snapshot()
 	now := time.Now()
 	result := map[string]any{
 		"connected":                wac.client.IsConnected(),
 		"logged_in":                wac.client.IsLoggedIn(),
 		"auth_status":              string(status),
-		"started_at":               info.StartedAt,
-		"serve_args":               info.Args,
-		"sync_window_seconds_left": int(syncWindowRemaining(wac.dataDir, now).Seconds()),
-		"pair_attempts_last_hour":  pairAttemptsInWindow(wac.dataDir, now),
+		"started_at":               st.StartedAt,
+		"serve_args":               st.Args,
+		"sync_window_seconds_left": int(syncWindowRemaining(st.LinkedAt, now).Seconds()),
+		"pair_attempts_last_hour":  pairAttemptsInWindow(st.PairAttempts, now),
+		"pair_attempts_last_day":   len(attemptsWithin(st.PairAttempts, now, PairDayWindow)),
+		"pair_attempts_last_7d":    len(attemptsWithin(st.PairAttempts, now, PairWeekWindow)),
+	}
+	if wac.client.Store.ID != nil {
+		result["number"] = "+" + wac.client.Store.ID.User
 	}
 	if build, ok := debug.ReadBuildInfo(); ok {
 		for _, dep := range build.Deps {
@@ -411,7 +556,7 @@ func cmdListContacts(args []string, wac *WhatsAppClient) (any, error) {
 	fs := flag.NewFlagSet("list-contacts", flag.ContinueOnError)
 	fs.StringVar(&query, "query", "", "Optional search query")
 	fs.IntVar(&limit, "limit", 50, "Max results")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	contacts, err := wac.store.SearchContacts(query, limit)
@@ -426,7 +571,7 @@ func cmdAddContact(args []string, wac *WhatsAppClient) (any, error) {
 	fs := flag.NewFlagSet("add-contact", flag.ContinueOnError)
 	fs.StringVar(&name, "name", "", "Contact name")
 	fs.StringVar(&phone, "phone", "", "Phone number (E.164)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if name == "" || phone == "" {
@@ -443,7 +588,7 @@ func cmdRemoveContact(args []string, wac *WhatsAppClient) (any, error) {
 	var identifier string
 	fs := flag.NewFlagSet("remove-contact", flag.ContinueOnError)
 	fs.StringVar(&identifier, "identifier", "", "Contact name or phone")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if identifier == "" {
@@ -466,7 +611,7 @@ func cmdListMessages(args []string, wac *WhatsAppClient) (any, error) {
 	fs.StringVar(&query, "query", "", "Search query")
 	fs.IntVar(&limit, "limit", 50, "Max results")
 	fs.IntVar(&page, "page", 0, "Page number")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 
@@ -516,7 +661,7 @@ func cmdListChats(args []string, wac *WhatsAppClient) (any, error) {
 	fs.IntVar(&page, "page", 0, "Page number")
 	fs.BoolVar(&includeLastMessage, "include-last-message", false, "Include last message")
 	fs.StringVar(&sortBy, "sort-by", "last_active", "Sort by (last_active or name)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	chats, err := wac.store.ListChats(query, limit, page*limit, includeLastMessage, sortBy)
@@ -535,7 +680,7 @@ func cmdSendMessage(args []string, wac *WhatsAppClient) (any, error) {
 	fs.StringVar(&messageFile, "message-file", "", "Path to a file containing the message body (use '-' for stdin). Preferred for multi-line text or content with apostrophes / quotes that complicate shell escaping.")
 	fs.StringVar(&replyTo, "reply-to", "", "Message ID to reply/quote (optional)")
 	fs.BoolVar(&longform, "longform", false, "Bypass the short-bubble lint for genuine reference material (a brief, a code block, a list they asked for).")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if to == "" {
@@ -597,7 +742,7 @@ func cmdSendFile(args []string, wac *WhatsAppClient) (any, error) {
 	fs.StringVar(&filePath, "file-path", "", "Path to file")
 	fs.StringVar(&caption, "caption", "", "Optional caption")
 	fs.StringVar(&displayName, "display-name", "", "Override filename shown to recipient")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if to == "" || filePath == "" {
@@ -612,7 +757,7 @@ func cmdSendAudio(args []string, wac *WhatsAppClient) (any, error) {
 	fs := flag.NewFlagSet("send-audio", flag.ContinueOnError)
 	fs.StringVar(&to, "to", "", "Recipient")
 	fs.StringVar(&filePath, "file-path", "", "Path to audio file")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if to == "" || filePath == "" {
@@ -628,7 +773,7 @@ func cmdDownloadMedia(args []string, wac *WhatsAppClient) (any, error) {
 	fs.StringVar(&messageID, "message-id", "", "Message ID")
 	fs.StringVar(&to, "to", "", "Chat")
 	fs.StringVar(&downloadPath, "download-path", "", "Save path")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if messageID == "" {
@@ -647,7 +792,7 @@ func cmdSendReaction(args []string, wac *WhatsAppClient) (any, error) {
 	fs.StringVar(&messageID, "message-id", "", "Message ID")
 	fs.StringVar(&emoji, "emoji", "", "Emoji")
 	fs.StringVar(&to, "to", "", "Chat")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if messageID == "" || emoji == "" || to == "" {
@@ -662,7 +807,7 @@ func cmdRevokeMessage(args []string, wac *WhatsAppClient) (any, error) {
 	fs := flag.NewFlagSet("revoke-message", flag.ContinueOnError)
 	fs.StringVar(&messageID, "message-id", "", "Message ID to revoke")
 	fs.StringVar(&to, "to", "", "Chat")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if messageID == "" || to == "" {
@@ -676,7 +821,7 @@ func cmdCreateGroup(args []string, wac *WhatsAppClient) (any, error) {
 	var groupName string
 	fs := flag.NewFlagSet("create-group", flag.ContinueOnError)
 	fs.StringVar(&groupName, "name", "", "Group name")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	participants := fs.Args()
@@ -691,7 +836,7 @@ func cmdLeaveGroup(args []string, wac *WhatsAppClient) (any, error) {
 	var group string
 	fs := flag.NewFlagSet("leave-group", flag.ContinueOnError)
 	fs.StringVar(&group, "group", "", "Group name")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if group == "" {
@@ -706,7 +851,7 @@ func cmdListGroups(args []string, wac *WhatsAppClient) (any, error) {
 	fs := flag.NewFlagSet("list-groups", flag.ContinueOnError)
 	fs.IntVar(&limit, "limit", 50, "Max results")
 	fs.IntVar(&page, "page", 0, "Page number")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	groups, err := wac.store.ListGroups(limit, page*limit)
@@ -721,7 +866,7 @@ func cmdUpdateGroupParticipants(args []string, wac *WhatsAppClient) (any, error)
 	fs := flag.NewFlagSet("update-group-participants", flag.ContinueOnError)
 	fs.StringVar(&group, "group", "", "Group name")
 	fs.StringVar(&action, "action", "", "add or remove")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	participants := fs.Args()
@@ -738,7 +883,7 @@ func cmdBackfill(args []string, wac *WhatsAppClient) (any, error) {
 	fs := flag.NewFlagSet("backfill", flag.ContinueOnError)
 	fs.StringVar(&to, "to", "", "Chat to backfill")
 	fs.IntVar(&count, "count", 50, "Number of messages")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if to == "" {
@@ -753,7 +898,7 @@ func cmdRenameGroup(args []string, wac *WhatsAppClient) (any, error) {
 	fs := flag.NewFlagSet("rename-group", flag.ContinueOnError)
 	fs.StringVar(&group, "group", "", "Group name or JID")
 	fs.StringVar(&name, "name", "", "New group name")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if group == "" || name == "" {
@@ -768,7 +913,7 @@ func cmdSetGroupPhoto(args []string, wac *WhatsAppClient) (any, error) {
 	fs := flag.NewFlagSet("set-group-photo", flag.ContinueOnError)
 	fs.StringVar(&group, "group", "", "Group name or JID")
 	fs.StringVar(&filePath, "file-path", "", "Path to image file")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if group == "" || filePath == "" {
@@ -783,7 +928,7 @@ func cmdSetGroupDescription(args []string, wac *WhatsAppClient) (any, error) {
 	fs := flag.NewFlagSet("set-group-description", flag.ContinueOnError)
 	fs.StringVar(&group, "group", "", "Group name or JID")
 	fs.StringVar(&description, "description", "", "New group description")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if group == "" || description == "" {
@@ -793,11 +938,47 @@ func cmdSetGroupDescription(args []string, wac *WhatsAppClient) (any, error) {
 	return successResult(success, msg), nil
 }
 
+func cmdSetProfilePhoto(args []string, wac *WhatsAppClient) (any, error) {
+	var filePath string
+	fs := flag.NewFlagSet("set-profile-photo", flag.ContinueOnError)
+	fs.StringVar(&filePath, "file", "", "Path to profile image (JPEG; PNG is converted to JPEG)")
+	if err := parseFlags(fs, args); err != nil {
+		return nil, err
+	}
+	if filePath == "" {
+		return nil, fmt.Errorf("an image path is required (positional or --file)")
+	}
+	imageBytes, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read image file: %w", err)
+	}
+	if err := wac.SetProfilePhoto(imageBytes); err != nil {
+		return nil, err
+	}
+	return map[string]any{"status": "updated"}, nil
+}
+
+func cmdSetProfileName(args []string, wac *WhatsAppClient) (any, error) {
+	var name string
+	fs := flag.NewFlagSet("set-profile-name", flag.ContinueOnError)
+	fs.StringVar(&name, "name", "", "New display name (push name)")
+	if err := parseFlags(fs, args); err != nil {
+		return nil, err
+	}
+	if name == "" {
+		return nil, fmt.Errorf("a name is required (positional or --name)")
+	}
+	if err := wac.SetProfileName(name); err != nil {
+		return nil, err
+	}
+	return map[string]any{"status": "updated"}, nil
+}
+
 func cmdGetGroupInviteLink(args []string, wac *WhatsAppClient) (any, error) {
 	var group string
 	fs := flag.NewFlagSet("get-group-invite-link", flag.ContinueOnError)
 	fs.StringVar(&group, "group", "", "Group name or JID")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if group == "" {
@@ -816,7 +997,7 @@ func cmdCheckDelivery(args []string, wac *WhatsAppClient) (any, error) {
 	fs.StringVar(&to, "to", "", "Chat filter")
 	fs.IntVar(&limit, "limit", 10, "Recent messages to show")
 	fs.BoolVar(&recent, "recent", false, "Show recent outgoing statuses")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 
@@ -851,28 +1032,225 @@ func cmdCheckDelivery(args []string, wac *WhatsAppClient) (any, error) {
 	return result, nil
 }
 
+// cmdProvisionManaged claims this account's one managed WhatsApp number and links
+// the companion, synchronously: it blocks through the whole claim -> pair -> link
+// handshake and returns the linked number or a terminal error. Idempotent on the
+// linked FACT (Store.ID): an already-linked device returns its number without
+// re-entering pairing, even in a not-yet-connected window. Single-flighted with
+// every other pairing op. The top-level `whatsapp provision` (runProvision)
+// cold-starts the daemon before dispatching this, so the agent runs one command
+// and never orchestrates the steps itself.
+func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
+	var opener string
+	fs := flag.NewFlagSet("provision", flag.ContinueOnError)
+	fs.StringVar(&opener, "opener", "", "Agent-authored first-contact greeting prefilled in the wa.me link")
+	if err := parseFlags(fs, args); err != nil {
+		return nil, err
+	}
+	if wac.client.Store.ID != nil {
+		// Already linked. If a takeover parked it, an explicit connect means
+		// "reclaim the session": clear the park and reconnect (a plain send never
+		// does this, so it can't ping-pong). If the other holder is still live it
+		// simply re-parks. Otherwise it's already connected and this is a no-op.
+		if wac.connModeIs(connParked) {
+			wac.setConnMode(connNormal)
+			if err := wac.EnsureConnected(); err != nil {
+				return nil, fmt.Errorf("reconnect the parked session: %w", err)
+			}
+			// EnsureConnected reconnects but never clears the PERSISTED park (only the
+			// boot/onConnected paths do), so without this a reclaimed session would boot
+			// parked again on the next restart. The reconnect succeeded, so drop it.
+			wac.state.update(func(s *daemonState) { s.ConnParked = false })
+		}
+		if err := wac.completeFreshProfile(); err != nil {
+			return nil, err
+		}
+		if pending := wac.state.snapshot(); pending.PendingLinkedResult {
+			result := managedLinkedResult("+"+wac.client.Store.ID.User, pending.PendingLinkedOpener)
+			wac.state.update(func(s *daemonState) {
+				s.OnboardedMSISDN = "+" + wac.client.Store.ID.User
+				s.PendingLinkedOpener = ""
+				s.PendingLinkedResult = false
+			})
+			return result, nil
+		}
+		wac.state.update(func(s *daemonState) { s.OnboardedMSISDN = "+" + wac.client.Store.ID.User })
+		// Store.ID is set (guaranteed non-nil here), so the device number is
+		// authoritative; daemon-status formats it the same way. An already-linked
+		// device is a resume, not a first link, so it never re-emits the reply-first
+		// onboarding copy meant for a brand-new number.
+		return managedResumeResult("+" + wac.client.Store.ID.User), nil
+	}
+	release, ok := wac.beginPairing()
+	if !ok {
+		return nil, errPairingInProgress
+	}
+	defer release()
+	// Capture the number we held BEFORE provisioning: a first-ever claim (no prior
+	// number) or a control-plane heal onto a different number is a genuinely new
+	// number that needs onboarding; re-linking the same established number is a
+	// resume that must not tell Vesta to stop initiating mid-relationship.
+	priorOnboardedMSISDN := wac.state.snapshot().OnboardedMSISDN
+	res, err := wac.linker.provision(wac)
+	if err != nil {
+		// A still-filling pool and a banned number are normal outcomes, not
+		// failures: return a clean status carrying the next step, never a raw error.
+		if errors.Is(err, errPoolFilling) {
+			return map[string]any{
+				"status": "provisioning",
+				"next":   "Your number is still being set up. Re-run `whatsapp connect` in about 30 seconds; it is idempotent, so repeating it is safe until it returns linked.",
+			}, nil
+		}
+		if errors.Is(err, errBlocked) {
+			return map[string]any{
+				"status": "blocked",
+				"reason": err.Error(),
+				"next":   "This number was blocked and cannot be used. Re-run `whatsapp connect` to get a fresh number.",
+			}, nil
+		}
+		if errors.Is(err, errRateLimited) {
+			// The guard blocked before any PairPhone code was minted; never pair.
+			return map[string]any{
+				"status": "rate_limited",
+				"reason": err.Error(),
+				"next":   "Too many link attempts on this number recently. Wait out the cooldown noted above before running `whatsapp connect` again; repeated pairing is exactly what gets a fresh number banned.",
+			}, nil
+		}
+		if errors.Is(err, errRestricted) {
+			// WhatsApp has temporarily restricted the account (self-clearing); waiting
+			// is the fix, not a fresh number or more pairing.
+			return map[string]any{
+				"status": "rate_limited",
+				"reason": err.Error(),
+				"next":   "WhatsApp has temporarily restricted this number (it self-clears). Wait a while, then re-run `whatsapp connect`; do not keep retrying, repeated attempts on a restricted number risk a full ban.",
+			}, nil
+		}
+		return nil, err
+	}
+	// A new number (first claim or a healed replacement) gets the reply-first
+	// onboarding; re-linking the same established number is a quiet resume.
+	if priorOnboardedMSISDN == "" || priorOnboardedMSISDN != res.MSISDN {
+		wac.state.update(func(s *daemonState) {
+			s.FreshNameSetPending = true
+			s.FreshPhotoWipePending = true
+			s.PendingLinkedOpener = opener
+			s.PendingLinkedResult = true
+		})
+		if err := wac.completeFreshProfile(); err != nil {
+			return nil, err
+		}
+		result := managedLinkedResult(res.MSISDN, opener)
+		wac.state.update(func(s *daemonState) {
+			s.OnboardedMSISDN = res.MSISDN
+			s.PendingLinkedOpener = ""
+			s.PendingLinkedResult = false
+		})
+		return result, nil
+	}
+	return managedResumeResult(res.MSISDN), nil
+}
+
+func managedProfileName(agentName string) string {
+	if name := strings.TrimSpace(agentName); name != "" {
+		return name
+	}
+	return "Vesta"
+}
+
+// completeFreshProfile owns the one-time managed identity initialization. Name
+// comes first because it unlocks presence immediately; each operation clears its
+// own bit only after success, so a partial failure resumes precisely where it left
+// off on the next explicit connect.
+func (wac *WhatsAppClient) completeFreshProfile() error {
+	if wac.state.snapshot().FreshNameSetPending {
+		agentName := ""
+		if wac.managed != nil {
+			agentName = wac.managed.cfg.agentName
+		}
+		setName := wac.SetProfileName
+		if wac.setFreshProfileName != nil {
+			setName = wac.setFreshProfileName
+		}
+		if err := setName(managedProfileName(agentName)); err != nil {
+			return fmt.Errorf("initialize fresh managed profile: %w", err)
+		}
+		wac.state.update(func(s *daemonState) { s.FreshNameSetPending = false })
+	}
+	return wac.completeFreshPhotoWipe()
+}
+
+// completeFreshPhotoWipe retries only a wipe that was armed by the successful
+// first link of a new managed number. Clearing the bit only after server success
+// makes the operation idempotent across an interrupted provisioning command.
+func (wac *WhatsAppClient) completeFreshPhotoWipe() error {
+	if !wac.state.snapshot().FreshPhotoWipePending {
+		return nil
+	}
+	removePhoto := wac.RemoveProfilePhoto
+	if wac.removeFreshPhoto != nil {
+		removePhoto = wac.removeFreshPhoto
+	}
+	if err := removePhoto(); err != nil {
+		return fmt.Errorf("initialize fresh managed profile: %w", err)
+	}
+	wac.state.update(func(s *daemonState) { s.FreshPhotoWipePending = false })
+	return nil
+}
+
+// managedLinkedResult is the terminal output for a genuinely NEW managed number: it
+// names the number and spells out the reply-first onboarding (surface the wa.me link,
+// let the user message first, never cold-initiate from a fresh number).
+func managedLinkedResult(number, opener string) map[string]any {
+	return map[string]any{
+		"status": "linked",
+		"number": number,
+		"next": fmt.Sprintf(
+			"Linked as %s with your agent name and a clean profile photo. Share this number with the user and ask them to message you FIRST: send them the click-to-chat link %s, and reply only once they say hi. You can later set a chosen photo with `whatsapp set-profile-photo <file>`. A fresh number must never cold-initiate.",
+			number, waMeLink(number, welcomeText(opener)),
+		),
+	}
+}
+
+// managedResumeResult is the terminal output when connect re-links an already
+// established managed number (a re-run or a reauth of the same number). It omits the
+// reply-first onboarding, which belongs only to a brand-new number: telling Vesta to
+// stop initiating and re-share a wa.me link mid-relationship would be wrong.
+func managedResumeResult(number string) map[string]any {
+	return map[string]any{
+		"status": "linked",
+		"number": number,
+		"next":   fmt.Sprintf("Reconnected as %s. Existing conversations continue as normal; no need to re-share the number or wait for an inbound.", number),
+	}
+}
+
 func cmdPairPhone(args []string, wac *WhatsAppClient) (any, error) {
 	var phone string
 	var acknowledged bool
 	fs := flag.NewFlagSet("pair-phone", flag.ContinueOnError)
 	fs.StringVar(&phone, "phone", "", "Phone number (E.164 format)")
 	fs.BoolVar(&acknowledged, "acknowledge-ban-risk", false, "Override the pairing rate limit")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if phone == "" {
 		return nil, fmt.Errorf("--phone is required (E.164 format, e.g. +393481234567)")
 	}
-	if wac.IsAuthenticated() {
+	if wac.client.Store.ID != nil {
 		return nil, fmt.Errorf("already linked; to pair a different account the user must first unlink this device from their phone (Linked Devices)")
 	}
-	wac.pairGuardMu.Lock()
-	guardErr := guardPairAttempt(wac.dataDir, time.Now(), acknowledged)
-	wac.pairGuardMu.Unlock()
-	if guardErr != nil {
-		return nil, guardErr
+	release, ok := wac.beginPairing()
+	if !ok {
+		return nil, errPairingInProgress
 	}
-	code, err := wac.PairPhone(phone)
+	defer release()
+	// Check the ban guard first; PairPhone records the attempt on dispatch (once the
+	// socket is up), so a cheap pre-dispatch failure (websocket not up yet on a fresh
+	// daemon) burns no slot while a request that reaches WhatsApp does. The
+	// single-flight (beginPairing) means no concurrent caller can double-spend.
+	if err := checkPairAttempt(wac.state.snapshot().PairAttempts, time.Now(), acknowledged); err != nil {
+		return nil, err
+	}
+	code, err := wac.linker.pairCode(wac, phone)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate pairing code: %v", err)
 	}
@@ -890,7 +1268,7 @@ func cmdListReceivedContacts(args []string, wac *WhatsAppClient) (any, error) {
 	fs := flag.NewFlagSet("list-received-contacts", flag.ContinueOnError)
 	fs.StringVar(&to, "to", "", "Filter by chat")
 	fs.IntVar(&limit, "limit", 50, "Max results")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	var chatJID string
@@ -914,7 +1292,7 @@ func cmdChatTarget(name, usage string, args []string, action func(string) (bool,
 	var to string
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.StringVar(&to, "to", "", usage)
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if to == "" && len(fs.Args()) > 0 {
@@ -931,7 +1309,10 @@ func cmdArchiveChat(args []string, wac *WhatsAppClient) (any, error) {
 	return cmdChatTarget("archive-chat", "Chat to archive (contact name, phone, group, or JID)", args, wac.ArchiveChat)
 }
 
-func cmdArchiveAllChats(_ []string, wac *WhatsAppClient) (any, error) {
+func cmdArchiveAllChats(args []string, wac *WhatsAppClient) (any, error) {
+	if err := parseNoFlags("archive-all-chats", args); err != nil {
+		return nil, err
+	}
 	archived, errs, err := wac.ArchiveAllChats()
 	if err != nil {
 		return nil, err
@@ -947,7 +1328,10 @@ func cmdDeleteChat(args []string, wac *WhatsAppClient) (any, error) {
 	return cmdChatTarget("delete-chat", "Chat to delete", args, wac.DeleteChat)
 }
 
-func cmdClearAllChats(_ []string, wac *WhatsAppClient) (any, error) {
+func cmdClearAllChats(args []string, wac *WhatsAppClient) (any, error) {
+	if err := parseNoFlags("clear-all-chats", args); err != nil {
+		return nil, err
+	}
 	jids, err := wac.store.ListAllChatJIDs()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list chats: %v", err)

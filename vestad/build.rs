@@ -20,11 +20,7 @@ fn collect_embed_inputs(path: &Path, out: &mut Vec<PathBuf>) {
     for entry in entries.flatten() {
         let p = entry.path();
         let name = entry.file_name();
-        if name == "__pycache__"
-            || name == ".venv"
-            || name == "node_modules"
-            || name == "generate-index.py"
-        {
+        if name == "__pycache__" || name == ".venv" || name == "node_modules" {
             continue;
         }
         if p.is_dir() {
@@ -149,9 +145,11 @@ fn main() {
     );
 
     let dist_index = web_dir.join("dist").join("index.html");
-    if !dist_index.exists() {
-        panic!("vite build did not produce {}", dist_index.display());
-    }
+    assert!(
+        dist_index.exists(),
+        "vite build did not produce {}",
+        dist_index.display()
+    );
 }
 
 fn run_npm(cwd: &Path, args: &[&str], env: &[(&str, &str)]) {
@@ -193,8 +191,11 @@ fn vendor_arch(skip_env: &str) -> Option<&'static str> {
 /// Download `url` to `dest` with curl, retrying transient GitHub CDN 502s. Returns whether the
 /// download succeeded; panics only if curl itself cannot be spawned.
 fn curl_fetch(url: &str, dest: &Path, artifact: &str) -> bool {
+    let dest_str = dest
+        .to_str()
+        .expect("vendored download path is valid UTF-8");
     Command::new("curl")
-        .args(["-fsSL", "--retry", "5", "--retry-all-errors", "--retry-delay", "2", "-o", dest.to_str().unwrap(), url])
+        .args(["-fsSL", "--retry", "5", "--retry-all-errors", "--retry-delay", "2", "-o", dest_str, url])
         .status()
         .unwrap_or_else(|e| {
             panic!("failed to spawn curl while vendoring {artifact}: {e} (set VESTAD_SKIP_{}=1 to skip)", artifact.to_uppercase())
@@ -214,11 +215,10 @@ fn vendor_cloudflared(manifest_dir: &Path) {
     if !dest.exists() {
         std::fs::create_dir_all(&vendored_dir).expect("failed to create vendored dir");
         let url = format!("{CLOUDFLARED_DOWNLOAD_BASE}/cloudflared-linux-{arch}");
-        if !curl_fetch(&url, &dest, "cloudflared") {
-            panic!(
-                "failed to download cloudflared from {url} (set VESTAD_SKIP_CLOUDFLARED=1 to skip)"
-            );
-        }
+        assert!(
+            curl_fetch(&url, &dest, "cloudflared"),
+            "failed to download cloudflared from {url} (set VESTAD_SKIP_CLOUDFLARED=1 to skip)"
+        );
     }
 
     println!("cargo:rustc-cfg=cloudflared_vendored");
@@ -247,8 +247,11 @@ fn vendor_restic(manifest_dir: &Path) {
             panic!("failed to download restic from {url} (set VESTAD_SKIP_RESTIC=1 to skip)");
         }
         // `bunzip2 -f` decompresses restic.bz2 -> restic and removes the .bz2.
+        let bz2_str = bz2
+            .to_str()
+            .expect("vendored restic.bz2 path is valid UTF-8");
         let status = Command::new("bunzip2")
-            .args(["-f", bz2.to_str().unwrap()])
+            .args(["-f", bz2_str])
             .status()
             .expect(
                 "failed to spawn bunzip2 while vendoring restic (set VESTAD_SKIP_RESTIC=1 to skip)",

@@ -23,6 +23,10 @@ telegram send-file --to "<contact_name>" --file-path /path/to/document.pdf
 telegram send-voice --to "<contact_name>" --file-path /path/to/note.ogg
 ```
 
+## Edited messages
+
+People change their minds after they hit send, so a message you already read can change. An edit arrives as an `edit` notification whose body carries what the message says now, just like a plain message, naming the message that changed (`target_message_id`) and the text you last saw (`old_text`). The stored message is rewritten, so `list-messages` and search show only the new text. Answer again only if the edit asks something new: a fixed typo needs nothing from you. Deletions are invisible here, Telegram never tells a bot that a message was deleted.
+
 ## Interactive UI (inline buttons + callbacks)
 
 Send tappable buttons, get notified when the owner taps, then answer the tap and/or edit the
@@ -59,7 +63,8 @@ Notification types written for the agent: `message`, `callback_query` (button ta
 reactions via `react` works). Aliases: `send`/`edit`/`del`/`voice`/`action`/`pin`/`unpin`.
 
 ## Notes
-- `send-message` enforces short-bubble texting: a wall (over ~220 chars, or 3+ sentences in one bubble) is rejected so you re-send as several short calls, one thought each. For genuine reference material the user asked for (a brief, a code block, a list), pass `--longform` to bypass. `--message-file` sends are linted too, so `--longform` is the only escape hatch.
+- `send-message` enforces short-bubble texting: a wall (over ~220 chars, or any text after a full stop) is rejected so you re-send as several short calls, one thought each. Don't use full stops at all: a `.`, `!` or `?` may only close a bubble, never carry text after it. Ellipses stay free, they're a beat rather than a stop. For genuine reference material the user asked for (a brief, a code block, a list), pass `--longform` to bypass. `--message-file` sends are linted too, so `--longform` is the only escape hatch.
+- A numbered or bulleted list is fine to send as one message (each item is one short thought); a line-leading marker like `1.` or `2)` is not a full stop, so a list does not need `--longform`.
 - Chat IDs are numeric (e.g., `123456789` for private, `-1001234567890` for groups)
 - Users must `/start` the bot before it can message them
 - Recipients can be resolved by: contact name, @username, or numeric chat ID

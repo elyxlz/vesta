@@ -18,7 +18,7 @@ export function ModalsProvider({ children }: { children: ReactNode }) {
   const clearAuthState = () => setShowAuth(false);
 
   const handleDelete = async () => {
-    navigate("/");
+    await navigate("/");
     await remove();
   };
 

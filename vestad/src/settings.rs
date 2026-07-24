@@ -13,10 +13,9 @@ pub(crate) struct ServiceEntry {
     pub(crate) port: u16,
     #[serde(default)]
     pub(crate) public: bool,
-    /// Random per-service access key. Embedded in the iframe URL path
-    /// (`/agents/{name}/{service}/k/{key}/`) so a non-public service is reachable
-    /// without cookies or headers: every relative sub-resource request rides under
-    /// the same key-prefixed path. See `agent_proxy::split_key_subpath`.
+    /// Random per-service access key. The iframe URL embeds it in
+    /// `/agents/{name}/{service}/k/{key}/`, so relative resource requests can
+    /// authenticate without cookies or headers.
     #[serde(default = "gen_service_key")]
     pub(crate) key: String,
 }
@@ -24,7 +23,8 @@ pub(crate) struct ServiceEntry {
 const SERVICE_KEY_BYTES: usize = 32;
 
 pub(crate) fn gen_service_key() -> String {
-    (0..SERVICE_KEY_BYTES).map(|_| format!("{:02x}", rand::random::<u8>())).collect()
+    let bytes: [u8; SERVICE_KEY_BYTES] = rand::random();
+    hex::encode(bytes)
 }
 
 impl<'de> serde::Deserialize<'de> for ServiceEntry {
@@ -42,8 +42,16 @@ impl<'de> serde::Deserialize<'de> for ServiceEntry {
             },
         }
         match Raw::deserialize(deserializer)? {
-            Raw::Legacy(port) => Ok(ServiceEntry { port, public: false, key: gen_service_key() }),
-            Raw::Full { port, public, key } => Ok(ServiceEntry { port, public, key: key.unwrap_or_else(gen_service_key) }),
+            Raw::Legacy(port) => Ok(ServiceEntry {
+                port,
+                public: false,
+                key: gen_service_key(),
+            }),
+            Raw::Full { port, public, key } => Ok(ServiceEntry {
+                port,
+                public,
+                key: key.unwrap_or_else(gen_service_key),
+            }),
         }
     }
 }
@@ -102,27 +110,15 @@ pub(crate) enum UserDesired {
     Stopped,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Default)]
 pub(crate) struct AgentSettings {
-    #[serde(default = "default_true")]
-    pub(crate) manage_agent_code: bool,
     #[serde(default)]
     pub(crate) user_desired: UserDesired,
     #[serde(default)]
     pub(crate) mounts: Vec<crate::mounts::HostMount>,
 }
 
-impl Default for AgentSettings {
-    fn default() -> Self {
-        Self { manage_agent_code: true, user_desired: UserDesired::Running, mounts: Vec::new() }
-    }
-}
-
 impl Settings {
-    pub(crate) fn manages_core_code(&self, name: &str) -> bool {
-        self.agents.get(name).is_none_or(|s| s.manage_agent_code)
-    }
-
     /// The agent's host-folder grants, or an empty list if the agent has none recorded.
     /// One reader so every mount-consuming path (restart, rebuild, rename, restore, list,
     /// reconcile) sees grants the same way.
@@ -305,6 +301,23 @@ mod tests {
         assert!(s.expose_lan);
     }
 
+    #[test]
+    fn legacy_service_entry_gets_a_random_256_bit_key() {
+        let entry: ServiceEntry = serde_json::from_str("8080").expect("legacy port entry");
+        assert_eq!(entry.port, 8080);
+        assert_eq!(entry.key.len(), SERVICE_KEY_BYTES * 2);
+        assert!(entry.key.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn service_entry_preserves_its_persisted_key() {
+        let entry: ServiceEntry = serde_json::from_str(
+            r#"{"port":8080,"public":false,"key":"0123456789abcdef"}"#,
+        )
+        .expect("full service entry");
+        assert_eq!(entry.key, "0123456789abcdef");
+    }
+
     // --- user_desired drives vestad's boot-start; a wrong default would silently keep every
     // agent down (Stopped) or start a user-stopped one (if it didn't persist) ---
 
@@ -315,16 +328,14 @@ mod tests {
 
     #[test]
     fn agent_settings_missing_user_desired_deserializes_running() {
-        // An agent entry written before the field existed (only manage_agent_code) must come up.
-        let s: AgentSettings =
-            serde_json::from_str(r#"{"manage_agent_code": true}"#).expect("valid AgentSettings");
+        // An agent entry written before the field existed (an empty object) must come up.
+        let s: AgentSettings = serde_json::from_str(r#"{}"#).expect("valid AgentSettings");
         assert_eq!(s.user_desired, UserDesired::Running);
     }
 
     #[test]
     fn agent_settings_user_desired_stopped_round_trips() {
         let s = AgentSettings {
-            manage_agent_code: true,
             user_desired: UserDesired::Stopped,
             mounts: Vec::new(),
         };
@@ -339,7 +350,7 @@ mod tests {
 
     #[test]
     fn agent_settings_defaults_mounts_to_empty() {
-        let json = r#"{"manage_agent_code": true, "user_desired": "running"}"#;
+        let json = r#"{"user_desired": "running"}"#;
         let s: AgentSettings = serde_json::from_str(json).expect("valid AgentSettings");
         assert!(s.mounts.is_empty());
     }
@@ -347,7 +358,6 @@ mod tests {
     #[test]
     fn agent_settings_roundtrips_mounts() {
         let s = AgentSettings {
-            manage_agent_code: true,
             user_desired: UserDesired::Running,
             mounts: vec![crate::mounts::HostMount {
                 host_path: "/mnt/media".into(),

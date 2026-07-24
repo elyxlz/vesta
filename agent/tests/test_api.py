@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import os
 import socket
 import tempfile
 import time
@@ -13,12 +12,12 @@ from pathlib import Path
 import pydantic as pyd
 import pytest
 from aiohttp import ClientSession, WSMsgType, web
-
-import core.models as vm
-import core.config as cfg
-from core.api import _ws_handler, _write_app_chat_notification, start_ws_server
-from core.events import ChatEvent, NotificationEvent, UserEvent
 from wait_util import wait_for_condition
+
+import core.config as cfg
+import core.models as vm
+from core.api import _ws_handler, start_ws_server
+from core.events import AssistantEvent
 
 
 def _pick_port() -> int:
@@ -31,6 +30,7 @@ async def _start_server(event_bus):
     app = web.Application()
     app["event_bus"] = event_bus
     app["config"] = cfg.VestaConfig(agent_dir=Path(tempfile.mkdtemp()) / "agent")
+    app["state"] = vm.State()
     app["websockets"] = weakref.WeakSet()
     app.router.add_get("/ws", _ws_handler)
     runner = web.AppRunner(app)
@@ -59,16 +59,42 @@ async def _drain_until(ws, predicate, timeout=1.0):
 
 
 @pytest.mark.anyio
-async def test_ws_sends_snapshot_by_default(event_bus):
-    event_bus.emit(ChatEvent(type="chat", text="hello"))
+async def test_ws_snapshot_omits_chat(event_bus):
+    """The connect snapshot carries state + notifications + config, never chat: the app-chat skill owns
+    chat end to end on its own service socket, so core neither transports nor seeds it."""
     runner, base = await _start_server(event_bus)
     try:
-        async with ClientSession() as session:
-            async with session.ws_connect(f"{base}/ws") as ws:
-                msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
-                data = json.loads(msg.data)
-                assert data["type"] == "snapshot"
-                assert any(e["type"] == "chat" and e["text"] == "hello" for e in data["chat"]["events"])
+        async with ClientSession() as session, session.ws_connect(f"{base}/ws") as ws:
+            msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
+            data = json.loads(msg.data)
+            assert data["type"] == "snapshot"
+            assert "chat" not in data
+            assert set(data) == {"type", "state", "notifications", "config"}
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.anyio
+async def test_ws_snapshot_carries_agent_timezone(event_bus):
+    """vestad reads the agent's IANA timezone off the connect snapshot to schedule
+    auto-updates in the agent's local quiet window."""
+    app = web.Application()
+    app["event_bus"] = event_bus
+    app["config"] = cfg.VestaConfig(agent_dir=Path(tempfile.mkdtemp()) / "agent", timezone="America/New_York")
+    app["state"] = vm.State()
+    app["websockets"] = weakref.WeakSet()
+    app.router.add_get("/ws", _ws_handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = _pick_port()
+    site = web.TCPSite(runner, "127.0.0.1", port)
+    await site.start()
+    try:
+        async with ClientSession() as session, session.ws_connect(f"http://127.0.0.1:{port}/ws") as ws:
+            msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
+            data = json.loads(msg.data)
+            assert data["type"] == "snapshot"
+            assert data["config"]["timezone"] == "America/New_York"
     finally:
         await runner.cleanup()
 
@@ -79,157 +105,32 @@ async def test_ws_sends_empty_snapshot_when_no_events(event_bus):
     can distinguish 'still loading' from 'no messages' instead of guessing."""
     runner, base = await _start_server(event_bus)
     try:
-        async with ClientSession() as session:
-            async with session.ws_connect(f"{base}/ws") as ws:
-                msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
-                data = json.loads(msg.data)
-                assert data["type"] == "snapshot"
-                assert data["chat"]["events"] == []
-                assert data["chat"]["cursor"] is None
-                assert data["notifications"]["pending"] == []
+        async with ClientSession() as session, session.ws_connect(f"{base}/ws") as ws:
+            msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
+            data = json.loads(msg.data)
+            assert data["type"] == "snapshot"
+            assert "chat" not in data
+            assert data["notifications"]["pending"] == []
     finally:
         await runner.cleanup()
 
 
 @pytest.mark.anyio
-async def test_ws_skip_history_sends_snapshot_without_chat(event_bus):
-    """skip_history still sends the snapshot (state + notifications), just omitting the heavy chat
-    seed, so lightweight taps get connect state without the conversation backlog."""
-    event_bus.emit(ChatEvent(type="chat", text="stored"))
+async def test_ws_recv_drain_survives_garbage_and_keeps_the_socket_live(event_bus):
+    """Nothing injects events over the WS anymore: the recv loop is a pure drain. Inbound frames
+    (garbage, a stale emit frame) are ignored without killing the connection, and the socket still
+    receives bus events afterwards."""
     runner, base = await _start_server(event_bus)
     try:
-        async with ClientSession() as session:
-            async with session.ws_connect(f"{base}/ws?skip_history=1") as ws:
-                msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
-                snapshot = json.loads(msg.data)
-                assert snapshot["type"] == "snapshot"
-                assert snapshot["chat"]["events"] == []  # "stored" backlog omitted
-                event_bus.emit(ChatEvent(type="chat", text="live"))
-                received = await _drain_until(
-                    ws,
-                    lambda r: any(e.get("type") == "chat" and e.get("text") == "live" for e in r),
-                )
-                assert any(e.get("type") == "chat" and e.get("text") == "live" for e in received)
-    finally:
-        await runner.cleanup()
-
-
-@pytest.mark.anyio
-async def test_ws_history_survives_notification_storm(event_bus):
-    """Regression: a burst of notifications used to fill the recent window and the
-    seeded history rendered empty. The WS now seeds the app-chat channel, so the
-    conversation comes through and notifications are excluded from history."""
-    event_bus.emit(UserEvent(type="user", text="are you there"))
-    event_bus.emit(ChatEvent(type="chat", text="i am here"))
-    for i in range(200):
-        event_bus.emit(NotificationEvent(type="notification", source="core", summary=f"spam {i}"))
-    runner, base = await _start_server(event_bus)
-    try:
-        async with ClientSession() as session:
-            async with session.ws_connect(f"{base}/ws") as ws:
-                msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
-                data = json.loads(msg.data)
-                assert data["type"] == "snapshot"
-                history_types = {e["type"] for e in data["chat"]["events"]}
-                assert history_types == {"user", "chat"}
-                assert any(e["type"] == "chat" and e["text"] == "i am here" for e in data["chat"]["events"])
-    finally:
-        await runner.cleanup()
-
-
-async def _start_server_with_config(event_bus, config):
-    """Like _start_server but with a caller-supplied config, so the test can read the
-    notifications_dir the recv loop writes intake into."""
-    app = web.Application()
-    app["event_bus"] = event_bus
-    app["config"] = config
-    app["websockets"] = weakref.WeakSet()
-    app.router.add_get("/ws", _ws_handler)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = _pick_port()
-    await web.TCPSite(runner, "127.0.0.1", port).start()
-    return runner, f"http://127.0.0.1:{port}"
-
-
-@pytest.mark.anyio
-async def test_ws_message_writes_app_chat_notification(event_bus, tmp_path):
-    """Regression (#809): an inbound app `message` is turned into a `source=app-chat` notification
-    by the agent itself, in-process — not by a sidecar subscriber that could die and silently drop
-    it. A `chat` frame (the agent's own reply path) broadcasts but writes no intake."""
-    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
-    runner, base = await _start_server_with_config(event_bus, config)
-    try:
-        async with ClientSession() as session:
-            async with session.ws_connect(f"{base}/ws") as ws:
-                await asyncio.wait_for(ws.receive(), timeout=1.0)  # snapshot
-                await ws.send_json({"type": "chat", "text": "a reply, not intake"})
-                await ws.send_json({"type": "message", "text": "  deliver me  "})
-                await wait_for_condition(
-                    lambda: len(list(config.notifications_dir.glob("*.json"))) == 1,
-                    message="expected exactly one intake notification",
-                )
-        files = list(config.notifications_dir.glob("*-app-chat-message.json"))
-        assert len(files) == 1
-        notif = json.loads(files[0].read_text())
-        assert notif["source"] == "app-chat"
-        assert notif["type"] == "message"
-        assert notif["message"] == "deliver me"  # stripped
-        assert notif["interrupt"] is True
-    finally:
-        await runner.cleanup()
-
-
-def test_app_chat_messages_delivered_in_send_order(config):
-    """Two app-chat messages written in quick succession must be read back in send order. The
-    monotonic time_ns() stem sorts lexically the same as send order; a uuid4 stem would not."""
-    _write_app_chat_notification(config, "first")
-    _write_app_chat_notification(config, "second")
-
-    files = sorted(config.notifications_dir.glob("*.json"))
-    assert len(files) == 2
-    texts = [json.loads(f.read_text())["message"] for f in files]
-    assert texts == ["first", "second"]
-
-
-def test_write_app_chat_notification_never_exposes_partial_file(config, monkeypatch):
-    """The write goes through atomic_write_text: a sibling .tmp file, then os.replace. A monitor
-    tick globbing the notifications dir mid-write can only ever see the tmp file (excluded by the
-    *.json glob) or the fully written target, never a truncated target."""
-    observed_matches: list[list[Path]] = []
-    real_replace = os.replace
-
-    def spying_replace(src, dst):
-        observed_matches.append(list(config.notifications_dir.glob("*.json")))
-        real_replace(src, dst)
-
-    monkeypatch.setattr(cfg.os, "replace", spying_replace)
-    _write_app_chat_notification(config, "hello")
-
-    assert observed_matches == [[]]  # no *.json match existed right before the rename
-    files = list(config.notifications_dir.glob("*.json"))
-    assert len(files) == 1
-    assert json.loads(files[0].read_text())["message"] == "hello"
-
-
-@pytest.mark.anyio
-async def test_ws_survives_non_dict_json_frame(event_bus):
-    """A frame whose JSON is not an object (a number, list, or null) is ignored, not a connection
-    killer: a later valid message on the same socket still comes through."""
-    runner, base = await _start_server(event_bus)
-    try:
-        async with ClientSession() as session:
-            async with session.ws_connect(f"{base}/ws?skip_history=1") as ws:
-                await asyncio.wait_for(ws.receive(), timeout=1.0)  # snapshot
-                await ws.send_str("123")
-                await ws.send_str("[]")
-                await ws.send_str("null")
-                await ws.send_json({"type": "chat", "text": "still alive"})
-                received = await _drain_until(
-                    ws,
-                    lambda r: any(e.get("type") == "chat" and e.get("text") == "still alive" for e in r),
-                )
-                assert any(e.get("type") == "chat" and e.get("text") == "still alive" for e in received)
+        async with ClientSession() as session, session.ws_connect(f"{base}/ws") as ws:
+            await asyncio.wait_for(ws.receive(), timeout=1.0)  # snapshot
+            await ws.send_str("123")
+            await ws.send_json({"type": "emit", "event": {"type": "chat", "id": 77, "text": "ignored"}})
+            event_bus.emit(AssistantEvent(type="assistant", text="still alive"))
+            received = await _drain_until(ws, lambda r: any(e.get("type") == "assistant" for e in r))
+            assistants = [e for e in received if e.get("type") == "assistant"]
+            assert [e["text"] for e in assistants] == ["still alive"]
+            assert not any(e.get("type") == "chat" for e in received)
     finally:
         await runner.cleanup()
 
@@ -247,10 +148,9 @@ async def test_ws_snapshot_failure_cleans_up_subscription(event_bus, monkeypatch
     monkeypatch.setattr(api, "_pending_notification_ids", _boom)
     runner, base = await _start_server(event_bus)
     try:
-        async with ClientSession() as session:
-            async with session.ws_connect(f"{base}/ws") as ws:
-                msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
-                assert msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR)
+        async with ClientSession() as session, session.ws_connect(f"{base}/ws") as ws:
+            msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
+            assert msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR)
         await wait_for_condition(lambda: len(event_bus._subscribers) == 0, message="subscriber leaked after snapshot failure")
     finally:
         await runner.cleanup()
@@ -288,7 +188,7 @@ async def test_send_loop_closes_when_send_stalls(event_bus, monkeypatch):
             await asyncio.Event().wait()
 
     sub = event_bus.subscribe()
-    event_bus.emit(ChatEvent(type="chat", text="never delivered"))
+    event_bus.emit(AssistantEvent(type="assistant", text="never delivered"))
     await asyncio.wait_for(api._send_loop(typing.cast("web.WebSocketResponse", _StalledWs()), sub), timeout=1.0)
 
 
@@ -301,7 +201,8 @@ async def test_memory_put_writes_atomically(tmp_path):
     config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
 
     class _Req:
-        app = {"config": config}
+        def __init__(self) -> None:
+            self.app = {"config": config}
 
         async def json(self):
             return {"content": "remember me"}
@@ -328,9 +229,9 @@ async def test_runner_cleanup_completes_quickly_with_open_ws(event_bus, tmp_path
 
     async with ClientSession() as session:
         sockets = [
-            await session.ws_connect(f"{base}/ws?skip_history=1", headers=auth),
-            await session.ws_connect(f"{base}/ws?skip_history=1", headers=auth),
-            await session.ws_connect(f"{base}/ws?skip_history=1", headers=auth),
+            await session.ws_connect(f"{base}/ws", headers=auth),
+            await session.ws_connect(f"{base}/ws", headers=auth),
+            await session.ws_connect(f"{base}/ws", headers=auth),
         ]
         await wait_for_condition(lambda: len(runner.app["websockets"]) == 3, message="WS handlers never registered")
 
@@ -353,9 +254,9 @@ async def test_close_all_websockets_sends_close_frame(event_bus, tmp_path):
     auth = {"X-Agent-Token": "test-token"}
 
     async with ClientSession() as session:
-        ws = await session.ws_connect(f"{base}/ws?skip_history=1", headers=auth)
+        ws = await session.ws_connect(f"{base}/ws", headers=auth)
         await wait_for_condition(lambda: len(runner.app["websockets"]) == 1, message="WS handler never registered")
-        # Drain the connect snapshot (always sent, even with skip_history) so the next frame is the close.
+        # Drain the connect snapshot (always sent) so the next frame is the close.
         await asyncio.wait_for(ws.receive(), timeout=SHUTDOWN_BUDGET_SEC)
 
         cleanup_task = asyncio.create_task(runner.cleanup())
@@ -375,6 +276,9 @@ def test_config_update_accepts_general_fields_and_returns_sparse(config):
 
     # Any general (non-provider-owned) config field may be set, by its VestaConfig name.
     assert validate_config_updates(config, {"agent_personality": "playful"}) == {"agent_personality": "playful"}
+    assert validate_config_updates(config, {"active_skills": ["whatsapp", "tasks", "tasks"]}) == {
+        "active_skills": ["tasks", "whatsapp"],
+    }
     assert validate_config_updates(config, {"log_level": "DEBUG", "response_timeout": 30}) == {
         "log_level": "DEBUG",
         "response_timeout": 30,
@@ -384,8 +288,10 @@ def test_config_update_accepts_general_fields_and_returns_sparse(config):
 def test_config_update_null_clears_a_key(config):
     from core.config import validate_config_updates
 
-    # A null is preserved (not dropped) so the handler can clear that key in the store.
+    # Nullable fields preserve null so the handler can clear the store key; list fields
+    # canonicalize null to their empty value.
     assert validate_config_updates(config, {"nightly_memory_hour": None}) == {"nightly_memory_hour": None}
+    assert validate_config_updates(config, {"active_skills": None}) == {"active_skills": []}
 
 
 def test_config_update_rejects_unknown_field(config):
@@ -401,6 +307,7 @@ def test_config_update_rejects_bad_values(config):
     for bad in [
         {"nightly_memory_hour": 99},
         {"log_level": "LOUD"},
+        {"active_skills": ["../core"]},
     ]:
         with pytest.raises(pyd.ValidationError):
             validate_config_updates(config, bad)
@@ -438,7 +345,8 @@ async def test_config_put_rejects_a_provider_key(config):
     from core.api import _config_put_handler
 
     class _Req:
-        app = {"config": config}
+        def __init__(self) -> None:
+            self.app = {"config": config}
 
         async def json(self):
             return {"provider": {"model": "opus"}}
@@ -457,13 +365,14 @@ async def test_provider_put_signs_in_then_delete_signs_out(config, monkeypatch):
     signed_in = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
     signed_out = ProviderStatus(state=ProviderAuthState.NOT_AUTHENTICATED, kind="none", model=None)
     monkeypatch.setattr(api_mod, "set_claude", lambda creds, model, ctx, *, config: signed_in)
-    monkeypatch.setattr(api_mod, "clear_provider", lambda *, config: signed_out)
+    monkeypatch.setattr(api_mod, "clear_provider", lambda: signed_out)
 
     state = vm.State()
     state.provider_status = signed_out
 
     class _PutReq:
-        app = {"state": state, "config": config}
+        def __init__(self) -> None:
+            self.app = {"state": state, "config": config}
 
         async def json(self):
             return {"kind": "claude", "model": "opus", "credentials": "{}"}
@@ -473,7 +382,8 @@ async def test_provider_put_signs_in_then_delete_signs_out(config, monkeypatch):
     assert state.provider_status is signed_in
 
     class _DelReq:
-        app = {"state": state, "config": config}
+        def __init__(self) -> None:
+            self.app = {"state": state, "config": config}
 
     del_resp = await api_mod._provider_delete_handler(typing.cast("web.Request", _DelReq()))
     assert del_resp.status == 200
@@ -496,7 +406,8 @@ async def test_status_reports_readiness_separate_from_provider(config):
     state.persisted.first_start_done = True
 
     class _Req:
-        app = {"state": state, "config": config}
+        def __init__(self) -> None:
+            self.app = {"state": state, "config": config}
 
     status_resp = await api_mod._status_handler(typing.cast("web.Request", _Req()))
     assert json.loads(typing.cast("str", status_resp.text)) == {"authed": True, "provider_configured": True, "setup_complete": True}
@@ -521,7 +432,8 @@ async def test_provider_get_surfaces_claude_plan_tier():
     state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
 
     class _Req:
-        app = {"state": state, "config": config}
+        def __init__(self) -> None:
+            self.app = {"state": state, "config": config}
 
     resp = await api_mod._provider_get_handler(typing.cast("web.Request", _Req()))
     body = json.loads(typing.cast("str", resp.text))
@@ -539,7 +451,8 @@ async def test_status_reports_unprovisioned_distinct_from_unauthenticated(config
     state.provider_status = ProviderStatus(state=ProviderAuthState.NOT_AUTHENTICATED, kind="none", model=None)
 
     class _Req:
-        app = {"state": state, "config": config}
+        def __init__(self) -> None:
+            self.app = {"state": state, "config": config}
 
     status_resp = await api_mod._status_handler(typing.cast("web.Request", _Req()))
     assert json.loads(typing.cast("str", status_resp.text)) == {"authed": False, "provider_configured": False, "setup_complete": False}
@@ -551,9 +464,9 @@ async def test_history_q_returns_matching_events_in_history_shape(event_bus):
     # as recency (cursor null), replacing the old /search endpoint.
     from core.api import _history_handler
 
-    event_bus.emit(UserEvent(type="user", text="what about paris"))
-    event_bus.emit(ChatEvent(type="chat", text="paris is lovely"))
-    event_bus.emit(ChatEvent(type="chat", text="london is grey"))
+    event_bus.emit(AssistantEvent(type="assistant", text="what about paris"))
+    event_bus.emit(AssistantEvent(type="assistant", text="paris is lovely"))
+    event_bus.emit(AssistantEvent(type="assistant", text="london is grey"))
 
     app = web.Application()
     app["event_bus"] = event_bus
@@ -563,10 +476,9 @@ async def test_history_q_returns_matching_events_in_history_shape(event_bus):
     port = _pick_port()
     await web.TCPSite(runner, "127.0.0.1", port).start()
     try:
-        async with ClientSession() as session:
-            async with session.get(f"http://127.0.0.1:{port}/history?q=paris") as resp:
-                assert resp.status == 200
-                data = await resp.json()
+        async with ClientSession() as session, session.get(f"http://127.0.0.1:{port}/history?q=paris") as resp:
+            assert resp.status == 200
+            data = await resp.json()
         assert data["cursor"] is None
         texts = [e["text"] for e in data["events"]]
         assert "paris is lovely" in texts and "london is grey" not in texts
@@ -582,8 +494,31 @@ async def test_memory_put_rejects_non_dict_body(event_bus, tmp_path):
     auth = {"X-Agent-Token": "test-token"}
 
     try:
+        async with ClientSession() as session, session.put(f"{base}/memory", json=42, headers=auth) as resp:
+            assert resp.status == 400
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.anyio
+async def test_history_rejects_app_chat_channel_with_410(event_bus):
+    """app-chat history moved to the app-chat skill service: core /history rejects channel=app-chat
+    with 410 so a stale client fails loud rather than silently getting the full stream. Other channels
+    are untouched."""
+    from core.api import _history_handler
+
+    app = web.Application()
+    app["event_bus"] = event_bus
+    app.router.add_get("/history", _history_handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = _pick_port()
+    await web.TCPSite(runner, "127.0.0.1", port).start()
+    try:
         async with ClientSession() as session:
-            async with session.put(f"{base}/memory", json=42, headers=auth) as resp:
-                assert resp.status == 400
+            async with session.get(f"http://127.0.0.1:{port}/history?channel=app-chat") as resp:
+                assert resp.status == 410
+            async with session.get(f"http://127.0.0.1:{port}/history?channel=notifications") as resp:
+                assert resp.status == 200
     finally:
         await runner.cleanup()

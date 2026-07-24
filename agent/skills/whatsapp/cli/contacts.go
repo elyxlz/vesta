@@ -277,6 +277,18 @@ func (wac *WhatsAppClient) resolveSenderJID(sender, senderAlt types.JID) types.J
 	return sender
 }
 
+// canonicalChatKey returns the stable storage key for a chat. WhatsApp addresses a direct chat
+// by the peer's LID (a privacy id), but a saved contact and any reply resolve to the peer's phone
+// JID; keying storage by the raw LID splits one person into two chats, which broke reply-first,
+// read-receipt targeting, and threading. Resolving the LID to its phone JID here (a group JID is
+// left unchanged) makes one person one chat key everywhere messages are stored or looked up.
+func (wac *WhatsAppClient) canonicalChatKey(chat types.JID) string {
+	if wac.client == nil {
+		return chat.String()
+	}
+	return wac.resolveSenderJID(chat, types.JID{}).String()
+}
+
 // formatSenderForDisplay returns a user-friendly sender display string.
 func (wac *WhatsAppClient) formatSenderForDisplay(jid types.JID) string {
 	if contact, err := wac.store.GetManualContact(jid.String()); err == nil && contact != nil && contact.Name != "" {

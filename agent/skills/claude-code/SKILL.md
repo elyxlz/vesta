@@ -44,7 +44,9 @@ JSON response shape:
 
 Parse `result` and report it. Capture `session_id` for follow-ups.
 
-Use a generous bash timeout when invoking it: coding work can take minutes, so set 5+ minute timeouts for non-trivial tasks. Pass the user's exact intent, not your paraphrase: Claude Code's prompt is tuned for natural-language coding tasks; don't pre-digest. And don't nest claude calls inside the task string: if the task itself involves running `claude`, you've over-decomposed; just describe the goal.
+- Use a generous bash timeout when invoking it: coding work can take minutes, so set 5+ minute timeouts for non-trivial tasks.
+- Pass the user's exact intent, not your paraphrase: Claude Code's prompt is tuned for natural-language coding tasks; don't pre-digest.
+- Don't nest claude calls inside the task string: if the task itself involves running `claude`, you've over-decomposed; just describe the goal.
 
 ## Multi-turn (follow-ups)
 

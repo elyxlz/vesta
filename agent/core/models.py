@@ -34,7 +34,7 @@ def is_crash_reason(reason: str | None) -> bool:
     processor/loop error handlers write). The single owner of the crash-category vocabulary: it
     drives the non-zero exit that lets Docker's on-failure policy recover the agent, the
     inbox-override precedence on boot, and the render (crash reasons keep their marker)."""
-    return reason is not None and (reason.startswith("crash:") or reason.startswith("error:"))
+    return reason is not None and (reason.startswith(("crash:", "error:")))
 
 
 @dc.dataclass
@@ -119,7 +119,7 @@ class State:
     # intentional restart fires mid-turn, since the notification is already handled and its file
     # would otherwise survive the SIGTERM and be re-delivered on reboot.
     in_flight_notification_paths: list[str] = dc.field(default_factory=list)
-    # Set by run_one when the current turn's query never reached the CLI (QueryNotDelivered): the
+    # Set by run_one when the current turn's query never reached the CLI (QueryNotDeliveredError): the
     # message loop then keeps in_flight_notification_paths instead of clearing it, since the
     # resumed session never saw the message. Reset at the start of every turn.
     query_not_delivered: bool = False

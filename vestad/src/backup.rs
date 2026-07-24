@@ -41,7 +41,7 @@ async fn check_disk_space(docker: &Docker, name: &str, cname: &str) -> Result<()
         .map_err(|e| DockerError::Failed(format!("failed to create backup dir: {e}")))?;
 
     let stat = nix::sys::statvfs::statvfs(repo_fs.as_path())
-        .map_err(|e| DockerError::Failed(format!("failed to check disk space: {}", e)))?;
+        .map_err(|e| DockerError::Failed(format!("failed to check disk space: {e}")))?;
 
     let available = stat.blocks_available() * stat.fragment_size();
 
@@ -59,8 +59,7 @@ async fn check_disk_space(docker: &Docker, name: &str, cname: &str) -> Result<()
         let avail_mb = available / 1_000_000;
         let required_mb = required / 1_000_000;
         return Err(DockerError::Failed(format!(
-            "insufficient disk space for backup ({}MB available, need at least {}MB)",
-            avail_mb, required_mb
+            "insufficient disk space for backup ({avail_mb}MB available, need at least {required_mb}MB)"
         )));
     }
     Ok(())
@@ -78,7 +77,7 @@ pub async fn container_age_secs(docker: &Docker, name: &str) -> Option<u64> {
 fn parse_rfc3339_epoch(ts: &str) -> Option<u64> {
     let dt = time::OffsetDateTime::parse(ts.trim(), &time::format_description::well_known::Rfc3339)
         .ok()?;
-    Some(dt.unix_timestamp() as u64)
+    u64::try_from(dt.unix_timestamp()).ok()
 }
 
 /// Stop (if running), run `op`, restart. Writes `resume_reason` into the agent's boot inbox for
@@ -173,7 +172,7 @@ pub async fn create_backup(
 
     match &result {
         Ok(info) => {
-            tracing::info!(agent = %name, backup_id = %info.id, size = info.size, "backup created")
+            tracing::info!(agent = %name, backup_id = %info.id, size = info.size, "backup created");
         }
         Err(e) => tracing::error!(agent = %name, error = %e, "backup failed"),
     }
@@ -235,7 +234,7 @@ pub async fn list_backups(
 ) -> Result<Vec<BackupInfo>, DockerError> {
     validate_name(name)?;
     if !env_file_names(agents_dir).iter().any(|owned| owned == name) {
-        return Err(DockerError::NotFound(format!("agent '{}' not found", name)));
+        return Err(DockerError::NotFound(format!("agent '{name}' not found")));
     }
     crate::restic::list(name).await
 }
@@ -261,7 +260,6 @@ pub async fn restore_backup(
     name: &str,
     backup_id: &str,
     env_config: &AgentEnvConfig,
-    manage_core_code: bool,
     user_mounts: &[crate::mounts::HostMount],
 ) -> Result<(), DockerError> {
     validate_name(name)?;
@@ -274,8 +272,7 @@ pub async fn restore_backup(
     let backups = list_backups(&env_config.agents_dir, name).await?;
     if !backups.iter().any(|b| b.id == backup_id) {
         return Err(DockerError::NotFound(format!(
-            "backup '{}' not found",
-            backup_id
+            "backup '{backup_id}' not found"
         )));
     }
 
@@ -318,13 +315,14 @@ pub async fn restore_backup(
     let image = crate::restic::restore_to_image(name, backup_id).await?;
     create_container(
         docker,
-        &cname,
-        &image,
-        port,
-        name,
         env_config,
-        manage_core_code,
-        user_mounts,
+        crate::docker::ContainerSpec {
+            cname: &cname,
+            image: &image,
+            port,
+            agent_name: name,
+            user_mounts,
+        },
     )
     .await?;
 
@@ -344,13 +342,12 @@ pub async fn delete_backup(
 ) -> Result<(), DockerError> {
     let owned_agents = list_agent_names(docker).await;
     if !owned_agents.iter().any(|owned| owned == name) {
-        return Err(DockerError::NotFound(format!("agent '{}' not found", name)));
+        return Err(DockerError::NotFound(format!("agent '{name}' not found")));
     }
     let backups = crate::restic::list(name).await?;
     if !backups.iter().any(|b| b.id == backup_id) {
         return Err(DockerError::Failed(format!(
-            "backup '{}' not found for agent '{}'",
-            backup_id, name
+            "backup '{backup_id}' not found for agent '{name}'"
         )));
     }
     crate::restic::forget(name, &[backup_id.to_string()]).await

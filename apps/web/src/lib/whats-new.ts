@@ -1,5 +1,5 @@
 import { compareVersions } from "@/lib/version";
-import type { ReleaseChannel } from "@/lib/types";
+import type { ReleaseChannel } from "@vesta/core";
 
 // Marketing summaries live in each GitHub release body between these markers
 // (written by the release pipeline); releases without a well-formed block are
@@ -44,7 +44,7 @@ function isGithubRelease(value: unknown): value is GithubRelease {
 export function extractWhatsNew(body: string): string | null {
   const match = WHATS_NEW_BLOCK_RE.exec(body);
   if (!match) return null;
-  const message = match[1].trim();
+  const message = match[1]?.trim() ?? "";
   return message.length > 0 ? message : null;
 }
 

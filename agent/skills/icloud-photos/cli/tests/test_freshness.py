@@ -3,7 +3,6 @@
 import json
 
 import pytest
-
 from icloud_cli import _freshness
 
 

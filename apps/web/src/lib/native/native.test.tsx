@@ -58,24 +58,26 @@ describe("browser bridge", () => {
 
 describe("electron bridge", () => {
   function fakeApi(overrides: Partial<VestaNativeApi> = {}): VestaNativeApi {
+    const noopUnsubscribe = () => {
+      /* noop */
+    };
     return {
       platform: "darwin",
-      focusWindow: vi.fn(async () => {}),
+      focusWindow: vi.fn(() => Promise.resolve()),
       setTheme: vi.fn(),
-      openExternal: vi.fn(async () => {}),
-      storeRead: vi.fn(async () => null),
-      storeWrite: vi.fn(async () => {}),
-      storeClear: vi.fn(async () => {}),
-      oauthStart: vi.fn(async () => 4242),
-      onOauthCallback: vi.fn(() => () => {}),
-      oauthCancel: vi.fn(async () => {}),
-      installUpdate: vi.fn(async () => {}),
-      onWindowFocus: vi.fn(() => () => {}),
-      windowMinimize: vi.fn(async () => {}),
-      windowToggleMaximize: vi.fn(async () => {}),
-      windowClose: vi.fn(async () => {}),
-      windowIsMaximized: vi.fn(async () => false),
-      onWindowMaximizedChange: vi.fn(() => () => {}),
+      openExternal: vi.fn(() => Promise.resolve()),
+      storeRead: vi.fn(() => Promise.resolve(null)),
+      storeWrite: vi.fn(() => Promise.resolve()),
+      storeClear: vi.fn(() => Promise.resolve()),
+      oauthStart: vi.fn(() => Promise.resolve(4242)),
+      onOauthCallback: vi.fn(() => noopUnsubscribe),
+      oauthCancel: vi.fn(() => Promise.resolve()),
+      onWindowFocus: vi.fn(() => noopUnsubscribe),
+      windowMinimize: vi.fn(() => Promise.resolve()),
+      windowToggleMaximize: vi.fn(() => Promise.resolve()),
+      windowClose: vi.fn(() => Promise.resolve()),
+      windowIsMaximized: vi.fn(() => Promise.resolve(false)),
+      onWindowMaximizedChange: vi.fn(() => noopUnsubscribe),
       ...overrides,
     };
   }
@@ -92,10 +94,10 @@ describe("electron bridge", () => {
 
   it("validates the stored connection shape", async () => {
     const api = fakeApi({
-      storeRead: vi.fn(async () => ({ url: "only-url" })),
+      storeRead: vi.fn(() => Promise.resolve({ url: "only-url" })),
     });
     expect(await createElectronBridge(api).connectionStore.read()).toBeNull();
-    const good = fakeApi({ storeRead: vi.fn(async () => CONFIG) });
+    const good = fakeApi({ storeRead: vi.fn(() => Promise.resolve(CONFIG)) });
     expect(await createElectronBridge(good).connectionStore.read()).toEqual(
       CONFIG,
     );
@@ -106,14 +108,13 @@ describe("electron bridge", () => {
     expect(await bridge.oauthLoopback?.start()).toBe(4242);
   });
 
-  it("routes theme, focus, and update calls to the preload api", async () => {
-    const api = fakeApi();
-    const bridge = createElectronBridge(api);
+  it("routes theme and focus calls to the preload api", async () => {
+    const setTheme = vi.fn();
+    const focusWindow = vi.fn(() => Promise.resolve());
+    const bridge = createElectronBridge(fakeApi({ setTheme, focusWindow }));
     bridge.setNativeTheme("dark");
     await bridge.focusWindow();
-    await bridge.installAppUpdate("0.1.176");
-    expect(api.setTheme).toHaveBeenCalledWith("dark");
-    expect(api.focusWindow).toHaveBeenCalled();
-    expect(api.installUpdate).toHaveBeenCalledWith("0.1.176");
+    expect(setTheme).toHaveBeenCalledWith("dark");
+    expect(focusWindow).toHaveBeenCalled();
   });
 });

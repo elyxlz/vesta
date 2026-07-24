@@ -1,22 +1,16 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-import type { AgentInfo } from "@/lib/types";
+import type { AgentRow } from "@/lib/types";
 
-// Tracks agents that have a saved change which only applies after a restart. Features flag their
-// agent here (each under its own reason key) instead of rendering their own "restart to apply"
-// hint, so the navbar can offer a single restart action. Per-reason tracking lets a feature
-// withdraw its own flag when its setting is toggled back to the applied value, without wiping
-// another feature's legitimate reminder. Persisted to localStorage so a page reload keeps the
-// reminder — the change is already saved server-side, and a lost reminder means the user never
-// restarts and the edit stays silently inert.
-// The flag is cleared by observing the agent actually restart: markPending stamps the agent's boot
-// time (`since`), and reconcile drops the flag once a different boot time is seen (see reconcile), so
-// a restart by any path — the navbar button, the CLI, another tab/device, a crash, the nightly
-// dreamer — clears it, not only a restart this browser triggered. The exception is host-access: a
-// new bind mount needs a container *recreate*, which a boot-time change can't distinguish from a
-// plain/crash restart that reused the old mounts, so reconcile leaves those reasons for the app
-// restart button's clear (which does recreate) rather than risk dropping a still-inert grant.
+// Tracks agents with a saved change that only applies after a restart. Features flag their agent
+// here (each under its own reason key) so the navbar can offer a single restart action, and a
+// feature can withdraw its own flag without wiping another's. Persisted to localStorage: the
+// change is already saved server-side, so a reminder lost to a reload leaves the edit silently
+// inert. Clearing works by observing the agent actually restart: markPending stamps the agent's
+// boot time (`since`) and reconcile drops the flag once a different boot time is seen, whichever
+// path triggered the restart. Exception: host-access needs a container recreate (indistinguishable
+// from a plain restart by boot time), so reconcile leaves it for the app restart button's clear.
 
 // ALL_REASONS is the single source for the reason vocabulary: it's the withdraw contract
 // (clearReason matches an identical key, so the store owns the spelling) and the runtime allowlist
@@ -29,7 +23,7 @@ export type RestartReason = (typeof ALL_REASONS)[number];
 // mere restart (see the header). host-access qualifies: bind mounts are fixed at container create.
 const RECREATE_ONLY_REASONS: readonly RestartReason[] = ["host-access"];
 
-// `since` is the agent's container start time (AgentInfo.startedAt) captured when the change was
+// `since` is the agent's container start time (AgentRow.startedAt) captured when the change was
 // saved; null when it wasn't known. Only the restart-applied reasons consult it — host-access
 // threads it too (so a later mixed entry has a baseline) but clears via the button regardless.
 interface PendingEntry {
@@ -37,15 +31,15 @@ interface PendingEntry {
   since: string | null;
 }
 
-// A restart observation: the subset of AgentInfo reconcile needs, kept coupled to the wire type.
-type AgentBoot = Pick<AgentInfo, "name" | "startedAt">;
+// A restart observation: the subset of AgentRow reconcile needs, kept coupled to the roster type.
+type AgentBoot = Pick<AgentRow, "name" | "startedAt">;
 
 interface RestartPendingState {
   pending: Record<string, PendingEntry>;
   markPending: (
     agent: string,
     reason: RestartReason,
-    startedAt: string | undefined,
+    startedAt: string | null,
   ) => void;
   clearReason: (agent: string, reason: RestartReason) => void;
   clearPending: (agent: string) => void;
@@ -56,9 +50,9 @@ function without(
   pending: Record<string, PendingEntry>,
   agent: string,
 ): Record<string, PendingEntry> {
-  const next = { ...pending };
-  delete next[agent];
-  return next;
+  return Object.fromEntries(
+    Object.entries(pending).filter(([name]) => name !== agent),
+  );
 }
 
 export function migrateRestartPending(

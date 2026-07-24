@@ -22,7 +22,9 @@ export function AppSettingsPage() {
             variant="outline"
             size="icon-lg"
             aria-label="home"
-            onClick={() => navigate("/")}
+            onClick={() => {
+              void navigate("/");
+            }}
           >
             <Home />
           </Button>

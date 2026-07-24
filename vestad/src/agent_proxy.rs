@@ -52,18 +52,18 @@ async fn resolve_service(
     service_name: &str,
 ) -> Option<ServiceEntry> {
     let settings = state.settings.read().await;
-    settings.services.get(agent_name)?.get(service_name).cloned()
+    settings
+        .services
+        .get(agent_name)?
+        .get(service_name)
+        .cloned()
 }
 
-/// If a service subpath begins with `/k/{key}`, split off the key and return
-/// `(key, forwarded_subpath)`. Matches `/k/abc/assets/x.js` -> `("abc", "/assets/x.js")`,
-/// `/k/abc/` -> `("abc", "/")`, and `/k/abc` -> `("abc", "/")`. Returns `None` if
-/// there is no key prefix. Used to authenticate iframe sub-resource requests by a
-/// per-service key in the path instead of a cookie or header.
+/// Split a `/k/{key}` service subpath into its key and the path forwarded upstream.
 fn split_key_subpath(subpath: &str) -> Option<(&str, String)> {
     let rest = subpath.strip_prefix("/k/")?;
     let (key, tail) = match rest.split_once('/') {
-        Some((key, tail)) => (key, format!("/{}", tail)),
+        Some((key, tail)) => (key, format!("/{tail}")),
         None => (rest, "/".to_string()),
     };
     if key.is_empty() {
@@ -123,22 +123,19 @@ pub async fn agent_proxy_handler(
     } else {
         resolve_service(&state, &name, first_segment).await
     };
-    // A registered service can be reached with a valid per-service key in the path
-    // (`/{service}/k/{key}/...`), which authenticates every relative sub-resource
-    // request the same way — this is how the dashboard iframe loads without cookies.
     let (target_port, stripped_path, service, via_key) = match resolved {
         Some(entry) => match split_key_subpath(service_subpath) {
             Some((key, forwarded)) => {
-                let ok = !entry.key.is_empty() && key == entry.key;
-                (entry.port, forwarded, Some(entry), ok)
+                let valid = !entry.key.is_empty() && key == entry.key;
+                (entry.port, forwarded, Some(entry), valid)
             }
             None => (entry.port, service_subpath.to_string(), Some(entry), false),
         },
-        None => (agent_port, format!("/{}", path), None, false),
+        None => (agent_port, format!("/{path}"), None, false),
     };
 
-    // Public services are fully open; a valid path key authenticates on its own.
-    // Everything else requires a Bearer token or ?token= query param.
+    // Public services and a valid service path key authenticate without an API
+    // header. Everything else keeps the existing Bearer/query-token behavior.
     let is_public = service.as_ref().is_some_and(|s| s.public);
     let skip_auth = is_public || via_key;
     if !skip_auth && !auth::has_valid_api_auth(request.headers(), request.uri(), &state.api_key) {
@@ -157,21 +154,28 @@ pub async fn agent_proxy_handler(
     let is_ws_upgrade = request
         .headers()
         .get("upgrade")
-        .map(|v| v.as_bytes().eq_ignore_ascii_case(b"websocket"))
-        .unwrap_or(false);
+        .is_some_and(|v| v.as_bytes().eq_ignore_ascii_case(b"websocket"));
 
     // Only wait for registered services — the raw agent port is already running
     // by the time ensure_running() returns, so a wait there would just mask dead agents.
     let is_registered_service = service.is_some();
 
     if is_ws_upgrade {
+        // The raw agent port carries the internal event bus, which is not client-exposed.
+        // Only registered-service WS (voice STT, dashboard-registered services) may upgrade.
+        if service.is_none() {
+            return Err(err_response(
+                StatusCode::NOT_FOUND,
+                "the raw agent event bus is not client-exposed; use /sync",
+            ));
+        }
         let (mut parts, _body) = request.into_parts();
         let ws = match WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
             Ok(ws) => ws,
             Err(e) => {
                 return Err(err_response(
                     StatusCode::BAD_REQUEST,
-                    &format!("invalid ws upgrade: {}", e),
+                    &format!("invalid ws upgrade: {e}"),
                 ));
             }
         };
@@ -217,11 +221,10 @@ async fn ws_proxy(
     let url = if let Some(token) = agent_token {
         let sep = if path.contains('?') { "&" } else { "?" };
         format!(
-            "ws://localhost:{}{}{}agent_token={}",
-            agent_port, path, sep, token
+            "ws://localhost:{agent_port}{path}{sep}agent_token={token}"
         )
     } else {
-        format!("ws://localhost:{}{}", agent_port, path)
+        format!("ws://localhost:{agent_port}{path}")
     };
     let agent_ws = match tokio_tungstenite::connect_async(&url).await {
         Ok((ws, _)) => ws,
@@ -260,8 +263,8 @@ async fn ws_proxy(
 
     let keepalive = Duration::from_secs(WS_KEEPALIVE_INTERVAL_SECS);
     tokio::select! {
-        _ = client_to_agent => {},
-        _ = pump_agent_to_client(client_tx, agent_rx, keepalive) => {},
+        () = client_to_agent => {},
+        () = pump_agent_to_client(client_tx, agent_rx, keepalive) => {},
     }
 
     tracing::info!(port = agent_port, "client websocket disconnected");
@@ -298,14 +301,14 @@ async fn pump_agent_to_client<ClientSink, AgentStream, AgentErr>(
                     TungMsg::Ping(p) => AxumMsg::Ping(p),
                     TungMsg::Pong(p) => AxumMsg::Pong(p),
                     TungMsg::Close(_) => break,
-                    _ => continue,
+                    TungMsg::Frame(_) => continue,
                 };
                 if client_tx.send(axum_msg).await.is_err() {
                     break;
                 }
             }
             _ = ticker.tick() => {
-                if client_tx.send(AxumMsg::Ping(Default::default())).await.is_err() {
+                if client_tx.send(AxumMsg::Ping(bytes::Bytes::new())).await.is_err() {
                     break;
                 }
             }
@@ -321,17 +324,17 @@ async fn forward_http_to_container(
     agent_token: Option<&str>,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     let (parts, body) = request.into_parts();
-    let url = format!("http://localhost:{}{}", port, target_path);
+    let url = format!("http://localhost:{port}{target_path}");
 
     let method = reqwest::Method::from_bytes(parts.method.as_str().as_bytes())
-        .map_err(|e| err_response(StatusCode::BAD_REQUEST, &format!("bad method: {}", e)))?;
+        .map_err(|e| err_response(StatusCode::BAD_REQUEST, &format!("bad method: {e}")))?;
 
     let body_bytes = axum::body::to_bytes(body, PROXY_MAX_BODY_BYTES)
         .await
-        .map_err(|e| err_response(StatusCode::BAD_REQUEST, &format!("read body: {}", e)))?;
+        .map_err(|e| err_response(StatusCode::BAD_REQUEST, &format!("read body: {e}")))?;
 
     let mut req_builder = client.request(method, &url);
-    for (name, value) in parts.headers.iter() {
+    for (name, value) in &parts.headers {
         let n = name.as_str().to_ascii_lowercase();
         if matches!(
             n.as_str(),
@@ -352,8 +355,7 @@ async fn forward_http_to_container(
         err_response(
             StatusCode::BAD_GATEWAY,
             &format!(
-                "container unreachable on port {} ({}): {} — is the service running?",
-                port, target_path, e
+                "container unreachable on port {port} ({target_path}): {e} — is the service running?"
             ),
         )
     })?;
@@ -361,7 +363,7 @@ async fn forward_http_to_container(
     let status =
         StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
     let mut builder = Response::builder().status(status);
-    for (name, value) in upstream.headers().iter() {
+    for (name, value) in upstream.headers() {
         let n = name.as_str().to_ascii_lowercase();
         if matches!(
             n.as_str(),
@@ -377,7 +379,7 @@ async fn forward_http_to_container(
     builder.body(body).map_err(|e| {
         err_response(
             StatusCode::INTERNAL_SERVER_ERROR,
-            &format!("build response: {}", e),
+            &format!("build response: {e}"),
         )
     })
 }
@@ -445,7 +447,7 @@ mod tests {
         let agent_rx = stream::iter([Ok::<_, Infallible>(TungMsg::Close(None))]);
 
         // A long keepalive guarantees the pump returns because of the Close, not a tick.
-        pump_agent_to_client(sink, agent_rx, Duration::from_secs(3600)).await;
+        pump_agent_to_client(sink, agent_rx, Duration::from_hours(1)).await;
 
         // The Close is consumed (not forwarded) and the pump has returned, so the channel is empty/closed.
         assert!(
@@ -459,7 +461,7 @@ mod tests {
         let (sink, mut rx) = recording_client_sink();
         let agent_rx = stream::iter([Ok::<_, Infallible>(TungMsg::Text("hello".into()))]);
 
-        pump_agent_to_client(sink, agent_rx, Duration::from_secs(3600)).await;
+        pump_agent_to_client(sink, agent_rx, Duration::from_hours(1)).await;
 
         let forwarded = rx.try_recv().expect("text frame forwarded");
         assert!(
@@ -492,17 +494,18 @@ mod tests {
 
     #[test]
     fn splits_key_from_subpath() {
-        assert_eq!(split_key_subpath("/k/abc123/assets/index.js"), Some(("abc123", "/assets/index.js".to_string())));
+        assert_eq!(
+            split_key_subpath("/k/abc123/assets/index.js"),
+            Some(("abc123", "/assets/index.js".to_string()))
+        );
         assert_eq!(split_key_subpath("/k/abc123/"), Some(("abc123", "/".to_string())));
         assert_eq!(split_key_subpath("/k/abc123"), Some(("abc123", "/".to_string())));
     }
 
     #[test]
-    fn key_subpath_rejects_non_key_paths() {
-        // No key prefix -> forwarded verbatim by the caller.
+    fn key_subpath_rejects_missing_or_empty_keys() {
         assert_eq!(split_key_subpath("/assets/index.js"), None);
         assert_eq!(split_key_subpath("/"), None);
-        // Empty key is not a match.
         assert_eq!(split_key_subpath("/k/"), None);
         assert_eq!(split_key_subpath("/k//assets/x.js"), None);
     }

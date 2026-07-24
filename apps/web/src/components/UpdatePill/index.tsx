@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useGateway } from "@/providers/GatewayProvider";
+import { useGateway } from "@/providers/GatewayProvider/context";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 
@@ -20,7 +20,9 @@ export function UpdatePill({ className }: { className?: string }) {
   return (
     <Button
       size="xs"
-      onClick={handleUpdate}
+      onClick={() => {
+        void handleUpdate();
+      }}
       disabled={updating}
       className={className}
       title={latestVersion ? `Update to v${latestVersion}` : "Update available"}

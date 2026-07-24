@@ -1,15 +1,9 @@
-import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/ui/button";
 import { Orb } from "@/components/Orb";
-import {
-  buildPhaseMessage,
-  getBuildPhase,
-  type BuildPhase,
-} from "@/api/agents";
-
-const BUILD_PHASE_POLL_MS = 1000;
+import { useGateway } from "@/providers/GatewayProvider";
+import { buildPhaseMessage } from "@/api/agents";
 
 // One screen for the whole birth: the same mounted orb works (busy), dims on a
 // failure (off), and wakes up (alive), never remounting between phases.
@@ -25,29 +19,12 @@ export function CreatingStep({
   onRetry: () => void;
 }) {
   const navigate = useNavigate();
-  // Track the latest reported phase so the status line follows the real build
-  // and never walks backwards once a phase has been seen.
-  const [phase, setPhase] = useState<BuildPhase | null>(null);
-  const building = !done && error === null;
-
-  useEffect(() => {
-    if (!building) return;
-    let active = true;
-    const poll = async () => {
-      try {
-        const next = await getBuildPhase(agentName);
-        if (active && next !== null) setPhase(next);
-      } catch {
-        // best-effort status only; the create flow owns success and failure.
-      }
-    };
-    void poll();
-    const id = setInterval(() => void poll(), BUILD_PHASE_POLL_MS);
-    return () => {
-      active = false;
-      clearInterval(id);
-    };
-  }, [agentName, building]);
+  const { agents } = useGateway();
+  // The build phase rides the replica tree: vestad records it into shared state
+  // and the roster carries it, so the status line follows the real create with
+  // no separate poll.
+  const phase =
+    agents.find((agent) => agent.name === agentName)?.buildPhase ?? null;
 
   const orbState = error !== null ? "off" : done ? "alive" : "busy";
 
@@ -92,7 +69,9 @@ export function CreatingStep({
       {done && (
         <Button
           className="mt-2 w-full"
-          onClick={() => navigate(`/agent/${agentName}/chat`)}
+          onClick={() => {
+            void navigate(`/agent/${agentName}/chat`);
+          }}
         >
           say hi
         </Button>

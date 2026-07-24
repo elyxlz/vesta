@@ -39,10 +39,17 @@ trap cleanup EXIT
 mkdir -p "$STAGE/agent"
 cp -a "$CONTENT/." "$STAGE/agent/"
 rm -f "$STAGE/agent/.vestad-fingerprint"
+# Core is a read-only bind mount on a box, not tracked content: keep it out of the snapshot.
+# The ignore for it lives in the root .gitignore below (which the image never bakes and the
+# monorepo never carries), not in agent/.gitignore: that way the box's baked agent/.gitignore
+# matches the snapshot exactly, so a fresh attach leaves a clean tree, and agent/core stays
+# tracked in the monorepo.
+rm -rf "$STAGE/agent/core"
 cat > "$STAGE/.gitignore" <<'EOF'
 /*
 !/.gitignore
 !/agent/
+/agent/core/
 EOF
 
 export GIT_DIR="$REPO" GIT_WORK_TREE="$STAGE" GIT_INDEX_FILE="$STAGE/.build-index"
@@ -80,8 +87,7 @@ git tag -f "$TAG" "refs/heads/$BRANCH" >/dev/null
 git update-ref "refs/heads/$LEGACY_BRANCH" "refs/heads/$BRANCH"
 
 # Regenerate atomically: boxes may be mid-download of the old bundle; rename is safe.
-TAG_REFS="$(git tag -l 'agent-v*' | sed 's|^|refs/tags/|')"
-# shellcheck disable=SC2086
-git bundle create "$BUNDLE.tmp" "refs/heads/$BRANCH" "refs/heads/$LEGACY_BRANCH" $TAG_REFS 2>/dev/null
+mapfile -t TAG_REFS < <(git tag -l 'agent-v*' | sed 's|^|refs/tags/|')
+git bundle create "$BUNDLE.tmp" "refs/heads/$BRANCH" "refs/heads/$LEGACY_BRANCH" "${TAG_REFS[@]}" 2>/dev/null
 mv "$BUNDLE.tmp" "$BUNDLE"
 echo "upstream: $BRANCH at $TAG ($(git rev-parse --short "refs/heads/$BRANCH"))"

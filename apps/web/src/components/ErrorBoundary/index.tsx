@@ -32,17 +32,17 @@ export class ErrorBoundary extends Component<
   ErrorBoundaryProps,
   ErrorBoundaryState
 > {
-  state: ErrorBoundaryState = { error: null };
+  override state: ErrorBoundaryState = { error: null };
 
   static getDerivedStateFromError(error: Error): ErrorBoundaryState {
     return { error };
   }
 
-  componentDidCatch(error: Error, info: ErrorInfo) {
+  override componentDidCatch(error: Error, info: ErrorInfo) {
     console.error("[ErrorBoundary]", error, info.componentStack);
   }
 
-  render() {
+  override render() {
     if (this.state.error) {
       return (
         this.props.fallback ?? (
@@ -65,7 +65,9 @@ export function RouteErrorBoundary() {
     return (
       <ErrorFallback
         error={
-          new Error(`${error.status}: ${error.statusText || "page not found"}`)
+          new Error(
+            `${String(error.status)}: ${error.statusText || "page not found"}`,
+          )
         }
         title={error.status === 404 ? "page not found" : "something went wrong"}
         description={
@@ -80,7 +82,7 @@ export function RouteErrorBoundary() {
   const resolvedError =
     error instanceof Error
       ? error
-      : new Error(String(error ?? "Unknown error"));
+      : new Error(typeof error === "string" ? error : "Unknown error");
 
   return <ErrorFallback error={resolvedError} />;
 }
@@ -115,10 +117,15 @@ function ErrorFallback({
 
   const handleCopy = () => {
     const text = [error.message, error.stack].filter(Boolean).join("\n\n");
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
+    navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      })
+      .catch(() => {
+        /* clipboard unavailable; leave the copied state untouched */
+      });
   };
 
   return (

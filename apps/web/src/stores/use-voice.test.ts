@@ -37,7 +37,9 @@ class FakeAudio {
     queueMicrotask(() => this.onended?.());
     return Promise.resolve();
   }
-  pause(): void {}
+  pause(): void {
+    /* noop */
+  }
 }
 
 const ENABLED_TTS: TtsStatus = {
@@ -68,16 +70,18 @@ describe("speak() — the assistant-message TTS trigger", () => {
     await vi.waitFor(() => expect(apiJsonMock).toHaveBeenCalledTimes(1));
 
     // The text was registered via POST /voice/tts/prepare ...
-    const [path, init] = apiJsonMock.mock.calls[0];
+    const [path, init] = apiJsonMock.mock.calls[0] ?? [];
     expect(path).toBe("/agents/test-agent/voice/tts/prepare");
     expect(init).toMatchObject({ method: "POST" });
-    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+    const body = init?.body;
+    if (typeof body !== "string") throw new Error("expected a string body");
+    expect(JSON.parse(body)).toEqual({
       text: "hello there",
     });
 
     // ... and the returned id was played from the streamed GET url.
     await vi.waitFor(() => expect(FakeAudio.created).toHaveLength(1));
-    expect(FakeAudio.created[0].src).toBe(
+    expect(FakeAudio.created[0]?.src).toBe(
       "https://host:8443/agents/test-agent/voice/tts/stream/tts-1?token=tok",
     );
   });

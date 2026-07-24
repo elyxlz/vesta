@@ -14,6 +14,11 @@ vi.mock("@/providers/SelectedAgentProvider", () => ({
   useSelectedAgent: () => ({ name: "bob" }),
 }));
 
+function must<T>(value: T | null | undefined): T {
+  if (value == null) throw new Error("expected a value");
+  return value;
+}
+
 describe("NotificationInterruptRulesCard", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -69,7 +74,7 @@ describe("NotificationInterruptRulesCard", () => {
       await screen.findByRole("button", { name: /trash them/i }),
     );
     await waitFor(() => expect(setSpy).toHaveBeenCalled());
-    expect(setSpy.mock.calls.at(-1)![1][0].action).toBe("trash");
+    expect(must(must(setSpy.mock.calls.at(-1))[1][0]).action).toBe("trash");
   });
 
   it("does not trash when the confirm is cancelled", async () => {
@@ -102,7 +107,7 @@ describe("NotificationInterruptRulesCard", () => {
       await screen.findByRole("button", { name: /action: trash/i }),
     );
     await waitFor(() => expect(setSpy).toHaveBeenCalled());
-    expect(setSpy.mock.calls.at(-1)![1][0].action).toBe("interrupt");
+    expect(must(must(setSpy.mock.calls.at(-1))[1][0]).action).toBe("interrupt");
   });
 
   it("deletes a rule and auto-saves", async () => {
@@ -146,14 +151,14 @@ describe("NotificationInterruptRulesCard", () => {
     const handles = screen.getAllByRole("button", {
       name: /drag to reorder rule/i,
     });
-    const row0 = handles[0].closest("div")!;
-    fireEvent.dragStart(handles[1]);
+    const row0 = must(must(handles[0]).closest("div"));
+    fireEvent.dragStart(must(handles[1]));
     fireEvent.dragOver(row0);
     fireEvent.drop(row0);
 
     await waitFor(() => expect(setSpy).toHaveBeenCalled());
     expect(
-      setSpy.mock.calls.at(-1)![1].map((r: { id: string }) => r.id),
+      must(setSpy.mock.calls.at(-1))[1].map((r: { id: string }) => r.id),
     ).toEqual(["b", "a"]);
   });
 

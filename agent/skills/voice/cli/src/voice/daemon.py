@@ -55,20 +55,17 @@ def data_dir() -> pl.Path:
 def screen_output_has_live_session(screen_ls: str, name: str) -> bool:
     """A LIVE screen session with exactly this name (a "(Dead ???)" corpse does not count)."""
     pattern = re.compile(r"\d+\." + re.escape(name) + r"\s")
-    for line in screen_ls.splitlines():
-        if pattern.search(line) and "Dead" not in line:
-            return True
-    return False
+    return any(pattern.search(line) and "Dead" not in line for line in screen_ls.splitlines())
 
 
 def _screen_session_live(name: str) -> bool:
     # `screen -ls` exits nonzero when no sessions exist; only the output matters.
-    result = subprocess.run(["screen", "-ls"], capture_output=True, text=True)
+    result = subprocess.run(["screen", "-ls"], capture_output=True, text=True, check=False)
     return screen_output_has_live_session(result.stdout, name)
 
 
 def resolve_port() -> int:
-    result = subprocess.run([str(REGISTER_SERVICE), "voice"], capture_output=True, text=True, timeout=35)
+    result = subprocess.run([str(REGISTER_SERVICE), "voice"], capture_output=True, text=True, timeout=35, check=False)
     if result.returncode != 0 or not result.stdout.strip():
         raise DaemonError(f"register-service failed: {result.stderr.strip()}")
     return int(result.stdout.strip())
@@ -87,11 +84,12 @@ def _auth_status() -> dict[str, AuthEntry | None]:
     auth: dict[str, AuthEntry | None] = {}
     for domain in ("stt", "tts"):
         entry = cfg[domain]
-        if entry is None or "provider" not in entry:
+        provider = entry["provider"] if entry is not None and "provider" in entry else None
+        if not isinstance(provider, str):
             auth[domain] = None
             continue
-        enabled = entry["enabled"] if "enabled" in entry else False
-        auth[domain] = {"provider": entry["provider"], "enabled": enabled}
+        enabled = entry["enabled"] if entry is not None and "enabled" in entry else False
+        auth[domain] = {"provider": provider, "enabled": bool(enabled)}
     return auth
 
 
@@ -106,7 +104,7 @@ def start() -> LifecycleResult:
 
     env = dict(os.environ)
     env["SKILL_PORT"] = str(port)
-    launch = subprocess.run(["screen", "-dmS", SESSION_NAME, binary], env=env, capture_output=True, text=True)
+    launch = subprocess.run(["screen", "-dmS", SESSION_NAME, binary], env=env, capture_output=True, text=True, check=False)
     if launch.returncode != 0:
         raise DaemonError(f"failed to launch screen session: {launch.stderr.strip()}")
 
@@ -125,7 +123,7 @@ def stop() -> LifecycleResult:
     if not port_alive(port):
         return {"status": "already_stopped", "session": SESSION_NAME, "port": port}
 
-    subprocess.run(["screen", "-S", SESSION_NAME, "-X", "quit"])
+    subprocess.run(["screen", "-S", SESSION_NAME, "-X", "quit"], check=False)
     deadline = time.monotonic() + STOP_TIMEOUT_S
     while time.monotonic() < deadline:
         if not port_alive(port):

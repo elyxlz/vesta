@@ -105,6 +105,10 @@ func NewMessageStore(dataDir string) (*MessageStore, error) {
 			DELETE FROM messages_fts WHERE rowid = old.rowid;
 		END;
 
+		CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE OF content ON messages BEGIN
+			UPDATE messages_fts SET content = new.content WHERE rowid = new.rowid;
+		END;
+
 		CREATE TRIGGER IF NOT EXISTS chats_au AFTER UPDATE OF name ON chats BEGIN
 			DELETE FROM messages_fts WHERE rowid IN (
 				SELECT rowid FROM messages WHERE chat_jid = new.jid
@@ -273,6 +277,17 @@ func (ms *MessageStore) UpdateDeliveryStatus(messageID, chatJID, status string, 
 		UPDATE messages SET delivery_status = ?, delivery_timestamp = ?
 		WHERE id = ? AND chat_jid = ?
 	`, status, timestamp, messageID, chatJID)
+	return err
+}
+
+// UpdateMessageContent rewrites a message's text in place after the sender edited it.
+// Deliberately not storeMessage: that INSERT OR REPLACE would reset delivery_status and
+// delivery_timestamp, which the stale-message alerting reads.
+func (ms *MessageStore) UpdateMessageContent(messageID, chatJID, content string) error {
+	_, err := ms.db.Exec(`
+		UPDATE messages SET content = ?
+		WHERE id = ? AND chat_jid = ?
+	`, content, messageID, chatJID)
 	return err
 }
 

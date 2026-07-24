@@ -5,11 +5,12 @@ import os
 import signal
 import sys
 import time
-from contextlib import closing
+from contextlib import closing, suppress
 from pathlib import Path
 
+from . import commands, db
+from . import format as fmt
 from .config import Config
-from . import commands, db, format as fmt
 from .scheduler import create_scheduler, write_notification
 
 
@@ -25,10 +26,8 @@ def _write_pid(config):
 
 
 def _remove_pid(config):
-    try:
+    with suppress(FileNotFoundError):
         (config.data_dir / "serve.pid").unlink()
-    except FileNotFoundError:
-        pass
 
 
 def _fail_daemon_not_running(detail: str):
@@ -65,7 +64,7 @@ def _sync_jobs(config: Config, scheduler, notif_dir: Path):
         try:
             scheduler.remove_job(sid)
         except Exception as e:
-            logging.getLogger(__name__).warning(f"Failed to remove stale job {sid}: {e}")
+            logging.getLogger(__name__).warning("Failed to remove stale job %s: %s", sid, e)
 
     to_restore = set(rows) - set(jobs)
     for jid, (scheduled_time, trigger_data) in rows.items():
@@ -82,14 +81,12 @@ def _sync_jobs(config: Config, scheduler, notif_dir: Path):
         commands.restore_jobs_by_ids(config, scheduler, to_restore, notif_dir=notif_dir)
 
 
-def main():
-    # We manually handle `tasks remind ...` because argparse cannot mix
-    # positional arguments with subparsers on the same parser level.
-    # Everything else goes through standard argparse.
+def _add_id_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("id_pos", nargs="?", default=None, metavar="id")
+    parser.add_argument("--id", default=None, dest="task_id")
 
-    if len(sys.argv) >= 2 and sys.argv[1] == "remind":
-        return _main_remind()
 
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="tasks")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -117,8 +114,7 @@ def main():
 
     # get
     p_get = sub.add_parser("get", help="Get a task by ID")
-    p_get.add_argument("id_pos", nargs="?", default=None, metavar="id")
-    p_get.add_argument("--id", default=None, dest="task_id")
+    _add_id_args(p_get)
     p_get.add_argument(
         "--field",
         action="append",
@@ -129,8 +125,7 @@ def main():
 
     # update
     p_update = sub.add_parser("update", help="Update a task")
-    p_update.add_argument("id_pos", nargs="?", default=None, metavar="id")
-    p_update.add_argument("--id", default=None, dest="task_id")
+    _add_id_args(p_update)
     p_update.add_argument("--status", default=None)
     p_update.add_argument("--title", default=None)
     p_update.add_argument("--priority", default=None)
@@ -142,13 +137,11 @@ def main():
 
     # done
     p_done = sub.add_parser("done", help="Mark a task done")
-    p_done.add_argument("id_pos", nargs="?", default=None, metavar="id")
-    p_done.add_argument("--id", default=None, dest="task_id")
+    _add_id_args(p_done)
 
     # postpone
     p_postpone = sub.add_parser("postpone", help="Set a new due date measured from now (also gives undated tasks one)")
-    p_postpone.add_argument("id_pos", nargs="?", default=None, metavar="id")
-    p_postpone.add_argument("--id", default=None, dest="task_id")
+    _add_id_args(p_postpone)
     p_postpone.add_argument("--in-minutes", type=int, default=None)
     p_postpone.add_argument("--in-hours", type=int, default=None)
     p_postpone.add_argument("--in-days", type=int, default=None)
@@ -157,8 +150,7 @@ def main():
 
     # delete
     p_delete = sub.add_parser("delete", help="Delete a task")
-    p_delete.add_argument("id_pos", nargs="?", default=None, metavar="id")
-    p_delete.add_argument("--id", default=None, dest="task_id")
+    _add_id_args(p_delete)
 
     # search
     p_search = sub.add_parser("search", help="Search tasks by title")
@@ -170,7 +162,18 @@ def main():
     # remind (placeholder for --help)
     sub.add_parser("remind", help="Set, list, delete, or update reminders")
 
-    args = parser.parse_args()
+    return parser
+
+
+def main():
+    # We manually handle `tasks remind ...` because argparse cannot mix
+    # positional arguments with subparsers on the same parser level.
+    # Everything else goes through standard argparse.
+
+    if len(sys.argv) >= 2 and sys.argv[1] == "remind":
+        return _main_remind()
+
+    args = _build_parser().parse_args()
     config = Config()
 
     config.data_dir.mkdir(parents=True, exist_ok=True)
@@ -181,7 +184,7 @@ def main():
     try:
         if args.command == "serve":
             _run_serve(config, Path(args.notifications_dir), port=args.port)
-            return
+            return None
 
         _require_daemon(config)
         _handle_task(args, config)
@@ -189,6 +192,88 @@ def main():
     except ValueError as e:
         print(json.dumps({"error": str(e)}), file=sys.stderr)
         sys.exit(1)
+
+
+def _remind_list_cmd(config: Config, argv: list[str]) -> None:
+    p = argparse.ArgumentParser(prog="tasks remind list", add_help=False)
+    p.add_argument("--task", default=None, dest="task_id")
+    p.add_argument("--limit", type=int, default=50)
+    _add_format_flags(p)
+    args = p.parse_args(argv)
+    _print_list(args, commands.remind_list(config, task_id=args.task_id, limit=args.limit), fmt.format_reminder_list)
+
+
+def _remind_delete_cmd(config: Config, argv: list[str]) -> dict:
+    p = argparse.ArgumentParser(prog="tasks remind delete", add_help=False)
+    p.add_argument("id_pos", nargs="?", default=None, metavar="id")
+    p.add_argument("--id", default=None, dest="reminder_id")
+    args = p.parse_args(argv)
+    reminder_id = _require_arg(args.id_pos or args.reminder_id, "id", "tasks remind delete <id> or tasks remind delete --id <id>")
+    return commands.remind_delete(config, reminder_id=reminder_id)
+
+
+def _remind_update_cmd(config: Config, argv: list[str]) -> dict:
+    p = argparse.ArgumentParser(prog="tasks remind update", add_help=False)
+    p.add_argument("id_pos", nargs="?", default=None, metavar="id")
+    p.add_argument("--id", default=None, dest="reminder_id")
+    p.add_argument("--message", required=True)
+    args = p.parse_args(argv)
+    reminder_id = _require_arg(args.id_pos or args.reminder_id, "id", "tasks remind update <id> or tasks remind update --id <id>")
+    return commands.remind_update(config, reminder_id=reminder_id, message=args.message)
+
+
+def _remind_snooze_cmd(config: Config, argv: list[str]) -> dict:
+    p = argparse.ArgumentParser(prog="tasks remind snooze", add_help=False)
+    p.add_argument("id_pos", nargs="?", default=None, metavar="id")
+    p.add_argument("--id", default=None, dest="reminder_id")
+    p.add_argument("--in-minutes", type=int, default=None)
+    p.add_argument("--in-hours", type=int, default=None)
+    p.add_argument("--in-days", type=int, default=None)
+    p.add_argument("--at", default=None)
+    p.add_argument("--tz", default=None)
+    args = p.parse_args(argv)
+    reminder_id = _require_arg(args.id_pos or args.reminder_id, "id", "tasks remind snooze <id> --in-hours N")
+    return commands.remind_snooze(
+        config,
+        reminder_id=reminder_id,
+        in_minutes=args.in_minutes,
+        in_hours=args.in_hours,
+        in_days=args.in_days,
+        at=args.at,
+        tz=args.tz,
+    )
+
+
+def _remind_set_cmd(config: Config, argv: list[str]) -> dict:
+    p = argparse.ArgumentParser(prog="tasks remind", add_help=False)
+    p.add_argument("message_pos", nargs="?", default=None, metavar="message")
+    p.add_argument("--message", default=None)
+    p.add_argument("--task", default=None, dest="task_id")
+    p.add_argument("--at", default=None, dest="scheduled_datetime")
+    p.add_argument("--tz", default=None)
+    p.add_argument("--in-minutes", type=int, default=None)
+    p.add_argument("--in-hours", type=int, default=None)
+    p.add_argument("--in-days", type=int, default=None)
+    p.add_argument("--recurring", default=None, choices=["hourly", "daily", "weekly", "monthly", "yearly"])
+    p.add_argument("--cron", default=None)
+    p.add_argument("--fuzz-minutes", type=int, default=None)
+    args = p.parse_args(argv)
+    message = _require_arg(args.message_pos or args.message, "message", 'tasks remind "message" or tasks remind --message "message"')
+    return commands.remind_set(
+        config,
+        commands.ReminderSpec(
+            message=message,
+            task_id=args.task_id,
+            scheduled_datetime=args.scheduled_datetime,
+            tz=args.tz,
+            in_minutes=args.in_minutes,
+            in_hours=args.in_hours,
+            in_days=args.in_days,
+            recurring=args.recurring,
+            cron=args.cron,
+            fuzz_minutes=args.fuzz_minutes,
+        ),
+    )
 
 
 def _main_remind():
@@ -200,7 +285,7 @@ def _main_remind():
 
     remind_args = sys.argv[2:]
 
-    if not remind_args or remind_args == ["-h"] or remind_args == ["--help"]:
+    if not remind_args or remind_args in (["-h"], ["--help"]):
         _print_remind_help()
         return
 
@@ -218,76 +303,16 @@ def _main_remind():
         _require_daemon(config)
 
         if subcmd == "list":
-            p = argparse.ArgumentParser(prog="tasks remind list", add_help=False)
-            p.add_argument("--task", default=None, dest="task_id")
-            p.add_argument("--limit", type=int, default=50)
-            _add_format_flags(p)
-            args = p.parse_args(remind_args[1:])
-            _print_list(args, commands.remind_list(config, task_id=args.task_id, limit=args.limit), fmt.format_reminder_list)
+            _remind_list_cmd(config, remind_args[1:])
             return
-        elif subcmd == "delete":
-            p = argparse.ArgumentParser(prog="tasks remind delete", add_help=False)
-            p.add_argument("id_pos", nargs="?", default=None, metavar="id")
-            p.add_argument("--id", default=None, dest="reminder_id")
-            args = p.parse_args(remind_args[1:])
-            reminder_id = _require_arg(args.id_pos or args.reminder_id, "id", "tasks remind delete <id> or tasks remind delete --id <id>")
-            result = commands.remind_delete(config, reminder_id=reminder_id)
+        if subcmd == "delete":
+            result = _remind_delete_cmd(config, remind_args[1:])
         elif subcmd == "update":
-            p = argparse.ArgumentParser(prog="tasks remind update", add_help=False)
-            p.add_argument("id_pos", nargs="?", default=None, metavar="id")
-            p.add_argument("--id", default=None, dest="reminder_id")
-            p.add_argument("--message", required=True)
-            args = p.parse_args(remind_args[1:])
-            reminder_id = _require_arg(args.id_pos or args.reminder_id, "id", "tasks remind update <id> or tasks remind update --id <id>")
-            result = commands.remind_update(config, reminder_id=reminder_id, message=args.message)
+            result = _remind_update_cmd(config, remind_args[1:])
         elif subcmd == "snooze":
-            p = argparse.ArgumentParser(prog="tasks remind snooze", add_help=False)
-            p.add_argument("id_pos", nargs="?", default=None, metavar="id")
-            p.add_argument("--id", default=None, dest="reminder_id")
-            p.add_argument("--in-minutes", type=int, default=None)
-            p.add_argument("--in-hours", type=int, default=None)
-            p.add_argument("--in-days", type=int, default=None)
-            p.add_argument("--at", default=None)
-            p.add_argument("--tz", default=None)
-            args = p.parse_args(remind_args[1:])
-            reminder_id = _require_arg(args.id_pos or args.reminder_id, "id", "tasks remind snooze <id> --in-hours N")
-            result = commands.remind_snooze(
-                config,
-                reminder_id=reminder_id,
-                in_minutes=args.in_minutes,
-                in_hours=args.in_hours,
-                in_days=args.in_days,
-                at=args.at,
-                tz=args.tz,
-            )
+            result = _remind_snooze_cmd(config, remind_args[1:])
         else:
-            p = argparse.ArgumentParser(prog="tasks remind", add_help=False)
-            p.add_argument("message_pos", nargs="?", default=None, metavar="message")
-            p.add_argument("--message", default=None)
-            p.add_argument("--task", default=None, dest="task_id")
-            p.add_argument("--at", default=None, dest="scheduled_datetime")
-            p.add_argument("--tz", default=None)
-            p.add_argument("--in-minutes", type=int, default=None)
-            p.add_argument("--in-hours", type=int, default=None)
-            p.add_argument("--in-days", type=int, default=None)
-            p.add_argument("--recurring", default=None, choices=["hourly", "daily", "weekly", "monthly", "yearly"])
-            p.add_argument("--cron", default=None)
-            p.add_argument("--fuzz-minutes", type=int, default=None)
-            args = p.parse_args(remind_args)
-            message = _require_arg(args.message_pos or args.message, "message", 'tasks remind "message" or tasks remind --message "message"')
-            result = commands.remind_set(
-                config,
-                message=message,
-                task_id=args.task_id,
-                scheduled_datetime=args.scheduled_datetime,
-                tz=args.tz,
-                in_minutes=args.in_minutes,
-                in_hours=args.in_hours,
-                in_days=args.in_days,
-                recurring=args.recurring,
-                cron=args.cron,
-                fuzz_minutes=args.fuzz_minutes,
-            )
+            result = _remind_set_cmd(config, remind_args)
 
         print(json.dumps(result, indent=2))
 
@@ -335,20 +360,22 @@ def _handle_task(args, config: Config):
         result = commands.add_task(
             config,
             title=title,
-            due_datetime=args.due_datetime,
-            timezone=args.timezone,
-            due_in_minutes=args.due_in_minutes,
-            due_in_hours=args.due_in_hours,
-            due_in_days=args.due_in_days,
+            due=commands.DueSpec(
+                due_datetime=args.due_datetime,
+                timezone=args.timezone,
+                due_in_minutes=args.due_in_minutes,
+                due_in_hours=args.due_in_hours,
+                due_in_days=args.due_in_days,
+            ),
             priority=args.priority,
             initial_metadata=args.initial_metadata,
         )
         print(json.dumps(result, indent=2))
         return
-    elif args.command == "list":
+    if args.command == "list":
         _print_list(args, commands.list_tasks(config, show_completed=args.show_completed), fmt.format_task_list)
         return
-    elif args.command == "get":
+    if args.command == "get":
         task_id = _require_arg(args.id_pos or args.task_id, "id", "tasks get <id> or tasks get --id <id>")
         if args.field:
             fields = list(args.field)
@@ -364,11 +391,13 @@ def _handle_task(args, config: Config):
             status=args.status,
             title=args.title,
             priority=args.priority,
-            due_datetime=args.due_datetime,
-            timezone=args.timezone,
-            due_in_minutes=args.due_in_minutes,
-            due_in_hours=args.due_in_hours,
-            due_in_days=args.due_in_days,
+            due=commands.DueSpec(
+                due_datetime=args.due_datetime,
+                timezone=args.timezone,
+                due_in_minutes=args.due_in_minutes,
+                due_in_hours=args.due_in_hours,
+                due_in_days=args.due_in_days,
+            ),
         )
     elif args.command == "done":
         task_id = _require_arg(args.id_pos or args.task_id, "id", "tasks done <id> or tasks done --id <id>")
@@ -400,9 +429,9 @@ def _handle_task(args, config: Config):
 def _print_list(args, result: list, formatter) -> None:
     """Dispatch a list-style command result to --json-pretty / --json / compact formatter."""
     attrs = vars(args)
-    if "json_pretty" in attrs and attrs["json_pretty"]:
+    if attrs.get("json_pretty"):
         print(json.dumps(result, indent=2))
-    elif "json" in attrs and attrs["json"]:
+    elif attrs.get("json"):
         print(json.dumps(result))
     else:
         print(formatter(result))
@@ -436,7 +465,7 @@ def _run_serve(config: Config, notif_dir: Path, *, port: int):
     stop = False
     shutdown_reason = "unknown"
 
-    def handle_signal(signum, frame):
+    def handle_signal(signum, _frame):
         nonlocal stop, shutdown_reason
         shutdown_reason = signal.Signals(signum).name
         stop = True

@@ -10,12 +10,15 @@
 # Or copy to the nova3 engines directory:
 #   cp torrentleech.py ~/.local/share/qBittorrent/nova3/engines/
 
+import contextlib
+import http.cookiejar
 import json
 import os
 import tempfile
 import urllib.parse
 import urllib.request
-import http.cookiejar
+from pathlib import Path
+from typing import ClassVar
 
 # Try importing qBittorrent's novaprinter (works when run as plugin)
 try:
@@ -49,7 +52,7 @@ class torrentleech:
 
     url = "https://www.torrentleech.org"
     name = "TorrentLeech"
-    supported_categories = {
+    supported_categories: ClassVar[dict[str, str]] = {
         "all": "",
         "movies": "1,8,9,10,11,12,13,14,15,29,36,37,43,47",
         "tv": "2,26,27,32,44",
@@ -66,7 +69,7 @@ class torrentleech:
     PASSWORD = os.environ.get("TL_PASSWORD", "")
 
     # Cookie persistence
-    COOKIE_FILE = os.environ.get("TL_COOKIE_FILE", os.path.join(tempfile.gettempdir(), "tl_qbt_cookies.txt"))
+    COOKIE_FILE = os.environ.get("TL_COOKIE_FILE", str(Path(tempfile.gettempdir()) / "tl_qbt_cookies.txt"))
 
     # SOCKS5 proxy (optional, for ISP bypass)
     SOCKS5_HOST = os.environ.get("SOCKS5_HOST", "")
@@ -100,10 +103,8 @@ class torrentleech:
         ]
 
         # Try loading saved cookies
-        try:
+        with contextlib.suppress(FileNotFoundError, OSError):
             self.cj.load(ignore_discard=True, ignore_expires=True)
-        except (FileNotFoundError, OSError):
-            pass
 
     def _login(self):
         """Authenticate with TorrentLeech"""

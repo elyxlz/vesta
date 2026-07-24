@@ -28,7 +28,7 @@ interface ChatProps {
 export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   const { name, agent } = useSelectedAgent();
   const notAuthenticated =
-    agent?.status === "not_authenticated" || agent?.status === "unprovisioned";
+    agent.status === "not_authenticated" || agent.status === "unprovisioned";
   const isMobile = useIsMobile();
   const navbarHeight = useLayout((s) => s.navbarHeight);
   const {
@@ -52,7 +52,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     loadingMore,
     loadMore,
     send,
-    showToolCalls,
+    retry,
   } = useAgentSocket();
 
   const [input, setInput] = useState("");
@@ -72,12 +72,9 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
           m.type === "user" ||
           m.type === "chat" ||
           m.type === "error" ||
-          m.type === "rate_limited" ||
-          (showToolCalls &&
-            m.type === "tool_start" &&
-            !(m.tool === "Bash" && m.input.includes("app-chat"))),
+          m.type === "rate_limited",
       ),
-    [messages, showToolCalls],
+    [messages],
   );
 
   const scrollToBottom = useCallback(() => {
@@ -106,7 +103,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
     setInput(e.target.value);
     const ta = e.target;
     ta.style.height = "auto";
-    ta.style.height = `${Math.min(ta.scrollHeight, 240)}px`;
+    ta.style.height = `${String(Math.min(ta.scrollHeight, 240))}px`;
   };
 
   return (
@@ -120,7 +117,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
         style={
           fullscreen
             ? {
-                maskImage: `linear-gradient(to bottom, transparent, black ${navbarHeight * (isMobile ? 1.75 : 3.5)}px)`,
+                maskImage: `linear-gradient(to bottom, transparent, black ${String(navbarHeight * (isMobile ? 1.75 : 3.5))}px)`,
               }
             : undefined
         }
@@ -133,7 +130,9 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
 
         <ChatMessageArea
           scrollRef={scrollRef}
-          loadMore={loadMore}
+          loadMore={() => {
+            void loadMore();
+          }}
           fullscreen={fullscreen}
           navbarHeight={navbarHeight}
           loadingMore={loadingMore}
@@ -145,6 +144,7 @@ export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
           notAuthenticated={notAuthenticated}
           isTyping={isTyping}
           isMobile={isMobile}
+          onRetry={retry}
         />
 
         <div className="relative">

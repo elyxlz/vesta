@@ -138,7 +138,7 @@ pub fn validate_mounts(
     Ok(out)
 }
 
-/// The Docker `-v` bind spec: `host:container:{ro|rw}`. Deliberately no SELinux `z`/`Z` relabel: a
+/// The Docker `-v` bind spec: `host:container:{ro|rw}`. Deliberately no `SELinux` `z`/`Z` relabel: a
 /// grant shares an *existing* host directory that host services (Plex, Samba, the user) may also use,
 /// and `z` would recursively `chcon` the whole tree to a container-shared label — slow on large trees
 /// and a host-wide change that can break those services. On an SELinux-enforcing host the user relabels
@@ -160,7 +160,7 @@ fn join_and(items: &[String]) -> String {
 /// A `mounts:` restart reason describing a grant change, or None if nothing changed.
 /// `actual` is the container's current user binds as (host, container, writable) tuples
 /// (`docker::actual_user_mounts`); `desired` is the new grant list. Classified per
-/// container_path: new path = granted, dropped path = removed, same path with a different
+/// `container_path`: new path = granted, dropped path = removed, same path with a different
 /// mode = changed — a downgrade must read as a revocation of write access, never a gain.
 pub fn mount_change_reason(
     actual: &[(String, String, bool)],

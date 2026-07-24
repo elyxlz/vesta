@@ -11,15 +11,14 @@ import (
 	"go.mau.fi/whatsmeow/types"
 )
 
-// A live WhatsApp voice call is Vesta talking to someone on the phone with the same voice it uses
-// in the app. CallManager owns the one active call: it answers inbound calls and places outbound
+// A live WhatsApp voice call is Vesta talking to someone on the phone with the same voice as in
+// the app. CallManager owns the one active call: it answers inbound calls and places outbound
 // ones, streams the caller's speech to the voice backend for transcription (each finished turn
 // becomes a `call_utterance` whatsapp notification, so the model responds live through the normal
 // interrupt flow), and speaks the model's `whatsapp say` replies back into the call. Only one call
-// runs at a time; a second inbound call is rejected while one is active.
-//
-// meowcaller carries the VoIP signaling and media on top of the already-connected whatsmeow
-// client; this manager holds no audio codec or provider logic of its own.
+// runs at a time; a second inbound call is rejected while one is active. meowcaller carries the
+// VoIP signaling and media on top of the already-connected whatsmeow client; this manager holds
+// no audio codec or provider logic of its own.
 
 const (
 	// How long to wait for the far end to answer an outbound call before giving up.
@@ -149,6 +148,12 @@ func (cm *CallManager) Place(target string) (any, error) {
 	}
 	if !isDirectChatJID(jid) {
 		return nil, fmt.Errorf("group calls are not supported; call a person, not a group")
+	}
+	// A voice call is the strongest ban trigger, so it passes the same gate as a text
+	// send: a saved contact, and on a managed number a prior inbound (reply-first)
+	// before dialing. Checked before touching meowcaller so a blocked call never dials.
+	if err := cm.wac.requireSendAllowed(jid); err != nil {
+		return nil, err
 	}
 	name, phone := cm.displayFor(jid)
 
@@ -307,7 +312,7 @@ func (cm *CallManager) startBridge(ac *activeCall) {
 					Direction:    ac.direction,
 					ContactName:  ac.contactName,
 					ContactPhone: ac.contactPhone,
-					Transcript:   turn.transcript,
+					Message:      turn.transcript,
 				})
 			}
 		}
@@ -348,7 +353,7 @@ func cmdCall(args []string, wac *WhatsAppClient) (any, error) {
 	var to string
 	fs := flag.NewFlagSet("call", flag.ContinueOnError)
 	fs.StringVar(&to, "to", "", "Who to call (contact name, phone, or JID)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if to == "" {
@@ -366,7 +371,7 @@ func cmdSay(args []string, wac *WhatsAppClient) (any, error) {
 	fs := flag.NewFlagSet("say", flag.ContinueOnError)
 	fs.StringVar(&text, "text", "", "What to speak into the call (use '-' to read from stdin)")
 	fs.StringVar(&textFile, "text-file", "", "Path to a file with the text to speak (use '-' for stdin). Preferred for lines with apostrophes or quotes.")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
 	if (text == "") == (textFile == "") {
@@ -393,7 +398,10 @@ func cmdSay(args []string, wac *WhatsAppClient) (any, error) {
 	return cm.Say(text)
 }
 
-func cmdHangup(_ []string, wac *WhatsAppClient) (any, error) {
+func cmdHangup(args []string, wac *WhatsAppClient) (any, error) {
+	if err := parseNoFlags("hangup", args); err != nil {
+		return nil, err
+	}
 	cm, err := requireCallMgr(wac)
 	if err != nil {
 		return nil, err
@@ -401,7 +409,10 @@ func cmdHangup(_ []string, wac *WhatsAppClient) (any, error) {
 	return cm.Hangup()
 }
 
-func cmdCallStatus(_ []string, wac *WhatsAppClient) (any, error) {
+func cmdCallStatus(args []string, wac *WhatsAppClient) (any, error) {
+	if err := parseNoFlags("call-status", args); err != nil {
+		return nil, err
+	}
 	cm, err := requireCallMgr(wac)
 	if err != nil {
 		return nil, err

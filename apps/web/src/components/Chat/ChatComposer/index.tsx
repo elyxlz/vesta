@@ -18,6 +18,53 @@ import { useVoice } from "@/stores/use-voice";
 import { useVoiceActivation } from "@/stores/use-voice-activation";
 import { useIsMobile } from "@/hooks/use-mobile";
 
+interface VoiceButtonHandlers {
+  onClick?: () => void;
+  onPointerDown?: (e: PointerEvent<HTMLButtonElement>) => void;
+  onPointerUp?: () => void;
+  onKeyDown?: (e: KeyboardEvent<HTMLButtonElement>) => void;
+  onKeyUp?: (e: KeyboardEvent<HTMLButtonElement>) => void;
+  onBlur?: () => void;
+}
+
+function holdVoiceHandlers(toggleVoice: () => void): VoiceButtonHandlers {
+  return {
+    onPointerDown: (e: PointerEvent<HTMLButtonElement>) => {
+      e.preventDefault();
+      e.currentTarget.setPointerCapture(e.pointerId);
+      if (!useVoice.getState().isRecording) toggleVoice();
+    },
+    onPointerUp: () => {
+      if (useVoice.getState().isRecording) toggleVoice();
+    },
+    onKeyDown: (e: KeyboardEvent<HTMLButtonElement>) => {
+      if (e.repeat || (e.key !== " " && e.key !== "Enter")) return;
+      e.preventDefault();
+      if (!useVoice.getState().isRecording) toggleVoice();
+    },
+    onKeyUp: (e: KeyboardEvent<HTMLButtonElement>) => {
+      if (e.key !== " " && e.key !== "Enter") return;
+      if (useVoice.getState().isRecording) toggleVoice();
+    },
+    onBlur: () => {
+      if (useVoice.getState().isRecording) toggleVoice();
+    },
+  };
+}
+
+function placeholderText(isRecording: boolean, notAuthenticated: boolean) {
+  if (isRecording) return "listening...";
+  return notAuthenticated ? "sign in to chat" : "send a message...";
+}
+
+function composerPadding(fullscreen: boolean | undefined, isMobile: boolean) {
+  if (!fullscreen) return "px-2.5 pb-2.5";
+  return cn(
+    "px-[calc(var(--page-padding-x)/2)]",
+    isMobile ? "pb-1" : "pb-[calc(var(--page-padding-x)/2)]",
+  );
+}
+
 interface ChatComposerProps {
   fullscreen?: boolean;
   connected: boolean;
@@ -56,30 +103,9 @@ export function ChatComposer({
   const activation = useVoiceActivation((s) => s.mode);
   const isMobile = useIsMobile();
 
-  const voiceButtonHandlers =
+  const voiceButtonHandlers: VoiceButtonHandlers =
     activation === "hold"
-      ? {
-          onPointerDown: (e: PointerEvent<HTMLButtonElement>) => {
-            e.preventDefault();
-            e.currentTarget.setPointerCapture(e.pointerId);
-            if (!useVoice.getState().isRecording) toggleVoice();
-          },
-          onPointerUp: () => {
-            if (useVoice.getState().isRecording) toggleVoice();
-          },
-          onKeyDown: (e: KeyboardEvent<HTMLButtonElement>) => {
-            if (e.repeat || (e.key !== " " && e.key !== "Enter")) return;
-            e.preventDefault();
-            if (!useVoice.getState().isRecording) toggleVoice();
-          },
-          onKeyUp: (e: KeyboardEvent<HTMLButtonElement>) => {
-            if (e.key !== " " && e.key !== "Enter") return;
-            if (useVoice.getState().isRecording) toggleVoice();
-          },
-          onBlur: () => {
-            if (useVoice.getState().isRecording) toggleVoice();
-          },
-        }
+      ? holdVoiceHandlers(toggleVoice)
       : { onClick: toggleVoice };
 
   const showSend = !isRecording || !voiceAutoSend;
@@ -91,10 +117,7 @@ export function ChatComposer({
     <div
       className={cn(
         "flex items-end gap-2",
-        fullscreen && "px-[calc(var(--page-padding-x)/2)]",
-        fullscreen && !isMobile && "pb-[calc(var(--page-padding-x)/2)]",
-        fullscreen && isMobile && "pb-1",
-        !fullscreen && "px-2.5 pb-2.5",
+        composerPadding(fullscreen, isMobile),
       )}
     >
       <InputGroup
@@ -113,13 +136,7 @@ export function ChatComposer({
           onChange={onInputChange}
           onKeyDown={onKeyDown}
           readOnly={useLiveTranscript}
-          placeholder={
-            isRecording
-              ? "listening..."
-              : notAuthenticated
-                ? "sign in to chat"
-                : "send a message..."
-          }
+          placeholder={placeholderText(isRecording, notAuthenticated)}
           disabled={inputDisabled}
           rows={1}
           enterKeyHint="send"
@@ -140,49 +157,76 @@ export function ChatComposer({
           </InputGroupAddon>
         )}
       </InputGroup>
-      {(sttAvailable || isSpeaking) && (
-        <div className="relative shrink-0">
-          {sttAvailable && (
+      <VoiceButtons
+        sttAvailable={sttAvailable}
+        isSpeaking={isSpeaking}
+        isRecording={isRecording}
+        inputDisabled={inputDisabled}
+        handlers={voiceButtonHandlers}
+        onStopSpeech={onStopSpeech}
+      />
+    </div>
+  );
+}
+
+function VoiceButtons({
+  sttAvailable,
+  isSpeaking,
+  isRecording,
+  inputDisabled,
+  handlers,
+  onStopSpeech,
+}: {
+  sttAvailable: boolean;
+  isSpeaking: boolean;
+  isRecording: boolean;
+  inputDisabled: boolean;
+  handlers: VoiceButtonHandlers;
+  onStopSpeech: () => void;
+}) {
+  if (!sttAvailable && !isSpeaking) return null;
+
+  return (
+    <div className="relative shrink-0">
+      {sttAvailable && (
+        <Button
+          type="button"
+          size="icon"
+          variant="secondary"
+          disabled={inputDisabled}
+          aria-label={isRecording ? "Stop recording" : "Start recording"}
+          {...handlers}
+          className={cn(
+            "size-12 touch-none rounded-full [&_svg]:size-5",
+            isRecording && "bg-red-500 text-white hover:bg-red-600",
+          )}
+        >
+          {isRecording ? <Square fill="currentColor" /> : <Mic />}
+        </Button>
+      )}
+      <AnimatePresence>
+        {isSpeaking && (
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 16 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
+            className={cn(sttAvailable && "absolute -top-14 left-0")}
+          >
             <Button
               type="button"
               size="icon"
               variant="secondary"
-              disabled={inputDisabled}
-              aria-label={isRecording ? "Stop recording" : "Start recording"}
-              {...voiceButtonHandlers}
-              className={cn(
-                "size-12 touch-none rounded-full [&_svg]:size-5",
-                isRecording && "bg-red-500 text-white hover:bg-red-600",
-              )}
+              onClick={onStopSpeech}
+              aria-label="Stop voice playback"
+              title="Stop voice playback"
+              className="size-12 rounded-full [&_svg]:size-5"
             >
-              {isRecording ? <Square fill="currentColor" /> : <Mic />}
+              <VolumeX />
             </Button>
-          )}
-          <AnimatePresence>
-            {isSpeaking && (
-              <motion.div
-                initial={{ opacity: 0, y: 16 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 16 }}
-                transition={{ duration: 0.2, ease: "easeOut" }}
-                className={cn(sttAvailable && "absolute -top-14 left-0")}
-              >
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="secondary"
-                  onClick={onStopSpeech}
-                  aria-label="Stop voice playback"
-                  title="Stop voice playback"
-                  className="size-12 rounded-full [&_svg]:size-5"
-                >
-                  <VolumeX />
-                </Button>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-      )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

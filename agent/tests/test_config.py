@@ -1,9 +1,9 @@
 """Tests for VestaConfig and initialization."""
 
-import json
 import os
 import pathlib as pl
 
+import pydantic as pyd
 import pytest
 
 import core.config as cfg
@@ -12,7 +12,6 @@ from core.config import (
     config_store_path,
     load_config,
     load_notification_rules,
-    migrate_notification_policy_file,
     read_config_store,
     update_config_store,
     validate_config_updates,
@@ -31,6 +30,7 @@ def test_config_default_values():
     config = cfg.VestaConfig()
     assert config.monitor_tick_interval > 0
     assert config.response_timeout > 0
+    assert config.active_skills == []
 
 
 def test_memory_paths(config):
@@ -99,7 +99,7 @@ def test_config_issues_turn_tells_agent(config):
     """Config issues reach the agent as a boot-turn body so it can tell the user."""
     from core.main import config_issues_turn
 
-    body = config_issues_turn(["THINKING='bogus' is invalid (...); reverted to default"], config=config)
+    body = config_issues_turn(["THINKING='bogus' is invalid (...); reverted to default"])
 
     assert body is not None
     assert "THINKING" in body
@@ -109,7 +109,7 @@ def test_config_issues_turn_tells_agent(config):
 def test_config_issues_turn_noop_without_issues(config):
     from core.main import config_issues_turn
 
-    assert config_issues_turn([], config=config) is None
+    assert config_issues_turn([]) is None
 
 
 # --- Config store (nested provider + scalar prefs) ---
@@ -148,6 +148,11 @@ def test_update_merges_and_clear_reverts(agentdir):
     update_config_store({"agent_personality": None})
     assert read_config_store() == {"provider": {"kind": "claude", "model": "sonnet"}}
     assert cfg.VestaConfig().agent_personality == "dry"
+
+
+def test_active_skills_load_from_config_store(agentdir):
+    update_config_store({"active_skills": ["whatsapp", "tasks"]})
+    assert cfg.VestaConfig().active_skills == ["tasks", "whatsapp"]
 
 
 def test_update_rejects_keys_that_are_not_config_fields(agentdir):
@@ -221,10 +226,18 @@ def test_validate_config_rejects_non_pref_keys(config, key):
         ("agent_personality", "playful"),
         ("timezone", "Europe/London"),
         ("seed_context", "they like terse replies"),
+        ("active_skills", ["whatsapp", "tasks", "tasks"]),
     ],
 )
 def test_validate_config_accepts_every_preference(config, key, value):
-    assert validate_config_updates(config, {key: value}) == {key: value}
+    expected = ["tasks", "whatsapp"] if key == "active_skills" else value
+    assert validate_config_updates(config, {key: value}) == {key: expected}
+
+
+@pytest.mark.parametrize("value", ["whatsapp", ["../core"], ["has/slash"], [""], [1]])
+def test_validate_config_rejects_bad_active_skills(config, value):
+    with pytest.raises((pyd.ValidationError, ValueError)):
+        validate_config_updates(config, {"active_skills": value})
 
 
 def test_validate_provider_partial_deep_merges(config):
@@ -252,54 +265,3 @@ def test_validating_a_config_update_does_not_apply_it(config, monkeypatch):
     updates = validate_config_updates(config, {"timezone": "Pacific/Auckland"})
     assert updates == {"timezone": "Pacific/Auckland"}
     assert os.environ["TZ"] == "UTC"
-
-
-# --- migrate_notification_policy_file (legacy notification_policy.json -> notification_rules) ---
-
-
-def _write_legacy_policy(agentdir, policy):
-    (agentdir / "data" / "notification_policy.json").write_text(json.dumps(policy))
-
-
-def test_migrate_policy_folds_rules_and_deletes_file(agentdir):
-    _write_legacy_policy(agentdir, {"rules": [{"id": "a", "source": "twitter", "action": "pool"}]})
-    migrate_notification_policy_file()
-    assert "notification_rules" in read_config_store()
-    assert [rule.source for rule in load_notification_rules()] == ["twitter"]
-    assert not (agentdir / "data" / "notification_policy.json").exists()
-
-
-def test_migrate_policy_translates_defaults_into_trailing_rules(agentdir):
-    # A default with an empty type becomes a source-only rule; a concrete type is preserved. Defaults
-    # were consulted after rules, so they trail; every migrated rule gets an id.
-    _write_legacy_policy(
-        agentdir,
-        {
-            "rules": [{"source": "twitter", "action": "interrupt"}],
-            "defaults": [
-                {"source": "outlook", "type": "", "action": "pool"},
-                {"source": "calendar", "type": "reminder", "action": "pool"},
-            ],
-        },
-    )
-    migrate_notification_policy_file()
-    rules = load_notification_rules()
-    assert [(rule.source, rule.type, rule.action) for rule in rules] == [
-        ("twitter", None, "interrupt"),
-        ("outlook", None, "snooze"),
-        ("calendar", "reminder", "snooze"),
-    ]
-    assert all(rule.id for rule in rules)
-
-
-def test_migrate_policy_no_file_is_a_noop(agentdir):
-    migrate_notification_policy_file()
-    assert "notification_rules" not in read_config_store()
-
-
-def test_migrate_policy_does_not_overwrite_existing_rules(agentdir):
-    update_config_store({"notification_rules": [{"id": "keep", "source": "existing", "action": "snooze"}]})
-    _write_legacy_policy(agentdir, {"rules": [{"source": "twitter", "action": "interrupt"}]})
-    migrate_notification_policy_file()
-    assert [rule.source for rule in load_notification_rules()] == ["existing"]
-    assert not (agentdir / "data" / "notification_policy.json").exists()

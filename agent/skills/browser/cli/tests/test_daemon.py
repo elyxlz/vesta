@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-
 from vesta_browser import daemon
 from vesta_browser.bidi import BidiError
 

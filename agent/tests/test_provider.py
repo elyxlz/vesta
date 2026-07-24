@@ -150,7 +150,7 @@ def test_clear_provider_removes_creds_and_resets_state(prov):
     set_claude(_CREDS, "opus", None, config=prov)
     assert provider_mod.CREDENTIALS_PATH.exists()
 
-    status = clear_provider(config=prov)
+    status = clear_provider()
     assert status.state == ProviderAuthState.NOT_AUTHENTICATED
     assert status.kind == "none"
     assert status.model is None
@@ -170,7 +170,7 @@ def test_set_claude_replaces_openrouter_provider(prov):
 
 
 def test_reauth_preserves_model_and_context(prov):
-    # `vesta auth` re-auth sends no model/context; they must be preserved, not reset to defaults.
+    # A re-auth sends no model/context; they must be preserved, not reset to defaults.
     update_config_store({"provider": {"kind": "claude", "model": "sonnet", "max_context_tokens": 500_000}})
     set_claude(_CREDS, None, None, config=prov)
     assert read_config_store()["provider"] == {"kind": "claude", "model": "sonnet", "max_context_tokens": 500_000}

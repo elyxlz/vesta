@@ -12,17 +12,14 @@ import { AnimatePresence, motion } from "motion/react";
 import { ArrowDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CardContent } from "@/components/ui/card";
-import type { VestaEvent } from "@/lib/types";
+import type { ChatMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { stepTransition } from "@/lib/motion";
-import { ChatBubble } from "../ChatBubble";
+import { ChatBubble, type RetryHandler } from "../ChatBubble";
 import { buildDecorated } from "./virtual";
 
-// First-paint estimates per row kind (actual heights are measured). Tool-call rows are
-// much shorter than message bubbles; estimating them all at the message height made the
-// virtualizer over-correct on every tool row that scrolled into view, which read as jank.
+// First-paint estimate per row (actual heights are measured).
 const ESTIMATED_MESSAGE_HEIGHT = 64;
-const ESTIMATED_TOOL_HEIGHT = 30;
 // How close to the bottom (px) still counts as "pinned" — drives follow-on-append and
 // gates the load-older check (don't page up while sitting at the bottom).
 const AT_BOTTOM_THRESHOLD_PX = 80;
@@ -45,13 +42,14 @@ interface ChatMessageAreaProps {
   loadingMore: boolean;
   fullscreen?: boolean;
   navbarHeight: number;
-  chatMessages: VestaEvent[];
+  chatMessages: ChatMessage[];
   connected: boolean;
   historyLoaded: boolean;
   agentName: string;
   notAuthenticated: boolean;
   isTyping: boolean;
   isMobile: boolean;
+  onRetry?: RetryHandler;
 }
 
 // Placeholder bubbles shown while the first page of history is in flight, so a slow
@@ -81,7 +79,7 @@ function ChatSkeleton() {
     <div className="pointer-events-none absolute inset-0 flex flex-col justify-end px-4 pb-4">
       {SKELETON_ROWS.map((row, i) => {
         const isUser = row.side === "user";
-        const sameAsPrev = i > 0 && SKELETON_ROWS[i - 1].side === row.side;
+        const sameAsPrev = i > 0 && SKELETON_ROWS[i - 1]?.side === row.side;
         return (
           <div
             key={i}
@@ -121,13 +119,14 @@ export function ChatMessageArea({
   notAuthenticated,
   isTyping,
   isMobile,
+  onRetry,
 }: ChatMessageAreaProps) {
   const decorated = useMemo(() => buildDecorated(chatMessages), [chatMessages]);
   const count = decorated.length;
   const lastAgentText = useMemo(() => {
     for (let i = chatMessages.length - 1; i >= 0; i--) {
       const event = chatMessages[i];
-      if (event.type === "chat") return event.text;
+      if (event?.type === "chat") return event.text;
     }
     return "";
   }, [chatMessages]);
@@ -137,17 +136,11 @@ export function ChatMessageArea({
   const [atBottom, setAtBottom] = useState(true);
 
   const getItemKey = useCallback(
-    (index: number) => decorated[index].key,
+    (index: number) => decorated[index]?.key ?? String(index),
     [decorated],
   );
 
-  const estimateSize = useCallback(
-    (index: number) =>
-      decorated[index]?.event.type === "tool_start"
-        ? ESTIMATED_TOOL_HEIGHT
-        : ESTIMATED_MESSAGE_HEIGHT,
-    [decorated],
-  );
+  const estimateSize = useCallback(() => ESTIMATED_MESSAGE_HEIGHT, []);
 
   const virtualizer = useVirtualizer({
     count,
@@ -155,8 +148,8 @@ export function ChatMessageArea({
     estimateSize,
     getItemKey,
     // End-anchored chat scrolling: TanStack captures the visible keyed row before a data
-    // change and re-pins it after — keeping scroll stable across prepends (load older),
-    // streaming growth, and the show-tools toggle's mid-list inserts/removes.
+    // change and re-pins it after — keeping scroll stable across prepends (load older)
+    // and streaming growth.
     anchorTo: "end",
     followOnAppend: "smooth",
     scrollEndThreshold: AT_BOTTOM_THRESHOLD_PX,
@@ -272,7 +265,7 @@ export function ChatMessageArea({
         onScroll={handleScroll}
         className="h-full overflow-y-auto overflow-x-hidden"
         style={{
-          maskImage: `linear-gradient(to bottom, transparent, black ${fullscreen ? navbarHeight : 48}px, black calc(100% - 20px), transparent)`,
+          maskImage: `linear-gradient(to bottom, transparent, black ${String(fullscreen ? navbarHeight : 48)}px, black calc(100% - 20px), transparent)`,
         }}
       >
         <div
@@ -281,6 +274,7 @@ export function ChatMessageArea({
         >
           {items.map((item) => {
             const row = decorated[item.index];
+            if (!row) return null;
             const isLast = item.index === count - 1;
             const isNewAppend =
               hadRowsRef.current && item.index > maxSeenIndexRef.current;
@@ -331,6 +325,7 @@ export function ChatMessageArea({
                         className={row.gap}
                         fullscreen={fullscreen}
                         isMobile={isMobile}
+                        onRetry={onRetry}
                       />
                     </motion.div>
                   ) : (
@@ -339,6 +334,7 @@ export function ChatMessageArea({
                       className={row.gap}
                       fullscreen={fullscreen}
                       isMobile={isMobile}
+                      onRetry={onRetry}
                     />
                   )}
                 </div>

@@ -2,7 +2,7 @@ export function calendarDayKey(isoTs: string | undefined): string | null {
   if (!isoTs) return null;
   const d = new Date(isoTs);
   if (Number.isNaN(d.getTime())) return null;
-  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  return `${String(d.getFullYear())}-${String(d.getMonth())}-${String(d.getDate())}`;
 }
 
 export function formatChatDayStampLabel(

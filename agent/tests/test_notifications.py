@@ -6,11 +6,12 @@ import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
-import core.models as vm
+from wait_util import wait_for_condition
+
 import core.config as cfg
+import core.models as vm
 from core.events import EventBus
 from core.helpers import clear_notifications
-from core.notification import Notification
 from core.loops import (
     _is_new_json,
     _load_notification_files,
@@ -21,8 +22,8 @@ from core.loops import (
     monitor_loop,
     process_batch,
 )
+from core.notification import Notification
 from core.provider import ProviderAuthState, ProviderStatus
-from wait_util import wait_for_condition
 
 
 @pytest.mark.parametrize("kind", ["openrouter", "claude", "none"])
@@ -222,6 +223,29 @@ def test_format_for_display_drops_empty_and_false_fields():
     assert "tags" not in display
 
 
+def test_spoken_words_on_a_call_read_like_a_text_message():
+    """A call_utterance's words are its content, so they render as the body exactly as a typed
+    message's do. The type, not the field name, is what says it arrived as speech."""
+    spoken = Notification.model_validate(
+        {
+            "timestamp": "2025-01-01T00:00:00",
+            "source": "whatsapp",
+            "type": "call_utterance",
+            "direction": "inbound",
+            "contact_name": "Alice",
+            "message": "are you there",
+        }
+    )
+    typed = Notification.model_validate(
+        {"timestamp": "2025-01-01T00:00:00", "source": "whatsapp", "type": "message", "contact_name": "Alice", "message": "are you there"}
+    )
+    spoken_display = spoken.format_for_display()
+    assert ">are you there</channel>" in spoken_display
+    assert "transcript" not in spoken_display
+    # Same words, same shape: only source/type/direction distinguish the two.
+    assert spoken_display.replace(' type="call_utterance"', ' type="message"').replace(' direction="inbound"', "") == typed.format_for_display()
+
+
 def test_format_for_display_keeps_integer_zero():
     """Integer 0 is falsey but meaningful (e.g. minutes_until=0 for a reminder firing now)."""
     notif = Notification.model_validate(
@@ -284,20 +308,19 @@ async def test_process_batch_queues_prompt(tmp_path):
     notif = Notification(timestamp=dt.datetime(2025, 1, 1), source="test", type="message", file_path=str(f))
 
     with patch("core.loops.load_prompt", return_value=""):
-        await process_batch([notif], queue=queue, config=config)
+        await process_batch([notif], queue=queue)
 
     assert not queue.empty()
-    prompt, is_user, file_paths, _ = await queue.get()
+    prompt, is_user, _file_paths, _ = await queue.get()
     assert '<channel source="test" type="message"' in prompt
     assert is_user is False
 
 
 @pytest.mark.anyio
 async def test_process_batch_empty_is_noop():
-    config = cfg.VestaConfig()
     queue: asyncio.Queue = asyncio.Queue()
 
-    await process_batch([], queue=queue, config=config)
+    await process_batch([], queue=queue)
     assert queue.empty()
 
 
@@ -314,7 +337,7 @@ async def test_process_batch_keeps_files_until_processing(tmp_path):
     notif = Notification(timestamp=dt.datetime(2025, 1, 1), source="t", type="m", file_path=str(f))
 
     with patch("core.loops.load_prompt", return_value=""):
-        await process_batch([notif], queue=queue, config=config)
+        await process_batch([notif], queue=queue)
 
     assert f.exists(), "notification file must stay on disk until the queued message is processed"
     _, _, file_paths, _ = await queue.get()
@@ -400,7 +423,7 @@ async def test_monitor_loop_interrupt_queued_while_not_idle(tmp_path, monkeypatc
         _write_notif(config.notifications_dir, "urgent")
         await wait_for_condition(lambda: not queue.empty(), message="interrupt notification was never queued")
 
-        prompt, is_user, file_paths, _ = await queue.get()
+        prompt, is_user, _file_paths, _ = await queue.get()
         assert '<channel source="test" type="message"' in prompt
         assert is_user is False
         assert state.event_bus.state == "thinking", "interrupt routing must not depend on idle state"
@@ -432,7 +455,7 @@ async def test_monitor_loop_passive_held_until_idle_then_flushed_once(tmp_path, 
         state.event_bus.set_state("idle")
         await wait_for_condition(lambda: not queue.empty(), message="passive batch never flushed after idle")
 
-        prompt, is_user, file_paths, _ = await queue.get()
+        prompt, is_user, _file_paths, _ = await queue.get()
         assert '<channel source="test" type="message"' in prompt
         assert is_user is False
 
@@ -847,7 +870,7 @@ def test_history_notifications_channel_filters_and_paginates(tmp_path):
 
     bus = EventBus(data_dir=tmp_path / "data")
     try:
-        bus.emit({"type": "user", "text": "hello"})  # must be excluded
+        bus.emit({"type": "assistant", "text": "hello"})  # must be excluded
         for i in range(3):
             bus.emit(
                 {
@@ -865,7 +888,7 @@ def test_history_notifications_channel_filters_and_paginates(tmp_path):
         assert cursor is not None  # 3 notifs > limit 2, so an older page exists
         older, _ = bus.before(cursor, limit=2, channel="notifications")
         assert all(e["type"] == "notification" for e in older)
-        assert len(page) + len(older) == 3  # all 3 notifs, user event never returned
+        assert len(page) + len(older) == 3  # all 3 notifs, assistant event never returned
     finally:
         bus.close()
 
@@ -877,7 +900,7 @@ def test_notifications_channel_is_arrivals_only(tmp_path):
 
     bus = EventBus(data_dir=tmp_path / "data")
     try:
-        bus.emit({"type": "user", "text": "ignored"})  # excluded: not a notification
+        bus.emit({"type": "assistant", "text": "ignored"})  # excluded: not a notification
         bus.emit({"type": "notification", "source": "s", "summary": "x", "notif_id": "n0"})
         bus.emit({"type": "notification_cleared", "notif_id": "n0"})  # broadcast-only, not persisted
 

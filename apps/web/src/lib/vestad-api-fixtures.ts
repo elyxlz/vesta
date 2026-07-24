@@ -32,33 +32,6 @@ export const vestadApiFixtures = {
       "ws_port": 4201
     }
   ],
-  "agents_ws_message": {
-    "agents": [
-      {
-        "activityState": "thinking",
-        "name": "sample-agent",
-        "services": {
-          "dashboard": {
-            "key": "0123456789abcdef",
-            "port": 8080,
-            "public": false,
-            "rev": 3
-          }
-        },
-        "startedAt": "2026-01-01T00:00:00Z",
-        "status": "alive",
-        "ws_port": 4200
-      },
-      {
-        "activityState": "idle",
-        "name": "stopped-agent",
-        "services": {},
-        "status": "stopped",
-        "ws_port": 4201
-      }
-    ],
-    "type": "agents"
-  },
   "auth_start": {
     "auth_url": "https://claude.ai/oauth/authorize?code=true",
     "session_id": "0123456789abcdef"

@@ -124,6 +124,70 @@ def _create_inbox_for_existing_account(username: str) -> dict:
     }
 
 
+def _acquire_inbox(username: str, use_prompt: bool, skip_signup: bool) -> dict:
+    """Resolve the agent's inbox: existing-key create, manual prompt, or autonomous sign-up."""
+    key = os.environ[AGENTMAIL_API_KEY_ENV].strip() if AGENTMAIL_API_KEY_ENV in os.environ else ""
+    have_key = bool(key)
+    if skip_signup or have_key:
+        if not have_key:
+            click.echo(
+                f"--skip-signup passed but {AGENTMAIL_API_KEY_ENV} is empty.\n"
+                f"  Sign up at https://console.agentmail.to (or via the browser "
+                f"skill), set the key in ~/.bashrc, then re-run.",
+                err=True,
+            )
+            sys.exit(2)
+        click.echo(f"{AGENTMAIL_API_KEY_ENV} already set; creating inbox without sign-up.")
+        try:
+            return _create_inbox_for_existing_account(username)
+        except Exception as e:
+            click.echo(f"  inbox create failed: {e}", err=True)
+            sys.exit(1)
+    if use_prompt:
+        click.echo("\nmanual sign-up (--prompt):")
+        try:
+            inbox = _prompt_signup(username)
+        except Exception as e:
+            click.echo(f"  sign-up failed: {e}", err=True)
+            sys.exit(1)
+        bashrc_set(AGENTMAIL_API_KEY_ENV, inbox["api_key"])
+        return inbox
+    click.echo("\nautonomous sign-up:")
+    try:
+        inbox = _autonomous_signup(username)
+    except Exception as e:
+        click.echo(
+            f"\n  autonomous sign-up failed: {e}\n"
+            f"  Likely causes: mail.tm is down, AgentMail rejected the disposable\n"
+            f"  domain, or the OTP didn't arrive within the timeout.\n"
+            f"  Recovery: `agentmail setup --prompt` (manual), or browser-sign-up\n"
+            f"  + `agentmail setup --skip-signup`.",
+            err=True,
+        )
+        sys.exit(1)
+    bashrc_set(AGENTMAIL_API_KEY_ENV, inbox["api_key"])
+    return inbox
+
+
+def _print_summary(inbox: dict, webhook_url: str) -> None:
+    click.echo("\nsetup complete.")
+    click.echo(f"  address: {inbox['email_address']}")
+    click.echo(f"  inbox:   {inbox['inbox_id']}")
+    click.echo(f"  webhook: {webhook_url}")
+    click.echo(f"  npm cli: {NPM_CLI_BIN}")
+    click.echo("\nfor send / list / etc., the wrapper passes through to the official CLI:")
+    click.echo(f"  agentmail inboxes:messages send --inbox-id {inbox['inbox_id']} \\")
+    click.echo("    --to recipient@example.com --subject 'hi' --text 'hello'")
+    click.echo("\nnext: register and start the local webhook receiver")
+    click.echo(
+        "  PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services "
+        "-H \"X-Agent-Token: $AGENT_TOKEN\" -H 'Content-Type: application/json' "
+        '-d \'{"name":"agentmail","public":true}\' | '
+        "python3 -c \"import sys,json; print(json.load(sys.stdin)['port'])\")"
+    )
+    click.echo("  screen -dmS agentmail agentmail serve --port $PORT")
+
+
 @click.command("setup")
 @click.option(
     "--username",
@@ -149,46 +213,7 @@ def setup_cmd(username: str | None, use_prompt: bool, skip_signup: bool) -> None
     if not username:
         username = agent_name().lower()
 
-    have_key = bool(os.environ.get(AGENTMAIL_API_KEY_ENV, "").strip())
-
-    if skip_signup or have_key:
-        if not have_key:
-            click.echo(
-                f"--skip-signup passed but {AGENTMAIL_API_KEY_ENV} is empty.\n"
-                f"  Sign up at https://console.agentmail.to (or via the browser "
-                f"skill), set the key in ~/.bashrc, then re-run.",
-                err=True,
-            )
-            sys.exit(2)
-        click.echo(f"{AGENTMAIL_API_KEY_ENV} already set; creating inbox without sign-up.")
-        try:
-            inbox = _create_inbox_for_existing_account(username)
-        except Exception as e:
-            click.echo(f"  inbox create failed: {e}", err=True)
-            sys.exit(1)
-    elif use_prompt:
-        click.echo("\nmanual sign-up (--prompt):")
-        try:
-            inbox = _prompt_signup(username)
-        except Exception as e:
-            click.echo(f"  sign-up failed: {e}", err=True)
-            sys.exit(1)
-        bashrc_set(AGENTMAIL_API_KEY_ENV, inbox["api_key"])
-    else:
-        click.echo("\nautonomous sign-up:")
-        try:
-            inbox = _autonomous_signup(username)
-        except Exception as e:
-            click.echo(
-                f"\n  autonomous sign-up failed: {e}\n"
-                f"  Likely causes: mail.tm is down, AgentMail rejected the disposable\n"
-                f"  domain, or the OTP didn't arrive within the timeout.\n"
-                f"  Recovery: `agentmail setup --prompt` (manual), or browser-sign-up\n"
-                f"  + `agentmail setup --skip-signup`.",
-                err=True,
-            )
-            sys.exit(1)
-        bashrc_set(AGENTMAIL_API_KEY_ENV, inbox["api_key"])
+    inbox = _acquire_inbox(username, use_prompt, skip_signup)
 
     click.echo(f"  inbox: {inbox['email_address']} (id {inbox['inbox_id']})")
 
@@ -253,19 +278,4 @@ def setup_cmd(username: str | None, use_prompt: bool, skip_signup: bool) -> None
     )
     save_config(cfg)
 
-    click.echo("\nsetup complete.")
-    click.echo(f"  address: {inbox['email_address']}")
-    click.echo(f"  inbox:   {inbox['inbox_id']}")
-    click.echo(f"  webhook: {webhook_url}")
-    click.echo(f"  npm cli: {NPM_CLI_BIN}")
-    click.echo("\nfor send / list / etc., the wrapper passes through to the official CLI:")
-    click.echo(f"  agentmail inboxes:messages send --inbox-id {inbox['inbox_id']} \\")
-    click.echo("    --to recipient@example.com --subject 'hi' --text 'hello'")
-    click.echo("\nnext: register and start the local webhook receiver")
-    click.echo(
-        "  PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services "
-        "-H \"X-Agent-Token: $AGENT_TOKEN\" -H 'Content-Type: application/json' "
-        '-d \'{"name":"agentmail","public":true}\' | '
-        "python3 -c \"import sys,json; print(json.load(sys.stdin)['port'])\")"
-    )
-    click.echo("  screen -dmS agentmail agentmail serve --port $PORT")
+    _print_summary(inbox, webhook_url)

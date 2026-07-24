@@ -12,7 +12,8 @@ import {
 } from "@/api";
 import { useAgentOps, type AgentOperation } from "@/stores/use-agent-ops";
 import { useRestartPending } from "@/stores/use-restart-pending";
-import type { AgentInfo, AgentActivityState } from "@/lib/types";
+import type { AgentActivityState } from "@vesta/core";
+import type { AgentRow } from "@/lib/types";
 import { errorMessage } from "@/lib/utils";
 import { getAgentVisualStatus } from "@/components/Orb/styles";
 import { SelectedAgentContext } from "./context";
@@ -24,7 +25,7 @@ export function SelectedAgentProvider({
   agent,
   children,
 }: {
-  agent: AgentInfo;
+  agent: AgentRow;
   children: ReactNode;
 }) {
   const name = agent.name;
@@ -99,7 +100,9 @@ export function SelectedAgentProvider({
       .then((fetched) => {
         if (!ignore) setBackups(fetched);
       })
-      .catch(() => {});
+      .catch(() => {
+        /* ignore */
+      });
     return () => {
       ignore = true;
     };
@@ -115,7 +118,7 @@ export function SelectedAgentProvider({
   );
 
   const restore = (backupId: string) => {
-    withOp(
+    void withOp(
       name,
       "restoring",
       async () => {
@@ -127,7 +130,7 @@ export function SelectedAgentProvider({
   };
 
   const removeBackup = (backupId: string) => {
-    withOp(
+    void withOp(
       name,
       "deleting",
       async () => {
@@ -163,10 +166,10 @@ export function SelectedAgentProvider({
     statusLabel,
     orbState,
     isBusy,
-    start,
-    stop,
+    start: () => void start(),
+    stop: () => void stop(),
     restart,
-    backup,
+    backup: () => void backup(),
     backups,
     refreshBackups,
     restore,

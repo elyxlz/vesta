@@ -40,7 +40,9 @@ A background process that needs no inbound port is just a daemon: it does not re
 it only goes in the restart skill's `## Daemons` section.
 
 Skills that run a service register it with vestad to get a port, then start it. The
-`register-service` helper does the curl and prints the port (idempotent: same port per name):
+`register-service` helper does the curl and prints the port (idempotent: same port per name,
+and re-registering without `--public` keeps the service's current exposure rather than
+revoking it, so a re-register that only wants the port is safe):
 
 ```bash
 # token-only service
@@ -64,10 +66,13 @@ a failed registration short-circuits the chain, so the daemon never launches por
 whole line in the `running <name> ||` guard the Daemons block defines, so re-running it (crash
 recovery re-enters the block) never stacks a duplicate daemon.
 
-List registrations, or tell connected clients to reload after changing what a service serves:
+List registrations, unregister a service (also how you make a public service private: drop the
+registration, then register it again without `--public`), or tell connected clients to reload
+after changing what a service serves:
 
 ```bash
 curl -sk https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H "X-Agent-Token: $AGENT_TOKEN"
+curl -sk -X DELETE https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services/<name> -H "X-Agent-Token: $AGENT_TOKEN"
 curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services/<name>/invalidate -H "X-Agent-Token: $AGENT_TOKEN"
 ```
 
