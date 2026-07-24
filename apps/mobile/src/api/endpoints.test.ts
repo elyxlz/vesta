@@ -25,7 +25,10 @@ describe("restartAgent", () => {
     expect(request).toHaveBeenCalledWith("/agents/luna/restart", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reason: RESTART_REASONS.manual }),
+      body: JSON.stringify({
+        reason: RESTART_REASONS.manual.logReason,
+        agent_message: RESTART_REASONS.manual.agentMessage,
+      }),
     });
   });
 
@@ -37,7 +40,10 @@ describe("restartAgent", () => {
     expect(request).toHaveBeenCalledWith("/agents/luna/restart", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reason: RESTART_REASONS.context }),
+      body: JSON.stringify({
+        reason: RESTART_REASONS.context.logReason,
+        agent_message: RESTART_REASONS.context.agentMessage,
+      }),
     });
   });
 });

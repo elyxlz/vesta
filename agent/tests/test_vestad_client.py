@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from core import vestad_client
+from core import lifecycle, vestad_client
 
 
 def _closed_port() -> int:
@@ -57,11 +57,9 @@ async def test_restart_forwards_specific_reason():
         new_callable=AsyncMock,
         return_value=True,
     ) as request:
-        assert await vestad_client.request_restart(
-            "compaction: conversation context was compacted"
-        )
+        assert await vestad_client.request_restart(lifecycle.COMPACTION_RESTART)
 
     request.assert_awaited_once_with(
         "restart",
-        reason="compaction: conversation context was compacted",
+        reason=lifecycle.COMPACTION_RESTART,
     )

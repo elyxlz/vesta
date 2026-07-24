@@ -1719,8 +1719,8 @@ pub async fn create_container(
 // --- Lifecycle-reason inboxes ---
 
 /// One-shot inbox the agent drains on its next boot (agent `state_store.take_pending_reason`).
-/// Written before a stop/recreate so the reason lands in the filesystem the next boot reads;
-/// plain text, no schema shared across the crate boundary.
+/// The JSON payload keeps operational log copy separate from the authenticated agent message.
+/// New agents also accept the legacy plain string during rolling upgrades.
 pub(crate) const PENDING_RESTART_REASON_PATH: &str = "/root/agent/data/pending_restart_reason";
 
 /// One-shot inbox the running agent drains when it receives SIGTERM. It is separate from the
@@ -1733,18 +1733,27 @@ pub(crate) const PENDING_SHUTDOWN_REASON_PATH: &str = "/root/agent/data/pending_
 pub(crate) async fn write_pending_restart_reason(
     docker: &Docker,
     cname: &str,
-    reason: &str,
+    reason: &crate::lifecycle::LifecycleReason<'_>,
 ) -> Result<(), DockerError> {
-    docker_cp_content(docker, cname, reason, PENDING_RESTART_REASON_PATH).await
+    let payload = serde_json::to_string(reason).map_err(|error| {
+        DockerError::Failed(format!("failed to serialize restart reason: {error}"))
+    })?;
+    docker_cp_content(docker, cname, &payload, PENDING_RESTART_REASON_PATH).await
 }
 
-/// Write `reason` into the running agent's shutdown inbox before vestad sends SIGTERM.
+/// Write only operational copy into the running agent's shutdown inbox before SIGTERM.
 pub(crate) async fn write_pending_shutdown_reason(
     docker: &Docker,
     cname: &str,
-    reason: &str,
+    reason: &crate::lifecycle::LifecycleReason<'_>,
 ) -> Result<(), DockerError> {
-    docker_cp_content(docker, cname, reason, PENDING_SHUTDOWN_REASON_PATH).await
+    docker_cp_content(
+        docker,
+        cname,
+        &reason.log_reason,
+        PENDING_SHUTDOWN_REASON_PATH,
+    )
+    .await
 }
 
 /// Best-effort handoff to the running process immediately before vestad sends SIGTERM.
@@ -1752,7 +1761,7 @@ pub(crate) async fn handoff_shutdown_reason(
     docker: &Docker,
     name: &str,
     cname: &str,
-    reason: &str,
+    reason: &crate::lifecycle::LifecycleReason<'_>,
 ) {
     if let Err(err) = write_pending_shutdown_reason(docker, cname, reason).await {
         tracing::warn!(agent = %name, error = %err, "failed to write shutdown reason");
@@ -1760,7 +1769,12 @@ pub(crate) async fn handoff_shutdown_reason(
 }
 
 /// Best-effort handoff to the process that will start from this container.
-pub(crate) async fn handoff_boot_reason(docker: &Docker, name: &str, cname: &str, reason: &str) {
+pub(crate) async fn handoff_boot_reason(
+    docker: &Docker,
+    name: &str,
+    cname: &str,
+    reason: &crate::lifecycle::LifecycleReason<'_>,
+) {
     if let Err(err) = write_pending_restart_reason(docker, cname, reason).await {
         tracing::warn!(agent = %name, error = %err, "failed to write restart reason");
     }
@@ -1882,7 +1896,7 @@ pub async fn start_agent(docker: &Docker, name: &str) -> Result<(), DockerError>
 pub async fn start_agent_with_reason(
     docker: &Docker,
     name: &str,
-    reason: &str,
+    reason: &crate::lifecycle::LifecycleReason<'_>,
 ) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
@@ -1909,7 +1923,7 @@ pub async fn start_all_agents(docker: &Docker) -> Vec<StartAllResult> {
     for ManagedAgent { cname, agent_name } in list_managed_agents(docker).await {
         let running = container_status(docker, &cname).await == ContainerStatus::Running;
         if !running {
-            handoff_boot_reason(docker, &agent_name, &cname, crate::lifecycle::START_ALL).await;
+            handoff_boot_reason(docker, &agent_name, &cname, &crate::lifecycle::START_ALL).await;
         }
         let ok = running || start_container(docker, &cname).await;
         let error = (!ok).then(|| "failed to start".to_string());
@@ -1928,7 +1942,7 @@ pub async fn stop_agent(docker: &Docker, name: &str) -> Result<(), DockerError> 
     if guard_alive(container_status(docker, &cname).await, name)? == ContainerStatus::Stopped {
         return Ok(());
     }
-    handoff_shutdown_reason(docker, name, &cname, crate::lifecycle::MANUAL_STOP).await;
+    handoff_shutdown_reason(docker, name, &cname, &crate::lifecycle::MANUAL_STOP).await;
     stop_container_with_timeout(docker, &cname, CONTAINER_STOP_TIMEOUT_SECS).await?;
     Ok(())
 }
@@ -1946,10 +1960,16 @@ pub async fn stop_all_agents(docker: &Docker) {
                 docker,
                 &agent_name,
                 &cname,
-                crate::lifecycle::VESTAD_SHUTDOWN,
+                &crate::lifecycle::VESTAD_SHUTDOWN,
             )
             .await;
-            handoff_boot_reason(docker, &agent_name, &cname, crate::lifecycle::VESTAD_RESUME).await;
+            handoff_boot_reason(
+                docker,
+                &agent_name,
+                &cname,
+                &crate::lifecycle::VESTAD_RESUME,
+            )
+            .await;
             stop_container_with_timeout(docker, &cname, CONTAINER_STOP_TIMEOUT_SECS)
                 .await
                 .ok();
@@ -1957,24 +1977,28 @@ pub async fn stop_all_agents(docker: &Docker) {
     }
 }
 
-fn restart_reason_or_default(reason: Option<String>) -> String {
+fn restart_reason_or_default(
+    reason: Option<crate::lifecycle::LifecycleReason<'static>>,
+) -> crate::lifecycle::LifecycleReason<'static> {
     reason
-        .filter(|text| !text.trim().is_empty())
-        .unwrap_or_else(|| crate::lifecycle::DEFAULT_RESTART.to_string())
+        .filter(|reason| !reason.log_reason.trim().is_empty())
+        .unwrap_or_else(|| crate::lifecycle::DEFAULT_RESTART.clone())
 }
 
 fn restart_reason_for_mount_change(
-    reason: Option<String>,
+    reason: Option<crate::lifecycle::LifecycleReason<'static>>,
     actual_mounts: &[(String, String, bool)],
     desired_mounts: &[crate::mounts::HostMount],
-) -> String {
+) -> crate::lifecycle::LifecycleReason<'static> {
     // The first-party clients' generic manual reason does not hide the more informative mount
     // delta vestad can derive. Any specific caller reason still wins.
     let specific_reason = reason
-        .filter(|text| !text.trim().is_empty())
-        .filter(|text| text != crate::lifecycle::DEFAULT_RESTART);
+        .filter(|reason| !reason.log_reason.trim().is_empty())
+        .filter(|reason| {
+            reason.log_reason.as_ref() != crate::lifecycle::DEFAULT_RESTART.log_reason.as_ref()
+        });
     crate::mounts::effective_restart_reason(specific_reason, actual_mounts, desired_mounts)
-        .unwrap_or_else(|| crate::lifecycle::DEFAULT_RESTART.to_string())
+        .unwrap_or_else(|| crate::lifecycle::DEFAULT_RESTART.clone())
 }
 
 pub async fn restart_agent(
@@ -1982,7 +2006,7 @@ pub async fn restart_agent(
     name: &str,
     env_config: &AgentEnvConfig,
     user_mounts: &[crate::mounts::HostMount],
-    reason: Option<String>,
+    reason: Option<crate::lifecycle::LifecycleReason<'static>>,
     rebuilding: &RebuildTracker,
 ) -> Result<(), DockerError> {
     validate_name(name)?;
@@ -2188,7 +2212,7 @@ pub async fn reconcile_containers(
             &actual_user_mounts(&item.raw),
             &item.desired_mounts,
         )
-        .unwrap_or_else(|| crate::lifecycle::CONTAINER_UPDATE.to_string());
+        .unwrap_or_else(|| crate::lifecycle::CONTAINER_UPDATE.clone());
         handoff_shutdown_reason(docker, item.name, item.cname, &restart_reason).await;
         match rebuild_agent(
             docker,
@@ -2242,8 +2266,8 @@ pub async fn reconcile_containers(
                 // it to reload the new core and re-bind the mount. (Boot-started agents above came
                 // up fresh already; this catches agents that stayed running across the upgrade.)
                 tracing::info!(agent = %name, "restarting to pick up new agent code");
-                handoff_shutdown_reason(docker, name, cname, crate::lifecycle::CODE_UPDATE).await;
-                handoff_boot_reason(docker, name, cname, crate::lifecycle::CODE_UPDATE).await;
+                handoff_shutdown_reason(docker, name, cname, &crate::lifecycle::CODE_UPDATE).await;
+                handoff_boot_reason(docker, name, cname, &crate::lifecycle::CODE_UPDATE).await;
                 docker
                     .restart_container(
                         cname,
@@ -2257,7 +2281,7 @@ pub async fn reconcile_containers(
             }
         } else if running {
             tracing::info!(agent = %name, "stopping (user-stopped)");
-            handoff_shutdown_reason(docker, name, cname, crate::lifecycle::DESIRED_STOP).await;
+            handoff_shutdown_reason(docker, name, cname, &crate::lifecycle::DESIRED_STOP).await;
             stop_container_with_timeout(docker, cname, CONTAINER_STOP_TIMEOUT_SECS)
                 .await
                 .ok();
@@ -2294,7 +2318,7 @@ pub async fn destroy_agent(
     validate_name(name)?;
     let cname = container_name(name);
     if guard_alive(container_status(docker, &cname).await, name)? == ContainerStatus::Running {
-        handoff_shutdown_reason(docker, name, &cname, crate::lifecycle::DESTROY).await;
+        handoff_shutdown_reason(docker, name, &cname, &crate::lifecycle::DESTROY).await;
         stop_container_with_timeout(docker, &cname, CONTAINER_STOP_TIMEOUT_SECS)
             .await
             .ok();
@@ -2578,13 +2602,13 @@ pub async fn rename_agent(
 
     let port =
         resolve_existing_port(docker, &old_container, &info, old_name, &env_config.agents_dir).await?;
+    let lifecycle_reason = crate::lifecycle::rename(old_name, new_name);
 
     // Stop cleanly so the snapshot captures a quiesced filesystem (SQLite mid-write would
     // be the main concern). Best-effort — snapshot will still proceed if stop fails.
     if info.status == ContainerStatus::Running {
         tracing::info!(agent = %old_name, "[1/4] stopping container...");
-        let reason = crate::lifecycle::rename_shutdown(new_name);
-        handoff_shutdown_reason(docker, old_name, &old_container, &reason).await;
+        handoff_shutdown_reason(docker, old_name, &old_container, &lifecycle_reason).await;
         stop_container_with_timeout(docker, &old_container, CONTAINER_STOP_TIMEOUT_SECS)
             .await
             .ok();
@@ -2624,8 +2648,7 @@ pub async fn rename_agent(
     )
     .await?;
 
-    let reason = crate::lifecycle::rename_boot(old_name, new_name);
-    handoff_boot_reason(docker, new_name, &new_container, &reason).await;
+    handoff_boot_reason(docker, new_name, &new_container, &lifecycle_reason).await;
 
     // Drop the snapshot the old container ran on; the renamed container runs on `snapshot_tag`.
     remove_replaced_snapshot(docker, prev_image.as_deref(), &snapshot_tag).await;
@@ -2747,12 +2770,18 @@ mod tests {
             crate::lifecycle::DEFAULT_RESTART
         );
         assert_eq!(
-            restart_reason_or_default(Some("   ".to_string())),
+            restart_reason_or_default(Some(crate::lifecycle::LifecycleReason::owned(
+                "   ", "ignored",
+            ))),
             crate::lifecycle::DEFAULT_RESTART
         );
+        let provider_reason = crate::lifecycle::LifecycleReason::owned(
+            "provider: model changed",
+            "Your configured model changed.",
+        );
         assert_eq!(
-            restart_reason_or_default(Some("provider: model changed".to_string())),
-            "provider: model changed"
+            restart_reason_or_default(Some(provider_reason.clone())),
+            provider_reason,
         );
     }
 
@@ -2764,13 +2793,14 @@ mod tests {
             writable: false,
         }];
         let reason = restart_reason_for_mount_change(
-            Some(crate::lifecycle::DEFAULT_RESTART.to_string()),
+            Some(crate::lifecycle::DEFAULT_RESTART.clone()),
             &[],
             &desired,
         );
 
-        assert!(reason.starts_with("mounts:"));
-        assert!(reason.contains("/media"));
+        assert!(reason.log_reason.starts_with("mounts:"));
+        assert!(reason.log_reason.contains("/media"));
+        assert!(reason.agent_message.contains("/media"));
     }
 
     #[test]

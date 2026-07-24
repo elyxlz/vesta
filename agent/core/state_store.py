@@ -14,7 +14,7 @@ import pathlib as pl
 import pydantic as pyd
 
 from . import config as cfg
-from . import logger
+from . import lifecycle, logger
 from .events import EVENTS_DB_FILENAME
 
 STATE_FILENAME = "state.json"
@@ -57,12 +57,14 @@ def _take_reason(path: pl.Path) -> str | None:
     return reason or None
 
 
-def take_pending_reason(config: cfg.VestaConfig) -> str | None:
+def take_pending_reason(config: cfg.VestaConfig) -> lifecycle.RestartReason | None:
     """Drain the restart reason vestad wrote for this boot.
 
     The file is transport, not storage: it is drained into last_restart_reason and removed so it
-    never re-fires on a later boot. Returns the stripped reason, or None if absent/empty."""
-    return _take_reason(pending_reason_path(config))
+    never re-fires on a later boot. Structured payloads carry separate operational and agent copy;
+    legacy plain strings remain accepted during rolling upgrades."""
+    payload = _take_reason(pending_reason_path(config))
+    return lifecycle.parse_inbox(payload) if payload is not None else None
 
 
 def take_pending_shutdown_reason(config: cfg.VestaConfig) -> str | None:

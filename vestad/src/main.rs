@@ -780,7 +780,7 @@ fn main() {
                                 &docker,
                                 &name,
                                 &cname,
-                                lifecycle::BACKUP_EXPORT,
+                                &lifecycle::BACKUP_EXPORT,
                             )
                             .await;
                             docker::stop_container_with_timeout(
@@ -802,7 +802,7 @@ fn main() {
                                     &docker,
                                     &name,
                                     &cname,
-                                    lifecycle::BACKUP_EXPORT,
+                                    &lifecycle::BACKUP_EXPORT,
                                 )
                                 .await;
                                 docker::start_container(&docker, &cname).await;
@@ -815,7 +815,7 @@ fn main() {
                                 &docker,
                                 &name,
                                 &cname,
-                                lifecycle::BACKUP_EXPORT,
+                                &lifecycle::BACKUP_EXPORT,
                             )
                             .await;
                             docker::start_container(&docker, &cname).await;
@@ -888,7 +888,7 @@ fn main() {
                             &docker,
                             &name,
                             &cname,
-                            lifecycle::BACKUP_IMPORT,
+                            &lifecycle::BACKUP_IMPORT,
                         )
                         .await;
                         if !docker::start_container(&docker, &cname).await {

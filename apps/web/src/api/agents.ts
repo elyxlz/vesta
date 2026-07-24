@@ -3,6 +3,7 @@ import {
   RESTART_REASONS,
   type BuildPhase,
   type NotificationEvent,
+  type RestartReason,
   type VestaEvent,
 } from "@vesta/core";
 
@@ -127,7 +128,7 @@ export async function getProvider(name: string): Promise<ProviderInfo> {
 async function patchProvider(
   name: string,
   patch: Record<string, unknown>,
-  reason: string,
+  reason: RestartReason,
 ): Promise<void> {
   await apiFetch(
     `/agents/${encodeURIComponent(name)}/provider`,
@@ -251,11 +252,14 @@ export async function stopAgent(name: string): Promise<void> {
 
 export async function restartAgent(
   name: string,
-  reason: string = RESTART_REASONS.manual,
+  reason: RestartReason = RESTART_REASONS.manual,
 ): Promise<void> {
   await apiJson(
     `/agents/${encodeURIComponent(name)}/restart`,
-    jsonInit("POST", { reason }),
+    jsonInit("POST", {
+      reason: reason.logReason,
+      agent_message: reason.agentMessage,
+    }),
   );
 }
 

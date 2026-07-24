@@ -1,6 +1,7 @@
 """Tests for vestad's one-shot shutdown-reason handoff."""
 
 import asyncio
+import json
 import signal
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -8,7 +9,7 @@ import pytest
 
 import core.config as cfg
 import core.models as vm
-from core import state_store
+from core import lifecycle, state_store
 from core.main import (
     _consume_restart_reason,
     _log_startup_reason,
@@ -27,13 +28,13 @@ def test_sigterm_hands_reason_to_usual_shutdown_log_without_extra_line(tmp_path)
     config = _config(tmp_path)
     state = vm.State()
     state_store.pending_shutdown_reason_path(config).write_text(
-        "backup: you were paused for a scheduled backup"
+        "backup: scheduled"
     )
 
     with patch("core.main.logger.shutdown") as shutdown_log:
         _make_signal_handler(state, config)(signal.SIGTERM, None)
 
-    assert state.shutdown_reason == "backup: you were paused for a scheduled backup"
+    assert state.shutdown_reason == "backup: scheduled"
     assert state.graceful_shutdown.is_set()
     shutdown_log.assert_not_called()
     assert not state_store.pending_shutdown_reason_path(config).exists()
@@ -44,7 +45,7 @@ async def test_usual_shutdown_log_includes_handed_reason(tmp_path):
     config = _config(tmp_path)
     for path in [config.notifications_dir, config.logs_dir, config.dreamer_dir]:
         path.mkdir(parents=True, exist_ok=True)
-    state = vm.State(shutdown_reason="backup: you were paused for a scheduled backup")
+    state = vm.State(shutdown_reason="backup: scheduled")
     state.graceful_shutdown.set()
 
     async def parked_worker(*_args, **_kwargs):
@@ -65,7 +66,7 @@ async def test_usual_shutdown_log_includes_handed_reason(tmp_path):
 
     assert crashed is False
     assert any(
-        call.args == ("Shutting down (backup: you were paused for a scheduled backup)",)
+        call.args == ("Shutting down (backup: scheduled)",)
         for call in shutdown_log.call_args_list
     )
 
@@ -79,24 +80,50 @@ def test_boot_discards_stale_shutdown_reason_without_using_it_as_restart_reason(
 
     reason = _consume_restart_reason(state, config, first_start=False)
 
-    assert reason == vm.CRASH_RESTART
+    assert reason == lifecycle.CRASH_RESTART
     assert not state_store.pending_shutdown_reason_path(config).exists()
+
+
+def test_structured_boot_reason_keeps_log_and_agent_copy_separate(tmp_path):
+    config = _config(tmp_path)
+    state = vm.State()
+    state.persisted.last_restart_reason = vm.CLEAN_RESTART
+    state_store.pending_reason_path(config).write_text(
+        json.dumps(
+            {
+                "log_reason": "backup: scheduled",
+                "agent_message": (
+                    "Vesta briefly paused you while it created a scheduled backup. "
+                    "No action is required."
+                ),
+            }
+        )
+    )
+
+    reason = _consume_restart_reason(state, config, first_start=False)
+
+    assert reason.log_reason == "backup: scheduled"
+    assert reason.agent_message == (
+        "Vesta briefly paused you while it created a scheduled backup. "
+        "No action is required."
+    )
 
 
 def test_restart_reason_always_gets_a_dedicated_startup_line():
     with patch("core.main.logger.startup") as startup_log:
         _log_startup_reason(
-            "backup: you were paused for a scheduled backup",
+            lifecycle.RestartReason(
+                log_reason="backup: scheduled",
+                agent_message="Vesta briefly paused you for a scheduled backup.",
+            ),
             first_start=False,
         )
 
-    startup_log.assert_called_once_with(
-        "Restart reason: backup: you were paused for a scheduled backup"
-    )
+    startup_log.assert_called_once_with("Restart reason: backup: scheduled")
 
 
 def test_first_start_uses_startup_reason_label():
     with patch("core.main.logger.startup") as startup_log:
-        _log_startup_reason(vm.FIRST_START_REASON, first_start=True)
+        _log_startup_reason(lifecycle.FIRST_START, first_start=True)
 
     startup_log.assert_called_once_with("Startup reason: first start")

@@ -87,7 +87,7 @@ async fn with_container_paused<F, Fut, T>(
     docker: &Docker,
     name: &str,
     cs: ContainerStatus,
-    resume_reason: &str,
+    resume_reason: &crate::lifecycle::LifecycleReason<'_>,
     op: F,
 ) -> Result<T, DockerError>
 where
@@ -127,12 +127,14 @@ where
 }
 
 /// The boot reason for the restart after a backup pause, by what triggered the backup.
-fn backup_resume_reason(backup_type: &BackupType) -> &'static str {
+fn backup_resume_reason(
+    backup_type: &BackupType,
+) -> &'static crate::lifecycle::LifecycleReason<'static> {
     match backup_type {
-        BackupType::Manual => crate::lifecycle::MANUAL_BACKUP,
-        BackupType::PreRestore => crate::lifecycle::PRE_RESTORE_BACKUP,
+        BackupType::Manual => &crate::lifecycle::MANUAL_BACKUP,
+        BackupType::PreRestore => &crate::lifecycle::PRE_RESTORE_BACKUP,
         BackupType::Daily | BackupType::Weekly | BackupType::Monthly => {
-            crate::lifecycle::SCHEDULED_BACKUP
+            &crate::lifecycle::SCHEDULED_BACKUP
         }
     }
 }
@@ -202,7 +204,7 @@ pub async fn create_backups_batch(
     let types_for_stop_failure = types.clone();
 
     // Batch backups are only ever the auto-backup's scheduled set, so one scheduled reason fits.
-    let paused_result = with_container_paused(docker, name, cs, crate::lifecycle::SCHEDULED_BACKUP, || async {
+    let paused_result = with_container_paused(docker, name, cs, &crate::lifecycle::SCHEDULED_BACKUP, || async {
         let mut results = Vec::new();
         for bt in types {
             let result = crate::restic::snapshot(name, &bt).await;
@@ -280,7 +282,8 @@ pub async fn restore_backup(
     if container_present {
         // Stop once, take safety backup, then remove — avoids a redundant stop/start cycle.
         if status == ContainerStatus::Running {
-            handoff_shutdown_reason(docker, name, &cname, crate::lifecycle::RESTORE_SHUTDOWN).await;
+            handoff_shutdown_reason(docker, name, &cname, &crate::lifecycle::RESTORE_SHUTDOWN)
+                .await;
             stop_container_with_timeout(docker, &cname, BACKUP_STOP_TIMEOUT_SECS)
                 .await
                 .ok();
@@ -288,7 +291,7 @@ pub async fn restore_backup(
         tracing::info!(agent = %name, "creating pre-restore safety backup");
         if let Err(e) = crate::restic::snapshot(name, &BackupType::PreRestore).await {
             if status == ContainerStatus::Running {
-                handoff_boot_reason(docker, name, &cname, crate::lifecycle::RESTORE_ABORTED).await;
+                handoff_boot_reason(docker, name, &cname, &crate::lifecycle::RESTORE_ABORTED).await;
                 start_container(docker, &cname).await;
             }
             return Err(DockerError::Failed(format!(
@@ -300,7 +303,7 @@ pub async fn restore_backup(
         // still exists. The pre-restore safety backup is already taken, so restart and bail.
         if let Err(e) = ensure_container_removed(docker, &cname).await {
             if status == ContainerStatus::Running {
-                handoff_boot_reason(docker, name, &cname, crate::lifecycle::RESTORE_ABORTED).await;
+                handoff_boot_reason(docker, name, &cname, &crate::lifecycle::RESTORE_ABORTED).await;
                 start_container(docker, &cname).await;
             }
             return Err(e);
@@ -327,7 +330,7 @@ pub async fn restore_backup(
     )
     .await?;
 
-    handoff_boot_reason(docker, name, &cname, crate::lifecycle::RESTORE_BOOT).await;
+    handoff_boot_reason(docker, name, &cname, &crate::lifecycle::RESTORE_BOOT).await;
     if !start_container(docker, &cname).await {
         return Err(DockerError::Failed("failed to start restored agent".into()));
     }

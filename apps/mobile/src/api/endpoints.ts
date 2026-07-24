@@ -1,6 +1,7 @@
 import {
   RESTART_REASONS,
   type NotificationEvent,
+  type RestartReason,
   type VestaEvent,
 } from "@vesta/core";
 import type { ApiClient } from "./client";
@@ -180,7 +181,7 @@ async function patchProvider(
   api: ApiClient,
   name: string,
   patch: Record<string, unknown>,
-  reason: string,
+  reason: RestartReason,
 ): Promise<void> {
   await api.request(
     `/agents/${encodeURIComponent(name)}/provider`,
@@ -237,11 +238,14 @@ export async function stopAgent(api: ApiClient, name: string): Promise<void> {
 export async function restartAgent(
   api: ApiClient,
   name: string,
-  reason: string = RESTART_REASONS.manual,
+  reason: RestartReason = RESTART_REASONS.manual,
 ): Promise<void> {
   await api.request(
     `/agents/${encodeURIComponent(name)}/restart`,
-    api.jsonInit("POST", { reason }),
+    api.jsonInit("POST", {
+      reason: reason.logReason,
+      agent_message: reason.agentMessage,
+    }),
   );
 }
 

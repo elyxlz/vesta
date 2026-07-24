@@ -1,38 +1,122 @@
-//! Canonical reasons for every vestad-driven agent lifecycle transition.
+//! Canonical copy for every vestad-driven agent lifecycle transition.
 //!
-//! Reasons use `category: human detail`: the category keeps operational logs greppable, while
-//! the agent's restart message strips non-crash categories and shows only the human detail.
+//! `log_reason` is terse, categorized operational copy used in shutdown/startup logs.
+//! `agent_message` is a complete sentence delivered only to an authenticated agent.
 
-pub const DEFAULT_RESTART: &str = "manual: restart requested";
-pub const MANUAL_START: &str = "manual: you were started";
-pub const MANUAL_STOP: &str = "manual: you were stopped";
-pub const START_ALL: &str = "manual: all agents were started";
-pub const DESTROY: &str = "manual: you were deleted";
+use std::borrow::Cow;
 
-pub const SCHEDULED_BACKUP: &str = "backup: you were paused for a scheduled backup";
-pub const MANUAL_BACKUP: &str = "backup: you were paused for a manual backup";
-pub const PRE_RESTORE_BACKUP: &str = "backup: you were paused for a safety backup before a restore";
-pub const BACKUP_EXPORT: &str = "backup: you were paused for a backup export";
-pub const BACKUP_IMPORT: &str = "backup: you were imported from a backup export";
+use serde::Serialize;
 
-pub const RESTORE_SHUTDOWN: &str = "restore: you were stopped to restore a backup";
-pub const RESTORE_BOOT: &str = "restore: you were restored from a backup";
-pub const RESTORE_ABORTED: &str = "restore: the restore did not complete; you resumed unchanged";
-
-pub const VESTAD_SHUTDOWN: &str = "system: vestad is shutting down";
-pub const VESTAD_RESUME: &str = "system: you resumed after vestad restarted";
-pub const CONFIG_WRITE_START: &str =
-    "system: you were started so a configuration change could be applied";
-pub const CODE_UPDATE: &str = "update: restarting to load updated agent code";
-pub const CONTAINER_UPDATE: &str = "update: restarting to apply updated container configuration";
-pub const DESIRED_STOP: &str = "system: stopping to match the requested state";
-
-pub fn rename_shutdown(new_name: &str) -> String {
-    format!("rename: you are being renamed to {new_name}")
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct LifecycleReason<'a> {
+    pub log_reason: Cow<'a, str>,
+    pub agent_message: Cow<'a, str>,
 }
 
-pub fn rename_boot(old_name: &str, new_name: &str) -> String {
-    format!("rename: you were renamed from {old_name} to {new_name}")
+impl LifecycleReason<'static> {
+    pub const fn borrowed(log_reason: &'static str, agent_message: &'static str) -> Self {
+        Self {
+            log_reason: Cow::Borrowed(log_reason),
+            agent_message: Cow::Borrowed(agent_message),
+        }
+    }
+
+    pub fn owned(log_reason: impl Into<String>, agent_message: impl Into<String>) -> Self {
+        Self {
+            log_reason: Cow::Owned(log_reason.into()),
+            agent_message: Cow::Owned(agent_message.into()),
+        }
+    }
+
+    pub fn from_legacy(log_reason: String, agent_message: Option<String>) -> Self {
+        let fallback = || {
+            let detail = log_reason.split_once(": ").map(|(_, detail)| detail);
+            if log_reason.starts_with("crash:") || log_reason.starts_with("error:") {
+                log_reason.clone()
+            } else {
+                detail.unwrap_or(&log_reason).to_string()
+            }
+        };
+        let agent_message = agent_message
+            .filter(|message| !message.trim().is_empty())
+            .unwrap_or_else(fallback);
+        Self::owned(log_reason, agent_message)
+    }
+}
+
+pub static DEFAULT_RESTART: LifecycleReason<'static> =
+    LifecycleReason::borrowed("manual: restart requested", "You were restarted manually.");
+pub static MANUAL_START: LifecycleReason<'static> =
+    LifecycleReason::borrowed("manual: start requested", "You were started manually.");
+pub static MANUAL_STOP: LifecycleReason<'static> =
+    LifecycleReason::borrowed("manual: stop requested", "You were stopped manually.");
+pub static START_ALL: LifecycleReason<'static> =
+    LifecycleReason::borrowed("manual: start-all requested", "You were started manually.");
+pub static DESTROY: LifecycleReason<'static> =
+    LifecycleReason::borrowed("manual: delete requested", "You were deleted.");
+
+pub static SCHEDULED_BACKUP: LifecycleReason<'static> = LifecycleReason::borrowed(
+    "backup: scheduled",
+    "Vesta briefly paused you while it created a scheduled backup. No action is required.",
+);
+pub static MANUAL_BACKUP: LifecycleReason<'static> = LifecycleReason::borrowed(
+    "backup: manual",
+    "Vesta briefly paused you while it created a manual backup. No action is required.",
+);
+pub static PRE_RESTORE_BACKUP: LifecycleReason<'static> = LifecycleReason::borrowed(
+    "backup: pre-restore safety backup",
+    "Vesta briefly paused you while it created a safety backup before a restore. No action is required.",
+);
+pub static BACKUP_EXPORT: LifecycleReason<'static> = LifecycleReason::borrowed(
+    "backup: export",
+    "Vesta briefly paused you while it exported a backup. No action is required.",
+);
+pub static BACKUP_IMPORT: LifecycleReason<'static> = LifecycleReason::borrowed(
+    "backup: import",
+    "You were restored from an exported backup.",
+);
+
+pub static RESTORE_SHUTDOWN: LifecycleReason<'static> = LifecycleReason::borrowed(
+    "restore: preparing",
+    "Vesta stopped you to restore a backup.",
+);
+pub static RESTORE_BOOT: LifecycleReason<'static> =
+    LifecycleReason::borrowed("restore: completed", "You were restored from a backup.");
+pub static RESTORE_ABORTED: LifecycleReason<'static> = LifecycleReason::borrowed(
+    "restore: aborted",
+    "The restore did not complete, so you resumed unchanged.",
+);
+
+pub static VESTAD_SHUTDOWN: LifecycleReason<'static> = LifecycleReason::borrowed(
+    "system: vestad shutdown",
+    "Vesta stopped you while its system service shut down.",
+);
+pub static VESTAD_RESUME: LifecycleReason<'static> = LifecycleReason::borrowed(
+    "system: vestad restarted",
+    "You resumed after the Vesta system service restarted.",
+);
+pub static CONFIG_WRITE_START: LifecycleReason<'static> = LifecycleReason::borrowed(
+    "system: configuration write",
+    "You were started so Vesta could apply a configuration change.",
+);
+pub static CODE_UPDATE: LifecycleReason<'static> = LifecycleReason::borrowed(
+    "update: agent code changed",
+    "Your runtime restarted to load updated agent code.",
+);
+pub static CONTAINER_UPDATE: LifecycleReason<'static> = LifecycleReason::borrowed(
+    "update: container configuration changed",
+    "Your runtime restarted to apply updated container configuration.",
+);
+pub static DESIRED_STOP: LifecycleReason<'static> = LifecycleReason::borrowed(
+    "system: desired state is stopped",
+    "Vesta stopped you to match the requested state.",
+);
+
+pub fn rename(old_name: &str, new_name: &str) -> LifecycleReason<'static> {
+    LifecycleReason::owned(
+        format!("rename: {old_name} -> {new_name}"),
+        format!("Your name changed from {old_name} to {new_name}."),
+    )
 }
 
 #[cfg(test)]
@@ -40,45 +124,67 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_static_reason_has_a_category_and_human_detail() {
+    fn every_static_reason_has_distinct_operational_and_agent_copy() {
         for reason in [
-            DEFAULT_RESTART,
-            MANUAL_START,
-            MANUAL_STOP,
-            START_ALL,
-            DESTROY,
-            SCHEDULED_BACKUP,
-            MANUAL_BACKUP,
-            PRE_RESTORE_BACKUP,
-            BACKUP_EXPORT,
-            BACKUP_IMPORT,
-            RESTORE_SHUTDOWN,
-            RESTORE_BOOT,
-            RESTORE_ABORTED,
-            VESTAD_SHUTDOWN,
-            VESTAD_RESUME,
-            CONFIG_WRITE_START,
-            CODE_UPDATE,
-            CONTAINER_UPDATE,
-            DESIRED_STOP,
+            &DEFAULT_RESTART,
+            &MANUAL_START,
+            &MANUAL_STOP,
+            &START_ALL,
+            &DESTROY,
+            &SCHEDULED_BACKUP,
+            &MANUAL_BACKUP,
+            &PRE_RESTORE_BACKUP,
+            &BACKUP_EXPORT,
+            &BACKUP_IMPORT,
+            &RESTORE_SHUTDOWN,
+            &RESTORE_BOOT,
+            &RESTORE_ABORTED,
+            &VESTAD_SHUTDOWN,
+            &VESTAD_RESUME,
+            &CONFIG_WRITE_START,
+            &CODE_UPDATE,
+            &CONTAINER_UPDATE,
+            &DESIRED_STOP,
         ] {
             let (category, detail) = reason
+                .log_reason
                 .split_once(": ")
                 .expect("lifecycle reasons use 'category: detail'");
             assert!(!category.is_empty());
             assert!(!detail.is_empty());
+            assert!(reason.agent_message.ends_with('.'));
+            assert_ne!(reason.log_reason, reason.agent_message);
         }
     }
 
     #[test]
-    fn rename_reasons_name_both_sides_of_the_transition() {
+    fn rename_reason_has_copy_for_both_audiences() {
+        let reason = rename("selene", "luna");
+        assert_eq!(reason.log_reason, "rename: selene -> luna",);
         assert_eq!(
-            rename_shutdown("luna"),
-            "rename: you are being renamed to luna"
+            reason.agent_message,
+            "Your name changed from selene to luna.",
         );
+    }
+
+    #[test]
+    fn legacy_reason_derives_the_old_agent_copy() {
+        let reason = LifecycleReason::from_legacy("provider: model changed".to_string(), None);
+        assert_eq!(reason.log_reason, "provider: model changed");
+        assert_eq!(reason.agent_message, "model changed");
+    }
+
+    #[test]
+    fn boot_inbox_json_uses_the_agent_contract_field_names() {
         assert_eq!(
-            rename_boot("selene", "luna"),
-            "rename: you were renamed from selene to luna"
+            serde_json::to_value(&SCHEDULED_BACKUP).unwrap(),
+            serde_json::json!({
+                "log_reason": "backup: scheduled",
+                "agent_message": concat!(
+                    "Vesta briefly paused you while it created a scheduled backup. ",
+                    "No action is required."
+                ),
+            }),
         );
     }
 }

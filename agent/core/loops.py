@@ -12,7 +12,7 @@ import pydantic
 from watchfiles import Change, awatch
 
 from . import config as cfg
-from . import logger, notification_interrupt_policy, state_store, vestad_client
+from . import lifecycle, logger, notification_interrupt_policy, state_store, vestad_client
 from . import models as vm
 from .client import (
     SDK_ERRORS,
@@ -374,9 +374,7 @@ async def drain_compaction_request(*, state: vm.State, config: cfg.VestaConfig) 
         # vestad owns the restart and starts us back on the compacted session. If it is unreachable
         # we stay up on this session, so the boot channel is moot: clear it and fall back to the
         # live channel below instead of losing the follow-up.
-        if not await vestad_client.request_restart(
-            "compaction: conversation context was compacted"
-        ):
+        if not await vestad_client.request_restart(lifecycle.COMPACTION_RESTART):
             logger.warning("vestad unreachable for restart; continuing on the compacted session")
             if turn is not None:
                 state.persisted.pending_boot_message = None
