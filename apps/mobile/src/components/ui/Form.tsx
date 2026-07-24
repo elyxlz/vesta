@@ -68,10 +68,16 @@ export function Field({
 interface SectionProps {
   title?: string;
   footer?: string;
-  children: ReactNode;
+  children?: ReactNode;
+  actions?: ReactNode;
 }
 
-export function FormSection({ title, footer, children }: SectionProps) {
+export function FormSection({
+  title,
+  footer,
+  children,
+  actions,
+}: SectionProps) {
   const { colors } = usePreferences();
   return (
     <View style={styles.section}>
@@ -83,14 +89,17 @@ export function FormSection({ title, footer, children }: SectionProps) {
           {title}
         </Text>
       ) : null}
-      <View
-        style={[
-          styles.sectionBody,
-          { backgroundColor: colors.card, borderColor: colors.border },
-        ]}
-      >
-        {children}
-      </View>
+      {children ? (
+        <View
+          style={[
+            styles.sectionBody,
+            { backgroundColor: colors.card, borderColor: colors.border },
+          ]}
+        >
+          {children}
+        </View>
+      ) : null}
+      {actions ? <View style={styles.sectionActions}>{actions}</View> : null}
       {footer ? (
         <Text style={[styles.footer, { color: colors.secondaryText }]}>
           {footer}
@@ -265,6 +274,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 6,
   },
+  sectionActions: { gap: 10 },
   footer: { fontSize: 13, lineHeight: 18, paddingHorizontal: 16 },
   row: {
     minHeight: 54,

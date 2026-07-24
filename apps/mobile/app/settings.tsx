@@ -1,4 +1,4 @@
-import { ActivityIndicator, Alert, Linking, StyleSheet } from "react-native";
+import { Alert, Linking, StyleSheet } from "react-native";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Stack, useRouter } from "expo-router";
 import {
@@ -8,6 +8,7 @@ import {
 } from "@vesta/core";
 import { fetchGatewayInfo, fetchGatewaySettings } from "@/api/endpoints";
 import { Screen } from "@/components/layout/Screen";
+import { Button } from "@/components/ui/Button";
 import { FormRow, FormSection, SwitchRow } from "@/components/ui/Form";
 import { unregisterCurrentMobileDevice } from "@/notifications/PushCoordinator";
 import {
@@ -100,7 +101,14 @@ export default function SettingsScreen() {
   return (
     <>
       <Screen contentStyle={styles.content}>
-        <FormSection title="Experience">
+        <FormSection
+          title="Experience"
+          actions={
+            <Button variant="secondary" onPress={chooseTheme}>
+              Change appearance
+            </Button>
+          }
+        >
           <FormRow
             label="Appearance"
             detail="Use the system setting or choose light or dark."
@@ -108,7 +116,6 @@ export default function SettingsScreen() {
             valueIconLabel={`${resolvedAppearance} appearance${
               preferences.theme === "system" ? " from system setting" : ""
             }`}
-            onPress={chooseTheme}
           />
         </FormSection>
 
@@ -160,7 +167,37 @@ export default function SettingsScreen() {
           />
         </FormSection>
 
-        <FormSection title="Gateway">
+        <FormSection
+          title="Gateway"
+          actions={
+            <>
+              <Button
+                variant={updateAvailable ? "primary" : "secondary"}
+                loading={gatewayUpdate.isPending || updateCheck.isPending}
+                onPress={
+                  updateAvailable
+                    ? confirmGatewayUpdate
+                    : () => updateCheck.mutate()
+                }
+              >
+                {updateAvailable
+                  ? "Update gateway"
+                  : updateCheck.isError
+                    ? "Retry update check"
+                    : updateCheck.isSuccess
+                      ? "Check again for updates"
+                      : "Check for updates"}
+              </Button>
+              <Button
+                variant="secondary"
+                loading={gatewayRestart.isPending}
+                onPress={confirmGatewayRestart}
+              >
+                Restart gateway
+              </Button>
+            </>
+          }
+        >
           <FormRow
             label="Status"
             value={roster.reachable ? "connected" : "reconnecting"}
@@ -180,94 +217,73 @@ export default function SettingsScreen() {
             label="Public tunnel"
             value={gateway.data?.info.tunnel_url ? "active" : "unavailable"}
           />
-          {gatewayUpdate.isPending ? (
-            <FormRow
-              label="Updating gateway"
-              trailing={
-                <ActivityIndicator color={preferences.colors.interactive} />
-              }
-            />
-          ) : updateCheck.isPending ? (
-            <FormRow
-              label="Checking for updates"
-              trailing={
-                <ActivityIndicator color={preferences.colors.interactive} />
-              }
-            />
-          ) : updateAvailable ? (
-            <FormRow
-              label="Update available"
-              value={roster.latestVersion ?? "available"}
-              onPress={confirmGatewayUpdate}
-            />
-          ) : updateCheck.isError ? (
-            <FormRow
-              label="Check failed"
-              value="try again"
-              onPress={() => updateCheck.mutate()}
-            />
-          ) : (
-            <FormRow
-              label="Check for updates"
-              value={updateCheck.isSuccess ? "up to date" : undefined}
-              onPress={() => updateCheck.mutate()}
-            />
-          )}
-          <FormRow
-            label="Restart gateway"
-            onPress={
-              gatewayRestart.isPending ? undefined : confirmGatewayRestart
-            }
-            trailing={
-              gatewayRestart.isPending ? (
-                <ActivityIndicator color={preferences.colors.interactive} />
-              ) : undefined
-            }
-          />
         </FormSection>
 
         {roster.managed ? (
-          <FormSection title="Account">
-            <FormRow
-              label="Manage account and billing"
-              onPress={() => void Linking.openURL("https://vesta.run/account")}
-            />
-          </FormSection>
-        ) : null}
-
-        <FormSection title="Support">
-          <FormRow label="Diagnostics" onPress={() => router.push("/debug")} />
-          <FormRow
-            label="What's new"
-            onPress={() =>
-              void Linking.openURL("https://github.com/elyxlz/vesta/releases")
+          <FormSection
+            title="Account"
+            actions={
+              <Button
+                variant="secondary"
+                onPress={() =>
+                  void Linking.openURL("https://vesta.run/account")
+                }
+              >
+                Manage account and billing
+              </Button>
             }
           />
-        </FormSection>
+        ) : null}
 
-        <FormSection title="Other">
-          <FormRow
-            label="Disconnect"
-            onPress={() => {
-              Alert.alert(
-                "Disconnect from Vesta?",
-                "You can reconnect using your account or tunnel link.",
-                [
-                  { text: "Cancel", style: "cancel" },
-                  {
-                    text: "Disconnect",
-                    style: "destructive",
-                    onPress: () =>
-                      void unregisterCurrentMobileDevice(session.api)
-                        .catch(() => undefined)
-                        .then(() => session.disconnect())
-                        .then(() => router.replace("/connect")),
-                  },
-                ],
-              );
-            }}
-          />
-        </FormSection>
+        <FormSection
+          title="Support"
+          actions={
+            <>
+              <Button variant="secondary" onPress={() => router.push("/debug")}>
+                Diagnostics
+              </Button>
+              <Button
+                variant="secondary"
+                onPress={() =>
+                  void Linking.openURL(
+                    "https://github.com/elyxlz/vesta/releases",
+                  )
+                }
+              >
+                What’s new
+              </Button>
+            </>
+          }
+        />
+
+        <FormSection
+          title="Other"
+          actions={
+            <Button
+              variant="danger"
+              onPress={() => {
+                Alert.alert(
+                  "Disconnect from Vesta?",
+                  "You can reconnect using your account or tunnel link.",
+                  [
+                    { text: "Cancel", style: "cancel" },
+                    {
+                      text: "Disconnect",
+                      style: "destructive",
+                      onPress: () =>
+                        void unregisterCurrentMobileDevice(session.api)
+                          .catch(() => undefined)
+                          .then(() => session.disconnect())
+                          .then(() => router.replace("/connect")),
+                    },
+                  ],
+                );
+              }}
+            >
+              Disconnect
+            </Button>
+          }
+        />
       </Screen>
       <Stack.Toolbar placement="left">
         <Stack.Toolbar.Button
