@@ -52,38 +52,29 @@ export default function WhatsNewScreen() {
             detail="Check back after the next update."
           />
         ) : (
-          <View
-            style={[
-              styles.releaseList,
-              { backgroundColor: colors.card, borderColor: colors.border },
-            ]}
-          >
-            {visible.map((entry, index) => (
-              <View key={entry.version}>
-                {index > 0 ? (
-                  <View
-                    style={[
-                      styles.separator,
-                      { backgroundColor: colors.border },
-                    ]}
-                  />
-                ) : null}
-                <View style={styles.release}>
-                  <View style={styles.releaseHeader}>
-                    <Text style={[styles.version, { color: colors.text }]}>
-                      v{entry.version}
-                    </Text>
-                    <Text style={[styles.date, { color: colors.tertiaryText }]}>
-                      {formatReleaseDate(entry.date)}
-                    </Text>
-                  </View>
-                  <Text
-                    selectable
-                    style={[styles.message, { color: colors.secondaryText }]}
-                  >
-                    {entry.message}
+          <View style={styles.releaseList}>
+            {visible.map((entry) => (
+              <View
+                key={entry.version}
+                style={[
+                  styles.releaseCard,
+                  { backgroundColor: colors.card, borderColor: colors.border },
+                ]}
+              >
+                <View style={styles.releaseHeader}>
+                  <Text style={[styles.version, { color: colors.text }]}>
+                    v{entry.version}
+                  </Text>
+                  <Text style={[styles.date, { color: colors.tertiaryText }]}>
+                    {formatReleaseDate(entry.date)}
                   </Text>
                 </View>
+                <Text
+                  selectable
+                  style={[styles.message, { color: colors.secondaryText }]}
+                >
+                  {entry.message}
+                </Text>
               </View>
             ))}
           </View>
@@ -106,19 +97,16 @@ export default function WhatsNewScreen() {
 
 const styles = StyleSheet.create({
   content: { gap: 24, paddingBottom: 80 },
-  releaseList: {
+  releaseList: { gap: 12 },
+  releaseCard: {
     borderRadius: radii.card,
     borderCurve: "continuous",
     borderWidth: StyleSheet.hairlineWidth,
-    overflow: "hidden",
+    gap: 8,
+    padding: 16,
   },
-  release: { gap: 8, padding: 16 },
   releaseHeader: { flexDirection: "row", alignItems: "baseline", gap: 8 },
   version: { fontSize: 16, fontWeight: "600" },
   date: { fontSize: 13 },
   message: { fontSize: 15, lineHeight: 21 },
-  separator: {
-    height: StyleSheet.hairlineWidth,
-    marginHorizontal: 16,
-  },
 });

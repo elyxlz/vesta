@@ -260,10 +260,10 @@ function SessionNavigation() {
                 options={{
                   title: "What’s new",
                   presentation: "formSheet",
-                  sheetAllowedDetents: [0.65, 1],
+                  sheetAllowedDetents: [1],
                   sheetInitialDetentIndex: 0,
-                  sheetGrabberVisible: true,
-                  sheetExpandsWhenScrolledToEdge: true,
+                  sheetGrabberVisible: false,
+                  sheetExpandsWhenScrolledToEdge: false,
                   contentStyle: { backgroundColor: colors.background },
                 }}
               />
