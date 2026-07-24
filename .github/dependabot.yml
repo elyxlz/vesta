@@ -23,20 +23,9 @@ updates:
     groups:
       node-deps:
         patterns: ["*"]
-
-  # Mobile is deliberately not an npm workspace under /apps and owns a
-  # separate lockfile, so it needs its own update source. Expo SDK owns the
-  # versions of its managed packages (react, react-native, the expo-* and
-  # @expo/* families, typescript); `expo install --check` pins them to the
-  # SDK's matrix, so bumping past it only yields red PRs. Ignore that set here;
-  # community deps (zod, tanstack, vitest) still get bumped.
-  - package-ecosystem: npm
-    directory: /apps/mobile
-    schedule:
-      interval: weekly
-    groups:
-      mobile-node-deps:
-        patterns: ["*"]
+    # Expo SDK owns the versions of its managed packages (React, React Native,
+    # Expo, and TypeScript). Keep those aligned across the unified workspace;
+    # `expo install --check` advances them when the SDK is upgraded.
     ignore:
       - dependency-name: "expo"
       - dependency-name: "expo-*"

@@ -96,10 +96,14 @@ jobs:
               - 'check.sh'
             core:
               - 'apps/core/**'
+              - 'apps/package.json'
+              - 'apps/package-lock.json'
               - '.github/workflows/ci.yml'
               - 'check.sh'
             web:
               - 'apps/web/**'
+              - 'apps/package.json'
+              - 'apps/package-lock.json'
               - 'design/**'
               - 'scripts/sync-design-tokens.py'
               - 'scripts/sync-dashboard.sh'
@@ -107,17 +111,22 @@ jobs:
               - 'check.sh'
             desktop:
               - 'apps/desktop/**'
+              - 'apps/package.json'
+              - 'apps/package-lock.json'
               - '.github/workflows/ci.yml'
               - 'check.sh'
             mobile:
               - 'apps/mobile/**'
+              - 'apps/package.json'
+              - 'apps/package-lock.json'
               - '.github/workflows/ci.yml'
               - '.github/workflows/mobile-build.yml'
               - 'check.sh'
             mobile_native:
               - 'apps/mobile/app.config.ts'
               - 'apps/mobile/package.json'
-              - 'apps/mobile/package-lock.json'
+              - 'apps/package.json'
+              - 'apps/package-lock.json'
               - 'apps/mobile/assets/**'
               - 'apps/mobile/modules/**'
               - 'apps/mobile/plugins/**'
@@ -334,7 +343,7 @@ jobs:
 
   # ── Frontend unit tests (one job per app, gated on its dependency closure) ──
   # @vesta/core is the shared controller: web bundles it, desktop bundles web,
-  # mobile consumes it via file:. So each downstream job's gate includes core.
+  # mobile consumes it from the same workspace. So each downstream job's gate includes core.
   test-app-core:
     name: Apps · core
     needs: detect-changes
@@ -425,16 +434,10 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: |
-            apps/package-lock.json
-            apps/mobile/package-lock.json
+          cache-dependency-path: apps/package-lock.json
 
-      # Mobile type-checks against @vesta/core's source (the file: dependency),
-      # which resolves its react types from the apps workspace install.
       - name: Install deps
-        run: |
-          npm --prefix apps ci
-          npm --prefix apps/mobile ci
+        run: npm --prefix apps ci
 
       - name: Run mobile checks
         run: ./check.sh app-mobile
@@ -1036,7 +1039,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: apps/mobile/package-lock.json
+          cache-dependency-path: apps/package-lock.json
 
       - name: Set up Java
         if: matrix.platform == 'android'
@@ -1045,8 +1048,8 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Install mobile dependencies
-        run: npm --prefix apps/mobile ci
+      - name: Install app dependencies
+        run: npm --prefix apps ci
 
       - name: Compile native project
         run: ./check.sh mobile-${{ matrix.platform }}

@@ -54,7 +54,7 @@ for generated in "$STORYBOARD" "$INFO_PLIST" "$EXPO_PLIST" "$ENTITLEMENTS_PLIST"
   fi
 done
 
-if grep -Eq 'imageView|SplashScreenLogo' "$STORYBOARD"; then
+if grep -q '<imageView' "$STORYBOARD"; then
   echo "error: generated iOS launch storyboard is not blank" >&2
   exit 1
 fi

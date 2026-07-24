@@ -10,13 +10,10 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { GatewayCloseButton } from "@/components/GatewayCloseButton";
-import { Button, TextButton } from "@/components/ui/Button";
+import { Button } from "@/components/ui/Button";
 import { Field } from "@/components/ui/Form";
 import { Text } from "@/components/ui/Typography";
-import {
-  ThemeOverrideProvider,
-  usePreferences,
-} from "@/preferences/PreferencesProvider";
+import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
 
 const SCANNED_LINK_LOADING_MS = 1_000;
@@ -29,14 +26,12 @@ export default function ConnectLinkScreen() {
   const parameterScanId = firstParameter(parameters.scanId) ?? "";
 
   return (
-    <ThemeOverrideProvider theme="light">
-      <ConnectLinkContent
-        key={`${parameterScanId}:${parameterLink}`}
-        initialLink={parameterLink}
-        autoConnect={parameterAutoConnect}
-        scanId={parameterScanId}
-      />
-    </ThemeOverrideProvider>
+    <ConnectLinkContent
+      key={`${parameterScanId}:${parameterLink}`}
+      initialLink={parameterLink}
+      autoConnect={parameterAutoConnect}
+      scanId={parameterScanId}
+    />
   );
 }
 
@@ -60,8 +55,8 @@ function ConnectLinkContent({
   scanId: string;
 }) {
   const router = useRouter();
-  const { connectLink, recentGateways } = useSession();
-  const { colors } = usePreferences();
+  const { connectLink } = useSession();
+  const { colors, dark } = usePreferences();
   const handledScan = useRef("");
   const [link, setLink] = useState(initialLink);
   const [busy, setBusy] = useState(false);
@@ -105,18 +100,18 @@ function ConnectLinkContent({
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === "ios" ? "padding" : undefined}
-      style={[styles.sheet, { backgroundColor: colors.background }]}
+      style={[styles.sheet, { backgroundColor: colors.card }]}
     >
       <View style={styles.header}>
         <View style={styles.titleRow}>
-          <Text family="heading" style={[styles.title, { color: colors.text }]}>
-            Connect your gateway
-          </Text>
           <GatewayCloseButton
             color={colors.text}
             fallbackColor={colors.input}
             onPress={() => router.back()}
           />
+          <Text family="heading" style={[styles.title, { color: colors.text }]}>
+            Connect your gateway
+          </Text>
         </View>
         <Text style={[styles.subtitle, { color: colors.secondaryText }]}>
           Enter the connection link provided by your Vesta gateway.
@@ -161,7 +156,7 @@ function ConnectLinkContent({
             importantForAutofill={
               Platform.OS === "android" ? "yes" : undefined
             }
-            keyboardAppearance="light"
+            keyboardAppearance={dark ? "dark" : "light"}
             secureTextEntry={!linkVisible}
             textContentType={Platform.OS === "ios" ? "password" : undefined}
             accessory={
@@ -210,11 +205,6 @@ function ConnectLinkContent({
               <Ionicons name="qr-code-outline" size={21} color={colors.text} />
             </Pressable>
           </View>
-          {recentGateways?.length ? (
-            <TextButton onPress={() => router.push("/recent-gateways")}>
-              Recent gateways
-            </TextButton>
-          ) : null}
         </View>
       )}
     </KeyboardAvoidingView>

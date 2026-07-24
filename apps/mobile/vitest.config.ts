@@ -8,6 +8,6 @@ export default defineConfig({
     },
   },
   test: {
-    include: ["src/**/*.test.ts", "metro.config.test.mjs"],
+    include: ["src/**/*.test.ts", "monorepo.test.mjs"],
   },
 });

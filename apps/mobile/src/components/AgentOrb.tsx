@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Animated, Easing, StyleSheet, View } from "react-native";
+import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import type { AgentActivityState, AgentStatus } from "@vesta/core";
 import { useBootTransitionTargetFrozen } from "@/components/BootTransition";
@@ -12,6 +13,7 @@ interface AgentOrbProps {
   animated?: boolean;
   pulseScale?: number;
   pulseDuration?: number;
+  pulseHaptics?: boolean;
 }
 
 function orbColors(
@@ -47,9 +49,11 @@ export function AgentOrb({
   animated = true,
   pulseScale,
   pulseDuration,
+  pulseHaptics = false,
 }: AgentOrbProps) {
   const [rotation] = useState(() => new Animated.Value(0));
   const [pulse] = useState(() => new Animated.Value(1));
+  const pulseHapticsEnabled = useRef(pulseHaptics);
   const transitionFrozen = useBootTransitionTargetFrozen();
   const shouldAnimate = animated && !transitionFrozen;
   const colors = orbColors(status, activityState);
@@ -57,6 +61,10 @@ export function AgentOrb({
     pulseScale ?? (activityState === "thinking" ? 1.1 : 1.04);
   const halfPulseDuration =
     pulseDuration ?? (activityState === "thinking" ? 1200 : 1800);
+
+  useEffect(() => {
+    pulseHapticsEnabled.current = pulseHaptics;
+  }, [pulseHaptics]);
 
   useEffect(() => {
     if (!shouldAnimate) {
@@ -78,28 +86,55 @@ export function AgentOrb({
 
   useEffect(() => {
     if (!shouldAnimate || status !== "alive") {
+      pulse.stopAnimation();
       pulse.setValue(1);
       return;
     }
 
-    const breathe = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulse, {
-          toValue: maximumPulseScale,
-          duration: halfPulseDuration,
-          easing: Easing.inOut(Easing.sin),
-          useNativeDriver: true,
-        }),
-        Animated.timing(pulse, {
+    let active = true;
+    let currentAnimation: Animated.CompositeAnimation | undefined;
+
+    const runCycle = () => {
+      currentAnimation = Animated.timing(pulse, {
+        toValue: maximumPulseScale,
+        duration: halfPulseDuration,
+        easing: Easing.inOut(Easing.sin),
+        useNativeDriver: true,
+      });
+      currentAnimation.start(({ finished: reachedPeak }) => {
+        if (!active || !reachedPeak) {
+          return;
+        }
+
+        if (
+          pulseHapticsEnabled.current &&
+          process.env.EXPO_OS === "ios"
+        ) {
+          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft).catch(
+            () => undefined,
+          );
+        }
+
+        currentAnimation = Animated.timing(pulse, {
           toValue: 1,
           duration: halfPulseDuration,
           easing: Easing.inOut(Easing.sin),
           useNativeDriver: true,
-        }),
-      ]),
-    );
-    breathe.start();
-    return () => breathe.stop();
+        });
+        currentAnimation.start(({ finished: reachedRest }) => {
+          if (active && reachedRest) {
+            runCycle();
+          }
+        });
+      });
+    };
+
+    runCycle();
+
+    return () => {
+      active = false;
+      currentAnimation?.stop();
+    };
   }, [halfPulseDuration, maximumPulseScale, pulse, shouldAnimate, status]);
 
   const rotate = rotation.interpolate({

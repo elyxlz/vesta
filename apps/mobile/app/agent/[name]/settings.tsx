@@ -1,6 +1,6 @@
 import { Alert, StyleSheet } from "react-native";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "expo-router";
+import { Stack, useRouter } from "expo-router";
 import {
   createBackup,
   deleteAgent,
@@ -12,10 +12,13 @@ import { useAgent } from "@/agent/AgentProvider";
 import { AgentPagesSettingsSection } from "@/components/AgentPagesSettingsSection";
 import { AgentIdentityCard } from "@/components/agent-identity-card";
 import { Screen } from "@/components/layout/Screen";
-import { FormRow, FormSection, SwitchRow } from "@/components/ui/Form";
+import { Button, ButtonGroup } from "@/components/ui/Button";
+import { FormSection, SwitchRow } from "@/components/ui/Form";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
+
+const IS_IOS = process.env.EXPO_OS === "ios";
 
 function AgentSettingsContent() {
   const router = useRouter();
@@ -55,129 +58,160 @@ function AgentSettingsContent() {
     });
 
   return (
-    <Screen contentStyle={styles.content}>
-      <AgentIdentityCard
-        name={name}
-        status={agent?.status ?? "not_found"}
-        activityState={socket.agentState}
-        style={styles.identityCard}
-      />
-      {action.error ? (
-        <Text accessibilityRole="alert" style={{ color: colors.danger }}>
-          {action.error instanceof Error
-            ? action.error.message
-            : "The action failed."}
-        </Text>
-      ) : null}
-      <FormSection title="Agent">
-        <FormRow
-          label="Provider and model"
-          detail="Credentials, model, context, and usage"
-          icon="sparkles-outline"
-          onPress={() => open("provider")}
+    <>
+      <Screen contentStyle={styles.content}>
+        <AgentIdentityCard
+          name={name}
+          status={agent?.status ?? "not_found"}
+          activityState={socket.agentState}
+          style={styles.identityCard}
         />
-        <FormRow
-          label="Voice"
-          detail="Live transcription and spoken replies"
-          icon="mic-outline"
-          onPress={() => open("voice")}
-        />
-        <SwitchRow
-          label="Natural chat pacing"
-          detail="Let this agent's replies arrive with a more human rhythm."
-          icon="chatbubble-ellipses-outline"
-          value={preferences.naturalChatPacingForAgent(name)}
-          onValueChange={(value) =>
-            void preferences.setNaturalChatPacingForAgent(name, value)
+        {action.error ? (
+          <Text accessibilityRole="alert" style={{ color: colors.danger }}>
+            {action.error instanceof Error
+              ? action.error.message
+              : "The action failed."}
+          </Text>
+        ) : null}
+        <FormSection
+          title="Agent"
+          actions={
+            <>
+              <Button pill variant="card" onPress={() => open("provider")}>
+                Provider and model
+              </Button>
+              <Button pill variant="card" onPress={() => open("voice")}>
+                Voice
+              </Button>
+            </>
+          }
+        >
+          <SwitchRow
+            label="Natural chat pacing"
+            detail="Let this agent's replies arrive with a more human rhythm."
+            value={preferences.naturalChatPacingForAgent(name)}
+            onValueChange={(value) =>
+              void preferences.setNaturalChatPacingForAgent(name, value)
+            }
+          />
+        </FormSection>
+        <AgentPagesSettingsSection />
+        <FormSection
+          title="Attention"
+          actions={
+            <>
+              <ButtonGroup>
+                <Button
+                  variant="cardGrouped"
+                  onPress={() => openPage("notifications")}
+                >
+                  Notifications
+                </Button>
+                <Button
+                  variant="cardGrouped"
+                  onPress={() => open("notifications")}
+                >
+                  Notification rules
+                </Button>
+              </ButtonGroup>
+              <Button pill variant="card" onPress={() => openPage("logs")}>
+                Logs
+              </Button>
+              <Button pill variant="card" onPress={() => open("files")}>
+                Files
+              </Button>
+              <Button pill variant="card" onPress={() => open("host-access")}>
+                Host access
+              </Button>
+            </>
           }
         />
-      </FormSection>
-      <AgentPagesSettingsSection />
-      <FormSection title="Attention">
-        <FormRow
-          label="Notifications"
-          detail="History and pending notifications"
-          icon="notifications-outline"
-          onPress={() => openPage("notifications")}
+        <FormSection
+          title="Backups"
+          actions={
+            <ButtonGroup>
+              <Button variant="cardGrouped" onPress={() => open("backups")}>
+                Manage backups
+              </Button>
+              <Button
+                variant="cardGrouped"
+                disabled={action.isPending}
+                loading={action.isPending && action.variables === "backup"}
+                onPress={() => action.mutate("backup")}
+              >
+                Back up now
+              </Button>
+            </ButtonGroup>
+          }
         />
-        <FormRow
-          label="Logs"
-          detail="Live agent output"
-          icon="terminal-outline"
-          onPress={() => openPage("logs")}
+        <FormSection
+          title="Actions"
+          actions={
+            <ButtonGroup>
+              <Button
+                variant="cardGrouped"
+                disabled={action.isPending}
+                loading={
+                  action.isPending &&
+                  (action.variables === "start" || action.variables === "stop")
+                }
+                onPress={() =>
+                  action.mutate(agent?.status === "stopped" ? "start" : "stop")
+                }
+              >
+                {agent?.status === "stopped" ? "Start agent" : "Stop agent"}
+              </Button>
+              <Button
+                variant="cardGrouped"
+                disabled={action.isPending}
+                loading={action.isPending && action.variables === "restart"}
+                onPress={() => action.mutate("restart")}
+              >
+                Restart agent
+              </Button>
+            </ButtonGroup>
+          }
         />
-        <FormRow
-          label="Notification rules"
-          detail="Choose what interrupts the agent"
-          icon="notifications-outline"
-          onPress={() => open("notifications")}
+        <FormSection
+          title="Danger zone"
+          actions={
+            <Button
+              pill
+              variant="cardDanger"
+              disabled={action.isPending}
+              loading={action.isPending && action.variables === "delete"}
+              onPress={() => {
+                Alert.alert(
+                  `Delete ${name}?`,
+                  "This permanently deletes the agent and their local state.",
+                  [
+                    { text: "Cancel", style: "cancel" },
+                    {
+                      text: "Delete",
+                      style: "destructive",
+                      onPress: () => action.mutate("delete"),
+                    },
+                  ],
+                );
+              }}
+            >
+              Delete agent
+            </Button>
+          }
         />
-        <FormRow
-          label="Files"
-          detail="Memory, constitution, dreams, and skills"
-          icon="folder-open-outline"
-          onPress={() => open("files")}
-        />
-        <FormRow
-          label="Host access"
-          detail="Folders shared with this agent"
-          icon="desktop-outline"
-          onPress={() => open("host-access")}
-        />
-        <FormRow
-          label="Backups"
-          detail="Create, restore, and remove snapshots"
-          icon="archive-outline"
-          onPress={() => open("backups")}
-        />
-      </FormSection>
-      <FormSection title="Actions">
-        {agent?.status === "stopped" ? (
-          <FormRow
-            label="Start agent"
-            icon="play-outline"
-            onPress={() => action.mutate("start")}
-          />
-        ) : (
-          <FormRow
-            label="Stop agent"
-            icon="stop-outline"
-            onPress={() => action.mutate("stop")}
-          />
-        )}
-        <FormRow
-          label="Restart agent"
-          icon="refresh-outline"
-          onPress={() => action.mutate("restart")}
-        />
-        <FormRow
-          label="Back up now"
-          icon="cloud-upload-outline"
-          onPress={() => action.mutate("backup")}
-        />
-      </FormSection>
-      <FormSection>
-        <FormRow
-          label="Delete agent"
-          icon="trash-outline"
-          destructive
-          onPress={() => {
-            Alert.alert(
-              `Delete ${name}?`,
-              "This permanently deletes the agent and their local state.",
-              [
-                { text: "Cancel", style: "cancel" },
-                {
-                  text: "Delete",
-                  style: "destructive",
-                  onPress: () => action.mutate("delete"),
-                },
-              ],
-            );
-          }}
-        />
-      </FormSection>
-    </Screen>
+      </Screen>
+      <Stack.Toolbar placement="left">
+        <Stack.Toolbar.Button
+          accessibilityLabel="Close agent settings"
+          icon={IS_IOS ? "xmark" : undefined}
+          separateBackground
+          tintColor={colors.text}
+          onPress={() => router.back()}
+        >
+          {IS_IOS ? undefined : "Close"}
+        </Stack.Toolbar.Button>
+      </Stack.Toolbar>
+    </>
   );
 }
 
@@ -186,6 +220,6 @@ export default function AgentSettingsScreen() {
 }
 
 const styles = StyleSheet.create({
-  content: { paddingBottom: 80 },
+  content: { gap: 24, paddingBottom: 80 },
   identityCard: { paddingVertical: 20 },
 });

@@ -20,7 +20,7 @@ import { AgentOrb } from "@/components/AgentOrb";
 import type { BootTargetFrame } from "@/components/BootTransition";
 import { Button } from "@/components/ui/Button";
 import { Text } from "@/components/ui/Typography";
-import { ThemeOverrideProvider } from "@/preferences/PreferencesProvider";
+import { usePreferences } from "@/preferences/PreferencesProvider";
 import { designTokens } from "@/theme/generated";
 
 const ORB_SIZE = 176;
@@ -49,6 +49,7 @@ export function BootSplash({
   onFinish: () => void;
 }) {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const { colors } = usePreferences();
   const scale = useSharedValue(INITIAL_SCALE);
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
@@ -298,7 +299,13 @@ export function BootSplash({
       pointerEvents={handingOff ? "none" : "auto"}
       style={styles.screen}
     >
-      <Animated.View style={[styles.backdrop, backdropStyle]} />
+      <Animated.View
+        style={[
+          styles.backdrop,
+          { backgroundColor: colors.background },
+          backdropStyle,
+        ]}
+      />
       <Animated.View style={orbStyle}>
         <AgentOrb
           status={target?.status ?? "alive"}
@@ -310,34 +317,37 @@ export function BootSplash({
         />
       </Animated.View>
       {showDisconnect && onDisconnect ? (
-        <ThemeOverrideProvider theme="light">
-          <>
-            <Animated.View
-              style={[styles.gatewayDelayMessage, delayMessageStyle]}
+        <>
+          <Animated.View
+            style={[styles.gatewayDelayMessage, delayMessageStyle]}
+          >
+            <Text
+              style={[
+                styles.gatewayDelayMessageText,
+                { color: colors.text },
+              ]}
             >
-              <Text style={styles.gatewayDelayMessageText}>
-                Reaching the gateway is taking longer than expected
-              </Text>
-            </Animated.View>
-            <Animated.View style={[styles.disconnect, disconnectButtonStyle]}>
-              <Button
-                pill
-                size="small"
-                variant="secondary"
-                icon="log-out-outline"
-                iconColor={designTokens.colors.light.destructive}
-                loading={disconnecting}
-                onPress={() => {
-                  if (disconnecting) return;
-                  setDisconnecting(true);
-                  void onDisconnect().catch(() => setDisconnecting(false));
-                }}
-              >
-                Disconnect gateway
-              </Button>
-            </Animated.View>
-          </>
-        </ThemeOverrideProvider>
+              Reaching the gateway is taking longer than expected
+            </Text>
+          </Animated.View>
+          <Animated.View style={[styles.disconnect, disconnectButtonStyle]}>
+            <Button
+              pill
+              size="small"
+              variant="secondary"
+              icon="log-out-outline"
+              iconColor={colors.danger}
+              loading={disconnecting}
+              onPress={() => {
+                if (disconnecting) return;
+                setDisconnecting(true);
+                void onDisconnect().catch(() => setDisconnecting(false));
+              }}
+            >
+              Disconnect gateway
+            </Button>
+          </Animated.View>
+        </>
       ) : null}
     </View>
   );
@@ -361,7 +371,6 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     left: 0,
-    backgroundColor: designTokens.launch.background,
   },
   disconnect: {
     position: "absolute",
@@ -378,7 +387,6 @@ const styles = StyleSheet.create({
     marginTop: HOLDING_ORB_SIZE / 2 + 20,
   },
   gatewayDelayMessageText: {
-    color: designTokens.colors.light.foreground,
     fontSize: designTokens.typography.sizes.base,
     lineHeight: 22,
     textAlign: "center",

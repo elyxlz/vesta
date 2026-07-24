@@ -9,7 +9,6 @@ export function AgentPagesSettingsSection() {
       <SwitchRow
         label="Notifications page"
         detail="Add notification history to the agent swipe pages."
-        icon="notifications-outline"
         value={preferences.showNotificationsPage}
         onValueChange={(value) =>
           void preferences.update({ showNotificationsPage: value })
@@ -18,7 +17,6 @@ export function AgentPagesSettingsSection() {
       <SwitchRow
         label="Logs page"
         detail="Add live output to the agent swipe pages."
-        icon="terminal-outline"
         value={preferences.showLogsPage}
         onValueChange={(value) =>
           void preferences.update({ showLogsPage: value })

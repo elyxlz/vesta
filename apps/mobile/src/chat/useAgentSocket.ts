@@ -14,31 +14,30 @@ import {
   typingDelay,
   type ChatMessage,
   type ChatState,
+  type Controller,
   type InputMethod,
   type SendFailure,
   type Tree,
   type VestaEvent,
 } from "@vesta/core";
-import { useReplica, useSyncState } from "@vesta/core/react";
-import { useController } from "@/controller/context";
 import { createRnSocket } from "@/controller/rn-socket";
+import {
+  useOptionalControllerReplica,
+  useOptionalControllerSyncState,
+} from "@/controller/optional-controller-store";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
 import { connectionKeyOf } from "@/session/session-model";
 import { useChatHold } from "./ChatHoldProvider";
-import {
-  captureChatHold,
-  chatHoldKey,
-  heldChatState,
-} from "./chat-hold-model";
-
-function idsEqual(a: string[], b: string[]): boolean {
-  return a.length === b.length && a.every((value, index) => value === b[index]);
-}
+import { captureChatHold, chatHoldKey, heldChatState } from "./chat-hold-model";
 
 interface HistoryPage {
   events: VestaEvent[];
   cursor: number | null;
+}
+
+function idsEqual(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
 // The chat view-model over the core controller. The chat tail is a per-agent app-chat socket
@@ -47,8 +46,11 @@ interface HistoryPage {
 // agentState + pending come from the replica; gateway connectedness from the single sync socket.
 // Sends are POST intents confirmed by their chat-socket echo. The stale-while-reconnecting hold gives
 // an instant render across a controller epoch; backgrounding never blanks the chat.
-export function useAgentSocket(name: string, active: boolean) {
-  const controller = useController();
+export function useAgentSocket(
+  name: string,
+  active: boolean,
+  controller: Controller | null,
+) {
   const preferences = usePreferences();
   const { connection } = useSession();
   const connectionRef = useRef(connection);
@@ -61,7 +63,7 @@ export function useAgentSocket(name: string, active: boolean) {
   const naturalPacingRef = useRef(naturalPacing);
   naturalPacingRef.current = naturalPacing;
 
-  const connected = useSyncState(controller) === "open";
+  const connected = useOptionalControllerSyncState(controller) === "open";
 
   // The app-chat live socket URL through vestad's authenticated proxy, mirroring the /sync URL
   // builder: swap http->ws and carry the (freshest-rendered) access token as a query param.
@@ -74,10 +76,12 @@ export function useAgentSocket(name: string, active: boolean) {
 
   const activitySelector = useCallback(
     (tree: Tree | null) =>
-      active && name ? (tree?.agents[name]?.info.activityState ?? "idle") : "idle",
+      active && name
+        ? (tree?.agents[name]?.info.activityState ?? "idle")
+        : "idle",
     [active, name],
   );
-  const agentState = useReplica(controller.replica, activitySelector);
+  const agentState = useOptionalControllerReplica(controller, activitySelector);
 
   const pendingSelector = useCallback(
     (tree: Tree | null): string[] =>
@@ -88,7 +92,11 @@ export function useAgentSocket(name: string, active: boolean) {
         : [],
     [name],
   );
-  const pendingNotifications = useReplica(controller.replica, pendingSelector, idsEqual);
+  const pendingNotifications = useOptionalControllerReplica(
+    controller,
+    pendingSelector,
+    idsEqual,
+  );
 
   // ChatState is the model's single source of truth. It lives in a ref (synchronous, so a batch of
   // appends dedups against the running accumulation) mirrored into React state for rendering. It is
@@ -142,30 +150,33 @@ export function useAgentSocket(name: string, active: boolean) {
     setIsTyping(false);
   }, [clearTypingTimer, commit]);
 
-  const drainQueue = useCallback(function drainQueue() {
-    if (drainingRef.current) return;
-    const queue = chatQueueRef.current;
-    const next = queue[0];
-    if (next === undefined) {
-      setIsTyping(false);
-      return;
-    }
-    if (queue.length > PACING.flushThreshold || !naturalPacingRef.current) {
-      flushQueue();
-      return;
-    }
-    drainingRef.current = true;
-    setIsTyping(true);
-    const delay = typingDelay(next.type === "chat" ? next.text.length : 0);
-    typingTimerRef.current = setTimeout(() => {
-      typingTimerRef.current = null;
-      queue.shift();
-      commit((current) => commitPacedChat(current, next));
-      if (next.type === "chat") setLatestLiveChat(next.text);
-      drainingRef.current = false;
-      drainQueue();
-    }, delay);
-  }, [commit, flushQueue]);
+  const drainQueue = useCallback(
+    function drainQueue() {
+      if (drainingRef.current) return;
+      const queue = chatQueueRef.current;
+      const next = queue[0];
+      if (next === undefined) {
+        setIsTyping(false);
+        return;
+      }
+      if (queue.length > PACING.flushThreshold || !naturalPacingRef.current) {
+        flushQueue();
+        return;
+      }
+      drainingRef.current = true;
+      setIsTyping(true);
+      const delay = typingDelay(next.type === "chat" ? next.text.length : 0);
+      typingTimerRef.current = setTimeout(() => {
+        typingTimerRef.current = null;
+        queue.shift();
+        commit((current) => commitPacedChat(current, next));
+        if (next.type === "chat") setLatestLiveChat(next.text);
+        drainingRef.current = false;
+        drainQueue();
+      }, delay);
+    },
+    [commit, flushQueue],
+  );
 
   const enqueueChat = useCallback(
     (event: ChatMessage) => {
@@ -181,6 +192,9 @@ export function useAgentSocket(name: string, active: boolean) {
 
   const fetchPage = useCallback(
     (cursor?: number): Promise<HistoryPage> => {
+      if (!controller) {
+        return Promise.reject(new Error("The gateway is not connected."));
+      }
       const parameters = new URLSearchParams();
       if (cursor !== undefined) parameters.set("cursor", String(cursor));
       const qs = parameters.toString();
@@ -192,7 +206,7 @@ export function useAgentSocket(name: string, active: boolean) {
   );
 
   useEffect(() => {
-    if (!active || !name) return;
+    if (!active || !name || !controller) return;
     let cancelled = false;
 
     // Seed from the hold for this key (survives the controller epoch); a mismatched key clears to
@@ -245,6 +259,7 @@ export function useAgentSocket(name: string, active: boolean) {
     };
   }, [
     active,
+    controller,
     name,
     key,
     holdStore,
@@ -268,7 +283,7 @@ export function useAgentSocket(name: string, active: boolean) {
 
   const send = useCallback(
     (text: string, inputMethod: InputMethod = "typed"): boolean => {
-      if (!name) return false;
+      if (!name || !controller) return false;
       const { id, outcome } = sendMessage(
         controller.http,
         name,
@@ -286,7 +301,7 @@ export function useAgentSocket(name: string, active: boolean) {
   // to "sending" and confirms on the same echo. Text + input method come from the bubble tapped.
   const retry = useCallback(
     (intentId: string, text: string, inputMethod: InputMethod = "typed") => {
-      if (!name) return;
+      if (!name || !controller) return;
       commit((current) => markSend(current, intentId, "sending"));
       const { outcome } = sendMessage(
         controller.http,
@@ -302,7 +317,14 @@ export function useAgentSocket(name: string, active: boolean) {
   const hasMore = state.cursor !== null;
 
   const loadMore = useCallback(async (): Promise<void> => {
-    if (!name || loadingMoreRef.current || stateRef.current.cursor === null) return;
+    if (
+      !name ||
+      !controller ||
+      loadingMoreRef.current ||
+      stateRef.current.cursor === null
+    ) {
+      return;
+    }
     loadingMoreRef.current = true;
     setLoadingMore(true);
     try {
@@ -312,7 +334,7 @@ export function useAgentSocket(name: string, active: boolean) {
       loadingMoreRef.current = false;
       setLoadingMore(false);
     }
-  }, [name, fetchPage, commit]);
+  }, [name, controller, fetchPage, commit]);
 
   return {
     events: state.messages,

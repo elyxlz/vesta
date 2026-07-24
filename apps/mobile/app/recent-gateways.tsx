@@ -13,19 +13,12 @@ import { useRouter } from "expo-router";
 import { GatewayCloseButton } from "@/components/GatewayCloseButton";
 import { NativeDeleteRow } from "@/components/NativeDeleteRow";
 import { Text } from "@/components/ui/Typography";
-import {
-  ThemeOverrideProvider,
-  usePreferences,
-} from "@/preferences/PreferencesProvider";
+import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
 import type { RecentGateway } from "@/storage/recent-gateway-model";
 
 export default function RecentGatewaysScreen() {
-  return (
-    <ThemeOverrideProvider theme="light">
-      <RecentGatewaysContent />
-    </ThemeOverrideProvider>
-  );
+  return <RecentGatewaysContent />;
 }
 
 function gatewayName(gateway: RecentGateway): string {
@@ -125,7 +118,7 @@ function RecentGatewaysContent() {
 
   return (
     <Animated.ScrollView
-      style={{ backgroundColor: colors.background }}
+      style={{ backgroundColor: colors.card }}
       contentContainerStyle={styles.content}
       contentInsetAdjustmentBehavior="never"
       onScroll={Animated.event(
@@ -138,20 +131,20 @@ function RecentGatewaysContent() {
     >
       <View style={styles.header}>
         <View
-          style={[styles.headerSurface, { backgroundColor: colors.background }]}
+          style={[styles.headerSurface, { backgroundColor: colors.card }]}
         >
           <View style={styles.titleRow}>
+            <GatewayCloseButton
+              color={colors.text}
+              fallbackColor={colors.input}
+              onPress={() => router.back()}
+            />
             <Text
               family="heading"
               style={[styles.title, { color: colors.text }]}
             >
               Recent gateways
             </Text>
-            <GatewayCloseButton
-              color={colors.text}
-              fallbackColor={colors.input}
-              onPress={() => router.back()}
-            />
           </View>
           <Text style={[styles.subtitle, { color: colors.secondaryText }]}>
             Reconnect to a gateway previously used on this device.
@@ -171,7 +164,7 @@ function RecentGatewaysContent() {
           ]}
         >
           <LinearGradient
-            colors={[colors.background, `${colors.background}00`]}
+            colors={[colors.card, `${colors.card}00`]}
             style={StyleSheet.absoluteFill}
           />
         </Animated.View>
@@ -191,7 +184,7 @@ function RecentGatewaysContent() {
               containerStyle={[
                 styles.gateway,
                 {
-                  backgroundColor: colors.elevated,
+                  backgroundColor: colors.background,
                   borderColor: colors.border,
                 },
               ]}

@@ -9,7 +9,7 @@ import {
 import type { Ref } from "react";
 import { fontNames } from "@/theme/typography";
 
-export type FontFamily = "sans" | "heading" | "mono";
+export type FontFamily = "sans" | "heading" | "wordmark" | "mono";
 
 function numericWeight(weight: TextStyle["fontWeight"]): number {
   if (typeof weight === "number") return weight;
@@ -20,6 +20,12 @@ function numericWeight(weight: TextStyle["fontWeight"]): number {
 
 function fontFor(family: FontFamily, weight: TextStyle["fontWeight"]): string {
   const value = numericWeight(weight);
+  if (family === "wordmark") {
+    if (value >= 700) return fontNames.wordmark.native["700"];
+    if (value >= 600) return fontNames.wordmark.native["600"];
+    if (value >= 500) return fontNames.wordmark.native["500"];
+    return fontNames.wordmark.native["400"];
+  }
   if (family === "heading") {
     if (value >= 700) return fontNames.heading.native["700"];
     if (value >= 600) return fontNames.heading.native["600"];

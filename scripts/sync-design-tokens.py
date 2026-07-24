@@ -76,6 +76,7 @@ def _css(tokens: dict[str, Any]) -> str:
   --font-sans: {families["sans"]["css"]};
   --font-heading: {families["heading"]["css"]};
   --font-serif: {families["heading"]["css"]};
+  --font-wordmark: {families["wordmark"]["css"]};
   --font-mono:
     "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas,
     "Liberation Mono", monospace;
@@ -152,10 +153,12 @@ def _typescript(tokens: dict[str, Any]) -> str:
 
 
 def _native_config_json(tokens: dict[str, Any]) -> str:
+    light = tokens["colors"]["light"]
     dark = tokens["colors"]["dark"]
     payload = {
         "background": _native_color(dark["background"]),
-        "splashBackground": _native_color(tokens["launch"]["background"]),
+        "splashBackground": _native_color(light["background"]),
+        "splashBackgroundDark": _native_color(dark["background"]),
         "primary": _native_color(dark["primary"]),
     }
     return json.dumps(payload, indent=2) + "\n"

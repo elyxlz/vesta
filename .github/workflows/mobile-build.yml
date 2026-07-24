@@ -43,17 +43,13 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: |
-            apps/package-lock.json
-            apps/mobile/package-lock.json
+          cache-dependency-path: apps/package-lock.json
 
       - name: Install dependencies
-        run: |
-          npm --prefix apps ci
-          npm --prefix apps/mobile ci
+        run: npm --prefix apps ci
 
       - name: Validate mobile app
-        run: ./check.sh web
+        run: ./check.sh app-mobile
 
       - name: Set up EAS
         uses: expo/expo-github-action@v9
