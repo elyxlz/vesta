@@ -105,6 +105,7 @@ export function Button({
           : size === "compact"
             ? styles.compactButton
             : null,
+        usesCardSurface ? styles.cardButton : null,
         pill ? styles.pill : null,
         {
           backgroundColor:
@@ -137,9 +138,11 @@ export function Button({
               />
             ) : null}
             <Text
+              family={usesCardSurface ? "heading" : "sans"}
               style={[
                 styles.label,
                 size !== "default" ? styles.smallLabel : null,
+                usesCardSurface ? styles.cardLabel : null,
                 labelStyle,
                 { color: contentColor },
               ]}
@@ -188,10 +191,17 @@ const styles = StyleSheet.create({
   },
   smallButton: { minHeight: 40, paddingHorizontal: 14 },
   compactButton: { minHeight: 18, paddingHorizontal: 14 },
+  cardButton: { alignItems: "flex-start", paddingHorizontal: 16 },
   pill: { borderRadius: radii.pill },
   content: { flexDirection: "row", alignItems: "center", gap: 8 },
   label: { fontSize: 16, fontWeight: "700" },
   smallLabel: { fontSize: 14, fontWeight: "600" },
+  cardLabel: {
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: "500",
+    letterSpacing: -0.2,
+  },
   textButton: { alignSelf: "center", padding: 4 },
   textButtonLabel: { fontSize: 13, fontWeight: "500" },
 });
