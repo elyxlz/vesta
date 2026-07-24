@@ -18,6 +18,11 @@ import { useRoster } from "@/session/RosterProvider";
 import { useSession } from "@/session/SessionProvider";
 
 const IS_IOS = process.env.EXPO_OS === "ios";
+const appearanceValueIcons = {
+  system: "phone-portrait-outline",
+  light: "sunny-outline",
+  dark: "moon-outline",
+} as const;
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -93,7 +98,8 @@ export default function SettingsScreen() {
           <FormRow
             label="Appearance"
             detail="Use the system setting or choose light or dark."
-            value={preferences.theme}
+            valueIcon={appearanceValueIcons[preferences.theme]}
+            valueIconLabel={`${preferences.theme} appearance`}
             onPress={chooseTheme}
           />
         </FormSection>

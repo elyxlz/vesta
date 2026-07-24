@@ -105,6 +105,8 @@ interface RowProps {
   detail?: string;
   icon?: IconName;
   value?: string;
+  valueIcon?: IconName;
+  valueIconLabel?: string;
   onPress?: () => void;
   destructive?: boolean;
   destructiveIcon?: boolean;
@@ -116,6 +118,8 @@ export function FormRow({
   detail,
   icon,
   value,
+  valueIcon,
+  valueIconLabel,
   onPress,
   destructive = false,
   destructiveIcon = false,
@@ -150,7 +154,21 @@ export function FormRow({
           </Text>
         ) : null}
       </View>
-      {value ? (
+      {valueIcon ? (
+        <View style={styles.valueWithIcon}>
+          <Ionicons
+            accessibilityLabel={valueIconLabel}
+            name={valueIcon}
+            size={17}
+            color={colors.secondaryText}
+          />
+          {value ? (
+            <Text style={[styles.value, { color: colors.secondaryText }]}>
+              {value}
+            </Text>
+          ) : null}
+        </View>
+      ) : value ? (
         <Text style={[styles.value, { color: colors.secondaryText }]}>
           {value}
         </Text>
@@ -271,4 +289,9 @@ const styles = StyleSheet.create({
   rowLabel: { fontSize: 16, fontWeight: "600" },
   rowDetail: { fontSize: 12, lineHeight: 16 },
   value: { fontSize: 15 },
+  valueWithIcon: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
 });
