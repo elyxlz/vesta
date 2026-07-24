@@ -139,6 +139,18 @@ export const designTokens = {
           "700": "SourceSerif4_700Bold",
         },
       },
+      wordmark: {
+        css: 'ui-serif, Georgia, Cambria, "Times New Roman", Times, serif',
+        native: {
+          ios: {
+            "400": ".NewYork-Regular",
+            "500": ".NewYork-Medium",
+            "600": ".NewYork-Semibold",
+            "700": ".NewYork-Bold",
+          },
+          default: "serif",
+        },
+      },
       mono: {
         css: '"JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
         native: {

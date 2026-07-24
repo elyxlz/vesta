@@ -89,7 +89,7 @@ function ConnectContent() {
           />
         </BootTransitionTarget>
         <View style={styles.heroCopy}>
-          <Text family="heading" style={[styles.title, { color: colors.text }]}>
+          <Text family="wordmark" style={[styles.title, { color: colors.text }]}>
             vesta
           </Text>
           <Text

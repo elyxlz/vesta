@@ -76,6 +76,7 @@ def _css(tokens: dict[str, Any]) -> str:
   --font-sans: {families["sans"]["css"]};
   --font-heading: {families["heading"]["css"]};
   --font-serif: {families["heading"]["css"]};
+  --font-wordmark: {families["wordmark"]["css"]};
   --font-mono:
     "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas,
     "Liberation Mono", monospace;
