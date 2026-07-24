@@ -212,7 +212,7 @@ function SessionNavigation() {
               <Stack.Screen
                 name="scan"
                 options={{
-                  title: "Scan QR code",
+                  title: "",
                   headerShown: true,
                   presentation: "formSheet",
                   sheetAllowedDetents: [1],
