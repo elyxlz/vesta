@@ -231,7 +231,7 @@ export default function SettingsScreen() {
             onValueChange={(value) => void changeAppLock(value)}
           />
           <SwitchRow
-            label="Hide app previews"
+            label="Hide in app switcher"
             detail={
               privacy.appLockEnabled
                 ? "Always enabled while App Lock is on."
@@ -268,7 +268,7 @@ export default function SettingsScreen() {
             }
           />
           <SwitchRow
-            label="Message previews"
+            label="Show message content"
             detail="Show chat text on the lock screen. Off keeps messages private."
             value={
               preferences.remoteNotifications &&
