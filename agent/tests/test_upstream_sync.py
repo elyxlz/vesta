@@ -3,11 +3,12 @@
 The box's ``~`` is a plain FULL git checkout of the agent-upstream snapshot (all skills +
 MEMORY.md; the engine ``agent/core`` is a read-only mount, gitignored, never in the tree).
 Which skills are ACTIVE is recorded in ``agent/data/config.json`` and materialized as the
-``~/.claude/skills`` symlink farm by the Docker entrypoint; every optional skill sits on disk
+``~/.claude/skills`` symlink farm by agent startup; every optional skill sits on disk
 regardless. These tests build an upstream repo with the REAL build-upstream.sh (the script
-vestad runs), then drive the REAL bootstrap/compatibility scripts and the standard Git
-commands documented for the agent in a fake ``$HOME``, pinning the flat-checkout contract:
-clean attach, version-pinned merge, offline activation, and the cone->flat migration spine.
+vestad runs), then drive the REAL bootstrap/compatibility scripts, agent startup, and the
+standard Git commands documented for the agent in a fake ``$HOME``, pinning the
+flat-checkout contract: clean attach, version-pinned merge, offline activation, and the
+cone->flat migration spine.
 """
 
 import json
@@ -74,18 +75,18 @@ def _run(script, home, args=(), extra_env=None):
     return subprocess.run(["bash", str(script), *args], cwd=str(home), env=_env(home, extra_env), capture_output=True, text=True, check=False)
 
 
-def _entrypoint_skill_link_script():
-    source = (REPO_ROOT / "vestad/src/docker.rs").read_text()
-    match = re.search(r"fn skill_link_entrypoint_step\(\) -> String \{\n    r#\"(.*?)\"#\n        \.into\(\)\n\}", source, re.DOTALL)
-    assert match, "skill_link_entrypoint_step raw string not found"
-    return match.group(1)
-
-
-def _run_skill_entrypoint(home, extra_env=None):
+def _run_agent_startup(home, extra_env=None):
+    env = _env(home, extra_env)
+    env["AGENT_DIR"] = str(home / "agent")
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(AGENT_ROOT), env.get("PYTHONPATH")]))
     return subprocess.run(
-        ["sh", "-c", _entrypoint_skill_link_script()],
+        [
+            sys.executable,
+            "-c",
+            "from core import config; from core.claude_runtime import reconcile_claude_runtime; reconcile_claude_runtime(config.VestaConfig())",
+        ],
         cwd=str(home),
-        env=_env(home, extra_env),
+        env=env,
         capture_output=True,
         text=True,
         check=False,
@@ -205,7 +206,9 @@ def _direct_sync(home, source):
         home,
         env,
     )
-    version = re.search(r'^version = "([^"]+)"$', (home / "agent/core/pyproject.toml").read_text(), re.MULTILINE).group(1)
+    match = re.search(r'^version = "([^"]+)"$', (home / "agent/core/pyproject.toml").read_text(), re.MULTILINE)
+    assert match is not None
+    version = match.group(1)
     tag = f"agent-v{version}"
     if _git_result(["merge-base", "--is-ancestor", tag, "HEAD"], home, env).returncode == 0:
         return None
@@ -486,7 +489,7 @@ def test_deactivate_default_is_honest_and_keeps_it_active(tmp_path):
     home = _fresh_box(tmp_path)
     env = _box_env(source)
     assert _attach(home, source).returncode == 0
-    _run_skill_entrypoint(home, extra_env=env)  # seed active_skills with the defaults
+    _run_agent_startup(home, extra_env=env)  # seed active_skills with the defaults
     assert "tasks" in _active(home)
     r = _run(SKILLS_DEACTIVATE, home, args=("tasks",), extra_env=env)
     assert r.returncode == 0
@@ -508,7 +511,7 @@ def test_search_lists_local_catalog_and_marks_active(tmp_path):
     assert "[active]" in lines["whatsapp"]  # activation is marked from config
 
 
-# --- entrypoint skill linking: the one gate turning the active list into the symlink farm ---
+# --- agent startup: the one gate turning the active list into the symlink farm ---
 
 
 def _skill_link_box(tmp_path, defaults=DEFAULT_SKILLS, optional=("tasks", "dream", "whatsapp", "microsoft")):
@@ -526,53 +529,63 @@ def _skill_link_box(tmp_path, defaults=DEFAULT_SKILLS, optional=("tasks", "dream
     return home
 
 
-def test_entrypoint_seeds_defaults_and_always_links_core(tmp_path):
+def test_agent_startup_seeds_defaults_and_always_links_core(tmp_path):
     home = _skill_link_box(tmp_path)
-    assert _run_skill_entrypoint(home).returncode == 0
+    assert _run_agent_startup(home).returncode == 0
     assert _active(home) == sorted(DEFAULT_SKILLS)  # seeded from the shipped defaults
     # Defaults + every core skill are linked; an inactive optional (whatsapp) is not.
     assert set(_links(home)) == {*DEFAULT_SKILLS, "app-chat", "upstream-sync"}
     assert "whatsapp" not in _links(home)
+    assert json.loads((home / ".claude/settings.json").read_text()) == {"permissions": {"allow": []}}
 
 
-def test_entrypoint_unions_a_newly_shipped_default(tmp_path):
+def test_agent_startup_unions_a_newly_shipped_default(tmp_path):
     home = _skill_link_box(tmp_path)
-    assert _run_skill_entrypoint(home).returncode == 0
+    assert _run_agent_startup(home).returncode == 0
     (home / "agent/core/default-skills.txt").write_text("\n".join((*DEFAULT_SKILLS, "whatsapp")) + "\n")  # an upgrade's new default
-    assert _run_skill_entrypoint(home).returncode == 0
+    assert _run_agent_startup(home).returncode == 0
     assert "whatsapp" in _active(home) and "whatsapp" in _links(home)
 
 
-def test_entrypoint_reads_final_active_line_without_newline(tmp_path):
+def test_agent_startup_preserves_existing_claude_settings(tmp_path):
+    home = _skill_link_box(tmp_path)
+    settings = home / ".claude/settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text('{"theme":"dark"}\n')
+    assert _run_agent_startup(home).returncode == 0
+    assert json.loads(settings.read_text()) == {"theme": "dark"}
+
+
+def test_agent_startup_reads_final_active_line_without_newline(tmp_path):
     home = _skill_link_box(tmp_path)
     active = home / "agent/data/active-skills.txt"
     active.parent.mkdir(parents=True, exist_ok=True)
     active.write_text("whatsapp")
-    assert _run_skill_entrypoint(home).returncode == 0
+    assert _run_agent_startup(home).returncode == 0
     assert "whatsapp" in _links(home)
 
 
-def test_entrypoint_drops_a_deactivated_optional(tmp_path):
+def test_agent_startup_drops_a_deactivated_optional(tmp_path):
     home = _skill_link_box(tmp_path)
-    assert _run_skill_entrypoint(home).returncode == 0
+    assert _run_agent_startup(home).returncode == 0
     _write_active(home, [*DEFAULT_SKILLS, "microsoft"])  # activate a non-default
-    assert _run_skill_entrypoint(home).returncode == 0
+    assert _run_agent_startup(home).returncode == 0
     assert "microsoft" in _links(home)
     _write_active(home, DEFAULT_SKILLS)  # deactivate it again
-    assert _run_skill_entrypoint(home).returncode == 0
+    assert _run_agent_startup(home).returncode == 0
     assert "microsoft" not in _links(home)  # deactivated leaves no dangling link
     assert set(DEFAULT_SKILLS) <= set(_links(home))  # defaults still linked
 
 
-def test_entrypoint_bridges_the_cone_on_first_flat_boot(tmp_path):
-    """A cone box's first flat boot (before the migration converts it): the entrypoint seeds
+def test_agent_startup_bridges_the_cone_on_first_flat_boot(tmp_path):
+    """A cone box's first flat boot (before the migration converts it): agent startup seeds
     active_skills from the still-present cone so the user's active skills stay active,
     instead of collapsing to defaults-only."""
     source = _upstream_fixture(tmp_path)
     # whatsapp is NOT a default, so only the cone bridge (not default-seeding) can preserve it.
     home, env = _legacy_cone_box(tmp_path, source, active=("tasks", "whatsapp"))
     assert not (home / "agent/data/config.json").exists()
-    assert _run_skill_entrypoint(home, extra_env=env).returncode == 0
+    assert _run_agent_startup(home, extra_env=env).returncode == 0
     assert "whatsapp" in _active(home)  # captured from the cone, not from defaults
     assert "whatsapp" in _links(home)  # and linked (on disk in the cone)
 
