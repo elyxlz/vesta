@@ -140,14 +140,9 @@ export const designTokens = {
         },
       },
       wordmark: {
-        css: 'ui-serif, Georgia, Cambria, "Times New Roman", Times, serif',
+        css: "Georgia, serif",
         native: {
-          ios: {
-            "400": ".NewYork-Regular",
-            "500": ".NewYork-Medium",
-            "600": ".NewYork-Semibold",
-            "700": ".NewYork-Bold",
-          },
+          ios: "Georgia",
           default: "serif",
         },
       },
