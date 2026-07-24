@@ -8,7 +8,7 @@ import {
 } from "@vesta/core";
 import { fetchGatewayInfo, fetchGatewaySettings } from "@/api/endpoints";
 import { Screen } from "@/components/layout/Screen";
-import { Button } from "@/components/ui/Button";
+import { Button, ButtonGroup } from "@/components/ui/Button";
 import { FormRow, FormSection, SwitchRow } from "@/components/ui/Form";
 import { unregisterCurrentMobileDevice } from "@/notifications/PushCoordinator";
 import {
@@ -169,10 +169,9 @@ export default function SettingsScreen() {
         <FormSection
           title="Gateway"
           actions={
-            <>
+            <ButtonGroup>
               <Button
-                pill
-                variant="card"
+                variant="cardGrouped"
                 loading={gatewayUpdate.isPending || updateCheck.isPending}
                 onPress={
                   updateAvailable
@@ -191,14 +190,13 @@ export default function SettingsScreen() {
                         : "Check for updates"}
               </Button>
               <Button
-                pill
-                variant="card"
+                variant="cardGrouped"
                 loading={gatewayRestart.isPending}
                 onPress={confirmGatewayRestart}
               >
                 Restart gateway
               </Button>
-            </>
+            </ButtonGroup>
           }
         >
           <FormRow
@@ -242,13 +240,15 @@ export default function SettingsScreen() {
         <FormSection
           title="Support"
           actions={
-            <>
-              <Button pill variant="card" onPress={() => router.push("/debug")}>
+            <ButtonGroup>
+              <Button
+                variant="cardGrouped"
+                onPress={() => router.push("/debug")}
+              >
                 Diagnostics
               </Button>
               <Button
-                pill
-                variant="card"
+                variant="cardGrouped"
                 onPress={() =>
                   void Linking.openURL(
                     "https://github.com/elyxlz/vesta/releases",
@@ -257,7 +257,7 @@ export default function SettingsScreen() {
               >
                 What’s new
               </Button>
-            </>
+            </ButtonGroup>
           }
         />
 

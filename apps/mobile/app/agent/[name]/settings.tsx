@@ -12,7 +12,7 @@ import { useAgent } from "@/agent/AgentProvider";
 import { AgentPagesSettingsSection } from "@/components/AgentPagesSettingsSection";
 import { AgentIdentityCard } from "@/components/agent-identity-card";
 import { Screen } from "@/components/layout/Screen";
-import { Button } from "@/components/ui/Button";
+import { Button, ButtonGroup } from "@/components/ui/Button";
 import { FormSection, SwitchRow } from "@/components/ui/Form";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
@@ -76,14 +76,14 @@ function AgentSettingsContent() {
         <FormSection
           title="Agent"
           actions={
-            <>
-              <Button pill variant="card" onPress={() => open("provider")}>
+            <ButtonGroup>
+              <Button variant="cardGrouped" onPress={() => open("provider")}>
                 Provider and model
               </Button>
-              <Button pill variant="card" onPress={() => open("voice")}>
+              <Button variant="cardGrouped" onPress={() => open("voice")}>
                 Voice
               </Button>
-            </>
+            </ButtonGroup>
           }
         >
           <SwitchRow
@@ -100,25 +100,34 @@ function AgentSettingsContent() {
           title="Attention"
           actions={
             <>
-              <Button
-                pill
-                variant="card"
-                onPress={() => openPage("notifications")}
-              >
-                Notifications
-              </Button>
+              <ButtonGroup>
+                <Button
+                  variant="cardGrouped"
+                  onPress={() => openPage("notifications")}
+                >
+                  Notifications
+                </Button>
+                <Button
+                  variant="cardGrouped"
+                  onPress={() => open("notifications")}
+                >
+                  Notification rules
+                </Button>
+              </ButtonGroup>
               <Button pill variant="card" onPress={() => openPage("logs")}>
                 Logs
               </Button>
-              <Button pill variant="card" onPress={() => open("notifications")}>
-                Notification rules
-              </Button>
-              <Button pill variant="card" onPress={() => open("files")}>
-                Files
-              </Button>
-              <Button pill variant="card" onPress={() => open("host-access")}>
-                Host access
-              </Button>
+              <ButtonGroup>
+                <Button variant="cardGrouped" onPress={() => open("files")}>
+                  Files
+                </Button>
+                <Button
+                  variant="cardGrouped"
+                  onPress={() => open("host-access")}
+                >
+                  Host access
+                </Button>
+              </ButtonGroup>
               <Button pill variant="card" onPress={() => open("backups")}>
                 Backups
               </Button>
@@ -129,29 +138,32 @@ function AgentSettingsContent() {
           title="Actions"
           actions={
             <>
-              <Button
-                pill
-                variant="card"
-                disabled={action.isPending}
-                loading={
-                  action.isPending &&
-                  (action.variables === "start" || action.variables === "stop")
-                }
-                onPress={() =>
-                  action.mutate(agent?.status === "stopped" ? "start" : "stop")
-                }
-              >
-                {agent?.status === "stopped" ? "Start agent" : "Stop agent"}
-              </Button>
-              <Button
-                pill
-                variant="card"
-                disabled={action.isPending}
-                loading={action.isPending && action.variables === "restart"}
-                onPress={() => action.mutate("restart")}
-              >
-                Restart agent
-              </Button>
+              <ButtonGroup>
+                <Button
+                  variant="cardGrouped"
+                  disabled={action.isPending}
+                  loading={
+                    action.isPending &&
+                    (action.variables === "start" ||
+                      action.variables === "stop")
+                  }
+                  onPress={() =>
+                    action.mutate(
+                      agent?.status === "stopped" ? "start" : "stop",
+                    )
+                  }
+                >
+                  {agent?.status === "stopped" ? "Start agent" : "Stop agent"}
+                </Button>
+                <Button
+                  variant="cardGrouped"
+                  disabled={action.isPending}
+                  loading={action.isPending && action.variables === "restart"}
+                  onPress={() => action.mutate("restart")}
+                >
+                  Restart agent
+                </Button>
+              </ButtonGroup>
               <Button
                 pill
                 variant="card"

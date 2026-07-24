@@ -1,4 +1,4 @@
-import type { ComponentProps, ReactNode } from "react";
+import { Children, type ComponentProps, type ReactNode } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -19,6 +19,8 @@ type ButtonVariant =
   | "secondary"
   | "card"
   | "cardDanger"
+  | "cardGrouped"
+  | "cardGroupedDanger"
   | "ghost"
   | "danger"
   | "plain";
@@ -56,6 +58,10 @@ interface TextButtonProps {
   accessibilityLabel?: string;
 }
 
+interface ButtonGroupProps {
+  children: ReactNode;
+}
+
 export function Button({
   children,
   onPress,
@@ -74,13 +80,22 @@ export function Button({
   accessibilityLabel,
 }: ButtonProps) {
   const { colors } = usePreferences();
-  const usesCardSurface = variant === "card" || variant === "cardDanger";
+  const usesCardLayout =
+    variant === "card" ||
+    variant === "cardDanger" ||
+    variant === "cardGrouped" ||
+    variant === "cardGroupedDanger";
+  const ownsCardSurface = variant === "card" || variant === "cardDanger";
+  const isDestructive =
+    variant === "danger" ||
+    variant === "cardDanger" ||
+    variant === "cardGroupedDanger";
   const backgroundColor =
     variant === "primary"
       ? colors.accent
       : variant === "danger"
         ? withAlpha(colors.danger, 0.7)
-        : usesCardSurface
+        : ownsCardSurface
           ? colors.card
           : variant === "secondary"
             ? colors.input
@@ -90,7 +105,7 @@ export function Button({
       ? colors.accentText
       : variant === "danger"
         ? "#ffffff"
-        : variant === "cardDanger"
+        : isDestructive
           ? colors.danger
           : colors.text;
 
@@ -111,15 +126,18 @@ export function Button({
           : size === "compact"
             ? styles.compactButton
             : null,
-        usesCardSurface ? styles.cardButton : null,
+        usesCardLayout ? styles.cardButton : null,
+        variant === "cardGrouped" || variant === "cardGroupedDanger"
+          ? styles.groupedCardButton
+          : null,
         pill ? styles.pill : null,
         {
           backgroundColor:
             variant === "danger" && pressed
               ? withAlpha(colors.danger, 0.8)
               : backgroundColor,
-          borderColor: usesCardSurface ? colors.border : "transparent",
-          borderWidth: usesCardSurface ? StyleSheet.hairlineWidth : 0,
+          borderColor: ownsCardSurface ? colors.border : "transparent",
+          borderWidth: ownsCardSurface ? StyleSheet.hairlineWidth : 0,
           opacity: disabled
             ? 0.45
             : pressed && variant !== "danger" && variant !== "ghost"
@@ -132,14 +150,11 @@ export function Button({
         const contentColor =
           variant === "ghost" && pressed ? colors.interactive : textColor;
 
-        return loading && !usesCardSurface ? (
+        return loading && !usesCardLayout ? (
           <ActivityIndicator color={contentColor} />
         ) : (
           <View
-            style={[
-              styles.content,
-              usesCardSurface ? styles.cardContent : null,
-            ]}
+            style={[styles.content, usesCardLayout ? styles.cardContent : null]}
           >
             {icon ? (
               <Ionicons
@@ -152,7 +167,7 @@ export function Button({
               style={[
                 styles.label,
                 size !== "default" ? styles.smallLabel : null,
-                usesCardSurface ? styles.cardLabel : null,
+                usesCardLayout ? styles.cardLabel : null,
                 labelStyle,
                 { color: contentColor },
               ]}
@@ -166,9 +181,9 @@ export function Button({
                 color={trailingIconColor ?? colors.secondaryText}
               />
             ) : null}
-            {usesCardSurface && loading ? (
+            {usesCardLayout && loading ? (
               <ActivityIndicator color={contentColor} />
-            ) : usesCardSurface ? (
+            ) : usesCardLayout ? (
               <Ionicons
                 name="chevron-forward"
                 size={17}
@@ -179,6 +194,34 @@ export function Button({
         );
       }}
     </Pressable>
+  );
+}
+
+export function ButtonGroup({ children }: ButtonGroupProps) {
+  const { colors } = usePreferences();
+  const items = Children.toArray(children);
+
+  return (
+    <View
+      style={[
+        styles.buttonGroup,
+        { backgroundColor: colors.card, borderColor: colors.border },
+      ]}
+    >
+      {items.map((child, index) => (
+        <View key={index}>
+          {index > 0 ? (
+            <View
+              style={[
+                styles.buttonGroupSeparator,
+                { backgroundColor: colors.border },
+              ]}
+            />
+          ) : null}
+          {child}
+        </View>
+      ))}
+    </View>
   );
 }
 
@@ -222,7 +265,18 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     paddingHorizontal: 16,
   },
+  groupedCardButton: { borderRadius: 0 },
   pill: { borderRadius: radii.pill },
+  buttonGroup: {
+    borderRadius: radii.card,
+    borderCurve: "continuous",
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: "hidden",
+  },
+  buttonGroupSeparator: {
+    height: StyleSheet.hairlineWidth,
+    marginHorizontal: 16,
+  },
   content: { flexDirection: "row", alignItems: "center", gap: 8 },
   cardContent: { alignSelf: "stretch" },
   label: { fontSize: 16, fontWeight: "700" },
