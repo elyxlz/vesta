@@ -7,6 +7,8 @@ import { Text, TextInput } from "./Typography";
 
 type IconName = ComponentProps<typeof Ionicons>["name"];
 
+const sectionHorizontalPadding = 14;
+
 interface FieldProps extends ComponentProps<typeof TextInput> {
   label?: string;
   description?: string;
@@ -166,6 +168,10 @@ export function FormRow({
   return onPress ? (
     <Pressable
       accessibilityRole="button"
+      hitSlop={{
+        left: sectionHorizontalPadding,
+        right: sectionHorizontalPadding,
+      }}
       onPress={onPress}
       style={({ pressed }) => ({ opacity: pressed ? 0.55 : 1 })}
     >
@@ -242,12 +248,12 @@ const styles = StyleSheet.create({
     borderCurve: "continuous",
     borderWidth: StyleSheet.hairlineWidth,
     overflow: "hidden",
+    paddingHorizontal: sectionHorizontalPadding,
     paddingVertical: 6,
   },
   footer: { fontSize: 13, lineHeight: 18, paddingHorizontal: 16 },
   row: {
     minHeight: 54,
-    paddingHorizontal: 14,
     paddingVertical: 10,
     flexDirection: "row",
     alignItems: "center",
