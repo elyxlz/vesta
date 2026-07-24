@@ -214,7 +214,7 @@ const styles = StyleSheet.create({
   cardContent: { alignSelf: "stretch" },
   label: { fontSize: 16, fontWeight: "700" },
   smallLabel: { fontSize: 14, fontWeight: "600" },
-  cardLabel: { flex: 1, fontSize: 16, fontWeight: "600" },
+  cardLabel: { flex: 1, fontSize: 16, fontWeight: "500" },
   textButton: { alignSelf: "center", padding: 4 },
   textButtonLabel: { fontSize: 13, fontWeight: "500" },
 });

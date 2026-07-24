@@ -296,7 +296,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  rowLabel: { fontSize: 16, fontWeight: "600" },
+  rowLabel: { fontSize: 16, fontWeight: "500" },
   rowDetail: { fontSize: 14, lineHeight: 20 },
   value: { fontSize: 15 },
   valueWithIcon: {
