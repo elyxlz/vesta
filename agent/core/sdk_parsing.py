@@ -271,8 +271,9 @@ def make_hooks(state: vm.State) -> dict[HookEvent, list[HookMatcher]]:
     async def log_tool_failure(input_data: PostToolUseFailureHookInput, tool_use_id: str | None, _context: HookContext) -> HookJSONOutput:
         name = input_data["tool_name"] if "tool_name" in input_data else "?"
         error = input_data["error"] if "error" in input_data else "(unknown error)"
-        prefix, _ = _subagent_prefix(input_data)
+        prefix, is_sub = _subagent_prefix(input_data)
         logger.warning(f"{prefix}Tool failed: {name}: {error}")
+        state.event_bus.emit({"type": "tool_end", "tool": name, "subagent": is_sub})
         tool_id = tool_use_id or name
         state.active_tools.pop(tool_id, None)
         diagnostics.touch_activity(state, f"tool_fail:{name}")

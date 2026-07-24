@@ -1,7 +1,4 @@
-"""Per-agent LLM-provider auth (Claude OAuth or OpenRouter key). The provider choice and OpenRouter
-key live in the config store; the Claude OAuth blob lives in `.credentials.json` (the `claude` CLI
-reads it). On-disk state is the single source of truth: status is re-derived from disk on every boot,
-and a runtime auth failure is an in-memory flip only (no separate persisted auth flag)."""
+"""Per-agent LLM-provider auth and subscription credentials."""
 
 import dataclasses as dc
 import enum
@@ -14,7 +11,25 @@ import aiohttp
 import pydantic as pyd
 
 from . import logger
-from .config import CREDENTIALS_PATH, ClaudeOAuth, OpenRouterConfig, VestaConfig, merge_provider, read_claude_oauth, update_config_store
+from .config import (
+    CREDENTIALS_PATH,
+    ClaudeConfig,
+    ClaudeOAuth,
+    KeyProviderKind,
+    KimiConfig,
+    OpenAIConfig,
+    OpenRouterConfig,
+    ProviderKind,
+    VestaConfig,
+    ZaiConfig,
+    atomic_write_text,
+    codex_proxy_auth_path,
+    config_store_path,
+    config_write_lock,
+    read_claude_oauth,
+    update_config_store,
+    validate_config_updates,
+)
 
 CLAUDE_JSON_PATH = pl.Path.home() / ".claude.json"
 
@@ -34,14 +49,12 @@ class ProviderAuthState(enum.StrEnum):
     NOT_AUTHENTICATED = "not_authenticated"
 
 
-ProviderKind = tp.Literal["claude", "openrouter", "none"]
 RATE_LIMIT_RETRY_FALLBACK_SECONDS = 300
+ProviderStatusKind = ProviderKind | tp.Literal["none"]
 
-# What counts as a terminal provider error — the credential is rejected (401) or the account can't
-# pay (402) — owned here for every provider's reactive detector. Transient errors (5xx, 429 rate
-# limit) are deliberately excluded: those resolve on retry and must not flip the agent to
-# unauthenticated. OpenRouter sees it as an HTTP status (its cache proxy); Claude sees it as the
-# Claude Agent SDK's classified error on the assistant turn. Two transports, one definition.
+# What normally counts as a terminal provider error — the credential is rejected (401) or the
+# account can't pay (402). Kimi overloads both statuses, so its Claude-harness path additionally
+# uses the documented error text in is_terminal_provider_error below.
 TERMINAL_PROVIDER_ERRORS = (401, 402)
 # The Claude Agent SDK's AssistantMessage.error values that mean re-auth: 401 and 402.
 _TERMINAL_AUTH_ERRORS = frozenset({"authentication_failed", "billing_error"})
@@ -57,6 +70,35 @@ def is_terminal_auth_error(error: str | None) -> bool:
     return error in _TERMINAL_AUTH_ERRORS
 
 
+_KIMI_INVALID_CREDENTIAL_MARKERS = (
+    "api key appears to be invalid or may have expired",
+    "invalid authentication",
+)
+
+
+def is_terminal_provider_error(
+    kind: "ProviderStatusKind | None",
+    *,
+    assistant_error: str | None,
+    api_error_status: int | None,
+    details: tp.Iterable[str] = (),
+) -> bool:
+    """Classify a streamed provider failure without treating Kimi entitlement errors as logout.
+
+    Kimi documents 401 for both invalid credentials and valid subscriptions lacking K3, 1M, or
+    HighSpeed access; it also uses 402 when membership verification is temporarily unavailable.
+    Only its two explicit credential messages are therefore terminal. Other providers retain the
+    SDK's 401/402 classification.
+    """
+    if kind == "kimi":
+        is_401 = assistant_error == "authentication_failed" or api_error_status == 401
+        if not is_401:
+            return False
+        text = "\n".join(details).lower()
+        return any(marker in text for marker in _KIMI_INVALID_CREDENTIAL_MARKERS)
+    return is_terminal_auth_error(assistant_error) or api_error_status in TERMINAL_PROVIDER_ERRORS
+
+
 def is_unauthenticated(status: "ProviderStatus | None") -> bool:
     """The "dead token" predicate: gates handing prompts to the CLI (the processor's deferral
     and send_preempt) so a known-bad credential doesn't burn the CLI's retry budget."""
@@ -66,7 +108,7 @@ def is_unauthenticated(status: "ProviderStatus | None") -> bool:
 @dc.dataclass
 class ProviderStatus:
     state: ProviderAuthState
-    kind: ProviderKind
+    kind: ProviderStatusKind
     model: str | None
 
     def __post_init__(self) -> None:
@@ -107,9 +149,15 @@ def derive_status(config: VestaConfig) -> ProviderStatus:
     return ProviderStatus(state=state, kind=kind, model=model)
 
 
-def _sign_in(kind: str, *, model: str | None, max_context_tokens: int | None, key: str | None, config: VestaConfig) -> str | None:
-    """Build a provider patch, merge it into the store (shared merge: same-kind keeps the rest, a kind
-    switch replaces), persist it, and return the resulting model for the status."""
+def _validated_sign_in(
+    kind: str,
+    *,
+    model: str | None,
+    max_context_tokens: int | None,
+    key: str | None,
+    config: VestaConfig,
+) -> dict[str, pyd.JsonValue]:
+    """Build and validate a complete provider before any credential or config write."""
     patch: dict[str, pyd.JsonValue] = {"kind": kind}
     if model is not None:
         patch["model"] = model
@@ -117,39 +165,203 @@ def _sign_in(kind: str, *, model: str | None, max_context_tokens: int | None, ke
         patch["max_context_tokens"] = max_context_tokens
     if key is not None:
         patch["key"] = key
-    merged = merge_provider(config, patch)
-    update_config_store({"provider": merged})
-    return merged["model"] if "model" in merged and isinstance(merged["model"], str) else None
+    updates = validate_config_updates(config, {"provider": patch})
+    provider = updates.get("provider")
+    if not isinstance(provider, dict):  # validate_config_updates guarantees this; keep the boundary explicit.
+        raise TypeError("validated provider is not an object")
+    return tp.cast("dict[str, pyd.JsonValue]", provider)
+
+
+def _persist_sign_in(provider: dict[str, pyd.JsonValue]) -> str | None:
+    update_config_store({"provider": provider})
+    model = provider.get("model")
+    return model if isinstance(model, str) else None
+
+
+def _clear_inactive_credentials(kind: ProviderStatusKind) -> None:
+    """Remove reusable OAuth tokens not owned by the provider being activated.
+
+    The Claude harness can read the agent's home directory, so retaining an inactive provider's
+    refresh token would unnecessarily expose it to the newly active session.
+    """
+    if kind != "claude":
+        CREDENTIALS_PATH.unlink(missing_ok=True)
+    if kind != "openai":
+        codex_proxy_auth_path().unlink(missing_ok=True)
+
+
+def _snapshot_files(paths: tp.Iterable[pl.Path]) -> dict[pl.Path, tuple[str | None, int | None]]:
+    snapshots: dict[pl.Path, tuple[str | None, int | None]] = {}
+    for path in paths:
+        try:
+            snapshots[path] = (path.read_text(), path.stat().st_mode & 0o777)
+        except FileNotFoundError:
+            snapshots[path] = (None, None)
+    return snapshots
+
+
+def _restore_files(snapshots: dict[pl.Path, tuple[str | None, int | None]]) -> None:
+    for path, (content, mode) in snapshots.items():
+        try:
+            if content is None:
+                path.unlink(missing_ok=True)
+            else:
+                atomic_write_text(path, content)
+                if mode is not None:
+                    path.chmod(mode)
+        except OSError as exc:
+            logger.error(f"Failed to roll back provider file {path}: {exc}")
+
+
+def _apply_sign_in(
+    provider: dict[str, pyd.JsonValue],
+    *,
+    credential_writes: dict[pl.Path, str] | None = None,
+) -> str | None:
+    """Commit already-validated config and credentials; caller holds the config transaction lock."""
+    paths = {config_store_path(), CREDENTIALS_PATH, codex_proxy_auth_path(), CLAUDE_JSON_PATH}
+    snapshots = _snapshot_files(paths)
+    kind = tp.cast("ProviderKind", provider["kind"])
+    try:
+        for path, content in (credential_writes or {}).items():
+            atomic_write_text(path, content)
+        reported = _persist_sign_in(provider)
+        _clear_inactive_credentials(kind)
+    except Exception:
+        _restore_files(snapshots)
+        raise
+    return reported
+
+
+def _commit_sign_in(
+    kind: ProviderKind,
+    *,
+    model: str | None,
+    max_context_tokens: int | None,
+    key: str | None,
+    config: VestaConfig,
+    credential_writes: dict[pl.Path, str] | None = None,
+) -> str | None:
+    """Validate from the latest store state and apply the whole sign-in as one serialized unit."""
+    with config_write_lock():
+        provider = _validated_sign_in(
+            kind,
+            model=model,
+            max_context_tokens=max_context_tokens,
+            key=key,
+            config=config,
+        )
+        return _apply_sign_in(provider, credential_writes=credential_writes)
+
+
+def enforce_active_credentials(config: VestaConfig) -> None:
+    """Delete inactive tokens at boot only when the raw store confirms the loaded provider.
+
+    A corrupt or newly incompatible store makes load_config recover with defaults. Never use that
+    fallback to delete credentials belonging to the provider the raw store intended.
+    """
+    kind = config.provider.kind if config.provider is not None else "none"
+    store_path = config_store_path()
+    if store_path.exists():
+        try:
+            raw = json.loads(store_path.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning(f"Skipping inactive OAuth cleanup because config store is unreadable: {exc}")
+            return
+        raw_provider = raw.get("provider") if isinstance(raw, dict) else None
+        raw_kind = raw_provider.get("kind") if isinstance(raw_provider, dict) else "none"
+        if raw_kind != kind:
+            logger.warning(f"Skipping inactive OAuth cleanup because raw provider {raw_kind!r} differs from loaded {kind!r}")
+            return
+    _clear_inactive_credentials(kind)
 
 
 def set_claude(credentials_json: str, model: str | None, max_context_tokens: int | None, *, config: VestaConfig) -> ProviderStatus:
     """Write the Claude OAuth credentials to the SDK path and merge a claude provider patch into the
     store (model/context unspecified on re-auth are preserved). The OAuth blob lives in the credentials
     file, never the store."""
-    # Validate JSON shape before touching disk so we don't half-apply on bad input.
-    json.loads(credentials_json)
-    CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    CREDENTIALS_PATH.write_text(credentials_json)
-    CLAUDE_JSON_PATH.write_text('{"hasCompletedOnboarding":true}')
-    reported = _sign_in("claude", model=model, max_context_tokens=max_context_tokens, key=None, config=config)
+    # Validate every input before touching either credential or config file so a bad provider
+    # choice cannot leave credentials half-applied.
+    credentials = json.loads(credentials_json)
+    if not isinstance(credentials, dict) or not isinstance(credentials.get("claudeAiOauth"), dict):
+        raise ValueError("Claude credentials must contain claudeAiOauth")
+    oauth = ClaudeOAuth.model_validate(credentials["claudeAiOauth"])
+    if not _check_claude_oauth(oauth):
+        raise ValueError("Claude credentials contain no usable access or refresh token")
+    reported = _commit_sign_in(
+        "claude",
+        model=model,
+        max_context_tokens=max_context_tokens,
+        key=None,
+        config=config,
+        credential_writes={CREDENTIALS_PATH: credentials_json, CLAUDE_JSON_PATH: '{"hasCompletedOnboarding":true}'},
+    )
     logger.startup("Provider set to claude")
     return ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model=reported)
 
 
-def set_openrouter(key: str, model: str, max_context_tokens: int | None, *, config: VestaConfig) -> ProviderStatus:
-    """Merge the nested OpenRouter provider (key + model, plus any context chosen at sign-in) into the
-    store. Vestad restarts the agent to apply it."""
-    reported = _sign_in("openrouter", model=model, max_context_tokens=max_context_tokens, key=key, config=config)
-    logger.startup(f"Provider set to openrouter model={model}")
-    return ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="openrouter", model=reported)
+def set_key_provider(
+    kind: KeyProviderKind,
+    key: str,
+    model: str,
+    max_context_tokens: int | None,
+    *,
+    config: VestaConfig,
+) -> ProviderStatus:
+    """Validate and store any key-backed provider through the shared credential transaction."""
+    reported = _commit_sign_in(
+        kind,
+        model=model,
+        max_context_tokens=max_context_tokens,
+        key=key,
+        config=config,
+    )
+    logger.startup(f"Provider set to {kind} model={model}")
+    return ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind=kind, model=reported)
+
+
+_NonBlankCredential = tp.Annotated[str, pyd.StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+class _OpenAICredentials(pyd.BaseModel):
+    access: _NonBlankCredential
+    refresh: _NonBlankCredential
+    expires: int = pyd.Field(gt=0)
+    account_id: str | None = pyd.Field(default=None, alias="accountId")
+
+    model_config = pyd.ConfigDict(populate_by_name=True)
+
+
+def set_openai(credentials_json: str, model: str, max_context_tokens: int | None, *, config: VestaConfig) -> ProviderStatus:
+    """Store refreshable ChatGPT OAuth for the local Claude-harness bridge."""
+    credentials = _OpenAICredentials.model_validate_json(credentials_json)
+    path = codex_proxy_auth_path()
+    reported = _commit_sign_in(
+        "openai",
+        model=model,
+        max_context_tokens=max_context_tokens,
+        key=None,
+        config=config,
+        credential_writes={path: credentials.model_dump_json(by_alias=True, exclude_none=True)},
+    )
+    logger.startup(f"Provider set to openai model={model}")
+    return ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="openai", model=reported)
 
 
 def clear_provider() -> ProviderStatus:
     """Sign out: remove the Claude OAuth blob and clear the stored provider to None (no provider
     chosen), leaving the agent unprovisioned. General config (personality, timezone, ...) survives.
     Vestad restarts the agent."""
-    CREDENTIALS_PATH.unlink(missing_ok=True)
-    update_config_store({"provider": None})
+    with config_write_lock():
+        paths = {config_store_path(), CREDENTIALS_PATH, codex_proxy_auth_path()}
+        snapshots = _snapshot_files(paths)
+        try:
+            CREDENTIALS_PATH.unlink(missing_ok=True)
+            codex_proxy_auth_path().unlink(missing_ok=True)
+            update_config_store({"provider": None})
+        except Exception:
+            _restore_files(snapshots)
+            raise
     logger.startup("Provider cleared (signed out)")
     return ProviderStatus(state=ProviderAuthState.NOT_AUTHENTICATED, kind="none", model=None)
 
@@ -168,37 +380,44 @@ def observed_provider_failure(status: ProviderStatus | None) -> ProviderStatus |
     return new_status
 
 
-def _derive_kind_and_auth(config: VestaConfig) -> tuple[ProviderKind, bool]:
+def _derive_kind_and_auth(config: VestaConfig) -> tuple[ProviderStatusKind, bool]:
     """The usable provider and whether its credential is valid: none when no provider is chosen (fresh
     / signed out); openrouter when chosen (key is type-guaranteed); claude when chosen, authed only if
     the OAuth blob loaded from disk is valid (an expired/absent blob is claude-but-unauthenticated)."""
     provider = config.provider
     if provider is None:
         return "none", False
-    if isinstance(provider, OpenRouterConfig):
-        return "openrouter", bool(provider.key.get_secret_value())
+    if isinstance(provider, (OpenRouterConfig, ZaiConfig, KimiConfig)):
+        return provider.kind, bool(provider.key.get_secret_value())
+    if isinstance(provider, OpenAIConfig):
+        try:
+            _OpenAICredentials.model_validate_json(codex_proxy_auth_path().read_text())
+        except (OSError, pyd.ValidationError):
+            return "openai", False
+        return "openai", True  # the validated refresh token can replace an expired access token
     # A config built outside load_config (validation paths never hydrate) carries oauth=None;
     # read the blob from disk here so status derivation stays an honest reading of what's on disk.
-    oauth = provider.oauth if provider.oauth is not None else read_claude_oauth()
-    return "claude", oauth is not None and _check_claude_oauth(oauth)
+    if isinstance(provider, ClaudeConfig):
+        oauth = provider.oauth if provider.oauth is not None else read_claude_oauth()
+        return "claude", oauth is not None and _check_claude_oauth(oauth)
+    return "none", False
 
 
 def _check_claude_oauth(oauth: ClaudeOAuth) -> bool:
     """A refresh token lets the SDK mint a fresh access token on demand, so an expired expiresAt isn't
     a problem — the SDK refreshes transparently."""
-    if isinstance(oauth.refresh_token, str) and oauth.refresh_token:
+    if isinstance(oauth.refresh_token, str) and oauth.refresh_token.strip():
         return True
-    if isinstance(oauth.expires_at, int):
+    if isinstance(oauth.access_token, str) and oauth.access_token.strip() and isinstance(oauth.expires_at, int):
         return oauth.expires_at > int(time.time() * 1000)
     return False
 
 
 # --- Plan usage (provider-agnostic) ---
 #
-# Each provider reports usage in its own upstream shape — Claude as time-windowed rate-limit buckets
-# (/api/oauth/usage), OpenRouter as a spend balance (/api/v1/key). We normalize both to `meters`
-# (quota used as a %, optionally with a reset time) plus `credits` (a spend balance), so the API and
-# UI never special-case a provider. Dispatch mirrors derive_status.
+# Providers with upstream usage APIs report different shapes — Claude as time-windowed rate-limit
+# buckets and OpenRouter as a spend balance. We normalize those to `meters` plus `credits`; providers
+# without a usage endpoint return an empty result.
 
 
 @dc.dataclass

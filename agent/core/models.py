@@ -99,13 +99,17 @@ class State:
     provider_status: ProviderStatus | None = None
     # Effective context window passed via CLAUDE_CODE_MAX_CONTEXT_TOKENS: the OpenRouter
     # model's real window (claude-code wrongly assumes 200k for non-Anthropic models,
-    # claude-code#46416) capped at config.provider.max_context_tokens to bound prompt-cache read
-    # cost. Resolved once at boot. None = unresolved.
+    # claude-code#46416), optionally capped by config.provider.max_context_tokens. With no user cap,
+    # the full per-model window is used. Resolved once at boot. None = unresolved.
     openrouter_max_tokens: int | None = None
     # Local OpenRouter caching proxy: the SDK subprocess routes ANTHROPIC_BASE_URL here
     # so requests can be rewritten for prompt-cache hits. Both set once at boot.
     openrouter_proxy_url: str | None = None
     cache_proxy_runner: AppRunner | None = None
+    # ChatGPT subscription bridge: an external Anthropic-compatible proxy scoped to this agent.
+    # It binds a private loopback port and reads refreshable OAuth from the agent data directory.
+    codex_proxy_url: str | None = None
+    codex_proxy_process: asyncio.subprocess.Process | None = None
     # The currently open turn's signals; written by the stream consumer, waited on by converse /
     # compact_session. None while no turn is open (results arriving then are dropped as advisory).
     turn: TurnSignals | None = None

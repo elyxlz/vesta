@@ -112,7 +112,7 @@ class ClaudeAgentOptions:
     mcp_servers: dict[str, tp.Any] = dc.field(default_factory=dict)
     resume: str | None = None
     # Extra env vars scoped to the claude subprocess only (not os.environ), so e.g. the
-    # OpenRouter base-url/context overrides don't leak into the skill subprocesses the
+    # Provider base-url/context overrides don't leak into the skill subprocesses the
     # agent spawns. Merged into the launch env after the fixed defaults.
     env: dict[str, str] = dc.field(default_factory=dict)
     # "all" enables the Skill tool for every skill discovered via setting_sources.

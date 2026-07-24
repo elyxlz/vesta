@@ -8,7 +8,7 @@ Routes:
   - GET  /config               prefs + notification_rules (personality, timezone, seed_context, operational)
   - PUT  /config               update prefs and/or notification_rules (provider is set via /provider)
   - GET  /provider             active provider (configured fields) + derived {authed}
-  - PUT  /provider             sign in / switch provider (claude credentials or openrouter key)
+  - PUT  /provider             sign in / switch provider (OAuth or subscription/provider key)
   - PATCH /provider            change model / context / thinking on the active provider
   - DELETE /provider           sign out: clear credentials, leaving not_authenticated
   - GET  /memory               read MEMORY.md
@@ -32,10 +32,12 @@ from aiohttp import web
 
 from .config import (
     ClaudeConfig,
+    KeyProviderKind,
     VestaConfig,
     atomic_write_text,
     load_active_skills,
     load_notification_rules,
+    provider_context_default,
     stored_config,
     update_config_store,
     validate_config_updates,
@@ -43,7 +45,16 @@ from .config import (
 from .events import EventBus, SnapshotEvent, VestaEvent, model_access_info
 from .helpers import get_memory_path
 from .models import State
-from .provider import ProviderAuthState, UsageError, active_cooldown, clear_provider, get_usage, set_claude, set_openrouter
+from .provider import (
+    ProviderAuthState,
+    UsageError,
+    active_cooldown,
+    clear_provider,
+    get_usage,
+    set_claude,
+    set_key_provider,
+    set_openai,
+)
 
 logger = logging.getLogger("vesta.api")
 
@@ -249,20 +260,33 @@ async def _config_put_handler(request: web.Request) -> web.Response:
 class _ClaudeSignIn(pyd.BaseModel):
     kind: tp.Literal["claude"]
     # None on re-auth: preserve the agent's existing model rather than reset it.
-    model: tp.Literal["opus", "sonnet", "haiku"] | None = None
+    model: tp.Literal["opus", "sonnet"] | None = None
     max_context_tokens: int | None = None
     credentials: str
 
 
-class _OpenRouterSignIn(pyd.BaseModel):
-    kind: tp.Literal["openrouter"]
-    model: str
+_NonEmptyString = tp.Annotated[str, pyd.StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+class _KeySignIn(pyd.BaseModel):
+    kind: KeyProviderKind
+    model: _NonEmptyString
     max_context_tokens: int | None = None
-    key: str
+    key: _NonEmptyString
 
 
-_ProviderSignIn = tp.Annotated[_ClaudeSignIn | _OpenRouterSignIn, pyd.Field(discriminator="kind")]
-_SIGN_IN_ADAPTER: pyd.TypeAdapter[_ClaudeSignIn | _OpenRouterSignIn] = pyd.TypeAdapter(_ProviderSignIn)
+class _OpenAISignIn(pyd.BaseModel):
+    kind: tp.Literal["openai"]
+    model: _NonEmptyString
+    max_context_tokens: int | None = None
+    credentials: str
+
+
+_ProviderSignIn = tp.Annotated[
+    _ClaudeSignIn | _KeySignIn | _OpenAISignIn,
+    pyd.Field(discriminator="kind"),
+]
+_SIGN_IN_ADAPTER: pyd.TypeAdapter[_ClaudeSignIn | _KeySignIn | _OpenAISignIn] = pyd.TypeAdapter(_ProviderSignIn)
 
 
 class _ProviderPrefs(pyd.BaseModel):
@@ -270,7 +294,7 @@ class _ProviderPrefs(pyd.BaseModel):
 
     model_config = pyd.ConfigDict(extra="forbid")
 
-    model: str | None = None
+    model: _NonEmptyString | None = None
     max_context_tokens: int | None = None
     thinking: str | None = None
 
@@ -309,8 +333,7 @@ async def _status_handler(request: web.Request) -> web.Response:
 
 
 async def _provider_put_handler(request: web.Request) -> web.Response:
-    """Sign in / switch provider: `{kind:"claude", model, credentials}` (OAuth blob written to the SDK
-    file, never stored) or `{kind:"openrouter", model, key}`. Applied by the next restart."""
+    """Sign in / switch provider. Applied by the next restart."""
     state: State = request.app["state"]
     config: VestaConfig = request.app["config"]
     try:
@@ -326,9 +349,15 @@ async def _provider_put_handler(request: web.Request) -> web.Response:
             state.provider_status = await asyncio.to_thread(
                 set_claude, signin.credentials, signin.model, signin.max_context_tokens, config=config
             )
+        elif isinstance(signin, _KeySignIn):
+            state.provider_status = await asyncio.to_thread(
+                set_key_provider, signin.kind, signin.key, signin.model, signin.max_context_tokens, config=config
+            )
         else:
-            state.provider_status = await asyncio.to_thread(set_openrouter, signin.key, signin.model, signin.max_context_tokens, config=config)
-    except (json.JSONDecodeError, TypeError) as e:
+            state.provider_status = await asyncio.to_thread(
+                set_openai, signin.credentials, signin.model, signin.max_context_tokens, config=config
+            )
+    except (ValueError, TypeError, pyd.ValidationError) as e:
         return web.json_response({"error": f"invalid credentials: {e}"}, status=400)
     except OSError as e:
         return web.json_response({"error": f"auth write failed: {e}"}, status=500)
@@ -350,6 +379,15 @@ async def _provider_patch_handler(request: web.Request) -> web.Response:
     patch = prefs.model_dump(exclude_unset=True)
     if not patch:
         return web.json_response({"error": "no provider fields provided"}, status=400)
+    # Reset context when changing fixed-catalog models so a larger old window cannot violate the new
+    # model's ceiling. Claude and OpenRouter keep their explicit user cap across model changes.
+    if (
+        isinstance(patch.get("model"), str)
+        and "max_context_tokens" not in patch
+        and config.provider is not None
+        and config.provider.kind not in {"claude", "openrouter"}
+    ):
+        patch["max_context_tokens"] = provider_context_default(config.provider.kind, tp.cast("str", patch["model"]))
     return await _validate_and_store(config, {"provider": patch}, label="provider")
 
 
