@@ -16,7 +16,7 @@ Don't want to run a server? [vesta.run](https://vesta.run) hosts one for you. In
 
 ## Prerequisites
 
-- Claude subscription or OpenRouter API key
+- Claude, Z.AI GLM Coding Plan, Kimi Code, or OpenAI ChatGPT subscription; alternatively, an OpenRouter API key
 - **Server (vestad)**: Linux with Docker installed
 - **Clients**: the web app (served by vestad), the desktop app (macOS, Windows, Linux), and mobile — no additional dependencies
 

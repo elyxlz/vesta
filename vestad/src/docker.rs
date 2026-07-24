@@ -112,18 +112,48 @@ pub(crate) const MOUNT_DESTS: &[&str] = &[
     UPSTREAM_MOUNT_DEST,
 ];
 
+fn claude_code_proxy_install_step() -> String {
+    // Fresh images bake this in, but fleet upgrades recreate old writable layers from a snapshot
+    // and never rerun the Dockerfile. Install the exact reviewed release on first boot of such a
+    // snapshot; the next snapshot then preserves it. Both supported architectures are digest-pinned.
+    let release = include_str!("../claude-code-proxy.env").trim();
+    format!(
+        r#"{release}
+PROVIDER_KIND="$(python3 -c 'import json; print(json.load(open("/root/agent/data/config.json")).get("provider", {{}}).get("kind", ""))' 2>/dev/null || true)"
+if [ "$PROVIDER_KIND" = "openai" ] && ! command -v claude-code-proxy >/dev/null 2>&1; then
+  ARCH="$(dpkg --print-architecture)"
+  case "$ARCH" in
+    amd64) SHA256="$CLAUDE_CODE_PROXY_AMD64_SHA256" ;;
+    arm64) SHA256="$CLAUDE_CODE_PROXY_ARM64_SHA256" ;;
+    *) echo "unsupported claude-code-proxy architecture: $ARCH" >&2; false ;;
+  esac
+  ASSET="claude-code-proxy-linux-${{ARCH}}.tar.gz"
+  TMP="$(mktemp)"
+  curl -fsSL --connect-timeout 10 --max-time 120 "https://github.com/raine/claude-code-proxy/releases/download/v${{CLAUDE_CODE_PROXY_VERSION}}/${{ASSET}}" -o "$TMP" &&
+    echo "${{SHA256}}  ${{TMP}}" | sha256sum -c - &&
+    tar -xzf "$TMP" -C /usr/local/bin claude-code-proxy
+  STATUS=$?
+  rm -f "$TMP"
+  [ "$STATUS" -eq 0 ]
+fi"#
+    )
+}
+
 pub(crate) fn agent_container_cmd() -> Vec<String> {
-    let steps = [
-        "set -e",
+    let steps: [String; 7] = [
+        "set -e".into(),
         // The engine venv is reached via PATH, never an exported UV_PROJECT_ENVIRONMENT (nor `uv
         // run`, which exports it): exported, it retargets every uv project, so a skill's `uv run`
         // re-syncs and can delete the engine venv. The core sync gets it scoped, since uv would
         // otherwise default to core/.venv, inside the read-only mount.
-        "export PATH=\"/root/agent/.venv/bin:/root/.local/bin:/root/.claude/local/bin:$PATH\"",
-        ". /run/vestad-env",
-        ". ~/.bashrc || true",
-        "UV_PROJECT_ENVIRONMENT=/root/agent/.venv uv sync --frozen --project /root/agent/core",
-        "cd /root/agent && exec .venv/bin/python -m core.main",
+        "export PATH=\"/root/agent/.venv/bin:/root/.local/bin:/root/.claude/local/bin:$PATH\""
+            .into(),
+        ". /run/vestad-env".into(),
+        ". ~/.bashrc || true".into(),
+        claude_code_proxy_install_step(),
+        "UV_PROJECT_ENVIRONMENT=/root/agent/.venv uv sync --frozen --project /root/agent/core"
+            .into(),
+        "cd /root/agent && exec .venv/bin/python -m core.main".into(),
     ];
     vec!["sh".into(), "-c".into(), steps.join("; \\\n")]
 }
@@ -2733,6 +2763,28 @@ mod tests {
         assert!(
             script.contains("python -m core.main"),
             "command must launch core.main: {script}"
+        );
+    }
+
+    #[test]
+    fn command_self_heals_missing_claude_code_proxy_with_pinned_digests() {
+        let cmd = agent_container_cmd();
+        let script = cmd.last().expect("container command");
+        assert!(script.contains("command -v claude-code-proxy"));
+        assert!(script.contains("[ \"$PROVIDER_KIND\" = \"openai\" ]"));
+        assert!(script.contains("releases/download/v${CLAUDE_CODE_PROXY_VERSION}/${ASSET}"));
+        assert!(script.contains("--connect-timeout 10 --max-time 120"));
+        for setting in include_str!("../claude-code-proxy.env").lines() {
+            assert!(script.contains(setting), "command must embed {setting}");
+        }
+        assert!(script.contains("sha256sum -c -"));
+        let install_at = script
+            .find("command -v claude-code-proxy")
+            .expect("proxy install present");
+        let main_at = script.find("core.main").expect("agent launch present");
+        assert!(
+            install_at < main_at,
+            "proxy install must precede launching core.main"
         );
     }
 

@@ -4,10 +4,13 @@
   "providers": {
     "claude": {
       "display": "Claude account",
+      "order": 0,
+      "auth_kind": "claude_oauth",
       "models": ["opus", "sonnet"],
       "default_model": "opus",
       "context": {
         "default": 1000000,
+        "max": 1000000,
         "defaults_by_plan": { "max": 1000000, "pro": 200000, "free": 200000 },
         "presets": [
           { "tokens": 1000000, "label": "1M", "note": "most context", "plans": ["max"] },
@@ -18,14 +21,89 @@
     },
     "openrouter": {
       "display": "OpenRouter",
+      "order": 4,
+      "auth_kind": "api_key",
       "models": "live",
       "default_model": null,
       "context": {
+        "default": 0,
+        "max": null,
+        "presets": []
+      }
+    },
+    "zai": {
+      "display": "Z.AI Coding Plan",
+      "order": 2,
+      "auth_kind": "subscription_key",
+      "models": ["glm-5.2", "glm-5-turbo", "glm-4.7"],
+      "default_model": "glm-5.2",
+      "context": {
         "default": 200000,
+        "max": 200000,
         "presets": [
           { "tokens": 200000, "label": "200K", "note": "full window" },
           { "tokens": 128000, "label": "128K", "note": "balanced" },
-          { "tokens": 64000, "label": "64K", "note": "cheapest prompt-cache reads" }
+          { "tokens": 64000, "label": "64K", "note": "compacts sooner" }
+        ]
+      },
+      "context_by_model": {
+        "glm-5.2": {
+          "default": 1000000,
+          "max": 1000000,
+          "harness_suffix_above": 200000,
+          "presets": [
+            { "tokens": 1000000, "label": "1M", "note": "full window" },
+            { "tokens": 200000, "label": "200K", "note": "compacts sooner" },
+            { "tokens": 128000, "label": "128K", "note": "balanced" },
+            { "tokens": 64000, "label": "64K", "note": "lowest cache use" }
+          ]
+        }
+      }
+    },
+    "kimi": {
+      "display": "Kimi Code",
+      "order": 3,
+      "auth_kind": "subscription_key",
+      "models": ["kimi-for-coding", "kimi-for-coding-highspeed", "k3"],
+      "default_model": "kimi-for-coding",
+      "context": {
+        "default": 262144,
+        "max": 262144,
+        "presets": [
+          { "tokens": 262144, "label": "256K", "note": "full standard window" },
+          { "tokens": 128000, "label": "128K", "note": "balanced" },
+          { "tokens": 64000, "label": "64K", "note": "compacts sooner" }
+        ]
+      },
+      "context_by_model": {
+        "k3": {
+          "default": 262144,
+          "max": 1048576,
+          "harness_suffix_above": 262144,
+          "presets": [
+            { "tokens": 1048576, "label": "1M", "note": "Allegretto and above" },
+            { "tokens": 262144, "label": "256K", "note": "Moderato and above" },
+            { "tokens": 128000, "label": "128K", "note": "compacts sooner" },
+            { "tokens": 64000, "label": "64K", "note": "lowest cache use" }
+          ]
+        }
+      }
+    },
+    "openai": {
+      "display": "OpenAI (ChatGPT)",
+      "order": 1,
+      "auth_kind": "device_oauth",
+      "models": ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
+      "default_model": "gpt-5.6-sol",
+      "auxiliary_model": "gpt-5.6-luna",
+      "context": {
+        "default": 272000,
+        "max": 272000,
+        "harness_suffix_above": 0,
+        "presets": [
+          { "tokens": 272000, "label": "272K", "note": "current pinned Claude-bridge window" },
+          { "tokens": 128000, "label": "128K", "note": "compacts sooner" },
+          { "tokens": 64000, "label": "64K", "note": "lowest cache use" }
         ]
       }
     }

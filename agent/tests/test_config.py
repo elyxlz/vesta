@@ -47,6 +47,15 @@ def test_default_provider_is_none_when_unprovisioned(agentdir, monkeypatch, tmp_
     assert config.provider is None
 
 
+def test_invalid_claude_oauth_shape_is_ignored(monkeypatch, tmp_path):
+    from core import config as config_mod
+
+    path = tmp_path / ".credentials.json"
+    path.write_text('{"claudeAiOauth":{"expiresAt":"not-an-integer"}}')
+    monkeypatch.setattr(config_mod, "CREDENTIALS_PATH", path)
+    assert config_mod.read_claude_oauth() is None
+
+
 # Both the plain-string form (thinking="adaptive") and the legacy JSON-dict form written before
 # adaptive.display was required must coerce to the SDK config. thinking lives on the claude provider.
 @pytest.mark.parametrize(
@@ -136,6 +145,7 @@ def test_loads_shipped_defaults_with_no_env_or_store(agentdir, monkeypatch, tmp_
 
 def test_store_sets_nested_provider(agentdir):
     update_config_store({"provider": {"kind": "claude", "model": "sonnet"}})
+    assert config_store_path().stat().st_mode & 0o777 == 0o600
     provider = cfg.VestaConfig().provider
     assert isinstance(provider, ClaudeConfig)
     assert provider.model == "sonnet"
