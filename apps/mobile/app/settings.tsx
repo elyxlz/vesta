@@ -53,10 +53,13 @@ export default function SettingsScreen() {
     mutationFn: () => triggerGatewayRestart(session.api),
   });
   const updateAvailable = roster.updateAvailable;
-  const appearanceValueIcon =
+  const resolvedAppearance =
     preferences.theme === "system"
-      ? undefined
-      : appearanceValueIcons[preferences.theme];
+      ? preferences.dark
+        ? "dark"
+        : "light"
+      : preferences.theme;
+  const appearanceValueIcon = appearanceValueIcons[resolvedAppearance];
 
   const confirmGatewayUpdate = () => {
     Alert.alert("Update gateway?", "Agents will briefly restart.", [
@@ -102,11 +105,9 @@ export default function SettingsScreen() {
             label="Appearance"
             detail="Use the system setting or choose light or dark."
             valueIcon={appearanceValueIcon}
-            valueIconLabel={
-              appearanceValueIcon
-                ? `${preferences.theme} appearance`
-                : undefined
-            }
+            valueIconLabel={`${resolvedAppearance} appearance${
+              preferences.theme === "system" ? " from system setting" : ""
+            }`}
             onPress={chooseTheme}
           />
         </FormSection>
