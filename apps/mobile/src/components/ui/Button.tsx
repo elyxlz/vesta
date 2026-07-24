@@ -202,7 +202,11 @@ const styles = StyleSheet.create({
   },
   smallButton: { minHeight: 40, paddingHorizontal: 14 },
   compactButton: { minHeight: 18, paddingHorizontal: 14 },
-  cardButton: { alignItems: "flex-start", paddingHorizontal: 16 },
+  cardButton: {
+    minHeight: 50,
+    alignItems: "flex-start",
+    paddingHorizontal: 16,
+  },
   pill: { borderRadius: radii.pill },
   content: { flexDirection: "row", alignItems: "center", gap: 8 },
   cardContent: { alignSelf: "stretch" },
