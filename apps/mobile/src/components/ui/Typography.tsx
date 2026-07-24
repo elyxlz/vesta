@@ -21,9 +21,10 @@ function numericWeight(weight: TextStyle["fontWeight"]): number {
 function fontFor(family: FontFamily, weight: TextStyle["fontWeight"]): string {
   const value = numericWeight(weight);
   if (family === "wordmark") {
-    return process.env.EXPO_OS === "ios"
-      ? fontNames.wordmark.native.ios
-      : fontNames.wordmark.native.default;
+    if (value >= 700) return fontNames.wordmark.native["700"];
+    if (value >= 600) return fontNames.wordmark.native["600"];
+    if (value >= 500) return fontNames.wordmark.native["500"];
+    return fontNames.wordmark.native["400"];
   }
   if (family === "heading") {
     if (value >= 700) return fontNames.heading.native["700"];
@@ -52,7 +53,7 @@ function themedStyle(
   return {
     ...flattened,
     fontFamily: fontFor(family, flattened.fontWeight),
-    fontWeight: family === "wordmark" ? flattened.fontWeight : undefined,
+    fontWeight: undefined,
   };
 }
 

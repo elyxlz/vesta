@@ -150,7 +150,7 @@
   --font-sans: "Archivo Variable", sans-serif;
   --font-heading: "Source Serif 4 Variable", Georgia, serif;
   --font-serif: "Source Serif 4 Variable", Georgia, serif;
-  --font-wordmark: Georgia, serif;
+  --font-wordmark: "Source Serif 4 Variable", Georgia, serif;
   --font-mono:
     "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas,
     "Liberation Mono", monospace;

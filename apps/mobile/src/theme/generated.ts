@@ -140,10 +140,12 @@ export const designTokens = {
         },
       },
       wordmark: {
-        css: "Georgia, serif",
+        css: '"Source Serif 4 Variable", Georgia, serif',
         native: {
-          ios: "Georgia",
-          default: "serif",
+          "400": "SourceSerif4_400Regular",
+          "500": "SourceSerif4_500Medium",
+          "600": "SourceSerif4_600SemiBold",
+          "700": "SourceSerif4_700Bold",
         },
       },
       mono: {
