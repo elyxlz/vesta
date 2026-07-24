@@ -151,7 +151,6 @@ async def send_preempt(prompt: str, *, state: vm.State, config: cfg.VestaConfig)
         # caller queues plain and nothing is lost.
         await asyncio.wait_for(client.query(_one()), timeout=config.interrupt_timeout)
         turn.preempted = True
-        logger.debug("Preempt sent (priority=now)")
         return True
     except Exception as e:
         # Like attempt_interrupt: best-effort, broad catch. A failed preempt must never abort
