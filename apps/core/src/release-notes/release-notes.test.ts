@@ -47,6 +47,13 @@ describe("extractWhatsNew", () => {
     expect(extractWhatsNew("<!-- whats-new -->half a block")).toBeNull()
     expect(extractWhatsNew("<!-- whats-new -->  \n<!-- /whats-new -->")).toBeNull()
   })
+
+  it("handles repeated markers without pathological backtracking", () => {
+    const repeatedOpenMarkers = "<!--whats-new-->a".repeat(10_000)
+    expect(extractWhatsNew(`${repeatedOpenMarkers}<!--/whats-new-->`)).toBe(
+      `a${"<!--whats-new-->a".repeat(9_999)}`,
+    )
+  })
 })
 
 describe("parseReleaseNotes", () => {

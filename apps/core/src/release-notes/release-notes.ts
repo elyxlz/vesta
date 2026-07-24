@@ -2,8 +2,6 @@ import type { FetchLike } from "../transport/http"
 import type { ReleaseChannel } from "../protocol/tree"
 import { compareReleaseVersions } from "../protocol/release-version"
 
-const WHATS_NEW_BLOCK_RE = /<!--\s*whats-new\s*-->([\s\S]*?)<!--\s*\/whats-new\s*-->/
-
 const RELEASES_URL = "https://api.github.com/repos/elyxlz/vesta/releases?per_page=20"
 
 const RELEASES_FETCH_TIMEOUT_MS = 10_000
@@ -39,10 +37,39 @@ function isGithubRelease(value: unknown): value is GithubRelease {
 }
 
 export function extractWhatsNew(body: string): string | null {
-  const match = WHATS_NEW_BLOCK_RE.exec(body)
-  if (!match) return null
-  const message = match[1]?.trim() ?? ""
-  return message.length > 0 ? message : null
+  let cursor = 0
+  let contentStart = -1
+  while (cursor < body.length) {
+    const commentStart = body.indexOf("<!--", cursor)
+    if (commentStart < 0) break
+    const commentEnd = body.indexOf("-->", commentStart + 4)
+    if (commentEnd < 0) break
+
+    const marker = body.slice(commentStart + 4, commentEnd).trim()
+    if (marker === "whats-new") {
+      contentStart = commentEnd + 3
+      break
+    }
+    cursor = commentEnd + 3
+  }
+  if (contentStart < 0) return null
+
+  cursor = contentStart
+  while (cursor < body.length) {
+    const commentStart = body.indexOf("<!--", cursor)
+    if (commentStart < 0) return null
+    const commentEnd = body.indexOf("-->", commentStart + 4)
+    if (commentEnd < 0) return null
+
+    const marker = body.slice(commentStart + 4, commentEnd).trim()
+    if (marker === "/whats-new") {
+      const message = body.slice(contentStart, commentStart).trim()
+      return message.length > 0 ? message : null
+    }
+    cursor = commentEnd + 3
+  }
+
+  return null
 }
 
 /** Parse a GitHub release-list response into notes, newest version first. */
