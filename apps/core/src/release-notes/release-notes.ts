@@ -13,6 +13,7 @@ export interface ReleaseNote {
   date: string
   prerelease: boolean
   message: string
+  url: string
 }
 
 interface GithubRelease {
@@ -57,6 +58,7 @@ export function parseReleaseNotes(json: unknown): ReleaseNote[] {
       date: release.published_at,
       prerelease: release.prerelease,
       message,
+      url: `https://github.com/elyxlz/vesta/releases/tag/${encodeURIComponent(release.tag_name)}`,
     })
   }
   return notes.sort((a, b) => compareReleaseVersions(b.version, a.version) ?? 0)

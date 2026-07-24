@@ -1,7 +1,8 @@
-import { StyleSheet, View } from "react-native";
+import { Pressable, StyleSheet, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { filterReleaseNotes } from "@vesta/core";
 import { Stack, useRouter } from "expo-router";
+import * as WebBrowser from "expo-web-browser";
 import { Screen } from "@/components/layout/Screen";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/States";
 import { Text } from "@/components/ui/Typography";
@@ -75,6 +76,33 @@ export default function WhatsNewScreen() {
                 >
                   {entry.message}
                 </Text>
+                <Pressable
+                  accessibilityRole="link"
+                  accessibilityLabel={`View release v${entry.version} on GitHub`}
+                  hitSlop={13}
+                  onPress={() => {
+                    void WebBrowser.openBrowserAsync(entry.url, {
+                      presentationStyle:
+                        WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
+                    });
+                  }}
+                  style={styles.releaseLink}
+                >
+                  {({ pressed }) => (
+                    <Text
+                      style={[
+                        styles.releaseLinkText,
+                        {
+                          color: pressed
+                            ? colors.interactive
+                            : colors.tertiaryText,
+                        },
+                      ]}
+                    >
+                      View on GitHub
+                    </Text>
+                  )}
+                </Pressable>
               </View>
             ))}
           </View>
@@ -109,4 +137,6 @@ const styles = StyleSheet.create({
   version: { fontSize: 16, fontWeight: "600" },
   date: { fontSize: 13 },
   message: { fontSize: 15, lineHeight: 21 },
+  releaseLink: { alignSelf: "flex-end", paddingTop: 2 },
+  releaseLinkText: { fontSize: 12, fontWeight: "500" },
 });

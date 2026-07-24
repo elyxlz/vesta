@@ -29,6 +29,7 @@ function note(version: string, prerelease = false): ReleaseNote {
     date: "2026-07-01T00:00:00Z",
     prerelease,
     message: "Something shipped.",
+    url: `https://github.com/elyxlz/vesta/releases/tag/v${version}`,
   }
 }
 
