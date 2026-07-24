@@ -34,6 +34,7 @@ from . import diagnostics, logger, sdk_parsing, state_store, vestad_client
 from . import models as vm
 from .config import CONTEXT_1M_BETA, DEFAULT_CONTEXT_WINDOW
 from .helpers import get_constitution_path, get_memory_path
+from .model_access import activate_rate_limit, model_access_available, wait_for_model_access
 from .provider import (
     OPENROUTER_SMALL_FAST_MODEL,
     is_terminal_provider_error,
@@ -144,7 +145,7 @@ async def send_preempt(prompt: str, *, state: vm.State, config: cfg.VestaConfig)
     turn = state.turn
     if not client or turn is None or state.noninterruptible_turn_active or state.compacting:
         return False
-    if is_unauthenticated(state.provider_status):
+    if is_unauthenticated(state.provider_status) or not model_access_available(state):
         # Same deferral as the processor's gate: don't hand prompts to a dead token; the
         # notification file stays on disk and re-runs after re-auth.
         return False
@@ -230,14 +231,21 @@ def _emit_parsed_content(texts: list[str], thinking_blocks: list[ThinkingBlock],
         state.event_bus.emit({"type": "error", "text": f"Turn failed upstream: {error_text[:500]}"})
 
 
-async def _note_rate_limit(msg: RateLimitEvent, *, state: vm.State) -> None:
+async def _note_rate_limit(msg: RateLimitEvent, *, state: vm.State, config: cfg.VestaConfig) -> None:
     """Surface a rejected rate limit from the structured classification: the CLI's synthesized text
     for the same event misnames the window (issue #1071), so this event is what consumers trust.
     Once per window; the type/resets_at pair changes when a different limit trips. The internal event
     is kept for history; a best-effort user notification raises a user-facing toast + push."""
+    # This structured window vocabulary is Claude-specific. OpenRouter's authoritative signal is
+    # its proxy's upstream HTTP 429, while the other Claude-compatible providers do not promise
+    # Claude's five-hour/weekly reset semantics.
+    if state.provider_status is None or state.provider_status.kind != "claude":
+        return
     info = msg.rate_limit_info
     notice = sdk_parsing.rate_limit_notice(info, now=time.time())
     window_key = (info.rate_limit_type, info.resets_at)
+    if notice:
+        await activate_rate_limit(state=state, config=config, resets_at=info.resets_at, window=info.rate_limit_type)
     if notice and window_key != state.rate_limit_noticed:
         state.rate_limit_noticed = window_key
         state.event_bus.emit({"type": "rate_limited", "text": notice, "window": info.rate_limit_type, "resets_at": info.resets_at})
@@ -275,7 +283,7 @@ async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaC
         await persist_session_id(session_id, state=state, config=config)
     _emit_parsed_content(texts, thinking_blocks, error_texts, state=state)
     if isinstance(msg, RateLimitEvent):
-        await _note_rate_limit(msg, state=state)
+        await _note_rate_limit(msg, state=state, config=config)
     # The SDK can surface a provider failure either on the assistant classification or the result's
     # HTTP status. Keep the decision provider-aware: Kimi uses 401 for tier/model/context permission
     # errors and a temporary 402, neither of which means its subscription key is dead.
@@ -391,6 +399,8 @@ async def converse(prompt: str, *, state: vm.State, config: cfg.VestaConfig, sho
     A preempt landing mid-turn needs no handling: the CLI-side abort ends this turn as an
     ordinary ResultMessage."""
     assert state.client is not None
+    if not await wait_for_model_access(state=state, config=config):
+        raise asyncio.CancelledError
     client = state.client
 
     diagnostics.touch_activity(state, "query_start")

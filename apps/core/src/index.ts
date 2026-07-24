@@ -10,6 +10,7 @@ export type { AnsiColor, AnsiSpan, AnsiStyle } from "./ansi/ansi"
 export type {
   AgentActivityState,
   AgentInfo,
+  ModelAccess,
   AgentNode,
   AgentStatus,
   BuildPhase,

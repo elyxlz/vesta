@@ -4,6 +4,12 @@
       "info": {
         "activityState": "thinking",
         "buildPhase": null,
+        "modelAccess": {
+          "reason": null,
+          "state": "available",
+          "until": null,
+          "window": null
+        },
         "services": {
           "dashboard": {
             "port": 8080,
@@ -71,6 +77,12 @@
           "info": {
             "activityState": "thinking",
             "buildPhase": null,
+            "modelAccess": {
+              "reason": null,
+              "state": "available",
+              "until": null,
+              "window": null
+            },
             "services": {
               "dashboard": {
                 "port": 8080,

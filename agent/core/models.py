@@ -134,6 +134,7 @@ class State:
     # resets_at): the CLI re-reports the same rejection on every retry, so _dispatch_message
     # announces each window once (issue #1071).
     rate_limit_noticed: tuple[str | None, int | None] | None = None
+    current_turn_rate_limited: bool = False
     processor_busy: bool = False
     event_bus: EventBus = dc.field(default_factory=EventBus)
     stderr_buffer: collections.deque[str] = dc.field(default_factory=lambda: collections.deque(maxlen=50))

@@ -17,5 +17,6 @@ pub(crate) mod protocol;
 pub(crate) const MIN_SUPPORTED_CLIENT_VERSION: &str = "0.1.181";
 
 pub(crate) use events::{activity_state, notification_change};
+pub(crate) use protocol::ModelAccess;
 pub(crate) use handler::sync_ws_handler;
 pub(crate) use hub::SyncHub;

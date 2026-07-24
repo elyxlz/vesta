@@ -1,8 +1,10 @@
 """Tests for the OpenRouter caching proxy's request transforms."""
 
 import asyncio
+import datetime as dt
 import json
 
+import pytest
 from aiohttp import web
 
 import core.config as cfg
@@ -11,8 +13,10 @@ from core.openrouter_cache import (
     _CACHE_LOG_EVERY,
     _forward_bodies,
     _forward_with_retry,
+    _note_openrouter_rate_limit,
     _PrestreamError,
     _record_cache_usage,
+    _retry_after_timestamp,
     _sniff_usage,
     _usage_int,
     transform_request,
@@ -177,6 +181,42 @@ def test_usage_int_parses_safely():
     assert _usage_int({}, "input_tokens") == 0
     assert _usage_int({"usage": {}}, "input_tokens") == 0
     assert _usage_int(None, "input_tokens") == 0
+
+
+def test_retry_after_parses_delta_seconds():
+    assert _retry_after_timestamp("120", now=1_000.0) == 1_120
+
+
+def test_retry_after_parses_http_date():
+    reset = dt.datetime(2030, 1, 2, 3, 4, 5, tzinfo=dt.UTC)
+    assert _retry_after_timestamp("Wed, 02 Jan 2030 03:04:05 GMT", now=1_000.0) == int(reset.timestamp())
+
+
+def test_retry_after_rejects_invalid_or_expired_values():
+    assert _retry_after_timestamp("not-a-date", now=1_000.0) is None
+    assert _retry_after_timestamp("-1", now=1_000.0) is None
+    assert _retry_after_timestamp("Thu, 01 Jan 1970 00:00:01 GMT", now=1_000.0) is None
+
+
+@pytest.mark.anyio
+async def test_openrouter_rate_limit_persists_and_publishes_model_access(config, state):
+    app = web.Application()
+    app["state"] = state
+    app["config"] = config
+    sub = state.event_bus.subscribe()
+
+    await _note_openrouter_rate_limit(app, "120")
+
+    cooldown = state.persisted.provider_cooldown
+    assert cooldown is not None
+    assert cooldown.window == "openrouter"
+    assert cooldown.until > 0
+    assert state.current_turn_rate_limited is True
+    events = [sub.get_nowait() for _ in range(sub.qsize())]
+    access = [event for event in events if event["type"] == "model_access"]
+    assert len(access) == 1
+    assert access[0]["state"] == "cooling_down"
+    assert access[0]["window"] == "openrouter"
 
 
 def _config_with_memory(tmp_path, **overrides):

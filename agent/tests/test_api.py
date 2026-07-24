@@ -69,7 +69,7 @@ async def test_ws_snapshot_omits_chat(event_bus):
             data = json.loads(msg.data)
             assert data["type"] == "snapshot"
             assert "chat" not in data
-            assert set(data) == {"type", "state", "notifications", "config"}
+            assert set(data) == {"type", "state", "notifications", "config", "model_access"}
     finally:
         await runner.cleanup()
 
@@ -535,7 +535,12 @@ async def test_status_reports_readiness_separate_from_provider(config):
             self.app = {"state": state, "config": config}
 
     status_resp = await api_mod._status_handler(typing.cast("web.Request", _Req()))
-    assert json.loads(typing.cast("str", status_resp.text)) == {"authed": True, "provider_configured": True, "setup_complete": True}
+    assert json.loads(typing.cast("str", status_resp.text)) == {
+        "authed": True,
+        "provider_configured": True,
+        "setup_complete": True,
+        "model_access": {"state": "available", "reason": None, "until": None, "window": None},
+    }
 
     provider_resp = await api_mod._provider_get_handler(typing.cast("web.Request", _Req()))
     provider_body = json.loads(typing.cast("str", provider_resp.text))
@@ -580,7 +585,12 @@ async def test_status_reports_unprovisioned_distinct_from_unauthenticated(config
             self.app = {"state": state, "config": config}
 
     status_resp = await api_mod._status_handler(typing.cast("web.Request", _Req()))
-    assert json.loads(typing.cast("str", status_resp.text)) == {"authed": False, "provider_configured": False, "setup_complete": False}
+    assert json.loads(typing.cast("str", status_resp.text)) == {
+        "authed": False,
+        "provider_configured": False,
+        "setup_complete": False,
+        "model_access": {"state": "available", "reason": None, "until": None, "window": None},
+    }
 
 
 @pytest.mark.anyio

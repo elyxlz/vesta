@@ -33,6 +33,39 @@ pub(crate) struct ServiceInfo {
     pub rev: u64,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ModelAccessState {
+    Available,
+    CoolingDown,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ModelAccessReason {
+    RateLimit,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ModelAccess {
+    pub state: ModelAccessState,
+    pub reason: Option<ModelAccessReason>,
+    pub until: Option<i64>,
+    pub window: Option<String>,
+}
+
+impl Default for ModelAccess {
+    fn default() -> Self {
+        Self {
+            state: ModelAccessState::Available,
+            reason: None,
+            until: None,
+            window: None,
+        }
+    }
+}
+
 /// The per-agent `info` branch. camelCase to match `AgentInfo`. `activity_state` is a plain string
 /// ("idle"/"thinking") sourced from the activity cache; the TS union narrows it.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -40,6 +73,7 @@ pub(crate) struct ServiceInfo {
 pub(crate) struct AgentInfo {
     pub status: AgentStatus,
     pub activity_state: String,
+    pub model_access: ModelAccess,
     pub build_phase: Option<BuildPhase>,
     pub started_at: Option<String>,
     pub services: BTreeMap<String, ServiceInfo>,
@@ -126,6 +160,7 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
     let info = AgentInfo {
         status: AgentStatus::Alive,
         activity_state: "thinking".into(),
+        model_access: ModelAccess::default(),
         build_phase: None,
         started_at: Some("2026-01-01T00:00:00Z".into()),
         services,
@@ -193,6 +228,7 @@ mod tests {
         let info = AgentInfo {
             status: crate::docker::AgentStatus::Alive,
             activity_state: "idle".into(),
+            model_access: ModelAccess::default(),
             build_phase: None,
             started_at: Some("2026-07-18T00:00:00Z".into()),
             services: std::collections::BTreeMap::new(),
@@ -208,6 +244,7 @@ mod tests {
         AgentInfo {
             status: crate::docker::AgentStatus::Alive,
             activity_state: "idle".into(),
+            model_access: ModelAccess::default(),
             build_phase: None,
             started_at: None,
             services: BTreeMap::new(),

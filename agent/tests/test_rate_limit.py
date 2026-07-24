@@ -4,8 +4,13 @@ paraphrase (which has misreported a five_hour rejection as a "monthly spend limi
 import pytest
 from claude_agent_sdk import RateLimitEvent, RateLimitInfo, RateLimitStatus, RateLimitType
 from conftest import consuming, make_stream_harness, result_msg
+from pydantic import SecretStr
 from wait_util import wait_for_condition
 
+import core.config as cfg
+from core.client import _note_rate_limit
+from core.model_access import clear_model_access
+from core.provider import ProviderAuthState, ProviderCooldown, ProviderStatus
 from core.sdk_parsing import rate_limit_notice
 
 NOW = 1_000_000.0
@@ -75,17 +80,75 @@ async def test_rejected_rate_limit_emits_one_rate_limited_event_per_window():
     sub = state.event_bus.subscribe()
 
     async with consuming(state, config):
-        await message_queue.put(_rate_limit_event("rejected", resets_at=2_000_000))
-        await message_queue.put(_rate_limit_event("rejected", resets_at=2_000_000))
-        await message_queue.put(_rate_limit_event("rejected", resets_at=3_000_000))
+        await message_queue.put(_rate_limit_event("rejected", resets_at=4_000_000_000))
+        await message_queue.put(_rate_limit_event("rejected", resets_at=4_000_000_000))
+        await message_queue.put(_rate_limit_event("rejected", resets_at=4_000_001_000))
         await message_queue.put(result_msg())
         await wait_for_condition(lambda: len(consumed) >= 4, message="consumer never dispatched the rate limit events")
 
     events = _rate_limited_events(sub)
-    assert [e["resets_at"] for e in events] == [2_000_000, 3_000_000]
+    assert [e["resets_at"] for e in events] == [4_000_000_000, 4_000_001_000]
     assert all(e["window"] == "five_hour" for e in events)
     assert all("5-hour usage window" in e["text"] for e in events)
     assert all("monthly" not in e["text"] for e in events)
+    assert state.persisted.provider_cooldown is not None
+    assert state.persisted.provider_cooldown.until == 4_000_001_000
+    assert state.persisted.provider_cooldown.window == "five_hour"
+
+
+@pytest.mark.anyio
+async def test_rejected_rate_limit_publishes_cooling_down_model_access():
+    state, config, _, _, message_queue, consumed = make_stream_harness()
+    sub = state.event_bus.subscribe()
+
+    async with consuming(state, config):
+        await message_queue.put(_rate_limit_event("rejected", resets_at=4_000_000_000))
+        await message_queue.put(result_msg())
+        await wait_for_condition(lambda: len(consumed) >= 2, message="consumer never dispatched the rate limit event")
+
+    events = [sub.get_nowait() for _ in range(sub.qsize())]
+    access = [event for event in events if event["type"] == "model_access"]
+    assert len(access) == 1
+    assert access[0]["state"] == "cooling_down"
+    assert access[0]["reason"] == "rate_limit"
+    assert access[0]["until"] == 4_000_000_000
+    assert access[0]["window"] == "five_hour"
+
+
+@pytest.mark.anyio
+async def test_claude_window_event_is_not_applied_to_compatible_key_providers():
+    state, config, *_ = make_stream_harness()
+    config.provider = cfg.ZaiConfig(key=SecretStr("test-key"), model="glm-5")
+    state.provider_status = ProviderStatus(
+        state=ProviderAuthState.AUTHENTICATED,
+        kind="zai",
+        model="glm-5",
+    )
+    sub = state.event_bus.subscribe()
+
+    await _note_rate_limit(
+        _rate_limit_event("rejected", resets_at=4_000_000_000),
+        state=state,
+        config=config,
+    )
+
+    assert state.persisted.provider_cooldown is None
+    assert sub.empty()
+
+
+@pytest.mark.anyio
+async def test_provider_change_clears_persisted_cooldown(config, state):
+    state.persisted.provider_cooldown = ProviderCooldown(until=4_000_000_000, window="five_hour")
+    state.current_turn_rate_limited = True
+    sub = state.event_bus.subscribe()
+
+    await clear_model_access(state=state, config=config)
+
+    assert state.persisted.provider_cooldown is None
+    assert state.current_turn_rate_limited is False
+    event = sub.get_nowait()
+    assert event["type"] == "model_access"
+    assert event["state"] == "available"
 
 
 @pytest.mark.anyio

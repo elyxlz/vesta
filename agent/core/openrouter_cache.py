@@ -24,9 +24,11 @@ path for the OpenRouter provider; the SDK never talks to OpenRouter directly.
 """
 
 import asyncio
+import email.utils
 import json
 import re
 import socket
+import time
 import typing as tp
 
 import aiohttp
@@ -34,6 +36,7 @@ from aiohttp import web
 
 from . import logger
 from .config import OpenRouterConfig, VestaConfig
+from .model_access import activate_rate_limit
 from .models import State
 from .provider import OPENROUTER_SMALL_FAST_MODEL, TERMINAL_PROVIDER_ERRORS, observed_provider_failure
 
@@ -56,6 +59,41 @@ _CACHE_LOG_EVERY = 50  # summarize the hit rate once per this many model request
 _LOW_CACHE_FRACTION = 0.2  # below this over a window (with a provider verified) => warn caching is broken
 _RE_INPUT_TOKENS = re.compile(rb'"input_tokens":(\d+)')
 _RE_CACHE_READ = re.compile(rb'"cache_read_input_tokens":(\d+)')
+
+
+def _retry_after_timestamp(value: str | None, *, now: float | None = None) -> int | None:
+    """Parse RFC Retry-After (delta-seconds or HTTP-date) to a Unix timestamp."""
+    if value is None:
+        return None
+    timestamp = time.time() if now is None else now
+    try:
+        delay = int(value.strip())
+        return int(timestamp) + delay if delay >= 0 else None
+    except ValueError:
+        pass
+    try:
+        parsed = email.utils.parsedate_to_datetime(value)
+        resets_at = int(parsed.timestamp())
+        return resets_at if resets_at > timestamp else None
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+async def _note_openrouter_rate_limit(app: web.Application, retry_after: str | None) -> None:
+    state: State = app["state"]
+    config: VestaConfig = app["config"]
+    resets_at = _retry_after_timestamp(retry_after)
+    cooldown = await activate_rate_limit(
+        state=state,
+        config=config,
+        resets_at=resets_at,
+        window="openrouter",
+    )
+    window_key = ("openrouter", cooldown.until)
+    if window_key != state.rate_limit_noticed:
+        state.rate_limit_noticed = window_key
+        text = f"OpenRouter rate limit hit, retrying after {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime(cooldown.until))}."
+        state.event_bus.emit({"type": "rate_limited", "text": text, "window": "openrouter", "resets_at": cooldown.until})
 
 
 # --- pure request transforms (unit-tested) ---
@@ -268,6 +306,8 @@ async def _stream_upstream(
             if upstream.status in TERMINAL_PROVIDER_ERRORS:
                 state: State = request.app["state"]
                 state.provider_status = observed_provider_failure(state.provider_status)
+            if upstream.status == 429:
+                await _note_openrouter_rate_limit(request.app, upstream.headers.get("Retry-After"))
             # Forward upstream headers (Content-Type, Retry-After, rate-limit, ...) so the SDK
             # keeps its backoff signals. aiohttp already decompressed the body and StreamResponse
             # re-frames length/encoding, so drop those hop-by-hop headers.
