@@ -4,7 +4,7 @@
 A "pot" is a shared group (a trip, a household, a project) with members. Two
 entry types are logged against it: expenses (a payer covers a cost, split among
 members) and transfers (one member pays another directly). It computes net
-balances and the minimum set of payments to settle up. Multi-currency: each pot
+balances and a compact set of payments to settle up. Multi-currency: each pot
 has a base currency; entries can be in another currency with an exchange rate.
 
 Money is stored as integer minor units (pence/cents) so settle-up is exact with
@@ -19,11 +19,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 import urllib.request
-from datetime import datetime, UTC
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 
 # Persistent, gitignored data dir (the vesta platform convention; core stores
 # its state here too). Override with MONEYPOT_DATA for a custom location.
@@ -33,6 +37,29 @@ DATA_DIR = DATA_FILE.parent
 
 class MoneypotError(ValueError):
     """Bad input. CLI maps it to a clean error+exit; the API maps it to HTTP 400."""
+
+
+@dataclass(frozen=True)
+class ExpenseRequest:
+    payer: str | None
+    amount: str | int | float | None
+    desc: str = ""
+    currency: str | None = None
+    rate: str | int | float | None = None
+    fetch: bool = False
+    for_list: list[str] | None = None
+    split_map: dict[str, str | int | float] | None = None
+
+
+@dataclass(frozen=True)
+class TransferRequest:
+    sender: str | None
+    recipient: str | None
+    amount: str | int | float | None
+    desc: str = ""
+    currency: str | None = None
+    rate: str | int | float | None = None
+    fetch: bool = False
 
 
 # ---------- storage ----------
@@ -74,22 +101,17 @@ def _next_entry_id(pot: dict) -> int:
 
 def to_cents(s) -> int:
     """Parse a money value ('12', '12.5', '12.50') to integer minor units."""
-    s = str(s).strip().replace(",", "")
-    if not s:
+    raw = str(s).strip().replace(",", "")
+    if not raw:
         raise MoneypotError("empty amount")
-    neg = s.startswith("-")
-    if neg:
-        s = s[1:]
     try:
-        if "." in s:
-            whole, frac = s.split(".", 1)
-            frac = (frac + "00")[:2]
-        else:
-            whole, frac = s, "00"
-        cents = int(whole or "0") * 100 + int(frac or "0")
-    except ValueError:
-        raise MoneypotError(f"bad amount: {s!r}")
-    return -cents if neg else cents
+        amount = Decimal(raw)
+    except InvalidOperation as exc:
+        raise MoneypotError(f"bad amount: {raw!r}") from exc
+    cents = amount * 100
+    if not amount.is_finite() or cents != cents.to_integral_value():
+        raise MoneypotError(f"amount must have at most two decimal places: {raw!r}")
+    return int(cents)
 
 
 def fmt(cents: int, currency: str) -> str:
@@ -104,9 +126,9 @@ def parse_rate(s) -> float:
     """Exchange rate: how many BASE units one ENTRY-currency unit is worth."""
     try:
         r = float(s)
-    except (ValueError, TypeError):
-        raise MoneypotError(f"bad rate: {s!r}")
-    if r <= 0:
+    except (ValueError, TypeError) as exc:
+        raise MoneypotError(f"bad rate: {s!r}") from exc
+    if not math.isfinite(r) or r <= 0:
         raise MoneypotError("rate must be positive")
     return r
 
@@ -124,7 +146,7 @@ def fetch_rate(orig: str, base: str) -> float | None:
         if data.get("result") != "success":
             return None
         return data.get("rates", {}).get(base.upper())
-    except Exception:
+    except (HTTPError, OSError, TypeError, URLError, json.JSONDecodeError):
         return None
 
 
@@ -148,29 +170,47 @@ def split_equal(total: int, members: list[str]) -> dict[str, int]:
     return {m: base + (1 if i < rem else 0) for i, m in enumerate(members)}
 
 
+def _custom_split(members, orig_total, base_total, rate, orig_currency, split_map):
+    if not isinstance(split_map, dict) or not split_map:
+        raise MoneypotError("split must be a non-empty object of member amounts")
+    orig_shares = {}
+    for raw_name, amt in split_map.items():
+        if not isinstance(raw_name, str):
+            raise MoneypotError("split member names must be strings")
+        name = raw_name.strip()
+        if name not in members:
+            raise MoneypotError(f"'{name}' is not a member of this pot")
+        orig_shares[name] = to_cents(amt)
+    if sum(orig_shares.values()) != orig_total:
+        raise MoneypotError(f"split must sum to {fmt(orig_total, orig_currency)}, got {fmt(sum(orig_shares.values()), orig_currency)}")
+    base_shares = {member: convert(cents, rate) for member, cents in orig_shares.items()}
+    drift = base_total - sum(base_shares.values())
+    if drift:
+        biggest = max(base_shares, key=lambda member: base_shares[member])
+        base_shares[biggest] += drift
+    return base_shares
+
+
+def _subset_split(members, base_total, for_list):
+    if not isinstance(for_list, list) or not for_list:
+        raise MoneypotError("for must be a non-empty list of members")
+    if any(not isinstance(member, str) for member in for_list):
+        raise MoneypotError("for members must be strings")
+    if len(for_list) != len(set(for_list)):
+        raise MoneypotError("for members must be unique")
+    for member in for_list:
+        if member not in members:
+            raise MoneypotError(f"'{member}' is not a member of this pot")
+    return split_equal(base_total, for_list)
+
+
 def _resolve_split(pot, orig_total, base_total, rate, orig_currency, for_list, split_map):
     """Per-member shares in BASE minor units. Custom split is in the ENTRY currency."""
     members = pot["members"]
-    if split_map:
-        orig_shares = {}
-        for name, amt in split_map.items():
-            name = name.strip()
-            if name not in members:
-                raise MoneypotError(f"'{name}' is not a member of this pot")
-            orig_shares[name] = to_cents(amt)
-        if sum(orig_shares.values()) != orig_total:
-            raise MoneypotError(f"split must sum to {fmt(orig_total, orig_currency)}, got {fmt(sum(orig_shares.values()), orig_currency)}")
-        base_shares = {m: convert(c, rate) for m, c in orig_shares.items()}
-        drift = base_total - sum(base_shares.values())
-        if drift and base_shares:
-            biggest = max(base_shares, key=lambda m: base_shares[m])
-            base_shares[biggest] += drift
-        return base_shares
-    if for_list:
-        for m in for_list:
-            if m not in members:
-                raise MoneypotError(f"'{m}' is not a member of this pot")
-        return split_equal(base_total, for_list)
+    if split_map is not None:
+        return _custom_split(members, orig_total, base_total, rate, orig_currency, split_map)
+    if for_list is not None:
+        return _subset_split(members, base_total, for_list)
     return split_equal(base_total, members)
 
 
@@ -179,7 +219,7 @@ def _resolve_split(pot, orig_total, base_total, rate, orig_currency, for_list, s
 
 def compute_nets(pot: dict) -> dict[str, int]:
     """Net per member in cents. Positive = owed money / ahead. Negative = owes."""
-    nets = {m: 0 for m in pot["members"]}
+    nets = dict.fromkeys(pot["members"], 0)
     for e in pot["entries"]:
         if e["type"] == "expense":
             nets[e["payer"]] = nets.get(e["payer"], 0) + e["amount"]
@@ -192,7 +232,7 @@ def compute_nets(pot: dict) -> dict[str, int]:
 
 
 def settle_up(nets: dict[str, int]) -> list[tuple[str, str, int]]:
-    """Minimal greedy settle-up: list of (debtor, creditor, cents)."""
+    """Greedy settle-up: list of (debtor, creditor, cents)."""
     rem: dict[str, int] = dict(nets)
     creditors: list[str] = sorted((m for m, v in nets.items() if v > 0), key=lambda m: -nets[m])
     debtors: list[str] = sorted((m for m, v in nets.items() if v < 0), key=lambda m: nets[m])
@@ -216,7 +256,7 @@ def settle_up(nets: dict[str, int]) -> list[tuple[str, str, int]]:
 
 
 def create_pot(data, pot_id, name=None, currency="GBP", members=None) -> dict:
-    if not pot_id or not pot_id.strip():
+    if not isinstance(pot_id, str) or not pot_id.strip():
         raise MoneypotError("pot id required")
     pot_id = pot_id.strip()
     if pot_id in data["pots"]:
@@ -224,17 +264,23 @@ def create_pot(data, pot_id, name=None, currency="GBP", members=None) -> dict:
     members = members or []
     if isinstance(members, str):
         members = [m.strip() for m in members.split(",") if m.strip()]
-    members = [m.strip() for m in members if m and m.strip()]
+    if not isinstance(members, list) or any(not isinstance(member, str) for member in members):
+        raise MoneypotError("members must be a list of names")
+    members = [member.strip() for member in members if member.strip()]
     if not members:
         raise MoneypotError("need at least one member")
-    pot = {"name": name or pot_id, "currency": currency.upper(), "members": members, "created": _now(), "entries": []}
+    if len(members) != len(set(members)):
+        raise MoneypotError("member names must be unique")
+    if not isinstance(currency, str) or not currency.strip():
+        raise MoneypotError("currency required")
+    pot = {"name": name or pot_id, "currency": currency.strip().upper(), "members": members, "created": _now(), "entries": []}
     data["pots"][pot_id] = pot
     return pot
 
 
 def add_member(data, pot_id, name) -> dict:
     pot = get_pot(data, pot_id)
-    name = (name or "").strip()
+    name = name.strip() if isinstance(name, str) else ""
     if not name:
         raise MoneypotError("member name required")
     if name in pot["members"]:
@@ -243,27 +289,29 @@ def add_member(data, pot_id, name) -> dict:
     return pot
 
 
-def add_expense(data, pot_id, payer, amount, desc="", currency=None, rate=None, fetch=False, for_list=None, split_map=None) -> dict:
+def add_expense(data, pot_id, request: ExpenseRequest) -> dict:
     pot = get_pot(data, pot_id)
     base = pot["currency"]
-    if payer not in pot["members"]:
-        raise MoneypotError(f"payer '{payer}' is not a member")
-    orig_total = to_cents(amount)
+    if request.payer not in pot["members"]:
+        raise MoneypotError(f"payer '{request.payer}' is not a member")
+    orig_total = to_cents(request.amount)
     if orig_total <= 0:
         raise MoneypotError("amount must be positive")
-    orig_currency = (currency or base).upper()
-    r = resolve_rate(orig_currency, base, rate, fetch)
-    base_total = convert(orig_total, r)
-    split = _resolve_split(pot, orig_total, base_total, r, orig_currency, for_list, split_map)
+    if request.currency is not None and not isinstance(request.currency, str):
+        raise MoneypotError("currency must be a string")
+    orig_currency = (request.currency or base).upper()
+    rate = resolve_rate(orig_currency, base, request.rate, request.fetch)
+    base_total = convert(orig_total, rate)
+    split = _resolve_split(pot, orig_total, base_total, rate, orig_currency, request.for_list, request.split_map)
     entry = {
         "id": _next_entry_id(pot),
         "type": "expense",
-        "payer": payer,
+        "payer": request.payer,
         "amount": base_total,
         "currency": orig_currency,
-        "rate": r,
+        "rate": rate,
         "orig_amount": orig_total,
-        "desc": desc or "",
+        "desc": request.desc or "",
         "split": split,
         "ts": _now(),
     }
@@ -271,30 +319,32 @@ def add_expense(data, pot_id, payer, amount, desc="", currency=None, rate=None, 
     return entry
 
 
-def add_transfer(data, pot_id, sender, recipient, amount, desc="", currency=None, rate=None, fetch=False) -> dict:
+def add_transfer(data, pot_id, request: TransferRequest) -> dict:
     pot = get_pot(data, pot_id)
     base = pot["currency"]
-    for who, label in ((sender, "from"), (recipient, "to")):
+    for who, label in ((request.sender, "from"), (request.recipient, "to")):
         if who not in pot["members"]:
             raise MoneypotError(f"{label} '{who}' is not a member")
-    if sender == recipient:
+    if request.sender == request.recipient:
         raise MoneypotError("from and to must differ")
-    orig_amt = to_cents(amount)
+    orig_amt = to_cents(request.amount)
     if orig_amt <= 0:
         raise MoneypotError("amount must be positive")
-    orig_currency = (currency or base).upper()
-    r = resolve_rate(orig_currency, base, rate, fetch)
-    base_amt = convert(orig_amt, r)
+    if request.currency is not None and not isinstance(request.currency, str):
+        raise MoneypotError("currency must be a string")
+    orig_currency = (request.currency or base).upper()
+    rate = resolve_rate(orig_currency, base, request.rate, request.fetch)
+    base_amt = convert(orig_amt, rate)
     entry = {
         "id": _next_entry_id(pot),
         "type": "transfer",
-        "from": sender,
-        "to": recipient,
+        "from": request.sender,
+        "to": request.recipient,
         "amount": base_amt,
         "currency": orig_currency,
-        "rate": r,
+        "rate": rate,
         "orig_amount": orig_amt,
-        "desc": desc or "",
+        "desc": request.desc or "",
         "ts": _now(),
     }
     pot["entries"].append(entry)
@@ -312,7 +362,7 @@ def remove_entry(data, pot_id, entry_id) -> None:
 def balance(data, pot_id) -> dict:
     pot = get_pot(data, pot_id)
     nets = compute_nets(pot)
-    paid = {m: 0 for m in pot["members"]}
+    paid = dict.fromkeys(pot["members"], 0)
     for e in pot["entries"]:
         if e["type"] == "expense":
             paid[e["payer"]] = paid.get(e["payer"], 0) + e["amount"]
@@ -335,8 +385,8 @@ def contributions(data, pot_id, account) -> dict:
     others = [m for m in pot["members"] if m != account]
     if not others:
         raise MoneypotError("pot has no members besides the account")
-    contributed = {m: 0 for m in others}
-    owed_back = {m: 0 for m in others}
+    contributed = dict.fromkeys(others, 0)
+    owed_back = dict.fromkeys(others, 0)
     for e in pot["entries"]:
         if e["type"] == "transfer":
             if e["to"] == account and e["from"] in contributed:
@@ -431,14 +481,16 @@ def cmd_add_expense(args):
     e = add_expense(
         data,
         args.id,
-        args.payer,
-        args.amount,
-        args.desc,
-        args.currency,
-        args.rate,
-        args.fetch,
-        [m.strip() for m in args.for_.split(",")] if args.for_ else None,
-        _split_map(args.split),
+        ExpenseRequest(
+            payer=args.payer,
+            amount=args.amount,
+            desc=args.desc,
+            currency=args.currency,
+            rate=args.rate,
+            fetch=args.fetch,
+            for_list=[m.strip() for m in args.for_.split(",")] if args.for_ else None,
+            split_map=_split_map(args.split),
+        ),
     )
     save(data)
     pot = data["pots"][args.id]
@@ -451,7 +503,19 @@ def cmd_add_expense(args):
 
 def cmd_add_transfer(args):
     data = load()
-    e = add_transfer(data, args.id, args.from_, args.to, args.amount, args.desc, args.currency, args.rate, args.fetch)
+    e = add_transfer(
+        data,
+        args.id,
+        TransferRequest(
+            sender=args.from_,
+            recipient=args.to,
+            amount=args.amount,
+            desc=args.desc,
+            currency=args.currency,
+            rate=args.rate,
+            fetch=args.fetch,
+        ),
+    )
     save(data)
     base = data["pots"][args.id]["currency"]
     tail = f" (= {fmt(e['amount'], base)} @ {e['rate']})" if e["currency"] != base else ""
@@ -496,7 +560,7 @@ def cmd_balance(args):
     if not b["settle_up"]:
         print("  settle-up: all square ✓")
     else:
-        print("  settle-up (minimum payments):")
+        print("  settle-up:")
         for t in b["settle_up"]:
             print(f"     {t['from']} pays {t['to']}  {fmt(t['amount'], cur)}")
 
@@ -529,10 +593,7 @@ def cmd_delete_entry(args):
     print(f"deleted entry #{args.entry_id} from {args.id}")
 
 
-def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="moneypot", description="Shared expense & pot tracker (Splitwise/Tricount style).")
-    sub = p.add_subparsers(dest="cmd", required=True)
-
+def _add_pot_parsers(sub) -> None:
     pot = sub.add_parser("pot", help="manage pots (shared groups)")
     potsub = pot.add_subparsers(dest="potcmd", required=True)
     pc = potsub.add_parser("create", help="create a pot")
@@ -549,6 +610,8 @@ def build_parser() -> argparse.ArgumentParser:
     pd.add_argument("--yes", action="store_true")
     pd.set_defaults(func=cmd_pot_delete)
 
+
+def _add_member_parser(sub) -> None:
     m = sub.add_parser("member", help="manage members")
     msub = m.add_subparsers(dest="memcmd", required=True)
     ma = msub.add_parser("add", help="add a member to a pot")
@@ -556,6 +619,8 @@ def build_parser() -> argparse.ArgumentParser:
     ma.add_argument("name")
     ma.set_defaults(func=cmd_member_add)
 
+
+def _add_entry_parsers(sub) -> None:
     ae = sub.add_parser("add-expense", help="log a shared expense someone paid")
     ae.add_argument("id")
     ae.add_argument("--payer", required=True)
@@ -579,6 +644,8 @@ def build_parser() -> argparse.ArgumentParser:
     at.add_argument("--fetch", action="store_true")
     at.set_defaults(func=cmd_add_transfer)
 
+
+def _add_view_parsers(sub) -> None:
     ls = sub.add_parser("list", help="show a pot's entry history")
     ls.add_argument("id")
     ls.add_argument("--json", action="store_true")
@@ -600,6 +667,14 @@ def build_parser() -> argparse.ArgumentParser:
     de.add_argument("entry_id", type=int)
     de.set_defaults(func=cmd_delete_entry)
 
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="moneypot", description="Shared expense & pot tracker (Splitwise/Tricount style).")
+    sub = p.add_subparsers(dest="cmd", required=True)
+    _add_pot_parsers(sub)
+    _add_member_parser(sub)
+    _add_entry_parsers(sub)
+    _add_view_parsers(sub)
     return p
 
 

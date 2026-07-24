@@ -1,11 +1,11 @@
 ---
 name: moneypot
-description: Track shared expenses and joint money pots (Splitwise/Tricount style). Use when the user wants to record who paid for what in a group, money put into a shared pot, split costs among people, see who owes whom, or get the minimum set of payments to settle up. Also exposes an optional HTTP/JSON API. Keywords: split the bill, who owes, shared expenses, joint account, money pot, settle up, IOU, tricount, splitwise.
+description: Track shared expenses and joint money pots (Splitwise/Tricount style). Use when the user wants to record who paid for what in a group, money put into a shared pot, split costs among people, see who owes whom, or get a compact set of payments to settle up. Also exposes an optional HTTP/JSON API. Keywords: split the bill, who owes, shared expenses, joint account, money pot, settle up, IOU, tricount, splitwise.
 ---
 
 # Moneypot
 
-A shared expense and pot tracker. A **pot** is a group (a trip, a household, a project) with members. You log two kinds of entries against it, and it computes net balances and the cheapest way to settle up. CLI plus an optional HTTP API. Data lives in `~/agent/data/moneypot.json` (shared by both).
+A shared expense and pot tracker. A **pot** is a group (a trip, a household, a project) with members. You log two kinds of entries against it, and it computes net balances and a compact way to settle up. CLI plus an optional HTTP API. Data lives in `~/agent/data/moneypot.json` (shared by both).
 
 Run the CLI with `python3 ~/agent/skills/moneypot/moneypot.py <command>`.
 
@@ -14,7 +14,7 @@ Run the CLI with `python3 ~/agent/skills/moneypot/moneypot.py <command>`.
 - **expense**: someone paid for a shared cost, split among members. Covers "I put money in / paid for a shared thing". The payer is credited the full amount; each member is debited their share.
 - **transfer**: one member paid another directly (settling up, or moving cash). The sender is credited, the recipient debited.
 - **balance**: net per member. Positive = owed money (ahead). Negative = owes. Nets always sum to zero.
-- **settle-up**: the minimum list of payments that zeroes everyone out.
+- **settle-up**: a greedy list of payments that zeroes everyone out.
 
 Amounts are stored as integer minor units (pence/cents), so there's no float drift. Equal splits distribute leftover pennies to the first members.
 
@@ -96,7 +96,7 @@ GET    /pots/{id}/contributions?account=X
 
 Errors return `{"error": "..."}` with HTTP 400 (bad input), 404 (no route), or 401 (bad key).
 
-**Public vs private.** By default the API is open. Set an app-level key with `--api-key KEY` (or `MONEYPOT_API_KEY`) to require it on every route except `/health`; callers pass `Authorization: Bearer KEY`, `X-API-Key: KEY`, otherwise 401. When a key is set, the vestad agent token (`AGENT_TOKEN` env) is also accepted via `X-Agent-Token` (or Bearer), so the service stays reachable through vestad (e.g. from the dashboard) without sharing the app key.
+**Authentication.** Inside vesta, the API automatically requires the vestad agent token (`AGENT_TOKEN`) on every route except `/health`. A separate app key can be added with `--api-key KEY` (or `MONEYPOT_API_KEY`) and sent as `Authorization: Bearer KEY` or `X-API-Key: KEY`. Outside vesta, with neither credential configured, the API is open.
 
 ## Notes
 

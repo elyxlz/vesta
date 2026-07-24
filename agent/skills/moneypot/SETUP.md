@@ -4,30 +4,33 @@ The **CLI needs no setup**: `python3 ~/agent/skills/moneypot/moneypot.py ...` wo
 
 The **HTTP API is optional**. To run it as a vestad-proxied service:
 
-1. Register a port and start the server (uses the `service` skill):
+1. Register a private port and start the server (uses the `vestad` skill):
 
    ```bash
-   P=$(~/agent/skills/service/scripts/register-service moneypot --public)
+   P=$(~/agent/skills/vestad/scripts/register-service moneypot) &&
    screen -dmS moneypot bash -c "cd ~/agent/skills/moneypot && PYTHONUNBUFFERED=1 python3 server.py --port $P > ~/agent/logs/moneypot.log 2>&1"
    ```
 
-   Drop `--public` for a token-gated service (reachable only with `X-Agent-Token`).
+   The server automatically accepts the vesta `AGENT_TOKEN`, and vestad also
+   requires that token before proxying a private service.
 
-   **Private with an app key (recommended):** generate a key and pass it so the API requires it on every route except `/health`:
+   **Public with a separate app key:** only use a public registration when an
+   external caller cannot send the vesta agent token. Generate and store a key:
 
    ```bash
    KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))")
-   echo "export MONEYPOT_API_KEY=$KEY" >> ~/.bashrc
-   P=$(~/agent/skills/service/scripts/register-service moneypot --public)
-   screen -dmS moneypot bash -c "cd ~/agent/skills/moneypot && MONEYPOT_API_KEY='$KEY' PYTHONUNBUFFERED=1 python3 server.py --port $P > ~/agent/logs/moneypot.log 2>&1"
+   install -m 600 /dev/null ~/agent/data/moneypot-api-key
+   printf '%s\n' "$KEY" > ~/agent/data/moneypot-api-key
+   P=$(~/agent/skills/vestad/scripts/register-service moneypot --public) &&
+   screen -dmS moneypot bash -c 'cd ~/agent/skills/moneypot && PYTHONUNBUFFERED=1 python3 server.py --api-key "$(cat ~/agent/data/moneypot-api-key)" --port '"$P"' > ~/agent/logs/moneypot.log 2>&1'
    ```
 
-   Callers then send `X-API-Key: <key>` (or `Authorization: Bearer <key>`). Omit the key entirely for an open API.
+   Callers then send `X-API-Key: <key>` (or `Authorization: Bearer <key>`).
 
 2. Add the startup line to the `## Daemons` section of `~/agent/skills/restart/SKILL.md` so it comes back after a restart:
 
    ```bash
-   running moneypot || { P=$(~/agent/skills/service/scripts/register-service moneypot --public); screen -dmS moneypot bash -c "cd ~/agent/skills/moneypot && PYTHONUNBUFFERED=1 python3 server.py --port $P > ~/agent/logs/moneypot.log 2>&1"; sleep 1; }
+   running moneypot || { P=$(~/agent/skills/vestad/scripts/register-service moneypot) && screen -dmS moneypot bash -c "cd ~/agent/skills/moneypot && PYTHONUNBUFFERED=1 python3 server.py --port $P > ~/agent/logs/moneypot.log 2>&1"; sleep 1; }
    ```
 
 3. Verify:
