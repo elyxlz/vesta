@@ -149,7 +149,7 @@ export function FormRow({
           {label}
         </Text>
         {detail ? (
-          <Text style={[styles.rowDetail, { color: colors.secondaryText }]}>
+          <Text style={[styles.rowDetail, { color: colors.tertiaryText }]}>
             {detail}
           </Text>
         ) : null}
