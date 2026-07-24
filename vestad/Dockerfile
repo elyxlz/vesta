@@ -59,6 +59,24 @@ COPY --from=whisper-build /opt/whisper.cpp/.pin /opt/whisper.cpp/.pin
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:${PATH}"
 
+# Anthropic-compatible bridge used only for ChatGPT subscription OAuth. Pin the release and its
+# per-architecture digest so an upstream replacement cannot silently enter the agent image.
+COPY vestad/claude-code-proxy.env /tmp/claude-code-proxy.env
+RUN . /tmp/claude-code-proxy.env && \
+    ARCH=$(dpkg --print-architecture) && \
+    case "$ARCH" in \
+      amd64) SHA256="$CLAUDE_CODE_PROXY_AMD64_SHA256" ;; \
+      arm64) SHA256="$CLAUDE_CODE_PROXY_ARM64_SHA256" ;; \
+      *) echo "unsupported claude-code-proxy architecture: $ARCH" >&2; exit 1 ;; \
+    esac && \
+    ASSET="claude-code-proxy-linux-${ARCH}.tar.gz" && \
+    curl -fsSL --connect-timeout 10 --max-time 120 "https://github.com/raine/claude-code-proxy/releases/download/v${CLAUDE_CODE_PROXY_VERSION}/${ASSET}" -o "/tmp/${ASSET}" && \
+    echo "${SHA256}  /tmp/${ASSET}" | sha256sum -c - && \
+    tar -xzf "/tmp/${ASSET}" -C /usr/local/bin claude-code-proxy && \
+    rm "/tmp/${ASSET}" /tmp/claude-code-proxy.env && \
+    claude-code-proxy version
+COPY vestad/licenses/claude-code-proxy.txt /usr/share/doc/claude-code-proxy/copyright
+
 WORKDIR /root
 
 COPY agent/ ./agent/

@@ -24,7 +24,7 @@ from .client import (
     resolve_openrouter_max_tokens,
     send_preempt,
 )
-from .config import DEFAULT_CONTEXT_WINDOW
+from .codex_proxy import start_codex_proxy
 from .diagnostics import format_crash_detail
 from .helpers import build_restart_context, clear_notifications, load_prompt
 from .notification import CORE_SNOOZE_TYPES, CORE_SOURCE, TYPE_COMPACTION_FOLLOWUP, TYPE_NIGHTLY_DREAM, TYPE_PROACTIVE_CHECK, Notification
@@ -398,15 +398,16 @@ async def message_processor(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.St
         if state.openrouter_max_tokens is None:
             real_window = await resolve_openrouter_max_tokens(config)
             if real_window:
-                # Cap at max_context_tokens: cache-read cost scales with how large the
-                # cached prefix grows before autocompact, so big-window models default
-                # to a 200k working window unless the user raises the cap.
-                cap = config.provider.max_context_tokens or DEFAULT_CONTEXT_WINDOW
+                # OpenRouter reports this per model. A configured value is an optional user cap;
+                # absent one, use the complete advertised window rather than a provider-wide guess.
+                cap = config.provider.max_context_tokens or real_window
                 state.openrouter_max_tokens = min(real_window, cap)
                 capped = f" (model supports {real_window:,})" if real_window > state.openrouter_max_tokens else ""
                 logger.startup(f"OpenRouter context window: {state.openrouter_max_tokens:,} tokens{capped}")
         if state.openrouter_proxy_url is None:
             await start_cache_proxy(config, state)
+    elif isinstance(config.provider, cfg.OpenAIConfig):
+        await start_codex_proxy(config, state)
     async with client_session(state=state, config=config):
         while not state.shutdown_event.is_set():
             try:

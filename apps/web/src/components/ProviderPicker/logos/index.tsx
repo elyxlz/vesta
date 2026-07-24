@@ -36,3 +36,63 @@ export function OpenRouterLogo({ className }: LogoProps) {
     </svg>
   );
 }
+
+export function ZaiLogo({ className }: LogoProps) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden
+      className={cn("size-10 text-[#246BFD]", className)}
+    >
+      <path
+        d="M5 5h13L6 19h13"
+        stroke="currentColor"
+        strokeWidth="3.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle cx="19" cy="5" r="2" fill="currentColor" />
+    </svg>
+  );
+}
+
+export function KimiLogo({ className }: LogoProps) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden
+      className={cn("size-10 text-[#7357FF]", className)}
+    >
+      <path
+        d="M5 4v16M19 4 8 12l11 8"
+        stroke="currentColor"
+        strokeWidth="3.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+export function OpenAILogo({ className }: LogoProps) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden
+      className={cn("size-10 text-foreground", className)}
+    >
+      <path
+        d="M12 3.5a4.25 4.25 0 0 1 4.1 3.13 4.25 4.25 0 0 1 1.34 7.93A4.25 4.25 0 0 1 10.9 20.5a4.25 4.25 0 0 1-4.1-3.13 4.25 4.25 0 0 1-1.34-7.93A4.25 4.25 0 0 1 12 3.5Zm-3.78 7.13 3.78-2.2 3.78 2.2v4.74L12 17.57l-3.78-2.2v-4.74Z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
