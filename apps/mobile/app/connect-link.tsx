@@ -100,7 +100,7 @@ function ConnectLinkContent({
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === "ios" ? "padding" : undefined}
-      style={[styles.sheet, { backgroundColor: colors.background }]}
+      style={[styles.sheet, { backgroundColor: colors.card }]}
     >
       <View style={styles.header}>
         <View style={styles.titleRow}>

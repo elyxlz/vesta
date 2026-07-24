@@ -118,7 +118,7 @@ function RecentGatewaysContent() {
 
   return (
     <Animated.ScrollView
-      style={{ backgroundColor: colors.background }}
+      style={{ backgroundColor: colors.card }}
       contentContainerStyle={styles.content}
       contentInsetAdjustmentBehavior="never"
       onScroll={Animated.event(
@@ -131,7 +131,7 @@ function RecentGatewaysContent() {
     >
       <View style={styles.header}>
         <View
-          style={[styles.headerSurface, { backgroundColor: colors.background }]}
+          style={[styles.headerSurface, { backgroundColor: colors.card }]}
         >
           <View style={styles.titleRow}>
             <Text
@@ -164,7 +164,7 @@ function RecentGatewaysContent() {
           ]}
         >
           <LinearGradient
-            colors={[colors.background, `${colors.background}00`]}
+            colors={[colors.card, `${colors.card}00`]}
             style={StyleSheet.absoluteFill}
           />
         </Animated.View>
@@ -184,7 +184,7 @@ function RecentGatewaysContent() {
               containerStyle={[
                 styles.gateway,
                 {
-                  backgroundColor: colors.elevated,
+                  backgroundColor: colors.background,
                   borderColor: colors.border,
                 },
               ]}

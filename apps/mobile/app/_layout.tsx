@@ -196,6 +196,7 @@ function SessionNavigation() {
                   presentation: "formSheet",
                   sheetAllowedDetents: "fitToContents",
                   sheetGrabberVisible: true,
+                  contentStyle: { backgroundColor: colors.card },
                 }}
               />
               <Stack.Screen
@@ -205,6 +206,7 @@ function SessionNavigation() {
                   presentation: "formSheet",
                   sheetAllowedDetents: "fitToContents",
                   sheetGrabberVisible: true,
+                  contentStyle: { backgroundColor: colors.card },
                 }}
               />
               <Stack.Screen
