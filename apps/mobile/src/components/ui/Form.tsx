@@ -238,7 +238,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   sectionBody: {
-    borderRadius: radii.base,
+    borderRadius: radii.card,
     borderCurve: "continuous",
     borderWidth: StyleSheet.hairlineWidth,
     overflow: "hidden",
