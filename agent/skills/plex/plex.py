@@ -27,6 +27,11 @@ import json
 import os
 import sys
 from pathlib import Path
+from xml.etree.ElementTree import ParseError
+
+from plexapi.exceptions import PlexApiException
+from plexapi.server import PlexServer
+from requests import RequestException
 
 
 def _load_config():
@@ -39,34 +44,31 @@ def _load_config():
         try:
             d = json.loads(cfg.read_text())
             return d.get("url", "").strip(), d.get("token", "").strip()
-        except Exception:
-            pass
+        except (AttributeError, json.JSONDecodeError, OSError, TypeError):
+            return url, token
     return url, token
 
 
 def connect():
-    from plexapi.server import PlexServer  # ty: ignore[unresolved-import]
-
     url, token = _load_config()
     if not url or not token:
         sys.exit("error: PLEX_URL + PLEX_TOKEN not set (env or ~/.plex/config.json).\nsee SETUP.md to get a token.")
     try:
         return PlexServer(url, token, timeout=15)
-    except Exception as e:
-        sys.exit(f"error: could not connect to plex at {url}: {e}")
+    except (ParseError, PlexApiException, RequestException) as exc:
+        sys.exit(f"error: could not connect to plex at {url}: {exc}")
 
 
 def _gb(n):
-    try:
-        return f"{n / 1e9:.1f}GB"
-    except Exception:
+    if not isinstance(n, (int, float)):
         return "?"
+    return f"{n / 1e9:.1f}GB"
 
 
 def _resolution(item):
     try:
         return item.media[0].videoResolution or "?"
-    except Exception:
+    except (AttributeError, IndexError, TypeError):
         return "?"
 
 
@@ -74,10 +76,9 @@ def _files(item):
     out = []
     try:
         for m in item.media:
-            for p in m.parts:
-                out.append({"file": p.file, "size": getattr(p, "size", 0)})
-    except Exception:
-        pass
+            out.extend({"file": p.file, "size": getattr(p, "size", 0)} for p in m.parts)
+    except (AttributeError, TypeError):
+        return []
     return out
 
 
@@ -111,13 +112,13 @@ def _search(plex, query, libtype):
     results = []
     try:
         results = plex.library.search(title=query, libtype=libtype) if libtype else plex.library.search(title=query)
-    except Exception:
+    except (PlexApiException, RequestException):
         # fall back to per-section search
         for s in plex.library.sections():
             try:
                 results.extend(s.search(title=query))
-            except Exception:
-                pass
+            except (PlexApiException, RequestException) as exc:
+                print(f"warning: could not search Plex section {s.title}: {exc}", file=sys.stderr)
     return results
 
 
@@ -159,14 +160,13 @@ def cmd_has(plex, args):
     hits = [it for it in res if q in getattr(it, "title", "").lower()]
     if args.json:
         print(json.dumps({"query": args.query, "found": bool(hits), "matches": [_item_row(it) for it in hits]}, indent=2))
+    elif hits:
+        for it in hits:
+            r = _item_row(it)
+            yr = f"({r['year']})" if r["year"] else ""
+            print(f"  YES: {r['title']} {yr}  {r['resolution']}  {_gb(r['size'])}")
     else:
-        if hits:
-            for it in hits:
-                r = _item_row(it)
-                yr = f"({r['year']})" if r["year"] else ""
-                print(f"  YES: {r['title']} {yr}  {r['resolution']}  {_gb(r['size'])}")
-        else:
-            print(f"  NO: '{args.query}' not in library")
+        print(f"  NO: '{args.query}' not in library")
     sys.exit(0 if hits else 1)
 
 
@@ -186,8 +186,7 @@ def cmd_recent(plex, args):
 
 
 def cmd_info(plex, args):
-    lt = None
-    res = _search(plex, args.title, lt)
+    res = plex.library.section(args.section).search(title=args.title) if args.section else _search(plex, args.title, None)
     q = args.title.lower()
     hits = [it for it in res if q in getattr(it, "title", "").lower()]
     if not hits:
@@ -205,8 +204,9 @@ def cmd_info(plex, args):
     try:
         detail["codec"] = it.media[0].videoCodec
         detail["container"] = it.media[0].container
-    except Exception:
-        pass
+    except (AttributeError, IndexError, TypeError):
+        detail["codec"] = None
+        detail["container"] = None
     if args.json:
         print(json.dumps(detail, indent=2))
         return
@@ -221,26 +221,30 @@ def cmd_info(plex, args):
 
 def main():
     p = argparse.ArgumentParser(prog="plex", description="Query a Plex Media Server.")
-    p.add_argument("--json", action="store_true", help="raw JSON output")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    sub.add_parser("sections", help="list libraries")
+    sections = sub.add_parser("sections", help="list libraries")
+    sections.add_argument("--json", action="store_true", help="raw JSON output")
 
     sp = sub.add_parser("search", help="search the library")
     sp.add_argument("query")
     sp.add_argument("--type", help="movie|show|episode|artist")
+    sp.add_argument("--json", action="store_true", help="raw JSON output")
 
     hp = sub.add_parser("has", help="is <query> in the library? (exit 0=yes)")
     hp.add_argument("query")
     hp.add_argument("--type", help="movie|show|episode|artist")
+    hp.add_argument("--json", action="store_true", help="raw JSON output")
 
     rp = sub.add_parser("recent", help="recently added")
     rp.add_argument("--count", type=int, default=25)
     rp.add_argument("--section")
+    rp.add_argument("--json", action="store_true", help="raw JSON output")
 
     ip = sub.add_parser("info", help="full details for one item")
     ip.add_argument("title")
     ip.add_argument("--section")
+    ip.add_argument("--json", action="store_true", help="raw JSON output")
 
     args = p.parse_args()
     plex = connect()
