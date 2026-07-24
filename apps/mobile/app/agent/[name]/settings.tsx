@@ -1,6 +1,6 @@
 import { Alert, StyleSheet } from "react-native";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "expo-router";
+import { Stack, useRouter } from "expo-router";
 import {
   createBackup,
   deleteAgent,
@@ -16,6 +16,8 @@ import { FormRow, FormSection, SwitchRow } from "@/components/ui/Form";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
+
+const IS_IOS = process.env.EXPO_OS === "ios";
 
 function AgentSettingsContent() {
   const router = useRouter();
@@ -55,129 +57,142 @@ function AgentSettingsContent() {
     });
 
   return (
-    <Screen contentStyle={styles.content}>
-      <AgentIdentityCard
-        name={name}
-        status={agent?.status ?? "not_found"}
-        activityState={socket.agentState}
-        style={styles.identityCard}
-      />
-      {action.error ? (
-        <Text accessibilityRole="alert" style={{ color: colors.danger }}>
-          {action.error instanceof Error
-            ? action.error.message
-            : "The action failed."}
-        </Text>
-      ) : null}
-      <FormSection title="Agent">
-        <FormRow
-          label="Provider and model"
-          detail="Credentials, model, context, and usage"
-          icon="sparkles-outline"
-          onPress={() => open("provider")}
+    <>
+      <Screen contentStyle={styles.content}>
+        <AgentIdentityCard
+          name={name}
+          status={agent?.status ?? "not_found"}
+          activityState={socket.agentState}
+          style={styles.identityCard}
         />
-        <FormRow
-          label="Voice"
-          detail="Live transcription and spoken replies"
-          icon="mic-outline"
-          onPress={() => open("voice")}
-        />
-        <SwitchRow
-          label="Natural chat pacing"
-          detail="Let this agent's replies arrive with a more human rhythm."
-          icon="chatbubble-ellipses-outline"
-          value={preferences.naturalChatPacingForAgent(name)}
-          onValueChange={(value) =>
-            void preferences.setNaturalChatPacingForAgent(name, value)
-          }
-        />
-      </FormSection>
-      <AgentPagesSettingsSection />
-      <FormSection title="Attention">
-        <FormRow
-          label="Notifications"
-          detail="History and pending notifications"
-          icon="notifications-outline"
-          onPress={() => openPage("notifications")}
-        />
-        <FormRow
-          label="Logs"
-          detail="Live agent output"
-          icon="terminal-outline"
-          onPress={() => openPage("logs")}
-        />
-        <FormRow
-          label="Notification rules"
-          detail="Choose what interrupts the agent"
-          icon="notifications-outline"
-          onPress={() => open("notifications")}
-        />
-        <FormRow
-          label="Files"
-          detail="Memory, constitution, dreams, and skills"
-          icon="folder-open-outline"
-          onPress={() => open("files")}
-        />
-        <FormRow
-          label="Host access"
-          detail="Folders shared with this agent"
-          icon="desktop-outline"
-          onPress={() => open("host-access")}
-        />
-        <FormRow
-          label="Backups"
-          detail="Create, restore, and remove snapshots"
-          icon="archive-outline"
-          onPress={() => open("backups")}
-        />
-      </FormSection>
-      <FormSection title="Actions">
-        {agent?.status === "stopped" ? (
+        {action.error ? (
+          <Text accessibilityRole="alert" style={{ color: colors.danger }}>
+            {action.error instanceof Error
+              ? action.error.message
+              : "The action failed."}
+          </Text>
+        ) : null}
+        <FormSection title="Agent">
           <FormRow
-            label="Start agent"
-            icon="play-outline"
-            onPress={() => action.mutate("start")}
+            label="Provider and model"
+            detail="Credentials, model, context, and usage"
+            icon="sparkles-outline"
+            onPress={() => open("provider")}
           />
-        ) : (
           <FormRow
-            label="Stop agent"
-            icon="stop-outline"
-            onPress={() => action.mutate("stop")}
+            label="Voice"
+            detail="Live transcription and spoken replies"
+            icon="mic-outline"
+            onPress={() => open("voice")}
           />
-        )}
-        <FormRow
-          label="Restart agent"
-          icon="refresh-outline"
-          onPress={() => action.mutate("restart")}
-        />
-        <FormRow
-          label="Back up now"
-          icon="cloud-upload-outline"
-          onPress={() => action.mutate("backup")}
-        />
-      </FormSection>
-      <FormSection>
-        <FormRow
-          label="Delete agent"
-          icon="trash-outline"
-          destructive
-          onPress={() => {
-            Alert.alert(
-              `Delete ${name}?`,
-              "This permanently deletes the agent and their local state.",
-              [
-                { text: "Cancel", style: "cancel" },
-                {
-                  text: "Delete",
-                  style: "destructive",
-                  onPress: () => action.mutate("delete"),
-                },
-              ],
-            );
-          }}
-        />
-      </FormSection>
-    </Screen>
+          <SwitchRow
+            label="Natural chat pacing"
+            detail="Let this agent's replies arrive with a more human rhythm."
+            icon="chatbubble-ellipses-outline"
+            value={preferences.naturalChatPacingForAgent(name)}
+            onValueChange={(value) =>
+              void preferences.setNaturalChatPacingForAgent(name, value)
+            }
+          />
+        </FormSection>
+        <AgentPagesSettingsSection />
+        <FormSection title="Attention">
+          <FormRow
+            label="Notifications"
+            detail="History and pending notifications"
+            icon="notifications-outline"
+            onPress={() => openPage("notifications")}
+          />
+          <FormRow
+            label="Logs"
+            detail="Live agent output"
+            icon="terminal-outline"
+            onPress={() => openPage("logs")}
+          />
+          <FormRow
+            label="Notification rules"
+            detail="Choose what interrupts the agent"
+            icon="notifications-outline"
+            onPress={() => open("notifications")}
+          />
+          <FormRow
+            label="Files"
+            detail="Memory, constitution, dreams, and skills"
+            icon="folder-open-outline"
+            onPress={() => open("files")}
+          />
+          <FormRow
+            label="Host access"
+            detail="Folders shared with this agent"
+            icon="desktop-outline"
+            onPress={() => open("host-access")}
+          />
+          <FormRow
+            label="Backups"
+            detail="Create, restore, and remove snapshots"
+            icon="archive-outline"
+            onPress={() => open("backups")}
+          />
+        </FormSection>
+        <FormSection title="Actions">
+          {agent?.status === "stopped" ? (
+            <FormRow
+              label="Start agent"
+              icon="play-outline"
+              onPress={() => action.mutate("start")}
+            />
+          ) : (
+            <FormRow
+              label="Stop agent"
+              icon="stop-outline"
+              onPress={() => action.mutate("stop")}
+            />
+          )}
+          <FormRow
+            label="Restart agent"
+            icon="refresh-outline"
+            onPress={() => action.mutate("restart")}
+          />
+          <FormRow
+            label="Back up now"
+            icon="cloud-upload-outline"
+            onPress={() => action.mutate("backup")}
+          />
+        </FormSection>
+        <FormSection>
+          <FormRow
+            label="Delete agent"
+            icon="trash-outline"
+            destructive
+            onPress={() => {
+              Alert.alert(
+                `Delete ${name}?`,
+                "This permanently deletes the agent and their local state.",
+                [
+                  { text: "Cancel", style: "cancel" },
+                  {
+                    text: "Delete",
+                    style: "destructive",
+                    onPress: () => action.mutate("delete"),
+                  },
+                ],
+              );
+            }}
+          />
+        </FormSection>
+      </Screen>
+      <Stack.Toolbar placement="left">
+        <Stack.Toolbar.Button
+          accessibilityLabel="Close agent settings"
+          icon={IS_IOS ? "xmark" : undefined}
+          separateBackground
+          tintColor={colors.text}
+          onPress={() => router.back()}
+        >
+          {IS_IOS ? undefined : "Close"}
+        </Stack.Toolbar.Button>
+      </Stack.Toolbar>
+    </>
   );
 }
 

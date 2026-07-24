@@ -24,7 +24,17 @@ export default function AgentLayout() {
         }}
       >
         <Stack.Screen name="index" />
-        <Stack.Screen name="settings" options={{ headerTitle: "" }} />
+        <Stack.Screen
+          name="settings"
+          options={{
+            title: "Settings",
+            presentation: "formSheet",
+            sheetAllowedDetents: [1],
+            sheetGrabberVisible: false,
+            sheetExpandsWhenScrolledToEdge: false,
+            contentStyle: { backgroundColor: colors.background },
+          }}
+        />
         <Stack.Screen name="logs" />
         <Stack.Screen name="notifications" />
         <Stack.Screen name="file" />
