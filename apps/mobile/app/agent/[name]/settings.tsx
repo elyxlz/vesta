@@ -76,14 +76,14 @@ function AgentSettingsContent() {
         <FormSection
           title="Agent"
           actions={
-            <ButtonGroup>
-              <Button variant="cardGrouped" onPress={() => open("provider")}>
+            <>
+              <Button pill variant="card" onPress={() => open("provider")}>
                 Provider and model
               </Button>
-              <Button variant="cardGrouped" onPress={() => open("voice")}>
+              <Button pill variant="card" onPress={() => open("voice")}>
                 Voice
               </Button>
-            </ButtonGroup>
+            </>
           }
         >
           <SwitchRow
@@ -117,63 +117,59 @@ function AgentSettingsContent() {
               <Button pill variant="card" onPress={() => openPage("logs")}>
                 Logs
               </Button>
-              <ButtonGroup>
-                <Button variant="cardGrouped" onPress={() => open("files")}>
-                  Files
-                </Button>
-                <Button
-                  variant="cardGrouped"
-                  onPress={() => open("host-access")}
-                >
-                  Host access
-                </Button>
-              </ButtonGroup>
-              <Button pill variant="card" onPress={() => open("backups")}>
-                Backups
+              <Button pill variant="card" onPress={() => open("files")}>
+                Files
+              </Button>
+              <Button pill variant="card" onPress={() => open("host-access")}>
+                Host access
               </Button>
             </>
           }
         />
         <FormSection
-          title="Actions"
+          title="Backups"
           actions={
-            <>
-              <ButtonGroup>
-                <Button
-                  variant="cardGrouped"
-                  disabled={action.isPending}
-                  loading={
-                    action.isPending &&
-                    (action.variables === "start" ||
-                      action.variables === "stop")
-                  }
-                  onPress={() =>
-                    action.mutate(
-                      agent?.status === "stopped" ? "start" : "stop",
-                    )
-                  }
-                >
-                  {agent?.status === "stopped" ? "Start agent" : "Stop agent"}
-                </Button>
-                <Button
-                  variant="cardGrouped"
-                  disabled={action.isPending}
-                  loading={action.isPending && action.variables === "restart"}
-                  onPress={() => action.mutate("restart")}
-                >
-                  Restart agent
-                </Button>
-              </ButtonGroup>
+            <ButtonGroup>
+              <Button variant="cardGrouped" onPress={() => open("backups")}>
+                Manage backups
+              </Button>
               <Button
-                pill
-                variant="card"
+                variant="cardGrouped"
                 disabled={action.isPending}
                 loading={action.isPending && action.variables === "backup"}
                 onPress={() => action.mutate("backup")}
               >
                 Back up now
               </Button>
-            </>
+            </ButtonGroup>
+          }
+        />
+        <FormSection
+          title="Actions"
+          actions={
+            <ButtonGroup>
+              <Button
+                variant="cardGrouped"
+                disabled={action.isPending}
+                loading={
+                  action.isPending &&
+                  (action.variables === "start" || action.variables === "stop")
+                }
+                onPress={() =>
+                  action.mutate(agent?.status === "stopped" ? "start" : "stop")
+                }
+              >
+                {agent?.status === "stopped" ? "Start agent" : "Stop agent"}
+              </Button>
+              <Button
+                variant="cardGrouped"
+                disabled={action.isPending}
+                loading={action.isPending && action.variables === "restart"}
+                onPress={() => action.mutate("restart")}
+              >
+                Restart agent
+              </Button>
+            </ButtonGroup>
           }
         />
         <FormSection
