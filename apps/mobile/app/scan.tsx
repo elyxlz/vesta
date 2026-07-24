@@ -1,14 +1,13 @@
 import { useEffect, useState } from "react";
-import { AppState, Linking, Pressable, StyleSheet, View } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import { AppState, Linking, StyleSheet, View } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import { GlassView, isGlassEffectAPIAvailable } from "expo-glass-effect";
-import { useRouter } from "expo-router";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Stack, useRouter } from "expo-router";
 import { Button } from "@/components/ui/Button";
 import { LoadingState } from "@/components/ui/States";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
+
+const IS_IOS = process.env.EXPO_OS === "ios";
 
 export default function ScanScreen() {
   return <ScanContent />;
@@ -16,7 +15,6 @@ export default function ScanScreen() {
 
 function ScanContent() {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   const { colors } = usePreferences();
   const [permission, requestPermission, getPermission] =
     useCameraPermissions();
@@ -35,125 +33,92 @@ function ScanContent() {
     return () => subscription.remove();
   }, [getPermission]);
 
-  const backButton = (
-    <ScannerBackButton
-      top={Math.max(insets.top, 12) + 8}
-      color={colors.text}
-      backgroundColor={colors.elevated}
-      onPress={() => router.back()}
-    />
+  const headerTintColor = permission?.granted ? "white" : colors.text;
+  const header = (
+    <>
+      <Stack.Screen options={{ headerTintColor }} />
+      <Stack.Toolbar placement="right">
+        <Stack.Toolbar.Button
+          accessibilityLabel="Close scanner"
+          icon={IS_IOS ? "xmark" : undefined}
+          separateBackground
+          tintColor={headerTintColor}
+          onPress={() => router.back()}
+        >
+          {IS_IOS ? undefined : "Close"}
+        </Stack.Toolbar.Button>
+      </Stack.Toolbar>
+    </>
   );
 
   if (!permission) {
     return (
-      <View style={[styles.screen, { backgroundColor: colors.background }]}>
-        <LoadingState label="Checking camera access…" />
-        {backButton}
-      </View>
+      <>
+        <View style={[styles.screen, { backgroundColor: colors.background }]}>
+          <LoadingState label="Checking camera access…" />
+        </View>
+        {header}
+      </>
     );
   }
   if (!permission.granted) {
     return (
-      <View style={[styles.state, { backgroundColor: colors.background }]}>
-        <Text family="heading" style={[styles.title, { color: colors.text }]}>
-          Camera access is needed
-        </Text>
-        <Text style={[styles.detail, { color: colors.secondaryText }]}>
-          Vesta uses the camera only to scan your connection QR code.
-        </Text>
-        {permission.canAskAgain ? (
-          <Button pill onPress={() => void requestPermission()}>
-            Allow camera
-          </Button>
-        ) : (
-          <Button
-            pill
-            icon="settings-outline"
-            onPress={() => void Linking.openSettings()}
-          >
-            Open Settings
-          </Button>
-        )}
-        {backButton}
-      </View>
+      <>
+        <View style={[styles.state, { backgroundColor: colors.background }]}>
+          <Text family="heading" style={[styles.title, { color: colors.text }]}>
+            Camera access is needed
+          </Text>
+          <Text style={[styles.detail, { color: colors.secondaryText }]}>
+            Vesta uses the camera only to scan your connection QR code.
+          </Text>
+          {permission.canAskAgain ? (
+            <Button pill onPress={() => void requestPermission()}>
+              Allow camera
+            </Button>
+          ) : (
+            <Button
+              pill
+              icon="settings-outline"
+              onPress={() => void Linking.openSettings()}
+            >
+              Open Settings
+            </Button>
+          )}
+        </View>
+        {header}
+      </>
     );
   }
 
   return (
-    <View style={[styles.screen, { backgroundColor: colors.background }]}>
-      <CameraView
-        style={StyleSheet.absoluteFill}
-        barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
-        onBarcodeScanned={
-          scanned
-            ? undefined
-            : ({ data }) => {
-                setScanned(true);
-                router.dismissTo({
-                  pathname: "/connect-link",
-                  params: {
-                    link: data,
-                    autoConnect: "true",
-                    scanId: String(Date.now()),
-                  },
-                });
-              }
-        }
-      />
-      <View style={styles.overlay} pointerEvents="none">
-        <View style={styles.finder} />
-        <Text style={styles.hint}>
-          Center the gateway QR code
-        </Text>
+    <>
+      <View style={[styles.screen, { backgroundColor: colors.background }]}>
+        <CameraView
+          style={StyleSheet.absoluteFill}
+          barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+          onBarcodeScanned={
+            scanned
+              ? undefined
+              : ({ data }) => {
+                  setScanned(true);
+                  router.dismissTo({
+                    pathname: "/connect-link",
+                    params: {
+                      link: data,
+                      autoConnect: "true",
+                      scanId: String(Date.now()),
+                    },
+                  });
+                }
+          }
+        />
+        <View style={styles.overlay} pointerEvents="none">
+          <View style={styles.finder} />
+          <Text style={styles.hint}>Center the gateway QR code</Text>
+        </View>
       </View>
-      {backButton}
-    </View>
-  );
-}
-
-function ScannerBackButton({
-  top,
-  color,
-  backgroundColor,
-  onPress,
-}: {
-  top: number;
-  color: string;
-  backgroundColor: string;
-  onPress: () => void;
-}) {
-  const button = (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel="Go back"
-      hitSlop={8}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.backButtonContent,
-        { opacity: pressed ? 0.72 : 1 },
-      ]}
-    >
-      <Ionicons name="chevron-back" size={26} color={color} />
-    </Pressable>
-  );
-
-  if (isGlassEffectAPIAvailable()) {
-    return (
-      <GlassView
-        glassEffectStyle="regular"
-        colorScheme="auto"
-        isInteractive
-        style={[styles.backButton, { top }]}
-      >
-        {button}
-      </GlassView>
-    );
-  }
-
-  return (
-    <View style={[styles.backButton, { top, backgroundColor }]}>
-      {button}
-    </View>
+      {header}
+    </>
   );
 }
 
@@ -173,20 +138,6 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     textShadowColor: "black",
     textShadowRadius: 6,
-  },
-  backButton: {
-    position: "absolute",
-    left: 16,
-    zIndex: 2,
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    overflow: "hidden",
-  },
-  backButtonContent: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
   },
   state: {
     flex: 1,

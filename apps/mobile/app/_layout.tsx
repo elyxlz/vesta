@@ -212,9 +212,13 @@ function SessionNavigation() {
               <Stack.Screen
                 name="scan"
                 options={{
-                  headerShown: false,
-                  presentation: "fullScreenModal",
-                  statusBarHidden: true,
+                  title: "Scan QR code",
+                  headerShown: true,
+                  presentation: "formSheet",
+                  sheetAllowedDetents: [1],
+                  sheetGrabberVisible: false,
+                  sheetExpandsWhenScrolledToEdge: false,
+                  contentStyle: { backgroundColor: colors.background },
                 }}
               />
             </Stack.Protected>
