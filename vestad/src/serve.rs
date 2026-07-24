@@ -1122,9 +1122,18 @@ const FILE_SIZE_LIMIT: u64 = 2 * 1024 * 1024; // 2 MiB
 const SENSITIVE_PATHS: &[&str] = &[
     "/root/agent/data/events.db",
     "/root/agent/data/session_id",
+    "/root/agent/data/config.json",
     "/root/.claude/.credentials.json",
     "/run/vestad-env",
 ];
+const SENSITIVE_PATH_PREFIXES: &[&str] = &["/root/agent/data/claude-code-proxy"];
+
+fn is_sensitive_path(p: &str) -> bool {
+    SENSITIVE_PATHS.contains(&p)
+        || SENSITIVE_PATH_PREFIXES
+            .iter()
+            .any(|prefix| p == *prefix || p.starts_with(&format!("{prefix}/")))
+}
 
 fn validate_file_path(p: &str) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
     if !p.starts_with("/root/")
@@ -1144,7 +1153,7 @@ fn is_readonly_path(p: &str) -> bool {
             return true;
         }
     }
-    SENSITIVE_PATHS.contains(&p)
+    is_sensitive_path(p)
 }
 
 fn shell_escape(s: &str) -> String {
@@ -1238,7 +1247,7 @@ async fn read_file_handler(
     docker::validate_name(&name).map_err(map_docker_err)?;
     validate_file_path(&q.path)?;
 
-    if SENSITIVE_PATHS.contains(&q.path.as_str()) {
+    if is_sensitive_path(&q.path) {
         return Err(err_response(StatusCode::FORBIDDEN, "file is not readable"));
     }
 
@@ -1461,6 +1470,9 @@ mod file_path_tests {
             ("/run/vestad-env", true),
             ("/root/agent/data/events.db", true),
             ("/root/agent/data/session_id", true),
+            ("/root/agent/data/config.json", true),
+            ("/root/agent/data/claude-code-proxy/codex/auth.json", true),
+            ("/root/agent/data/claude-code-proxy/other.json", true),
             ("/root/.claude/.credentials.json", true),
             ("/root/agent/data/foo.json", false),
             ("/root/agent/prompts/x.md", false),
@@ -2304,6 +2316,14 @@ pub fn build_router(state: SharedState) -> Router {
         .route(
             "/providers/claude/oauth/complete",
             post(crate::providers::claude::oauth_complete_handler),
+        )
+        .route(
+            "/providers/openai/oauth/start",
+            post(crate::providers::openai::oauth_start_handler),
+        )
+        .route(
+            "/providers/openai/oauth/complete",
+            post(crate::providers::openai::oauth_complete_handler),
         )
         .route(
             "/providers/openrouter/models/top",

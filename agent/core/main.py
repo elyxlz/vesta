@@ -23,7 +23,7 @@ from .loops import (
     monitor_loop,
 )
 from .migrations import pending_migration_turns
-from .provider import derive_status
+from .provider import derive_status, enforce_active_credentials
 from .upstream_sync import upstream_sync_turn, vesta_version
 
 
@@ -243,6 +243,9 @@ async def async_main() -> bool:
 
     logger.setup(config.logs_dir, log_level=config.log_level)
     logger.init(f"{config.agent_name} starting on vesta v{vesta_version(config)}")
+    # A previous harness may have refreshed its token after sign-in but before vestad stopped it.
+    # Boot is the final enforcement point; the helper cross-checks the raw store before deleting.
+    enforce_active_credentials(config)
 
     initial_state = init_state(config=config)
     first_start = not initial_state.persisted.first_start_done

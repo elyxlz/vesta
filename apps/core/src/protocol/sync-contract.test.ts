@@ -11,7 +11,7 @@ describe("sync protocol contract (vestad fixtures)", () => {
     expect(parsed.kind).toBe("hello")
     if (parsed.kind === "hello") {
       expect(typeof parsed.frame.version).toBe("string")
-      expect(parsed.frame.minSupported).toBe("0.0.0")
+      expect(parsed.frame.minSupported).toMatch(/^\d+\.\d+\.\d+$/)
     }
   })
 

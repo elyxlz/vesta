@@ -7,4 +7,5 @@
 //! teaching the wizard's `ChoiceStep` about it.
 
 pub mod claude;
+pub mod openai;
 pub mod openrouter;

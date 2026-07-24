@@ -4,10 +4,21 @@ the Claude credentials auth check (refresh-token-aware) and the boot/runtime sta
 
 import json
 
+import pydantic as pyd
 import pytest
 
 import core.config as cfg
-from core.config import ClaudeConfig, ClaudeOAuth, OpenRouterConfig, read_config_store, update_config_store
+from core.config import (
+    ClaudeConfig,
+    ClaudeOAuth,
+    KimiConfig,
+    OpenAIConfig,
+    OpenRouterConfig,
+    ZaiConfig,
+    codex_proxy_auth_path,
+    read_config_store,
+    update_config_store,
+)
 from core.provider import (
     ProviderAuthState,
     UsageCredits,
@@ -16,11 +27,14 @@ from core.provider import (
     _derive_kind_and_auth,
     clear_provider,
     derive_status,
+    enforce_active_credentials,
     get_usage,
     is_terminal_auth_error,
+    is_terminal_provider_error,
     observed_provider_failure,
     set_claude,
-    set_openrouter,
+    set_key_provider,
+    set_openai,
 )
 
 
@@ -51,7 +65,18 @@ def test_derive_openrouter_authenticated_with_key():
     assert _derive_kind_and_auth(cfg) == ("openrouter", True)
 
 
+def test_derive_zai_authenticated_with_key():
+    config = _cfg(ZaiConfig.model_validate({"model": "glm-4.7", "key": "zai-key"}))
+    assert _derive_kind_and_auth(config) == ("zai", True)
+
+
+def test_derive_kimi_authenticated_with_key():
+    config = _cfg(KimiConfig.model_validate({"model": "kimi-for-coding", "key": "kimi-key"}))
+    assert _derive_kind_and_auth(config) == ("kimi", True)
+
+
 _CREDS = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 2**62}})
+_OPENAI_CREDS = json.dumps({"access": "access", "refresh": "refresh", "expires": 2**62, "accountId": "acct"})
 
 
 # --- Terminal auth-error classification (Claude path) ---
@@ -71,6 +96,21 @@ _CREDS = json.dumps({"claudeAiOauth": {"accessToken": "a", "expiresAt": 2**62}})
 )
 def test_is_terminal_auth_error(error, expected):
     assert is_terminal_auth_error(error) is expected
+
+
+@pytest.mark.parametrize(
+    "error,status,details,expected",
+    [
+        ("authentication_failed", None, ["API Error: 401 Invalid Authentication"], True),
+        ("authentication_failed", None, ["API Error: 401 Your current subscription does not have access to k3"], False),
+        ("authentication_failed", None, ["API Error: 401 Your current plan supports only kimi-k3 up to 256K context"], False),
+        ("authentication_failed", None, ["API Error: 401 no access to kimi-for-coding-highspeed"], False),
+        (None, 401, [], False),  # a bare Kimi status cannot distinguish auth from entitlement
+        ("billing_error", None, ["unable to verify your membership benefits"], False),
+    ],
+)
+def test_kimi_terminal_error_requires_an_explicit_invalid_credential_message(error, status, details, expected):
+    assert is_terminal_provider_error("kimi", assistant_error=error, api_error_status=status, details=details) is expected
 
 
 # --- Claude credentials auth check ---
@@ -114,12 +154,13 @@ def test_set_claude_writes_creds_and_store(prov):
     assert status.state == ProviderAuthState.AUTHENTICATED
     assert status.kind == "claude"
     assert provider_mod.CREDENTIALS_PATH.read_text() == _CREDS
+    assert provider_mod.CREDENTIALS_PATH.stat().st_mode & 0o777 == 0o600
     assert read_config_store()["provider"] == {"kind": "claude", "model": "opus"}
     assert isinstance(cfg.VestaConfig().provider, ClaudeConfig)
 
 
 def test_set_openrouter_writes_nested_provider_to_store(prov):
-    status = set_openrouter("sk-or-v1-secret", "deepseek/deepseek-v4-flash", None, config=prov)
+    status = set_key_provider("openrouter", "sk-or-v1-secret", "deepseek/deepseek-v4-flash", None, config=prov)
     assert status.state == ProviderAuthState.AUTHENTICATED
     assert status.kind == "openrouter"
     assert status.model == "deepseek/deepseek-v4-flash"
@@ -135,6 +176,158 @@ def test_set_openrouter_writes_nested_provider_to_store(prov):
     assert derive_status(fresh).kind == "openrouter"
 
 
+def test_set_zai_writes_nested_provider_to_store(prov):
+    status = set_key_provider("zai", "zai-secret", "glm-4.7", 128_000, config=prov)
+    assert status.state == ProviderAuthState.AUTHENTICATED
+    assert status.kind == "zai"
+    assert read_config_store()["provider"] == {
+        "kind": "zai",
+        "model": "glm-4.7",
+        "key": "zai-secret",
+        "max_context_tokens": 128_000,
+    }
+    fresh = cfg.VestaConfig()
+    assert isinstance(fresh.provider, ZaiConfig)
+    assert derive_status(fresh).kind == "zai"
+
+
+def test_set_kimi_writes_nested_provider_to_store(prov):
+    status = set_key_provider("kimi", "kimi-secret", "kimi-for-coding", 128_000, config=prov)
+    assert status.state == ProviderAuthState.AUTHENTICATED
+    assert status.kind == "kimi"
+    assert read_config_store()["provider"] == {
+        "kind": "kimi",
+        "model": "kimi-for-coding",
+        "key": "kimi-secret",
+        "max_context_tokens": 128_000,
+    }
+    fresh = cfg.VestaConfig()
+    assert isinstance(fresh.provider, KimiConfig)
+    assert derive_status(fresh).kind == "kimi"
+
+
+def test_set_kimi_rejects_invalid_model_context_before_writing(prov):
+    with pytest.raises(ValueError, match="kimi-for-coding supports at most 262144"):
+        set_key_provider("kimi", "kimi-secret", "kimi-for-coding", 1_048_576, config=prov)
+    assert read_config_store() == {}
+
+
+def test_set_openai_writes_oauth_outside_config_store(prov):
+    status = set_openai(_OPENAI_CREDS, "gpt-5.6-sol", 272_000, config=prov)
+    assert status.state == ProviderAuthState.AUTHENTICATED
+    assert status.kind == "openai"
+    assert json.loads(codex_proxy_auth_path().read_text()) == json.loads(_OPENAI_CREDS)
+    assert read_config_store()["provider"] == {
+        "kind": "openai",
+        "model": "gpt-5.6-sol",
+        "max_context_tokens": 272_000,
+    }
+    fresh = cfg.VestaConfig()
+    assert isinstance(fresh.provider, OpenAIConfig)
+    assert derive_status(fresh).kind == "openai"
+    assert codex_proxy_auth_path().stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize(
+    "credentials",
+    [
+        "{}",
+        "[]",
+        json.dumps({"claudeAiOauth": {}}),
+        json.dumps({"claudeAiOauth": {"expiresAt": 2**62}}),
+        json.dumps({"claudeAiOauth": {"refreshToken": " "}}),
+    ],
+)
+def test_set_claude_rejects_unusable_credentials_before_writing(prov, credentials):
+    from core import provider as provider_mod
+
+    with pytest.raises(ValueError):
+        set_claude(credentials, "opus", None, config=prov)
+    assert not provider_mod.CREDENTIALS_PATH.exists()
+    assert read_config_store() == {}
+
+
+def test_set_openai_rejects_invalid_context_before_writing_oauth(prov):
+    with pytest.raises(ValueError, match="supports at most 272000"):
+        set_openai(_OPENAI_CREDS, "gpt-5.6-sol", 300_000, config=prov)
+    assert not codex_proxy_auth_path().exists()
+    assert read_config_store() == {}
+
+
+def test_set_openai_rejects_blank_tokens_before_writing_oauth(prov):
+    credentials = json.dumps({"access": " ", "refresh": "refresh", "expires": 2**62})
+    with pytest.raises(pyd.ValidationError):
+        set_openai(credentials, "gpt-5.6-sol", None, config=prov)
+    assert not codex_proxy_auth_path().exists()
+    assert read_config_store() == {}
+
+
+def test_switching_provider_removes_inactive_oauth_tokens(prov):
+    from core import provider as provider_mod
+
+    set_claude(_CREDS, "opus", None, config=prov)
+    assert provider_mod.CREDENTIALS_PATH.exists()
+
+    set_openai(_OPENAI_CREDS, "gpt-5.6-sol", None, config=cfg.VestaConfig())
+    assert not provider_mod.CREDENTIALS_PATH.exists()
+    assert codex_proxy_auth_path().exists()
+
+    set_key_provider("kimi", "kimi-secret", "kimi-for-coding", None, config=cfg.VestaConfig())
+    assert not provider_mod.CREDENTIALS_PATH.exists()
+    assert not codex_proxy_auth_path().exists()
+
+
+def test_provider_switch_rolls_back_config_and_credentials_on_write_failure(prov, monkeypatch):
+    from core import provider as provider_mod
+
+    set_claude(_CREDS, "opus", None, config=prov)
+    old_store = read_config_store()
+
+    def fail_persist(_provider):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(provider_mod, "_persist_sign_in", fail_persist)
+    with pytest.raises(OSError, match="disk full"):
+        set_openai(_OPENAI_CREDS, "gpt-5.6-sol", None, config=cfg.VestaConfig())
+
+    assert read_config_store() == old_store
+    assert provider_mod.CREDENTIALS_PATH.read_text() == _CREDS
+    assert not codex_proxy_auth_path().exists()
+
+
+def test_boot_cleanup_skips_corrupt_or_fallback_provider_store(prov):
+    from core import provider as provider_mod
+
+    path = codex_proxy_auth_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_OPENAI_CREDS)
+
+    cfg.config_store_path().write_text("{corrupt")
+    enforce_active_credentials(cfg.VestaConfig.model_construct(provider=None))
+    assert path.exists()
+
+    update_config_store({"provider": {"kind": "openai", "model": "retired-openai-model"}})
+    enforce_active_credentials(cfg.VestaConfig.model_construct(provider=ClaudeConfig()))
+    assert path.exists()
+    assert not provider_mod.CREDENTIALS_PATH.exists()
+
+
+@pytest.mark.parametrize(
+    "provider",
+    [
+        ZaiConfig(model="glm-4.7", key="zai-secret"),
+        KimiConfig(model="kimi-for-coding", key="kimi-secret"),
+    ],
+)
+def test_subscription_provider_keys_are_redacted_on_the_wire(provider):
+    from core.config import stored_config
+
+    config = _cfg(provider)
+    dumped = stored_config(config)["provider"]
+    assert isinstance(dumped, dict)
+    assert dumped["key"] == "**********"
+
+
 def test_model_context_prefs_persist_to_store_and_reload(prov):
     update_config_store({"provider": {"kind": "claude", "model": "opus", "max_context_tokens": 500_000}})
     provider = cfg.VestaConfig().provider
@@ -146,15 +339,20 @@ def test_model_context_prefs_persist_to_store_and_reload(prov):
 def test_clear_provider_removes_creds_and_resets_state(prov):
     from core import provider as provider_mod
 
-    set_openrouter("sk-or-v1-secret", "deepseek/deepseek-v4-flash", None, config=prov)
-    set_claude(_CREDS, "opus", None, config=prov)
+    # Seed both stores directly: normal provider switches now remove inactive credentials.
+    provider_mod.CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    provider_mod.CREDENTIALS_PATH.write_text(_CREDS)
+    codex_proxy_auth_path().parent.mkdir(parents=True, exist_ok=True)
+    codex_proxy_auth_path().write_text(_OPENAI_CREDS)
     assert provider_mod.CREDENTIALS_PATH.exists()
+    assert codex_proxy_auth_path().exists()
 
     status = clear_provider()
     assert status.state == ProviderAuthState.NOT_AUTHENTICATED
     assert status.kind == "none"
     assert status.model is None
     assert not provider_mod.CREDENTIALS_PATH.exists()
+    assert not codex_proxy_auth_path().exists()
     # Sign-out clears the provider entirely (no provider chosen), not a fake default.
     assert "provider" not in read_config_store()
     # A fresh boot re-derives unprovisioned from disk (no provider, creds removed).
@@ -164,7 +362,7 @@ def test_clear_provider_removes_creds_and_resets_state(prov):
 
 
 def test_set_claude_replaces_openrouter_provider(prov):
-    set_openrouter("sk-or-v1-secret", "deepseek/deepseek-v4-flash", None, config=prov)
+    set_key_provider("openrouter", "sk-or-v1-secret", "deepseek/deepseek-v4-flash", None, config=prov)
     set_claude(_CREDS, "opus", None, config=prov)
     assert read_config_store()["provider"] == {"kind": "claude", "model": "opus"}  # no stale openrouter key leaks
 
@@ -177,7 +375,7 @@ def test_reauth_preserves_model_and_context(prov):
 
 
 def test_set_openrouter_applies_context_chosen_at_signin(prov):
-    set_openrouter("sk-or-v1-secret", "deepseek/deepseek-v4-flash", 128_000, config=prov)
+    set_key_provider("openrouter", "sk-or-v1-secret", "deepseek/deepseek-v4-flash", 128_000, config=prov)
     assert read_config_store()["provider"] == {
         "kind": "openrouter",
         "model": "deepseek/deepseek-v4-flash",
@@ -190,7 +388,7 @@ def test_patch_provider_preserves_openrouter_key(prov):
     # Regression: a model-only PATCH must keep the real key, not the redacted '**********' from the dump.
     from core.config import validate_config_updates
 
-    set_openrouter("sk-or-v1-secret", "deepseek/deepseek-v4-flash", None, config=prov)
+    set_key_provider("openrouter", "sk-or-v1-secret", "deepseek/deepseek-v4-flash", None, config=prov)
     updates = validate_config_updates(cfg.VestaConfig(), {"provider": {"model": "anthropic/claude-3"}})
     assert updates["provider"] == {"kind": "openrouter", "model": "anthropic/claude-3", "key": "sk-or-v1-secret"}
 
@@ -297,7 +495,7 @@ async def test_get_usage_claude_normalizes_buckets_and_credits(prov, monkeypatch
 async def test_get_usage_openrouter_normalizes_credits(prov, monkeypatch):
     from core import provider as provider_mod
 
-    set_openrouter("sk-or-v1-secret", "deepseek/deepseek-v4-flash", None, config=prov)
+    set_key_provider("openrouter", "sk-or-v1-secret", "deepseek/deepseek-v4-flash", None, config=prov)
 
     async def fake_fetch(url, *, headers):
         assert url == provider_mod.OPENROUTER_KEY_URL

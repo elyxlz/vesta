@@ -87,5 +87,19 @@ export {
 export { rosterFromTree, rostersEqual } from "./tree/roster"
 export type { AgentRow } from "./tree/roster"
 
+export { normalizeProviderInfo, providerPutBody } from "./provider/provider"
+export type {
+  ProviderAuthKind,
+  ProviderContextPolicy,
+  ProviderContextPreset,
+  ProviderInfo,
+  ProviderInfoWire,
+  ProviderKind,
+  ProviderManifest,
+  ProviderManifestEntry,
+  ProviderPutBody,
+  ProviderSelection,
+} from "./provider/provider"
+
 export { createController } from "./controller/controller"
 export type { Controller, ControllerDeps } from "./controller/controller"
