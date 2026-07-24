@@ -212,6 +212,6 @@ export default function AgentSettingsScreen() {
 }
 
 const styles = StyleSheet.create({
-  content: { paddingBottom: 80 },
+  content: { gap: 24, paddingBottom: 80 },
   identityCard: { paddingVertical: 20 },
 });
