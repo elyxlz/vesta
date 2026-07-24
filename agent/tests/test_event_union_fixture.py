@@ -3,7 +3,7 @@ SnapshotEvent through the real EventBus emit/read path into a committed JSON fix
 aggregator test can parse the exact Python-to-Rust wire shape. Regenerate with REGEN_EVENT_FIXTURES=1.
 
 The fixture's contract is the core-`/ws` -> vestad-tap seam (D11): the tap reads only `status`,
-`notification`, and `notification_cleared`. Core's internal StreamEvent union keeps other variants
+`model_access`, `notification`, and `notification_cleared`. Core's internal StreamEvent union keeps other variants
 (assistant/thinking/error/rate_limited/...) for history, but they are not part of the tap contract, so
 they are not in the fixture.
 """
@@ -14,6 +14,8 @@ from pathlib import Path
 
 from core.events import (
     EventBus,
+    ModelAccessEvent,
+    ModelAccessInfo,
     NotificationClearedEvent,
     NotificationEvent,
     SnapshotEvent,
@@ -27,13 +29,20 @@ _FIXED_TS = "2026-01-01T00:00:00+00:00"
 
 # The exact set of event types the vestad tap reads off core's /ws. status and notification_cleared are
 # live-only (negative session ids); notification is persisted (a positive rowid).
-_TAP_READ_TYPES: frozenset[str] = frozenset({"status", "notification", "notification_cleared"})
+_TAP_READ_TYPES: frozenset[str] = frozenset({"status", "model_access", "notification", "notification_cleared"})
 
 
 def _variants() -> list[StreamEvent]:
     """One representative instance of each tap-read StreamEvent variant."""
     return [
         StatusEvent(type="status", state="thinking"),
+        ModelAccessEvent(
+            type="model_access",
+            state="cooling_down",
+            reason="rate_limit",
+            until=2_000_000_000,
+            window="five_hour",
+        ),
         NotificationEvent(
             type="notification",
             source="whatsapp",
@@ -69,6 +78,7 @@ def _snapshot() -> SnapshotEvent:
         state="idle",
         notifications={"pending": ["whatsapp-123"]},
         config={"timezone": "America/New_York"},
+        model_access=ModelAccessInfo(state="available", reason=None, until=None, window=None),
     )
 
 

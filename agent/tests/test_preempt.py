@@ -57,7 +57,7 @@ async def test_send_preempt_sends_priority_now_message_not_interrupt(config, sta
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("gate", ["no_client", "no_turn", "boot_turn", "compacting", "unauthenticated"])
+@pytest.mark.parametrize("gate", ["no_client", "no_turn", "boot_turn", "compacting", "unauthenticated", "rate_limited"])
 async def test_send_preempt_gates_return_false_without_sending(config, state, gate):
     """Nothing to preempt (idle) or preemption barred (boot turn, compaction, dead token) -> queue normally."""
     from core.client import send_preempt
@@ -74,6 +74,10 @@ async def test_send_preempt_gates_return_false_without_sending(config, state, ga
         state.compacting = True
     if gate == "unauthenticated":
         state.provider_status = ProviderStatus(state=ProviderAuthState.NOT_AUTHENTICATED, kind="claude", model="opus")
+    if gate == "rate_limited":
+        from core.provider import ProviderCooldown
+
+        state.persisted.provider_cooldown = ProviderCooldown(until=4_000_000_000, window="five_hour")
 
     assert not await send_preempt("notification", state=state, config=config)
     if state.turn is not None:

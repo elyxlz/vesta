@@ -7,6 +7,15 @@
       "type": "status"
     },
     {
+      "id": -2,
+      "reason": "rate_limit",
+      "state": "cooling_down",
+      "ts": "2026-01-01T00:00:00+00:00",
+      "type": "model_access",
+      "until": 2000000000,
+      "window": "five_hour"
+    },
+    {
       "decided": "interrupt",
       "fields": {
         "chat_name": "Bride squad"
@@ -21,7 +30,7 @@
       "type": "notification"
     },
     {
-      "id": -2,
+      "id": -3,
       "notif_id": "whatsapp-123",
       "ts": "2026-01-01T00:00:00+00:00",
       "type": "notification_cleared"
@@ -30,6 +39,12 @@
   "snapshot": {
     "config": {
       "timezone": "America/New_York"
+    },
+    "model_access": {
+      "reason": null,
+      "state": "available",
+      "until": null,
+      "window": null
     },
     "notifications": {
       "pending": [

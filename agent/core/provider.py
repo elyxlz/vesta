@@ -49,6 +49,7 @@ class ProviderAuthState(enum.StrEnum):
     NOT_AUTHENTICATED = "not_authenticated"
 
 
+RATE_LIMIT_RETRY_FALLBACK_SECONDS = 300
 ProviderStatusKind = ProviderKind | tp.Literal["none"]
 
 # What normally counts as a terminal provider error — the credential is rejected (401) or the
@@ -116,6 +117,25 @@ class ProviderStatus:
         # reports none. Enforced here so every construction path — including dc.replace — converges.
         if self.state != ProviderAuthState.AUTHENTICATED:
             self.model = None
+
+
+class ProviderCooldown(pyd.BaseModel):
+    reason: tp.Literal["rate_limit"] = "rate_limit"
+    until: int
+    window: str | None = None
+
+
+def active_cooldown(cooldown: ProviderCooldown | None, *, now: float | None = None) -> ProviderCooldown | None:
+    if cooldown is None:
+        return None
+    timestamp = time.time() if now is None else now
+    return cooldown if cooldown.until > timestamp else None
+
+
+def rate_limit_cooldown(*, resets_at: int | None, window: str | None, now: float | None = None) -> ProviderCooldown:
+    timestamp = time.time() if now is None else now
+    until = resets_at if resets_at is not None and resets_at > timestamp else int(timestamp) + RATE_LIMIT_RETRY_FALLBACK_SECONDS
+    return ProviderCooldown(until=until, window=window)
 
 
 def derive_status(config: VestaConfig) -> ProviderStatus:
