@@ -1,11 +1,5 @@
-import {
-  createContext,
-  use,
-  useEffect,
-  useState,
-  type ReactNode,
-} from "react";
-import type { AgentRow, Controller, Tree } from "@vesta/core";
+import { createContext, use, useEffect, useState, type ReactNode } from "react";
+import type { AgentRow, Controller, ReleaseChannel, Tree } from "@vesta/core";
 import { rosterFromTree, rostersEqual } from "@vesta/core";
 import { useReplica, useSyncState } from "@vesta/core/react";
 import { ControllerContext } from "@/controller/context";
@@ -23,6 +17,7 @@ interface RosterValue {
   agentsReady: boolean;
   reachable: boolean;
   gatewayVersion: string | undefined;
+  gatewayChannel: ReleaseChannel | undefined;
   managed: boolean;
   updateAvailable: boolean;
   latestVersion: string | null;
@@ -78,6 +73,7 @@ function servedRoster(
     agentsReady: hold.agentsReady,
     reachable: live.reachable,
     gatewayVersion: hold.gatewayVersion,
+    gatewayChannel: hold.gatewayChannel,
     managed: hold.managed,
     updateAvailable: hold.updateAvailable,
     latestVersion: hold.latestVersion,
@@ -119,6 +115,7 @@ function LiveRoster({
     ? {
         agents,
         gatewayVersion: gateway.version,
+        gatewayChannel: gateway.channel,
         managed: gateway.managed,
         updateAvailable: gateway.updateAvailable,
         latestVersion: gateway.latestVersion,

@@ -247,11 +247,7 @@ export default function SettingsScreen() {
               <Button
                 pill
                 variant="card"
-                onPress={() =>
-                  void Linking.openURL(
-                    "https://github.com/elyxlz/vesta/releases",
-                  )
-                }
+                onPress={() => router.push("/whats-new")}
               >
                 What’s new
               </Button>

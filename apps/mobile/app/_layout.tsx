@@ -33,6 +33,7 @@ import {
 } from "@/preferences/PreferencesProvider";
 import { UserNotifications } from "@/notifications/UserNotifications";
 import { PushCoordinator } from "@/notifications/PushCoordinator";
+import { WhatsNewAutoOpen } from "@/releases/whats-new-auto-open";
 import {
   RosterHoldProvider,
   RosterProvider,
@@ -254,6 +255,18 @@ function SessionNavigation() {
                   ),
                 }}
               />
+              <Stack.Screen
+                name="whats-new"
+                options={{
+                  title: "What’s new",
+                  presentation: "formSheet",
+                  sheetAllowedDetents: [0.65, 1],
+                  sheetInitialDetentIndex: 0,
+                  sheetGrabberVisible: true,
+                  sheetExpandsWhenScrolledToEdge: true,
+                  contentStyle: { backgroundColor: colors.background },
+                }}
+              />
               <Stack.Screen name="debug" options={{ title: "Diagnostics" }} />
               <Stack.Screen
                 name="agent/[name]"
@@ -270,6 +283,7 @@ function SessionNavigation() {
               !bootSplashVisible
             }
           />
+          <WhatsNewAutoOpen enabled={!bootSplashVisible} />
           {bootSplashVisible ? (
             <BootSplash
               ready={routeMatchesSession}
