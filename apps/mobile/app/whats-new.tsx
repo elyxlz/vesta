@@ -1,4 +1,5 @@
 import { Pressable, StyleSheet, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import { filterReleaseNotes } from "@vesta/core";
 import { Stack, useRouter } from "expo-router";
@@ -82,18 +83,13 @@ export default function WhatsNewScreen() {
                     style={styles.releaseLink}
                   >
                     {({ pressed }) => (
-                      <Text
-                        style={[
-                          styles.releaseLinkText,
-                          {
-                            color: pressed
-                              ? colors.interactive
-                              : colors.tertiaryText,
-                          },
-                        ]}
-                      >
-                        View on GitHub
-                      </Text>
+                      <Ionicons
+                        name="open-outline"
+                        size={16}
+                        color={
+                          pressed ? colors.interactive : colors.tertiaryText
+                        }
+                      />
                     )}
                   </Pressable>
                 </View>
@@ -137,6 +133,5 @@ const styles = StyleSheet.create({
   version: { fontSize: 16, fontWeight: "600" },
   date: { fontSize: 13 },
   message: { fontSize: 15, lineHeight: 21 },
-  releaseLink: { marginLeft: "auto" },
-  releaseLinkText: { fontSize: 12, fontWeight: "500" },
+  releaseLink: { alignSelf: "center", marginLeft: "auto" },
 });
