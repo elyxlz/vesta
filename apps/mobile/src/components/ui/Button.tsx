@@ -129,7 +129,12 @@ export function Button({
         return loading ? (
           <ActivityIndicator color={contentColor} />
         ) : (
-          <View style={styles.content}>
+          <View
+            style={[
+              styles.content,
+              usesCardSurface ? styles.cardContent : null,
+            ]}
+          >
             {icon ? (
               <Ionicons
                 name={icon}
@@ -148,6 +153,13 @@ export function Button({
             >
               {children}
             </Text>
+            {usesCardSurface ? (
+              <Ionicons
+                name="chevron-forward"
+                size={17}
+                color={colors.tertiaryText}
+              />
+            ) : null}
           </View>
         );
       }}
@@ -193,9 +205,10 @@ const styles = StyleSheet.create({
   cardButton: { alignItems: "flex-start", paddingHorizontal: 16 },
   pill: { borderRadius: radii.pill },
   content: { flexDirection: "row", alignItems: "center", gap: 8 },
+  cardContent: { alignSelf: "stretch" },
   label: { fontSize: 16, fontWeight: "700" },
   smallLabel: { fontSize: 14, fontWeight: "600" },
-  cardLabel: { fontSize: 16, fontWeight: "600" },
+  cardLabel: { flex: 1, fontSize: 16, fontWeight: "600" },
   textButton: { alignSelf: "center", padding: 4 },
   textButtonLabel: { fontSize: 13, fontWeight: "500" },
 });
