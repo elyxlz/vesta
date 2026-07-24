@@ -1,4 +1,4 @@
-use vesta_tests::{TestAgent, SERVER, mark_first_start_done, unique_agent};
+use vesta_tests::{mark_first_start_done, unique_agent, TestAgent, SERVER};
 
 #[test]
 fn oauth_start_returns_url() {

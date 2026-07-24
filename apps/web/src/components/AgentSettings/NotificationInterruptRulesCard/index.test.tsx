@@ -4,405 +4,176 @@ import {
   screen,
   waitFor,
   cleanup,
-  act,
-  within,
+  fireEvent,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { createRef } from "react";
 import * as api from "@/api/agents";
-import {
-  NotificationInterruptRulesCard,
-  type NotificationInterruptRulesHandle,
-} from "./index";
+import { NotificationInterruptRulesCard } from "./index";
 
 vi.mock("@/providers/SelectedAgentProvider", () => ({
   useSelectedAgent: () => ({ name: "bob" }),
 }));
 
+function must<T>(value: T | null | undefined): T {
+  if (value == null) throw new Error("expected a value");
+  return value;
+}
+
 describe("NotificationInterruptRulesCard", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    // The card fetches recent notifications for suggestions; default to none unless a test overrides.
-    vi.spyOn(api, "getNotificationHistory").mockResolvedValue({
-      notifications: [],
-      cursor: null,
-    });
   });
   afterEach(cleanup);
 
   it("loads existing rules on mount", async () => {
     vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([
-      { id: "a", source: "twitter", action: "pool" },
+      { id: "a", source: "twitter", action: "snooze" },
     ]);
     render(<NotificationInterruptRulesCard />);
-    // active rules render condition badges like "source: twitter"
     expect(await screen.findByText(/twitter/)).toBeTruthy();
   });
 
-  it("adds a rule by selecting a suggested source", async () => {
+  it("renders match-predicate conditions read-only", async () => {
+    vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([
+      {
+        id: "a",
+        source: "whatsapp",
+        match: [{ field: "chat_name", op: "contains", value: "Bride squad" }],
+        action: "snooze",
+      },
+    ]);
+    render(<NotificationInterruptRulesCard />);
+    expect(await screen.findByText(/chat_name: Bride squad/)).toBeTruthy();
+  });
+
+  it("points the user to the agent to add a rule", async () => {
     vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([]);
-    vi.spyOn(api, "getNotificationHistory").mockResolvedValue({
-      notifications: [
-        {
-          type: "notification",
-          source: "twitter",
-          summary: "x",
-          notif_type: "tweet",
-        },
-      ],
-      cursor: null,
-    });
+    render(<NotificationInterruptRulesCard />);
+    await waitFor(() =>
+      expect(api.getNotificationInterruptRules).toHaveBeenCalled(),
+    );
+    expect(screen.getByText(/just ask bob/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /add rule/i })).toBeNull();
+  });
+
+  it("cycles snooze -> trash only after confirming the destructive drop", async () => {
+    vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([
+      { id: "a", source: "twitter", action: "snooze" },
+    ]);
     const setSpy = vi
       .spyOn(api, "setNotificationInterruptRules")
-      .mockResolvedValue([
-        { id: "new", source: "twitter", action: "interrupt" },
-      ]);
+      .mockResolvedValue([]);
     render(<NotificationInterruptRulesCard />);
-    await waitFor(() => expect(api.getNotificationHistory).toHaveBeenCalled());
-
-    // Open the add-rule dialog, then in step 1 pick a suggested source (selecting closes the combo).
-    await userEvent.click(screen.getByRole("button", { name: /add rule/i }));
-    await userEvent.type(screen.getByLabelText("source"), "t");
+    // snooze steps into trash next; stepping into trash is destructive, so it must confirm first.
     await userEvent.click(
-      await screen.findByRole("option", { name: "twitter" }),
+      await screen.findByRole("button", { name: /action: snooze/i }),
     );
-    // Step 2 keeps the default interrupt action; commit.
-    await userEvent.click(screen.getByRole("button", { name: /next/i }));
+    // No save yet — the confirm dialog is open.
+    expect(setSpy).not.toHaveBeenCalled();
     await userEvent.click(
-      within(screen.getByRole("dialog")).getByRole("button", {
-        name: /add rule/i,
-      }),
+      await screen.findByRole("button", { name: /trash them/i }),
     );
-
-    await waitFor(() => expect(setSpy).toHaveBeenCalledTimes(1));
-    const [, rulesArg] = setSpy.mock.calls[0];
-    expect(rulesArg).toHaveLength(1);
-    expect(rulesArg[0].source).toBe("twitter");
-    expect(rulesArg[0].action).toBe("interrupt");
+    await waitFor(() => expect(setSpy).toHaveBeenCalled());
+    expect(must(must(setSpy.mock.calls.at(-1))[1][0]).action).toBe("trash");
   });
 
-  it("won't add a rule with no conditions", async () => {
-    vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([]);
+  it("does not trash when the confirm is cancelled", async () => {
+    vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([
+      { id: "a", source: "twitter", action: "snooze" },
+    ]);
+    const setSpy = vi
+      .spyOn(api, "setNotificationInterruptRules")
+      .mockResolvedValue([]);
     render(<NotificationInterruptRulesCard />);
-    await waitFor(() =>
-      expect(api.getNotificationInterruptRules).toHaveBeenCalled(),
+    await userEvent.click(
+      await screen.findByRole("button", { name: /action: snooze/i }),
     );
-    // With no conditions entered, step 1 can't advance.
-    await userEvent.click(screen.getByRole("button", { name: /add rule/i }));
-    const nextButton = within(screen.getByRole("dialog")).getByRole("button", {
-      name: /next/i,
-    }) as HTMLButtonElement;
-    expect(nextButton.disabled).toBe(true);
+    await userEvent.click(
+      await screen.findByRole("button", { name: /cancel/i }),
+    );
+    // Cancelling leaves the rule untouched and saves nothing.
+    expect(setSpy).not.toHaveBeenCalled();
   });
 
-  it("blocks an invalid keyword regex and accepts a valid one", async () => {
-    vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([]);
+  it("renders a trash rule and cycles it back to interrupt", async () => {
+    vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([
+      { id: "a", source: "whatsapp", action: "trash" },
+    ]);
+    const setSpy = vi
+      .spyOn(api, "setNotificationInterruptRules")
+      .mockResolvedValue([]);
     render(<NotificationInterruptRulesCard />);
-    await waitFor(() =>
-      expect(api.getNotificationInterruptRules).toHaveBeenCalled(),
+    await userEvent.click(
+      await screen.findByRole("button", { name: /action: trash/i }),
     );
-    await userEvent.click(screen.getByRole("button", { name: /add rule/i }));
-    const nextButton = within(screen.getByRole("dialog")).getByRole("button", {
-      name: /next/i,
-    }) as HTMLButtonElement;
-
-    await userEvent.type(screen.getByLabelText("keyword"), "(unclosed");
-    expect(screen.getByText(/invalid keyword regex/i)).toBeTruthy();
-    expect(nextButton.disabled).toBe(true);
-
-    // Completing the group makes it a valid regex; the error clears and next re-enables.
-    await userEvent.type(screen.getByLabelText("keyword"), ")");
-    expect(screen.queryByText(/invalid keyword regex/i)).toBeNull();
-    expect(nextButton.disabled).toBe(false);
+    await waitFor(() => expect(setSpy).toHaveBeenCalled());
+    expect(must(must(setSpy.mock.calls.at(-1))[1][0]).action).toBe("interrupt");
   });
 
   it("deletes a rule and auto-saves", async () => {
     vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([
-      { id: "a", source: "twitter", action: "pool" },
+      { id: "a", source: "twitter", action: "snooze" },
     ]);
     const setSpy = vi
       .spyOn(api, "setNotificationInterruptRules")
       .mockResolvedValue([]);
     render(<NotificationInterruptRulesCard />);
     await screen.findByText(/twitter/);
-
     await userEvent.click(screen.getByRole("button", { name: /delete rule/i }));
-
     await waitFor(() => expect(setSpy).toHaveBeenCalledWith("bob", []));
   });
 
   it("flushes a pending debounced save on unmount", async () => {
     vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([
-      { id: "a", source: "twitter", action: "pool" },
+      { id: "a", source: "twitter", action: "snooze" },
     ]);
     const setSpy = vi
       .spyOn(api, "setNotificationInterruptRules")
       .mockResolvedValue([]);
     const { unmount } = render(<NotificationInterruptRulesCard />);
     await screen.findByText(/twitter/);
-
-    // Edit, then unmount within the debounce window (e.g. switching settings tabs). The save must
-    // still fire on unmount rather than being silently dropped.
     await userEvent.click(screen.getByRole("button", { name: /delete rule/i }));
     unmount();
-
     await waitFor(() => expect(setSpy).toHaveBeenCalledWith("bob", []));
   });
 
-  it("offers source/type/sender suggestions from recent notifications", async () => {
-    vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([]);
-    vi.spyOn(api, "getNotificationHistory").mockResolvedValue({
-      notifications: [
-        {
-          type: "notification",
-          source: "twitter",
-          summary: "x",
-          notif_type: "tweet",
-          sender: "@bob",
-        },
-        {
-          type: "notification",
-          source: "whatsapp",
-          summary: "x",
-          notif_type: "message",
-          sender: "Alice",
-        },
-      ],
-      cursor: null,
-    });
+  it("reorders rules by drag and persists the new order", async () => {
+    vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([
+      { id: "a", source: "twitter", action: "snooze" },
+      { id: "b", source: "whatsapp", action: "snooze" },
+    ]);
+    const setSpy = vi
+      .spyOn(api, "setNotificationInterruptRules")
+      .mockResolvedValue([]);
     render(<NotificationInterruptRulesCard />);
-    await waitFor(() => expect(api.getNotificationHistory).toHaveBeenCalled());
+    await screen.findByText(/twitter/);
 
-    // Typing into the source combobox opens it and surfaces values seen in recent notifications.
-    await userEvent.click(screen.getByRole("button", { name: /add rule/i }));
-    await userEvent.type(screen.getByLabelText("source"), "t");
-    expect(await screen.findByRole("option", { name: "twitter" })).toBeTruthy();
-  });
-});
-
-describe("NotificationInterruptRulesCard handle", () => {
-  beforeEach(() => {
-    vi.restoreAllMocks();
-    vi.spyOn(api, "getNotificationHistory").mockResolvedValue({
-      notifications: [],
-      cursor: null,
+    const handles = screen.getAllByRole("button", {
+      name: /drag to reorder rule/i,
     });
-  });
-  afterEach(cleanup);
+    const row0 = must(must(handles[0]).closest("div"));
+    fireEvent.dragStart(must(handles[1]));
+    fireEvent.dragOver(row0);
+    fireEvent.drop(row0);
 
-  it("opens the add-rule dialog pre-filled from a notification, then commits on review", async () => {
-    vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([]);
-    const setSpy = vi
-      .spyOn(api, "setNotificationInterruptRules")
-      .mockResolvedValue([]);
-    const ref = createRef<NotificationInterruptRulesHandle>();
-    render(<NotificationInterruptRulesCard ref={ref} />);
-    await waitFor(() =>
-      expect(api.getNotificationInterruptRules).toHaveBeenCalled(),
-    );
-
-    // addFromNotification opens the wizard pre-filled (source/type carried over) rather than
-    // committing silently; the user reviews and commits.
-    act(() =>
-      ref.current?.addFromNotification({ source: "twitter", type: "tweet" }),
-    );
-    const dialog = await screen.findByRole("dialog");
-    await userEvent.click(
-      within(dialog).getByRole("button", { name: /next/i }),
-    );
-    await userEvent.click(
-      within(dialog).getByRole("button", { name: /add rule/i }),
-    );
-
-    await waitFor(() => expect(setSpy).toHaveBeenCalledTimes(1));
-    const [, rulesArg] = setSpy.mock.calls[0];
-    expect(rulesArg[0]).toMatchObject({ source: "twitter", type: "tweet" });
+    await waitFor(() => expect(setSpy).toHaveBeenCalled());
+    expect(
+      must(setSpy.mock.calls.at(-1))[1].map((r: { id: string }) => r.id),
+    ).toEqual(["b", "a"]);
   });
 
-  it("ignores addFromNotification fired before the ruleset has loaded", async () => {
-    // The sibling card's make-rule button can fire before this card's own fetch resolves. If we
-    // committed against the unloaded (null) ruleset, the debounced save would overwrite the user's
-    // existing rules with just the new one — silent data loss. Guard: it must be a no-op while loading.
-    let resolveRules: (
-      rules: { id: string; source: string; action: string }[],
-    ) => void = () => {};
-    vi.spyOn(api, "getNotificationInterruptRules").mockReturnValue(
-      new Promise((resolve) => {
-        resolveRules = resolve;
-      }),
-    );
-    const setSpy = vi
-      .spyOn(api, "setNotificationInterruptRules")
-      .mockResolvedValue([]);
-    const ref = createRef<NotificationInterruptRulesHandle>();
-    const { unmount } = render(<NotificationInterruptRulesCard ref={ref} />);
-
-    // Fire the seed while the fetch is still pending (rules === null).
-    act(() => ref.current?.addFromNotification({ source: "twitter" }));
-
-    // The fetch resolves with the user's existing rule.
-    await act(async () => {
-      resolveRules([{ id: "x", source: "email", action: "interrupt" }]);
-    });
-    // Unmount flushes any pending debounced save; none should exist, so the server is never written.
-    unmount();
-    await waitFor(() =>
-      expect(api.getNotificationInterruptRules).toHaveBeenCalled(),
-    );
-    expect(setSpy).not.toHaveBeenCalled();
-  });
-});
-
-describe("NotificationInterruptRulesCard core protection", () => {
-  beforeEach(() => vi.restoreAllMocks());
-  afterEach(cleanup);
-
-  it("excludes core from the source suggestions", async () => {
-    vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([]);
-    vi.spyOn(api, "getNotificationHistory").mockResolvedValue({
-      notifications: [
-        {
-          type: "notification",
-          source: "core",
-          summary: "x",
-          notif_type: "default_skill_sync",
-        },
-        {
-          type: "notification",
-          source: "twitter",
-          summary: "x",
-          notif_type: "tweet",
-        },
-      ],
-      cursor: null,
-    });
-    render(<NotificationInterruptRulesCard />);
-    await waitFor(() => expect(api.getNotificationHistory).toHaveBeenCalled());
-
-    // "r" matches both "twitter" and "core", but core is filtered out of the suggestions.
-    await userEvent.click(screen.getByRole("button", { name: /add rule/i }));
-    await userEvent.type(screen.getByLabelText("source"), "r");
-    expect(await screen.findByRole("option", { name: "twitter" })).toBeTruthy();
-    expect(screen.queryByRole("option", { name: "core" })).toBeNull();
-  });
-
-  it("refuses to seed a rule from a core notification", async () => {
-    vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([]);
-    vi.spyOn(api, "getNotificationHistory").mockResolvedValue({
-      notifications: [],
-      cursor: null,
-    });
-    const setSpy = vi
-      .spyOn(api, "setNotificationInterruptRules")
-      .mockResolvedValue([]);
-    const ref = createRef<NotificationInterruptRulesHandle>();
-    render(<NotificationInterruptRulesCard ref={ref} />);
-    await waitFor(() =>
-      expect(api.getNotificationInterruptRules).toHaveBeenCalled(),
-    );
-
-    act(() =>
-      ref.current?.addFromNotification({
-        source: "core",
-        type: "default_skill_sync",
-      }),
-    );
-
-    // No optimistic rule, no save — core can't be targeted.
-    expect(screen.queryByText(/core/)).toBeNull();
-    await new Promise((r) => setTimeout(r, 350));
-    expect(setSpy).not.toHaveBeenCalled();
-  });
-
-  it("rolls a rejected rule back out of the list", async () => {
-    vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([]);
-    vi.spyOn(api, "getNotificationHistory").mockResolvedValue({
-      notifications: [],
-      cursor: null,
-    });
+  it("rolls a rejected change back", async () => {
+    vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([
+      { id: "a", source: "twitter", action: "snooze" },
+    ]);
     vi.spyOn(api, "setNotificationInterruptRules").mockRejectedValue(
       new Error("invalid rules"),
     );
-    const ref = createRef<NotificationInterruptRulesHandle>();
-    render(<NotificationInterruptRulesCard ref={ref} />);
-    await waitFor(() =>
-      expect(api.getNotificationInterruptRules).toHaveBeenCalled(),
-    );
-
-    act(() =>
-      ref.current?.addFromNotification({ source: "twitter", type: "tweet" }),
-    );
-    const dialog = await screen.findByRole("dialog");
-    await userEvent.click(
-      within(dialog).getByRole("button", { name: /next/i }),
-    );
-    await userEvent.click(
-      within(dialog).getByRole("button", { name: /add rule/i }),
-    );
-
-    // Optimistically shown in the list, then the save fails and the rule is rolled back.
-    expect(await screen.findByText(/twitter/)).toBeTruthy();
+    render(<NotificationInterruptRulesCard />);
+    await screen.findByText(/twitter/);
+    // Delete optimistically removes it, then the save fails and it's restored.
+    await userEvent.click(screen.getByRole("button", { name: /delete rule/i }));
     await screen.findByText("invalid rules");
-    await waitFor(() => expect(screen.queryByText(/twitter/)).toBeNull());
-  });
-});
-
-describe("NotificationInterruptRulesCard cascade", () => {
-  beforeEach(() => vi.restoreAllMocks());
-  afterEach(cleanup);
-
-  it("can add a rule from keyword alone", async () => {
-    vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([]);
-    vi.spyOn(api, "getNotificationHistory").mockResolvedValue({
-      notifications: [],
-      cursor: null,
-    });
-    const setSpy = vi
-      .spyOn(api, "setNotificationInterruptRules")
-      .mockResolvedValue([]);
-    render(<NotificationInterruptRulesCard />);
-    await waitFor(() =>
-      expect(api.getNotificationInterruptRules).toHaveBeenCalled(),
-    );
-
-    await userEvent.click(screen.getByRole("button", { name: /add rule/i }));
-    await userEvent.type(screen.getByLabelText("keyword"), "urgent");
-    await userEvent.click(screen.getByRole("button", { name: /next/i }));
-    await userEvent.click(
-      within(screen.getByRole("dialog")).getByRole("button", {
-        name: /add rule/i,
-      }),
-    );
-
-    await waitFor(() => expect(setSpy).toHaveBeenCalledTimes(1));
-    const [, rulesArg] = setSpy.mock.calls[0];
-    expect(rulesArg[0].keyword).toBe("urgent");
-    expect(rulesArg[0].source).toBeUndefined();
-  });
-
-  it("reveals type only after a source is picked", async () => {
-    vi.spyOn(api, "getNotificationInterruptRules").mockResolvedValue([]);
-    vi.spyOn(api, "getNotificationHistory").mockResolvedValue({
-      notifications: [
-        {
-          type: "notification",
-          source: "twitter",
-          summary: "x",
-          notif_type: "tweet",
-        },
-      ],
-      cursor: null,
-    });
-    render(<NotificationInterruptRulesCard />);
-    await waitFor(() => expect(api.getNotificationHistory).toHaveBeenCalled());
-
-    await userEvent.click(screen.getByRole("button", { name: /add rule/i }));
-    // type isn't shown at all until a source is chosen.
-    expect(screen.queryByLabelText("type")).toBeNull();
-    await userEvent.type(screen.getByLabelText("source"), "t");
-    await userEvent.click(
-      await screen.findByRole("option", { name: "twitter" }),
-    );
-    expect(await screen.findByLabelText("type")).toBeTruthy();
+    expect(screen.getByText(/twitter/)).toBeTruthy();
   });
 });

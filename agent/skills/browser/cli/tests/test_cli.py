@@ -30,51 +30,104 @@ def test_parser_accepts_all_documented_subcommands():
         "scroll",
         "wait",
         "evaluate",
-        "cdp",
+        "bidi",
         "http-get",
+        "fetch",
+        "doctor",
         "tabs",
         "focus",
         "close",
         "resize",
     ):
-        ns = parser.parse_args([cmd] + _minimal_args_for(cmd))
+        ns = parser.parse_args([cmd, *_minimal_args_for(cmd)])
         assert ns.cmd == cmd
 
 
+_URL_ARGS = ["https://example.com"]
+_MINIMAL_ARGS = {
+    "open": _URL_ARGS,
+    "navigate": _URL_ARGS,
+    "connect": _URL_ARGS,
+    "http-get": _URL_ARGS,
+    "fetch": _URL_ARGS,
+    "type": ["e1", "hello"],
+    "hover": ["e1"],
+    "click": ["e1"],
+    "press": ["Enter"],
+    "evaluate": ["document.title"],
+    "bidi": ["browsingContext.getTree"],
+    "focus": ["TARGET_XYZ"],
+    "close": ["TARGET_XYZ"],
+    "resize": ["1920", "1080"],
+}
+
+
 def _minimal_args_for(cmd: str) -> list[str]:
-    need_url = {"open", "navigate", "connect", "http-get"}
-    need_ref = {"type", "hover"}
-    need_key = {"press"}
-    need_expression = {"evaluate"}
-    need_cdp_method = {"cdp"}
-    if cmd in need_url:
-        return ["https://example.com"]
-    if cmd in need_ref:
-        if cmd == "type":
-            return ["e1", "hello"]
-        return ["e1"]
-    if cmd in need_key:
-        return ["Enter"]
-    if cmd in need_expression:
-        return ["document.title"]
-    if cmd in need_cdp_method:
-        return ["Page.reload"]
-    if cmd == "click":
-        return ["e1"]
-    if cmd == "focus" or cmd == "close":
-        return ["TARGET_XYZ"]
-    if cmd == "resize":
-        return ["1920", "1080"]
-    return []
+    return _MINIMAL_ARGS[cmd] if cmd in _MINIMAL_ARGS else []
 
 
-def test_parser_launch_flags():
+def test_parser_launch_flags_compat():
+    # --stealth/--no-sandbox/--port stay accepted (no-ops now) so existing prompts keep parsing.
     parser = cli._build_parser()
     ns = parser.parse_args(["launch", "--headless", "--stealth", "--no-sandbox", "--port", "9999"])
     assert ns.headless is True
     assert ns.stealth is True
     assert ns.no_sandbox is True
     assert ns.port == 9999
+
+
+def test_parser_fetch_navigate_first():
+    parser = cli._build_parser()
+    ns = parser.parse_args(["fetch", "https://x.com", "--navigate-first"])
+    assert ns.navigate_first is True
+
+
+def test_parser_mode_accepts_choices():
+    parser = cli._build_parser()
+    assert parser.parse_args(["mode", "screenshot"]).mode == "screenshot"
+    assert parser.parse_args(["mode"]).mode is None
+
+
+def test_parser_launch_mode_flag():
+    parser = cli._build_parser()
+    assert parser.parse_args(["launch", "--mode", "screenshot"]).mode == "screenshot"
+    assert parser.parse_args(["launch"]).mode is None
+
+
+def test_cmd_mode_sets_and_prints(monkeypatch, capsys):
+    seen: dict = {"mode": "a11y"}
+    monkeypatch.setattr(cli.admin, "set_mode", lambda m: seen.__setitem__("mode", m))
+    monkeypatch.setattr(cli.admin, "read_mode", lambda: seen["mode"])
+    cli.cmd_mode(argparse.Namespace(mode="both"))
+    assert seen["mode"] == "both"
+    assert '"both"' in capsys.readouterr().out
+
+
+def test_print_feedback_a11y_only(monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(cli.admin, "read_mode", lambda: "a11y")
+    monkeypatch.setattr(cli, "_print_snapshot", lambda interactive_only=False: calls.append("snap"))
+    monkeypatch.setattr(cli, "_print_view", lambda with_header=True: calls.append("view"))
+    cli._print_feedback()
+    assert calls == ["snap"]
+
+
+def test_print_feedback_screenshot_only(monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(cli.admin, "read_mode", lambda: "screenshot")
+    monkeypatch.setattr(cli, "_print_snapshot", lambda interactive_only=False: calls.append("snap"))
+    monkeypatch.setattr(cli, "_print_view", lambda with_header=True: calls.append("view"))
+    cli._print_feedback()
+    assert calls == ["view"]
+
+
+def test_print_feedback_both(monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(cli.admin, "read_mode", lambda: "both")
+    monkeypatch.setattr(cli, "_print_snapshot", lambda interactive_only=False: calls.append("snap"))
+    monkeypatch.setattr(cli, "_print_view", lambda with_header=True: calls.append("view"))
+    cli._print_feedback()
+    assert calls == ["snap", "view"]
 
 
 def test_parser_click_at_coords():
@@ -164,7 +217,7 @@ def test_main_prints_help_when_no_command(monkeypatch, capsys):
 
 
 def test_snapshot_banner_format(monkeypatch):
-    def fake_snapshot(interactive_only: bool = False, compact: bool = False):
+    def fake_snapshot(interactive_only: bool = False):
         return {
             "target_id": "T1",
             "url": "https://unknown.example/",
@@ -186,21 +239,21 @@ def test_snapshot_banner_format(monkeypatch):
 
 def test_snapshot_banner_handles_snapshot_failure(monkeypatch):
     def blow_up(**kwargs):
-        raise RuntimeError("CDP dead")
+        raise RuntimeError("backend dead")
 
     monkeypatch.setattr(cli.snapshot, "snapshot", blow_up)
-    assert "snapshot failed: CDP dead" in cli._snapshot_banner()
+    assert "snapshot failed: backend dead" in cli._snapshot_banner()
 
 
 def test_cmd_screenshot_plumbs_webp_and_region(monkeypatch):
-    """--webp + --region flow through as format='webp' + region tuple; path default follows format."""
+    """--webp + --region flow through as image_format='webp' + region tuple; path default follows the format."""
     captured: dict = {}
     monkeypatch.setattr(cli.admin, "ensure_daemon", lambda *a, **kw: None)
     monkeypatch.setattr(cli.helpers, "screenshot", lambda **kw: (captured.update(kw), kw["path"])[1])
 
     args = argparse.Namespace(path="/tmp/shot.webp", full_page=False, webp=True, jpeg=False, region="10,20,300,200", quality=75)
     assert cli.cmd_screenshot(args) == 0
-    assert captured["format"] == "webp"
+    assert captured["image_format"] == "webp"
     assert captured["region"] == (10.0, 20.0, 300.0, 200.0)
     assert captured["quality"] == 75
 
@@ -214,7 +267,7 @@ def test_cmd_screenshot_infers_format_from_path_suffix(monkeypatch):
     monkeypatch.setattr(cli.admin, "ensure_daemon", lambda *a, **kw: None)
     monkeypatch.setattr(cli.helpers, "screenshot", lambda **kw: (captured.update(kw), kw["path"])[1])
     cli.cmd_screenshot(argparse.Namespace(path="/tmp/x.jpg", full_page=False, webp=False, jpeg=False, region=None, quality=None))
-    assert captured["format"] == "jpeg"
+    assert captured["image_format"] == "jpeg"
 
 
 def test_cmd_screenshot_rejects_malformed_region(monkeypatch):

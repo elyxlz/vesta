@@ -7,8 +7,8 @@ import sys
 import threading
 from pathlib import Path
 
+from . import auth_commands, calendar, gmail, monitor, notifications
 from .config import Config
-from . import auth_commands, gmail, calendar, meet, monitor, notifications
 from .context import GoogleContext
 
 
@@ -23,25 +23,23 @@ def _remove_pid(config):
 def _require_daemon(config):
     pid_file = config.data_dir / "serve.pid"
     if not pid_file.exists():
-        print(json.dumps({"error": "daemon not running — start with: screen -dmS google google serve"}), file=sys.stderr)
+        print(json.dumps({"error": "daemon not running - start with: screen -dmS google google serve"}), file=sys.stderr)
         sys.exit(1)
     try:
         os.kill(int(pid_file.read_text().strip()), 0)
     except (ValueError, ProcessLookupError, OSError):
         pid_file.unlink(missing_ok=True)
-        print(json.dumps({"error": "daemon not running (stale pid file) — start with: screen -dmS google google serve"}), file=sys.stderr)
+        print(json.dumps({"error": "daemon not running (stale pid file) - start with: screen -dmS google google serve"}), file=sys.stderr)
         sys.exit(1)
 
 
-def main():
+def _build_parser():
     parser = argparse.ArgumentParser(prog="google")
     group = parser.add_subparsers(dest="group", required=True)
 
-    # serve
     serve_parser = group.add_parser("serve")
     serve_parser.add_argument("--notifications-dir", required=True)
 
-    # auth
     auth_parser = group.add_parser("auth")
     auth_sub = auth_parser.add_subparsers(dest="command", required=True)
     auth_sub.add_parser("login")
@@ -50,7 +48,12 @@ def main():
     p_complete.add_argument("--code", required=True)
     auth_sub.add_parser("list")
 
-    # email
+    _add_email_commands(group)
+    _add_calendar_commands(group)
+    return parser
+
+
+def _add_email_commands(group):
     email_parser = group.add_parser("email")
     email_sub = email_parser.add_subparsers(dest="command", required=True)
 
@@ -98,7 +101,8 @@ def main():
     p_update.add_argument("--add-labels", nargs="+", default=None)
     p_update.add_argument("--remove-labels", nargs="+", default=None)
 
-    # calendar
+
+def _add_calendar_commands(group):
     cal_parser = group.add_parser("calendar")
     cal_sub = cal_parser.add_subparsers(dest="command", required=True)
 
@@ -106,6 +110,7 @@ def main():
     p_list_events.add_argument("--calendar", default="primary")
     p_list_events.add_argument("--days-ahead", type=int, default=7)
     p_list_events.add_argument("--days-back", type=int, default=0)
+    p_list_events.add_argument("--limit", type=int, default=None)
     p_list_events.add_argument("--no-details", action="store_true")
     p_list_events.add_argument("--user-timezone", default=None)
 
@@ -127,7 +132,6 @@ def main():
     p_create_event.add_argument("--all-day", action="store_true")
     p_create_event.add_argument("--recurrence", choices=["daily", "weekly", "monthly", "yearly"], default=None)
     p_create_event.add_argument("--recurrence-end-date", default=None)
-    p_create_event.add_argument("--meet-link", action="store_true")
 
     p_update_event = cal_sub.add_parser("update")
     p_update_event.add_argument("--id", required=True, dest="event_id")
@@ -150,12 +154,9 @@ def main():
     p_respond.add_argument("--response", choices=["accept", "decline", "tentative"], default="accept")
     p_respond.add_argument("--message", default=None)
 
-    # meet
-    meet_parser = group.add_parser("meet")
-    meet_sub = meet_parser.add_subparsers(dest="command", required=True)
-    meet_sub.add_parser("create")
 
-    args = parser.parse_args()
+def main():
+    args = _build_parser().parse_args()
     config = Config()
 
     config.data_dir.mkdir(parents=True, exist_ok=True)
@@ -166,14 +167,13 @@ def main():
             _run_serve(config, Path(args.notifications_dir))
             return
 
-        if args.group not in ("auth", "meet"):
+        if args.group != "auth":
             _require_daemon(config)
 
         dispatchers = {
             "auth": _dispatch_auth,
             "email": _dispatch_email,
             "calendar": _dispatch_calendar,
-            "meet": _dispatch_meet,
         }
         result = dispatchers[args.group](args, config)
         print(json.dumps(result, indent=2))
@@ -185,95 +185,101 @@ def main():
 def _dispatch_auth(args, config):
     if args.command == "list":
         return auth_commands.list_accounts(config)
-    elif args.command == "login":
+    if args.command == "login":
         return auth_commands.authenticate_account(config)
-    elif args.command == "login-local":
+    if args.command == "login-local":
         return auth_commands.run_local_auth(config)
-    elif args.command == "complete":
+    if args.command == "complete":
         return auth_commands.complete_authentication(config, code=args.code)
+    return None
+
+
+_TRANSMIT_EMAIL_COMMANDS = {"send", "reply", "forward"}
+
+
+def _draft_only_enabled():
+    """True when EMAIL_DRAFT_ONLY is set to a truthy value (1/true/yes, case-insensitive)."""
+    value = os.environ["EMAIL_DRAFT_ONLY"] if "EMAIL_DRAFT_ONLY" in os.environ else ""
+    return value.strip().lower() in {"1", "true", "yes"}
 
 
 def _dispatch_email(args, config):
-    if args.command == "list":
-        return gmail.list_emails(config, label=args.label, limit=args.limit)
-    elif args.command == "get":
-        return gmail.get_email(config, message_id=args.message_id, include_attachments=not args.no_attachments, save_to_file=args.save_to)
-    elif args.command == "send":
-        return gmail.send_email(config, to=args.to, subject=args.subject, body=args.body, cc=args.cc, attachments=args.attachments)
-    elif args.command == "draft":
-        return gmail.create_draft(config, to=args.to, subject=args.subject, body=args.body, cc=args.cc, attachments=args.attachments)
-    elif args.command == "reply":
-        return gmail.reply_to_email(config, message_id=args.message_id, body=args.body, attachments=args.attachments, reply_all=args.reply_all)
-    elif args.command == "attachment":
-        return gmail.get_attachment(config, email_id=args.email_id, attachment_id=args.attachment_id, save_path=args.save_path)
-    elif args.command == "search":
-        return gmail.search_emails(config, query=args.query, limit=args.limit, label=args.label)
-    elif args.command == "update":
-        return gmail.update_email(config, message_id=args.message_id, add_labels=args.add_labels, remove_labels=args.remove_labels)
+    if args.command in _TRANSMIT_EMAIL_COMMANDS and _draft_only_enabled():
+        raise RuntimeError("draft-only mode (EMAIL_DRAFT_ONLY): sending is disabled. Create a draft instead (email draft ...).")
+    handlers = {
+        "list": lambda: gmail.list_emails(config, label=args.label, limit=args.limit),
+        "get": lambda: gmail.get_email(
+            config, message_id=args.message_id, include_attachments=not args.no_attachments, save_to_file=args.save_to
+        ),
+        "send": lambda: gmail.send_email(config, to=args.to, subject=args.subject, body=args.body, cc=args.cc, attachments=args.attachments),
+        "draft": lambda: gmail.create_draft(config, to=args.to, subject=args.subject, body=args.body, cc=args.cc, attachments=args.attachments),
+        "reply": lambda: gmail.reply_to_email(
+            config, message_id=args.message_id, body=args.body, attachments=args.attachments, reply_all=args.reply_all
+        ),
+        "attachment": lambda: gmail.get_attachment(config, email_id=args.email_id, attachment_id=args.attachment_id, save_path=args.save_path),
+        "search": lambda: gmail.search_emails(config, query=args.query, limit=args.limit, label=args.label),
+        "update": lambda: gmail.update_email(config, message_id=args.message_id, add_labels=args.add_labels, remove_labels=args.remove_labels),
+    }
+    return handlers[args.command]()
 
 
 def _dispatch_calendar(args, config):
-    if args.command == "list":
-        return calendar.list_events(
+    handlers = {
+        "list": lambda: calendar.list_events(
             config,
             calendar_id=args.calendar,
             days_ahead=args.days_ahead,
             days_back=args.days_back,
             include_details=not args.no_details,
             user_timezone=args.user_timezone,
-        )
-    elif args.command == "calendars":
-        return calendar.list_calendars(config)
-    elif args.command == "get":
-        return calendar.get_event(config, calendar_id=args.calendar, event_id=args.event_id)
-    elif args.command == "create":
-        return calendar.create_event(
+            limit=args.limit,
+        ),
+        "calendars": lambda: calendar.list_calendars(config),
+        "get": lambda: calendar.get_event(config, calendar_id=args.calendar, event_id=args.event_id),
+        "create": lambda: calendar.create_event(
             config,
+            calendar.NewEvent(
+                subject=args.subject,
+                start=args.start,
+                timezone=args.timezone,
+                end=args.end,
+                location=args.location,
+                body=args.body,
+                attendees=args.attendees,
+                all_day=args.all_day,
+                recurrence=args.recurrence,
+                recurrence_end_date=args.recurrence_end_date,
+            ),
             calendar_id=args.calendar,
-            subject=args.subject,
-            start=args.start,
-            end=args.end,
-            location=args.location,
-            body=args.body,
-            attendees=args.attendees,
-            timezone=args.timezone,
-            all_day=args.all_day,
-            recurrence=args.recurrence,
-            recurrence_end_date=args.recurrence_end_date,
-            meet_link=args.meet_link,
-        )
-    elif args.command == "update":
-        return calendar.update_event(
+        ),
+        "update": lambda: calendar.update_event(
             config,
+            calendar.EventPatch(
+                subject=args.subject,
+                start=args.start,
+                end=args.end,
+                location=args.location,
+                body=args.body,
+                timezone=args.timezone,
+            ),
             calendar_id=args.calendar,
             event_id=args.event_id,
-            subject=args.subject,
-            start=args.start,
-            end=args.end,
-            location=args.location,
-            body=args.body,
-            timezone=args.timezone,
-        )
-    elif args.command == "delete":
-        return calendar.delete_event(
+        ),
+        "delete": lambda: calendar.delete_event(
             config,
             calendar_id=args.calendar,
             event_id=args.event_id,
             send_updates="none" if args.no_notification else "all",
-        )
-    elif args.command == "respond":
-        return calendar.respond_event(
+        ),
+        "respond": lambda: calendar.respond_event(
             config,
             calendar_id=args.calendar,
             event_id=args.event_id,
             response=args.response,
             message=args.message,
-        )
-
-
-def _dispatch_meet(args, config):
-    if args.command == "create":
-        return meet.create_space(config)
+        ),
+    }
+    return handlers[args.command]()
 
 
 def _run_serve(config: Config, notif_dir: Path):
@@ -305,7 +311,7 @@ def _run_serve(config: Config, notif_dir: Path):
 
     shutdown_reason = "unknown"
 
-    def handle_signal(signum, frame):
+    def handle_signal(signum, _frame):
         nonlocal shutdown_reason
         shutdown_reason = signal.Signals(signum).name
         monitor_stop_event.set()

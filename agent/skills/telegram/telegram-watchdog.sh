@@ -26,9 +26,10 @@ serve_alive() { pgrep -f "telegram serve --notifications-dir" >/dev/null 2>&1; }
 start_daemon() { screen -dmS telegram telegram serve --notifications-dir "$NOTIF_DIR"; }
 
 notify_restart() { # $1 = note
-  local f="$NOTIF_DIR/$(date +%s%N)-telegram-watchdog.json"
+  local f
+  f="$NOTIF_DIR/$(date +%s%N)-telegram-watchdog.json"
   mkdir -p "$NOTIF_DIR"
-  printf '{"timestamp":"%s","source":"telegram-watchdog","type":"daemon_restarted","note":"%s","interrupt":false}\n' \
+  printf '{"timestamp":"%s","source":"telegram-watchdog","type":"daemon_restarted","note":"%s"}\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" > "$f"
 }
 

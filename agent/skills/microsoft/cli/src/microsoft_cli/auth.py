@@ -1,6 +1,8 @@
-import msal
 import pathlib as pl
 from typing import NamedTuple
+
+import msal
+
 from .settings import get_settings
 
 
@@ -45,11 +47,8 @@ def _run_device_flow(app: msal.PublicClientApplication, scopes: list[str], cache
     return result
 
 
-def get_app(cache_file: pl.Path) -> msal.PublicClientApplication:
+def get_app(cache_file: pl.Path, client_id: str | None = None) -> msal.PublicClientApplication:
     settings = get_settings()
-    if not settings.microsoft_mcp_client_id:
-        raise ValueError("MICROSOFT_MCP_CLIENT_ID is required")
-
     authority = f"https://login.microsoftonline.com/{settings.microsoft_mcp_tenant_id}"
 
     cache = msal.SerializableTokenCache()
@@ -57,9 +56,33 @@ def get_app(cache_file: pl.Path) -> msal.PublicClientApplication:
     if cache_content:
         cache.deserialize(cache_content)
 
-    app = msal.PublicClientApplication(settings.microsoft_mcp_client_id, authority=authority, token_cache=cache)
+    return msal.PublicClientApplication(client_id or settings.microsoft_mcp_client_id, authority=authority, token_cache=cache)
 
-    return app
+
+def get_token_silent(cache_file: pl.Path, scopes: list[str], *, account_id: str | None = None, client_id: str | None = None) -> str | None:
+    """Acquire a token from the cache without ever prompting; return None if none is available.
+
+    Used by the OWA REST fallback: after a device-flow `owa-login`, MSAL holds the refresh
+    token, so a fresh access token is minted silently on each call with no browser and no
+    re-auth (the cache is persisted on rotation, same as get_token)."""
+    app = get_app(cache_file, client_id)
+    accounts = app.get_accounts()
+    account = next((a for a in accounts if a["home_account_id"] == account_id), None) if account_id else (accounts[0] if accounts else None)
+    if account is None:
+        return None
+    result = app.acquire_token_silent(scopes, account=account)
+    if not result:
+        return None
+    cache = app.token_cache
+    if isinstance(cache, msal.SerializableTokenCache) and cache.has_state_changed:
+        _write_cache(cache_file, content=cache.serialize())
+    return result["access_token"]
+
+
+def account_in_cache(cache_file: pl.Path, account_email: str, *, client_id: str | None = None) -> bool:
+    """Local, network-free check: is this account present in the MSAL cache?"""
+    app = get_app(cache_file, client_id)
+    return any((a["username"] or "").lower() == account_email.lower() for a in app.get_accounts())
 
 
 def get_token(cache_file: pl.Path, scopes: list[str], *, account_id: str | None = None) -> str:
@@ -72,6 +95,14 @@ def get_token(cache_file: pl.Path, scopes: list[str], *, account_id: str | None 
 
     if not result:
         result = _run_device_flow(app, scopes, cache_file)
+    else:
+        # Persist the cache after a silent acquisition. MSAL rotates the refresh
+        # token in-memory on refresh; if we never write it back, the on-disk token
+        # is never renewed, so its 90-day inactivity clock never advances and it
+        # eventually dies with AADSTS700082 even under constant daemon polling.
+        cache = app.token_cache
+        if isinstance(cache, msal.SerializableTokenCache) and cache.has_state_changed:
+            _write_cache(cache_file, content=cache.serialize())
 
     return result["access_token"]
 
@@ -99,8 +130,7 @@ def get_account_id_by_email(email: str, cache_file: pl.Path) -> str:
     if accounts:
         available = ", ".join([f"'{acc.username}'" for acc in accounts])
         raise ValueError(f"No account found with email '{email}'. Available accounts: {available}. Use list_accounts() to see all.")
-    else:
-        raise ValueError(f"No account found with email '{email}'. No accounts are authenticated. Use authenticate_account() to add an account.")
+    raise ValueError(f"No account found with email '{email}'. No accounts are authenticated. Use authenticate_account() to add an account.")
 
 
 def authenticate_new_account(cache_file: pl.Path, scopes: list[str]) -> Account | None:

@@ -8,7 +8,6 @@ import json
 import sys
 
 import pytest
-
 from finance_cli import cli
 
 
@@ -26,7 +25,14 @@ def run(monkeypatch, capsys, argv, conf, eb_patches=None):
 def test_config_show(monkeypatch, capsys):
     conf = {"app_id": "a1", "key_path": "/k.pem", "session_id": "s1", "accounts": [{"uid": "u1"}]}
     out, _ = run(monkeypatch, capsys, ["config", "show"], conf)
-    assert out == {"app_id": "a1", "key_path": "/k.pem", "session_id": "***", "accounts": [{"uid": "u1"}]}
+    assert out == {
+        "app_id": "a1",
+        "key_path": "/k.pem",
+        "aspsp_name": "",
+        "aspsp_country": "",
+        "session_id": "***",
+        "accounts": [{"uid": "u1"}],
+    }
 
 
 def test_config_set(monkeypatch, capsys):

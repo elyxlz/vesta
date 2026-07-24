@@ -2,8 +2,8 @@
 
 from collections.abc import Callable
 
-from .config import Config
 from .auth import get_client
+from .config import Config
 
 
 def _guard_device(action: Callable[[], object]) -> dict | None:

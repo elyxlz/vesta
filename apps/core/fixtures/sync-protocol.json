@@ -1,0 +1,113 @@
+{
+  "deltas": {
+    "agent": {
+      "info": {
+        "activityState": "thinking",
+        "buildPhase": null,
+        "services": {
+          "dashboard": {
+            "port": 8080,
+            "rev": 3
+          }
+        },
+        "startedAt": "2026-01-01T00:00:00Z",
+        "status": "alive"
+      },
+      "name": "sample-agent",
+      "type": "agent"
+    },
+    "agent_removed": {
+      "name": "stopped-agent",
+      "type": "agent_removed"
+    },
+    "notifications": {
+      "agent": "sample-agent",
+      "pending": [
+        {
+          "id": 7,
+          "notif_id": "whatsapp-123",
+          "source": "whatsapp",
+          "summary": "new message",
+          "type": "notification"
+        }
+      ],
+      "type": "notifications"
+    },
+    "state": {
+      "scope": "gateway",
+      "type": "state",
+      "value": {
+        "autoUpdate": true,
+        "channel": "stable",
+        "lan": {
+          "exposed": false,
+          "url": null
+        },
+        "latestVersion": "0.1.1",
+        "managed": false,
+        "port": 4111,
+        "tunnelUrl": "https://sample.vesta.run",
+        "updateAvailable": true,
+        "version": "0.1.0"
+      }
+    },
+    "user_notification": {
+      "agent": "sample-agent",
+      "body": "hello",
+      "kind": "message",
+      "title": "sample-agent",
+      "type": "user_notification"
+    }
+  },
+  "hello": {
+    "min_supported": "0.0.0",
+    "type": "hello",
+    "version": "0.1.0"
+  },
+  "snapshot": {
+    "tree": {
+      "agents": {
+        "sample-agent": {
+          "info": {
+            "activityState": "thinking",
+            "buildPhase": null,
+            "services": {
+              "dashboard": {
+                "port": 8080,
+                "rev": 3
+              }
+            },
+            "startedAt": "2026-01-01T00:00:00Z",
+            "status": "alive"
+          },
+          "notifications": {
+            "pending": [
+              {
+                "id": 7,
+                "notif_id": "whatsapp-123",
+                "source": "whatsapp",
+                "summary": "new message",
+                "type": "notification"
+              }
+            ]
+          }
+        }
+      },
+      "gateway": {
+        "autoUpdate": true,
+        "channel": "stable",
+        "lan": {
+          "exposed": false,
+          "url": null
+        },
+        "latestVersion": "0.1.1",
+        "managed": false,
+        "port": 4111,
+        "tunnelUrl": "https://sample.vesta.run",
+        "updateAvailable": true,
+        "version": "0.1.0"
+      }
+    },
+    "type": "snapshot"
+  }
+}

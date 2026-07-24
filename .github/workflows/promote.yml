@@ -4,7 +4,9 @@ name: Promote
 # only opted-in beta clients follow; this workflow does the stable half once the beta
 # has soaked: move the agent image :latest tag, flip the GitHub release to latest, and
 # advance the production branch. No rebuild happens here, the exact artifacts that beta
-# users tested become stable.
+# users tested become stable. Promotion also cascades: every non-draft prerelease older
+# than the target is flipped to stable too (never marked latest), so no beta is ever
+# left behind below the new stable.
 
 on:
   workflow_dispatch:
@@ -24,6 +26,7 @@ concurrency:
 
 jobs:
   promote:
+    name: Release · Promote to stable
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -42,6 +45,33 @@ jobs:
             exit 1
           fi
           echo "✓ $TAG is a prerelease, promoting to stable"
+
+      # Cascade: flip every non-draft prerelease older than the target to stable,
+      # oldest first, so no beta lingers as a prerelease below the new stable. Only
+      # the target (below) gets --latest, the :latest image move, and the production
+      # push; cascaded releases are explicitly not marked latest.
+      - name: Promote older prereleases
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          RELEASE_LIST_LIMIT=100
+          TARGET_VERSION="${TAG#v}"
+          PRERELEASE_TAGS=$(gh release list --repo "$GITHUB_REPOSITORY" --limit "$RELEASE_LIST_LIMIT" \
+            --json tagName,isPrerelease,isDraft \
+            --jq '.[] | select(.isPrerelease and (.isDraft | not)) | .tagName')
+          for OLDER_TAG in $(printf '%s\n' "$PRERELEASE_TAGS" | sort -V); do
+            OLDER_VERSION="${OLDER_TAG#v}"
+            if [ "$OLDER_VERSION" = "$TARGET_VERSION" ]; then
+              continue
+            fi
+            NEWEST=$(printf '%s\n%s\n' "$OLDER_VERSION" "$TARGET_VERSION" | sort -V | tail -n 1)
+            if [ "$NEWEST" != "$TARGET_VERSION" ]; then
+              continue
+            fi
+            echo "Cascading: flipping older beta $OLDER_TAG to stable"
+            gh release edit "$OLDER_TAG" --repo "$GITHUB_REPOSITORY" --prerelease=false --latest=false
+          done
 
       # Full history: the production push is a force-push of the tag's commit, and a
       # shallow checkout can be rejected with "shallow update not allowed".
@@ -87,55 +117,3 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git push --force origin HEAD:production
           echo "✓ production advanced to ${{ inputs.tag }}"
-
-  # iOS stable = App Store. The matching build was already uploaded to TestFlight (the
-  # iOS beta channel) during the beta CI run; here we submit it for App Store review.
-  # Self-skips until the Apple ASC API secrets exist, exactly like the iOS build job in
-  # ci.yml, so this is dormant-but-wired today and lights up the day secrets are added.
-  #
-  # Apple review is async: TestFlight (beta) users already have this build; App Store
-  # (stable) iOS users get it only once Apple approves, so iOS stable lags the rest of
-  # the promotion by review time. Runs on Linux because submission is pure ASC API (no
-  # build), separate from `promote` so an iOS hiccup never undoes the core promotion.
-  submit-ios:
-    needs: promote
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - name: Check Apple ASC API secrets
-        env:
-          HAS_SECRETS: ${{ secrets.APPLE_API_KEY != '' }}
-        run: |
-          if [ "$HAS_SECRETS" != "true" ]; then
-            echo "::warning::Apple ASC API secrets not configured — skipping App Store submission (iOS stays beta-only on TestFlight)"
-            echo "SKIP_IOS_SUBMIT=true" >> "$GITHUB_ENV"
-          fi
-
-      - uses: actions/checkout@v7
-        if: env.SKIP_IOS_SUBMIT != 'true'
-        with:
-          ref: ${{ inputs.tag }}
-
-      - name: Set up Ruby
-        if: env.SKIP_IOS_SUBMIT != 'true'
-        uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: "3.3"
-
-      - name: Install fastlane
-        if: env.SKIP_IOS_SUBMIT != 'true'
-        run: gem install fastlane -N
-
-      # Submits the already-processed TestFlight build for the promoted version. The
-      # first ever App Store release must be set up manually (listing/metadata exist
-      # before skip_metadata works); subsequent promotions go through this lane.
-      - name: Submit iOS build for App Store review
-        if: env.SKIP_IOS_SUBMIT != 'true'
-        working-directory: apps/mobile
-        env:
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          TAG: ${{ inputs.tag }}
-        run: |
-          fastlane promote version:"${TAG#v}"

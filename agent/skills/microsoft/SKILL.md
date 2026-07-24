@@ -1,82 +1,63 @@
 ---
 name: microsoft
-description: Outlook email, inbox, calendar, meetings, events via Microsoft. Requires daemon.
+description: Use for any Microsoft account, personal or work (Outlook.com, Hotmail, Live, Microsoft 365); preferred over email-client for Microsoft accounts. Graph-based mail (read/send/reply/forward, drafts, flag/categorize, move/archive, folders, attachments, block senders), calendar and meetings, Microsoft Teams (chats, channels, presence), and new-mail/Teams notifications. Requires daemon.
 ---
 
 # Microsoft - CLI: microsoft
 
-**Setup**: See [SETUP.md](SETUP.md)
-**Background**: `screen -dmS microsoft microsoft serve --notifications-dir ~/agent/notifications`
+**Setup / sign-in**: run **`microsoft auth setup --account <email>`**, one command provisions mail, calendar, and Teams and auto-picks device-code (personal / permissive) or a one-URL browser sign-in (locked work/school tenants), then auto-refreshes so the user signs in only once. Details and the two backends (Graph + browser-capture fallback): see [SETUP.md](SETUP.md).
 
-## Email
+**Background daemon**: `screen -dmS microsoft microsoft serve --notifications-dir ~/agent/notifications`
 
-```bash
-microsoft email list --account user@example.com
-microsoft email get --account user@example.com --id <email_id>
-microsoft email send --account user@example.com --to bob@example.com --subject "Hello" --body "Message"
-microsoft email reply --account user@example.com --id <email_id> --body "Thanks!"
-microsoft email search --account user@example.com --query "project update"
-```
+## Command groups
 
-## Email Block/Unblock
+Each area's detail lives in its own file, read it when you work in that area:
 
-Block or unblock senders to filter unwanted emails:
+- **Email**: read/send/reply/forward, search, organize (flag/categorize/move/archive), drafts, folders, block/unblock, attachments. See [references/email.md](references/email.md).
+- **Calendar**: list/create/update/respond to events and meetings. See [references/calendar.md](references/calendar.md).
+- **Teams**: chats, channels, presence (and Teams sign-in). See [references/teams.md](references/teams.md).
+- **Notifications**: new-mail folder watching + Teams chat alerts (plus non-interrupting Teams channel alerts where the account has channel access; degrades to chats-only otherwise). See [references/notifications.md](references/notifications.md).
 
-```bash
-microsoft email block --account user@example.com --sender spam@example.com
-microsoft email unblock --account user@example.com --sender spam@example.com
-microsoft email block --account user@example.com --list  # show blocked senders
-```
+## Shared flags
 
-After blocking a phishing/spam sender, clean up messages that already arrived:
+- `--account <email>` is required on every email/calendar/folder/teams command (list accounts with `microsoft auth list`; sign one out with `microsoft auth remove --account <email>`).
+- `--backend {auto,graph,owa-rest}` (default `auto`) picks the path; both backends support the full surface except `block`/`unblock` (Graph-only). See [SETUP.md](SETUP.md).
+- List commands (`email list`/`search`, `calendar list`/`calendars`, `folder list`, `teams chats`/`messages`/`teams`/`channels`) default to a compact tab-separated table; pass `--json` for one-line JSON or `--json-pretty` for indented JSON. Graph `@odata.*` metadata is stripped from every result.
 
-```bash
-microsoft email delete --account user@example.com --id <email_id>            # delete one message
-microsoft email delete --account user@example.com --sender spam@example.com  # delete all from a sender
-microsoft email delete --account user@example.com --sender spam@example.com --permanent  # hard delete
-```
+## Draft-only mode
 
-Delete soft-deletes to Deleted Items by default (moves to `deleteditems`); `--permanent` hard-deletes. `--id` and `--sender` are mutually exclusive and exactly one is required.
+Set `EMAIL_DRAFT_ONLY=1` (truthy: `1`/`true`/`yes`, case-insensitive) to **hard-disable sending**. In this mode `email send`/`reply`/`forward` are refused before any Graph or OWA-REST call (non-zero exit with a clear message); only `email draft` works. This is a CLI-level safety guarantee, not a behavioral promise, and it covers **both** backends. Default off: unset/empty means today's behavior, no change.
 
-If block returns 403, re-authorize:
-```bash
-microsoft auth add --account user@example.com
-```
+## Personalization
 
-## Calendar
+## Threaded reply DRAFT (leave unsent for the user to send)
+
+`email reply` ALWAYS sends and `email draft --reply-to` overwrites the quoted history. To leave a
+threaded reply(-all) draft the user reviews + sends themselves, use `email reply-draft`
+(createReply/createReplyAll + body placed above the preserved quote + attach, no /send):
 
 ```bash
-microsoft calendar list --account user@example.com --days-ahead 7
-microsoft calendar create --account user@example.com --subject "Standup" --start "2025-11-15T10:00:00" --end "2025-11-15T10:30:00" --timezone "Europe/London"
-microsoft calendar respond --account user@example.com --id <event_id> --response accept
+microsoft email reply-draft --account user@example.com --id '<latest-msg-id-in-thread>' --body "draft answer for review"
+microsoft email reply-draft --account user@example.com --id '<email_id>' --body "thanks all" --reply-all --attachments /path/file.pdf
 ```
 
-## Notes
-- `--account` required for all email/calendar commands (find with: `microsoft auth list`)
-- `--timezone` required for calendar create/update (IANA names like "Europe/London")
-- `--response` choices: accept / decline / tentativelyAccept
-- `--to`/`--cc`/`--attendees` accept multiple space-separated values
-- `--no-cancellation` on delete skips notifying attendees
-- `--no-details` on calendar list returns compact output (no body/attendees)
-- `--user-timezone` on calendar list converts times to the given IANA timezone
-- `--folder` on email list/search filters by folder (default "inbox")
-- `--no-attachments` on email get skips attachment metadata
-- `--save-to` on email get overrides the auto-save path for the body
-- **`email get` always saves the body to disk** under `~/.microsoft/emails/<timestamp>_<subject>_<id>.txt` and strips it from the JSON response. The JSON returns `body: {saved_to, length, size_bytes, _note}` plus the legacy `body_saved_to`, `body_saved_size`, `body_length` fields, and a short `preview`. To inspect content, read the file at `body.saved_to`. The full `body.content` field is intentionally never returned inline to keep agent context small. Bodies over 5000 chars also surface a warning telling you to grep/crop before pasting snippets
-- `--categories` on email update accepts multiple space-separated category names
-- `email list`, `email search`, `calendar list`, and `calendar calendars` default to a compact tab-separated table; pass `--json` for one-line JSON or `--json-pretty` for indented JSON. Graph `@odata.*` metadata is stripped from every result.
-
-## Email Attachments
-
-```bash
-microsoft email attachment --account user@example.com --email-id '<email_id>' --attachment-id '<attachment_id>' --save-path /tmp/file.pdf
-```
+`--body` is plain text (`- ` lines become bullets), placed above the quoted thread. On a re-edit
+pass `--replace-draft <old_id>` (the `id` printed by the prior run) so repeated tweaks leave
+exactly one draft, not a pile. Graph-only.
 
 ### Contact Communication Styles
 [How to communicate with different contacts. Fill in after data gathering: who are the key contacts, what tone/formality for each, language preferences]
 
 ### Email Preferences
 [User's email patterns. Fill in after data gathering: greeting style, sign-offs, capitalization, punctuation habits, typical length, tone, which account for what]
+
+### Cold-email screening (optional standing behavior)
+If the user asks you to screen their inbox, watch new-mail notifications for **cold 1:1 outreach**: unsolicited investor/VC pitches, recruitment/mentor solicitations, sales/SaaS/agency prospecting, cold "let's chat" intros. For these:
+- **Move the message to a `Screened` folder** on that account (`microsoft email move --account X --id <id> --to-folder Screened`) so it leaves the inbox, and **drop the notification** (never surface it).
+- **Never delete** the Screened folder is a holding area the user can skim anytime; nothing real is lost.
+- **When unsure, leave it in the inbox** (conservative: a genuine warm intro, a real deal, or anything from a known contact stays and gets surfaced normally). Better to leave one cold email than misfile a real one.
+- **Repeat offenders → block the sender** (`microsoft email block --account X --sender ...`, Graph-only).
+- Create the `Screened` folder once per account (`microsoft folder create --account X --name Screened`). Newsletters and marketing are usually better left in the inbox unless the user asks to file those too.
 
 ### Scheduling Preferences
 [User's scheduling patterns. Fill in after data gathering: preferred meeting times, timezone, how they reschedule, buffer preferences]

@@ -1,5 +1,5 @@
 use super::common::start_pair;
-use vesta_tests::{TestAgent, unique_agent};
+use vesta_tests::{unique_agent, TestAgent};
 
 #[test]
 fn destroy_on_one_doesnt_affect_other() {
@@ -14,10 +14,16 @@ fn destroy_on_one_doesnt_affect_other() {
     alice_client.destroy_agent(&alice_agent_name).unwrap();
 
     let alice_status = alice_client.agent_status(&name).unwrap();
-    assert_eq!(alice_status.status, "not_found", "alice's agent should be gone");
+    assert_eq!(
+        alice_status.status, "not_found",
+        "alice's agent should be gone"
+    );
 
     let bob_status = bob_client.agent_status(&name).unwrap();
-    assert_ne!(bob_status.status, "not_found", "bob's agent should still exist");
+    assert_ne!(
+        bob_status.status, "not_found",
+        "bob's agent should still exist"
+    );
 }
 
 #[test]
@@ -41,8 +47,14 @@ fn stop_start_independent() {
     alice_client.stop_agent(&name).unwrap();
 
     let alice_stopped = alice_client.agent_status(&name).unwrap();
-    assert_eq!(alice_stopped.status, "stopped", "alice's agent should be stopped");
+    assert_eq!(
+        alice_stopped.status, "stopped",
+        "alice's agent should be stopped"
+    );
 
     let bob_still_running = bob_client.agent_status(&name).unwrap();
-    assert_eq!(bob_still_running.status, "unprovisioned", "bob's agent should still be running");
+    assert_eq!(
+        bob_still_running.status, "unprovisioned",
+        "bob's agent should still be running"
+    );
 }

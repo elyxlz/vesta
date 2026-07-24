@@ -24,8 +24,8 @@ All commands print JSON. Pipe to `jq` for filtering.
 ```bash
 exa search "latest research on reasoning models" --num 10
 exa search "diffusion music generation papers" --type neural --category "research paper"
-exa search "founder blogs about RLHF" --text                    # include full text
-exa search "ai agents startups 2026" --highlights                # include highlights
+exa search "founder blogs about RLHF" --text
+exa search "ai agents startups 2026" --highlights
 exa search "foo" --start-published 2026-01-01 --end-published 2026-04-24
 ```
 
@@ -77,4 +77,4 @@ Models:
 - Every response includes a `costDollars` field. Mention cost to the user for `research` calls (they can add up).
 - `--text` significantly increases token count. Use `--highlights` or `--summary` when you just need gist.
 - Exa ranks by semantic relevance. For exact-match queries (names, SKUs), pass `--type keyword`.
-- Installed via `uv tool install ~/agent/skills/exa/cli`.
+- Installed via `uv tool install --editable ~/agent/skills/exa/cli`.

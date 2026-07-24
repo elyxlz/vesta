@@ -20,11 +20,7 @@ def _run_watch(args, config: Config) -> dict:
     return {}  # unreachable
 
 
-def main():
-    parser = argparse.ArgumentParser(prog="spotify", description="Spotify CLI")
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    # --- auth ---
+def _add_auth_parsers(subparsers) -> None:
     auth_parser = subparsers.add_parser("auth", help="Authentication")
     auth_sub = auth_parser.add_subparsers(dest="auth_command", required=True)
 
@@ -33,15 +29,16 @@ def main():
     setup_p.add_argument("--client-secret", required=True)
     setup_p.set_defaults(func=lambda args, config: auth.save_credentials(config, args.client_id, args.client_secret))
 
-    auth_sub.add_parser("login", help="Start OAuth login flow").set_defaults(func=lambda args, config: auth.login(config))
+    auth_sub.add_parser("login", help="Start OAuth login flow").set_defaults(func=lambda _args, config: auth.login(config))
 
     cb_p = auth_sub.add_parser("callback", help="Handle OAuth callback")
     cb_p.add_argument("--url", required=True, help="The full redirect URL after authorization")
     cb_p.set_defaults(func=lambda args, config: auth.handle_callback(config, args.url))
 
-    auth_sub.add_parser("status", help="Check auth status").set_defaults(func=lambda args, config: auth.status(config))
+    auth_sub.add_parser("status", help="Check auth status").set_defaults(func=lambda _args, config: auth.status(config))
 
-    # --- playlists ---
+
+def _add_playlist_parsers(subparsers) -> None:
     pl_parser = subparsers.add_parser("playlists", help="Playlist management")
     pl_sub = pl_parser.add_subparsers(dest="playlist_command", required=True)
 
@@ -77,14 +74,16 @@ def main():
     liked_p.add_argument("--offset", type=int, default=0)
     liked_p.set_defaults(func=lambda args, config: playlists.liked_songs(config, limit=args.limit, offset=args.offset))
 
-    # --- search ---
+
+def _add_search_parser(subparsers) -> None:
     search_p = subparsers.add_parser("search", help="Search Spotify")
     search_p.add_argument("query", help="Search query")
     search_p.add_argument("--type", default="track", help="track, album, artist, or comma-separated")
     search_p.add_argument("--limit", type=int, default=10)
     search_p.set_defaults(func=lambda args, config: search.search(config, query=args.query, search_type=args.type, limit=args.limit))
 
-    # --- organize ---
+
+def _add_organize_parsers(subparsers) -> None:
     org_parser = subparsers.add_parser("organize", help="Library organization")
     org_sub = org_parser.add_subparsers(dest="organize_command", required=True)
 
@@ -118,12 +117,13 @@ def main():
     )
     watch_p.set_defaults(func=_run_watch)
 
-    # --- playback ---
+
+def _add_playback_parsers(subparsers) -> None:
     pb_parser = subparsers.add_parser("playback", help="Playback control (Premium)")
     pb_sub = pb_parser.add_subparsers(dest="playback_command", required=True)
 
-    pb_sub.add_parser("current", help="Current playback state").set_defaults(func=lambda args, config: playback.current(config))
-    pb_sub.add_parser("devices", help="List available devices").set_defaults(func=lambda args, config: playback.devices(config))
+    pb_sub.add_parser("current", help="Current playback state").set_defaults(func=lambda _args, config: playback.current(config))
+    pb_sub.add_parser("devices", help="List available devices").set_defaults(func=lambda _args, config: playback.devices(config))
 
     play_p = pb_sub.add_parser("play", help="Play/resume")
     play_p.add_argument("--uri", help="Track URI to play")
@@ -131,13 +131,13 @@ def main():
     play_p.add_argument("--device", help="Device ID")
     play_p.set_defaults(func=lambda args, config: playback.play(config, uri=args.uri, context_uri=args.context, device_id=args.device))
 
-    pb_sub.add_parser("pause", help="Pause playback").set_defaults(func=lambda args, config: playback.pause(config))
+    pb_sub.add_parser("pause", help="Pause playback").set_defaults(func=lambda _args, config: playback.pause(config))
 
     skip_p = pb_sub.add_parser("skip", help="Skip track")
     skip_p.add_argument("--direction", default="next", choices=["next", "previous"])
     skip_p.set_defaults(func=lambda args, config: playback.skip(config, direction=args.direction))
 
-    pb_sub.add_parser("previous", help="Previous track").set_defaults(func=lambda args, config: playback.skip(config, direction="previous"))
+    pb_sub.add_parser("previous", help="Previous track").set_defaults(func=lambda _args, config: playback.skip(config, direction="previous"))
 
     vol_p = pb_sub.add_parser("volume", help="Set volume")
     vol_p.add_argument("level", type=int, help="Volume 0-100")
@@ -162,7 +162,17 @@ def main():
     xfer_p.add_argument("--play", action="store_true", help="Start playing on transfer")
     xfer_p.set_defaults(func=lambda args, config: playback.transfer(config, device_id=args.device_id, force_play=args.play))
 
-    # --- dispatch ---
+
+def main():
+    parser = argparse.ArgumentParser(prog="spotify", description="Spotify CLI")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    _add_auth_parsers(subparsers)
+    _add_playlist_parsers(subparsers)
+    _add_search_parser(subparsers)
+    _add_organize_parsers(subparsers)
+    _add_playback_parsers(subparsers)
+
     args = parser.parse_args()
 
     config = Config()

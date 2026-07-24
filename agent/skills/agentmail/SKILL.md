@@ -12,24 +12,11 @@ paid plan required.
 The agent's address is `${username}@agentmail.to`, where `username`
 defaults to the lowercased agent name.
 
-## How this skill is structured
-
-The `agentmail` binary is a thin Python wrapper. Four verbs are
-Vesta-specific:
-
-- `agentmail setup` - autonomous AgentMail account + inbox + webhook
-  provisioning, plus a local install of the official CLI for passthrough.
-- `agentmail serve` - local FastAPI receiver for AgentMail webhooks; writes
-  notifications to `~/agent/notifications/`.
-- `agentmail status` - show the configured address, inbox id, webhook URL,
-  and last inbound notification.
-- `agentmail teardown` - delete the inbox + webhook + clear local config.
-
-**Anything else is passed through to the official `agentmail` CLI**
-(installed locally to `~/.agentmail/node_modules/.bin/` by setup). The
-agent only sees one binary on PATH.
-
 ## Quick reference
+
+The `agentmail` binary is a thin Python wrapper: the Vesta verbs below are
+local, and anything else passes through to the official `agentmail` CLI
+(installed to `~/.agentmail/node_modules/.bin/` by setup). One binary on PATH.
 
 ```bash
 # Vesta verbs
@@ -63,7 +50,7 @@ agentmail inboxes:messages send \
   --html "<p>HTML body</p>"
 ```
 
-Free tier caps: 3,000/month, 100/day. The CLI surfaces AgentMail's error
+The CLI surfaces AgentMail's error
 body verbatim on failure. Pass both `--text` and `--html` when you can -
 text-only sends score worse on spam filters; HTML-only breaks for clients
 that strip HTML.
@@ -82,29 +69,13 @@ agentmail inboxes:messages reply \
 
 AgentMail POSTs each inbound message to a webhook at
 `${VESTAD_TUNNEL}/agents/${AGENT_NAME}/agentmail/webhook?secret=…`. The
-local FastAPI service (`agentmail serve`) verifies the secret, writes a
-JSON file to `~/agent/notifications/`, and the agent's notification loop
-picks it up like any other source.
+local FastAPI service (`agentmail serve`) verifies the secret and writes a
+JSON file to `~/agent/notifications/`.
 
 ## Notification shape
 
-```json
-{
-  "source": "agentmail",
-  "type": "message",
-  "message_id": "<...@email.amazonses.com>",
-  "from": "sender@example.com",
-  "to": "athena@agentmail.to",
-  "subject": "...",
-  "body_text": "...",
-  "body_html": "...",
-  "in_reply_to": "<parent-id@email.amazonses.com>",
-  "references": "<root-id> <parent-id>",
-  "thread_id": "2719807e-deeb-4edb-b65b-c52e250e6c1a",
-  "labels": [],
-  "received_at": "2026-04-27T11:00:00Z"
-}
-```
+Fields: `source` (`agentmail`), `type`, `from`, `to`, `subject`, `thread_id`,
+`in_reply_to`, `message_id`, `body_text`, `body_html`, `references`, `labels`, `received_at`.
 
 ## Configuration storage
 
@@ -115,30 +86,22 @@ picks it up like any other source.
 | Inbox id, address, webhook id, username | `~/.agentmail/config.json` |
 | Official npm CLI | `~/.agentmail/node_modules/.bin/agentmail` |
 
-`~/.bashrc` is sourced by the agent process on container start, so secrets
-persist across restarts without any host-side mechanism.
-
 ## When to use this vs cloudflare-email
 
-| Need | Pick |
-|---|---|
-| Free outbound + inbound, no domain | `agentmail` |
-| Vanity address on a domain you own | `cloudflare-email` |
-| You're already on Cloudflare Workers Paid for routing | `cloudflare-email` |
-| You don't have a Cloudflare account or any domain | `agentmail` |
-
-The two skills are independent and can coexist on the same agent; each
-inbound notification is tagged with its `source` so handlers can route.
+Pick `agentmail` for free outbound + inbound with no domain or Cloudflare
+account; pick `cloudflare-email` for a vanity address on a domain you own (or
+if already on Cloudflare Workers Paid for routing). The two are independent and
+can coexist; each inbound notification is tagged with its `source` for routing.
 
 ## Common mistakes
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `setup` times out at the OTP poll step (3 min) | AgentMail's anti-fraud rejected the disposable domain (sign-up succeeded but no OTP delivered), or mail.tm is down | Run `agentmail setup --prompt` and provide your own email; or sign up at https://console.agentmail.to via the `browser` skill, then `export AGENTMAIL_API_KEY=<key> && agentmail setup --skip-signup` |
-| `setup` fails at `verify` with HTTP 401 | OTP wrong (regex pulled a non-OTP number from the email) or expired (~10 min window) | Re-run `agentmail setup` for a fresh disposable inbox + new OTP |
-| `agentmail inboxes:messages send` fails with "official AgentMail CLI not installed" | Setup hadn't run, or its npm install step failed | Re-run `agentmail setup`; check the npm install log |
-| Send fails with HTTP 401 | `AGENTMAIL_API_KEY` missing or rotated | Re-run `agentmail setup` (if missing) or `source ~/.bashrc` (if just rotated) |
-| Send fails with HTTP 429 | Hit the 100/day or 3,000/month free-tier cap | Wait, or upgrade AgentMail to a paid plan |
-| Inbound never arrives | Webhook can't reach the local service | `agentmail status` should show `webhook_url`; `screen -ls` should show the `agentmail` session; the service must have been registered with `"public": true` |
-| Send fails with `string was used where mapping is expected` on `--headers` | `--headers` value contains an angle-bracketed Message-Id (e.g. `In-Reply-To=<msg-id>`); the upstream CLI parses the leading `<` as a YAML flow-style list opener | Use `inboxes:messages reply --message-id "<parent-id>"` to thread replies -- the CLI sets `In-Reply-To` and `References` server-side. Upstream bug in `agentmail-cli` |
-| Send fails with `Invalid input: expected string, received object` on `subject` | `--subject` value contains `": "` (colon followed by space), which the upstream CLI parses as a YAML mapping | Drop the space (`Re:topic`), rephrase to avoid `": "`, or use `inboxes:messages reply` which derives the subject from the parent and sidesteps the issue. Upstream bug in `agentmail-cli` |
+| `setup` times out at the OTP poll (3 min) | Anti-fraud rejected the disposable domain, or mail.tm is down | `agentmail setup --prompt` with your own email; or sign up at https://console.agentmail.to via `browser`, then `export AGENTMAIL_API_KEY=<key> && agentmail setup --skip-signup` |
+| `setup` fails at `verify` with 401 | OTP wrong or expired (~10 min window) | Re-run `agentmail setup` for a fresh inbox + OTP |
+| Send fails: "official AgentMail CLI not installed" | Setup never ran, or its npm install failed | Re-run `agentmail setup`; check the npm install log |
+| Send fails with 401 | `AGENTMAIL_API_KEY` missing or rotated | Re-run `agentmail setup`, or `source ~/.bashrc` if just rotated |
+| Send fails with 429 | Hit the 100/day or 3,000/month cap | Wait, or upgrade to a paid plan |
+| Inbound never arrives | Webhook can't reach the local service | `agentmail status` must show `webhook_url`; `screen -ls` must show the `agentmail` session (registered with `"public": true`) |
+| Send fails: `string was used where mapping is expected` on `--headers` | Upstream bug: an angle-bracketed Message-Id (`In-Reply-To=<msg-id>`) makes the CLI read the leading `<` as a YAML list | Use `inboxes:messages reply --message-id "<parent-id>"`; it sets `In-Reply-To`/`References` server-side |
+| Send fails: `Invalid input: expected string, received object` on `subject` | Upstream bug: a `": "` in `--subject` is parsed as a YAML mapping | Drop the space (`Re:topic`) or avoid `": "`; or use `inboxes:messages reply`, which derives the subject from the parent |

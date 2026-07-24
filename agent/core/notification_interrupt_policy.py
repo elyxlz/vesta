@@ -1,51 +1,82 @@
 """Arrival-time notification interrupt policy.
 
-A persistent, ordered ruleset decides whether an incoming notification preempts the agent's
-current turn (`interrupt`) or waits in the passive pool until the agent is idle (`pool`). Both the
-user (PUT /config/notification-policy) and the agent (tools) edit the same list; monitor_loop reads
-it each tick, so edits apply live with no restart.
+An ordered ruleset decides an incoming notification's disposition: preempt the agent's current turn
+(`interrupt`), snooze until the agent is idle (`snooze`), or drop without ever reaching
+the agent (`trash`). First matching rule wins; with no match the decision falls back to the
+notification's own `interrupt` flag — the default the producing skill ships for its own notifications
+(whatsapp/chat interrupt, email/finance snooze), so a fresh agent with no rules already behaves sensibly.
+A notification is never trashed by default, only by an explicit user rule. The user's rules exist to
+override those defaults.
+The ruleset lives on the agent config
+(`VestaConfig.notification_rules`); both the user (PUT /config) and the agent (the notifications skill,
+via the same config API) edit it, and monitor_loop reads it from the config store each tick, so edits
+apply live with no restart.
 
-`source="core"` notifications (greetings, migrations, proactive checks, dreamer) are exempt: they
-always honor their own static `interrupt` flag, so a broad user rule can't swallow internal
-control-flow. When no rule matches, the decision falls back to the user's per-`(source, type)`
-default override (if set), then to the notification's static flag — so skills that set
-`interrupt=False` keep pooling unless the user changed that source's default.
+`source="core"` notifications (greetings, migrations, proactive checks, dreamer) are exempt: their
+disposition is control-flow owned by loops.py (derived from the type), so a broad user rule can't
+swallow it. Rules can't target `source="core"` (rejected at write time here).
 """
 
+import datetime as dt
 import functools
-import json
-import pathlib as pl
 import re
 import typing as tp
-import uuid
 
 import pydantic as pyd
 
-from . import logger
-from . import config as cfg
-from . import models as vm
-from . import state_store
+from .notification import CORE_SOURCE, Notification
 
-POLICY_FILENAME = "notification_policy.json"
-
-# `sender` is matched (case-insensitive substring) against whichever of these per-source identity
-# fields are present; the field name varies by skill.
+# A predicate's `field` is the notification key it reads. Concrete keys (chat_name, chat_type, …) read
+# that exact field; an alias here expands to a set of per-source synonyms and matches if ANY of them
+# satisfies the op. This is the single place cross-source field-name knowledge lives — a new source's
+# new field is targetable by its concrete name with no code change.
 _IDENTITY_FIELDS = ("sender", "contact_name", "handle", "from", "author")
-# `keyword` is a case-insensitive regex (re.search) matched against `body` (a declared field,
-# handled separately) plus these text extras.
-_BODY_EXTRA_FIELDS = ("message", "content")
+_BODY_FIELDS = ("body", "message", "content")
+_FIELD_ALIASES: dict[str, tuple[str, ...]] = {"sender": _IDENTITY_FIELDS, "text": _BODY_FIELDS}
 
 
 def _is_core_source(value: str) -> bool:
-    return value.strip().lower() == vm.CORE_SOURCE
+    return value.strip().lower() == CORE_SOURCE
 
 
 @functools.lru_cache(maxsize=256)
-def _compiled_keyword(pattern: str) -> re.Pattern[str]:
-    """Compile a keyword regex once and cache it: monitor_loop re-parses rules every tick, so without
+def _compiled_regex(pattern: str) -> re.Pattern[str]:
+    """Compile a predicate regex once and cache it: monitor_loop re-reads rules every tick, so without
     the cache the hot path would recompile each pattern per tick. IGNORECASE keeps matching
     case-insensitive (a power user can override inline with (?-i:...))."""
     return re.compile(pattern, re.IGNORECASE)
+
+
+class FieldPredicate(pyd.BaseModel):
+    """One match condition: read `field` (a concrete notification key or an alias from `_FIELD_ALIASES`)
+    and test it. `op` is `contains` (case-insensitive substring) or `regex` (case-insensitive re.search).
+    `negate` inverts the result, so "field does NOT match". A predicate over a field the notification
+    lacks does not match (and so, negated, it does)."""
+
+    model_config = pyd.ConfigDict(extra="forbid")
+
+    field: str
+    op: tp.Literal["contains", "regex"] = "contains"
+    value: str
+    negate: bool = False
+
+    @pyd.field_validator("field")
+    @classmethod
+    def _reject_blank_field(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("predicate field must be non-empty")
+        return value
+
+    @pyd.model_validator(mode="after")
+    def _validate_regex(self) -> "FieldPredicate":
+        # A regex predicate is rejected at write time (PUT /config and load_notification_rules, which
+        # drops the offending rule) so a bad pattern never reaches the matcher.
+        if self.op == "regex":
+            try:
+                re.compile(self.value)
+            except re.error as e:
+                raise ValueError(f"invalid regex {self.value!r}: {e}") from e
+        return self
 
 
 class NotificationInterruptRule(pyd.BaseModel):
@@ -54,189 +85,151 @@ class NotificationInterruptRule(pyd.BaseModel):
     id: str = ""
     source: str | None = None
     type: str | None = None
-    sender: str | None = None
-    keyword: str | None = None
-    action: tp.Literal["interrupt", "pool"]
+    match: list[FieldPredicate] = []
+    action: tp.Literal["interrupt", "snooze", "trash"]
+    # When set, the rule stops applying once this instant passes (a temporary silence/trash), so
+    # notifications flow by their default again with no one having to remember to remove it. Filtered
+    # out of the live ruleset by drop_expired at the load boundary, then pruned on the next rule write.
+    expires_at: dt.datetime | None = None
+
+    def is_expired(self, now: dt.datetime) -> bool:
+        if self.expires_at is None:
+            return False
+        # A naive stored value (older write, hand edit) is read as UTC so the comparison never raises.
+        expiry = self.expires_at if self.expires_at.tzinfo is not None else self.expires_at.replace(tzinfo=dt.UTC)
+        return now >= expiry
+
+    @pyd.model_validator(mode="before")
+    @classmethod
+    def _coerce_legacy_pool_action(cls, data: object) -> object:
+        # LEGACY(remove-when: no stored rule still carries action="pool" — every agent rewrites its
+        # rules in canonical shape on its next rule edit): the snooze action was previously named
+        # "pool"; coerce stored rules on read so fleet rulesets keep validating.
+        if not isinstance(data, dict) or "action" not in data:
+            return data
+        data = dict(data)
+        if data["action"] == "pool":
+            data["action"] = "snooze"
+        return data
 
     @pyd.field_validator("source")
     @classmethod
     def _reject_core_source(cls, value: str | None) -> str | None:
-        # Core notifications are exempt from rules at evaluation time (see should_interrupt); forbid
+        # Core notifications are exempt from rules (their disposition is owned by loops.py); forbid
         # targeting them here too, so a rule that could never apply can't be created.
         if value is not None and _is_core_source(value):
-            raise ValueError(f"cannot target source={vm.CORE_SOURCE!r}: core notifications are never affected by rules")
-        return value
-
-    @pyd.field_validator("keyword")
-    @classmethod
-    def _validate_keyword_regex(cls, value: str | None) -> str | None:
-        # `keyword` is a regex; reject an invalid pattern at write time (PUT /config and model_validate
-        # in load_rules, which drops the offending rule) so a bad pattern never reaches the matcher.
-        if value is not None:
-            try:
-                re.compile(value)
-            except re.error as e:
-                raise ValueError(f"invalid keyword regex {value!r}: {e}") from e
+            raise ValueError(f"cannot target source={CORE_SOURCE!r}: core notifications are never affected by rules")
         return value
 
 
-class NotificationDefault(pyd.BaseModel):
-    """A user override of a source's static interrupt default, keyed by exact (source, type). Consulted
-    after the rules (so a specific rule still wins) and before the notification's own static flag, so a
-    user can flip e.g. "outlook -> snooze by default" without a catch-all rule. `type=""` is the
-    no-type bucket (matches a notification whose type is empty)."""
-
-    model_config = pyd.ConfigDict(extra="forbid")
-
-    source: str
-    type: str = ""
-    action: tp.Literal["interrupt", "pool"]
-
-    @pyd.field_validator("source")
-    @classmethod
-    def _reject_core_source(cls, value: str) -> str:
-        if _is_core_source(value):
-            raise ValueError(f"cannot override source={vm.CORE_SOURCE!r}: core notifications are never affected by rules")
-        return value
-
-
-def _extra_str(notif: vm.Notification, field: str) -> str | None:
-    extra = notif.model_extra
-    if extra is None:
+def _coerce(value: object) -> str | None:
+    """Render a notification field value as a string for matching, or None if absent. Datetimes drop
+    microseconds (matching how format_for_display renders them); everything else is str()'d, so bools
+    and ints (`is_group`, `chat_id`) are matchable too."""
+    if value is None:
         return None
-    if field in extra and isinstance(extra[field], str):
+    if isinstance(value, dt.datetime):
+        return value.replace(microsecond=0).isoformat()
+    return str(value)
+
+
+def _field_raw(notif: Notification, field: str) -> object | None:
+    """The raw value of one notification field (declared or extra), or None if absent. Declared fields
+    the matcher can target (`timestamp` str-coerced; `file_path` is internal and omitted) are read
+    explicitly, then the open `model_extra` keys."""
+    declared = {"source": notif.source, "type": notif.type, "body": notif.body, "timestamp": notif.timestamp}
+    if field in declared:
+        return declared[field]
+    extra = notif.model_extra
+    if extra is not None and field in extra:
         return extra[field]
     return None
 
 
-def notif_sender(notif: vm.Notification) -> str | None:
+def _field_values(notif: Notification, field: str) -> list[str]:
+    """The notification's value(s) for a predicate field: one value for a concrete key, or every
+    present synonym for an alias. Coerced to strings; absent fields contribute nothing."""
+    fields = _FIELD_ALIASES[field] if field in _FIELD_ALIASES else (field,)
+    return [v for f in fields if (v := _coerce(_field_raw(notif, f))) is not None]
+
+
+def _predicate_matches(predicate: FieldPredicate, notif: Notification) -> bool:
+    values = _field_values(notif, predicate.field)
+    if predicate.op == "contains":
+        needle = predicate.value.lower()
+        hit = any(needle in v.lower() for v in values)
+    else:
+        pattern = _compiled_regex(predicate.value)
+        hit = any(pattern.search(v) for v in values)
+    return hit != predicate.negate
+
+
+# Extra keys NOT surfaced as discoverable facet fields: the identity fields (already surfaced as the
+# single `sender` facet), the free-text fields (reachable via the `text` alias / keyword, and too long
+# / private to list), and internals. Everything else scalar is a targetable structured attribute
+# (chat_name, chat_type, is_group, media_type, …).
+_FACET_EXCLUDE = frozenset({*_IDENTITY_FIELDS, *_BODY_FIELDS, "file_path"})
+# Skip a value too long to be a sane rule target (a pasted blob, a long quoted reply); keeps the facet
+# map and the event row small.
+FACET_VALUE_MAXLEN = 80
+
+
+def notif_facet_fields(notif: Notification) -> dict[str, str]:
+    """The notification's targetable structured extras, as {field: value} — what the rule editor and the
+    skill's `facets` surface so an author can discover fields like `chat_name` to match on. Scalars only,
+    string-coerced; identity/text/internal keys are excluded (see `_FACET_EXCLUDE`)."""
+    extra = notif.model_extra
+    if extra is None:
+        return {}
+    fields: dict[str, str] = {}
+    for key, raw in extra.items():
+        if key in _FACET_EXCLUDE:
+            continue
+        # Scalars only: a list/dict extra would str() to a Python repr ("['a', 'b']"), a nonsense rule
+        # target. str/bool/int/float/datetime render to a real matchable token; anything else is skipped.
+        if not isinstance(raw, (str, bool, int, float, dt.datetime)):
+            continue
+        value = _coerce(raw)
+        if value is not None and value != "" and len(value) <= FACET_VALUE_MAXLEN:
+            fields[key] = value
+    return fields
+
+
+def notif_sender(notif: Notification) -> str | None:
     """The notification's sender, normalized across the per-source identity fields.
 
     Sender is not one field: each source attaches its own (`contact_name`, `handle`, ...), which is
-    why `sender` rule-matching searches across all of `_IDENTITY_FIELDS`. This returns the first one
-    present, so the event log and facets have a single sender value consistent with how rules match."""
-    for field in _IDENTITY_FIELDS:
-        value = _extra_str(notif, field)
-        if value is not None:
-            return value
-    return None
+    why the `sender` alias searches across all of `_IDENTITY_FIELDS`. This returns the first one
+    present (via the same `sender` alias the matcher uses), so the event log and facets have a single
+    sender value consistent with how rules match."""
+    return next(iter(_field_values(notif, "sender")), None)
 
 
-def _matches(rule: NotificationInterruptRule, notif: vm.Notification) -> bool:
+def _matches(rule: NotificationInterruptRule, notif: Notification) -> bool:
     if rule.source is not None and rule.source.lower() != notif.source.lower():
         return False
     if rule.type is not None and rule.type.lower() != notif.type.lower():
         return False
-    if rule.sender is not None:
-        needle = rule.sender.lower()
-        hay = [v.lower() for f in _IDENTITY_FIELDS if (v := _extra_str(notif, f)) is not None]
-        if not any(needle in h for h in hay):
-            return False
-    if rule.keyword is not None:
-        pattern = _compiled_keyword(rule.keyword)
-        candidates = [v for f in _BODY_EXTRA_FIELDS if (v := _extra_str(notif, f)) is not None]
-        if notif.body is not None:
-            candidates.append(notif.body)
-        if not any(pattern.search(c) for c in candidates):
-            return False
-    return True
+    return all(_predicate_matches(predicate, notif) for predicate in rule.match)
 
 
-def _default_override(notif: vm.Notification, defaults: list[NotificationDefault]) -> tp.Literal["interrupt", "pool"] | None:
-    """The user's default override for this notification's exact (source, type), or None."""
-    for default in defaults:
-        if default.source.lower() == notif.source.lower() and default.type.lower() == notif.type.lower():
-            return default.action
-    return None
+def drop_expired(rules: list[NotificationInterruptRule], now: dt.datetime) -> list[NotificationInterruptRule]:
+    """The live subset of a ruleset: temporary rules whose `expires_at` has passed are gone. Applied at
+    the load boundary (load_notification_rules) so matching, the GET /config view, and the skill's `list`
+    all see only active rules, and an expired rule is pruned the next time the ruleset is written."""
+    return [rule for rule in rules if not rule.is_expired(now)]
 
 
-def should_interrupt(notif: vm.Notification, rules: list[NotificationInterruptRule], defaults: list[NotificationDefault] | None = None) -> bool:
-    """True -> preempt the agent's current turn; False -> pool until idle.
+def notif_disposition(notif: Notification, rules: list[NotificationInterruptRule]) -> tp.Literal["interrupt", "snooze", "trash"]:
+    """The effective disposition for an arriving notification: `interrupt` (preempt the current turn now),
+    `snooze` (wait until the agent has been idle a little while), or `trash` (drop without ever reaching
+    the agent).
 
-    Precedence: core notifications are exempt (always their own flag); else the first matching rule
-    wins; else the user's default override for this (source, type); else the notification's static flag.
-    `defaults` is optional (absent = no overrides = the source's static flag), so callers that don't
-    use overrides need not pass it."""
-    if notif.source == vm.CORE_SOURCE:
-        return notif.interrupt
+    First matching rule wins and supplies its action; with no match the notification's own `interrupt`
+    flag (the producing skill's default) decides interrupt-vs-snooze. A notification is never trashed by
+    default, only by an explicit user rule. Core notifications never reach here: loops.py decides their
+    disposition from the type."""
     for rule in rules:
         if _matches(rule, notif):
-            return rule.action == "interrupt"
-    override = _default_override(notif, defaults or [])
-    if override is not None:
-        return override == "interrupt"
-    return notif.interrupt
-
-
-def policy_path(config: cfg.VestaConfig) -> pl.Path:
-    return config.data_dir / POLICY_FILENAME
-
-
-def _read_policy(config: cfg.VestaConfig) -> dict[str, object]:
-    """The whole policy file as a dict ({"rules": [...], "defaults": [...]}), or {} if absent/corrupt."""
-    path = policy_path(config)
-    if not path.exists():
-        return {}
-    try:
-        raw = json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError) as e:
-        logger.error(f"{POLICY_FILENAME} unreadable ({type(e).__name__}: {e}) — ignoring")
-        return {}
-    if not isinstance(raw, dict):
-        logger.error(f"{POLICY_FILENAME} is not an object ({type(raw).__name__}) — ignoring")
-        return {}
-    return raw
-
-
-def _validate_section[M: pyd.BaseModel](policy: dict[str, object], key: str, model_cls: type[M]) -> list[M]:
-    """Validate one section's entries independently: one malformed entry (e.g. an unknown field a newer
-    skill version wrote, or an invalid keyword regex) is dropped and the rest are kept."""
-    raw = policy[key] if key in policy else []
-    if not isinstance(raw, list):
-        logger.error(f"{POLICY_FILENAME}[{key!r}] is not a list ({type(raw).__name__}) — ignoring")
-        return []
-    items: list[M] = []
-    for item in raw:
-        try:
-            items.append(model_cls.model_validate(item))
-        except pyd.ValidationError as e:
-            logger.error(f"dropping invalid {key} entry {item} — keeping the rest ({e})")
-    return items
-
-
-def _write_section(config: cfg.VestaConfig, key: str, value: list[dict[str, object]]) -> None:
-    """Replace one section of the policy file, preserving the other (read-modify-write)."""
-    policy = _read_policy(config)
-    policy[key] = value
-    state_store.atomic_write_text(policy_path(config), json.dumps(policy))
-
-
-def load_rules(config: cfg.VestaConfig) -> list[NotificationInterruptRule]:
-    return _validate_section(_read_policy(config), "rules", NotificationInterruptRule)
-
-
-def save_rules(rules: list[NotificationInterruptRule], config: cfg.VestaConfig) -> list[NotificationInterruptRule]:
-    for rule in rules:
-        if not rule.id:
-            rule.id = uuid.uuid4().hex
-    _write_section(config, "rules", [rule.model_dump() for rule in rules])
-    return rules
-
-
-def load_defaults(config: cfg.VestaConfig) -> list[NotificationDefault]:
-    return _validate_section(_read_policy(config), "defaults", NotificationDefault)
-
-
-def load_policy(config: cfg.VestaConfig) -> tuple[list[NotificationInterruptRule], list[NotificationDefault]]:
-    """Load both sections from a single read+parse — monitor_loop needs both every tick, so this
-    avoids reading and JSON-parsing notification_policy.json twice per tick."""
-    policy = _read_policy(config)
-    return (
-        _validate_section(policy, "rules", NotificationInterruptRule),
-        _validate_section(policy, "defaults", NotificationDefault),
-    )
-
-
-def save_defaults(defaults: list[NotificationDefault], config: cfg.VestaConfig) -> list[NotificationDefault]:
-    _write_section(config, "defaults", [default.model_dump() for default in defaults])
-    return defaults
+            return rule.action
+    return "interrupt" if notif.interrupt else "snooze"

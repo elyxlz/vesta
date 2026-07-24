@@ -12,10 +12,10 @@ describe("buildTree", () => {
       { path: "/root/foo.txt", is_dir: false, mode: 0o644 },
     ]);
     expect(root.children).toHaveLength(1);
-    expect(root.children[0].name).toBe("root");
-    expect(root.children[0].isDir).toBe(true);
-    expect(root.children[0].children).toHaveLength(1);
-    expect(root.children[0].children[0]).toMatchObject({
+    expect(root.children[0]?.name).toBe("root");
+    expect(root.children[0]?.isDir).toBe(true);
+    expect(root.children[0]?.children).toHaveLength(1);
+    expect(root.children[0]?.children[0]).toMatchObject({
       name: "foo.txt",
       path: "/root/foo.txt",
       isDir: false,
@@ -29,13 +29,13 @@ describe("buildTree", () => {
       { path: "/root/agent/data/x.json", is_dir: false, mode: 0o644 },
     ]);
     const rootDir = root.children[0];
-    expect(rootDir.name).toBe("root");
-    const agent = rootDir.children[0];
-    expect(agent.name).toBe("agent");
-    expect(agent.isDir).toBe(true);
-    const data = agent.children[0];
-    expect(data.name).toBe("data");
-    expect(data.children[0]).toMatchObject({
+    expect(rootDir?.name).toBe("root");
+    const agent = rootDir?.children[0];
+    expect(agent?.name).toBe("agent");
+    expect(agent?.isDir).toBe(true);
+    const data = agent?.children[0];
+    expect(data?.name).toBe("data");
+    expect(data?.children[0]).toMatchObject({
       name: "x.json",
       path: "/root/agent/data/x.json",
       isDir: false,
@@ -49,7 +49,7 @@ describe("buildTree", () => {
       { path: "/root/m-dir/inner.txt", is_dir: false, mode: 0o644 },
       { path: "/root/afile.txt", is_dir: false, mode: 0o644 },
     ]);
-    const names = root.children[0].children.map((n) => n.name);
+    const names = root.children[0]?.children.map((n) => n.name);
     expect(names).toEqual(["a-dir", "m-dir", "afile.txt", "zfile.txt"]);
   });
 
@@ -57,9 +57,9 @@ describe("buildTree", () => {
     const root = buildTree([
       { path: "/root/agent/empty-dir", is_dir: true, mode: 0o755 },
     ]);
-    const agent = root.children[0].children[0];
-    const empty = agent.children[0];
-    expect(empty.isDir).toBe(true);
-    expect(empty.name).toBe("empty-dir");
+    const agent = root.children[0]?.children[0];
+    const empty = agent?.children[0];
+    expect(empty?.isDir).toBe(true);
+    expect(empty?.name).toBe("empty-dir");
   });
 });

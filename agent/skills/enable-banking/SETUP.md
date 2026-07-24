@@ -13,7 +13,7 @@
 ## 2. Install CLI
 
 ```bash
-cd ~/agent/skills/enable-banking/cli && uv tool install --force --reinstall .
+cd ~/agent/skills/enable-banking/cli && uv tool install --editable --force --reinstall .
 ```
 
 ## 3. Configure
@@ -61,7 +61,7 @@ screen -dmS finance /root/.local/share/uv/tools/finance/bin/python -m finance_cl
 
 ## 6. Register the service
 
-So the watcher comes back after a container restart, register it for restart (see [service](../service/SKILL.md)) with this startup command:
+So the watcher comes back after a container restart, register it for restart (see [vestad](../vestad/SKILL.md)) with this startup command:
 
 ```
 screen -dmS finance /root/.local/share/uv/tools/finance/bin/python -m finance_cli.transaction_watcher serve

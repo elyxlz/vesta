@@ -3,9 +3,13 @@
 # them (CARGO_BIN_EXE_vestad); vestad dev-depends on this crate for the harness.
 [package]
 name = "vesta-tests"
-version = "0.1.165"
+version = "0.1.180"
 edition = "2021"
 publish = false
+
+# Test harness crate: workspace lints, but unwrap is fine in test plumbing.
+[lints]
+workspace = true
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -13,6 +17,7 @@ serde_json = "1"
 ureq = { version = "3", features = ["json", "rustls"] }
 tempfile = "3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
-tokio-tungstenite = { version = "0.29", features = ["__rustls-tls"] }
+tokio-tungstenite = { version = "0.30", features = ["__rustls-tls"] }
+futures-util = "0.3"
 rustls = "0.23"
 ring = "0.17"

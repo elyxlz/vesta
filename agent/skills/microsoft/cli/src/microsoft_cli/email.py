@@ -1,14 +1,16 @@
 """Email commands for Microsoft CLI."""
 
 import base64
+import html
 import pathlib as pl
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
 
-from . import graph, auth
+from . import auth, folders, graph
 from .config import Config
+from .payloads import MailDraft
 
 EMAIL_SAVE_SUBDIR = "emails"
 LARGE_ATTACHMENT_THRESHOLD = 3 * 1024 * 1024
@@ -43,8 +45,22 @@ def _read_attachment(file_path: str) -> tuple[bytes, str, int]:
     return content_bytes, path.name, len(content_bytes)
 
 
+def _attach_files(config: Config, client: httpx.Client, message_id: str, attachments: list[str] | None, account_id: str) -> None:
+    """Attach files to an existing draft, small ones inline and large ones via upload session."""
+    if not attachments:
+        return
+    for file_path in attachments:
+        content_bytes, att_name, att_size = _read_attachment(file_path)
+        if att_size < LARGE_ATTACHMENT_THRESHOLD:
+            graph.request_cfg(
+                config, client, "POST", f"/me/messages/{message_id}/attachments", account_id, json=_file_attachment(att_name, content_bytes)
+            )
+        else:
+            graph.upload_mail_attachment_cfg(config, client, message_id, att_name, content_bytes, account_id)
+
+
 def _remove_attachment_bytes(result: dict[str, Any]) -> None:
-    if "attachments" in result and result["attachments"]:
+    if result.get("attachments"):
         for attachment in result["attachments"]:
             if "contentBytes" in attachment:
                 del attachment["contentBytes"]
@@ -86,8 +102,7 @@ def _extract_addresses(recipients: list[dict[str, Any]]) -> str:
 
 
 def _scrub_email_snapshot(record: dict[str, Any]) -> None:
-    if "body" in record:
-        del record["body"]
+    record.pop("body", None)
     if "bodyPreview" in record:
         record.setdefault("preview", record.pop("bodyPreview"))
 
@@ -167,7 +182,15 @@ def get_email(
         raise ValueError(f"Email with ID {email_id} not found")
 
     graph.localize_datetime_fields(result)
+    return finalize_email_body(config, email_id, result, save_to_file)
 
+
+def finalize_email_body(config: Config, email_id: str, result: dict[str, Any], save_to_file: str | None) -> dict[str, Any]:
+    """Persist an email body to disk and replace it with a pointer in the returned
+    dict. Shared by the Graph path and the OWA/EWS fallback so `email get` returns
+    an identical shape regardless of which backend fetched the message. `result`
+    must be a Graph-shaped message dict carrying a `body` of {contentType, content}.
+    """
     body_obj = result["body"] if "body" in result else None
     full_body_content = (body_obj["content"] if body_obj and "content" in body_obj else "") or ""
     _remove_attachment_bytes(result)
@@ -219,26 +242,60 @@ def get_email(
     return result
 
 
-def create_email_draft(
-    config: Config,
-    client: httpx.Client,
-    *,
-    account_email: str,
-    to: list[str] | None = None,
-    subject: str,
-    body: str,
-    cc: list[str] | None = None,
-    bcc: list[str] | None = None,
-    attachments: list[str] | None = None,
-) -> dict[str, Any]:
-    if not to and not cc and not bcc:
-        raise ValueError("At least one recipient is required (--to, --cc, or --bcc)")
+def _split_attachments(attachments: list[str] | None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split attachment paths into inline-able small payloads and upload-session large ones."""
+    small: list[dict[str, Any]] = []
+    large: list[dict[str, Any]] = []
+    for file_path in attachments or []:
+        content_bytes, att_name, att_size = _read_attachment(file_path)
+        if att_size < LARGE_ATTACHMENT_THRESHOLD:
+            small.append(_file_attachment(att_name, content_bytes))
+        else:
+            large.append({"name": att_name, "content_bytes": content_bytes, "content_type": "application/octet-stream"})
+    return small, large
+
+
+def _draft_reply_or_forward(config: Config, client: httpx.Client, account_id: str, mail: MailDraft) -> dict[str, Any]:
+    source_id = mail.reply_to_id or mail.forward_id
+    create_endpoint = "createReply" if mail.reply_to_id else "createForward"
+    draft = graph.request_cfg(config, client, "POST", f"/me/messages/{source_id}/{create_endpoint}", account_id)
+    if not draft or "id" not in draft:
+        raise ValueError("Failed to create reply/forward draft")
+    draft_id = draft["id"]
+
+    updates: dict[str, Any] = {"body": {"contentType": "Text", "content": mail.body}}
+    if mail.subject:
+        updates["subject"] = mail.subject
+    if mail.to:
+        updates["toRecipients"] = [{"emailAddress": {"address": addr}} for addr in mail.to]
+    if mail.cc:
+        updates["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in mail.cc]
+    if mail.bcc:
+        updates["bccRecipients"] = [{"emailAddress": {"address": addr}} for addr in mail.bcc]
+    graph.request_cfg(config, client, "PATCH", f"/me/messages/{draft_id}", account_id, json=updates)
+
+    _attach_files(config, client, draft_id, mail.attachments, account_id)
+    return {"status": "drafted", "id": draft_id, "source_id": source_id}
+
+
+def create_email_draft(config: Config, client: httpx.Client, *, account_email: str, mail: MailDraft) -> dict[str, Any]:
+    if mail.reply_to_id and mail.forward_id:
+        raise ValueError("Specify at most one of --reply-to or --forward")
 
     account_id = auth.get_account_id_by_email(account_email, config.cache_file)
 
+    if mail.reply_to_id or mail.forward_id:
+        return _draft_reply_or_forward(config, client, account_id, mail)
+
+    subject, to, cc, bcc, attachments = mail.subject, mail.to, mail.cc, mail.bcc, mail.attachments
+    if not subject:
+        raise ValueError("--subject is required for a new draft")
+    if not to and not cc and not bcc:
+        raise ValueError("At least one recipient is required (--to, --cc, or --bcc)")
+
     message = {
         "subject": subject,
-        "body": {"contentType": "Text", "content": body},
+        "body": {"contentType": "Text", "content": mail.body},
         "toRecipients": [{"emailAddress": {"address": addr}} for addr in to] if to else [],
     }
 
@@ -247,23 +304,7 @@ def create_email_draft(
     if bcc:
         message["bccRecipients"] = [{"emailAddress": {"address": addr}} for addr in bcc]
 
-    small_attachments = []
-    large_attachments = []
-
-    if attachments:
-        for file_path in attachments:
-            content_bytes, att_name, att_size = _read_attachment(file_path)
-
-            if att_size < LARGE_ATTACHMENT_THRESHOLD:
-                small_attachments.append(_file_attachment(att_name, content_bytes))
-            else:
-                large_attachments.append(
-                    {
-                        "name": att_name,
-                        "content_bytes": content_bytes,
-                        "content_type": "application/octet-stream",
-                    }
-                )
+    small_attachments, large_attachments = _split_attachments(attachments)
 
     if small_attachments:
         message["attachments"] = small_attachments
@@ -288,27 +329,16 @@ def create_email_draft(
     return result
 
 
-def send_email(
-    config: Config,
-    client: httpx.Client,
-    *,
-    account_email: str,
-    to: list[str] | None = None,
-    subject: str,
-    body: str,
-    cc: list[str] | None = None,
-    bcc: list[str] | None = None,
-    attachments: list[str] | None = None,
-    html: bool = False,
-) -> dict[str, str]:
+def send_email(config: Config, client: httpx.Client, *, account_email: str, mail: MailDraft) -> dict[str, str]:
+    to, cc, bcc, attachments = mail.to, mail.cc, mail.bcc, mail.attachments
     if not to and not cc and not bcc:
         raise ValueError("At least one recipient is required (--to, --cc, or --bcc)")
 
     account_id = auth.get_account_id_by_email(account_email, config.cache_file)
 
     message = {
-        "subject": subject,
-        "body": {"contentType": "HTML" if html else "Text", "content": body},
+        "subject": mail.subject,
+        "body": {"contentType": "HTML" if mail.html else "Text", "content": mail.body},
         "toRecipients": [{"emailAddress": {"address": addr}} for addr in to] if to else [],
     }
 
@@ -340,7 +370,7 @@ def send_email(
         message["attachments"] = [_file_attachment(att["name"], att["content_bytes"]) for att in processed_attachments]
         graph.request_cfg(config, client, "POST", "/me/sendMail", account_id, json={"message": message})
         return {"status": "sent"}
-    elif has_large_attachments:
+    if has_large_attachments:
         result = graph.request_cfg(config, client, "POST", "/me/messages", account_id, json=message)
         if not result:
             raise ValueError("Failed to create email draft")
@@ -364,9 +394,8 @@ def send_email(
 
         graph.request_cfg(config, client, "POST", f"/me/messages/{message_id}/send", account_id)
         return {"status": "sent"}
-    else:
-        graph.request_cfg(config, client, "POST", "/me/sendMail", account_id, json={"message": message})
-        return {"status": "sent"}
+    graph.request_cfg(config, client, "POST", "/me/sendMail", account_id, json={"message": message})
+    return {"status": "sent"}
 
 
 def reply_to_email(
@@ -400,22 +429,225 @@ def reply_to_email(
             json={"body": {"contentType": "HTML" if html else "Text", "content": body}},
         )
 
-        for file_path in attachments:
-            content_bytes, att_name, att_size = _read_attachment(file_path)
-
-            if att_size < LARGE_ATTACHMENT_THRESHOLD:
-                attachment = _file_attachment(att_name, content_bytes)
-                graph.request_cfg(config, client, "POST", f"/me/messages/{draft_id}/attachments", account_id, json=attachment)
-            else:
-                graph.upload_mail_attachment_cfg(config, client, draft_id, att_name, content_bytes, account_id)
+        _attach_files(config, client, draft_id, attachments, account_id)
 
         graph.request_cfg(config, client, "POST", f"/me/messages/{draft_id}/send", account_id)
         return {"status": "sent"}
-    else:
-        endpoint = f"/me/messages/{email_id}/{reply_endpoint}"
-        payload = {"message": {"body": {"contentType": "HTML" if html else "Text", "content": body}}}
-        graph.request_cfg(config, client, "POST", endpoint, account_id, json=payload)
+    endpoint = f"/me/messages/{email_id}/{reply_endpoint}"
+    payload = {"message": {"body": {"contentType": "HTML" if html else "Text", "content": body}}}
+    graph.request_cfg(config, client, "POST", endpoint, account_id, json=payload)
+    return {"status": "sent"}
+
+
+def _reply_body_to_html(raw: str) -> str:
+    """Render a plain-text reply body as HTML so it can sit above the quoted history:
+    `- ` lines become bullets, blank lines become spacing, everything else a div. Escaped
+    so the body cannot inject markup."""
+    parts: list[str] = []
+    in_ul = False
+    for line in raw.rstrip("\n").split("\n"):
+        if line.startswith("- "):
+            if not in_ul:
+                parts.append("<ul>")
+                in_ul = True
+            parts.append("<li>" + html.escape(line[2:]) + "</li>")
+        else:
+            if in_ul:
+                parts.append("</ul>")
+                in_ul = False
+            parts.append("<br>" if line.strip() == "" else "<div>" + html.escape(line) + "</div>")
+    if in_ul:
+        parts.append("</ul>")
+    return "".join(parts)
+
+
+def reply_draft(
+    config: Config,
+    client: httpx.Client,
+    *,
+    account_email: str,
+    email_id: str,
+    body: str,
+    attachments: list[str] | None = None,
+    reply_all: bool = False,
+    replace_draft: str | None = None,
+) -> dict[str, Any]:
+    """Leave an UNSENT threaded reply(-all) draft for the user to review and send.
+
+    `email reply` always sends and `email draft --reply-to` overwrites the quoted history;
+    this fills the gap. createReply/createReplyAll pre-fills recipients + the quoted thread,
+    the new body is placed above that preserved quote, files attach, and we STOP before /send.
+    `--replace-draft` deletes a prior draft first so repeated edits leave exactly one draft."""
+    account_id = auth.get_account_id_by_email(account_email, config.cache_file)
+
+    warnings: list[str] = []
+    if replace_draft:
+        try:
+            graph.request_cfg(config, client, "DELETE", f"/me/messages/{replace_draft}", account_id)
+        except httpx.HTTPStatusError as exc:
+            warnings.append(f"could not delete old draft {replace_draft}: {exc}")
+
+    create_endpoint = "createReplyAll" if reply_all else "createReply"
+    draft = graph.request_cfg(config, client, "POST", f"/me/messages/{email_id}/{create_endpoint}", account_id)
+    if not draft or "id" not in draft:
+        raise ValueError("Failed to create reply draft")
+    draft_id = draft["id"]
+
+    existing = graph.request_cfg(
+        config, client, "GET", f"/me/messages/{draft_id}", account_id, params={"$select": "body,toRecipients,ccRecipients"}
+    )
+    if not existing or "body" not in existing:
+        raise ValueError("Failed to read the created reply draft")
+    quoted = existing["body"]["content"]
+    to = _extract_addresses(existing["toRecipients"] if "toRecipients" in existing else [])
+    cc = _extract_addresses(existing["ccRecipients"] if "ccRecipients" in existing else [])
+
+    graph.request_cfg(
+        config,
+        client,
+        "PATCH",
+        f"/me/messages/{draft_id}",
+        account_id,
+        json={"body": {"contentType": "HTML", "content": _reply_body_to_html(body) + "<br><br>" + quoted}},
+    )
+
+    _attach_files(config, client, draft_id, attachments, account_id)
+
+    check = graph.request_cfg(
+        config,
+        client,
+        "GET",
+        f"/me/messages/{draft_id}",
+        account_id,
+        params={"$select": "subject,isDraft", "$expand": "attachments($select=name,size)"},
+    )
+    result: dict[str, Any] = {
+        "status": "drafted",
+        "id": draft_id,
+        "subject": check["subject"] if check and "subject" in check else None,
+        "isDraft": check["isDraft"] if check and "isDraft" in check else None,
+        "to": to,
+        "cc": cc,
+        "attachments": [a["name"] for a in (check["attachments"] if check and "attachments" in check else [])],
+    }
+    if warnings:
+        result["warnings"] = warnings
+    return result
+
+
+def forward_email(config: Config, client: httpx.Client, *, account_email: str, email_id: str, mail: MailDraft) -> dict[str, str]:
+    to, body, cc, attachments, html = mail.to, mail.body, mail.cc, mail.attachments, mail.html
+    if not to:
+        raise ValueError("--to is required to forward")
+
+    account_id = auth.get_account_id_by_email(account_email, config.cache_file)
+    to_recipients = [{"emailAddress": {"address": addr}} for addr in to]
+
+    # cc / html / attachments need the draft path (the one-shot forward action only
+    # takes a plain-text comment + toRecipients); the plain case keeps the quoted original.
+    if attachments or cc or html:
+        draft = graph.request_cfg(config, client, "POST", f"/me/messages/{email_id}/createForward", account_id)
+        if not draft or "id" not in draft:
+            raise ValueError("Failed to create forward draft")
+        draft_id = draft["id"]
+
+        updates: dict[str, Any] = {
+            "body": {"contentType": "HTML" if html else "Text", "content": body},
+            "toRecipients": to_recipients,
+        }
+        if cc:
+            updates["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in cc]
+        graph.request_cfg(config, client, "PATCH", f"/me/messages/{draft_id}", account_id, json=updates)
+
+        _attach_files(config, client, draft_id, attachments, account_id)
+        graph.request_cfg(config, client, "POST", f"/me/messages/{draft_id}/send", account_id)
         return {"status": "sent"}
+
+    graph.request_cfg(
+        config, client, "POST", f"/me/messages/{email_id}/forward", account_id, json={"comment": body, "toRecipients": to_recipients}
+    )
+    return {"status": "sent"}
+
+
+def move_email(
+    config: Config,
+    client: httpx.Client,
+    *,
+    account_email: str,
+    email_id: str,
+    to_folder: str,
+) -> dict[str, Any]:
+    account_id = auth.get_account_id_by_email(account_email, config.cache_file)
+    destination = folders.resolve_folder_id_cfg(config, client, account_id, to_folder)
+    result = graph.request_cfg(config, client, "POST", f"/me/messages/{email_id}/move", account_id, json={"destinationId": destination})
+    return {
+        "status": "moved",
+        "email_id": email_id,
+        "to_folder": to_folder,
+        "new_id": result["id"] if result and "id" in result else None,
+    }
+
+
+def archive_email(
+    config: Config,
+    client: httpx.Client,
+    *,
+    account_email: str,
+    email_id: str,
+) -> dict[str, Any]:
+    return move_email(config, client, account_email=account_email, email_id=email_id, to_folder="archive")
+
+
+def list_attachments(
+    config: Config,
+    client: httpx.Client,
+    *,
+    account_email: str,
+    email_id: str,
+) -> list[dict[str, Any]]:
+    account_id = auth.get_account_id_by_email(account_email, config.cache_file)
+    result = graph.request_cfg(
+        config, client, "GET", f"/me/messages/{email_id}/attachments", account_id, params={"$select": "id,name,size,contentType"}
+    )
+    return result["value"] if result and "value" in result else []
+
+
+def download_attachments(
+    config: Config,
+    client: httpx.Client,
+    *,
+    account_email: str,
+    email_id: str,
+    out_dir: str,
+) -> dict[str, Any]:
+    account_id = auth.get_account_id_by_email(account_email, config.cache_file)
+    result = graph.request_cfg(config, client, "GET", f"/me/messages/{email_id}/attachments", account_id)
+    attachments = result["value"] if result and "value" in result else []
+
+    out = pl.Path(out_dir).expanduser().resolve()
+    out.mkdir(parents=True, exist_ok=True)
+
+    saved: list[dict[str, Any]] = []
+    used: set[str] = set()
+    for att in attachments:
+        # item/reference attachments carry no inline bytes; only file attachments are downloadable.
+        if "contentBytes" not in att:
+            continue
+        raw_name = att["name"] if "name" in att else "attachment"
+        stem = pl.Path(raw_name).stem or "attachment"
+        suffix = pl.Path(raw_name).suffix
+        name = f"{stem}{suffix}"
+        counter = 1
+        while name in used:
+            name = f"{stem}_{counter}{suffix}"
+            counter += 1
+        used.add(name)
+
+        path = out / name
+        path.write_bytes(base64.b64decode(att["contentBytes"]))
+        saved.append({"name": raw_name, "saved_to": str(path), "size": att["size"] if "size" in att else 0})
+
+    return {"email_id": email_id, "count": len(saved), "saved": saved}
 
 
 def get_attachment(
@@ -518,17 +750,20 @@ def update_email(
     email_id: str,
     is_read: bool | None = None,
     categories: list[str] | None = None,
+    flagged: bool | None = None,
 ) -> dict[str, Any]:
     account_id = auth.get_account_id_by_email(account_email, config.cache_file)
 
-    updates = {}
+    updates: dict[str, Any] = {}
     if is_read is not None:
         updates["isRead"] = is_read
     if categories is not None:
         updates["categories"] = categories
+    if flagged is not None:
+        updates["flag"] = {"flagStatus": "flagged" if flagged else "notFlagged"}
 
     if not updates:
-        raise ValueError("Must specify at least one field to update (is_read or categories)")
+        raise ValueError("Must specify at least one field to update (is_read, categories, or flagged)")
 
     result = graph.request_cfg(config, client, "PATCH", f"/me/messages/{email_id}", account_id, json=updates)
     return result or {"status": "updated", "email_id": email_id}

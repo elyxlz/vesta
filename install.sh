@@ -4,24 +4,21 @@ set -euo pipefail
 main() {
   REPO="elyxlz/vesta"
   INSTALL_VERSION=""
-  INSTALL_CLI=""
   INSTALL_SERVER=""
   INSTALL_APP=""
 
   for arg in "$@"; do
     case "$arg" in
       --version=*) INSTALL_VERSION="${arg#--version=}" ;;
-      --cli) INSTALL_CLI=1 ;;
       --server) INSTALL_SERVER=1 ;;
       --app) INSTALL_APP=1 ;;
       --help|-h)
         echo "Usage: curl -fsSL https://raw.githubusercontent.com/elyxlz/vesta/master/install.sh | bash"
         echo ""
-        echo "Installs vesta CLI, desktop app (if GUI available), and vestad (Linux only)."
+        echo "Installs the Vesta desktop app (if a GUI is available) and vestad (Linux only)."
         echo "By default, all available components for your platform are installed."
         echo ""
         echo "Options:"
-        echo "  --cli              Install only the CLI"
         echo "  --server           Install only vestad (Linux only)"
         echo "  --app              Install only the desktop app"
         echo "  --version=X.Y.Z   Install a specific version"
@@ -34,11 +31,10 @@ main() {
   OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 
   EXPLICIT_FLAGS=""
-  [ -n "$INSTALL_CLI" ] || [ -n "$INSTALL_SERVER" ] || [ -n "$INSTALL_APP" ] && EXPLICIT_FLAGS=1
+  [ -n "$INSTALL_SERVER" ] || [ -n "$INSTALL_APP" ] && EXPLICIT_FLAGS=1
 
   # If no component flags given, install everything available for this platform
   if [ -z "$EXPLICIT_FLAGS" ]; then
-    INSTALL_CLI=1
     [ "$OS" = "linux" ] && INSTALL_SERVER=1
     INSTALL_APP=1
   fi
@@ -105,35 +101,6 @@ main() {
     done
 
     export PATH="$bin_dir:$PATH"
-  }
-
-  install_cli() {
-    case "$OS" in
-      darwin)
-        case "$ARCH" in
-          x86_64) local rust_target="x86_64-apple-darwin" ;;
-          aarch64) local rust_target="aarch64-apple-darwin" ;;
-        esac
-        ;;
-      linux)
-        case "$ARCH" in
-          x86_64) local rust_target="x86_64-unknown-linux-gnu" ;;
-          aarch64) local rust_target="aarch64-unknown-linux-gnu" ;;
-        esac
-        ;;
-    esac
-
-    local artifact="vesta-${rust_target}.tar.gz"
-    echo "Downloading vesta CLI..."
-    curl -fsSL -o "$WORK_DIR/vesta.tar.gz" "https://github.com/${REPO}/releases/download/v${VERSION}/${artifact}"
-    verify_checksum "$WORK_DIR/vesta.tar.gz" "$artifact"
-    tar -xzf "$WORK_DIR/vesta.tar.gz" -C "$WORK_DIR"
-
-    local bin_dir="$HOME/.local/bin"
-    mkdir -p "$bin_dir"
-    install -m 755 "$WORK_DIR/vesta" "$bin_dir/vesta"
-    echo "  ✓ vesta CLI → $bin_dir/vesta"
-    ensure_path
   }
 
   check_docker_snapshotter() {
@@ -211,15 +178,17 @@ EOF
   }
 
   install_app_macos() {
-    local artifact="Vesta_${VERSION}_${ARCH}.dmg"
+    # The desktop app supports Apple Silicon only.
+    local artifact
+    case "$ARCH" in
+      aarch64) artifact="Vesta_${VERSION}_arm64.dmg" ;;
+      *)
+        echo "  ⚠ The Vesta desktop app supports Apple Silicon only; skipping"
+        return
+        ;;
+    esac
     local dmg_path="$WORK_DIR/Vesta.dmg"
     echo "Downloading desktop app (DMG)..."
-
-    # Map arch for DMG filename
-    case "$ARCH" in
-      x86_64) artifact="Vesta_${VERSION}_x64.dmg" ;;
-      aarch64) artifact="Vesta_${VERSION}_aarch64.dmg" ;;
-    esac
 
     curl -fsSL -o "$dmg_path" "https://github.com/${REPO}/releases/download/v${VERSION}/${artifact}"
     verify_checksum "$dmg_path" "$artifact"
@@ -259,12 +228,10 @@ EOF
 
   case "$OS" in
     linux)
-      [ -n "$INSTALL_CLI" ] && install_cli
       [ -n "$INSTALL_SERVER" ] && install_vestad
       [ -n "$INSTALL_APP" ] && has_gui && install_app_linux
       ;;
     darwin)
-      [ -n "$INSTALL_CLI" ] && install_cli
       [ -n "$INSTALL_APP" ] && has_gui && install_app_macos
       ;;
     *)
@@ -275,22 +242,19 @@ EOF
   esac
 
   echo ""
-  echo "Installed!"
+  echo "installed."
   echo ""
   if [ "$OS" = "linux" ]; then
-    echo "Start your server — this one command does the rest:"
+    echo "start your gateway, one command does the rest:"
     echo ""
     echo "    vestad"
     echo ""
-    echo "It walks you through connecting a domain, then prints your agent's URL."
-    echo "Open that URL in a browser to create your first agent."
+    echo "it walks you through connecting a domain, then prints your agent's URL."
+    echo "open that URL in a browser, or paste the connect link into the Vesta"
+    echo "desktop app, to create your first agent."
   else
-    echo "Connect to a vestad server:"
-    echo "    vesta connect <connect-link>"
-  fi
-  if has_gui; then
-    echo ""
-    echo "Prefer an app? Open the Vesta app and paste your connect link."
+    echo "open your gateway's connect link in the Vesta desktop app, or open its"
+    echo "URL in a browser, to reach your agent."
   fi
   if [ -n "$PATH_UPDATED" ]; then
     echo ""

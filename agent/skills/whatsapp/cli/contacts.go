@@ -13,6 +13,21 @@ func (wac *WhatsAppClient) AddContact(name, phone string) (Contact, error) {
 	return wac.store.SaveManualContact(name, phone)
 }
 
+// MaxPhoneDigits is the E.164 ceiling on phone-number length. A WhatsApp
+// group ID renders as a longer all-digit string; sending to one as a user JID
+// makes the server log the device out and destroys the pairing (#1169).
+const MaxPhoneDigits = 15
+
+func errIfGroupIDDigits(digits string) error {
+	if len(digits) <= MaxPhoneDigits {
+		return nil
+	}
+	return fmt.Errorf(
+		"'%s' looks like a WhatsApp group ID, not a phone number (%d digits; phone numbers have at most %d). To message a group, use its group name: send --to '<Group Name>'",
+		digits, len(digits), MaxPhoneDigits,
+	)
+}
+
 func (wac *WhatsAppClient) requireManualContact(jid types.JID) error {
 	if jid.Server != types.DefaultUserServer {
 		return nil
@@ -40,6 +55,19 @@ func (wac *WhatsAppClient) requireManualContact(jid types.JID) error {
 }
 
 func (wac *WhatsAppClient) ResolveRecipient(identifier string) (types.JID, error) {
+	jid, err := wac.resolveRecipientJID(identifier)
+	if err != nil {
+		return types.JID{}, err
+	}
+	if jid.Server == types.DefaultUserServer {
+		if err := errIfGroupIDDigits(jid.User); err != nil {
+			return types.JID{}, err
+		}
+	}
+	return jid, nil
+}
+
+func (wac *WhatsAppClient) resolveRecipientJID(identifier string) (types.JID, error) {
 	if identifier == "" {
 		return types.JID{}, fmt.Errorf("recipient identifier cannot be empty")
 	}
@@ -249,6 +277,18 @@ func (wac *WhatsAppClient) resolveSenderJID(sender, senderAlt types.JID) types.J
 	return sender
 }
 
+// canonicalChatKey returns the stable storage key for a chat. WhatsApp addresses a direct chat
+// by the peer's LID (a privacy id), but a saved contact and any reply resolve to the peer's phone
+// JID; keying storage by the raw LID splits one person into two chats, which broke reply-first,
+// read-receipt targeting, and threading. Resolving the LID to its phone JID here (a group JID is
+// left unchanged) makes one person one chat key everywhere messages are stored or looked up.
+func (wac *WhatsAppClient) canonicalChatKey(chat types.JID) string {
+	if wac.client == nil {
+		return chat.String()
+	}
+	return wac.resolveSenderJID(chat, types.JID{}).String()
+}
+
 // formatSenderForDisplay returns a user-friendly sender display string.
 func (wac *WhatsAppClient) formatSenderForDisplay(jid types.JID) string {
 	if contact, err := wac.store.GetManualContact(jid.String()); err == nil && contact != nil && contact.Name != "" {
@@ -293,8 +333,20 @@ func (wac *WhatsAppClient) prepareNotificationInfo(info types.MessageSource) (
 		lookupContact(info.SenderAlt.String())
 	}
 
-	if contactPhone == "" && resolvedChat.User != "" {
-		contactPhone = "+" + resolvedChat.User
+	// Fall back to a JID's user part as the phone, but only when that JID is a real
+	// phone-server JID — never for a group ID or an unresolved LID/hidden JID, whose
+	// user part is an internal numeric that would render as a bogus "+120363..." phone.
+	// In a direct chat the meaningful number is the peer's (resolvedChat); in a group
+	// it is the sender's (resolvedSender). Either way, if it didn't resolve to a real
+	// phone JID, leave contact_phone empty rather than lie.
+	if contactPhone == "" {
+		if isDirectChatJID(info.Chat) {
+			if resolvedChat.Server == types.DefaultUserServer && resolvedChat.User != "" {
+				contactPhone = "+" + resolvedChat.User
+			}
+		} else if resolvedSender.Server == types.DefaultUserServer && resolvedSender.User != "" {
+			contactPhone = "+" + resolvedSender.User
+		}
 	}
 
 	if !contactSaved && contactPhone != "" {

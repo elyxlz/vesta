@@ -1,4 +1,5 @@
 import argparse
+import contextlib
 import json
 import logging
 import os
@@ -9,9 +10,21 @@ from pathlib import Path
 
 import httpx
 
+from . import auth_commands, backend, block, calendar, email, folders, monitor, notifications, notify, owa_rest, owa_rest_commands, teams
+from . import format as fmt
 from .config import Config
-from . import auth_commands, email, calendar, monitor, notifications, block, format as fmt
 from .context import MicrosoftContext
+from .payloads import EventFields, EventPatch, MailDraft
+
+# Commands whose effect is to actually transmit mail. In draft-only mode these are
+# refused before any Graph/OWA-REST call; drafting (`email draft`) stays allowed.
+_TRANSMIT_COMMANDS = {"send", "reply", "forward"}
+_DRAFT_ONLY_MESSAGE = "draft-only mode (EMAIL_DRAFT_ONLY): sending is disabled. Create a draft instead (--draft / the draft command)."
+
+
+def _draft_only_enabled() -> bool:
+    """True when EMAIL_DRAFT_ONLY is set to a truthy value (1/true/yes, case-insensitive)."""
+    return os.environ.get("EMAIL_DRAFT_ONLY", "").strip().lower() in {"1", "true", "yes"}
 
 
 def _write_pid(config):
@@ -19,10 +32,8 @@ def _write_pid(config):
 
 
 def _remove_pid(config):
-    try:
+    with contextlib.suppress(FileNotFoundError):
         (config.data_dir / "serve.pid").unlink()
-    except FileNotFoundError:
-        pass
 
 
 def _add_format_flags(parser: argparse.ArgumentParser) -> None:
@@ -45,30 +56,102 @@ def _require_daemon(config):
         sys.exit(1)
 
 
-def main():
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="microsoft")
     group = parser.add_subparsers(dest="group", required=True)
 
-    # serve
     p_serve = group.add_parser("serve")
     p_serve.add_argument("--notifications-dir", required=True)
 
-    # auth
+    _add_auth_parsers(group)
+    email_sub = _add_email_parsers(group)
+    folder_sub = _add_folder_parsers(group)
+    _add_notify_parsers(group)
+    cal_sub = _add_calendar_parsers(group)
+    teams_sub = _add_teams_parsers(group)
+
+    # Backend selector on every email/calendar/folder subcommand.
+    # auto     - Graph first; on a permission failure fall back to OWA REST (if a captured token exists).
+    # graph    - force the official Graph API.
+    # owa-rest - force the OWA REST path (browser-captured token; requires: microsoft auth owa-login).
+    for sub in (email_sub, cal_sub, folder_sub, teams_sub):
+        for sp in sub.choices.values():
+            sp.add_argument(
+                "--backend",
+                choices=[backend.AUTO, backend.GRAPH, backend.OWA_REST],
+                default=backend.AUTO,
+                help="Path: auto (Graph then OWA-REST fallback), graph, or owa-rest (browser-captured token; requires auth owa-login).",
+            )
+
+    return parser
+
+
+def _add_auth_parsers(group) -> None:
     auth_parser = group.add_parser("auth")
     auth_sub = auth_parser.add_subparsers(dest="command", required=True)
     auth_sub.add_parser("login")
     p_complete = auth_sub.add_parser("complete")
     p_complete.add_argument("--flow-cache", required=True)
     auth_sub.add_parser("list")
+    p_auth_remove = auth_sub.add_parser("remove")
+    p_auth_remove.add_argument("--account", required=True)
+    p_owa_login = auth_sub.add_parser(
+        "owa-login", help="Authorize the OWA REST fallback (default: capture token from the agent's browser session)."
+    )
+    p_owa_login.add_argument("--account", required=True, help="Email address to authorize.")
+    p_owa_login_mode = p_owa_login.add_mutually_exclusive_group()
+    p_owa_login_mode.add_argument(
+        "--device", action="store_true", help="Use a device-code sign-in instead of the browser (for tenants that still permit device flow)."
+    )
+    p_owa_login_mode.add_argument(
+        "--token", default=None, help="Save a token the user extracted from their own signed-in Outlook (creds never reach the agent)."
+    )
+    p_owa_complete = auth_sub.add_parser("owa-complete", help="Finish an OWA REST --device sign-in started with owa-login.")
+    p_owa_complete.add_argument("--account", required=True)
+    p_owa_complete.add_argument("--flow-cache", required=True)
 
-    # email
+    p_setup = auth_sub.add_parser(
+        "setup", help="One-step onboarding for mail, calendar, and Teams (device code, or browser for locked tenants)."
+    )
+    p_setup.add_argument("--account", required=True)
+    p_setup.add_argument("--browser", action="store_true", help="Skip device code and capture from the browser (locked work/school tenant).")
+    p_setup.add_argument("--device", action="store_true", help="Force device-code sign-in even for a work/school domain (permissive tenants).")
+    p_setup.add_argument("--flow-cache", default=None, help="Finish a device-code sign-in started by a prior `auth setup`.")
+    p_setup.add_argument("--capture", action="store_true", help="Finish after signing in through the browser handover.")
+
+    auth_sub.add_parser("teams-login", help="Authorize Microsoft Teams via device code (separate from the mail login).")
+    p_teams_complete = auth_sub.add_parser("teams-complete", help="Finish a Teams sign-in started with teams-login.")
+    p_teams_complete.add_argument("--flow-cache", required=True)
+    p_teams_capture = auth_sub.add_parser(
+        "teams-capture", help="Capture a Teams token for a locked tenant (default: from the agent's browser session)."
+    )
+    p_teams_capture.add_argument("--account", required=True, help="Email address to authorize.")
+    p_teams_capture.add_argument(
+        "--token", default=None, help="Save a token the user extracted from their own signed-in Teams (creds never reach the agent)."
+    )
+
+
+def _add_email_parsers(group):
     email_parser = group.add_parser("email")
     email_sub = email_parser.add_subparsers(dest="command", required=True)
+    _add_email_read_parsers(email_sub)
+    _add_email_compose_parsers(email_sub)
+    _add_email_manage_parsers(email_sub)
+    return email_sub
 
+
+def _add_email_read_parsers(email_sub) -> None:
     p_list_emails = email_sub.add_parser("list")
     p_list_emails.add_argument("--account", required=True)
     p_list_emails.add_argument("--folder", default="inbox")
     p_list_emails.add_argument("--limit", type=int, default=10)
+    # A search query on `list` is an alias for `email search`: agents naturally reach for
+    # `email list --search "foo"`, and silently erroring on it caused a false negative
+    # (empty stdout under `2>/dev/null` read as "no results"). With a query set, `list`
+    # runs the exact same search path as `email search --query`.
+    p_list_emails.add_argument(
+        "--search", "--query", dest="search", default=None, help="Search instead of listing (alias for `email search --query`)."
+    )
     _add_format_flags(p_list_emails)
 
     p_get_email = email_sub.add_parser("get")
@@ -77,6 +160,24 @@ def main():
     p_get_email.add_argument("--no-attachments", action="store_true")
     p_get_email.add_argument("--save-to", default=None)
 
+    p_search = email_sub.add_parser("search")
+    p_search.add_argument("--account", required=True)
+    p_search.add_argument("--query", required=True)
+    p_search.add_argument("--limit", type=int, default=10)
+    p_search.add_argument("--folder", default=None)
+    _add_format_flags(p_search)
+
+    p_attachment = email_sub.add_parser("attachment")
+    p_attachment.add_argument("--account", required=True)
+    p_attachment.add_argument("--email-id", required=True)
+    p_attachment.add_argument("--attachment-id", default=None)
+    p_attachment.add_argument("--save-path", default=None)
+    p_attachment.add_argument("--list", action="store_true", dest="list_only", help="List attachment metadata only")
+    p_attachment.add_argument("--all", action="store_true", dest="download_all", help="Download every attachment to --out-dir")
+    p_attachment.add_argument("--out-dir", default=None, help="Directory for --all downloads (default ~/.microsoft/attachments/<email-id>)")
+
+
+def _add_email_compose_parsers(email_sub) -> None:
     p_send = email_sub.add_parser("send")
     p_send.add_argument("--account", required=True)
     p_send.add_argument("--to", nargs="+", default=None)
@@ -90,11 +191,14 @@ def main():
     p_draft = email_sub.add_parser("draft")
     p_draft.add_argument("--account", required=True)
     p_draft.add_argument("--to", nargs="+", default=None)
-    p_draft.add_argument("--subject", required=True)
+    p_draft.add_argument("--subject", default=None)
     p_draft.add_argument("--body", required=True)
     p_draft.add_argument("--cc", nargs="+", default=None)
     p_draft.add_argument("--bcc", nargs="+", default=None)
     p_draft.add_argument("--attachments", nargs="+", default=None)
+    p_draft_source = p_draft.add_mutually_exclusive_group()
+    p_draft_source.add_argument("--reply-to", dest="reply_to_id", default=None, help="Draft a threaded reply to this message id")
+    p_draft_source.add_argument("--forward", dest="forward_id", default=None, help="Draft a forward of this message id")
 
     p_reply = email_sub.add_parser("reply")
     p_reply.add_argument("--account", required=True)
@@ -104,24 +208,42 @@ def main():
     p_reply.add_argument("--reply-all", action="store_true")
     p_reply.add_argument("--html", action="store_true")
 
-    p_attachment = email_sub.add_parser("attachment")
-    p_attachment.add_argument("--account", required=True)
-    p_attachment.add_argument("--email-id", required=True)
-    p_attachment.add_argument("--attachment-id", required=True)
-    p_attachment.add_argument("--save-path", required=True)
+    p_reply_draft = email_sub.add_parser("reply-draft")
+    p_reply_draft.add_argument("--account", required=True)
+    p_reply_draft.add_argument("--id", required=True, dest="email_id", help="Message id to reply to (latest in thread)")
+    p_reply_draft.add_argument("--body", required=True, help="Reply text placed above the quoted history; '- ' lines become bullets")
+    p_reply_draft.add_argument("--attachments", nargs="+", default=None)
+    p_reply_draft.add_argument("--reply-all", action="store_true")
+    p_reply_draft.add_argument("--replace-draft", dest="replace_draft", default=None, help="Delete this draft id first (for re-edits)")
 
-    p_search = email_sub.add_parser("search")
-    p_search.add_argument("--account", required=True)
-    p_search.add_argument("--query", required=True)
-    p_search.add_argument("--limit", type=int, default=10)
-    p_search.add_argument("--folder", default=None)
-    _add_format_flags(p_search)
+    p_forward = email_sub.add_parser("forward")
+    p_forward.add_argument("--account", required=True)
+    p_forward.add_argument("--id", required=True, dest="email_id")
+    p_forward.add_argument("--to", nargs="+", required=True)
+    p_forward.add_argument("--body", default="")
+    p_forward.add_argument("--cc", nargs="+", default=None)
+    p_forward.add_argument("--attachments", nargs="+", default=None)
+    p_forward.add_argument("--html", action="store_true")
+
+
+def _add_email_manage_parsers(email_sub) -> None:
+    p_move = email_sub.add_parser("move")
+    p_move.add_argument("--account", required=True)
+    p_move.add_argument("--id", required=True, dest="email_id")
+    p_move.add_argument("--to-folder", required=True, dest="to_folder")
+
+    p_archive = email_sub.add_parser("archive")
+    p_archive.add_argument("--account", required=True)
+    p_archive.add_argument("--id", required=True, dest="email_id")
 
     p_update = email_sub.add_parser("update")
     p_update.add_argument("--account", required=True)
     p_update.add_argument("--id", required=True, dest="email_id")
     p_update.add_argument("--is-read", type=lambda x: x.lower() == "true", default=None)
     p_update.add_argument("--categories", nargs="+", default=None)
+    p_update_flag = p_update.add_mutually_exclusive_group()
+    p_update_flag.add_argument("--flagged", dest="flagged", action="store_true", default=None, help="Flag the message for follow-up.")
+    p_update_flag.add_argument("--unflagged", dest="flagged", action="store_false", default=None, help="Clear the follow-up flag.")
 
     p_delete = email_sub.add_parser("delete")
     p_delete.add_argument("--account", required=True)
@@ -140,7 +262,55 @@ def main():
     p_unblock.add_argument("--account", required=True)
     p_unblock.add_argument("--sender", required=True, help="Email address of sender to unblock")
 
-    # calendar
+
+def _add_folder_parsers(group):
+    folder_parser = group.add_parser("folder")
+    folder_sub = folder_parser.add_subparsers(dest="command", required=True)
+
+    p_folder_list = folder_sub.add_parser("list")
+    p_folder_list.add_argument("--account", required=True)
+    _add_format_flags(p_folder_list)
+
+    p_folder_status = folder_sub.add_parser("status")
+    p_folder_status.add_argument("--account", required=True)
+    p_folder_status.add_argument("--folder", required=True)
+
+    p_folder_create = folder_sub.add_parser("create")
+    p_folder_create.add_argument("--account", required=True)
+    p_folder_create.add_argument("--name", required=True)
+    p_folder_create.add_argument("--parent", default=None, dest="parent_id", help="Parent folder id for a nested folder")
+
+    p_folder_rename = folder_sub.add_parser("rename")
+    p_folder_rename.add_argument("--account", required=True)
+    p_folder_rename.add_argument("--id", required=True, dest="folder_id")
+    p_folder_rename.add_argument("--name", required=True)
+
+    p_folder_delete = folder_sub.add_parser("delete")
+    p_folder_delete.add_argument("--account", required=True)
+    p_folder_delete.add_argument("--id", required=True, dest="folder_id")
+
+    return folder_sub
+
+
+def _add_notify_parsers(group) -> None:
+    notify_parser = group.add_parser("notify")
+    notify_sub = notify_parser.add_subparsers(dest="command", required=True)
+
+    p_notify_list = notify_sub.add_parser("list")
+    p_notify_list.add_argument("--account", required=True)
+
+    p_notify_add = notify_sub.add_parser("add")
+    p_notify_add.add_argument("--account", required=True)
+    p_notify_add_group = p_notify_add.add_mutually_exclusive_group(required=True)
+    p_notify_add_group.add_argument("--folder", default=None, help="Folder (well-known key or display name) to also notify on")
+    p_notify_add_group.add_argument("--all", action="store_true", dest="all_folders", help="Watch every folder on the server")
+
+    p_notify_remove = notify_sub.add_parser("remove")
+    p_notify_remove.add_argument("--account", required=True)
+    p_notify_remove.add_argument("--folder", required=True)
+
+
+def _add_calendar_parsers(group):
     cal_parser = group.add_parser("calendar")
     cal_sub = cal_parser.add_subparsers(dest="command", required=True)
 
@@ -175,15 +345,7 @@ def main():
     p_create_event.add_argument("--recurrence", choices=["daily", "weekly", "monthly", "yearly"], default=None)
     p_create_event.add_argument("--recurrence-end-date", default=None)
 
-    p_update_event = cal_sub.add_parser("update")
-    p_update_event.add_argument("--account", required=True)
-    p_update_event.add_argument("--id", required=True, dest="event_id")
-    p_update_event.add_argument("--subject", default=None)
-    p_update_event.add_argument("--start", default=None)
-    p_update_event.add_argument("--end", default=None)
-    p_update_event.add_argument("--location", default=None)
-    p_update_event.add_argument("--body", default=None)
-    p_update_event.add_argument("--timezone", default=None)
+    _add_calendar_update_parser(cal_sub)
 
     p_delete_event = cal_sub.add_parser("delete")
     p_delete_event.add_argument("--account", required=True)
@@ -196,6 +358,112 @@ def main():
     p_respond.add_argument("--response", choices=["accept", "decline", "tentativelyAccept"], default="accept")
     p_respond.add_argument("--message", default=None)
 
+    return cal_sub
+
+
+def _add_calendar_update_parser(cal_sub) -> None:
+    p_update_event = cal_sub.add_parser("update")
+    p_update_event.add_argument("--account", required=True)
+    p_update_event.add_argument("--id", required=True, dest="event_id")
+    p_update_event.add_argument("--subject", default=None)
+    p_update_event.add_argument("--start", default=None)
+    p_update_event.add_argument("--end", default=None)
+    p_update_event.add_argument("--location", default=None)
+    p_update_event.add_argument("--body", default=None)
+    p_update_event.add_argument("--timezone", default=None)
+    p_update_event_reminder = p_update_event.add_mutually_exclusive_group()
+    p_update_event_reminder.add_argument(
+        "--reminder-on", dest="reminder_on", action="store_true", default=None, help="Turn the event reminder on."
+    )
+    p_update_event_reminder.add_argument(
+        "--reminder-off", dest="reminder_on", action="store_false", default=None, help="Turn the event reminder off."
+    )
+    p_update_event.add_argument("--reminder-minutes", type=int, default=None, help="Minutes before start to fire the reminder.")
+
+
+def _add_teams_parsers(group):
+    teams_parser = group.add_parser("teams")
+    teams_sub = teams_parser.add_subparsers(dest="command", required=True)
+    _add_teams_chat_parsers(teams_sub)
+    _add_teams_channel_parsers(teams_sub)
+    return teams_sub
+
+
+def _add_teams_chat_parsers(teams_sub) -> None:
+
+    p_chats = teams_sub.add_parser("chats", help="List recent chats (most recent message first).")
+    p_chats.add_argument("--account", required=True)
+    p_chats.add_argument("--limit", type=int, default=20)
+    _add_format_flags(p_chats)
+
+    p_chat_msgs = teams_sub.add_parser("messages", help="List messages in a chat.")
+    p_chat_msgs.add_argument("--account", required=True)
+    p_chat_msgs.add_argument("--chat", required=True, dest="chat_id")
+    p_chat_msgs.add_argument("--limit", type=int, default=20)
+    _add_format_flags(p_chat_msgs)
+
+    p_chat_send = teams_sub.add_parser("send", help="Send a message to a chat.")
+    p_chat_send.add_argument("--account", required=True)
+    p_chat_send.add_argument("--chat", required=True, dest="chat_id")
+    p_chat_send.add_argument("--body", required=True)
+    p_chat_send.add_argument("--html", action="store_true")
+
+    p_chat_start = teams_sub.add_parser("start", help="Start a new one-on-one or group chat.")
+    p_chat_start.add_argument("--account", required=True)
+    p_chat_start.add_argument("--with", nargs="+", required=True, dest="members", help="Email addresses of the other participants.")
+    p_chat_start.add_argument("--body", default=None, help="Optional first message.")
+    p_chat_start.add_argument("--topic", default=None, help="Group chat topic (ignored for one-on-one).")
+    p_chat_start.add_argument("--html", action="store_true")
+
+
+def _add_teams_channel_parsers(teams_sub) -> None:
+    p_teams_list = teams_sub.add_parser("teams", help="List the teams you have joined.")
+    p_teams_list.add_argument("--account", required=True)
+    _add_format_flags(p_teams_list)
+
+    p_channels = teams_sub.add_parser("channels", help="List channels in a team.")
+    p_channels.add_argument("--account", required=True)
+    p_channels.add_argument("--team", required=True, dest="team_id")
+    _add_format_flags(p_channels)
+
+    p_chan_msgs = teams_sub.add_parser("channel-messages", help="List messages in a channel (needs admin-granted ChannelMessage.Read.All).")
+    p_chan_msgs.add_argument("--account", required=True)
+    p_chan_msgs.add_argument("--team", required=True, dest="team_id")
+    p_chan_msgs.add_argument("--channel", required=True, dest="channel_id")
+    p_chan_msgs.add_argument("--limit", type=int, default=20)
+    _add_format_flags(p_chan_msgs)
+
+    p_chan_post = teams_sub.add_parser("post", help="Post a new message to a channel.")
+    p_chan_post.add_argument("--account", required=True)
+    p_chan_post.add_argument("--team", required=True, dest="team_id")
+    p_chan_post.add_argument("--channel", required=True, dest="channel_id")
+    p_chan_post.add_argument("--body", required=True)
+    p_chan_post.add_argument("--html", action="store_true")
+
+    p_chan_reply = teams_sub.add_parser("reply", help="Reply to a channel message.")
+    p_chan_reply.add_argument("--account", required=True)
+    p_chan_reply.add_argument("--team", required=True, dest="team_id")
+    p_chan_reply.add_argument("--channel", required=True, dest="channel_id")
+    p_chan_reply.add_argument("--message", required=True, dest="message_id")
+    p_chan_reply.add_argument("--body", required=True)
+    p_chan_reply.add_argument("--html", action="store_true")
+
+    p_presence = teams_sub.add_parser("presence", help="Show your presence (availability + activity).")
+    p_presence.add_argument("--account", required=True)
+
+    p_set_presence = teams_sub.add_parser("set-presence", help="Set your preferred presence.")
+    p_set_presence.add_argument("--account", required=True)
+    p_set_presence.add_argument(
+        "--availability", required=True, choices=["Available", "Busy", "DoNotDisturb", "BeRightBack", "Away", "Offline"]
+    )
+    p_set_presence.add_argument("--expires", default=None, help="ISO 8601 duration to hold it, e.g. PT1H (default: Graph's own expiry).")
+
+    p_clear_presence = teams_sub.add_parser("clear-presence", help="Clear your preferred presence.")
+    p_clear_presence.add_argument("--account", required=True)
+
+
+def main():
+    parser = build_parser()
     args = parser.parse_args()
     config = Config()
 
@@ -213,12 +481,16 @@ def main():
         if args.group == "auth":
             result = _dispatch_auth(args, config)
             print(json.dumps(fmt.strip_odata(result), indent=2))
-        elif args.group in ("email", "calendar"):
+        elif args.group in ("email", "calendar", "folder", "notify", "teams"):
             with httpx.Client(timeout=30.0, follow_redirects=True) as client:
-                if args.group == "email":
-                    result = _dispatch_email(args, config, client)
-                else:
-                    result = _dispatch_calendar(args, config, client)
+                dispatchers = {
+                    "email": _dispatch_email,
+                    "calendar": _dispatch_calendar,
+                    "folder": _dispatch_folder,
+                    "notify": _dispatch_notify,
+                    "teams": _dispatch_teams,
+                }
+                result = dispatchers[args.group](args, config, client)
                 _print_result(args, result)
     except Exception as e:
         print(json.dumps({"error": str(e)}), file=sys.stderr)
@@ -230,6 +502,12 @@ _COMPACT_FORMATTERS = {
     ("email", "search"): fmt.format_email_list,
     ("calendar", "list"): fmt.format_calendar_event_list,
     ("calendar", "calendars"): fmt.format_calendar_name_list,
+    ("folder", "list"): fmt.format_folder_list,
+    ("teams", "chats"): fmt.format_teams_chat_list,
+    ("teams", "messages"): fmt.format_teams_message_list,
+    ("teams", "channel-messages"): fmt.format_teams_message_list,
+    ("teams", "teams"): fmt.format_teams_team_list,
+    ("teams", "channels"): fmt.format_teams_channel_list,
 }
 
 
@@ -254,139 +532,377 @@ def _print_result(args, result) -> None:
     print(json.dumps(fmt.strip_odata(result), indent=2))
 
 
+_AUTH_HANDLERS = {
+    "list": lambda _args, config: auth_commands.list_accounts(config),
+    "setup": lambda args, config: auth_commands.auth_setup(
+        config,
+        account_email=args.account,
+        use_browser=args.browser,
+        flow_cache=args.flow_cache,
+        do_capture=args.capture,
+        force_device=args.device,
+    ),
+    "login": lambda _args, config: auth_commands.authenticate_account(config),
+    "complete": lambda args, config: auth_commands.complete_authentication(config, flow_cache=args.flow_cache),
+    "remove": lambda args, config: auth_commands.remove_account(config, account_email=args.account),
+    "owa-login": lambda args, config: auth_commands.owa_login(config, account_email=args.account, use_device=args.device, token=args.token),
+    "owa-complete": lambda args, config: auth_commands.owa_complete(config, account_email=args.account, flow_cache=args.flow_cache),
+    "teams-login": lambda _args, config: auth_commands.teams_login(config),
+    "teams-complete": lambda args, config: auth_commands.teams_complete(config, flow_cache=args.flow_cache),
+    "teams-capture": lambda args, config: auth_commands.teams_capture(config, account_email=args.account, token=args.token),
+}
+
+
 def _dispatch_auth(args, config):
-    if args.command == "list":
-        return auth_commands.list_accounts(config)
-    elif args.command == "login":
-        return auth_commands.authenticate_account(config)
-    elif args.command == "complete":
-        return auth_commands.complete_authentication(config, flow_cache=args.flow_cache)
+    return _AUTH_HANDLERS[args.command](args, config) if args.command in _AUTH_HANDLERS else None
+
+
+def _graph_has_account(config, account_email: str) -> bool:
+    """True if the Graph token cache knows this account. Accounts on a locked tenant
+    reachable only via OWA REST are absent here, so the Graph path can't resolve them."""
+    try:
+        return any((a["email"] or "").lower() == (account_email or "").lower() for a in auth_commands.list_accounts(config))
+    except Exception:
+        return False
+
+
+def _route(args, config, account_email, graph_fn, rest_fn):
+    """Run a command on the chosen backend. For ``auto``, fall back to OWA REST only
+    when a captured token exists; if the account is unknown to Graph but has a REST
+    token, go straight to REST (Graph can't even resolve it)."""
+    choice = args.backend if "backend" in vars(args) else backend.AUTO
+    if choice != backend.AUTO:
+        return backend.run(choice, graph_fn, rest_fn)
+    has_rest = owa_rest.has_valid_token(account_email, config)
+    if not has_rest:
+        return graph_fn()
+    if not _graph_has_account(config, account_email):
+        return rest_fn()
+    return backend.run(backend.AUTO, graph_fn, rest_fn)
+
+
+def _email_routes():
+    """Routed email commands: (graph implementation, OWA REST implementation, per-command kwargs from args).
+    `account_email` is merged in at dispatch time. Built per dispatch so module attributes stay late-bound."""
+    return {
+        "list": (email.list_emails, owa_rest_commands.list_emails, lambda a: {"folder": a.folder, "limit": a.limit}),
+        "get": (
+            email.get_email,
+            owa_rest_commands.get_email,
+            lambda a: {"email_id": a.email_id, "include_attachments": not a.no_attachments, "save_to_file": a.save_to},
+        ),
+        "send": (
+            email.send_email,
+            owa_rest_commands.send_email,
+            lambda a: {"mail": MailDraft(to=a.to, subject=a.subject, body=a.body, cc=a.cc, bcc=a.bcc, attachments=a.attachments, html=a.html)},
+        ),
+        "draft": (
+            email.create_email_draft,
+            owa_rest_commands.create_email_draft,
+            lambda a: {
+                "mail": MailDraft(
+                    to=a.to,
+                    subject=a.subject,
+                    body=a.body,
+                    cc=a.cc,
+                    bcc=a.bcc,
+                    attachments=a.attachments,
+                    reply_to_id=a.reply_to_id,
+                    forward_id=a.forward_id,
+                )
+            },
+        ),
+        "reply": (
+            email.reply_to_email,
+            owa_rest_commands.reply_to_email,
+            lambda a: {"email_id": a.email_id, "body": a.body, "attachments": a.attachments, "reply_all": a.reply_all, "html": a.html},
+        ),
+        "forward": (
+            email.forward_email,
+            owa_rest_commands.forward_email,
+            lambda a: {
+                "email_id": a.email_id,
+                "mail": MailDraft(to=a.to, body=a.body, cc=a.cc, attachments=a.attachments, html=a.html),
+            },
+        ),
+        "move": (email.move_email, owa_rest_commands.move_email, lambda a: {"email_id": a.email_id, "to_folder": a.to_folder}),
+        "archive": (email.archive_email, owa_rest_commands.archive_email, lambda a: {"email_id": a.email_id}),
+        "search": (
+            email.search_emails,
+            owa_rest_commands.search_emails,
+            lambda a: {"query": a.query, "limit": a.limit, "folder": a.folder},
+        ),
+        "update": (
+            email.update_email,
+            owa_rest_commands.update_email,
+            lambda a: {"email_id": a.email_id, "is_read": a.is_read, "categories": a.categories, "flagged": a.flagged},
+        ),
+        "delete": (
+            email.delete_email,
+            owa_rest_commands.delete_email,
+            lambda a: {"email_id": a.email_id, "sender": a.sender, "permanent": a.permanent},
+        ),
+    }
 
 
 def _dispatch_email(args, config, client):
-    if args.command == "list":
-        return email.list_emails(config, client, account_email=args.account, folder=args.folder, limit=args.limit)
-    elif args.command == "get":
-        return email.get_email(
+    acct = args.account
+
+    # Hard draft-only guard: refuse any transmitting command before it can reach
+    # EITHER backend (Graph or OWA-REST). Drafting still flows through untouched.
+    if args.command in _TRANSMIT_COMMANDS and _draft_only_enabled():
+        raise RuntimeError(_DRAFT_ONLY_MESSAGE)
+
+    if args.command == "list" and args.search is not None:
+        # `list --search/--query` is an alias for `email search`: run the identical search path,
+        # defaulting to all folders (folder=None) unless the caller explicitly narrowed it.
+        kw = {"account_email": acct, "query": args.search, "limit": args.limit, "folder": args.folder if args.folder != "inbox" else None}
+        return _route(
+            args,
             config,
-            client,
-            account_email=args.account,
-            email_id=args.email_id,
-            include_attachments=not args.no_attachments,
-            save_to_file=args.save_to,
+            acct,
+            lambda: email.search_emails(config, client, **kw),
+            lambda: owa_rest_commands.search_emails(config, client, **kw),
         )
-    elif args.command == "send":
-        return email.send_email(
+    if args.command == "reply-draft":
+        # Graph-only: leaving a properly-threaded unsent draft over the preserved quote
+        # has no OWA REST counterpart, so this bypasses the backend router.
+        return email.reply_draft(
             config,
             client,
-            account_email=args.account,
-            to=args.to,
-            subject=args.subject,
-            body=args.body,
-            cc=args.cc,
-            bcc=args.bcc,
-            attachments=args.attachments,
-            html=args.html,
-        )
-    elif args.command == "draft":
-        return email.create_email_draft(
-            config,
-            client,
-            account_email=args.account,
-            to=args.to,
-            subject=args.subject,
-            body=args.body,
-            cc=args.cc,
-            bcc=args.bcc,
-            attachments=args.attachments,
-        )
-    elif args.command == "reply":
-        return email.reply_to_email(
-            config,
-            client,
-            account_email=args.account,
+            account_email=acct,
             email_id=args.email_id,
             body=args.body,
             attachments=args.attachments,
             reply_all=args.reply_all,
-            html=args.html,
+            replace_draft=args.replace_draft,
         )
-    elif args.command == "attachment":
-        return email.get_attachment(
-            config, client, account_email=args.account, email_id=args.email_id, attachment_id=args.attachment_id, save_path=args.save_path
+    if args.command == "attachment":
+        return _dispatch_attachment(args, config, client)
+    if args.command in ("block", "unblock"):
+        return _dispatch_block(args, config, client)
+    routes = _email_routes()
+    if args.command in routes:
+        graph_impl, rest_impl, kw_of = routes[args.command]
+        kw = {"account_email": acct, **kw_of(args)}
+        return _route(args, config, acct, lambda: graph_impl(config, client, **kw), lambda: rest_impl(config, client, **kw))
+    return None
+
+
+def _dispatch_block(args, config, client):
+    acct = args.account
+
+    def route(graph_fn, rest_fn):
+        return _route(args, config, acct, graph_fn, rest_fn)
+
+    if args.command == "unblock":
+        return route(
+            lambda: block.unblock_sender(config, client, account_email=acct, sender=args.sender),
+            lambda: owa_rest_commands.unblock_sender(config, client, account_email=acct, sender=args.sender),
         )
-    elif args.command == "search":
-        return email.search_emails(config, client, account_email=args.account, query=args.query, limit=args.limit, folder=args.folder)
-    elif args.command == "update":
-        return email.update_email(
-            config, client, account_email=args.account, email_id=args.email_id, is_read=args.is_read, categories=args.categories
+    if args.list:
+        return route(
+            lambda: block.list_block_rules(config, client, account_email=acct),
+            lambda: owa_rest_commands.list_block_rules(config, client, account_email=acct),
         )
-    elif args.command == "delete":
-        return email.delete_email(
-            config, client, account_email=args.account, email_id=args.email_id, sender=args.sender, permanent=args.permanent
+    return route(
+        lambda: block.block_sender(config, client, account_email=acct, sender=args.sender),
+        lambda: owa_rest_commands.block_sender(config, client, account_email=acct, sender=args.sender),
+    )
+
+
+def _dispatch_attachment(args, config, client):
+    acct = args.account
+    if args.list_only:
+        kw = {"account_email": acct, "email_id": args.email_id}
+        return _route(
+            args,
+            config,
+            acct,
+            lambda: email.list_attachments(config, client, **kw),
+            lambda: owa_rest_commands.list_attachments(config, client, **kw),
         )
-    elif args.command == "block":
-        if args.list:
-            return block.list_block_rules(config, client, account_email=args.account)
-        return block.block_sender(config, client, account_email=args.account, sender=args.sender)
-    elif args.command == "unblock":
-        return block.unblock_sender(config, client, account_email=args.account, sender=args.sender)
+    if args.download_all:
+        out_dir = args.out_dir or str(config.data_dir / "attachments" / args.email_id)
+        kw = {"account_email": acct, "email_id": args.email_id, "out_dir": out_dir}
+        return _route(
+            args,
+            config,
+            acct,
+            lambda: email.download_attachments(config, client, **kw),
+            lambda: owa_rest_commands.download_attachments(config, client, **kw),
+        )
+    if not args.attachment_id or not args.save_path:
+        raise ValueError("Provide --attachment-id and --save-path to download one attachment, or use --list / --all")
+    kw = {"account_email": acct, "email_id": args.email_id, "attachment_id": args.attachment_id, "save_path": args.save_path}
+    return _route(
+        args,
+        config,
+        acct,
+        lambda: email.get_attachment(config, client, **kw),
+        lambda: owa_rest_commands.get_attachment(config, client, **kw),
+    )
+
+
+def _dispatch_folder(args, config, client):
+    acct = args.account
+
+    def route(graph_fn, rest_fn):
+        return _route(args, config, acct, graph_fn, rest_fn)
+
+    if args.command == "list":
+        return route(
+            lambda: folders.list_folders(config, client, account_email=acct),
+            lambda: owa_rest_commands.list_folders(config, client, account_email=acct),
+        )
+    if args.command == "status":
+        return route(
+            lambda: folders.folder_status(config, client, account_email=acct, folder=args.folder),
+            lambda: owa_rest_commands.folder_status(config, client, account_email=acct, folder=args.folder),
+        )
+    if args.command == "create":
+        return route(
+            lambda: folders.create_folder(config, client, account_email=acct, name=args.name, parent_id=args.parent_id),
+            lambda: owa_rest_commands.create_folder(config, client, account_email=acct, name=args.name, parent_id=args.parent_id),
+        )
+    if args.command == "rename":
+        return route(
+            lambda: folders.rename_folder(config, client, account_email=acct, folder_id=args.folder_id, name=args.name),
+            lambda: owa_rest_commands.rename_folder(config, client, account_email=acct, folder_id=args.folder_id, name=args.name),
+        )
+    if args.command == "delete":
+        return route(
+            lambda: folders.delete_folder(config, client, account_email=acct, folder_id=args.folder_id),
+            lambda: owa_rest_commands.delete_folder(config, client, account_email=acct, folder_id=args.folder_id),
+        )
+    return None
+
+
+def _dispatch_notify(args, config, client):
+    if args.command == "list":
+        return notify.list_notify(config, client, account_email=args.account)
+    if args.command == "add":
+        return notify.add_notify(config, client, account_email=args.account, folder=args.folder, all_folders=args.all_folders)
+    if args.command == "remove":
+        return notify.remove_notify(config, client, account_email=args.account, folder=args.folder)
+    return None
+
+
+def _calendar_routes():
+    """Routed calendar commands, same shape as _email_routes(). The update patch carries the
+    Graph-only reminder knobs; the OWA REST path ignores them."""
+    return {
+        "list": (
+            calendar.list_events,
+            owa_rest_commands.list_events,
+            lambda a: {
+                "calendar_name": a.calendar_name,
+                "days_ahead": a.days_ahead,
+                "days_back": a.days_back,
+                "include_details": not a.no_details,
+                "user_timezone": a.user_timezone,
+            },
+        ),
+        "calendars": (calendar.list_calendars, owa_rest_commands.list_calendars, lambda _a: {}),
+        "get": (calendar.get_event, owa_rest_commands.get_event, lambda a: {"event_id": a.event_id}),
+        "create": (
+            calendar.create_event,
+            owa_rest_commands.create_event,
+            lambda a: {
+                "event": EventFields(
+                    subject=a.subject,
+                    start=a.start,
+                    end=a.end,
+                    location=a.location,
+                    body=a.body,
+                    attendees=a.attendees,
+                    timezone=a.timezone,
+                    calendar_name=a.calendar_name,
+                    is_all_day=a.all_day,
+                    recurrence=a.recurrence,
+                    recurrence_end_date=a.recurrence_end_date,
+                )
+            },
+        ),
+        "update": (
+            calendar.update_event,
+            owa_rest_commands.update_event,
+            lambda a: {
+                "event_id": a.event_id,
+                "patch": EventPatch(
+                    subject=a.subject,
+                    start=a.start,
+                    end=a.end,
+                    location=a.location,
+                    body=a.body,
+                    timezone=a.timezone,
+                    reminder_on=a.reminder_on,
+                    reminder_minutes=a.reminder_minutes,
+                ),
+            },
+        ),
+        "delete": (
+            calendar.delete_event,
+            owa_rest_commands.delete_event,
+            lambda a: {"event_id": a.event_id, "send_cancellation": not a.no_cancellation},
+        ),
+        "respond": (
+            calendar.respond_event,
+            owa_rest_commands.respond_event,
+            lambda a: {"event_id": a.event_id, "response": a.response, "message": a.message},
+        ),
+    }
 
 
 def _dispatch_calendar(args, config, client):
-    if args.command == "list":
-        return calendar.list_events(
-            config,
-            client,
-            account_email=args.account,
-            calendar_name=args.calendar_name,
-            days_ahead=args.days_ahead,
-            days_back=args.days_back,
-            include_details=not args.no_details,
-            user_timezone=args.user_timezone,
-        )
-    elif args.command == "calendars":
-        return calendar.list_calendars(config, client, account_email=args.account)
-    elif args.command == "get":
-        return calendar.get_event(config, client, account_email=args.account, event_id=args.event_id)
-    elif args.command == "create":
-        return calendar.create_event(
-            config,
-            client,
-            account_email=args.account,
-            subject=args.subject,
-            start=args.start,
-            end=args.end,
-            location=args.location,
-            body=args.body,
-            attendees=args.attendees,
-            timezone=args.timezone,
-            calendar_name=args.calendar_name,
-            is_all_day=args.all_day,
-            recurrence=args.recurrence,
-            recurrence_end_date=args.recurrence_end_date,
-        )
-    elif args.command == "update":
-        return calendar.update_event(
-            config,
-            client,
-            account_email=args.account,
-            event_id=args.event_id,
-            subject=args.subject,
-            start=args.start,
-            end=args.end,
-            location=args.location,
-            body=args.body,
-            timezone=args.timezone,
-        )
-    elif args.command == "delete":
-        return calendar.delete_event(
-            config, client, account_email=args.account, event_id=args.event_id, send_cancellation=not args.no_cancellation
-        )
-    elif args.command == "respond":
-        return calendar.respond_event(
-            config, client, account_email=args.account, event_id=args.event_id, response=args.response, message=args.message
-        )
+    acct = args.account
+    routes = _calendar_routes()
+    if args.command in routes:
+        graph_impl, rest_impl, kw_of = routes[args.command]
+        kw = {"account_email": acct, **kw_of(args)}
+        return _route(args, config, acct, lambda: graph_impl(config, client, **kw), lambda: rest_impl(config, client, **kw))
+    return None
+
+
+# Teams commands as (client, token, args) calls; the dispatcher supplies the token per backend.
+_TEAMS_CALLS = {
+    "chats": lambda c, t, a: teams.list_chats(c, t, limit=a.limit),
+    "messages": lambda c, t, a: teams.list_chat_messages(c, t, chat_id=a.chat_id, limit=a.limit),
+    "send": lambda c, t, a: teams.send_chat_message(c, t, chat_id=a.chat_id, body=a.body, html=a.html),
+    "start": lambda c, t, a: teams.start_chat(c, t, members=a.members, body=a.body, topic=a.topic, html=a.html),
+    "teams": lambda c, t, _a: teams.list_teams(c, t),
+    "channels": lambda c, t, a: teams.list_channels(c, t, team_id=a.team_id),
+    "channel-messages": lambda c, t, a: teams.list_channel_messages(c, t, team_id=a.team_id, channel_id=a.channel_id, limit=a.limit),
+    "post": lambda c, t, a: teams.post_channel_message(c, t, team_id=a.team_id, channel_id=a.channel_id, body=a.body, html=a.html),
+    "reply": lambda c, t, a: teams.reply_channel_message(
+        c, t, team_id=a.team_id, channel_id=a.channel_id, message_id=a.message_id, body=a.body, html=a.html
+    ),
+    "presence": lambda c, t, _a: teams.get_presence(c, t),
+    "set-presence": lambda c, t, a: teams.set_presence(c, t, availability=a.availability, expires=a.expires),
+    "clear-presence": lambda c, t, _a: teams.clear_presence(c, t),
+}
+
+
+def _dispatch_teams(args, config, client):
+    """Teams runs one Graph transport with two token sources: a device-flow token (graph) or a
+    browser-captured token (owa-rest). backend.run picks per --backend, falling back on a
+    permission failure exactly like the mail dispatcher."""
+    acct = args.account
+    if args.command not in _TEAMS_CALLS:
+        return None
+    fn = _TEAMS_CALLS[args.command]
+
+    graph_fn = lambda: fn(client, teams.graph_token(config, acct), args)
+    rest_fn = lambda: fn(client, teams.captured_token(config, acct), args)
+    try:
+        return backend.run(args.backend, graph_fn, rest_fn)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 403:
+            raise PermissionError(
+                f"the Teams token for {acct} lacks the scope for `teams {args.command}`. Re-authorize: "
+                f"microsoft auth setup --account {acct} --browser"
+            ) from e
+        raise
 
 
 def _run_serve(config: Config, notif_dir: Path):
@@ -422,12 +938,13 @@ def _run_serve(config: Config, notif_dir: Path):
         base_url=config.base_url,
         upload_chunk_size=config.upload_chunk_size,
         folders=config.folders,
+        notify_file=notify.notify_file_for(config),
         calendar_notify_thresholds=config.calendar_notify_thresholds,
     )
 
     shutdown_reason = "unknown"
 
-    def handle_signal(signum, frame):
+    def handle_signal(signum, _frame):
         nonlocal shutdown_reason
         shutdown_reason = signal.Signals(signum).name
         monitor_stop_event.set()

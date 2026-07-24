@@ -2,12 +2,63 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
-
-	waLog "go.mau.fi/whatsmeow/util/log"
 )
+
+func isHelpArg(arg string) bool {
+	return arg == "--help" || arg == "-h" || arg == "help"
+}
+
+// printUsage lists every command in the registry, so a command cannot ship without appearing here.
+func printUsage(w io.Writer) {
+	fmt.Fprintln(w, "Usage: whatsapp <command> [args] [flags]")
+	// The lifecycle commands run in the client, not the daemon, so they are not in the registry.
+	fmt.Fprintln(w, "Setup / health:")
+	fmt.Fprintln(w, "  connect [--opener <text>] [--own-number] set up WhatsApp: claim + link the agent's own number, or link the user's own WhatsApp by QR. --opener: agent-authored greeting for the managed wa.me link")
+	fmt.Fprintln(w, "  status                               simple health check: linked, number, connected. If it shows linked:false, run `whatsapp connect`")
+	fmt.Fprintln(w, "  start                                bring the daemon up (idempotent); the restart skill runs this at boot")
+	fmt.Fprintln(w, "Internal (the CLI self-manages its daemon; agents never call these):")
+	fmt.Fprintln(w, "  daemon <start|stop|restart|status>   manage the background daemon")
+	fmt.Fprintln(w, "  serve                                run the daemon in the foreground")
+	fmt.Fprintln(w, "  update-deps                          bump the pinned whatsmeow to latest (do this deliberately, not mid-session)")
+	fmt.Fprintln(w, "Commands (short aliases in parentheses; `whatsapp <command> --help` for its flags):")
+	for _, cmd := range commands {
+		if cmd.hidden {
+			continue
+		}
+		fmt.Fprintln(w, "  "+commandSignature(cmd))
+	}
+}
+
+// printCommandUsage answers `whatsapp <command> --help` from the command's own flags. Every
+// handler declares its FlagSet and parses before it touches the client, so passing no client
+// reports the flags without a daemon, without the socket, and without reaching any command body.
+func printCommandUsage(w io.Writer, name string) {
+	cmd, ok := lookupCommand(name)
+	if !ok {
+		// A lifecycle command (serve, link, daemon, authenticate): the general usage documents it.
+		printUsage(w)
+		return
+	}
+	_, err := cmd.run([]string{"--help"}, nil)
+	fmt.Fprintln(w, err)
+}
+
+// commandSignature renders one registry entry as `name (alias) <positional>`.
+func commandSignature(cmd command) string {
+	var sig strings.Builder
+	sig.WriteString(cmd.name)
+	if len(cmd.aliases) > 0 {
+		sig.WriteString(" (" + strings.Join(cmd.aliases, ", ") + ")")
+	}
+	for _, positional := range cmd.positionals {
+		sig.WriteString(" <" + positional + ">")
+	}
+	return sig.String()
+}
 
 func resolveDir(path string) (string, error) {
 	abs, err := filepath.Abs(path)
@@ -21,21 +72,9 @@ func resolveDir(path string) (string, error) {
 }
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "Usage: whatsapp <command> [args] [flags]")
-		fmt.Fprintln(os.Stderr, "Commands (short aliases in parentheses):")
-		fmt.Fprintln(os.Stderr, "  send-message (send) [to] [message]   send-file (file) [to] [path]")
-		fmt.Fprintln(os.Stderr, "  list-messages (messages) [to]        send-reaction (react) [to] [id] [emoji]")
-		fmt.Fprintln(os.Stderr, "  list-chats (chats)                   list-contacts (contacts)")
-		fmt.Fprintln(os.Stderr, "  list-groups (groups)                 add-contact [name] [phone]")
-		fmt.Fprintln(os.Stderr, "  remove-contact [identifier]          leave-group [group]")
-		fmt.Fprintln(os.Stderr, "  backfill [to]                        rename-group (rename) [group] [name]")
-		fmt.Fprintln(os.Stderr, "  check-delivery (delivery) [msg-id]   download-media [msg-id]")
-		fmt.Fprintln(os.Stderr, "  delete-chat [to]                     archive-chat [to]")
-		fmt.Fprintln(os.Stderr, "  clear-all-chats                      update-group-participants")
-		fmt.Fprintln(os.Stderr, "  serve  authenticate  create-group    search-contacts")
-		fmt.Fprintln(os.Stderr, "  update-group-participants            set-group-description [group] [desc]")
-		os.Exit(1)
+	if len(os.Args) < 2 || isHelpArg(os.Args[1]) {
+		printUsage(os.Stdout)
+		os.Exit(0)
 	}
 
 	command := os.Args[1]
@@ -45,6 +84,14 @@ func main() {
 	// The bash execution environment escapes special chars — undo in all args
 	for i := range os.Args {
 		os.Args[i] = shellEscapeReplacer.Replace(os.Args[i])
+	}
+
+	// Answer it here so no daemon, no socket, and no command body is involved, which is what keeps
+	// `clear-all-chats --help` from running clear-all-chats. Only the first argument is read as
+	// help, so `send <to> -h` still sends the text `-h`.
+	if len(os.Args) > 1 && isHelpArg(os.Args[1]) {
+		printCommandUsage(os.Stdout, command)
+		os.Exit(0)
 	}
 
 	// Resolve the alias to its canonical name and rewrite the command's leading
@@ -67,14 +114,57 @@ func main() {
 		}
 	}
 
-	logger := waLog.Stdout("WhatsApp", "WARN", true)
-
 	switch command {
 	case "serve":
-		runServe(logger)
+		runServe()
+	case "start":
+		// Bring the daemon up and wait until it answers, so inbound notifications
+		// are already flowing before the caller (the restart skill at boot, or the
+		// agent) does anything else. Idempotent: an already-running daemon is a
+		// no-op. Reuses the daemon-lifecycle start; any trailing serve flags
+		// (e.g. --instance) pass through.
+		daemonStart(os.Args[1:])
+	case "status":
+		runStatus()
+	case "profile":
+		runProfile()
 	case "authenticate":
 		runAuthenticate()
+	case "daemon":
+		runDaemon()
+	// connect is the one setup verb; provision and link are hidden back-compat
+	// aliases for the same unified path (runConnect picks managed vs. QR).
+	case "connect", "link", "provision":
+		runConnect()
 	default:
 		runOneShot(command)
 	}
+}
+
+// profileCommand maps a friendly `whatsapp profile <sub>` to the canonical
+// set-profile-* socket command and the flag its value fills.
+func profileCommand(sub string) (command string, flag string, ok bool) {
+	switch sub {
+	case "name":
+		return "set-profile-name", "name", true
+	case "photo":
+		return "set-profile-photo", "file", true
+	}
+	return "", "", false
+}
+
+// runProfile is the friendly `whatsapp profile name <name>` /
+// `whatsapp profile photo <file>` surface. It rewrites into the canonical
+// set-profile-name / set-profile-photo socket command (both still usable
+// directly), preserving any trailing flags like --instance.
+func runProfile() {
+	if len(os.Args) < 3 {
+		failJSON("usage: whatsapp profile name <name> | whatsapp profile photo <file>")
+	}
+	command, flag, ok := profileCommand(os.Args[1])
+	if !ok {
+		failJSON("unknown profile subcommand %q (use: whatsapp profile name <name> | whatsapp profile photo <file>)", os.Args[1])
+	}
+	os.Args = append([]string{os.Args[0], "--" + flag, os.Args[2]}, os.Args[3:]...)
+	runOneShot(command)
 }

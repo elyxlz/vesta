@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { Input } from "@/components/ui/input";
 import { openrouterProvider } from "@/api";
+import { errorMessage } from "@/lib/utils";
 import { ProviderStep } from "../ProviderStep";
 
 export function KeyStep({
@@ -28,7 +29,7 @@ export function KeyStep({
       await openrouterProvider.validateKey(key.trim());
       onNext(key.trim());
     } catch (e: unknown) {
-      setError((e as { message?: string })?.message || "key validation failed");
+      setError(errorMessage(e, "key validation failed"));
     } finally {
       setValidating(false);
     }
@@ -41,7 +42,9 @@ export function KeyStep({
       subtitle="paste a key from openrouter.ai/keys. it stays on this machine."
       submitLabel={validating ? "checking key..." : "next"}
       submitDisabled={!canContinue}
-      onSubmit={submit}
+      onSubmit={() => {
+        void submit();
+      }}
       onCancel={onCancel}
       error={error}
     >

@@ -1,8 +1,15 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-const CLOUDFLARED_DOWNLOAD_BASE: &str = "https://github.com/cloudflare/cloudflared/releases/latest/download";
+const CLOUDFLARED_DOWNLOAD_BASE: &str =
+    "https://github.com/cloudflare/cloudflared/releases/latest/download";
 const CF_API_BASE: &str = "https://api.cloudflare.com/client/v4";
+
+/// Bound every Cloudflare API curl so a stalled connection can never wedge the
+/// caller: the tunnel supervisor runs these calls in its loop and vestad's
+/// shutdown awaits that loop.
+const CF_API_CONNECT_TIMEOUT_SECS: u64 = 10;
+const CF_API_MAX_TIME_SECS: u64 = 60;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct TunnelConfig {
@@ -10,6 +17,13 @@ pub struct TunnelConfig {
     pub tunnel_token: String,
     pub hostname: String,
     pub dns_record_id: Option<String>,
+}
+
+impl TunnelConfig {
+    /// The public https URL this tunnel serves.
+    pub fn url(&self) -> String {
+        format!("https://{}", self.hostname)
+    }
 }
 
 /// Self-hosted (BYOK) Cloudflare credentials, persisted to `cloudflare.json`.
@@ -37,13 +51,37 @@ pub fn has_cf_creds(config_dir: &Path) -> bool {
             && std::env::var("CLOUDFLARE_ZONE_ID").is_ok())
 }
 
+fn no_tunnel_marker_path(config_dir: &Path) -> PathBuf {
+    config_dir.join("no_tunnel")
+}
+
+/// True once the user has explicitly skipped domain setup (empty input at the
+/// first-run prompt), so `run_server_systemd` doesn't re-prompt on every
+/// subsequent `vestad start`.
+pub fn has_declined_tunnel(config_dir: &Path) -> bool {
+    no_tunnel_marker_path(config_dir).exists()
+}
+
+/// Persist "the user does not want a tunnel" (written by `vestad tunnel
+/// destroy` and the skipped first-run prompt) so neither boot nor the
+/// supervisor recreates one until `vestad connect` clears it.
+pub fn decline_tunnel(config_dir: &Path) -> Result<(), String> {
+    write_secret_file(&no_tunnel_marker_path(config_dir), "", "no-tunnel preference")
+}
+
+/// Clear the declined-tunnel preference: a successful `vestad connect` means
+/// the user wants a tunnel again.
+fn clear_declined_tunnel(config_dir: &Path) {
+    std::fs::remove_file(no_tunnel_marker_path(config_dir)).ok();
+}
+
 /// Write `contents` to `path` 0600, creating the parent dir. Single owner of the
 /// "persist a secret config file" pattern; `what` names the file in write errors.
 fn write_secret_file(path: &Path, contents: &str, what: &str) -> Result<(), String> {
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("failed to create config dir: {}", e))?;
+        std::fs::create_dir_all(dir).map_err(|e| format!("failed to create config dir: {e}"))?;
     }
-    std::fs::write(path, contents).map_err(|e| format!("failed to write {what}: {}", e))?;
+    std::fs::write(path, contents).map_err(|e| format!("failed to write {what}: {e}"))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -53,7 +91,11 @@ fn write_secret_file(path: &Path, contents: &str, what: &str) -> Result<(), Stri
 }
 
 fn save_cf_creds(config_dir: &Path, creds: &CloudflareCreds) -> Result<(), String> {
-    write_secret_file(&cf_creds_path(config_dir), &serde_json::to_string_pretty(creds).unwrap(), "cloudflare creds")
+    write_secret_file(
+        &cf_creds_path(config_dir),
+        &serde_json::to_string_pretty(creds).expect("cloudflare creds serialize to json"),
+        "cloudflare creds",
+    )
 }
 
 /// Resolve Cloudflare credentials for self-hosted tunnel management.
@@ -70,11 +112,15 @@ fn cf_env(config_dir: &Path) -> Result<CloudflareCreds, String> {
     let api_token = std::env::var("CLOUDFLARE_API_TOKEN").map_err(|_| {
         "no Cloudflare credentials — run `vestad connect` to connect your domain".to_string()
     })?;
-    let account_id =
-        std::env::var("CLOUDFLARE_ACCOUNT_ID").map_err(|_| "CLOUDFLARE_ACCOUNT_ID not set".to_string())?;
-    let zone_id =
-        std::env::var("CLOUDFLARE_ZONE_ID").map_err(|_| "CLOUDFLARE_ZONE_ID not set".to_string())?;
-    Ok(CloudflareCreds { api_token, account_id, zone_id })
+    let account_id = std::env::var("CLOUDFLARE_ACCOUNT_ID")
+        .map_err(|_| "CLOUDFLARE_ACCOUNT_ID not set".to_string())?;
+    let zone_id = std::env::var("CLOUDFLARE_ZONE_ID")
+        .map_err(|_| "CLOUDFLARE_ZONE_ID not set".to_string())?;
+    Ok(CloudflareCreds {
+        api_token,
+        account_id,
+        zone_id,
+    })
 }
 
 fn prompt(label: &str) -> Result<String, String> {
@@ -84,7 +130,7 @@ fn prompt(label: &str) -> Result<String, String> {
     let mut s = String::new();
     std::io::stdin()
         .read_line(&mut s)
-        .map_err(|e| format!("failed to read input: {}", e))?;
+        .map_err(|e| format!("failed to read input: {e}"))?;
     Ok(s.trim().to_string())
 }
 
@@ -123,9 +169,17 @@ pub fn setup_cf_creds_interactive(config_dir: &Path) -> Result<(), String> {
     );
     eprintln!();
 
-    let domain = prompt("  Your domain (e.g. example.com): ")?.to_lowercase();
+    let domain =
+        prompt("  your domain (press enter to skip, local network only): ")?.to_lowercase();
     if domain.is_empty() {
-        return Err("no domain entered".into());
+        decline_tunnel(config_dir)?;
+        eprintln!();
+        eprintln!(
+            "  no public URL yet. your agent works on this machine and your LAN. \
+             run `vestad connect` anytime to add one."
+        );
+        eprintln!();
+        return Ok(());
     }
     let api_token = prompt("  Cloudflare API token: ")?;
     if api_token.is_empty() {
@@ -133,17 +187,16 @@ pub fn setup_cf_creds_interactive(config_dir: &Path) -> Result<(), String> {
     }
 
     eprintln!("  verifying token and looking up zone…");
-    let zones_url = format!("{}/zones?name={}", CF_API_BASE, domain);
+    let zones_url = format!("{CF_API_BASE}/zones?name={domain}");
     let resp = cf_request("GET", &zones_url, &api_token, None)
-        .map_err(|e| format!("could not verify token / find zone: {}", e))?;
+        .map_err(|e| format!("could not verify token / find zone: {e}"))?;
     let zone = resp["result"]
         .as_array()
         .and_then(|a| a.first())
         .ok_or_else(|| {
             format!(
-                "no Cloudflare zone found for '{}'. Add the domain to your Cloudflare \
-                 account first, and make sure the token can read it.",
-                domain
+                "no Cloudflare zone found for '{domain}'. Add the domain to your Cloudflare \
+                 account first, and make sure the token can read it."
             )
         })?;
     let zone_id = zone["id"]
@@ -157,9 +210,14 @@ pub fn setup_cf_creds_interactive(config_dir: &Path) -> Result<(), String> {
 
     save_cf_creds(
         config_dir,
-        &CloudflareCreds { api_token, account_id, zone_id },
+        &CloudflareCreds {
+            api_token,
+            account_id,
+            zone_id,
+        },
     )?;
-    eprintln!("  \x1b[32m✓\x1b[0m connected to {}", domain);
+    clear_declined_tunnel(config_dir);
+    eprintln!("  \x1b[32m✓\x1b[0m connected to {domain}");
     eprintln!();
     Ok(())
 }
@@ -172,26 +230,32 @@ fn cf_request(
 ) -> Result<serde_json::Value, String> {
     let mut cmd = std::process::Command::new("curl");
     cmd.args(["-sS", "-X", method, url])
-        .arg("-H").arg(format!("Authorization: Bearer {}", api_token))
-        .arg("-H").arg("Content-Type: application/json");
+        .arg("--connect-timeout")
+        .arg(CF_API_CONNECT_TIMEOUT_SECS.to_string())
+        .arg("--max-time")
+        .arg(CF_API_MAX_TIME_SECS.to_string())
+        .arg("-H")
+        .arg(format!("Authorization: Bearer {api_token}"))
+        .arg("-H")
+        .arg("Content-Type: application/json");
 
     if let Some(b) = body {
         cmd.arg("-d").arg(b.to_string());
     }
 
-    let output = cmd.output().map_err(|e| format!("curl failed: {}", e))?;
+    let output = cmd.output().map_err(|e| format!("curl failed: {e}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("cloudflare API request failed: {}", stderr));
+        return Err(format!("cloudflare API request failed: {stderr}"));
     }
 
     let resp: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .map_err(|e| format!("failed to parse cloudflare response: {}", e))?;
+        .map_err(|e| format!("failed to parse cloudflare response: {e}"))?;
 
     if resp["success"].as_bool() != Some(true) {
         let errors = &resp["errors"];
-        return Err(format!("cloudflare API error: {}", errors));
+        return Err(format!("cloudflare API error: {errors}"));
     }
 
     Ok(resp)
@@ -202,7 +266,7 @@ fn get_zone_domain(env: &CloudflareCreds) -> Result<String, String> {
     let resp = cf_request("GET", &url, &env.api_token, None)?;
     resp["result"]["name"]
         .as_str()
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .ok_or_else(|| "failed to get domain name from zone".to_string())
 }
 
@@ -211,15 +275,17 @@ fn delete_tunnel_if_exists(env: &CloudflareCreds, tunnel_name: &str) {
         "{}/accounts/{}/cfd_tunnel?name={}",
         CF_API_BASE, env.account_id, tunnel_name
     );
-    let resp = match cf_request("GET", &list_url, &env.api_token, None) {
-        Ok(r) => r,
-        Err(_) => return,
+    let Ok(resp) = cf_request("GET", &list_url, &env.api_token, None) else {
+        return;
     };
     if let Some(tunnels) = resp["result"].as_array() {
         for tunnel in tunnels {
             if tunnel["deleted_at"].is_null() {
                 if let Some(id) = tunnel["id"].as_str() {
-                    let del_url = format!("{}/accounts/{}/cfd_tunnel/{}", CF_API_BASE, env.account_id, id);
+                    let del_url = format!(
+                        "{}/accounts/{}/cfd_tunnel/{}",
+                        CF_API_BASE, env.account_id, id
+                    );
                     tracing::info!(tunnel_id = %id, "deleting stale tunnel");
                     cf_request("DELETE", &del_url, &env.api_token, None).ok();
                 }
@@ -229,18 +295,16 @@ fn delete_tunnel_if_exists(env: &CloudflareCreds, tunnel_name: &str) {
 }
 
 fn delete_dns_record_if_exists(env: &CloudflareCreds, subdomain: &str) {
-    let domain = match get_zone_domain(env) {
-        Ok(d) => d,
-        Err(_) => return,
+    let Ok(domain) = get_zone_domain(env) else {
+        return;
     };
-    let fqdn = format!("{}.{}", subdomain, domain);
+    let fqdn = format!("{subdomain}.{domain}");
     let list_url = format!(
         "{}/zones/{}/dns_records?type=CNAME&name={}",
         CF_API_BASE, env.zone_id, fqdn
     );
-    let resp = match cf_request("GET", &list_url, &env.api_token, None) {
-        Ok(r) => r,
-        Err(_) => return,
+    let Ok(resp) = cf_request("GET", &list_url, &env.api_token, None) else {
+        return;
     };
     if let Some(records) = resp["result"].as_array() {
         for record in records {
@@ -263,56 +327,150 @@ pub fn get_tunnel_config(config_dir: &Path) -> Option<TunnelConfig> {
     serde_json::from_str(&data).ok()
 }
 
-/// Drop the saved tunnel config WITHOUT touching Cloudflare. Used when the box
-/// can't manage the remote tunnel (no creds — e.g. an orphaned `*.vesta.run`
-/// tunnel left behind on a now-self-hosted box) so future boots stop retrying a
-/// tunnel that can never register.
-pub fn forget_tunnel(config_dir: &Path) {
-    std::fs::remove_file(tunnel_config_path(config_dir)).ok();
-}
-
 const ANIMALS: &[&str] = &[
-    "alpaca", "badger", "beaver", "bison", "bobcat", "camel", "capybara", "cardinal",
-    "caribou", "chameleon", "cheetah", "chinchilla", "chipmunk", "cobra", "condor",
-    "cougar", "coyote", "crane", "cricket", "crow", "dingo", "dolphin", "donkey",
-    "eagle", "egret", "elk", "falcon", "ferret", "finch", "flamingo", "fox",
-    "gazelle", "gecko", "gopher", "grizzly", "grouse", "gull", "hamster", "hawk",
-    "hedgehog", "heron", "hornet", "hyena", "ibex", "iguana", "impala", "jackal",
-    "jaguar", "jay", "kestrel", "kingfisher", "kiwi", "koala", "komodo", "lark",
-    "lemur", "leopard", "lion", "llama", "lobster", "lynx", "macaw", "mamba",
-    "manatee", "mantis", "marmot", "marten", "merlin", "mink", "mongoose", "moose",
-    "narwhal", "newt", "ocelot", "okapi", "opossum", "osprey", "otter", "owl",
-    "panda", "panther", "parrot", "pelican", "penguin", "phoenix", "pika", "piranha",
-    "puma", "python", "quail", "raven", "robin", "salmon", "scorpion", "shark",
-    "shrike", "sparrow", "squid", "stork", "swift", "tapir", "tern", "tiger",
-    "toucan", "turtle", "viper", "vulture", "walrus", "weasel", "whale", "wolf",
-    "wolverine", "wombat", "wren", "yak", "zebra",
+    "alpaca",
+    "badger",
+    "beaver",
+    "bison",
+    "bobcat",
+    "camel",
+    "capybara",
+    "cardinal",
+    "caribou",
+    "chameleon",
+    "cheetah",
+    "chinchilla",
+    "chipmunk",
+    "cobra",
+    "condor",
+    "cougar",
+    "coyote",
+    "crane",
+    "cricket",
+    "crow",
+    "dingo",
+    "dolphin",
+    "donkey",
+    "eagle",
+    "egret",
+    "elk",
+    "falcon",
+    "ferret",
+    "finch",
+    "flamingo",
+    "fox",
+    "gazelle",
+    "gecko",
+    "gopher",
+    "grizzly",
+    "grouse",
+    "gull",
+    "hamster",
+    "hawk",
+    "hedgehog",
+    "heron",
+    "hornet",
+    "hyena",
+    "ibex",
+    "iguana",
+    "impala",
+    "jackal",
+    "jaguar",
+    "jay",
+    "kestrel",
+    "kingfisher",
+    "kiwi",
+    "koala",
+    "komodo",
+    "lark",
+    "lemur",
+    "leopard",
+    "lion",
+    "llama",
+    "lobster",
+    "lynx",
+    "macaw",
+    "mamba",
+    "manatee",
+    "mantis",
+    "marmot",
+    "marten",
+    "merlin",
+    "mink",
+    "mongoose",
+    "moose",
+    "narwhal",
+    "newt",
+    "ocelot",
+    "okapi",
+    "opossum",
+    "osprey",
+    "otter",
+    "owl",
+    "panda",
+    "panther",
+    "parrot",
+    "pelican",
+    "penguin",
+    "phoenix",
+    "pika",
+    "piranha",
+    "puma",
+    "python",
+    "quail",
+    "raven",
+    "robin",
+    "salmon",
+    "scorpion",
+    "shark",
+    "shrike",
+    "sparrow",
+    "squid",
+    "stork",
+    "swift",
+    "tapir",
+    "tern",
+    "tiger",
+    "toucan",
+    "turtle",
+    "viper",
+    "vulture",
+    "walrus",
+    "weasel",
+    "whale",
+    "wolf",
+    "wolverine",
+    "wombat",
+    "wren",
+    "yak",
+    "zebra",
 ];
 
 fn animal_for_user(username: &str, offset: usize) -> &'static str {
     let mut hash: u64 = 5381;
     for byte in username.bytes() {
-        hash = hash.wrapping_mul(33).wrapping_add(byte as u64);
+        hash = hash.wrapping_mul(33).wrapping_add(u64::from(byte));
     }
-    ANIMALS[(hash as usize + offset) % ANIMALS.len()]
-}
-
-fn current_user() -> String {
-    std::env::var("USER")
-        .or_else(|_| std::env::var("LOGNAME"))
-        .unwrap_or_else(|_| "unknown".into())
+    let base = usize::try_from(hash % ANIMALS.len() as u64).expect("modulo keeps index below ANIMALS.len()");
+    ANIMALS[(base + offset) % ANIMALS.len()]
 }
 
 /// Sanitize a string to only contain lowercase alphanumeric characters and hyphens.
 fn sanitize(s: &str) -> String {
-    let cleaned: String = s.to_lowercase().replace(|c: char| !c.is_alphanumeric(), "-");
+    let cleaned: String = s
+        .to_lowercase()
+        .replace(|c: char| !c.is_alphanumeric(), "-");
     cleaned.trim_matches('-').to_string()
 }
 
 fn generate_subdomain(offset: usize) -> String {
-    let animal = animal_for_user(&current_user(), offset);
+    let animal = animal_for_user(&crate::paths::current_user(), offset);
     let hostname = sanitize(&gethostname());
-    let short = if hostname.len() > 20 { &hostname[..20] } else { &hostname };
+    let short = if hostname.len() > 20 {
+        &hostname[..20]
+    } else {
+        &hostname
+    };
     format!("{}-{}", animal, short.trim_end_matches('-'))
 }
 
@@ -321,7 +479,11 @@ fn gethostname() -> String {
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_default();
-    if output.is_empty() { "vesta".to_string() } else { output }
+    if output.is_empty() {
+        "vesta".to_string()
+    } else {
+        output
+    }
 }
 
 /// Full self-host connect flow (`vestad connect`): collect the user's own
@@ -335,6 +497,15 @@ pub fn connect_interactive(config_dir: &Path) -> Result<TunnelConfig, String> {
     ensure_tunnel(config_dir)
 }
 
+/// The subdomain this box wants: `VESTA_SUBDOMAIN` when set, else <animal>-<hostname>.
+fn preferred_subdomain() -> String {
+    std::env::var("VESTA_SUBDOMAIN")
+        .ok()
+        .map(|s| sanitize(&s))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| generate_subdomain(0))
+}
+
 pub fn ensure_tunnel(config_dir: &Path) -> Result<TunnelConfig, String> {
     // Managed (vesta.run) VMs: the control plane creates the tunnel + DNS and
     // SEEDS tunnel.json into the config dir. vestad holds no Cloudflare account
@@ -343,19 +514,14 @@ pub fn ensure_tunnel(config_dir: &Path) -> Result<TunnelConfig, String> {
     // fleet-wide token: a managed box can run its one tunnel but cannot touch the
     // zone or any other tunnel.
     if crate::is_cloud_managed() {
-        return get_tunnel_config(config_dir).ok_or_else(|| {
-            "managed mode: no tunnel.json seeded by the control plane".to_string()
-        });
+        return get_tunnel_config(config_dir)
+            .ok_or_else(|| "managed mode: no tunnel.json seeded by the control plane".to_string());
     }
 
     // Self-hosted deployments pin an exact subdomain via VESTA_SUBDOMAIN only when
     // set; otherwise keep the generated <animal>-<hostname>. Creation uses the
     // BYOK creds in cloudflare.json (see cf_env / setup_cf_creds_interactive).
-    let preferred = std::env::var("VESTA_SUBDOMAIN")
-        .ok()
-        .map(|s| sanitize(&s))
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| generate_subdomain(0));
+    let preferred = preferred_subdomain();
 
     // Reuse existing tunnel if it matches our preferred subdomain
     if let Some(tc) = get_tunnel_config(config_dir) {
@@ -364,10 +530,9 @@ pub fn ensure_tunnel(config_dir: &Path) -> Result<TunnelConfig, String> {
             return Ok(tc);
         }
         tracing::info!(old = %current, new = %preferred, "tunnel subdomain changed, recreating");
-        if let Err(e) = destroy_tunnel(config_dir) {
-            tracing::warn!("failed to destroy old tunnel: {e}");
-            std::fs::remove_file(tunnel_config_path(config_dir)).ok();
-        }
+        destroy_tunnel(config_dir).map_err(|e| {
+            format!("could not destroy the old tunnel to recreate it (keeping the saved config): {e}")
+        })?;
     }
 
     // setup_tunnel calls delete_tunnel_if_exists, so stale tunnels with our
@@ -377,36 +542,59 @@ pub fn ensure_tunnel(config_dir: &Path) -> Result<TunnelConfig, String> {
     setup_tunnel(config_dir, &preferred)
 }
 
+/// Supervisor establish: converge tunnel.json without ever rewriting an
+/// existing config. An existing config is authoritative here, whatever its
+/// subdomain (reconciling a changed subdomain belongs to `vestad connect`
+/// and the boot converge); a tunnel the user declined or destroyed stays
+/// down; everything else (managed seed wait, BYOK creation) delegates to
+/// `ensure_tunnel`.
+fn establish_tunnel(config_dir: &Path) -> Result<TunnelConfig, String> {
+    if let Some(saved) = get_tunnel_config(config_dir) {
+        return Ok(saved);
+    }
+    if has_declined_tunnel(config_dir) {
+        return Err("tunnel declined by the user: run `vestad connect` to enable one".to_string());
+    }
+    ensure_tunnel(config_dir)
+}
 
 pub fn setup_tunnel(config_dir: &Path, subdomain: &str) -> Result<TunnelConfig, String> {
     let env = cf_env(config_dir)?;
     let domain = get_zone_domain(&env)?;
-    let hostname = format!("{}.{}", subdomain, domain);
-    let tunnel_name = format!("vesta-{}", subdomain);
+    let hostname = format!("{subdomain}.{domain}");
+    let tunnel_name = format!("vesta-{subdomain}");
 
     tracing::info!(tunnel = %tunnel_name, "creating tunnel");
 
     delete_tunnel_if_exists(&env, &tunnel_name);
 
     let create_url = format!("{}/accounts/{}/cfd_tunnel", CF_API_BASE, env.account_id);
-    let tunnel_secret: String = (0..32).map(|_| format!("{:02x}", rand::random::<u8>())).collect();
+    let tunnel_secret = hex::encode(rand::random::<[u8; 32]>());
     let secret_b64 = {
         use base64::Engine;
         base64::engine::general_purpose::STANDARD.encode(tunnel_secret.as_bytes())
     };
 
-    let resp = cf_request("POST", &create_url, &env.api_token, Some(serde_json::json!({
-        "name": tunnel_name,
-        "tunnel_secret": secret_b64,
-        "config_src": "local",
-    })))?;
+    let resp = cf_request(
+        "POST",
+        &create_url,
+        &env.api_token,
+        Some(serde_json::json!({
+            "name": tunnel_name,
+            "tunnel_secret": secret_b64,
+            "config_src": "local",
+        })),
+    )?;
 
     let tunnel_id = resp["result"]["id"]
         .as_str()
         .ok_or("missing tunnel id in response")?
         .to_string();
 
-    let token_url = format!("{}/accounts/{}/cfd_tunnel/{}/token", CF_API_BASE, env.account_id, tunnel_id);
+    let token_url = format!(
+        "{}/accounts/{}/cfd_tunnel/{}/token",
+        CF_API_BASE, env.account_id, tunnel_id
+    );
     let token_resp = cf_request("GET", &token_url, &env.api_token, None)?;
     let tunnel_token = token_resp["result"]
         .as_str()
@@ -418,16 +606,19 @@ pub fn setup_tunnel(config_dir: &Path, subdomain: &str) -> Result<TunnelConfig, 
     delete_dns_record_if_exists(&env, subdomain);
 
     let dns_url = format!("{}/zones/{}/dns_records", CF_API_BASE, env.zone_id);
-    let dns_resp = cf_request("POST", &dns_url, &env.api_token, Some(serde_json::json!({
-        "type": "CNAME",
-        "name": subdomain,
-        "content": format!("{}.cfargotunnel.com", tunnel_id),
-        "proxied": true,
-    })))?;
+    let dns_resp = cf_request(
+        "POST",
+        &dns_url,
+        &env.api_token,
+        Some(serde_json::json!({
+            "type": "CNAME",
+            "name": subdomain,
+            "content": format!("{}.cfargotunnel.com", tunnel_id),
+            "proxied": true,
+        })),
+    )?;
 
-    let dns_record_id = dns_resp["result"]["id"]
-        .as_str()
-        .map(|s| s.to_string());
+    let dns_record_id = dns_resp["result"]["id"].as_str().map(std::string::ToString::to_string);
 
     let config = TunnelConfig {
         tunnel_id,
@@ -436,21 +627,27 @@ pub fn setup_tunnel(config_dir: &Path, subdomain: &str) -> Result<TunnelConfig, 
         dns_record_id,
     };
 
-    write_secret_file(&tunnel_config_path(config_dir), &serde_json::to_string_pretty(&config).unwrap(), "tunnel config")?;
+    write_secret_file(
+        &tunnel_config_path(config_dir),
+        &serde_json::to_string_pretty(&config).expect("tunnel config serializes to json"),
+        "tunnel config",
+    )?;
 
     tracing::info!(hostname = %hostname, "tunnel ready");
     Ok(config)
 }
 
 pub fn destroy_tunnel(config_dir: &Path) -> Result<(), String> {
-    let config = get_tunnel_config(config_dir)
-        .ok_or("no tunnel configured")?;
+    let config = get_tunnel_config(config_dir).ok_or("no tunnel configured")?;
 
     let env = cf_env(config_dir)?;
 
     if let Some(record_id) = &config.dns_record_id {
         tracing::info!("deleting DNS record");
-        let dns_url = format!("{}/zones/{}/dns_records/{}", CF_API_BASE, env.zone_id, record_id);
+        let dns_url = format!(
+            "{}/zones/{}/dns_records/{}",
+            CF_API_BASE, env.zone_id, record_id
+        );
         cf_request("DELETE", &dns_url, &env.api_token, None).ok();
     }
 
@@ -460,7 +657,7 @@ pub fn destroy_tunnel(config_dir: &Path) -> Result<(), String> {
         CF_API_BASE, env.account_id, config.tunnel_id
     );
     cf_request("DELETE", &tunnel_url, &env.api_token, None)
-        .map_err(|e| format!("failed to delete tunnel: {}", e))?;
+        .map_err(|e| format!("failed to delete tunnel: {e}"))?;
 
     std::fs::remove_file(tunnel_config_path(config_dir)).ok();
     tracing::info!("tunnel destroyed");
@@ -468,16 +665,16 @@ pub fn destroy_tunnel(config_dir: &Path) -> Result<(), String> {
 }
 
 pub fn ensure_cloudflared(config_dir: &Path) -> Result<PathBuf, String> {
-    if let Ok(path) = which("cloudflared") {
+    if let Some(path) = crate::vendored_bin::which("cloudflared") {
         return Ok(path);
     }
 
-    let local_bin = config_dir.join("cloudflared");
-
-    if let Some((bytes, fingerprint)) = crate::cloudflared_embed::vendored_cloudflared() {
-        return extract_embedded_cloudflared(config_dir, bytes, fingerprint);
+    if let Some((bytes, fingerprint)) = crate::vendored_bin::vendored_cloudflared() {
+        return crate::vendored_bin::extract_embedded(config_dir, "cloudflared", bytes, fingerprint)
+            .map_err(|e| e.to_string());
     }
 
+    let local_bin = config_dir.join("cloudflared");
     if local_bin.exists() {
         return Ok(local_bin);
     }
@@ -485,66 +682,39 @@ pub fn ensure_cloudflared(config_dir: &Path) -> Result<PathBuf, String> {
     let arch = match std::env::consts::ARCH {
         "x86_64" => "amd64",
         "aarch64" => "arm64",
-        other => return Err(format!("unsupported architecture for cloudflared: {}", other)),
+        other => {
+            return Err(format!(
+                "unsupported architecture for cloudflared: {other}"
+            ))
+        }
     };
 
-    let url = format!("{}/cloudflared-linux-{}", CLOUDFLARED_DOWNLOAD_BASE, arch);
+    let url = format!("{CLOUDFLARED_DOWNLOAD_BASE}/cloudflared-linux-{arch}");
     tracing::info!(url = %url, "downloading cloudflared");
 
     std::fs::create_dir_all(config_dir)
-        .map_err(|e| format!("failed to create config dir: {}", e))?;
+        .map_err(|e| format!("failed to create config dir: {e}"))?;
 
     let status = std::process::Command::new("curl")
-        .args(["-fsSL", "-o", local_bin.to_str().unwrap(), &url])
+        .args(["-fsSL", "-o"])
+        .arg(&local_bin)
+        .arg(&url)
         .status()
-        .map_err(|e| format!("curl failed: {}", e))?;
+        .map_err(|e| format!("curl failed: {e}"))?;
 
     if !status.success() {
         return Err("failed to download cloudflared".to_string());
     }
 
-    set_executable(&local_bin)?;
+    crate::vendored_bin::set_executable(&local_bin).map_err(|e| e.to_string())?;
 
     tracing::info!(path = %local_bin.display(), "cloudflared downloaded");
     Ok(local_bin)
 }
 
-const CLOUDFLARED_FINGERPRINT_MARKER: &str = ".cloudflared-fingerprint";
-
-fn extract_embedded_cloudflared(
-    config_dir: &Path,
-    bytes: &[u8],
-    fingerprint: &str,
-) -> Result<PathBuf, String> {
-    let local_bin = config_dir.join("cloudflared");
-    let marker = config_dir.join(CLOUDFLARED_FINGERPRINT_MARKER);
-    if local_bin.exists()
-        && std::fs::read_to_string(&marker).ok().as_deref() == Some(fingerprint)
-    {
-        return Ok(local_bin);
-    }
-
-    std::fs::create_dir_all(config_dir)
-        .map_err(|e| format!("failed to create config dir: {}", e))?;
-    std::fs::write(&local_bin, bytes)
-        .map_err(|e| format!("failed to write embedded cloudflared: {}", e))?;
-    set_executable(&local_bin)?;
-    std::fs::write(&marker, fingerprint)
-        .map_err(|e| format!("failed to write cloudflared fingerprint: {}", e))?;
-
-    tracing::info!(path = %local_bin.display(), "cloudflared extracted from embed");
-    Ok(local_bin)
-}
-
-fn set_executable(path: &Path) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
-        .map_err(|e| format!("chmod failed: {}", e))
-}
-
 /// Spawn one cloudflared run for the configured tunnel. Returns the child and
 /// the loopback port of its metrics server (for /ready probing).
-async fn start_tunnel(
+fn start_tunnel(
     config_dir: &Path,
     port: u16,
 ) -> Result<(tokio::process::Child, u16), String> {
@@ -567,7 +737,7 @@ async fn start_tunnel(
         port = port,
     );
     std::fs::write(&cf_config_path, &cf_config)
-        .map_err(|e| format!("failed to write cloudflared config: {}", e))?;
+        .map_err(|e| format!("failed to write cloudflared config: {e}"))?;
 
     // Loopback metrics server: exposes cloudflared's /ready endpoint, which the
     // supervisor probes for registered edge connections. Bind-and-drop to pick a
@@ -582,10 +752,20 @@ async fn start_tunnel(
     // share after an idle period). TCP keeps the connection alive far longer.
     let mut child = tokio::process::Command::new(cloudflared)
         .args([
-            "tunnel", "--protocol", "http2", "--metrics", &metrics_addr,
-            "--config", cf_config_path.to_str().unwrap(),
-            "run", "--token", &tc.tunnel_token,
+            "tunnel",
+            "--protocol",
+            "http2",
+            // The supervisor reports connectivity changes and recovery itself.
+            // cloudflared's info stream repeats per-connection lifecycle details
+            // and overwhelms `vestad logs`; retain only actionable diagnostics.
+            "--loglevel",
+            "warn",
+            "--metrics",
+            &metrics_addr,
+            "--config",
         ])
+        .arg(&cf_config_path)
+        .args(["run", "--token", &tc.tunnel_token])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
         // SIGKILL the child if its handle is dropped without an explicit kill
@@ -593,12 +773,10 @@ async fn start_tunnel(
         // is never orphaned holding the hostname.
         .kill_on_drop(true)
         .spawn()
-        .map_err(|e| format!("failed to start cloudflared: {}", e))?;
+        .map_err(|e| format!("failed to start cloudflared: {e}"))?;
 
-    // cloudflared logs its connection lifecycle (registering/registered/lost connections)
-    // to stderr. Forward it into vestad's tracing so `vestad logs` shows tunnel state —
-    // otherwise a reconnecting tunnel looks like silence and a transient 502 has no trail.
-    // This also drains the piped stderr, which would otherwise fill and stall cloudflared.
+    // Forward cloudflared's remaining warnings/errors into vestad's tracing. This
+    // also drains the piped stderr, which would otherwise fill and stall it.
     if let Some(stderr) = child.stderr.take() {
         tokio::spawn(async move {
             use tokio::io::AsyncBufReadExt;
@@ -606,7 +784,12 @@ async fn start_tunnel(
             while let Ok(Some(line)) = lines.next_line().await {
                 let line = line.trim();
                 if !line.is_empty() {
-                    tracing::info!(target: "tunnel", "{line}");
+                    let (message, is_error) = clean_cloudflared_log(line);
+                    if is_error {
+                        tracing::error!(target: "tunnel", "{message}");
+                    } else {
+                        tracing::warn!(target: "tunnel", "{message}");
+                    }
                 }
             }
         });
@@ -615,97 +798,70 @@ async fn start_tunnel(
     Ok((child, metrics_port))
 }
 
+/// cloudflared output varies between plain and JSON across builds. Keep the human
+/// message and error detail, and discard connector ids and other metadata when
+/// structured output is available.
+fn clean_cloudflared_log(line: &str) -> (String, bool) {
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
+        let level = value["level"].as_str().unwrap_or("warn");
+        let is_error = matches!(level, "error" | "fatal" | "panic");
+        let mut message = value["message"].as_str().unwrap_or(line).to_string();
+        if let Some(error) = value["error"].as_str() {
+            if !error.is_empty() && !message.contains(error) {
+                message.push_str(": ");
+                message.push_str(error);
+            }
+        }
+        return (message, is_error);
+    }
+
+    let first = line.split_whitespace().next().unwrap_or("");
+    let rest = line.strip_prefix(first).unwrap_or(line).trim_start();
+    let level = rest.split_whitespace().next().unwrap_or("");
+    let normalized_level = level.trim_matches(|c: char| !c.is_ascii_alphabetic());
+    let is_cloudflared_level = matches!(
+        normalized_level,
+        "INF" | "WRN" | "ERR" | "FTL" | "INFO" | "WARN" | "ERROR" | "FATAL"
+    );
+    let is_error = matches!(normalized_level, "ERR" | "FTL" | "ERROR" | "FATAL");
+    let message = if is_cloudflared_level {
+        rest.strip_prefix(level).unwrap_or(rest).trim_start()
+    } else {
+        line
+    };
+    (message.to_string(), is_error)
+}
+
 /// Bind-and-drop an ephemeral loopback port for cloudflared's metrics server.
 fn alloc_loopback_port() -> Result<u16, String> {
     let listener = std::net::TcpListener::bind(("127.0.0.1", 0))
-        .map_err(|e| format!("failed to allocate metrics port: {}", e))?;
+        .map_err(|e| format!("failed to allocate metrics port: {e}"))?;
     let addr = listener
         .local_addr()
-        .map_err(|e| format!("failed to read metrics port: {}", e))?;
+        .map_err(|e| format!("failed to read metrics port: {e}"))?;
     Ok(addr.port())
 }
 
-/// How long boot-time pre-flight waits for cloudflared to register an edge
-/// connection before declaring the saved tunnel dead. Generous enough to absorb
-/// a slow first connect, short enough not to stall startup.
-const PREFLIGHT_READY_TIMEOUT_SECS: u64 = 20;
-const PREFLIGHT_POLL_INTERVAL_MS: u64 = 500;
-
-/// Credential-free boot check that the saved tunnel can actually register.
-///
-/// Spawns one short-lived cloudflared and polls its /ready endpoint until it
-/// reports a registered edge connection, then kills it (the supervisor owns the
-/// long-lived child). Returns `false` if cloudflared exits early — e.g.
-/// "Unauthorized: Tunnel not found" when the tunnel was deleted server-side or
-/// its token revoked — or never registers within PREFLIGHT_READY_TIMEOUT_SECS.
-/// This relies only on cloudflared's local /ready, so it works on a box that
-/// holds no Cloudflare credentials and can't query the API.
-pub async fn preflight_tunnel(config_dir: &Path, port: u16) -> bool {
-    let (mut child, metrics_port) = match start_tunnel(config_dir, port).await {
-        Ok(pair) => pair,
-        Err(e) => {
-            tracing::warn!("tunnel pre-flight could not start cloudflared: {e}");
-            return false;
-        }
-    };
-    let probe_client = match reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(READY_PROBE_TIMEOUT_SECS))
-        .build()
-    {
-        Ok(client) => client,
-        Err(e) => {
-            tracing::warn!("tunnel pre-flight probe client unavailable: {e}");
-            child.kill().await.ok();
-            return false;
-        }
-    };
-    let probe_url = format!("http://127.0.0.1:{metrics_port}/ready");
-    let deadline =
-        tokio::time::Instant::now() + std::time::Duration::from_secs(PREFLIGHT_READY_TIMEOUT_SECS);
-    let ready = loop {
-        // cloudflared gave up on its own (dead tunnel / revoked token).
-        if matches!(child.try_wait(), Ok(Some(_))) {
-            break false;
-        }
-        let registered = match probe_client.get(&probe_url).send().await {
-            Ok(resp) => resp.status().is_success(),
-            Err(_) => false,
-        };
-        if registered {
-            break true;
-        }
-        if tokio::time::Instant::now() >= deadline {
-            break false;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(PREFLIGHT_POLL_INTERVAL_MS)).await;
-    };
-    child.kill().await.ok();
-    ready
-}
-
 // --- Tunnel supervision ---
-//
-// cloudflared is the one long-running child vestad owns, and a dead tunnel is
-// invisible from the inside: vestad stays healthy, systemd sees nothing wrong,
-// and every request to the hostname gets Cloudflare error 1033 until someone
-// restarts vestad by hand. Two failure modes, two layers:
-//   - the process exits (crash, OOM, fatal give-up) -> respawn after a fixed delay
-//   - the process wedges with its edge connections dead -> cloudflared's own
-//     /ready endpoint (loopback metrics port) reports no registered connection;
-//     after consecutive failures the child is killed and respawned.
-// The probe is deliberately LOCAL. Probing the public hostname through the
-// Cloudflare edge would conflate probe-path failures (host DNS/egress, an edge
-// incident) with a wedged connector and kill a healthy tunnel — dropping every
-// live session through it. /ready measures exactly the thing a restart fixes.
-// Config-level death (tunnel deleted server-side, token revoked) is NOT
-// self-healed here: cloudflared exits with the reason, which lands in
-// `vestad logs` via the stderr forwarder; recovery is `vestad connect`.
+// cloudflared is the one long-running child vestad owns, and a dead tunnel is invisible
+// from the inside, so two layers heal it: a process exit respawns after a backoff delay,
+// and a wedged process is caught by probing cloudflared's own LOCAL /ready endpoint (a
+// public-hostname probe would conflate host DNS/egress or edge incidents with a wedged
+// connector and kill a healthy tunnel). The supervisor converges tunnel.json before each
+// run (establish_tunnel), recreates a sustained-dead tunnel from BYOK creds
+// (repair_tunnel), and never deletes tunnel.json: only explicit user action does.
 
-/// Delay between cloudflared respawns. Fixed rather than exponential: the one
-/// child vestad owns rarely dies, and a constant delay recovers promptly
-/// without the backoff/healthy-reset bookkeeping. Permanent failure (a revoked
-/// token) loops at this cadence with cloudflared's reason in `vestad logs`.
-const TUNNEL_RESPAWN_DELAY_SECS: u64 = 15;
+/// Respawn backoff. A respawn whose run reconnects to the edge (a transient blip
+/// on a working tunnel) resets to BASE for prompt recovery; a run that never
+/// registers (revoked token, deleted tunnel, resolver still down) doubles the
+/// delay up to MAX, so a permanently-failing tunnel settles into a slow retry
+/// instead of churning cloudflared every BASE seconds forever. Either way it
+/// keeps retrying, so a transient outage of any length still recovers on its own.
+const TUNNEL_RESPAWN_BASE_DELAY_SECS: u64 = 15;
+/// Capped at the sustained-down window (`TUNNEL_DOWN_SUSTAINED_SECS)`: never wait
+/// longer to retry than we wait to declare the tunnel down, so recovery after a
+/// long outage lags by at most one down-window rather than several minutes more.
+const TUNNEL_RESPAWN_MAX_DELAY_SECS: u64 = 120;
 const READY_PROBE_INTERVAL_SECS: u64 = 30;
 const READY_PROBE_TIMEOUT_SECS: u64 = 5;
 /// Consecutive failed /ready probes before cloudflared is restarted.
@@ -714,6 +870,11 @@ const READY_PROBE_MAX_FAILURES: u32 = 3;
 /// down to status.json. Longer than a normal restart-recovery cycle, so transient
 /// blips the supervisor heals on its own keep the status showing "enabled".
 const TUNNEL_DOWN_SUSTAINED_SECS: u64 = 120;
+/// How long shutdown waits for the supervisor task before aborting it. The
+/// task can be inside a blocking Cloudflare API sequence (establish or
+/// repair); aborting is safe, cloudflared children are `kill_on_drop` and the
+/// curl at worst runs out its own --max-time detached.
+const TUNNEL_SHUTDOWN_MAX_WAIT_SECS: u64 = 10;
 
 pub struct TunnelSupervisor {
     shutdown: tokio::sync::watch::Sender<bool>,
@@ -721,22 +882,31 @@ pub struct TunnelSupervisor {
 }
 
 impl TunnelSupervisor {
-    /// Kill the current cloudflared and stop supervising (graceful shutdown).
+    /// Kill the current cloudflared and stop supervising (graceful shutdown,
+    /// bounded by `TUNNEL_SHUTDOWN_MAX_WAIT_SECS`).
     pub async fn shutdown(self) {
         self.shutdown.send(true).ok();
-        self.task.await.ok();
+        let mut task = self.task;
+        if tokio::time::timeout(
+            std::time::Duration::from_secs(TUNNEL_SHUTDOWN_MAX_WAIT_SECS),
+            &mut task,
+        )
+        .await
+        .is_err()
+        {
+            task.abort();
+        }
     }
 }
 
-/// Spawn cloudflared and keep it alive until `shutdown()`: respawn on exit or
-/// on a failed edge probe streak, after a fixed delay between attempts.
-///
-/// `on_tunnel_up(bool)` is invoked on SUSTAINED edge changes (debounced) so the
-/// caller can mirror tunnel health into status.json: `true` as soon as the tunnel
-/// re-registers, `false` only after it has been unregistered for
-/// `TUNNEL_DOWN_SUSTAINED_SECS` (so transient blips the supervisor heals don't
-/// flip status). Kept as a plain `Fn(bool)` to keep this module free of caller
-/// types.
+/// Spawn cloudflared and keep it alive until `shutdown()`: respawn on exit or on a
+/// failed edge probe streak, after a backoff delay between attempts (see
+/// `next_respawn_delay_secs`). `on_tunnel_up(bool)` is invoked on SUSTAINED edge
+/// changes (debounced) so the caller can mirror tunnel health into status.json:
+/// `true` when the tunnel registers (including the first registration after boot),
+/// `false` only after it has been unregistered for `TUNNEL_DOWN_SUSTAINED_SECS`, so
+/// transient blips the supervisor heals don't flip status. Kept as a plain
+/// `Fn(bool)` to keep this module free of caller types.
 pub fn supervise_tunnel(
     config_dir: PathBuf,
     port: u16,
@@ -757,56 +927,104 @@ pub fn supervise_tunnel(
                 None
             }
         };
-        // Edge state for status.json, carried across cloudflared restarts. The
-        // supervisor only runs once the tunnel was verified up, so we start
-        // "reported up" with `now` as the last registered time.
-        let mut reported_up = true;
+        // Edge state for status.json, carried across cloudflared restarts.
+        // Nothing is reported at spawn (boot shows "connecting…"), so the first
+        // registered probe reports up, and a boot that never registers reports
+        // down once the outage is sustained.
+        let mut reported: Option<bool> = None;
         let mut last_registered = tokio::time::Instant::now();
+        let mut respawn_delay_secs = TUNNEL_RESPAWN_BASE_DELAY_SECS;
+        // Latches once a repair (tunnel recreated from scratch) succeeds, so a
+        // sustained API-reachable/edge-unreachable incident doesn't recreate the
+        // tunnel + DNS every cycle; a run that registers clears it.
+        let mut repaired_since_registered = false;
         loop {
-            match start_tunnel(&config_dir, port).await {
+            // Establish before each run: an existing tunnel.json is used as-is
+            // (subdomain reconciliation is `vestad connect`'s job, never the
+            // supervisor's); a missing one is created from BYOK creds; a
+            // managed box keeps erroring here until the control plane seeds
+            // it. The Cloudflare API call goes through blocking curl, so it
+            // runs off the async runtime.
+            let ensure_dir = config_dir.clone();
+            let attempt = match tokio::task::spawn_blocking(move || establish_tunnel(&ensure_dir))
+                .await
+                .unwrap_or_else(|join_err| Err(format!("establish_tunnel task failed: {join_err}")))
+            {
+                Ok(_) => start_tunnel(&config_dir, port),
+                Err(e) => Err(e),
+            };
+            match attempt {
                 Ok((mut child, metrics_port)) => {
-                    let reason = tokio::select! {
+                    let (reason, registered) = tokio::select! {
                         _ = shutdown_rx.changed() => {
                             child.kill().await.ok();
                             return;
                         }
-                        reason = run_until_unhealthy(
+                        outcome = run_until_unhealthy(
                             &mut child,
                             probe_client.as_ref(),
                             metrics_port,
                             on_tunnel_up.as_ref(),
-                            &mut reported_up,
+                            &mut reported,
                             &mut last_registered,
-                        ) => reason,
+                        ) => outcome,
                     };
                     child.kill().await.ok();
-                    tracing::warn!(delay_secs = TUNNEL_RESPAWN_DELAY_SECS, "tunnel unhealthy ({reason}), restarting cloudflared");
+                    respawn_delay_secs = next_respawn_delay_secs(respawn_delay_secs, registered);
+                    tracing::warn!(
+                        delay_secs = respawn_delay_secs,
+                        "tunnel unhealthy ({reason}), restarting cloudflared"
+                    );
+                    if registered {
+                        repaired_since_registered = false;
+                    }
                 }
                 Err(e) => {
-                    tracing::warn!(delay_secs = TUNNEL_RESPAWN_DELAY_SECS, "tunnel start failed: {e}");
+                    // Establish or start never reached the edge, so this counts
+                    // as a run that did not register — back off.
+                    respawn_delay_secs = next_respawn_delay_secs(respawn_delay_secs, false);
+                    tracing::warn!(delay_secs = respawn_delay_secs, "tunnel not up: {e}");
                 }
+            }
+            // A cycle that ends without a registered edge (fast cloudflared
+            // exit, establish or start failure) never reaches a probe tick, so
+            // evaluate the sustained window here too; the report latches via
+            // `reported`, firing at most once per sustained outage.
+            report_sustained_edge(&mut reported, false, last_registered, on_tunnel_up.as_ref());
+            if should_attempt_repair(reported, has_cf_creds(&config_dir), repaired_since_registered)
+                && repair_tunnel(&config_dir).await
+            {
+                repaired_since_registered = true;
+                // A fresh tunnel deserves a prompt first run, not the grown
+                // failure backoff.
+                respawn_delay_secs = TUNNEL_RESPAWN_BASE_DELAY_SECS;
             }
             tokio::select! {
                 _ = shutdown_rx.changed() => return,
-                _ = tokio::time::sleep(std::time::Duration::from_secs(TUNNEL_RESPAWN_DELAY_SECS)) => {}
+                () = tokio::time::sleep(std::time::Duration::from_secs(respawn_delay_secs)) => {}
             }
         }
     });
-    TunnelSupervisor { shutdown: shutdown_tx, task }
+    TunnelSupervisor {
+        shutdown: shutdown_tx,
+        task,
+    }
 }
 
-/// Watch one cloudflared run; returns the reason it must be replaced (process
-/// exit, or /ready failing READY_PROBE_MAX_FAILURES times in a row). Drives the
-/// debounced `on_tunnel_up` edge callback via `reported_up`/`last_registered`,
-/// which persist across restarts.
+/// Watch one cloudflared run; returns `(reason it must be replaced, whether this
+/// run ever registered an edge connection)`. The reason is a process exit or
+/// /ready failing `READY_PROBE_MAX_FAILURES` times in a row; the `registered` flag
+/// drives the respawn backoff (a run that reconnected resets it, one that never
+/// did lets it grow). Drives the debounced `on_tunnel_up` edge callback via
+/// `reported`/`last_registered`, which persist across restarts.
 async fn run_until_unhealthy(
     child: &mut tokio::process::Child,
     probe_client: Option<&reqwest::Client>,
     metrics_port: u16,
     on_tunnel_up: &(dyn Fn(bool) + Send + Sync),
-    reported_up: &mut bool,
+    reported: &mut Option<bool>,
     last_registered: &mut tokio::time::Instant,
-) -> String {
+) -> (String, bool) {
     let probe_url = format!("http://127.0.0.1:{metrics_port}/ready");
     let probe_interval = std::time::Duration::from_secs(READY_PROBE_INTERVAL_SECS);
     // First probe only after a full interval, so cloudflared has time to register.
@@ -817,13 +1035,18 @@ async fn run_until_unhealthy(
     // reconnecting on its own.
     probe_ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut consecutive_failures = 0u32;
+    // Whether this run ever saw a registered edge connection. Feeds the respawn
+    // backoff: a run that reconnected is a transient blip (reset to base), one
+    // that never did is a persistent failure (let the delay grow).
+    let mut registered = false;
     loop {
         tokio::select! {
             status = child.wait() => {
-                return match status {
+                let reason = match status {
                     Ok(s) => format!("cloudflared exited: {s}"),
                     Err(e) => format!("cloudflared wait failed: {e}"),
                 };
+                return (reason, registered);
             }
             _ = probe_ticks.tick() => {
                 let Some(client) = probe_client else { continue };
@@ -832,35 +1055,38 @@ async fn run_until_unhealthy(
                     Ok(resp) => resp.status().is_success(),
                     Err(_) => false,
                 };
-                // Mirror health into status.json on sustained edges only: "up" the
-                // moment it re-registers, "down" only after a sustained outage.
                 if ok {
+                    registered = true;
                     *last_registered = tokio::time::Instant::now();
-                    if !*reported_up {
-                        on_tunnel_up(true);
-                        *reported_up = true;
-                    }
-                } else if *reported_up
-                    && last_registered.elapsed() >= std::time::Duration::from_secs(TUNNEL_DOWN_SUSTAINED_SECS)
-                {
-                    on_tunnel_up(false);
-                    *reported_up = false;
                 }
+                // Mirror health into status.json on sustained edges only: "up" the
+                // moment it registers, "down" only after a sustained outage.
+                report_sustained_edge(reported, ok, *last_registered, on_tunnel_up);
                 let (failures, restart) = record_probe(consecutive_failures, ok);
                 consecutive_failures = failures;
                 if !ok {
                     tracing::warn!(consecutive_failures, "tunnel ready probe failed (no registered edge connection)");
                 }
                 if restart {
-                    return format!("no ready edge connection for {consecutive_failures} consecutive probes");
+                    return (format!("no ready edge connection for {consecutive_failures} consecutive probes"), registered);
                 }
             }
         }
     }
 }
 
+/// Pure backoff accounting: after a run that registered an edge connection reset
+/// to base (recovery should be prompt), otherwise double up to the cap so a
+/// persistently-failing tunnel stops churning cloudflared every base delay.
+fn next_respawn_delay_secs(current: u64, registered: bool) -> u64 {
+    if registered {
+        return TUNNEL_RESPAWN_BASE_DELAY_SECS;
+    }
+    current.saturating_mul(2).min(TUNNEL_RESPAWN_MAX_DELAY_SECS)
+}
+
 /// Pure probe accounting: a success clears the failure streak; a failure
-/// extends it, demanding a restart at READY_PROBE_MAX_FAILURES.
+/// extends it, demanding a restart at `READY_PROBE_MAX_FAILURES`.
 fn record_probe(consecutive_failures: u32, ok: bool) -> (u32, bool) {
     if ok {
         return (0, false);
@@ -869,18 +1095,72 @@ fn record_probe(consecutive_failures: u32, ok: bool) -> (u32, bool) {
     (failures, failures >= READY_PROBE_MAX_FAILURES)
 }
 
-fn which(name: &str) -> Result<PathBuf, ()> {
-    let output = std::process::Command::new("which")
-        .arg(name)
-        .output()
-        .map_err(|_| ())?;
-    if output.status.success() {
-        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !path.is_empty() {
-            return Ok(PathBuf::from(path));
+/// Evaluate one health observation against the sustained-down window and report
+/// a debounced edge transition at most once (see `edge_report`), latching what
+/// was reported into `reported`.
+fn report_sustained_edge(
+    reported: &mut Option<bool>,
+    ok: bool,
+    last_registered: tokio::time::Instant,
+    on_tunnel_up: &(dyn Fn(bool) + Send + Sync),
+) {
+    let sustained_down =
+        last_registered.elapsed() >= std::time::Duration::from_secs(TUNNEL_DOWN_SUSTAINED_SECS);
+    if let Some(report) = edge_report(*reported, ok, sustained_down) {
+        on_tunnel_up(report);
+        *reported = Some(report);
+    }
+}
+
+/// Pure edge accounting for status.json: which sustained transition (if any) to
+/// report given what was last reported (`None` = nothing yet, at boot). Reports
+/// up on the first successful probe after boot or a reported outage; reports
+/// down once the edge has been unregistered for the sustained window.
+fn edge_report(reported: Option<bool>, ok: bool, sustained_down: bool) -> Option<bool> {
+    if ok && reported != Some(true) {
+        return Some(true);
+    }
+    if !ok && sustained_down && reported != Some(false) {
+        return Some(false);
+    }
+    None
+}
+
+/// Whether to recreate the tunnel from scratch: only once the outage is
+/// sustained enough to have been reported down (a pre-report failure is
+/// routinely transient: a boot-time resolver race, a brief edge blip), only
+/// with our own Cloudflare creds to rebuild with, and only once per
+/// down-period (a run that registers clears the latch).
+fn should_attempt_repair(reported: Option<bool>, has_creds: bool, repaired_since_registered: bool) -> bool {
+    reported == Some(false) && has_creds && !repaired_since_registered
+}
+
+/// Recreate the saved tunnel from scratch (same subdomain, fresh tunnel + token +
+/// DNS record) after a run that never registered. During a network outage the
+/// API call fails fast and changes nothing; with a live network and a revoked or
+/// deleted tunnel this restores it. Never deletes the saved config on failure.
+/// Returns true only on a successful recreate, so the caller can latch and stop
+/// repairing until a run registers again.
+async fn repair_tunnel(config_dir: &Path) -> bool {
+    let Some(saved) = get_tunnel_config(config_dir) else {
+        return false; // nothing saved yet; the establish step owns creation
+    };
+    let subdomain = saved.hostname.split('.').next().unwrap_or("").to_string();
+    let repair_dir = config_dir.to_path_buf();
+    match tokio::task::spawn_blocking(move || setup_tunnel(&repair_dir, &subdomain)).await {
+        Ok(Ok(fresh)) => {
+            tracing::info!(hostname = %fresh.hostname, "tunnel recreated after a run that never registered");
+            true
+        }
+        Ok(Err(e)) => {
+            tracing::warn!("tunnel repair failed: {e}");
+            false
+        }
+        Err(join_err) => {
+            tracing::warn!("tunnel repair task failed: {join_err}");
+            false
         }
     }
-    Err(())
 }
 
 #[cfg(test)]
@@ -902,10 +1182,40 @@ mod tests {
     }
 
     #[test]
+    fn cloudflared_json_is_reduced_to_an_actionable_message() {
+        let line = r#"{"level":"error","connIndex":2,"message":"connection failed","error":"edge timeout"}"#;
+        assert_eq!(
+            clean_cloudflared_log(line),
+            ("connection failed: edge timeout".to_string(), true)
+        );
+    }
+
+    #[test]
+    fn cloudflared_plain_warnings_keep_their_text_and_severity() {
+        let line = "2026-07-23T12:34:56Z WRN reconnecting to edge";
+        assert_eq!(
+            clean_cloudflared_log(line),
+            ("reconnecting to edge".to_string(), false)
+        );
+    }
+
+    #[test]
+    fn cloudflared_plain_errors_are_cleaned_and_promoted() {
+        let line = "2026-07-23T12:34:56Z ERR failed to proxy error=\"context canceled\"";
+        assert_eq!(
+            clean_cloudflared_log(line),
+            ("failed to proxy error=\"context canceled\"".to_string(), true)
+        );
+    }
+
+    #[test]
     fn animal_is_from_list() {
         for name in ["alice", "bob", "root", "deploy", "test-user", "x"] {
             let animal = animal_for_user(name, 0);
-            assert!(ANIMALS.contains(&animal), "{name} mapped to '{animal}' which is not in ANIMALS");
+            assert!(
+                ANIMALS.contains(&animal),
+                "{name} mapped to '{animal}' which is not in ANIMALS"
+            );
         }
     }
 
@@ -914,7 +1224,10 @@ mod tests {
         let sub = generate_subdomain(0);
         assert!(sub.contains('-'), "subdomain should contain a dash: {sub}");
         let animal_part = sub.split('-').next().unwrap();
-        assert!(ANIMALS.contains(&animal_part), "first part should be an animal: {sub}");
+        assert!(
+            ANIMALS.contains(&animal_part),
+            "first part should be an animal: {sub}"
+        );
     }
 
     #[test]
@@ -944,9 +1257,149 @@ mod tests {
     }
 
     #[test]
+    fn edge_report_reports_each_sustained_transition_once() {
+        // Boot, nothing reported yet: first success reports up.
+        assert_eq!(edge_report(None, true, false), Some(true));
+        // Already up: further successes are silent.
+        assert_eq!(edge_report(Some(true), true, false), None);
+        // Up, blip not yet sustained: silent.
+        assert_eq!(edge_report(Some(true), false, false), None);
+        // Up, outage sustained: reports down once.
+        assert_eq!(edge_report(Some(true), false, true), Some(false));
+        assert_eq!(edge_report(Some(false), false, true), None);
+        // Down, recovers: reports up.
+        assert_eq!(edge_report(Some(false), true, false), Some(true));
+        // Boot, never registers, sustained: reports down so status.json gets
+        // the recovery hint instead of showing connecting forever.
+        assert_eq!(edge_report(None, false, true), Some(false));
+        // Boot, not yet sustained: silent.
+        assert_eq!(edge_report(None, false, false), None);
+    }
+
+    #[test]
+    fn repair_waits_for_a_reported_sustained_outage_and_runs_once() {
+        // Reported down, holding our own creds, no prior repair this
+        // down-period: repair.
+        assert!(should_attempt_repair(Some(false), true, false));
+        // A repair already succeeded this down-period: don't recreate again
+        // every cycle while the outage continues.
+        assert!(!should_attempt_repair(Some(false), true, true));
+        // No creds (managed / legacy): nothing to rebuild with.
+        assert!(!should_attempt_repair(Some(false), false, false));
+        // Reported up: the tunnel is fine, nothing to repair.
+        assert!(!should_attempt_repair(Some(true), true, false));
+        // Not yet reported down (a pre-report failure is routinely
+        // transient): wait for the sustained-outage report before repairing.
+        assert!(!should_attempt_repair(None, true, false));
+    }
+
+    #[test]
+    fn respawn_backoff_grows_to_cap_while_failing_and_resets_on_reconnect() {
+        // A persistently-failing tunnel doubles the delay from base up to the cap
+        // and then stays there — no unbounded growth, no churn past the ceiling.
+        let mut delay = TUNNEL_RESPAWN_BASE_DELAY_SECS;
+        let mut seen = vec![delay];
+        for _ in 0..8 {
+            delay = next_respawn_delay_secs(delay, false);
+            seen.push(delay);
+        }
+        assert_eq!(seen[0], TUNNEL_RESPAWN_BASE_DELAY_SECS);
+        assert_eq!(seen[1], TUNNEL_RESPAWN_BASE_DELAY_SECS * 2);
+        assert_eq!(*seen.last().unwrap(), TUNNEL_RESPAWN_MAX_DELAY_SECS);
+        assert!(
+            seen.windows(2).all(|w| w[1] >= w[0]),
+            "delay is monotonic while failing"
+        );
+        assert!(
+            seen.iter().all(|&d| d <= TUNNEL_RESPAWN_MAX_DELAY_SECS),
+            "never exceeds the cap"
+        );
+
+        // A run that reconnected resets straight to base, however large the delay had grown.
+        assert_eq!(
+            next_respawn_delay_secs(TUNNEL_RESPAWN_MAX_DELAY_SECS, true),
+            TUNNEL_RESPAWN_BASE_DELAY_SECS
+        );
+    }
+
+    #[test]
     fn alloc_loopback_port_returns_a_usable_port() {
         let port = alloc_loopback_port().expect("allocation succeeds");
         assert_ne!(port, 0);
     }
-}
 
+    #[test]
+    fn supervisor_establish_never_rewrites_an_existing_config() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // A saved config whose subdomain does NOT match preferred_subdomain()
+        // (simulates legacy creds-less box / hostname drift): the supervisor
+        // must use it as-is, never destroy or recreate it.
+        let mismatched = TunnelConfig {
+            tunnel_id: "existing-tunnel-id".to_string(),
+            tunnel_token: "existing-token".to_string(),
+            hostname: "definitely-not-preferred.example.com".to_string(),
+            dns_record_id: Some("existing-record-id".to_string()),
+        };
+        let path = tunnel_config_path(dir.path());
+        std::fs::write(&path, serde_json::to_string_pretty(&mismatched).unwrap())
+            .expect("write tunnel.json");
+        let original_contents = std::fs::read_to_string(&path).expect("read back");
+
+        let result = establish_tunnel(dir.path()).expect("establish succeeds from saved config");
+
+        assert_eq!(result.hostname, mismatched.hostname);
+        assert_eq!(result.tunnel_id, mismatched.tunnel_id);
+        assert!(path.exists(), "tunnel.json must still exist");
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read back after establish"),
+            original_contents,
+            "tunnel.json content must be unchanged"
+        );
+    }
+
+    #[test]
+    fn establish_tunnel_errors_when_the_user_declined_and_nothing_is_saved() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(no_tunnel_marker_path(dir.path()), "").expect("write no_tunnel marker");
+
+        let err = match establish_tunnel(dir.path()) {
+            Err(e) => e,
+            Ok(_) => panic!("a declined tunnel must not be established"),
+        };
+
+        assert!(err.contains("declined"), "error should mention the decline: {err}");
+    }
+
+    #[test]
+    fn ensure_tunnel_keeps_the_saved_config_when_reconcile_fails_without_creds() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // A saved config whose subdomain does NOT match preferred_subdomain(),
+        // and no cloudflare.json / CLOUDFLARE_* env: the reconcile attempt
+        // fails at cf_env before any curl, so it must never touch the saved
+        // tunnel.json.
+        let preferred = preferred_subdomain();
+        let stale = TunnelConfig {
+            tunnel_id: "stale-tunnel-id".to_string(),
+            tunnel_token: "stale-token".to_string(),
+            hostname: format!("{preferred}-stale.example.com"),
+            dns_record_id: Some("stale-record-id".to_string()),
+        };
+        let path = tunnel_config_path(dir.path());
+        std::fs::write(&path, serde_json::to_string_pretty(&stale).unwrap())
+            .expect("write tunnel.json");
+        let original_contents = std::fs::read_to_string(&path).expect("read back");
+
+        let result = ensure_tunnel(dir.path());
+
+        assert!(
+            result.is_err(),
+            "no cloudflare.json and no CLOUDFLARE_* env: reconcile cannot succeed"
+        );
+        assert!(path.exists(), "tunnel.json must still exist after a failed reconcile");
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read back after ensure_tunnel"),
+            original_contents,
+            "tunnel.json content must be unchanged"
+        );
+    }
+}

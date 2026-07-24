@@ -1,0 +1,15 @@
+#!/bin/sh
+set -e
+
+# Self-healing dashboard launcher. `vite preview` serves the prebuilt app, but
+# node_modules/ and dist/ are untracked build artifacts: a checkout or clean
+# can drop them while the box keeps running, leaving `vite preview` to serve
+# 404s with no rebuild. Ensuring both exist here,
+# before every launch, lets the service rebuild itself on the next restart
+# instead of serving nothing. Idempotent: on a normal restart both dirs are
+# present and this goes straight to `vite preview`.
+cd ~/agent/skills/dashboard/app
+[ -d node_modules ] || npm install
+[ -d dist ] || npx vite build
+PORT=$(~/agent/skills/vestad/scripts/register-service dashboard --public)
+exec npx vite preview --port "$PORT" --host 0.0.0.0

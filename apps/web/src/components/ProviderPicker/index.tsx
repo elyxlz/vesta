@@ -8,13 +8,14 @@ import { ChoiceStep } from "./ChoiceStep";
 import { KeyStep } from "./KeyStep";
 import { ModelStep } from "./ModelStep";
 import { ContextStep } from "./ContextStep";
+import { planContextOptions, planFromCredentials } from "./context-plan";
 import { AuthStep } from "./AuthStep";
 import { ClaudeLogo, OpenRouterLogo } from "./logos";
 import type { ProviderMode } from "./types";
 import { useManifest } from "@/hooks/use-manifest";
 import { useClaudeModels } from "@/hooks/use-claude-models";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cn } from "@/lib/utils";
+import { cn, errorMessage } from "@/lib/utils";
 
 type InternalStep = "choice" | "auth" | "key" | "model" | "context";
 
@@ -22,10 +23,15 @@ export function ProviderPicker({
   onDone,
   onBack,
   className,
+  defaultsOnly,
 }: {
   onDone: (result: ProviderResult) => void;
   onBack?: () => void;
   className?: string;
+  // Skip ModelStep/ContextStep and finish with the manifest's default model
+  // and context window as soon as credentials/key land. Onboarding uses this;
+  // both values stay editable afterward in AgentSettings' full picker.
+  defaultsOnly?: boolean;
 }) {
   const [step, setStep] = useState<InternalStep>("choice");
   // The chosen provider drives the shared model/context steps (which list to
@@ -55,9 +61,7 @@ export function ProviderPicker({
       })
       .catch((e: unknown) => {
         if (cancelled) return;
-        setAuthStartError(
-          (e as { message?: string })?.message || "failed to start auth",
-        );
+        setAuthStartError(errorMessage(e, "failed to start auth"));
       });
     return () => {
       cancelled = true;
@@ -90,12 +94,51 @@ export function ProviderPicker({
   // model + context, mirroring the OpenRouter path.
   const handleCredentialsReady = (creds: string) => {
     setCredentials(creds);
+    if (defaultsOnly) {
+      finishWithDefaults(creds, key);
+      return;
+    }
     setStep("model");
   };
 
   const handleKeyNext = (newKey: string) => {
     setKey(newKey);
+    if (defaultsOnly) {
+      finishWithDefaults(credentials, newKey);
+      return;
+    }
     setStep("model");
+  };
+
+  // Onboarding skips ModelStep/ContextStep entirely: finish with the
+  // manifest's default model and context window as soon as the provider is
+  // ready, mirroring handleContextSubmit's result shape.
+  const finishWithDefaults = (creds: string | null, apiKey: string) => {
+    if (provider === null) return;
+    const context = manifest.providers[provider]?.context;
+    const plan =
+      provider === "claude" && creds !== null
+        ? planFromCredentials(creds)
+        : null;
+    const { initial } = context
+      ? planContextOptions(context, plan)
+      : { initial: 0 };
+    const defaultModel = manifest.providers[provider]?.default_model ?? "";
+    if (provider === "claude") {
+      if (creds === null) return;
+      onDone({
+        kind: "claude",
+        credentials: creds,
+        model: defaultModel || undefined,
+        maxContextTokens: initial,
+      });
+      return;
+    }
+    onDone({
+      kind: "openrouter",
+      config: { key: apiKey, model: defaultModel },
+      maxContextTokens: initial,
+    });
   };
 
   const handleContextSubmit = (maxContextTokens: number) => {
@@ -195,15 +238,28 @@ export function ProviderPicker({
             onCancel={cancelToChoice}
           />
         )}
-        {step === "context" && provider && (
-          <ContextStep
-            presets={manifest.providers[provider]?.context.presets ?? []}
-            initial={manifest.providers[provider]?.context.default ?? 0}
-            onSubmit={handleContextSubmit}
-            logo={stepLogo}
-            onCancel={cancelToChoice}
-          />
-        )}
+        {step === "context" &&
+          provider &&
+          (() => {
+            const context = manifest.providers[provider]?.context;
+            // Claude gates >200K windows on the plan tier, read from the stashed OAuth blob.
+            const plan =
+              provider === "claude" && credentials !== null
+                ? planFromCredentials(credentials)
+                : null;
+            const { presets, initial } = context
+              ? planContextOptions(context, plan)
+              : { presets: [], initial: 0 };
+            return (
+              <ContextStep
+                presets={presets}
+                initial={initial}
+                onSubmit={handleContextSubmit}
+                logo={stepLogo}
+                onCancel={cancelToChoice}
+              />
+            );
+          })()}
       </div>
     </div>
   );

@@ -1,54 +1,92 @@
-"""Per-session daemon holding a CDP websocket and relaying requests over a Unix socket.
+"""Per-session daemon holding a WebDriver BiDi websocket and relaying requests over a Unix socket.
 
 Protocol (one JSON line each way):
 
   client -> daemon:
-    {"method": "Page.navigate", "params": {...}, "session_id": "..."}   # raw CDP
-    {"meta": "drain_events"}                                             # control
-    {"meta": "set_session", "session_id": "..."}
-    {"meta": "session"}
+    {"method": "browsingContext.navigate", "params": {...}}   # raw BiDi
+    {"meta": "drain_events"}                                   # control
+    {"meta": "set_context", "context": "..."}
+    {"meta": "context"}
     {"meta": "pending_dialog"}
     {"meta": "shutdown"}
     {"meta": "info"}
 
   daemon -> client:
     {"result": {...}} | {"error": "..."} | {"events": [...]}
-    {"session_id": "..."} | {"dialog": {...}} | {"ok": true}
+    {"context": "..."} | {"dialog": {...}} | {"ok": true}
     {"info": {...}}
 
 One daemon per BROWSER_SESSION name. Socket: /tmp/vesta-browser-<name>.sock
+
+BiDi has no Runtime.enable-style leak to guard against, and browsing-context ids are
+stable across the session, so the CDP daemon's per-target session juggling collapses
+to a single current-context id the daemon injects where the command shape needs it.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import socket
 import sys
 import time
-import urllib.request
 from collections import deque
 from pathlib import Path
+from typing import Protocol
 
-from cdp_use.client import CDPClient  # type: ignore[import-untyped]
+from .bidi import BidiClient, BidiError
 
-from . import stealth
+
+class Backend(Protocol):
+    """The surface the daemon uses, satisfied by BidiClient (Camoufox) and CdpBackend (Chrome)."""
+
+    async def connect(self, ws_url: str) -> None: ...
+    async def new_session(self) -> str: ...
+    def on_event(self, method: str) -> asyncio.Queue[dict]: ...
+    async def send(self, method: str, params: dict | None = None) -> dict: ...
+    async def close(self) -> None: ...
+
 
 INTERNAL_URL_PREFIXES = (
-    "chrome://",
-    "chrome-untrusted://",
-    "devtools://",
-    "chrome-extension://",
     "about:",
+    "moz-extension://",
+    "chrome://",
+    "resource://",
 )
 
 EVENT_BUFFER = 500
-DOMAIN_ENABLE_TIMEOUT_S = 5
-SESSION_REENABLE_TIMEOUT_S = 3
-TAB_MARK_TIMEOUT_S = 2
-UA_FETCH_TIMEOUT_S = 2
-WS_DISCOVERY_TIMEOUT_S = 3
+MARK_TIMEOUT_S = 2
+SUBSCRIBED_EVENTS = (
+    "browsingContext.load",
+    "browsingContext.domContentLoaded",
+    "browsingContext.userPromptOpened",
+    "browsingContext.userPromptClosed",
+    "log.entryAdded",
+)
+
+# BiDi places the target context differently per command; the daemon owns the
+# current-context decision and injects it where the caller left it out.
+_CTX_TOP = frozenset(
+    {
+        "browsingContext.navigate",
+        "browsingContext.reload",
+        "browsingContext.traverseHistory",
+        "browsingContext.captureScreenshot",
+        "browsingContext.activate",
+        "browsingContext.close",
+        "browsingContext.handleUserPrompt",
+        "browsingContext.setViewport",
+        "browsingContext.print",
+        "input.performActions",
+        "input.releaseActions",
+        "input.setFiles",
+    }
+)
+_CTX_TARGET = frozenset({"script.evaluate", "script.callFunction"})
+
+_MARK_JS = "if(!document.title.startsWith('\U0001f7e2'))document.title='\U0001f7e2 '+document.title"
 
 
 def _session_name() -> str:
@@ -69,140 +107,92 @@ def log_path(name: str | None = None) -> str:
 
 def _log(msg: str) -> None:
     try:
-        with open(log_path(), "a") as f:
+        with Path(log_path()).open("a") as f:
             f.write(f"{time.strftime('%H:%M:%S')} {msg}\n")
     except OSError:
         # Logging must never cascade. If the log file is unwritable we're already in trouble.
         pass
 
 
-def _is_real_page(target: dict) -> bool:
-    if "type" not in target or target["type"] != "page":
-        return False
-    url = target["url"] if "url" in target else ""
-    return not url.startswith(INTERNAL_URL_PREFIXES)
-
-
 def resolve_ws_url() -> str:
-    """Resolve the CDP websocket URL to connect to.
-
-    Priority:
-      1. VESTA_BROWSER_CDP_WS (explicit override, e.g. remote browser)
-      2. VESTA_BROWSER_CDP_PORT (local Chrome we launched)
-    """
-    if "VESTA_BROWSER_CDP_WS" in os.environ and os.environ["VESTA_BROWSER_CDP_WS"]:
-        return os.environ["VESTA_BROWSER_CDP_WS"]
-
-    if "VESTA_BROWSER_CDP_PORT" in os.environ:
-        port = int(os.environ["VESTA_BROWSER_CDP_PORT"])
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=WS_DISCOVERY_TIMEOUT_S) as r:
-            data = json.loads(r.read())
-        if "webSocketDebuggerUrl" not in data or not data["webSocketDebuggerUrl"]:
-            raise RuntimeError(f"/json/version on port {port} returned no webSocketDebuggerUrl")
-        return data["webSocketDebuggerUrl"]
-
-    raise RuntimeError("VESTA_BROWSER_CDP_PORT or VESTA_BROWSER_CDP_WS must be set. Run `browser launch` first.")
-
-
-def _fetch_user_agent() -> str | None:
-    if "VESTA_BROWSER_CDP_PORT" not in os.environ:
-        return None
-    port = os.environ["VESTA_BROWSER_CDP_PORT"]
-    try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=UA_FETCH_TIMEOUT_S) as r:
-            data = json.loads(r.read())
-    except (TimeoutError, OSError, json.JSONDecodeError) as e:
-        _log(f"UA fetch failed: {e}")
-        return None
-    if "User-Agent" in data and data["User-Agent"]:
-        return data["User-Agent"]
-    return None
+    """Resolve the BiDi websocket URL. Set by `browser launch` (recorded ws) or an
+    explicit VESTA_BROWSER_BIDI_WS for an externally running Camoufox."""
+    if os.environ.get("VESTA_BROWSER_BIDI_WS"):
+        return os.environ["VESTA_BROWSER_BIDI_WS"]
+    raise RuntimeError("VESTA_BROWSER_BIDI_WS must be set. Run `browser launch` first.")
 
 
 class Daemon:
     def __init__(self) -> None:
-        self.cdp: CDPClient | None = None
-        self.session: str | None = None
+        self.bidi: Backend | None = None
+        self.context: str | None = None
         self.events: deque[dict] = deque(maxlen=EVENT_BUFFER)
         self.dialog: dict | None = None
         self.stop = asyncio.Event()
         self.ws_url = ""
-
-    async def attach_first_page(self) -> dict | None:
-        assert self.cdp is not None
-        targets = (await self.cdp.send_raw("Target.getTargets"))["targetInfos"]
-        pages = [t for t in targets if _is_real_page(t)]
-        if not pages:
-            created = await self.cdp.send_raw("Target.createTarget", {"url": "about:blank"})
-            target_id = created["targetId"]
-            _log(f"no real pages, created about:blank tid={target_id}")
-            pages = [{"targetId": target_id, "url": "about:blank", "type": "page"}]
-        attach = await self.cdp.send_raw(
-            "Target.attachToTarget",
-            {"targetId": pages[0]["targetId"], "flatten": True},
-        )
-        self.session = attach["sessionId"]
-        _log(f"attached target={pages[0]['targetId']} session={self.session}")
-
-        async def _enable(domain: str) -> None:
-            try:
-                await asyncio.wait_for(
-                    self.cdp.send_raw(f"{domain}.enable", session_id=self.session),
-                    timeout=DOMAIN_ENABLE_TIMEOUT_S,
-                )
-            except (TimeoutError, RuntimeError) as e:
-                _log(f"enable {domain}: {e}")
-
-        await asyncio.gather(*(_enable(d) for d in ("Page", "DOM", "Runtime", "Network")))
-
-        if "VESTA_BROWSER_NO_STEALTH" not in os.environ or os.environ["VESTA_BROWSER_NO_STEALTH"] != "1":
-            ua = _fetch_user_agent()
-            await stealth.apply_to_session(self.cdp, self.session, ua=ua)
-        return pages[0]
+        self._consumers: set[asyncio.Task[None]] = set()
 
     async def start(self) -> None:
-        self.ws_url = resolve_ws_url()
-        _log(f"connecting to {self.ws_url}")
-        self.cdp = CDPClient(self.ws_url)
+        # CDP backend (a connected Chrome) if VESTA_BROWSER_CDP_WS is set, else native BiDi.
+        if os.environ.get("VESTA_BROWSER_CDP_WS"):
+            from .cdp_backend import CdpBackend
+
+            self.ws_url = os.environ["VESTA_BROWSER_CDP_WS"]
+            self.bidi = CdpBackend()
+            _log(f"connecting (CDP) to {self.ws_url}")
+        else:
+            self.ws_url = resolve_ws_url()
+            self.bidi = BidiClient()
+            _log(f"connecting (BiDi) to {self.ws_url}")
         try:
-            await self.cdp.start()
+            await self.bidi.connect(self.ws_url)
         except Exception as e:
-            raise RuntimeError(f"CDP WS handshake failed: {e}")
+            raise RuntimeError(f"backend WS handshake failed: {e}") from e
+        self.context = await self.bidi.new_session()
+        _log(f"session ready, context={self.context}")
 
-        await self.attach_first_page()
+        # Create every event queue before subscribing so no event arrives before its
+        # consumer exists (the client only enqueues methods it has a queue for).
+        for method in SUBSCRIBED_EVENTS:
+            self.bidi.on_event(method)
+        await self.bidi.send("session.subscribe", {"events": list(SUBSCRIBED_EVENTS)})
+        for method in SUBSCRIBED_EVENTS:
+            self._spawn_consumer(method)
 
-        orig = self.cdp._event_registry.handle_event
-        mark_js = "if(!document.title.startsWith('\U0001f7e2'))document.title='\U0001f7e2 '+document.title"
+    def _spawn_consumer(self, method: str) -> None:
+        task = asyncio.create_task(self._consume(method))
+        self._consumers.add(task)
+        task.add_done_callback(self._consumers.discard)
 
-        async def tap(method: str, params: dict, session_id: str | None = None):
-            self.events.append({"method": method, "params": params, "session_id": session_id})
-            if method == "Page.javascriptDialogOpening":
+    async def _consume(self, method: str) -> None:
+        assert self.bidi is not None
+        queue = self.bidi.on_event(method)
+        while True:
+            params = await queue.get()
+            self.events.append({"method": method, "params": params})
+            if method == "browsingContext.userPromptOpened":
                 self.dialog = params
-            elif method == "Page.javascriptDialogClosed":
+            elif method == "browsingContext.userPromptClosed":
                 self.dialog = None
-            elif method in ("Page.loadEventFired", "Page.domContentEventFired"):
-                try:
-                    assert self.cdp is not None
-                    await asyncio.wait_for(
-                        self.cdp.send_raw(
-                            "Runtime.evaluate",
-                            {"expression": mark_js},
-                            session_id=self.session,
-                        ),
-                        timeout=TAB_MARK_TIMEOUT_S,
-                    )
-                except (TimeoutError, RuntimeError):
-                    # Tab-marking is cosmetic; don't let it kill event propagation.
-                    pass
-            return await orig(method, params, session_id)
+            elif method == "browsingContext.load":
+                await self._mark_tab(params)
 
-        self.cdp._event_registry.handle_event = tap
+    async def _mark_tab(self, params: dict) -> None:
+        assert self.bidi is not None
+        if "context" not in params:
+            return
+        # Tab-marking is cosmetic; never let it break event handling.
+        with contextlib.suppress(TimeoutError, BidiError):
+            await asyncio.wait_for(
+                self.bidi.send("script.evaluate", {"expression": _MARK_JS, "target": {"context": params["context"]}, "awaitPromise": False}),
+                timeout=MARK_TIMEOUT_S,
+            )
 
     async def handle(self, req: dict) -> dict:
-        assert self.cdp is not None
+        assert self.bidi is not None
         if "meta" in req:
             return await self._handle_meta(req)
-        return await self._handle_cdp(req)
+        return await self._handle_bidi(req)
 
     async def _handle_meta(self, req: dict) -> dict:
         meta = req["meta"]
@@ -210,58 +200,57 @@ class Daemon:
             out = list(self.events)
             self.events.clear()
             return {"events": out}
-        if meta == "session":
-            return {"session_id": self.session}
-        if meta == "set_session":
-            self.session = req["session_id"] if "session_id" in req else None
-            if self.session:
-                try:
-                    await asyncio.wait_for(
-                        self.cdp.send_raw("Page.enable", session_id=self.session),
-                        timeout=SESSION_REENABLE_TIMEOUT_S,
-                    )
-                except (TimeoutError, RuntimeError) as e:
-                    _log(f"re-enable Page on new session: {e}")
-            return {"session_id": self.session}
+        if meta in ("context", "set_context"):
+            if meta == "set_context":
+                self.context = req["context"] if "context" in req else None
+            return {"context": self.context}
         if meta == "pending_dialog":
             return {"dialog": self.dialog}
         if meta == "info":
-            return {
-                "info": {
-                    "ws_url": self.ws_url,
-                    "session_id": self.session,
-                    "event_count": len(self.events),
-                }
-            }
+            return {"info": {"ws_url": self.ws_url, "context": self.context, "event_count": len(self.events)}}
         if meta == "shutdown":
             self.stop.set()
             return {"ok": True}
         return {"error": f"unknown meta: {meta!r}"}
 
-    async def _handle_cdp(self, req: dict) -> dict:
+    async def _handle_bidi(self, req: dict) -> dict:
+        assert self.bidi is not None
         method = req["method"]
-        params = req["params"] if "params" in req and req["params"] else {}
-        # Browser-level Target.* calls must not carry a session.
-        if method.startswith("Target."):
-            sid: str | None = None
-        elif "session_id" in req and req["session_id"]:
-            sid = req["session_id"]
-        else:
-            sid = self.session
+        params = dict(req["params"]) if req.get("params") else {}
+        if method in _CTX_TOP and "context" not in params and self.context:
+            params["context"] = self.context
+        elif method in _CTX_TARGET and "target" not in params and self.context:
+            params["target"] = {"context": self.context}
         try:
-            return {"result": await self.cdp.send_raw(method, params, session_id=sid)}
-        except Exception as e:
-            msg = str(e)
-            if "Session with given id not found" in msg and sid == self.session and sid:
-                _log(f"stale session {sid}, re-attaching")
-                if await self.attach_first_page():
-                    return {"result": await self.cdp.send_raw(method, params, session_id=self.session)}
-            return {"error": msg}
+            return {"result": await self.bidi.send(method, params)}
+        except BidiError as e:
+            if e.code in ("no such frame", "no such node") and await self._rederive_context():
+                if method in _CTX_TOP:
+                    params["context"] = self.context
+                elif method in _CTX_TARGET:
+                    params["target"] = {"context": self.context}
+                try:
+                    return {"result": await self.bidi.send(method, params)}
+                except BidiError as retry:
+                    return {"error": str(retry)}
+            return {"error": str(e)}
+
+    async def _rederive_context(self) -> bool:
+        """The current context closed (tab gone); adopt the first remaining one."""
+        assert self.bidi is not None
+        try:
+            tree = await self.bidi.send("browsingContext.getTree", {})
+        except BidiError:
+            return False
+        if not tree["contexts"]:
+            return False
+        self.context = tree["contexts"][0]["context"]
+        _log(f"re-derived context={self.context}")
+        return True
 
 
 async def _serve(daemon: Daemon) -> None:
     sock = socket_path()
-    Path(sock).unlink(missing_ok=True)
 
     async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
@@ -282,7 +271,6 @@ async def _serve(daemon: Daemon) -> None:
             writer.close()
 
     server = await asyncio.start_unix_server(handler, path=sock)
-    os.chmod(sock, 0o600)
     _log(f"listening on {sock}")
     async with server:
         await daemon.stop.wait()
@@ -313,6 +301,8 @@ def run() -> int:
 
     Path(log_path()).write_text("")
     Path(pid_path()).write_text(str(os.getpid()))
+    Path(socket_path()).unlink(missing_ok=True)  # a crashed daemon may have left a stale socket
+    os.umask(0o177)  # the unix socket is created owner-only (0600)
 
     try:
         asyncio.run(_main())

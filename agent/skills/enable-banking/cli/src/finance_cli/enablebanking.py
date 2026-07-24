@@ -4,7 +4,7 @@ import json
 import os
 import sys
 import uuid
-from datetime import datetime, UTC, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -191,8 +191,11 @@ def get_transactions(
         if not continuation_key:
             break
 
-        # Subsequent pages use continuation_key instead of date params
-        params = {"continuation_key": continuation_key}
+        # Subsequent pages MUST resend the same date_from/date_to alongside the
+        # continuation_key: Enable Banking validates that the key's embedded dates
+        # match the request, and 422s ("dateFrom in request is not the same as in
+        # continuationKey") if they're dropped. So add the key, keep the dates.
+        params["continuation_key"] = continuation_key
 
     return all_txns
 
@@ -234,15 +237,14 @@ def aggregate_by_category(transactions: list[dict]) -> dict:
         totals[category] = totals.get(category, 0.0) + amount
         counts[category] = counts.get(category, 0) + 1
 
-    summary = []
-    for cat in sorted(totals, key=lambda c: totals[c], reverse=True):
-        summary.append(
-            {
-                "category": cat,
-                "total": round(totals[cat], 2),
-                "count": counts[cat],
-            }
-        )
+    summary = [
+        {
+            "category": cat,
+            "total": round(totals[cat], 2),
+            "count": counts[cat],
+        }
+        for cat in sorted(totals, key=lambda c: totals[c], reverse=True)
+    ]
 
     return {
         "categories": summary,
@@ -283,10 +285,11 @@ def _extract_category(tx: dict) -> str:
 def _generate_self_signed_cert() -> tuple[str, str]:
     """Generate a temporary self-signed cert for the localhost callback server."""
     import tempfile
+
     from cryptography import x509
-    from cryptography.x509.oid import NameOID
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
 
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     subject = issuer = x509.Name(
@@ -309,19 +312,17 @@ def _generate_self_signed_cert() -> tuple[str, str]:
         .sign(key, hashes.SHA256())
     )
 
-    cert_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pem")
-    cert_file.write(cert.public_bytes(serialization.Encoding.PEM))
-    cert_file.close()
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pem") as cert_file:
+        cert_file.write(cert.public_bytes(serialization.Encoding.PEM))
 
-    key_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pem")
-    key_file.write(
-        key.private_bytes(
-            serialization.Encoding.PEM,
-            serialization.PrivateFormat.TraditionalOpenSSL,
-            serialization.NoEncryption(),
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pem") as key_file:
+        key_file.write(
+            key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.TraditionalOpenSSL,
+                serialization.NoEncryption(),
+            )
         )
-    )
-    key_file.close()
 
     return cert_file.name, key_file.name
 
@@ -371,7 +372,7 @@ def wait_for_callback(port: int = CALLBACK_PORT) -> str:
                 b"<html><body><h2>Authorization successful!</h2><p>You can close this tab and return to the terminal.</p></body></html>"
             )
 
-        def log_message(self, format, *args):  # noqa: A002
+        def log_message(self, fmt, *args):
             # Suppress default request logging
             pass
 
@@ -384,8 +385,8 @@ def wait_for_callback(port: int = CALLBACK_PORT) -> str:
         server.handle_request()  # blocks until one request is received
         server.server_close()
     finally:
-        os.unlink(cert_path)
-        os.unlink(key_path)
+        Path(cert_path).unlink()
+        Path(key_path).unlink()
 
     if not received_code:
         print(json.dumps({"error": "No authorization code received"}), file=sys.stderr)

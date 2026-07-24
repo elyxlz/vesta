@@ -1,19 +1,11 @@
 version: 2
 updates:
   - package-ecosystem: pip
-    directory: /agent
+    directory: /agent/core
     schedule:
       interval: weekly
     groups:
       python-deps:
-        patterns: ["*"]
-
-  - package-ecosystem: cargo
-    directory: /cli
-    schedule:
-      interval: weekly
-    groups:
-      rust-deps:
         patterns: ["*"]
 
   - package-ecosystem: cargo
@@ -24,22 +16,6 @@ updates:
       vestad-deps:
         patterns: ["*"]
 
-  - package-ecosystem: cargo
-    directory: /apps/desktop/src-tauri
-    schedule:
-      interval: weekly
-    groups:
-      tauri-deps:
-        patterns: ["*"]
-
-  - package-ecosystem: cargo
-    directory: /apps/mobile/src-tauri
-    schedule:
-      interval: weekly
-    groups:
-      mobile-tauri-deps:
-        patterns: ["*"]
-
   - package-ecosystem: npm
     directory: /apps
     schedule:
@@ -47,6 +23,42 @@ updates:
     groups:
       node-deps:
         patterns: ["*"]
+
+  # Mobile is deliberately not an npm workspace under /apps and owns a
+  # separate lockfile, so it needs its own update source. Expo SDK owns the
+  # versions of its managed packages (react, react-native, the expo-* and
+  # @expo/* families, typescript); `expo install --check` pins them to the
+  # SDK's matrix, so bumping past it only yields red PRs. Ignore that set here;
+  # community deps (zod, tanstack, vitest) still get bumped.
+  - package-ecosystem: npm
+    directory: /apps/mobile
+    schedule:
+      interval: weekly
+    groups:
+      mobile-node-deps:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: "expo"
+      - dependency-name: "expo-*"
+      - dependency-name: "@expo/*"
+      - dependency-name: "@expo-google-fonts/*"
+      - dependency-name: "react"
+      - dependency-name: "react-dom"
+      - dependency-name: "react-native"
+      - dependency-name: "react-native-*"
+      - dependency-name: "@react-native/*"
+      - dependency-name: "@react-native-async-storage/*"
+      - dependency-name: "typescript"
+      - dependency-name: "@types/react"
+      # eslint-config-expo pins the lint stack (eslint and its transitive
+      # eslint-plugin-react / typescript-eslint) to the SDK's matrix: SDK 57
+      # requires eslint ^9.7. A major of either can't resolve until Expo ships
+      # an SDK that accepts it, so majors only yield red PRs (#1380). Ignore
+      # majors only; minors, patches, and security still flow.
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "eslint-config-expo"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: /

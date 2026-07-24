@@ -1,9 +1,8 @@
-use crate::serve::{SharedState, err_response};
-use axum::{Json, extract::State, http::StatusCode};
+use crate::state::{err_response, SharedState};
+use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 
-const TOP_MODELS_URL: &str =
-    "https://openrouter.ai/api/frontend/models/find?order=top-weekly";
+const TOP_MODELS_URL: &str = "https://openrouter.ai/api/frontend/models/find?order=top-weekly";
 const TOP_MODELS_LIMIT: usize = 20;
 const KEY_INFO_URL: &str = "https://openrouter.ai/api/v1/key";
 // OpenRouter quotes pricing per token; the picker shows it per million tokens.
@@ -15,7 +14,7 @@ pub struct TopModel {
     pub label: String,
     pub author: String,
     pub context_length: Option<u64>,
-    /// USD per million prompt/completion/cache-read tokens, when OpenRouter reports it.
+    /// USD per million prompt/completion/cache-read tokens, when `OpenRouter` reports it.
     pub input_price: Option<f64>,
     pub output_price: Option<f64>,
     pub cache_read_price: Option<f64>,
@@ -55,8 +54,10 @@ struct FrontendPricing {
 }
 
 // OpenRouter reports per-token prices as decimal strings; convert to USD per million.
-fn price_per_million(raw: &Option<String>) -> Option<f64> {
-    raw.as_ref()?.parse::<f64>().ok().map(|per_token| per_token * TOKENS_PER_PRICE_UNIT)
+fn price_per_million(raw: Option<&str>) -> Option<f64> {
+    raw?.parse::<f64>()
+        .ok()
+        .map(|per_token| per_token * TOKENS_PER_PRICE_UNIT)
 }
 
 pub async fn list_top_models_handler(
@@ -67,7 +68,12 @@ pub async fn list_top_models_handler(
         .get(TOP_MODELS_URL)
         .send()
         .await
-        .map_err(|e| err_response(StatusCode::BAD_GATEWAY, &format!("openrouter request failed: {e}")))?;
+        .map_err(|e| {
+            err_response(
+                StatusCode::BAD_GATEWAY,
+                &format!("openrouter request failed: {e}"),
+            )
+        })?;
     if !resp.status().is_success() {
         return Err(err_response(
             StatusCode::BAD_GATEWAY,
@@ -75,7 +81,10 @@ pub async fn list_top_models_handler(
         ));
     }
     let body: FrontendResponse = resp.json().await.map_err(|e| {
-        err_response(StatusCode::BAD_GATEWAY, &format!("openrouter response parse failed: {e}"))
+        err_response(
+            StatusCode::BAD_GATEWAY,
+            &format!("openrouter response parse failed: {e}"),
+        )
     })?;
     let models = body
         .data
@@ -86,9 +95,9 @@ pub async fn list_top_models_handler(
             let pricing = m.endpoint.and_then(|e| e.pricing);
             let (input_price, output_price, cache_read_price) = match pricing {
                 Some(p) => (
-                    price_per_million(&p.prompt),
-                    price_per_million(&p.completion),
-                    price_per_million(&p.input_cache_read),
+                    price_per_million(p.prompt.as_deref()),
+                    price_per_million(p.completion.as_deref()),
+                    price_per_million(p.input_cache_read.as_deref()),
                 ),
                 None => (None, None, None),
             };
@@ -111,7 +120,7 @@ pub struct ValidateKeyBody {
     pub key: String,
 }
 
-/// Probes OpenRouter's /api/v1/key with the user-supplied key. 200 means the key
+/// Probes `OpenRouter`'s /api/v1/key with the user-supplied key. 200 means the key
 /// is valid; 401 means it isn't. Lets both CLI and web validate before commit.
 pub async fn validate_key_handler(
     State(state): State<SharedState>,
@@ -123,7 +132,12 @@ pub async fn validate_key_handler(
         .bearer_auth(&body.key)
         .send()
         .await
-        .map_err(|e| err_response(StatusCode::BAD_GATEWAY, &format!("openrouter request failed: {e}")))?;
+        .map_err(|e| {
+            err_response(
+                StatusCode::BAD_GATEWAY,
+                &format!("openrouter request failed: {e}"),
+            )
+        })?;
     if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
         return Err(err_response(StatusCode::BAD_REQUEST, "invalid API key"));
     }

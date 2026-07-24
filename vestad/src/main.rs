@@ -3,36 +3,40 @@ compile_error!("vestad only supports Linux");
 
 use clap::Parser;
 
-mod agent_provider;
 mod agent_code;
 mod agent_embed;
+mod agent_provider;
 mod agent_proxy;
 mod agent_status;
 mod app_static;
 mod auth;
 mod backup;
 mod channel;
-mod cloudflared_embed;
-mod control_ws;
 mod docker;
-mod manifest;
 mod jwt;
+mod manifest;
+mod mobile_app;
+mod mounts;
 mod paths;
 mod providers;
 mod restic;
-mod restic_embed;
 mod self_log;
-mod time_utils;
 mod self_update;
 mod serve;
+mod settings;
+mod state;
 mod status;
+mod sync;
 mod systemd;
+mod time_utils;
 mod tunnel;
 mod types;
 mod update_check;
+mod update_window;
+mod upstream;
+mod vendored_bin;
 
-use status::{Status, TunnelStatus};
-
+use status::{paint, AgentEntry, Status, TunnelStatus};
 
 #[derive(Parser)]
 #[command(name = "vestad", version, about = "Vesta API server daemon")]
@@ -54,8 +58,7 @@ enum Command {
         /// Run in foreground without systemd (for CI/dev)
         #[arg(long)]
         standalone: bool,
-        /// Bind the HTTPS API to all interfaces so other devices on the LAN can
-        /// connect (default: loopback only). Standalone mode only.
+        /// Expose the HTTPS API to other devices on your LAN (default: loopback only)
         #[arg(long)]
         expose_lan: bool,
     },
@@ -123,7 +126,7 @@ enum TunnelAction {
     Setup {
         /// Subdomain name (e.g., "alice" for alice.yourdomain.com)
         subdomain: String,
-        /// Emit a single line of JSON ({"tunnel_id","dns_record_id","hostname"})
+        /// Emit a single line of JSON ({"`tunnel_id","dns_record_id","hostname`"})
         /// to stdout instead of human-readable output (for cloud-init / jq).
         #[arg(long)]
         json: bool,
@@ -133,7 +136,7 @@ enum TunnelAction {
 }
 
 fn die(msg: impl std::fmt::Display) -> ! {
-    eprintln!("error: {}", msg);
+    eprintln!("error: {msg}");
     std::process::exit(1);
 }
 
@@ -146,26 +149,9 @@ fn docker_exec_inherit(args: &[&str]) {
         .stdout(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::inherit())
         .status()
-        .unwrap_or_else(|e| die(format!("docker exec failed: {}", e)));
+        .unwrap_or_else(|e| die(format!("docker exec failed: {e}")));
     if !status.success() {
         std::process::exit(status.code().unwrap_or(1));
-    }
-}
-
-/// Whether to emit ANSI color: only when stderr is a real terminal and NO_COLOR
-/// is unset. Without this, `vestad status > file` / piping captures raw escape
-/// codes.
-pub(crate) fn color_on() -> bool {
-    use std::io::IsTerminal;
-    std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none()
-}
-
-/// Wrap `s` in ANSI `code` (e.g. "1;35"), but only when color is enabled.
-pub(crate) fn paint(code: &str, s: &str) -> String {
-    if color_on() {
-        format!("\x1b[{code}m{s}\x1b[0m")
-    } else {
-        s.to_string()
     }
 }
 
@@ -177,7 +163,9 @@ fn find_available_port() -> Option<u16> {
             .ok()
             .and_then(|l| l.local_addr().ok())
             .map(|addr| addr.port())?;
-        let Some(http_port) = port.checked_add(1) else { continue };
+        let Some(http_port) = port.checked_add(1) else {
+            continue;
+        };
         if std::net::TcpListener::bind(("127.0.0.1", http_port)).is_ok() {
             return Some(port);
         }
@@ -187,7 +175,9 @@ fn find_available_port() -> Option<u16> {
 
 /// Read the stored HTTPS port from `<config>/port`, if present and parseable.
 fn read_port_file(config: &std::path::Path) -> Option<u16> {
-    std::fs::read_to_string(config.join("port")).ok().and_then(|s| s.trim().parse::<u16>().ok())
+    std::fs::read_to_string(config.join("port"))
+        .ok()
+        .and_then(|s| s.trim().parse::<u16>().ok())
 }
 
 fn resolve_port(explicit: Option<u16>, config: &std::path::Path) -> u16 {
@@ -201,16 +191,21 @@ fn resolve_port(explicit: Option<u16>, config: &std::path::Path) -> u16 {
         {
             return stored;
         }
-        tracing::warn!(stored_port = stored, "stored port unavailable, allocating new one");
+        tracing::warn!(
+            stored_port = stored,
+            "stored port unavailable, allocating new one"
+        );
     }
 
-    find_available_port()
-        .unwrap_or_else(|| die("no free port found — another service may be using the range; try `vestad restart`"))
+    find_available_port().unwrap_or_else(|| {
+        die("no free port found — another service may be using the range; try `vestad restart`")
+    })
 }
 
 fn config_dir() -> std::path::PathBuf {
-    paths::config_dir()
-        .unwrap_or_else(|| die("couldn't find your home directory ($HOME) — vestad stores its config there"))
+    paths::config_dir().unwrap_or_else(|| {
+        die("couldn't find your home directory ($HOME) — vestad stores its config there")
+    })
 }
 
 /// Read the stored API key from `<config>/api-key`, if present and non-empty.
@@ -223,16 +218,11 @@ fn read_api_key(config: &std::path::Path) -> Option<String> {
 
 /// True iff this VM is managed by the vesta-cloud control plane.
 ///
-/// `VESTA_CLOUD_MANAGED` is the canonical gate (set by the control plane's
-/// cloud-init drop-in); `VESTA_MANAGED` is the legacy name still present on VMs
-/// provisioned before the rename. We accept BOTH so a box that self-updates to
-/// this binary keeps its managed tunnel + server-identity behavior regardless of
-/// which name its drop-in carries. This single bit gates ALL vesta-cloud
-/// integration (managed tunnel, the `/info` managed flag, the account-token
-/// endpoint).
+/// `VESTA_CLOUD_MANAGED` is the sole gate (set by the control plane's cloud-init
+/// drop-in). This single bit gates ALL vesta-cloud integration (managed tunnel,
+/// the `/info` managed flag, the account-token endpoint).
 pub fn is_cloud_managed() -> bool {
     std::env::var("VESTA_CLOUD_MANAGED").as_deref() == Ok("1")
-        || std::env::var("VESTA_MANAGED").as_deref() == Ok("1")
 }
 
 const RESTART_LOCAL_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
@@ -249,7 +239,10 @@ fn report_restart_readiness(config: &std::path::Path) {
     // The probe below can take tens of seconds (local API + tunnel reconnect), so
     // say what we're doing rather than appearing to hang.
     eprintln!("waiting for vestad to come back up…");
-    let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
         Ok(runtime) => runtime,
         Err(e) => {
             eprintln!("vestad restarted (could not probe readiness: {e}).");
@@ -257,7 +250,10 @@ fn report_restart_readiness(config: &std::path::Path) {
         }
     };
     runtime.block_on(async {
-        let client = match reqwest::Client::builder().timeout(HEALTH_PROBE_TIMEOUT).build() {
+        let client = match reqwest::Client::builder()
+            .timeout(HEALTH_PROBE_TIMEOUT)
+            .build()
+        {
             Ok(client) => client,
             Err(e) => {
                 eprintln!("vestad restarted (could not probe readiness: {e}).");
@@ -270,7 +266,9 @@ fn report_restart_readiness(config: &std::path::Path) {
             None => false,
         };
         if !local_ready {
-            eprintln!("vestad restarted, but its local API did not come up in time — check 'vestad logs'.");
+            eprintln!(
+                "vestad restarted, but its local API did not come up in time. check 'vestad logs'."
+            );
             return;
         }
 
@@ -296,13 +294,17 @@ fn report_restart_readiness(config: &std::path::Path) {
 /// (serve.rs binds HTTPS on the stored port and plain HTTP on port + 1).
 fn local_health_url(config: &std::path::Path) -> Option<String> {
     let https_port = read_port_file(config)?;
-    let http_port = https_port.checked_add(1)?;
-    Some(format!("http://127.0.0.1:{http_port}/health"))
+    let health_port = https_port.checked_add(1)?;
+    Some(format!("http://127.0.0.1:{health_port}/health"))
 }
 
 /// Poll `url` until it answers 2xx or `timeout` elapses. A connection refused / 5xx
 /// just means "not ready yet", so keep retrying until the deadline.
-async fn wait_for_health(client: &reqwest::Client, url: &str, timeout: std::time::Duration) -> bool {
+async fn wait_for_health(
+    client: &reqwest::Client,
+    url: &str,
+    timeout: std::time::Duration,
+) -> bool {
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
         if let Ok(resp) = client.get(url).send().await {
@@ -325,9 +327,16 @@ async fn wait_for_health(client: &reqwest::Client, url: &str, timeout: std::time
 /// way the result is covered by the TLS cert SANs. `None` if undeterminable.
 fn local_lan_ip() -> Option<String> {
     // `ip -4 route get <external ip>` prints "<dst> via <gw> dev <if> src <LAN_IP> …".
-    if let Ok(output) = std::process::Command::new("ip").args(["-4", "route", "get", "1.1.1.1"]).output() {
+    if let Ok(output) = std::process::Command::new("ip")
+        .args(["-4", "route", "get", "1.1.1.1"])
+        .output()
+    {
         let text = String::from_utf8_lossy(&output.stdout);
-        if let Some(src) = text.split_whitespace().skip_while(|token| *token != "src").nth(1) {
+        if let Some(src) = text
+            .split_whitespace()
+            .skip_while(|token| *token != "src")
+            .nth(1)
+        {
             if let Ok(ip) = src.parse::<std::net::Ipv4Addr>() {
                 if !ip.is_loopback() {
                     return Some(ip.to_string());
@@ -337,7 +346,10 @@ fn local_lan_ip() -> Option<String> {
     }
     // Fallback: first non-loopback IPv4 from `hostname -I`, skipping Docker's
     // default bridge range (172.17.0.0/16).
-    let output = std::process::Command::new("hostname").arg("-I").output().ok()?;
+    let output = std::process::Command::new("hostname")
+        .arg("-I")
+        .output()
+        .ok()?;
     let ips = String::from_utf8_lossy(&output.stdout);
     ips.split_whitespace()
         .filter_map(|token| token.parse::<std::net::Ipv4Addr>().ok())
@@ -349,8 +361,8 @@ fn local_lan_ip() -> Option<String> {
 }
 
 /// Bind the HTTP listener atomically inside the tokio runtime. If the HTTP port
-/// (N+1) is in use, re-select a new N via find_available_port and retry. This
-/// closes the TOCTOU race where find_available_port's probe was dropped before
+/// (N+1) is in use, re-select a new N via `find_available_port` and retry. This
+/// closes the TOCTOU race where `find_available_port`'s probe was dropped before
 /// serve.rs bound the port, letting a parallel vestad steal it.
 async fn bind_http_atomically(
     explicit: Option<u16>,
@@ -367,108 +379,26 @@ async fn bind_http_atomically(
             Ok(listener) => return (port, listener),
             Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
                 if attempt + 1 == MAX_BIND_ATTEMPTS {
-                    die(format!("http bind retries exhausted on port {}: {}", http_port, e));
+                    die(format!(
+                        "http bind retries exhausted on port {http_port}: {e}"
+                    ));
                 }
                 tracing::warn!(port, http_port, "http port raced, reselecting");
                 port = find_available_port().unwrap_or_else(|| die("no available port found"));
             }
-            Err(e) => die(format!("failed to bind http listener: {}", e)),
+            Err(e) => die(format!("failed to bind http listener: {e}")),
         }
     }
     unreachable!()
 }
 
-/// How many times startup tries to bring the tunnel up before giving up and
-/// starting anyway (with the failure shown in the banner). Absorbs a tunnel that
-/// is slow to register right after boot — e.g. the network isn't up yet.
-const TUNNEL_STARTUP_ATTEMPTS: u32 = 3;
-const TUNNEL_STARTUP_RETRY_DELAY_SECS: u64 = 5;
-
-/// Bring the tunnel up at startup, retrying before giving up. On success the
-/// banner advertises the live URL and the supervisor keeps it alive; if every
-/// attempt fails, vestad starts ANYWAY (local access + agents) with the error
-/// surfaced in the banner — a broken tunnel must not block the rest of the box.
-///
-/// The /ready pre-flight is credential-free, so this works even on a box that
-/// can't reach the Cloudflare API. Managed (vesta.run) boxes are exempt: the
-/// control plane owns the tunnel, so we trust the seeded config and let the
-/// supervisor (re)connect rather than pre-flighting.
-async fn setup_and_verify_tunnel(config: &std::path::Path, port: u16) -> TunnelStatus {
-    let status = retry_tunnel(
-        TUNNEL_STARTUP_ATTEMPTS,
-        std::time::Duration::from_secs(TUNNEL_STARTUP_RETRY_DELAY_SECS),
-        |attempt| async move {
-            let result = try_establish_tunnel(config, port).await;
-            if let Err(reason) = &result {
-                tracing::warn!(attempt, attempts = TUNNEL_STARTUP_ATTEMPTS, "tunnel not up: {reason}");
-            }
-            result
-        },
-    )
-    .await;
-
-    // Gave up. Drop the dead config (unless managed — the control plane owns it)
-    // so the supervisor isn't started into a "Tunnel not found" loop. vestad then
-    // starts anyway with the reason shown on the banner.
-    if matches!(status, TunnelStatus::Failed(_)) && !is_cloud_managed() {
-        tunnel::forget_tunnel(config);
-    }
-    status
-}
-
-/// Retry an async tunnel attempt up to `attempts` times, sleeping `delay` between
-/// tries. Returns `Active` with the first URL that comes up, or `Failed` carrying
-/// the last error once every attempt has failed.
-async fn retry_tunnel<F, Fut>(attempts: u32, delay: std::time::Duration, mut attempt: F) -> TunnelStatus
-where
-    F: FnMut(u32) -> Fut,
-    Fut: std::future::Future<Output = Result<String, String>>,
-{
-    let mut reason = "tunnel could not be established".to_string();
-    for n in 1..=attempts {
-        match attempt(n).await {
-            Ok(url) => return TunnelStatus::Active(url),
-            Err(e) => {
-                reason = e;
-                if n < attempts {
-                    tokio::time::sleep(delay).await;
-                }
-            }
-        }
-    }
-    TunnelStatus::Failed(reason)
-}
-
-/// One attempt to bring up and verify the tunnel. `Ok(url)` once it registers an
-/// edge connection; `Err(reason)` describes why this attempt failed.
-async fn try_establish_tunnel(config: &std::path::Path, port: u16) -> Result<String, String> {
-    let tc = tunnel::ensure_cloudflared(config).and_then(|_| tunnel::ensure_tunnel(config))?;
-
-    if is_cloud_managed() {
-        return Ok(format!("https://{}", tc.hostname));
-    }
-
-    if tunnel::preflight_tunnel(config, port).await {
-        return Ok(format!("https://{}", tc.hostname));
-    }
-    tracing::warn!(hostname = %tc.hostname, "saved tunnel failed to register");
-
-    // With our own creds the tunnel may be fixable — recreate it from scratch
-    // (new tunnel + token + DNS) and re-verify.
-    if tunnel::has_cf_creds(config) {
-        let subdomain = tc.hostname.split('.').next().unwrap_or("");
-        let fresh = tunnel::setup_tunnel(config, subdomain)?;
-        if tunnel::preflight_tunnel(config, port).await {
-            tracing::info!(hostname = %fresh.hostname, "tunnel recreated and registered");
-            return Ok(format!("https://{}", fresh.hostname));
-        }
-        return Err("recreated tunnel still could not register".to_string());
-    }
-    Err("saved tunnel could not register".to_string())
-}
-
 fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
     let config = config_dir();
+
+    // The systemd unit launches `serve --standalone` with no flag, so the
+    // persisted preference is the source of truth; an explicit --standalone
+    // --expose-lan (CI/dev) still wins.
+    let expose_lan = expose_lan || settings::expose_lan_setting();
 
     let docker = docker::connect().unwrap_or_else(|e| die(&e));
     docker::ensure_docker_sync(&docker).unwrap_or_else(|e| die(&e));
@@ -479,26 +409,52 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
     if cf_config.exists() {
         std::process::Command::new("pkill")
             .args(["-f", &format!("cloudflared.*{}", cf_config.display())])
-            .output().ok();
+            .output()
+            .ok();
     }
 
-    let api_key = serve::ensure_api_key(&config);
-    let (cert_pem, key_pem, _fingerprint) = serve::ensure_tls(&config);
+    let api_key = serve::ensure_api_key(&config).unwrap_or_else(|e| die(&e));
+    let (cert_pem, key_pem, _fingerprint) = serve::ensure_tls(&config).unwrap_or_else(|e| die(&e));
 
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-        .unwrap()
+        .expect("tokio runtime builds")
         .block_on(async {
             let (port, http_listener) = bind_http_atomically(port, &config).await;
             serve::write_port_file(&config, port);
 
+            // Best-effort convergence before the surfaces below read
+            // tunnel.json: create a missing tunnel (fresh BYOK box) or
+            // reconcile a changed pinned subdomain, so agent env files, /info,
+            // and the banner get the right identity URL on first boot. Failure
+            // is fine here; the supervisor keeps converging after boot.
+            let byok_tunnel_wanted =
+                tunnel::has_cf_creds(&config) && !tunnel::has_declined_tunnel(&config);
+            if !no_tunnel && !is_cloud_managed() && byok_tunnel_wanted {
+                if let Err(e) = tunnel::ensure_tunnel(&config) {
+                    tracing::warn!("boot tunnel converge failed (supervisor will retry): {e}");
+                }
+            }
+
+            // Boot renders no verdict on tunnel health: the supervisor owns
+            // establish/verify/repair and mirrors sustained state into
+            // status.json via on_tunnel_up. Boot only decides whether a tunnel
+            // is intended and advertises the identity URL from tunnel.json
+            // (read after the converge above, which may have just created it).
+            let saved_url = tunnel::get_tunnel_config(&config).map(|tc| tc.url());
+            let tunnel_intended =
+                !no_tunnel && (is_cloud_managed() || saved_url.is_some() || byok_tunnel_wanted);
+            let tunnel_url = if tunnel_intended { saved_url } else { None };
             let tunnel_status = if no_tunnel {
                 TunnelStatus::Disabled
+            } else if tunnel_intended {
+                TunnelStatus::Connecting(tunnel_url.clone())
             } else {
-                setup_and_verify_tunnel(&config, port).await
+                TunnelStatus::Failed(
+                    "no tunnel configured: run `vestad connect` to connect a domain".to_string(),
+                )
             };
-            let tunnel_url = tunnel_status.url().map(str::to_string);
 
             docker::update_all_agent_env_files(&config.join("agents"), port, tunnel_url.as_deref());
             // Only advertise a LAN address when the API is actually bound to the
@@ -506,37 +462,46 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
             let lan_url = expose_lan
                 .then(local_lan_ip)
                 .flatten()
-                .map(|ip| format!("https://{}:{}", ip, port));
-            let user = std::env::var("USER").or_else(|_| std::env::var("LOGNAME")).unwrap_or_else(|_| "unknown".into());
+                .map(|ip| format!("https://{ip}:{port}"));
+            let user = std::env::var("USER")
+                .or_else(|_| std::env::var("LOGNAME"))
+                .unwrap_or_else(|_| "unknown".into());
             let dev_mode = cfg!(debug_assertions) || std::env::var("VESTAD_DEV").is_ok();
 
             // Build the status snapshot, persist it before the API opens (so any
             // reader that sees the daemon reachable also sees status.json), and
             // print the banner from it — the same banner `vestad status` renders.
-            let status = Status::new(
-                env!("CARGO_PKG_VERSION").to_string(),
+            // Agents are seeded by name only (statuses unknown until the status
+            // cache polls the just-started containers).
+            let agents = docker::env_file_names(&config.join("agents"))
+                .into_iter()
+                .map(|name| AgentEntry { name, status: None })
+                .collect();
+            let status = Status {
+                version: env!("CARGO_PKG_VERSION").to_string(),
                 user,
                 port,
                 dev_mode,
                 expose_lan,
-                lan_url.clone(),
-                tunnel_status,
-            );
+                lan_url: lan_url.clone(),
+                tunnel: tunnel_status,
+                agents,
+                pid: std::process::id(),
+            };
             status.persist(&config);
             status.print_banner(&api_key);
-
-            // Supervise whenever a tunnel is INTENDED, not only when boot-time
-            // setup succeeded: a managed box whose tunnel.json the control plane
-            // is still seeding, or a transient ensure_tunnel failure, must not
-            // leave the daemon tunnel-less until a manual restart. The supervisor
-            // re-reads tunnel.json on every respawn, so late config is picked up.
-            let tunnel_intended = tunnel_url.is_some()
-                || (!no_tunnel
-                    && (is_cloud_managed() || tunnel::get_tunnel_config(&config).is_some()));
 
             // Keep status.json honest: on a SUSTAINED tunnel outage the supervisor
             // flips the tunnel field to an error and back to enabled on recovery.
             // Transient blips it recovers from on its own don't change it.
+            // Recovery guidance differs by who owns the tunnel: a managed
+            // (vesta.run) tunnel is the control plane's to fix, a self-hosted
+            // one is re-created by `vestad connect`.
+            let tunnel_down_hint = if is_cloud_managed() {
+                "tunnel down 2+ min; the vesta.run control plane owns it and should recover it"
+            } else {
+                "tunnel down 2+ min; if it persists, run vestad connect"
+            };
             let status = std::sync::Arc::new(std::sync::Mutex::new(status));
             let on_tunnel_up: std::sync::Arc<dyn Fn(bool) + Send + Sync> = {
                 let status = status.clone();
@@ -544,14 +509,19 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
                 let tunnel_url = tunnel_url.clone();
                 std::sync::Arc::new(move |up: bool| {
                     let next = if up {
-                        match tunnel_url.clone().or_else(|| {
-                            tunnel::get_tunnel_config(&config).map(|tc| format!("https://{}", tc.hostname))
-                        }) {
+                        match tunnel::get_tunnel_config(&config)
+                            .map(|tc| tc.url())
+                            .or_else(|| tunnel_url.clone())
+                        {
                             Some(url) => TunnelStatus::Active(url),
                             None => return, // can't name the URL; leave the field as-is
                         }
                     } else {
-                        TunnelStatus::Failed("tunnel connection lost".to_string())
+                        // Fired once the tunnel has been unregistered for
+                        // TUNNEL_DOWN_SUSTAINED_SECS, whatever the failure mode
+                        // (wedged connector, fast-exiting cloudflared, dead
+                        // config): a general recovery hint, not revoked-specific.
+                        TunnelStatus::Failed(tunnel_down_hint.to_string())
                     };
                     if let Ok(mut s) = status.lock() {
                         s.set_tunnel(next);
@@ -561,6 +531,26 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
             };
             let tunnel_supervisor = tunnel_intended
                 .then(|| tunnel::supervise_tunnel(config.clone(), port, on_tunnel_up));
+
+            // Keep the agents section of status.json fresh: the agent-status cache
+            // task invokes this whenever the polled agent list actually changes.
+            let on_agents_changed: agent_status::OnAgentsChanged = {
+                let status = status.clone();
+                let config = config.clone();
+                std::sync::Arc::new(move |entries: &[docker::ListEntry]| {
+                    let agents = entries
+                        .iter()
+                        .map(|entry| AgentEntry {
+                            name: entry.name.clone(),
+                            status: Some(entry.status),
+                        })
+                        .collect();
+                    if let Ok(mut s) = status.lock() {
+                        s.set_agents(agents);
+                        s.persist(&config);
+                    }
+                })
+            };
 
             serve::run_server(serve::ServerConfig {
                 port,
@@ -574,7 +564,9 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
                 dev_mode,
                 expose_lan,
                 lan_url,
-            }).await;
+                on_agents_changed,
+            })
+            .await;
 
             if let Some(supervisor) = tunnel_supervisor {
                 supervisor.shutdown().await;
@@ -582,7 +574,7 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
         });
 }
 
-fn run_server_systemd(port: Option<u16>, no_tunnel: bool) {
+fn run_server_systemd(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
     if port.is_some() || no_tunnel {
         eprintln!("note: --port and --no-tunnel only apply with --standalone");
     }
@@ -591,9 +583,19 @@ fn run_server_systemd(port: Option<u16>, no_tunnel: bool) {
     docker::ensure_docker_sync(&docker).unwrap_or_else(|e| die(&e));
     systemd::ensure_service_installed().unwrap_or_else(|e| die(&e));
 
+    // --expose-lan is a persisted binding preference (like the port file), not part
+    // of the static unit. Write it before the daemon (re)starts so it reads the new
+    // value; a running daemon only re-binds on restart.
+    let lan_changed = settings::set_expose_lan(expose_lan);
+
     if systemd::is_active() {
+        if lan_changed {
+            systemd::restart().unwrap_or_else(|e| die(&e));
+            eprintln!("vestad restarted to apply the --expose-lan change.");
+            return;
+        }
         if let Some(pid) = systemd::main_pid() {
-            eprintln!("vestad is already running (pid {}).", pid);
+            eprintln!("vestad is already running (pid {pid}).");
         } else {
             eprintln!("vestad is already running.");
         }
@@ -610,37 +612,36 @@ fn run_server_systemd(port: Option<u16>, no_tunnel: bool) {
     if !is_cloud_managed()
         && tunnel::get_tunnel_config(&config).is_none()
         && !tunnel::has_cf_creds(&config)
+        && !tunnel::has_declined_tunnel(&config)
     {
         tunnel::setup_cf_creds_interactive(&config).unwrap_or_else(|e| die(e));
     }
 
+    let start_time = std::time::SystemTime::now();
     systemd::start().unwrap_or_else(|e| die(&e));
     systemd::wait_for_start().unwrap_or_else(|e| die(&e));
+    // The unit is not Type=notify, so being "active" only means the process
+    // launched, not that async startup (tunnel dial, etc.) finished and wrote a
+    // fresh status.json; wait for that so the banner below isn't stale/empty.
+    Status::wait_for_fresh(&config, start_time);
 
     eprintln!();
-    eprintln!("  \x1b[1;35mvestad\x1b[0m v{} is now running as a systemd service.", env!("CARGO_PKG_VERSION"));
-    eprintln!("  run {} to see your connection info.", paint("1", "vestad status"));
-    eprintln!();
-
-    eprintln!("manage with:");
-    eprintln!("  vestad status     show status + your URL");
-    eprintln!("  vestad connect    connect a domain for a public URL");
-    eprintln!("  vestad logs       show service logs");
-    eprintln!("  vestad restart    restart the service");
-    eprintln!("  vestad update     update to the latest version");
-    eprintln!("  vestad stop       stop the service");
+    eprintln!(
+        "  \x1b[1;35mvestad\x1b[0m v{} is now running as a systemd service.",
+        env!("CARGO_PKG_VERSION")
+    );
+    status::print_status_banner(&config, read_api_key(&config).as_deref());
+    eprintln!("scan the QR or open the link to create your first agent. manage with vestad status | logs | restart.");
 }
 
-/// Log to stdout (captured by journald under systemd, shown in the terminal under
-/// `cargo run`) and to a rolling file under the config dir. The file is what the
-/// gateway logs viewer tails, so the viewer works regardless of how vestad is run.
-/// A failed appender (no HOME, unwritable dir) degrades to stdout-only rather than
-/// crashing the daemon.
+/// Log to stdout (journald under systemd, the terminal under `cargo run`) and to a
+/// rolling file under the config dir; the file is what the gateway logs viewer tails,
+/// so the viewer works regardless of how vestad is run. A failed appender (no HOME,
+/// unwritable dir) degrades to stdout-only rather than crashing the daemon.
 ///
-/// ANSI is disabled on both sinks: the two fmt layers share one span-field cache
-/// (`FormattedFields<DefaultFields>`) in the span extensions, so a colored stdout
-/// layer would bleed escape codes into the plain file. Logs are plain text on every
-/// sink; the gateway logs viewer adds its own per-level color in the browser.
+/// ANSI is disabled on both sinks: the two fmt layers share one span-field cache in
+/// the span extensions, so a colored stdout layer would bleed escape codes into the
+/// plain file; the gateway logs viewer adds its own per-level color in the browser.
 fn init_tracing() {
     use tracing_subscriber::prelude::*;
 
@@ -660,7 +661,11 @@ fn init_tracing() {
 
     tracing_subscriber::registry()
         .with(filter)
-        .with(tracing_subscriber::fmt::layer().with_target(false).with_ansi(false))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_target(false)
+                .with_ansi(false),
+        )
         .with(file_layer)
         .init();
 }
@@ -676,28 +681,34 @@ fn main() {
 
     let cli = Cli::parse();
 
-    match cli.command.unwrap_or(Command::Serve { port: None, no_tunnel: false, standalone: false, expose_lan: false }) {
-        Command::Serve { port, no_tunnel, standalone, expose_lan } => {
+    match cli.command.unwrap_or(Command::Serve {
+        port: None,
+        no_tunnel: false,
+        standalone: false,
+        expose_lan: false,
+    }) {
+        Command::Serve {
+            port,
+            no_tunnel,
+            standalone,
+            expose_lan,
+        } => {
             if standalone {
                 run_server_foreground(port, no_tunnel, expose_lan);
             } else {
-                if expose_lan {
-                    eprintln!("note: --expose-lan only applies with --standalone");
-                }
-                run_server_systemd(port, no_tunnel);
+                run_server_systemd(port, no_tunnel, expose_lan);
             }
         }
 
         Command::Status => {
             let config = config_dir();
-            let binary_path = std::env::current_exe()
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|_| "<unknown>".into());
+            let binary_path = std::env::current_exe().map_or_else(|_| "<unknown>".into(), |p| p.display().to_string());
             let agent_count = std::fs::read_dir(config.join("agents"))
-                .map(|rd| rd.filter_map(Result::ok)
-                    .filter(|e| e.file_name().to_string_lossy().ends_with(".env"))
-                    .count())
-                .unwrap_or(0);
+                .map_or(0, |rd| {
+                    rd.filter_map(Result::ok)
+                        .filter(|e| e.file_name().to_string_lossy().ends_with(".env"))
+                        .count()
+                });
 
             eprintln!();
             eprintln!(
@@ -714,7 +725,7 @@ fn main() {
         }
 
         Command::Logs { n, no_follow } => {
-            systemd::exec_journal(n, !no_follow);
+            systemd::stream_journal(n, !no_follow).unwrap_or_else(|e| die(e));
         }
 
         Command::Stop => {
@@ -731,8 +742,12 @@ fn main() {
             docker::validate_name(&name).unwrap_or_else(|e| die(&e));
             let docker = docker::connect().unwrap_or_else(|e| die(&e));
             let cname = docker::container_name(&name);
-            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-            rt.block_on(docker::ensure_running(&docker, &cname)).unwrap_or_else(|e| die(&e));
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("tokio runtime builds");
+            rt.block_on(docker::ensure_running(&docker, &cname))
+                .unwrap_or_else(|e| die(&e));
 
             eprintln!("entering {name} (exit with `exit`, or detach with Ctrl-Q)…");
             docker_exec_inherit(&["exec", "-it", "--detach-keys=ctrl-q", &cname, "bash"]);
@@ -740,7 +755,10 @@ fn main() {
 
         Command::Backup { action } => {
             let docker = docker::connect().unwrap_or_else(|e| die(&e));
-            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("tokio runtime builds");
 
             match action {
                 BackupAction::Export { name, output } => {
@@ -751,23 +769,30 @@ fn main() {
                     rt.block_on(async {
                         let cs = docker::container_status(&docker, &cname).await;
                         if cs == docker::ContainerStatus::NotFound {
-                            die(format!("agent '{}' not found", name));
+                            die(format!("agent '{name}' not found"));
                         }
 
                         let was_running = cs == docker::ContainerStatus::Running;
                         if was_running {
                             eprintln!("stopping agent...");
-                            docker::stop_container_with_timeout(&docker, &cname, backup::BACKUP_STOP_TIMEOUT_SECS).await
-                                .unwrap_or_else(|e| die(format!("failed to stop container: {}", e)));
+                            docker::stop_container_with_timeout(
+                                &docker,
+                                &cname,
+                                backup::BACKUP_STOP_TIMEOUT_SECS,
+                            )
+                            .await
+                            .unwrap_or_else(|e| die(format!("failed to stop container: {e}")));
                         }
 
                         eprintln!("snapshotting container...");
-                        let temp_tag = format!("vesta-export:{}-temp", name);
-                        if let Err(e) = docker::snapshot_container(&docker, &cname, &temp_tag, &[]).await {
+                        let temp_tag = format!("vesta-export:{name}-temp");
+                        if let Err(e) =
+                            docker::snapshot_container(&docker, &cname, &temp_tag, &[]).await
+                        {
                             if was_running {
                                 docker::start_container(&docker, &cname).await;
                             }
-                            die(format!("snapshot failed: {}", e));
+                            die(format!("snapshot failed: {e}"));
                         }
 
                         if was_running {
@@ -775,11 +800,13 @@ fn main() {
                         }
 
                         eprintln!("exporting to {}...", output.display());
-                        docker::export_image_gzip(&docker, &temp_tag, &output).await
-                            .unwrap_or_else(|e| die(format!("export failed: {}", e)));
+                        docker::export_image_gzip(&docker, &temp_tag, &output)
+                            .await
+                            .unwrap_or_else(|e| die(format!("export failed: {e}")));
 
-                        docker::remove_image(&docker, &temp_tag).await
-                            .unwrap_or_else(|e| die(format!("failed to remove temp image: {}", e)));
+                        docker::remove_image(&docker, &temp_tag)
+                            .await
+                            .unwrap_or_else(|e| die(format!("failed to remove temp image: {e}")));
 
                         eprintln!("exported: {}", output.display());
                     });
@@ -796,39 +823,53 @@ fn main() {
 
                     rt.block_on(async {
                         if docker::container_status(&docker, &cname).await != docker::ContainerStatus::NotFound {
-                            die(format!("agent '{}' already exists — destroy it first or pick a different name", name));
+                            die(format!("agent '{name}' already exists — destroy it first or pick a different name"));
                         }
 
                         eprintln!("loading image from {}...", input.display());
                         let loaded_image = docker::import_image_gzip(&docker, &input).await
-                            .unwrap_or_else(|e| die(format!("import failed: {}", e)));
+                            .unwrap_or_else(|e| die(format!("import failed: {e}")));
                         let loaded_image = loaded_image.as_str();
 
-                        eprintln!("creating agent '{}'...", name);
+                        eprintln!("creating agent '{name}'...");
                         let config = config_dir();
                         let vestad_port = read_port_file(&config).unwrap_or(0);
-                        let vestad_tunnel = tunnel::get_tunnel_config(&config)
-                            .map(|tc| format!("https://{}", tc.hostname));
+                        let vestad_tunnel = tunnel::get_tunnel_config(&config).map(|tc| tc.url());
                         let env_config = docker::AgentEnvConfig {
                             config_dir: config.clone(),
                             agents_dir: config.join("agents"),
                             vestad_port,
                             vestad_tunnel,
                         };
-                        agent_code::ensure_agent_code(&config)
+                        let code_dir = agent_code::ensure_agent_code(&config)
                             .unwrap_or_else(|e| die(format!("failed to populate agent code: {e}")));
+                        // The container bind-mounts the upstream dir; build it here like server
+                        // startup does, or rootful Docker would create the missing host path as
+                        // root and the next vestad startup could no longer write into it.
+                        upstream::ensure_upstream(&config, &code_dir).unwrap_or_else(|e| die(e.to_string()));
                         let port = docker::allocate_port(&env_config.agents_dir).unwrap_or_else(|e| die(&e));
-                        docker::create_container(&docker, &cname, loaded_image, port, &name, &env_config, true).await
-                            .unwrap_or_else(|e| die(&e));
+                        docker::create_container(
+                            &docker,
+                            &env_config,
+                            docker::ContainerSpec {
+                                cname: &cname,
+                                image: loaded_image,
+                                port,
+                                agent_name: &name,
+                                user_mounts: &[],
+                            },
+                        )
+                        .await
+                        .unwrap_or_else(|e| die(&e));
 
                         if !docker::start_container(&docker, &cname).await {
                             die("failed to start imported agent");
                         }
-                        eprintln!("imported: {} (port {})", name, port);
+                        eprintln!("imported: {name} (port {port})");
                     });
                 }
             }
-        },
+        }
 
         Command::Connect => {
             let config = config_dir();
@@ -851,31 +892,36 @@ fn main() {
             let config = config_dir();
             match action {
                 TunnelAction::Setup { subdomain, json } => {
-                    let tc = tunnel::setup_tunnel(&config, &subdomain)
-                        .unwrap_or_else(|e| die(e));
+                    let tc = tunnel::setup_tunnel(&config, &subdomain).unwrap_or_else(|e| die(e));
                     if json {
-                        println!("{}", serde_json::json!({
-                            "tunnel_id": tc.tunnel_id,
-                            "dns_record_id": tc.dns_record_id,
-                            "hostname": tc.hostname,
-                        }));
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "tunnel_id": tc.tunnel_id,
+                                "dns_record_id": tc.dns_record_id,
+                                "hostname": tc.hostname,
+                            })
+                        );
                     } else {
                         eprintln!("✓ tunnel ready at https://{}", tc.hostname);
                     }
                 }
                 TunnelAction::Destroy => {
                     tunnel::destroy_tunnel(&config).unwrap_or_else(|e| die(e));
+                    if let Err(e) = tunnel::decline_tunnel(&config) {
+                        eprintln!(
+                            "warning: tunnel destroyed but failed to persist the no-tunnel preference: {e}"
+                        );
+                    }
                     eprintln!("✓ tunnel removed");
                 }
             }
         }
 
         Command::Update => {
-            let outcome =
-                self_update::perform_update(channel::Channel::effective()).unwrap_or_else(|e| die(e.to_string()));
-            if !outcome.updated {
-                println!("vestad already at the latest version (v{})", outcome.current);
-            } else {
+            let outcome = self_update::perform_update(channel::Channel::effective())
+                .unwrap_or_else(|e| die(e.to_string()));
+            if outcome.updated {
                 println!("✓ updated v{} → v{}", outcome.current, outcome.latest);
                 println!(
                     "{}",
@@ -885,6 +931,11 @@ fn main() {
                         "  run `vestad` to start the new version."
                     },
                 );
+            } else {
+                println!(
+                    "vestad already at the latest version (v{})",
+                    outcome.current
+                );
             }
         }
 
@@ -893,8 +944,9 @@ fn main() {
         }
 
         Command::Uninstall => {
-            eprint!("This will stop vestad, remove its systemd service, config, and binary. Continue? [y/N] ");
             use std::io::Write;
+
+            eprint!("This will stop vestad, remove its systemd service, config, and binary. Continue? [y/N] ");
             std::io::stderr().flush().ok();
             let mut answer = String::new();
             if std::io::stdin().read_line(&mut answer).is_err() {
@@ -908,10 +960,10 @@ fn main() {
 
             if systemd::is_active() {
                 eprintln!("stopping vestad service...");
-                systemd::stop().unwrap_or_else(|e| eprintln!("warning: {}", e));
+                systemd::stop().unwrap_or_else(|e| eprintln!("warning: {e}"));
             }
             if let Err(err) = systemd::uninstall() {
-                eprintln!("warning: {}", err);
+                eprintln!("warning: {err}");
             } else {
                 eprintln!("  removed systemd service");
             }
@@ -920,20 +972,24 @@ fn main() {
             match std::fs::remove_dir_all(&config) {
                 Ok(()) => eprintln!("  removed {}", config.display()),
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                Err(err) => eprintln!("warning: failed to remove config: {}", err),
+                Err(err) => eprintln!("warning: failed to remove config: {err}"),
             }
 
             if let Some(tunnel_dir) = config.parent().map(|p| p.join("cloudflared")) {
                 match std::fs::remove_dir_all(&tunnel_dir) {
                     Ok(()) => eprintln!("  removed {}", tunnel_dir.display()),
                     Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(err) => eprintln!("warning: failed to remove cloudflared: {}", err),
+                    Err(err) => eprintln!("warning: failed to remove cloudflared: {err}"),
                 }
             }
 
             if let Ok(exe) = std::env::current_exe() {
                 if let Err(err) = std::fs::remove_file(&exe) {
-                    eprintln!("warning: could not remove binary {}: {}", exe.display(), err);
+                    eprintln!(
+                        "warning: could not remove binary {}: {}",
+                        exe.display(),
+                        err
+                    );
                     eprintln!("  remove it manually: rm {}", exe.display());
                 } else {
                     eprintln!("  removed {}", exe.display());
@@ -942,7 +998,9 @@ fn main() {
 
             eprintln!("\nvestad has been uninstalled.");
             eprintln!("Note: Docker containers and images for agents are still intact.");
-            eprintln!("To remove them too, run: docker rm -f $(docker ps -aq --filter name=vesta-)");
+            eprintln!(
+                "To remove them too, run: docker rm -f $(docker ps -aq --filter name=vesta-)"
+            );
         }
     }
 }
@@ -950,48 +1008,6 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[tokio::test]
-    async fn retry_tunnel_succeeds_without_retrying_when_first_attempt_works() {
-        let calls = std::cell::Cell::new(0u32);
-        let status = retry_tunnel(3, std::time::Duration::ZERO, |_| {
-            calls.set(calls.get() + 1);
-            async { Ok::<String, String>("https://host".to_string()) }
-        })
-        .await;
-        assert!(matches!(status, TunnelStatus::Active(url) if url == "https://host"));
-        assert_eq!(calls.get(), 1, "should not retry once an attempt succeeds");
-    }
-
-    #[tokio::test]
-    async fn retry_tunnel_retries_until_an_attempt_succeeds() {
-        let calls = std::cell::Cell::new(0u32);
-        let status = retry_tunnel(3, std::time::Duration::ZERO, |attempt| {
-            calls.set(calls.get() + 1);
-            async move {
-                if attempt < 3 {
-                    Err(format!("not up yet (attempt {attempt})"))
-                } else {
-                    Ok("https://up".to_string())
-                }
-            }
-        })
-        .await;
-        assert!(matches!(status, TunnelStatus::Active(url) if url == "https://up"));
-        assert_eq!(calls.get(), 3);
-    }
-
-    #[tokio::test]
-    async fn retry_tunnel_gives_up_with_the_last_error_after_all_attempts() {
-        let calls = std::cell::Cell::new(0u32);
-        let status = retry_tunnel(3, std::time::Duration::ZERO, |attempt| {
-            calls.set(calls.get() + 1);
-            async move { Err::<String, String>(format!("boom {attempt}")) }
-        })
-        .await;
-        assert!(matches!(status, TunnelStatus::Failed(reason) if reason == "boom 3"));
-        assert_eq!(calls.get(), 3, "should try exactly `attempts` times before giving up");
-    }
 
     #[test]
     fn local_health_url_targets_http_port_plus_one() {

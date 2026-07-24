@@ -2,12 +2,12 @@ import { Orb } from "@/components/Orb";
 import { cn } from "@/lib/utils";
 import type { OrbVisualState } from "@/components/Orb/styles";
 
-type AgentIslandCollapsedProps = {
+interface AgentIslandCollapsedProps {
   name: string;
   orbState: OrbVisualState;
   statusLabel: string;
   error: string;
-};
+}
 
 // Self-sized content view (no motion / no layoutId). The shell crossfades whole
 // views, so this just renders the collapsed pill content at its natural size.
@@ -28,7 +28,7 @@ export function AgentIslandCollapsed({
           label={`${name}: ${statusLabel || orbState}`}
         />
       </div>
-      <div className="relative -top-0.5 flex min-w-0 flex-1 items-baseline gap-1.5">
+      <div className="relative -top-px flex min-w-0 flex-1 items-baseline gap-1.5">
         <span className="min-w-0 truncate font-serif text-base font-medium leading-tight tracking-tight sm:text-lg">
           {name}
         </span>

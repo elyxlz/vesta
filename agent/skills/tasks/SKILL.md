@@ -3,133 +3,74 @@ name: tasks
 description: Tasks, to-dos, reminders, time-based alerts; create and manage. Requires daemon.
 ---
 
-# Tasks + Reminders - CLI: tasks
+# Tasks + Reminders (CLI: tasks)
 
-One CLI, one daemon, one SQLite DB. Tasks are what needs doing; reminders are nudges about when.
+One CLI, one daemon, one SQLite DB. Tasks are what needs doing; reminders are nudges about when. The daemon does the tracking for you: it reminds you before a due date, forces a decision at the due time, and sends a daily digest of anything overdue or stale. Your job is to always resolve those notifications with one of the commands below, never to ignore them.
 
-## Task Commands
+## Tasks
+
 ```bash
-tasks add "Buy groceries"
 tasks add "Submit report" --priority high --due-in-hours 4
-tasks add "Meeting prep" --due-datetime "2025-12-01T10:00:00" --timezone "Europe/London"
-tasks list
-tasks list --show-completed
-tasks search "groceries"
-tasks update <id> --status done
-tasks update <id> --title "Updated title" --priority high
+tasks add "Meeting prep" --due-datetime "2026-12-01T10:00:00" --timezone "Europe/London"
+tasks list                        # pending tasks, overdue first
+tasks done <id>                   # mark done
+tasks postpone <id> --in-days 2   # new due date, measured from now
+tasks search "report"
 tasks get <id>
-tasks get <id> --field status              # just the status, no envelope
-tasks get <id> --field notes --field title # several fields, tab-separated
-tasks delete <id>                          # CASCADE: linked reminders are deleted too
+tasks update <id> --title "..." --priority low --status pending
+tasks delete <id>                 # cascades to linked reminders
 ```
 
-### Task Options
-- `--priority`: low / normal / high (default: normal)
-- `--due-in-minutes`, `--due-in-hours`, `--due-in-days`: relative due date
-- `--due-datetime` + `--timezone`: absolute (both required together)
-- `--show-completed`: include done tasks in list/search
-- `--initial-metadata`: string of metadata to attach when adding a task
-- `tasks list`, `tasks search`, and `tasks remind list` default to a compact tab-separated table; pass `--json` for one-line JSON or `--json-pretty` for indented JSON.
-- `tasks get --field <name>` returns only the named field(s) as raw text. Valid fields: `id`, `title`, `status`, `priority`, `due_date`, `created_at`, `completed_at`, `metadata_path`, `metadata`. Prefer this over `Read`-ing `~/.tasks/metadata/<id>.md` when you only need a specific field. Metadata content is read only when `--field metadata` is requested.
+- Due date: `--due-in-minutes/--due-in-hours/--due-in-days` (relative) or `--due-datetime` + `--timezone` (absolute, both required). `--priority` low/normal/high. `--initial-metadata "..."` attaches notes.
+- `postpone` also takes `--in-minutes/--in-hours` or `--at` + `--tz`, and works on a task with no due date (gives it one).
+- `tasks get <id> --field status` prints just that field (repeat `--field` for several, tab-separated). Valid fields: id, title, status, priority, due_date, created_at, completed_at, metadata_path, metadata. Prefer this over reading the metadata file when you need one value.
+- `list`/`search` print compact tables (`--show-completed` to include done); add `--json` or `--json-pretty` for JSON.
 
-## Reminder Commands
+## Reminders
 
-Reminders take the message as the first positional argument to `tasks remind`. There is no `create` subcommand, so don't reach for one:
+The message is the first argument to `tasks remind`; there is no create/add/set subcommand:
 
 ```bash
-# Set a reminder (the message IS the first argument, no subcommand needed)
 tasks remind "Call mom" --in-minutes 30
-tasks remind "Check report" --in-hours 2
-tasks remind "Weekly review" --in-days 7
-tasks remind "Meeting" --at "2025-12-01T10:00:00" --tz "Europe/London"
-
-# Linked to a task
+tasks remind "Meeting" --at "2026-12-01T10:00:00" --tz "Europe/London"
 tasks remind "Check progress" --task <id> --in-hours 1
-
-# Recurring
-tasks remind "Standup" --recurring daily --at "2025-12-01T10:30:00" --tz "America/New_York"
-tasks remind "Review" --recurring weekly --at "2025-12-06T17:00:00" --tz "America/New_York"
-tasks remind "Bills" --recurring monthly --at "2025-12-15T09:00:00" --tz "America/New_York"
-tasks remind "Birthday" --recurring yearly --at "2025-03-14T12:00:00" --tz "America/New_York"
-tasks remind "Check inbox" --recurring hourly
-
-# List, delete, update
-tasks remind list                        # all active reminders
-tasks remind list --task <id>            # reminders linked to a task
-tasks remind delete <id>                 # removes the reminder, task stays
-tasks remind update <id> --message "New message"
+tasks remind "Standup" --recurring daily --at "2026-12-01T09:30:00" --tz "America/New_York"
+tasks remind "Evening check-in" --recurring daily --at "2026-12-01T21:30:00" --tz "Europe/Rome" --fuzz-minutes 75
+tasks remind "Weekdays 9am" --cron "0 9 * * 1-5" --tz "America/New_York"
+tasks remind list [--task <id>]
+tasks remind snooze <id> --in-hours 4    # push a one-shot back; works on already-fired ones too
+tasks remind update <id> --message "..."
+tasks remind delete <id>
 ```
 
-### Reminder Options
-- `--in-minutes`, `--in-hours`, `--in-days`: relative timing
-- `--at` + `--tz`: absolute datetime (both required together)
-- `--recurring`: hourly | daily | weekly | monthly | yearly
-  - hourly needs no datetime; others require `--at` + `--tz`
-- Always use the user's timezone from MEMORY.md section 4, not UTC
-- `--task <id>`: link reminder to a task (optional)
-- `--message`: alternative to positional message argument
+- One-shot: `--in-minutes/--in-hours/--in-days` or `--at` + `--tz`. Always use the user's IANA timezone from MEMORY.md, never UTC.
+- Recurring: `--recurring hourly|daily|weekly|monthly|yearly` (all but hourly need `--at` + `--tz`), or `--cron "min hour dom month dow"` + `--tz` for anything else (standard cron: 0/7 = Sunday, ranges/lists/steps/names supported). Both keep their wall-clock time across DST.
+- `--fuzz-minutes N` (recurring/cron only): each fire lands at a varying point within N minutes either side of the nominal time, so a routine feels natural instead of firing at 09:30:00 sharp every day. Translate vague times yourself: "late evening" is roughly `--at ...T21:30:00 --fuzz-minutes 75`. Use fuzz for human-facing rhythms, never for deadlines; it must fit within half the gap between fires.
+- A recurring reminder's message is an instruction: when it fires, act on it. Recurring reminders double as scheduled automations.
 
-### Recurring Automations
-Recurring reminders double as scheduled automations. The message is delivered as a notification:
-```bash
-tasks remind "Summarize week ahead" --recurring weekly --at "2025-12-01T08:00:00" --tz "Europe/London"
-tasks remind "Archive completed tasks" --recurring weekly --at "2025-12-05T17:00:00" --tz "Europe/London"
-tasks remind "Check inbox" --recurring hourly
-```
-When a recurring reminder fires, treat the message as an instruction and act on it.
+## What the daemon does on its own
 
-## Behavior
-
-### Auto-Generated Reminders
-When a task has a due date, 4 auto-generated reminders are created:
-- 1 week before due
-- 1 day before due
-- 1 hour before due
-- 15 minutes before due
-
-There is **no at-due fire**: when the due time itself is reached, no notification is emitted. If you want a fire at the exact due time (e.g. user says "remind me at 6pm to X"), set an explicit reminder with `tasks remind "X" --at "..." --tz "..."` instead of relying on `tasks add --due-datetime`.
-
-These are skipped if the trigger time is already in the past. They are cleaned up when:
-- The task is marked done (`--status done`)
-- The task is deleted (FK cascade)
-- They can also be individually deleted with `tasks remind delete <id>`
-
-### Cascade Deletion
-- Deleting a task deletes all linked reminders (FK ON DELETE CASCADE)
-- Deleting a reminder does NOT affect the linked task
-
-### Missed Reminders
-When the daemon restarts, any one-time reminders that should have fired while the daemon was down are immediately sent as missed notifications.
-
-### Notification Files
-Written to the notifications directory as JSON:
-- Reminder: `*-tasks-reminder.json` with type `reminder`
-- Daemon death: `*-tasks-daemon_died.json` with type `daemon_died`
+- **Spaced pre-due reminders**: for each due date, checkpoints that halve the remaining time (a task due in 6 months pings at about 3 months, 6 weeks, 3 weeks), then 1 week, 1 day, 1 hour, and 15 minutes before due.
+- **A decision fire at the due time.** When it arrives you must pick one, immediately: do the task and `tasks done <id>`, or `tasks postpone <id> --in-days N`, or tell the user you are dropping it and `tasks delete <id>`. Marking a task done without doing it is never an option.
+- **Daily digest** (`type=task_digest`): one notification per day listing every overdue task and every task pending 2+ weeks with no due date, with the same three choices. It returns every day until the list is empty; work it down, don't acknowledge it.
+- **Missed one-shots**: reminders that should have fired while the daemon was down are sent on restart marked `missed`; missed recurring fires are skipped.
+- Completing or deleting a task cleans up its auto reminders; postponing rebuilds them for the new date.
 
 ## Data
-- SQLite DB: `~/.tasks/tasks.db`
-- Task metadata files: `~/.tasks/metadata/<id>.md`
-- Logs: `~/.tasks/logs/daemon.log`
-- PID file: `~/.tasks/serve.pid`
+
+DB `~/.tasks/tasks.db`; metadata `~/.tasks/metadata/<id>.md`; logs `~/.tasks/logs/daemon.log`; PID `~/.tasks/serve.pid`.
 
 ## Setup
+
 ```bash
-uv tool install ~/agent/skills/tasks/cli
+uv tool install --editable ~/agent/skills/tasks/cli
 ```
 
 ## Background Daemon
 
-Register with vestad to get a port (see [service](../service/SKILL.md)), then start:
-```bash
-PORT=$(~/agent/skills/service/scripts/register-service tasks)
-screen -dmS tasks tasks serve --notifications-dir ~/agent/notifications --port $PORT
+One daemon handles everything: task due-date monitoring, reminder scheduling, and the daily digest. `--notifications-dir` defaults to `~/agent/notifications`; pass it only to override. Register with vestad to get a port (see [vestad](../vestad/SKILL.md)) and add this startup command to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
 ```
-
-One daemon handles everything, both task due-date monitoring and reminder scheduling. No separate reminder daemon needed.
-
-**Restart**: Add this startup command to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
-```
-PORT=$(~/agent/skills/service/scripts/register-service tasks) && screen -dmS tasks tasks serve --notifications-dir ~/agent/notifications --port $PORT
+running tasks || { PORT=$(~/agent/skills/vestad/scripts/register-service tasks) && screen -dmS tasks tasks serve --port $PORT; sleep 1; }
 ```
 
 ### Reminder Patterns

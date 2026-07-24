@@ -33,6 +33,32 @@ func TestLookupCommandAliases(t *testing.T) {
 	}
 }
 
+// TestProfileCommandMapping pins the friendly `whatsapp profile <sub>` surface to
+// the canonical set-profile-* commands (which stay directly usable).
+func TestProfileCommandMapping(t *testing.T) {
+	cases := []struct {
+		sub     string
+		command string
+		flag    string
+		ok      bool
+	}{
+		{"name", "set-profile-name", "name", true},
+		{"photo", "set-profile-photo", "file", true},
+		{"bogus", "", "", false},
+	}
+	for _, tc := range cases {
+		command, flag, ok := profileCommand(tc.sub)
+		if ok != tc.ok || command != tc.command || flag != tc.flag {
+			t.Errorf("profileCommand(%q) = (%q,%q,%v), want (%q,%q,%v)", tc.sub, command, flag, ok, tc.command, tc.flag, tc.ok)
+		}
+		if tc.ok {
+			if _, found := lookupCommand(command); !found {
+				t.Errorf("profile maps to %q which is not a registered command", command)
+			}
+		}
+	}
+}
+
 func TestLookupCommandUnknown(t *testing.T) {
 	if _, ok := lookupCommand("definitely-not-a-command"); ok {
 		t.Error("lookupCommand returned ok for unknown command")
@@ -51,8 +77,10 @@ func TestCommandWriteFlags(t *testing.T) {
 		"send-audio": true, "add-contact": true, "remove-contact": true,
 		"leave-group": true, "create-group": true, "rename-group": true,
 		"update-group-participants": true, "set-group-photo": true, "set-group-description": true,
+		"set-profile-photo": true, "set-profile-name": true,
 		"revoke-message": true, "archive-chat": true, "archive-all-chats": true,
 		"delete-chat": true, "clear-all-chats": true,
+		"call": true, "say": true, "hangup": true,
 	}
 	for _, cmd := range commands {
 		want := writeExpected[cmd.name]
@@ -76,9 +104,13 @@ func TestCommandPositionals(t *testing.T) {
 		"backfill":              {"to"},
 		"rename-group":          {"group", "name"},
 		"set-group-description": {"group", "description"},
+		"set-profile-photo":     {"file"},
+		"set-profile-name":      {"name"},
 		"check-delivery":        {"message-id"},
 		"delete-chat":           {"to"},
 		"archive-chat":          {"to"},
+		"call":                  {"to"},
+		"say":                   {"text"},
 	}
 	for _, cmd := range commands {
 		want := positionalExpected[cmd.name]

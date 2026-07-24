@@ -1,37 +1,80 @@
 import { useEffect, useRef, useState } from "react";
-import { Plus } from "lucide-react";
+import { Bell, Cog, Mail, MessageCircle, Wallet } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemMedia,
+  ItemTitle,
+} from "@/components/ui/item";
+import { parseNotificationContent } from "@vesta/core";
 import { type NotificationEvent } from "@/api/agents";
 import { cn } from "@/lib/utils";
 
-// Loading placeholder shaped like a NotificationRow card.
+// Loading placeholder shaped like a NotificationRow cell.
 export function NotificationRowSkeleton() {
   return (
-    <Card size="sm" className="!gap-2.5 px-4 !py-3.5">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <Skeleton className="h-4 w-20 rounded-3xl" />
-          <Skeleton className="h-4 w-14 rounded-full" />
-        </div>
-        <Skeleton className="h-3 w-10 rounded" />
-      </div>
-      <Skeleton className="h-3 w-full rounded" />
-      <Skeleton className="h-3 w-3/4 rounded" />
-    </Card>
+    <Item variant="muted" size="sm" className="items-start">
+      <ItemMedia variant="icon" className="size-9 rounded-[10px] bg-muted">
+        <Skeleton className="size-4 rounded" />
+      </ItemMedia>
+      <ItemContent className="gap-1.5">
+        <Skeleton className="h-3.5 w-24 rounded" />
+        <Skeleton className="h-3 w-full rounded" />
+        <Skeleton className="h-3 w-3/4 rounded" />
+      </ItemContent>
+    </Item>
   );
 }
 
-// The stored summary is `<notification source=… type=…>INNER</notification>` (see
-// Notification.format_for_display in core/models.py). The header already shows source/type/sender,
-// so the row body just needs INNER. Falls back to the whole string if the shape ever changes.
-function notificationContent(summary: string): string {
-  const open = summary.indexOf(">");
-  const close = summary.lastIndexOf("</notification>");
-  if (open === -1 || close === -1 || close <= open) return summary;
-  return summary.slice(open + 1, close).trim();
+// A source-appropriate icon for the cell's media square.
+function SourceIcon({ source }: { source: string }) {
+  const s = source.toLowerCase();
+  if (s.includes("mail")) return <Mail />;
+  if (
+    s.includes("whatsapp") ||
+    s.includes("telegram") ||
+    s.includes("chat") ||
+    s.includes("message")
+  )
+    return <MessageCircle />;
+  if (s.includes("finance") || s.includes("bank") || s.includes("pay"))
+    return <Wallet />;
+  if (s === "core") return <Cog />;
+  return <Bell />;
+}
+
+// Icon-box tints. A source is hashed to one of these so the same source always gets the same color
+// (and different sources spread across the palette). Kept as full literal class strings so Tailwind
+// picks them up.
+const SOURCE_COLORS = [
+  "bg-sky-500/12 text-sky-600 dark:text-sky-400",
+  "bg-emerald-500/12 text-emerald-600 dark:text-emerald-400",
+  "bg-amber-500/12 text-amber-600 dark:text-amber-400",
+  "bg-violet-500/12 text-violet-600 dark:text-violet-400",
+  "bg-rose-500/12 text-rose-600 dark:text-rose-400",
+  "bg-cyan-500/12 text-cyan-600 dark:text-cyan-400",
+  "bg-indigo-500/12 text-indigo-600 dark:text-indigo-400",
+  "bg-orange-500/12 text-orange-600 dark:text-orange-400",
+  "bg-teal-500/12 text-teal-600 dark:text-teal-400",
+  "bg-fuchsia-500/12 text-fuchsia-600 dark:text-fuchsia-400",
+  "bg-blue-500/12 text-blue-600 dark:text-blue-400",
+  "bg-lime-500/12 text-lime-600 dark:text-lime-400",
+  "bg-pink-500/12 text-pink-600 dark:text-pink-400",
+  "bg-purple-500/12 text-purple-600 dark:text-purple-400",
+  "bg-red-500/12 text-red-600 dark:text-red-400",
+  "bg-green-500/12 text-green-600 dark:text-green-400",
+  "bg-yellow-500/12 text-yellow-600 dark:text-yellow-400",
+];
+
+function sourceColor(source: string): string {
+  let hash = 0;
+  for (let i = 0; i < source.length; i++) {
+    hash = (hash * 31 + source.charCodeAt(i)) | 0;
+  }
+  return SOURCE_COLORS[Math.abs(hash) % SOURCE_COLORS.length] ?? "";
 }
 
 function relativeTime(ts: string | undefined): string {
@@ -40,68 +83,56 @@ function relativeTime(ts: string | undefined): string {
   if (Number.isNaN(then)) return "";
   const mins = Math.floor((Date.now() - then) / 60000);
   if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
+  if (mins < 60) return `${String(mins)}m ago`;
   const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
+  if (hours < 24) return `${String(hours)}h ago`;
   const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
+  if (days < 7) return `${String(days)}d ago`;
   return new Intl.DateTimeFormat(undefined, {
     month: "short",
     day: "numeric",
   }).format(then);
 }
 
-// Notification bodies often arrive as `key=value, key=value` — and a value can itself
-// contain commas (e.g. a message). Split on the next `key=` boundary so a comma inside
-// a value isn't mistaken for a separator. Returns [] for plain (non key=value) text.
-function parseFields(content: string): { key: string; value: string }[] {
-  return [...content.matchAll(/(\w+)=(.*?)(?=,\s*\w+=|$)/g)].map((m) => ({
-    key: m[1],
-    value: m[2].trim(),
-  }));
-}
-
-// Shows what happened to this notification: the effective decision (interrupt vs snooze).
+// Shows what happened to this notification: the effective decision (interrupt, snooze, or trashed =
+// dropped without ever reaching the agent).
 function Disposition({ event }: { event: NotificationEvent }) {
   const decided = event.decided;
   if (!decided) return null;
+  const label =
+    decided === "interrupt"
+      ? "interrupt"
+      : decided === "trash"
+        ? "trashed"
+        : "snooze";
+  const variant =
+    decided === "interrupt"
+      ? "default"
+      : decided === "trash"
+        ? "destructive"
+        : "outline";
   return (
-    <Badge
-      variant={decided === "interrupt" ? "default" : "secondary"}
-      className="w-[4.5rem]"
-    >
-      {decided === "interrupt" ? "interrupt" : "snooze"}
+    <Badge variant={variant} className="w-[4.5rem]">
+      {label}
     </Badge>
   );
 }
 
-// One notification, as an elegant card row: source · type lead with the disposition + time on the
-// right (a pending dot marks unprocessed ones), the sender sits on a quiet line, and the body text
-// clamps to two lines and expands on demand. The make-rule action sits at the foot.
+// One notification as an Item cell (matching the files hub): a source icon, the source · type on the
+// title line, the sender, and the parsed headline/body/context (headline clamped to two lines,
+// expandable). Time and disposition sit in the trailing actions; a pending ring + dot marks unprocessed ones.
 export function NotificationRow({
   event,
   isPending,
-  onMakeRule,
 }: {
   event: NotificationEvent;
   isPending: boolean;
-  onMakeRule?: (event: NotificationEvent) => void;
 }) {
-  // Core notifications can't be targeted by a rule, so don't offer the action.
-  const isCore = event.source.trim().toLowerCase() === "core";
-  // The backend renders a notification either as plain prose (its `body`) or, when it has
-  // no body, as `key=value, …` of its fields — which always starts with a key. So treat
-  // the content as structured only when it starts with `key=`: then surface `message` as
-  // the body text and render every other field as a tag (timestamp dropped — the row
-  // already shows the time). Plain prose falls through unchanged.
-  const rawContent = notificationContent(event.summary);
-  const structured = /^\w+=/.test(rawContent);
-  const fields = structured ? parseFields(rawContent) : [];
-  const message = fields.find((f) => f.key === "message")?.value;
-  const body = structured ? (message ?? "") : rawContent;
-  const tagFields = fields.filter(
-    (f) => f.key !== "message" && f.key !== "timestamp",
-  );
+  // The agent emits a `<channel …>INNER</channel>` envelope; the core parser splits it into a
+  // headline (the message or subject), an optional secondary body (e.g. an email preview), and
+  // an optional context line (routing metadata like account · folder). The headline is the
+  // clamped, expandable text.
+  const content = parseNotificationContent(event);
   const [expanded, setExpanded] = useState(false);
   const [overflows, setOverflows] = useState(false);
   const textRef = useRef<HTMLParagraphElement>(null);
@@ -112,17 +143,25 @@ export function NotificationRow({
     const element = textRef.current;
     if (!element || expanded) return;
     setOverflows(element.scrollHeight > element.clientHeight + 1);
-  }, [body, expanded]);
+  }, [content.headline, expanded]);
 
   return (
-    <Card
+    <Item
+      variant="muted"
       size="sm"
       className={cn(
-        "!gap-2.5 px-4 !py-3.5",
-        isPending && "bg-primary/[0.01] ring-2 ring-primary",
+        "items-start",
+        isPending && "bg-primary/5 ring-2 ring-primary",
       )}
     >
-      <div className="flex items-start justify-between gap-3">
+      <ItemMedia
+        variant="icon"
+        className={cn("size-9 rounded-[10px]", sourceColor(event.source))}
+      >
+        <SourceIcon source={event.source} />
+      </ItemMedia>
+
+      <ItemContent className="min-w-0 gap-1.5">
         <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
           {isPending ? (
             <>
@@ -133,44 +172,18 @@ export function NotificationRow({
               <span className="sr-only">pending</span>
             </>
           ) : null}
-          <span className="text-sm font-semibold text-foreground">
-            {event.source}
-          </span>
+          <ItemTitle>{event.source}</ItemTitle>
           {event.notif_type ? (
-            <Badge variant="secondary">{event.notif_type}</Badge>
+            <Badge variant="outline">{event.notif_type}</Badge>
           ) : null}
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <time className="text-xs text-muted-foreground/70">
-            {relativeTime(event.ts)}
-          </time>
-          <Disposition event={event} />
-        </div>
-      </div>
 
-      {event.sender ? (
-        <span className="truncate text-xs text-muted-foreground/80">
-          {event.sender}
-        </span>
-      ) : null}
+        {event.sender ? (
+          <span className="truncate text-xs text-muted-foreground/80">
+            {event.sender}
+          </span>
+        ) : null}
 
-      {tagFields.length > 0 ? (
-        <div className="flex flex-wrap gap-1">
-          {tagFields.map((field) => (
-            <span
-              key={field.key}
-              className="inline-flex max-w-full items-center gap-1 rounded-md bg-muted/60 px-1.5 py-0.5 text-[10px] text-muted-foreground"
-            >
-              <span className="font-medium text-foreground/70">
-                {field.key}
-              </span>
-              <span className="truncate">{field.value}</span>
-            </span>
-          ))}
-        </div>
-      ) : null}
-
-      {body ? (
         <div className="flex flex-col gap-1">
           <p
             ref={textRef}
@@ -179,7 +192,7 @@ export function NotificationRow({
               expanded ? "" : "line-clamp-2",
             )}
           >
-            {body}
+            {content.headline}
           </p>
           {overflows ? (
             <button
@@ -191,20 +204,24 @@ export function NotificationRow({
             </button>
           ) : null}
         </div>
-      ) : null}
 
-      {onMakeRule && !isCore ? (
-        <Button
-          size="xs"
-          variant="ghost"
-          className="h-5 w-[4.5rem] gap-1 self-end px-2 text-muted-foreground hover:bg-transparent hover:text-foreground"
-          aria-label="make a rule from this notification"
-          onClick={() => onMakeRule(event)}
-        >
-          <Plus className="size-3" />
-          rule
-        </Button>
-      ) : null}
-    </Card>
+        {content.body ? (
+          <p className="text-xs text-muted-foreground/80">{content.body}</p>
+        ) : null}
+
+        {content.context ? (
+          <span className="text-[11px] text-muted-foreground/70">
+            {content.context}
+          </span>
+        ) : null}
+      </ItemContent>
+
+      <ItemActions className="self-start">
+        <time className="text-xs text-muted-foreground/70">
+          {relativeTime(event.ts)}
+        </time>
+        <Disposition event={event} />
+      </ItemActions>
+    </Item>
   );
 }

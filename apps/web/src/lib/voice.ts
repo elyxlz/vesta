@@ -30,13 +30,13 @@ export interface SettingDef {
   unit?: string;
   config?: SettingDef[];
   config_label?: string;
-  options?: Array<{
+  options?: {
     value: string;
     label: string;
     preview?: string;
     custom?: boolean;
     [k: string]: unknown;
-  }>;
+  }[];
 }
 
 export const setVoiceSetting = (
@@ -81,10 +81,6 @@ export async function fetchSttUsage(agentName: string): Promise<SttUsage> {
 
 export const setSttEnabled = (n: string, value: boolean) =>
   voicePost(n, "stt/set-enabled", { value });
-export const setSttEot = (
-  n: string,
-  params: { threshold?: number; timeout_ms?: number },
-) => voicePost(n, "stt/set-eot", params);
 
 // --- TTS ---
 
@@ -117,21 +113,14 @@ export async function fetchTtsUsage(agentName: string): Promise<TtsUsage> {
 
 export const setTtsEnabled = (n: string, value: boolean) =>
   voicePost(n, "tts/set-enabled", { value });
-export const setTtsVoice = (n: string, voiceId: string) =>
-  voicePost(n, "tts/set-voice", { voice_id: voiceId });
 
-// --- TTS playback ---
-//
-// Playback runs through a native <audio> element pointed at a streamed GET
-// rather than fetching bytes in JS and feeding MediaSource. The native media
-// stack streams progressively from the first byte on every webview (Android's
-// System WebView has no reliable MSE support for raw audio/mpeg and would
-// otherwise buffer the whole clip then dump it), and it owns audio routing
-// including Bluetooth A2DP cold-start. See issue #466.
-//
-// Because a media-element request can't carry an Authorization header and uses
-// GET (no body), the text is first registered via POST /tts/prepare, which
-// returns an id; the element then streams GET /tts/stream/{id}?token=...
+// TTS playback runs through a native <audio> element pointed at a streamed GET,
+// not JS-fetched bytes fed to MediaSource: the native media stack streams from
+// the first byte on every webview (Android's System WebView has no reliable
+// MSE for raw audio/mpeg) and owns audio routing including Bluetooth A2DP
+// cold-start (issue #466). A media-element request can't carry an Authorization
+// header and uses GET (no body), so the text is first registered via POST
+// /tts/prepare; the element then streams GET /tts/stream/{id}?token=...
 
 export function prepareSpeech(
   text: string,
@@ -266,7 +255,7 @@ export class Transcriber {
     this.transcript = "";
     this.committed = "";
 
-    if (!navigator.mediaDevices) {
+    if (!("mediaDevices" in navigator)) {
       this.active = false;
       throw new Error("Microphone requires a secure connection");
     }
@@ -314,7 +303,7 @@ export class Transcriber {
       if (typeof ev.data !== "string") return;
       let data: DeepgramEvent;
       try {
-        data = JSON.parse(ev.data);
+        data = JSON.parse(ev.data) as DeepgramEvent;
       } catch {
         return;
       }
@@ -366,6 +355,7 @@ export class Transcriber {
       if (this.active) {
         this.active = false;
         this.opts.onError("Transcription connection closed unexpectedly");
+        this.cleanup();
       }
     };
 
@@ -395,12 +385,7 @@ export class Transcriber {
     });
 
     workletNode.port.onmessage = (e: MessageEvent<Float32Array>) => {
-      if (
-        !this.active ||
-        !this.socket ||
-        this.socket.readyState !== WebSocket.OPEN
-      )
-        return;
+      if (!this.active || this.socket?.readyState !== WebSocket.OPEN) return;
       try {
         const pcm = floatTo16BitPCM(e.data);
         this.socket.send(pcm);
@@ -449,11 +434,9 @@ export class Transcriber {
       this.socket = null;
     }
     if (this.audioCtx) {
-      try {
-        this.audioCtx.close();
-      } catch {
-        /* ignore */
-      }
+      this.audioCtx.close().catch(() => {
+        /* already closed */
+      });
       this.audioCtx = null;
     }
     if (this.stream) {
@@ -468,7 +451,7 @@ function floatTo16BitPCM(float32: Float32Array): ArrayBuffer {
   const buf = new ArrayBuffer(float32.length * 2);
   const view = new DataView(buf);
   for (let i = 0; i < float32.length; i++) {
-    const s = Math.max(-1, Math.min(1, float32[i]));
+    const s = Math.max(-1, Math.min(1, float32[i] ?? 0));
     view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
   }
   return buf;

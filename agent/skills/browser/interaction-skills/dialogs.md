@@ -6,19 +6,20 @@ Browser dialogs (`alert`, `confirm`, `prompt`, `beforeunload`) freeze the JS thr
 
 `page_info()` auto-surfaces any open dialog: if one is pending it returns `{"dialog": {"type", "message", ...}}` instead of the usual viewport dict (because the page's JS is frozen anyway). So if you call `page_info()` after an action and see a `dialog` key, handle it before doing anything else.
 
-## Reactive: dismiss via CDP (preferred)
+## Reactive: dismiss via BiDi (preferred)
 
 Works even when JS is frozen. Handles all dialog types including `beforeunload`.
 
 ```python
-# Dismiss and read the message
-cdp("Page.handleJavaScriptDialog", accept=True)   # accept / click OK
-cdp("Page.handleJavaScriptDialog", accept=False)  # cancel / click Cancel
+# Dismiss and read the message (the daemon injects the current context)
+bidi("browsingContext.handleUserPrompt", accept=True)                 # accept / click OK
+bidi("browsingContext.handleUserPrompt", accept=False)                # cancel / click Cancel
+bidi("browsingContext.handleUserPrompt", accept=True, userText="hi")  # answer a prompt()
 
-# Read what the dialog said (from buffered CDP events)
+# Read what the dialog said (from buffered BiDi events)
 events = drain_events()
 for e in events:
-    if e["method"] == "Page.javascriptDialogOpening":
+    if e["method"] == "browsingContext.userPromptOpened":
         print(e["params"]["type"])     # "alert", "confirm", "prompt", "beforeunload"
         print(e["params"]["message"])  # the dialog text
 ```
@@ -51,12 +52,12 @@ Tradeoffs:
 Fires when navigating away from a page with unsaved changes (forms, editors, upload pages). The page freezes until the user clicks Leave/Stay.
 
 ```python
-# Option A: dismiss after navigating (CDP-level, safe)
+# Option A: dismiss after navigating (BiDi-level, safe)
 goto("https://new-url.com")
 try:
-    cdp("Page.handleJavaScriptDialog", accept=True)  # click "Leave"
-except:
-    pass  # no dialog — normal
+    bidi("browsingContext.handleUserPrompt", accept=True)  # click "Leave"
+except RuntimeError:
+    pass  # no dialog, normal
 
 # Option B: prevent before navigating (JS injection, detectable)
 js("window.onbeforeunload=null")

@@ -1,105 +1,150 @@
-use vesta_tests::{TestAgent, SERVER, inject_fake_token, unique_agent};
+use vesta_tests::{
+    agent_container_name, exec_in_container, inject_fake_token, unique_agent, TestAgent, SERVER,
+};
 
 fn ws_base_url(url: &str) -> String {
-    url.replace("https://", "wss://").replace("http://", "ws://")
+    url.replace("https://", "wss://")
+        .replace("http://", "ws://")
 }
 
 fn make_ws_rustls_config(fingerprint: Option<String>) -> std::sync::Arc<rustls::ClientConfig> {
     use std::sync::Arc;
 
     #[derive(Debug)]
-    struct AcceptAll { expected: Option<String> }
+    struct AcceptAll {
+        expected: Option<String>,
+    }
 
     impl rustls::client::danger::ServerCertVerifier for AcceptAll {
-        fn verify_server_cert(&self, end_entity: &rustls::pki_types::CertificateDer<'_>, _: &[rustls::pki_types::CertificateDer<'_>], _: &rustls::pki_types::ServerName<'_>, _: &[u8], _: rustls::pki_types::UnixTime) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        fn verify_server_cert(
+            &self,
+            end_entity: &rustls::pki_types::CertificateDer<'_>,
+            _: &[rustls::pki_types::CertificateDer<'_>],
+            _: &rustls::pki_types::ServerName<'_>,
+            _: &[u8],
+            _: rustls::pki_types::UnixTime,
+        ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
             if let Some(ref expected) = self.expected {
                 let digest = ring::digest::digest(&ring::digest::SHA256, end_entity.as_ref());
-                let actual = format!("sha256:{}", digest.as_ref().iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(":"));
+                let actual = format!(
+                    "sha256:{}",
+                    digest
+                        .as_ref()
+                        .iter()
+                        .map(|b| format!("{:02X}", b))
+                        .collect::<Vec<_>>()
+                        .join(":")
+                );
                 if actual != *expected {
                     return Err(rustls::Error::General("fingerprint mismatch".into()));
                 }
             }
             Ok(rustls::client::danger::ServerCertVerified::assertion())
         }
-        fn verify_tls12_signature(&self, _: &[u8], _: &rustls::pki_types::CertificateDer<'_>, _: &rustls::DigitallySignedStruct) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        fn verify_tls12_signature(
+            &self,
+            _: &[u8],
+            _: &rustls::pki_types::CertificateDer<'_>,
+            _: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
             Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
         }
-        fn verify_tls13_signature(&self, _: &[u8], _: &rustls::pki_types::CertificateDer<'_>, _: &rustls::DigitallySignedStruct) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        fn verify_tls13_signature(
+            &self,
+            _: &[u8],
+            _: &rustls::pki_types::CertificateDer<'_>,
+            _: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
             Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
         }
         fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-            rustls::crypto::ring::default_provider().signature_verification_algorithms.supported_schemes()
+            rustls::crypto::ring::default_provider()
+                .signature_verification_algorithms
+                .supported_schemes()
         }
     }
 
     let _ = rustls::crypto::ring::default_provider().install_default();
-    Arc::new(rustls::ClientConfig::builder().dangerous().with_custom_certificate_verifier(Arc::new(AcceptAll { expected: fingerprint })).with_no_client_auth())
+    Arc::new(
+        rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(AcceptAll {
+                expected: fingerprint,
+            }))
+            .with_no_client_auth(),
+    )
 }
 
-/// How long to poll the WS endpoint before requiring a proxy-level response.
-const WS_PROXY_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
-const WS_CONNECT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+const WS_AGENT_RUNNING_TIMEOUT_SECS: u64 = 60;
 
+async fn ws_connect(url: &str) -> Result<(), tokio_tungstenite::tungstenite::Error> {
+    let tls = make_ws_rustls_config(SERVER.config.cert_fingerprint.clone());
+    let connector = tokio_tungstenite::Connector::Rustls(tls);
+    tokio_tungstenite::connect_async_tls_with_config(url, None, false, Some(connector))
+        .await
+        .map(|(ws, _)| drop(ws))
+}
+
+/// The raw agent event bus is no longer client-exposed: a WS upgrade to `/agents/{name}/ws`
+/// (no registered service) is rejected with 404, while a registered-service WS still upgrades.
 #[tokio::test]
-async fn ws_connect_to_running_agent() {
+async fn raw_bus_ws_rejected_but_registered_service_ws_upgrades() {
     let c = SERVER.client();
     let agent = TestAgent::create(&c, &unique_agent("ws")).unwrap();
     inject_fake_token(&c, &agent.name);
     c.start_agent(&agent.name).unwrap();
+    // The WS handler runs ensure_running() before the service guard, so the container must be up
+    // for a raw-port upgrade to reach (and be rejected by) that guard rather than a docker error.
+    c.wait_until_running(&agent.name, WS_AGENT_RUNNING_TIMEOUT_SECS)
+        .unwrap();
 
-    let ws_url = format!(
+    // Register a service so the service plane has a live route to upgrade against.
+    let cname = agent_container_name(&agent.name);
+    exec_in_container(
+        &cname,
+        ". /run/vestad-env && curl -fsSk -X POST -H \"X-Agent-Token: $AGENT_TOKEN\" \
+         -H 'Content-Type: application/json' -d '{\"name\":\"probe\"}' \
+         \"https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services\"",
+    )
+    .expect("register probe service");
+
+    // A registered-service WS upgrades: the proxy completes the 101 handshake before touching
+    // the (here dead) upstream, so a successful upgrade proves the service plane is intact.
+    let service_url = format!(
+        "{}/agents/{}/probe?token={}",
+        ws_base_url(&SERVER.config.url),
+        agent.name,
+        SERVER.config.api_key
+    );
+    ws_connect(&service_url)
+        .await
+        .expect("registered-service WS should still upgrade");
+
+    // The raw event-bus port is rejected before any upgrade.
+    let raw_url = format!(
         "{}/agents/{}/ws?token={}",
         ws_base_url(&SERVER.config.url),
         agent.name,
         SERVER.config.api_key
     );
-
-    // Poll until the proxy route responds: either a successful WS upgrade, or a 502/503
-    // (agent's WS server not up — expected with a fake token). Any other error before the
-    // deadline means the route itself is broken, which is what this test guards against.
-    let deadline = std::time::Instant::now() + WS_PROXY_READY_TIMEOUT;
-    loop {
-        let tls = make_ws_rustls_config(SERVER.config.cert_fingerprint.clone());
-        let connector = tokio_tungstenite::Connector::Rustls(tls);
-
-        let result = tokio_tungstenite::connect_async_tls_with_config(
-            &ws_url, None, false, Some(connector),
-        ).await;
-
-        match result {
-            Ok((ws, _)) => {
-                drop(ws);
-                break;
-            }
-            Err(e) => {
-                let err = e.to_string();
-                if err.contains("503") || err.contains("502") {
-                    break;
-                }
-                assert!(
-                    std::time::Instant::now() < deadline,
-                    "WS endpoint never became proxy-ready: {err}"
-                );
-                tokio::time::sleep(WS_CONNECT_POLL_INTERVAL).await;
-            }
-        }
-    }
-}
-
-#[tokio::test]
-async fn ws_rejected_without_auth() {
-    let ws_url = format!(
-        "{}/agents/{}/ws",
-        ws_base_url(&SERVER.config.url),
-        unique_agent("ws-noauth"),
+    let err = ws_connect(&raw_url)
+        .await
+        .expect_err("raw event-bus WS must be rejected")
+        .to_string();
+    assert!(
+        err.contains("404"),
+        "raw event-bus WS should be rejected with 404, got: {err}"
     );
 
-    let tls = make_ws_rustls_config(SERVER.config.cert_fingerprint.clone());
-    let connector = tokio_tungstenite::Connector::Rustls(tls);
-
-    let result = tokio_tungstenite::connect_async_tls_with_config(
-        &ws_url, None, false, Some(connector),
-    ).await;
-
-    assert!(result.is_err(), "WS without auth should be rejected");
+    // Auth runs on the proxy WS path: the same route without a token is rejected. The service-WS
+    // auth path shares this handler, so this covers registered-service auth too.
+    let noauth_url = format!("{}/agents/{}/ws", ws_base_url(&SERVER.config.url), agent.name);
+    let noauth_err = ws_connect(&noauth_url)
+        .await
+        .expect_err("WS without auth must be rejected")
+        .to_string();
+    assert!(
+        noauth_err.contains("401"),
+        "unauthenticated WS should be rejected with 401, got: {noauth_err}"
+    );
 }

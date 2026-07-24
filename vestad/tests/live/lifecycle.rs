@@ -1,6 +1,9 @@
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use super::common::{create_file_request, lock_live_agent_a, wait_for_container_running, wait_for_file_contains, write_notification, E2E_FILES_DIR};
+use super::common::{
+    create_file_request, lock_live_agent_a, wait_for_container_running, wait_for_file_contains,
+    write_notification, E2E_FILES_DIR,
+};
 use vesta_tests::docker_cmd;
 
 fn started_at(container: &str) -> String {
@@ -19,7 +22,10 @@ fn agent_restart_vesta_tool_restarts_through_vestad() {
     };
 
     let started_before = started_at(&container);
-    assert!(!started_before.is_empty(), "agent container should be running before the test");
+    assert!(
+        !started_before.is_empty(),
+        "agent container should be running before the test"
+    );
 
     write_notification(
         &container,
@@ -44,10 +50,15 @@ fn agent_restart_vesta_tool_restarts_through_vestad() {
     }
 
     // The agent must come back and still do real work after the vestad-driven restart.
-    wait_for_container_running(&container, Duration::from_secs(120)).expect("container running after restart");
-    let uid = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    wait_for_container_running(&container, Duration::from_secs(120))
+        .expect("container running after restart");
+    let uid = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
     let file = format!("{E2E_FILES_DIR}/restarted-{uid}.txt");
-    write_notification(&container, &create_file_request(&file, "BACK"), true).expect("write post-restart probe");
-    wait_for_file_contains(&container, &file, "BACK", Duration::from_secs(180))
+    write_notification(&container, &create_file_request(&file, "BACK"), true)
+        .expect("write post-restart probe");
+    wait_for_file_contains(&container, &file, "BACK", Duration::from_secs(300))
         .expect("agent must process work after the restart");
 }

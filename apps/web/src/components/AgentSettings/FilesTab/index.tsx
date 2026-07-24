@@ -10,6 +10,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Item, ItemContent, ItemGroup, ItemMedia } from "@/components/ui/item";
 import { cn, errorMessage } from "@/lib/utils";
 import {
   fetchFileTree,
@@ -22,6 +23,7 @@ import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useFillHeight } from "@/hooks/use-fill-height";
 import { useAppMode } from "@/stores/use-app-mode";
+import { useRestartPending } from "@/stores/use-restart-pending";
 import { DreamsViewer } from "./DreamsViewer";
 import { FileTree } from "./FileTree";
 import { FileEditor } from "./FileEditor";
@@ -32,7 +34,8 @@ import {
   friendlyLabel,
   isSimpleAllowed,
 } from "./paths";
-import { buildTree } from "./tree";
+import { buildTree, type TreeNode } from "./tree";
+import type { AppMode } from "@/stores/use-app-mode";
 
 type SaveStatus =
   | { kind: "idle" }
@@ -45,7 +48,7 @@ function statusText(status: SaveStatus, dirty: boolean): string {
     case "saving":
       return "saving...";
     case "saved":
-      return "saved — restart the agent for changes to take effect";
+      return "saved";
     case "error":
       return status.message;
     default:
@@ -61,7 +64,7 @@ function statusClass(status: SaveStatus): string {
 function AdvancedSkeleton() {
   return (
     <Card size="sm" className="!py-0 !gap-0 flex flex-1 min-h-0 flex-col">
-      <CardHeader className="shrink-0 !flex !flex-row !items-center !gap-2.5 !px-5 !py-2.5 border-b border-border/60 [.border-b]:!pb-2.5">
+      <CardHeader className="shrink-0 !flex !flex-row !items-center !gap-2.5 !px-5 !py-2.5">
         <Skeleton className="size-4 rounded-full" />
         <Skeleton className="h-3 w-16" />
       </CardHeader>
@@ -79,40 +82,68 @@ function AdvancedSkeleton() {
   );
 }
 
-function SkeletonRow() {
+// A hub cell placeholder, shaped like the Item cells the simple view renders.
+function HubRowSkeleton() {
   return (
-    <div className="flex w-full items-center gap-2.5 px-4 py-3">
-      <Skeleton className="size-4 shrink-0 rounded-full" />
-      <Skeleton className="h-3 flex-1 rounded" />
+    <Item variant="muted" size="sm">
+      <ItemMedia variant="icon" className="size-9 rounded-[10px] bg-muted">
+        <Skeleton className="size-4 rounded" />
+      </ItemMedia>
+      <ItemContent className="gap-1.5">
+        <Skeleton className="h-3.5 w-24 rounded" />
+        <Skeleton className="h-3 w-40 max-w-full rounded" />
+      </ItemContent>
+    </Item>
+  );
+}
+
+function SkeletonSection({
+  label,
+  rows,
+  className,
+}: {
+  label: string;
+  rows: number;
+  className?: string;
+}) {
+  return (
+    <div className={cn("flex flex-col gap-3", className)}>
+      <p className="px-1 text-[11px] font-medium text-muted-foreground/70">
+        {label}
+      </p>
+      <Card size="sm">
+        <CardContent>
+          <ItemGroup>
+            {Array.from({ length: rows }).map((_, i) => (
+              <HubRowSkeleton key={i} />
+            ))}
+          </ItemGroup>
+        </CardContent>
+      </Card>
     </div>
   );
 }
 
-function SimpleSkeleton() {
+// Matches SimpleView's bento: mind + shared folders left, skills right; one stacked column on mobile.
+function SimpleSkeleton({ agentName }: { agentName?: string }) {
+  const name = agentName ?? "the agent";
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4 p-1">
-      <Card size="sm" className="!py-0 !gap-0 flex shrink-0 flex-col">
-        <SkeletonRow />
-        <div className="border-t border-border/60">
-          <SkeletonRow />
-        </div>
-        <div className="border-t border-border/60">
-          <SkeletonRow />
-        </div>
-      </Card>
-      <Card size="sm" className="!py-0 !gap-0 flex flex-1 min-h-0 flex-col">
-        <CardHeader className="shrink-0 !flex !flex-row !items-center !gap-2.5 !px-4 !py-2.5 border-b border-border/60 [.border-b]:!pb-2.5">
-          <Skeleton className="size-4 rounded-full" />
-          <Skeleton className="h-3 w-12" />
-        </CardHeader>
-        <CardContent className="flex-1 min-h-0 !px-0 !py-0">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="border-b border-border/60 last:border-b-0">
-              <SkeletonRow />
-            </div>
-          ))}
-        </CardContent>
-      </Card>
+    <div className="flex flex-col gap-3 p-1 lg:grid lg:grid-cols-2 lg:items-start lg:gap-x-6">
+      <div className="contents lg:flex lg:flex-col lg:gap-6">
+        <SkeletonSection label={`who ${name} is`} rows={3} />
+        <SkeletonSection
+          label="shared folders"
+          rows={2}
+          className="order-3 lg:order-none"
+        />
+      </div>
+      <div className="contents lg:flex lg:flex-col lg:gap-6">
+        <SkeletonSection
+          label="abilities"
+          rows={3}
+          className="order-2 lg:order-none"
+        />
+      </div>
     </div>
   );
 }
@@ -130,7 +161,7 @@ function FileEditorSkeleton() {
         <Skeleton
           key={i}
           className="h-3.5 shrink-0 rounded"
-          style={{ width: `${width}%` }}
+          style={{ width: `${String(width)}%` }}
         />
       ))}
     </div>
@@ -140,9 +171,194 @@ function FileEditorSkeleton() {
 // The Tabs container's pb-6 sits below the panel on mobile; reserve it.
 const MOBILE_BOTTOM_GAP = 24;
 
+function SaveControls({
+  loadedFile,
+  status,
+  dirty,
+  onSave,
+}: {
+  loadedFile: FileReadResponse | null;
+  status: SaveStatus;
+  dirty: boolean;
+  onSave: () => Promise<void>;
+}) {
+  return (
+    <>
+      {loadedFile?.readonly && (
+        <Badge variant="outline" className="text-[10px]">
+          read-only
+        </Badge>
+      )}
+      {(status.kind !== "idle" || dirty) && (
+        <span className={cn("text-[10px]", statusClass(status))}>
+          {statusText(status, dirty)}
+        </span>
+      )}
+      <Button
+        size="xs"
+        disabled={
+          !dirty || status.kind === "saving" || (loadedFile?.readonly ?? false)
+        }
+        onClick={() => {
+          void onSave();
+        }}
+      >
+        save
+      </Button>
+    </>
+  );
+}
+
+function TreePanel({
+  mode,
+  entries,
+  treeError,
+  root,
+  agentName,
+  selectedPath,
+  dreamsActive,
+  onSelect,
+  onShowDreams,
+}: {
+  mode: AppMode;
+  entries: FileTreeEntry[] | null;
+  treeError: string | null;
+  root: TreeNode | null;
+  agentName: string;
+  selectedPath: string | null;
+  dreamsActive: boolean;
+  onSelect: (path: string) => void;
+  onShowDreams: () => void;
+}) {
+  return (
+    <div className="flex flex-1 min-h-0 flex-col">
+      {treeError ? (
+        <p className="px-1 py-2 text-xs text-destructive">
+          failed to load: {treeError}
+        </p>
+      ) : !entries ? (
+        mode === "simple" ? (
+          <SimpleSkeleton agentName={agentName} />
+        ) : (
+          <AdvancedSkeleton />
+        )
+      ) : mode === "simple" ? (
+        <SimpleView
+          entries={entries}
+          selected={selectedPath}
+          dreamsActive={dreamsActive}
+          agentName={agentName}
+          onSelect={onSelect}
+          onShowDreams={onShowDreams}
+        />
+      ) : root ? (
+        <Card size="sm" className="!py-0 !gap-0 flex flex-1 min-h-0 flex-col">
+          <CardHeader className="shrink-0 !flex !flex-row !items-center !gap-2.5 !px-5 !py-2.5">
+            <FolderTree className="size-4 text-muted-foreground" />
+            <CardTitle>/root</CardTitle>
+          </CardHeader>
+          <CardContent className="flex-1 min-h-0 overflow-auto !px-2 !py-2">
+            <FileTree root={root} selected={selectedPath} onSelect={onSelect} />
+          </CardContent>
+        </Card>
+      ) : null}
+    </div>
+  );
+}
+
+function EditorBody({
+  entries,
+  treeError,
+  dreamsActive,
+  agentName,
+  dreamPaths,
+  loadError,
+  selectedPath,
+  loadedFile,
+  onChange,
+}: {
+  entries: FileTreeEntry[] | null;
+  treeError: string | null;
+  dreamsActive: boolean;
+  agentName: string;
+  dreamPaths: string[];
+  loadError: string | null;
+  selectedPath: string | null;
+  loadedFile: FileReadResponse | null;
+  onChange: (content: string) => void;
+}) {
+  return (
+    <CardContent className="flex-1 min-h-0 !px-0">
+      {!entries && !treeError ? (
+        <FileEditorSkeleton />
+      ) : dreamsActive && agentName ? (
+        <DreamsViewer agent={agentName} dreamPaths={dreamPaths} />
+      ) : loadError ? (
+        <div className="flex h-full items-center justify-center bg-muted/40 text-sm text-destructive">
+          {loadError}
+        </div>
+      ) : !selectedPath ? (
+        <div className="flex h-full items-center justify-center bg-muted/40 text-sm text-muted-foreground">
+          select a file to view or edit
+        </div>
+      ) : !loadedFile ? (
+        <FileEditorSkeleton />
+      ) : (
+        <FileEditor
+          key={loadedFile.path}
+          initialContent={loadedFile.content}
+          readonly={loadedFile.readonly}
+          encoding={loadedFile.encoding}
+          onChange={onChange}
+          placeholder={
+            loadedFile.path === CONSTITUTION_PATH
+              ? "empty — set principles, boundaries, or facts the agent must always honor"
+              : undefined
+          }
+        />
+      )}
+    </CardContent>
+  );
+}
+
+// Wrapper for the one-panel-at-a-time layout: mobile fills the screen; desktop
+// bounds the detail view so it scrolls internally and lets the hub flow.
+function DrillInContainer({
+  isMobile,
+  inDetail,
+  fillRef,
+  fillHeight,
+  children,
+}: {
+  isMobile: boolean;
+  inDetail: boolean;
+  fillRef: (node: HTMLDivElement | null) => void;
+  fillHeight: number;
+  children: React.ReactNode;
+}) {
+  if (isMobile) {
+    return (
+      <div
+        ref={fillRef}
+        style={{ height: fillHeight }}
+        className={cn("flex min-h-0 flex-col", !inDetail && "overflow-y-auto")}
+      >
+        {children}
+      </div>
+    );
+  }
+  return inDetail ? (
+    <div className="mx-auto flex h-[70vh] w-full max-w-2xl min-h-0 flex-col">
+      {children}
+    </div>
+  ) : (
+    <div className="mx-auto w-full max-w-4xl">{children}</div>
+  );
+}
+
 export function FilesTab() {
   const { name: agentName, agent } = useSelectedAgent();
-  const isAlive = agent?.status === "alive";
+  const isAlive = agent.status === "alive";
   const isMobile = useIsMobile();
   // Mobile uses a drill-in (tree, then editor): the active panel fills the space
   // down to the viewport bottom.
@@ -156,6 +372,7 @@ export function FilesTab() {
   const [editorContent, setEditorContent] = useState("");
   const [status, setStatus] = useState<SaveStatus>({ kind: "idle" });
   const mode = useAppMode((s) => s.mode);
+  const markRestartPending = useRestartPending((s) => s.markPending);
   const [dreamsActive, setDreamsActive] = useState(false);
 
   useEffect(() => {
@@ -200,9 +417,19 @@ export function FilesTab() {
       return;
     }
     setTreeError(null);
+    let cancelled = false;
     fetchFileTree(agentName)
-      .then(setEntries)
-      .catch((e: Error) => setTreeError(e.message));
+      .then((entries) => {
+        if (cancelled) return;
+        setEntries(entries);
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setTreeError(errorMessage(e, "failed to load files"));
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [agentName, isAlive]);
 
   useEffect(() => {
@@ -217,9 +444,9 @@ export function FilesTab() {
         setLoadedFile(file);
         setEditorContent(file.content);
       })
-      .catch((e: Error) => {
+      .catch((e: unknown) => {
         if (cancelled) return;
-        setLoadError(e.message);
+        setLoadError(errorMessage(e, "failed to load file"));
       });
     return () => {
       cancelled = true;
@@ -250,6 +477,7 @@ export function FilesTab() {
       await writeFile(agentName, loadedFile.path, editorContent);
       setLoadedFile({ ...loadedFile, content: editorContent });
       setStatus({ kind: "saved" });
+      markRestartPending(agentName, "files", agent.startedAt);
     } catch (e) {
       setStatus({ kind: "error", message: errorMessage(e, "save failed") });
     }
@@ -264,132 +492,79 @@ export function FilesTab() {
   }
 
   const saveControls = (
-    <>
-      {loadedFile?.readonly && (
-        <Badge variant="outline" className="text-[10px]">
-          read-only
-        </Badge>
-      )}
-      {(status.kind !== "idle" || dirty) && (
-        <span className={cn("text-[10px]", statusClass(status))}>
-          {statusText(status, dirty)}
-        </span>
-      )}
-      <Button
-        size="xs"
-        disabled={
-          !dirty || status.kind === "saving" || (loadedFile?.readonly ?? false)
-        }
-        onClick={onSave}
-      >
-        save
-      </Button>
-    </>
+    <SaveControls
+      loadedFile={loadedFile}
+      status={status}
+      dirty={dirty}
+      onSave={onSave}
+    />
   );
 
   const treeInner = (
-    <div className="flex flex-1 min-h-0 flex-col">
-      {treeError ? (
-        <p className="px-1 py-2 text-xs text-destructive">
-          failed to load: {treeError}
-        </p>
-      ) : !entries ? (
-        mode === "simple" ? (
-          <SimpleSkeleton />
-        ) : (
-          <AdvancedSkeleton />
-        )
-      ) : mode === "simple" ? (
-        <SimpleView
-          entries={entries}
-          selected={selectedPath}
-          dreamsActive={dreamsActive}
-          onSelect={selectFile}
-          onShowDreams={showDreams}
-        />
-      ) : root ? (
-        <Card size="sm" className="!py-0 !gap-0 flex flex-1 min-h-0 flex-col">
-          <CardHeader className="shrink-0 !flex !flex-row !items-center !gap-2.5 !px-5 !py-2.5 border-b border-border/60 [.border-b]:!pb-2.5">
-            <FolderTree className="size-4 text-muted-foreground" />
-            <CardTitle className="!text-sm !font-medium">/root</CardTitle>
-          </CardHeader>
-          <CardContent className="flex-1 min-h-0 overflow-auto !px-2 !py-2">
-            <FileTree
-              root={root}
-              selected={selectedPath}
-              onSelect={selectFile}
-            />
-          </CardContent>
-        </Card>
-      ) : null}
-    </div>
+    <TreePanel
+      mode={mode}
+      entries={entries}
+      treeError={treeError}
+      root={root}
+      agentName={agentName}
+      selectedPath={selectedPath}
+      dreamsActive={dreamsActive}
+      onSelect={selectFile}
+      onShowDreams={showDreams}
+    />
   );
 
   const editorBody = (
-    <CardContent className="flex-1 min-h-0 !px-0">
-      {!entries && !treeError ? (
-        <FileEditorSkeleton />
-      ) : dreamsActive && agentName ? (
-        <DreamsViewer agent={agentName} dreamPaths={dreamPaths} />
-      ) : loadError ? (
-        <div className="flex h-full items-center justify-center bg-muted/40 text-sm text-destructive">
-          {loadError}
-        </div>
-      ) : !selectedPath ? (
-        <div className="flex h-full items-center justify-center bg-muted/40 text-sm text-muted-foreground">
-          select a file to view or edit
-        </div>
-      ) : !loadedFile ? (
-        <FileEditorSkeleton />
-      ) : (
-        <FileEditor
-          key={loadedFile.path}
-          initialContent={loadedFile.content}
-          readonly={loadedFile.readonly}
-          encoding={loadedFile.encoding}
-          onChange={setEditorContent}
-          placeholder={
-            loadedFile.path === CONSTITUTION_PATH
-              ? "empty — set principles, boundaries, or facts the agent must always honor"
-              : undefined
-          }
-        />
-      )}
-    </CardContent>
+    <EditorBody
+      entries={entries}
+      treeError={treeError}
+      dreamsActive={dreamsActive}
+      agentName={agentName}
+      dreamPaths={dreamPaths}
+      loadError={loadError}
+      selectedPath={selectedPath}
+      loadedFile={loadedFile}
+      onChange={setEditorContent}
+    />
   );
 
-  // Mobile drill-in: the tree, then the editor/dreams detail view with a back
-  // button. Only one panel shows at a time, each filling the screen.
-  if (isMobile) {
+  // Drill-in layout: a hub, then the editor/dreams detail with a back button,
+  // one panel at a time. Used on mobile (any mode) and for the calm simple-mode
+  // hub on desktop. Advanced desktop keeps the two-pane tree + editor below.
+  const drillIn = isMobile || mode === "simple";
+  if (drillIn) {
     const inDetail = dreamsActive || selectedPath !== null;
+    const panel = inDetail ? (
+      <Card size="sm" className="!py-0 !gap-0 flex flex-1 min-w-0 flex-col">
+        <div className="shrink-0 flex items-center gap-2 px-3 py-2.5">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="back to files"
+            onClick={goBack}
+          >
+            <ChevronLeft className="size-5" />
+          </Button>
+          <span className="flex-1 truncate text-xs text-muted-foreground">
+            {headerLabel}
+          </span>
+          {!dreamsActive && saveControls}
+        </div>
+        {editorBody}
+      </Card>
+    ) : (
+      treeInner
+    );
+
     return (
-      <div
-        ref={fillRef}
-        style={{ height: fillHeight }}
-        className="flex min-h-0 flex-col"
+      <DrillInContainer
+        isMobile={isMobile}
+        inDetail={inDetail}
+        fillRef={fillRef}
+        fillHeight={fillHeight}
       >
-        {inDetail ? (
-          <Card size="sm" className="!py-0 !gap-0 flex flex-1 min-w-0 flex-col">
-            <div className="shrink-0 flex items-center gap-2 border-b border-border/60 px-3 py-2.5">
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label="back to files"
-                onClick={goBack}
-              >
-                <ChevronLeft className="size-5" />
-              </Button>
-              <span className="flex-1 truncate text-xs text-muted-foreground">
-                {headerLabel}
-              </span>
-              {!dreamsActive && saveControls}
-            </div>
-            {editorBody}
-          </Card>
-        ) : (
-          treeInner
-        )}
-      </div>
+        {panel}
+      </DrillInContainer>
     );
   }
 
@@ -399,7 +574,7 @@ export function FilesTab() {
 
       <Card size="sm" className="!py-0 !gap-0 flex min-w-0 flex-col">
         {!dreamsActive && (
-          <CardHeader className="shrink-0 items-center !px-5 !py-2.5 border-b border-border/60 [.border-b]:!pb-2.5">
+          <CardHeader className="shrink-0 items-center !px-5 !py-2.5">
             <CardTitle className="truncate !text-xs !font-normal text-muted-foreground">
               {!entries && !treeError ? (
                 <Skeleton className="h-3 w-28" />

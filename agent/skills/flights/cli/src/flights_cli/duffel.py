@@ -4,8 +4,8 @@ Thin wrapper around the Duffel REST API v2.
 Uses requests directly (official Python SDK was archived Sep 2024).
 """
 
-import os
 import json
+import os
 from pathlib import Path
 from typing import Any
 

@@ -8,31 +8,34 @@ import {
 describe("notification rules api", () => {
   beforeEach(() => vi.restoreAllMocks());
 
-  it("getNotificationInterruptRules unwraps the rules array", async () => {
+  it("getNotificationInterruptRules reads notification_rules from config", async () => {
     const spy = vi.spyOn(client, "apiJson").mockResolvedValue({
-      rules: [{ id: "a", source: "twitter", action: "pool" }],
+      notification_rules: [{ id: "a", source: "twitter", action: "snooze" }],
     });
     const rules = await getNotificationInterruptRules("bob");
-    expect(spy).toHaveBeenCalledWith("/agents/bob/config/notification-policy");
-    expect(rules).toEqual([{ id: "a", source: "twitter", action: "pool" }]);
+    expect(spy).toHaveBeenCalledWith("/agents/bob/config");
+    expect(rules).toEqual([{ id: "a", source: "twitter", action: "snooze" }]);
   });
 
-  it("setNotificationInterruptRules PUTs the full list and returns saved rules", async () => {
-    const spy = vi.spyOn(client, "apiJson").mockResolvedValue({
-      rules: [{ id: "x", source: "twitter", action: "pool" }],
-    });
-    const out = await setNotificationInterruptRules("bob", [
-      { id: "", source: "twitter", action: "pool" },
-    ]);
+  it("getNotificationInterruptRules defaults to [] when absent", async () => {
+    vi.spyOn(client, "apiJson").mockResolvedValue({});
+    const rules = await getNotificationInterruptRules("bob");
+    expect(rules).toEqual([]);
+  });
+
+  it("setNotificationInterruptRules PUTs notification_rules and returns them", async () => {
+    const spy = vi
+      .spyOn(client, "apiFetch")
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true })));
+    const rules = [{ id: "x", source: "twitter", action: "snooze" as const }];
+    const out = await setNotificationInterruptRules("bob", rules);
     expect(spy).toHaveBeenCalledWith(
-      "/agents/bob/config/notification-policy",
+      "/agents/bob/config",
       expect.objectContaining({
         method: "PUT",
-        body: JSON.stringify({
-          rules: [{ id: "", source: "twitter", action: "pool" }],
-        }),
+        body: JSON.stringify({ notification_rules: rules }),
       }),
     );
-    expect(out).toEqual([{ id: "x", source: "twitter", action: "pool" }]);
+    expect(out).toEqual(rules);
   });
 });

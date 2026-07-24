@@ -1,14 +1,12 @@
-type BadgeNavigator = Navigator & {
-  setAppBadge?: (count?: number) => Promise<void>;
-  clearAppBadge?: () => Promise<void>;
-};
-
 export function setAppBadge(on: boolean): void {
-  if (typeof navigator === "undefined") return;
-  const nav = navigator as BadgeNavigator;
+  if (typeof navigator === "undefined" || !("setAppBadge" in navigator)) return;
   if (on) {
-    nav.setAppBadge?.(1).catch(() => {});
+    navigator.setAppBadge(1).catch(() => {
+      /* badge is best-effort */
+    });
   } else {
-    nav.clearAppBadge?.().catch(() => {});
+    navigator.clearAppBadge().catch(() => {
+      /* badge is best-effort */
+    });
   }
 }

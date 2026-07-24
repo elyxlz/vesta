@@ -11,15 +11,15 @@
 //
 // The token never rides in a URL; only the single-use, PKCE-bound code does.
 //
-// Native (Tauri) apps aren't served by a box, so they can't full-navigate to
-// /cb on their own origin. Desktop instead runs a transient loopback server
-// (tauri-plugin-oauth) and registers `http://127.0.0.1:<port>/cb` as the
-// redirect; the control plane returns the box `url` alongside the token, and we
-// upgrade that token to a rotating refresh at the box's `/auth/exchange`. See
-// `startNativeLogin` and the `vesta-app` native client in the control plane's
-// functions/api/oauth.ts.
+// The desktop app isn't served by a box, so it can't full-navigate to /cb on
+// its own origin. It instead runs a transient loopback server (the Electron
+// main process, via the runtime bridge) and registers
+// `http://127.0.0.1:<port>/cb` as the redirect; the control plane returns the
+// box `url` alongside the token, and we upgrade that token to a rotating
+// refresh at the box's `/auth/exchange`. See `startNativeLogin` and the
+// `vesta-app` native client in the control plane's functions/api/oauth.ts.
 
-import { isTauri, buildPlatform } from "./env";
+import { native } from "./native";
 import { setConnection } from "./connection";
 
 const VERIFIER_KEY = "vesta-pkce-verifier";
@@ -65,9 +65,9 @@ export function tenantIdentity(): { apexOrigin: string; subdomain: string } {
  * browser leaves this page.
  */
 export async function startHostedLogin(): Promise<void> {
-  // Native apps can't redirect to their own origin — hand off to the loopback
-  // flow instead (desktop) or the in-app secure tab (mobile, not yet wired).
-  if (isTauri) return startNativeLogin();
+  // The desktop app can't redirect to its own origin: hand off to the
+  // loopback flow instead.
+  if (native.oauthLoopback) return startNativeLogin();
 
   const { apexOrigin, subdomain } = tenantIdentity();
   const verifier = randomBase64url(32);
@@ -115,93 +115,91 @@ export async function completeHostedLogin(
     body: JSON.stringify({ code, code_verifier: verifier }),
   });
   if (!resp.ok) throw new Error("could not complete sign-in");
-  const data = await resp.json();
+  const data = (await resp.json()) as {
+    access_token?: string;
+    expires_in?: number;
+  };
   if (!data.access_token) throw new Error("no token returned");
   return { accessToken: data.access_token, expiresIn: data.expires_in ?? 600 };
 }
 
 /**
- * Native (Tauri) hosted login. Desktop spins up a loopback server
- * (tauri-plugin-oauth), opens the system browser to the control plane's single
- * sign-in page, and catches the redirect there — no box origin to bounce off.
+ * Native (desktop app) hosted login. The main process spins up a loopback
+ * server, the system browser opens the control plane's single sign-in page,
+ * and the redirect lands there — no box origin to bounce off.
  *
  *   loopback :<port>  →  open https://vesta.run/api/authorize?client_id=vesta-app
  *                        &redirect_uri=http://127.0.0.1:<port>/cb&...
- *     ← onUrl: http://127.0.0.1:<port>/cb?code=...&state=...
+ *     ← callback: http://127.0.0.1:<port>/cb?code=...&state=...
  *     → POST https://vesta.run/api/token { code, code_verifier }
  *     ← { access_token, url }                       (url = this user's box)
  *     → POST <url>/auth/exchange  (Bearer access_token)
  *     ← { access_token, refresh_token, expires_in } (rotating, on-box)
- *
- * Mobile (ios/android) needs an in-app secure tab (ASWebAuthenticationSession /
- * Custom Tabs via tauri-plugin-web-auth); not wired yet — fail with a clear note
- * rather than spawning a loopback server that the OS sandbox would block.
  */
 export async function startNativeLogin(): Promise<void> {
-  if (buildPlatform === "ios" || buildPlatform === "android") {
-    throw new Error("mobile sign-in is coming soon — use the web app for now");
-  }
-
-  const { start, onUrl, cancel } =
-    await import("@fabianlars/tauri-plugin-oauth");
-  const { openUrl } = await import("@tauri-apps/plugin-opener");
+  const loopback = native.oauthLoopback;
+  if (!loopback) throw new Error("native sign-in requires the desktop app");
 
   const verifier = randomBase64url(32);
   const state = randomBase64url(16);
-  const port = await start();
+  const port = await loopback.start();
   const params = new URLSearchParams({
     client_id: NATIVE_CLIENT_ID,
-    redirect_uri: `http://127.0.0.1:${port}/cb`,
+    redirect_uri: `http://127.0.0.1:${String(port)}/cb`,
     code_challenge: await s256(verifier),
     code_challenge_method: "S256",
     state,
   });
 
-  // Bridge the loopback's onUrl callback (which fires when the browser redirects
+  // Bridge the loopback's callback (which fires when the browser redirects
   // back, potentially much later) into this promise, so the caller can surface
   // errors and reset its busy state. A success ends in a full navigation into the
   // app. `settled` guards against double-firing — the loopback can see a stray
   // favicon/preflight hit before the real callback.
   await new Promise<void>((resolve, reject) => {
     let settled = false;
-    let unlisten: (() => void) | undefined;
+    let unlisten = () => {
+      /* replaced once the callback listener registers */
+    };
     const teardown = () => {
-      void cancel(port).catch(() => {});
-      unlisten?.();
+      void loopback.cancel(port).catch(() => {
+        /* the loopback is already gone */
+      });
+      unlisten();
     };
 
-    onUrl(async (url: string) => {
+    unlisten = loopback.onCallback((url: string) => {
       if (settled) return;
       const u = new URL(url);
       const code = u.searchParams.get("code");
       const returnedState = u.searchParams.get("state");
       if (!code || !returnedState) return; // stray hit — keep waiting
       settled = true;
-      try {
-        if (returnedState !== state) {
-          throw new Error("state mismatch, try again");
+      void (async () => {
+        try {
+          if (returnedState !== state) {
+            throw new Error("state mismatch, try again");
+          }
+          await completeNativeLogin(code, verifier);
+          teardown();
+          resolve();
+          // Full load so connection-reading providers re-init from storage.
+          window.location.assign("/");
+        } catch (e) {
+          teardown();
+          reject(e instanceof Error ? e : new Error(String(e)));
         }
-        await completeNativeLogin(code, verifier);
-        teardown();
-        resolve();
-        // Full load so connection-reading providers re-init from storage.
-        window.location.assign("/");
-      } catch (e) {
-        teardown();
-        reject(e);
-      }
-    })
-      .then((fn) => {
-        unlisten = fn;
-      })
-      .catch(reject);
-
-    openUrl(`${CONTROL_APEX}/api/authorize?${params.toString()}`).catch((e) => {
-      if (settled) return;
-      settled = true;
-      teardown();
-      reject(e);
+      })();
     });
+
+    native
+      .openExternal(`${CONTROL_APEX}/api/authorize?${params.toString()}`)
+      .catch((e: unknown) => {
+        if (settled) return;
+        settled = true;
+        teardown();
+        reject(e instanceof Error ? e : new Error(String(e)));
+      });
   });
 }
 
@@ -220,7 +218,10 @@ async function completeNativeLogin(
     body: JSON.stringify({ code, code_verifier: verifier }),
   });
   if (!tokenResp.ok) throw new Error("could not complete sign-in");
-  const tok = await tokenResp.json();
+  const tok = (await tokenResp.json()) as {
+    access_token?: string;
+    url?: string;
+  };
   if (!tok.access_token || !tok.url) {
     throw new Error("sign-in response missing token or box url");
   }
@@ -236,7 +237,11 @@ async function completeNativeLogin(
   if (!exchangeResp.ok) {
     throw new Error("could not finish connecting to your vesta");
   }
-  const ex = await exchangeResp.json();
+  const ex = (await exchangeResp.json()) as {
+    access_token?: string;
+    refresh_token?: string;
+    expires_in?: number;
+  };
   if (!ex.access_token || !ex.refresh_token) {
     throw new Error("exchange returned no tokens");
   }

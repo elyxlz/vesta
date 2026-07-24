@@ -63,20 +63,24 @@ export function AgentIslandModals() {
             <div className="flex min-w-0 flex-col items-center gap-3 py-2">
               <ProviderPicker
                 className="w-full px-0"
-                onDone={async (result) => {
-                  setSubmitting(true);
-                  setSubmitError(null);
-                  try {
-                    await setProvider(name, result);
-                    clearAuthState();
-                  } catch (e: unknown) {
-                    setSubmitError(
-                      (e as { message?: string })?.message ||
-                        "failed to update provider",
-                    );
-                  } finally {
-                    setSubmitting(false);
-                  }
+                onDone={(result) => {
+                  const submit = async () => {
+                    setSubmitting(true);
+                    setSubmitError(null);
+                    try {
+                      await setProvider(name, result);
+                      clearAuthState();
+                    } catch (e: unknown) {
+                      setSubmitError(
+                        e instanceof Error
+                          ? e.message
+                          : "failed to update provider",
+                      );
+                    } finally {
+                      setSubmitting(false);
+                    }
+                  };
+                  void submit();
                 }}
               />
               {submitError && (
@@ -94,13 +98,18 @@ export function AgentIslandModals() {
           <AlertDialogHeader>
             <AlertDialogTitle>delete {name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              this will permanently destroy the agent and all its data. this
-              action cannot be undone.
+              this permanently deletes {name} and everything they've learned. it
+              can't be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>cancel</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={handleDelete}>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                void handleDelete();
+              }}
+            >
               delete
             </AlertDialogAction>
           </AlertDialogFooter>

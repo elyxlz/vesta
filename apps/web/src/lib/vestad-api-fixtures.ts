@@ -14,35 +14,24 @@ export const vestadApiFixtures = {
     "starting",
     "not_authenticated",
     "unprovisioned",
+    "rebuilding",
     "stopped",
     "dead",
     "not_found"
   ],
-  "agents_ws_message": {
-    "agents": [
-      {
-        "activityState": "thinking",
-        "name": "sample-agent",
-        "services": {
-          "dashboard": {
-            "port": 8080,
-            "public": true,
-            "rev": 3
-          }
-        },
-        "status": "alive",
-        "ws_port": 4200
-      },
-      {
-        "activityState": "idle",
-        "name": "stopped-agent",
-        "services": {},
-        "status": "stopped",
-        "ws_port": 4201
-      }
-    ],
-    "type": "agents"
-  },
+  "agents": [
+    {
+      "name": "sample-agent",
+      "startedAt": "2026-01-01T00:00:00Z",
+      "status": "alive",
+      "ws_port": 4200
+    },
+    {
+      "name": "stopped-agent",
+      "status": "stopped",
+      "ws_port": 4201
+    }
+  ],
   "auth_start": {
     "auth_url": "https://claude.ai/oauth/authorize?code=true",
     "session_id": "0123456789abcdef"
@@ -84,6 +73,19 @@ export const vestadApiFixtures = {
       "size": 1234567890
     }
   ],
+  "start_all": {
+    "results": [
+      {
+        "name": "sample-agent",
+        "ok": true
+      },
+      {
+        "error": "failed to start",
+        "name": "broken-agent",
+        "ok": false
+      }
+    ]
+  },
   "tree_entry": {
     "is_dir": false,
     "mode": 420,

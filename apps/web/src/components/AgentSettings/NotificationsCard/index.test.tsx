@@ -6,13 +6,13 @@ import {
   AgentSocketContext,
   type AgentSocketValue,
 } from "@/providers/AgentSocketProvider/context";
-import type { VestaEvent } from "@/lib/types";
+import type { ChatMessage } from "@/lib/types";
 import { NotificationsCard } from "./index";
 
 // A fake AgentSocket context: `pending` is the connect-snapshot seed; `messages` carries any live
 // notification / notification_cleared deltas the card folds on top of it.
 function socketValue(
-  messages: VestaEvent[],
+  messages: ChatMessage[],
   pending: string[] = [],
 ): AgentSocketValue {
   return {
@@ -24,11 +24,11 @@ function socketValue(
     pendingNotifications: pending,
     hasMore: false,
     loadingMore: false,
-    loadMore: () => {},
+    loadMore: async () => {
+      /* noop */
+    },
     send: () => true,
-    sendEvent: () => true,
-    showToolCalls: false,
-    setShowToolCalls: () => {},
+    retry: () => undefined,
   };
 }
 
@@ -49,11 +49,11 @@ describe("NotificationsCard", () => {
           type: "notification",
           source: "twitter",
           summary:
-            '<notification source="twitter" type="tweet">a new tweet</notification>',
+            '<channel source="twitter" type="tweet">a new tweet</channel>',
           notif_type: "tweet",
+          id: 101,
           sender: "@bob",
-          interrupt: true,
-          decided: "pool",
+          decided: "snooze",
           ts: new Date().toISOString(),
         },
       ],
@@ -63,8 +63,32 @@ describe("NotificationsCard", () => {
 
     expect(await screen.findByText("twitter")).toBeTruthy();
     expect(screen.getByText("a new tweet")).toBeTruthy();
-    // decided=pool renders the "snooze" disposition badge.
+    // decided=snooze renders the "snooze" disposition badge.
     expect(screen.getByText("snooze")).toBeTruthy();
+  });
+
+  it("renders a trashed notification's disposition", async () => {
+    vi.spyOn(api, "getNotificationHistory").mockResolvedValue({
+      notifications: [
+        {
+          type: "notification",
+          source: "whatsapp",
+          summary:
+            '<channel source="whatsapp" type="message">status update</channel>',
+          notif_type: "message",
+          id: 102,
+          sender: "someone",
+          decided: "trash",
+          ts: new Date().toISOString(),
+        },
+      ],
+      cursor: null,
+    });
+    render(<NotificationsCard />);
+
+    expect(await screen.findByText("whatsapp")).toBeTruthy();
+    // decided=trash renders the "trashed" disposition badge.
+    expect(screen.getByText("trashed")).toBeTruthy();
   });
 
   it("loads older notifications when there's a cursor", async () => {
@@ -75,9 +99,9 @@ describe("NotificationsCard", () => {
           {
             type: "notification",
             source: "twitter",
-            summary:
-              '<notification source="twitter" type="tweet">first</notification>',
+            summary: '<channel source="twitter" type="tweet">first</channel>',
             notif_type: "tweet",
+            id: 103,
             ts: new Date().toISOString(),
           },
         ],
@@ -88,9 +112,9 @@ describe("NotificationsCard", () => {
           {
             type: "notification",
             source: "email",
-            summary:
-              '<notification source="email" type="message">older</notification>',
+            summary: '<channel source="email" type="message">older</channel>',
             notif_type: "message",
+            id: 104,
             ts: new Date().toISOString(),
           },
         ],
@@ -115,57 +139,6 @@ describe("NotificationsCard", () => {
   });
 });
 
-describe("NotificationsCard make-rule", () => {
-  beforeEach(() => {
-    vi.restoreAllMocks();
-  });
-  afterEach(cleanup);
-
-  it("offers a make-rule action per notification", async () => {
-    const onMakeRule = vi.fn();
-    vi.spyOn(api, "getNotificationHistory").mockResolvedValue({
-      notifications: [
-        {
-          type: "notification",
-          source: "twitter",
-          summary:
-            '<notification source="twitter" type="tweet">hi</notification>',
-          notif_type: "tweet",
-          ts: new Date().toISOString(),
-        },
-      ],
-      cursor: null,
-    });
-    render(<NotificationsCard onMakeRule={onMakeRule} />);
-    await screen.findByText("twitter");
-
-    await userEvent.click(screen.getByRole("button", { name: /make a rule/i }));
-
-    expect(onMakeRule).toHaveBeenCalledTimes(1);
-    expect(onMakeRule.mock.calls[0][0].source).toBe("twitter");
-  });
-
-  it("hides the make-rule action on core notifications", async () => {
-    vi.spyOn(api, "getNotificationHistory").mockResolvedValue({
-      notifications: [
-        {
-          type: "notification",
-          source: "core",
-          summary:
-            '<notification source="core" type="default_skill_sync">synced</notification>',
-          notif_type: "default_skill_sync",
-          ts: new Date().toISOString(),
-        },
-      ],
-      cursor: null,
-    });
-    render(<NotificationsCard onMakeRule={vi.fn()} />);
-    await screen.findByText("core");
-
-    expect(screen.queryByRole("button", { name: /make a rule/i })).toBeNull();
-  });
-});
-
 describe("NotificationsCard pending", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -178,18 +151,18 @@ describe("NotificationsCard pending", () => {
         {
           type: "notification",
           source: "twitter",
-          summary:
-            '<notification source="twitter" type="tweet">a</notification>',
+          summary: '<channel source="twitter" type="tweet">a</channel>',
           notif_type: "tweet",
+          id: 105,
           notif_id: "n-pending",
           ts: new Date().toISOString(),
         },
         {
           type: "notification",
           source: "email",
-          summary:
-            '<notification source="email" type="message">b</notification>',
+          summary: '<channel source="email" type="message">b</channel>',
           notif_type: "message",
+          id: 106,
           notif_id: "n-cleared",
           ts: new Date().toISOString(),
         },
@@ -213,11 +186,10 @@ describe("NotificationsCard pending", () => {
         {
           type: "notification",
           source: "app-chat",
-          summary:
-            '<notification source="app-chat" type="message">hi</notification>',
+          summary: '<channel source="app-chat" type="message">hi</channel>',
           notif_type: "message",
+          id: 107,
           notif_id: "abc-app-chat-message",
-          interrupt: true,
           decided: "interrupt",
           ts: new Date().toISOString(),
         },

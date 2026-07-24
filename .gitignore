@@ -6,6 +6,8 @@
 *~
 .DS_Store
 
+__pycache__/
+
 # Temporary files
 *.bak
 *.orig
@@ -36,3 +38,6 @@ ROADMAP.md
 
 # Local MCP server config — holds secret tokens, never commit
 .mcp.json
+
+# Superpowers planning scratch (specs/plans) — kept local, never committed
+docs/superpowers/

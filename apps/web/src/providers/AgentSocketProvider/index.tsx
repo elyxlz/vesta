@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { useAgentSocketState } from "./use-agent-socket";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useNotifications } from "@/providers/NotificationProvider";
@@ -11,7 +11,6 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
   const { name, agent, setAgentState } = useSelectedAgent();
   const { speak, prefetch } = useVoice();
   const { notifyAssistant, setChattingAgent } = useNotifications();
-  const [showToolCalls, setShowToolCalls] = useState(false);
 
   useEffect(() => {
     setChattingAgent(name);
@@ -21,9 +20,9 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
   // Connect once the agent's WS is up so chat history loads — including when the
   // agent isn't authenticated yet (the composer stays disabled until sign-in).
   const connectable =
-    agent?.status === "alive" ||
-    agent?.status === "not_authenticated" ||
-    agent?.status === "unprovisioned";
+    agent.status === "alive" ||
+    agent.status === "not_authenticated" ||
+    agent.status === "unprovisioned";
   const socket = useAgentSocketState({
     name,
     active: connectable,
@@ -38,11 +37,7 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
     setAgentState(socket.agentState);
   }, [socket.agentState, setAgentState]);
 
-  const value: AgentSocketValue = {
-    ...socket,
-    showToolCalls,
-    setShowToolCalls,
-  };
+  const value: AgentSocketValue = { ...socket };
 
   return (
     <AgentSocketContext.Provider value={value}>

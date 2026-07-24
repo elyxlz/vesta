@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -34,6 +35,8 @@ import time
 import traceback
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 ICLOUD_DIR = Path.home() / ".icloud"
 COOKIE_DIR = ICLOUD_DIR / "cookies"
@@ -105,8 +108,8 @@ def _load_creds_from_file() -> dict[str, str] | None:
         data = json.loads(CREDS_FILE.read_text())
         if data.get("account") and data.get("password"):
             return {"account": data["account"], "password": data["password"]}
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("could not read %s: %s", CREDS_FILE, e)
     return None
 
 
@@ -124,6 +127,7 @@ def _load_creds_from_keeper() -> dict[str, str] | None:
                 capture_output=True,
                 text=True,
                 timeout=20,
+                check=False,
             )
             if result.returncode != 0 or not result.stdout.strip():
                 continue
@@ -147,6 +151,7 @@ def _load_creds_from_keeper() -> dict[str, str] | None:
                     capture_output=True,
                     text=True,
                     timeout=20,
+                    check=False,
                 )
                 if got.returncode != 0:
                     continue
@@ -211,12 +216,8 @@ def _collect_phones(auth_data: dict) -> list[dict]:
         inner = pnv.get("trustedPhoneNumber")
         if isinstance(inner, dict):
             out.append({"source": "pnv.trustedPhoneNumber", **inner})
-        for entry in pnv.get("trustedPhoneNumbers") or []:
-            if isinstance(entry, dict):
-                out.append({"source": "pnv.trustedPhoneNumbers", **entry})
-    for entry in auth_data.get("trustedPhoneNumbers") or []:
-        if isinstance(entry, dict):
-            out.append({"source": "trustedPhoneNumbers", **entry})
+        out.extend({"source": "pnv.trustedPhoneNumbers", **entry} for entry in pnv.get("trustedPhoneNumbers") or [] if isinstance(entry, dict))
+    out.extend({"source": "trustedPhoneNumbers", **entry} for entry in auth_data.get("trustedPhoneNumbers") or [] if isinstance(entry, dict))
     return out
 
 
@@ -237,22 +238,54 @@ def _pick_phone_id(candidates: list[dict], suffix: str | None = None) -> int | N
 
         # Best: exact lastTwoDigits match
         for c in candidates:
-            if str(c.get("lastTwoDigits") or "") == target_last_two:
-                if isinstance(c.get("id"), int):
-                    return c["id"]
+            if str(c.get("lastTwoDigits") or "") == target_last_two and isinstance(c.get("id"), int):
+                return c["id"]
         # Tail of any number field, matching the full suffix when available
         for c in candidates:
             for key in ("numberWithDialCode", "number", "obfuscatedNumber"):
                 v = c.get(key)
-                if isinstance(v, str):
-                    if tail_digits(v, len(s)) == s or tail_digits(v, 2) == target_last_two:
-                        if isinstance(c.get("id"), int):
-                            return c["id"]
+                matches_tail = isinstance(v, str) and (tail_digits(v, len(s)) == s or tail_digits(v, 2) == target_last_two)
+                if matches_tail and isinstance(c.get("id"), int):
+                    return c["id"]
 
     # No suffix, or suffix didn't match: take the first candidate that has an id.
     for c in candidates:
         if isinstance(c.get("id"), int):
             return c["id"]
+    return None
+
+
+def _discover_phone_candidates(api: Any) -> list[dict]:
+    """Merge JSON-shell auth_data into the HTML-shell auth_data to find trusted phones."""
+    from pyicloud.base import CONTENT_TYPE_JSON
+
+    html_auth = dict(api._auth_data or {})
+    candidates = _collect_phones(html_auth)
+    if candidates:
+        return candidates
+    try:
+        headers = api._get_auth_headers({"Accept": CONTENT_TYPE_JSON})
+        resp = api.session.get(api._auth_endpoint, headers=headers)
+        json_auth = resp.json() if resp.status_code < 400 else {}
+    except Exception as e:
+        json_auth = {}
+        _write_state(message=f"json shell fetch err: {type(e).__name__}:{e}")
+    merged = dict(html_auth)
+    merged.update(json_auth or {})
+    api._auth_data = merged
+    return _collect_phones(merged)
+
+
+def _poll_code_file() -> str | None:
+    """Wait for `auth verify` to write a 6-digit code to CODE_FILE."""
+    deadline = time.time() + POLL_TIMEOUT_S
+    while time.time() < deadline:
+        if CODE_FILE.exists():
+            raw = CODE_FILE.read_text().strip()
+            digits = "".join(ch for ch in raw if ch.isdigit())
+            if len(digits) == 6:
+                return digits
+        time.sleep(POLL_EVERY_S)
     return None
 
 
@@ -271,22 +304,7 @@ def _run_login_worker(account: str, password: str, phone_suffix: str | None = No
         _write_state(phase="trusted", message="already trusted; no 2FA needed")
         return 0
 
-    # Merge JSON-shell auth_data to find trusted phones
-    html_auth = dict(api._auth_data or {})
-    candidates = _collect_phones(html_auth)
-    if not candidates:
-        try:
-            headers = api._get_auth_headers({"Accept": CONTENT_TYPE_JSON})
-            resp = api.session.get(api._auth_endpoint, headers=headers)
-            json_auth = resp.json() if resp.status_code < 400 else {}
-        except Exception as e:
-            json_auth = {}
-            _write_state(message=f"json shell fetch err: {type(e).__name__}:{e}")
-        merged = dict(html_auth)
-        merged.update(json_auth or {})
-        api._auth_data = merged
-        candidates = _collect_phones(merged)
-
+    candidates = _discover_phone_candidates(api)
     phone_id = _pick_phone_id(candidates, suffix=phone_suffix)
     if phone_id is None:
         msg = f"no trusted phone matched suffix {phone_suffix}" if phone_suffix else "no trusted phone numbers returned by Apple"
@@ -321,17 +339,7 @@ def _run_login_worker(account: str, password: str, phone_suffix: str | None = No
 
     CODE_FILE.unlink(missing_ok=True)
 
-    deadline = time.time() + POLL_TIMEOUT_S
-    code: str | None = None
-    while time.time() < deadline:
-        if CODE_FILE.exists():
-            raw = CODE_FILE.read_text().strip()
-            digits = "".join(ch for ch in raw if ch.isdigit())
-            if len(digits) == 6:
-                code = digits
-                break
-        time.sleep(POLL_EVERY_S)
-
+    code = _poll_code_file()
     if code is None:
         _write_state(phase="error", message="timed out waiting for code")
         return 4
@@ -386,27 +394,27 @@ def cmd_auth_login(args: argparse.Namespace) -> None:
             _write_state(phase="trusted", account=creds["account"], message="already trusted")
             print(json.dumps({"status": "already_trusted", "account": creds["account"]}, indent=2))
             return
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("trusted-session probe failed: %s", e)
 
     if args.foreground:
         rc = _run_login_worker(creds["account"], creds["password"], phone_suffix=phone_suffix)
         sys.exit(rc)
 
     # Background spawn: re-exec ourselves with --worker.
-    log_fh = open(WORKER_LOG, "ab", buffering=0)
     env = os.environ.copy()
     env["ICLOUD_WORKER_ACCOUNT"] = creds["account"]
     env["ICLOUD_WORKER_PASSWORD"] = creds["password"]
     if phone_suffix:
         env["ICLOUD_WORKER_PHONE_SUFFIX"] = phone_suffix
-    proc = subprocess.Popen(
-        [sys.executable, "-m", "icloud_cli.cli", "_worker"],
-        stdout=log_fh,
-        stderr=subprocess.STDOUT,
-        env=env,
-        start_new_session=True,
-    )
+    with WORKER_LOG.open("ab", buffering=0) as log_fh:
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "icloud_cli.cli", "_worker"],
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+            env=env,
+            start_new_session=True,
+        )
     _write_state(phase="starting", account=creds["account"], pid=proc.pid)
 
     # Wait briefly for the worker to advance to "awaiting_code" or fail.
@@ -458,7 +466,7 @@ def cmd_auth_verify(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def cmd_auth_status(args: argparse.Namespace) -> None:
+def cmd_auth_status(_args: argparse.Namespace) -> None:
     state = _load_state()
     cfg = _load_config()
     account = cfg.get("account") or state.get("account")
@@ -550,28 +558,29 @@ def _find_album(api: Any, key: str) -> Any:
     """Find an album in shared_streams or owned albums by id or name."""
     try:
         for album in api.photos.shared_streams:
-            if album.id == key or album.name == key:
+            if key in (album.id, album.name):
                 return album
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("shared album lookup failed: %s", e)
     try:
         for album in api.photos.albums:
             aname = getattr(album, "name", None) or getattr(album, "title", None)
-            if album.id == key or aname == key:
+            if key in (album.id, aname):
                 return album
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("owned album lookup failed: %s", e)
     return None
 
 
 def _human_size(n: int | None) -> str:
     if n is None:
         return "?"
+    size = float(n)
     for unit in ("B", "KB", "MB", "GB"):
-        if n < 1024:
-            return f"{n:.1f}{unit}"
-        n /= 1024  # type: ignore[assignment]
-    return f"{n:.1f}TB"
+        if size < 1024:
+            return f"{size:.1f}{unit}"
+        size /= 1024
+    return f"{size:.1f}TB"
 
 
 def _safe_filename(name: str) -> str:
@@ -621,7 +630,7 @@ def _download_one(
         local_size = dest.stat().st_size
         expected = version.get("size") or 0
         # Shared streams report size=0; treat any non-empty existing file as "done".
-        if local_size > 0 and (expected == 0 or local_size == expected):
+        if local_size > 0 and (expected in (0, local_size)):
             return False, "exists"
 
     # Stream download
@@ -629,7 +638,7 @@ def _download_one(
     if resp.status_code >= 400:
         return False, f"http {resp.status_code}"
     tmp = dest.with_suffix(dest.suffix + ".part")
-    with open(tmp, "wb") as f:
+    with tmp.open("wb") as f:
         for chunk in resp.iter_content(chunk_size=64 * 1024):
             if chunk:
                 f.write(chunk)
@@ -668,11 +677,10 @@ def cmd_download(args: argparse.Namespace) -> None:
             ok, msg = False, f"err {type(e).__name__}:{e}"
         if ok:
             downloaded += 1
+        elif msg.startswith("err"):
+            failed.append(f"{photo.filename}: {msg}")
         else:
-            if msg.startswith("err"):
-                failed.append(f"{photo.filename}: {msg}")
-            else:
-                skipped += 1
+            skipped += 1
         if i % 10 == 0 or i == total:
             elapsed = time.time() - started
             rate = i / elapsed if elapsed else 0
@@ -746,7 +754,7 @@ def cmd_sync_shared(args: argparse.Namespace) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def cmd_worker(args: argparse.Namespace) -> None:
+def cmd_worker(_args: argparse.Namespace) -> None:
     account = os.environ.get("ICLOUD_WORKER_ACCOUNT")
     password = os.environ.get("ICLOUD_WORKER_PASSWORD")
     phone_suffix = os.environ.get("ICLOUD_WORKER_PHONE_SUFFIX") or None
@@ -844,6 +852,14 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+    # pyicloud reverse-engineers iCloud and breaks when it falls behind Apple's
+    # changes; a stale version fails silently. Guard every user command. The
+    # internal _worker runs in a subprocess the parent already guarded, so it is
+    # exempt to avoid a duplicate PyPI check.
+    if args.command != "_worker":
+        from ._freshness import require_latest
+
+        require_latest("pyicloud")
     args.func(args)
 
 

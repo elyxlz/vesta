@@ -4,14 +4,13 @@ set -euo pipefail
 BORE_LOG="/tmp/vesta-bore-ssh.log"
 BORE_SCREEN="bore-ssh"
 SSHD_PID="/tmp/vesta-sshd.pid"
-SSHD_PORT_FILE="/tmp/vesta-sshd.port"
 
 sshd_running() { [ -f "$SSHD_PID" ] && kill -0 "$(cat "$SSHD_PID")" 2>/dev/null; }
 bore_running() { screen -ls 2>/dev/null | grep -q "$BORE_SCREEN"; }
 
 if ! sshd_running && ! bore_running; then
     echo "SSH tunnel is not running. Start it with:"
-    echo "  ~/vesta/skills/ssh/scripts/start.sh '<public key>'"
+    echo "  ~/agent/skills/ssh/scripts/start.sh '<public key>'"
     exit 0
 fi
 

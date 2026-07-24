@@ -36,22 +36,25 @@ export function ProgressBar({ message }: ProgressBarProps) {
           />
         )}
       </div>
-      <AnimatePresence mode="wait">
-        {message && (
-          <motion.p
-            key={message}
-            role="status"
-            aria-live="polite"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.15 }}
-            className="text-xs text-muted-foreground whitespace-pre-line"
-          >
-            {message}
-          </motion.p>
-        )}
-      </AnimatePresence>
+      <p
+        role="status"
+        aria-live="polite"
+        className="text-xs text-muted-foreground whitespace-pre-line"
+      >
+        <AnimatePresence mode="wait">
+          {message && (
+            <motion.span
+              key={message}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+            >
+              {message}
+            </motion.span>
+          )}
+        </AnimatePresence>
+      </p>
     </div>
   );
 }

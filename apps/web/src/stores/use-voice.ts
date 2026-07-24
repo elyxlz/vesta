@@ -8,7 +8,7 @@ import {
   type SttStatus,
   type TtsStatus,
 } from "@/lib/voice";
-import type { InputMethod, ServiceInfo } from "@/lib/types";
+import type { InputMethod, ServiceInfo } from "@vesta/core";
 import { useVoiceActivation } from "@/stores/use-voice-activation";
 
 interface VoiceState {
@@ -82,12 +82,19 @@ function clearIdleTimer() {
   }
 }
 
+function boolSetting(
+  status: SttStatus | TtsStatus | null,
+  key: string,
+  fallback: boolean,
+): boolean {
+  const value = status?.settings?.find((s) => s.key === key)?.value;
+  return typeof value === "boolean" ? value : fallback;
+}
+
 function deriveStatus(stt: SttStatus | null, tts: TtsStatus | null) {
-  const sttAvailable = (stt?.configured && stt?.enabled) ?? false;
-  const speechEnabled = (tts?.configured && tts?.enabled) ?? false;
-  const voiceAutoSend =
-    (stt?.settings?.find((s) => s.key === "auto_send")?.value as boolean) ??
-    true;
+  const sttAvailable = (stt?.configured && stt.enabled) ?? false;
+  const speechEnabled = (tts?.configured && tts.enabled) ?? false;
+  const voiceAutoSend = boolSetting(stt, "auto_send", true);
   return { sttAvailable, speechEnabled, voiceAutoSend };
 }
 
@@ -100,7 +107,8 @@ export const useVoice = create<VoiceState>((set, get) => {
     set({ isSpeaking: true });
 
     while (ttsQueue.length > 0 && ttsEpoch === myEpoch) {
-      const text = ttsQueue.shift()!;
+      const text = ttsQueue.shift();
+      if (text === undefined) break;
       const controller = new AbortController();
       ttsAbort = controller;
       try {
@@ -202,10 +210,8 @@ export const useVoice = create<VoiceState>((set, get) => {
           armIdleTimer();
         },
         onTurnStart: () => {
-          const interruptTts =
-            (get().sttStatus?.settings?.find((s) => s.key === "interrupt_tts")
-              ?.value as boolean) ?? true;
-          if (interruptTts) get().stopSpeech();
+          if (boolSetting(get().sttStatus, "interrupt_tts", true))
+            get().stopSpeech();
         },
         onError: (err) => {
           set({ voiceError: err, isRecording: false });
@@ -221,7 +227,7 @@ export const useVoice = create<VoiceState>((set, get) => {
           set({ isRecording: true });
           armIdleTimer();
         })
-        .catch((err) => {
+        .catch((err: unknown) => {
           const msg =
             err instanceof Error ? err.message : "Microphone access denied";
           set({ voiceError: msg });
@@ -280,20 +286,17 @@ export const useVoice = create<VoiceState>((set, get) => {
     refreshVoiceStatus: () => {
       const { agentName } = get();
       if (!agentName) return;
-      const ctrl = new AbortController();
-      Promise.all([
-        fetchSttStatus(agentName, ctrl.signal),
-        fetchTtsStatus(agentName, ctrl.signal),
-      ])
+      Promise.all([fetchSttStatus(agentName), fetchTtsStatus(agentName)])
         .then(([stt, tts]) => {
-          if (ctrl.signal.aborted) return;
           set({
             sttStatus: stt,
             ttsStatus: tts,
             ...deriveStatus(stt, tts),
           });
         })
-        .catch(() => {});
+        .catch(() => {
+          /* ignore */
+        });
     },
 
     _setAgentContext: (name, services, voiceRev) => {

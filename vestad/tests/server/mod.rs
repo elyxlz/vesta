@@ -6,12 +6,14 @@ fn _point_harness_at_built_vestad() {
     std::env::set_var("VESTAD_BIN", env!("CARGO_BIN_EXE_vestad"));
 }
 
-mod health;
-mod lifecycle;
+mod agent_code;
 mod auth;
 mod backup;
-mod websocket;
-mod ports;
-mod agent_code;
+mod health;
 mod layout;
+mod lifecycle;
+mod ports;
 mod rename;
+mod sync;
+mod upstream;
+mod websocket;

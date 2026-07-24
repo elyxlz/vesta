@@ -5,40 +5,45 @@ Routes:
   - GET  /history              paginated event history (cursor optional), or full-text search with ?q=
   - GET  /usage                normalized, provider-agnostic plan usage
   - GET  /status               operational readiness: {authed, setup_complete} (vestad polls this)
-  - GET  /config               prefs only (personality, timezone, seed_context, operational)
-  - PUT  /config               update prefs (provider is set via /provider)
+  - GET  /config               prefs + notification_rules (personality, timezone, seed_context, operational)
+  - PUT  /config               update prefs and/or notification_rules (provider is set via /provider)
   - GET  /provider             active provider (configured fields) + derived {authed}
   - PUT  /provider             sign in / switch provider (claude credentials or openrouter key)
   - PATCH /provider            change model / context / thinking on the active provider
   - DELETE /provider           sign out: clear credentials, leaving not_authenticated
-  - GET  /config/notification-policy   the policy: {rules, defaults} (ordered ruleset + per-(source, type) overrides)
-  - PUT  /config/notification-policy   replace either/both sections; body {rules?, defaults?} (LIVE — applies next tick)
-  Writes don't restart; the caller applies them with one restart afterwards. The
-  notification endpoint is LIVE — applied on the next monitor tick, no restart.
   - GET  /memory               read MEMORY.md
   - PUT  /memory               overwrite MEMORY.md (applies on next restart)
+
+  Prefs writes apply on the caller's next restart; notification_rules apply live (monitor_loop
+  re-reads them from the store each tick), so the rules editor and the skill need no restart.
 """
 
 import asyncio
 import dataclasses as dc
 import json
 import logging
-import typing as tp
 import sqlite3
+import typing as tp
 import weakref
-from collections.abc import Callable
 
 import aiohttp as _aiohttp
 import pydantic as pyd
 from aiohttp import web
 
-from .events import ChatEvent, EventBus, SnapshotChat, SnapshotEvent, UserEvent, VestaEvent
-from .config import VestaConfig, stored_config, update_config_store, validate_config_updates
+from .config import (
+    ClaudeConfig,
+    VestaConfig,
+    atomic_write_text,
+    load_active_skills,
+    load_notification_rules,
+    stored_config,
+    update_config_store,
+    validate_config_updates,
+)
+from .events import EventBus, SnapshotEvent, VestaEvent
 from .helpers import get_memory_path
-from .models import State, TYPE_NOTIFICATION_POLICY_CHANGE
+from .models import State
 from .provider import ProviderAuthState, UsageError, clear_provider, get_usage, set_claude, set_openrouter
-from . import notification_interrupt_policy
-
 
 logger = logging.getLogger("vesta.api")
 
@@ -53,15 +58,13 @@ def _pending_notification_ids(config: VestaConfig) -> list[str]:
 
 
 async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
-    """Bidirectional event bus WebSocket.
+    """Event bus WebSocket.
 
     Send: all events from the event bus are pushed to connected clients.
-    Recv: clients can emit events (e.g. user messages, chat replies).
-    On connect: sends a `snapshot` seed (state + chat + pending notifications); ?skip_history=1
-    omits the chat backlog for lightweight taps."""
+    Recv: drained only to keep the socket live and notice a close (see _recv_loop); nothing injects
+    events anymore. On connect: sends a `snapshot` seed (state + pending notifications + config)."""
     event_bus: EventBus = request.app["event_bus"]
     config: VestaConfig = request.app["config"]
-    skip_history = request.query.get("skip_history", "") in ("1", "true")
 
     ws = web.WebSocketResponse()
     await ws.prepare(request)
@@ -71,71 +74,79 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     recv_task: asyncio.Task[None] | None = None
     send_task: asyncio.Task[None] | None = None
     try:
-        # The connect snapshot: one event seeding the client with current agent state. `chat` is the
-        # app-chat conversation (notifications/internal events still arrive live but never bury the
-        # capped recent window) — skipped with ?skip_history=1 for lightweight taps. `notifications`
-        # carries the ids still on disk so the view can mark pending without polling. Always sent, even
-        # empty, so the client can tell "still loading" from "no messages". Reads run off the loop: a
-        # slow scan must not freeze the agent (it would starve vestad's status poll and flap "starting").
-        if skip_history:
-            chat = SnapshotChat(events=[], cursor=None)
-        else:
-            events, cursor = await asyncio.to_thread(event_bus.recent, channel="app-chat")
-            chat = SnapshotChat(events=events, cursor=cursor)
+        # The connect snapshot: one event seeding the client with current agent state. Chat is not
+        # here (the app-chat skill owns it end to end on its own service socket). `notifications`
+        # carries the ids still on disk so the view can mark pending without polling. Always sent so the
+        # client can tell "still loading" from "no messages". Reads run off the loop: a slow scan must
+        # not freeze the agent (it would starve vestad's status poll and flap "starting").
         pending = await asyncio.to_thread(_pending_notification_ids, config)
-        await ws.send_json(SnapshotEvent(type="snapshot", state=event_bus.state, chat=chat, notifications={"pending": pending}))
-        recv_task = asyncio.create_task(_recv_loop(ws, event_bus))
+        await ws.send_json(
+            SnapshotEvent(
+                type="snapshot",
+                state=event_bus.state,
+                notifications={"pending": pending},
+                config={"timezone": config.timezone},
+            )
+        )
+        recv_task = asyncio.create_task(_recv_loop(ws))
         send_task = asyncio.create_task(_send_loop(ws, sub))
         await asyncio.wait([recv_task, send_task], return_when=asyncio.FIRST_COMPLETED)
     finally:
-        if recv_task:
-            recv_task.cancel()
-        if send_task:
-            send_task.cancel()
-        await asyncio.gather(recv_task, send_task, return_exceptions=True)
+        tasks = [task for task in (recv_task, send_task) if task]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         event_bus.unsubscribe(sub)
         request.app["websockets"].discard(ws)
 
     return ws
 
 
-async def _recv_loop(ws: web.WebSocketResponse, event_bus: EventBus) -> None:
-    """Receive events from clients and emit to event bus."""
+async def _recv_loop(ws: web.WebSocketResponse) -> None:
+    """Drain inbound frames. Nothing injects events into the bus anymore (app-chat owns chat on its own
+    service socket); this only keeps the connection live and notices a close."""
     async for msg in ws:
-        if msg.type == web.WSMsgType.TEXT:
-            try:
-                data = json.loads(msg.data)
-            except (json.JSONDecodeError, TypeError):
-                continue
-            if "type" not in data:
-                continue
-            msg_type = data["type"]
-            if msg_type in ("message", "chat"):
-                if "text" not in data or not isinstance(data["text"], str):
-                    continue
-                text = data["text"].strip()
-                if text:
-                    if msg_type == "message":
-                        event: UserEvent = {"type": "user", "text": text}
-                        if "input_method" in data and data["input_method"] in ("voice", "typed"):
-                            event["input_method"] = data["input_method"]
-                        event_bus.emit(event)
-                    else:
-                        event_bus.emit(ChatEvent(type="chat", text=text))
-        elif msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):
+        if msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):
             break
 
 
+# Bound on a single WS send. A half-open socket (peer gone, TCP not yet timed out) blocks
+# send_json indefinitely while the subscriber queue overflows behind it; timing out closes
+# the socket promptly so the client reconnects instead of lingering wedged for minutes.
+_SEND_TIMEOUT_S = 30.0
+
+
 async def _send_loop(ws: web.WebSocketResponse, sub: asyncio.Queue[VestaEvent]) -> None:
-    """Forward all event-bus events to the WS client."""
+    """Forward all event-bus events to the WS client. Exits on the bus's eviction sentinel or a
+    stalled send; the handler then closes the WS so the client reconnects and resyncs."""
     try:
         while True:
             event = await sub.get()
-            await ws.send_json(event)
+            if event["type"] == "evicted":
+                logger.info("subscriber evicted by event bus, closing ws")
+                break
+            await asyncio.wait_for(ws.send_json(event), timeout=_SEND_TIMEOUT_S)
     except asyncio.CancelledError:
         pass
+    except TimeoutError:
+        logger.info("ws send stalled for %.0fs, closing", _SEND_TIMEOUT_S)
     except (ConnectionError, RuntimeError, TypeError) as e:
-        logger.info(f"ws send_loop exited: {type(e).__name__}: {e}")
+        logger.info("ws send_loop exited: %s: %s", type(e).__name__, e)
+
+
+async def _search_response(event_bus: EventBus, query: str, limit: int | None) -> web.Response:
+    """Full-text search branch of /history: matching events ranked by relevance, no cursor."""
+    try:
+        events = await asyncio.to_thread(event_bus.search, query, limit=limit if limit is not None else 20)
+    except sqlite3.OperationalError as e:
+        # FTS5 raises OperationalError for a malformed MATCH expression: that's a client error.
+        logger.warning("search query rejected: %s", e)
+        return web.json_response({"error": "invalid search query"}, status=400)
+    except sqlite3.Error as e:
+        # A genuine SQLite fault (locked db, disk full, corrupted FTS) must surface, not masquerade as a bad query.
+        logger.error("search failed for query=%r: %s", query, e)
+        return web.json_response({"error": "search failed"}, status=500)
+    return web.json_response({"events": events, "cursor": None})
 
 
 async def _history_handler(request: web.Request) -> web.Response:
@@ -146,7 +157,8 @@ async def _history_handler(request: web.Request) -> web.Response:
       q       (str, optional): FTS5 search; returns events ranked by relevance (cursor is null).
       cursor  (int, optional): fetch events before this id. Omit for most recent. Ignored with `q`.
       limit   (int, optional): max events to return (default: EventBus.PAGE_SIZE; 20 for search).
-      channel (str, optional): "app-chat" filters to the conversation event types. Ignored with `q`.
+      channel (str, optional): "notifications" filters to the arrivals list. "app-chat" is gone (410,
+              moved to the app-chat skill service). Ignored with `q`.
     """
     event_bus: EventBus = request.app["event_bus"]
 
@@ -158,20 +170,12 @@ async def _history_handler(request: web.Request) -> web.Response:
 
     query = request.query.get("q", "").strip()
     if query:
-        try:
-            events = event_bus.search(query, limit=limit if limit is not None else 20)
-        except sqlite3.OperationalError as e:
-            # FTS5 raises OperationalError for a malformed MATCH expression: that's a client error.
-            logger.warning(f"search query rejected: {e}")
-            return web.json_response({"error": "invalid search query"}, status=400)
-        except sqlite3.Error as e:
-            # A genuine SQLite fault (locked db, disk full, corrupted FTS) must surface, not masquerade as a bad query.
-            logger.error(f"search failed for query={query!r}: {e}")
-            return web.json_response({"error": "search failed"}, status=500)
-        return web.json_response({"events": events, "cursor": None})
+        return await _search_response(event_bus, query, limit)
 
     kwargs = {"limit": limit} if limit is not None else {}
     channel = request.query.get("channel", "") or None
+    if channel == "app-chat":
+        return web.json_response({"error": "app-chat history moved to the app-chat service"}, status=410)
 
     cursor_raw = request.query.get("cursor", "")
     if cursor_raw:
@@ -192,23 +196,45 @@ async def _usage_handler(request: web.Request) -> web.Response:
     try:
         usage = await get_usage(config)
     except UsageError as e:
-        logger.error(f"usage fetch failed: {e}")
+        logger.error("usage fetch failed: %s", e)
         return web.json_response({"error": str(e)}, status=502)
     return web.json_response(dc.asdict(usage))
 
 
 async def _config_get_handler(request: web.Request) -> web.Response:
-    """Prefs only (personality, timezone, seed_context, operational), secrets redacted. The provider
-    is its own resource at GET /provider."""
+    """Prefs + notification_rules (secrets redacted). The provider is its own resource at GET /provider.
+    notification_rules is overlaid from the store, not the boot-time config, so it reflects live edits
+    (the skill relies on this read-modify-write to append/remove rules without a restart)."""
     config: VestaConfig = request.app["config"]
     data = stored_config(config)
     data.pop("provider", None)
+    data["active_skills"] = load_active_skills(config)
+    data["notification_rules"] = [rule.model_dump(mode="json") for rule in load_notification_rules()]
     return web.json_response(data)
 
 
+async def _validate_and_store(config: VestaConfig, data: object, *, label: str) -> web.Response:
+    """The shared tail of a config write (PUT /config, PATCH /provider): validate the updates against
+    the current config, write them to the store, and map each failure to its response."""
+    try:
+        updates = validate_config_updates(config, data)
+    except pyd.ValidationError as e:
+        return web.json_response({"error": f"invalid {label}: {e.errors(include_url=False)}"}, status=400)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    if not updates:
+        return web.json_response({"error": "no config provided"}, status=400)
+    try:
+        await asyncio.to_thread(update_config_store, updates)
+    except OSError as e:
+        return web.json_response({"error": f"failed to write config: {e}"}, status=500)
+    return web.json_response({"ok": True})
+
+
 async def _config_put_handler(request: web.Request) -> web.Response:
-    """Update prefs (personality, timezone, seed_context). The provider is set via /provider, not here.
-    Applied by the next restart (callers write, then restart once)."""
+    """Update prefs (personality, timezone, seed_context) and/or notification_rules. The provider is set
+    via /provider, not here. Prefs apply on the caller's next restart; notification_rules apply live
+    (monitor_loop re-reads them from the store each tick), so a rules-only write needs no restart."""
     config: VestaConfig = request.app["config"]
     try:
         data = await request.json()
@@ -216,19 +242,7 @@ async def _config_put_handler(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid json body"}, status=400)
     if isinstance(data, dict) and "provider" in data:
         return web.json_response({"error": "provider is set via PUT/PATCH /provider"}, status=400)
-    try:
-        updates = validate_config_updates(config, data)
-    except pyd.ValidationError as e:
-        return web.json_response({"error": f"invalid config: {e.errors(include_url=False)}"}, status=400)
-    except ValueError as e:
-        return web.json_response({"error": str(e)}, status=400)
-    if not updates:
-        return web.json_response({"error": "no config provided"}, status=400)
-    try:
-        update_config_store(updates)
-    except OSError as e:
-        return web.json_response({"error": f"failed to write config: {e}"}, status=500)
-    return web.json_response({"ok": True})
+    return await _validate_and_store(config, data, label="config")
 
 
 class _ClaudeSignIn(pyd.BaseModel):
@@ -269,6 +283,10 @@ async def _provider_get_handler(request: web.Request) -> web.Response:
     provider = stored_config(config)["provider"]
     body = dict(provider) if isinstance(provider, dict) else {}
     body["authed"] = status is not None and status.state == ProviderAuthState.AUTHENTICATED
+    # The Claude plan tier (from the on-disk OAuth blob, excluded from stored_config) so the context
+    # picker can restrict >200K windows to Max, the only plan entitled to the 1M-context beta.
+    if isinstance(config.provider, ClaudeConfig) and config.provider.oauth is not None:
+        body["plan"] = config.provider.oauth.subscription_type
     return web.json_response(body)
 
 
@@ -303,9 +321,11 @@ async def _provider_put_handler(request: web.Request) -> web.Response:
         return web.json_response({"error": f"invalid provider: {e.errors(include_url=False)}"}, status=400)
     try:
         if isinstance(signin, _ClaudeSignIn):
-            state.provider_status = set_claude(signin.credentials, signin.model, signin.max_context_tokens, config=config)
+            state.provider_status = await asyncio.to_thread(
+                set_claude, signin.credentials, signin.model, signin.max_context_tokens, config=config
+            )
         else:
-            state.provider_status = set_openrouter(signin.key, signin.model, signin.max_context_tokens, config=config)
+            state.provider_status = await asyncio.to_thread(set_openrouter, signin.key, signin.model, signin.max_context_tokens, config=config)
     except (json.JSONDecodeError, TypeError) as e:
         return web.json_response({"error": f"invalid credentials: {e}"}, status=400)
     except OSError as e:
@@ -328,123 +348,18 @@ async def _provider_patch_handler(request: web.Request) -> web.Response:
     patch = prefs.model_dump(exclude_unset=True)
     if not patch:
         return web.json_response({"error": "no provider fields provided"}, status=400)
-    try:
-        updates = validate_config_updates(config, {"provider": patch})
-    except pyd.ValidationError as e:
-        return web.json_response({"error": f"invalid provider: {e.errors(include_url=False)}"}, status=400)
-    except ValueError as e:
-        return web.json_response({"error": str(e)}, status=400)
-    try:
-        update_config_store(updates)
-    except OSError as e:
-        return web.json_response({"error": f"failed to write config: {e}"}, status=500)
-    return web.json_response({"ok": True})
+    return await _validate_and_store(config, {"provider": patch}, label="provider")
 
 
 async def _provider_delete_handler(request: web.Request) -> web.Response:
     """Sign out: clear the provider credentials, resetting to a valid signed-out state. Idempotent.
     Applied by the next restart."""
     state: State = request.app["state"]
-    config: VestaConfig = request.app["config"]
     try:
-        state.provider_status = clear_provider(config=config)
+        state.provider_status = await asyncio.to_thread(clear_provider)
     except OSError as e:
         return web.json_response({"error": f"sign out failed: {e}"}, status=500)
     return web.json_response({"ok": True})
-
-
-# The notification policy is one file with two live-edited sections: an ordered interrupt `rules` list
-# and per-(source, type) `defaults` overrides. One endpoint serves both. A PUT replaces only the
-# sections present in the body, so the rules card and the defaults card each write independently
-# without clobbering the other (save_* is a read-modify-write that preserves the untouched section).
-# Unlike the other /config writes, this is LIVE — monitor_loop picks the change up on the next tick.
-_POLICY_SECTIONS: dict[str, tuple[type[pyd.BaseModel], Callable[[list[tp.Any], VestaConfig], list[tp.Any]]]] = {
-    "rules": (notification_interrupt_policy.NotificationInterruptRule, notification_interrupt_policy.save_rules),
-    "defaults": (notification_interrupt_policy.NotificationDefault, notification_interrupt_policy.save_defaults),
-}
-
-
-def _policy_response(config: VestaConfig) -> web.Response:
-    rules, defaults = notification_interrupt_policy.load_policy(config)
-    return web.json_response({"rules": [rule.model_dump() for rule in rules], "defaults": [default.model_dump() for default in defaults]})
-
-
-async def _config_notification_policy_get_handler(request: web.Request) -> web.Response:
-    config: VestaConfig = request.app["config"]
-    return await asyncio.to_thread(_policy_response, config)
-
-
-def _policy_change_summary(validated: dict[str, list[pyd.BaseModel]]) -> str:
-    """A plain-language recap of the sections the user just saved, for the core notification that tells
-    the agent its policy was retuned. Renders each entry from its model_dump (no per-model coupling)."""
-
-    def render(item: pyd.BaseModel) -> str:
-        dumped = item.model_dump()
-        conds = ", ".join(
-            f"{key}={dumped[key]}" for key in ("source", "type", "sender", "keyword") if key in dumped and dumped[key] not in (None, "")
-        )
-        action = dumped["action"] if "action" in dumped else "?"
-        return f"{conds or 'any'} -> {action}"
-
-    parts: list[str] = []
-    for key, label in (("rules", "interrupt rules"), ("defaults", "default overrides")):
-        if key in validated:
-            items = validated[key]
-            parts.append(f"{label} ({len(items)}): " + ("; ".join(render(item) for item in items) if items else "none"))
-    body = " and ".join(parts) if parts else "your notification policy"
-    return (
-        "[The user updated your notification interrupt policy from the app — you didn't make this change; "
-        f"it's already live.] Now: {body}. If any of this is wrong for your focus, raise it with the user."
-    )
-
-
-async def _config_notification_policy_put_handler(request: web.Request) -> web.Response:
-    config: VestaConfig = request.app["config"]
-    try:
-        data = await request.json()
-    except (json.JSONDecodeError, TypeError):
-        return web.json_response({"error": "invalid json body"}, status=400)
-    if not isinstance(data, dict):
-        return web.json_response({"error": "body must be an object with 'rules' and/or 'defaults' lists"}, status=400)
-    present = {key: data[key] for key in _POLICY_SECTIONS if key in data}
-    if not present or any(not isinstance(value, list) for value in present.values()):
-        return web.json_response({"error": "body must contain at least one of 'rules'/'defaults' as a list"}, status=400)
-    # Validate every present section before saving any, so a malformed 'defaults' can't land a partial
-    # write that already persisted 'rules'.
-    validated: dict[str, list[pyd.BaseModel]] = {}
-    for key, value in present.items():
-        model_cls, _save = _POLICY_SECTIONS[key]
-        try:
-            validated[key] = [model_cls.model_validate(item) for item in value]
-        except pyd.ValidationError as e:
-            return web.json_response({"error": f"invalid {key}: {e.errors(include_url=False)}"}, status=400)
-    try:
-        for key, items in validated.items():
-            _model_cls, save = _POLICY_SECTIONS[key]
-            await asyncio.to_thread(save, items, config)
-    except OSError as e:
-        return web.json_response({"error": f"failed to write notification policy: {e}"}, status=500)
-    # Surface the change to the agent in-context (pooled core notification): the agent's own edits go
-    # through the skill's direct file write, never this endpoint, so this fires only for user changes.
-    # Deferred import: loops pulls heavy deps and would be a wide import at module load.
-    from .loops import drop_core_notification
-
-    await asyncio.to_thread(
-        drop_core_notification,
-        type_=TYPE_NOTIFICATION_POLICY_CHANGE,
-        body=_policy_change_summary(validated),
-        interrupt=False,
-        config=config,
-    )
-    return await asyncio.to_thread(_policy_response, config)
-
-
-async def _notifications_static_defaults_handler(request: web.Request) -> web.Response:
-    """The static interrupt fallback per (source, type), aggregated in one query over the whole
-    history. The defaults card uses this instead of paging every notification page client-side."""
-    event_bus: EventBus = request.app["event_bus"]
-    defaults = await asyncio.to_thread(event_bus.notification_static_defaults)
-    return web.json_response({"defaults": defaults})
 
 
 async def _memory_get_handler(request: web.Request) -> web.Response:
@@ -463,11 +378,10 @@ async def _memory_put_handler(request: web.Request) -> web.Response:
         data = await request.json()
     except (json.JSONDecodeError, TypeError):
         return web.json_response({"error": "invalid json body"}, status=400)
-    if "content" not in data or not isinstance(data["content"], str):
+    if not isinstance(data, dict) or "content" not in data or not isinstance(data["content"], str):
         return web.json_response({"error": "body must be {content: string}"}, status=400)
     path = get_memory_path(config)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(data["content"])
+    await asyncio.to_thread(atomic_write_text, path, data["content"])
     return web.json_response({"ok": True})
 
 
@@ -512,9 +426,6 @@ async def start_ws_server(
     app.router.add_put("/provider", _provider_put_handler)
     app.router.add_patch("/provider", _provider_patch_handler)
     app.router.add_delete("/provider", _provider_delete_handler)
-    app.router.add_get("/config/notification-policy", _config_notification_policy_get_handler)
-    app.router.add_put("/config/notification-policy", _config_notification_policy_put_handler)
-    app.router.add_get("/notifications/static-defaults", _notifications_static_defaults_handler)
     app.router.add_get("/memory", _memory_get_handler)
     app.router.add_put("/memory", _memory_put_handler)
 

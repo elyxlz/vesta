@@ -13,7 +13,10 @@ use tokio::time::Instant;
 
 use crate::auth;
 use crate::docker;
-use crate::serve::{ServiceEntry, SharedState, err_response, map_docker_err, PROXY_MAX_BODY_BYTES, WS_KEEPALIVE_INTERVAL_SECS};
+use crate::settings::ServiceEntry;
+use crate::state::{
+    err_response, map_docker_err, SharedState, PROXY_MAX_BODY_BYTES, WS_KEEPALIVE_INTERVAL_SECS,
+};
 
 // When a freshly-registered service is still binding its port (e.g. `vite preview`
 // takes a couple of seconds), wait briefly for the upstream to start accepting
@@ -27,7 +30,10 @@ async fn wait_for_upstream(port: u16, timeout: Duration) {
     let deadline = Instant::now() + timeout;
     let mut delay = UPSTREAM_READY_POLL_INITIAL;
     loop {
-        if TcpStream::connect((Ipv4Addr::LOCALHOST, port)).await.is_ok() {
+        if TcpStream::connect((Ipv4Addr::LOCALHOST, port))
+            .await
+            .is_ok()
+        {
             return;
         }
         let now = Instant::now();
@@ -41,12 +47,16 @@ async fn wait_for_upstream(port: u16, timeout: Duration) {
 }
 
 async fn resolve_service(
-    state: &crate::serve::AppState,
+    state: &crate::state::AppState,
     agent_name: &str,
     service_name: &str,
 ) -> Option<ServiceEntry> {
     let settings = state.settings.read().await;
-    settings.services.get(agent_name)?.get(service_name).copied()
+    settings
+        .services
+        .get(agent_name)?
+        .get(service_name)
+        .copied()
 }
 
 /// Split the axum-captured `{*path}` tail into `(first_segment, forwarded_subpath)`.
@@ -62,7 +72,11 @@ fn split_service_subpath(path: &str) -> (&str, &str) {
         return ("", "/");
     }
     let rest = &path[first.len()..];
-    if rest.is_empty() { (first, "/") } else { (first, rest) }
+    if rest.is_empty() {
+        (first, "/")
+    } else {
+        (first, rest)
+    }
 }
 
 pub async fn agent_proxy_handler(
@@ -78,10 +92,17 @@ pub async fn agent_proxy_handler(
     let lock = state.agent_lock(&name).await;
     let guard = lock.read_owned().await;
 
-    docker::ensure_running(&state.docker, &cname).await.map_err(map_docker_err)?;
-    let (agent_port, agent_token) = docker::read_agent_port_and_token(&name, &state.env_config.agents_dir);
-    let agent_port = agent_port
-        .ok_or_else(|| err_response(StatusCode::INTERNAL_SERVER_ERROR, "agent has no port — check the agent's .env file in ~/.config/vesta/vestad/agents/"))?;
+    docker::ensure_running(&state.docker, &cname)
+        .await
+        .map_err(map_docker_err)?;
+    let (agent_port, agent_token) =
+        docker::read_agent_port_and_token(&name, &state.env_config.agents_dir);
+    let agent_port = agent_port.ok_or_else(|| {
+        err_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "agent has no port — check the agent's .env file in ~/.config/vesta/vestad/agents/",
+        )
+    })?;
 
     let (first_segment, service_subpath) = split_service_subpath(&path);
     let resolved = if first_segment.is_empty() {
@@ -91,13 +112,16 @@ pub async fn agent_proxy_handler(
     };
     let (target_port, stripped_path, service) = match resolved {
         Some(entry) => (entry.port, service_subpath.to_string(), Some(entry)),
-        None => (agent_port, format!("/{}", path), None),
+        None => (agent_port, format!("/{path}"), None),
     };
 
     // Public services are fully open; everything else requires auth.
     let is_public = service.as_ref().is_some_and(|s| s.public);
     if !is_public && !auth::has_valid_api_auth(request.headers(), request.uri(), &state.api_key) {
-        return Err(err_response(StatusCode::UNAUTHORIZED, "unauthorized — pass a valid Bearer token or ?token= query parameter"));
+        return Err(err_response(
+            StatusCode::UNAUTHORIZED,
+            "unauthorized — pass a valid Bearer token or ?token= query parameter",
+        ));
     }
 
     let mut target_path = stripped_path;
@@ -109,21 +133,28 @@ pub async fn agent_proxy_handler(
     let is_ws_upgrade = request
         .headers()
         .get("upgrade")
-        .map(|v| v.as_bytes().eq_ignore_ascii_case(b"websocket"))
-        .unwrap_or(false);
+        .is_some_and(|v| v.as_bytes().eq_ignore_ascii_case(b"websocket"));
 
     // Only wait for registered services — the raw agent port is already running
     // by the time ensure_running() returns, so a wait there would just mask dead agents.
     let is_registered_service = service.is_some();
 
     if is_ws_upgrade {
+        // The raw agent port carries the internal event bus, which is not client-exposed.
+        // Only registered-service WS (voice STT, dashboard-registered services) may upgrade.
+        if service.is_none() {
+            return Err(err_response(
+                StatusCode::NOT_FOUND,
+                "the raw agent event bus is not client-exposed; use /sync",
+            ));
+        }
         let (mut parts, _body) = request.into_parts();
         let ws = match WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
             Ok(ws) => ws,
             Err(e) => {
                 return Err(err_response(
                     StatusCode::BAD_REQUEST,
-                    &format!("invalid ws upgrade: {}", e),
+                    &format!("invalid ws upgrade: {e}"),
                 ));
             }
         };
@@ -137,30 +168,47 @@ pub async fn agent_proxy_handler(
         }))
     } else {
         drop(guard);
-        let token = if is_public { None } else { agent_token.as_deref() };
+        let token = if is_public {
+            None
+        } else {
+            agent_token.as_deref()
+        };
         if is_registered_service {
             wait_for_upstream(target_port, UPSTREAM_READY_TIMEOUT).await;
         }
-        forward_http_to_container(&state.http_client, target_port, &target_path, request, token)
-            .await
+        forward_http_to_container(
+            &state.http_client,
+            target_port,
+            &target_path,
+            request,
+            token,
+        )
+        .await
     }
 }
 
-async fn ws_proxy(client_ws: axum::extract::ws::WebSocket, agent_port: u16, path: &str, agent_token: Option<&str>) {
+async fn ws_proxy(
+    client_ws: axum::extract::ws::WebSocket,
+    agent_port: u16,
+    path: &str,
+    agent_token: Option<&str>,
+) {
     use axum::extract::ws::Message as AxumMsg;
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message as TungMsg;
 
     let url = if let Some(token) = agent_token {
         let sep = if path.contains('?') { "&" } else { "?" };
-        format!("ws://localhost:{}{}{}agent_token={}", agent_port, path, sep, token)
+        format!(
+            "ws://localhost:{agent_port}{path}{sep}agent_token={token}"
+        )
     } else {
-        format!("ws://localhost:{}{}", agent_port, path)
+        format!("ws://localhost:{agent_port}{path}")
     };
     let agent_ws = match tokio_tungstenite::connect_async(&url).await {
         Ok((ws, _)) => ws,
         Err(e) => {
-            tracing::warn!(url = %url, error = %e, "agent websocket not reachable");
+            tracing::warn!(port = agent_port, error = %e, "agent websocket not reachable");
             let mut client_ws = client_ws;
             let _ = client_ws
                 .send(AxumMsg::Close(Some(axum::extract::ws::CloseFrame {
@@ -194,8 +242,8 @@ async fn ws_proxy(client_ws: axum::extract::ws::WebSocket, agent_port: u16, path
 
     let keepalive = Duration::from_secs(WS_KEEPALIVE_INTERVAL_SECS);
     tokio::select! {
-        _ = client_to_agent => {},
-        _ = pump_agent_to_client(client_tx, agent_rx, keepalive) => {},
+        () = client_to_agent => {},
+        () = pump_agent_to_client(client_tx, agent_rx, keepalive) => {},
     }
 
     tracing::info!(port = agent_port, "client websocket disconnected");
@@ -212,8 +260,8 @@ async fn pump_agent_to_client<ClientSink, AgentStream, AgentErr>(
     keepalive: Duration,
 ) where
     ClientSink: futures_util::Sink<axum::extract::ws::Message> + Unpin,
-    AgentStream:
-        futures_util::Stream<Item = Result<tokio_tungstenite::tungstenite::Message, AgentErr>> + Unpin,
+    AgentStream: futures_util::Stream<Item = Result<tokio_tungstenite::tungstenite::Message, AgentErr>>
+        + Unpin,
 {
     use axum::extract::ws::Message as AxumMsg;
     use futures_util::{SinkExt, StreamExt};
@@ -232,14 +280,14 @@ async fn pump_agent_to_client<ClientSink, AgentStream, AgentErr>(
                     TungMsg::Ping(p) => AxumMsg::Ping(p),
                     TungMsg::Pong(p) => AxumMsg::Pong(p),
                     TungMsg::Close(_) => break,
-                    _ => continue,
+                    TungMsg::Frame(_) => continue,
                 };
                 if client_tx.send(axum_msg).await.is_err() {
                     break;
                 }
             }
             _ = ticker.tick() => {
-                if client_tx.send(AxumMsg::Ping(Default::default())).await.is_err() {
+                if client_tx.send(AxumMsg::Ping(bytes::Bytes::new())).await.is_err() {
                     break;
                 }
             }
@@ -255,19 +303,22 @@ async fn forward_http_to_container(
     agent_token: Option<&str>,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     let (parts, body) = request.into_parts();
-    let url = format!("http://localhost:{}{}", port, target_path);
+    let url = format!("http://localhost:{port}{target_path}");
 
     let method = reqwest::Method::from_bytes(parts.method.as_str().as_bytes())
-        .map_err(|e| err_response(StatusCode::BAD_REQUEST, &format!("bad method: {}", e)))?;
+        .map_err(|e| err_response(StatusCode::BAD_REQUEST, &format!("bad method: {e}")))?;
 
     let body_bytes = axum::body::to_bytes(body, PROXY_MAX_BODY_BYTES)
         .await
-        .map_err(|e| err_response(StatusCode::BAD_REQUEST, &format!("read body: {}", e)))?;
+        .map_err(|e| err_response(StatusCode::BAD_REQUEST, &format!("read body: {e}")))?;
 
     let mut req_builder = client.request(method, &url);
-    for (name, value) in parts.headers.iter() {
+    for (name, value) in &parts.headers {
         let n = name.as_str().to_ascii_lowercase();
-        if matches!(n.as_str(), "host" | "connection" | "transfer-encoding" | "content-length") {
+        if matches!(
+            n.as_str(),
+            "host" | "connection" | "transfer-encoding" | "content-length"
+        ) {
             continue;
         }
         req_builder = req_builder.header(name.as_str(), value.as_bytes());
@@ -282,16 +333,21 @@ async fn forward_http_to_container(
     let upstream = req_builder.send().await.map_err(|e| {
         err_response(
             StatusCode::BAD_GATEWAY,
-            &format!("container unreachable on port {} ({}): {} — is the service running?", port, target_path, e),
+            &format!(
+                "container unreachable on port {port} ({target_path}): {e} — is the service running?"
+            ),
         )
     })?;
 
-    let status = StatusCode::from_u16(upstream.status().as_u16())
-        .unwrap_or(StatusCode::BAD_GATEWAY);
+    let status =
+        StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
     let mut builder = Response::builder().status(status);
-    for (name, value) in upstream.headers().iter() {
+    for (name, value) in upstream.headers() {
         let n = name.as_str().to_ascii_lowercase();
-        if matches!(n.as_str(), "transfer-encoding" | "connection" | "content-length") {
+        if matches!(
+            n.as_str(),
+            "transfer-encoding" | "connection" | "content-length"
+        ) {
             continue;
         }
         builder = builder.header(name.as_str(), value.as_bytes());
@@ -299,9 +355,12 @@ async fn forward_http_to_container(
 
     let stream = upstream.bytes_stream();
     let body = Body::from_stream(stream);
-    builder
-        .body(body)
-        .map_err(|e| err_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("build response: {}", e)))
+    builder.body(body).map_err(|e| {
+        err_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &format!("build response: {e}"),
+        )
+    })
 }
 
 #[cfg(test)]
@@ -342,11 +401,20 @@ mod tests {
         let start = Instant::now();
         let first = rx.recv().await.expect("first keepalive ping");
         let second = rx.recv().await.expect("second keepalive ping");
-        assert!(matches!(first, AxumMsg::Ping(_)), "expected a ping, got {first:?}");
-        assert!(matches!(second, AxumMsg::Ping(_)), "expected a ping, got {second:?}");
+        assert!(
+            matches!(first, AxumMsg::Ping(_)),
+            "expected a ping, got {first:?}"
+        );
+        assert!(
+            matches!(second, AxumMsg::Ping(_)),
+            "expected a ping, got {second:?}"
+        );
         // First ping waits a full interval (the immediate tick is dropped), two pings ~= 2 intervals.
         let elapsed = start.elapsed();
-        assert!(elapsed >= keepalive, "first ping fired too early: {elapsed:?}");
+        assert!(
+            elapsed >= keepalive,
+            "first ping fired too early: {elapsed:?}"
+        );
         assert!(elapsed < keepalive * 6, "pings too slow: {elapsed:?}");
 
         pump.abort();
@@ -358,10 +426,13 @@ mod tests {
         let agent_rx = stream::iter([Ok::<_, Infallible>(TungMsg::Close(None))]);
 
         // A long keepalive guarantees the pump returns because of the Close, not a tick.
-        pump_agent_to_client(sink, agent_rx, Duration::from_secs(3600)).await;
+        pump_agent_to_client(sink, agent_rx, Duration::from_hours(1)).await;
 
         // The Close is consumed (not forwarded) and the pump has returned, so the channel is empty/closed.
-        assert!(rx.try_recv().is_err(), "Close frame should not be forwarded to the client");
+        assert!(
+            rx.try_recv().is_err(),
+            "Close frame should not be forwarded to the client"
+        );
     }
 
     #[tokio::test]
@@ -369,24 +440,34 @@ mod tests {
         let (sink, mut rx) = recording_client_sink();
         let agent_rx = stream::iter([Ok::<_, Infallible>(TungMsg::Text("hello".into()))]);
 
-        pump_agent_to_client(sink, agent_rx, Duration::from_secs(3600)).await;
+        pump_agent_to_client(sink, agent_rx, Duration::from_hours(1)).await;
 
         let forwarded = rx.try_recv().expect("text frame forwarded");
-        assert!(matches!(forwarded, AxumMsg::Text(ref t) if t.as_str() == "hello"), "got {forwarded:?}");
+        assert!(
+            matches!(forwarded, AxumMsg::Text(ref t) if t.as_str() == "hello"),
+            "got {forwarded:?}"
+        );
     }
 
     #[test]
     fn splits_service_name_from_forwarded_subpath() {
         // (path, expected service, expected subpath)
         let cases = [
-            ("dashboard/assets/index-abc.js", ("dashboard", "/assets/index-abc.js")),
+            (
+                "dashboard/assets/index-abc.js",
+                ("dashboard", "/assets/index-abc.js"),
+            ),
             ("dashboard/a/b/c/d.png", ("dashboard", "/a/b/c/d.png")),
             ("dashboard/", ("dashboard", "/")),
             ("dashboard", ("dashboard", "/")),
             ("", ("", "/")),
         ];
         for (path, expected) in cases {
-            assert_eq!(split_service_subpath(path), expected, "split_service_subpath({path:?})");
+            assert_eq!(
+                split_service_subpath(path),
+                expected,
+                "split_service_subpath({path:?})"
+            );
         }
     }
 
@@ -424,7 +505,9 @@ mod tests {
 
         let binder = tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(150)).await;
-            TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await.unwrap()
+            TcpListener::bind((Ipv4Addr::LOCALHOST, port))
+                .await
+                .unwrap()
         });
 
         let start = Instant::now();

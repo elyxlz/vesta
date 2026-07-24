@@ -1,127 +1,148 @@
 ---
 name: whatsapp
-description: WhatsApp messages, contacts, groups (not generic text/message). Requires whatsapp daemon.
+description: WhatsApp messages, contacts, groups, and live voice calls (place/answer, talk in your own voice; not generic text/SMS). Use to message or call someone on WhatsApp.
 ---
 
-# WhatsApp - CLI: `whatsapp`
+# WhatsApp (CLI: `whatsapp`)
 
-**Setup / first-time auth / re-auth**: see [SETUP.md](SETUP.md).
-**Start daemon**: `screen -dmS whatsapp whatsapp serve --notifications-dir ~/agent/notifications`
+You never stop or restart anything, and you don't manage the daemon by hand. The
+`whatsapp` CLI runs its own background daemon: the restart skill runs `whatsapp
+start` at boot to bring it up (so inbound WhatsApp notifications flow before you
+send anything), and every command below also brings it up on demand. Your whole
+world is four verbs: **connect, status, send, messages** (plus profile and calls).
 
-## Calling the CLI
+## The one rule
 
+**If `whatsapp status` ever shows `linked: false`, run `whatsapp connect`.**
+That is the only recovery you ever need. Never re-link, re-pair, or "restart the
+daemon" any other way; connect is idempotent and safe to re-run.
+
+## Set up (one command)
+
+`whatsapp connect` is the single setup verb. It picks the right path for the box on
+its own, so you never choose between modes. Every output carries a `next:` step, so
+just do what it says:
+
+- **Hosted (vesta.run) box:** compose a warm, natural first-contact opener in your
+  own voice that says hi and introduces you by name, for example, "Hi, it's Nova,
+  nice to meet you!" Then run `whatsapp connect --opener '<your opener>'`. The
+  opener is prefilled for the USER to send TO you, so phrase it as the user reaching
+  out. The command claims the agent's own managed number and links
+  it, returning `{status:"linked", number, next:...}`. Follow `next`: share the
+  number and its `wa.me` link so the user messages you FIRST (reply-first: never
+  cold-initiate), then reply only once they do.
+- **Still filling:** `{status:"provisioning", next:...}` means the number is still
+  being set up. Re-run `whatsapp connect` in about 30 seconds; repeating is safe.
+- **Blocked:** `{status:"blocked", next:...}` means that number was banned. Re-run
+  `whatsapp connect` to get a fresh one.
+- **Rate limited:** `{status:"rate_limited", reason, next:...}` means the number keeps
+  failing to link and the ban guard paused pairing. Wait out the cooldown named in
+  `reason` before running `whatsapp connect` again; retrying sooner is what gets a
+  number banned.
+- **Self-hosted (user's own WhatsApp):** it serves a QR page and returns
+  `{status:"linking", url, next:...}`. Send the user the URL to scan in WhatsApp >
+  Settings > Linked Devices. See [SETUP.md](SETUP.md) / [MANAGED_AUTH.md](MANAGED_AUTH.md).
+
+## Other ways to connect
+
+- **User owns the number (`whatsapp connect --own-number`):** the pool hands you a
+  fresh number and its verification code to relay; the USER registers that number on
+  their OWN phone and owns it, and you link only as a companion. Use this only when the
+  user wants the WhatsApp account to live on their own device: they keep their phone
+  online and re-link it themselves if it drops. Normal messaging applies (no reply-first
+  restriction, since the number is theirs, not a fresh pooled one).
+- **Direct token (no vesta.run needed):** the doubletick number service is a standalone API, not
+  only reachable through vesta.run. If the box operator set `DOUBLETICK_API_URL` and
+  `DOUBLETICK_API_KEY` (a per-account `wak_` token they minted for you), `whatsapp
+  connect` uses them automatically: the same managed number and pairing, straight to the
+  home box, no membership gate and no control plane in the loop. You do nothing
+  different, it is transparent. This is how a non-managed agent gets a pooled number
+  when the operator has handed them a token.
+
+Before the companion connects, egress selection is `WHATSAPP_PROXY_URL`, then a
+doubletick residential lease, then direct. If you're managed or on a datacenter IP,
+the skill leases a residential proxy from doubletick automatically; it hardfails
+rather than run WhatsApp over a datacenter IP. A supplied proxy is validated too.
+
+## Check state
+
+`whatsapp status` is your one diagnostic:
+- linked: `{"linked":true,"number":"+44...","connected":true}`
+- not linked: `{"linked":false,"connected":false,"next":"run: whatsapp connect","reason":"<why>"}`
+
+## Send
 - Form: `whatsapp <subcommand> [positionals] [--flag value ...]`. **Subcommand goes first**, before any flags.
 - Most common subcommands accept leading positional args that the CLI rewrites into flags (e.g. `whatsapp send 'Alice' 'Hi'` is identical to `whatsapp send --to 'Alice' --message 'Hi'`). You can always use the flag form.
 - Flags for a specific subcommand: `whatsapp <subcommand> --help`. The top-level `whatsapp` with no args prints the command list.
-- Names for `--to` / `--chat-id` / `--group`: contact name, phone (`+E.164`), group name, or JID - the CLI resolves them.
-- For `send-message`, prefer `--message-file <path>` (or `--message-file -` / `--message -` to read from stdin) when the body contains apostrophes, quotes, or multiple lines: this avoids shell-escaping issues that break `--message 'text'`.
-- `send-message` enforces short-bubble texting: a wall (over ~220 chars, or 3+ sentences in one bubble) is rejected so you re-send as several short calls, one thought each. For genuine reference material the user asked for (a brief, a code block, a list), pass `--longform` to bypass. This applies to `--message-file` sends too, so `--longform` is the only escape hatch.
+- Names for `--to` / `--chat-id` / `--group`: contact name, phone (`+E.164`), group name, or JID; the CLI resolves them.
+- For `send-message`, prefer `--message-file <path>` (or `--message-file -` / `--message -` to read from stdin) when the body contains apostrophes, quotes, backticks, `$(...)`, or multiple lines: an inline `--message 'text'` lets the shell mangle or even evaluate it.
+- `send-message` enforces short-bubble texting: a wall (over ~220 chars, or any text after a full stop) is rejected so you re-send as several short calls, one thought each. Don't use full stops at all: a `.`, `!` or `?` may only close a bubble, never carry text after it. Ellipses stay free, they're a beat rather than a stop. For genuine reference material the user asked for (a brief, a code block, a list), pass `--longform` to bypass. This applies to `--message-file` sends too, so `--longform` is the only escape hatch.
+- A numbered or bulleted list is fine to send as one message (each item is one short thought); a line-leading marker like `1.` or `2)` is not a full stop, so a list does not need `--longform`.
 
-## Reply / Quote
 ```bash
-whatsapp send --to 'Name' --message 'reply text' --reply-to '<message_id>'
+whatsapp send --to 'Alice' --message 'Hi'          # positionals also work: whatsapp send Alice 'Hi'
+whatsapp send --to 'Alice' --message 'reply' --reply-to '<message_id>'   # quote a message
 ```
-The `--reply-to` flag quotes the referenced message in WhatsApp's native reply UI. The message ID can be found in incoming notification payloads (`message_id` field) or `list-messages` output.
+- `--to` accepts a contact name, phone (`+E.164`), group name, or JID; the CLI resolves it.
+- Prefer `--message-file <path>` (or `--message -` / `--message-file -` for stdin) when the
+  text has apostrophes, quotes, backticks, `$(...)`, or multiple lines, so the shell can't mangle it.
+- Short bubbles only: a wall (over ~220 chars, or 3+ sentences in one bubble) is rejected.
+  Re-send as several short calls, one thought each. Pass `--longform` only for genuine
+  reference material the user asked for (a brief, a code block, a list).
+- Before texting an unknown raw number, save it first with `add-contact` (name + phone).
 
-## Commands
+## Read
 
-Aliases in parentheses. Positional signature shown after `:` for commands that take positionals.
+- `whatsapp messages [--to <name>] [--query <text>] [--after <RFC3339>] [--limit N]` reads the local DB.
+- `whatsapp chats`, `whatsapp contacts`, `whatsapp groups` list the obvious things.
+- `whatsapp backfill --to <name>` asks the phone for older history when the local DB is thin.
+- `whatsapp check-delivery --message-id <id>` (or `--recent`) checks whether a send landed.
+- Message IDs come from inbound notification payloads (`message_id`) or `messages` output.
 
-**Sending**
-- `send-message` (`send`) : `<to> <message>`
-- `send-file` (`file`) : `<to> <file-path>`
-- `send-audio` - voice note; use `--help` for flags
-- `send-reaction` (`react`) : `<to> <message-id> <emoji>`
-- `revoke-message` - unsend; `--to <to> --message-id <id>`
-- `download-media` - `--to <to> --message-id <id>`; saves to `~/.whatsapp/downloads/`
+## Profile
 
-**Reading**
-- `list-chats` (`chats`)
-- `list-messages` (`messages`) : `<to>` - local DB only
-- `list-contacts` (`contacts`, `search-contacts`)
-- `list-groups` (`groups`)
-- `list-received-contacts` - contact cards (vCards) received from others
-- `check-delivery` (`delivery`) : `<message-id>`
-- `backfill` : `<to>` - asks the phone for older history
+Change the agent's own WhatsApp name/picture from its own client (no phone, no QR, works while linked):
+- `whatsapp profile name 'mozzy'` sets the display (push) name. Account-wide and immediate, but a
+  contact keeps seeing the OLD name until you next message them, so message them once to refresh it.
+- `whatsapp profile photo ~/avatar.jpg` sets the picture. JPEG (PNG is auto-converted), roughly square (~640x640).
 
-**Contacts**
-- `add-contact` : `<name> <phone>`
-- `remove-contact` : `<identifier>` (name or phone)
+## Edited and deleted messages
 
-**Groups**
-- `create-group` - `--help` for flags
-- `leave-group` : `<group>`
-- `rename-group` (`rename`) : `<group> <name>`
-- `set-group-description` : `<group> <description>`
-- `set-group-photo` - `--help` for flags
-- `get-group-invite-link` - `--help` for flags
-- `update-group-participants` - add/remove members; `--help` for flags
+People change their minds after they hit send, so a message you already read can change or vanish:
 
-**Chat management**
-- `archive-chat` : `<to>`
-- `archive-all-chats`
-- `delete-chat` : `<to>`
-- `clear-all-chats` - destructive; wipes local message DB
+- **An edit** arrives as an `edit` notification whose body carries what the message says now, just like a plain message, naming the message that changed (`target_message_id`) and the text you last saw (`old_text`). The stored message is rewritten, so `list-messages` and search show only the new text. Answer again only if the edit asks something new: a fixed typo needs nothing from you.
+- **A deletion** (delete-for-everyone) arrives as a `revoke` notification with the text you last saw in `old_text`. They took it back, so treat it as unsaid and do not quote it at them.
 
-**Auth / daemon** (see SETUP.md for details)
-- `serve` - starts the background daemon; requires `--notifications-dir`
-- `authenticate` - QR-code pairing
-- `pair-phone` - phone-number pairing; `--phone <+E.164>`
+## Voice calls
 
-### `serve` flags
+Hold a live call in your own voice (the `voice` skill's TTS) and hear the other person (its STT):
+- The other person's speech arrives as `call_utterance` notifications; it interrupts like any message,
+  so you answer live by **speaking** with `whatsapp say '<one short line>'` (one spoken thought at a
+  time, not a monologue). A newer `say` replaces whatever is still playing.
+- `whatsapp call --to <name>` places a call and returns once answered; greet them with `say`.
+  Inbound calls answer automatically. `whatsapp hangup` ends it; `whatsapp call-status` reports the active call.
+- Requires the `voice` skill with both STT and TTS; without it, calls are declined and you are told to set it up.
+- **Calling is your loudest, most interrupting reach.** Reserve `whatsapp call` for the genuinely
+  time-critical (a real deadline, a safety or money issue, something they asked to be called about)
+  and only after messages went unanswered. Respect anything the constitution says about calling.
 
-- `--notifications-dir <dir>` (required unless `--no-notifications`): directory where inbound notification JSON files are written for the agent to pick up.
-- `--no-notifications` (optional): the daemon writes no notification files at all, so the agent receives nothing from this instance. When set, `--notifications-dir` is not required. Inbound messages are still stored locally and queryable on demand. Use for a passive linked account you want to read but never be pinged about.
-- `--instance <name>` (optional): run a second, isolated account/session. State lives in `~/.whatsapp/<name>/` instead of `~/.whatsapp/`. This is how you link a second WhatsApp account (e.g. a personal account) alongside the agent's own line.
-- `--read-only` (optional): passive mode. Blocks every write command (`send-message`, `send-file`, `send-audio`, `send-reaction`, `revoke-message`, `add-contact`, `remove-contact`, all group ops, `archive-chat`, `archive-all-chats`, `delete-chat`, `clear-all-chats`); each returns `command "X" blocked: instance is read-only`. Suppresses delayed read receipts (incoming messages are NOT marked read, no blue ticks) AND suppresses presence: `EnsureOnline()` is a no-op under read-only, so the account never broadcasts `available` and does not appear online to contacts. Read-only alone does NOT stop notifications; use `--no-notifications` or `--skip-senders` for that.
-- `--skip-senders <phone,phone,...>` (optional): comma-separated E.164 numbers whose inbound messages never generate a notification. Messages are still stored and queryable, just silent.
+## More commands
 
-**Recipe: link a personal account fully silently (passive, invisible to contacts).**
-```bash
-whatsapp serve --instance personal --read-only --no-notifications
-```
-The agent can read/search that account on demand (`whatsapp list-chats --instance personal`, `list-messages`, `search-contacts`, etc.) but receives zero notifications, never sends or marks-read, and the account never shows online to its contacts. Deliver the linking QR with the auto-refresh page (see SETUP.md), then `whatsapp authenticate --instance personal`.
+`whatsapp` with no args lists everything. Others (all take `--help`): `send-file`, `send-audio`,
+`react`, `revoke-message`, `download-media`, `create-group`, `leave-group`, `rename-group`,
+`set-group-description`, `set-group-photo`, `get-group-invite-link`, `update-group-participants`,
+`archive-chat`, `delete-chat`, `remove-contact`.
 
 ## Rules
 
-- **Send messages one tool call at a time. Never batch WhatsApp sends in a single parallel tool-call block.**
-  *Why:* If one parallel call fails while another succeeds, you can't tell which went through. Retrying "the failed one" sends a duplicate that the recipient sees.
+- **Send one WhatsApp call at a time.** Never batch sends (or `say` lines) in a parallel tool-call
+  block: if one fails you can't tell which landed, and a retry sends a duplicate; parallel `say` lines race.
+- **Never re-link without the user's explicit go-ahead.** Pairing is rate-limited because repeated
+  attempts get numbers flagged and banned. If linking fails, report it and wait; don't retry-loop.
+- Phone numbers are E.164 with a leading `+` (e.g. `+12025551234`). Auth state lives in `~/.whatsapp/`.
 
-- **`whatsapp serve` requires `--notifications-dir`.**
-  *Why:* Without it the daemon exits silently (no stderr), and every subsequent command reports "daemon not running."
+Advanced setup (second/personal account, read-only, silent instances) and how to develop the CLI:
+see [SETUP.md](SETUP.md) and [DEVELOPING.md](DEVELOPING.md).
 
-- **Do not restart the daemon once the user is authenticated**, unless the user explicitly confirms a full re-auth is acceptable.
-  *Why:* Restarting mid-session can invalidate the WhatsApp pairing and force the user to rescan the QR.
-
-- **Never kill whatsapp processes with signals (pkill, killall, kill, os.kill, SIGTERM).** Use `screen -S whatsapp -X quit` only, then sleep briefly, then start a new screen session.
-  *Why:* Sending SIGTERM to `whatsapp serve` propagates too broadly and crashes the entire container (exit code 143/144). Screen quit is always sufficient.
-
-- **Before sending to an unknown phone number, save it first with `add-contact`.**
-  *Why:* Sending to a raw JID with no saved contact row triggers the `requireManualContact` guard and blocks the send.
-
-- **Right after first-pair auth, `database is locked` can occur transiently during history backfill.**
-  *Why:* WhatsApp pushes up to 2 years of history; each conversation is persisted in a short transaction that can briefly exceed the 5s busy-timeout on large chats. If a write fails with "database is locked" within the first minute or two after authentication, wait 10-20 seconds and retry; do not treat it as a real failure. This does not occur on subsequent runs.
-
-## Conventions
-
-- Phone numbers: E.164 with leading `+` (e.g. `+12025551234`).
-- JIDs: direct chats end in `@s.whatsapp.net`, groups in `@g.us`. Only pass JIDs where a flag explicitly asks for one (e.g. `--chat-id`).
-- Auth state: `~/.whatsapp/` (or `~/.whatsapp/{instance}/` for named instances).
-
-## Developing & Testing Changes
-
-The WhatsApp CLI runs as a **daemon** via `screen`. One-shot commands (send, list, etc.) connect to the daemon over a Unix socket. This means:
-
-1. **Rebuild**: `cd ~/agent/skills/whatsapp/cli && CGO_ENABLED=1 go build -tags "fts5" -o ~/.local/bin/whatsapp .`
-2. **Restart daemon**: The running daemon uses the old binary. Restart it to pick up changes:
-   ```bash
-   screen -S whatsapp -X quit
-   sleep 1
-   screen -dmS whatsapp whatsapp serve --notifications-dir ~/agent/notifications
-   ```
-3. **Test**: Send a message and verify the new behavior. The daemon handles all command execution, so changes won't take effect until step 2.
-
-**Common mistake**: rebuilding the binary and testing immediately without restarting the daemon. The CLI client just forwards commands to the daemon over the socket, so the daemon process must be running the new binary.
-
-### Contact Preferences
+## Contact Preferences
 [How the user prefers to communicate with different contacts]

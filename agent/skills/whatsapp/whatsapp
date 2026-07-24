@@ -1,0 +1,66 @@
+#!/bin/bash
+# Launcher for the whatsapp CLI. Builds cli/ from source and caches the binary,
+# rebuilding only when a source input changed, so no stale binary can drift
+# (issue #1073) without recompiling (~3.5 min) on every invocation. Installed as
+# a symlink at ~/.local/bin/whatsapp; never `go build` a static binary somewhere.
+#
+# whatsmeow is PINNED in cli/go.mod (like the whisper.cpp binding): the pin is
+# authoritative and the agent bumps it DELIBERATELY via `whatsapp update-deps`.
+# Floating it to @latest on every serve is banned: a mid-session version bump can
+# invalidate a fresh multi-device session and log the companion out, and the
+# on-every-serve recompile it forced turned an engine keepalive that re-invokes
+# serve into a churn loop. Instead, serve runs a non-blocking check and only WARNS
+# when a newer whatsmeow exists, so the agent can update at a safe time.
+set -euo pipefail
+
+CLI_DIR="$(dirname "$(readlink -f "$0")")/cli"
+
+# The box install puts Go at /usr/local/go without linking it onto PATH.
+if ! command -v go >/dev/null; then export PATH="/usr/local/go/bin:$PATH"; fi
+. "$CLI_DIR/cgo-env.sh"
+
+# Deliberate dependency update: the one sanctioned way to move the whatsmeow pin.
+# Bumps go.mod/go.sum, so the next serve's cache check rebuilds against it. Runs
+# in the launcher because the cached binary has no path back to the cli/ source.
+if [ "${1:-}" = "update-deps" ]; then
+  echo "whatsapp launcher: updating whatsmeow to latest and tidying go.mod..." >&2
+  (cd "$CLI_DIR" && go get go.mau.fi/whatsmeow@latest && go mod tidy)
+  echo "whatsapp launcher: done. Restart the daemon (whatsapp daemon restart) to build and run against it." >&2
+  exit 0
+fi
+
+# whatsmeow_update_check warns (never upgrades) when a newer whatsmeow than the
+# pin exists. Non-blocking and offline-tolerant: a short timeout and swallowed
+# errors mean it never changes what gets built and never fails serve.
+whatsmeow_update_check() {
+  local out
+  out="$(cd "$CLI_DIR" && timeout 20 go list -m -u -f '{{if .Update}}{{.Version}} {{.Update.Version}}{{end}}' go.mau.fi/whatsmeow 2>/dev/null)" || return 0
+  [ -n "$out" ] || return 0
+  echo "whatsapp launcher: a newer whatsmeow is available (${out% *} -> ${out#* }). WhatsApp periodically breaks old protocol code, so updating may become necessary, but a whatsmeow bump can require RE-LINKING this device. Update DELIBERATELY at a safe time (not mid-critical-session): run 'whatsapp update-deps', then 'whatsapp daemon restart'." >&2
+}
+
+if [ "${1:-}" = "serve" ]; then
+  whatsmeow_update_check
+fi
+
+BIN_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/whatsapp"
+mkdir -p "$BIN_DIR"
+BIN="$BIN_DIR/whatsapp"
+
+# Rebuild only when the cached binary is missing or older than any build input
+# (the Go sources plus go.mod/go.sum). Directories are checked too: deleting a
+# source file bumps its directory's mtime but leaves no newer FILE, so a file-only
+# check would keep serving a stale binary after a pure deletion.
+needs_build() {
+  [ -x "$BIN" ] || return 0
+  [ -n "$(cd "$CLI_DIR" && find . \( -type d -o -type f \( -name '*.go' -o -name 'go.mod' -o -name 'go.sum' \) \) -newer "$BIN" -print -quit)" ]
+}
+
+if needs_build; then
+  # Build to a temp path then rename: writing over the binary the running daemon
+  # executes would fail with ETXTBSY, and rename keeps the old inode alive for it.
+  TMP="$BIN.$$"
+  (cd "$CLI_DIR" && go build -tags fts5 -o "$TMP" .)
+  mv -f "$TMP" "$BIN"
+fi
+exec "$BIN" "$@"

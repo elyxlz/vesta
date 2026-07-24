@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { logStreamAction, isAgentContainerUp } from "./log-stream-policy";
-import type { AgentStatus } from "./types";
+import {
+  logStreamAction,
+  isAgentContainerUp,
+  replayTailLines,
+  LOG_SCROLLBACK_LINES,
+} from "./log-stream-policy";
+import type { AgentStatus } from "@vesta/core";
 
 describe("logStreamAction", () => {
   it("appends a line with its text", () => {
@@ -38,5 +43,15 @@ describe("isAgentContainerUp", () => {
 
   it.each(down)("treats %s as down (no live logs)", (status) => {
     expect(isAgentContainerUp(status)).toBe(false);
+  });
+});
+
+describe("replayTailLines", () => {
+  it("asks a fresh stream to replay the full scrollback the viewer keeps", () => {
+    expect(replayTailLines(true)).toBe(LOG_SCROLLBACK_LINES);
+  });
+
+  it("asks a reconnect for no replay, so the tail is not re-appended", () => {
+    expect(replayTailLines(false)).toBe(0);
   });
 });

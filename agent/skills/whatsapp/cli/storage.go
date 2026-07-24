@@ -23,7 +23,7 @@ func NewMessageStore(dataDir string) (*MessageStore, error) {
 		return nil, fmt.Errorf("failed to create data directory: %v", err)
 	}
 
-	db, err := sql.Open("sqlite3", dbPath+"?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000")
+	db, err := sql.Open("sqlite3", dbPath+"?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=30000")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open message database: %v", err)
 	}
@@ -103,6 +103,10 @@ func NewMessageStore(dataDir string) (*MessageStore, error) {
 
 		CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
 			DELETE FROM messages_fts WHERE rowid = old.rowid;
+		END;
+
+		CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE OF content ON messages BEGIN
+			UPDATE messages_fts SET content = new.content WHERE rowid = new.rowid;
 		END;
 
 		CREATE TRIGGER IF NOT EXISTS chats_au AFTER UPDATE OF name ON chats BEGIN
@@ -273,6 +277,17 @@ func (ms *MessageStore) UpdateDeliveryStatus(messageID, chatJID, status string, 
 		UPDATE messages SET delivery_status = ?, delivery_timestamp = ?
 		WHERE id = ? AND chat_jid = ?
 	`, status, timestamp, messageID, chatJID)
+	return err
+}
+
+// UpdateMessageContent rewrites a message's text in place after the sender edited it.
+// Deliberately not storeMessage: that INSERT OR REPLACE would reset delivery_status and
+// delivery_timestamp, which the stale-message alerting reads.
+func (ms *MessageStore) UpdateMessageContent(messageID, chatJID, content string) error {
+	_, err := ms.db.Exec(`
+		UPDATE messages SET content = ?
+		WHERE id = ? AND chat_jid = ?
+	`, content, messageID, chatJID)
 	return err
 }
 
@@ -508,6 +523,9 @@ func (ms *MessageStore) SaveManualContact(name, phone string) (Contact, error) {
 	}
 	if trimmedName == "" {
 		return Contact{}, fmt.Errorf("contact name cannot be empty")
+	}
+	if err := errIfGroupIDDigits(normalizedDigits); err != nil {
+		return Contact{}, err
 	}
 	jid := fmt.Sprintf("%s@%s", normalizedDigits, types.DefaultUserServer)
 	_, err = ms.db.Exec(`

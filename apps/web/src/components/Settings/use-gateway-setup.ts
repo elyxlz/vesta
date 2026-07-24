@@ -23,7 +23,9 @@ export function useGatewaySetup(): GatewaySetup | undefined {
       .then(([info, settings]) => {
         if (!cancelled) setSetup({ info, settings });
       })
-      .catch(() => {});
+      .catch(() => {
+        /* noop: the section stays hidden when the fetch fails */
+      });
     return () => {
       cancelled = true;
     };

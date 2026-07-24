@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
+	waProto "go.mau.fi/whatsmeow/binary/proto"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 )
@@ -12,52 +14,285 @@ import (
 func (wac *WhatsAppClient) eventHandler(evt any) {
 	switch v := evt.(type) {
 	case *events.Message:
-		if v.Message.GetReactionMessage() != nil {
-			wac.handleReaction(v)
-		} else {
-			wac.handleMessage(v)
-		}
+		// Data-plane: offload so a slow store write never stalls whatsmeow's serial
+		// node loop. The reaction/protocol/message split runs on the worker, in FIFO order.
+		wac.enqueueWork(func() {
+			switch {
+			case v.Message.GetReactionMessage() != nil:
+				wac.handleReaction(v)
+			case v.Message.GetProtocolMessage() != nil:
+				wac.handleProtocolMessage(v)
+			default:
+				wac.handleMessage(v)
+			}
+		})
 	case *events.Receipt:
-		wac.handleReceipt(v)
+		wac.enqueueWork(func() { wac.handleReceipt(v) })
 	case *events.HistorySync:
 		wac.handleHistorySync(v)
+	case *events.PairSuccess:
+		// A phone-code pairing finished (the user entered the code). QR pairing
+		// instead completes through consumeQRChannel, so this is the phone-code path.
+		wac.logger.Infof("Pairing succeeded")
+		wac.onLinked()
 	case *events.Connected:
 		wac.logger.Infof("Connected to WhatsApp")
+		// A successful connect clears any stale logout/yield reason so `status` does
+		// not keep reporting an old failure after the daemon has recovered.
+		wac.clearExit()
 		wac.presenceMutex.Lock()
 		wac.presenceActive = false
 		wac.presenceMutex.Unlock()
-	case *events.Disconnected:
-		wac.logger.Warnf("Disconnected from WhatsApp")
-		wac.presenceMutex.Lock()
-		wac.presenceActive = false
-		wac.presenceMutex.Unlock()
+		// Refresh the last-good device snapshot (throttled) and (re)arm the
+		// stability timer that clears the preserve single-retry guard once the
+		// connection has held for StableConnDuration.
+		wac.maybeSnapshotGoodDevice()
+		wac.armStableTimer()
 	case *events.KeepAliveTimeout:
 		wac.logger.Warnf("WhatsApp keep-alive timeout: error_count=%d, last_success=%s", v.ErrorCount, v.LastSuccess.Format(time.RFC3339))
 		if v.ErrorCount >= KeepAliveRestartThreshold {
 			go wac.recoverOrRestart(fmt.Sprintf("keepalive_timeout:error_count=%d", v.ErrorCount))
 		}
-	case *events.StreamReplaced:
-		wac.logger.Warnf("WhatsApp stream replaced; another connection took over this session")
-		go wac.recoverOrRestart("stream_replaced")
 	case *events.StreamError:
 		wac.logger.Errorf("WhatsApp stream error: code=%s", v.Code)
 		go wac.recoverOrRestart("stream_error:" + v.Code)
+	case *events.Disconnected:
+		wac.applyConnAction(classifyConnEvent(v), "")
+	case *events.StreamReplaced:
+		wac.applyConnAction(classifyConnEvent(v), "another connection took over this device session")
 	case *events.LoggedOut:
-		wac.logger.Warnf("Device logged out from WhatsApp - initiating re-authentication")
-		wac.initiateReauth()
+		wac.applyConnAction(classifyConnEvent(v), loggedOutReason(v))
+	}
+}
+
+// connEventAction is what the daemon does in response to a connection-lifecycle
+// event. The mapping lives in classifyConnEvent (the single owner); applyConnAction
+// executes each action.
+type connEventAction int
+
+const (
+	// connIgnore: a transient disconnect. whatsmeow auto-reconnects, so the
+	// daemon does nothing but reset presence; it must NOT stop or re-pair.
+	connIgnore connEventAction = iota
+	// connYield: another connection took over this device session (the conflict
+	// signal). whatsmeow has already disabled auto-reconnect; park (stay up, do not
+	// reconnect, do not exit) so an auto-restarted daemon can't steal the session
+	// back and ping-pong with the other holder.
+	connYield
+	// connNeedsProvision: a genuine logout (the phone unlinked the device, a
+	// stream:error device_removed). Try device preservation, then clear the dead
+	// device and exit for a deliberate `whatsapp provision`; never re-pair automatically.
+	connNeedsProvision
+	// connRecoverConflict: a self-inflicted "logged out from another device" (401)
+	// raised ON CONNECT, i.e. a transient session overlap (our own reconnect racing
+	// the old socket's teardown), not a genuine unlink. Restore the kept device and
+	// reconnect; on a persisting conflict park (a real other holder), never clear.
+	connRecoverConflict
+)
+
+// classifyConnEvent maps a whatsmeow connection-lifecycle event to the daemon's
+// response. It is the single source of truth for how a disconnect, a stream
+// replacement, and a logout are treated differently.
+func classifyConnEvent(evt any) connEventAction {
+	switch e := evt.(type) {
+	case *events.Disconnected:
+		return connIgnore
+	case *events.StreamReplaced:
+		return connYield
+	case *events.LoggedOut:
+		if isConflictLogout(e) {
+			return connRecoverConflict
+		}
+		return connNeedsProvision
+	}
+	return connIgnore
+}
+
+// isConflictLogout reports whether a LoggedOut is a self-inflicted "logged out from
+// another device" (401) conflict raised ON CONNECT: a transient session overlap (our own
+// reconnect racing the old socket's teardown), recoverable by reconnecting the kept
+// device. A genuine phone-side unlink is a stream:error device_removed (OnConnect=false),
+// and other on-connect logouts (primary gone, ban) carry a different reason; both stay
+// terminal. Matched on the typed reason, so it never depends on a message string.
+func isConflictLogout(evt *events.LoggedOut) bool {
+	return evt.OnConnect && evt.Reason == events.ConnectFailureLoggedOut
+}
+
+// loggedOutReason renders a human-readable reason for a LoggedOut event, using
+// whatsmeow's connect-failure reason when the logout arrived on connect.
+func loggedOutReason(evt *events.LoggedOut) string {
+	if evt.OnConnect {
+		return "logged out on connect: " + evt.Reason.String()
+	}
+	return "unlinked from the phone (stream:error logout)"
+}
+
+// recordExit persists why the device session ended, so status can surface it after
+// the daemon has gone quiescent.
+func (wac *WhatsAppClient) recordExit(status, reason string) {
+	wac.state.update(func(s *daemonState) {
+		s.ExitStatus, s.ExitReason, s.ExitTime = status, reason, time.Now().UTC()
+	})
+}
+
+// clearExit drops a stale exit reason once the daemon has reconnected, so status
+// stops reporting an old failure.
+func (wac *WhatsAppClient) clearExit() {
+	wac.state.update(func(s *daemonState) {
+		s.ExitStatus, s.ExitReason, s.ExitTime = "", "", time.Time{}
+	})
+}
+
+func (wac *WhatsAppClient) applyConnAction(action connEventAction, reason string) {
+	// Any Disconnected/StreamReplaced/LoggedOut cancels the stability timer, so a
+	// brief connect that drops before StableConnDuration keeps PreserveRetryAt fresh.
+	wac.stopStableTimer()
+	switch action {
+	case connIgnore:
+		wac.logger.Warnf("Disconnected from WhatsApp (transient); whatsmeow will auto-reconnect")
+		wac.presenceMutex.Lock()
+		wac.presenceActive = false
+		wac.presenceMutex.Unlock()
+	case connYield:
+		// Another connection owns this session and whatsmeow already stopped
+		// reconnecting. Park (connParked): record the reason and stay up WITHOUT
+		// reconnecting or exiting. The park is what every reconnect path
+		// (EnsureConnected, recoverOrRestart) reads to refuse reconnecting, so the
+		// next auto-started daemon can't steal the session back and ping-pong.
+		wac.logger.Warnf("Yielding: %s. Parking (no reconnect, no exit).", reason)
+		wac.applyYield(reason)
+	case connNeedsProvision:
+		// A genuine device removal (stream:error device_removed). Try device
+		// preservation first (restore last-good + reconnect once); fall back to
+		// clear-and-exit when preservation is unavailable or a retry just failed.
+		wac.handleDeviceRemoved(reason, false)
+	case connRecoverConflict:
+		// A self-inflicted on-connect "another device" (401) conflict. Same preserve
+		// machinery, but a persisting conflict PARKS with the device preserved instead
+		// of clearing it, so a transient overlap can never churn the daemon to unpaired.
+		wac.handleDeviceRemoved(reason, true)
+	}
+}
+
+// applyYield records and persists the parked posture on a yield (StreamReplaced):
+// mark parked in memory AND on disk (so a restart honors it), record the exit
+// reason, and reset presence. Split off the event dispatcher so the persisted
+// side-effects are testable without a live socket.
+func (wac *WhatsAppClient) applyYield(reason string) {
+	wac.setConnMode(connParked)
+	// Parking is terminal for any in-flight preserve episode: close it (clear the guard
+	// and the conflict origin) so a later logout is judged fresh, not against a stale
+	// conflict episode that would wrongly park a genuine unlink.
+	wac.state.update(func(s *daemonState) {
+		s.ConnParked = true
+		s.PreserveRetryAt = time.Time{}
+		s.ConflictEpisode = false
+	})
+	wac.recordExit("stream_replaced", reason)
+	wac.presenceMutex.Lock()
+	wac.presenceActive = false
+	wac.presenceMutex.Unlock()
+}
+
+// handleDeviceRemoved responds to a whatsmeow device removal (whatsmeow has already
+// deleted the device store by the time this runs). When a last-good snapshot exists and
+// the single-retry guard is clear, it restores the snapshot and reconnects once via a
+// clean re-exec (NOT a re-pair, so no ban risk). On give-up it PARKS with the device
+// preserved when the episode began as a self-inflicted on-connect conflict
+// (onConnectConflict), and otherwise CLEARS the dead device and exits for a deliberate
+// `whatsapp provision` (a genuine phone-side unlink).
+func (wac *WhatsAppClient) handleDeviceRemoved(reason string, onConnectConflict bool) {
+	st := wac.state.snapshot()
+	episodeArmed := !st.PreserveRetryAt.IsZero()
+	switch decideRemoval(decidePreserve(hasGoodDevice(wac.dataDir), st.PreserveRetryAt, time.Now()), onConnectConflict, st.ConflictEpisode, episodeArmed) {
+	case removalReconnect:
+		wac.logger.Warnf("Device removed (%s). Restoring last-good device and reconnecting once to avoid a re-pair.", reason)
+		wac.markPreserveReconnect(onConnectConflict)
+		wac.reExecDaemon() // does not return
+	case removalPark:
+		wac.logger.Warnf("Logout conflict persisted (%s). Preserving the device and parking (no re-pair, no clear).", reason)
+		wac.markConflictPark(reason)
+		wac.reExecDaemon() // comes back parked on the restored device; does not return
+	default: // removalClear: a genuine logout, or a preserve retry that just re-dropped
+		wac.logger.Warnf("Device logged out (%s). Clearing dead device and exiting; run `whatsapp connect` to re-link.", reason)
+		wac.recordDeviceLoggedOut(reason)
+		wac.dropDeadDevice()
+		os.Exit(0)
+	}
+}
+
+// markPreserveReconnect persists the intent to restore the last-good device and reconnect
+// once at the next boot: RestorePending drives the boot restore, PreserveRetryAt arms the
+// single-retry guard, and ConflictEpisode records whether this episode began as a
+// self-inflicted on-connect conflict (park on give-up) or a genuine removal (clear).
+// Split from the re-exec so the persisted side-effect is testable without a live socket.
+func (wac *WhatsAppClient) markPreserveReconnect(onConnectConflict bool) {
+	wac.state.update(func(s *daemonState) {
+		s.RestorePending = true
+		s.PreserveRetryAt = time.Now().UTC()
+		s.ConflictEpisode = onConnectConflict
+	})
+}
+
+// markConflictPark persists the parked-but-preserved posture for a self-inflicted conflict
+// that survived one reconnect (a real other device holds the session): restore the device
+// whatsmeow deleted on the 401 and come back PARKED (not cleared), so a deliberate
+// `whatsapp connect` reconnects the kept device instead of re-pairing. Notifies the agent
+// once. Split from the re-exec so the persisted side-effect is testable.
+func (wac *WhatsAppClient) markConflictPark(reason string) {
+	wac.state.update(func(s *daemonState) {
+		s.RestorePending = true
+		s.ConnParked = true
+		s.ExitStatus, s.ExitReason, s.ExitTime = "stream_replaced", reason, time.Now().UTC()
+		s.PreserveRetryAt = time.Time{}
+		s.ConflictEpisode = false
+	})
+	if wac.notificationsDir != "" {
+		if err := WriteLoggedOutNotification(wac.notificationsDir, wac.instance, reason); err != nil {
+			wac.logger.Warnf("Failed to write parked notification: %v", err)
+		}
+	}
+}
+
+// recordDeviceLoggedOut persists the logged-out posture and notifies the agent
+// once. Split from the exit path (dropDeadDevice + os.Exit) so the persisted state
+// and the notification are testable. Keeps MSISDN so the next `whatsapp provision`
+// re-links the SAME number (reauth), no re-claim.
+func (wac *WhatsAppClient) recordDeviceLoggedOut(reason string) {
+	wac.state.update(func(s *daemonState) {
+		s.ExitStatus, s.ExitReason, s.ExitTime = "logged_out", reason, time.Now().UTC()
+		s.AuthStatus = "logged_out"
+		s.AuthNote = "WhatsApp logged this device out. Re-linking is a deliberate `whatsapp connect`, never an automatic retry loop."
+		s.PreserveRetryAt = time.Time{} // episode closed
+		s.ConflictEpisode = false
+	})
+	if wac.notificationsDir != "" {
+		if err := WriteLoggedOutNotification(wac.notificationsDir, wac.instance, reason); err != nil {
+			wac.logger.Warnf("Failed to write logged_out notification: %v", err)
+		}
+	}
+}
+
+// dropDeadDevice clears the logged-out device store so the next daemon start
+// builds a fresh device that a deliberate `whatsapp provision` can pair. The
+// caller EXITS immediately after (which closes the socket), so this does not
+// Disconnect from inside the event-handler goroutine; and Store.Delete poisons the
+// in-memory client (ErrDeviceDeleted), which is why this must never be used on a
+// daemon that keeps running.
+func (wac *WhatsAppClient) dropDeadDevice() {
+	if err := wac.client.Store.Delete(context.Background()); err != nil {
+		wac.logger.Warnf("Failed to clear logged-out device store: %v", err)
 	}
 }
 
 // buildNotifContext assembles the NotifContext shared by message and reaction
-// notifications, resolving the per-sender interrupt decision in one place.
+// notifications.
 func (wac *WhatsAppClient) buildNotifContext(chatName, senderDisplay, contactName, contactPhone string, contactSaved, isDirectChat bool) NotifContext {
-	interrupt, interruptExplicit := wac.shouldInterrupt(contactPhone)
 	return NotifContext{
 		NotifDir: wac.notificationsDir, ChatName: chatName,
 		ContactName: contactName, ContactPhone: contactPhone,
 		Instance: wac.instance, ContactSaved: contactSaved,
 		IsDirectChat: isDirectChat, Sender: senderDisplay,
-		Interrupt: interrupt, InterruptExplicit: interruptExplicit,
 	}
 }
 
@@ -82,7 +317,7 @@ func (wac *WhatsAppClient) handleReceipt(evt *events.Receipt) {
 		}
 	}
 
-	chatJID := evt.Chat.String()
+	chatJID := wac.canonicalChatKey(evt.Chat)
 	for _, msgID := range evt.MessageIDs {
 		if err := wac.store.UpdateDeliveryStatus(string(msgID), chatJID, status, evt.Timestamp); err != nil {
 			wac.logger.Warnf("Failed to update delivery status for %s: %v", msgID, err)
@@ -95,6 +330,7 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 	info := evt.Info
 
 	content := extractTextContent(msg)
+	content = wac.resolveMentionsInContent(content, msg)
 	isForwarded := isMessageForwarded(msg)
 	quotedMessageID, quotedText := extractQuoteContext(msg)
 	mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength := extractMediaInfo(msg)
@@ -105,6 +341,9 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 
 	resolvedSender, senderDisplay, contactName, contactPhone, contactSaved, isDirectChat := wac.prepareNotificationInfo(info.MessageSource)
 	chatName := wac.getChatName(info.Chat)
+	// Canonical storage key: resolve the peer LID to its phone JID so this chat is keyed the same
+	// whether the message arrived under the peer's LID or a reply resolves them to their number.
+	chatKey := wac.canonicalChatKey(info.Chat)
 
 	// Track message sender for reaction routing
 	wac.sendersMutex.Lock()
@@ -122,11 +361,11 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 	}
 	wac.sendersMutex.Unlock()
 
-	if err := wac.store.StoreChat(info.Chat.String(), chatName, info.Timestamp); err != nil {
+	if err := wac.store.StoreChat(chatKey, chatName, info.Timestamp); err != nil {
 		wac.logger.Warnf("Failed to store chat: %v", err)
 	}
 	if err := wac.store.StoreMessage(StoreMessageParams{
-		ID: info.ID, ChatJID: info.Chat.String(), Sender: senderDisplay, Content: content,
+		ID: info.ID, ChatJID: chatKey, Sender: senderDisplay, Content: content,
 		Timestamp: info.Timestamp, IsFromMe: info.IsFromMe, IsForwarded: isForwarded,
 		MediaType: mediaType, Filename: filename, URL: url,
 		MediaKey: mediaKey, FileSHA256: fileSHA256, FileEncSHA256: fileEncSHA256, FileLength: fileLength,
@@ -139,7 +378,7 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 	// "delivered". This prevents false-positive stale-message alerts for
 	// contacts who have delivery receipts turned off.
 	if !info.IsFromMe && isDirectChat && wac.store != nil {
-		if n, err := wac.store.UpgradeSentToDelivered(info.Chat.String(), info.Timestamp); err != nil {
+		if n, err := wac.store.UpgradeSentToDelivered(chatKey, info.Timestamp); err != nil {
 			wac.logger.Warnf("Failed to upgrade sent→delivered for %s: %v", info.Chat, err)
 		} else if n > 0 {
 			wac.logger.Infof("Upgraded %d sent→delivered for %s (contact replied)", n, info.Chat)
@@ -156,7 +395,7 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 	// Audio messages: transcribe asynchronously, then send notification
 	if mediaType == MediaTypeAudio && !info.IsFromMe {
 		msgID := info.ID
-		chatJIDStr := info.Chat.String()
+		chatJIDStr := chatKey
 		go func() {
 			wac.transcribeSem <- struct{}{} // acquire
 			defer func() { <-wac.transcribeSem }()
@@ -229,21 +468,37 @@ func (wac *WhatsAppClient) flushReadReceipt(key string) {
 		return
 	}
 
-	if err := wac.EnsureOnline(); err != nil {
-		wac.logger.Warnf("Failed to set online status for read receipt: %v", err)
-		return
+	presenceErr, receiptErr := sendReadAfterPresence(
+		wac.EnsureOnline,
+		func() error {
+			return wac.client.MarkRead(
+				context.Background(),
+				batch.msgIDs,
+				time.Now(),
+				batch.chatJID,
+				batch.sender,
+				types.ReceiptTypeRead,
+			)
+		},
+	)
+	if presenceErr != nil {
+		// Presence improves the foreground semantics, but it is not a prerequisite
+		// for the receipt stanza itself. In particular, a missing push name must not
+		// turn "can't send presence" into "never send read".
+		wac.logger.Warnf("Failed to set online status for read receipt: %v", presenceErr)
 	}
+	if receiptErr != nil {
+		wac.logger.Warnf("Failed to send read receipt: %v", receiptErr)
+	}
+}
 
-	if err := wac.client.MarkRead(
-		context.Background(),
-		batch.msgIDs,
-		time.Now(),
-		batch.chatJID,
-		batch.sender,
-		types.ReceiptTypeRead,
-	); err != nil {
-		wac.logger.Warnf("Failed to send read receipt: %v", err)
-	}
+// sendReadAfterPresence deliberately attempts the read receipt even when the
+// best-effort presence broadcast fails. Kept as a small seam so the failure
+// ordering is testable without a live WhatsApp socket.
+func sendReadAfterPresence(ensureOnline, markRead func() error) (presenceErr, receiptErr error) {
+	presenceErr = ensureOnline()
+	receiptErr = markRead()
+	return
 }
 
 func (wac *WhatsAppClient) handleReaction(evt *events.Message) {
@@ -265,7 +520,99 @@ func (wac *WhatsAppClient) handleReaction(evt *events.Message) {
 	}
 }
 
+// handleProtocolMessage surfaces the two ways a sender changes a message after the fact:
+// editing it and deleting it for everyone. Both arrive as a ProtocolMessage naming the
+// original message's key, which whatsmeow's UnwrapRaw leaves wrapped, so they never carry
+// text of their own and would otherwise die on handleMessage's empty-content return.
+//
+// Reached only when the event has a ProtocolMessage: GetType() reports REVOKE for a nil
+// one, so testing the type first would read every ordinary message as a deletion.
+func (wac *WhatsAppClient) handleProtocolMessage(evt *events.Message) {
+	protocol := evt.Message.GetProtocolMessage()
+	targetID := protocol.GetKey().GetID()
+	if targetID == "" {
+		return
+	}
+
+	switch protocol.GetType() {
+	case waProto.ProtocolMessage_MESSAGE_EDIT:
+		wac.handleEdit(evt, targetID, protocol.GetEditedMessage())
+	case waProto.ProtocolMessage_REVOKE:
+		wac.handleRevoke(evt, targetID)
+	}
+}
+
+func (wac *WhatsAppClient) handleEdit(evt *events.Message, targetID string, edited *waProto.Message) {
+	newText := wac.resolveMentionsInContent(extractTextContent(edited), edited)
+	if newText == "" {
+		return
+	}
+
+	// Read the old text before the update overwrites it: it is the whole point of the
+	// notification, and an edit to a message we never stored just reads as empty.
+	oldText := wac.storedContent(targetID)
+	if wac.store != nil {
+		if err := wac.store.UpdateMessageContent(targetID, wac.canonicalChatKey(evt.Info.Chat), newText); err != nil {
+			wac.logger.Warnf("Failed to apply edit to message %s: %v", targetID, err)
+		}
+	}
+	if oldText == newText {
+		return
+	}
+
+	if ctx, ok := wac.notifContextFor(evt); ok {
+		if err := WriteEditNotification(ctx, targetID, oldText, newText); err != nil {
+			wac.logger.Warnf("Failed to write edit notification for %s: %v", targetID, err)
+		}
+	}
+}
+
+func (wac *WhatsAppClient) handleRevoke(evt *events.Message, targetID string) {
+	oldText := wac.storedContent(targetID)
+	if oldText == "" {
+		return
+	}
+
+	if ctx, ok := wac.notifContextFor(evt); ok {
+		if err := WriteRevokeNotification(ctx, targetID, oldText); err != nil {
+			wac.logger.Warnf("Failed to write revoke notification for %s: %v", targetID, err)
+		}
+	}
+}
+
+func (wac *WhatsAppClient) storedContent(messageID string) string {
+	if wac.store == nil {
+		return ""
+	}
+	content, err := wac.store.GetMessageContent(messageID)
+	if err != nil {
+		wac.logger.Warnf("Failed to look up message %s: %v", messageID, err)
+		return ""
+	}
+	return content
+}
+
+// notifContextFor applies the same suppressions handleMessage uses, so an edit or a
+// deletion stays as quiet as the message it refers to would have been.
+func (wac *WhatsAppClient) notifContextFor(evt *events.Message) (NotifContext, bool) {
+	if wac.notificationsDir == "" || wac.noNotify || evt.Info.IsFromMe {
+		return NotifContext{}, false
+	}
+	_, senderDisplay, contactName, contactPhone, contactSaved, isDirectChat := wac.prepareNotificationInfo(evt.Info.MessageSource)
+	if wac.skipSenders[contactPhone] {
+		return NotifContext{}, false
+	}
+	return wac.buildNotifContext(wac.getChatName(evt.Info.Chat), senderDisplay, contactName, contactPhone, contactSaved, isDirectChat), true
+}
+
 func (wac *WhatsAppClient) handleHistorySync(evt *events.HistorySync) {
+	// History backfill can outlast the fixed post-link window; slide the window
+	// while batches are still arriving so stop/restart stay refused mid-sync.
+	// An expired window is never re-armed: routine syncs outside it are ignored.
+	if syncWindowRemaining(wac.state.snapshot().LinkedAt, time.Now()) > 0 {
+		wac.markLinkedNow()
+	}
+
 	wac.logger.Infof("Processing history sync with %d conversations", len(evt.Data.Conversations))
 
 	// Commit one transaction per conversation so the writer lock releases between
@@ -276,11 +623,12 @@ func (wac *WhatsAppClient) handleHistorySync(evt *events.HistorySync) {
 			continue
 		}
 
-		chatJID := *conversation.ID
-		jid, err := types.ParseJID(chatJID)
+		jid, err := types.ParseJID(*conversation.ID)
 		if err != nil {
 			continue
 		}
+		// Key history the same way live messages are keyed: canonical phone JID, not the raw LID.
+		chatJID := wac.canonicalChatKey(jid)
 
 		err = func() error {
 			tx, err := wac.store.Begin()
