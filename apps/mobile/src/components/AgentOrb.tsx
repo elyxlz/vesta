@@ -32,11 +32,7 @@ function orbColors(
   ) {
     return designTokens.orb.busy;
   }
-  if (
-    status === "setting_up" ||
-    status === "not_authenticated" ||
-    status === "unprovisioned"
-  ) {
+  if (status === "setting_up") {
     return designTokens.orb.busy;
   }
   return designTokens.orb.off;

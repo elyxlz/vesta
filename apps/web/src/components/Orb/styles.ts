@@ -57,9 +57,9 @@ function resolveAgentStatus(
     case "setting_up":
       return { label: "setting up...", orbState: "busy" };
     case "not_authenticated":
-      return { label: "needs to sign in again", orbState: "busy" };
+      return { label: "needs you to sign in again", orbState: "off" };
     case "unprovisioned":
-      return { label: "not set up", orbState: "busy" };
+      return { label: "needs to be set up", orbState: "off" };
     case "restarting":
       return { label: "restarting...", orbState: "busy" };
     case "rebuilding":
