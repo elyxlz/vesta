@@ -1,5 +1,5 @@
 import { StyleSheet, View } from "react-native";
-import type { AgentStatus } from "@vesta/core";
+import type { AgentActivityState, AgentStatus } from "@vesta/core";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { Text } from "@/components/ui/Typography";
 
@@ -18,20 +18,26 @@ const STATUS_LABELS: Record<AgentStatus, string> = {
 
 export function AgentStatusBadge({
   status,
+  activityState = "idle",
   centered = false,
 }: {
   status: AgentStatus;
+  activityState?: AgentActivityState;
   centered?: boolean;
 }) {
   const { colors } = usePreferences();
   const active = status === "alive";
+  const thinking = active && activityState === "thinking";
   const attention =
     status === "not_authenticated" || status === "unprovisioned";
-  const color = active
-    ? colors.success
-    : attention
-      ? colors.warning
-      : colors.tertiaryText;
+  const color = thinking
+    ? colors.warning
+    : active
+      ? colors.success
+      : attention
+        ? colors.warning
+        : colors.tertiaryText;
+  const label = thinking ? "thinking" : STATUS_LABELS[status];
   return (
     <View
       style={[
@@ -41,7 +47,7 @@ export function AgentStatusBadge({
       ]}
     >
       <View style={[styles.dot, { backgroundColor: color }]} />
-      <Text style={[styles.label, { color }]}>{STATUS_LABELS[status]}</Text>
+      <Text style={[styles.label, { color }]}>{label}</Text>
     </View>
   );
 }
