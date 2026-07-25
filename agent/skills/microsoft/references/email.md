@@ -16,6 +16,16 @@ microsoft email search --account user@example.com --query "project update"
 
 `send`, `reply`, and `forward` accept `--attachments file1 file2` and `--html` (treats `--body` as HTML). `forward` requires `--to` and also takes `--cc`.
 
+## Undo window (hold a send)
+
+```bash
+microsoft email send --account user@example.com --to bob@example.com --subject "Hi" --body "..." --hold 60
+microsoft email list-pending                  # held sends: token, recipient, subject, seconds until fire
+microsoft email cancel --token <token>        # abort a held send before it fires
+```
+
+`--hold <secs>` on `send`/`reply`/`forward` enqueues the fully resolved send and prints a cancel token instead of dispatching; the serve daemon sends it once the window elapses uncancelled (dispatch granularity is the daemon's 45s cycle). Use it whenever a send feels irreversible-risky (fast back-and-forth drafting, changed recipients or figures). `cancel`/`list-pending` are local queue commands, no `--account` needed. A held send that fails at dispatch is kept on disk (never retried) and raises a `send_failed` notification.
+
 ## Organize messages
 
 ```bash

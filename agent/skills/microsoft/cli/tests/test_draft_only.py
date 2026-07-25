@@ -23,6 +23,7 @@ def _send_args(**over):
         "attachments": None,
         "html": False,
         "backend": backend.GRAPH,
+        "hold": None,
     }
     base.update(over)
     return SimpleNamespace(**base)
@@ -38,6 +39,7 @@ def _reply_args(**over):
         "reply_all": False,
         "html": False,
         "backend": backend.GRAPH,
+        "hold": None,
     }
     base.update(over)
     return SimpleNamespace(**base)
@@ -54,6 +56,7 @@ def _forward_args(**over):
         "attachments": None,
         "html": False,
         "backend": backend.GRAPH,
+        "hold": None,
     }
     base.update(over)
     return SimpleNamespace(**base)

@@ -6,11 +6,26 @@ import os
 import signal
 import sys
 import threading
+import time
 from pathlib import Path
 
 import httpx
 
-from . import auth_commands, backend, block, calendar, email, folders, monitor, notifications, notify, owa_rest, owa_rest_commands, teams
+from . import (
+    auth_commands,
+    backend,
+    block,
+    calendar,
+    email,
+    folders,
+    monitor,
+    notifications,
+    notify,
+    owa_rest,
+    owa_rest_commands,
+    pending,
+    teams,
+)
 from . import format as fmt
 from .config import Config
 from .context import MicrosoftContext
@@ -177,6 +192,16 @@ def _add_email_read_parsers(email_sub) -> None:
     p_attachment.add_argument("--out-dir", default=None, help="Directory for --all downloads (default ~/.microsoft/attachments/<email-id>)")
 
 
+def _add_hold_flag(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--hold",
+        type=int,
+        default=None,
+        metavar="SECS",
+        help="Undo window: hold the send for SECS seconds and print a cancel token (email cancel --token <t>) instead of sending now.",
+    )
+
+
 def _add_email_compose_parsers(email_sub) -> None:
     p_send = email_sub.add_parser("send")
     p_send.add_argument("--account", required=True)
@@ -187,6 +212,7 @@ def _add_email_compose_parsers(email_sub) -> None:
     p_send.add_argument("--bcc", nargs="+", default=None)
     p_send.add_argument("--attachments", nargs="+", default=None)
     p_send.add_argument("--html", action="store_true", default=False)
+    _add_hold_flag(p_send)
 
     p_draft = email_sub.add_parser("draft")
     p_draft.add_argument("--account", required=True)
@@ -207,6 +233,7 @@ def _add_email_compose_parsers(email_sub) -> None:
     p_reply.add_argument("--attachments", nargs="+", default=None)
     p_reply.add_argument("--reply-all", action="store_true")
     p_reply.add_argument("--html", action="store_true")
+    _add_hold_flag(p_reply)
 
     p_reply_draft = email_sub.add_parser("reply-draft")
     p_reply_draft.add_argument("--account", required=True)
@@ -224,6 +251,12 @@ def _add_email_compose_parsers(email_sub) -> None:
     p_forward.add_argument("--cc", nargs="+", default=None)
     p_forward.add_argument("--attachments", nargs="+", default=None)
     p_forward.add_argument("--html", action="store_true")
+    _add_hold_flag(p_forward)
+
+    p_cancel = email_sub.add_parser("cancel", help="Cancel a held send before its undo window elapses.")
+    p_cancel.add_argument("--token", required=True, help="Cancel token printed by a --hold send.")
+
+    email_sub.add_parser("list-pending", help="List held sends waiting out their undo window.")
 
 
 def _add_email_manage_parsers(email_sub) -> None:
@@ -645,13 +678,99 @@ def _email_routes():
     }
 
 
+def _held_mail(args) -> tuple[MailDraft, str | None, bool]:
+    """The fully resolved (mail, email_id, reply_all) payload of a --hold command."""
+    if args.command == "send":
+        mail = MailDraft(
+            to=args.to, subject=args.subject, body=args.body, cc=args.cc, bcc=args.bcc, attachments=args.attachments, html=args.html
+        )
+        return mail, None, False
+    if args.command == "reply":
+        return MailDraft(body=args.body, attachments=args.attachments, html=args.html), args.email_id, args.reply_all
+    return MailDraft(to=args.to, body=args.body, cc=args.cc, attachments=args.attachments, html=args.html), args.email_id, False
+
+
+def _hold_send(args, config):
+    """Enqueue a transmit command for the serve daemon to dispatch after the undo window."""
+    if args.hold <= 0:
+        raise ValueError("--hold expects a positive number of seconds")
+    mail, email_id, reply_all = _held_mail(args)
+    if args.command == "send" and not (mail.to or mail.cc or mail.bcc):
+        raise ValueError("At least one recipient is required (--to, --cc, or --bcc)")
+    for attachment in mail.attachments or []:
+        if not Path(attachment).expanduser().exists():
+            raise ValueError(f"attachment not found: {attachment}")
+    # Pin the backend an auto command would start on when Graph cannot even resolve
+    # the account, so dispatch needs no account lookup of its own.
+    choice = args.backend
+    if choice == backend.AUTO and owa_rest.has_valid_token(args.account, config) and not _graph_has_account(config, args.account):
+        choice = backend.OWA_REST
+    now = time.time()
+    entry = pending.PendingSend(
+        token=pending.new_token(),
+        fire_at=now + args.hold,
+        created_at=now,
+        account=args.account,
+        backend=choice,
+        command=args.command,
+        mail=mail,
+        email_id=email_id,
+        reply_all=reply_all,
+    )
+    pending.save(config, entry)
+    return {
+        "held": pending.describe(entry, now),
+        "cancel": f"microsoft email cancel --token {entry.token}",
+    }
+
+
+def _dispatch_queue(args, config, _client):
+    """Local undo-queue commands (cancel, list-pending): no account, no backend, no daemon call."""
+    if args.command == "cancel":
+        if not pending.cancel(config, args.token):
+            raise ValueError(f"no held send with token {args.token!r} (already sent, cancelled, or unknown)")
+        return {"cancelled": args.token}
+    now = time.time()
+    return [pending.describe(entry, now) for entry in pending.list_pending(config)]
+
+
+def _dispatch_reply_draft(args, config, client):
+    """Graph-only: leaving a properly-threaded unsent draft over the preserved quote
+    has no OWA REST counterpart, so this bypasses the backend router."""
+    return email.reply_draft(
+        config,
+        client,
+        account_email=args.account,
+        email_id=args.email_id,
+        body=args.body,
+        attachments=args.attachments,
+        reply_all=args.reply_all,
+        replace_draft=args.replace_draft,
+    )
+
+
 def _dispatch_email(args, config, client):
+    # Built per dispatch so module attributes stay late-bound (matching _email_routes).
+    delegated = {
+        "cancel": _dispatch_queue,
+        "list-pending": _dispatch_queue,
+        "reply-draft": _dispatch_reply_draft,
+        "attachment": _dispatch_attachment,
+        "block": _dispatch_block,
+        "unblock": _dispatch_block,
+    }
+    if args.command in delegated:
+        return delegated[args.command](args, config, client)
+
     acct = args.account
 
     # Hard draft-only guard: refuse any transmitting command before it can reach
     # EITHER backend (Graph or OWA-REST). Drafting still flows through untouched.
     if args.command in _TRANSMIT_COMMANDS and _draft_only_enabled():
         raise RuntimeError(_DRAFT_ONLY_MESSAGE)
+
+    if args.command in _TRANSMIT_COMMANDS and args.hold is not None:
+        return _hold_send(args, config)
 
     if args.command == "list" and args.search is not None:
         # `list --search/--query` is an alias for `email search`: run the identical search path,
@@ -664,23 +783,6 @@ def _dispatch_email(args, config, client):
             lambda: email.search_emails(config, client, **kw),
             lambda: owa_rest_commands.search_emails(config, client, **kw),
         )
-    if args.command == "reply-draft":
-        # Graph-only: leaving a properly-threaded unsent draft over the preserved quote
-        # has no OWA REST counterpart, so this bypasses the backend router.
-        return email.reply_draft(
-            config,
-            client,
-            account_email=acct,
-            email_id=args.email_id,
-            body=args.body,
-            attachments=args.attachments,
-            reply_all=args.reply_all,
-            replace_draft=args.replace_draft,
-        )
-    if args.command == "attachment":
-        return _dispatch_attachment(args, config, client)
-    if args.command in ("block", "unblock"):
-        return _dispatch_block(args, config, client)
     routes = _email_routes()
     if args.command in routes:
         graph_impl, rest_impl, kw_of = routes[args.command]

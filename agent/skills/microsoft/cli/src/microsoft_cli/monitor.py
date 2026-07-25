@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import NotRequired, TypedDict, cast
 from zoneinfo import ZoneInfo
 
-from . import auth, capture, folders, graph, notifications, notify, owa_rest, teams
+from . import auth, capture, folders, graph, notifications, notify, owa_rest, pending, teams
 from .config import Config
 from .context import MicrosoftContext
 
@@ -595,6 +595,26 @@ def _poll_graph_calendar(ctx: MicrosoftContext, acc, new_check_time: datetime, l
     return True
 
 
+def _dispatch_held_sends(ctx: MicrosoftContext, config: Config, logger) -> None:
+    """Send every held undo-window entry (--hold) whose fire-at has passed; see pending.py."""
+    for entry, error in pending.dispatch_due(config, ctx.http_client, time.time()):
+        if error is None:
+            logger.info("Dispatched held %s for %s (token %s)", entry.command, entry.account, entry.token)
+            continue
+        logger.error("Held %s for %s failed (token %s): %s", entry.command, entry.account, entry.token, error)
+        notifications.write_notification(
+            ctx.notif_dir,
+            "send_failed",
+            interrupt=True,
+            account=entry.account,
+            token=entry.token,
+            command=entry.command,
+            to=entry.mail.to,
+            subject=entry.mail.subject,
+            error=error,
+        )
+
+
 def run(ctx: MicrosoftContext):
     logger = ctx.monitor_logger
     logger.info("Monitor thread started")
@@ -605,6 +625,8 @@ def run(ctx: MicrosoftContext):
             new_check_time = datetime.now(UTC)
             state = _read_state(ctx.monitor_state_file, new_check_time)
             config = Config(data_dir=ctx.cache_file.parent)
+
+            _dispatch_held_sends(ctx, config, logger)
 
             msal_accounts = auth.list_accounts(ctx.cache_file)
             for acc in msal_accounts:

@@ -45,6 +45,7 @@ from imap_tools import AND, MailBox, MailMessageFlags
 # importable without adding a new symlink for each one.
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import daemon_lifecycle
+import pending_sends
 from providers import (
     apply_env_overrides,
     detect_provider,
@@ -813,6 +814,27 @@ def cmd_daemon_status(_args):
     print(json.dumps(daemon_lifecycle.daemon_status(state_dir=state_dir, accounts=accounts), indent=2))
 
 
+# -- pending subcommands (undo-window queue of held sends) ---------
+
+
+def cmd_pending_list(_args):
+    entries = pending_sends.list_pending(pending_sends.queue_dir(_state_dir()))
+    if not entries:
+        print("no held sends")
+        return
+    now = time.time()
+    for e in entries:
+        remaining = max(0, int(e.fire_at - now))
+        print(f"{e.token}\taccount={e.account}\tto={e.to}\tsubject={e.subject}\tfires_in={remaining}s")
+
+
+def cmd_pending_cancel(args):
+    if pending_sends.cancel(pending_sends.queue_dir(_state_dir()), args.token):
+        print(f"cancelled {args.token}")
+        return
+    sys.exit(f"no held send with token {args.token!r} (already sent, cancelled, or unknown)")
+
+
 # -- auth subcommands (multi-account management) -------------------
 
 
@@ -1081,6 +1103,16 @@ def _add_admin_parsers(sub):
     pd_restart.add_argument("--interval", type=int, default=None)
     dsub.add_parser("status", help="daemon process state plus per-account auth health, in one JSON blob")
 
+    _add_pending_parsers(sub)
+
+
+def _add_pending_parsers(sub):
+    pp = sub.add_parser("pending", help="held undo-window sends (email-client-send --hold): list | cancel")
+    psub = pp.add_subparsers(dest="pending_cmd", required=True)
+    psub.add_parser("list", help="show held sends waiting out their undo window")
+    pp_cancel = psub.add_parser("cancel", help="cancel a held send before it fires")
+    pp_cancel.add_argument("token", help="cancel token printed by email-client-send --hold")
+
 
 def _build_parser():
     ap = argparse.ArgumentParser(prog="email-client")
@@ -1144,6 +1176,11 @@ def _dispatch(args):
             "restart": cmd_daemon_restart,
             "status": cmd_daemon_status,
         }[args.daemon_cmd](args)
+    elif args.cmd == "pending":
+        {
+            "list": cmd_pending_list,
+            "cancel": cmd_pending_cancel,
+        }[args.pending_cmd](args)
     elif args.cmd == "calendar":
         _cmd_calendar(args)
     else:

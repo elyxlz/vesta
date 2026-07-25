@@ -1,6 +1,6 @@
 ---
 name: microsoft
-description: Use for any Microsoft account, personal or work (Outlook.com, Hotmail, Live, Microsoft 365); preferred over email-client for Microsoft accounts. Graph-based mail (read/send/reply/forward, drafts, flag/categorize, move/archive, folders, attachments, block senders), calendar and meetings, Microsoft Teams (chats, channels, presence), and new-mail/Teams notifications. Requires daemon.
+description: Use for any Microsoft account, personal or work (Outlook.com, Hotmail, Live, Microsoft 365); preferred over email-client for Microsoft accounts. Graph-based mail (read/send/reply/forward with an optional undo-send hold window, drafts, flag/categorize, move/archive, folders, attachments, block senders), calendar and meetings, Microsoft Teams (chats, channels, presence), and new-mail/Teams notifications. Requires daemon.
 ---
 
 # Microsoft - CLI: microsoft
@@ -13,7 +13,7 @@ description: Use for any Microsoft account, personal or work (Outlook.com, Hotma
 
 Each area's detail lives in its own file, read it when you work in that area:
 
-- **Email**: read/send/reply/forward, search, organize (flag/categorize/move/archive), drafts, folders, block/unblock, attachments. See [references/email.md](references/email.md).
+- **Email**: read/send/reply/forward, undo-send hold window (`--hold` / `cancel` / `list-pending`), search, organize (flag/categorize/move/archive), drafts, folders, block/unblock, attachments. See [references/email.md](references/email.md).
 - **Calendar**: list/create/update/respond to events and meetings. See [references/calendar.md](references/calendar.md).
 - **Teams**: chats, channels, presence (and Teams sign-in). See [references/teams.md](references/teams.md).
 - **Notifications**: new-mail folder watching + Teams chat alerts (plus non-interrupting Teams channel alerts where the account has channel access; degrades to chats-only otherwise). See [references/notifications.md](references/notifications.md).

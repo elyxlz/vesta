@@ -1,6 +1,6 @@
 ---
 name: email-client
-description: Personal email over IMAP/SMTP for any provider (Gmail, Outlook, Yahoo, iCloud, Fastmail, generic IMAP). Multi-account: read an inbox, send/reply/forward, save drafts, manage messages and folders, handle attachments, and get paged on new mail. Calendar over CalDAV with the same credential (Gmail, iCloud, Fastmail, any CalDAV server): list/create/update/delete/respond to events. Requires the poll daemon for notifications.
+description: Personal email over IMAP/SMTP for any provider (Gmail, Outlook, Yahoo, iCloud, Fastmail, generic IMAP). Multi-account: read an inbox, send/reply/forward (with an optional undo-send hold window), save drafts, manage messages and folders, handle attachments, and get paged on new mail. Calendar over CalDAV with the same credential (Gmail, iCloud, Fastmail, any CalDAV server): list/create/update/delete/respond to events. Requires the poll daemon for notifications.
 ---
 
 # Email Client
@@ -46,7 +46,7 @@ One-time per account, ~2 minutes. See [SETUP.md](SETUP.md) for install, every au
 Two binaries plus a daemon:
 
 - `email-client` - read (`list-folders`, `list`, `get`, `search`, `attachments`, `status`), manage messages (`mark`, `move`, `archive`, `delete`), manage folders (`folder create/rename/delete/subscribe`), and choose notify folders (`notify list/add/remove`)
-- `email-client-send` - outbound mail (send, reply, forward, save draft)
+- `email-client-send` - outbound mail (send, reply, forward, save draft, `--hold` undo window; cancel via `email-client pending`)
 - `poll_daemon.py` - watches each account's chosen folders (INBOX by default) and writes a notification per new message
 
 Omit `--account` on any command to use the default account from `accounts.json`. All commands accept `--account` and (where relevant) `--folder` (default `INBOX`).
@@ -170,6 +170,19 @@ email-client-send --account personal --forward-uid 999 --to recipient@example.co
 ```
 
 A draft does not contact SMTP and does not flag the original `\Answered` (nothing was sent). `--dry-run` previews the draft without writing it. The Drafts folder is auto-detected (see below).
+
+### Undo window (hold a send)
+
+Pass `--hold <secs>` on any send, reply, or forward to keep an undo window: the message is fully composed and validated now (recipients, threading, attachments), then held; the command prints a cancel token, and the poll daemon sends it once the window elapses uncancelled (so the daemon must be running). Not combinable with `--draft` or `--dry-run`.
+
+```bash
+email-client-send --account personal --to recipient@example.com --subject "Hi" --body "..." --hold 60
+email-client-send --account personal --reply-to-uid 12345 --body "thanks, will do" --hold 30
+email-client pending list                # held sends: token, recipient, subject, seconds until fire
+email-client pending cancel <token>     # abort a held send before it fires
+```
+
+Use it whenever a send feels irreversible-risky (fast back-and-forth drafting, changed recipients or figures): a mis-send becomes recoverable for the length of the window. A held send that fails at dispatch is kept on disk (never retried, no double-send risk) and raises a `send_failed` notification so you can recover it.
 
 ### Draft-only mode
 

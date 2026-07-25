@@ -48,6 +48,12 @@ Drafts: pass ``--draft`` to APPEND the composed message to the Drafts
 folder with the ``\\Draft`` flag instead of sending it. Works with
 ``--reply-to-uid`` / ``--forward-uid`` so a threaded reply or forward
 can be drafted for the user to review and send from any mail client.
+
+Undo window: pass ``--hold <secs>`` to compose and validate now but hold
+the send in the pending queue (``pending_sends.py``); the poll daemon
+dispatches it once the window elapses uncancelled. Cancel with
+``email-client pending cancel <token>``, list with ``email-client
+pending list``.
 """
 
 from __future__ import annotations
@@ -75,9 +81,12 @@ MAX_ATTACH_TOTAL_BYTES = 25 * 1024 * 1024
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import contextlib
 
+import daemon_lifecycle
+import pending_sends
 from imap_client import (
     _env,
     _from_full,
+    _state_dir,
     _to_full,
     account_profile,
     account_user,
@@ -273,6 +282,7 @@ class SendRequest:
     sent_sync: bool = True
     dry_run: bool = False
     draft: bool = False
+    hold: int | None = None
 
 
 @dataclasses.dataclass
@@ -467,11 +477,8 @@ def _sync_sent(acc: str | None, profile: dict, out: Outbound) -> None:
         print(f"warning: sent-sync skipped ({info})", file=sys.stderr)
 
 
-def send(req: SendRequest) -> None:
-    if req.reply_to_uid and req.forward_uid:
-        sys.exit("--reply-to-uid and --forward-uid are mutually exclusive")
-    acc = resolve_account(req.account)
-    user = account_user(acc)
+def _transport(acc: str) -> tuple[dict, str, int]:
+    """Resolve the account's SMTP profile + host + port, exiting when unconfigured."""
     name, profile = account_profile(acc)
     smtp_host = profile.get("smtp_host")
     smtp_port = int(profile.get("smtp_port", 587))
@@ -480,6 +487,95 @@ def send(req: SendRequest) -> None:
             f"provider {name} (account {acc!r}) has no SMTP host configured; "
             "set smtp_host in the per-account config.json or EMAIL_CLIENT_SMTP_HOST"
         )
+    return profile, smtp_host, smtp_port
+
+
+def _held_from_outbound(out: Outbound, req: SendRequest, acc: str, token: str, fire_at: float) -> pending_sends.HeldSend:
+    return pending_sends.HeldSend(
+        token=token,
+        fire_at=fire_at,
+        created_at=time.time(),
+        account=acc,
+        user=out.user,
+        display=out.display,
+        to=out.to,
+        subject=out.subject,
+        body=out.body,
+        body_html=out.body_html,
+        cc=out.cc,
+        bcc=out.bcc,
+        in_reply_to=out.in_reply_to,
+        references=out.references,
+        attachments=[
+            pending_sends.HeldAttachment(
+                name=att["name"],
+                maintype=att["maintype"],
+                subtype=att["subtype"],
+                data_b64=base64.b64encode(att["data"]).decode(),
+            )
+            for att in out.attachments
+        ],
+        sent_sync=req.sent_sync,
+        reply_to_uid=req.reply_to_uid,
+        reply_folder=req.reply_folder,
+    )
+
+
+def _outbound_from_held(entry: pending_sends.HeldSend) -> Outbound:
+    return Outbound(
+        user=entry.user,
+        display=entry.display,
+        to=entry.to,
+        subject=entry.subject,
+        body=entry.body,
+        body_html=entry.body_html,
+        cc=entry.cc,
+        bcc=entry.bcc,
+        in_reply_to=entry.in_reply_to,
+        references=entry.references,
+        attachments=[
+            {
+                "name": att.name,
+                "maintype": att.maintype,
+                "subtype": att.subtype,
+                "data": base64.b64decode(att.data_b64),
+            }
+            for att in entry.attachments
+        ],
+    )
+
+
+def _hold(req: SendRequest, acc: str, out: Outbound) -> None:
+    """Enqueue the composed message for the poll daemon to send once the undo window elapses."""
+    state_dir = _state_dir()
+    running, _pid = daemon_lifecycle.daemon_running(state_dir)
+    if not running:
+        sys.exit("--hold needs the poll daemon to dispatch the send later, but it is not running; start it with: email-client daemon start")
+    entry = _held_from_outbound(out, req, acc, pending_sends.new_token(), time.time() + req.hold)
+    pending_sends.save(pending_sends.queue_dir(state_dir), entry)
+    fire_iso = _dt.datetime.fromtimestamp(entry.fire_at, tz=_dt.UTC).isoformat(timespec="seconds")
+    print(f"HELD {entry.token}: fires at {fire_iso} (in {req.hold}s)")
+    print(f"cancel with: email-client pending cancel {entry.token}")
+
+
+def send_held(entry: pending_sends.HeldSend) -> None:
+    """Dispatch a claimed queue entry: deliver, then the usual post-send steps."""
+    out = _outbound_from_held(entry)
+    msg = _build_message(out)
+    profile, smtp_host, smtp_port = _transport(entry.account)
+    _smtp_deliver(entry.account, profile, entry.user, smtp_host, smtp_port, msg)
+    if entry.reply_to_uid:
+        _mark_answered(entry.account, entry.reply_folder, entry.reply_to_uid)
+    if entry.sent_sync:
+        _sync_sent(entry.account, profile, out)
+
+
+def send(req: SendRequest) -> None:
+    if req.reply_to_uid and req.forward_uid:
+        sys.exit("--reply-to-uid and --forward-uid are mutually exclusive")
+    acc = resolve_account(req.account)
+    user = account_user(acc)
+    profile, smtp_host, smtp_port = _transport(acc)
     display = req.from_name or _env("EMAIL_CLIENT_FROM_NAME", user.split("@", 1)[0])
 
     out = _compose(req, acc, user, display)
@@ -503,6 +599,10 @@ def send(req: SendRequest) -> None:
             print(f"draft saved to {info}")
             return
         sys.exit(f"draft save failed: {info}")
+
+    if req.hold is not None:
+        _hold(req, acc, out)
+        return
 
     _smtp_deliver(acc, profile, user, smtp_host, smtp_port, msg)
     print("OK")
@@ -600,7 +700,18 @@ def main():
         action="store_true",
         help="save the composed message to the Drafts folder instead of sending; works with --reply-to-uid / --forward-uid to draft for review",
     )
+    ap.add_argument(
+        "--hold",
+        type=int,
+        default=None,
+        metavar="SECS",
+        help="undo window: compose now, hold the send for SECS seconds, print a cancel token (email-client pending cancel <token>)",
+    )
     args = ap.parse_args()
+    if args.hold is not None and (args.draft or args.dry_run):
+        sys.exit("--hold is mutually exclusive with --draft and --dry-run")
+    if args.hold is not None and args.hold <= 0:
+        sys.exit("--hold expects a positive number of seconds")
     # Hard draft-only guard: refuse any transmitting invocation (send/reply/forward)
     # before touching SMTP. Drafting (--draft) and the no-network preview (--dry-run)
     # stay allowed. Default off: no behavior change when EMAIL_DRAFT_ONLY is unset.
@@ -625,6 +736,7 @@ def main():
             sent_sync=not args.no_sent_sync,
             dry_run=args.dry_run,
             draft=args.draft,
+            hold=args.hold,
         )
     )
 

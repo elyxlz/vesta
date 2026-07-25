@@ -19,6 +19,9 @@ with the latest UID so there is no backlog flood.
 Notifications carry source ``email-client`` and ``account`` + ``folder``
 fields naming the source mailbox. The filename includes both so
 simultaneous notifications never collide.
+
+The supervisor also dispatches held undo-window sends (``--hold`` on
+email-client-send, queue in ``pending_sends.py``) each tick.
 """
 
 from __future__ import annotations
@@ -41,6 +44,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import contextlib
 
 import daemon_lifecycle
+import pending_sends
+import smtp_send
 from imap_client import (
     _env,
     _from_full,
@@ -221,6 +226,43 @@ def write_daemon_died_notification(reason: str) -> None:
     tmp.replace(final)
 
 
+def write_send_failed_notification(entry: pending_sends.HeldSend, error: str) -> None:
+    NOTIF_DIR.mkdir(parents=True, exist_ok=True)
+    notif = {
+        "source": "email-client",
+        "type": "send_failed",
+        # Interrupts: the undo window elapsed on a send the user believes is out, so a
+        # failure must reach them promptly.
+        "interrupt": True,
+        "account": entry.account,
+        "token": entry.token,
+        "to": entry.to,
+        "subject": entry.subject,
+        "error": error,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
+    }
+    fname = f"email-client-send_failed-{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}.json"
+    final = NOTIF_DIR / fname
+    tmp = NOTIF_DIR / f"{fname}.tmp"
+    tmp.write_text(json.dumps(notif, ensure_ascii=False, indent=2))
+    tmp.replace(final)
+
+
+def dispatch_held(state_dir: pathlib.Path, log) -> None:
+    """Send every held entry whose undo window has elapsed (see pending_sends.py)."""
+    for claimed, entry in pending_sends.claim_due(pending_sends.queue_dir(state_dir), time.time()):
+        # SystemExit included: smtp_send's helpers sys.exit on auth/transport errors,
+        # which must fail this one entry, not the daemon.
+        try:
+            smtp_send.send_held(entry)
+            claimed.unlink(missing_ok=True)
+            log(f"[held:{entry.token}] sent to={entry.to[:60]} subject={entry.subject[:60]}")
+        except (Exception, SystemExit) as e:
+            failed = pending_sends.fail(claimed, str(e))
+            write_send_failed_notification(entry, str(e))
+            log(f"[held:{entry.token}] send failed: {e} (kept at {failed})")
+
+
 def desired_workers() -> set[tuple[str, str]]:
     """The set of ``(account, folder)`` pairs that should be watched now."""
     wanted: set[tuple[str, str]] = set()
@@ -327,6 +369,7 @@ def main():
                 log(f"watching: {sorted(wanted)}")
             _maybe_probe(state_dir, log)
             _reconcile_workers(workers, wanted, args.interval, log)
+            dispatch_held(state_dir, log)
             shutdown_event.wait(INDEX_CHECK_SECS)
     finally:
         for _, stop_event in workers.values():
