@@ -23,6 +23,7 @@ Each area's detail lives in its own file, read it when you work in that area:
 - `--account <email>` is required on every email/calendar/folder/teams command (list accounts with `microsoft auth list`; sign one out with `microsoft auth remove --account <email>`).
 - `--backend {auto,graph,owa-rest}` (default `auto`) picks the path; both backends support the full surface except `block`/`unblock` (Graph-only). See [SETUP.md](SETUP.md).
 - List commands (`email list`/`search`, `calendar list`/`calendars`, `folder list`, `teams chats`/`messages`/`teams`/`channels`) default to a compact tab-separated table; pass `--json` for one-line JSON or `--json-pretty` for indented JSON. Graph `@odata.*` metadata is stripped from every result.
+- `email list`/`search` take `--since YYYY-MM-DD` / `--until YYYY-MM-DD` (both inclusive) to reach mail by date. Plain `search` uses relevance-ranked `$search`, which buries old mail; the date flags switch to a `receivedDateTime` range filter ordered newest-first. See [references/email.md](references/email.md).
 
 ## Draft-only mode
 
