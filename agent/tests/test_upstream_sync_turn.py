@@ -1,7 +1,10 @@
 """Upgrade-driven upstream sync: Git ancestry + boot turn."""
 
 import asyncio
+import os
 import subprocess
+
+from test_upstream_sync import BASE_ENV  # hermetic-git env, as build-upstream.sh uses
 
 import core.config as cfg
 import core.models as vm
@@ -20,14 +23,26 @@ def _config(tmp_path, version: str | None = "0.1.170") -> cfg.VestaConfig:
 
 
 def _record_snapshot(config: cfg.VestaConfig, version: str) -> None:
+    """A box's checkout at `version`: history carrying the agent-v<version> tag. Runs under the same
+    hermetic env build-upstream.sh exports, so the host's own git config cannot reach it (a user-level
+    tag.gpgSign turns `git tag` into a signed annotated tag, which fails without a message)."""
     home = config.agent_dir.parent
-    subprocess.run(["git", "init", "-q", "-b", "agent"], cwd=home, check=True)
-    subprocess.run(
-        ["git", "-c", "user.name=test", "-c", "user.email=test@vesta", "commit", "-q", "--allow-empty", "-m", "stock"],
-        cwd=home,
-        check=True,
-    )
-    subprocess.run(["git", "tag", f"agent-v{version}"], cwd=home, check=True)
+    env = os.environ | BASE_ENV
+    for args in (["init", "-q", "-b", "agent"], ["commit", "-q", "--allow-empty", "-m", "stock"], ["tag", f"agent-v{version}"]):
+        subprocess.run(["git", *args], cwd=home, check=True, env=env)
+
+
+def test_snapshot_fixtures_ignore_a_hostile_host_git_config(tmp_path, monkeypatch):
+    """A developer with tag.gpgSign/commit.gpgSign set globally must still be able to run the suite:
+    signing turns `git tag` into an annotated tag and fails for want of a message."""
+    hostile = tmp_path / "hostile.gitconfig"
+    hostile.write_text("[tag]\n\tgpgsign = true\n[commit]\n\tgpgsign = true\n")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(hostile))
+
+    config = _config(tmp_path)
+    _record_snapshot(config, "0.1.170")
+
+    assert workspace_synced(config, "0.1.170")
 
 
 def test_vesta_version_reads_core_pyproject(tmp_path):
