@@ -37,6 +37,9 @@ class TriggerData(TypedDict, total=False):
     fuzz_minutes: int  # "cron": each fire shifts by a deterministic sample in [-fuzz, +fuzz]
 
 
+RECURRING_TRIGGER_TYPES = ("cron", "interval")  # trigger types that fire more than once; "date" is the one-shot type
+
+
 class DueSpec(BaseModel):
     """A task due date: an absolute datetime + timezone, or a relative due-in offset."""
 
@@ -697,7 +700,7 @@ def _restore_row(scheduler: BackgroundScheduler, row, now: datetime, notif_dir: 
             "id": reminder_id,
             "replace_existing": True,
         }
-        if trigger_type in ("cron", "interval"):
+        if trigger_type in RECURRING_TRIGGER_TYPES:
             add_job_kwargs["misfire_grace_time"] = 3600
             add_job_kwargs["coalesce"] = True
         scheduler.add_job(**add_job_kwargs)
@@ -860,15 +863,20 @@ def remind_set(config: Config, spec: ReminderSpec) -> dict:
 
 
 def remind_list(config: Config, *, task_id: str | None = None, limit: int = 50) -> list[dict]:
+    # Recurring reminders sort ahead of one-shots so the limit only ever trims the newest
+    # one-shot tail: a long-lived daily/cron reminder is typically the oldest row and would
+    # otherwise silently fall off a created_at-ordered list, a false-negative view.
+    recurring_types = ", ".join(f"'{t}'" for t in RECURRING_TRIGGER_TYPES)
+    order_clause = f"ORDER BY json_extract(trigger_data, '$.type') IN ({recurring_types}) DESC, created_at DESC LIMIT ?"
     with closing(db.get_db(config.data_dir)) as conn:
         if task_id is not None:
             cursor = conn.execute(
-                "SELECT * FROM reminders WHERE completed = 0 AND task_id = ? ORDER BY created_at DESC LIMIT ?",
+                f"SELECT * FROM reminders WHERE completed = 0 AND task_id = ? {order_clause}",
                 (task_id, limit),
             )
         else:
             cursor = conn.execute(
-                "SELECT * FROM reminders WHERE completed = 0 ORDER BY created_at DESC LIMIT ?",
+                f"SELECT * FROM reminders WHERE completed = 0 {order_clause}",
                 (limit,),
             )
         return [

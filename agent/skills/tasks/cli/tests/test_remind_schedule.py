@@ -292,3 +292,33 @@ def test_migration_is_idempotent(tmp_path: Path):
     first = _read_trigger(data_dir, "daily1")
     db.init_db(data_dir)  # second run must not touch already-migrated rows
     assert _read_trigger(data_dir, "daily1") == first == {"type": "cron", "expr": "0 9 * * *", "tz": "UTC"}
+
+
+# ---------------------------------------------------------------------------
+# remind list: recurring reminders stay visible past the one-shot limit
+# ---------------------------------------------------------------------------
+
+
+def _backdate(config: Config, reminder_ids: list[str]) -> None:
+    with closing(db.get_db(config.data_dir)) as conn:
+        for reminder_id in reminder_ids:
+            conn.execute("UPDATE reminders SET created_at = '2026-01-01 00:00:00' WHERE id = ?", (reminder_id,))
+        conn.commit()
+
+
+def test_remind_list_keeps_old_recurring_reminders_past_the_limit(tmp_config: Config):
+    daily = commands.remind_set(
+        tmp_config, commands.ReminderSpec(message="standup", scheduled_datetime="2026-04-26T09:00:00", tz="Europe/Rome", recurring="daily")
+    )
+    cron = commands.remind_set(tmp_config, commands.ReminderSpec(message="weekdays", cron="0 9 * * 1-5", tz="Europe/Rome"))
+    hourly = commands.remind_set(tmp_config, commands.ReminderSpec(message="ping", recurring="hourly"))
+    _backdate(tmp_config, [daily["id"], cron["id"], hourly["id"]])
+    for index in range(5):
+        commands.remind_set(tmp_config, commands.ReminderSpec(message=f"one-shot {index}", in_hours=1))
+
+    listed = {reminder["id"]: reminder for reminder in commands.remind_list(tmp_config, limit=5)}
+
+    assert len(listed) == 5
+    assert listed[daily["id"]]["schedule"] == "daily at 09:00 Europe/Rome"
+    assert listed[cron["id"]]["schedule"] == "cron: 0 9 * * 1-5 (Europe/Rome)"
+    assert listed[hourly["id"]]["schedule"] == "hourly"
