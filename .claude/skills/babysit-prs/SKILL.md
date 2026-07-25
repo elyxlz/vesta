@@ -48,11 +48,18 @@ Make every open PR mergeable: green CI and no merge conflicts. One pass: discove
    - PRs still red or still conflicting after retries: list them with the diagnosis the subagent landed on, so the user can decide what to do
    - PRs skipped: list with reason (draft, fork, label, already-tried)
 
+**Invoked for one specific PR** (a PR number/URL given directly, not a full sweep): skip discovery, don't dispatch a subagent for a single PR, run the Per-PR loop below yourself, still in its own isolated worktree per the rule below.
+
 ## Per-PR loop (what the subagent does)
 
-The subagent has its own worktree. Inside it:
+**Always in an isolated git worktree, never the invoking session's current checkout.** A dispatched subagent already has one from `isolation: "worktree"`. Running this loop yourself for a single PR: create one first, before checking anything out —
+```
+git worktree add <tmp-path> <head-branch>
+cd <tmp-path>
+```
+Do all of the following inside that worktree.
 
-1. **Check out the PR's branch:**
+1. **Check out the PR's branch** (skip if the `worktree add` above already put you on it):
    ```
    gh pr checkout <N>
    ```
@@ -149,6 +156,7 @@ The skill is aggressive about *fixing*, not about *bypassing*. These rules hold 
 - **Never amend commits on the PR branch.** Always add a new commit. The user can squash at merge time.
 - **Never close, merge, approve, re-request review, or change labels** on the PR. The skill only pushes fixes and posts one comment per attempt.
 - **Never touch unrelated PRs** (only the one your subagent was dispatched for).
+- **Never work in the invoking session's current checkout.** Always an isolated worktree, per the Per-PR loop rule above, even for a single directly-requested PR — the current checkout may hold unrelated in-progress work on a different branch.
 - **Never delete a test, snapshot, or fixture** to make red go green. Update them only if the underlying behavior change is intentional and already merged on the PR's main commits.
 - **Don't retry beyond 3 attempts per PR.** A skill that loops on the same failure burns CI minutes and produces noisy comment threads. Stop and surface.
 - **Don't proceed if `gh auth status` is unauthenticated.** Stop the whole skill and tell the user to log in.
