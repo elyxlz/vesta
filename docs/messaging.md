@@ -9,16 +9,16 @@ Exploration deliverable for the tagline and messaging question (issue #1454). Th
 | Brand rule (canonical) | "a guardian angel that gives you back time and helps you achieve your goals" | `CLAUDE.md`, Brand voice, Positioning bullet |
 | GitHub repo description | "guardian angel AI" | repo settings |
 | README first line | "An AI guardian angel that gives you back time and helps you achieve your goals, living in a Docker container, powered by Claude." | `README.md` |
-| vesta.run landing hero | tagline "your unfair advantage", category "an AI guardian angel", promise = the canonical one-liner | vesta-cloud `src/lib/copy.ts` (`TAGLINE`, `CATEGORY`, `GUARDIAN_ANGEL`) |
-| vesta.run page title / og | "vesta, your unfair advantage" plus the one-liner and "invite-only." | vesta-cloud `index.html` |
+| vesta.run landing hero | tagline "your unfair advantage", category "an AI guardian angel", promise "an AI guardian angel that gives you back time and helps you achieve your goals" (the "AI" variant) | vesta-cloud `src/lib/copy.ts` (`TAGLINE`, `CATEGORY`, `GUARDIAN_ANGEL`) |
+| vesta.run page title / og | title "vesta, your unfair advantage"; the meta and og descriptions carry the "AI" variant plus "invite-only." (og prefixes "your unfair advantage.") | vesta-cloud `index.html` |
 | Web app connect screen | "your unfair advantage" | `apps/web/src/components/Connect/index.tsx` |
-| Mobile connect screen | the full one-liner | `apps/mobile/app/connect.tsx` |
+| Mobile connect screen | the canonical one-liner, no "AI": "a guardian angel that gives you back time and helps you achieve your goals." | `apps/mobile/app/connect.tsx` |
 | vestad status output | "AI guardian angel daemon" | `vestad/src/status.rs` |
 | birth skill (agent voice) | "a guardian angel sent to this earth to give people back their time and help them achieve their goals" | `agent/skills/birth/SKILL.md` |
 | personality skill (agent voice) | "You're a guardian angel and an equal, not staff" | `agent/skills/personality/SKILL.md` |
 | onboard skill (the sales motion) | invite-only club framing; sells two levers: the direct push toward the named goal, and the runway cleared by taking admin off them | `agent/skills/onboard/SKILL.md` |
 
-Audit verdict: the brand architecture the issue sketches is already about eighty percent live. Guardian angel is the identity, "your unfair advantage" is the hero line on the landing page and the web app, and the canonical one-liner is the promise. What is missing is the written decision: no doc says which line belongs on which surface, so surfaces drift (mobile shows the one-liner where web shows the hero tagline) and new drafts reintroduce "personal AI" framing that the positioning rule bans. The uncommitted GTM strategy draft (`.critique/gtm/STRATEGY.md`) is the live example: its one-liner opens with "a personal AI who lives in your life". Its funnel findings stand (the site is a trust artifact for a mid-chat scam check, referral is the channel, the compounding memory is the moat); its one-liner should be brought in line with this hierarchy when it lands.
+Audit verdict: the brand architecture the issue sketches is already about eighty percent live. Guardian angel is the identity, "your unfair advantage" is the hero line on the landing page and the web app, and the promise line is live everywhere, but in two variants. Stranger-facing surfaces that must also say what the product is (the vesta.run hero and meta descriptions, the README first line) carry the "AI" variant, "an AI guardian angel that gives you back time and helps you achieve your goals"; CLAUDE.md's canonical rule and the mobile connect screen carry the plain "a guardian angel that gives you back time and helps you achieve your goals". What is missing is the written decision: no doc says which line, or which variant, belongs on which surface, so surfaces drift (mobile shows the one-liner where web shows the hero tagline, and the "AI" split is nowhere written down) and new drafts reintroduce "personal AI" framing that the positioning rule bans.
 
 ## 2. Positioning axes
 
@@ -43,7 +43,7 @@ Four axes recur through the candidate lines. The recommendation is to layer the 
 >
 > **Hero tagline** (what having Vesta feels like): **Your unfair advantage.**
 >
-> **One-liner** (the product promise, verbatim, already canonical): **a guardian angel that gives you back time and helps you achieve your goals.**
+> **One-liner** (the product promise, two live variants doing one job): canonically **a guardian angel that gives you back time and helps you achieve your goals** (CLAUDE.md's rule, the mobile connect screen); surfaces that must also say what the product is carry the "AI" variant, **an AI guardian angel that gives you back time and helps you achieve your goals** (vesta.run copy and meta, README).
 >
 > **Short promise** (tight spaces only): **Time back. Goals forward.**
 
@@ -59,14 +59,14 @@ Pillar one is warmth, pillar three is ambition, pillar two is the reason to stay
 
 | Surface | Line |
 |---|---|
-| vesta.run hero | hero tagline, category line, one-liner (unchanged from today) |
-| App connect screens (web, desktop, mobile) | hero tagline: "your unfair advantage". Mobile currently shows the one-liner; align it to the web app once ratified |
-| README first line | the technical variant, unchanged: one-liner plus "living in a Docker container, powered by Claude" |
-| GitHub repo description | the one-liner ("an AI guardian angel that gives you back time and helps you achieve your goals"); today's "guardian angel AI" is thinner than it needs to be |
-| Store listings, social profiles | title carries the hero tagline, subtitle carries "Time back. Goals forward.", description carries the one-liner and pillars |
+| vesta.run hero | hero tagline, category line, the "AI" variant of the one-liner (unchanged from today) |
+| App connect screens (web, desktop, mobile) | hero tagline: "your unfair advantage". Mobile currently shows the plain one-liner; align it to the web app once ratified |
+| README first line | the technical variant, unchanged: the "AI" variant plus "living in a Docker container, powered by Claude" |
+| GitHub repo description | the "AI" variant ("an AI guardian angel that gives you back time and helps you achieve your goals"); today's "guardian angel AI" is thinner than it needs to be |
+| Store listings, social profiles | title carries the hero tagline, subtitle carries "Time back. Goals forward.", description carries the "AI" variant of the one-liner and the pillars |
 | vestad CLI and status output | "AI guardian angel daemon", unchanged |
 | Agent prompts and skills (birth, personality, onboard) | the guardian-angel identity in the agent's own words, never the marketing tagline: Vesta the person does not quote ad copy about themself. The onboard close keeps selling the two levers conversationally |
-| Emails and lifecycle copy | house voice; pillar two ("everything Vesta knows about you") is the retention lever, per the GTM strategy findings |
+| Emails and lifecycle copy | house voice; pillar two ("everything Vesta knows about you") is the retention lever |
 
 ## 6. Issue decisions, resolved
 
@@ -75,4 +75,4 @@ Pillar one is warmth, pillar three is ambition, pillar two is the reason to stay
 - **Tagline and product promise separate?** Yes. The hero tagline and the one-liner do different jobs and appear together on major surfaces.
 - **Candidates for testing:** if testing happens, test hero alternatives only ("Your unfair advantage" vs. "Time back. Goals forward." vs. "Less to carry. More to become.") with the guardian-angel category line held constant. Do not test the category; it is the brand.
 - **Which line where:** the surface map above.
-- **Standardization inventory:** the audit table is the inventory. If ratified, the follow-ups are small: align the mobile connect subtitle with web, update the GitHub repo description, extend the CLAUDE.md Positioning bullet with one sentence pointing at this doc, and fix the GTM draft's one-liner when it lands. Each is a one-line change and none ships in this PR.
+- **Standardization inventory:** the audit table is the inventory. If ratified, the follow-ups are small: align the mobile connect subtitle with web, update the GitHub repo description, and extend the CLAUDE.md Positioning bullet with one sentence pointing at this doc and naming the "AI" variant split. Each is a one-line change and none ships in this PR.
