@@ -307,6 +307,21 @@ def list_messages_since(client: httpx.Client, account_email: str, config, *, fol
     return _paginate(client, token, f"/me/mailfolders/{fid}/messages", params, limit)
 
 
+def filter_messages_by_date(
+    client: httpx.Client, account_email: str, config, *, folder: str | None, date_filter: str, limit: int
+) -> list[dict]:
+    """Fetch messages in a receivedDateTime range, newest first, via server-side $filter."""
+    token = load_token(account_email, config)
+    fid = _folder_id(folder or "inbox")
+    params = {
+        "$select": _MSG_SELECT,
+        "$filter": date_filter,
+        "$orderby": "ReceivedDateTime desc",
+        "$top": str(min(limit, _MAX_PAGE_SIZE)),
+    }
+    return _paginate(client, token, f"/me/mailfolders/{fid}/messages", params, limit)
+
+
 def search_messages(client: httpx.Client, account_email: str, config, *, query: str, folder: str | None = None, limit: int = 10) -> list[dict]:
     token = load_token(account_email, config)
     fid = _folder_id(folder or "inbox")

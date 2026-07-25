@@ -34,7 +34,7 @@ def test_greeting_deferred_until_authenticated(config, kind):
     upgraded agent that loaded a stale unauthenticated provider and never ran its migrations."""
     state = vm.State()
     state.provider_status = ProviderStatus(state=ProviderAuthState.NOT_AUTHENTICATED, kind=kind, model=None)
-    assert greeting_turn(config=config, state=state, reason="first_start") is None
+    assert greeting_turn(config=config, state=state, agent_message="first start", first_start=True) is None
 
 
 # --- _load_notification_files ---
@@ -275,7 +275,7 @@ def test_format_for_display_strips_timestamp_microseconds():
     assert 'timestamp="2025-01-01T12:34:56+00:00"' in display
 
 
-def test_batch_reply_guidance_appears_only_in_producer_reply_hint():
+def test_batch_keeps_reply_command_structurally_separate_from_guidance():
     notif = Notification.model_validate(
         {
             "timestamp": "2025-01-01T00:00:00",
@@ -284,12 +284,13 @@ def test_batch_reply_guidance_appears_only_in_producer_reply_hint():
             "chat_name": "Bride squad",
             "sender": "bob",
             "message": "hi",
-            "reply_hint": "reply with `whatsapp send`; this is a group chat, so it may not be expecting a reply from you",
+            "reply_command": "whatsapp send",
+            "reply_hint": "this is a group chat, so it may not be expecting a reply from you",
         }
     )
     formatted = format_notification_batch([notif])
     assert formatted.count("group chat") == 1
-    assert formatted.count("whatsapp send") == 1
+    assert 'reply_command="whatsapp send"' in formatted
     assert "[Reply using" not in formatted
     assert "chip in or stay out" not in formatted
 

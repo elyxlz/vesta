@@ -40,6 +40,7 @@ import { ModelStep } from "@/components/ProviderPicker/ModelStep";
 import { ContextStep } from "@/components/ProviderPicker/ContextStep";
 import { planContextOptions } from "@/components/ProviderPicker/context-plan";
 import { providerMeta } from "@/components/ProviderPicker/providers";
+import { providerModelOptions } from "@/components/ProviderPicker/model-options";
 import type { ProviderMode } from "@/components/ProviderPicker/types";
 import {
   setModel,
@@ -49,7 +50,7 @@ import {
   type Usage,
   type UsageMeter,
 } from "@/api/agents";
-import type { Manifest } from "@/api/manifest";
+import { contextForModel, type Manifest } from "@/api/manifest";
 import type { OpenRouterModelOption } from "@/api/providers/openrouter";
 import { formatTokens } from "@/lib/format";
 import { errorMessage } from "@/lib/utils";
@@ -128,8 +129,8 @@ function NotConnectedCard({
           </div>
         </div>
         <p className="text-xs text-muted-foreground">
-          {name} needs a provider before it can respond. Connect Claude or
-          OpenRouter to get started.
+          {name} needs a provider before it can respond. Connect one to get
+          started.
         </p>
         <Button size="sm" className="self-start" onClick={onSetup}>
           <Plug className="size-4" />
@@ -153,28 +154,33 @@ function ProviderIdentity({
   manifest: Manifest | undefined;
   ready: boolean;
 }) {
-  const isOpenRouter = kind === "openrouter";
+  const isClaude = kind === "claude";
   const { Logo } = providerMeta(kind);
+  const defaultContext = contextForModel(
+    manifest?.providers[kind],
+    provider.model ?? "",
+  )?.default;
   const contextLabel =
     provider.max_context_tokens != null
       ? `${formatTokens(provider.max_context_tokens)} context`
-      : isOpenRouter
-        ? "default context"
-        : "1M context";
+      : kind === "openrouter"
+        ? "model context"
+        : defaultContext != null && defaultContext > 0
+          ? `${formatTokens(defaultContext)} context`
+          : "default context";
 
   return (
     <div className="flex items-center gap-3">
       <div
         className={`flex size-11 shrink-0 items-center justify-center rounded-2xl [corner-shape:squircle] ${
-          isOpenRouter ? "bg-muted" : "bg-[#D97757]/10"
+          isClaude ? "bg-[#D97757]/10" : "bg-muted"
         }`}
       >
         <Logo className="size-6" />
       </div>
       <div className="flex min-w-0 flex-col gap-0.5">
         <span className="text-xs text-muted-foreground">
-          {manifest?.providers[kind]?.display ??
-            (isOpenRouter ? "OpenRouter" : "Claude account")}
+          {manifest?.providers[kind]?.display ?? kind}
         </span>
         <div className="flex min-w-0 items-center gap-2">
           <span
@@ -262,6 +268,7 @@ function ModelDialog({
   error,
   provider,
   claudeModels,
+  manifest,
   onSubmit,
 }: {
   open: boolean;
@@ -270,9 +277,17 @@ function ModelDialog({
   error: string | null;
   provider: ProviderInfo;
   claudeModels: OpenRouterModelOption[];
+  manifest: Manifest | undefined;
   onSubmit: (model: string) => void;
 }) {
   const isOpenRouter = provider.kind === "openrouter";
+  const configuredKind = provider.kind === "none" ? null : provider.kind;
+  const fixedModels = providerModelOptions(
+    configuredKind,
+    manifest,
+    claudeModels,
+    provider.model,
+  );
   return (
     <Dialog
       open={open}
@@ -295,7 +310,7 @@ function ModelDialog({
           <div className="flex flex-col items-center gap-4 py-2">
             <ModelStep
               initialModel={provider.model ?? ""}
-              models={isOpenRouter ? undefined : claudeModels}
+              models={isOpenRouter ? undefined : fixedModels}
               allowCustom={isOpenRouter}
               submitLabel="switch model"
               onSubmit={onSubmit}
@@ -354,7 +369,12 @@ function ContextDialog({
         ) : (
           <div className="flex flex-col items-center gap-4 py-2">
             {(() => {
-              const context = manifest.providers[provider.kind]?.context;
+              const context = contextForModel(
+                provider.kind === "none"
+                  ? undefined
+                  : manifest.providers[provider.kind],
+                provider.model ?? "",
+              );
               const { presets, initial } = context
                 ? planContextOptions(context, provider.plan)
                 : { presets: [], initial: 0 };
@@ -429,7 +449,7 @@ function SignOutDialog({
 }
 
 /// Provider hub for an agent: shows the current provider, model, context
-/// window, and plan usage; lets you switch between Claude and OpenRouter
+/// window, and plan usage; lets you switch between supported providers
 /// (reuses the reconfigure modal), change the model, and change the context
 /// window — each without re-entering credentials.
 export function ProviderCard() {
@@ -534,14 +554,16 @@ export function ProviderCard() {
               >
                 change model
               </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="flex-1"
-                onClick={() => setContextOpen(true)}
-              >
-                change context
-              </Button>
+              {provider.kind !== "openrouter" && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="flex-1"
+                  onClick={() => setContextOpen(true)}
+                >
+                  change context
+                </Button>
+              )}
             </>
           ) : (
             <Button
@@ -590,6 +612,7 @@ export function ProviderCard() {
         error={error}
         provider={provider}
         claudeModels={claudeModels}
+        manifest={manifest}
         onSubmit={(model) => void applyModel(model)}
       />
 

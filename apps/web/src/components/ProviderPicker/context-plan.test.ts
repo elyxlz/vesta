@@ -4,6 +4,7 @@ import { planContextOptions, planFromCredentials } from "./context-plan";
 
 const claudeContext: ProviderContext = {
   default: 1000000,
+  max: 1000000,
   defaults_by_plan: { max: 1000000, pro: 200000, free: 200000 },
   presets: [
     { tokens: 1000000, label: "1M", note: "most context", plans: ["max"] },
@@ -44,6 +45,7 @@ describe("planContextOptions", () => {
   it("leaves an ungated provider unchanged", () => {
     const openrouter: ProviderContext = {
       default: 200000,
+      max: 200000,
       presets: [
         { tokens: 200000, label: "200K", note: "full window" },
         { tokens: 64000, label: "64K", note: "cheapest" },

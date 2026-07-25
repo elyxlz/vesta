@@ -35,6 +35,9 @@ export type { ForegroundSignal } from "./adapters/types"
 
 export { PACING, typingDelay } from "./pacing/pacing"
 
+export { RESTART_REASONS, restartBody } from "./lifecycle/restart-reasons"
+export type { RestartBody, RestartReason } from "./lifecycle/restart-reasons"
+
 export { parseNotificationContent } from "./notification-content/notification-content"
 export type {
   NotificationContent,
@@ -78,6 +81,20 @@ export {
 
 export { rosterFromTree, rostersEqual } from "./tree/roster"
 export type { AgentRow } from "./tree/roster"
+
+export { normalizeProviderInfo, providerPutBody } from "./provider/provider"
+export type {
+  ProviderAuthKind,
+  ProviderContextPolicy,
+  ProviderContextPreset,
+  ProviderInfo,
+  ProviderInfoWire,
+  ProviderKind,
+  ProviderManifest,
+  ProviderManifestEntry,
+  ProviderPutBody,
+  ProviderSelection,
+} from "./provider/provider"
 
 export { createController } from "./controller/controller"
 export type { Controller, ControllerDeps } from "./controller/controller"

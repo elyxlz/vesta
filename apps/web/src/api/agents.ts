@@ -1,43 +1,23 @@
 import { apiJson, apiFetch, jsonInit } from "./client";
-import type { BuildPhase, NotificationEvent, VestaEvent } from "@vesta/core";
+import {
+  RESTART_REASONS,
+  normalizeProviderInfo,
+  providerPutBody,
+  restartBody,
+  type BuildPhase,
+  type NotificationEvent,
+  type ProviderInfo,
+  type ProviderSelection,
+  type RestartReason,
+  type VestaEvent,
+} from "@vesta/core";
 
 export type { BuildPhase };
 
 export type { NotificationEvent };
 
-export interface OpenRouterConfig {
-  key: string;
-  model: string;
-}
-
-export type ProviderResult =
-  | {
-      kind: "claude";
-      credentials: string;
-      model?: string;
-      maxContextTokens?: number;
-    }
-  | {
-      kind: "openrouter";
-      config: OpenRouterConfig;
-      maxContextTokens?: number;
-    };
-
-/// The nested provider body for `PUT /provider` (sign in / switch). The claude OAuth blob travels as
-/// a transient `credentials` field (written to the SDK file, never stored); openrouter carries `key`.
-type ProviderBody =
-  | {
-      kind: "claude";
-      credentials: string;
-      model?: string;
-      max_context_tokens?: number;
-    }
-  | {
-      kind: "openrouter";
-      model: string;
-      key: string;
-      max_context_tokens?: number;
-    };
+export type ProviderResult = ProviderSelection;
+export type { ProviderInfo };
 
 /// Provision/attach a provider: map the chosen `ProviderResult` to the `PUT /provider` body, write any
 /// prefs (personality/timezone) to `PUT /config`, then restart once to apply. Re-provisioning an
@@ -49,24 +29,7 @@ export async function setProvider(
   timezone?: string,
 ): Promise<void> {
   const enc = encodeURIComponent(name);
-  const body: ProviderBody =
-    result.kind === "claude"
-      ? {
-          kind: "claude",
-          credentials: result.credentials,
-          ...(result.model ? { model: result.model } : {}),
-          ...(result.maxContextTokens != null
-            ? { max_context_tokens: result.maxContextTokens }
-            : {}),
-        }
-      : {
-          kind: "openrouter",
-          model: result.config.model,
-          key: result.config.key,
-          ...(result.maxContextTokens != null
-            ? { max_context_tokens: result.maxContextTokens }
-            : {}),
-        };
+  const body = providerPutBody(result);
   await apiFetch(`/agents/${enc}/provider`, jsonInit("PUT", body));
   const prefs: Record<string, string> = {};
   if (personality) prefs.agent_personality = personality;
@@ -74,7 +37,7 @@ export async function setProvider(
   if (Object.keys(prefs).length > 0) {
     await apiFetch(`/agents/${enc}/config`, jsonInit("PUT", prefs));
   }
-  await restartAgent(name);
+  await restartAgent(name, RESTART_REASONS.provider);
 }
 
 /// Sign out: clear the agent's provider credentials (`DELETE /provider`), then restart so it boots
@@ -83,56 +46,34 @@ export async function signOutProvider(name: string): Promise<void> {
   await apiFetch(`/agents/${encodeURIComponent(name)}/provider`, {
     method: "DELETE",
   });
-  await restartAgent(name);
-}
-
-export interface ProviderInfo {
-  /// "none" means no provider chosen (fresh agent, or signed out). A concrete kind with
-  /// `authed: false` means a provider IS chosen but its credential is invalid/expired (re-auth).
-  kind: "claude" | "openrouter" | "none";
-  model: string | null;
-  max_context_tokens: number | null;
-  authed: boolean;
-  // Claude plan tier ("free" | "pro" | "max"), null for OpenRouter or when unknown; gates the
-  // context-window presets (the 1M beta is Max-only).
-  plan: string | null;
+  await restartAgent(name, RESTART_REASONS.signOut);
 }
 
 /// Read an agent's active provider from its `GET /provider`. The agent reports `kind` only when a
 /// provider is chosen (omitted when unprovisioned) plus an `authed` flag — so the UI can tell
 /// "no provider yet" (kind "none") apart from "chosen but credential expired" (kind set, authed false).
 export async function getProvider(name: string): Promise<ProviderInfo> {
-  const provider = await apiJson<{
-    kind?: "claude" | "openrouter";
-    model: string | null;
-    max_context_tokens: number | null;
-    authed?: boolean;
-    plan?: string | null;
-  }>(`/agents/${encodeURIComponent(name)}/provider`);
-  return {
-    kind: provider.kind ?? "none",
-    model: provider.model,
-    max_context_tokens: provider.max_context_tokens,
-    authed: provider.authed ?? false,
-    plan: provider.plan ?? null,
-  };
+  return normalizeProviderInfo(
+    await apiJson(`/agents/${encodeURIComponent(name)}/provider`),
+  );
 }
 
 /// Patch a provider preference (model / context) via `PATCH /provider`, then restart to apply.
 async function patchProvider(
   name: string,
   patch: Record<string, unknown>,
+  reason: RestartReason,
 ): Promise<void> {
   await apiFetch(
     `/agents/${encodeURIComponent(name)}/provider`,
     jsonInit("PATCH", patch),
   );
-  await restartAgent(name);
+  await restartAgent(name, reason);
 }
 
 /// Change only the model. Vestad restarts the agent so it takes effect.
 export async function setModel(name: string, model: string): Promise<void> {
-  await patchProvider(name, { model });
+  await patchProvider(name, { model }, RESTART_REASONS.model);
 }
 
 /// Change only the context window. Vestad restarts the agent so it takes effect.
@@ -140,7 +81,11 @@ export async function setContextWindow(
   name: string,
   maxContextTokens: number,
 ): Promise<void> {
-  await patchProvider(name, { max_context_tokens: maxContextTokens });
+  await patchProvider(
+    name,
+    { max_context_tokens: maxContextTokens },
+    RESTART_REASONS.context,
+  );
 }
 
 /// Create an empty agent container. Credentials and preferences (provider, model, personality,
@@ -239,10 +184,18 @@ export async function stopAgent(name: string): Promise<void> {
   });
 }
 
-export async function restartAgent(name: string): Promise<void> {
-  await apiJson(`/agents/${encodeURIComponent(name)}/restart`, {
-    method: "POST",
-  });
+/// Restart an agent. `reason` is omitted for a plain manual restart, leaving vestad to name it (it
+/// prefers a mount-grant delta it can derive over a generic one).
+export async function restartAgent(
+  name: string,
+  reason?: RestartReason,
+): Promise<void> {
+  await apiJson(
+    `/agents/${encodeURIComponent(name)}/restart`,
+    reason === undefined
+      ? { method: "POST" }
+      : jsonInit("POST", restartBody(reason)),
+  );
 }
 
 export async function deleteAgent(name: string): Promise<void> {

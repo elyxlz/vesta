@@ -31,6 +31,20 @@ pub(crate) struct AuthSession {
     pub created: std::time::Instant,
 }
 
+/// One in-flight `ChatGPT` device-code session (see providers/openai.rs).
+#[derive(Clone)]
+pub(crate) struct OpenAiAuthSession {
+    pub device_auth_id: String,
+    pub user_code: String,
+    pub created: std::time::Instant,
+}
+
+impl OpenAiAuthSession {
+    pub fn is_expired(&self) -> bool {
+        self.created.elapsed().as_secs() > AUTH_SESSION_TIMEOUT_SECS
+    }
+}
+
 impl AuthSession {
     pub fn is_expired(&self) -> bool {
         self.created.elapsed().as_secs() > AUTH_SESSION_TIMEOUT_SECS
@@ -91,6 +105,7 @@ pub struct AppState {
     pub(crate) env_config: docker::AgentEnvConfig,
     pub(crate) docker: bollard::Docker,
     pub(crate) auth_sessions: Mutex<HashMap<String, AuthSession>>,
+    pub(crate) openai_auth_sessions: Mutex<HashMap<String, OpenAiAuthSession>>,
     /// Refresh-token registry: family id → {live/prev jti, exp} (rotation + reuse
     /// detection, see `auth.rs`). Loaded from / persisted to the config dir so a
     /// vestad restart/self-update does NOT invalidate outstanding refresh tokens.
@@ -156,6 +171,7 @@ impl AppState {
                 env_config,
                 docker,
                 auth_sessions: Mutex::new(HashMap::new()),
+                openai_auth_sessions: Mutex::new(HashMap::new()),
                 refresh_live: Mutex::new(refresh_live),
                 agent_locks: Mutex::new(HashMap::new()),
                 tunnel_url: Mutex::new(tunnel_url),
@@ -186,6 +202,9 @@ impl AppState {
 
     pub(crate) async fn clean_expired_sessions(&self) {
         let mut sessions = self.auth_sessions.lock().await;
+        sessions.retain(|_, s| !s.is_expired());
+        drop(sessions);
+        let mut sessions = self.openai_auth_sessions.lock().await;
         sessions.retain(|_, s| !s.is_expired());
     }
 }

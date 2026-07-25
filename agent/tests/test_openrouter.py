@@ -1,7 +1,9 @@
 """Tests for OpenRouter provider mode: nested provider config and SDK option gating."""
 
+import pytest
+
 import core.config as cfg
-from core.client import build_client_options
+from core.client import build_client_options, resolve_openrouter_max_tokens
 from core.config import ClaudeConfig, OpenRouterConfig
 
 
@@ -82,6 +84,73 @@ def test_build_client_options_openrouter_falls_back_when_unresolved(tmp_path, st
     options = build_client_options(config, state)
     # No resolved window: claude-code keeps its own default (no env override).
     assert "CLAUDE_CODE_MAX_CONTEXT_TOKENS" not in options.env
+
+
+def test_build_client_options_preserves_explicit_cap_before_resolution(tmp_path, state):
+    config = _config_with_memory(
+        tmp_path,
+        provider=OpenRouterConfig(model="deepseek/deepseek-v4", key="key", max_context_tokens=64_000),
+    )
+    state.openrouter_proxy_url = "http://127.0.0.1:40000"
+    options = build_client_options(config, state)
+    assert options.env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "64000"
+
+
+class _ModelResponse:
+    def __init__(self, status, body):
+        self.status = status
+        self.body = body
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+    async def json(self):
+        return self.body
+
+
+class _ModelSession:
+    def __init__(self, response):
+        self.response = response
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+    def get(self, *_args, **_kwargs):
+        return self.response
+
+
+@pytest.mark.anyio
+async def test_openrouter_context_resolver_uses_selected_model_metadata(tmp_path, monkeypatch):
+    import core.client as client_mod
+
+    config = _config_with_memory(tmp_path, provider=_openrouter("vendor/model"))
+    response = _ModelResponse(200, {"data": [{"id": "other/model", "context_length": 1}, {"id": "vendor/model", "context_length": 131_072}]})
+    monkeypatch.setattr(client_mod.aiohttp, "ClientSession", lambda: _ModelSession(response))
+    assert await resolve_openrouter_max_tokens(config) == 131_072
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "status,body,match",
+    [
+        (503, {}, "HTTP 503"),
+        (200, {"data": [{"id": "other/model", "context_length": 100_000}]}, "no valid context_length"),
+        (200, {"data": [{"id": "vendor/model", "context_length": "large"}]}, "no valid context_length"),
+    ],
+)
+async def test_openrouter_context_resolver_fails_closed_on_bad_metadata(tmp_path, monkeypatch, status, body, match):
+    import core.client as client_mod
+
+    config = _config_with_memory(tmp_path, provider=_openrouter("vendor/model"))
+    monkeypatch.setattr(client_mod.aiohttp, "ClientSession", lambda: _ModelSession(_ModelResponse(status, body)))
+    with pytest.raises(RuntimeError, match=match):
+        await resolve_openrouter_max_tokens(config)
 
 
 def test_build_client_options_claude_default_reports_1m_window(tmp_path, state):

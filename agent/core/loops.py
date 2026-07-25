@@ -12,7 +12,7 @@ import pydantic
 from watchfiles import Change, awatch
 
 from . import config as cfg
-from . import logger, notification_interrupt_policy, state_store, vestad_client
+from . import lifecycle, logger, notification_interrupt_policy, state_store, vestad_client
 from . import models as vm
 from .client import (
     SDK_ERRORS,
@@ -24,7 +24,7 @@ from .client import (
     resolve_openrouter_max_tokens,
     send_preempt,
 )
-from .config import DEFAULT_CONTEXT_WINDOW
+from .codex_proxy import start_codex_proxy
 from .diagnostics import format_crash_detail
 from .helpers import build_restart_context, clear_notifications, load_prompt
 from .notification import CORE_SNOOZE_TYPES, CORE_SOURCE, TYPE_COMPACTION_FOLLOWUP, TYPE_NIGHTLY_DREAM, TYPE_PROACTIVE_CHECK, Notification
@@ -115,8 +115,9 @@ async def trash_notification_files(notifications: list[Notification], *, trash_d
 def format_notification_batch(notifications: list[Notification]) -> str:
     """Join the batch as newline-separated <channel> elements, matching how Claude Code delivers
     several native channel events together on one turn. No wrapper element: each <channel> is
-    self-contained. All read-time guidance (the reply command, the group-chat caveat) is the
-    producer's, carried in its `reply_hint` attribute; core injects nothing."""
+    self-contained. All read-time guidance is producer-owned: executable reply syntax is carried in
+    `reply_command`, while behavioral guidance such as the group-chat caveat stays in
+    `reply_hint`; core injects nothing."""
     return "\n".join(n.format_for_display() for n in notifications)
 
 
@@ -149,7 +150,7 @@ async def process_batch(
         await queue_section(external)
 
 
-def greeting_turn(*, config: cfg.VestaConfig, state: vm.State, reason: str) -> str | None:
+def greeting_turn(*, config: cfg.VestaConfig, state: vm.State, agent_message: str, first_start: bool) -> str | None:
     """The boot greeting as a prompt body (or None to skip): first start runs the setup prompt,
     a restart builds the wake-up context (reason + restart prompt + any pending dreamer summary).
 
@@ -167,7 +168,7 @@ def greeting_turn(*, config: cfg.VestaConfig, state: vm.State, reason: str) -> s
         logger.startup("No authenticated provider yet, waiting for sign-in before starting")
         return None
 
-    if reason == "first_start":
+    if first_start:
         setup_prompt = load_prompt("birth", config)
         if not setup_prompt:
             # No prompt to run, flip the flag so we don't loop into first-start every reboot.
@@ -178,15 +179,25 @@ def greeting_turn(*, config: cfg.VestaConfig, state: vm.State, reason: str) -> s
         return setup_prompt.strip()
 
     extras = [boot_msg] if boot_msg is not None else []
-    prompt = build_restart_context(reason, config, extras=extras)
+    prompt = build_restart_context(agent_message, config, extras=extras)
     if not prompt or not prompt.strip():
         return None
 
-    logger.startup(f"Boot turn: {reason} greeting")
+    logger.startup("Boot turn: restart greeting")
     return prompt.strip()
 
 
 # --- Message processing ---
+
+
+def _log_queued_turn(text: str, *, user: bool, is_notification: bool) -> None:
+    """Render a queued item once, whether it runs as a plain turn or is delivered as a preempt."""
+    if user:
+        logger.user(text)
+        return
+    preview = text[:1000] + "..." if len(text) > 1000 else text
+    log = logger.notification if is_notification else logger.system
+    log(preview)
 
 
 async def _run_one_turn(
@@ -199,12 +210,7 @@ async def _run_one_turn(
 ) -> None:
     """Drive one queued turn through process_message, mapping failures to a graceful restart."""
     try:
-        if user:
-            logger.user(text)
-        else:
-            preview = text[:1000] + "..." if len(text) > 1000 else text
-            log = logger.notification if is_notification else logger.system
-            log(preview)
+        _log_queued_turn(text, user=user, is_notification=is_notification)
         state.event_bus.set_state("thinking")
         await process_message(text, state=state, config=config)
     except asyncio.CancelledError:
@@ -258,6 +264,12 @@ async def _watch_queue_during_turn(
         if queue_task in done:
             arrived = queue_task.result()
             if await send_preempt(arrived.text, state=state, config=config):
+                _log_queued_turn(
+                    arrived.text,
+                    user=arrived.is_user,
+                    is_notification=arrived.interruptible and not arrived.is_user,
+                )
+                logger.debug("Preempt sent (priority=now)")
                 clear_notifications(state, arrived.file_paths)
             else:
                 pending.append(arrived)
@@ -374,7 +386,7 @@ async def drain_compaction_request(*, state: vm.State, config: cfg.VestaConfig) 
         # vestad owns the restart and starts us back on the compacted session. If it is unreachable
         # we stay up on this session, so the boot channel is moot: clear it and fall back to the
         # live channel below instead of losing the follow-up.
-        if not await vestad_client.request_restart():
+        if not await vestad_client.request_restart(lifecycle.COMPACTION_RESTART):
             logger.warning("vestad unreachable for restart; continuing on the compacted session")
             if turn is not None:
                 state.persisted.pending_boot_message = None
@@ -398,15 +410,16 @@ async def message_processor(queue: asyncio.Queue[vm.QueuedTurn], *, state: vm.St
         if state.openrouter_max_tokens is None:
             real_window = await resolve_openrouter_max_tokens(config)
             if real_window:
-                # Cap at max_context_tokens: cache-read cost scales with how large the
-                # cached prefix grows before autocompact, so big-window models default
-                # to a 200k working window unless the user raises the cap.
-                cap = config.provider.max_context_tokens or DEFAULT_CONTEXT_WINDOW
+                # OpenRouter reports this per model. A configured value is an optional user cap;
+                # absent one, use the complete advertised window rather than a provider-wide guess.
+                cap = config.provider.max_context_tokens or real_window
                 state.openrouter_max_tokens = min(real_window, cap)
                 capped = f" (model supports {real_window:,})" if real_window > state.openrouter_max_tokens else ""
                 logger.startup(f"OpenRouter context window: {state.openrouter_max_tokens:,} tokens{capped}")
         if state.openrouter_proxy_url is None:
             await start_cache_proxy(config, state)
+    elif isinstance(config.provider, cfg.OpenAIConfig):
+        await start_codex_proxy(config, state)
     async with client_session(state=state, config=config):
         while not state.shutdown_event.is_set():
             try:

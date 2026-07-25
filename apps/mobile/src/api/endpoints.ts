@@ -1,4 +1,14 @@
-import type { NotificationEvent, VestaEvent } from "@vesta/core";
+import {
+  RESTART_REASONS,
+  normalizeProviderInfo,
+  providerPutBody,
+  restartBody,
+  type NotificationEvent,
+  type ProviderInfo,
+  type ProviderSelection,
+  type RestartReason,
+  type VestaEvent,
+} from "@vesta/core";
 import type { ApiClient } from "./client";
 import type {
   BackupInfo,
@@ -9,24 +19,11 @@ import type {
   HostMount,
   Manifest,
   NotificationInterruptRule,
-  ProviderInfo,
   Usage,
   VoiceStatus,
 } from "./types";
 
-export type ProviderSelection =
-  | {
-      kind: "claude";
-      credentials: string;
-      model?: string;
-      maxContextTokens?: number;
-    }
-  | {
-      kind: "openrouter";
-      key: string;
-      model: string;
-      maxContextTokens?: number;
-    };
+export type { ProviderSelection };
 
 export interface OpenRouterModelOption {
   slug: string;
@@ -83,24 +80,7 @@ export async function provisionAgent(
   personality?: string,
   timezone?: string,
 ): Promise<void> {
-  const providerBody =
-    provider.kind === "claude"
-      ? {
-          kind: "claude",
-          credentials: provider.credentials,
-          ...(provider.model ? { model: provider.model } : {}),
-          ...(provider.maxContextTokens !== undefined
-            ? { max_context_tokens: provider.maxContextTokens }
-            : {}),
-        }
-      : {
-          kind: "openrouter",
-          key: provider.key,
-          model: provider.model,
-          ...(provider.maxContextTokens !== undefined
-            ? { max_context_tokens: provider.maxContextTokens }
-            : {}),
-        };
+  const providerBody = providerPutBody(provider);
   const encoded = encodeURIComponent(name);
   await api.request(
     `/agents/${encoded}/provider`,
@@ -115,7 +95,7 @@ export async function provisionAgent(
       }),
     );
   }
-  await restartAgent(api, name);
+  await restartAgent(api, name, RESTART_REASONS.provider);
 }
 
 export async function startClaudeOAuth(
@@ -132,6 +112,23 @@ export async function completeClaudeOAuth(
   const result = await api.json<{ credentials: string }>(
     "/providers/claude/oauth/complete",
     api.jsonInit("POST", { session_id: sessionId, code }),
+  );
+  return result.credentials;
+}
+
+export async function startOpenAIOAuth(
+  api: ApiClient,
+): Promise<{ auth_url: string; user_code: string; session_id: string }> {
+  return api.json("/providers/openai/oauth/start", { method: "POST" });
+}
+
+export async function completeOpenAIOAuth(
+  api: ApiClient,
+  sessionId: string,
+): Promise<string> {
+  const result = await api.json<{ credentials: string }>(
+    "/providers/openai/oauth/complete",
+    api.jsonInit("POST", { session_id: sessionId }),
   );
   return result.credentials;
 }
@@ -156,32 +153,22 @@ export async function getProvider(
   api: ApiClient,
   name: string,
 ): Promise<ProviderInfo> {
-  const provider = await api.json<{
-    kind?: "claude" | "openrouter";
-    model: string | null;
-    max_context_tokens: number | null;
-    authed?: boolean;
-    plan?: string | null;
-  }>(`/agents/${encodeURIComponent(name)}/provider`);
-  return {
-    kind: provider.kind ?? "none",
-    model: provider.model,
-    max_context_tokens: provider.max_context_tokens,
-    authed: provider.authed ?? false,
-    plan: provider.plan ?? null,
-  };
+  return normalizeProviderInfo(
+    await api.json(`/agents/${encodeURIComponent(name)}/provider`),
+  );
 }
 
 async function patchProvider(
   api: ApiClient,
   name: string,
   patch: Record<string, unknown>,
+  reason: RestartReason,
 ): Promise<void> {
   await api.request(
     `/agents/${encodeURIComponent(name)}/provider`,
     api.jsonInit("PATCH", patch),
   );
-  await restartAgent(api, name);
+  await restartAgent(api, name, reason);
 }
 
 export async function setModel(
@@ -189,7 +176,7 @@ export async function setModel(
   name: string,
   model: string,
 ): Promise<void> {
-  await patchProvider(api, name, { model });
+  await patchProvider(api, name, { model }, RESTART_REASONS.model);
 }
 
 export async function setContextWindow(
@@ -197,9 +184,14 @@ export async function setContextWindow(
   name: string,
   maxContextTokens: number,
 ): Promise<void> {
-  await patchProvider(api, name, {
-    max_context_tokens: maxContextTokens,
-  });
+  await patchProvider(
+    api,
+    name,
+    {
+      max_context_tokens: maxContextTokens,
+    },
+    RESTART_REASONS.context,
+  );
 }
 
 export async function signOutProvider(
@@ -209,7 +201,7 @@ export async function signOutProvider(
   await api.request(`/agents/${encodeURIComponent(name)}/provider`, {
     method: "DELETE",
   });
-  await restartAgent(api, name);
+  await restartAgent(api, name, RESTART_REASONS.signOut);
 }
 
 export async function startAgent(api: ApiClient, name: string): Promise<void> {
@@ -227,10 +219,14 @@ export async function stopAgent(api: ApiClient, name: string): Promise<void> {
 export async function restartAgent(
   api: ApiClient,
   name: string,
+  reason?: RestartReason,
 ): Promise<void> {
-  await api.request(`/agents/${encodeURIComponent(name)}/restart`, {
-    method: "POST",
-  });
+  await api.request(
+    `/agents/${encodeURIComponent(name)}/restart`,
+    reason === undefined
+      ? { method: "POST" }
+      : api.jsonInit("POST", restartBody(reason)),
+  );
 }
 
 export async function deleteAgent(api: ApiClient, name: string): Promise<void> {

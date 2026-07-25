@@ -28,6 +28,7 @@ type messageNotif struct {
 	Timestamp       string `json:"timestamp"`
 	MessageID       string `json:"message_id,omitempty"`
 	ContactUnknown  bool   `json:"contact_unknown,omitempty"`
+	ReplyCommand    string `json:"reply_command,omitempty"`
 	ReplyHint       string `json:"reply_hint,omitempty"`
 }
 
@@ -64,6 +65,7 @@ type editNotif struct {
 	Timestamp       string `json:"timestamp"`
 	TargetMessageID string `json:"target_message_id"`
 	ContactUnknown  bool   `json:"contact_unknown,omitempty"`
+	ReplyCommand    string `json:"reply_command,omitempty"`
 	ReplyHint       string `json:"reply_hint,omitempty"`
 }
 
@@ -140,11 +142,12 @@ func WriteNotification(
 		Timestamp:       time.Now().Format(time.RFC3339),
 		MessageID:       messageID,
 		ContactUnknown:  !ctx.ContactSaved,
-		ReplyHint:       "reply with `whatsapp send`, and think about how you can best show your personality",
+		ReplyCommand:    "whatsapp send",
+		ReplyHint:       "think about how you can best show your personality",
 	}
 	if !ctx.IsDirectChat {
 		n.ChatName = ctx.ChatName
-		n.ReplyHint = "reply with `whatsapp send`, and think about how you can best show your personality; this is a group chat, so it may not be expecting a reply from you"
+		n.ReplyHint = "think about how you can best show your personality; this is a group chat, so it may not be expecting a reply from you"
 		// Drop Sender when it's just the same JID as the chat (happens for unsaved group participants).
 		if ctx.Sender != ctx.ChatName {
 			n.Sender = ctx.Sender
@@ -202,7 +205,8 @@ func WriteEditNotification(ctx NotifContext, targetMessageID, oldText, newText s
 		Timestamp:       time.Now().Format(time.RFC3339),
 		TargetMessageID: targetMessageID,
 		ContactUnknown:  !ctx.ContactSaved,
-		ReplyHint:       "they changed a message you may have already answered; reply with `whatsapp send` only if the change asks something new",
+		ReplyCommand:    "whatsapp send",
+		ReplyHint:       "they changed a message you may have already answered; reply only if the change asks something new",
 	}
 	n.applyChatContext(ctx)
 	return writeNotificationFile(ctx.NotifDir, n, "edit")

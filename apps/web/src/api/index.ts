@@ -12,5 +12,6 @@ export {
 } from "./agents";
 export * as claudeProvider from "./providers/claude";
 export * as openrouterProvider from "./providers/openrouter";
+export * as openaiProvider from "./providers/openai";
 export { streamLogs, stopLogs } from "./logs";
 export { connectToServer } from "./server";

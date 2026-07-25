@@ -1,6 +1,5 @@
 import { useState, type ReactNode } from "react";
 import { Input } from "@/components/ui/input";
-import { openrouterProvider } from "@/api";
 import { errorMessage } from "@/lib/utils";
 import { ProviderStep } from "../ProviderStep";
 
@@ -9,11 +8,19 @@ export function KeyStep({
   onNext,
   logo,
   onCancel,
+  title,
+  subtitle,
+  placeholder,
+  validateKey,
 }: {
   initialKey: string;
   onNext: (key: string) => void;
   logo?: ReactNode;
   onCancel?: () => void;
+  title: string;
+  subtitle: string;
+  placeholder?: string;
+  validateKey?: (key: string) => Promise<void>;
 }) {
   const [key, setKey] = useState(initialKey);
   const [validating, setValidating] = useState(false);
@@ -26,7 +33,7 @@ export function KeyStep({
     setValidating(true);
     setError(null);
     try {
-      await openrouterProvider.validateKey(key.trim());
+      await validateKey?.(key.trim());
       onNext(key.trim());
     } catch (e: unknown) {
       setError(errorMessage(e, "key validation failed"));
@@ -38,8 +45,8 @@ export function KeyStep({
   return (
     <ProviderStep
       logo={logo}
-      title="OpenRouter API key"
-      subtitle="paste a key from openrouter.ai/keys. it stays on this machine."
+      title={title}
+      subtitle={subtitle}
       submitLabel={validating ? "checking key..." : "next"}
       submitDisabled={!canContinue}
       onSubmit={() => {
@@ -57,7 +64,7 @@ export function KeyStep({
         data-lpignore="true"
         data-form-type="other"
         style={{ WebkitTextSecurity: "disc" } as React.CSSProperties}
-        placeholder="sk-or-v1-..."
+        placeholder={placeholder}
         value={key}
         onChange={(e) => {
           setKey(e.target.value);

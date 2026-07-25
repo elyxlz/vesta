@@ -1,23 +1,154 @@
 import { useEffect, useState } from "react";
 import { ChevronLeftIcon } from "lucide-react";
-import { claudeProvider } from "@/api";
+import { claudeProvider, openaiProvider, openrouterProvider } from "@/api";
 import type { ProviderResult } from "@/api/agents";
 
-type AuthStartResult = claudeProvider.OAuthStartResult;
+type AuthStartResult =
+  claudeProvider.OAuthStartResult | openaiProvider.OAuthStartResult;
 import { ChoiceStep } from "./ChoiceStep";
 import { KeyStep } from "./KeyStep";
 import { ModelStep } from "./ModelStep";
 import { ContextStep } from "./ContextStep";
 import { planContextOptions, planFromCredentials } from "./context-plan";
 import { AuthStep } from "./AuthStep";
-import { ClaudeLogo, OpenRouterLogo } from "./logos";
+import { OpenAIAuthStep } from "./OpenAIAuthStep";
+import {
+  ClaudeLogo,
+  KimiLogo,
+  OpenAILogo,
+  OpenRouterLogo,
+  ZaiLogo,
+} from "./logos";
 import type { ProviderMode } from "./types";
 import { useManifest } from "@/hooks/use-manifest";
 import { useClaudeModels } from "@/hooks/use-claude-models";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn, errorMessage } from "@/lib/utils";
+import { contextForModel, type Manifest } from "@/api/manifest";
+import { providerModelOptions } from "./model-options";
 
 type InternalStep = "choice" | "auth" | "key" | "model" | "context";
+
+const KEY_STEP_COPY = {
+  openrouter: {
+    title: "OpenRouter API key",
+    subtitle: "paste a key from openrouter.ai/keys. it stays on this machine.",
+    placeholder: "sk-or-v1-...",
+  },
+  zai: {
+    title: "Z.AI subscription key",
+    subtitle:
+      "paste your Coding Plan subscription key. it stays on this machine.",
+    placeholder: "Z.AI subscription key",
+  },
+  kimi: {
+    title: "Kimi Code subscription key",
+    subtitle: "paste your Kimi membership key. it stays on this machine.",
+    placeholder: "Kimi Code subscription key",
+  },
+} as const;
+
+function providerLogo(provider: ProviderMode | null) {
+  if (provider === "claude") return <ClaudeLogo />;
+  if (provider === "zai") return <ZaiLogo />;
+  if (provider === "kimi") return <KimiLogo />;
+  if (provider === "openai") return <OpenAILogo />;
+  return <OpenRouterLogo />;
+}
+
+function keyStepCopy(provider: ProviderMode | null) {
+  if (provider === "claude" || provider === "openai" || provider === null)
+    return KEY_STEP_COPY.openrouter;
+  return KEY_STEP_COPY[provider];
+}
+
+function providerResult(
+  provider: ProviderMode,
+  credentials: string | null,
+  key: string,
+  model: string,
+  maxContextTokens: number,
+): ProviderResult | null {
+  if (provider === "claude") {
+    return credentials === null
+      ? null
+      : {
+          kind: "claude",
+          credentials,
+          model: model || undefined,
+          maxContextTokens,
+        };
+  }
+  if (provider === "openai") {
+    return credentials === null
+      ? null
+      : {
+          kind: "openai",
+          credentials,
+          model,
+          ...(maxContextTokens > 0 ? { maxContextTokens } : {}),
+        };
+  }
+  return {
+    kind: provider,
+    key,
+    model,
+    ...(maxContextTokens > 0 ? { maxContextTokens } : {}),
+  };
+}
+
+function providerUsesOAuth(
+  provider: ProviderMode | null,
+  manifest: Manifest,
+): boolean {
+  if (provider === null) return false;
+  const authKind = manifest.providers[provider]?.auth_kind;
+  return authKind === "claude_oauth" || authKind === "device_oauth";
+}
+
+function startProviderOAuth(provider: ProviderMode | null) {
+  if (provider === "openai") return openaiProvider.startOAuth();
+  if (provider === "claude") return claudeProvider.startOAuth();
+  return Promise.reject(
+    new Error(`no OAuth adapter for ${provider ?? "none"}`),
+  );
+}
+
+function ProviderAuthStep({
+  provider,
+  authStart,
+  startError,
+  onCredentialsReady,
+  onCancel,
+}: {
+  provider: ProviderMode | null;
+  authStart: AuthStartResult | null;
+  startError: string | null;
+  onCredentialsReady: (credentials: string) => void;
+  onCancel: () => void;
+}) {
+  if (provider === "claude") {
+    return (
+      <AuthStep
+        authStart={authStart}
+        startError={startError}
+        onCredentialsReady={onCredentialsReady}
+        onCancel={onCancel}
+      />
+    );
+  }
+  if (provider === "openai") {
+    return (
+      <OpenAIAuthStep
+        authStart={authStart as openaiProvider.OAuthStartResult | null}
+        startError={startError}
+        onCredentialsReady={onCredentialsReady}
+        onCancel={onCancel}
+      />
+    );
+  }
+  return null;
+}
 
 export function ProviderPicker({
   onDone,
@@ -28,9 +159,9 @@ export function ProviderPicker({
   onDone: (result: ProviderResult) => void;
   onBack?: () => void;
   className?: string;
-  // Skip ModelStep/ContextStep and finish with the manifest's default model
-  // and context window as soon as credentials/key land. Onboarding uses this;
-  // both values stay editable afterward in AgentSettings' full picker.
+  // Skip ModelStep/ContextStep when the manifest supplies a static default. Live-catalog
+  // providers still require a model choice. Onboarding uses this mode; both values stay
+  // editable afterward in AgentSettings' full picker.
   defaultsOnly?: boolean;
 }) {
   const [step, setStep] = useState<InternalStep>("choice");
@@ -46,6 +177,9 @@ export function ProviderPicker({
   const manifest = useManifest();
   // Claude's fixed model list; fetched only while on the Claude path.
   const claudeModels = useClaudeModels(provider === "claude");
+  const providerModels = providerModelOptions(provider, manifest, claudeModels);
+  const stepLogo = providerLogo(provider);
+  const keyCopy = keyStepCopy(provider);
 
   // Kick off the standalone OAuth session once when entering the auth substep.
   // Owned here (not by AuthStep) so AuthStep remounts don't restart a fresh
@@ -54,8 +188,7 @@ export function ProviderPicker({
     if (step !== "auth" || authStart !== null || authStartError !== null)
       return;
     let cancelled = false;
-    claudeProvider
-      .startOAuth()
+    startProviderOAuth(provider)
       .then((res) => {
         if (!cancelled) setAuthStart(res);
       })
@@ -66,7 +199,7 @@ export function ProviderPicker({
     return () => {
       cancelled = true;
     };
-  }, [step, authStart, authStartError]);
+  }, [step, provider, authStart, authStartError]);
 
   // Wait for the manifest before rendering any step that needs the context window.
   // The user reaches this picker after the personality step, so it is loaded in practice.
@@ -84,10 +217,14 @@ export function ProviderPicker({
   }
 
   const handleChoice = (next: ProviderMode) => {
+    resetAuth();
+    setCredentials(null);
+    setKey("");
+    setModel("");
     setProvider(next);
-    // Claude authenticates first; OpenRouter takes a key first. Both then walk
+    // Claude authenticates first; key-backed providers take a key first. All then walk
     // the shared model -> context steps.
-    setStep(next === "claude" ? "auth" : "key");
+    setStep(providerUsesOAuth(next, manifest) ? "auth" : "key");
   };
 
   // Claude auth no longer ends the flow: stash the credentials and continue to
@@ -103,7 +240,7 @@ export function ProviderPicker({
 
   const handleKeyNext = (newKey: string) => {
     setKey(newKey);
-    if (defaultsOnly) {
+    if (defaultsOnly && provider !== "openrouter") {
       finishWithDefaults(credentials, newKey);
       return;
     }
@@ -115,7 +252,8 @@ export function ProviderPicker({
   // ready, mirroring handleContextSubmit's result shape.
   const finishWithDefaults = (creds: string | null, apiKey: string) => {
     if (provider === null) return;
-    const context = manifest.providers[provider]?.context;
+    const defaultModel = manifest.providers[provider]?.default_model ?? "";
+    const context = contextForModel(manifest.providers[provider], defaultModel);
     const plan =
       provider === "claude" && creds !== null
         ? planFromCredentials(creds)
@@ -123,36 +261,26 @@ export function ProviderPicker({
     const { initial } = context
       ? planContextOptions(context, plan)
       : { initial: 0 };
-    const defaultModel = manifest.providers[provider]?.default_model ?? "";
-    if (provider === "claude") {
-      if (creds === null) return;
-      onDone({
-        kind: "claude",
-        credentials: creds,
-        model: defaultModel || undefined,
-        maxContextTokens: initial,
-      });
-      return;
-    }
-    onDone({
-      kind: "openrouter",
-      config: { key: apiKey, model: defaultModel },
-      maxContextTokens: initial,
-    });
+    const result = providerResult(
+      provider,
+      creds,
+      apiKey,
+      defaultModel,
+      initial,
+    );
+    if (result) onDone(result);
   };
 
   const handleContextSubmit = (maxContextTokens: number) => {
-    if (provider === "claude") {
-      if (credentials === null) return;
-      onDone({
-        kind: "claude",
-        credentials,
-        model: model || undefined,
-        maxContextTokens,
-      });
-      return;
-    }
-    onDone({ kind: "openrouter", config: { key, model }, maxContextTokens });
+    if (provider === null) return;
+    const result = providerResult(
+      provider,
+      credentials,
+      key,
+      model,
+      maxContextTokens,
+    );
+    if (result) onDone(result);
   };
 
   const resetAuth = () => {
@@ -165,6 +293,8 @@ export function ProviderPicker({
   const cancelToChoice = () => {
     resetAuth();
     setCredentials(null);
+    setKey("");
+    setModel("");
     setProvider(null);
     setStep("choice");
   };
@@ -173,13 +303,12 @@ export function ProviderPicker({
     if (step === "choice") return onBack;
     // The model step's previous screen depends on how the provider started.
     if (step === "model")
-      return () => setStep(provider === "claude" ? "auth" : "key");
+      return () =>
+        setStep(providerUsesOAuth(provider, manifest) ? "auth" : "key");
     if (step === "context") return () => setStep("model");
     // auth and key both return to the choice screen.
     return cancelToChoice;
   })();
-
-  const stepLogo = provider === "claude" ? <ClaudeLogo /> : <OpenRouterLogo />;
 
   return (
     <div
@@ -204,7 +333,8 @@ export function ProviderPicker({
           <ChoiceStep onPick={handleChoice} manifest={manifest} />
         )}
         {step === "auth" && (
-          <AuthStep
+          <ProviderAuthStep
+            provider={provider}
             authStart={authStart}
             startError={authStartError}
             onCredentialsReady={handleCredentialsReady}
@@ -215,8 +345,16 @@ export function ProviderPicker({
           <KeyStep
             initialKey={key}
             onNext={handleKeyNext}
-            logo={<OpenRouterLogo />}
+            logo={stepLogo}
             onCancel={cancelToChoice}
+            title={keyCopy.title}
+            subtitle={keyCopy.subtitle}
+            placeholder={keyCopy.placeholder}
+            validateKey={
+              provider === "openrouter"
+                ? openrouterProvider.validateKey
+                : undefined
+            }
           />
         )}
         {step === "model" && (
@@ -230,10 +368,14 @@ export function ProviderPicker({
             onModelChange={setModel}
             onSubmit={(m) => {
               setModel(m);
-              setStep("context");
+              if (provider === "openrouter") {
+                onDone({ kind: "openrouter", key, model: m });
+              } else {
+                setStep("context");
+              }
             }}
-            models={provider === "claude" ? claudeModels : undefined}
-            allowCustom={provider !== "claude"}
+            models={provider === "openrouter" ? undefined : providerModels}
+            allowCustom={provider === "openrouter"}
             logo={stepLogo}
             onCancel={cancelToChoice}
           />
@@ -241,7 +383,12 @@ export function ProviderPicker({
         {step === "context" &&
           provider &&
           (() => {
-            const context = manifest.providers[provider]?.context;
+            const selectedModel =
+              model || (manifest.providers[provider]?.default_model ?? "");
+            const context = contextForModel(
+              manifest.providers[provider],
+              selectedModel,
+            );
             // Claude gates >200K windows on the plan tier, read from the stashed OAuth blob.
             const plan =
               provider === "claude" && credentials !== null

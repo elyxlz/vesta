@@ -283,6 +283,7 @@ async def test_tool_failure_hook_cleans_up():
 
     state = vm.State()
     hooks = sdk_parsing.make_hooks(state)
+    sub = state.event_bus.subscribe()
 
     pre_hook = hooks["PreToolUse"][0].hooks[0]
     fail_hook = hooks["PostToolUseFailure"][0].hooks[0]
@@ -296,6 +297,11 @@ async def test_tool_failure_hook_cleans_up():
     await fail_hook(fail_input, "tool-456", ctx)
     assert "tool-456" not in state.active_tools
     assert state.last_sdk_activity_label == "tool_fail:Bash"
+    events = [sub.get_nowait() for _ in range(sub.qsize())]
+    assert [(event["type"], event.get("tool"), event.get("subagent")) for event in events] == [
+        ("tool_start", "Bash", False),
+        ("tool_end", "Bash", False),
+    ]
 
 
 # --- converse() liveness integration ---

@@ -37,11 +37,51 @@ def _to_utc_z(value: str, timezone: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def list_emails(config: Config, client, *, account_email: str, folder: str = "inbox", limit: int = 10) -> list[dict]:
+def _owa_date_filter(since: str | None, until: str | None) -> str:
+    """Build a ReceivedDateTime range $filter (PascalCase for the OWA REST v2.0 endpoint)."""
+    clauses: list[str] = []
+    if since:
+        clauses.append(f"ReceivedDateTime ge {email_mod._iso_utc_bound(since, end_of_day=False)}")
+    if until:
+        clauses.append(f"ReceivedDateTime le {email_mod._iso_utc_bound(until, end_of_day=True)}")
+    return " and ".join(clauses)
+
+
+def list_emails(
+    config: Config,
+    client,
+    *,
+    account_email: str,
+    folder: str = "inbox",
+    limit: int = 10,
+    since: str | None = None,
+    until: str | None = None,
+) -> list[dict]:
+    if since or until:
+        return owa_rest.filter_messages_by_date(
+            client, account_email, config, folder=folder, date_filter=_owa_date_filter(since, until), limit=limit
+        )
     return owa_rest.list_messages(client, account_email, config, folder=folder, limit=limit)
 
 
-def search_emails(config: Config, client, *, account_email: str, query: str, limit: int = 10, folder: str | None = None) -> list[dict]:
+def search_emails(
+    config: Config,
+    client,
+    *,
+    account_email: str,
+    query: str,
+    limit: int = 10,
+    folder: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+) -> list[dict]:
+    if since or until:
+        # $search + $filter cannot combine; filter by date server-side, match the query client-side.
+        rows = owa_rest.filter_messages_by_date(
+            client, account_email, config, folder=folder, date_filter=_owa_date_filter(since, until), limit=email_mod.MAX_FILTER_SCAN
+        )
+        matched = [row for row in rows if email_mod._email_matches_query(row, query)]
+        return matched[:limit]
     return owa_rest.search_messages(client, account_email, config, query=query, folder=folder, limit=limit)
 
 
