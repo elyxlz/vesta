@@ -30,6 +30,7 @@ import Reanimated, {
   withTiming,
 } from "react-native-reanimated";
 import Markdown, {
+  MarkdownIt,
   type ASTNode,
   type RenderRules,
 } from "react-native-markdown-display";
@@ -64,6 +65,8 @@ import {
   createInvertedChatRows,
   type ChatRow,
 } from "@/agent/chat-list-model";
+import { messageSegments } from "@/agent/message-links";
+import { readChatDraft, writeChatDraft } from "@/storage/chat-draft";
 import {
   messageActionIds,
   quotedReply,
@@ -72,6 +75,8 @@ import {
 import { useInvertedChatScroll } from "@/agent/use-inverted-chat-scroll";
 
 const USES_NATIVE_BUBBLE_SHAPE = process.env.EXPO_OS === "ios";
+// The library's default instance, plus linkify so bare URLs in agent messages become tappable links.
+const MARKDOWN_IT = MarkdownIt({ typographer: true, linkify: true });
 const COMPOSER_RESIZE_DURATION = 250;
 const COMPOSER_SURFACE_PADDING = 4;
 const CHAT_COMPOSER_GAP = 6;
@@ -530,7 +535,20 @@ const ChatEvent = memo(function ChatEvent({
       ) : null}
       {user ? (
         <Text style={[styles.userText, { color: colors.accentText }]}>
-          {event.text}
+          {messageSegments(event.text).map((segment, index) =>
+            segment.url ? (
+              <Text
+                key={index}
+                style={styles.userLink}
+                onPress={() => openMarkdownLink(segment.url ?? segment.text)}
+                accessibilityRole="link"
+              >
+                {segment.text}
+              </Text>
+            ) : (
+              <Text key={index}>{segment.text}</Text>
+            ),
+          )}
           {timestamp ? (
             <Text style={styles.timestampSpacer}>
               {"\u00A0\u00A0\u00A0\u00A0"}
@@ -540,6 +558,7 @@ const ChatEvent = memo(function ChatEvent({
         </Text>
       ) : (
         <Markdown
+          markdownit={MARKDOWN_IT}
           onLinkPress={openMarkdownLink}
           rules={markdownRules}
           style={markdownStyles}
@@ -967,10 +986,30 @@ export default function ChatPage() {
   const { colors } = preferences;
   const [input, setInputState] = useState("");
   const inputValueRef = useRef("");
-  const setInput = useCallback((value: string) => {
-    inputValueRef.current = value;
-    setInputState(value);
-  }, []);
+  // Every input change writes through to the per-agent draft (cleared on send via setInput("")),
+  // so an app switch that unmounts this view never loses in-progress compose text.
+  const setInput = useCallback(
+    (value: string) => {
+      inputValueRef.current = value;
+      setInputState(value);
+      void writeChatDraft(name, value).catch(() => undefined);
+    },
+    [name],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    void readChatDraft(name)
+      .then((draft) => {
+        if (cancelled || !draft || inputValueRef.current) return;
+        inputValueRef.current = draft;
+        setInputState(draft);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [name]);
   const [replyTarget, setReplyTarget] = useState<ReplyTarget | null>(null);
   const [voiceError, setVoiceError] = useState("");
   const notifyTranscriptWords = useTranscriptWordHaptics();
@@ -1309,6 +1348,7 @@ const styles = StyleSheet.create({
   },
   typingDot: { width: 6, height: 6, borderRadius: 3 },
   userText: { fontSize: 16, lineHeight: 22 },
+  userLink: { textDecorationLine: "underline" },
   timestampSpacer: { fontSize: 12, opacity: 0 },
   bubbleTimestamp: { position: "absolute", right: 12, bottom: 10, fontSize: 12 },
   finalMarkdownParagraph: { marginBottom: 0 },
