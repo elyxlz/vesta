@@ -29,6 +29,90 @@ EMAIL_SNAPSHOT_FIELDS = [
 ]
 EMAIL_SNAPSHOT_SELECT = ",".join(EMAIL_SNAPSHOT_FIELDS)
 
+# Per-page $top and a hard scan cap for the client-side date+text filter path, where
+# Graph cannot do the text matching (it forbids $search together with $filter).
+FILTER_PAGE_SIZE = 200
+MAX_FILTER_SCAN = 2000
+
+
+def _iso_utc_bound(date_str: str, *, end_of_day: bool) -> str:
+    """Normalize a plain date (YYYY-MM-DD) or full ISO datetime into an ISO-8601 UTC
+    bound such as 2021-01-01T00:00:00Z. A plain date becomes the start of that day, or
+    the end (23:59:59) when `end_of_day` is set, so a --since/--until range is inclusive."""
+    value = date_str.strip()
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=UTC)
+        if end_of_day:
+            parsed = parsed.replace(hour=23, minute=59, second=59)
+    except ValueError:
+        parsed = datetime.fromisoformat(value)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        parsed = parsed.astimezone(UTC)
+    return parsed.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _build_received_filter(since: str | None, until: str | None) -> str:
+    """Build a Graph $filter clause over receivedDateTime for the given inclusive bounds."""
+    clauses: list[str] = []
+    if since:
+        clauses.append(f"receivedDateTime ge {_iso_utc_bound(since, end_of_day=False)}")
+    if until:
+        clauses.append(f"receivedDateTime le {_iso_utc_bound(until, end_of_day=True)}")
+    return " and ".join(clauses)
+
+
+def _email_matches_query(email: dict[str, Any], query: str) -> bool:
+    """Case-insensitive substring match of `query` against subject, sender, and body preview."""
+    needle = query.casefold()
+    from_obj = email["from"] if "from" in email else {}
+    from_email = from_obj["emailAddress"] if from_obj and "emailAddress" in from_obj else {}
+    parts = [
+        email["subject"] if "subject" in email else "",
+        email["bodyPreview"] if "bodyPreview" in email else "",
+        from_email["address"] if "address" in from_email else "",
+        from_email["name"] if "name" in from_email else "",
+    ]
+    haystack = " ".join(p for p in parts if p).casefold()
+    return needle in haystack
+
+
+def _filter_mailbox_messages(
+    config: Config,
+    client: httpx.Client,
+    account_id: str,
+    endpoint: str,
+    *,
+    since: str | None,
+    until: str | None,
+    query: str | None,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Reach mail by date via Graph $filter on receivedDateTime, newest first. When a text
+    `query` is also given, Graph forbids combining $search with $filter, so we run the date
+    $filter and match the text client-side, trimming to `limit` after filtering."""
+    params: dict[str, Any] = {
+        "$filter": _build_received_filter(since, until),
+        "$orderby": "receivedDateTime desc",
+        "$select": EMAIL_SNAPSHOT_SELECT,
+        "$top": FILTER_PAGE_SIZE if query else min(limit, 100),
+    }
+    page_limit = None if query else limit
+    results: list[dict[str, Any]] = []
+    scanned = 0
+    for email in graph.paginate_cfg(config, client, endpoint, account_id, params=params, limit=page_limit):
+        scanned += 1
+        if query and not _email_matches_query(email, query):
+            if scanned >= MAX_FILTER_SCAN:
+                break
+            continue
+        _scrub_email_snapshot(email)
+        graph.localize_datetime_fields(email)
+        results.append(email)
+        if len(results) >= limit or scanned >= MAX_FILTER_SCAN:
+            break
+    return results
+
 
 def _file_attachment(name: str, content_bytes: bytes) -> dict[str, str]:
     return {
@@ -141,10 +225,17 @@ def list_emails(
     account_email: str,
     folder: str = "inbox",
     limit: int = 10,
+    since: str | None = None,
+    until: str | None = None,
 ) -> list[dict[str, Any]]:
     account_id = auth.get_account_id_by_email(account_email, config.cache_file)
 
     folder_path = config.folders[folder.casefold()] if folder.casefold() in config.folders else folder
+    endpoint = f"/me/mailFolders/{folder_path}/messages"
+
+    if since or until:
+        # Date-range path: $filter reaches ANY date directly, unlike relevance-ranked $search.
+        return _filter_mailbox_messages(config, client, account_id, endpoint, since=since, until=until, query=None, limit=limit)
 
     params = {
         "$top": min(limit, 100),
@@ -152,7 +243,7 @@ def list_emails(
         "$orderby": "receivedDateTime desc",
     }
 
-    emails = list(graph.paginate_cfg(config, client, f"/me/mailFolders/{folder_path}/messages", account_id, params=params, limit=limit))
+    emails = list(graph.paginate_cfg(config, client, endpoint, account_id, params=params, limit=limit))
 
     for email in emails:
         _scrub_email_snapshot(email)
@@ -689,9 +780,14 @@ def search_emails(
     query: str,
     limit: int = 10,
     folder: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
 ) -> list[dict[str, Any]]:
     account_id = auth.get_account_id_by_email(account_email, config.cache_file)
     endpoint = _resolve_mail_endpoint(config, folder)
+    if since or until:
+        # Graph forbids $search + $filter together, so a date range wins: filter by date, match text client-side.
+        return _filter_mailbox_messages(config, client, account_id, endpoint, since=since, until=until, query=query, limit=limit)
     return _search_mailbox_messages(config, client, account_id, endpoint, query, limit)
 
 

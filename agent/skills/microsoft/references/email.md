@@ -12,6 +12,8 @@ microsoft email reply --account user@example.com --id <email_id> --body "Thanks!
 microsoft email reply --account user@example.com --id <email_id> --body "Thanks all!" --reply-all
 microsoft email forward --account user@example.com --id <email_id> --to bob@example.com --body "fyi, see below"
 microsoft email search --account user@example.com --query "project update"
+microsoft email list --account user@example.com --since 2021-01-01 --until 2021-12-31   # reach mail by date
+microsoft email search --account user@example.com --query "invoice" --since 2021-06-01  # text within a date range
 ```
 
 `send`, `reply`, and `forward` accept `--attachments file1 file2` and `--html` (treats `--body` as HTML). `forward` requires `--to` and also takes `--cc`.
@@ -83,6 +85,7 @@ microsoft email attachment --account user@example.com --email-id '<email_id>' --
 ## Notes
 
 - `--folder` on `email list`/`search` filters by folder (default "inbox").
+- `--since YYYY-MM-DD` / `--until YYYY-MM-DD` on `email list`/`search` (both inclusive) reach mail by date. Plain `search` uses Graph `$search`, which ranks by relevance and buries old mail, so searching a large mailbox for old messages returns nothing useful; the date flags switch to a `$filter=receivedDateTime` range ordered newest-first, which reaches any date directly. Graph forbids combining `$search` with `$filter`, so when a `--query` and a date range are given together, the date range is applied server-side and the query is matched client-side (case-insensitive) against subject, sender, and body preview.
 - `--no-attachments` on `email get` skips attachment metadata; `--save-to` overrides the auto-save path for the body.
 - **`email get` always saves the body to disk** under `~/.microsoft/emails/<timestamp>_<subject>_<id>.txt` and strips it from the JSON response. The JSON returns `body: {saved_to, length, size_bytes, _note}` plus the legacy `body_saved_to`, `body_saved_size`, `body_length` fields, and a short `preview`. To inspect content, read the file at `body.saved_to`. The full `body.content` field is intentionally never returned inline to keep agent context small. Bodies over 5000 chars also surface a warning telling you to grep/crop before pasting snippets.
 - `--categories` on `email update` accepts multiple space-separated names; `--flagged`/`--unflagged` set or clear the follow-up flag.

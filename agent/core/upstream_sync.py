@@ -1,23 +1,10 @@
-"""Upgrade-driven upstream sync trigger.
+"""Upgrade-driven upstream sync trigger, with Git history as the source of truth."""
 
-A vestad upgrade re-extracts the core mount, so the running core version (read from
-core/pyproject.toml) changes across the restart. This module turns that signal into a
-boot turn: when the persisted `last_synced_version` doesn't match the running version,
-the agent is told to rebase its workspace onto this version's published snapshot
-(`agent-v<version>` in the bind-mounted upstream repo) and record completion via the
-`mark_upstream_synced` tool. Unmarked (failed, crashed, forgotten) turns re-fire on
-every boot until the sync lands — the flow itself is idempotent.
-
-Fresh agents pre-mark the current version without a turn (the image is already
-current), the same pattern migrations use. An unreadable version never fires and never
-marks: no churn on a broken pyproject.
-"""
-
+import subprocess
 import tomllib
 
 from . import config as cfg
-from . import logger, state_store
-from . import models as vm
+from . import logger
 
 UNKNOWN_VERSION = "unknown"
 
@@ -35,28 +22,37 @@ def vesta_version(config: cfg.VestaConfig) -> str:
         return UNKNOWN_VERSION
 
 
-def upstream_sync_turn(*, state: vm.State, config: cfg.VestaConfig, first_start: bool) -> str | None:
-    """Boot-turn body telling the agent to sync onto this version's snapshot, or None.
+def workspace_synced(config: cfg.VestaConfig, version: str) -> bool:
+    """Whether this version's stock snapshot is already part of the workspace history."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(config.agent_dir.parent), "merge-base", "--is-ancestor", f"agent-v{version}", "HEAD"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError as e:
+        logger.init(f"could not inspect workspace git history: {e}")
+        return False
+    return result.returncode == 0
 
-    First start pre-marks the running version (fresh image is already current). An
-    unknown version is never acted on. Any mismatch — including an absent marker on a
-    legacy agent, and downgrades — fires the turn."""
+
+def upstream_sync_turn(*, config: cfg.VestaConfig, first_start: bool) -> str | None:
+    """Tell the agent to merge this version's snapshot when Git says it has not landed."""
     running = vesta_version(config)
-    if running == UNKNOWN_VERSION:
+    # Birth owns the initial attach. If it was interrupted, the next ordinary boot sees
+    # the missing tag in history and queues this turn, so no persisted claim is needed.
+    if running == UNKNOWN_VERSION or first_start:
         return None
-    if first_start:
-        state.persisted.last_synced_version = running
-        state_store.save_state(state.persisted, config)
+    if workspace_synced(config, running):
         return None
-    if state.persisted.last_synced_version == running:
-        return None
-    logger.startup(f"Queued upstream-sync boot turn: {state.persisted.last_synced_version} -> {running}")
+    logger.startup(f"Queued upstream-sync boot turn: workspace is missing agent-v{running}")
     return (
         "[Upstream sync]\n\n"
         f"Vesta was upgraded (now v{running}). Read `~/agent/core/skills/upstream-sync/SKILL.md` "
-        f"and follow it to sync your workspace to this version: run its `sync.sh`, which rebases "
-        f"your changes onto `agent-v{running}`, and resolve any conflicts it stops on. "
-        f"Then call `mark_upstream_synced`. "
-        "If the rebase brought changes, call `restart_vesta` afterward so the new skills load; "
+        f"and follow it to sync your workspace to this version: fetch, checkpoint dirty work, "
+        f"and run `git merge --no-ff --no-edit agent-v{running}`. Resolve any conflicts by hand. "
+        "If the merge brought changes, call `restart_vesta` afterward so the new skills load; "
         "if it was a no-op, no restart is needed. If it fails, tell the user what blocked it."
     )

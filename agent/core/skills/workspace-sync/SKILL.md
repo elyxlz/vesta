@@ -10,4 +10,8 @@ the 2026-07 workspace migrations are fleet-applied): released migration prompts 
 old boxes' synced scripts reference these paths verbatim. Everything this skill
 documented, including the Sync section the 2026-07 migrations point at, now lives in
 `~/agent/core/skills/upstream-sync/SKILL.md`; read that file and follow it as written.
-The scripts under `scripts/` forward to their renamed counterparts.
+Some released migration text parenthetically summarizes the old procedure as a rebase.
+That summary is historical: the current upstream-sync Sync section is authoritative and
+uses a merge. The migration may still call `set-cone.sh` and `mark_workspace_synced`
+afterward; those compatibility steps are safe no-ops that verify the result. The remaining
+scripts under `scripts/` forward to their renamed bootstrap/compatibility counterparts.

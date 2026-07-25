@@ -10,7 +10,7 @@ from . import logger, state_store, vestad_client
 from . import models as vm
 from .api import start_ws_server
 from .helpers import clear_notifications
-from .upstream_sync import vesta_version
+from .upstream_sync import vesta_version, workspace_synced
 
 
 def _opt_str(value: tp.Any) -> str:
@@ -84,17 +84,18 @@ def _mark_tools(state: vm.State, config: cfg.VestaConfig) -> list[tp.Any]:
 
     @tool(
         "mark_upstream_synced",
-        "Call once the upstream sync completed: the workspace was rebased onto this version's snapshot "
-        "(agent-v<version>) and any conflicts are resolved. Records the synced version; without this call "
-        "the sync boot turn re-fires on every boot. Call it BEFORE restart_vesta.",
+        "Legacy compatibility tool. Verifies that the running version's stock snapshot is in Git history; "
+        "current syncs need no separate completion marker.",
         {},
     )
     async def mark_upstream_synced(_args: dict[str, tp.Any]) -> dict[str, tp.Any]:
         version = vesta_version(config)
-        state.persisted.last_synced_version = version
-        await state_store.save_state_async(state.persisted, config)
-        logger.startup(f"Upstream sync marked complete by agent at v{version}")
-        return {"content": [{"type": "text", "text": f"synced: {version}"}]}
+        if version == "unknown" or not workspace_synced(config, version):
+            return {
+                "content": [{"type": "text", "text": f"error: agent-v{version} is not in the workspace's Git history"}],
+                "isError": True,
+            }
+        return {"content": [{"type": "text", "text": f"verified: agent-v{version} is in Git history; no marker is needed"}]}
 
     # LEGACY(remove-when: no agent predating the release that ships this rename remains and
     # the 2026-07 workspace migrations are fleet-applied): released migration prompts call

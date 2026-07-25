@@ -115,8 +115,9 @@ async def trash_notification_files(notifications: list[Notification], *, trash_d
 def format_notification_batch(notifications: list[Notification]) -> str:
     """Join the batch as newline-separated <channel> elements, matching how Claude Code delivers
     several native channel events together on one turn. No wrapper element: each <channel> is
-    self-contained. All read-time guidance (the reply command, the group-chat caveat) is the
-    producer's, carried in its `reply_hint` attribute; core injects nothing."""
+    self-contained. All read-time guidance is producer-owned: executable reply syntax is carried in
+    `reply_command`, while behavioral guidance such as the group-chat caveat stays in
+    `reply_hint`; core injects nothing."""
     return "\n".join(n.format_for_display() for n in notifications)
 
 
@@ -189,6 +190,16 @@ def greeting_turn(*, config: cfg.VestaConfig, state: vm.State, agent_message: st
 # --- Message processing ---
 
 
+def _log_queued_turn(text: str, *, user: bool, is_notification: bool) -> None:
+    """Render a queued item once, whether it runs as a plain turn or is delivered as a preempt."""
+    if user:
+        logger.user(text)
+        return
+    preview = text[:1000] + "..." if len(text) > 1000 else text
+    log = logger.notification if is_notification else logger.system
+    log(preview)
+
+
 async def _run_one_turn(
     text: str,
     *,
@@ -199,12 +210,7 @@ async def _run_one_turn(
 ) -> None:
     """Drive one queued turn through process_message, mapping failures to a graceful restart."""
     try:
-        if user:
-            logger.user(text)
-        else:
-            preview = text[:1000] + "..." if len(text) > 1000 else text
-            log = logger.notification if is_notification else logger.system
-            log(preview)
+        _log_queued_turn(text, user=user, is_notification=is_notification)
         state.event_bus.set_state("thinking")
         await process_message(text, state=state, config=config)
     except asyncio.CancelledError:
@@ -258,6 +264,12 @@ async def _watch_queue_during_turn(
         if queue_task in done:
             arrived = queue_task.result()
             if await send_preempt(arrived.text, state=state, config=config):
+                _log_queued_turn(
+                    arrived.text,
+                    user=arrived.is_user,
+                    is_notification=arrived.interruptible and not arrived.is_user,
+                )
+                logger.debug("Preempt sent (priority=now)")
                 clear_notifications(state, arrived.file_paths)
             else:
                 pending.append(arrived)
