@@ -79,6 +79,12 @@ Subagent (general-purpose):
     build fails or a page is blank, fix the reported errors and confirm `app/dist/` exists before
     starting the preview. `UNRESOLVED_IMPORT` means deps were never installed.
 
+    Pages are backed by live user stores (the tasks page reads and writes the user's real tasks),
+    so any browser pass over the served pages is read-only: load, render, and measure, never
+    click, submit, or toggle a control that can write. If verifying genuinely requires an
+    interaction, create throwaway data yourself, interact only with that, and delete it before
+    you report.
+
     ## Before you report: self-review
 
     - Completeness: did you build everything in the spec? Any content or interaction missed?
@@ -95,6 +101,7 @@ Subagent (general-purpose):
     - Status: DONE | DONE_WITH_CONCERNS | BLOCKED
     - What you built, and which files you changed
     - The daemon status line (`running`, `port`, `http_ok`) as evidence it serves
+    - Which live-data pages you exercised in a browser, so the requester knows what to re-verify
     - Any concern, or if BLOCKED, exactly what was underspecified or what failed
 
     Never claim success without the serve evidence. If the spec was genuinely ambiguous, do not
