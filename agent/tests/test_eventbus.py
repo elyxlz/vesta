@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+import time
 import typing as tp
 
 import pytest
@@ -10,6 +11,7 @@ from core.events import (
     _EVENTS_SCHEMA,
     _SCHEMA_VERSION,
     SUBSCRIBER_QUEUE_MAXSIZE,
+    WRITER_BUSY_TIMEOUT_S,
     AssistantEvent,
     EventBus,
     NotificationClearedEvent,
@@ -62,6 +64,29 @@ def test_emit_survives_history_write_failure(event_bus):
     event_bus._conn.close()
     event_bus.emit(AssistantEvent(type="assistant", text="still delivered"))
     assert q.get_nowait()["text"] == "still delivered"
+
+
+def test_emit_under_held_write_lock_returns_fast_and_drops(event_bus, caplog):
+    """A held exclusive lock on events.db (a VACUUM, an external tool) stalls emit for at most the
+    writer busy timeout, never 30s: the row is dropped with a warning, live subscribers still
+    receive the event, and the event loop thread is back within a small bound."""
+    locker = sqlite3.connect(str(event_bus._db_path))
+    locker.execute("BEGIN IMMEDIATE")
+    try:
+        q = event_bus.subscribe()
+        start = time.monotonic()
+        with caplog.at_level("WARNING", logger="vesta.events"):
+            event_bus.emit(AssistantEvent(type="assistant", text="under contention"))
+        elapsed = time.monotonic() - start
+    finally:
+        locker.close()
+
+    assert WRITER_BUSY_TIMEOUT_S <= 1.0
+    assert elapsed < 5.0, f"emit blocked {elapsed:.1f}s under a held write lock"
+    delivered = q.get_nowait()
+    assert delivered["text"] == "under contention"
+    assert delivered["id"] < 0
+    assert any("dropping event" in record.getMessage() for record in caplog.records)
 
 
 def test_no_data_dir():

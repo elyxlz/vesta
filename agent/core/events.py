@@ -226,11 +226,14 @@ def _migrate(conn: sqlite3.Connection) -> None:
         current = version
 
 
+# The writer connection's busy timeout: emit() runs INSERT+COMMIT inline on the event loop
+# thread, so this bounds how long a held lock can stall the whole loop per event. Kept short
+# since a long wait buys nothing; see the drop-on-expiry guard in emit() below.
+WRITER_BUSY_TIMEOUT_S = 1.0
+
+
 def _open(db_path: pl.Path) -> sqlite3.Connection:
-    # timeout sets SQLite's busy handler: a write waits up to N seconds for a held lock (e.g. a
-    # long-running VACUUM/maintenance op) instead of raising "database is locked" immediately.
-    # Pairs with the guard in emit() below.
-    conn = sqlite3.connect(str(db_path), timeout=30)
+    conn = sqlite3.connect(str(db_path), timeout=WRITER_BUSY_TIMEOUT_S)
     conn.execute("PRAGMA journal_mode=WAL")
     # Catches deep-page corruption (a hot-copied backup, bit rot) that a plain connect() would
     # let through lazily, so it surfaces here at boot rather than mid-turn during emit/recent.
