@@ -1748,9 +1748,12 @@ pub async fn create_container(
 
     tracing::info!(agent = %agent_name, image = %image, "creating container");
 
+    let network_name = ensure_agent_network(docker, agent_name).await?;
+
     let host_config = bollard::models::HostConfig {
         binds: Some(binds),
-        network_mode: Some(NETWORK_MODE.to_string()),
+        network_mode: Some(network_name),
+        extra_hosts: Some(vec![HOST_DOCKER_INTERNAL.to_string()]),
         restart_policy: Some(bollard::models::RestartPolicy {
             name: Some(bollard::models::RestartPolicyNameEnum::ON_FAILURE),
             maximum_retry_count: Some(RESTART_MAX_RETRIES),
@@ -3694,6 +3697,64 @@ mod tests {
         fn drop(&mut self) {
             docker_cleanup(&["network", "rm", &self.name]);
         }
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn create_container_attaches_to_its_own_agent_network() {
+        let docker = test_docker();
+        let tc = TestContainer::new("network-attach");
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let env_config = AgentEnvConfig {
+            config_dir: dir.path().to_path_buf(),
+            agents_dir: dir.path().to_path_buf(),
+            vestad_port: 1,
+            vestad_tunnel: None,
+        };
+        let _net_cleanup = TestNetwork {
+            name: agent_network_name(&tc.name),
+        };
+
+        let spec = ContainerSpec {
+            cname: &tc.name,
+            image: &test_agent_image(),
+            port: 41999,
+            agent_name: &tc.name,
+            user_mounts: &[],
+        };
+        create_container(&docker, &env_config, spec)
+            .await
+            .expect("create");
+
+        let info = docker.inspect_container(&tc.name, None).await.unwrap();
+        let networks = info
+            .network_settings
+            .as_ref()
+            .and_then(|s| s.networks.as_ref())
+            .expect("network settings present");
+        assert!(
+            networks.contains_key(&agent_network_name(&tc.name)),
+            "container should be attached to its own agent network, got {networks:?}"
+        );
+        assert_ne!(
+            info.host_config
+                .as_ref()
+                .and_then(|h| h.network_mode.as_deref()),
+            Some("host"),
+            "must not use host networking anymore"
+        );
+
+        let extra_hosts = info
+            .host_config
+            .as_ref()
+            .and_then(|h| h.extra_hosts.as_ref())
+            .expect("extra_hosts present");
+        assert!(
+            extra_hosts
+                .iter()
+                .any(|h| h.starts_with("host.docker.internal:")),
+            "expected a host.docker.internal mapping, got {extra_hosts:?}"
+        );
     }
 
     #[tokio::test]
