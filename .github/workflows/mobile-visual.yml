@@ -91,18 +91,29 @@ jobs:
       - name: Install app on simulator
         run: xcrun simctl install "$SIMULATOR_UDID" apps/mobile/build/Build/Products/Release-iphonesimulator/Vesta.app
 
-      # takeScreenshot files land in --test-output-dir (never the cwd), so
-      # both output dirs point inside the uploaded visual-out tree.
+      # takeScreenshot files land in Maestro's output dirs (never the cwd),
+      # so both point inside the uploaded visual-out tree.
       - name: Run screen catalog
         run: |
-          mkdir -p visual-out/screenshots
           maestro --device "$SIMULATOR_UDID" test \
-            --test-output-dir "$GITHUB_WORKSPACE/visual-out/screenshots" \
+            --test-output-dir "$GITHUB_WORKSPACE/visual-out/maestro-output" \
             --debug-output "$GITHUB_WORKSPACE/visual-out/maestro-debug" \
             --flatten-debug-output \
             --format junit \
             --output "$GITHUB_WORKSPACE/visual-out/report.xml" \
             apps/mobile/visual/flows
+
+      # Maestro nests each capture at <flow>/takeScreenshot/<name>.png; pull
+      # them into one flat folder for the contact sheet and summary.
+      - name: Collect screenshots
+        if: always()
+        run: |
+          mkdir -p visual-out/screenshots
+          for output_dir in visual-out/maestro-output visual-out/maestro-debug; do
+            if [ -d "$output_dir" ]; then
+              find "$output_dir" -path '*/takeScreenshot/*' -name '*.png' -exec cp {} visual-out/screenshots/ \;
+            fi
+          done
 
       - name: Generate contact sheet
         if: always()

@@ -18,7 +18,7 @@ The current catalog covers the disconnected surfaces: they render deterministica
 2. Start from a known state: `launchApp` with `clearState: true` wipes app data so every run begins identically.
 3. Navigate deterministically: tap stable visible text or accessibility labels, or use `openLink` with the `vesta://` scheme for routes that have no tap path. Maestro selector strings are full-match regular expressions, and iOS merges child icon glyphs into a button's accessible text, so wrap anchors in `.*` when the element carries an icon and wildcard characters like `?`.
 4. Settle before capturing: `extendedWaitUntil` on a stable text anchor unique to the page, then `waitForAnimationToEnd`.
-5. Capture with `takeScreenshot: NN-page-name`, matching the flow's prefix so the contact sheet stays ordered. Screenshots land in Maestro's test output directory (the workflow points `--test-output-dir` into the artifact tree).
+5. Capture with `takeScreenshot: NN-page-name`, matching the flow's prefix so the contact sheet stays ordered. Screenshots land in Maestro's output directories (never the working directory); the workflow points them into the artifact tree and collects every `takeScreenshot` file into one flat `screenshots/` folder.
 
 Determinism rules for every flow: no live gateways or credentials, no dependence on wall-clock time or network responses, anchors on copy that only changes when the page itself changes. The simulator is pinned by `boot-simulator.sh` (device type, newest installed runtime, `en_US` locale, light appearance, 9:41 status bar) and the workflow pins `TZ=UTC` and the Maestro version.
 

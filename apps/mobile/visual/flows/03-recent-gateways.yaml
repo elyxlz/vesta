@@ -7,6 +7,11 @@ appId: com.vesta.mobile
     visible: "Self-hosting.*Connect your gateway"
     timeout: 60000
 - openLink: vesta://recent-gateways
+# openLink from outside the app pops the springboard "Open in Vesta?" dialog;
+# optional so the flow survives an iOS version that skips it.
+- tapOn:
+    text: "Open"
+    optional: true
 - extendedWaitUntil:
     visible: ".*No saved gateways.*"
     timeout: 15000
