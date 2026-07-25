@@ -227,10 +227,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
 
 
 # The writer connection's busy timeout: emit() runs INSERT+COMMIT inline on the event loop
-# thread, so this bounds how long a held lock (a long-running VACUUM/maintenance op, an
-# external tool touching the db) can stall the whole loop per event. Kept short: on expiry
-# the guard in emit() drops the row with a warning, the accepted contention behavior, so a
-# long wait buys nothing.
+# thread, so this bounds how long a held lock can stall the whole loop per event. Kept short
+# since a long wait buys nothing; see the drop-on-expiry guard in emit() below.
 WRITER_BUSY_TIMEOUT_S = 1.0
 
 

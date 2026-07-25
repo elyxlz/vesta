@@ -79,7 +79,6 @@ def test_emit_under_held_write_lock_returns_fast_and_drops(event_bus, caplog):
             event_bus.emit(AssistantEvent(type="assistant", text="under contention"))
         elapsed = time.monotonic() - start
     finally:
-        locker.rollback()
         locker.close()
 
     assert WRITER_BUSY_TIMEOUT_S <= 1.0
