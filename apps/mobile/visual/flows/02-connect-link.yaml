@@ -12,4 +12,4 @@ appId: com.vesta.mobile
     timeout: 15000
 - waitForAnimationToEnd:
     timeout: 5000
-- takeScreenshot: ${SCREENSHOT_DIR}/02-connect-link
+- takeScreenshot: 02-connect-link

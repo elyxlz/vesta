@@ -4,12 +4,12 @@ appId: com.vesta.mobile
 - launchApp:
     clearState: true
 - extendedWaitUntil:
-    visible: "Connect with Vesta Cloud"
+    visible: "Self-hosting.*Connect your gateway"
     timeout: 60000
 - openLink: vesta://recent-gateways
 - extendedWaitUntil:
-    visible: "No saved gateways."
+    visible: ".*No saved gateways.*"
     timeout: 15000
 - waitForAnimationToEnd:
     timeout: 5000
-- takeScreenshot: ${SCREENSHOT_DIR}/03-recent-gateways
+- takeScreenshot: 03-recent-gateways

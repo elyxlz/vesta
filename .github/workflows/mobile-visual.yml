@@ -91,14 +91,17 @@ jobs:
       - name: Install app on simulator
         run: xcrun simctl install "$SIMULATOR_UDID" apps/mobile/build/Build/Products/Release-iphonesimulator/Vesta.app
 
+      # takeScreenshot files land in --test-output-dir (never the cwd), so
+      # both output dirs point inside the uploaded visual-out tree.
       - name: Run screen catalog
         run: |
           mkdir -p visual-out/screenshots
           maestro --device "$SIMULATOR_UDID" test \
-            -e SCREENSHOT_DIR="$GITHUB_WORKSPACE/visual-out/screenshots" \
-            --debug-output visual-out/maestro-debug \
+            --test-output-dir "$GITHUB_WORKSPACE/visual-out/screenshots" \
+            --debug-output "$GITHUB_WORKSPACE/visual-out/maestro-debug" \
+            --flatten-debug-output \
             --format junit \
-            --output visual-out/report.xml \
+            --output "$GITHUB_WORKSPACE/visual-out/report.xml" \
             apps/mobile/visual/flows
 
       - name: Generate contact sheet
@@ -124,8 +127,8 @@ jobs:
             echo ""
             echo "Captured pages (download the mobile-visual-screenshots artifact for the images):"
             echo ""
-            if ls visual-out/screenshots/*.png >/dev/null 2>&1; then
-              for shot in visual-out/screenshots/*.png; do
+            if find visual-out/screenshots -name '*.png' | grep -q .; then
+              find visual-out/screenshots -name '*.png' | sort | while read -r shot; do
                 echo "- $(basename "$shot" .png)"
               done
             else

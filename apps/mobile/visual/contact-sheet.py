@@ -27,7 +27,7 @@ def main() -> int:
         return 2
     screenshots_dir = Path(sys.argv[1])
     output = Path(sys.argv[2])
-    shots = sorted(screenshots_dir.glob("*.png"))
+    shots = sorted(screenshots_dir.rglob("*.png"))
     if not shots:
         print("no screenshots found; skipping contact sheet", file=sys.stderr)
         return 0

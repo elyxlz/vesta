@@ -1,11 +1,13 @@
 # Page: connect (the disconnected landing screen).
+# Anchors wrap in .* because iOS merges child icon glyphs into a button's
+# accessible text, and Maestro selectors are full-match regular expressions.
 appId: com.vesta.mobile
 ---
 - launchApp:
     clearState: true
 - extendedWaitUntil:
-    visible: "Connect with Vesta Cloud"
+    visible: ".*Connect with Vesta Cloud.*"
     timeout: 60000
 - waitForAnimationToEnd:
     timeout: 5000
-- takeScreenshot: ${SCREENSHOT_DIR}/01-connect
+- takeScreenshot: 01-connect
