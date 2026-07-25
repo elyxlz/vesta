@@ -91,7 +91,8 @@ func TestResolveStdinArgsSubstitutesBodyBeforeForwarding(t *testing.T) {
 	}
 }
 
-func TestResolveStdinArgsLeavesArgsUntouchedWhenNoDash(t *testing.T) {
+// Callers still hold the slice they passed, so the substitution must not write through it.
+func TestResolveStdinArgsDoesNotMutateItsInput(t *testing.T) {
 	args := []string{"--to", "Ana", "--message", "plain"}
 	got, err := resolveStdinArgs(args, "message")
 	if err != nil {

@@ -710,41 +710,36 @@ func cmdSendMessage(args []string, wac *WhatsAppClient) (any, error) {
 
 // resolveStdinArgs replaces a `-` body value with this process's stdin, before the command is
 // forwarded to the daemon. executeCommand runs inside the daemon, whose stdin is not ours, so a `-`
-// that reached it would read EOF and the send would fail as an empty body. Handles both
-// `--flag -` and `--flag=-`; a body is read at most once.
+// that reached it would read EOF and the send would fail as an empty body. Accepts both `--flag -`
+// and `--flag=-`, the two forms the flag package itself accepts; a command carries one body, so the
+// first match is the only one.
 func resolveStdinArgs(args []string, bodyFlags ...string) ([]string, error) {
 	out := slices.Clone(args)
-	body := ""
-	read := false
-	readOnce := func() (string, error) {
-		if !read {
-			data, err := io.ReadAll(os.Stdin)
-			if err != nil {
-				return "", err
-			}
-			body, read = strings.TrimRight(string(data), "\r\n"), true
-		}
-		return body, nil
-	}
-
 	for i, arg := range out {
-		name, inline, hasInline := strings.Cut(arg, "=")
+		name, value, inline := strings.Cut(arg, "=")
 		if !strings.HasPrefix(name, "-") || !slices.Contains(bodyFlags, strings.TrimLeft(name, "-")) {
 			continue
 		}
-		if hasInline && inline == "-" {
-			text, err := readOnce()
-			if err != nil {
-				return nil, err
+		at := i
+		if !inline {
+			at, value = i+1, ""
+			if at < len(out) {
+				value = out[at]
 			}
-			out[i] = name + "=" + text
-		} else if !hasInline && i+1 < len(out) && out[i+1] == "-" {
-			text, err := readOnce()
-			if err != nil {
-				return nil, err
-			}
-			out[i+1] = text
 		}
+		if value != "-" {
+			continue
+		}
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return nil, err
+		}
+		body := strings.TrimRight(string(data), "\r\n")
+		if inline {
+			body = name + "=" + body
+		}
+		out[at] = body
+		return out, nil
 	}
 	return out, nil
 }
