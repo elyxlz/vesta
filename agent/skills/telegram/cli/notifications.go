@@ -89,18 +89,24 @@ func quoteReplyArg(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
-func notificationReplyCommand(chatName, contactName, username, instance string, isDirectChat, contactSaved bool) string {
+// The addressed template is only offered for a target `telegram send` can actually resolve
+// (MessageStore.ResolveRecipient): a saved contact, matched on contacts.name, or a stored chat,
+// matched on chats.name. An unsaved sender has no contacts row by definition, and their @username
+// is looked up in that same table, so there is nothing to address them by; they get the bare
+// command and the agent works the recipient out from the notification's other fields.
+func notificationReplyCommand(chatName, contactName, instance string, isDirectChat, contactSaved bool) string {
+	const bare = "telegram send"
 	target := chatName
 	if isDirectChat {
-		if contactSaved {
-			target = contactName
-		} else if username != "" {
-			target = "@" + username
-		} else {
-			target = contactName
+		if !contactSaved {
+			return bare
 		}
+		target = contactName
 	}
-	command := "telegram send"
+	if target == "" {
+		return bare
+	}
+	command := bare
 	if instance != "" {
 		command += " --instance " + quoteReplyArg(instance)
 	}
@@ -163,7 +169,7 @@ func WriteEditNotification(
 		Timestamp:       time.Now().Format(time.RFC3339),
 		TargetMessageID: targetMessageID,
 		ContactUnknown:  !contactSaved,
-		ReplyCommand:    notificationReplyCommand(chatName, contactName, username, instance, isDirectChat, contactSaved),
+		ReplyCommand:    notificationReplyCommand(chatName, contactName, instance, isDirectChat, contactSaved),
 		ReplyHint:       "they changed a message you may have already answered; reply only if the change asks something new",
 	}
 	if !isDirectChat {
@@ -207,7 +213,7 @@ func WriteNotification(
 		Timestamp:      time.Now().Format(time.RFC3339),
 		MessageID:      messageID,
 		ContactUnknown: !contactSaved,
-		ReplyCommand:   notificationReplyCommand(chatName, contactName, username, instance, isDirectChat, contactSaved),
+		ReplyCommand:   notificationReplyCommand(chatName, contactName, instance, isDirectChat, contactSaved),
 		ReplyHint:      "think about how you can best show your personality",
 	}
 	if !isDirectChat {

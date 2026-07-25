@@ -113,14 +113,23 @@ func quoteReplyArg(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
+// The addressed template is only offered for a target `whatsapp send` can actually resolve
+// (WhatsAppClient.ResolveRecipient): a saved contact or group by name, or an unsaved sender by
+// phone number, which resolves on its own without a saved contact. With no name and no number
+// there is nothing to address, so the bare command goes out and the agent works the recipient out
+// from the notification's other fields.
 func notificationReplyCommand(ctx NotifContext) string {
+	const bare = "whatsapp send"
 	target := ctx.ContactPhone
 	if !ctx.IsDirectChat {
 		target = ctx.ChatName
 	} else if ctx.ContactSaved {
 		target = ctx.ContactName
 	}
-	command := "whatsapp send"
+	if target == "" {
+		return bare
+	}
+	command := bare
 	if ctx.Instance != "" {
 		command += " --instance " + quoteReplyArg(ctx.Instance)
 	}
