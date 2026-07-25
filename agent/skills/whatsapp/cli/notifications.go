@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,6 +28,7 @@ type messageNotif struct {
 	QuotedText      string `json:"quoted_text,omitempty"`
 	Timestamp       string `json:"timestamp"`
 	MessageID       string `json:"message_id,omitempty"`
+	ChatJID         string `json:"chat_jid,omitempty"`
 	ContactUnknown  bool   `json:"contact_unknown,omitempty"`
 	ReplyCommand    string `json:"reply_command,omitempty"`
 	ReplyHint       string `json:"reply_hint,omitempty"`
@@ -64,6 +66,7 @@ type editNotif struct {
 	Message         string `json:"message,omitempty"`
 	Timestamp       string `json:"timestamp"`
 	TargetMessageID string `json:"target_message_id"`
+	ChatJID         string `json:"chat_jid,omitempty"`
 	ContactUnknown  bool   `json:"contact_unknown,omitempty"`
 	ReplyCommand    string `json:"reply_command,omitempty"`
 	ReplyHint       string `json:"reply_hint,omitempty"`
@@ -108,6 +111,24 @@ func notifPhone(ctx NotifContext) string {
 	return ctx.ContactPhone
 }
 
+func quoteReplyArg(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+// Every notification carries a complete reply command. The target is always the chat JID, which
+// ResolveRecipient matches first and which needs no saved contact, so there is no case where the
+// agent has to work the recipient out for itself. It stops at `--message -`: the notification is
+// rendered as an XML attribute, so a heredoc here would reach the agent as &lt;&lt; and &#10;
+// entities. `-` says the body comes from stdin and SKILL.md carries the one heredoc shape, which
+// keeps the reply body out of the shell's reach.
+func notificationReplyCommand(ctx NotifContext) string {
+	command := "whatsapp send"
+	if ctx.Instance != "" {
+		command += " --instance " + quoteReplyArg(ctx.Instance)
+	}
+	return command + " --to " + quoteReplyArg(ctx.ChatJID) + " --message -"
+}
+
 func writeNotificationFile(notifDir string, data any, notifType string) error {
 	if notifDir == "" {
 		return nil
@@ -141,8 +162,9 @@ func WriteNotification(
 		QuotedText:      quotedText,
 		Timestamp:       time.Now().Format(time.RFC3339),
 		MessageID:       messageID,
+		ChatJID:         ctx.ChatJID,
 		ContactUnknown:  !ctx.ContactSaved,
-		ReplyCommand:    "whatsapp send",
+		ReplyCommand:    notificationReplyCommand(ctx),
 		ReplyHint:       "think about how you can best show your personality",
 	}
 	if !ctx.IsDirectChat {
@@ -204,8 +226,9 @@ func WriteEditNotification(ctx NotifContext, targetMessageID, oldText, newText s
 		Message:         newText,
 		Timestamp:       time.Now().Format(time.RFC3339),
 		TargetMessageID: targetMessageID,
+		ChatJID:         ctx.ChatJID,
 		ContactUnknown:  !ctx.ContactSaved,
-		ReplyCommand:    "whatsapp send",
+		ReplyCommand:    notificationReplyCommand(ctx),
 		ReplyHint:       "they changed a message you may have already answered; reply only if the change asks something new",
 	}
 	n.applyChatContext(ctx)

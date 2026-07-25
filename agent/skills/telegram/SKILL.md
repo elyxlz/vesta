@@ -10,9 +10,14 @@ description: Telegram: send/receive messages; reply to source=telegram notificat
 
 ## Quick Reference
 ```bash
-telegram send '<contact_name>' 'Hello!'
-telegram send '<contact_name>' 'long text' --message-file /tmp/body.txt   # prefer --message-file when the body has apostrophes, quotes, backticks, $(...), or multiple lines: an inline string lets the shell mangle or even evaluate it
-telegram send '<contact_name>' 'reply' --reply-to '<message_id>'          # quote a message
+# The one shape to use for any message body. Replace only the middle line.
+telegram send --to '<contact_name>' --message - <<'MSG'
+can't wait to see you
+MSG
+
+telegram send --to '<contact_name>' --message - --reply-to '<message_id>' <<'MSG'   # quote a message
+same here
+MSG
 telegram send '<contact_name>' '<a brief or list they asked for>' --longform  # bypass short-bubble lint
 telegram chats
 telegram contacts
@@ -63,7 +68,7 @@ Notification types written for the agent: `message`, `callback_query` (button ta
 reactions via `react` works). Aliases: `send`/`edit`/`del`/`voice`/`action`/`pin`/`unpin`.
 
 ## Notes
-- `send-message` enforces short-bubble texting: a wall (over ~220 chars, or any text after a full stop) is rejected so you re-send as several short calls, one thought each. Don't use full stops at all: a `.`, `!` or `?` may only close a bubble, never carry text after it. Ellipses stay free, they're a beat rather than a stop. For genuine reference material the user asked for (a brief, a code block, a list), pass `--longform` to bypass. `--message-file` sends are linted too, so `--longform` is the only escape hatch.
+- `send-message` enforces short-bubble texting: a wall (over ~220 chars, or any text after a full stop) is rejected so you re-send as several short calls, one thought each. Don't use full stops at all: a `.`, `!` or `?` may only close a bubble, never carry text after it. Ellipses stay free, they're a beat rather than a stop. For genuine reference material the user asked for (a brief, a code block, a list), pass `--longform` to bypass. Heredoc sends are linted too, so `--longform` is the only escape hatch.
 - A numbered or bulleted list is fine to send as one message (each item is one short thought); a line-leading marker like `1.` or `2)` is not a full stop, so a list does not need `--longform`.
 - Chat IDs are numeric (e.g., `123456789` for private, `-1001234567890` for groups)
 - Users must `/start` the bot before it can message them

@@ -367,29 +367,16 @@ func cmdCall(args []string, wac *WhatsAppClient) (any, error) {
 }
 
 func cmdSay(args []string, wac *WhatsAppClient) (any, error) {
-	var text, textFile string
+	var text string
 	fs := flag.NewFlagSet("say", flag.ContinueOnError)
-	fs.StringVar(&text, "text", "", "What to speak into the call (use '-' to read from stdin)")
-	fs.StringVar(&textFile, "text-file", "", "Path to a file with the text to speak (use '-' for stdin). Preferred for lines with apostrophes or quotes.")
+	fs.StringVar(&text, "text", "", "What to speak into the call, or '-' to read it from stdin (use a <<'MSG' heredoc for anything with apostrophes or quotes)")
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
-	if (text == "") == (textFile == "") {
-		return nil, fmt.Errorf("exactly one of --text or --text-file is required")
-	}
-	source := text
-	if textFile != "" {
-		source = textFile
-	}
-	if source == "-" || textFile != "" {
-		body, err := readMessageSource(source)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read spoken text: %w", err)
-		}
-		text = body
-	}
-	if text == "" {
-		return nil, fmt.Errorf("spoken text is empty")
+	// resolveStdinArgs swapped a `-` for the real text in the client process; still seeing one here
+	// means nothing was piped in.
+	if text == "" || text == "-" {
+		return nil, fmt.Errorf("--text is required (pass '-' and a <<'MSG' heredoc to read it from stdin)")
 	}
 	cm, err := requireCallMgr(wac)
 	if err != nil {

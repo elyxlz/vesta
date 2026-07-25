@@ -75,17 +75,23 @@ rather than run WhatsApp over a datacenter IP. A supplied proxy is validated too
 - Most common subcommands accept leading positional args that the CLI rewrites into flags (e.g. `whatsapp send 'Alice' 'Hi'` is identical to `whatsapp send --to 'Alice' --message 'Hi'`). You can always use the flag form.
 - Flags for a specific subcommand: `whatsapp <subcommand> --help`. The top-level `whatsapp` with no args prints the command list.
 - Names for `--to` / `--chat-id` / `--group`: contact name, phone (`+E.164`), group name, or JID; the CLI resolves them.
-- For `send-message`, prefer `--message-file <path>` (or `--message-file -` / `--message -` to read from stdin) when the body contains apostrophes, quotes, backticks, `$(...)`, or multiple lines: an inline `--message 'text'` lets the shell mangle or even evaluate it.
-- `send-message` enforces short-bubble texting: a wall (over ~220 chars, or any text after a full stop) is rejected so you re-send as several short calls, one thought each. Don't use full stops at all: a `.`, `!` or `?` may only close a bubble, never carry text after it. Ellipses stay free, they're a beat rather than a stop. For genuine reference material the user asked for (a brief, a code block, a list), pass `--longform` to bypass. This applies to `--message-file` sends too, so `--longform` is the only escape hatch.
+- Send every message body through `--message -` and a quoted heredoc, as in the example below. The shell expands nothing inside `<<'MSG'`, so apostrophes, quotes, backticks, `$(...)` and newlines all pass through untouched. An inline `--message 'text'` breaks on the first apostrophe, so use it only for text you can see has none.
+- `send-message` enforces short-bubble texting: a wall (over ~220 chars, or any text after a full stop) is rejected so you re-send as several short calls, one thought each. Don't use full stops at all: a `.`, `!` or `?` may only close a bubble, never carry text after it. Ellipses stay free, they're a beat rather than a stop. For genuine reference material the user asked for (a brief, a code block, a list), pass `--longform` to bypass. This applies to heredoc sends too, so `--longform` is the only escape hatch.
 - A numbered or bulleted list is fine to send as one message (each item is one short thought); a line-leading marker like `1.` or `2)` is not a full stop, so a list does not need `--longform`.
 
 ```bash
-whatsapp send --to 'Alice' --message 'Hi'          # positionals also work: whatsapp send Alice 'Hi'
-whatsapp send --to 'Alice' --message 'reply' --reply-to '<message_id>'   # quote a message
+# The one shape to use for any message body. Replace only the middle line.
+whatsapp send --to 'Alice' --message - <<'MSG'
+can't wait to see you
+MSG
+
+whatsapp send --to 'Alice' --message - --reply-to '<message_id>' <<'MSG'   # quote a message
+same here
+MSG
 ```
 - `--to` accepts a contact name, phone (`+E.164`), group name, or JID; the CLI resolves it.
-- Prefer `--message-file <path>` (or `--message -` / `--message-file -` for stdin) when the
-  text has apostrophes, quotes, backticks, `$(...)`, or multiple lines, so the shell can't mangle it.
+- `--message -` reads the body from stdin; pair it with a quoted heredoc so the shell cannot
+  mangle or evaluate anything in the text.
 - Short bubbles only: a wall (over ~220 chars, or 3+ sentences in one bubble) is rejected.
   Re-send as several short calls, one thought each. Pass `--longform` only for genuine
   reference material the user asked for (a brief, a code block, a list).

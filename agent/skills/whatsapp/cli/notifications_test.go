@@ -9,7 +9,7 @@ import (
 
 func savedCtx(dir string) NotifContext {
 	return NotifContext{
-		NotifDir: dir, Instance: "personal", ChatName: "Ana",
+		NotifDir: dir, Instance: "personal", ChatJID: "4477000111@s.whatsapp.net", ChatName: "Ana",
 		ContactName: "Ana", ContactPhone: "+15551234567",
 		ContactSaved: true, IsDirectChat: true, Sender: "Ana",
 	}
@@ -17,7 +17,7 @@ func savedCtx(dir string) NotifContext {
 
 func unsavedCtx(dir string) NotifContext {
 	return NotifContext{
-		NotifDir: dir, Instance: "personal", ChatName: "+15559998888",
+		NotifDir: dir, Instance: "personal", ChatJID: "15559998888@s.whatsapp.net", ChatName: "+15559998888",
 		ContactName: "", ContactPhone: "+15559998888",
 		ContactSaved: false, IsDirectChat: true, Sender: "+15559998888",
 	}

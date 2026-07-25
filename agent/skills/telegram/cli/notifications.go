@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,6 +27,7 @@ type messageNotif struct {
 	ReplyToID      int64  `json:"reply_to_id,omitempty"`
 	Timestamp      string `json:"timestamp"`
 	MessageID      int64  `json:"message_id,omitempty"`
+	ChatID         int64  `json:"chat_id,omitempty"`
 	ContactUnknown bool   `json:"contact_unknown,omitempty"`
 	ReplyCommand   string `json:"reply_command,omitempty"`
 	ReplyHint      string `json:"reply_hint,omitempty"`
@@ -61,6 +64,7 @@ type editNotif struct {
 	Message         string `json:"message"`
 	Timestamp       string `json:"timestamp"`
 	TargetMessageID int64  `json:"target_message_id"`
+	ChatID          int64  `json:"chat_id,omitempty"`
 	ContactUnknown  bool   `json:"contact_unknown,omitempty"`
 	ReplyCommand    string `json:"reply_command,omitempty"`
 	ReplyHint       string `json:"reply_hint,omitempty"`
@@ -82,6 +86,24 @@ type callbackNotif struct {
 	Username       string `json:"username,omitempty"`
 	Timestamp      string `json:"timestamp"`
 	ContactUnknown bool   `json:"contact_unknown,omitempty"`
+}
+
+func quoteReplyArg(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+// Every notification carries a complete reply command. The target is always the numeric chat ID, which
+// ResolveRecipient matches first and which needs no saved contact, so there is no case where the
+// agent has to work the recipient out for itself. It stops at `--message -`: the notification is
+// rendered as an XML attribute, so a heredoc here would reach the agent as &lt;&lt; and &#10;
+// entities. `-` says the body comes from stdin and SKILL.md carries the one heredoc shape, which
+// keeps the reply body out of the shell's reach.
+func notificationReplyCommand(chatID int64, instance string) string {
+	command := "telegram send"
+	if instance != "" {
+		command += " --instance " + quoteReplyArg(instance)
+	}
+	return command + " --to " + quoteReplyArg(strconv.FormatInt(chatID, 10)) + " --message -"
 }
 
 func WriteCallbackNotification(
@@ -117,7 +139,7 @@ func WriteCallbackNotification(
 }
 
 func WriteEditNotification(
-	notifDir string, targetMessageID int64, chatName, contactName, username, instance string,
+	notifDir string, targetMessageID, chatID int64, chatName, contactName, username, instance string,
 	contactSaved, isDirectChat bool,
 	sender, oldText, newText string,
 ) error {
@@ -139,8 +161,9 @@ func WriteEditNotification(
 		Message:         newText,
 		Timestamp:       time.Now().Format(time.RFC3339),
 		TargetMessageID: targetMessageID,
+		ChatID:          chatID,
 		ContactUnknown:  !contactSaved,
-		ReplyCommand:    "telegram send",
+		ReplyCommand:    notificationReplyCommand(chatID, instance),
 		ReplyHint:       "they changed a message you may have already answered; reply only if the change asks something new",
 	}
 	if !isDirectChat {
@@ -159,7 +182,7 @@ func WriteEditNotification(
 }
 
 func WriteNotification(
-	notifDir string, messageID int64, chatName, contactName, username, instance string,
+	notifDir string, messageID, chatID int64, chatName, contactName, username, instance string,
 	contactSaved, isDirectChat bool,
 	sender, content, mediaType string,
 	replyToID int64,
@@ -183,8 +206,9 @@ func WriteNotification(
 		ReplyToID:      replyToID,
 		Timestamp:      time.Now().Format(time.RFC3339),
 		MessageID:      messageID,
+		ChatID:         chatID,
 		ContactUnknown: !contactSaved,
-		ReplyCommand:   "telegram send",
+		ReplyCommand:   notificationReplyCommand(chatID, instance),
 		ReplyHint:      "think about how you can best show your personality",
 	}
 	if !isDirectChat {

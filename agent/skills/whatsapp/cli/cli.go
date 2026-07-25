@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -329,7 +330,11 @@ func runOneShot(command string) {
 	if err := startDaemonProcess(linkServeArgs()); err != nil {
 		failJSON("could not start the whatsapp daemon: %v; run `whatsapp status`", err)
 	}
-	output, exitCode, connected := trySocketCommand(sockPath, command, stripGlobalFlags(os.Args[1:]))
+	args, err := resolveStdinArgs(stripGlobalFlags(os.Args[1:]), "message", "text")
+	if err != nil {
+		failJSON("could not read the body from stdin: %v", err)
+	}
+	output, exitCode, connected := trySocketCommand(sockPath, command, args)
 	if !connected {
 		failJSON("whatsapp daemon is not answering; run `whatsapp status`")
 	}
@@ -672,12 +677,11 @@ func cmdListChats(args []string, wac *WhatsAppClient) (any, error) {
 }
 
 func cmdSendMessage(args []string, wac *WhatsAppClient) (any, error) {
-	var to, message, messageFile, replyTo string
+	var to, message, replyTo string
 	var longform bool
 	fs := flag.NewFlagSet("send-message", flag.ContinueOnError)
 	fs.StringVar(&to, "to", "", "Recipient")
-	fs.StringVar(&message, "message", "", "Message text (use '-' to read from stdin)")
-	fs.StringVar(&messageFile, "message-file", "", "Path to a file containing the message body (use '-' for stdin). Preferred for multi-line text or content with apostrophes / quotes that complicate shell escaping.")
+	fs.StringVar(&message, "message", "", "Message text, or '-' to read the body from stdin (use a <<'MSG' heredoc for anything with apostrophes, quotes, backticks or newlines)")
 	fs.StringVar(&replyTo, "reply-to", "", "Message ID to reply/quote (optional)")
 	fs.BoolVar(&longform, "longform", false, "Bypass the short-bubble lint for genuine reference material (a brief, a code block, a list they asked for).")
 	if err := parseFlags(fs, args); err != nil {
@@ -686,24 +690,10 @@ func cmdSendMessage(args []string, wac *WhatsAppClient) (any, error) {
 	if to == "" {
 		return nil, fmt.Errorf("--to is required")
 	}
-	if (message == "") == (messageFile == "") {
-		return nil, fmt.Errorf("exactly one of --message or --message-file is required")
-	}
-	if messageFile != "" {
-		body, err := readMessageSource(messageFile)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read --message-file: %w", err)
-		}
-		message = body
-	} else if message == "-" {
-		body, err := readMessageSource("-")
-		if err != nil {
-			return nil, fmt.Errorf("failed to read stdin: %w", err)
-		}
-		message = body
-	}
-	if message == "" {
-		return nil, fmt.Errorf("message body is empty")
+	// resolveStdinArgs swapped a `-` for the real body in the client process. Still seeing one here
+	// means nothing was piped in, so say that rather than sending a literal dash.
+	if message == "" || message == "-" {
+		return nil, fmt.Errorf("--message is required (pass '-' and a <<'MSG' heredoc to read the body from stdin)")
 	}
 	if !longform {
 		if reason := bubbleLintReason(message); reason != "" {
@@ -718,21 +708,40 @@ func cmdSendMessage(args []string, wac *WhatsAppClient) (any, error) {
 	return result, nil
 }
 
-// readMessageSource loads a message body from a file path or "-" for stdin.
-// Trailing newlines are stripped so content from `echo` or editor-saved files
-// does not produce a leading/trailing blank line in the sent message.
-func readMessageSource(src string) (string, error) {
-	var data []byte
-	var err error
-	if src == "-" {
-		data, err = io.ReadAll(os.Stdin)
-	} else {
-		data, err = os.ReadFile(src)
+// resolveStdinArgs replaces a `-` body value with this process's stdin, before the command is
+// forwarded to the daemon. executeCommand runs inside the daemon, whose stdin is not ours, so a `-`
+// that reached it would read EOF and the send would fail as an empty body. Accepts both `--flag -`
+// and `--flag=-`, the two forms the flag package itself accepts; a command carries one body, so the
+// first match is the only one.
+func resolveStdinArgs(args []string, bodyFlags ...string) ([]string, error) {
+	out := slices.Clone(args)
+	for i, arg := range out {
+		name, value, inline := strings.Cut(arg, "=")
+		if !strings.HasPrefix(name, "-") || !slices.Contains(bodyFlags, strings.TrimLeft(name, "-")) {
+			continue
+		}
+		at := i
+		if !inline {
+			at, value = i+1, ""
+			if at < len(out) {
+				value = out[at]
+			}
+		}
+		if value != "-" {
+			continue
+		}
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return nil, err
+		}
+		body := strings.TrimRight(string(data), "\r\n")
+		if inline {
+			body = name + "=" + body
+		}
+		out[at] = body
+		return out, nil
 	}
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimRight(string(data), "\r\n"), nil
+	return out, nil
 }
 
 func cmdSendFile(args []string, wac *WhatsAppClient) (any, error) {
