@@ -43,10 +43,16 @@ async def activate_rate_limit(
 ) -> ProviderCooldown:
     """Persist and publish one provider's rejected model request.
 
-    Provider adapters own parsing their native signal; this function owns the
-    shared state transition so every provider blocks scheduling identically.
+    Provider adapters own parsing their native signal; this function owns the shared state
+    transition so every provider blocks scheduling identically. A live cooldown is only ever
+    extended: the signals differ in precision (Claude names its window and reset, OpenRouter's
+    proxy reads Retry-After, a bare 429 knows neither), and they can arrive in either order for
+    one rejection, so the coarse fallback must never cut a precise deadline short.
     """
     cooldown = rate_limit_cooldown(resets_at=resets_at, window=window)
+    current = active_cooldown(state.persisted.provider_cooldown)
+    if current is not None and current.until >= cooldown.until:
+        return current
     await _set_cooldown(cooldown, state=state, config=config)
     return cooldown
 

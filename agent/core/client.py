@@ -37,6 +37,7 @@ from .helpers import get_constitution_path, get_memory_path
 from .model_access import activate_rate_limit, model_access_available, note_rate_limit_once, wait_for_model_access
 from .provider import (
     OPENROUTER_SMALL_FAST_MODEL,
+    RATE_LIMITED_STATUS,
     is_terminal_provider_error,
     is_unauthenticated,
     observed_provider_failure,
@@ -249,6 +250,31 @@ async def _note_rate_limit(msg: RateLimitEvent, *, state: vm.State, config: cfg.
         await vestad_client.send_user_notification("rate_limited", agent_name, notice)
 
 
+async def _note_rejected_turn(*, state: vm.State, config: cfg.VestaConfig) -> None:
+    """Every provider can refuse a turn with HTTP 429, and for most of them that status is the whole
+    signal: only Claude names the window it hit and when it resets, and only OpenRouter's traffic
+    passes through a proxy that can read Retry-After. So this opens a fixed-length cooldown, which
+    activate_rate_limit will not let undercut a longer one either signal already established."""
+    kind = state.provider_status.kind if state.provider_status is not None else None
+    cooldown = await activate_rate_limit(state=state, config=config, resets_at=None, window=kind)
+    resets = time.strftime("%I:%M %p %Z", time.localtime(cooldown.until))
+    note_rate_limit_once(
+        state=state,
+        window=kind,
+        resets_at=cooldown.until,
+        notice=f"Rate limited by {kind or 'the provider'}, pausing until {resets}.",
+    )
+
+
+async def _note_rate_limit_signal(msg: Message, *, state: vm.State, config: cfg.VestaConfig) -> None:
+    """The two ways a rejection reaches this stream: Claude's structured classification, which
+    names the window, or any provider's bare 429 on the result."""
+    if isinstance(msg, RateLimitEvent):
+        await _note_rate_limit(msg, state=state, config=config)
+    elif isinstance(msg, ResultMessage) and msg.api_error_status == RATE_LIMITED_STATUS:
+        await _note_rejected_turn(state=state, config=config)
+
+
 async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaConfig) -> None:
     """Handle one SDK stream message: emit content, persist session ids, detect auth loss, and
     close the open turn on its ResultMessage. Messages with no open turn (a delivered preempt
@@ -278,8 +304,7 @@ async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaC
             logger.warning(f"Session ID changed: {state.persisted.session_id[:16]} -> {session_id[:16]} (resume may have failed)")
         await persist_session_id(session_id, state=state, config=config)
     _emit_parsed_content(texts, thinking_blocks, error_texts, state=state)
-    if isinstance(msg, RateLimitEvent):
-        await _note_rate_limit(msg, state=state, config=config)
+    await _note_rate_limit_signal(msg, state=state, config=config)
     # The SDK can surface a provider failure either on the assistant classification or the result's
     # HTTP status. Keep the decision provider-aware: Kimi uses 401 for tier/model/context permission
     # errors and a temporary 402, neither of which means its subscription key is dead.

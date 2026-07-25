@@ -50,6 +50,7 @@ class ProviderAuthState(enum.StrEnum):
 
 
 RATE_LIMIT_RETRY_FALLBACK_SECONDS = 300
+RATE_LIMITED_STATUS = 429
 ProviderStatusKind = ProviderKind | tp.Literal["none"]
 
 # What normally counts as a terminal provider error — the credential is rejected (401) or the

@@ -260,3 +260,59 @@ async def test_requeue_returns_every_unstarted_turn(config, state):
     await _requeue(items, queue)
 
     assert [queue.get_nowait().text for _ in range(queue.qsize())] == ["migration", "sync", "greeting"]
+
+
+# --- every provider, not just the two with a native signal ---
+
+
+@pytest.mark.anyio
+async def test_a_bare_429_cools_down_a_provider_with_no_native_signal(config, state):
+    """Z.AI, Kimi and OpenAI surface nothing richer than the status, so it has to be enough."""
+    from core.client import _note_rejected_turn
+
+    config.provider = cfg.ZaiConfig(key=SecretStr("test-key"), model="glm-5")
+    state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="zai", model="glm-5")
+    sub = state.event_bus.subscribe()
+
+    await _note_rejected_turn(state=state, config=config)
+
+    cooldown = state.persisted.provider_cooldown
+    assert cooldown is not None
+    assert cooldown.window == "zai"
+    assert cooldown.until > time.time()
+    assert not model_access_available(state)
+    assert any(e["type"] == "model_access" and e["state"] == "cooling_down" for e in _drain(sub))
+
+
+@pytest.mark.anyio
+async def test_a_bare_429_never_shortens_a_precise_window(config, state):
+    """Claude's structured window and the generic status can both land for one rejection. The
+    fallback is minutes and the real window is hours, so order must not decide the deadline."""
+    from core.client import _note_rejected_turn
+
+    state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
+    precise = int(time.time()) + 5 * 3600
+    state.persisted.provider_cooldown = ProviderCooldown(until=precise, window="five_hour")
+
+    await _note_rejected_turn(state=state, config=config)
+
+    assert state.persisted.provider_cooldown is not None
+    assert state.persisted.provider_cooldown.until == precise
+    assert state.persisted.provider_cooldown.window == "five_hour"
+
+
+@pytest.mark.anyio
+async def test_a_lapsed_cooldown_does_not_block_a_new_one(config, state):
+    """Extend-only applies to live cooldowns; a spent one must not pin the agent to the past."""
+    from core.client import _note_rejected_turn
+
+    state.persisted.provider_cooldown = ProviderCooldown(until=1, window="five_hour")
+
+    await _note_rejected_turn(state=state, config=config)
+
+    assert state.persisted.provider_cooldown is not None
+    assert state.persisted.provider_cooldown.until > time.time()
+
+
+def _drain(sub):
+    return [sub.get_nowait() for _ in range(sub.qsize())]
