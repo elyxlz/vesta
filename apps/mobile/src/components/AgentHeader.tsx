@@ -15,7 +15,7 @@ const IS_IOS = process.env.EXPO_OS === "ios";
 
 export function AgentStackHeader({ hidden = false }: { hidden?: boolean }) {
   const router = useRouter();
-  const { name, agent, socket } = useAgent();
+  const { name, agent, activityState } = useAgent();
   const { colors, dark } = usePreferences();
   const status = agent?.status ?? "not_found";
   const openSettings = () =>
@@ -45,7 +45,7 @@ export function AgentStackHeader({ hidden = false }: { hidden?: boolean }) {
         <AgentIsland
           name={name}
           status={status}
-          activityState={socket.agentState}
+          activityState={activityState}
           color={colors.text}
           dark={dark}
           fallbackColor={colors.elevated}

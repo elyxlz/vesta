@@ -12,6 +12,7 @@ interface FieldProps extends ComponentProps<typeof TextInput> {
   description?: string;
   error?: string;
   accessory?: ReactNode;
+  accessoryWidth?: number;
 }
 
 export function Field({
@@ -19,6 +20,7 @@ export function Field({
   description,
   error,
   accessory,
+  accessoryWidth,
   ...inputProps
 }: FieldProps) {
   const { colors } = usePreferences();
@@ -44,7 +46,9 @@ export function Field({
               borderColor: error ? colors.danger : colors.border,
               color: colors.text,
             },
-            accessory ? styles.inputWithAccessory : null,
+            accessory
+              ? { paddingRight: (accessoryWidth ?? 40) + 12 }
+              : null,
             inputProps.multiline ? styles.multiline : null,
             inputProps.style,
           ]}
@@ -242,13 +246,13 @@ const styles = StyleSheet.create({
   description: { fontSize: 13, lineHeight: 18 },
   input: {
     minHeight: 48,
-    borderRadius: radii.control,
+    borderRadius: radii.pill,
+    borderCurve: "continuous",
     borderWidth: StyleSheet.hairlineWidth,
     paddingHorizontal: 14,
     fontSize: 16,
   },
   inputContainer: { position: "relative" },
-  inputWithAccessory: { paddingRight: 52 },
   inputAccessory: {
     position: "absolute",
     top: 0,
@@ -256,7 +260,12 @@ const styles = StyleSheet.create({
     bottom: 0,
     justifyContent: "center",
   },
-  multiline: { minHeight: 120, paddingTop: 13, textAlignVertical: "top" },
+  multiline: {
+    minHeight: 120,
+    borderRadius: radii.control,
+    paddingTop: 13,
+    textAlignVertical: "top",
+  },
   error: { fontSize: 13, fontWeight: "600" },
   section: { gap: 8 },
   sectionTitle: {

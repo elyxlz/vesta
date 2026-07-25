@@ -54,5 +54,6 @@ describe("privacy settings", () => {
     expect(blocksProtectedContent(false, false)).toBe(true);
     expect(blocksProtectedContent(true, true)).toBe(true);
     expect(blocksProtectedContent(true, false)).toBe(false);
+    expect(blocksProtectedContent(true, false, true)).toBe(true);
   });
 });

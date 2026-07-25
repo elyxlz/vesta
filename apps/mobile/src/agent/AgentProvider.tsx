@@ -5,14 +5,16 @@ import { ControllerContext } from "@/controller/context";
 import { setVisibleAgentSocket } from "@/notifications/foreground-policy";
 import { useRoster } from "@/session/RosterProvider";
 import { useSession } from "@/session/SessionProvider";
-import type { AgentRow } from "@vesta/core";
+import type { AgentActivityState, AgentRow } from "@vesta/core";
 import { writeLastUsedAgent } from "@/storage/recent-agent";
+import { servedAgentActivity } from "@/chat/agent-activity-model";
 
 type AgentSocket = ReturnType<typeof useAgentSocket>;
 
 interface AgentValue {
   name: string;
   agent: AgentRow | null;
+  activityState: AgentActivityState;
   socket: AgentSocket;
 }
 
@@ -30,12 +32,19 @@ function AgentContent({
   children: ReactNode;
 }) {
   const { connection } = useSession();
+  const activityState = servedAgentActivity(
+    {
+      state: socket.agentState,
+      ready: socket.agentStateReady,
+    },
+    agent?.activityState,
+  );
   useEffect(
     () => setVisibleAgentSocket(connection?.url ?? "", name, socket.connected),
     [connection?.url, name, socket.connected],
   );
   return (
-    <AgentContext.Provider value={{ name, agent, socket }}>
+    <AgentContext.Provider value={{ name, agent, activityState, socket }}>
       {children}
     </AgentContext.Provider>
   );

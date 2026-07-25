@@ -1,16 +1,13 @@
 import { useState } from "react";
-import { StyleSheet, View } from "react-native";
+import { StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { AuthSheet } from "@/components/auth-sheet";
 import { Button } from "@/components/ui/Button";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
 
-const originalBottomGap = 24;
-
 export default function ConnectActionsScreen() {
-  const insets = useSafeAreaInsets();
   const router = useRouter();
   const { recentGateways, signIn } = useSession();
   const { colors } = usePreferences();
@@ -32,28 +29,22 @@ export default function ConnectActionsScreen() {
   };
 
   return (
-    <View
-      style={[
-        styles.sheet,
-        {
-          backgroundColor: colors.card,
-          paddingBottom: originalBottomGap,
-          marginBottom: -insets.bottom,
-        },
-      ]}
-    >
+    <AuthSheet gap={14}>
       <Button
         pill
+        size="large"
         icon="person-circle-outline"
         iconSize={20}
         labelStyle={[styles.actionLabel, styles.primaryActionLabel]}
         loading={busy}
+        loadingLabel="Connecting…"
         onPress={() => void signInWithAccount()}
       >
         Connect with Vesta Cloud
       </Button>
       <Button
         pill
+        size="large"
         variant="secondary"
         icon="server-outline"
         labelStyle={styles.actionLabel}
@@ -82,16 +73,11 @@ export default function ConnectActionsScreen() {
           {error}
         </Text>
       ) : null}
-    </View>
+    </AuthSheet>
   );
 }
 
 const styles = StyleSheet.create({
-  sheet: {
-    gap: 12,
-    paddingHorizontal: 24,
-    paddingTop: 24,
-  },
   actionLabel: { fontSize: 14, lineHeight: 18, fontWeight: "600" },
   primaryActionLabel: { fontSize: 14.5 },
   recentActionLabel: { fontSize: 13, fontWeight: "500" },

@@ -30,6 +30,7 @@ import Reanimated, {
   withTiming,
 } from "react-native-reanimated";
 import Markdown, {
+  MarkdownIt,
   type ASTNode,
   type RenderRules,
 } from "react-native-markdown-display";
@@ -76,6 +77,10 @@ const COMPOSER_RESIZE_DURATION = 250;
 const COMPOSER_SURFACE_PADDING = 4;
 const CHAT_COMPOSER_GAP = 6;
 const TRANSCRIPT_HAPTIC_INTERVAL_MS = 110;
+const CHAT_MARKDOWN = new MarkdownIt({
+  linkify: true,
+  typographer: true,
+});
 
 const MESSAGE_ACTIONS: Record<MessageActionId, MessageMenuAction> = {
   reply: {
@@ -182,8 +187,10 @@ function isSameCalendarDay(left: Date, right: Date): boolean {
   );
 }
 
-function chatDateLabel(timestamp: string): string {
+function chatDateLabel(timestamp: string | null): string {
+  if (!timestamp) return "Earlier";
   const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "Earlier";
   const today = new Date();
   if (isSameCalendarDay(date, today)) return "Today";
 
@@ -202,7 +209,7 @@ function chatDateLabel(timestamp: string): string {
 const ChatDateHeader = memo(function ChatDateHeader({
   timestamp,
 }: {
-  timestamp: string;
+  timestamp: string | null;
 }) {
   const { colors } = usePreferences();
   return (
@@ -243,6 +250,7 @@ const ChatEvent = memo(function ChatEvent({
         minute: "2-digit",
       })
     : null;
+  const user = event.type === "user";
   const markdownRules = useMemo<RenderRules>(
     () => ({
       textgroup: (node, children, parentNodes, markdownStyles) => (
@@ -465,7 +473,18 @@ const ChatEvent = memo(function ChatEvent({
     }),
     [colors],
   );
-  const user = event.type === "user";
+  const userMarkdownStyles = useMemo(
+    () => ({
+      ...markdownStyles,
+      body: { ...markdownStyles.body, color: colors.accentText },
+      link: {
+        ...markdownStyles.link,
+        color: colors.accentText,
+        textDecorationColor: colors.accentText,
+      },
+    }),
+    [colors.accentText, markdownStyles],
+  );
   const sendState = event.type === "user" ? event.send_state : undefined;
   const intentId = event.type === "user" ? event.intent_id : undefined;
   const messageText = "text" in event ? event.text : "";
@@ -528,25 +547,14 @@ const ChatEvent = memo(function ChatEvent({
       {endsBubbleGroup && !USES_NATIVE_BUBBLE_SHAPE ? (
         <BubbleTail user={user} fill={bubbleColor} stroke={colors.border} />
       ) : null}
-      {user ? (
-        <Text style={[styles.userText, { color: colors.accentText }]}>
-          {event.text}
-          {timestamp ? (
-            <Text style={styles.timestampSpacer}>
-              {"\u00A0\u00A0\u00A0\u00A0"}
-              {timestamp}
-            </Text>
-          ) : null}
-        </Text>
-      ) : (
-        <Markdown
-          onLinkPress={openMarkdownLink}
-          rules={markdownRules}
-          style={markdownStyles}
-        >
-          {event.text}
-        </Markdown>
-      )}
+      <Markdown
+        markdownit={CHAT_MARKDOWN}
+        onLinkPress={openMarkdownLink}
+        rules={markdownRules}
+        style={user ? userMarkdownStyles : markdownStyles}
+      >
+        {event.text}
+      </Markdown>
       {timestamp ? (
         <Text
           style={[
@@ -1308,7 +1316,6 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   typingDot: { width: 6, height: 6, borderRadius: 3 },
-  userText: { fontSize: 16, lineHeight: 22 },
   timestampSpacer: { fontSize: 12, opacity: 0 },
   bubbleTimestamp: { position: "absolute", right: 12, bottom: 10, fontSize: 12 },
   finalMarkdownParagraph: { marginBottom: 0 },

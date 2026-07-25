@@ -40,6 +40,7 @@ export function locksApp(state: AppStateStatus): boolean {
 export function blocksProtectedContent(
   hydrated: boolean,
   locked: boolean,
+  initializationFailed = false,
 ): boolean {
-  return !hydrated || locked;
+  return !hydrated || locked || initializationFailed;
 }

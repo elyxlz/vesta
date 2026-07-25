@@ -307,9 +307,9 @@ export function BootSplash({
         ]}
       />
       <Animated.View style={orbStyle}>
+        {/* Keep the boot orb neutral. The real target crossfades in with its settled palette. */}
         <AgentOrb
-          status={target?.status ?? "alive"}
-          activityState={target?.activityState}
+          status="starting"
           size={ORB_SIZE}
           animated={!reduceMotion && holding && !ready}
           pulseScale={1.1}

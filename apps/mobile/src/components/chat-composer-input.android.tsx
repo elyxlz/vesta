@@ -1,4 +1,4 @@
-import { useEffect, useImperativeHandle, useRef } from "react";
+import { useCallback, useImperativeHandle, useRef } from "react";
 import { StyleSheet } from "react-native";
 import {
   BasicTextField,
@@ -18,6 +18,7 @@ import {
   type ChatComposerInputProps,
   type ChatComposerInputRef,
 } from "@/components/chat-composer-input.types";
+import { useChatComposerLifecycle } from "@/components/chat-composer-input-lifecycle";
 import { fontNames } from "@/theme/typography";
 
 const textStyle = {
@@ -39,10 +40,17 @@ export function ChatComposerInput({
 }: ChatComposerInputProps) {
   const nativeValue = useNativeState(value);
   const nativeRef = useRef<BasicTextFieldRef>(null);
-
-  useEffect(() => {
-    if (nativeValue.get() !== value) nativeValue.set(value);
-  }, [nativeValue, value]);
+  const restoreNativeValue = useCallback(
+    (nextValue: string) => {
+      if (nativeValue.get() !== nextValue) nativeValue.set(nextValue);
+    },
+    [nativeValue],
+  );
+  const lifecycle = useChatComposerLifecycle({
+    value,
+    onChangeText,
+    restoreNativeValue,
+  });
 
   useImperativeHandle(
     ref,
@@ -72,7 +80,8 @@ export function ChatComposerInput({
           defaultMinSize({ minHeight: 36 }),
           padding(9, 8, 4, 6),
         ]}
-        onValueChange={onChangeText}
+        onFocusChanged={lifecycle.onFocusChange}
+        onValueChange={lifecycle.onNativeTextChange}
         textSelectionColors={{
           backgroundColor: selectionColor,
           handleColor: selectionColor,

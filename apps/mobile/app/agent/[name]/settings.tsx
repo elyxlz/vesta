@@ -24,7 +24,7 @@ function AgentSettingsContent() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { api } = useSession();
-  const { name, agent, socket } = useAgent();
+  const { name, agent, activityState } = useAgent();
   const preferences = usePreferences();
   const { colors } = preferences;
   const action = useMutation({
@@ -63,7 +63,7 @@ function AgentSettingsContent() {
         <AgentIdentityCard
           name={name}
           status={agent?.status ?? "not_found"}
-          activityState={socket.agentState}
+          activityState={activityState}
           style={styles.identityCard}
         />
         {action.error ? (

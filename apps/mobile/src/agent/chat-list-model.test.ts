@@ -103,6 +103,37 @@ describe("inverted chat rows", () => {
         .filter((row) => row.kind === "event")
         .map((row) => row.startsNewBubbleGroup),
     ).toEqual([false, false]);
+    expect(rows.at(-1)).toMatchObject({
+      kind: "date",
+      timestamp: null,
+    });
+  });
+
+  it("separates undated legacy messages from a newer dated section", () => {
+    const rows = createInvertedChatRows(
+      [
+        { type: "chat", text: "legacy without embedded timestamp" },
+        { type: "chat", text: "new", ts: "2026-07-25T10:00:00Z" },
+      ],
+      false,
+    );
+
+    expect(
+      [...rows].reverse().map((row) =>
+        row.kind === "date"
+          ? (row.timestamp ?? "earlier")
+          : row.kind === "event"
+            ? row.event.type === "chat"
+              ? row.event.text
+              : row.event.type
+            : row.kind,
+      ),
+    ).toEqual([
+      "earlier",
+      "legacy without embedded timestamp",
+      "2026-07-25T10:00:00Z",
+      "new",
+    ]);
   });
 
   it("inserts a header above each local calendar day", () => {

@@ -35,7 +35,9 @@ interface PrivacyValue extends PrivacySettings {
   locked: boolean;
   authenticating: boolean;
   authenticationName: string;
+  initializationError: string | null;
   unlockError: string | null;
+  retryInitialization: () => void;
   unlock: () => Promise<boolean>;
   setAppLockEnabled: (enabled: boolean) => Promise<boolean>;
   setHideAppSwitcherPreview: (enabled: boolean) => Promise<void>;
@@ -71,16 +73,40 @@ function authenticationError(error: string): string {
   return "Vesta could not verify your identity. Please try again.";
 }
 
+async function applyAppSwitcherProtection(
+  settings: PrivacySettings,
+): Promise<void> {
+  const protectedPreview = protectsAppSwitcher(settings);
+  if (IS_IOS) {
+    if (protectedPreview) {
+      await ScreenCapture.enableAppSwitcherProtectionAsync(1);
+    } else {
+      await ScreenCapture.disableAppSwitcherProtectionAsync();
+    }
+  } else if (IS_ANDROID) {
+    if (protectedPreview) {
+      await ScreenCapture.preventScreenCaptureAsync(SCREEN_CAPTURE_KEY);
+    } else {
+      await ScreenCapture.allowScreenCaptureAsync(SCREEN_CAPTURE_KEY);
+    }
+  }
+}
+
 export function PrivacyProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState(initialPrivacySettings);
   const [hydrated, setHydrated] = useState(false);
+  const [hydrationRevision, setHydrationRevision] = useState(0);
   const [locked, setLocked] = useState(true);
   const [authenticating, setAuthenticating] = useState(false);
   const [authName, setAuthName] = useState("device authentication");
+  const [initializationError, setInitializationError] = useState<string | null>(
+    null,
+  );
   const [unlockError, setUnlockError] = useState<string | null>(null);
   const settingsRef = useRef(settings);
   const lockedRef = useRef(locked);
   const authenticatingRef = useRef(false);
+  const privacyReadyRef = useRef(false);
 
   const updateLocked = useCallback((value: boolean) => {
     lockedRef.current = value;
@@ -90,24 +116,49 @@ export function PrivacyProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let active = true;
-    void SecureStore.getItemAsync(PRIVACY_SETTINGS_KEY)
-      .then((stored) => {
+
+    const initialize = async () => {
+      try {
+        const stored = await SecureStore.getItemAsync(PRIVACY_SETTINGS_KEY);
         if (!active) return;
         const next = readPrivacySettings(stored);
+
+        try {
+          await applyAppSwitcherProtection(next);
+        } catch (cause) {
+          if (protectsAppSwitcher(next)) throw cause;
+          console.warn("Could not clear app-switcher protection:", cause);
+        }
+        if (!active) return;
+
         settingsRef.current = next;
         setSettings(next);
-        if (!next.appLockEnabled) updateLocked(false);
-      })
-      .catch((cause: unknown) => {
+        updateLocked(next.appLockEnabled);
+        privacyReadyRef.current = true;
+      } catch (cause) {
+        if (!active) return;
         console.warn("Could not load privacy settings:", cause);
-        updateLocked(false);
-      })
-      .finally(() => {
+        setInitializationError(
+          "Vesta could not safely load your privacy settings.",
+        );
+        updateLocked(true);
+      } finally {
         if (active) setHydrated(true);
-      });
+      }
+    };
+
+    void initialize();
     return () => {
       active = false;
     };
+  }, [hydrationRevision, updateLocked]);
+
+  const retryInitialization = useCallback(() => {
+    privacyReadyRef.current = false;
+    setHydrated(false);
+    setInitializationError(null);
+    updateLocked(true);
+    setHydrationRevision((revision) => revision + 1);
   }, [updateLocked]);
 
   useEffect(() => {
@@ -128,19 +179,47 @@ export function PrivacyProvider({ children }: { children: ReactNode }) {
     async (patch: Partial<PrivacySettings>) => {
       const previous = settingsRef.current;
       const next = { ...previous, ...patch };
-      settingsRef.current = next;
-      setSettings(next);
+      const nextProtectsPreview = protectsAppSwitcher(next);
+
       try {
+        // Establish protection before recording that it is enabled. When disabling,
+        // record the choice first so an interruption can only leave extra protection behind.
+        if (nextProtectsPreview) await applyAppSwitcherProtection(next);
         await SecureStore.setItemAsync(
           PRIVACY_SETTINGS_KEY,
           JSON.stringify(next),
           { keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY },
         );
+        if (!nextProtectsPreview) await applyAppSwitcherProtection(next);
       } catch (cause) {
-        settingsRef.current = previous;
-        setSettings(previous);
-        throw cause;
+        try {
+          await applyAppSwitcherProtection(previous);
+        } catch (rollbackCause) {
+          console.warn(
+            "Could not restore native app-switcher protection:",
+            rollbackCause,
+          );
+        }
+        try {
+          await SecureStore.setItemAsync(
+            PRIVACY_SETTINGS_KEY,
+            JSON.stringify(previous),
+            { keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY },
+          );
+        } catch (rollbackCause) {
+          console.warn(
+            "Could not roll back privacy settings after native protection failed:",
+            rollbackCause,
+          );
+        }
+        console.warn("Could not update privacy settings:", cause);
+        throw new Error(
+          "Vesta could not save or apply privacy settings on this device.",
+        );
       }
+
+      settingsRef.current = next;
+      setSettings(next);
     },
     [],
   );
@@ -164,6 +243,7 @@ export function PrivacyProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const unlock = useCallback(async (): Promise<boolean> => {
+    if (!privacyReadyRef.current) return false;
     if (!settingsRef.current.appLockEnabled) {
       updateLocked(false);
       return true;
@@ -230,14 +310,22 @@ export function PrivacyProvider({ children }: { children: ReactNode }) {
   );
 
   useEffect(() => {
-    if (!hydrated || !settings.appLockEnabled) return;
+    if (
+      !hydrated ||
+      initializationError ||
+      !privacyReadyRef.current ||
+      !settings.appLockEnabled
+    ) {
+      return;
+    }
     if (AppState.currentState === "active" && lockedRef.current) {
       void unlock();
     }
-  }, [hydrated, settings.appLockEnabled, unlock]);
+  }, [hydrated, initializationError, settings.appLockEnabled, unlock]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) => {
+      if (!privacyReadyRef.current) return;
       if (locksApp(state) && settingsRef.current.appLockEnabled) {
         updateLocked(true);
       } else if (
@@ -251,29 +339,6 @@ export function PrivacyProvider({ children }: { children: ReactNode }) {
     return () => subscription.remove();
   }, [unlock, updateLocked]);
 
-  useEffect(() => {
-    if (!hydrated) return;
-    const protectedPreview = protectsAppSwitcher(settings);
-    const apply = async () => {
-      if (IS_IOS) {
-        if (protectedPreview) {
-          await ScreenCapture.enableAppSwitcherProtectionAsync(1);
-        } else {
-          await ScreenCapture.disableAppSwitcherProtectionAsync();
-        }
-      } else if (IS_ANDROID) {
-        if (protectedPreview) {
-          await ScreenCapture.preventScreenCaptureAsync(SCREEN_CAPTURE_KEY);
-        } else {
-          await ScreenCapture.allowScreenCaptureAsync(SCREEN_CAPTURE_KEY);
-        }
-      }
-    };
-    void apply().catch((cause: unknown) =>
-      console.warn("Could not update app-switcher protection:", cause),
-    );
-  }, [hydrated, settings]);
-
   const value = useMemo<PrivacyValue>(
     () => ({
       ...settings,
@@ -281,7 +346,9 @@ export function PrivacyProvider({ children }: { children: ReactNode }) {
       locked,
       authenticating,
       authenticationName: authName,
+      initializationError,
       unlockError,
+      retryInitialization,
       unlock,
       setAppLockEnabled,
       setHideAppSwitcherPreview,
@@ -292,7 +359,9 @@ export function PrivacyProvider({ children }: { children: ReactNode }) {
       locked,
       authenticating,
       authName,
+      initializationError,
       unlockError,
+      retryInitialization,
       unlock,
       setAppLockEnabled,
       setHideAppSwitcherPreview,

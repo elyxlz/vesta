@@ -1,15 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
   StyleSheet,
   View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { GatewayCloseButton } from "@/components/GatewayCloseButton";
+import { AuthSheet } from "@/components/auth-sheet";
 import { Button } from "@/components/ui/Button";
 import { Field } from "@/components/ui/Form";
 import { Text } from "@/components/ui/Typography";
@@ -98,26 +96,12 @@ function ConnectLinkContent({
   }, [autoConnect, connect, initialLink, scanId]);
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-      style={[styles.sheet, { backgroundColor: colors.card }]}
+    <AuthSheet
+      mode="keyboard"
+      title="Connect your gateway"
+      onClose={() => router.back()}
+      hasGrabber
     >
-      <View style={styles.header}>
-        <View style={styles.titleRow}>
-          <GatewayCloseButton
-            color={colors.text}
-            fallbackColor={colors.input}
-            onPress={() => router.back()}
-          />
-          <Text family="heading" style={[styles.title, { color: colors.text }]}>
-            Connect your gateway
-          </Text>
-        </View>
-        <Text style={[styles.subtitle, { color: colors.secondaryText }]}>
-          Enter the connection link provided by your Vesta gateway.
-        </Text>
-      </View>
-
       {autoConnecting ? (
         <View
           accessibilityRole="progressbar"
@@ -133,7 +117,10 @@ function ConnectLinkContent({
               Connecting to gateway
             </Text>
             <Text
-              style={[styles.connectingDetail, { color: colors.secondaryText }]}
+              style={[
+                styles.connectingDetail,
+                { color: colors.secondaryText },
+              ]}
             >
               Verifying the scanned connection link…
             </Text>
@@ -142,6 +129,7 @@ function ConnectLinkContent({
       ) : (
         <View style={styles.form}>
           <Field
+            accessibilityLabel="Connection link"
             placeholder="Paste your connection link"
             value={link}
             onChangeText={(value) => {
@@ -149,36 +137,63 @@ function ConnectLinkContent({
               setError("");
             }}
             autoCapitalize="none"
-            autoComplete={
-              Platform.OS === "android" ? "current-password" : undefined
-            }
+            autoComplete="off"
             autoCorrect={false}
-            importantForAutofill={
-              Platform.OS === "android" ? "yes" : undefined
-            }
+            enablesReturnKeyAutomatically
+            importantForAutofill="no"
             keyboardAppearance={dark ? "dark" : "light"}
+            onSubmitEditing={() => {
+              const connectionLink = link.trim();
+              if (connectionLink && !busy) void connect(connectionLink);
+            }}
+            returnKeyType="go"
             secureTextEntry={!linkVisible}
-            textContentType={Platform.OS === "ios" ? "password" : undefined}
-            accessory={
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={
-                  linkVisible ? "Hide connection link" : "Show connection link"
-                }
-                hitSlop={8}
-                onPress={() => setLinkVisible((visible) => !visible)}
-                style={({ pressed }) => [
-                  styles.visibilityButton,
-                  { opacity: pressed ? 0.55 : 1 },
-                ]}
-              >
-                <Ionicons
-                  name={linkVisible ? "eye-off-outline" : "eye-outline"}
-                  size={20}
-                  color={colors.secondaryText}
-                />
-              </Pressable>
-            }
+            textContentType="none"
+            accessoryWidth={80}
+            accessory={link ? (
+              <View style={styles.fieldAccessories}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Clear connection link"
+                  hitSlop={4}
+                  onPress={() => {
+                    setLink("");
+                    setLinkVisible(false);
+                    setError("");
+                  }}
+                  style={({ pressed }) => [
+                    styles.fieldAccessoryButton,
+                    { opacity: pressed ? 0.55 : 1 },
+                  ]}
+                >
+                  <Ionicons
+                    name="close-circle"
+                    size={19}
+                    color={colors.secondaryText}
+                  />
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    linkVisible
+                      ? "Hide connection link"
+                      : "Show connection link"
+                  }
+                  hitSlop={4}
+                  onPress={() => setLinkVisible((visible) => !visible)}
+                  style={({ pressed }) => [
+                    styles.fieldAccessoryButton,
+                    { opacity: pressed ? 0.55 : 1 },
+                  ]}
+                >
+                  <Ionicons
+                    name={linkVisible ? "eye-off-outline" : "eye-outline"}
+                    size={20}
+                    color={colors.secondaryText}
+                  />
+                </Pressable>
+              </View>
+            ) : undefined}
             error={error || undefined}
           />
 
@@ -187,8 +202,9 @@ function ConnectLinkContent({
               <Button
                 pill
                 loading={busy}
+                loadingLabel="Connecting…"
                 disabled={!link.trim()}
-                onPress={() => void connect(link)}
+                onPress={() => void connect(link.trim())}
               >
                 Connect
               </Button>
@@ -199,40 +215,26 @@ function ConnectLinkContent({
               onPress={() => router.push("/scan")}
               style={({ pressed }) => [
                 styles.scanButton,
-                { backgroundColor: colors.input, opacity: pressed ? 0.72 : 1 },
+                {
+                  backgroundColor: colors.input,
+                  opacity: pressed ? 0.72 : 1,
+                },
               ]}
             >
-              <Ionicons name="qr-code-outline" size={21} color={colors.text} />
+              <Ionicons
+                name="qr-code-outline"
+                size={21}
+                color={colors.text}
+              />
             </Pressable>
           </View>
         </View>
       )}
-    </KeyboardAvoidingView>
+    </AuthSheet>
   );
 }
 
 const styles = StyleSheet.create({
-  sheet: {
-    padding: 24,
-    paddingTop: 36,
-  },
-  header: {
-    gap: 0,
-  },
-  titleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 16,
-  },
-  title: {
-    flex: 1,
-    fontSize: 28,
-    lineHeight: 34,
-    fontWeight: "500",
-    letterSpacing: -0.7,
-  },
-  subtitle: { maxWidth: "80%", fontSize: 14, lineHeight: 20 },
   connecting: {
     flexDirection: "row",
     alignItems: "center",
@@ -253,7 +255,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  visibilityButton: {
+  fieldAccessories: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  fieldAccessoryButton: {
     width: 40,
     height: 40,
     alignItems: "center",

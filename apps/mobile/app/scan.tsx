@@ -15,9 +15,8 @@ export default function ScanScreen() {
 
 function ScanContent() {
   const router = useRouter();
-  const { colors } = usePreferences();
-  const [permission, requestPermission, getPermission] =
-    useCameraPermissions();
+  const { colors, dark } = usePreferences();
+  const [permission, requestPermission, getPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
 
   useEffect(() => {
@@ -36,7 +35,12 @@ function ScanContent() {
   const headerTintColor = permission?.granted ? "white" : colors.text;
   const header = (
     <>
-      <Stack.Screen options={{ headerTintColor }} />
+      <Stack.Screen
+        options={{
+          headerTintColor,
+          statusBarStyle: permission?.granted || dark ? "light" : "dark",
+        }}
+      />
       <Stack.Toolbar placement="left">
         <Stack.Toolbar.Button
           accessibilityLabel="Close scanner"
@@ -114,7 +118,6 @@ function ScanContent() {
         />
         <View style={styles.overlay} pointerEvents="none">
           <View style={styles.finder} />
-          <Text style={styles.hint}>Center the gateway QR code</Text>
         </View>
       </View>
       {header}
@@ -124,20 +127,13 @@ function ScanContent() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  overlay: { flex: 1, justifyContent: "center", alignItems: "center", gap: 24 },
+  overlay: { flex: 1, justifyContent: "center", alignItems: "center" },
   finder: {
     width: 248,
     height: 248,
     borderRadius: 30,
     borderWidth: 3,
     borderColor: "white",
-  },
-  hint: {
-    color: "white",
-    fontSize: 16,
-    fontWeight: "500",
-    textShadowColor: "black",
-    textShadowRadius: 6,
   },
   state: {
     flex: 1,

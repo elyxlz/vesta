@@ -1,6 +1,7 @@
 import { Pressable, StyleSheet, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { GlassView, isGlassEffectAPIAvailable } from "expo-glass-effect";
+import { usePreferences } from "@/preferences/PreferencesProvider";
 
 export function GatewayCloseButton({
   color,
@@ -11,6 +12,7 @@ export function GatewayCloseButton({
   fallbackColor: string;
   onPress: () => void;
 }) {
+  const { dark } = usePreferences();
   const content = (
     <Pressable
       accessibilityRole="button"
@@ -30,7 +32,7 @@ export function GatewayCloseButton({
     return (
       <GlassView
         glassEffectStyle="regular"
-        colorScheme="light"
+        colorScheme={dark ? "dark" : "light"}
         isInteractive
         style={styles.close}
       >
@@ -51,8 +53,8 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 19,
+    alignSelf: "center",
     overflow: "hidden",
-    transform: [{ translateY: 1 }],
   },
   closeContent: {
     flex: 1,

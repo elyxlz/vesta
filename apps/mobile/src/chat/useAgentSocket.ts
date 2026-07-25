@@ -28,6 +28,10 @@ import {
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
 import { connectionKeyOf } from "@/session/session-model";
+import {
+  agentActivitySnapshotsEqual,
+  selectAgentActivitySnapshot,
+} from "./agent-activity-model";
 import { useChatHold } from "./ChatHoldProvider";
 import { captureChatHold, chatHoldKey, heldChatState } from "./chat-hold-model";
 
@@ -75,13 +79,14 @@ export function useAgentSocket(
   }, [name]);
 
   const activitySelector = useCallback(
-    (tree: Tree | null) =>
-      active && name
-        ? (tree?.agents[name]?.info.activityState ?? "idle")
-        : "idle",
+    (tree: Tree | null) => selectAgentActivitySnapshot(tree, active, name),
     [active, name],
   );
-  const agentState = useOptionalControllerReplica(controller, activitySelector);
+  const agentActivity = useOptionalControllerReplica(
+    controller,
+    activitySelector,
+    agentActivitySnapshotsEqual,
+  );
 
   const pendingSelector = useCallback(
     (tree: Tree | null): string[] =>
@@ -338,7 +343,8 @@ export function useAgentSocket(
 
   return {
     events: state.messages,
-    agentState,
+    agentState: agentActivity.state,
+    agentStateReady: agentActivity.ready,
     isTyping,
     connected,
     historyLoaded: state.historyLoaded,

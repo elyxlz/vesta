@@ -10,11 +10,16 @@ import { usePrivacy } from "./privacy-provider";
 export function PrivacyGate({ children }: { children: ReactNode }) {
   const { colors } = usePreferences();
   const privacy = usePrivacy();
-  const blocked = blocksProtectedContent(privacy.hydrated, privacy.locked);
+  const blocked = blocksProtectedContent(
+    privacy.hydrated,
+    privacy.locked,
+    privacy.initializationError !== null,
+  );
   const unlockLabel =
     privacy.authenticationName === "device authentication"
       ? "Unlock Vesta"
       : `Unlock with ${privacy.authenticationName}`;
+  const initializationFailed = privacy.initializationError !== null;
 
   return (
     <View style={styles.root}>
@@ -49,14 +54,22 @@ export function PrivacyGate({ children }: { children: ReactNode }) {
               family="heading"
               style={[styles.title, { color: colors.text }]}
             >
-              {privacy.hydrated ? "Vesta is locked" : "Opening Vesta"}
+              {initializationFailed
+                ? "Privacy settings unavailable"
+                : privacy.hydrated
+                  ? "Vesta is locked"
+                  : "Opening Vesta"}
             </Text>
             <Text style={[styles.detail, { color: colors.secondaryText }]}>
-              {privacy.hydrated
-                ? "Authenticate to return to your agents."
-                : "Checking your privacy settings."}
+              {initializationFailed
+                ? privacy.initializationError
+                : privacy.hydrated
+                  ? "Authenticate to return to your agents."
+                  : "Checking your privacy settings."}
             </Text>
-            {privacy.hydrated && privacy.unlockError ? (
+            {privacy.hydrated &&
+            !initializationFailed &&
+            privacy.unlockError ? (
               <Text
                 accessibilityRole="alert"
                 selectable
@@ -66,7 +79,9 @@ export function PrivacyGate({ children }: { children: ReactNode }) {
               </Text>
             ) : null}
           </View>
-          {privacy.hydrated ? (
+          {initializationFailed ? (
+            <Button onPress={privacy.retryInitialization}>Try again</Button>
+          ) : privacy.hydrated ? (
             <Button
               loading={privacy.authenticating}
               disabled={privacy.authenticating}

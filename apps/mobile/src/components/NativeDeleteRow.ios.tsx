@@ -1,4 +1,4 @@
-import { StyleSheet, View } from "react-native";
+import { StyleSheet, useWindowDimensions, View } from "react-native";
 import {
   Button,
   Host,
@@ -17,25 +17,36 @@ import {
   listStyle,
   scrollContentBackground,
   scrollDisabled,
+  tint,
 } from "@expo/ui/swift-ui/modifiers";
+import { usePreferences } from "@/preferences/PreferencesProvider";
+import { radii } from "@/theme/layout";
 import type { NativeDeleteRowProps } from "./NativeDeleteRow.types";
-
-const rowModifiers = [
-  frame({ height: 64 }),
-  listRowBackground("#00000000"),
-  listRowInsets({ top: 0, leading: 0, bottom: 0, trailing: 0 }),
-  listRowSeparator("hidden"),
-];
 
 export function NativeDeleteRow({
   children,
   containerStyle,
   deleteAccessibilityLabel,
+  dangerColor,
   disabled = false,
   onDelete,
 }: NativeDeleteRowProps) {
+  const { fontScale } = useWindowDimensions();
+  const { dark } = usePreferences();
+  const rowHeight = Math.max(64, Math.ceil(40 * fontScale + 24));
+  const rowModifiers = [
+    frame({ height: rowHeight }),
+    listRowBackground("#00000000"),
+    listRowInsets({ top: 0, leading: 0, bottom: 0, trailing: 0 }),
+    listRowSeparator("hidden"),
+  ];
+
   return (
-    <Host colorScheme="light" ignoreSafeArea="all" style={styles.host}>
+    <Host
+      colorScheme={dark ? "dark" : "light"}
+      ignoreSafeArea="all"
+      style={[styles.host, { height: rowHeight }]}
+    >
       <List
         modifiers={[
           listStyle("plain"),
@@ -49,11 +60,11 @@ export function NativeDeleteRow({
           </RNHostView>
           <SwipeActions.Actions edge="trailing" allowsFullSwipe={false}>
             <Button
-              role="destructive"
               onPress={onDelete}
               modifiers={[
                 accessibilityLabel(deleteAccessibilityLabel),
                 disabledModifier(disabled),
+                tint(dangerColor),
               ]}
             >
               <Image systemName="trash" />
@@ -68,8 +79,8 @@ export function NativeDeleteRow({
 const styles = StyleSheet.create({
   host: {
     alignSelf: "stretch",
-    height: 64,
-    borderRadius: 18,
+    borderRadius: radii.card,
+    borderCurve: "continuous",
     overflow: "hidden",
   },
   content: { flex: 1 },

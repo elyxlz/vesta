@@ -22,7 +22,7 @@ export interface TypingChatRow {
 export interface DateChatRow {
   kind: "date";
   key: string;
-  timestamp: string;
+  timestamp: string | null;
 }
 
 export type ChatRow = EventChatRow | TypingChatRow | DateChatRow;
@@ -89,20 +89,21 @@ function eventRows(events: ChatMessage[]): EventChatRow[] {
 
 function addDateRows(rows: EventChatRow[]): ChatRow[] {
   const datedRows: ChatRow[] = [];
-  let previousDay: string | null = null;
+  let previousBucket: string | null = null;
 
   for (const row of rows) {
     const day = calendarDay(row.event.ts);
-    if (day && day !== previousDay && row.event.ts) {
+    const bucket = day ?? "unknown";
+    if (bucket !== previousBucket) {
       row.startsNewBubbleGroup = false;
       datedRows.push({
         kind: "date",
-        key: `date-${day}`,
-        timestamp: row.event.ts,
+        key: day ? `date-${day}` : `date-unknown-${row.key}`,
+        timestamp: day && row.event.ts ? row.event.ts : null,
       });
     }
     datedRows.push(row);
-    if (day) previousDay = day;
+    previousBucket = bucket;
   }
 
   return datedRows;

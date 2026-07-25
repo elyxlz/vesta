@@ -24,7 +24,7 @@ type ButtonVariant =
   | "ghost"
   | "danger"
   | "plain";
-type ButtonSize = "default" | "small" | "compact";
+type ButtonSize = "default" | "large" | "small" | "compact";
 
 function withAlpha(color: string, opacity: number): string {
   if (!/^#[0-9a-f]{6}$/i.test(color)) return color;
@@ -46,6 +46,7 @@ interface ButtonProps {
   trailingIconSize?: number;
   disabled?: boolean;
   loading?: boolean;
+  loadingLabel?: ReactNode;
   pill?: boolean;
   size?: ButtonSize;
   labelStyle?: StyleProp<TextStyle>;
@@ -74,6 +75,7 @@ export function Button({
   trailingIconSize = 17,
   disabled = false,
   loading = false,
+  loadingLabel,
   pill = false,
   size = "default",
   labelStyle,
@@ -121,11 +123,13 @@ export function Button({
       }}
       style={({ pressed }) => [
         styles.button,
-        size === "small"
-          ? styles.smallButton
-          : size === "compact"
-            ? styles.compactButton
-            : null,
+        size === "large"
+          ? styles.largeButton
+          : size === "small"
+            ? styles.smallButton
+            : size === "compact"
+              ? styles.compactButton
+              : null,
         usesCardLayout ? styles.cardButton : null,
         variant === "cardGrouped" || variant === "cardGroupedDanger"
           ? styles.groupedCardButton
@@ -150,13 +154,13 @@ export function Button({
         const contentColor =
           variant === "ghost" && pressed ? colors.interactive : textColor;
 
-        return loading && !usesCardLayout ? (
-          <ActivityIndicator color={contentColor} />
-        ) : (
+        return (
           <View
             style={[styles.content, usesCardLayout ? styles.cardContent : null]}
           >
-            {icon ? (
+            {loading && !usesCardLayout ? (
+              <ActivityIndicator color={contentColor} />
+            ) : icon && !loading ? (
               <Ionicons
                 name={icon}
                 size={iconSize}
@@ -166,13 +170,17 @@ export function Button({
             <Text
               style={[
                 styles.label,
-                size !== "default" ? styles.smallLabel : null,
+                size === "small" || size === "compact"
+                  ? styles.smallLabel
+                  : null,
                 usesCardLayout ? styles.cardLabel : null,
                 labelStyle,
                 { color: contentColor },
               ]}
             >
-              {children}
+              {loading && loadingLabel !== undefined
+                ? loadingLabel
+                : children}
             </Text>
             {trailingIcon && !loading ? (
               <Ionicons
@@ -258,6 +266,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 18,
   },
+  largeButton: { minHeight: 50 },
   smallButton: { minHeight: 40, paddingHorizontal: 14 },
   compactButton: { minHeight: 18, paddingHorizontal: 14 },
   cardButton: {

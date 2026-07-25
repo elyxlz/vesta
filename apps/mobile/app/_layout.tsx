@@ -142,13 +142,7 @@ function SessionNavigation() {
     >
       <View style={[styles.appSurface, { backgroundColor: colors.background }]}>
         <ThemeProvider value={navigationTheme}>
-          <StatusBar
-            style={
-              (bootSplashVisible && !bootPageRevealed) || !dark
-                ? "dark"
-                : "light"
-            }
-          />
+          <StatusBar style={dark ? "light" : "dark"} />
           <Stack
             screenOptions={{
               contentStyle: { backgroundColor: colors.background },
