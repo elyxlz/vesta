@@ -1,8 +1,9 @@
 use bollard::models::ContainerCreateBody;
 use bollard::query_parameters::{
     BuildImageOptions, CreateContainerOptions, CreateImageOptions, DownloadFromContainerOptions,
-    ImportImageOptions, InspectContainerOptions, ListContainersOptions, RemoveContainerOptions,
-    RemoveImageOptions, RestartContainerOptions, StopContainerOptions, UploadToContainerOptions,
+    ImportImageOptions, InspectContainerOptions, InspectNetworkOptionsBuilder,
+    ListContainersOptions, RemoveContainerOptions, RemoveImageOptions, RestartContainerOptions,
+    StopContainerOptions, UploadToContainerOptions,
 };
 use bollard::Docker;
 use bytes::Bytes;
@@ -81,7 +82,49 @@ const LABEL_AGENT_NAME: &str = "vesta.agent_name";
 
 // --- Expected container config (single source of truth) ---
 
+/// The network mode every agent container used before per-agent bridge networks: kept as a
+/// named value so tests can construct a legacy container to exercise the drift-detection
+/// migration path against. No longer the mode `create_container` creates with.
 const NETWORK_MODE: &str = "host";
+/// Prefix for each agent's dedicated Docker bridge network. One network per agent gives full
+/// inter-agent port-space isolation from Docker's own network boundary — no supplementary
+/// iptables rule to maintain or forget.
+const AGENT_NETWORK_PREFIX: &str = "vesta-agent-";
+/// `host.docker.internal` inside the container resolves to the host's bridge gateway (Docker
+/// Engine >= 20.10's `host-gateway` magic value), so an agent can still reach a host-local
+/// service bound to 0.0.0.0 or the bridge interface without host networking.
+const HOST_DOCKER_INTERNAL: &str = "host.docker.internal:host-gateway";
+
+pub(crate) fn agent_network_name(agent_name: &str) -> String {
+    format!("{AGENT_NETWORK_PREFIX}{agent_name}")
+}
+
+/// Idempotently ensure `agent_name`'s dedicated bridge network exists, returning its name.
+/// "Already exists" is success, not an error — two overlapping reconcile passes can race here
+/// harmlessly, same as the existing `ensure_constitution_file` idempotent-creation shape.
+pub(crate) async fn ensure_agent_network(
+    docker: &Docker,
+    agent_name: &str,
+) -> Result<String, DockerError> {
+    let name = agent_network_name(agent_name);
+    let inspect_opts = InspectNetworkOptionsBuilder::default().build();
+    if docker.inspect_network(&name, Some(inspect_opts)).await.is_ok() {
+        return Ok(name);
+    }
+    let create_opts = bollard::models::NetworkCreateRequest {
+        name: name.clone(),
+        driver: Some("bridge".to_string()),
+        ..Default::default()
+    };
+    match docker.create_network(create_opts).await {
+        Ok(_) => Ok(name),
+        // A concurrent reconcile pass created it between our inspect and create: treat as success.
+        Err(bollard::errors::Error::DockerResponseServerError { status_code: 409, .. }) => Ok(name),
+        Err(e) => Err(DockerError::Failed(format!(
+            "failed to create agent network {name}: {e}"
+        ))),
+    }
+}
 // on-failure (not unless-stopped) so Docker recovers genuine crashes but never auto-starts a
 // stale container on daemon/host boot: vestad owns boot-start (reconcile -> rebuild -> start),
 // so an agent that needs a rebuild is never reachable on its pre-update container. The bound caps
@@ -2669,6 +2712,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn agent_network_name_is_prefixed_and_stable() {
+        assert_eq!(agent_network_name("ada"), "vesta-agent-ada");
+        assert_eq!(agent_network_name("ada"), agent_network_name("ada"));
+    }
+
+    #[test]
     fn serves_ws_covers_every_running_reachable_state() {
         for status in [
             AgentStatus::Alive,
@@ -3634,6 +3683,37 @@ mod tests {
         fn drop(&mut self) {
             docker_cleanup(&["rmi", &self.tag]);
         }
+    }
+
+    /// Clean up a test agent network on drop.
+    struct TestNetwork {
+        name: String,
+    }
+
+    impl Drop for TestNetwork {
+        fn drop(&mut self) {
+            docker_cleanup(&["network", "rm", &self.name]);
+        }
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn ensure_agent_network_is_idempotent() {
+        let docker = test_docker();
+        let agent_name = format!("{TEST_PREFIX}-net-{}", std::process::id());
+        let _cleanup = TestNetwork {
+            name: agent_network_name(&agent_name),
+        };
+
+        let first = ensure_agent_network(&docker, &agent_name)
+            .await
+            .expect("first create");
+        let second = ensure_agent_network(&docker, &agent_name)
+            .await
+            .expect("second create is a no-op, not an error");
+
+        assert_eq!(first, second);
+        assert_eq!(first, agent_network_name(&agent_name));
     }
 
     async fn create_test_container_async(
