@@ -36,9 +36,24 @@ _FRESH_START_LOOKBACK = timedelta(hours=1)
 AUTH_BROKEN_MARKER = "auth_broken.notified"
 CALENDAR_BROKEN_MARKER = "calendar_broken.notified"
 
+# Gmail's inbox-tab labels, exposed on the notification as `category` so the user's own
+# notification rules decide what interrupts vs. snoozes (notification_interrupt_policy),
+# instead of the poll silently dropping any category.
+_GMAIL_CATEGORY_LABELS = {
+    "CATEGORY_PERSONAL": "primary",
+    "CATEGORY_SOCIAL": "social",
+    "CATEGORY_PROMOTIONS": "promotions",
+    "CATEGORY_UPDATES": "updates",
+    "CATEGORY_FORUMS": "forums",
+}
+
 
 def clamp_catchup_start(last_check_dt: datetime, now: datetime) -> datetime:
     return max(last_check_dt, now - MAX_CATCHUP_LOOKBACK)
+
+
+def _gmail_category(label_ids: list[str]) -> str | None:
+    return next((_GMAIL_CATEGORY_LABELS[label] for label in label_ids if label in _GMAIL_CATEGORY_LABELS), None)
 
 
 class MonitorState(TypedDict):
@@ -151,9 +166,7 @@ def _poll_gmail(ctx: GoogleContext, gmail, query_since: datetime, catching_up: b
     logger = ctx.monitor_logger
     try:
         epoch_seconds = int(query_since.timestamp())
-        # Promotions/Social are Gmail's own noise tabs; Primary/Updates/Forums keep
-        # notifying, so transactional mail (receipts, alerts) still comes through.
-        query = f"after:{epoch_seconds} -category:promotions -category:social"
+        query = f"after:{epoch_seconds}"
         results = gmail.users().messages().list(userId="me", q=query, labelIds=["INBOX"], maxResults=50).execute()
         messages = results["messages"] if "messages" in results else []
         logger.info("Found %d new emails", len(messages))
@@ -174,16 +187,18 @@ def _poll_gmail(ctx: GoogleContext, gmail, query_since: datetime, catching_up: b
             sender = _get_header(headers, "From")
             subject = _get_header(headers, "Subject")
             snippet = msg["snippet"] if "snippet" in msg else ""
+            label_ids = msg["labelIds"] if "labelIds" in msg else []
 
             notifications.write_notification(
                 ctx.notif_dir,
                 "email",
                 # Email pools by default (calendar reminders keep interrupting); the user adds
-                # interrupt rules for the senders/keywords that should reach them right away.
+                # interrupt rules for the senders/keywords/categories that should reach them right away.
                 interrupt=False,
                 sender=sender,
                 subject=subject,
                 preview=clean_preview(snippet)[:200],
+                category=_gmail_category(label_ids),
                 missed=catching_up or None,
             )
         except HttpError as e:

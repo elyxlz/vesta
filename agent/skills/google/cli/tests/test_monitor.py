@@ -153,23 +153,23 @@ def _http_error(status: int) -> HttpError:
     return HttpError(httplib2.Response({"status": status}), b'{"error": "outage"}')
 
 
-def _gmail_message(sender: str, subject: str, snippet: str) -> dict:
-    return {"payload": {"headers": [{"name": "From", "value": sender}, {"name": "Subject", "value": subject}]}, "snippet": snippet}
+def _gmail_message(sender: str, subject: str, snippet: str, *, label_ids: list[str] | None = None) -> dict:
+    return {
+        "payload": {"headers": [{"name": "From", "value": sender}, {"name": "Subject", "value": subject}]},
+        "snippet": snippet,
+        "labelIds": label_ids if label_ids is not None else [],
+    }
 
 
 class _DrivenGmail:
     """Chainable gmail stub honoring the real service's contract: list() runs list_hook (which may
     raise HttpError to simulate an outage), then returns the inbox filtered by the query's ``after:``
-    epoch and ``-category:`` exclusions, exactly as Gmail's server-side filter does; get() returns
-    the message for the fetched id. ``categories`` maps message id to its Gmail category."""
+    epoch, exactly as Gmail's server-side filter does; get() returns the message for the fetched id."""
 
-    def __init__(
-        self, inbox: list[tuple[str, datetime]], list_hook, messages_by_id: dict[str, dict], categories: dict[str, str] | None = None
-    ) -> None:
+    def __init__(self, inbox: list[tuple[str, datetime]], list_hook, messages_by_id: dict[str, dict]) -> None:
         self._inbox = inbox
         self._list_hook = list_hook
         self._messages_by_id = messages_by_id
-        self._categories = categories if categories is not None else {}
         self._op = ""
         self._query = ""
         self._get_id = ""
@@ -193,16 +193,8 @@ class _DrivenGmail:
     def execute(self):
         if self._op == "list":
             self._list_hook()
-            terms = self._query.split()
-            after = int(next(term.removeprefix("after:") for term in terms if term.startswith("after:")))
-            excluded = {term.removeprefix("-category:") for term in terms if term.startswith("-category:")}
-            return {
-                "messages": [
-                    {"id": mid}
-                    for mid, arrived in self._inbox
-                    if int(arrived.timestamp()) > after and (self._categories[mid] if mid in self._categories else "") not in excluded
-                ]
-            }
+            after = int(self._query.removeprefix("after:"))
+            return {"messages": [{"id": mid} for mid, arrived in self._inbox if int(arrived.timestamp()) > after]}
         return self._messages_by_id[self._get_id]
 
 
@@ -292,9 +284,10 @@ def test_broken_calendar_does_not_make_mail_renotify(tmp_path, monkeypatch):
     assert _watermark(ctx, "calendar") < _watermark(ctx, "mail")
 
 
-def test_promotions_and_social_mail_never_notifies(tmp_path, monkeypatch):
-    """The built query excludes category:promotions and category:social, so marketing blasts and
-    social-network mail stay quiet while Primary/Updates transactional mail still notifies."""
+def test_promotions_and_social_mail_still_notifies_tagged_with_category(tmp_path, monkeypatch):
+    """The poll notifies on every email regardless of Gmail category; Promotions/Social mail carries
+    its category on the notification so the user's own notification rules, not the poll, decide
+    whether it interrupts or snoozes."""
     calls = []
     monkeypatch.setattr(monitor.notifications, "write_notification", lambda *a, **k: calls.append(k))
     monkeypatch.setattr(monitor.calendar, "list_events_between", lambda *a, **k: [])
@@ -305,13 +298,41 @@ def test_promotions_and_social_mail_never_notifies(tmp_path, monkeypatch):
     ctx.monitor_state_file.write_text((now - timedelta(seconds=60)).isoformat())
 
     inbox = [("promo", arrived_at), ("social", arrived_at), ("receipt", arrived_at)]
-    categories = {"promo": "promotions", "social": "social", "receipt": "updates"}
-    messages_by_id = {"receipt": _gmail_message("Shop <orders@x.com>", "Your order shipped", "on its way")}
-    monkeypatch.setattr(monitor.api, "gmail_service", lambda config: _DrivenGmail(inbox, lambda: None, messages_by_id, categories))
+    messages_by_id = {
+        "promo": _gmail_message("Shop <deals@x.com>", "50% off today", "flash sale", label_ids=["CATEGORY_PROMOTIONS"]),
+        "social": _gmail_message("Network <notify@social.com>", "New follower", "someone followed you", label_ids=["CATEGORY_SOCIAL"]),
+        "receipt": _gmail_message("Shop <orders@x.com>", "Your order shipped", "on its way", label_ids=["CATEGORY_UPDATES"]),
+    }
+    monkeypatch.setattr(monitor.api, "gmail_service", lambda config: _DrivenGmail(inbox, lambda: None, messages_by_id))
 
     monitor.run(ctx)
 
-    assert _email_notifs(calls) == ["Your order shipped"]
+    assert _email_notifs(calls) == ["50% off today", "New follower", "Your order shipped"]
+    by_subject = {call["subject"]: call for call in calls if "subject" in call}
+    assert by_subject["50% off today"]["category"] == "promotions"
+    assert by_subject["New follower"]["category"] == "social"
+    assert by_subject["Your order shipped"]["category"] == "updates"
+
+
+def test_uncategorized_mail_notifies_with_no_category(tmp_path, monkeypatch):
+    """A message with no Gmail category label (a non-tabbed inbox) still notifies, with no category
+    inferred (write_notification drops the None field, so it never reaches the notification file)."""
+    calls = []
+    monkeypatch.setattr(monitor.notifications, "write_notification", lambda *a, **k: calls.append(k))
+    monkeypatch.setattr(monitor.calendar, "list_events_between", lambda *a, **k: [])
+
+    now = datetime.now(UTC)
+    arrived_at = now - timedelta(seconds=30)
+    ctx = _run_ctx(tmp_path, cycles=1)
+    ctx.monitor_state_file.write_text((now - timedelta(seconds=60)).isoformat())
+
+    inbox = [("m1", arrived_at)]
+    messages_by_id = {"m1": _gmail_message("Manager <boss@x.com>", "Q3 plan", "please review")}
+    monkeypatch.setattr(monitor.api, "gmail_service", lambda config: _DrivenGmail(inbox, lambda: None, messages_by_id))
+
+    monitor.run(ctx)
+
+    assert calls[0]["category"] is None
 
 
 def test_legacy_bare_timestamp_state_is_read_as_the_starting_watermark(tmp_path, monkeypatch):
