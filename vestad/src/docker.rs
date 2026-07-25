@@ -1746,21 +1746,53 @@ pub async fn create_container(
     }
 }
 
-// --- Restart-reason inbox ---
+// --- Lifecycle-reason inboxes ---
 
 /// One-shot inbox the agent drains on its next boot (agent `state_store.take_pending_reason`).
-/// Written before a stop/recreate so the reason lands in the filesystem the next boot reads;
-/// plain text, no schema shared across the crate boundary.
+/// The JSON payload keeps operational log copy separate from the authenticated agent message.
+/// New agents also accept the legacy plain string during rolling upgrades.
 pub(crate) const PENDING_RESTART_REASON_PATH: &str = "/root/agent/data/pending_restart_reason";
 
-/// Write `reason` into the agent's boot inbox. Best-effort at every call site: a failed write
-/// only costs a missing greeting line, never the restart itself.
-pub(crate) async fn write_pending_restart_reason(
+/// One-shot inbox the running agent drains when it receives SIGTERM. It is separate from the
+/// restart inbox because backup/rebuild writes this before stopping the container, while the boot
+/// reason must be written after snapshotting so a restore cannot replay a stale greeting.
+pub(crate) const PENDING_SHUTDOWN_REASON_PATH: &str = "/root/agent/data/pending_shutdown_reason";
+
+/// Best-effort handoff to the running process immediately before vestad sends SIGTERM. Only the
+/// operational copy is written: the dying process logs it and nothing else reads it.
+pub(crate) async fn handoff_shutdown_reason(
     docker: &Docker,
+    name: &str,
     cname: &str,
-    reason: &str,
-) -> Result<(), DockerError> {
-    docker_cp_content(docker, cname, reason, PENDING_RESTART_REASON_PATH).await
+    reason: &crate::lifecycle::LifecycleReason,
+) {
+    if let Err(err) =
+        docker_cp_content(docker, cname, &reason.log_reason, PENDING_SHUTDOWN_REASON_PATH).await
+    {
+        tracing::warn!(agent = %name, error = %err, "failed to write shutdown reason");
+    }
+}
+
+/// Best-effort handoff to the process that will start from this container: a failed write only
+/// costs a missing greeting line, never the restart itself.
+pub(crate) async fn handoff_boot_reason(
+    docker: &Docker,
+    name: &str,
+    cname: &str,
+    reason: &crate::lifecycle::LifecycleReason,
+) {
+    match serde_json::to_string(reason) {
+        Ok(payload) => {
+            if let Err(err) =
+                docker_cp_content(docker, cname, &payload, PENDING_RESTART_REASON_PATH).await
+            {
+                tracing::warn!(agent = %name, error = %err, "failed to write restart reason");
+            }
+        }
+        Err(error) => {
+            tracing::warn!(agent = %name, %error, "failed to serialize restart reason");
+        }
+    }
 }
 
 // --- Credential injection ---
@@ -1864,11 +1896,20 @@ pub async fn create_agent(
     Ok(name.to_string())
 }
 
-pub async fn start_agent(docker: &Docker, name: &str) -> Result<(), DockerError> {
+/// `reason` is `None` when the boot inbox is already written (a rebuild/rename wrote it into the
+/// new container) or when there is no prior process to explain the boot to (a fresh agent).
+pub async fn start_agent(
+    docker: &Docker,
+    name: &str,
+    reason: Option<&crate::lifecycle::LifecycleReason>,
+) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
     if guard_alive(container_status(docker, &cname).await, name)? == ContainerStatus::Running {
         return Ok(());
+    }
+    if let Some(reason) = reason {
+        handoff_boot_reason(docker, name, &cname, reason).await;
     }
     if !start_container(docker, &cname).await {
         return Err(DockerError::Failed(format!("failed to start '{name}'")));
@@ -1887,8 +1928,11 @@ pub struct StartAllResult {
 pub async fn start_all_agents(docker: &Docker) -> Vec<StartAllResult> {
     let mut results = Vec::new();
     for ManagedAgent { cname, agent_name } in list_managed_agents(docker).await {
-        let ok = container_status(docker, &cname).await == ContainerStatus::Running
-            || start_container(docker, &cname).await;
+        let running = container_status(docker, &cname).await == ContainerStatus::Running;
+        if !running {
+            handoff_boot_reason(docker, &agent_name, &cname, &crate::lifecycle::START_ALL).await;
+        }
+        let ok = running || start_container(docker, &cname).await;
         let error = (!ok).then(|| "failed to start".to_string());
         results.push(StartAllResult {
             name: agent_name,
@@ -1905,6 +1949,7 @@ pub async fn stop_agent(docker: &Docker, name: &str) -> Result<(), DockerError> 
     if guard_alive(container_status(docker, &cname).await, name)? == ContainerStatus::Stopped {
         return Ok(());
     }
+    handoff_shutdown_reason(docker, name, &cname, &crate::lifecycle::MANUAL_STOP).await;
     stop_container_with_timeout(docker, &cname, CONTAINER_STOP_TIMEOUT_SECS).await?;
     Ok(())
 }
@@ -1918,6 +1963,20 @@ pub async fn stop_all_agents(docker: &Docker) {
     for ManagedAgent { cname, agent_name } in list_managed_agents(docker).await {
         if container_status(docker, &cname).await == ContainerStatus::Running {
             tracing::info!(agent = %agent_name, "stopping for vestad shutdown");
+            handoff_shutdown_reason(
+                docker,
+                &agent_name,
+                &cname,
+                &crate::lifecycle::VESTAD_SHUTDOWN,
+            )
+            .await;
+            handoff_boot_reason(
+                docker,
+                &agent_name,
+                &cname,
+                &crate::lifecycle::VESTAD_RESUME,
+            )
+            .await;
             stop_container_with_timeout(docker, &cname, CONTAINER_STOP_TIMEOUT_SECS)
                 .await
                 .ok();
@@ -1925,12 +1984,37 @@ pub async fn stop_all_agents(docker: &Docker) {
     }
 }
 
+/// A caller reason counts only when it carries copy; a blank one is the same as none.
+fn stated_reason(
+    reason: Option<crate::lifecycle::LifecycleReason>,
+) -> Option<crate::lifecycle::LifecycleReason> {
+    reason.filter(|reason| !reason.log_reason.trim().is_empty())
+}
+
+fn restart_reason_or_default(
+    reason: Option<crate::lifecycle::LifecycleReason>,
+) -> crate::lifecycle::LifecycleReason {
+    stated_reason(reason).unwrap_or_else(|| crate::lifecycle::DEFAULT_RESTART.clone())
+}
+
+fn restart_reason_for_mount_change(
+    reason: Option<crate::lifecycle::LifecycleReason>,
+    actual_mounts: &[(String, String, bool)],
+    desired_mounts: &[crate::mounts::HostMount],
+) -> crate::lifecycle::LifecycleReason {
+    // A caller with something specific to say wins; otherwise the mount delta vestad can derive is
+    // more informative than the generic manual reason, so it speaks.
+    stated_reason(reason)
+        .or_else(|| crate::mounts::mount_change_reason(actual_mounts, desired_mounts))
+        .unwrap_or_else(|| crate::lifecycle::DEFAULT_RESTART.clone())
+}
+
 pub async fn restart_agent(
     docker: &Docker,
     name: &str,
     env_config: &AgentEnvConfig,
     user_mounts: &[crate::mounts::HostMount],
-    reason: Option<String>,
+    reason: Option<crate::lifecycle::LifecycleReason>,
     rebuilding: &RebuildTracker,
 ) -> Result<(), DockerError> {
     validate_name(name)?;
@@ -1957,22 +2041,23 @@ pub async fn restart_agent(
                 )));
             }
             tracing::info!(agent = %name, "restart: mount grants drifted, recreating");
-            // A caller-supplied reason wins; else describe the grant delta the rebuild applies.
-            let effective =
-                crate::mounts::effective_restart_reason(reason, &actual_mounts, user_mounts);
+            let effective = restart_reason_for_mount_change(reason, &actual_mounts, user_mounts);
+            handoff_shutdown_reason(docker, name, &cname, &effective).await;
             rebuild_agent(docker, name, env_config, user_mounts, rebuilding).await?;
             // Written into the freshly created container AFTER the rebuild: a write before it
             // would survive a failed rebuild in the old container, claiming access that was
             // never applied (and would bake the reason into the rebuild snapshot).
-            write_boot_reason(docker, name, &cname, effective).await;
-            return start_agent(docker, name).await;
+            handoff_boot_reason(docker, name, &cname, &effective).await;
+            return start_agent(docker, name, None).await;
         }
     } else {
         tracing::warn!(agent = %name, "restart: container inspect failed; doing a plain restart (mount changes apply on next reconcile)");
     }
     // The container's filesystem survives a plain restart, so the inbox written here is read on the
     // very next boot.
-    write_boot_reason(docker, name, &cname, reason).await;
+    let effective = restart_reason_or_default(reason);
+    handoff_shutdown_reason(docker, name, &cname, &effective).await;
+    handoff_boot_reason(docker, name, &cname, &effective).await;
     docker
         .restart_container(
             &cname,
@@ -1983,16 +2068,6 @@ pub async fn restart_agent(
         )
         .await?;
     Ok(())
-}
-
-/// Best-effort write of an optional boot reason to the agent's inbox: a failed write only costs a
-/// missing greeting line, never the restart itself.
-async fn write_boot_reason(docker: &Docker, name: &str, cname: &str, reason: Option<String>) {
-    if let Some(text) = reason {
-        if let Err(err) = write_pending_restart_reason(docker, cname, &text).await {
-            tracing::warn!(agent = %name, error = %err, "failed to write restart reason");
-        }
-    }
 }
 
 /// Free space (in bytes) on the filesystem backing `path`, or `None` if it can't be read.
@@ -2141,16 +2216,24 @@ pub async fn reconcile_containers(
                 }
             }
         }
-        match rebuild_agent(docker, item.name, env_config, &item.desired_mounts, rebuilding).await {
+        let restart_reason = crate::mounts::mount_change_reason(
+            &actual_user_mounts(&item.raw),
+            &item.desired_mounts,
+        )
+        .unwrap_or_else(|| crate::lifecycle::CONTAINER_UPDATE.clone());
+        handoff_shutdown_reason(docker, item.name, item.cname, &restart_reason).await;
+        match rebuild_agent(
+            docker,
+            item.name,
+            env_config,
+            &item.desired_mounts,
+            rebuilding,
+        )
+        .await
+        {
             Ok(()) => {
                 tracing::info!(agent = %item.name, "rebuild complete");
-                // Grants can also land here (restart_agent defers to reconcile when disk is low or
-                // inspect fails); tell the agent about the delta, same as the restart path would.
-                let mount_reason = crate::mounts::mount_change_reason(
-                    &actual_user_mounts(&item.raw),
-                    &item.desired_mounts,
-                );
-                write_boot_reason(docker, item.name, item.cname, mount_reason).await;
+                handoff_boot_reason(docker, item.name, item.cname, &restart_reason).await;
                 rebuilt_marks.push(item.mark);
             }
             Err(e) => tracing::error!(agent = %item.name, error = %e, "rebuild failed"),
@@ -2191,6 +2274,8 @@ pub async fn reconcile_containers(
                 // it to reload the new core and re-bind the mount. (Boot-started agents above came
                 // up fresh already; this catches agents that stayed running across the upgrade.)
                 tracing::info!(agent = %name, "restarting to pick up new agent code");
+                handoff_shutdown_reason(docker, name, cname, &crate::lifecycle::CODE_UPDATE).await;
+                handoff_boot_reason(docker, name, cname, &crate::lifecycle::CODE_UPDATE).await;
                 docker
                     .restart_container(
                         cname,
@@ -2204,6 +2289,7 @@ pub async fn reconcile_containers(
             }
         } else if running {
             tracing::info!(agent = %name, "stopping (user-stopped)");
+            handoff_shutdown_reason(docker, name, cname, &crate::lifecycle::DESIRED_STOP).await;
             stop_container_with_timeout(docker, cname, CONTAINER_STOP_TIMEOUT_SECS)
                 .await
                 .ok();
@@ -2240,6 +2326,7 @@ pub async fn destroy_agent(
     validate_name(name)?;
     let cname = container_name(name);
     if guard_alive(container_status(docker, &cname).await, name)? == ContainerStatus::Running {
+        handoff_shutdown_reason(docker, name, &cname, &crate::lifecycle::DESTROY).await;
         stop_container_with_timeout(docker, &cname, CONTAINER_STOP_TIMEOUT_SECS)
             .await
             .ok();
@@ -2523,11 +2610,13 @@ pub async fn rename_agent(
 
     let port =
         resolve_existing_port(docker, &old_container, &info, old_name, &env_config.agents_dir).await?;
+    let lifecycle_reason = crate::lifecycle::rename(old_name, new_name);
 
     // Stop cleanly so the snapshot captures a quiesced filesystem (SQLite mid-write would
     // be the main concern). Best-effort — snapshot will still proceed if stop fails.
     if info.status == ContainerStatus::Running {
         tracing::info!(agent = %old_name, "[1/4] stopping container...");
+        handoff_shutdown_reason(docker, old_name, &old_container, &lifecycle_reason).await;
         stop_container_with_timeout(docker, &old_container, CONTAINER_STOP_TIMEOUT_SECS)
             .await
             .ok();
@@ -2566,6 +2655,8 @@ pub async fn rename_agent(
         },
     )
     .await?;
+
+    handoff_boot_reason(docker, new_name, &new_container, &lifecycle_reason).await;
 
     // Drop the snapshot the old container ran on; the renamed container runs on `snapshot_tag`.
     remove_replaced_snapshot(docker, prev_image.as_deref(), &snapshot_tag).await;
@@ -2668,6 +2759,76 @@ mod tests {
         assert_eq!(
             PENDING_RESTART_REASON_PATH,
             "/root/agent/data/pending_restart_reason"
+        );
+    }
+
+    #[test]
+    fn pending_shutdown_reason_path_matches_agent_contract() {
+        // The running agent drains this exact path from its SIGTERM handler.
+        assert_eq!(
+            PENDING_SHUTDOWN_REASON_PATH,
+            "/root/agent/data/pending_shutdown_reason"
+        );
+    }
+
+    #[test]
+    fn restart_reason_defaults_bodyless_and_blank_requests() {
+        assert_eq!(
+            restart_reason_or_default(None),
+            crate::lifecycle::DEFAULT_RESTART
+        );
+        assert_eq!(
+            restart_reason_or_default(Some(crate::lifecycle::LifecycleReason::owned(
+                "   ", "ignored",
+            ))),
+            crate::lifecycle::DEFAULT_RESTART
+        );
+        let provider_reason = crate::lifecycle::LifecycleReason::owned(
+            "provider: model changed",
+            "Your configured model changed.",
+        );
+        assert_eq!(
+            restart_reason_or_default(Some(provider_reason.clone())),
+            provider_reason,
+        );
+    }
+
+    #[test]
+    fn a_reasonless_restart_lets_the_mount_delta_speak() {
+        // A plain manual restart sends no reason, so the delta is the most informative thing to
+        // hand over. The mount-grant flow is the whole point of the reason reaching the agent.
+        let desired = [crate::mounts::HostMount {
+            host_path: "/media".to_string(),
+            container_path: "/media".to_string(),
+            writable: false,
+        }];
+        let reason = restart_reason_for_mount_change(None, &[], &desired);
+
+        assert!(reason.log_reason.starts_with("mounts:"));
+        assert!(reason.log_reason.contains("/media"));
+        assert!(reason.agent_message.contains("/media"));
+    }
+
+    #[test]
+    fn a_specific_caller_reason_wins_over_the_mount_delta() {
+        let desired = [crate::mounts::HostMount {
+            host_path: "/media".to_string(),
+            container_path: "/media".to_string(),
+            writable: false,
+        }];
+        let caller = crate::lifecycle::LifecycleReason::owned(
+            "provider: model changed",
+            "Your configured model changed.",
+        );
+
+        assert_eq!(
+            restart_reason_for_mount_change(Some(caller.clone()), &[], &desired),
+            caller,
+        );
+        // No caller reason and no delta: the generic manual reason is the floor.
+        assert_eq!(
+            restart_reason_for_mount_change(None, &[], &[]),
+            crate::lifecycle::DEFAULT_RESTART
         );
     }
 
