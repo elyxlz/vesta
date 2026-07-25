@@ -28,11 +28,9 @@ function orbColors(
   if (
     status === "starting" ||
     status === "restarting" ||
-    status === "rebuilding"
+    status === "rebuilding" ||
+    status === "setting_up"
   ) {
-    return designTokens.orb.busy;
-  }
-  if (status === "setting_up") {
     return designTokens.orb.busy;
   }
   return designTokens.orb.off;
