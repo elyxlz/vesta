@@ -77,6 +77,73 @@ _KIMI_INVALID_CREDENTIAL_MARKERS = (
 )
 
 
+# --- what a provider's HTTP 429 actually means ---
+# One status covers a minute-scale throttle, a quota resetting in days, and problems retrying can
+# never fix (expired plan, empty balance, a model the subscription lacks). So each provider answers
+# for its own, with no default: guessing meant silently retrying a dead subscription forever while
+# reporting a passing rate limit. Markers come from the vendors' published error tables and match
+# the error text the SDK surfaces, as _KIMI_INVALID_CREDENTIAL_MARKERS already does.
+
+
+class Rejection(tp.NamedTuple):
+    """How to treat one rejected request. `retryable=False` means waiting cannot help."""
+
+    retryable: bool
+    window: str
+    seconds: int | None = None
+
+
+_MINUTE = 60
+_FIVE_HOURS = 5 * 60 * 60
+_SEVEN_DAYS = 7 * 24 * 60 * 60
+
+# Ordered: the first marker found in the error text wins, so the specific precede the general.
+_ZAI_REJECTIONS: tuple[tuple[str, Rejection], ...] = (
+    ("1309", Rejection(retryable=False, window="plan expired")),
+    ("1311", Rejection(retryable=False, window="model not in plan")),
+    ("1314", Rejection(retryable=False, window="enterprise package expired")),
+    ("1315", Rejection(retryable=False, window="api key scope")),
+    ("1313", Rejection(retryable=False, window="fair usage policy")),
+    ("past 7 days", Rejection(retryable=True, window="7 days", seconds=_SEVEN_DAYS)),
+    ("past 5 hours", Rejection(retryable=True, window="5 hours", seconds=_FIVE_HOURS)),
+    ("weekly/monthly limit exhausted", Rejection(retryable=True, window="weekly/monthly", seconds=_SEVEN_DAYS)),
+    ("usage limit reached", Rejection(retryable=True, window="usage limit", seconds=_FIVE_HOURS)),
+    ("temporarily overloaded", Rejection(retryable=True, window="overloaded", seconds=_MINUTE)),
+    ("rate limit reached", Rejection(retryable=True, window="requests", seconds=_MINUTE)),
+)
+
+_KIMI_REJECTIONS: tuple[tuple[str, Rejection], ...] = (
+    ("exceeded_current_quota_error", Rejection(retryable=False, window="account balance")),
+    ("tpd limit", Rejection(retryable=True, window="tokens per day", seconds=24 * 60 * 60)),
+    ("tpm limit", Rejection(retryable=True, window="tokens per minute", seconds=_MINUTE)),
+    ("rpm limit", Rejection(retryable=True, window="requests per minute", seconds=_MINUTE)),
+    ("concurrency limit", Rejection(retryable=True, window="concurrency", seconds=10)),
+    # Matches both the error type (engine_overloaded_error) and its message text.
+    ("overloaded", Rejection(retryable=True, window="overloaded", seconds=_MINUTE)),
+)
+
+_REJECTIONS_BY_KIND: dict[str, tuple[tuple[str, Rejection], ...]] = {
+    "zai": _ZAI_REJECTIONS,
+    "kimi": _KIMI_REJECTIONS,
+}
+
+
+def classify_rejection(kind: "ProviderStatusKind | None", details: tp.Iterable[str]) -> Rejection | None:
+    """What this provider's 429 means, or None when it does not answer for its own rejections.
+
+    None is a known gap rather than a wait: Claude and OpenRouter are served by richer signals
+    elsewhere, and a provider reached through an external bridge may never surface the status here.
+    """
+    if kind is None or kind not in _REJECTIONS_BY_KIND:
+        return None
+    markers = _REJECTIONS_BY_KIND[kind]
+    text = "\n".join(details).lower()
+    for marker, rejection in markers:
+        if marker in text:
+            return rejection
+    return None
+
+
 def is_terminal_provider_error(
     kind: "ProviderStatusKind | None",
     *,

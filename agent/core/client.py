@@ -38,6 +38,7 @@ from .model_access import activate_rate_limit, model_access_available, note_rate
 from .provider import (
     OPENROUTER_SMALL_FAST_MODEL,
     RATE_LIMITED_STATUS,
+    classify_rejection,
     is_terminal_provider_error,
     is_unauthenticated,
     observed_provider_failure,
@@ -250,29 +251,39 @@ async def _note_rate_limit(msg: RateLimitEvent, *, state: vm.State, config: cfg.
         await vestad_client.send_user_notification("rate_limited", agent_name, notice)
 
 
-async def _note_rejected_turn(*, state: vm.State, config: cfg.VestaConfig) -> None:
-    """Every provider can refuse a turn with HTTP 429, and for most of them that status is the whole
-    signal: only Claude names the window it hit and when it resets, and only OpenRouter's traffic
-    passes through a proxy that can read Retry-After. So this opens a fixed-length cooldown, which
-    activate_rate_limit will not let undercut a longer one either signal already established."""
+async def _note_rejected_turn(msg: ResultMessage, *, state: vm.State, config: cfg.VestaConfig, details: tuple[str, ...]) -> None:
+    """Act on a provider's 429 according to what that provider says it means.
+
+    There is no fallback for a provider that does not answer: a blanket "wait five minutes" reads an
+    expired plan or an empty balance as a passing throttle and retries it forever, while reporting a
+    temporary rate limit to the user. An unclassified rejection is logged as the gap it is."""
     kind = state.provider_status.kind if state.provider_status is not None else None
-    cooldown = await activate_rate_limit(state=state, config=config, resets_at=None, window=kind)
+    rejection = classify_rejection(kind, details)
+    if rejection is None:
+        logger.warning(f"{kind or 'provider'} rejected a turn with {msg.api_error_status} and no rate-limit meaning; not pausing")
+        return
+    if not rejection.retryable:
+        # Waiting cannot fix this one, so say so instead of opening a cooldown that hides it.
+        state.event_bus.emit({"type": "error", "text": f"{kind} rejected the request: {rejection.window}. This needs your attention."})
+        return
+    resets_at = int(time.time()) + rejection.seconds if rejection.seconds is not None else None
+    cooldown = await activate_rate_limit(state=state, config=config, resets_at=resets_at, window=rejection.window)
     resets = time.strftime("%I:%M %p %Z", time.localtime(cooldown.until))
     note_rate_limit_once(
         state=state,
-        window=kind,
+        window=rejection.window,
         resets_at=cooldown.until,
-        notice=f"Rate limited by {kind or 'the provider'}, pausing until {resets}.",
+        notice=f"Rate limited by {kind} ({rejection.window}), pausing until {resets}.",
     )
 
 
-async def _note_rate_limit_signal(msg: Message, *, state: vm.State, config: cfg.VestaConfig) -> None:
+async def _note_rate_limit_signal(msg: Message, *, state: vm.State, config: cfg.VestaConfig, details: tuple[str, ...]) -> None:
     """The two ways a rejection reaches this stream: Claude's structured classification, which
     names the window, or any provider's bare 429 on the result."""
     if isinstance(msg, RateLimitEvent):
         await _note_rate_limit(msg, state=state, config=config)
     elif isinstance(msg, ResultMessage) and msg.api_error_status == RATE_LIMITED_STATUS:
-        await _note_rejected_turn(state=state, config=config)
+        await _note_rejected_turn(msg, state=state, config=config, details=details)
 
 
 async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaConfig) -> None:
@@ -304,7 +315,7 @@ async def _dispatch_message(msg: Message, *, state: vm.State, config: cfg.VestaC
             logger.warning(f"Session ID changed: {state.persisted.session_id[:16]} -> {session_id[:16]} (resume may have failed)")
         await persist_session_id(session_id, state=state, config=config)
     _emit_parsed_content(texts, thinking_blocks, error_texts, state=state)
-    await _note_rate_limit_signal(msg, state=state, config=config)
+    await _note_rate_limit_signal(msg, state=state, config=config, details=(*texts, *error_texts))
     # The SDK can surface a provider failure either on the assistant classification or the result's
     # HTTP status. Keep the decision provider-aware: Kimi uses 401 for tier/model/context permission
     # errors and a temporary 402, neither of which means its subscription key is dead.

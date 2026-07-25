@@ -262,56 +262,100 @@ async def test_requeue_returns_every_unstarted_turn(config, state):
     assert [queue.get_nowait().text for _ in range(queue.qsize())] == ["migration", "sync", "greeting"]
 
 
-# --- every provider, not just the two with a native signal ---
+# --- each provider answers for its own 429 ---
+
+
+def _rejected(details: str):
+    """A ResultMessage carrying a provider's 429 and its error text."""
+    from unittest.mock import MagicMock
+
+    from claude_agent_sdk import ResultMessage
+
+    msg = MagicMock(spec=ResultMessage)
+    msg.api_error_status = 429
+    return msg, (details,)
 
 
 @pytest.mark.anyio
-async def test_a_bare_429_cools_down_a_provider_with_no_native_signal(config, state):
-    """Z.AI, Kimi and OpenAI surface nothing richer than the status, so it has to be enough."""
+@pytest.mark.parametrize(
+    ("kind", "details", "window", "min_seconds"),
+    [
+        ("zai", '{"error":{"code":"1302","message":"Rate limit reached for requests"}}', "requests", 30),
+        ("zai", "Usage limit reached for the past 5 hours. Insufficient balance", "5 hours", 4 * 3600),
+        ("zai", "Usage limit reached for the past 7 days. Insufficient balance", "7 days", 6 * 24 * 3600),
+        ("kimi", "Organization-level RPM limit reached", "requests per minute", 30),
+        ("kimi", "Organization-level TPD limit reached", "tokens per day", 12 * 3600),
+        ("kimi", "The engine is currently overloaded, please try again later", "overloaded", 30),
+    ],
+)
+async def test_a_provider_names_its_own_window(config, state, kind, details, window, min_seconds):
+    """The vendors publish what each 429 means; reading it beats a single guessed duration."""
     from core.client import _note_rejected_turn
 
-    config.provider = cfg.ZaiConfig(key=SecretStr("test-key"), model="glm-5")
-    state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="zai", model="glm-5")
-    sub = state.event_bus.subscribe()
+    state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind=kind, model="m")
+    msg, detail_texts = _rejected(details)
 
-    await _note_rejected_turn(state=state, config=config)
+    await _note_rejected_turn(msg, state=state, config=config, details=detail_texts)
 
     cooldown = state.persisted.provider_cooldown
     assert cooldown is not None
-    assert cooldown.window == "zai"
-    assert cooldown.until > time.time()
-    assert not model_access_available(state)
-    assert any(e["type"] == "model_access" and e["state"] == "cooling_down" for e in _drain(sub))
+    assert cooldown.window == window
+    assert cooldown.until >= time.time() + min_seconds
 
 
 @pytest.mark.anyio
-async def test_a_bare_429_never_shortens_a_precise_window(config, state):
-    """Claude's structured window and the generic status can both land for one rejection. The
-    fallback is minutes and the real window is hours, so order must not decide the deadline."""
+@pytest.mark.parametrize(
+    ("kind", "details"),
+    [
+        ("zai", '{"error":{"code":"1309","message":"Your GLM Coding Plan package has expired"}}'),
+        ("zai", '{"error":{"code":"1311","message":"subscription plan does not yet include access"}}'),
+        ("kimi", "exceeded_current_quota_error: Account balance is insufficient"),
+    ],
+)
+async def test_a_429_that_waiting_cannot_fix_never_opens_a_cooldown(config, state, kind, details):
+    """An expired plan or an empty balance is not a throttle. Cooling down would retry it forever
+    while telling the user it was temporary."""
     from core.client import _note_rejected_turn
 
-    state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
-    precise = int(time.time()) + 5 * 3600
-    state.persisted.provider_cooldown = ProviderCooldown(until=precise, window="five_hour")
+    state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind=kind, model="m")
+    sub = state.event_bus.subscribe()
+    msg, detail_texts = _rejected(details)
 
-    await _note_rejected_turn(state=state, config=config)
+    await _note_rejected_turn(msg, state=state, config=config, details=detail_texts)
+
+    assert state.persisted.provider_cooldown is None
+    assert model_access_available(state)
+    assert any(e["type"] == "error" for e in _drain(sub))
+
+
+@pytest.mark.anyio
+async def test_a_provider_that_does_not_answer_is_a_logged_gap_not_a_guess(config, state):
+    """No blanket fallback: a provider with no published meaning for its 429 gets no invented one."""
+    from core.client import _note_rejected_turn
+
+    state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="openai", model="gpt")
+    msg, detail_texts = _rejected("429 Too Many Requests")
+
+    await _note_rejected_turn(msg, state=state, config=config, details=detail_texts)
+
+    assert state.persisted.provider_cooldown is None
+
+
+@pytest.mark.anyio
+async def test_a_named_window_never_shortens_a_precise_one(config, state):
+    """Claude's structured window and a provider 429 can both land for one rejection, in either
+    order, so the shorter must not win."""
+    from core.client import _note_rejected_turn
+
+    state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="zai", model="glm-5")
+    precise = int(time.time()) + 5 * 3600
+    state.persisted.provider_cooldown = ProviderCooldown(until=precise, window="5 hours")
+    msg, detail_texts = _rejected("Rate limit reached for requests")
+
+    await _note_rejected_turn(msg, state=state, config=config, details=detail_texts)
 
     assert state.persisted.provider_cooldown is not None
     assert state.persisted.provider_cooldown.until == precise
-    assert state.persisted.provider_cooldown.window == "five_hour"
-
-
-@pytest.mark.anyio
-async def test_a_lapsed_cooldown_does_not_block_a_new_one(config, state):
-    """Extend-only applies to live cooldowns; a spent one must not pin the agent to the past."""
-    from core.client import _note_rejected_turn
-
-    state.persisted.provider_cooldown = ProviderCooldown(until=1, window="five_hour")
-
-    await _note_rejected_turn(state=state, config=config)
-
-    assert state.persisted.provider_cooldown is not None
-    assert state.persisted.provider_cooldown.until > time.time()
 
 
 def _drain(sub):
