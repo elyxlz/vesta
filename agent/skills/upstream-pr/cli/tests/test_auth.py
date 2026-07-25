@@ -1,4 +1,5 @@
 import base64
+import os
 import subprocess
 import sys
 
@@ -6,10 +7,13 @@ import pytest
 from upstream_pr_cli import cli
 
 SENTINEL = "ghs_SENTINELtoken1234567890abcdef"
+# The host's own git config must not reach these repos: a user-level commit.gpgSign would sign
+# every fixture commit, and fail wherever no key is available.
+HERMETIC_GIT = {"GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null"}
 
 
 def _git(repo, *args):
-    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True)
+    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True, env=os.environ | HERMETIC_GIT)
 
 
 @pytest.fixture

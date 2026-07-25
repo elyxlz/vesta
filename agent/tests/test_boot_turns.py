@@ -1,6 +1,6 @@
 """Tests for boot-turn assembly: boot-time control-flow delivered as ordered, non-interruptible turns."""
 
-import subprocess
+from test_upstream_sync_turn import _record_snapshot
 
 import core.config as cfg
 import core.models as vm
@@ -20,17 +20,6 @@ def _authed_state() -> vm.State:
     state = vm.State()
     state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="claude", model="opus")
     return state
-
-
-def _record_snapshot(config, version):
-    home = config.agent_dir.parent
-    subprocess.run(["git", "init", "-q", "-b", "agent"], cwd=home, check=True)
-    subprocess.run(
-        ["git", "-c", "user.name=test", "-c", "user.email=test@vesta", "commit", "-q", "--allow-empty", "-m", "stock"],
-        cwd=home,
-        check=True,
-    )
-    subprocess.run(["git", "tag", f"agent-v{version}"], cwd=home, check=True)
 
 
 def test_boot_turns_ordered_migrations_then_sync_then_config_then_greeting(tmp_path):
