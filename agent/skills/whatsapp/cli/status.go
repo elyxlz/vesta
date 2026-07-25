@@ -35,6 +35,23 @@ func runStatus() {
 func simpleStatus(live map[string]any, dataDir string) map[string]any {
 	loggedIn, _ := live["logged_in"].(bool)
 	if !loggedIn {
+		if pending, _ := live["phone_pairing_pending"].(bool); pending {
+			return map[string]any{
+				"linked":     false,
+				"connecting": true,
+				"method":     "phone",
+				"next":       "wait for the user to enter the active pairing code; do not run connect again",
+			}
+		}
+		linkPort, _ := live["link_port"].(float64)
+		if live["auth_status"] == string(AuthStatusQRReady) || linkPort > 0 {
+			return map[string]any{
+				"linked":     false,
+				"connecting": true,
+				"method":     "qr",
+				"next":       "wait for the user to scan the active QR page; do not run connect again",
+			}
+		}
 		return notLinkedStatus(dataDir, "")
 	}
 	connected, _ := live["connected"].(bool)

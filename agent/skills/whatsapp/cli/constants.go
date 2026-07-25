@@ -26,6 +26,10 @@ const (
 	// synchronous, so this is just the PairSuccess round-trip). Well inside
 	// SocketTimeout so a synchronous `provision` never outlives its socket call.
 	ManagedLinkTimeout = 60 * time.Second
+	// Whatsmeow documents a 160-second phone-code window before the login
+	// websocket closes. During that window status must keep agents from starting
+	// a QR pairing that invalidates the code the user is entering.
+	PhonePairingWindow = 160 * time.Second
 
 	// KeepAliveRestartThreshold is the consecutive keep-alive failure count at
 	// which the socket is treated as dead. Below it, whatsmeow is still
