@@ -151,7 +151,9 @@ def _poll_gmail(ctx: GoogleContext, gmail, query_since: datetime, catching_up: b
     logger = ctx.monitor_logger
     try:
         epoch_seconds = int(query_since.timestamp())
-        query = f"after:{epoch_seconds}"
+        # Promotions/Social are Gmail's own noise tabs; Primary/Updates/Forums keep
+        # notifying, so transactional mail (receipts, alerts) still comes through.
+        query = f"after:{epoch_seconds} -category:promotions -category:social"
         results = gmail.users().messages().list(userId="me", q=query, labelIds=["INBOX"], maxResults=50).execute()
         messages = results["messages"] if "messages" in results else []
         logger.info("Found %d new emails", len(messages))
