@@ -284,10 +284,10 @@ def test_broken_calendar_does_not_make_mail_renotify(tmp_path, monkeypatch):
     assert _watermark(ctx, "calendar") < _watermark(ctx, "mail")
 
 
-def test_promotions_and_social_mail_still_notifies_tagged_with_category(tmp_path, monkeypatch):
-    """The poll notifies on every email regardless of Gmail category; Promotions/Social mail carries
-    its category on the notification so the user's own notification rules, not the poll, decide
-    whether it interrupts or snoozes."""
+def test_mail_notifies_tagged_with_its_gmail_category(tmp_path, monkeypatch):
+    """The poll notifies on every email regardless of Gmail category; each notification carries its
+    category (or none, for a non-tabbed inbox) so the user's own notification rules, not the poll,
+    decide what interrupts vs. snoozes."""
     calls = []
     monkeypatch.setattr(monitor.notifications, "write_notification", lambda *a, **k: calls.append(k))
     monkeypatch.setattr(monitor.calendar, "list_events_between", lambda *a, **k: [])
@@ -297,42 +297,23 @@ def test_promotions_and_social_mail_still_notifies_tagged_with_category(tmp_path
     ctx = _run_ctx(tmp_path, cycles=1)
     ctx.monitor_state_file.write_text((now - timedelta(seconds=60)).isoformat())
 
-    inbox = [("promo", arrived_at), ("social", arrived_at), ("receipt", arrived_at)]
+    inbox = [("promo", arrived_at), ("social", arrived_at), ("receipt", arrived_at), ("plain", arrived_at)]
     messages_by_id = {
         "promo": _gmail_message("Shop <deals@x.com>", "50% off today", "flash sale", label_ids=["CATEGORY_PROMOTIONS"]),
         "social": _gmail_message("Network <notify@social.com>", "New follower", "someone followed you", label_ids=["CATEGORY_SOCIAL"]),
         "receipt": _gmail_message("Shop <orders@x.com>", "Your order shipped", "on its way", label_ids=["CATEGORY_UPDATES"]),
+        "plain": _gmail_message("Manager <boss@x.com>", "Q3 plan", "please review"),
     }
     monkeypatch.setattr(monitor.api, "gmail_service", lambda config: _DrivenGmail(inbox, lambda: None, messages_by_id))
 
     monitor.run(ctx)
 
-    assert _email_notifs(calls) == ["50% off today", "New follower", "Your order shipped"]
+    assert _email_notifs(calls) == ["50% off today", "New follower", "Your order shipped", "Q3 plan"]
     by_subject = {call["subject"]: call for call in calls if "subject" in call}
     assert by_subject["50% off today"]["category"] == "promotions"
     assert by_subject["New follower"]["category"] == "social"
     assert by_subject["Your order shipped"]["category"] == "updates"
-
-
-def test_uncategorized_mail_notifies_with_no_category(tmp_path, monkeypatch):
-    """A message with no Gmail category label (a non-tabbed inbox) still notifies, with no category
-    inferred (write_notification drops the None field, so it never reaches the notification file)."""
-    calls = []
-    monkeypatch.setattr(monitor.notifications, "write_notification", lambda *a, **k: calls.append(k))
-    monkeypatch.setattr(monitor.calendar, "list_events_between", lambda *a, **k: [])
-
-    now = datetime.now(UTC)
-    arrived_at = now - timedelta(seconds=30)
-    ctx = _run_ctx(tmp_path, cycles=1)
-    ctx.monitor_state_file.write_text((now - timedelta(seconds=60)).isoformat())
-
-    inbox = [("m1", arrived_at)]
-    messages_by_id = {"m1": _gmail_message("Manager <boss@x.com>", "Q3 plan", "please review")}
-    monkeypatch.setattr(monitor.api, "gmail_service", lambda config: _DrivenGmail(inbox, lambda: None, messages_by_id))
-
-    monitor.run(ctx)
-
-    assert calls[0]["category"] is None
+    assert by_subject["Q3 plan"]["category"] is None
 
 
 def test_legacy_bare_timestamp_state_is_read_as_the_starting_watermark(tmp_path, monkeypatch):
