@@ -602,6 +602,93 @@ async def test_compact_session_query_send_timeout_fails_compaction():
     assert state.turn is None
 
 
+# --- In-place (restart=false) compaction through the processor ---
+
+
+def _processor_nap_harness(tmp_path):
+    """Stream harness wired for driving message_processor through an in-place nap; the follow-up
+    notification write is pointed at the test's tmp dir, never the real agent home."""
+    state, config, mock_client, _, message_queue, _ = make_stream_harness()
+    config.agent_dir = tmp_path / "agent"
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    return state, config, mock_client, message_queue
+
+
+async def _drive_nap(state, mock_client, message_queue, queue):
+    """One turn that requests an in-place nap, then the compaction stream that completes it."""
+    from claude_agent_sdk import SystemMessage
+
+    await queue.put(vm.QueuedTurn("please take a nap", True, []))
+    await wait_for_condition(lambda: mock_client.query.await_count >= 1, message="nap turn never queried")
+    state.pending_compaction = vm.PendingCompaction(prompt="keep threads", followup="reflect", restart=False)
+    await message_queue.put(result_msg())
+
+    await wait_for_condition(
+        lambda: any(call.args and str(call.args[0]).startswith("/compact") for call in mock_client.query.call_args_list),
+        message="idle tick never drained the nap",
+    )
+    await message_queue.put(SystemMessage(subtype="compact_boundary", data={"compact_metadata": {"pre_tokens": 5, "trigger": "manual"}}))
+    await message_queue.put(result_msg())
+
+
+@pytest.mark.anyio
+async def test_processor_serves_turns_after_inplace_nap(tmp_path):
+    """compact_context(restart=false): after the drain completes in place, the processor must
+    return to serving turns on the same session (issue #1363's expected behavior)."""
+    from core.loops import message_processor
+
+    state, config, mock_client, message_queue = _processor_nap_harness(tmp_path)
+    queue: asyncio.Queue = asyncio.Queue()
+
+    with (
+        patch("core.client.ClaudeSDKClient", return_value=mock_client),
+        patch("core.client.build_client_options", return_value=MagicMock()),
+    ):
+        processor = asyncio.create_task(message_processor(queue, state=state, config=config))
+        await _drive_nap(state, mock_client, message_queue, queue)
+        await wait_for_condition(lambda: state.pending_compaction is None and not state.processor_busy, message="drain never completed")
+
+        before = mock_client.query.await_count
+        await queue.put(vm.QueuedTurn("hello again", True, []))
+        await wait_for_condition(lambda: mock_client.query.await_count > before, message="post-nap turn never served")
+        await message_queue.put(result_msg())
+        await wait_for_condition(lambda: not state.processor_busy, message="post-nap turn never finished")
+
+        state.shutdown_event.set()
+        await asyncio.wait_for(processor, timeout=5)
+
+
+@pytest.mark.anyio
+async def test_inplace_nap_on_failing_disk_restarts_instead_of_wedging(tmp_path):
+    """Regression (issue #1363): a failing disk during the restart=false drain tail (the follow-up
+    notification write) unwinds message_processor, and the same disk fails the restart-reason
+    persist inside handle_processor_done. That callback exception is swallowed by asyncio, so
+    graceful_shutdown was never set: the agent sat with a dead processor and a live monitor,
+    busy-skipping every tick until a manual container restart. The crash must still flip
+    graceful_shutdown so the agent restarts and returns to serving turns."""
+    from core.loops import message_processor
+    from core.main import handle_processor_done
+
+    state, config, mock_client, message_queue = _processor_nap_harness(tmp_path)
+    queue: asyncio.Queue = asyncio.Queue()
+
+    with (
+        patch("core.client.ClaudeSDKClient", return_value=mock_client),
+        patch("core.client.build_client_options", return_value=MagicMock()),
+        patch("core.config.atomic_write_text", side_effect=OSError(28, "No space left on device")),
+    ):
+        processor = asyncio.create_task(message_processor(queue, state=state, config=config))
+        processor.add_done_callback(lambda t: handle_processor_done(t, name="message processor", state=state, config=config))
+        await _drive_nap(state, mock_client, message_queue, queue)
+
+        await wait_for_condition(state.graceful_shutdown.is_set, message="processor death never flipped graceful_shutdown")
+        with pytest.raises(OSError):
+            await processor
+    assert state.persisted.last_restart_reason is not None
+    assert state.persisted.last_restart_reason.startswith("crash:")
+
+
 def test_read_compaction_summary_extracts_latest(tmp_path, monkeypatch):
     """The /compact summary is read back from the session transcript for logging: pick the latest
     isCompactSummary entry and join its text blocks."""

@@ -649,6 +649,33 @@ async def test_handle_processor_done_silent_exit_triggers_restart(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_handle_processor_done_failing_state_write_still_triggers_restart(tmp_path):
+    """Regression (issue #1363): the disk failure that crashed the processor also fails the
+    restart-reason persist inside this done-callback; asyncio swallows callback exceptions, so
+    an unguarded persist left graceful_shutdown unset and the agent wedged silently forever.
+    The flip must happen even when the persist raises."""
+    from core.main import handle_processor_done
+
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
+    config.data_dir.mkdir(parents=True, exist_ok=True)
+    state = vm.State()
+
+    async def crasher():
+        raise OSError(28, "No space left on device")
+
+    task = asyncio.create_task(crasher())
+    with contextlib.suppress(OSError):
+        await task
+
+    with patch("core.config.atomic_write_text", side_effect=OSError(28, "No space left on device")):
+        handle_processor_done(task, name="processor", state=state, config=config)
+
+    assert state.graceful_shutdown.is_set(), "a failed persist must never block the restart flip"
+    assert state.persisted.last_restart_reason is not None
+    assert state.persisted.last_restart_reason.startswith("crash:")
+
+
+@pytest.mark.anyio
 async def test_handle_processor_done_noop_during_shutdown(tmp_path):
     """If shutdown was already initiated, the callback must not override the restart_reason."""
     from core.main import handle_processor_done

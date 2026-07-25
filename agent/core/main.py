@@ -60,7 +60,13 @@ def handle_processor_done(task: asyncio.Task[None], *, name: str, state: vm.Stat
         else:
             logger.error(f"{name} exited without error, restarting")
             state.persisted.last_restart_reason = f"crash: the {name} exited silently"
-    state_store.save_state(state.persisted, config)
+    # The flip is the wedge-proof invariant: the same failing disk that killed the task makes
+    # this persist raise, and an exception escaping this callback is swallowed by asyncio, so
+    # an unguarded persist leaves the agent up but never serving again (issue #1363).
+    try:
+        state_store.save_state(state.persisted, config)
+    except OSError as e:
+        logger.error(f"failed to persist restart reason: {e}")
     state.graceful_shutdown.set()
 
 
