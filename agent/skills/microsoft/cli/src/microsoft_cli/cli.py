@@ -152,6 +152,15 @@ def _add_email_read_parsers(email_sub) -> None:
     p_list_emails.add_argument(
         "--search", "--query", dest="search", default=None, help="Search instead of listing (alias for `email search --query`)."
     )
+    p_list_emails.add_argument(
+        "--since",
+        default=None,
+        help=(
+            "Only mail received on/after this date (YYYY-MM-DD, inclusive). Uses a date $filter to reach "
+            "any date, unlike relevance-ranked search."
+        ),
+    )
+    p_list_emails.add_argument("--until", default=None, help="Only mail received on/before this date (YYYY-MM-DD, inclusive).")
     _add_format_flags(p_list_emails)
 
     p_get_email = email_sub.add_parser("get")
@@ -165,6 +174,15 @@ def _add_email_read_parsers(email_sub) -> None:
     p_search.add_argument("--query", required=True)
     p_search.add_argument("--limit", type=int, default=10)
     p_search.add_argument("--folder", default=None)
+    p_search.add_argument(
+        "--since",
+        default=None,
+        help=(
+            "Restrict to mail received on/after this date (YYYY-MM-DD, inclusive). With a --query, Graph cannot combine "
+            "$search and $filter, so the date range is applied server-side and the query is matched client-side against subject/from/preview."
+        ),
+    )
+    p_search.add_argument("--until", default=None, help="Restrict to mail received on/before this date (YYYY-MM-DD, inclusive).")
     _add_format_flags(p_search)
 
     p_attachment = email_sub.add_parser("attachment")
@@ -585,7 +603,11 @@ def _email_routes():
     """Routed email commands: (graph implementation, OWA REST implementation, per-command kwargs from args).
     `account_email` is merged in at dispatch time. Built per dispatch so module attributes stay late-bound."""
     return {
-        "list": (email.list_emails, owa_rest_commands.list_emails, lambda a: {"folder": a.folder, "limit": a.limit}),
+        "list": (
+            email.list_emails,
+            owa_rest_commands.list_emails,
+            lambda a: {"folder": a.folder, "limit": a.limit, "since": getattr(a, "since", None), "until": getattr(a, "until", None)},
+        ),
         "get": (
             email.get_email,
             owa_rest_commands.get_email,
@@ -630,7 +652,13 @@ def _email_routes():
         "search": (
             email.search_emails,
             owa_rest_commands.search_emails,
-            lambda a: {"query": a.query, "limit": a.limit, "folder": a.folder},
+            lambda a: {
+                "query": a.query,
+                "limit": a.limit,
+                "folder": a.folder,
+                "since": getattr(a, "since", None),
+                "until": getattr(a, "until", None),
+            },
         ),
         "update": (
             email.update_email,
@@ -657,6 +685,9 @@ def _dispatch_email(args, config, client):
         # `list --search/--query` is an alias for `email search`: run the identical search path,
         # defaulting to all folders (folder=None) unless the caller explicitly narrowed it.
         kw = {"account_email": acct, "query": args.search, "limit": args.limit, "folder": args.folder if args.folder != "inbox" else None}
+        since, until = getattr(args, "since", None), getattr(args, "until", None)
+        if since or until:
+            kw["since"], kw["until"] = since, until
         return _route(
             args,
             config,
