@@ -11,7 +11,7 @@ import typing as tp
 from rich import print_json
 
 from . import config as cfg
-from . import logger, state_store
+from . import lifecycle, logger, state_store
 from . import models as vm
 from .api import start_ws_server
 from .claude_runtime import reconcile_claude_runtime
@@ -32,6 +32,8 @@ def _make_signal_handler(state: vm.State, *, allow_force_exit: bool = False) -> 
         sig_name = signal.Signals(signum).name
         state.shutdown_count += 1
         if state.shutdown_count == 1:
+            # Logged here rather than left to the shutdown path below: if the unwind hangs, this is
+            # the only evidence the signal ever arrived.
             logger.shutdown(f"received {sig_name}, graceful shutdown")
             state.graceful_shutdown.set()
         elif allow_force_exit and state.shutdown_count > 2:
@@ -69,7 +71,7 @@ async def run_vesta(
     *,
     state: vm.State,
     first_start: bool = False,
-    restart_reason: str = vm.CLEAN_RESTART,
+    restart_reason: lifecycle.RestartReason | None = None,
     config_issues: list[str] | None = None,
 ) -> bool:
     """Run the agent until shutdown. Returns whether the agent is exiting because it crashed, so the
@@ -78,6 +80,7 @@ async def run_vesta(
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
     signal.signal(signal.SIGINT, _make_signal_handler(state, allow_force_exit=True))
     signal.signal(signal.SIGTERM, _make_signal_handler(state))
+    restart_reason = restart_reason or lifecycle.CLEAN_RESTART
 
     logger.init(f"{config.agent_name.upper()} started")
 
@@ -86,9 +89,12 @@ async def run_vesta(
     # Boot-time control-flow runs as boot turns: enqueued first (before the processor/input/monitor
     # tasks start), processed immediately and non-interruptibly so the agent converges and orients
     # before taking any other work.
-    greeting_reason = "first_start" if first_start else restart_reason
     for body in collect_boot_turns(
-        state=state, config=config, config_issues=config_issues or [], greeting_reason=greeting_reason, first_start=first_start
+        state=state,
+        config=config,
+        config_issues=config_issues or [],
+        agent_message=restart_reason.agent_message,
+        first_start=first_start,
     ):
         await message_queue.put(vm.QueuedTurn(body, False, [], interruptible=False))
 
@@ -118,11 +124,14 @@ async def run_vesta(
     # policy recovers us. Intentional restarts/stops are driven by vestad (docker restart/stop) and
     # a SIGTERM-driven shutdown carries no crash reason, so those exit 0 — vestad starts us back, or
     # leaves us down. Capture intent before the clean-restart default below overwrites a blank reason.
-    crashed = vm.is_crash_reason(state.persisted.last_restart_reason)
-    reason = state.persisted.last_restart_reason or vm.CLEAN_RESTART
+    crashed = lifecycle.is_crash(state.persisted.last_restart_reason)
+    # vestad drops a terse reason into the shutdown inbox just before SIGTERM; a reason this process
+    # recorded itself (a crash, a tool-driven restart) is the more specific story, so it wins.
+    handed_in = state_store.take_pending_shutdown_reason(config)
+    reason = state.persisted.last_restart_reason or handed_in or lifecycle.CLEAN_RESTART.log_reason
     logger.shutdown(f"Shutting down ({reason})")
     if not state.persisted.last_restart_reason:
-        state.persisted.last_restart_reason = vm.CLEAN_RESTART
+        state.persisted.last_restart_reason = lifecycle.CLEAN_RESTART.log_reason
         state_store.save_state(state.persisted, config)
 
     for task in tasks:
@@ -166,7 +175,7 @@ BOOT_RESTORE_ORIENTATION = (
 
 
 def collect_boot_turns(
-    *, state: vm.State, config: cfg.VestaConfig, config_issues: list[str], greeting_reason: str, first_start: bool
+    *, state: vm.State, config: cfg.VestaConfig, config_issues: list[str], agent_message: str, first_start: bool
 ) -> list[str]:
     """Boot-time control-flow as ordered prompt bodies: migrations, then upstream sync, then
     config issues, then the greeting last — converge first, orient and reach out last. Each is
@@ -183,30 +192,40 @@ def collect_boot_turns(
         turns.append(config_turn)
     if turns:
         turns[0] = f"{BOOT_RESTORE_ORIENTATION}\n\n{turns[0]}"
-    greeting = greeting_turn(config=config, state=state, reason=greeting_reason)
+    greeting = greeting_turn(config=config, state=state, agent_message=agent_message, first_start=first_start)
     if greeting is not None:
         turns.append(greeting)
     return turns
 
 
-def _consume_restart_reason(state: vm.State, config: cfg.VestaConfig, *, first_start: bool) -> str:
+def _consume_restart_reason(
+    state: vm.State,
+    config: cfg.VestaConfig,
+    *,
+    first_start: bool,
+) -> lifecycle.RestartReason:
     """Return the reason to log for this boot and clear it from persisted state. On a never-run agent
-    the absence of a stored reason is innocent; report FIRST_START_REASON instead of a misleading
-    crash label."""
-    # Drain the inbox on every boot, including first start: a file left behind would fire stale
+    the absence of a stored reason is innocent; report FIRST_START instead of a misleading crash
+    label."""
+    # A backup/rebuild snapshot can capture the shutdown inbox if the old process was force-killed
+    # before its signal handler drained it. It is never valid after boot, so discard it first.
+    state_store.take_pending_shutdown_reason(config)
+    # Drain the boot inbox on every boot, including first start: a file left behind would fire stale
     # on some later, unrelated boot.
     pending = state_store.take_pending_reason(config)
     if first_start:
-        return vm.FIRST_START_REASON
+        return lifecycle.FIRST_START
     stored = state.persisted.last_restart_reason
-    if pending is not None and not vm.is_crash_reason(stored):
+    if pending is not None and not lifecycle.is_crash(stored):
         # An external actor (vestad backup/mounts/manual restart) handed in a reason for this boot.
         # It overrides the clean-restart placeholder the prior run persisted on its way down, but
         # never a recorded crash: the crash detail is the more important story to surface.
-        stored = pending
+        reason = pending
+    else:
+        reason = lifecycle.from_legacy(stored) if stored else lifecycle.CRASH_RESTART
     state.persisted.last_restart_reason = None
     state_store.save_state(state.persisted, config)
-    return stored or vm.CRASH_RESTART
+    return reason
 
 
 def init_state(*, config: cfg.VestaConfig) -> vm.State:
@@ -217,6 +236,11 @@ def init_state(*, config: cfg.VestaConfig) -> vm.State:
     provider_status = derive_status(config)
     logger.init(f"Provider: {provider_status.kind} ({provider_status.state.value})")
     return vm.State(persisted=persisted, event_bus=event_bus, provider_status=provider_status)
+
+
+def _log_startup_reason(reason: lifecycle.RestartReason, *, first_start: bool) -> None:
+    label = "Startup reason" if first_start else "Restart reason"
+    logger.startup(f"{label}: {reason.log_reason}")
 
 
 async def async_main() -> bool:
@@ -250,7 +274,8 @@ async def async_main() -> bool:
     initial_state = init_state(config=config)
     first_start = not initial_state.persisted.first_start_done
     restart_reason = _consume_restart_reason(initial_state, config, first_start=first_start)
-    logger.init(f"Starting main loop ({restart_reason})...")
+    logger.init("Starting main loop...")
+    _log_startup_reason(restart_reason, first_start=first_start)
     return await run_vesta(config, state=initial_state, first_start=first_start, restart_reason=restart_reason, config_issues=config_issues)
 
 

@@ -10,12 +10,12 @@ import os
 
 import aiohttp
 
-from . import logger
+from . import lifecycle, logger
 
 _TIMEOUT = aiohttp.ClientTimeout(total=15)
 
 
-async def _request_lifecycle(action: str) -> bool:
+async def _request_lifecycle(action: str, *, reason: lifecycle.RestartReason | None = None) -> bool:
     """POST /agents/{me}/{action} to vestad (action = "restart" | "stop"). Returns True when vestad
     accepted it — including the connection being cut mid-request, the expected path once vestad
     starts tearing the container down — and False only when vestad could not be reached at all."""
@@ -26,10 +26,11 @@ async def _request_lifecycle(action: str) -> bool:
         logger.error("cannot reach vestad: missing VESTAD_PORT/AGENT_NAME/AGENT_TOKEN")
         return False
     url = f"https://localhost:{port}/agents/{name}/{action}"
+    body = None if reason is None else {"reason": reason.log_reason, "agent_message": reason.agent_message}
     connector = aiohttp.TCPConnector(ssl=False)
     try:
         async with aiohttp.ClientSession(connector=connector, timeout=_TIMEOUT) as session:
-            resp = await session.post(url, headers={"X-Agent-Token": token})
+            resp = await session.post(url, headers={"X-Agent-Token": token}, json=body)
             resp.raise_for_status()
         # vestad answered 2xx without tearing us down yet (rare — a real restart/stop usually cuts
         # the connection first, below). The action was accepted.
@@ -77,9 +78,9 @@ async def send_user_notification(kind: str, title: str, body: str) -> None:
         logger.warning(f"user notification to vestad timed out ({kind})")
 
 
-async def request_restart() -> bool:
+async def request_restart(reason: lifecycle.RestartReason = lifecycle.AGENT_RESTART) -> bool:
     """Ask vestad to restart this agent's container (graceful docker restart)."""
-    return await _request_lifecycle("restart")
+    return await _request_lifecycle("restart", reason=reason)
 
 
 async def request_stop() -> bool:
