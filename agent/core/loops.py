@@ -115,8 +115,9 @@ async def trash_notification_files(notifications: list[Notification], *, trash_d
 def format_notification_batch(notifications: list[Notification]) -> str:
     """Join the batch as newline-separated <channel> elements, matching how Claude Code delivers
     several native channel events together on one turn. No wrapper element: each <channel> is
-    self-contained. All read-time guidance (the reply command, the group-chat caveat) is the
-    producer's, carried in its `reply_hint` attribute; core injects nothing."""
+    self-contained. All read-time guidance is producer-owned: executable reply syntax is carried in
+    `reply_command`, while behavioral guidance such as the group-chat caveat stays in
+    `reply_hint`; core injects nothing."""
     return "\n".join(n.format_for_display() for n in notifications)
 
 

@@ -26,6 +26,7 @@ type messageNotif struct {
 	Timestamp      string `json:"timestamp"`
 	MessageID      int64  `json:"message_id,omitempty"`
 	ContactUnknown bool   `json:"contact_unknown,omitempty"`
+	ReplyCommand   string `json:"reply_command,omitempty"`
 	ReplyHint      string `json:"reply_hint,omitempty"`
 }
 
@@ -61,6 +62,7 @@ type editNotif struct {
 	Timestamp       string `json:"timestamp"`
 	TargetMessageID int64  `json:"target_message_id"`
 	ContactUnknown  bool   `json:"contact_unknown,omitempty"`
+	ReplyCommand    string `json:"reply_command,omitempty"`
 	ReplyHint       string `json:"reply_hint,omitempty"`
 }
 
@@ -138,7 +140,8 @@ func WriteEditNotification(
 		Timestamp:       time.Now().Format(time.RFC3339),
 		TargetMessageID: targetMessageID,
 		ContactUnknown:  !contactSaved,
-		ReplyHint:       "they changed a message you may have already answered; reply with `telegram send` only if the change asks something new",
+		ReplyCommand:    "telegram send",
+		ReplyHint:       "they changed a message you may have already answered; reply only if the change asks something new",
 	}
 	if !isDirectChat {
 		notif.ChatName = chatName
@@ -181,11 +184,12 @@ func WriteNotification(
 		Timestamp:      time.Now().Format(time.RFC3339),
 		MessageID:      messageID,
 		ContactUnknown: !contactSaved,
-		ReplyHint:      "reply with `telegram send`, and think about how you can best show your personality",
+		ReplyCommand:   "telegram send",
+		ReplyHint:      "think about how you can best show your personality",
 	}
 	if !isDirectChat {
 		notif.ChatName = chatName
-		notif.ReplyHint = "reply with `telegram send`, and think about how you can best show your personality; this is a group chat, so it may not be expecting a reply from you"
+		notif.ReplyHint = "think about how you can best show your personality; this is a group chat, so it may not be expecting a reply from you"
 		if sender != chatName {
 			notif.Sender = sender
 		}
