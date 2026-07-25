@@ -73,6 +73,12 @@ def test_counting_system_lines_finds_every_daemon_record_and_no_agent_narration(
     assert sum("Rate limit rejected" in line for line in system_lines) == 2
 
 
+def test_subagent_identity_precedes_tool_call_category(log_file: pl.Path) -> None:
+    logger.tool("done: Bash (3.0s)", subagent="general-purpose:abc-123")
+
+    assert read_lines(log_file)[0].endswith("[AGENT] [SUB:general-purpose:abc-123] [TOOL CALL] done: Bash (3.0s)")
+
+
 @pytest.mark.parametrize(
     ("emit", "pattern"),
     [

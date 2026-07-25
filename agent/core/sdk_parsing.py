@@ -233,21 +233,22 @@ def _subagent_hook(state: vm.State, *, verb: str, event_type: str) -> HookCallba
     return tp.cast(HookCallback, hook)
 
 
-def _subagent_prefix(input_data: Mapping[str, object]) -> tuple[str, bool]:
-    """Extract sub-agent prefix from hook input. SDK adds agent_id/agent_type for sub-agent calls."""
+def _subagent_identity(input_data: Mapping[str, object]) -> tuple[str | None, bool]:
+    """Extract log identity from hook input. SDK adds agent_id/agent_type for sub-agent calls."""
     if "agent_id" not in input_data:
-        return "", False
+        return None, False
+    agent_id = input_data["agent_id"]
     agent_type = input_data["agent_type"] if "agent_type" in input_data else None
-    prefix = f"[SUB:{agent_type}] " if agent_type else "[SUB] "
-    return prefix, True
+    identity = f"{agent_type}:{agent_id}" if agent_type else str(agent_id)
+    return identity, True
 
 
 def make_hooks(state: vm.State) -> dict[HookEvent, list[HookMatcher]]:
     async def log_tool_start(input_data: PreToolUseHookInput, tool_use_id: str | None, _context: HookContext) -> HookJSONOutput:
         name = input_data["tool_name"] if "tool_name" in input_data else "?"
         summary = _tool_summary(name, input_data["tool_input"] if "tool_input" in input_data else {})
-        prefix, is_sub = _subagent_prefix(input_data)
-        logger.tool(f"{prefix}{summary}")
+        subagent, is_sub = _subagent_identity(input_data)
+        logger.tool(summary, subagent=subagent)
         state.event_bus.emit({"type": "tool_start", "tool": name, "input": summary, "subagent": is_sub})
         diagnostics.touch_activity(state, f"tool_start:{name}")
         tool_id = tool_use_id or name
@@ -256,14 +257,14 @@ def make_hooks(state: vm.State) -> dict[HookEvent, list[HookMatcher]]:
 
     async def log_tool_finish(input_data: PostToolUseHookInput, tool_use_id: str | None, _context: HookContext) -> HookJSONOutput:
         name = input_data["tool_name"] if "tool_name" in input_data else "?"
-        prefix, is_sub = _subagent_prefix(input_data)
+        subagent, is_sub = _subagent_identity(input_data)
         tool_id = tool_use_id or name
         elapsed = ""
         active = state.active_tools.pop(tool_id, None)
         if active:
             duration = time.monotonic() - active.started_at
             elapsed = f" ({duration:.1f}s)"
-        logger.tool(f"{prefix}done: {name}{elapsed}")
+        logger.tool(f"done: {name}{elapsed}", subagent=subagent)
         state.event_bus.emit({"type": "tool_end", "tool": name, "subagent": is_sub})
         diagnostics.touch_activity(state, f"tool_end:{name}")
         return tp.cast(HookJSONOutput, {})
@@ -271,7 +272,8 @@ def make_hooks(state: vm.State) -> dict[HookEvent, list[HookMatcher]]:
     async def log_tool_failure(input_data: PostToolUseFailureHookInput, tool_use_id: str | None, _context: HookContext) -> HookJSONOutput:
         name = input_data["tool_name"] if "tool_name" in input_data else "?"
         error = input_data["error"] if "error" in input_data else "(unknown error)"
-        prefix, is_sub = _subagent_prefix(input_data)
+        subagent, is_sub = _subagent_identity(input_data)
+        prefix = f"[SUB:{subagent}] " if subagent else ""
         logger.warning(f"{prefix}Tool failed: {name}: {error}")
         state.event_bus.emit({"type": "tool_end", "tool": name, "subagent": is_sub})
         tool_id = tool_use_id or name
