@@ -49,6 +49,7 @@ from .models import State
 from .provider import (
     ProviderAuthState,
     UsageError,
+    active_cooldown,
     clear_provider,
     get_usage,
     set_claude,
@@ -203,13 +204,17 @@ async def _history_handler(request: web.Request) -> web.Response:
 
 
 async def _usage_handler(request: web.Request) -> web.Response:
-    """Report normalized, provider-agnostic plan usage for the agent's active provider."""
+    """Report normalized, provider-agnostic plan usage for the agent's active provider, including
+    any live cooldown, so a client never has to reconcile the pulled meters against the pushed
+    model_access state."""
     config = request.app["config"]
+    state: State = request.app["state"]
     try:
         usage = await get_usage(config)
     except UsageError as e:
         logger.error("usage fetch failed: %s", e)
         return web.json_response({"error": str(e)}, status=502)
+    usage.cooldown = active_cooldown(state.persisted.provider_cooldown)
     return web.json_response(dc.asdict(usage))
 
 

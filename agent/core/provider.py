@@ -122,10 +122,12 @@ _KIMI_REJECTIONS: tuple[tuple[str, Rejection], ...] = (
     ("overloaded", Rejection(retryable=True, window="overloaded", seconds=_MINUTE)),
 )
 
-_REJECTIONS_BY_KIND: dict[str, tuple[tuple[str, Rejection], ...]] = {
-    "zai": _ZAI_REJECTIONS,
-    "kimi": _KIMI_REJECTIONS,
-}
+# The bridge retries a 429 three times itself before surfacing one, so a rejection reaching us is a
+# sustained limit. It carries the true reset in a Retry-After header we cannot read from here.
+_OPENAI_REJECTIONS: tuple[tuple[str, Rejection], ...] = (
+    ("rate_limit_error", Rejection(retryable=True, window="chatgpt plan", seconds=_FIVE_HOURS)),
+    ("rate limit reached", Rejection(retryable=True, window="chatgpt plan", seconds=_FIVE_HOURS)),
+)
 
 
 def classify_rejection(kind: "ProviderStatusKind | None", details: tp.Iterable[str]) -> Rejection | None:
@@ -134,9 +136,10 @@ def classify_rejection(kind: "ProviderStatusKind | None", details: tp.Iterable[s
     None is a known gap rather than a wait: Claude and OpenRouter are served by richer signals
     elsewhere, and a provider reached through an external bridge may never surface the status here.
     """
-    if kind is None or kind not in _REJECTIONS_BY_KIND:
+    limits = _provider_limits()
+    if kind is None or kind not in limits:
         return None
-    markers = _REJECTIONS_BY_KIND[kind]
+    markers = limits[kind].rejections
     text = "\n".join(details).lower()
     for marker, rejection in markers:
         if marker in text:
@@ -509,8 +512,13 @@ class UsageCredits:
 
 @dc.dataclass
 class Usage:
+    """One provider's account of its own limits: how full each window is, what credit remains, and
+    whether it is refusing work right now. Meters and credits are pulled on request; the cooldown is
+    pushed by a rejection, so a client reads one shape rather than reconciling two sources."""
+
     meters: list[UsageMeter]
     credits: UsageCredits | None
+    cooldown: "ProviderCooldown | None" = None
 
 
 class UsageError(Exception):
@@ -543,15 +551,40 @@ def _read_oauth_token() -> str | None:
         return None
 
 
+@dc.dataclass(frozen=True)
+class ProviderLimits:
+    """Everything one provider can tell us about its own limits.
+
+    `fetch` pulls meters and credits when the provider exposes a usage API; None means it does not,
+    and the agent learns its limits only by being refused. `rejections` names what that refusal
+    means, ordered specific-first; empty means the provider is served by a richer signal elsewhere
+    (Claude's structured window, OpenRouter's proxied Retry-After) or publishes nothing usable.
+    Adding a provider is one row here."""
+
+    fetch: "tp.Callable[[VestaConfig], tp.Awaitable[Usage]] | None"
+    rejections: tuple[tuple[str, Rejection], ...] = ()
+
+
+def _provider_limits() -> "dict[str, ProviderLimits]":
+    return {
+        "claude": ProviderLimits(fetch=lambda _config: _claude_usage()),
+        "openrouter": ProviderLimits(fetch=_openrouter_usage),
+        "zai": ProviderLimits(fetch=None, rejections=_ZAI_REJECTIONS),
+        "kimi": ProviderLimits(fetch=None, rejections=_KIMI_REJECTIONS),
+        "openai": ProviderLimits(fetch=None, rejections=_OPENAI_REJECTIONS),
+    }
+
+
 async def get_usage(config: VestaConfig) -> Usage:
-    """Provider-agnostic plan usage for the agent's active provider. Returns empty usage when no
-    provider is configured; raises UsageError when an upstream fetch fails."""
+    """Provider-agnostic plan usage for the agent's active provider. Returns empty usage when the
+    provider exposes none; raises UsageError when an upstream fetch fails."""
     kind, _ = _derive_kind_and_auth(config)
-    if kind == "claude":
-        return await _claude_usage()
-    if kind == "openrouter":
-        return await _openrouter_usage(config)
-    return Usage(meters=[], credits=None)
+    limits = _provider_limits()
+    if kind not in limits or limits[kind].fetch is None:
+        return Usage(meters=[], credits=None)
+    fetch = limits[kind].fetch
+    assert fetch is not None
+    return await fetch(config)
 
 
 async def _claude_usage() -> Usage:

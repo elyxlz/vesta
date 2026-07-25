@@ -3,6 +3,7 @@ paraphrase (which has misreported a five_hour rejection as a "monthly spend limi
 
 import asyncio
 import time
+import typing as tp
 
 import pytest
 from claude_agent_sdk import RateLimitEvent, RateLimitInfo, RateLimitStatus, RateLimitType
@@ -362,3 +363,45 @@ async def test_a_named_window_never_shortens_a_precise_one(config, state):
 
 def _drain(sub):
     return [sub.get_nowait() for _ in range(sub.qsize())]
+
+
+# --- the per-provider limits interface ---
+
+
+def test_every_provider_declares_what_it_knows_about_its_limits():
+    """One row per provider: a usage fetcher when it publishes meters, rejection markers when the
+    only thing it tells us is why it refused. A provider missing from this table can neither report
+    usage nor have its 429 understood, so the table is the checklist when one is added."""
+    from core.config import ProviderKind
+    from core.provider import _provider_limits
+
+    limits = _provider_limits()
+    declared = set(limits)
+    assert declared == set(tp.get_args(ProviderKind)) - {"none"}, "every provider needs a row"
+
+    for kind, entry in limits.items():
+        assert entry.fetch is not None or entry.rejections, f"{kind} declares nothing about its limits"
+
+
+def test_a_provider_with_a_usage_api_reports_meters_not_guesses():
+    """Claude and OpenRouter publish usage, so they must not also carry marker guesses: their
+    rejections arrive through richer signals (the structured window, the proxied Retry-After)."""
+    from core.provider import _provider_limits
+
+    limits = _provider_limits()
+    for kind in ("claude", "openrouter"):
+        assert limits[kind].fetch is not None
+        assert limits[kind].rejections == ()
+
+
+@pytest.mark.anyio
+async def test_usage_carries_the_live_cooldown(config, state):
+    """A client reads one shape rather than reconciling pulled meters against pushed model access."""
+    from core.provider import Usage, active_cooldown
+
+    state.persisted.provider_cooldown = ProviderCooldown(until=int(time.time()) + 600, window="five_hour")
+    usage = Usage(meters=[], credits=None)
+    usage.cooldown = active_cooldown(state.persisted.provider_cooldown)
+
+    assert usage.cooldown is not None
+    assert usage.cooldown.window == "five_hour"
