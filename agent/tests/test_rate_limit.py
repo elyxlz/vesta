@@ -405,3 +405,17 @@ async def test_usage_carries_the_live_cooldown(config, state):
 
     assert usage.cooldown is not None
     assert usage.cooldown.window == "five_hour"
+
+
+@pytest.mark.parametrize("kind", ["zai", "kimi", "openai"])
+def test_a_subscription_provider_is_known_by_its_refusals(kind):
+    """Z.AI Coding Plan, Kimi Code and ChatGPT are subscriptions, and none of them publishes an API
+    for how much of the plan is left. Kimi's documented balance endpoint is the pay-as-you-go
+    platform, a different product from the membership key this agent holds, so calling it would
+    report a number that is not the user's. Until an endpoint exists, these are known only by what
+    they say when they refuse."""
+    from core.provider import _provider_limits
+
+    entry = _provider_limits()[kind]
+    assert entry.fetch is None
+    assert entry.rejections, "with no usage API, its 429s must carry the meaning instead"
