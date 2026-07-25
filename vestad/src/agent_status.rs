@@ -11,6 +11,8 @@ use bollard::Docker;
 use futures_util::StreamExt;
 use tokio::sync::watch;
 
+use serde::Deserialize;
+
 use crate::docker::{self, ListEntry};
 use crate::mobile_app::MobileApp;
 use crate::settings::ServiceEntry;
@@ -574,7 +576,7 @@ async fn agent_event_listener(
 }
 
 fn parse_model_access(value: &serde_json::Value) -> Option<ModelAccess> {
-    serde_json::from_value(value.clone()).ok()
+    ModelAccess::deserialize(value).ok()
 }
 
 /// The pending notification ids on a connect snapshot (`notifications.pending`, file stems).

@@ -34,7 +34,7 @@ from . import diagnostics, logger, sdk_parsing, state_store, vestad_client
 from . import models as vm
 from .config import CONTEXT_1M_BETA, DEFAULT_CONTEXT_WINDOW
 from .helpers import get_constitution_path, get_memory_path
-from .model_access import activate_rate_limit, model_access_available, wait_for_model_access
+from .model_access import activate_rate_limit, model_access_available, note_rate_limit_once, wait_for_model_access
 from .provider import (
     OPENROUTER_SMALL_FAST_MODEL,
     is_terminal_provider_error,
@@ -242,12 +242,9 @@ async def _note_rate_limit(msg: RateLimitEvent, *, state: vm.State, config: cfg.
         return
     info = msg.rate_limit_info
     notice = sdk_parsing.rate_limit_notice(info, now=time.time())
-    window_key = (info.rate_limit_type, info.resets_at)
     if notice:
         await activate_rate_limit(state=state, config=config, resets_at=info.resets_at, window=info.rate_limit_type)
-    if notice and window_key != state.rate_limit_noticed:
-        state.rate_limit_noticed = window_key
-        state.event_bus.emit({"type": "rate_limited", "text": notice, "window": info.rate_limit_type, "resets_at": info.resets_at})
+    if notice and note_rate_limit_once(state=state, window=info.rate_limit_type, resets_at=info.resets_at, notice=notice):
         agent_name = os.environ["AGENT_NAME"] if "AGENT_NAME" in os.environ else "Vesta"
         await vestad_client.send_user_notification("rate_limited", agent_name, notice)
 

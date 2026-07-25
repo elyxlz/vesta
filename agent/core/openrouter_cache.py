@@ -36,7 +36,7 @@ from aiohttp import web
 
 from . import logger
 from .config import OpenRouterConfig, VestaConfig
-from .model_access import activate_rate_limit
+from .model_access import activate_rate_limit, note_rate_limit_once
 from .models import State
 from .provider import OPENROUTER_SMALL_FAST_MODEL, TERMINAL_PROVIDER_ERRORS, observed_provider_failure
 
@@ -89,14 +89,17 @@ async def _note_openrouter_rate_limit(app: web.Application, retry_after: str | N
         resets_at=resets_at,
         window="openrouter",
     )
-    window_key = ("openrouter", cooldown.until)
-    if window_key != state.rate_limit_noticed:
-        state.rate_limit_noticed = window_key
-        # localtime, not gmtime: main() applies the agent's configured timezone to the process, and
-        # this line is read by the user.
-        resets = time.strftime("%I:%M %p %Z", time.localtime(cooldown.until))
-        text = f"OpenRouter rate limit hit, retrying after {resets}."
-        state.event_bus.emit({"type": "rate_limited", "text": text, "window": "openrouter", "resets_at": cooldown.until})
+    # localtime, not gmtime: main() applies the agent's configured timezone to the process, and this
+    # line is read by the user.
+    resets = time.strftime("%I:%M %p %Z", time.localtime(cooldown.until))
+    # No user notification here, unlike the Claude path: the proxy sees every upstream 429, including
+    # ones the SDK then retries away.
+    note_rate_limit_once(
+        state=state,
+        window="openrouter",
+        resets_at=cooldown.until,
+        notice=f"OpenRouter rate limit hit, retrying after {resets}.",
+    )
 
 
 # --- pure request transforms (unit-tested) ---

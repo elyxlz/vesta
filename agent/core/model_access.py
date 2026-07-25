@@ -14,17 +14,13 @@ def model_access_available(state: vm.State, *, now: float | None = None) -> bool
     return active_cooldown(state.persisted.provider_cooldown, now=now) is None
 
 
-def model_access_info(cooldown: ProviderCooldown | None) -> ModelAccessInfo:
+def model_access_snapshot(state: vm.State) -> ModelAccessInfo:
     """The wire shape clients read. Lives here rather than in events so the event bus stays
     ignorant of the provider domain."""
+    cooldown = active_cooldown(state.persisted.provider_cooldown)
     if cooldown is None:
         return {"state": "available", "reason": None, "until": None, "window": None}
     return {"state": "cooling_down", "reason": cooldown.reason, "until": cooldown.until, "window": cooldown.window}
-
-
-def model_access_snapshot(state: vm.State) -> ModelAccessInfo:
-    """Current access for the snapshot/status payloads."""
-    return model_access_info(active_cooldown(state.persisted.provider_cooldown))
 
 
 def model_access_event(state: vm.State) -> ModelAccessEvent:
@@ -53,6 +49,17 @@ async def activate_rate_limit(
     cooldown = rate_limit_cooldown(resets_at=resets_at, window=window)
     await _set_cooldown(cooldown, state=state, config=config)
     return cooldown
+
+
+def note_rate_limit_once(*, state: vm.State, window: str | None, resets_at: int | None, notice: str) -> bool:
+    """Emit the rate-limit notice for a window the agent has not already announced. Returns whether
+    it was new, so a caller can decide whether to raise a user-facing notification too."""
+    window_key = (window, resets_at)
+    if window_key == state.rate_limit_noticed:
+        return False
+    state.rate_limit_noticed = window_key
+    state.event_bus.emit({"type": "rate_limited", "text": notice, "window": window, "resets_at": resets_at})
+    return True
 
 
 async def clear_model_access(*, state: vm.State, config: cfg.VestaConfig) -> None:
