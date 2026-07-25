@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -84,6 +85,28 @@ type callbackNotif struct {
 	ContactUnknown bool   `json:"contact_unknown,omitempty"`
 }
 
+func quoteReplyArg(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func notificationReplyCommand(chatName, contactName, username, instance string, isDirectChat, contactSaved bool) string {
+	target := chatName
+	if isDirectChat {
+		if contactSaved {
+			target = contactName
+		} else if username != "" {
+			target = "@" + username
+		} else {
+			target = contactName
+		}
+	}
+	command := "telegram send"
+	if instance != "" {
+		command += " --instance " + quoteReplyArg(instance)
+	}
+	return command + " --to " + quoteReplyArg(target) + " --message '<reply>'"
+}
+
 func WriteCallbackNotification(
 	notifDir, callbackID, data string, chatID, messageID int64,
 	contactName, sender, username, instance string, contactSaved bool,
@@ -140,7 +163,7 @@ func WriteEditNotification(
 		Timestamp:       time.Now().Format(time.RFC3339),
 		TargetMessageID: targetMessageID,
 		ContactUnknown:  !contactSaved,
-		ReplyCommand:    "telegram send",
+		ReplyCommand:    notificationReplyCommand(chatName, contactName, username, instance, isDirectChat, contactSaved),
 		ReplyHint:       "they changed a message you may have already answered; reply only if the change asks something new",
 	}
 	if !isDirectChat {
@@ -184,7 +207,7 @@ func WriteNotification(
 		Timestamp:      time.Now().Format(time.RFC3339),
 		MessageID:      messageID,
 		ContactUnknown: !contactSaved,
-		ReplyCommand:   "telegram send",
+		ReplyCommand:   notificationReplyCommand(chatName, contactName, username, instance, isDirectChat, contactSaved),
 		ReplyHint:      "think about how you can best show your personality",
 	}
 	if !isDirectChat {

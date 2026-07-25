@@ -77,7 +77,7 @@ def test_message_persists_emits_and_writes_notification(tmp_path):
     assert notif["type"] == "message"
     assert notif["message"] == "hello there"
     assert notif["interrupt"] is True
-    assert notif["reply_command"] == "app-chat send"
+    assert notif["reply_command"] == "app-chat send --message '<reply>'"
     assert notif["reply_hint"] == "think about how you can best show your personality"
     state.store.close()
 

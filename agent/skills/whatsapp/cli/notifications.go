@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -108,6 +109,24 @@ func notifPhone(ctx NotifContext) string {
 	return ctx.ContactPhone
 }
 
+func quoteReplyArg(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func notificationReplyCommand(ctx NotifContext) string {
+	target := ctx.ContactPhone
+	if !ctx.IsDirectChat {
+		target = ctx.ChatName
+	} else if ctx.ContactSaved {
+		target = ctx.ContactName
+	}
+	command := "whatsapp send"
+	if ctx.Instance != "" {
+		command += " --instance " + quoteReplyArg(ctx.Instance)
+	}
+	return command + " --to " + quoteReplyArg(target) + " --message '<reply>'"
+}
+
 func writeNotificationFile(notifDir string, data any, notifType string) error {
 	if notifDir == "" {
 		return nil
@@ -142,7 +161,7 @@ func WriteNotification(
 		Timestamp:       time.Now().Format(time.RFC3339),
 		MessageID:       messageID,
 		ContactUnknown:  !ctx.ContactSaved,
-		ReplyCommand:    "whatsapp send",
+		ReplyCommand:    notificationReplyCommand(ctx),
 		ReplyHint:       "think about how you can best show your personality",
 	}
 	if !ctx.IsDirectChat {
@@ -205,7 +224,7 @@ func WriteEditNotification(ctx NotifContext, targetMessageID, oldText, newText s
 		Timestamp:       time.Now().Format(time.RFC3339),
 		TargetMessageID: targetMessageID,
 		ContactUnknown:  !ctx.ContactSaved,
-		ReplyCommand:    "whatsapp send",
+		ReplyCommand:    notificationReplyCommand(ctx),
 		ReplyHint:       "they changed a message you may have already answered; reply only if the change asks something new",
 	}
 	n.applyChatContext(ctx)
