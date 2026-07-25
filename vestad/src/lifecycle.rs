@@ -102,6 +102,43 @@ pub static CONTAINER_UPDATE: LifecycleReason = LifecycleReason::borrowed(
 );
 pub static DESIRED_STOP: LifecycleReason = LifecycleReason::shutdown_only("system: desired state is stopped");
 
+// Transitions only a client can name: the restart is a separate request from the provider write
+// that preceded it, so vestad cannot infer which one happened. The client names it with a token
+// and vestad supplies the copy, keeping every word the agent reads authored in this file.
+pub static PROVIDER_CONFIGURED: LifecycleReason = LifecycleReason::borrowed(
+    "provider: configuration changed",
+    "Your provider configuration changed.",
+);
+pub static PROVIDER_SIGNED_OUT: LifecycleReason =
+    LifecycleReason::borrowed("provider: signed out", "Your provider was signed out.");
+pub static PROVIDER_MODEL: LifecycleReason = LifecycleReason::borrowed(
+    "provider: model changed",
+    "Your configured model changed.",
+);
+pub static PROVIDER_CONTEXT: LifecycleReason = LifecycleReason::borrowed(
+    "provider: context window changed",
+    "Your configured context window changed.",
+);
+
+/// Every token a client may send, with the reason it resolves to. Emitted into
+/// `apps/core/fixtures/restart-reason-tokens.json` by the API contract test, so a client cannot
+/// drift onto a token this table does not carry.
+pub static CLIENT_TOKENS: [(&str, &LifecycleReason); 4] = [
+    ("provider.configured", &PROVIDER_CONFIGURED),
+    ("provider.signed-out", &PROVIDER_SIGNED_OUT),
+    ("provider.model", &PROVIDER_MODEL),
+    ("provider.context", &PROVIDER_CONTEXT),
+];
+
+/// Resolve a client token. An unknown one yields None rather than invented copy, so a client newer
+/// than this vestad degrades to the generic manual reason instead of saying something wrong.
+pub fn from_token(token: &str) -> Option<LifecycleReason> {
+    CLIENT_TOKENS
+        .iter()
+        .find(|(name, _)| *name == token)
+        .map(|(_, reason)| (*reason).clone())
+}
+
 pub fn rename(old_name: &str, new_name: &str) -> LifecycleReason {
     LifecycleReason::owned(
         format!("rename: {old_name} -> {new_name}"),
@@ -115,8 +152,12 @@ mod tests {
 
     /// Every reason vestad can hand over. Shutdown-only ones carry no agent copy: the shutdown
     /// inbox writes the log reason alone, so a sentence there would reach nobody.
-    const BOOT_FACING: [&LifecycleReason; 14] = [
+    const BOOT_FACING: [&LifecycleReason; 18] = [
         &DEFAULT_RESTART,
+        &PROVIDER_CONFIGURED,
+        &PROVIDER_SIGNED_OUT,
+        &PROVIDER_MODEL,
+        &PROVIDER_CONTEXT,
         &MANUAL_START,
         &START_ALL,
         &SCHEDULED_BACKUP,
@@ -164,6 +205,14 @@ mod tests {
         for reason in SHUTDOWN_ONLY {
             assert!(reason.agent_message.is_empty(), "{}", reason.log_reason);
         }
+    }
+
+    #[test]
+    fn every_client_token_resolves_and_unknown_ones_do_not() {
+        for (token, reason) in CLIENT_TOKENS {
+            assert_eq!(from_token(token).as_ref(), Some(reason));
+        }
+        assert!(from_token("provider.nonexistent").is_none());
     }
 
     #[test]

@@ -615,10 +615,15 @@ async fn stop_agent_handler(
 
 #[derive(Deserialize, Default)]
 struct RestartBody {
-    /// Operational copy. Kept under the legacy field name so older servers/clients interoperate.
+    /// Names a transition only the client can name (`crate::lifecycle::CLIENT_TOKENS`). vestad owns
+    /// the copy it resolves to, so the agent's words have one author.
+    #[serde(default)]
+    reason_token: Option<String>,
+    /// LEGACY(remove-when: no released client predating the token still posts a restart): a client
+    /// older than the token sends the copy itself.
     #[serde(default)]
     reason: Option<String>,
-    /// Complete sentence delivered to the authenticated agent after it boots.
+    /// LEGACY(remove-when: same condition as `reason`).
     #[serde(default)]
     agent_message: Option<String>,
 }
@@ -635,9 +640,19 @@ fn parse_restart_reason(
     }
     serde_json::from_slice::<RestartBody>(body)
         .map(|restart_body| {
-            restart_body.reason.map(|reason| {
-                crate::lifecycle::LifecycleReason::from_request(reason, restart_body.agent_message)
-            })
+            let RestartBody {
+                reason_token,
+                reason,
+                agent_message,
+            } = restart_body;
+            reason_token
+                .as_deref()
+                .and_then(crate::lifecycle::from_token)
+                .or_else(|| {
+                    reason.map(|reason| {
+                        crate::lifecycle::LifecycleReason::from_request(reason, agent_message)
+                    })
+                })
         })
         .map_err(|e| format!("invalid restart body: {e}"))
 }
@@ -3615,6 +3630,17 @@ mod tests {
         let sync_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../apps/core/fixtures/sync-protocol.json");
         sync_fixture_file(&sync_path, &sync_content, regen);
+
+        // The restart tokens a client may send. vestad owns the copy each resolves to, so this list
+        // is the whole contract; @vesta/core's test asserts its token table matches it exactly.
+        let tokens: Vec<&str> = crate::lifecycle::CLIENT_TOKENS
+            .iter()
+            .map(|(token, _)| *token)
+            .collect();
+        let tokens_json = serde_json::to_string_pretty(&tokens).expect("serialize tokens");
+        let tokens_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../apps/core/fixtures/restart-reason-tokens.json");
+        sync_fixture_file(&tokens_path, &format!("{tokens_json}\n"), regen);
     }
 }
 
@@ -3720,6 +3746,31 @@ mod restart_body_tests {
         assert_eq!(structured.log_reason, "provider: model changed");
         assert_eq!(structured.agent_message, "Your configured model changed.");
         assert!(parse_restart_reason(b"not json").is_err());
+    }
+
+    #[test]
+    fn a_token_resolves_to_vestad_owned_copy() {
+        let reason = parse_restart_reason(br#"{"reason_token":"provider.model"}"#)
+            .unwrap()
+            .unwrap();
+        assert_eq!(reason, crate::lifecycle::PROVIDER_MODEL);
+    }
+
+    #[test]
+    fn an_unknown_token_falls_back_rather_than_inventing_copy() {
+        // A client newer than this vestad names a transition it has no copy for. Better a generic
+        // manual restart (the None default) than a sentence vestad made up.
+        assert_eq!(
+            parse_restart_reason(br#"{"reason_token":"provider.telepathy"}"#).unwrap(),
+            None
+        );
+        // ...and a client sending both prefers the token, so the copy has one author.
+        let both = parse_restart_reason(
+            br#"{"reason_token":"provider.model","reason":"provider: something else"}"#,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(both, crate::lifecycle::PROVIDER_MODEL);
     }
 }
 
