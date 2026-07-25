@@ -42,14 +42,13 @@ from .config import (
     update_config_store,
     validate_config_updates,
 )
-from .events import EventBus, SnapshotEvent, VestaEvent, model_access_info
+from .events import EventBus, SnapshotEvent, VestaEvent
 from .helpers import get_memory_path
-from .model_access import clear_model_access
+from .model_access import clear_model_access, model_access_snapshot
 from .models import State
 from .provider import (
     ProviderAuthState,
     UsageError,
-    active_cooldown,
     clear_provider,
     get_usage,
     set_claude,
@@ -98,7 +97,7 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
                 state=event_bus.state,
                 notifications={"pending": pending},
                 config={"timezone": config.timezone},
-                model_access=model_access_info(active_cooldown(request.app["state"].persisted.provider_cooldown)),
+                model_access=model_access_snapshot(request.app["state"]),
             )
         )
         recv_task = asyncio.create_task(_recv_loop(ws))
@@ -328,7 +327,7 @@ async def _status_handler(request: web.Request) -> web.Response:
             "authed": status is not None and status.state == ProviderAuthState.AUTHENTICATED,
             "provider_configured": status is not None and status.kind != "none",
             "setup_complete": state.persisted.first_start_done,
-            "model_access": model_access_info(active_cooldown(state.persisted.provider_cooldown)),
+            "model_access": model_access_snapshot(state),
         }
     )
 
@@ -457,6 +456,8 @@ async def start_ws_server(
     app["event_bus"] = event_bus
     app["agent_token"] = config.agent_token.get_secret_value() if config.agent_token is not None else None
     app["config"] = config
+    # start_ws_server takes an optional state (tests bind the server alone); the snapshot
+    # handlers dereference it, so stand in a throwaway rather than crash the request.
     app["state"] = state or State()
     app["websockets"] = weakref.WeakSet()
     app.on_shutdown.append(_close_all_websockets)

@@ -9,7 +9,6 @@ import sqlite3
 import typing as tp
 
 from . import logger as vesta_logger
-from .provider import ProviderCooldown
 
 logger = logging.getLogger("vesta.events")
 
@@ -81,17 +80,6 @@ class ModelAccessInfo(tp.TypedDict):
 
 class ModelAccessEvent(_BaseEvent, ModelAccessInfo):
     type: tp.Literal["model_access"]
-
-
-def model_access_info(cooldown: ProviderCooldown | None) -> ModelAccessInfo:
-    if cooldown is None:
-        return {"state": "available", "reason": None, "until": None, "window": None}
-    return {
-        "state": "cooling_down",
-        "reason": cooldown.reason,
-        "until": cooldown.until,
-        "window": cooldown.window,
-    }
 
 
 class NotificationEvent(_BaseEvent):

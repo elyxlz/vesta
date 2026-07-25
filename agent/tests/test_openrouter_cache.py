@@ -211,7 +211,6 @@ async def test_openrouter_rate_limit_persists_and_publishes_model_access(config,
     assert cooldown is not None
     assert cooldown.window == "openrouter"
     assert cooldown.until > 0
-    assert state.current_turn_rate_limited is True
     events = [sub.get_nowait() for _ in range(sub.qsize())]
     access = [event for event in events if event["type"] == "model_access"]
     assert len(access) == 1

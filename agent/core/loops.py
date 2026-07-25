@@ -27,7 +27,7 @@ from .client import (
 from .codex_proxy import start_codex_proxy
 from .diagnostics import format_crash_detail
 from .helpers import build_restart_context, clear_notifications, load_prompt
-from .model_access import wait_for_model_access
+from .model_access import model_access_available, wait_for_model_access
 from .notification import CORE_SNOOZE_TYPES, CORE_SOURCE, TYPE_COMPACTION_FOLLOWUP, TYPE_NIGHTLY_DREAM, TYPE_PROACTIVE_CHECK, Notification
 from .openrouter_cache import start_cache_proxy
 from .provider import ProviderAuthState, is_unauthenticated
@@ -278,6 +278,12 @@ async def _watch_queue_during_turn(
             await cancel_task(queue_task)
 
 
+async def _requeue(items: list[vm.QueuedTurn], queue: asyncio.Queue[vm.QueuedTurn]) -> None:
+    """Hand unstarted turns back to the queue so a shutdown never drops one."""
+    for item in items:
+        await queue.put(item)
+
+
 async def _run_messages_with_preempts(
     first: vm.QueuedTurn,
     *,
@@ -295,13 +301,15 @@ async def _run_messages_with_preempts(
     try:
         while pending:
             if state.graceful_shutdown.is_set():
-                for remaining in pending:
-                    await queue.put(remaining)
+                await _requeue(pending, queue)
                 break
 
             current = pending.pop(0)
             if not await wait_for_model_access(state=state, config=config):
-                await queue.put(current)
+                # Only shutdown ends the wait. Give `current` back and requeue the lot: a boot turn
+                # has no notification file to re-read, so dropping one loses it outright.
+                pending.insert(0, current)
+                await _requeue(pending, queue)
                 break
             # Defer (don't drive claude, don't delete the file) while unauthenticated: a dead token
             # just burns the CLI's full retry budget per message. Keeping the notification file on
@@ -313,7 +321,6 @@ async def _run_messages_with_preempts(
             state.noninterruptible_turn_active = not current.interruptible
             state.in_flight_notification_paths = current.file_paths
             state.query_not_delivered = False
-            state.current_turn_rate_limited = False
             process_task = asyncio.create_task(
                 _run_one_turn(
                     current.text,
@@ -332,13 +339,16 @@ async def _run_messages_with_preempts(
             # restart. Operate on in_flight_notification_paths, not current.file_paths: an intentional
             # restart mid-turn already cleared and emptied it, so this stays a no-op instead of re-emitting.
             authenticated = state.provider_status is None or state.provider_status.state == ProviderAuthState.AUTHENTICATED
-            if authenticated and not state.query_not_delivered and not state.current_turn_rate_limited:
+            # A cooldown active now can only have been opened by this turn: the gate above cleared
+            # any earlier one before the turn started. Reading it back beats a shared flag, which
+            # the OpenRouter proxy writes from its own task.
+            rate_limited = not model_access_available(state)
+            if authenticated and not state.query_not_delivered and not rate_limited:
                 clear_notifications(state, state.in_flight_notification_paths)
-            if state.current_turn_rate_limited:
+            if rate_limited:
                 pending.append(current)
             state.in_flight_notification_paths = []
             state.query_not_delivered = False
-            state.current_turn_rate_limited = False
             process_task = None
     except asyncio.CancelledError:
         if process_task:

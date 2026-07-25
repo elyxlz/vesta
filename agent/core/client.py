@@ -398,6 +398,9 @@ async def converse(prompt: str, *, state: vm.State, config: cfg.VestaConfig, sho
     A preempt landing mid-turn needs no handling: the CLI-side abort ends this turn as an
     ordinary ResultMessage."""
     assert state.client is not None
+    # wait_for_model_access returns False only once shutdown is signalled, so this cancellation is
+    # the shutdown path: _run_one_turn re-raises it there instead of treating it as an unexpected
+    # cancel. Pinned by test_wait_for_model_access_returns_false_only_on_shutdown.
     if not await wait_for_model_access(state=state, config=config):
         raise asyncio.CancelledError
     client = state.client

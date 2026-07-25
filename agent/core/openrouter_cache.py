@@ -92,7 +92,10 @@ async def _note_openrouter_rate_limit(app: web.Application, retry_after: str | N
     window_key = ("openrouter", cooldown.until)
     if window_key != state.rate_limit_noticed:
         state.rate_limit_noticed = window_key
-        text = f"OpenRouter rate limit hit, retrying after {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime(cooldown.until))}."
+        # localtime, not gmtime: main() applies the agent's configured timezone to the process, and
+        # this line is read by the user.
+        resets = time.strftime("%I:%M %p %Z", time.localtime(cooldown.until))
+        text = f"OpenRouter rate limit hit, retrying after {resets}."
         state.event_bus.emit({"type": "rate_limited", "text": text, "window": "openrouter", "resets_at": cooldown.until})
 
 

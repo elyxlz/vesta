@@ -6,7 +6,7 @@ import time
 from . import config as cfg
 from . import models as vm
 from . import state_store
-from .events import ModelAccessEvent, model_access_info
+from .events import ModelAccessEvent, ModelAccessInfo
 from .provider import ProviderCooldown, active_cooldown, rate_limit_cooldown
 
 
@@ -14,9 +14,28 @@ def model_access_available(state: vm.State, *, now: float | None = None) -> bool
     return active_cooldown(state.persisted.provider_cooldown, now=now) is None
 
 
+def model_access_info(cooldown: ProviderCooldown | None) -> ModelAccessInfo:
+    """The wire shape clients read. Lives here rather than in events so the event bus stays
+    ignorant of the provider domain."""
+    if cooldown is None:
+        return {"state": "available", "reason": None, "until": None, "window": None}
+    return {"state": "cooling_down", "reason": cooldown.reason, "until": cooldown.until, "window": cooldown.window}
+
+
+def model_access_snapshot(state: vm.State) -> ModelAccessInfo:
+    """Current access for the snapshot/status payloads."""
+    return model_access_info(active_cooldown(state.persisted.provider_cooldown))
+
+
 def model_access_event(state: vm.State) -> ModelAccessEvent:
-    cooldown = active_cooldown(state.persisted.provider_cooldown)
-    return {"type": "model_access", **model_access_info(cooldown)}
+    return {"type": "model_access", **model_access_snapshot(state)}
+
+
+async def _set_cooldown(cooldown: ProviderCooldown | None, *, state: vm.State, config: cfg.VestaConfig) -> None:
+    """The one way this state changes: persist the transition, then publish it."""
+    state.persisted.provider_cooldown = cooldown
+    await state_store.save_state_async(state.persisted, config)
+    state.event_bus.emit(model_access_event(state))
 
 
 async def activate_rate_limit(
@@ -32,10 +51,7 @@ async def activate_rate_limit(
     shared state transition so every provider blocks scheduling identically.
     """
     cooldown = rate_limit_cooldown(resets_at=resets_at, window=window)
-    state.persisted.provider_cooldown = cooldown
-    state.current_turn_rate_limited = True
-    await state_store.save_state_async(state.persisted, config)
-    state.event_bus.emit(model_access_event(state))
+    await _set_cooldown(cooldown, state=state, config=config)
     return cooldown
 
 
@@ -47,26 +63,20 @@ async def clear_model_access(*, state: vm.State, config: cfg.VestaConfig) -> Non
     """
     if state.persisted.provider_cooldown is None:
         return
-    state.persisted.provider_cooldown = None
-    state.current_turn_rate_limited = False
-    await state_store.save_state_async(state.persisted, config)
-    state.event_bus.emit(model_access_event(state))
+    await _set_cooldown(None, state=state, config=config)
 
 
 async def wait_for_model_access(*, state: vm.State, config: cfg.VestaConfig) -> bool:
+    """Park until model access returns, then drop the spent cooldown. Returns False only when
+    shutdown ended the wait, which is what callers read as "do not start this turn"."""
     cooldown = active_cooldown(state.persisted.provider_cooldown)
-    if cooldown is None:
-        if state.persisted.provider_cooldown is not None:
-            state.persisted.provider_cooldown = None
-            await state_store.save_state_async(state.persisted, config)
-            state.event_bus.emit(model_access_event(state))
-        return True
-    timeout = max(cooldown.until - time.time(), 0)
-    try:
-        await asyncio.wait_for(state.shutdown_event.wait(), timeout=timeout)
-        return False
-    except TimeoutError:
-        state.persisted.provider_cooldown = None
-        await state_store.save_state_async(state.persisted, config)
-        state.event_bus.emit(model_access_event(state))
-        return True
+    if cooldown is not None:
+        try:
+            await asyncio.wait_for(state.shutdown_event.wait(), timeout=max(cooldown.until - time.time(), 0))
+            return False
+        except TimeoutError:
+            pass
+    # Reached whether the cooldown had already lapsed or just ran out.
+    if state.persisted.provider_cooldown is not None:
+        await _set_cooldown(None, state=state, config=config)
+    return True
