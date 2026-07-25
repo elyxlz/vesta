@@ -193,6 +193,10 @@ pub struct AgentStatusCache {
     /// phase even before the container exists (Pulling/Building run first). Entries exist only for
     /// the duration of a create and are removed when it settles.
     build_phases: Mutex<HashMap<String, docker::BuildPhase>>,
+    /// Each agent's private bridge-network IP, resolved after container start/recreate.
+    /// `agent_proxy.rs` and the WS tap dial this instead of `localhost` now that agents no
+    /// longer share the host's network namespace.
+    bridge_ips: Mutex<HashMap<String, String>>,
 }
 
 impl AgentStatusCache {
@@ -215,6 +219,7 @@ impl AgentStatusCache {
             invalidations_rx,
             revs: Mutex::new(HashMap::new()),
             build_phases: Mutex::new(HashMap::new()),
+            bridge_ips: Mutex::new(HashMap::new()),
         }
     }
 
@@ -309,6 +314,32 @@ impl AgentStatusCache {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
+    }
+
+    /// Record the resolved bridge IP for `agent`, replacing any prior value.
+    pub fn set_bridge_ip(&self, agent: &str, ip: String) {
+        self.bridge_ips
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(agent.to_string(), ip);
+    }
+
+    /// The agent's current bridge IP, if resolved.
+    pub fn bridge_ip(&self, agent: &str) -> Option<String> {
+        self.bridge_ips
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(agent)
+            .cloned()
+    }
+
+    /// Drop the cached bridge IP (agent removed, or a resolve failed and the caller wants a
+    /// clean retry next time rather than an indefinitely stale address).
+    pub fn clear_bridge_ip(&self, agent: &str) {
+        self.bridge_ips
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(agent);
     }
 }
 
@@ -559,6 +590,21 @@ fn pending_ids(snapshot: &serde_json::Value) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bridge_ip_round_trips_and_clears() {
+        let cache = AgentStatusCache::new();
+        assert_eq!(cache.bridge_ip("ada"), None);
+
+        cache.set_bridge_ip("ada", "172.20.0.5".to_string());
+        assert_eq!(cache.bridge_ip("ada"), Some("172.20.0.5".to_string()));
+
+        cache.set_bridge_ip("ada", "172.20.0.9".to_string());
+        assert_eq!(cache.bridge_ip("ada"), Some("172.20.0.9".to_string()));
+
+        cache.clear_bridge_ip("ada");
+        assert_eq!(cache.bridge_ip("ada"), None);
+    }
 
     #[test]
     fn apply_rebuilding_overrides_status_and_keeps_missing_agents_listed() {
