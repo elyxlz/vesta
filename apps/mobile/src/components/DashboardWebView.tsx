@@ -16,6 +16,19 @@ function serializeForInjection(value: unknown): string {
     .replaceAll("\u2029", "\\u2029");
 }
 
+/// Dispatch bridge messages into the page as real MessageEvents — the shape the
+/// dashboard's parent-bridge listens for (string postMessage payloads are ignored).
+function dispatchMessagesScript(
+  bridgeMessages: readonly Record<string, unknown>[],
+): string {
+  return `
+    for (const data of ${serializeForInjection(bridgeMessages)}) {
+      window.dispatchEvent(new MessageEvent("message", { data }));
+    }
+    true;
+  `;
+}
+
 function embeddedDocumentSetup(
   dark: boolean,
   bridgeMessages: readonly Record<string, unknown>[],
@@ -62,7 +75,7 @@ function embeddedDocumentSetup(
 }
 
 export interface DashboardWebViewHandle {
-  postMessage: (message: string) => void;
+  sendBridgeMessages: (messages: readonly Record<string, unknown>[]) => void;
 }
 
 interface DashboardWebViewProps {
@@ -85,11 +98,14 @@ export const DashboardWebView = forwardRef<
   { bridgeMessages, dark, ...props },
   forwardedRef,
 ) {
-  const nativeRef = useRef<DashboardWebViewHandle>(null);
+  const nativeRef = useRef<{ injectJavaScript: (script: string) => void }>(
+    null,
+  );
   useImperativeHandle(
     forwardedRef,
     () => ({
-      postMessage: (message) => nativeRef.current?.postMessage(message),
+      sendBridgeMessages: (messages) =>
+        nativeRef.current?.injectJavaScript(dispatchMessagesScript(messages)),
     }),
     [],
   );

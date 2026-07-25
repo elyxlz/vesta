@@ -39,7 +39,7 @@ const API_KEY_BYTES: usize = 32;
 
 const RESERVED_SERVICE_NAMES: &[&str] = &[
     "start", "stop", "restart", "destroy", "auth", "logs", "tree", "file", "backups", "settings",
-    "services",
+    "services", "dashboard-token",
 ];
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
 const AUTO_BACKUP_CHECK_INTERVAL_SECS: u64 = 3600;
@@ -2383,6 +2383,10 @@ pub fn build_router(state: SharedState) -> Router {
             axum::routing::delete(delete_agent_backup_settings_handler),
         )
         .route("/agents/{name}/mounts", put(set_mounts_handler))
+        .route(
+            "/agents/{name}/dashboard-token",
+            post(auth::mint_dashboard_token_handler),
+        )
         .route("/host/folders", get(host_folder_suggestions_handler))
         .route(
             "/mobile/devices",
@@ -3536,6 +3540,13 @@ mod tests {
         })
         .expect("serialize TreeEntry");
 
+        // Fixed sample token: the fixture pins the response SHAPE, not a live JWT.
+        let dashboard_token = serde_json::to_value(crate::auth::DashboardTokenResponse {
+            token: "sample.dashboard.capability".into(),
+            expires_in: crate::jwt::DASHBOARD_TOKEN_TTL,
+        })
+        .expect("serialize DashboardTokenResponse");
+
         // Mirrors version_json() above; that response is an inline json! so it cannot be
         // serialized from a struct here. Keep this in sync with version_json().
         let version = serde_json::json!({
@@ -3556,6 +3567,7 @@ mod tests {
             "auth_start": auth_start,
             "start_all": start_all,
             "tree_entry": tree_entry,
+            "dashboard_token": dashboard_token,
             "version": version,
         })
     }

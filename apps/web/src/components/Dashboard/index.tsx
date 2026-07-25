@@ -10,6 +10,7 @@ import { Card } from "@/components/ui/card";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useTheme } from "@/providers/ThemeProvider";
 import { useRuntime } from "@/providers/RuntimeProvider";
+import { mintDashboardToken } from "@/api/agents";
 import { getConnection } from "@/lib/connection";
 import { openExternalUrl } from "@/lib/open-external-url";
 import {
@@ -19,6 +20,11 @@ import {
   EmptyDescription,
   EmptyMedia,
 } from "@/components/ui/empty";
+
+// The iframe holds a short-lived capability scoped to this agent's service routes, never the
+// gateway token; re-mint well before expiry so an open dashboard keeps working.
+const DASHBOARD_TOKEN_REMINT_FRACTION = 0.8;
+const DASHBOARD_TOKEN_RETRY_MS = 5000;
 
 // Pre-iframe states (no dashboard, error, loading) wear the same flat chrome as the chat card and the
 // live dashboard shell — shadow-none, just the squircle + hairline ring — so the three panels are
@@ -84,6 +90,36 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
       ? `${conn.url}/agents/${encodeURIComponent(name)}/dashboard/`
       : null;
 
+  // Derived, not reset: a token minted for another agent is simply never used.
+  const [minted, setMinted] = useState<{ agent: string; token: string } | null>(
+    null,
+  );
+  const dashboardToken = minted?.agent === name ? minted.token : null;
+  useEffect(() => {
+    if (!hasDashboard) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const mint = async () => {
+      try {
+        const { token, expires_in } = await mintDashboardToken(name);
+        if (cancelled) return;
+        setMinted({ agent: name, token });
+        timer = setTimeout(
+          () => void mint(),
+          expires_in * 1000 * DASHBOARD_TOKEN_REMINT_FRACTION,
+        );
+      } catch {
+        if (!cancelled)
+          timer = setTimeout(() => void mint(), DASHBOARD_TOKEN_RETRY_MS);
+      }
+    };
+    void mint();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [hasDashboard, name]);
+
   const sendContext = useCallback(() => {
     const frame = iframeRef.current?.contentWindow;
     if (!frame) return;
@@ -103,11 +139,11 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
       },
       "*",
     );
-    if (conn)
+    if (conn && dashboardToken)
       frame.postMessage(
         {
           type: "vesta-auth",
-          token: conn.accessToken,
+          token: dashboardToken,
           baseUrl: `${conn.url}/agents/${encodeURIComponent(name)}`,
           agentName: name,
         },
@@ -122,6 +158,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
     isMobile,
     vibrancy,
     conn,
+    dashboardToken,
     name,
   ]);
 

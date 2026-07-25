@@ -115,9 +115,16 @@ pub async fn agent_proxy_handler(
         None => (agent_port, format!("/{path}"), None),
     };
 
-    // Public services are fully open; everything else requires auth.
+    // Public services are fully open; the api key opens everything; the short-lived
+    // dashboard capability opens only this agent's registered services (issue #1260).
     let is_public = service.as_ref().is_some_and(|s| s.public);
-    if !is_public && !auth::has_valid_api_auth(request.headers(), request.uri(), &state.api_key) {
+    if !auth::proxy_authorized(
+        request.headers(),
+        request.uri(),
+        &state.api_key,
+        &name,
+        service.as_ref(),
+    ) {
         return Err(err_response(
             StatusCode::UNAUTHORIZED,
             "unauthorized — pass a valid Bearer token or ?token= query parameter",

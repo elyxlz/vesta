@@ -73,6 +73,10 @@ export const vestadApiFixtures = {
       "size": 1234567890
     }
   ],
+  "dashboard_token": {
+    "expires_in": 600,
+    "token": "sample.dashboard.capability"
+  },
   "start_all": {
     "results": [
       {

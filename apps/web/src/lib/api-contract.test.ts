@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { AgentStatus } from "@vesta/core";
-import type { BackupInfo } from "@/api/agents";
+import type { BackupInfo, DashboardToken } from "@/api/agents";
 import type { OAuthStartResult } from "@/api/providers/claude";
 import type { FileTreeEntry } from "@/api/files";
 import { vestadApiFixtures } from "./vestad-api-fixtures";
@@ -44,5 +44,11 @@ describe("vestad API contract", () => {
   it("tree entries satisfy FileTreeEntry", () => {
     const entry = vestadApiFixtures.tree_entry satisfies FileTreeEntry;
     expect(entry.is_dir).toBe(false);
+  });
+
+  it("dashboard token mint response satisfies DashboardToken", () => {
+    const minted = vestadApiFixtures.dashboard_token satisfies DashboardToken;
+    expect(minted.expires_in).toBeGreaterThan(0);
+    expect(minted.token).toBeTruthy();
   });
 });

@@ -264,6 +264,22 @@ export async function fetchUsage(api: ApiClient, name: string): Promise<Usage> {
   return api.json(`/agents/${encodeURIComponent(name)}/usage`);
 }
 
+export interface DashboardToken {
+  token: string;
+  expires_in: number;
+}
+
+/// Mint a short-lived capability scoped to this agent's registered service routes: the only
+/// credential the dashboard WebView ever receives, never the gateway token (POST /dashboard-token).
+export async function mintDashboardToken(
+  api: ApiClient,
+  name: string,
+): Promise<DashboardToken> {
+  return api.json(`/agents/${encodeURIComponent(name)}/dashboard-token`, {
+    method: "POST",
+  });
+}
+
 export async function getNotificationHistory(
   api: ApiClient,
   name: string,

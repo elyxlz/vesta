@@ -369,3 +369,18 @@ export async function getHostFolderSuggestions(): Promise<string[]> {
   const resp = await apiJson<{ folders: string[] }>("/host/folders");
   return resp.folders;
 }
+
+export interface DashboardToken {
+  token: string;
+  expires_in: number;
+}
+
+/// Mint a short-lived capability scoped to this agent's registered service routes: the only
+/// credential dashboard content ever receives, never the gateway token (POST /dashboard-token).
+export async function mintDashboardToken(
+  name: string,
+): Promise<DashboardToken> {
+  return apiJson(`/agents/${encodeURIComponent(name)}/dashboard-token`, {
+    method: "POST",
+  });
+}

@@ -48,6 +48,16 @@ pub const SERVER_IDENTITY_TYP: &str = "server-identity";
 /// Server-identity token TTL — short; minted on demand, carried once.
 pub const SERVER_IDENTITY_TTL: u64 = 600; // 10 minutes
 
+/// `typ` of a dashboard capability token — the ONLY credential dashboard WebView/iframe
+/// JS ever holds (issue #1260). Scoped to one agent (`sub` = agent name) and accepted
+/// solely on that agent's registered service routes, so compromised dashboard content
+/// cannot administer the gateway or reach other agents. Its own derived subkey means
+/// it does not even verify as an `"access"` token.
+pub const DASHBOARD_TYP: &str = "dashboard";
+/// Dashboard token TTL — short; the app shell re-mints before expiry while the
+/// dashboard stays open.
+pub const DASHBOARD_TOKEN_TTL: u64 = 600; // 10 minutes
+
 #[derive(Serialize, Deserialize)]
 pub struct Claims {
     pub sub: String,
@@ -128,6 +138,31 @@ pub fn create_server_identity_token(api_key: &str, server_id: &str) -> String {
     .expect("HS256 encoding of a serializable struct is infallible")
 }
 
+/// Mint a dashboard capability: `{ sub: <agent_name>, typ: "dashboard" }` with a
+/// short expiry, signed under the dashboard subkey (see `DASHBOARD_TYP` for scope).
+pub fn create_dashboard_token(api_key: &str, agent_name: &str) -> String {
+    let now = crate::time_utils::now_epoch_secs();
+    let claims = Claims {
+        sub: agent_name.into(),
+        typ: DASHBOARD_TYP.into(),
+        iat: now,
+        exp: now + DASHBOARD_TOKEN_TTL,
+        jti: None,
+        fam: None,
+    };
+    encode(
+        &Header::new(Algorithm::HS256),
+        &claims,
+        &EncodingKey::from_secret(&signing_key(api_key, DASHBOARD_TYP)),
+    )
+    .expect("HS256 encoding of a serializable struct is infallible")
+}
+
+/// True when `token` is a live dashboard capability for exactly `agent_name`.
+pub fn validate_dashboard_token(api_key: &str, token: &str, agent_name: &str) -> bool {
+    validate_token(api_key, token, DASHBOARD_TYP).is_ok_and(|claims| claims.sub == agent_name)
+}
+
 pub fn validate_token(
     api_key: &str,
     token: &str,
@@ -180,9 +215,13 @@ mod tests {
         let a = signing_key("k", "access");
         let r = signing_key("k", "refresh");
         let i = signing_key("k", "server-identity");
+        let d = signing_key("k", DASHBOARD_TYP);
         assert_ne!(a, r);
         assert_ne!(a, i);
         assert_ne!(r, i);
+        assert_ne!(d, a);
+        assert_ne!(d, r);
+        assert_ne!(d, i);
     }
 
     #[test]
@@ -213,6 +252,46 @@ mod tests {
     fn wrong_key_rejected() {
         let token = create_token("secret", "access", ACCESS_TOKEN_TTL);
         assert!(validate_token("other-secret", &token, "access").is_err());
+    }
+
+    #[test]
+    fn dashboard_token_is_scoped_to_its_agent() {
+        let token = create_dashboard_token("secret", "alpha");
+        assert!(validate_dashboard_token("secret", &token, "alpha"));
+        // Another agent's name, or another host's key, is a different capability.
+        assert!(!validate_dashboard_token("secret", &token, "beta"));
+        assert!(!validate_dashboard_token("other-secret", &token, "alpha"));
+    }
+
+    #[test]
+    fn dashboard_token_cannot_be_replayed_as_another_role() {
+        let token = create_dashboard_token("secret", "alpha");
+        assert!(validate_token("secret", &token, "access").is_err());
+        assert!(validate_token("secret", &token, "refresh").is_err());
+        // And an access token is not a dashboard capability for any agent.
+        let access = create_token("secret", "access", ACCESS_TOKEN_TTL);
+        assert!(!validate_dashboard_token("secret", &access, "vesta-app"));
+    }
+
+    #[test]
+    fn expired_dashboard_token_is_rejected() {
+        // Back-dated past jsonwebtoken's default 60s exp leeway.
+        let now = crate::time_utils::now_epoch_secs();
+        let claims = Claims {
+            sub: "alpha".into(),
+            typ: DASHBOARD_TYP.into(),
+            iat: now - 300,
+            exp: now - 120,
+            jti: None,
+            fam: None,
+        };
+        let token = encode(
+            &Header::new(Algorithm::HS256),
+            &claims,
+            &EncodingKey::from_secret(&signing_key("secret", DASHBOARD_TYP)),
+        )
+        .expect("encode expired claims");
+        assert!(!validate_dashboard_token("secret", &token, "alpha"));
     }
 
     #[test]

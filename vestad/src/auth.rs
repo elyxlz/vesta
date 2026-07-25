@@ -176,21 +176,59 @@ fn token_fingerprint(token: &str) -> String {
     hex::encode(&digest.as_ref()[..3])
 }
 
+/// Credentials presented on a request: the Bearer header and/or `?token=` query param.
+fn presented_tokens<'req>(
+    headers: &'req HeaderMap,
+    uri: &'req axum::http::Uri,
+) -> impl Iterator<Item = &'req str> {
+    let bearer = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "));
+    let query = uri
+        .query()
+        .and_then(|q| q.split('&').find_map(|p| p.strip_prefix("token=")));
+    bearer.into_iter().chain(query)
+}
+
 pub(crate) fn has_valid_api_auth(
     headers: &HeaderMap,
     uri: &axum::http::Uri,
     api_key: &str,
 ) -> bool {
-    let bearer_ok = headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .is_some_and(|token| verify_token(token, api_key));
-    let query_ok = uri
-        .query()
-        .and_then(|q| q.split('&').find_map(|p| p.strip_prefix("token=")))
-        .is_some_and(|token| verify_token(token, api_key));
-    bearer_ok || query_ok
+    presented_tokens(headers, uri).any(|token| verify_token(token, api_key))
+}
+
+/// True when the request presents a live dashboard capability scoped to `agent_name`
+/// (issue #1260). Deliberately NOT accepted by `has_valid_api_auth`, so the capability
+/// opens nothing behind the api-key middlewares (gateway or agent administration).
+fn has_valid_dashboard_auth(
+    headers: &HeaderMap,
+    uri: &axum::http::Uri,
+    api_key: &str,
+    agent_name: &str,
+) -> bool {
+    presented_tokens(headers, uri)
+        .any(|token| jwt::validate_dashboard_token(api_key, token, agent_name))
+}
+
+/// The agent-proxy authorization decision: public services are open to all; the api
+/// key / access token opens everything; the dashboard capability opens only this
+/// agent's REGISTERED services, never the raw agent port fallback.
+pub(crate) fn proxy_authorized(
+    headers: &HeaderMap,
+    uri: &axum::http::Uri,
+    api_key: &str,
+    agent_name: &str,
+    service: Option<&crate::settings::ServiceEntry>,
+) -> bool {
+    if service.is_some_and(|entry| entry.public) {
+        return true;
+    }
+    if has_valid_api_auth(headers, uri, api_key) {
+        return true;
+    }
+    service.is_some() && has_valid_dashboard_auth(headers, uri, api_key, agent_name)
 }
 
 fn extract_agent_name(path: &str) -> Option<String> {
@@ -352,6 +390,27 @@ pub async fn exchange_session_handler(
     Ok(Json(session_response(&state.api_key, &jti, &fam)))
 }
 
+#[derive(Serialize)]
+pub struct DashboardTokenResponse {
+    pub token: String,
+    pub expires_in: u64,
+}
+
+/// `POST /agents/{name}/dashboard-token` — behind `auth_middleware`, so only a
+/// full-token caller (the app shell, never dashboard content) can mint. Returns the
+/// short-lived agent-scoped capability the shell hands the dashboard WebView/iframe
+/// in place of the gateway token (issue #1260).
+pub async fn mint_dashboard_token_handler(
+    State(state): State<SharedState>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+) -> Result<Json<DashboardTokenResponse>, (StatusCode, Json<serde_json::Value>)> {
+    crate::docker::validate_name(&name).map_err(crate::state::map_docker_err)?;
+    Ok(Json(DashboardTokenResponse {
+        token: jwt::create_dashboard_token(&state.api_key, &name),
+        expires_in: jwt::DASHBOARD_TOKEN_TTL,
+    }))
+}
+
 pub async fn refresh_session_handler(
     State(state): State<SharedState>,
     Json(body): Json<RefreshRequest>,
@@ -509,6 +568,79 @@ mod verify_token_tests {
     #[test]
     fn same_length_non_matching_key_does_not_verify() {
         assert!(!verify_token("the-api-kex", "the-api-key"));
+    }
+}
+
+#[cfg(test)]
+mod dashboard_auth_tests {
+    use super::{has_valid_api_auth, proxy_authorized};
+    use crate::jwt;
+    use crate::settings::ServiceEntry;
+    use axum::http::{HeaderMap, HeaderValue, Uri};
+
+    const API_KEY: &str = "the-api-key";
+    const REGISTERED: ServiceEntry = ServiceEntry { port: 8080, public: false };
+    const PUBLIC: ServiceEntry = ServiceEntry { port: 8080, public: true };
+
+    fn bearer(token: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        let value = HeaderValue::from_str(&format!("Bearer {token}")).expect("ascii header");
+        headers.insert("authorization", value);
+        headers
+    }
+
+    fn service_uri() -> Uri {
+        Uri::from_static("/agents/alpha/tasks/tasks")
+    }
+
+    #[test]
+    fn dashboard_token_opens_the_scoped_agents_registered_service() {
+        let token = jwt::create_dashboard_token(API_KEY, "alpha");
+        let via_bearer = bearer(&token);
+        assert!(proxy_authorized(&via_bearer, &service_uri(), API_KEY, "alpha", Some(&REGISTERED)));
+        // The `?token=` form (media/WS URLs) carries the same capability.
+        let query_uri: Uri = format!("/agents/alpha/tasks/tasks?token={token}")
+            .parse()
+            .expect("valid uri");
+        assert!(proxy_authorized(&HeaderMap::new(), &query_uri, API_KEY, "alpha", Some(&REGISTERED)));
+    }
+
+    #[test]
+    fn dashboard_token_is_denied_for_another_agents_service() {
+        let token = jwt::create_dashboard_token(API_KEY, "alpha");
+        assert!(!proxy_authorized(&bearer(&token), &service_uri(), API_KEY, "beta", Some(&REGISTERED)));
+    }
+
+    #[test]
+    fn dashboard_token_is_denied_on_the_raw_agent_fallback() {
+        // No registered service matched: the fallback proxies to the agent's own port
+        // (X-Agent-Token injected), which the dashboard capability must never reach.
+        let token = jwt::create_dashboard_token(API_KEY, "alpha");
+        assert!(!proxy_authorized(&bearer(&token), &service_uri(), API_KEY, "alpha", None));
+    }
+
+    #[test]
+    fn dashboard_token_is_denied_by_gateway_api_auth() {
+        // `has_valid_api_auth` backs every api-key middleware (gateway admin, agent
+        // admin, /sync, mint itself), so this single check is the gateway-level denial.
+        let token = jwt::create_dashboard_token(API_KEY, "alpha");
+        assert!(!has_valid_api_auth(&bearer(&token), &Uri::from_static("/gateway/settings"), API_KEY));
+    }
+
+    #[test]
+    fn api_key_and_access_token_still_open_non_public_services() {
+        assert!(proxy_authorized(&bearer(API_KEY), &service_uri(), API_KEY, "alpha", Some(&REGISTERED)));
+        let access = jwt::create_token(API_KEY, "access", jwt::ACCESS_TOKEN_TTL);
+        assert!(proxy_authorized(&bearer(&access), &service_uri(), API_KEY, "alpha", Some(&REGISTERED)));
+        assert!(proxy_authorized(&bearer(API_KEY), &service_uri(), API_KEY, "alpha", None));
+    }
+
+    #[test]
+    fn public_service_needs_no_credentials_and_bare_requests_are_denied_elsewhere() {
+        let no_headers = HeaderMap::new();
+        assert!(proxy_authorized(&no_headers, &service_uri(), API_KEY, "alpha", Some(&PUBLIC)));
+        assert!(!proxy_authorized(&no_headers, &service_uri(), API_KEY, "alpha", Some(&REGISTERED)));
+        assert!(!proxy_authorized(&no_headers, &service_uri(), API_KEY, "alpha", None));
     }
 }
 

@@ -1,8 +1,9 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Linking, Platform, StyleSheet, View } from "react-native";
 import type { WebViewMessageEvent, ShouldStartLoadRequest } from "react-native-webview/lib/WebViewTypes";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAgent } from "@/agent/AgentProvider";
+import { mintDashboardToken } from "@/api/endpoints";
 import { DashboardWebView, type DashboardWebViewHandle } from "@/components/DashboardWebView";
 import { EmptyState } from "@/components/ui/States";
 import { usePreferences } from "@/preferences/PreferencesProvider";
@@ -13,18 +14,54 @@ interface DashboardMessage {
   url?: string;
 }
 
+// The WebView holds a short-lived capability scoped to this agent's service routes, never
+// the gateway token; re-mint well before expiry so an open dashboard keeps working.
+const DASHBOARD_TOKEN_REMINT_FRACTION = 0.8;
+const DASHBOARD_TOKEN_RETRY_MS = 5000;
+
 export default function DashboardPage() {
   const webView = useRef<DashboardWebViewHandle>(null);
   const insets = useSafeAreaInsets();
   const { name, agent } = useAgent();
-  const { connection } = useSession();
+  const { connection, api } = useSession();
   const { colors, dark } = usePreferences();
   const [error, setError] = useState("");
   const dashboard = agent?.services.dashboard;
+  const hasDashboard = !!dashboard;
   const dashboardUrl =
     dashboard && connection
       ? `${connection.url}/agents/${encodeURIComponent(name)}/dashboard/`
       : null;
+
+  // Derived, not reset: a token minted for another agent is simply never used.
+  const [minted, setMinted] = useState<{ agent: string; token: string } | null>(
+    null,
+  );
+  const dashboardToken = minted?.agent === name ? minted.token : null;
+  useEffect(() => {
+    if (!hasDashboard) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const mint = async () => {
+      try {
+        const { token, expires_in } = await mintDashboardToken(api, name);
+        if (cancelled) return;
+        setMinted({ agent: name, token });
+        timer = setTimeout(
+          () => void mint(),
+          expires_in * 1000 * DASHBOARD_TOKEN_REMINT_FRACTION,
+        );
+      } catch {
+        if (!cancelled)
+          timer = setTimeout(() => void mint(), DASHBOARD_TOKEN_RETRY_MS);
+      }
+    };
+    void mint();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [api, hasDashboard, name]);
 
   const bridgeMessages = useMemo<readonly Record<string, unknown>[]>(
     () =>
@@ -40,22 +77,29 @@ export default function DashboardPage() {
               isMobile: true,
               vibrancy: true,
             },
-            {
-              type: "vesta-auth",
-              token: connection.accessToken,
-              baseUrl: `${connection.url}/agents/${encodeURIComponent(name)}`,
-              agentName: name,
-            },
+            ...(dashboardToken
+              ? [
+                  {
+                    type: "vesta-auth",
+                    token: dashboardToken,
+                    baseUrl: `${connection.url}/agents/${encodeURIComponent(name)}`,
+                    agentName: name,
+                  },
+                ]
+              : []),
           ]
         : [],
-    [connection, dark, name],
+    [connection, dark, dashboardToken, name],
   );
 
   const sendContext = useCallback(() => {
-    for (const message of bridgeMessages) {
-      webView.current?.postMessage(JSON.stringify(message));
-    }
+    webView.current?.sendBridgeMessages(bridgeMessages);
   }, [bridgeMessages]);
+
+  // Deliver a freshly-minted (or re-minted) capability to an already-loaded page.
+  useEffect(() => {
+    sendContext();
+  }, [sendContext]);
 
   const onMessage = (event: WebViewMessageEvent) => {
     let message: DashboardMessage;
@@ -113,12 +157,7 @@ export default function DashboardPage() {
             ref={webView}
             bridgeMessages={bridgeMessages}
             dark={dark}
-            source={{
-              uri: dashboardUrl,
-              headers: connection
-                ? { Authorization: `Bearer ${connection.accessToken}` }
-                : undefined,
-            }}
+            source={{ uri: dashboardUrl }}
             style={styles.webView}
             containerStyle={styles.webView}
             originWhitelist={["https://*", "http://*"]}
