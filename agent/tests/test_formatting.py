@@ -7,7 +7,7 @@ import pytest
 from core.client import _contains_dashes
 from core.sdk_parsing import (
     _parse_agent_input,
-    _subagent_prefix,
+    _subagent_identity,
     _tool_summary,
     filter_tool_lines,
     parse_sdk_message,
@@ -29,19 +29,19 @@ def test_parse_agent_input(input_data, expected):
     assert _parse_agent_input(input_data) == expected
 
 
-def test_subagent_log_prefix_includes_type_and_unique_id():
-    assert _subagent_prefix({"agent_id": "abc-123", "agent_type": "general-purpose"}) == (
-        "[SUB:general-purpose:abc-123] ",
+def test_subagent_log_identity_includes_type_and_unique_id():
+    assert _subagent_identity({"agent_id": "abc-123", "agent_type": "general-purpose"}) == (
+        "general-purpose:abc-123",
         True,
     )
 
 
-def test_subagent_log_prefix_keeps_id_when_type_is_missing():
-    assert _subagent_prefix({"agent_id": "abc-123"}) == ("[SUB:abc-123] ", True)
+def test_subagent_log_identity_keeps_id_when_type_is_missing():
+    assert _subagent_identity({"agent_id": "abc-123"}) == ("abc-123", True)
 
 
-def test_parent_tool_log_has_no_subagent_prefix():
-    assert _subagent_prefix({}) == ("", False)
+def test_parent_tool_log_has_no_subagent_identity():
+    assert _subagent_identity({}) == (None, False)
 
 
 # --- Tool summary ---

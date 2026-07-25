@@ -231,8 +231,9 @@ def thinking(msg: tp.Any) -> None:
     _agent_phase("THINKING", msg)
 
 
-def tool(msg: tp.Any) -> None:
-    _agent_phase("TOOL CALL", msg)
+def tool(msg: tp.Any, *, subagent: str | None = None) -> None:
+    prefix = f"[AGENT] [SUB:{subagent}] [TOOL CALL] " if subagent else "[AGENT] [TOOL CALL] "
+    _log(msg, prefix=prefix, line_style="magenta")
 
 
 def system(msg: tp.Any) -> None:
