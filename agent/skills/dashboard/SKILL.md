@@ -68,4 +68,4 @@ Example, for a request like "show me my running this week":
 
 ## Verify and relay
 
-When the builder returns, confirm the dashboard is actually serving before you tell the user it is done: `~/agent/skills/dashboard/scripts/daemon status` reports `http_ok`, or reload the app. Then give the user a short, non-technical summary of what changed. Don't take "done" on faith; a failed build won't tell you.
+When the builder returns, confirm the dashboard is actually serving before you tell the user it is done: `~/agent/skills/dashboard/scripts/daemon status` reports `http_ok`, or reload the app. If the builder exercised pages backed by a live store (tasks, anything wired to a skill), also confirm that store is unchanged; a browser pass that clicked a control can silently write real user data. Then give the user a short, non-technical summary of what changed. Don't take "done" on faith; a failed build won't tell you.
