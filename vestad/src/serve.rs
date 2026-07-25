@@ -2557,11 +2557,17 @@ pub fn build_router(state: SharedState) -> Router {
 
 fn spawn_auto_backup_task(state: SharedState) {
     tokio::spawn(async move {
+        // Per-agent epoch of the first busy deferral of its pending backup; cleared once it runs.
+        let mut busy_deferrals: HashMap<String, u64> = HashMap::new();
+        let mut recheck_soon = false;
         loop {
-            tokio::time::sleep(tokio::time::Duration::from_secs(
-                AUTO_BACKUP_CHECK_INTERVAL_SECS,
-            ))
-            .await;
+            let sleep_secs = if recheck_soon {
+                backup::BUSY_RECHECK_INTERVAL_SECS
+            } else {
+                AUTO_BACKUP_CHECK_INTERVAL_SECS
+            };
+            tokio::time::sleep(tokio::time::Duration::from_secs(sleep_secs)).await;
+            recheck_soon = false;
 
             let backup_settings = {
                 let settings = state.settings.read().await;
@@ -2589,6 +2595,7 @@ fn spawn_auto_backup_task(state: SharedState) {
             }
 
             let agents = backup::list_agent_names(&state.docker).await;
+            busy_deferrals.retain(|deferred_name, _| agents.contains(deferred_name));
 
             if agents.is_empty() {
                 tracing::debug!("auto-backup: no agents found, skipping cycle");
@@ -2660,6 +2667,30 @@ fn spawn_auto_backup_task(state: SharedState) {
                 }
 
                 if !needed.is_empty() {
+                    let activity = state.agent_status_cache.activity();
+                    match backup::gate_scheduled_backup(
+                        activity.get(name).map(String::as_str),
+                        busy_deferrals.get(name).copied(),
+                        now_epoch,
+                    ) {
+                        backup::ScheduledBackupGate::Defer => {
+                            let since = *busy_deferrals.entry(name.clone()).or_insert(now_epoch);
+                            tracing::info!(
+                                agent = %name,
+                                deferred_secs = now_epoch.saturating_sub(since),
+                                "auto-backup: agent busy, deferring until idle"
+                            );
+                            recheck_soon = true;
+                            continue;
+                        }
+                        backup::ScheduledBackupGate::RunDeferralExpired => {
+                            busy_deferrals.remove(name);
+                            tracing::warn!(agent = %name, "auto-backup: agent still busy after max deferral, backing up anyway");
+                        }
+                        backup::ScheduledBackupGate::Run => {
+                            busy_deferrals.remove(name);
+                        }
+                    }
                     let _file_lock = match backup::agent_file_lock(name) {
                         Ok(lock) => lock,
                         Err(e) => {

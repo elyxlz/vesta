@@ -17,6 +17,42 @@ const MIN_DISK_SPACE_BYTES: u64 = 1_000_000_000; // 1 GB
 const DISK_SPACE_MARGIN_BYTES: u64 = 500_000_000; // 500 MB margin above container size
 pub const BACKUP_STOP_TIMEOUT_SECS: i32 = 30;
 pub const MIN_AGE_FOR_BACKUP_SECS: u64 = 6 * 3600;
+/// How soon the auto-backup loop re-checks a busy agent it deferred.
+pub const BUSY_RECHECK_INTERVAL_SECS: u64 = 5 * 60;
+/// Hard cap on total deferral: a permanently-busy agent is backed up anyway past this.
+pub const MAX_BUSY_DEFERRAL_SECS: u64 = 6 * 3600;
+
+/// Whether a scheduled backup should run now or wait for the agent to go idle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScheduledBackupGate {
+    /// Agent idle (or unreachable, which is not mid-task): back up now.
+    Run,
+    /// Agent still busy but the deferral cap expired: back up anyway.
+    RunDeferralExpired,
+    /// Agent mid-task: skip and re-check soon.
+    Defer,
+}
+
+/// Gate a scheduled backup on agent activity. `activity` is the live tap state ("idle"/"thinking");
+/// `None` means the agent is stopped or unreachable, so the stop/snapshot cannot kill in-flight
+/// work and the backup proceeds. `deferred_since_epoch` is when this agent's pending backup was
+/// first deferred, `None` on the first busy sighting.
+pub fn gate_scheduled_backup(
+    activity: Option<&str>,
+    deferred_since_epoch: Option<u64>,
+    now_epoch: u64,
+) -> ScheduledBackupGate {
+    let busy = activity.is_some_and(|state| state != "idle");
+    if !busy {
+        return ScheduledBackupGate::Run;
+    }
+    match deferred_since_epoch {
+        Some(since) if now_epoch.saturating_sub(since) >= MAX_BUSY_DEFERRAL_SECS => {
+            ScheduledBackupGate::RunDeferralExpired
+        }
+        _ => ScheduledBackupGate::Defer,
+    }
+}
 
 /// Acquire an exclusive file lock for the given agent. The lock is held for the
 /// lifetime of the returned Flock. Used to coordinate between the vestad API and
@@ -437,6 +473,57 @@ mod tests {
         assert!(
             !restore_body.contains("remove_container_force"),
             "restore_backup must use ensure_container_removed (confirms gone), not the best-effort remove_container_force"
+        );
+    }
+
+    // ── Scheduled-backup busy gate tests ──────────────────────────
+
+    #[test]
+    fn gate_runs_when_agent_is_idle() {
+        assert_eq!(
+            gate_scheduled_backup(Some("idle"), None, 1000),
+            ScheduledBackupGate::Run
+        );
+    }
+
+    #[test]
+    fn gate_runs_when_activity_is_unknown() {
+        // A stopped or unreachable agent has no tap entry; it is not mid-task.
+        assert_eq!(
+            gate_scheduled_backup(None, None, 1000),
+            ScheduledBackupGate::Run
+        );
+    }
+
+    #[test]
+    fn gate_defers_on_first_busy_sighting() {
+        assert_eq!(
+            gate_scheduled_backup(Some("thinking"), None, 1000),
+            ScheduledBackupGate::Defer
+        );
+    }
+
+    #[test]
+    fn gate_defers_while_under_the_cap() {
+        assert_eq!(
+            gate_scheduled_backup(Some("thinking"), Some(1000), 1000 + MAX_BUSY_DEFERRAL_SECS - 1),
+            ScheduledBackupGate::Defer
+        );
+    }
+
+    #[test]
+    fn gate_forces_the_backup_once_the_cap_expires() {
+        assert_eq!(
+            gate_scheduled_backup(Some("thinking"), Some(1000), 1000 + MAX_BUSY_DEFERRAL_SECS),
+            ScheduledBackupGate::RunDeferralExpired
+        );
+    }
+
+    #[test]
+    fn gate_runs_when_a_deferred_agent_goes_idle() {
+        assert_eq!(
+            gate_scheduled_backup(Some("idle"), Some(1000), 2000),
+            ScheduledBackupGate::Run
         );
     }
 

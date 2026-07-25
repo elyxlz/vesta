@@ -231,6 +231,13 @@ impl AgentStatusCache {
         self.activity_rx.clone()
     }
 
+    /// Snapshot of each tapped agent's live activity state ("idle"/"thinking"). Agents that are
+    /// stopped or unreachable have no entry. The auto-backup scheduler reads it to defer a
+    /// scheduled backup while an agent is mid-task.
+    pub fn activity(&self) -> HashMap<String, String> {
+        self.activity_rx.borrow().clone()
+    }
+
     /// Snapshot of each alive agent's IANA timezone, as last reported on its connect snapshot.
     pub fn timezones(&self) -> HashMap<String, String> {
         self.timezones_rx.borrow().clone()
