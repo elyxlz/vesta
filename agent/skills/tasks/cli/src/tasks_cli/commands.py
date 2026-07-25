@@ -860,15 +860,19 @@ def remind_set(config: Config, spec: ReminderSpec) -> dict:
 
 
 def remind_list(config: Config, *, task_id: str | None = None, limit: int = 50) -> list[dict]:
+    # Recurring reminders sort ahead of one-shots so the limit only ever trims the newest
+    # one-shot tail: a long-lived daily/cron reminder is typically the oldest row and would
+    # otherwise silently fall off a created_at-ordered list, a false-negative view.
+    order_clause = "ORDER BY json_extract(trigger_data, '$.type') IN ('cron', 'interval') DESC, created_at DESC LIMIT ?"
     with closing(db.get_db(config.data_dir)) as conn:
         if task_id is not None:
             cursor = conn.execute(
-                "SELECT * FROM reminders WHERE completed = 0 AND task_id = ? ORDER BY created_at DESC LIMIT ?",
+                f"SELECT * FROM reminders WHERE completed = 0 AND task_id = ? {order_clause}",
                 (task_id, limit),
             )
         else:
             cursor = conn.execute(
-                "SELECT * FROM reminders WHERE completed = 0 ORDER BY created_at DESC LIMIT ?",
+                f"SELECT * FROM reminders WHERE completed = 0 {order_clause}",
                 (limit,),
             )
         return [
