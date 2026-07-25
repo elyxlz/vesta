@@ -10,6 +10,7 @@ from wait_util import wait_for_condition
 
 import core.config as cfg
 import core.models as vm
+from core import lifecycle
 from core.client import process_message
 
 
@@ -146,7 +147,7 @@ async def test_restarts_on_timeout(tmp_path):
     )
     assert state.graceful_shutdown.is_set()
     assert state.persisted.last_restart_reason == "error: Response timed out"
-    assert vm.is_crash_reason(state.persisted.last_restart_reason), "an SDK-hang timeout must classify as a crash so on-failure restarts it"
+    assert lifecycle.is_crash(state.persisted.last_restart_reason), "an SDK-hang timeout must classify as a crash so on-failure restarts it"
 
 
 def test_restart_reason_round_trip(tmp_path):
@@ -162,20 +163,23 @@ def test_restart_reason_round_trip(tmp_path):
     state_store.save_state(state.persisted, config)
 
     reloaded = vm.State(persisted=state_store.load_state(config))
-    assert _consume_restart_reason(reloaded, config, first_start=False) == "nightly: conversation history reset, dreamer ran"
+    reason = _consume_restart_reason(reloaded, config, first_start=False)
+    assert reason.log_reason == "nightly: conversation history reset, dreamer ran"
+    assert reason.agent_message == "conversation history reset, dreamer ran"
 
     # Consumed: a fresh load now reports CRASH_RESTART.
     again = vm.State(persisted=state_store.load_state(config))
-    assert _consume_restart_reason(again, config, first_start=False) == vm.CRASH_RESTART
+    assert _consume_restart_reason(again, config, first_start=False) == lifecycle.CRASH_RESTART
 
 
 def test_reason_constants_follow_category_detail_shape():
-    for const in (vm.CLEAN_RESTART, vm.CRASH_RESTART):
-        assert ": " in const, f"{const!r} must be 'category: detail'"
-        category = const.split(": ", 1)[0]
+    for const in (lifecycle.CLEAN_RESTART, lifecycle.CRASH_RESTART):
+        log_reason = const.log_reason
+        assert ": " in log_reason, f"{log_reason!r} must be 'category: detail'"
+        category = log_reason.split(": ", 1)[0]
         assert category in {"clean", "crash", "error"}, category
-        assert "—" not in const and "–" not in const
-    assert vm.CLEAN_RESTART == "clean: routine restart, no specific reason"
+        assert "—" not in log_reason and "–" not in log_reason
+    assert lifecycle.CLEAN_RESTART.log_reason == "clean: routine restart, no specific reason"
 
 
 def test_build_restart_context_renders_system_restart_header(tmp_path):
@@ -186,9 +190,9 @@ def test_build_restart_context_renders_system_restart_header(tmp_path):
     config.core_prompts_dir.mkdir(parents=True, exist_ok=True)
     (config.core_prompts_dir / "restart.md").write_text("Read the `restart` skill and follow it.\n")
 
-    reason = "clean: routine restart, no specific reason"
-    out = helpers.build_restart_context(reason, config)
-    assert out.startswith("[System Restart]\nReason: routine restart, no specific reason")
+    agent_message = "You restarted after a routine shutdown."
+    out = helpers.build_restart_context(agent_message, config)
+    assert out.startswith("[System Restart]\nReason: You restarted after a routine shutdown.")
     assert out.endswith("Read the `restart` skill and follow it.")
 
     # A reason without a category prefix renders whole.
@@ -196,7 +200,7 @@ def test_build_restart_context_renders_system_restart_header(tmp_path):
     assert "Reason: first start" in out2
 
     # Extras (e.g. a compaction boot message) slot between the header and the restart prompt.
-    out3 = helpers.build_restart_context(reason, config, extras=["[Boot Message]\nhello"])
+    out3 = helpers.build_restart_context(agent_message, config, extras=["[Boot Message]\nhello"])
     header, summary, prompt = out3.split("\n\n")
     assert header.startswith("[System Restart]")
     assert summary.startswith("[Boot Message]")
@@ -217,20 +221,21 @@ def test_consume_restart_reason_drains_pending_inbox(tmp_path):
     config.data_dir.mkdir(parents=True, exist_ok=True)
 
     state = vm.State()
-    state.persisted.last_restart_reason = vm.CLEAN_RESTART
+    state.persisted.last_restart_reason = lifecycle.CLEAN_RESTART.log_reason
 
     # No inbox -> existing behavior (returns the persisted reason).
-    assert _consume_restart_reason(state, config, first_start=False) == vm.CLEAN_RESTART
+    assert _consume_restart_reason(state, config, first_start=False) == lifecycle.CLEAN_RESTART
 
     # Inbox present -> it wins over the persisted clean reason and the file is removed one-shot.
-    state.persisted.last_restart_reason = vm.CLEAN_RESTART
+    state.persisted.last_restart_reason = lifecycle.CLEAN_RESTART.log_reason
     (config.data_dir / "pending_restart_reason").write_text("mounts: you now have read-only access to /media/Plex\n")
     got = _consume_restart_reason(state, config, first_start=False)
-    assert got == "mounts: you now have read-only access to /media/Plex"
+    assert got.log_reason == "mounts: you now have read-only access to /media/Plex"
+    assert got.agent_message == "you now have read-only access to /media/Plex"
     assert not (config.data_dir / "pending_restart_reason").exists()
 
     # Drained: the next boot falls back to CRASH_RESTART like any consumed reason.
-    assert _consume_restart_reason(state, config, first_start=False) == vm.CRASH_RESTART
+    assert _consume_restart_reason(state, config, first_start=False) == lifecycle.CRASH_RESTART
 
 
 def test_pending_inbox_never_masks_a_crash_reason(tmp_path):
@@ -245,7 +250,14 @@ def test_pending_inbox_never_masks_a_crash_reason(tmp_path):
 
     # The crash the prior run recorded wins over the external reason, and the inbox is still
     # consumed so it can't fire stale on a later boot.
-    assert _consume_restart_reason(state, config, first_start=False) == "crash: TypeError: boom"
+    assert _consume_restart_reason(
+        state,
+        config,
+        first_start=False,
+    ) == lifecycle.RestartReason(
+        log_reason="crash: TypeError: boom",
+        agent_message="crash: TypeError: boom",
+    )
     assert not (config.data_dir / "pending_restart_reason").exists()
 
 
@@ -258,7 +270,7 @@ def test_first_start_drains_the_inbox_so_it_cannot_fire_later(tmp_path):
     state = vm.State()
     (config.data_dir / "pending_restart_reason").write_text("mounts: you now have access to /media/Plex (read-only)\n")
 
-    assert _consume_restart_reason(state, config, first_start=True) == vm.FIRST_START_REASON
+    assert _consume_restart_reason(state, config, first_start=True) == lifecycle.FIRST_START
     assert not (config.data_dir / "pending_restart_reason").exists(), "a stale inbox must not fire on a later boot"
 
 

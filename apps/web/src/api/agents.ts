@@ -1,11 +1,14 @@
 import { apiJson, apiFetch, jsonInit } from "./client";
 import {
+  RESTART_REASONS,
   normalizeProviderInfo,
   providerPutBody,
+  restartBody,
   type BuildPhase,
   type NotificationEvent,
   type ProviderInfo,
   type ProviderSelection,
+  type RestartReason,
   type VestaEvent,
 } from "@vesta/core";
 
@@ -34,7 +37,7 @@ export async function setProvider(
   if (Object.keys(prefs).length > 0) {
     await apiFetch(`/agents/${enc}/config`, jsonInit("PUT", prefs));
   }
-  await restartAgent(name);
+  await restartAgent(name, RESTART_REASONS.provider);
 }
 
 /// Sign out: clear the agent's provider credentials (`DELETE /provider`), then restart so it boots
@@ -43,7 +46,7 @@ export async function signOutProvider(name: string): Promise<void> {
   await apiFetch(`/agents/${encodeURIComponent(name)}/provider`, {
     method: "DELETE",
   });
-  await restartAgent(name);
+  await restartAgent(name, RESTART_REASONS.signOut);
 }
 
 /// Read an agent's active provider from its `GET /provider`. The agent reports `kind` only when a
@@ -59,17 +62,18 @@ export async function getProvider(name: string): Promise<ProviderInfo> {
 async function patchProvider(
   name: string,
   patch: Record<string, unknown>,
+  reason: RestartReason,
 ): Promise<void> {
   await apiFetch(
     `/agents/${encodeURIComponent(name)}/provider`,
     jsonInit("PATCH", patch),
   );
-  await restartAgent(name);
+  await restartAgent(name, reason);
 }
 
 /// Change only the model. Vestad restarts the agent so it takes effect.
 export async function setModel(name: string, model: string): Promise<void> {
-  await patchProvider(name, { model });
+  await patchProvider(name, { model }, RESTART_REASONS.model);
 }
 
 /// Change only the context window. Vestad restarts the agent so it takes effect.
@@ -77,7 +81,11 @@ export async function setContextWindow(
   name: string,
   maxContextTokens: number,
 ): Promise<void> {
-  await patchProvider(name, { max_context_tokens: maxContextTokens });
+  await patchProvider(
+    name,
+    { max_context_tokens: maxContextTokens },
+    RESTART_REASONS.context,
+  );
 }
 
 /// Create an empty agent container. Credentials and preferences (provider, model, personality,
@@ -176,10 +184,18 @@ export async function stopAgent(name: string): Promise<void> {
   });
 }
 
-export async function restartAgent(name: string): Promise<void> {
-  await apiJson(`/agents/${encodeURIComponent(name)}/restart`, {
-    method: "POST",
-  });
+/// Restart an agent. `reason` is omitted for a plain manual restart, leaving vestad to name it (it
+/// prefers a mount-grant delta it can derive over a generic one).
+export async function restartAgent(
+  name: string,
+  reason?: RestartReason,
+): Promise<void> {
+  await apiJson(
+    `/agents/${encodeURIComponent(name)}/restart`,
+    reason === undefined
+      ? { method: "POST" }
+      : jsonInit("POST", restartBody(reason)),
+  );
 }
 
 export async function deleteAgent(name: string): Promise<void> {
