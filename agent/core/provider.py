@@ -571,6 +571,11 @@ def _provider_limits() -> "dict[str, ProviderLimits]":
         "openrouter": ProviderLimits(fetch=_openrouter_usage),
         "zai": ProviderLimits(fetch=None, rejections=_ZAI_REJECTIONS),
         "kimi": ProviderLimits(fetch=None, rejections=_KIMI_REJECTIONS),
+        # openai is the opposite case: Codex reports used-percent, window length and reset for a
+        # primary and secondary window plus a credit balance, on every response, via x-codex-*
+        # headers. The bridge captures them and forwards none, and drops the codex.rate_limits
+        # stream event too, so nothing downstream of it can read them. Reaching them means teaching
+        # the bridge to pass them through, not another endpoint here.
         "openai": ProviderLimits(fetch=None, rejections=_OPENAI_REJECTIONS),
     }
 
