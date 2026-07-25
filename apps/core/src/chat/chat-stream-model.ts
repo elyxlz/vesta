@@ -66,13 +66,28 @@ export function seedTail(state: ChatState, page: HistoryPage): ChatState {
         !echoedIntents.has(message.intent_id)) ||
       (message.id != null && !pageIds.has(message.id)),
   )
+  // The page is the newest slice of history, so survivors from before it (earlier loadMore pages
+  // held across a reseed) go BEFORE it; only rows the page cannot cover (raced live rows past its
+  // end, optimistic bubbles with no id yet) stay after. Keeps the tail chronological, so a reseed
+  // never renders days-old messages below today's.
+  const oldestPageId = page.events.reduce<number | null>(
+    (oldest, event) =>
+      event.id != null && (oldest === null || event.id < oldest) ? event.id : oldest,
+    null,
+  )
+  const olderThanPage = (message: ChatMessage): boolean =>
+    message.id != null && oldestPageId !== null && message.id < oldestPageId
   const pendingIntents = new Set(state.pendingIntents)
   for (const intentId of echoedIntents) pendingIntents.delete(intentId)
   const shownIds = new Set(state.shownIds)
   for (const id of pageIds) shownIds.add(id)
   return {
     ...state,
-    messages: capTail([...page.events, ...survivors]),
+    messages: capTail([
+      ...survivors.filter(olderThanPage),
+      ...page.events,
+      ...survivors.filter((message) => !olderThanPage(message)),
+    ]),
     shownIds,
     pendingIntents,
     cursor: page.cursor,

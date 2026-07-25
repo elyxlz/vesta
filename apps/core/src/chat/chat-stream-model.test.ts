@@ -137,6 +137,21 @@ describe("chat-stream-model", () => {
     expect(replay.state.messages).toHaveLength(2)
   })
 
+  it("keeps history rows older than the reseed page BEFORE it so the tail stays chronological", () => {
+    // Background/foreground reseed: the hold carries earlier loadMore pages (ids 1-2, days old)
+    // plus part of the tail; the refetched newest page (ids 10-11) must land after them, never
+    // push them below today's messages.
+    let state = seedTail(initialChatState(), { events: [chat(10, "today-a")], cursor: 10 })
+    state = prependPage(state, [chat(1, "old-a"), chat(2, "old-b")], null)
+    state = seedTail(state, { events: [chat(10, "today-a"), chat(11, "today-b")], cursor: 10 })
+    expect(state.messages.map((m) => (m.type === "chat" ? m.text : ""))).toEqual([
+      "old-a",
+      "old-b",
+      "today-a",
+      "today-b",
+    ])
+  })
+
   it("preserves a pending optimistic bubble across a resync reseed and confirms its later echo", () => {
     let state = beginSend(initialChatState(), "hi", "typed", "i-1")
 
