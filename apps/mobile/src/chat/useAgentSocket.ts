@@ -47,10 +47,8 @@ interface HistoryPage {
 // seam by event id; on every socket open the hook refetches the tail so a reconnect gap self-heals.
 // agentState + pending come from the replica; gateway connectedness from the single sync socket.
 // Sends are POST intents confirmed by their chat-socket echo. The stale-while-reconnecting hold gives
-// an instant render across a controller epoch; backgrounding never blanks the chat.
-// `heldActivityState` is the last-known activity from the roster hold, served while the replica
-// tree has not resolved yet (connecting / first snapshot in flight) so the orb never flashes
-// through a made-up "idle" before settling on the real state.
+// an instant render across a controller epoch; backgrounding never blanks the chat. Until the replica
+// resolves, `heldActivityState` (the roster hold's last-known activity) is served instead of "idle".
 export function useAgentSocket(
   name: string,
   active: boolean,
