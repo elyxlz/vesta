@@ -1,0 +1,104 @@
+# Trusted half of the mobile visual review (issue #1463): runs from the
+# default branch's workflow file with a write token, never checks out or
+# executes PR code, and interpolates nothing attacker-controlled into the
+# comment (only the head SHA, run conclusion, and run/artifact ids from the
+# workflow_run event). It keeps one sticky comment per PR pointing at the
+# newest run's screenshots artifact.
+name: Mobile Visual Review Comment
+
+on:
+  workflow_run:
+    workflows: ["Mobile Visual Review"]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  comment:
+    name: Update the sticky visual review comment
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      pull-requests: write
+    steps:
+      - name: Create or update the review comment
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const MARKER = "<!-- mobile-visual-review -->";
+            const ARTIFACT_NAME = "mobile-visual-screenshots";
+            const run = context.payload.workflow_run;
+
+            // run.pull_requests is empty for fork PRs, so resolve the PR from
+            // the head commit instead.
+            const { data: associatedPrs } =
+              await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                commit_sha: run.head_sha,
+              });
+            const pullRequest = associatedPrs.find(
+              (candidate) => candidate.state === "open",
+            );
+            if (!pullRequest) {
+              core.info(`no open PR found for ${run.head_sha}; skipping`);
+              return;
+            }
+
+            const { data: artifactList } =
+              await github.rest.actions.listWorkflowRunArtifacts({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: run.id,
+              });
+            const artifact = artifactList.artifacts.find(
+              (candidate) => candidate.name === ARTIFACT_NAME,
+            );
+            const artifactLine = artifact
+              ? `[Download the screenshots artifact](${run.html_url}/artifacts/${artifact.id}); contact-sheet.png inside is the one-glance overview.`
+              : "No screenshots artifact was produced; open the workflow run for diagnostics.";
+            const status =
+              run.conclusion === "success"
+                ? "All catalog pages captured."
+                : `Capture finished with conclusion \`${run.conclusion}\`; the run log names the failing page.`;
+            const body = [
+              MARKER,
+              "## Mobile visual review",
+              "",
+              status,
+              "",
+              `- Commit: ${run.head_sha}`,
+              `- [Workflow run](${run.html_url})`,
+              `- ${artifactLine}`,
+              "",
+              "_Screenshots come from an unprivileged workflow that builds this PR's code on a pinned iOS simulator; this comment only links the produced artifact._",
+            ].join("\n");
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pullRequest.number,
+              per_page: 100,
+            });
+            const existing = comments.find(
+              (candidate) => candidate.body !== undefined && candidate.body.includes(MARKER),
+            );
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pullRequest.number,
+                body,
+              });
+            }

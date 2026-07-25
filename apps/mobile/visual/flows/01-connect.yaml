@@ -1,0 +1,11 @@
+# Page: connect (the disconnected landing screen).
+appId: com.vesta.mobile
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: "Connect with Vesta Cloud"
+    timeout: 60000
+- waitForAnimationToEnd:
+    timeout: 5000
+- takeScreenshot: ${SCREENSHOT_DIR}/01-connect
