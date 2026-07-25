@@ -56,8 +56,8 @@ _STATE_KEY: web.AppKey[ServiceState] = web.AppKey("state", ServiceState)
 
 def _write_notification(state: ServiceState, text: str, intent_id: str | None) -> None:
     """Persist an inbound app message as the source=app-chat notification the monitor loop turns into a
-    model turn. Byte-identical to core's former _write_app_chat_notification: the reply_hint and the
-    intent_id extra ride along unchanged so the model side sees no difference."""
+    model turn. The structured reply command, behavioral hint, and intent ID ride along
+    unchanged so the model receives the producer-owned response guidance."""
     directory = state.notifications_dir
     directory.mkdir(parents=True, exist_ok=True)
     fields: dict[str, object] = {
@@ -66,7 +66,8 @@ def _write_notification(state: ServiceState, text: str, intent_id: str | None) -
         "type": "message",
         "message": text,
         "interrupt": True,
-        "reply_hint": "reply with `app-chat send`, and think about how you can best show your personality",
+        "reply_command": "app-chat send",
+        "reply_hint": "think about how you can best show your personality",
     }
     if intent_id is not None:
         fields["intent_id"] = intent_id
