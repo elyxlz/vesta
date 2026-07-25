@@ -165,7 +165,7 @@ fn join_and(items: &[String]) -> String {
 pub fn mount_change_reason(
     actual: &[(String, String, bool)],
     desired: &[HostMount],
-) -> Option<crate::lifecycle::LifecycleReason<'static>> {
+) -> Option<crate::lifecycle::LifecycleReason> {
     let actual_modes: std::collections::HashMap<&str, bool> = actual
         .iter()
         .map(|(_, container, writable)| (container.as_str(), *writable))
@@ -245,15 +245,6 @@ pub fn mount_change_reason(
     }
 }
 
-/// An explicit caller reason wins; otherwise the mount delta speaks for itself.
-pub fn effective_restart_reason(
-    caller: Option<crate::lifecycle::LifecycleReason<'static>>,
-    actual: &[(String, String, bool)],
-    desired: &[HostMount],
-) -> Option<crate::lifecycle::LifecycleReason<'static>> {
-    caller.or_else(|| mount_change_reason(actual, desired))
-}
-
 /// Host roots whose immediate subdirectories are common places to share (media libraries,
 /// downloads, data disks). Their children — e.g. `/mnt/media` — are the suggestions.
 pub const SUGGESTION_ROOTS: &[&str] = &["/mnt", "/media", "/srv", "/data", "/pool", "/tank"];
@@ -322,7 +313,7 @@ mod tests {
     }
 
     fn assert_reason(
-        reason: Option<crate::lifecycle::LifecycleReason<'static>>,
+        reason: Option<crate::lifecycle::LifecycleReason>,
         log_reason: &str,
         agent_message: &str,
     ) {
@@ -383,25 +374,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn effective_restart_reason_prefers_the_caller_reason() {
-        // Caller intent wins over the synthesized delta...
-        let caller = crate::lifecycle::LifecycleReason::owned(
-            "manual: switching model",
-            "You changed models.",
-        );
-        assert_eq!(
-            effective_restart_reason(Some(caller.clone()), &[], &[m("/new", false)]),
-            Some(caller),
-        );
-        // ...else the delta speaks, and no delta means no reason.
-        assert_reason(
-            effective_restart_reason(None, &[], &[m("/new", false)]),
-            "mounts: granted /new (read-only)",
-            "You now have access to /new (read-only).",
-        );
-        assert_eq!(effective_restart_reason(None, &[], &[]), None);
-    }
 
     #[test]
     fn mirror_uses_canonical_host_path_as_container_path() {

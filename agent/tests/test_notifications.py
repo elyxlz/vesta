@@ -34,7 +34,7 @@ def test_greeting_deferred_until_authenticated(config, kind):
     upgraded agent that loaded a stale unauthenticated provider and never ran its migrations."""
     state = vm.State()
     state.provider_status = ProviderStatus(state=ProviderAuthState.NOT_AUTHENTICATED, kind=kind, model=None)
-    assert greeting_turn(config=config, state=state, reason="first_start") is None
+    assert greeting_turn(config=config, state=state, agent_message="first start", first_start=True) is None
 
 
 # --- _load_notification_files ---

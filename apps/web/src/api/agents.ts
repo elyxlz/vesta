@@ -3,6 +3,7 @@ import {
   RESTART_REASONS,
   normalizeProviderInfo,
   providerPutBody,
+  restartBody,
   type BuildPhase,
   type NotificationEvent,
   type ProviderInfo,
@@ -183,16 +184,17 @@ export async function stopAgent(name: string): Promise<void> {
   });
 }
 
+/// Restart an agent. `reason` is omitted for a plain manual restart, leaving vestad to name it (it
+/// prefers a mount-grant delta it can derive over a generic one).
 export async function restartAgent(
   name: string,
-  reason: RestartReason = RESTART_REASONS.manual,
+  reason?: RestartReason,
 ): Promise<void> {
   await apiJson(
     `/agents/${encodeURIComponent(name)}/restart`,
-    jsonInit("POST", {
-      reason: reason.logReason,
-      agent_message: reason.agentMessage,
-    }),
+    reason === undefined
+      ? { method: "POST" }
+      : jsonInit("POST", restartBody(reason)),
   );
 }
 

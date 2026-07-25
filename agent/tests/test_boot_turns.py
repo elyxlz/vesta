@@ -33,7 +33,7 @@ def test_boot_turns_ordered_migrations_then_sync_then_config_then_greeting(tmp_p
         state=_authed_state(),
         config=config,
         config_issues=["BAD=1 is invalid; reverted to default"],
-        greeting_reason="You restarted after a routine shutdown.",
+        agent_message="You restarted after a routine shutdown.",
         first_start=False,
     )
 
@@ -65,7 +65,7 @@ def test_restart_only_boot_carries_no_daemon_orientation(tmp_path):
             state=state,
             config=config,
             config_issues=[],
-            greeting_reason="You restarted after a routine shutdown.",
+            agent_message="You restarted after a routine shutdown.",
             first_start=False,
         )
 
@@ -81,7 +81,7 @@ def test_first_start_pre_marks_migrations_and_greets_with_setup(tmp_path):
     (config.core_prompts_dir / "birth.md").write_text("welcome, run setup")
     state = _authed_state()
 
-    turns = collect_boot_turns(state=state, config=config, config_issues=[], greeting_reason="first_start", first_start=True)
+    turns = collect_boot_turns(state=state, config=config, config_issues=[], agent_message="first start", first_start=True)
 
     assert len(turns) == 1
     assert "welcome, run setup" in turns[0]
@@ -101,7 +101,7 @@ def test_restart_greeting_carries_pending_boot_message(tmp_path):
         state=state,
         config=config,
         config_issues=[],
-        greeting_reason="You restarted.",
+        agent_message="You restarted.",
         first_start=False,
     )
 
@@ -120,7 +120,7 @@ def test_pending_boot_message_consumed_even_on_unauthenticated_boot(tmp_path):
     state = vm.State()  # no provider_status -> unauthenticated
     state.persisted.pending_boot_message = "[Your context was just compacted; the summary is above.]\n\nnew day"
 
-    result = greeting_turn(config=config, state=state, reason="You restarted.")
+    result = greeting_turn(config=config, state=state, agent_message="You restarted.", first_start=False)
 
     assert result is None  # no greeting on an unauthenticated boot
     assert state.persisted.pending_boot_message is None  # but the one-shot message is still consumed

@@ -87,7 +87,7 @@ async fn with_container_paused<F, Fut, T>(
     docker: &Docker,
     name: &str,
     cs: ContainerStatus,
-    resume_reason: &crate::lifecycle::LifecycleReason<'_>,
+    resume_reason: &crate::lifecycle::LifecycleReason,
     op: F,
 ) -> Result<T, DockerError>
 where
@@ -129,7 +129,7 @@ where
 /// The boot reason for the restart after a backup pause, by what triggered the backup.
 fn backup_resume_reason(
     backup_type: &BackupType,
-) -> &'static crate::lifecycle::LifecycleReason<'static> {
+) -> &'static crate::lifecycle::LifecycleReason {
     match backup_type {
         BackupType::Manual => &crate::lifecycle::MANUAL_BACKUP,
         BackupType::PreRestore => &crate::lifecycle::PRE_RESTORE_BACKUP,

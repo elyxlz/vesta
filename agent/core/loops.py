@@ -149,7 +149,7 @@ async def process_batch(
         await queue_section(external)
 
 
-def greeting_turn(*, config: cfg.VestaConfig, state: vm.State, reason: str) -> str | None:
+def greeting_turn(*, config: cfg.VestaConfig, state: vm.State, agent_message: str, first_start: bool) -> str | None:
     """The boot greeting as a prompt body (or None to skip): first start runs the setup prompt,
     a restart builds the wake-up context (reason + restart prompt + any pending dreamer summary).
 
@@ -167,7 +167,7 @@ def greeting_turn(*, config: cfg.VestaConfig, state: vm.State, reason: str) -> s
         logger.startup("No authenticated provider yet, waiting for sign-in before starting")
         return None
 
-    if reason == "first_start":
+    if first_start:
         setup_prompt = load_prompt("birth", config)
         if not setup_prompt:
             # No prompt to run, flip the flag so we don't loop into first-start every reboot.
@@ -178,7 +178,7 @@ def greeting_turn(*, config: cfg.VestaConfig, state: vm.State, reason: str) -> s
         return setup_prompt.strip()
 
     extras = [boot_msg] if boot_msg is not None else []
-    prompt = build_restart_context(reason, config, extras=extras)
+    prompt = build_restart_context(agent_message, config, extras=extras)
     if not prompt or not prompt.strip():
         return None
 

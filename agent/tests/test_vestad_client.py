@@ -36,30 +36,13 @@ async def test_send_user_notification_swallows_an_unreachable_vestad(monkeypatch
 
 
 @pytest.mark.anyio
-async def test_restart_uses_canonical_agent_reason_by_default():
-    with patch(
-        "core.vestad_client._request_lifecycle",
-        new_callable=AsyncMock,
-        return_value=True,
-    ) as request:
-        assert await vestad_client.request_restart()
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [((), lifecycle.AGENT_RESTART), ((lifecycle.COMPACTION_RESTART,), lifecycle.COMPACTION_RESTART)],
+    ids=["defaults to the canonical agent reason", "forwards a specific reason"],
+)
+async def test_restart_carries_a_reason(args, expected):
+    with patch("core.vestad_client._request_lifecycle", new_callable=AsyncMock, return_value=True) as request:
+        assert await vestad_client.request_restart(*args)
 
-    request.assert_awaited_once_with(
-        "restart",
-        reason=vestad_client.AGENT_RESTART_REASON,
-    )
-
-
-@pytest.mark.anyio
-async def test_restart_forwards_specific_reason():
-    with patch(
-        "core.vestad_client._request_lifecycle",
-        new_callable=AsyncMock,
-        return_value=True,
-    ) as request:
-        assert await vestad_client.request_restart(lifecycle.COMPACTION_RESTART)
-
-    request.assert_awaited_once_with(
-        "restart",
-        reason=lifecycle.COMPACTION_RESTART,
-    )
+    request.assert_awaited_once_with("restart", reason=expected)

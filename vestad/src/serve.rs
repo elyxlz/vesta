@@ -516,7 +516,7 @@ async fn create_and_start(
         .map_err(map_docker_err)?;
 
     progress.set(docker::BuildPhase::Starting);
-    docker::start_agent(&state.docker, &name)
+    docker::start_agent(&state.docker, &name, None)
         .await
         .map_err(map_docker_err)?;
 
@@ -556,7 +556,7 @@ async fn start_agent_handler(
             .user_desired = UserDesired::Running;
         save_settings(&settings);
     }
-    docker::start_agent_with_reason(&state.docker, &name, &crate::lifecycle::MANUAL_START)
+    docker::start_agent(&state.docker, &name, Some(&crate::lifecycle::MANUAL_START))
         .await
         .map_err(map_docker_err)?;
     Ok(ok_json())
@@ -629,14 +629,14 @@ struct RestartBody {
 /// other Content-Type; raw bytes sidestep the header entirely.
 fn parse_restart_reason(
     body: &[u8],
-) -> Result<Option<crate::lifecycle::LifecycleReason<'static>>, String> {
+) -> Result<Option<crate::lifecycle::LifecycleReason>, String> {
     if body.is_empty() {
         return Ok(None);
     }
     serde_json::from_slice::<RestartBody>(body)
         .map(|restart_body| {
             restart_body.reason.map(|reason| {
-                crate::lifecycle::LifecycleReason::from_legacy(reason, restart_body.agent_message)
+                crate::lifecycle::LifecycleReason::from_request(reason, restart_body.agent_message)
             })
         })
         .map_err(|e| format!("invalid restart body: {e}"))
@@ -779,7 +779,7 @@ async fn rename_agent_handler(
         tracing::warn!(old = %name, new = %new_name, error = %e, "failed to drop rename notification");
     }
 
-    docker::start_agent(&state.docker, &new_name)
+    docker::start_agent(&state.docker, &new_name, None)
         .await
         .map_err(map_docker_err)?;
 
@@ -872,7 +872,7 @@ async fn write_to_agent(
 
     // Agent must be running to receive the proxy call; auto-start stopped agents.
     if docker::container_status(&state.docker, &cname).await != docker::ContainerStatus::Running {
-        docker::start_agent_with_reason(&state.docker, name, &crate::lifecycle::CONFIG_WRITE_START)
+        docker::start_agent(&state.docker, name, Some(&crate::lifecycle::CONFIG_WRITE_START))
             .await
             .map_err(map_docker_err)?;
     }
@@ -3704,11 +3704,13 @@ mod restart_body_tests {
         assert_eq!(parse_restart_reason(b"").unwrap(), None);
         assert_eq!(parse_restart_reason(b"{}").unwrap(), None);
         assert_eq!(parse_restart_reason(br#"{"reason": null}"#).unwrap(), None);
+        // A client that sends no agent copy leaves it empty: the agent derives its own from the
+        // log reason, so the derivation has exactly one owner.
         let legacy = parse_restart_reason(br#"{"reason": "manual: switching to Claude Opus 4.8"}"#)
             .unwrap()
             .unwrap();
         assert_eq!(legacy.log_reason, "manual: switching to Claude Opus 4.8");
-        assert_eq!(legacy.agent_message, "switching to Claude Opus 4.8");
+        assert!(legacy.agent_message.is_empty());
 
         let structured = parse_restart_reason(
             br#"{"reason":"provider: model changed","agent_message":"Your configured model changed."}"#,

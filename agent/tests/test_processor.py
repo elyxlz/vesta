@@ -147,7 +147,7 @@ async def test_restarts_on_timeout(tmp_path):
     )
     assert state.graceful_shutdown.is_set()
     assert state.persisted.last_restart_reason == "error: Response timed out"
-    assert vm.is_crash_reason(state.persisted.last_restart_reason), "an SDK-hang timeout must classify as a crash so on-failure restarts it"
+    assert lifecycle.is_crash(state.persisted.last_restart_reason), "an SDK-hang timeout must classify as a crash so on-failure restarts it"
 
 
 def test_restart_reason_round_trip(tmp_path):
@@ -173,12 +173,13 @@ def test_restart_reason_round_trip(tmp_path):
 
 
 def test_reason_constants_follow_category_detail_shape():
-    for const in (vm.CLEAN_RESTART, vm.CRASH_RESTART):
-        assert ": " in const, f"{const!r} must be 'category: detail'"
-        category = const.split(": ", 1)[0]
+    for const in (lifecycle.CLEAN_RESTART, lifecycle.CRASH_RESTART):
+        log_reason = const.log_reason
+        assert ": " in log_reason, f"{log_reason!r} must be 'category: detail'"
+        category = log_reason.split(": ", 1)[0]
         assert category in {"clean", "crash", "error"}, category
-        assert "—" not in const and "–" not in const
-    assert vm.CLEAN_RESTART == "clean: routine restart, no specific reason"
+        assert "—" not in log_reason and "–" not in log_reason
+    assert lifecycle.CLEAN_RESTART.log_reason == "clean: routine restart, no specific reason"
 
 
 def test_build_restart_context_renders_system_restart_header(tmp_path):
@@ -220,13 +221,13 @@ def test_consume_restart_reason_drains_pending_inbox(tmp_path):
     config.data_dir.mkdir(parents=True, exist_ok=True)
 
     state = vm.State()
-    state.persisted.last_restart_reason = vm.CLEAN_RESTART
+    state.persisted.last_restart_reason = lifecycle.CLEAN_RESTART.log_reason
 
     # No inbox -> existing behavior (returns the persisted reason).
     assert _consume_restart_reason(state, config, first_start=False) == lifecycle.CLEAN_RESTART
 
     # Inbox present -> it wins over the persisted clean reason and the file is removed one-shot.
-    state.persisted.last_restart_reason = vm.CLEAN_RESTART
+    state.persisted.last_restart_reason = lifecycle.CLEAN_RESTART.log_reason
     (config.data_dir / "pending_restart_reason").write_text("mounts: you now have read-only access to /media/Plex\n")
     got = _consume_restart_reason(state, config, first_start=False)
     assert got.log_reason == "mounts: you now have read-only access to /media/Plex"

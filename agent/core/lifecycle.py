@@ -1,7 +1,12 @@
-"""Lifecycle reason transport shared by startup logging and the authenticated boot message."""
+"""Lifecycle reason transport shared by startup logging and the authenticated boot message.
+
+The single owner of the restart-reason vocabulary: the `category: detail` operational shape, the
+crash categories that drive the non-zero exit, and the canonical copy for agent-initiated restarts.
+"""
 
 import dataclasses as dc
-import json
+
+import pydantic as pyd
 
 
 @dc.dataclass(frozen=True)
@@ -12,41 +17,47 @@ class RestartReason:
     agent_message: str
 
 
+class InboxPayload(pyd.BaseModel):
+    """The structured boot inbox vestad writes (`docker::write_pending_restart_reason`)."""
+
+    log_reason: str
+    agent_message: str = ""
+
+
+def is_crash(reason: str | None) -> bool:
+    """Whether a restart reason marks an unexpected exit (the `crash:`/`error:` categories the
+    processor/loop error handlers write). It drives the non-zero exit that lets Docker's on-failure
+    policy recover the agent, the inbox-override precedence on boot, and the render (crash reasons
+    keep their marker)."""
+    return reason is not None and reason.startswith(("crash:", "error:"))
+
+
 def from_legacy(reason: str) -> RestartReason:
-    """Upgrade the former `category: detail` string without changing its visible behavior."""
+    """Derive agent copy from a bare `category: detail` reason: the category is an internal routing
+    tag, so only the human detail is shown. Crash reasons stay whole, their marker is the story."""
     if reason == CLEAN_RESTART.log_reason:
         return CLEAN_RESTART
     if reason == CRASH_RESTART.log_reason:
         return CRASH_RESTART
     detail = reason.partition(": ")[2]
-    agent_message = reason if is_crash(reason) or not detail else detail
-    return RestartReason(log_reason=reason, agent_message=agent_message)
-
-
-def is_crash(reason: str) -> bool:
-    return reason.startswith(("crash:", "error:"))
+    return RestartReason(log_reason=reason, agent_message=reason if is_crash(reason) or not detail else detail)
 
 
 def parse_inbox(payload: str) -> RestartReason:
-    """Parse the structured boot inbox, accepting the old plain string during rolling upgrades."""
-    try:
-        decoded = json.loads(payload)
-    except (json.JSONDecodeError, TypeError):
-        return from_legacy(payload)
+    """Parse the boot inbox vestad wrote for this boot.
 
-    if isinstance(decoded, str):
-        return from_legacy(decoded)
-    if isinstance(decoded, dict):
-        log_reason = decoded.get("log_reason")
-        agent_message = decoded.get("agent_message")
-        if isinstance(log_reason, str) and log_reason.strip():
-            if not isinstance(agent_message, str) or not agent_message.strip():
-                return from_legacy(log_reason)
-            return RestartReason(
-                log_reason=log_reason.strip(),
-                agent_message=agent_message.strip(),
-            )
-    return from_legacy(payload)
+    LEGACY(remove-when: no agent can boot on an inbox written by a vestad older than the release
+    that ships this file): a vestad that stopped its agents before being upgraded left a bare
+    reason string behind, so a payload that is not the structured JSON is read as one."""
+    try:
+        parsed = InboxPayload.model_validate_json(payload)
+    except pyd.ValidationError:
+        return from_legacy(payload)
+    if not parsed.log_reason.strip():
+        return from_legacy(payload)
+    if not parsed.agent_message.strip():
+        return from_legacy(parsed.log_reason.strip())
+    return RestartReason(log_reason=parsed.log_reason.strip(), agent_message=parsed.agent_message.strip())
 
 
 FIRST_START = RestartReason(log_reason="first start", agent_message="first start")

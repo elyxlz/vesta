@@ -2,6 +2,7 @@ import {
   RESTART_REASONS,
   normalizeProviderInfo,
   providerPutBody,
+  restartBody,
   type NotificationEvent,
   type ProviderInfo,
   type ProviderSelection,
@@ -218,14 +219,13 @@ export async function stopAgent(api: ApiClient, name: string): Promise<void> {
 export async function restartAgent(
   api: ApiClient,
   name: string,
-  reason: RestartReason = RESTART_REASONS.manual,
+  reason?: RestartReason,
 ): Promise<void> {
   await api.request(
     `/agents/${encodeURIComponent(name)}/restart`,
-    api.jsonInit("POST", {
-      reason: reason.logReason,
-      agent_message: reason.agentMessage,
-    }),
+    reason === undefined
+      ? { method: "POST" }
+      : api.jsonInit("POST", restartBody(reason)),
   );
 }
 

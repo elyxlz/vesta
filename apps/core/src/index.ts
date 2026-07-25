@@ -35,8 +35,8 @@ export type { ForegroundSignal } from "./adapters/types"
 
 export { PACING, typingDelay } from "./pacing/pacing"
 
-export { RESTART_REASONS } from "./lifecycle/restart-reasons"
-export type { RestartReason } from "./lifecycle/restart-reasons"
+export { RESTART_REASONS, restartBody } from "./lifecycle/restart-reasons"
+export type { RestartBody, RestartReason } from "./lifecycle/restart-reasons"
 
 export { parseNotificationContent } from "./notification-content/notification-content"
 export type {

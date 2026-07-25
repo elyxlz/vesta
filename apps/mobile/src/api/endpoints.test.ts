@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { RESTART_REASONS } from "@vesta/core";
+import { RESTART_REASONS, restartBody } from "@vesta/core";
 import type { ApiClient } from "./client";
 import { restartAgent } from "./endpoints";
 
@@ -17,18 +17,13 @@ function apiStub() {
 }
 
 describe("restartAgent", () => {
-  it("sends the canonical manual reason by default", async () => {
+  it("sends no body for a plain manual restart, leaving vestad to name it", async () => {
     const { api, request } = apiStub();
 
     await restartAgent(api, "luna");
 
     expect(request).toHaveBeenCalledWith("/agents/luna/restart", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        reason: RESTART_REASONS.manual.logReason,
-        agent_message: RESTART_REASONS.manual.agentMessage,
-      }),
     });
   });
 
@@ -40,10 +35,7 @@ describe("restartAgent", () => {
     expect(request).toHaveBeenCalledWith("/agents/luna/restart", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        reason: RESTART_REASONS.context.logReason,
-        agent_message: RESTART_REASONS.context.agentMessage,
-      }),
+      body: JSON.stringify(restartBody(RESTART_REASONS.context)),
     });
   });
 });

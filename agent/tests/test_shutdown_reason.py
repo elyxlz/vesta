@@ -24,18 +24,19 @@ def _config(tmp_path):
     return config
 
 
-def test_sigterm_hands_reason_to_usual_shutdown_log_without_extra_line(tmp_path):
+def test_sigterm_signals_shutdown_without_reading_the_inbox(tmp_path):
+    """The handler runs between bytecodes, so it does no IO: it records that the signal arrived and
+    leaves the reason to the shutdown path, the only place it is used."""
     config = _config(tmp_path)
     state = vm.State()
     state_store.pending_shutdown_reason_path(config).write_text("backup: scheduled")
 
     with patch("core.main.logger.shutdown") as shutdown_log:
-        _make_signal_handler(state, config)(signal.SIGTERM, None)
+        _make_signal_handler(state)(signal.SIGTERM, None)
 
-    assert state.shutdown_reason == "backup: scheduled"
     assert state.graceful_shutdown.is_set()
-    shutdown_log.assert_not_called()
-    assert not state_store.pending_shutdown_reason_path(config).exists()
+    shutdown_log.assert_called_once_with("received SIGTERM, graceful shutdown")
+    assert state_store.pending_shutdown_reason_path(config).exists()
 
 
 @pytest.mark.anyio
@@ -43,7 +44,8 @@ async def test_usual_shutdown_log_includes_handed_reason(tmp_path):
     config = _config(tmp_path)
     for path in [config.notifications_dir, config.logs_dir, config.dreamer_dir]:
         path.mkdir(parents=True, exist_ok=True)
-    state = vm.State(shutdown_reason="backup: scheduled")
+    state_store.pending_shutdown_reason_path(config).write_text("backup: scheduled")
+    state = vm.State()
     state.graceful_shutdown.set()
 
     async def parked_worker(*_args, **_kwargs):
@@ -64,6 +66,7 @@ async def test_usual_shutdown_log_includes_handed_reason(tmp_path):
 
     assert crashed is False
     assert any(call.args == ("Shutting down (backup: scheduled)",) for call in shutdown_log.call_args_list)
+    assert not state_store.pending_shutdown_reason_path(config).exists()
 
 
 def test_boot_discards_stale_shutdown_reason_without_using_it_as_restart_reason(tmp_path):
@@ -80,7 +83,7 @@ def test_boot_discards_stale_shutdown_reason_without_using_it_as_restart_reason(
 def test_structured_boot_reason_keeps_log_and_agent_copy_separate(tmp_path):
     config = _config(tmp_path)
     state = vm.State()
-    state.persisted.last_restart_reason = vm.CLEAN_RESTART
+    state.persisted.last_restart_reason = lifecycle.CLEAN_RESTART.log_reason
     state_store.pending_reason_path(config).write_text(
         json.dumps(
             {
