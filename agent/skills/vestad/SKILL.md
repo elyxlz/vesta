@@ -40,15 +40,20 @@ A background process that needs no inbound port is just a daemon: it does not re
 it only goes in the restart skill's `## Daemons` section.
 
 Skills that run a service register it with vestad to get a port, then start it. The
-`register-service` helper does the curl and prints the port (idempotent: same port per name,
-and re-registering without `--public` keeps the service's current exposure rather than
-revoking it, so a re-register that only wants the port is safe):
+`register-service` helper does the curl and prints the port. Use `--claim` when the
+process is about to bind that port. It keeps a free cached port, but replaces one
+occupied by another host-network process. Omit `--claim` only when resolving an
+already-running service, which preserves its live port. Re-registering without
+`--public` keeps the service's current exposure rather than revoking it.
+The claim is a bindability check, not a port lease: another process can still
+win the bind after vestad replies. Verify that the process you started owns the
+listener. If its bind fails with address in use, repeat the claim and start.
 
 ```bash
 # token-only service
-PORT=$(~/agent/skills/vestad/scripts/register-service tasks)
+PORT=$(~/agent/skills/vestad/scripts/register-service tasks --claim)
 # public service
-PORT=$(~/agent/skills/vestad/scripts/register-service dashboard --public)
+PORT=$(~/agent/skills/vestad/scripts/register-service dashboard --public --claim)
 ```
 
 So the service comes back after a container restart, add its startup command to the
@@ -56,7 +61,7 @@ So the service comes back after a container restart, add its startup command to 
 single line that re-registers and starts, e.g.:
 
 ```bash
-running tasks || { PORT=$(~/agent/skills/vestad/scripts/register-service tasks) && screen -dmS tasks tasks serve --notifications-dir ~/agent/notifications --port $PORT; sleep 1; }
+running tasks || { PORT=$(~/agent/skills/vestad/scripts/register-service tasks --claim) && screen -dmS tasks tasks serve --notifications-dir ~/agent/notifications --port $PORT; sleep 1; }
 ```
 
 vestad's API may still be coming up when the daemon block runs, so `register-service` polls

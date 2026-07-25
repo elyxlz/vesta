@@ -18,6 +18,7 @@ box (dev/tests) it falls back to a local port.
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import os
 import shutil
 import socket
@@ -37,6 +38,8 @@ WEB_PORT_START = 6080
 X11VNC_READY_TIMEOUT_S = 10.0
 X11VNC_SETTLE_S = 0.4
 X11VNC_TERMINATE_TIMEOUT_S = 5.0
+WEBSOCKIFY_READY_TIMEOUT_S = 3.0
+WEBSOCKIFY_SETTLE_S = 0.4
 DISPLAY_CLAIM_ATTEMPTS = 10
 READY_POLL_S = 0.1
 PROC = Path("/proc")
@@ -53,6 +56,7 @@ SCREEN_W, SCREEN_H = 1280, 800
 HANDOVER_SERVICE = "browser"
 REGISTER_SERVICE = Path.home() / "agent" / "skills" / "vestad" / "scripts" / "register-service"
 SERVICE_REGISTER_TIMEOUT_S = 35  # register-service polls vestad up to ~30s before giving up
+SERVICE_UNREGISTER_TIMEOUT_S = 10
 
 # The handover display shows exactly one app. Without this, openbox smart-places the window a
 # few pixels off origin and adds a titlebar, so the stream sits misaligned in the page's screen
@@ -77,8 +81,23 @@ NOVNC_DIRS = [
 ]
 
 
+class HandoverPortError(RuntimeError):
+    pass
+
+
 def _session_file(suffix: str) -> Path:
     return Path(f"/tmp/vesta-browser-{HANDOVER_SESSION}.{suffix}")
+
+
+@contextlib.contextmanager
+def _handover_lock() -> tp.Iterator[None]:
+    lock_path = _session_file("lock")
+    with lock_path.open("a+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
 
 
 def _find_novnc_dir() -> Path:
@@ -195,7 +214,7 @@ def _register_public_service() -> tuple[int, str] | None:
     if not tunnel or not agent or not REGISTER_SERVICE.exists():
         return None
     result = subprocess.run(
-        [str(REGISTER_SERVICE), HANDOVER_SERVICE, "--public"],
+        [str(REGISTER_SERVICE), HANDOVER_SERVICE, "--public", "--claim"],
         capture_output=True,
         text=True,
         timeout=SERVICE_REGISTER_TIMEOUT_S,
@@ -205,6 +224,42 @@ def _register_public_service() -> tuple[int, str] | None:
         return None
     port = int(result.stdout.strip())
     return port, f"{tunnel.rstrip('/')}/agents/{agent}/{HANDOVER_SERVICE}/handover.html"
+
+
+def _unregister_public_service(expected_port: int | None = None) -> None:
+    """Remove the ephemeral public route only when this lifecycle still owns its port."""
+    if expected_port is None:
+        return
+    vestad_port = os.environ.get("VESTAD_PORT")
+    agent = os.environ.get("AGENT_NAME")
+    token = os.environ.get("AGENT_TOKEN")
+    if not vestad_port or not agent or not token:
+        return
+    endpoint = f"https://localhost:{vestad_port}/agents/{agent}/services/{HANDOVER_SERVICE}"
+    if expected_port is not None:
+        # A distinct route fails closed on older vestad versions. Putting the
+        # ownership check in a query would let an older handler ignore it and
+        # delete a newer registration unconditionally.
+        endpoint += f"/registrations/{expected_port}"
+    try:
+        result = subprocess.run(
+            [
+                "curl",
+                "-fsk",
+                "-X",
+                "DELETE",
+                endpoint,
+                "-H",
+                f"X-Agent-Token: {token}",
+            ],
+            capture_output=True,
+            timeout=SERVICE_UNREGISTER_TIMEOUT_S,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"could not unregister browser handover route: {exc}") from exc
+    if result.returncode != 0:
+        raise RuntimeError("vestad refused to unregister the browser handover route")
 
 
 def render_page() -> str:
@@ -232,6 +287,29 @@ def _port_serving(port: int) -> bool:
     with socket.socket() as probe:
         probe.settimeout(0.2)
         return probe.connect_ex(("127.0.0.1", port)) == 0
+
+
+def _process_listens_on(pid: int, port: int) -> bool:
+    """Whether this exact child owns a TCP LISTEN socket on `port`."""
+    inodes: set[str] = set()
+    for table_name in ("tcp", "tcp6"):
+        try:
+            lines = (PROC / "net" / table_name).read_text().splitlines()[1:]
+        except OSError:
+            continue
+        for line in lines:
+            fields = line.split()
+            if len(fields) > 9 and fields[3] == "0A":
+                local_port = int(fields[1].rsplit(":", 1)[1], 16)
+                if local_port == port:
+                    inodes.add(fields[9])
+    if not inodes:
+        return False
+    try:
+        links = (PROC / str(pid) / "fd").iterdir()
+        return any(path.readlink().as_posix() in {f"socket:[{inode}]" for inode in inodes} for path in links)
+    except OSError:
+        return False
 
 
 def _start_x11vnc(*, display: str, vnc_port: int, log: tp.TextIO) -> subprocess.Popen[bytes]:
@@ -270,21 +348,61 @@ def _x11vnc_settles(proc: subprocess.Popen[bytes], vnc_port: int) -> bool:
     while time.monotonic() < deadline:
         if proc.poll() is not None:
             return False
-        if _port_serving(vnc_port):
+        if _process_listens_on(proc.pid, vnc_port):
             time.sleep(X11VNC_SETTLE_S)
-            return proc.poll() is None
+            return proc.poll() is None and _process_listens_on(proc.pid, vnc_port)
         time.sleep(READY_POLL_S)
     return False
 
 
-def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> dict[str, object]:
+def _start_websockify(*, webroot: Path, web_port: int, vnc_port: int, log: tp.TextIO) -> subprocess.Popen[bytes]:
+    proc = subprocess.Popen(
+        ["websockify", "--web", str(webroot), str(web_port), f"localhost:{vnc_port}"],
+        stdout=log,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+    deadline = time.monotonic() + WEBSOCKIFY_READY_TIMEOUT_S
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            raise HandoverPortError(f"websockify could not bind handover port {web_port}")
+        if _process_listens_on(proc.pid, web_port):
+            time.sleep(WEBSOCKIFY_SETTLE_S)
+            if proc.poll() is None and _process_listens_on(proc.pid, web_port):
+                return proc
+            raise HandoverPortError(f"websockify lost the race for handover port {web_port}")
+        time.sleep(READY_POLL_S)
+    proc.terminate()
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        proc.wait(timeout=X11VNC_TERMINATE_TIMEOUT_S)
+    raise HandoverPortError(f"websockify did not serve handover port {web_port}")
+
+
+def start(
+    *,
+    url: str | None,
+    port: int | None,
+    user_data_dir: str | None,
+    _claim_attempt: int = 0,
+    _lock_held: bool = False,
+) -> dict[str, object]:
     """Bring up headed Camoufox + a window manager + x11vnc + websockify serving the branded page.
 
     Idempotent-ish: stops any prior handover first so ports and pids don't collide. Returns a
     ready-to-send `user_url` (public tunnel link on a box, localhost off one).
     """
+    if not _lock_held:
+        with _handover_lock():
+            return start(
+                url=url,
+                port=port,
+                user_data_dir=user_data_dir,
+                _claim_attempt=_claim_attempt,
+                _lock_held=True,
+            )
+
     _require_binaries()
-    stop()
+    stop(_lock_held=True)
 
     # Resolve the port + the link to send the user. An explicit --port wins; otherwise, on a box,
     # register a public vestad service and use its port so the returned URL is the public tunnel
@@ -292,6 +410,12 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
     service = _register_public_service() if port is None else None
     if service is not None:
         web_port, user_url = service
+        try:
+            _session_file("registration-port").write_text(str(web_port))
+        except Exception:
+            with contextlib.suppress(RuntimeError):
+                _unregister_public_service(web_port)
+            raise
     else:
         web_port = port or _free_port(WEB_PORT_START)
         user_url = f"http://localhost:{web_port}/handover.html"
@@ -304,10 +428,14 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
     # Recorded before the launch that writes the headed prefs into it, so stop() can always find
     # the profile to strip them back out of, including when that launch is what failed.
     profile = Path(user_data_dir) if user_data_dir else launcher.PROFILE_ROOT
-    _session_file("profile").write_text(str(profile))
-    admin.stop_browser("default")
-    for lock in ("lock", ".parentlock"):
-        (profile / lock).unlink(missing_ok=True)
+    try:
+        _session_file("profile").write_text(str(profile))
+        admin.stop_browser("default")
+        for lock in ("lock", ".parentlock"):
+            (profile / lock).unlink(missing_ok=True)
+    except Exception:
+        stop(_suppress_unregister_errors=True, _lock_held=True)
+        raise
 
     # Handover owns a dedicated Xvfb display, never the ambient one: x11vnc can grab a fresh Xvfb
     # but not a live desktop seat (a real :0 fails X_GetImage BadMatch, hanging noVNC), and a
@@ -342,11 +470,11 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
         with _session_file("handover-log").open("w") as log:
             x11vnc = _start_x11vnc(display=display, vnc_port=vnc_port, log=log)
             _session_file("x11vnc-pid").write_text(str(x11vnc.pid))
-            websockify = subprocess.Popen(
-                ["websockify", "--web", str(webroot), str(web_port), f"localhost:{vnc_port}"],
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
+            websockify = _start_websockify(
+                webroot=webroot,
+                web_port=web_port,
+                vnc_port=vnc_port,
+                log=log,
             )
             _session_file("websockify-pid").write_text(str(websockify.pid))
 
@@ -359,11 +487,18 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
             extra_args=[url] if url else None,
             window_size=(SCREEN_W, SCREEN_H),
         )
-    except Exception:
-        stop()
+        _session_file("web-port").write_text(str(web_port))
+    except Exception as exc:
+        stop(_suppress_unregister_errors=True, _lock_held=True)
+        if isinstance(exc, HandoverPortError) and port is None and _claim_attempt == 0:
+            return start(
+                url=url,
+                port=port,
+                user_data_dir=user_data_dir,
+                _claim_attempt=1,
+                _lock_held=True,
+            )
         raise
-
-    _session_file("web-port").write_text(str(web_port))
 
     return {
         "session": HANDOVER_SESSION,
@@ -377,7 +512,7 @@ def start(*, url: str | None, port: int | None, user_data_dir: str | None) -> di
     }
 
 
-def stop() -> dict[str, object]:
+def stop(*, _suppress_unregister_errors: bool = False, _lock_held: bool = False) -> dict[str, object]:
     """Tear down the handover: websockify, x11vnc, the WM, headed Camoufox, Xvfb, and the web root. Idempotent.
 
     Xvfb goes last: the bridge and the browser are its clients, so dropping the display first would
@@ -385,6 +520,13 @@ def stop() -> dict[str, object]:
     keeps answering on its display number, so `_free_display` skips past it and the next handover
     climbs to the following one until the range runs dry.
     """
+    if not _lock_held:
+        with _handover_lock():
+            return stop(
+                _suppress_unregister_errors=_suppress_unregister_errors,
+                _lock_held=True,
+            )
+
     for suffix in ("websockify-pid", "x11vnc-pid", "openbox-pid"):
         pid = _read_pid(suffix)
         if pid is not None:
@@ -400,10 +542,20 @@ def stop() -> dict[str, object]:
     profile_file = _session_file("profile")
     if profile_file.exists():
         (Path(profile_file.read_text().strip()) / "user.js").unlink(missing_ok=True)
+    web_port = _read_pid("web-port")
+    registered_port = _read_pid("registration-port") or web_port
     for suffix in ("web-port", "vnc-port", "handover-log", "openbox-rc.xml", "profile"):
         _session_file(suffix).unlink(missing_ok=True)
     if WEBROOT.exists():
         shutil.rmtree(WEBROOT)
+    if _suppress_unregister_errors:
+        try:
+            _unregister_public_service(registered_port)
+        except RuntimeError:
+            return {"stopped": True}
+    else:
+        _unregister_public_service(registered_port)
+    _session_file("registration-port").unlink(missing_ok=True)
     return {"stopped": True}
 
 

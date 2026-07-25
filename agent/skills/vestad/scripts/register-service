@@ -16,16 +16,32 @@ set -euo pipefail
 # seconds (default 30). On timeout, exit non-zero with a stderr message and no
 # stdout, so `PORT=$(register-service ...) && start` short-circuits cleanly.
 #
-# Usage: register-service <name> [--public]
-#   PORT=$(~/agent/skills/vestad/scripts/register-service tasks)
-#   PORT=$(~/agent/skills/vestad/scripts/register-service dashboard --public)
+# Pass --claim when the caller is about to bind the returned port. This asks
+# vestad to replace a cached port if another host-network process has claimed
+# it. Omit --claim when resolving an already-running service.
+#
+# Usage: register-service <name> [--public] [--claim]
+#   PORT=$(~/agent/skills/vestad/scripts/register-service tasks --claim)
+#   PORT=$(~/agent/skills/vestad/scripts/register-service dashboard --public --claim)
 
-NAME="${1:?Usage: register-service <name> [--public]}"
-if [ "${2:-}" = "--public" ]; then
-    REQUEST="{\"name\":\"$NAME\",\"public\":true}"
-else
-    REQUEST="{\"name\":\"$NAME\"}"
-fi
+NAME="${1:?Usage: register-service <name> [--public] [--claim]}"
+shift
+PUBLIC=false
+CLAIM=false
+for ARG in "$@"; do
+    case "$ARG" in
+        --public) PUBLIC=true ;;
+        --claim) CLAIM=true ;;
+        *)
+            echo "Usage: register-service <name> [--public] [--claim]" >&2
+            exit 2
+            ;;
+    esac
+done
+REQUEST="{\"name\":\"$NAME\""
+[ "$PUBLIC" = true ] && REQUEST="$REQUEST,\"public\":true"
+[ "$CLAIM" = true ] && REQUEST="$REQUEST,\"require_bindable\":true"
+REQUEST="$REQUEST}"
 
 WAIT_SECONDS="${REGISTER_SERVICE_WAIT:-30}"
 URL="https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services"

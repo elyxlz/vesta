@@ -1,9 +1,9 @@
 """Lifecycle for the voice-server screen daemon.
 
-`start` owns the register-service call (idempotent: vestad returns the same port for a
-given name on every call), so the agent runs one command instead of stitching together
-register-service + screen by hand. Liveness is a TCP connect to the registered port;
-voice-server has no admin socket of its own.
+`start` owns the register-service call, so the agent runs one command instead of
+stitching together register-service + screen by hand. A live screen session establishes
+ownership and a TCP connect establishes readiness; an unrelated listener is never
+treated as voice-server.
 """
 
 import os
@@ -64,8 +64,11 @@ def _screen_session_live(name: str) -> bool:
     return screen_output_has_live_session(result.stdout, name)
 
 
-def resolve_port() -> int:
-    result = subprocess.run([str(REGISTER_SERVICE), "voice"], capture_output=True, text=True, timeout=35, check=False)
+def resolve_port(*, claim: bool = False) -> int:
+    command = [str(REGISTER_SERVICE), "voice"]
+    if claim:
+        command.append("--claim")
+    result = subprocess.run(command, capture_output=True, text=True, timeout=35, check=False)
     if result.returncode != 0 or not result.stdout.strip():
         raise DaemonError(f"register-service failed: {result.stderr.strip()}")
     return int(result.stdout.strip())
@@ -94,9 +97,13 @@ def _auth_status() -> dict[str, AuthEntry | None]:
 
 
 def start() -> LifecycleResult:
-    port = resolve_port()
-    if port_alive(port):
-        return {"status": "already_running", "session": SESSION_NAME, "port": port}
+    if _screen_session_live(SESSION_NAME):
+        port = resolve_port()
+        if port_alive(port):
+            return {"status": "already_running", "session": SESSION_NAME, "port": port}
+        raise DaemonError(f"voice screen session is live but registered port {port} is not answering; inspect with 'screen -r {SESSION_NAME}'")
+
+    port = resolve_port(claim=True)
 
     binary = shutil.which("voice-server")
     if binary is None:
@@ -120,16 +127,16 @@ def start() -> LifecycleResult:
 
 def stop() -> LifecycleResult:
     port = resolve_port()
-    if not port_alive(port):
+    if not _screen_session_live(SESSION_NAME):
         return {"status": "already_stopped", "session": SESSION_NAME, "port": port}
 
     subprocess.run(["screen", "-S", SESSION_NAME, "-X", "quit"], check=False)
     deadline = time.monotonic() + STOP_TIMEOUT_S
     while time.monotonic() < deadline:
-        if not port_alive(port):
+        if not _screen_session_live(SESSION_NAME):
             return {"status": "stopped", "session": SESSION_NAME, "port": port}
         time.sleep(POLL_INTERVAL_S)
-    raise DaemonError(f"voice-server still answering on port {port} after screen quit; inspect with 'screen -r {SESSION_NAME}'")
+    raise DaemonError(f"voice screen session did not stop; inspect with 'screen -r {SESSION_NAME}'")
 
 
 def restart() -> LifecycleResult:
@@ -142,7 +149,7 @@ def restart() -> LifecycleResult:
 def status() -> StatusResult:
     port = resolve_port()
     return {
-        "running": port_alive(port),
+        "running": _screen_session_live(SESSION_NAME) and port_alive(port),
         "session": SESSION_NAME,
         "port": port,
         "auth": _auth_status(),

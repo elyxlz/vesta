@@ -45,7 +45,7 @@ USER_NOTIFICATION = pl.Path.home() / "agent" / "skills" / "vestad" / "scripts" /
 
 
 def resolve_port() -> int:
-    result = subprocess.run([str(REGISTER_SERVICE), "app-chat"], capture_output=True, text=True, timeout=35, check=False)
+    result = subprocess.run([str(REGISTER_SERVICE), "app-chat", "--claim"], capture_output=True, text=True, timeout=35, check=False)
     if result.returncode != 0 or not result.stdout.strip():
         raise RuntimeError(f"register-service failed: {result.stderr.strip()}")
     return int(result.stdout.strip())

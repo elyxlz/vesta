@@ -41,17 +41,41 @@ def test_auth_status_reports_provider_and_enabled(tmp_path: pl.Path, monkeypatch
 
 
 def test_start_is_idempotent_when_port_already_alive(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(daemon, "resolve_port", lambda: 4242)
+    claims: list[bool] = []
+    monkeypatch.setattr(daemon, "resolve_port", lambda *, claim=False: claims.append(claim) or 4242)
+    monkeypatch.setattr(daemon, "_screen_session_live", lambda name: True)
     monkeypatch.setattr(daemon, "port_alive", lambda port: True)
 
     result = daemon.start()
 
     assert result == {"status": "already_running", "session": "voice", "port": 4242}
+    assert claims == [False]
+
+
+def test_start_claims_a_new_port_when_cached_port_has_an_unrelated_listener(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    claims: list[bool] = []
+    monkeypatch.setattr(daemon, "resolve_port", lambda *, claim=False: claims.append(claim) or 4242)
+    monkeypatch.setattr(daemon, "_screen_session_live", lambda name: False)
+    monkeypatch.setattr(daemon, "port_alive", lambda port: True)
+    monkeypatch.setattr(daemon.shutil, "which", lambda name: "/usr/bin/voice-server")
+    monkeypatch.setattr(
+        daemon.subprocess,
+        "run",
+        lambda *args, **kwargs: daemon.subprocess.CompletedProcess(args[0], 0, "", ""),
+    )
+
+    result = daemon.start()
+
+    assert result == {"status": "started", "session": "voice", "port": 4242}
+    assert claims == [True]
 
 
 def test_stop_is_idempotent_when_already_stopped(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(daemon, "resolve_port", lambda: 4242)
-    monkeypatch.setattr(daemon, "port_alive", lambda port: False)
+    monkeypatch.setattr(daemon, "resolve_port", lambda *, claim=False: 4242)
+    monkeypatch.setattr(daemon, "_screen_session_live", lambda name: False)
+    monkeypatch.setattr(daemon, "port_alive", lambda port: True)
 
     result = daemon.stop()
 
@@ -60,7 +84,8 @@ def test_stop_is_idempotent_when_already_stopped(monkeypatch: pytest.MonkeyPatch
 
 def test_status_reports_running_port_and_auth(tmp_path: pl.Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(daemon, "data_dir", lambda: tmp_path)
-    monkeypatch.setattr(daemon, "resolve_port", lambda: 4242)
+    monkeypatch.setattr(daemon, "resolve_port", lambda *, claim=False: 4242)
+    monkeypatch.setattr(daemon, "_screen_session_live", lambda name: True)
     monkeypatch.setattr(daemon, "port_alive", lambda port: True)
     vc.set_key(tmp_path, "stt", "deepgram", "k")
 
@@ -72,3 +97,12 @@ def test_status_reports_running_port_and_auth(tmp_path: pl.Path, monkeypatch: py
         "port": 4242,
         "auth": {"stt": {"provider": "deepgram", "enabled": True}, "tts": None},
     }
+
+
+def test_status_does_not_adopt_an_unrelated_listener(tmp_path: pl.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(daemon, "data_dir", lambda: tmp_path)
+    monkeypatch.setattr(daemon, "resolve_port", lambda *, claim=False: 4242)
+    monkeypatch.setattr(daemon, "_screen_session_live", lambda name: False)
+    monkeypatch.setattr(daemon, "port_alive", lambda port: True)
+
+    assert daemon.status()["running"] is False

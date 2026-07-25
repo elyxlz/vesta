@@ -9,7 +9,9 @@ from __future__ import annotations
 import os
 import socket
 import subprocess
+import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 from vesta_browser import handover
@@ -173,6 +175,30 @@ def test_stop_is_idempotent_without_an_xvfb_pid(monkeypatch):
     assert killed == []
 
 
+def test_stop_keeps_registration_marker_until_cleanup_can_retry(monkeypatch):
+    _record_kills(monkeypatch)
+    marker = handover._session_file("registration-port")
+    marker.write_text("7431")
+    attempts = 0
+
+    def unregister(port):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("vestad unavailable")
+        assert port == 7431
+
+    monkeypatch.setattr(handover, "_unregister_public_service", unregister)
+
+    with pytest.raises(RuntimeError, match="vestad unavailable"):
+        handover.stop()
+    assert marker.read_text() == "7431"
+
+    assert handover.stop() == {"stopped": True}
+    assert not marker.exists()
+    assert attempts == 2
+
+
 # ── liveness ──────────────────────────────────────────────────
 
 
@@ -235,7 +261,7 @@ def _stub_x11vnc(monkeypatch, *, serves_with, dies_when_refused=True):
         return FakeProc(argv)
 
     monkeypatch.setattr(handover.subprocess, "Popen", fake_popen)
-    monkeypatch.setattr(handover, "_port_serving", lambda _p: attempts[-1] == serves_with)
+    monkeypatch.setattr(handover, "_process_listens_on", lambda _pid, _port: attempts[-1] == serves_with)
     monkeypatch.setattr(handover, "X11VNC_SETTLE_S", 0)
     return attempts
 
@@ -302,7 +328,7 @@ def test_x11vnc_that_binds_then_dies_is_not_taken_as_ready(monkeypatch, isolated
         return BindsThenDies()
 
     monkeypatch.setattr(handover.subprocess, "Popen", fake_popen)
-    monkeypatch.setattr(handover, "_port_serving", lambda _p: True)
+    monkeypatch.setattr(handover, "_process_listens_on", lambda _pid, _port: True)
     monkeypatch.setattr(handover, "X11VNC_SETTLE_S", 0)
     monkeypatch.setattr(handover, "X11VNC_READY_TIMEOUT_S", 0.2)
     with (isolated / "log").open("w") as log, pytest.raises(RuntimeError, match="never served port 5900"):
@@ -346,12 +372,47 @@ def test_register_public_service_returns_port_and_public_url(monkeypatch, tmp_pa
     monkeypatch.setenv("VESTAD_TUNNEL", "https://box.vesta.run/")
     monkeypatch.setenv("AGENT_NAME", "ada")
     script = tmp_path / "register-service"
-    script.write_text("#!/bin/sh\necho 7431\n")
+    args_file = tmp_path / "register-service.args"
+    script.write_text('#!/bin/sh\nprintf \'%s\\n\' "$@" > "$0.args"\necho 7431\n')
     script.chmod(0o755)
     monkeypatch.setattr(handover, "REGISTER_SERVICE", script)
     port, url = handover._register_public_service()
     assert port == 7431
     assert url == "https://box.vesta.run/agents/ada/browser/handover.html"
+    assert args_file.read_text().splitlines() == ["browser", "--public", "--claim"]
+
+
+def test_unregister_public_service_removes_the_ephemeral_route(monkeypatch):
+    monkeypatch.setenv("VESTAD_PORT", "8443")
+    monkeypatch.setenv("AGENT_NAME", "ada")
+    monkeypatch.setenv("AGENT_TOKEN", "secret")
+    calls = []
+    monkeypatch.setattr(
+        handover.subprocess,
+        "run",
+        lambda args, **kwargs: calls.append((args, kwargs)) or subprocess.CompletedProcess(args, 0),
+    )
+
+    handover._unregister_public_service(7431)
+
+    args, kwargs = calls[0]
+    assert args[:4] == ["curl", "-fsk", "-X", "DELETE"]
+    assert args[4] == "https://localhost:8443/agents/ada/services/browser/registrations/7431"
+    assert kwargs["timeout"] == handover.SERVICE_UNREGISTER_TIMEOUT_S
+
+
+def test_unregister_public_service_surfaces_a_failed_delete(monkeypatch):
+    monkeypatch.setenv("VESTAD_PORT", "8443")
+    monkeypatch.setenv("AGENT_NAME", "ada")
+    monkeypatch.setenv("AGENT_TOKEN", "secret")
+    monkeypatch.setattr(
+        handover.subprocess,
+        "run",
+        lambda args, **kwargs: subprocess.CompletedProcess(args, 22),
+    )
+
+    with pytest.raises(RuntimeError, match="refused to unregister"):
+        handover._unregister_public_service(7431)
 
 
 # ── ports + liveness ──────────────────────────────────────────
@@ -404,6 +465,269 @@ def test_claim_own_display_gives_up_after_the_attempt_cap(monkeypatch):
         handover._claim_own_display()
 
 
+def test_start_websockify_rejects_a_foreign_listener(monkeypatch, tmp_path):
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    port = listener.getsockname()[1]
+
+    class LiveProcess:
+        pid = 123
+        terminated = False
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            self.terminated = True
+
+        def wait(self, timeout=None):
+            return 0
+
+    process = LiveProcess()
+    monkeypatch.setattr(handover.subprocess, "Popen", lambda *args, **kwargs: process)
+    monkeypatch.setattr(handover, "WEBSOCKIFY_READY_TIMEOUT_S", 0.02)
+    monkeypatch.setattr(handover, "READY_POLL_S", 0.001)
+    monkeypatch.setattr(handover, "_process_listens_on", lambda _pid, _port: False)
+    try:
+        with (
+            (tmp_path / "log").open("w") as log,
+            pytest.raises(handover.HandoverPortError, match="did not serve"),
+        ):
+            handover._start_websockify(webroot=tmp_path, web_port=port, vnc_port=5900, log=log)
+    finally:
+        listener.close()
+    assert process.terminated is True
+
+
+def test_process_listens_on_matches_the_socket_owner():
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    try:
+        port = listener.getsockname()[1]
+        assert handover._process_listens_on(os.getpid(), port) is True
+        assert handover._process_listens_on(2**31 - 1, port) is False
+    finally:
+        listener.close()
+
+
+def test_start_reclaims_once_after_losing_the_registered_port(monkeypatch, isolated):
+    registrations = iter(
+        [
+            (7431, "https://box.vesta.run/agents/ada/browser/handover.html"),
+            (7432, "https://box.vesta.run/agents/ada/browser/handover.html"),
+        ]
+    )
+    websockify_ports: list[int] = []
+    stops: list[tuple[bool, int | None, int | None]] = []
+
+    monkeypatch.setattr(handover, "_require_binaries", lambda: None)
+    handover._session_file("web-port").unlink(missing_ok=True)
+    handover._session_file("registration-port").unlink(missing_ok=True)
+
+    def stop(*, _suppress_unregister_errors=False, _lock_held=False):
+        stops.append(
+            (
+                _suppress_unregister_errors,
+                handover._read_pid("registration-port"),
+                handover._read_pid("web-port"),
+            )
+        )
+        handover._session_file("web-port").unlink(missing_ok=True)
+        handover._session_file("registration-port").unlink(missing_ok=True)
+        return {"stopped": True}
+
+    monkeypatch.setattr(handover, "stop", stop)
+    monkeypatch.setattr(handover, "_register_public_service", lambda: next(registrations))
+    monkeypatch.setattr(handover, "_claim_own_display", lambda: (":99", 1001))
+    monkeypatch.setattr(handover, "_free_port", lambda _start: 5901)
+    monkeypatch.setattr(handover, "_build_webroot", lambda: isolated)
+    monkeypatch.setattr(handover.admin, "stop_browser", lambda _name: None)
+    monkeypatch.setattr(
+        handover.admin,
+        "launch_browser",
+        lambda *args, **kwargs: SimpleNamespace(ws_url="ws://browser"),
+    )
+    monkeypatch.setattr(
+        handover.subprocess,
+        "Popen",
+        lambda *args, **kwargs: SimpleNamespace(pid=1002),
+    )
+    monkeypatch.setattr(
+        handover,
+        "_start_x11vnc",
+        lambda **kwargs: SimpleNamespace(pid=1003),
+    )
+
+    def start_websockify(*, webroot, web_port, vnc_port, log):
+        websockify_ports.append(web_port)
+        if len(websockify_ports) == 1:
+            raise handover.HandoverPortError("lost the first claim")
+        return SimpleNamespace(pid=1004)
+
+    monkeypatch.setattr(handover, "_start_websockify", start_websockify)
+
+    result = handover.start(url=None, port=None, user_data_dir=str(isolated / "profile"))
+
+    assert websockify_ports == [7431, 7432]
+    assert stops == [
+        (False, None, None),
+        (True, 7431, None),
+        (False, None, None),
+    ]
+    assert result["web_port"] == 7432
+    assert result["user_url"] == "https://box.vesta.run/agents/ada/browser/handover.html"
+
+
+def test_start_cleans_registration_when_profile_setup_fails(monkeypatch, isolated):
+    cleaned: list[int] = []
+    monkeypatch.setattr(handover, "_require_binaries", lambda: None)
+    monkeypatch.setattr(
+        handover,
+        "_register_public_service",
+        lambda: (7431, "https://box.vesta.run/agents/ada/browser/handover.html"),
+    )
+    monkeypatch.setattr(
+        handover,
+        "_unregister_public_service",
+        lambda port: cleaned.append(port) if port is not None else None,
+    )
+
+    def stop_browser(name):
+        if name == "default":
+            raise RuntimeError("profile shutdown failed")
+
+    monkeypatch.setattr(handover.admin, "stop_browser", stop_browser)
+
+    with pytest.raises(RuntimeError, match="profile shutdown failed"):
+        handover.start(url=None, port=None, user_data_dir=str(isolated / "profile"))
+
+    assert cleaned == [7431]
+    assert not handover._session_file("registration-port").exists()
+
+
+def test_start_cleans_in_memory_claim_when_registration_marker_write_fails(monkeypatch):
+    original_session_file = handover._session_file
+    cleaned: list[int] = []
+
+    class FailingMarker:
+        def read_text(self):
+            raise FileNotFoundError
+
+        def write_text(self, _value):
+            raise OSError("marker disk full")
+
+        def unlink(self, *, missing_ok=False):
+            return None
+
+    monkeypatch.setattr(
+        handover,
+        "_session_file",
+        lambda suffix: FailingMarker() if suffix == "registration-port" else original_session_file(suffix),
+    )
+    monkeypatch.setattr(handover, "_require_binaries", lambda: None)
+    monkeypatch.setattr(handover.admin, "stop_browser", lambda _name: None)
+    monkeypatch.setattr(
+        handover,
+        "_register_public_service",
+        lambda: (7431, "https://box.vesta.run/agents/ada/browser/handover.html"),
+    )
+    monkeypatch.setattr(
+        handover,
+        "_unregister_public_service",
+        lambda port: cleaned.append(port) if port is not None else None,
+    )
+
+    with pytest.raises(OSError, match="marker disk full"):
+        handover.start(url=None, port=None, user_data_dir=None)
+
+    assert cleaned == [7431]
+
+
+def test_start_cleans_everything_when_final_readiness_marker_write_fails(monkeypatch, isolated):
+    original_session_file = handover._session_file
+    cleaned: list[int] = []
+    killed: list[int] = []
+
+    class FailingMarker:
+        def read_text(self):
+            raise FileNotFoundError
+
+        def write_text(self, _value):
+            raise OSError("readiness marker disk full")
+
+        def unlink(self, *, missing_ok=False):
+            return None
+
+    monkeypatch.setattr(
+        handover,
+        "_session_file",
+        lambda suffix: FailingMarker() if suffix == "web-port" else original_session_file(suffix),
+    )
+    monkeypatch.setattr(handover, "_require_binaries", lambda: None)
+    monkeypatch.setattr(
+        handover,
+        "_register_public_service",
+        lambda: (7431, "https://box.vesta.run/agents/ada/browser/handover.html"),
+    )
+    monkeypatch.setattr(handover, "_claim_own_display", lambda: (":99", 1001))
+    monkeypatch.setattr(handover, "_free_port", lambda _start: 5901)
+    monkeypatch.setattr(handover, "_build_webroot", lambda: isolated)
+    monkeypatch.setattr(handover.admin, "stop_browser", lambda _name: None)
+    monkeypatch.setattr(handover.admin, "_terminate_pid", killed.append)
+    monkeypatch.setattr(
+        handover.admin,
+        "launch_browser",
+        lambda *args, **kwargs: SimpleNamespace(ws_url="ws://browser"),
+    )
+    monkeypatch.setattr(
+        handover.subprocess,
+        "Popen",
+        lambda *args, **kwargs: SimpleNamespace(pid=1002),
+    )
+    monkeypatch.setattr(
+        handover,
+        "_start_x11vnc",
+        lambda **kwargs: SimpleNamespace(pid=1003),
+    )
+    monkeypatch.setattr(
+        handover,
+        "_start_websockify",
+        lambda **kwargs: SimpleNamespace(pid=1004),
+    )
+    monkeypatch.setattr(
+        handover,
+        "_unregister_public_service",
+        lambda port: cleaned.append(port) if port is not None else None,
+    )
+
+    with pytest.raises(OSError, match="readiness marker disk full"):
+        handover.start(url=None, port=None, user_data_dir=str(isolated / "profile"))
+
+    assert cleaned == [7431]
+    assert killed == [1004, 1003, 1002, 1001]
+    assert not handover._session_file("registration-port").exists()
+
+
+def test_handover_lock_serializes_overlapping_lifecycles():
+    attempted = threading.Event()
+    acquired = threading.Event()
+
+    def contender():
+        attempted.set()
+        with handover._handover_lock():
+            acquired.set()
+
+    with handover._handover_lock():
+        thread = threading.Thread(target=contender)
+        thread.start()
+        assert attempted.wait(timeout=1)
+        assert not acquired.wait(timeout=0.05)
+    thread.join(timeout=1)
+    assert acquired.is_set()
+
+
 def test_alive_false_for_none_and_dead_pid():
     assert handover._alive(None) is False
     # PID 2**31-1 is not a running process on any sane system.
@@ -437,6 +761,21 @@ def test_status_all_false_when_idle():
     assert st["websockify"] is False
     assert st["web_port"] is None
     assert st["page"] is None
+
+
+def test_status_does_not_report_a_claim_before_our_process_serves():
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    try:
+        handover._session_file("registration-port").write_text(str(listener.getsockname()[1]))
+        st = handover.status()
+        assert st["serving"] is False
+        assert st["web_port"] is None
+        assert st["page"] is None
+    finally:
+        listener.close()
+        handover._session_file("registration-port").unlink(missing_ok=True)
 
 
 # ── display selection: liveness, not file existence ───────────

@@ -15,10 +15,11 @@ The server binds to localhost, so it needs a public route.
 # 1. drop the file(s) into the served directory
 mkdir -p ~/.file-host && cp /path/to/report.pdf ~/.file-host/
 
-# 2. register a public service (idempotent: returns the same port each time)
-PORT=$(~/agent/skills/vestad/scripts/register-service file-host --public)
+# 2. stop any prior server, then claim a bindable public port
+screen -S file-host -X quit >/dev/null 2>&1 || true
+PORT=$(~/agent/skills/vestad/scripts/register-service file-host --public --claim)
 
-# 3. serve it (run in a screen so it persists)
+# 3. serve it in a screen so it persists
 screen -dmS file-host python3 ~/agent/skills/file-host/serve.py --dir ~/.file-host --port "$PORT"
 ```
 

@@ -5,11 +5,13 @@ message, no Python traceback) instead of emitting an empty port that launches a
 portless daemon (issue #960)."""
 
 import http.server
+import json
 import pathlib as pl
 import socket
 import ssl
 import subprocess
 import threading
+from typing import ClassVar
 
 REPO_ROOT = pl.Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "agent/skills/vestad/scripts/register-service"
@@ -47,7 +49,7 @@ def _self_signed(tmp_path):
     return cert, key
 
 
-def _run(port, tmp_path, wait="2"):
+def _run(port, tmp_path, wait="2", *flags):
     env = {
         "PATH": "/usr/bin:/bin",
         "VESTAD_PORT": str(port),
@@ -56,15 +58,23 @@ def _run(port, tmp_path, wait="2"):
         "REGISTER_SERVICE_WAIT": wait,
         "HOME": str(tmp_path),
     }
-    return subprocess.run(["bash", str(SCRIPT), "tasks"], env=env, capture_output=True, text=True, timeout=30, check=False)
+    return subprocess.run(
+        ["bash", str(SCRIPT), "tasks", *flags],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
 
 
 class _PortHandler(http.server.BaseHTTPRequestHandler):
     port_value = 45321
+    request_body: ClassVar[dict] = {}
 
     def do_POST(self):
         length = int(self.headers["Content-Length"])
-        self.rfile.read(length)
+        type(self).request_body = json.loads(self.rfile.read(length))
         body = f'{{"port":{self.port_value}}}'.encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -96,6 +106,28 @@ def test_prints_port_when_vestad_answers(tmp_path):
         server.shutdown()
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "45321"
+
+
+def test_claim_requests_a_bindable_port(tmp_path):
+    cert, key = _self_signed(tmp_path)
+    port = _free_port()
+    server = _serve_https(port, cert, key)
+    try:
+        result = _run(port, tmp_path, "2", "--public", "--claim")
+    finally:
+        server.shutdown()
+    assert result.returncode == 0, result.stderr
+    assert _PortHandler.request_body == {
+        "name": "tasks",
+        "public": True,
+        "require_bindable": True,
+    }
+
+
+def test_rejects_unknown_flags_without_contacting_vestad(tmp_path):
+    result = _run(_free_port(), tmp_path, "1", "--pubic")
+    assert result.returncode == 2
+    assert "Usage:" in result.stderr
 
 
 def test_fails_cleanly_when_vestad_unreachable(tmp_path):

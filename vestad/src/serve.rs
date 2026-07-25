@@ -19,8 +19,8 @@ use crate::settings::{
 };
 use crate::state::{err_response, map_docker_err, ok_json, AppState, SharedState};
 use crate::{
-    agent_provider, agent_proxy, agent_status, auth, backup, docker, mobile_app,
-    self_update, systemd, update_check, update_window,
+    agent_provider, agent_proxy, agent_status, auth, backup, docker, mobile_app, self_update,
+    systemd, update_check, update_window,
 };
 
 const GATEWAY_RESTART_DELAY_MS: u64 = 200;
@@ -498,7 +498,10 @@ async fn wait_for_agent_listed(state: &SharedState, name: &str) {
         {
             return;
         }
-        if tokio::time::timeout_at(deadline, agents_rx.changed()).await.is_err() {
+        if tokio::time::timeout_at(deadline, agents_rx.changed())
+            .await
+            .is_err()
+        {
             return;
         }
     }
@@ -1492,6 +1495,12 @@ struct RegisterServiceBody {
     name: String,
     #[serde(default)]
     public: Option<bool>,
+    #[serde(default)]
+    require_bindable: bool,
+}
+
+fn unregister_matches(entry: Option<&ServiceEntry>, expected_port: Option<u16>) -> bool {
+    entry.is_some_and(|entry| expected_port.is_none_or(|port| entry.port == port))
 }
 
 /// Collect all ports in use across all agents in the service registry.
@@ -1536,7 +1545,7 @@ fn allocate_service_port(registry: &HashMap<String, HashMap<String, ServiceEntry
     let used = all_registered_ports(registry);
     let scan = |lo: u16| {
         (lo..=SERVICE_PORT_MAX)
-            .find(|p| !used.contains(p) && std::net::TcpListener::bind(("127.0.0.1", *p)).is_ok())
+            .find(|p| !used.contains(p) && std::net::TcpListener::bind(("0.0.0.0", *p)).is_ok())
     };
     // Preferred: above the ephemeral range, where the port can't be reused as a
     // transient outbound source port between allocation and the caller binding it.
@@ -1552,10 +1561,9 @@ fn allocate_service_port(registry: &HashMap<String, HashMap<String, ServiceEntry
 /// connect succeeds) or genuinely free (bind succeeds). Only a port that is neither,
 /// a `zombie/TIME_WAIT` corpse left by a crashed startup (#371), is dropped so the
 /// caller gets a fresh one. A bind-only probe (#436) treats every listener as a
-/// squatter, but resolvers (whatsapp's `resolveVoiceBaseURL`, voice's own
-/// status/stop/restart) POST here purely to *find* the live port, and reallocating a
-/// resident service's port leaves every later lookup on a fresh, dead port. The one
-/// caller that binds (voice `start`) guards with `port_alive` first.
+/// squatter, but resolvers POST here purely to *find* a live service. Reallocating a
+/// resident service's port leaves later lookups on a fresh, dead port. Callers that
+/// are about to bind use the explicit `require_bindable` claim instead.
 async fn is_cached_port_reusable(port: u16) -> bool {
     use std::net::Ipv4Addr;
     use std::time::Duration;
@@ -1565,10 +1573,25 @@ async fn is_cached_port_reusable(port: u16) -> bool {
     )
     .await
     .is_ok_and(|r| r.is_ok());
-    alive
-        || tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port))
-            .await
-            .is_ok()
+    alive || is_port_bindable(port).await
+}
+
+/// A service that is about to start needs a port it can bind, while a resolver
+/// looking up an already-running service needs its live listener preserved.
+/// Keeping these intents explicit prevents an unrelated process on a cached
+/// host-network port from being mistaken for the registered service.
+async fn is_port_bindable(port: u16) -> bool {
+    tokio::net::TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, port))
+        .await
+        .is_ok()
+}
+
+async fn can_reuse_cached_service_port(port: u16, require_bindable: bool) -> bool {
+    if require_bindable {
+        is_port_bindable(port).await
+    } else {
+        is_cached_port_reusable(port).await
+    }
 }
 
 /// `public` is intrinsic to a registration, like the port: an absent field inherits
@@ -1618,14 +1641,22 @@ async fn user_notification_handler(
     Json(body): Json<UserNotificationBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     if !valid_user_notification_kind(&body.kind) {
-        return Err(err_response(StatusCode::BAD_REQUEST, "unknown user notification kind"));
+        return Err(err_response(
+            StatusCode::BAD_REQUEST,
+            "unknown user notification kind",
+        ));
     }
     let title = truncate_chars(&body.title, USER_NOTIFICATION_TITLE_MAX_CHARS);
     let preview = truncate_chars(&body.body, USER_NOTIFICATION_BODY_MAX_CHARS);
+    state.sync_hub.publish_user_notification(
+        &name,
+        body.kind.clone(),
+        title.clone(),
+        preview.clone(),
+    );
     state
-        .sync_hub
-        .publish_user_notification(&name, body.kind.clone(), title.clone(), preview.clone());
-    state.mobile_app.push_user_notification(&name, &body.kind, &title, &preview);
+        .mobile_app
+        .push_user_notification(&name, &body.kind, &title, &preview);
     Ok(ok_json())
 }
 
@@ -1661,9 +1692,13 @@ async fn register_service_handler(
         .and_then(|services| services.get(&service_name))
         .copied();
     let port = match cached_entry.map(|entry| entry.port) {
-        Some(cached_port) if is_cached_port_reusable(cached_port).await => cached_port,
+        Some(cached_port)
+            if can_reuse_cached_service_port(cached_port, body.require_bindable).await =>
+        {
+            cached_port
+        }
         Some(stale_port) => {
-            tracing::warn!(agent = %name, service = %service_name, stale_port, "cached service port is not bindable, allocating a fresh one");
+            tracing::warn!(agent = %name, service = %service_name, stale_port, require_bindable = body.require_bindable, "cached service port cannot satisfy registration, allocating a fresh one");
             allocate_service_port(&settings.services).ok_or_else(no_free_ports_err)?
         }
         None => allocate_service_port(&settings.services).ok_or_else(no_free_ports_err)?,
@@ -1688,17 +1723,39 @@ async fn unregister_service_handler(
     State(state): State<SharedState>,
     Path((name, service_name)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    unregister_service_registration(state, name, service_name, None).await
+}
+
+async fn unregister_owned_service_handler(
+    State(state): State<SharedState>,
+    Path((name, service_name, expected_port)): Path<(String, String, u16)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    unregister_service_registration(state, name, service_name, Some(expected_port)).await
+}
+
+async fn unregister_service_registration(
+    state: SharedState,
+    name: String,
+    service_name: String,
+    expected_port: Option<u16>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let mut settings = state.settings.write().await;
+    let mut removed = false;
     if let Some(agent_services) = settings.services.get_mut(&name) {
-        agent_services.remove(&service_name);
+        let matches_expected_port =
+            unregister_matches(agent_services.get(&service_name), expected_port);
+        if matches_expected_port {
+            agent_services.remove(&service_name);
+            removed = true;
+        }
         if agent_services.is_empty() {
             settings.services.remove(&name);
         }
     }
     save_settings(&settings);
     state.agent_status_cache.update_services(&settings.services);
-    tracing::info!(agent = %name, service = %service_name, "service unregistered");
-    Ok(ok_json())
+    tracing::info!(agent = %name, service = %service_name, removed, expected_port, "service unregister requested");
+    Ok(Json(serde_json::json!({"ok": true, "removed": removed})))
 }
 
 async fn list_services_handler(
@@ -2442,11 +2499,18 @@ pub fn build_router(state: SharedState) -> Router {
             axum::routing::delete(unregister_service_handler),
         )
         .route(
+            "/agents/{name}/services/{service}/registrations/{port}",
+            axum::routing::delete(unregister_owned_service_handler),
+        )
+        .route(
             "/agents/{name}/services/{service}/invalidate",
             post(agent_status::invalidate_service_handler),
         )
         .route("/agents/{name}/account-token", post(account_token_handler))
-        .route("/agents/{name}/user-notification", post(user_notification_handler))
+        .route(
+            "/agents/{name}/user-notification",
+            post(user_notification_handler),
+        )
         .route(
             "/agents/{name}/workspace.bundle",
             get(workspace_bundle_handler),
@@ -3007,8 +3071,9 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::{
-        allocate_service_port, ensure_not_rebuilding, is_cached_port_reusable, resolve_public,
-        spawn_pipeline_sse, truncate_chars, valid_user_notification_kind, RegisterServiceBody,
+        allocate_service_port, can_reuse_cached_service_port, ensure_not_rebuilding,
+        is_cached_port_reusable, resolve_public, spawn_pipeline_sse, truncate_chars,
+        unregister_matches, valid_user_notification_kind, RegisterServiceBody,
     };
 
     #[test]
@@ -3269,6 +3334,32 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn bindable_claim_rejects_an_unrelated_live_listener() {
+        let listener = tokio::net::TcpListener::bind(("0.0.0.0", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert!(
+            can_reuse_cached_service_port(port, false).await,
+            "a resolver must preserve a resident service's live port",
+        );
+        assert!(
+            !can_reuse_cached_service_port(port, true).await,
+            "a service about to bind must reject a port held by another process",
+        );
+    }
+
+    #[tokio::test]
+    async fn bindable_claim_rejects_a_listener_on_another_local_address() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.2", 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert!(
+            !can_reuse_cached_service_port(port, true).await,
+            "a wildcard-binding service cannot use a port held on one host interface",
+        );
+    }
+
     /// A port a crashed startup left *held but unserved* (#371, #433), and the corpse
     /// holding it: connect is refused, yet bind still fails. Only a raw socket bound
     /// without `SO_REUSEADDR` and never listened on models that; std/tokio listeners
@@ -3438,6 +3529,29 @@ mod tests {
         assert_eq!(parse(r#"{"name":"dashboard","public":null}"#), None);
         assert_eq!(parse(r#"{"name":"dashboard","public":false}"#), Some(false));
         assert_eq!(parse(r#"{"name":"dashboard","public":true}"#), Some(true));
+    }
+
+    #[test]
+    fn register_body_defaults_bindable_claim_off() {
+        let parse = |body: &str| {
+            serde_json::from_str::<RegisterServiceBody>(body)
+                .expect("a well-formed body should deserialize")
+                .require_bindable
+        };
+        assert!(!parse(r#"{"name":"dashboard"}"#));
+        assert!(parse(r#"{"name":"dashboard","require_bindable":true}"#));
+    }
+
+    #[test]
+    fn conditional_unregister_does_not_remove_a_newer_port() {
+        let entry = crate::settings::ServiceEntry {
+            port: 61013,
+            public: true,
+        };
+        assert!(unregister_matches(Some(&entry), None));
+        assert!(unregister_matches(Some(&entry), Some(61013)));
+        assert!(!unregister_matches(Some(&entry), Some(61012)));
+        assert!(!unregister_matches(None, Some(61013)));
     }
 
     // ── API contract fixtures ──────────────────────────────────────────────
