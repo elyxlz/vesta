@@ -76,7 +76,7 @@ function LiveAgent({
   active: boolean;
   children: ReactNode;
 }) {
-  const socket = useAgentSocket(name, active);
+  const socket = useAgentSocket(name, active, agent?.activityState ?? "idle");
   return (
     <AgentContent name={name} agent={agent} socket={socket}>
       {children}
@@ -103,8 +103,14 @@ export function AgentProvider({ children }: { children: ReactNode }) {
   }, [name]);
 
   if (!controller) {
+    // Serve the roster hold's last-known activity while torn down, so the orb doesn't flash
+    // through a made-up "idle" on foreground before the replica resolves the real state.
+    const socket = {
+      ...DISCONNECTED_SOCKET,
+      agentState: agent?.activityState ?? "idle",
+    };
     return (
-      <AgentContent name={name} agent={agent} socket={DISCONNECTED_SOCKET}>
+      <AgentContent name={name} agent={agent} socket={socket}>
         {children}
       </AgentContent>
     );

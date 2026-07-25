@@ -12,6 +12,7 @@ import {
   seedTail,
   sendMessage,
   typingDelay,
+  type AgentActivityState,
   type ChatMessage,
   type ChatState,
   type InputMethod,
@@ -47,7 +48,14 @@ interface HistoryPage {
 // agentState + pending come from the replica; gateway connectedness from the single sync socket.
 // Sends are POST intents confirmed by their chat-socket echo. The stale-while-reconnecting hold gives
 // an instant render across a controller epoch; backgrounding never blanks the chat.
-export function useAgentSocket(name: string, active: boolean) {
+// `heldActivityState` is the last-known activity from the roster hold, served while the replica
+// tree has not resolved yet (connecting / first snapshot in flight) so the orb never flashes
+// through a made-up "idle" before settling on the real state.
+export function useAgentSocket(
+  name: string,
+  active: boolean,
+  heldActivityState: AgentActivityState = "idle",
+) {
   const controller = useController();
   const preferences = usePreferences();
   const { connection } = useSession();
@@ -74,8 +82,10 @@ export function useAgentSocket(name: string, active: boolean) {
 
   const activitySelector = useCallback(
     (tree: Tree | null) =>
-      active && name ? (tree?.agents[name]?.info.activityState ?? "idle") : "idle",
-    [active, name],
+      active && name
+        ? (tree?.agents[name]?.info.activityState ?? heldActivityState)
+        : heldActivityState,
+    [active, name, heldActivityState],
   );
   const agentState = useReplica(controller.replica, activitySelector);
 
