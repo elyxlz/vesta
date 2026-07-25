@@ -2,10 +2,24 @@ package main
 
 import (
 	"encoding/json"
+	"net"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+func TestStartLinkServerReportsOccupiedPort(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	wac := &WhatsAppClient{}
+	if err := wac.startLinkServer(listener.Addr().(*net.TCPAddr).Port); err == nil {
+		t.Fatal("startLinkServer accepted an occupied port")
+	}
+}
 
 func testClientWithQR(code string) *WhatsAppClient {
 	return &WhatsAppClient{currentQRCode: code, authStatus: AuthStatusQRReady}
@@ -65,12 +79,46 @@ func TestServeLinkPage(t *testing.T) {
 // code for the page to serve (the QR link is single-flighted and self-contained,
 // so there is no generation machinery to reason about anymore).
 func TestClearQRClearsCode(t *testing.T) {
-	wac := &WhatsAppClient{currentQRCode: "code"}
+	state := newStateStore(t.TempDir())
+	state.update(func(s *daemonState) { s.AuthStatus = string(AuthStatusQRReady) })
+	wac := &WhatsAppClient{
+		currentQRCode: "code",
+		authStatus:    AuthStatusQRReady,
+		state:         state,
+	}
 	wac.clearQR()
 	wac.authMutex.RLock()
 	code := wac.currentQRCode
+	status := wac.authStatus
 	wac.authMutex.RUnlock()
 	if code != "" {
 		t.Error("clearQR must clear the current QR code so nothing serves it")
+	}
+	if status != AuthStatusNotAuthenticated || state.snapshot().AuthStatus != "" {
+		t.Errorf("clearQR left stale QR-ready state: memory=%q disk=%q", status, state.snapshot().AuthStatus)
+	}
+}
+
+func TestLinkServerPublishesItsActivePort(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	listener.Close()
+
+	wac := &WhatsAppClient{}
+	wac.setLinkService("wa-link")
+	if err := wac.startLinkServer(port); err != nil {
+		t.Fatal(err)
+	}
+	gotPort, gotService := wac.activeLink()
+	if gotPort != port || gotService != "wa-link" {
+		t.Fatalf("activeLink = (%d, %q), want (%d, %q)", gotPort, gotService, port, "wa-link")
+	}
+	wac.stopLinkServer()
+	gotPort, gotService = wac.activeLink()
+	if gotPort != 0 || gotService != "" {
+		t.Fatalf("activeLink after stop = (%d, %q), want empty", gotPort, gotService)
 	}
 }

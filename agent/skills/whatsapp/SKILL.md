@@ -13,9 +13,11 @@ world is four verbs: **connect, status, send, messages** (plus profile and calls
 
 ## The one rule
 
-**If `whatsapp status` ever shows `linked: false`, run `whatsapp connect`.**
-That is the only recovery you ever need. Never re-link, re-pair, or "restart the
-daemon" any other way; connect is idempotent and safe to re-run.
+**If `whatsapp status` shows `linked: false`, run `whatsapp connect`, except when
+it also shows `connecting: true`.** In that case a QR page is already active:
+wait for the user to scan it and do not start another connect. This is the only
+recovery you ever need. Never re-link, re-pair, or "restart the daemon" any other
+way; connect is idempotent outside an active QR session.
 
 ## Set up (one command)
 
@@ -41,7 +43,15 @@ just do what it says:
   number banned.
 - **Self-hosted (user's own WhatsApp):** it serves a QR page and returns
   `{status:"linking", url, next:...}`. Send the user the URL to scan in WhatsApp >
-  Settings > Linked Devices. See [SETUP.md](SETUP.md) / [MANAGED_AUTH.md](MANAGED_AUTH.md).
+  Settings > Linked Devices. The command returns as soon as the live page is ready.
+  Wait for the user to say they scanned it, then run `whatsapp status` once. Never
+  choose a port, register a QR service, or run a second connect while the page is
+  active. If the user cannot scan a QR, and
+  explicitly approves a pairing attempt, run `whatsapp connect --phone '+E.164'`
+  with the exact account number. Confirm the echoed number, then send the returned
+  code for WhatsApp > Linked Devices > Link a Device > Link with phone number.
+  While that code is active, wait for the user and do not run connect again. See
+  [SETUP.md](SETUP.md) / [MANAGED_AUTH.md](MANAGED_AUTH.md).
 
 ## Other ways to connect
 
@@ -68,6 +78,8 @@ rather than run WhatsApp over a datacenter IP. A supplied proxy is validated too
 
 `whatsapp status` is your one diagnostic:
 - linked: `{"linked":true,"number":"+44...","connected":true}`
+- connecting: `{"linked":false,"connecting":true,"method":"qr","next":"wait for the user to scan..."}`
+- pairing code active: `{"linked":false,"connecting":true,"method":"phone","next":"wait for the user to enter..."}`
 - not linked: `{"linked":false,"connected":false,"next":"run: whatsapp connect","reason":"<why>"}`
 
 ## Send

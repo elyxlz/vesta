@@ -17,7 +17,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage: whatsapp <command> [args] [flags]")
 	// The lifecycle commands run in the client, not the daemon, so they are not in the registry.
 	fmt.Fprintln(w, "Setup / health:")
-	fmt.Fprintln(w, "  connect [--opener <text>] [--own-number] set up WhatsApp: claim + link the agent's own number, or link the user's own WhatsApp by QR. --opener: agent-authored greeting for the managed wa.me link")
+	fmt.Fprintln(w, "  connect [--opener <text>] [--phone +E.164] [--own-number] set up or recover WhatsApp; --phone uses a pairing code when the user cannot scan a QR")
 	fmt.Fprintln(w, "  status                               simple health check: linked, number, connected. If it shows linked:false, run `whatsapp connect`")
 	fmt.Fprintln(w, "  start                                bring the daemon up (idempotent); the restart skill runs this at boot")
 	fmt.Fprintln(w, "Internal (the CLI self-manages its daemon; agents never call these):")
@@ -37,6 +37,11 @@ func printUsage(w io.Writer) {
 // handler declares its FlagSet and parses before it touches the client, so passing no client
 // reports the flags without a daemon, without the socket, and without reaching any command body.
 func printCommandUsage(w io.Writer, name string) {
+	if name == "connect" || name == "link" || name == "provision" {
+		_, err := parseConnectOptions(name, []string{"--help"})
+		fmt.Fprintln(w, err)
+		return
+	}
 	cmd, ok := lookupCommand(name)
 	if !ok {
 		// A lifecycle command (serve, link, daemon, authenticate): the general usage documents it.

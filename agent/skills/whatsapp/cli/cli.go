@@ -452,28 +452,55 @@ var commands = []command{
 func linkViaQR(name string, args []string, wac *WhatsAppClient, link func(port int) (linkResult, error), result map[string]any) (any, error) {
 	var port int
 	var acknowledged bool
+	var unregisterService string
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.IntVar(&port, "port", 0, "Serve the QR link page on this port (0 = no page)")
 	fs.BoolVar(&acknowledged, "acknowledge-ban-risk", false, "Override the pairing rate limit")
+	fs.StringVar(&unregisterService, "unregister-service", "", "Internal vestad service to remove when the page stops")
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
+	cleanup := func() {
+		if unregisterService != "" {
+			if err := unregisterVestadService(unregisterService, port); err != nil {
+				wac.logger.Warnf("Failed to unregister QR link service %s: %v", unregisterService, err)
+			}
+		}
+	}
 	// Gate on the linked FACT (Store.ID), not transient connection status.
 	if wac.client.Store.ID != nil {
+		cleanup()
 		return nil, fmt.Errorf("already linked; to pair a different account the user must first unlink this device from their phone (Linked Devices)")
 	}
 	release, ok := wac.beginPairing()
 	if !ok {
+		activePort, _ := wac.activeLink()
+		cleanupRejectedPairing(cleanup, activePort, port)
 		return nil, errPairingInProgress
 	}
-	defer release()
+	// Keep pairMu held through route cleanup. Releasing it first lets the next
+	// pairing reuse the same port before this pairing's conditional delete runs.
+	defer finishPairing(cleanup, release)
 	if err := wac.state.tryRecordPairAttempt(time.Now(), acknowledged); err != nil {
 		return nil, err
 	}
+	wac.setLinkService(unregisterService)
+	defer wac.clearPendingLinkService()
 	if _, err := link(port); err != nil {
 		return nil, err
 	}
 	return result, nil
+}
+
+func finishPairing(cleanup, release func()) {
+	cleanup()
+	release()
+}
+
+func cleanupRejectedPairing(cleanup func(), activePort, requestedPort int) {
+	if activePort != requestedPort {
+		cleanup()
+	}
 }
 
 // cmdLink runs the whole self-hosted QR pairing synchronously in one socket call:
@@ -518,6 +545,16 @@ func cmdDaemonStatus(args []string, wac *WhatsAppClient) (any, error) {
 	}
 	if wac.client.Store.ID != nil {
 		result["number"] = "+" + wac.client.Store.ID.User
+	}
+	if linkPort, linkService := wac.activeLink(); linkPort != 0 {
+		result["link_port"] = linkPort
+		if linkService != "" {
+			result["link_service"] = linkService
+		}
+	}
+	if seconds := wac.phonePairingSecondsLeft(now); seconds > 0 {
+		result["phone_pairing_pending"] = true
+		result["phone_pairing_seconds_left"] = seconds
 	}
 	if build, ok := debug.ReadBuildInfo(); ok {
 		for _, dep := range build.Deps {
@@ -1263,6 +1300,7 @@ func cmdPairPhone(args []string, wac *WhatsAppClient) (any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate pairing code: %v", err)
 	}
+	wac.markPhonePairingPending(time.Now())
 	return map[string]any{
 		"pairing_code": code,
 		"phone":        phone,

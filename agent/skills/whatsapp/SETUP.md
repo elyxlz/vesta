@@ -21,15 +21,18 @@ assistant reads and sends from their personal chats). No separate number yet?
 Read [PHONE_NUMBER.md](PHONE_NUMBER.md) and guide them through getting one.
 
 ```bash
-whatsapp link
+whatsapp connect
 ```
 
 Prints one shareable URL (public tunnel route, no token). The user opens it,
 goes to WhatsApp > Settings > Linked Devices > Link a Device, and scans. The
 page keeps the code current automatically, so there is no 20-second race. The
-command waits and reports success.
+command returns when the live page is ready. Wait for the user to scan, then run
+`whatsapp status` once. Do not run connect again while the page is active.
+If a cached public port belongs to another service, connect asks vestad for a
+bindable replacement automatically. Never choose or register a manual QR port.
 
-Fallback, pairing code (when the user can't scan): `whatsapp link --phone '+E.164'`.
+Fallback, pairing code (when the user can't scan): `whatsapp connect --phone '+E.164'`.
 Confirm the echoed number is EXACTLY the one being linked, then send the user
 the code: WhatsApp > Linked Devices > Link a Device > Link with phone number.
 
@@ -63,7 +66,7 @@ Sending is fine during the sync window; only stop/restart is locked.
 - Daemon won't start: run `whatsapp serve` in the foreground; the compile or
   serve error prints directly.
 - Auth state not linked after a restore/restart: the device session was lost;
-  re-link (with the user's go-ahead) via `whatsapp link`.
+  re-link (with the user's go-ahead) via `whatsapp connect`.
 
 ## How transcription works
 

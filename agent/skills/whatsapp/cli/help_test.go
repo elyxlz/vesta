@@ -102,6 +102,17 @@ func TestLifecycleCommandsAnswerHelpRatherThanRunning(t *testing.T) {
 	}
 }
 
+func TestSetupAliasesReportConnectFlagsWithoutPairing(t *testing.T) {
+	for _, name := range []string{"connect", "link", "provision"} {
+		usage := helpFor(t, name)
+		for _, flag := range []string{"-phone", "-own-number", "-opener"} {
+			if !strings.Contains(usage, flag) {
+				t.Errorf("%s --help does not mention %s:\n%s", name, flag, usage)
+			}
+		}
+	}
+}
+
 // An argument whose own text is `-h` is not a question. It must fail loudly: reporting usage and
 // succeeding would tell the agent a message was sent when nothing was.
 func TestAnArgumentThatLooksLikeHelpIsNotTreatedAsHelp(t *testing.T) {

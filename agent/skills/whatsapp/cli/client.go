@@ -69,14 +69,15 @@ type WhatsAppClient struct {
 	// managed is the pool-API client when this box links a managed number (nil on a
 	// self-hosted QR box). It leases the residential proxy the cloud companion egresses
 	// through and drives the user-owned (BYO) number flow.
-	managed       *managedAuth
-	proxyMu       sync.Mutex
-	proxyURL      string // cached residential proxy lease for the process lifetime
-	egressCache   map[string]egressInfo
-	authStatus    AuthStatus
-	authMutex     sync.RWMutex
-	qrPath        string
-	currentQRCode string // guarded by authMutex, cleared on success
+	managed        *managedAuth
+	proxyMu        sync.Mutex
+	proxyURL       string // cached residential proxy lease for the process lifetime
+	egressCache    map[string]egressInfo
+	authStatus     AuthStatus
+	authMutex      sync.RWMutex
+	qrPath         string
+	currentQRCode  string // guarded by authMutex, cleared on success
+	phonePairUntil time.Time
 	// pairMu single-flights every pairing op (provision, QR link, phone code): only
 	// one runs at a time, so a failed one leaves a clean client for the next and no
 	// two pairings ever race for the rate-limit slot or the QR channel.
@@ -86,6 +87,8 @@ type WhatsAppClient struct {
 	mode              atomic.Int32
 	linkMu            sync.Mutex // guards linkServer
 	linkServer        *http.Server
+	linkPort          int
+	linkService       string
 	presenceActive    bool
 	presenceMutex     sync.RWMutex
 	lastMessageSentAt time.Time
@@ -429,6 +432,7 @@ func (wac *WhatsAppClient) onConnected() {
 // Used only on a FRESH link (QR success, managed provision, phone-code PairSuccess),
 // never on a routine reconnect, so the window is not re-armed on every reconnect.
 func (wac *WhatsAppClient) onLinked() {
+	wac.clearPhonePairingPending()
 	wac.onConnected()
 	wac.markLinkedNow()
 	// Capture a good-device snapshot of the freshly PAIRED store immediately, bypassing
@@ -568,23 +572,84 @@ func (wac *WhatsAppClient) beginPairing() (release func(), ok bool) {
 	if !wac.pairMu.TryLock() {
 		return nil, false
 	}
+	if wac.phonePairingPending(time.Now()) {
+		wac.pairMu.Unlock()
+		return nil, false
+	}
 	wac.setConnMode(connPairing)
 	return func() {
-		wac.mode.CompareAndSwap(int32(connPairing), int32(connNormal))
+		if !wac.phonePairingPending(time.Now()) {
+			wac.mode.CompareAndSwap(int32(connPairing), int32(connNormal))
+		}
 		wac.pairMu.Unlock()
 	}, true
+}
+
+func (wac *WhatsAppClient) markPhonePairingPending(now time.Time) {
+	wac.authMutex.Lock()
+	wac.phonePairUntil = now.Add(PhonePairingWindow)
+	wac.authMutex.Unlock()
+}
+
+func (wac *WhatsAppClient) clearPhonePairingPending() {
+	wac.authMutex.Lock()
+	wac.phonePairUntil = time.Time{}
+	wac.mode.CompareAndSwap(int32(connPairing), int32(connNormal))
+	wac.authMutex.Unlock()
+}
+
+func (wac *WhatsAppClient) phonePairingPending(now time.Time) bool {
+	wac.authMutex.Lock()
+	defer wac.authMutex.Unlock()
+	if wac.phonePairUntil.IsZero() {
+		return false
+	}
+	if !now.Before(wac.phonePairUntil) {
+		wac.phonePairUntil = time.Time{}
+		wac.mode.CompareAndSwap(int32(connPairing), int32(connNormal))
+		return false
+	}
+	return true
+}
+
+func (wac *WhatsAppClient) phonePairingSecondsLeft(now time.Time) int {
+	wac.authMutex.Lock()
+	if wac.phonePairUntil.IsZero() {
+		wac.authMutex.Unlock()
+		return 0
+	}
+	if !now.Before(wac.phonePairUntil) {
+		wac.phonePairUntil = time.Time{}
+		wac.mode.CompareAndSwap(int32(connPairing), int32(connNormal))
+		wac.authMutex.Unlock()
+		return 0
+	}
+	remaining := wac.phonePairUntil.Sub(now)
+	wac.authMutex.Unlock()
+	return int((remaining + time.Second - 1) / time.Second)
 }
 
 // clearQR drops any live QR code/image so a finished or abandoned link session
 // leaves no stale artifact for the link page to serve.
 func (wac *WhatsAppClient) clearQR() {
 	wac.authMutex.Lock()
-	defer wac.authMutex.Unlock()
 	if wac.qrPath != "" {
 		os.Remove(wac.qrPath)
 		wac.qrPath = ""
 	}
 	wac.currentQRCode = ""
+	if wac.authStatus == AuthStatusQRReady {
+		wac.authStatus = AuthStatusNotAuthenticated
+	}
+	wac.authMutex.Unlock()
+	if wac.state != nil {
+		wac.state.update(func(s *daemonState) {
+			if s.AuthStatus == string(AuthStatusQRReady) {
+				s.AuthStatus = ""
+				s.AuthNote = ""
+			}
+		})
+	}
 }
 
 // runQRLink is the whole self-hosted QR pairing, run synchronously in the socket
@@ -594,7 +659,9 @@ func (wac *WhatsAppClient) clearQR() {
 // the next `whatsapp link` starts clean (never GetQRChannel-on-connected-client).
 func (wac *WhatsAppClient) runQRLink(port int) (linkResult, error) {
 	if port > 0 {
-		wac.startLinkServer(port)
+		if err := wac.startLinkServer(port); err != nil {
+			return linkResult{}, err
+		}
 		defer wac.stopLinkServer()
 	}
 	defer wac.clearQR()
