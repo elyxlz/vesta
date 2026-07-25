@@ -29,7 +29,6 @@ class PersistedState(pyd.BaseModel):
     pending_boot_message: str | None = None
     session_id: str | None = None
     applied_migrations: list[str] = pyd.Field(default_factory=list)
-    last_synced_version: str | None = None
 
 
 def state_path(config: cfg.VestaConfig) -> pl.Path:
