@@ -252,19 +252,20 @@ async def _note_rate_limit(msg: RateLimitEvent, *, state: vm.State, config: cfg.
 
 
 async def _note_rejected_turn(msg: ResultMessage, *, state: vm.State, config: cfg.VestaConfig, details: tuple[str, ...]) -> None:
-    """Act on a provider's 429 according to what that provider says it means.
+    """Open a cooldown for a 429 the provider says is worth waiting out.
 
     There is no fallback for a provider that does not answer: a blanket "wait five minutes" reads an
-    expired plan or an empty balance as a passing throttle and retries it forever, while reporting a
-    temporary rate limit to the user. An unclassified rejection is logged as the gap it is."""
+    expired plan as a passing throttle and retries it forever. An unclassified rejection is logged
+    as the gap it is; one waiting cannot fix is left to the terminal-error path."""
     kind = state.provider_status.kind if state.provider_status is not None else None
     rejection = classify_rejection(kind, details)
     if rejection is None:
         logger.warning(f"{kind or 'provider'} rejected a turn with {msg.api_error_status} and no rate-limit meaning; not pausing")
         return
     if not rejection.retryable:
-        # Waiting cannot fix this one, so say so instead of opening a cooldown that hides it.
-        state.event_bus.emit({"type": "error", "text": f"{kind} rejected the request: {rejection.window}. This needs your attention."})
+        # Waiting cannot fix an expired plan or an empty balance. is_terminal_provider_error claims
+        # these below, flipping the agent to not_authenticated exactly as a 402 from any other
+        # provider would, so the user is asked to act rather than watching silent retries.
         return
     resets_at = int(time.time()) + rejection.seconds if rejection.seconds is not None else None
     cooldown = await activate_rate_limit(state=state, config=config, resets_at=resets_at, window=rejection.window)

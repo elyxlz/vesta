@@ -158,6 +158,12 @@ def is_terminal_provider_error(
     Only its two explicit credential messages are therefore terminal. Other providers retain the
     SDK's 401/402 classification.
     """
+    # Z.AI and Kimi return 429 for an expired plan, an empty balance, or a model the subscription
+    # lacks. Every other provider calls that 402, so it lands here as the same terminal failure:
+    # the agent stops and the app asks the user to act, instead of retrying what waiting cannot fix.
+    if api_error_status == RATE_LIMITED_STATUS:
+        rejection = classify_rejection(kind, details)
+        return rejection is not None and not rejection.retryable
     if kind == "kimi":
         is_401 = assistant_error == "authentication_failed" or api_error_status == 401
         if not is_401:

@@ -312,26 +312,26 @@ async def test_a_provider_names_its_own_window(config, state, kind, details, win
         ("kimi", "exceeded_current_quota_error: Account balance is insufficient"),
     ],
 )
-async def test_a_429_that_waiting_cannot_fix_never_opens_a_cooldown(config, state, kind, details):
-    """An expired plan or an empty balance is not a throttle. Cooling down would retry it forever
-    while telling the user it was temporary."""
+async def test_a_429_that_waiting_cannot_fix_is_terminal_not_a_cooldown(config, state, kind, details):
+    """Z.AI and Kimi return 429 where every other provider returns 402. It has to reach the same
+    terminal path, so the app asks the user to act instead of hiding it behind silent retries."""
     from core.client import _note_rejected_turn
+    from core.provider import is_terminal_provider_error
 
     state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind=kind, model="m")
-    sub = state.event_bus.subscribe()
     msg, detail_texts = _rejected(details)
 
     await _note_rejected_turn(msg, state=state, config=config, details=detail_texts)
 
-    assert state.persisted.provider_cooldown is None
-    assert model_access_available(state)
-    assert any(e["type"] == "error" for e in _drain(sub))
+    assert state.persisted.provider_cooldown is None, "waiting cannot fix this, so no cooldown"
+    assert is_terminal_provider_error(kind, assistant_error=None, api_error_status=429, details=detail_texts)
 
 
 @pytest.mark.anyio
 async def test_a_provider_that_does_not_answer_is_a_logged_gap_not_a_guess(config, state):
     """No blanket fallback: a provider with no published meaning for its 429 gets no invented one."""
     from core.client import _note_rejected_turn
+    from core.provider import is_terminal_provider_error
 
     state.provider_status = ProviderStatus(state=ProviderAuthState.AUTHENTICATED, kind="openai", model="gpt")
     msg, detail_texts = _rejected("429 Too Many Requests")
@@ -339,6 +339,8 @@ async def test_a_provider_that_does_not_answer_is_a_logged_gap_not_a_guess(confi
     await _note_rejected_turn(msg, state=state, config=config, details=detail_texts)
 
     assert state.persisted.provider_cooldown is None
+    # An unknown 429 is a gap, not a terminal credential failure: it must not sign the agent out.
+    assert not is_terminal_provider_error("openai", assistant_error=None, api_error_status=429, details=detail_texts)
 
 
 @pytest.mark.anyio
