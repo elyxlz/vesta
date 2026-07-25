@@ -19,7 +19,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  authenticate                         save the bot token / print auth status")
 	fmt.Fprintln(w, "Commands (short aliases in parentheses):")
 	fmt.Fprintln(w, "  send-message (send) [to] [message]   send-file (file) [to] [path]")
-	fmt.Fprintln(w, "    send-message flags: --buttons 'L1=d1,L2=d2;L3=d3'  --reply-to <id>  --message-file <path>")
+	fmt.Fprintln(w, "    send-message flags: --buttons 'L1=d1,L2=d2;L3=d3'  --reply-to <id>  --message - (heredoc)")
 	fmt.Fprintln(w, "  edit-message [to] [message-id] [message] (--buttons)  delete-message (del) [to] [message-id]")
 	fmt.Fprintln(w, "  answer-callback [callback-id] (--text --alert)   send-voice [to] [file-path]")
 	fmt.Fprintln(w, "  send-chat-action [to] [action]       pin-message [to] [message-id]   unpin-message [to] [message-id]")

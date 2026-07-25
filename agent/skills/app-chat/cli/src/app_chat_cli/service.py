@@ -66,7 +66,7 @@ def _write_notification(state: ServiceState, text: str, intent_id: str | None) -
         "type": "message",
         "message": text,
         "interrupt": True,
-        "reply_command": "app-chat send --message '<reply>'",
+        "reply_command": "app-chat send --message -",
         "reply_hint": "think about how you can best show your personality",
     }
     if intent_id is not None:

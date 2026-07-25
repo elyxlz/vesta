@@ -1,66 +1,38 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
-// chatName and contactName are deliberately different in every case: they are adjacent string
-// parameters, so identical values would let a transposition pass.
-func TestNotificationReplyCommand(t *testing.T) {
-	cases := []struct {
-		name         string
-		chatName     string
-		contactName  string
-		instance     string
-		isDirectChat bool
-		contactSaved bool
-		want         string
-	}{
-		{
-			name:         "saved contact is addressed by the name send resolves",
-			chatName:     "Ana Ruiz",
-			contactName:  "Ana",
-			instance:     "personal",
-			isDirectChat: true,
-			contactSaved: true,
-			want:         "telegram send --instance 'personal' --to 'Ana' --message '<reply>'",
-		},
-		{
-			// ResolveRecipient looks an @username up in contacts, the very table an unsaved
-			// sender is missing from, so any addressed command would fail to resolve.
-			name:         "unsaved sender falls back to the bare command",
-			chatName:     "Bob Stone",
-			contactName:  "Bob Stone",
-			instance:     "personal",
-			isDirectChat: true,
-			contactSaved: false,
-			want:         "telegram send",
-		},
-		{
-			name:        "group is addressed by chat name, shell-quoted",
-			chatName:    "Bob's Crew",
-			contactName: "Bob",
-			want:        "telegram send --to 'Bob'\"'\"'s Crew' --message '<reply>'",
-		},
-		{
-			name:        "an unnamed chat falls back to the bare command",
-			chatName:    "",
-			contactName: "Bob",
-			want:        "telegram send",
-		},
-		{
-			name:        "a single account omits the instance flag",
-			chatName:    "Team",
-			contactName: "Bob",
-			instance:    "",
-			want:        "telegram send --to 'Team' --message '<reply>'",
-		},
+func TestNotificationReplyCommandIsCompleteAndUnambiguous(t *testing.T) {
+	// The chat ID is what ResolveRecipient matches first and needs no saved contact, so the same
+	// command shape works for a saved contact, a stranger, and a group alike.
+	got := notificationReplyCommand(-1001234567890, "personal")
+	want := "telegram send --instance 'personal' --to '-1001234567890' --message -"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := notificationReplyCommand(tc.chatName, tc.contactName, tc.instance, tc.isDirectChat, tc.contactSaved)
-			if got != tc.want {
-				t.Fatalf("got %q, want %q", got, tc.want)
-			}
-		})
+	single := notificationReplyCommand(42, "")
+	if strings.Contains(single, "--instance") {
+		t.Fatalf("a single account should omit --instance: %q", single)
+	}
+}
+
+// The command hands the body to stdin rather than inlining it, so the reply text never reaches the
+// shell. An inline --message would break on the first apostrophe and could evaluate a $(...).
+func TestNotificationReplyCommandBodyIsShellInert(t *testing.T) {
+	got := notificationReplyCommand(42, "")
+	if !strings.HasSuffix(got, "--message -") {
+		t.Fatalf("reply command must end at --message -, leaving the body to stdin: %q", got)
+	}
+	if strings.Contains(got, "--message '") {
+		t.Fatalf("reply command must not inline the body: %q", got)
+	}
+	// A heredoc here would reach the agent as &lt;&lt; and &#10; entities: the notification is
+	// rendered as an XML attribute. SKILL.md carries the heredoc shape instead.
+	if strings.ContainsAny(got, "<\n") {
+		t.Fatalf("reply command must survive XML attribute rendering unescaped: %q", got)
 	}
 }

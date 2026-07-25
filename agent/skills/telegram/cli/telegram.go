@@ -222,7 +222,7 @@ func (tc *TelegramClient) handleEditedMessage(msg *tgbotapi.Message) {
 
 	if ctx, ok := tc.notifContextFor(msg); ok {
 		if err := WriteEditNotification(
-			tc.notificationsDir, int64(msg.MessageID), ctx.chatName, ctx.contactName,
+			tc.notificationsDir, int64(msg.MessageID), msg.Chat.ID, ctx.chatName, ctx.contactName,
 			ctx.username, tc.instance, ctx.contactSaved, ctx.isDirectChat,
 			ctx.sender, oldText, newText,
 		); err != nil {
@@ -312,6 +312,7 @@ func (tc *TelegramClient) handleMessage(msg *tgbotapi.Message) {
 		WriteNotification(
 			tc.notificationsDir,
 			int64(msg.MessageID),
+			msg.Chat.ID,
 			ctx.chatName,
 			ctx.contactName,
 			ctx.username,

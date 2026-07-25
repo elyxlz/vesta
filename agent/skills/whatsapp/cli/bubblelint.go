@@ -7,7 +7,7 @@ package main
 // read like an assistant, not a person. Linting the one place every send passes
 // through makes it structural: a wall is rejected with the reason, so the agent
 // re-sends as several short calls with its own break points. The single bypass
-// is `--longform` (reference material the user asked for); `--message-file` sends are linted too.
+// is `--longform` (reference material the user asked for); heredoc sends are linted too.
 
 import (
 	"fmt"

@@ -51,6 +51,7 @@ type StoreMessageParams struct {
 
 type NotifContext struct {
 	NotifDir     string
+	ChatJID      string
 	ChatName     string
 	ContactName  string
 	ContactPhone string

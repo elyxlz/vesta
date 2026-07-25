@@ -13,7 +13,12 @@ from app_chat_cli.store import Store, store_path
 
 
 def cmd_send(args: argparse.Namespace) -> None:
-    message = args.message
+    # `-` reads the body from stdin, so a reply with apostrophes, quotes or newlines can be passed
+    # through a quoted heredoc instead of being escaped into an inline argument.
+    message = sys.stdin.read().rstrip("\r\n") if args.message == "-" else args.message
+    if not message:
+        print(json.dumps({"error": "--message is empty (pass '-' and a <<'MSG' heredoc to read the body from stdin)"}))
+        sys.exit(1)
 
     if not getattr(args, "longform", False):
         reason = bubble_lint_reason(message)

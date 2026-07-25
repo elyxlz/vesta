@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -233,9 +235,55 @@ func stripGlobalFlags(args []string) []string {
 	return filtered
 }
 
+// resolveStdinArgs replaces a `-` body value with this process's stdin, before the command is
+// forwarded to the daemon. executeCommand runs inside the daemon, whose stdin is not ours, so a `-`
+// that reached it would read EOF and the send would fail as an empty body. Handles both
+// `--flag -` and `--flag=-`; a body is read at most once.
+func resolveStdinArgs(args []string, bodyFlags ...string) ([]string, error) {
+	out := slices.Clone(args)
+	body := ""
+	read := false
+	readOnce := func() (string, error) {
+		if !read {
+			data, err := io.ReadAll(os.Stdin)
+			if err != nil {
+				return "", err
+			}
+			body, read = strings.TrimRight(string(data), "\r\n"), true
+		}
+		return body, nil
+	}
+
+	for i, arg := range out {
+		name, inline, hasInline := strings.Cut(arg, "=")
+		if !strings.HasPrefix(name, "-") || !slices.Contains(bodyFlags, strings.TrimLeft(name, "-")) {
+			continue
+		}
+		if hasInline && inline == "-" {
+			text, err := readOnce()
+			if err != nil {
+				return nil, err
+			}
+			out[i] = name + "=" + text
+		} else if !hasInline && i+1 < len(out) && out[i+1] == "-" {
+			text, err := readOnce()
+			if err != nil {
+				return nil, err
+			}
+			out[i+1] = text
+		}
+	}
+	return out, nil
+}
+
 func runOneShot(command string) {
 	sockPath := getSocketPath()
-	output, exitCode, connected := trySocketCommand(sockPath, command, stripGlobalFlags(os.Args[1:]))
+	args, err := resolveStdinArgs(stripGlobalFlags(os.Args[1:]), "message")
+	if err != nil {
+		printJSON(map[string]interface{}{"error": fmt.Sprintf("could not read the body from stdin: %v", err)})
+		os.Exit(1)
+	}
+	output, exitCode, connected := trySocketCommand(sockPath, command, args)
 	if !connected {
 		printJSON(map[string]interface{}{"error": "daemon not running; start with: telegram daemon start"})
 		os.Exit(1)
@@ -380,27 +428,24 @@ func executeCommand(command string, args []string, tc *TelegramClient) (interfac
 		return map[string]interface{}{"chats": chats}, nil
 
 	case "send-message":
-		var to, message, messageFile, buttons, replyToStr string
+		var to, message, buttons, replyToStr string
 		var longform bool
 		fs := flag.NewFlagSet("send-message", flag.ContinueOnError)
 		fs.StringVar(&to, "to", "", "Recipient (name, username, or chat ID)")
-		fs.StringVar(&message, "message", "", "Message text")
-		fs.StringVar(&messageFile, "message-file", "", "Read message body from this file (avoids shell-escaping long text)")
+		fs.StringVar(&message, "message", "", "Message text, or '-' to read the body from stdin (use a <<'MSG' heredoc for anything with apostrophes, quotes, backticks or newlines)")
 		fs.StringVar(&buttons, "buttons", "", "Inline keyboard: rows by ';', buttons by ',', each 'Label=callback_data' (or 'Label=url:https://...')")
 		fs.StringVar(&replyToStr, "reply-to", "", "Quote/reply to this message ID")
 		fs.BoolVar(&longform, "longform", false, "Bypass the short-bubble lint for genuine reference material (a brief, a code block, a list they asked for).")
 		if err := fs.Parse(args); err != nil {
 			return nil, err
 		}
-		if messageFile != "" {
-			b, err := os.ReadFile(messageFile)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read --message-file: %v", err)
-			}
-			message = string(b)
+		if to == "" {
+			return nil, fmt.Errorf("--to is required")
 		}
-		if to == "" || message == "" {
-			return nil, fmt.Errorf("--to and --message (or --message-file) are required")
+		// resolveStdinArgs swapped a `-` for the real body in the client process; still seeing one
+		// here means nothing was piped in.
+		if message == "" || message == "-" {
+			return nil, fmt.Errorf("--message is required (pass '-' and a <<'MSG' heredoc to read the body from stdin)")
 		}
 		if !longform {
 			if reason := bubbleLintReason(message); reason != "" {
@@ -428,25 +473,22 @@ func executeCommand(command string, args []string, tc *TelegramClient) (interfac
 		return map[string]interface{}{"success": true, "message_id": msgID, "message": "Message sent successfully"}, nil
 
 	case "edit-message":
-		var to, messageIDStr, message, messageFile, buttons string
+		var to, messageIDStr, message, buttons string
 		fs := flag.NewFlagSet("edit-message", flag.ContinueOnError)
 		fs.StringVar(&to, "to", "", "Chat (name, username, or chat ID)")
 		fs.StringVar(&messageIDStr, "message-id", "", "ID of the message to edit")
-		fs.StringVar(&message, "message", "", "New message text")
-		fs.StringVar(&messageFile, "message-file", "", "Read new text from this file")
+		fs.StringVar(&message, "message", "", "New message text, or '-' to read it from stdin (use a <<'MSG' heredoc for anything with apostrophes, quotes, backticks or newlines)")
 		fs.StringVar(&buttons, "buttons", "", "Replacement inline keyboard (same format as send-message; omit to clear/keep none)")
 		if err := fs.Parse(args); err != nil {
 			return nil, err
 		}
-		if messageFile != "" {
-			b, err := os.ReadFile(messageFile)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read --message-file: %v", err)
-			}
-			message = string(b)
+		if to == "" || messageIDStr == "" {
+			return nil, fmt.Errorf("--to and --message-id are required")
 		}
-		if to == "" || messageIDStr == "" || message == "" {
-			return nil, fmt.Errorf("--to, --message-id, and --message (or --message-file) are required")
+		// resolveStdinArgs swapped a `-` for the real body in the client process; still seeing one
+		// here means nothing was piped in.
+		if message == "" || message == "-" {
+			return nil, fmt.Errorf("--message is required (pass '-' and a <<'MSG' heredoc to read the body from stdin)")
 		}
 		messageID, err := strconv.ParseInt(messageIDStr, 10, 64)
 		if err != nil {

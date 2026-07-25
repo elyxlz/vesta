@@ -45,7 +45,12 @@ def _build_parser() -> argparse.ArgumentParser:
         daemon_action_p.add_argument("--data-dir", default=None, help="Data directory (default: ~/.app-chat)")
 
     send_p = sub.add_parser("send", help="Send a message to the app")
-    send_p.add_argument("--message", "-m", required=True, help="Message text")
+    send_p.add_argument(
+        "--message",
+        "-m",
+        required=True,
+        help="Message text, or '-' to read the body from stdin (use a <<'MSG' heredoc for anything with apostrophes, quotes or newlines)",
+    )
     send_p.add_argument("--socket", default=None, help="Unix socket path (default: ~/.app-chat/app-chat.sock)")
     send_p.add_argument(
         "--longform",

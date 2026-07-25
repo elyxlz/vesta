@@ -287,9 +287,9 @@ func (wac *WhatsAppClient) dropDeadDevice() {
 
 // buildNotifContext assembles the NotifContext shared by message and reaction
 // notifications.
-func (wac *WhatsAppClient) buildNotifContext(chatName, senderDisplay, contactName, contactPhone string, contactSaved, isDirectChat bool) NotifContext {
+func (wac *WhatsAppClient) buildNotifContext(chatJID, chatName, senderDisplay, contactName, contactPhone string, contactSaved, isDirectChat bool) NotifContext {
 	return NotifContext{
-		NotifDir: wac.notificationsDir, ChatName: chatName,
+		NotifDir: wac.notificationsDir, ChatJID: chatJID, ChatName: chatName,
 		ContactName: contactName, ContactPhone: contactPhone,
 		Instance: wac.instance, ContactSaved: contactSaved,
 		IsDirectChat: isDirectChat, Sender: senderDisplay,
@@ -389,7 +389,7 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 	shouldNotify := wac.notificationsDir != "" && !wac.noNotify && !info.IsFromMe && !wac.skipSenders[contactPhone]
 	var notifCtx NotifContext
 	if shouldNotify {
-		notifCtx = wac.buildNotifContext(chatName, senderDisplay, contactName, contactPhone, contactSaved, isDirectChat)
+		notifCtx = wac.buildNotifContext(info.Chat.String(), chatName, senderDisplay, contactName, contactPhone, contactSaved, isDirectChat)
 	}
 
 	// Audio messages: transcribe asynchronously, then send notification
@@ -515,7 +515,7 @@ func (wac *WhatsAppClient) handleReaction(evt *events.Message) {
 
 	if wac.notificationsDir != "" {
 		_, senderDisplay, contactName, contactPhone, contactSaved, isDirectChat := wac.prepareNotificationInfo(evt.Info.MessageSource)
-		ctx := wac.buildNotifContext(chatName, senderDisplay, contactName, contactPhone, contactSaved, isDirectChat)
+		ctx := wac.buildNotifContext(evt.Info.Chat.String(), chatName, senderDisplay, contactName, contactPhone, contactSaved, isDirectChat)
 		WriteReactionNotification(ctx, targetID, emoji, isRemoved)
 	}
 }
@@ -602,7 +602,7 @@ func (wac *WhatsAppClient) notifContextFor(evt *events.Message) (NotifContext, b
 	if wac.skipSenders[contactPhone] {
 		return NotifContext{}, false
 	}
-	return wac.buildNotifContext(wac.getChatName(evt.Info.Chat), senderDisplay, contactName, contactPhone, contactSaved, isDirectChat), true
+	return wac.buildNotifContext(evt.Info.Chat.String(), wac.getChatName(evt.Info.Chat), senderDisplay, contactName, contactPhone, contactSaved, isDirectChat), true
 }
 
 func (wac *WhatsAppClient) handleHistorySync(evt *events.HistorySync) {
