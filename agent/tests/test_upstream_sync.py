@@ -355,6 +355,29 @@ def test_direct_sync_checkpoints_dirty_work_before_merging(tmp_path):
     assert _git(["show", "-s", "--format=%s", "HEAD^1"], home, env).strip() == "checkpoint"
 
 
+def test_direct_sync_checkpoint_survives_untracked_files_in_the_core_mount(tmp_path):
+    """An upgrade can drop brand-new untracked files inside the read-only agent/core mount
+    (e.g. a fresh migration prompt). The root .gitignore scopes the mount out, so the
+    checkpoint's `git add -A` neither fails nor stages any of it and the sync completes."""
+    source = _upstream_fixture(tmp_path, versions=("0.1.170", "0.1.171"))
+    home = _fresh_box(tmp_path)
+    env = _box_env(source)
+    assert _attach(home, source).returncode == 0
+    memory = home / "agent/MEMORY.md"
+    memory.write_text(memory.read_text() + "uncommitted note\n")
+    # The upgraded mount: version moved and new files appeared that no snapshot ever tracked.
+    (home / "agent/core/pyproject.toml").write_text('[project]\nname = "vesta"\nversion = "0.1.171"\n')
+    (home / "agent/core/migrations").mkdir()
+    (home / "agent/core/migrations/2026-07-manual-upstream-review.md").write_text("review prompt\n")
+
+    r = _direct_sync(home, source)
+
+    assert r is not None and r.returncode == 0, (r.stdout + r.stderr) if r else "unexpected no-op"
+    assert _git(["show", "-s", "--format=%s", "HEAD^1"], home, env).strip() == "checkpoint"
+    assert "agent/core" not in _git(["show", "--name-only", "--format=", "HEAD^1"], home, env)
+    assert "agent/core" not in _git(["status", "--porcelain"], home, env)
+
+
 def test_direct_sync_is_idempotent_once_synced(tmp_path):
     source = _upstream_fixture(tmp_path)
     home = _fresh_box(tmp_path)
