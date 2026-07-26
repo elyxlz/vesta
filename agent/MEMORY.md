@@ -84,7 +84,8 @@ The user's important people are [agent_name]'s important people too. Keeps track
 ## 3. SYSTEM CONFIGURATION
 
 ### The Machine
-- Docker container on a host managed by **vestad** (a Rust daemon). Host networking, so `localhost` reaches the host. vestad runs the container lifecycle (create, rebuild, backup), proxies app/CLI traffic to the agent, and handles service registration.
+- Docker container on a host managed by **vestad** (a Rust daemon), on a Docker network of its own. vestad runs the container lifecycle (create, rebuild, backup), proxies app/CLI traffic to the agent, and handles service registration.
+- **Reaching the host**: `localhost` is this container, so it reaches your own daemons and nothing else. `$VESTAD_HOST` (`host.docker.internal`) is the physical machine: vestad's API and anything else running there, like a Plex or a media server. Ports you bind are yours alone; they cannot collide with another agent's.
 - Runs as **root**: home `/root`, working dir `/root/agent`. Paths written `~/agent/...` (here and in skills) are `/root/agent/...`; the Read/Edit tools need the absolute form.
 - `/run/vestad-env` holds env vars injected by vestad.
 - On rebuild (`vestad update`), by default `agent/core/` (the engine, including its `pyproject.toml` and `uv.lock`) is replaced from the new image and everything else persists.
