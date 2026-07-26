@@ -1536,14 +1536,6 @@ struct RegisterServiceBody {
     public: Option<bool>,
 }
 
-/// Collect all ports in use across all agents in the service registry.
-fn all_registered_ports(registry: &HashMap<String, HashMap<String, ServiceEntry>>) -> Vec<u16> {
-    registry
-        .values()
-        .flat_map(|services| services.values().map(|e| e.port))
-        .collect()
-}
-
 /// Upper bound of the kernel's ephemeral source-port range
 /// (`net.ipv4.ip_local_port_range`). Service ports are allocated above this so
 /// the kernel never reuses a just-allocated service port as a transient
@@ -1566,51 +1558,31 @@ fn no_free_ports_err() -> (StatusCode, Json<serde_json::Value>) {
     )
 }
 
-/// Find a free port not used by any registered service or other process.
+/// Find a free port for `agent`'s own services, scanning only that agent's currently
+/// registered set.
 ///
-/// Callers bind the returned port themselves, only later. Asking the OS via `bind(0)`
-/// hands back an *ephemeral* port that the kernel can reuse as the source port of an
-/// outbound connection before the caller binds it, producing a spurious `EADDRINUSE`
-/// (the port looks free to a LISTEN scan but `bind()` fails). So scan
-/// deterministically and prefer ports *above* the ephemeral range, which the kernel
-/// will not hand out as source ports.
-fn allocate_service_port(registry: &HashMap<String, HashMap<String, ServiceEntry>>) -> Option<u16> {
-    let used = all_registered_ports(registry);
-    let scan = |lo: u16| {
-        (lo..=SERVICE_PORT_MAX)
-            .find(|p| !used.contains(p) && std::net::TcpListener::bind(("127.0.0.1", *p)).is_ok())
-    };
+/// vestad's own process can no longer meaningfully test bindability inside a different
+/// agent's network namespace (each agent has its own now; see `ensure_agent_network` in
+/// docker.rs), so this is pure bookkeeping over a small, already-in-memory set, no bind
+/// probe. The caller's own `bind()` is the real check, same as it is for every service.
+/// Still prefers ports above the kernel's ephemeral source-port range, since a port in that
+/// range can be reused as an outbound source port by the kernel between allocation and the
+/// caller's own bind, producing a spurious `EADDRINUSE`; that risk is orthogonal to
+/// multi-tenancy and applies equally on a single host regardless of network namespacing.
+fn allocate_service_port(registry: &HashMap<String, HashMap<String, ServiceEntry>>, agent: &str) -> Option<u16> {
+    let used: std::collections::HashSet<u16> = registry
+        .get(agent)
+        .map(|services| services.values().map(|entry| entry.port).collect())
+        .unwrap_or_default();
+    let scan = |lo: u16| (lo..=SERVICE_PORT_MAX).find(|p| !used.contains(p));
     // Preferred: above the ephemeral range, where the port can't be reused as a
     // transient outbound source port between allocation and the caller binding it.
     let safe_min = ephemeral_port_high()
         .saturating_add(1)
         .max(SERVICE_PORT_MIN);
-    // Fallback: the full service range (may still race, but better than failing
-    // to allocate when the safe band is exhausted).
+    // Fallback: the full service range (exhausting the safe band before this agent's
+    // own handful of ports run out is not a realistic scenario, but cheap to keep).
     scan(safe_min).or_else(|| scan(SERVICE_PORT_MIN))
-}
-
-/// A cached service port is reusable when it's the service's own live server (TCP
-/// connect succeeds) or genuinely free (bind succeeds). Only a port that is neither,
-/// a `zombie/TIME_WAIT` corpse left by a crashed startup (#371), is dropped so the
-/// caller gets a fresh one. A bind-only probe (#436) treats every listener as a
-/// squatter, but resolvers (whatsapp's `resolveVoiceBaseURL`, voice's own
-/// status/stop/restart) POST here purely to *find* the live port, and reallocating a
-/// resident service's port leaves every later lookup on a fresh, dead port. The one
-/// caller that binds (voice `start`) guards with `port_alive` first.
-async fn is_cached_port_reusable(port: u16) -> bool {
-    use std::net::Ipv4Addr;
-    use std::time::Duration;
-    let alive = tokio::time::timeout(
-        Duration::from_millis(200),
-        tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port)),
-    )
-    .await
-    .is_ok_and(|r| r.is_ok());
-    alive
-        || tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port))
-            .await
-            .is_ok()
 }
 
 /// `public` is intrinsic to a registration, like the port: an absent field inherits
@@ -1703,12 +1675,8 @@ async fn register_service_handler(
         .and_then(|services| services.get(&service_name))
         .copied();
     let port = match cached_entry.map(|entry| entry.port) {
-        Some(cached_port) if is_cached_port_reusable(cached_port).await => cached_port,
-        Some(stale_port) => {
-            tracing::warn!(agent = %name, service = %service_name, stale_port, "cached service port is not bindable, allocating a fresh one");
-            allocate_service_port(&settings.services).ok_or_else(no_free_ports_err)?
-        }
-        None => allocate_service_port(&settings.services).ok_or_else(no_free_ports_err)?,
+        Some(cached_port) => cached_port,
+        None => allocate_service_port(&settings.services, &name).ok_or_else(no_free_ports_err)?,
     };
     let public = resolve_public(body.public, cached_entry);
 
@@ -3051,8 +3019,8 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::{
-        allocate_service_port, ensure_not_rebuilding, is_cached_port_reusable, resolve_public,
-        spawn_pipeline_sse, truncate_chars, valid_user_notification_kind, RegisterServiceBody,
+        allocate_service_port, ensure_not_rebuilding, resolve_public, spawn_pipeline_sse,
+        truncate_chars, valid_user_notification_kind, RegisterServiceBody,
     };
 
     #[test]
@@ -3286,130 +3254,79 @@ mod tests {
         handle.abort();
     }
 
-    #[tokio::test]
-    async fn cached_port_is_reusable_when_free() {
-        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        let port = listener.local_addr().unwrap().port();
-        drop(listener);
-        assert!(
-            is_cached_port_reusable(port).await,
-            "a free port must be reusable"
-        );
-    }
+    #[test]
+    fn allocate_service_port_ignores_other_agents_ports() {
+        // Learn this machine's first-choice port with an empty registry (the exact number
+        // depends on /proc/sys/net/ipv4/ip_local_port_range, so it isn't hardcoded here).
+        let empty: HashMap<String, HashMap<String, ServiceEntry>> = HashMap::new();
+        let first_choice = allocate_service_port(&empty, "agent-b").expect("allocate");
 
-    // A live listener is the service's own resident server (voice-server, a
-    // dashboard, etc.): reuse must return its port so register stays idempotent
-    // and lookups keep resolving the live port. Reallocating here moved the port
-    // out from under resident services (vesta#1254).
-    #[tokio::test]
-    async fn cached_port_is_reusable_when_listening() {
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
-            .await
-            .unwrap();
-        let port = listener.local_addr().unwrap().port();
-        assert!(
-            is_cached_port_reusable(port).await,
-            "a port with a live listener must be reported reusable",
-        );
-    }
-
-    /// A port a crashed startup left *held but unserved* (#371, #433), and the corpse
-    /// holding it: connect is refused, yet bind still fails. Only a raw socket bound
-    /// without `SO_REUSEADDR` and never listened on models that; std/tokio listeners
-    /// always listen. The port is OS-ephemeral rather than from `allocate_service_port`,
-    /// whose deterministic scan would hand the same port to a parallel test.
-    fn dead_port_with_corpse() -> (u16, socket2::Socket) {
-        let probe = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("an ephemeral port");
-        let port = probe.local_addr().expect("the probe's address").port();
-        drop(probe);
-        let corpse = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None)
-            .expect("a raw tcp socket");
-        let addr = std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, port));
-        corpse.bind(&addr.into()).expect("bind without listening");
-        (port, corpse)
-    }
-
-    #[tokio::test]
-    async fn cached_port_is_not_reusable_when_held_but_unserved() {
-        let (port, _corpse) = dead_port_with_corpse();
-        assert!(
-            !is_cached_port_reusable(port).await,
-            "a port held by a crashed service's corpse must not be reused",
-        );
-    }
-
-    // The recovery half of #371/#433: a crashed service re-registering must land on a
-    // port it can actually bind, without a container or host restart.
-    #[tokio::test]
-    async fn crashed_service_is_reallocated_off_its_dead_port() {
-        let (dead_port, _corpse) = dead_port_with_corpse();
+        // Two agents no longer share a port space (each gets its own network namespace), so
+        // agent-a registering that exact port must not exclude it for agent-b.
         let mut registry: HashMap<String, HashMap<String, ServiceEntry>> = HashMap::new();
-        registry.entry("agent".into()).or_default().insert(
-            "dashboard".into(),
+        registry.entry("agent-a".into()).or_default().insert(
+            "tasks".into(),
             ServiceEntry {
-                port: dead_port,
+                port: first_choice,
+                public: false,
+            },
+        );
+        registry.insert("agent-b".into(), HashMap::new());
+
+        let port = allocate_service_port(&registry, "agent-b").expect("allocate");
+        assert_eq!(
+            port, first_choice,
+            "agent-b has nothing registered, so agent-a's port is free for it too"
+        );
+    }
+
+    #[test]
+    fn allocate_service_port_avoids_the_same_agents_own_ports() {
+        let empty: HashMap<String, HashMap<String, ServiceEntry>> = HashMap::new();
+        let first_choice = allocate_service_port(&empty, "agent-a").expect("allocate");
+
+        let mut registry: HashMap<String, HashMap<String, ServiceEntry>> = HashMap::new();
+        registry.entry("agent-a".into()).or_default().insert(
+            "tasks".into(),
+            ServiceEntry {
+                port: first_choice,
                 public: false,
             },
         );
 
-        // Re-registration, replaying register_service_handler's port decision.
+        let port = allocate_service_port(&registry, "agent-a").expect("allocate");
+        assert_ne!(
+            port, first_choice,
+            "must not hand back a port agent-a already has registered"
+        );
+    }
+
+    // vestad's own process can no longer meaningfully probe bindability inside a different
+    // agent's network namespace (each agent has its own now), so an existing registration is
+    // always reused: no liveness check, no bind probe. The caller's own bind() is the only
+    // real check, same as it is for every service. Replays register_service_handler's port
+    // decision, which is now this simple.
+    #[test]
+    fn register_service_handler_reuses_a_cached_port_unconditionally() {
+        let mut registry: HashMap<String, HashMap<String, ServiceEntry>> = HashMap::new();
+        registry.entry("agent".into()).or_default().insert(
+            "dashboard".into(),
+            ServiceEntry {
+                port: 55000,
+                public: false,
+            },
+        );
+
         let cached = registry
             .get("agent")
             .and_then(|services| services.get("dashboard"))
             .map(|entry| entry.port);
         let resolved = match cached {
-            Some(port) if is_cached_port_reusable(port).await => port,
-            _ => allocate_service_port(&registry).expect("a port should be free"),
+            Some(port) => port,
+            None => allocate_service_port(&registry, "agent").expect("a port should be free"),
         };
 
-        assert_ne!(
-            resolved, dead_port,
-            "a crashed service must be moved off its held-but-dead port, not handed it back forever",
-        );
-    }
-
-    // Reproduction of vesta#1254. A resident service (voice-server) stays bound to
-    // its registered port; re-registration, which is also how consumers resolve the
-    // port (whatsapp's resolveVoiceBaseURL, voice's own status/stop/restart), must
-    // return that same live port. This replays the exact choice
-    // register_service_handler makes (reuse the cached port when reusable, else
-    // allocate a fresh one) against a real live listener, using the same
-    // allocate_service_port + is_cached_port_reusable it calls; a bind-only probe
-    // makes reuse fail here and the port drifts to a fresh, dead one.
-    #[tokio::test]
-    async fn resident_service_keeps_its_port_across_reregistration() {
-        use std::collections::HashMap;
-
-        // First registration: a fresh port for "voice", recorded in the registry.
-        let mut registry: HashMap<String, HashMap<String, ServiceEntry>> = HashMap::new();
-        let p1 = allocate_service_port(&registry).expect("a port should be free");
-        registry.entry("agent".into()).or_default().insert(
-            "voice".into(),
-            ServiceEntry {
-                port: p1,
-                public: false,
-            },
-        );
-
-        // The service is now resident: voice-server is listening on p1.
-        let _server = tokio::net::TcpListener::bind(("127.0.0.1", p1))
-            .await
-            .unwrap();
-
-        // Re-registration, replaying register_service_handler's port decision.
-        let cached = registry
-            .get("agent")
-            .and_then(|s| s.get("voice"))
-            .map(|e| e.port);
-        let resolved = match cached {
-            Some(p) if is_cached_port_reusable(p).await => p,
-            _ => allocate_service_port(&registry).expect("a port should be free"),
-        };
-
-        assert_eq!(
-            resolved, p1,
-            "a resident service must resolve to its live port {p1}, not a fresh dead one ({resolved})",
-        );
+        assert_eq!(resolved, 55000, "an existing registration is always reused");
     }
 
     // Reproduction of vesta#1323: the caller re-registering is often a resolver that never
