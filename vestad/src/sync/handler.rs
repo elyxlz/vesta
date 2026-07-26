@@ -187,12 +187,13 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
                             }
                         }
                     }
-                    // Reauth (and any unknown/malformed frame, ignored by rule) go through the reauth path.
-                    _ => {
-                        if let ControlFlow::Break(()) = handle_reauth(&state.api_key, text.as_str(), &mut deadline) {
+                    Ok(ClientFrame::Reauth { token }) => {
+                        if let ControlFlow::Break(()) = apply_reauth(&token, &state.api_key, &mut deadline) {
                             break;
                         }
                     }
+                    // Unknown/malformed frames are ignored by rule.
+                    Err(_) => {}
                 }
             }
             // End the session: the peer closed, the stream ended, a transport error, the deadline, or
@@ -298,15 +299,11 @@ fn notifications_deltas(
     (deltas, recorded)
 }
 
-/// Handle a reauth frame. Unknown/malformed frames and any non-reauth frame (e.g. `client_context`,
-/// handled at the call site) are ignored by rule. Returns Break only on a failed reauth (the loop
-/// then closes the socket).
-fn handle_reauth(api_key: &str, text: &str, deadline: &mut Option<tokio::time::Instant>) -> ControlFlow<()> {
-    let Ok(ClientFrame::Reauth { token }) = serde_json::from_str::<ClientFrame>(text) else {
-        return ControlFlow::Continue(());
-    };
-    if crate::auth::verify_token(&token, api_key) {
-        *deadline = token_deadline(&token, api_key);
+/// Apply a reauth token: on a valid token extend the deadline, else Break so the loop closes the
+/// socket. The caller parses the frame once and dispatches on the typed variant.
+fn apply_reauth(token: &str, api_key: &str, deadline: &mut Option<tokio::time::Instant>) -> ControlFlow<()> {
+    if crate::auth::verify_token(token, api_key) {
+        *deadline = token_deadline(token, api_key);
         ControlFlow::Continue(())
     } else {
         tracing::warn!("sync reauth failed; closing socket");
@@ -637,25 +634,13 @@ mod tests {
         let mut deadline: Option<tokio::time::Instant> = None;
 
         let token = crate::jwt::create_token("secret", "access", crate::jwt::ACCESS_TOKEN_TTL);
-        let valid = format!(r#"{{"type":"reauth","token":"{token}"}}"#);
-        let flow = handle_reauth("secret", &valid, &mut deadline);
+        let flow = apply_reauth(&token, "secret", &mut deadline);
         assert!(matches!(flow, ControlFlow::Continue(())));
         assert!(deadline.is_some(), "a valid reauth extends the deadline");
 
         let before = deadline;
-        let flow = handle_reauth("secret", r#"{"type":"reauth","token":"bad.token.here"}"#, &mut deadline);
+        let flow = apply_reauth("bad.token.here", "secret", &mut deadline);
         assert!(matches!(flow, ControlFlow::Break(())), "a bad reauth breaks the loop");
         assert_eq!(deadline, before, "a failed reauth leaves the deadline unchanged");
-    }
-
-    #[test]
-    fn handle_reauth_still_ignores_unknown_frames() {
-        let mut deadline = None;
-        // A non-reauth (client_context) frame is not a reauth failure: the loop continues.
-        assert_eq!(
-            handle_reauth("key", r#"{"type":"client_context","focused":true,"active_agent":null}"#, &mut deadline),
-            ControlFlow::Continue(())
-        );
-        assert_eq!(handle_reauth("key", r#"{"type":"mystery"}"#, &mut deadline), ControlFlow::Continue(()));
     }
 }

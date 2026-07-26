@@ -1,6 +1,5 @@
 import { useContext, useEffect } from "react";
 import { AppState, type AppStateStatus } from "react-native";
-import type { Controller } from "@vesta/core";
 import { ControllerContext } from "@/controller/context";
 import { activeAgentName } from "@/notifications/foreground-policy";
 
@@ -10,10 +9,11 @@ function isFocused(state: AppStateStatus): boolean {
 
 // Reports app foreground + the visible agent to vestad so the gateway can suppress a push while a
 // client is focused. Reports on mount and on every AppState transition (foreground/background), which
-// is exactly when suppression flips; activeAgentName() is re-read on each change. Rendered only when a
-// controller exists.
-function LivePresenceReporter({ controller }: { controller: Controller }) {
+// is exactly when suppression flips; activeAgentName() is re-read on each change.
+export function PresenceReporter() {
+  const controller = useContext(ControllerContext);
   useEffect(() => {
+    if (!controller) return;
     const report = (state: AppStateStatus) =>
       controller.reportPresence(isFocused(state), activeAgentName());
     report(AppState.currentState);
@@ -21,10 +21,4 @@ function LivePresenceReporter({ controller }: { controller: Controller }) {
     return () => sub.remove();
   }, [controller]);
   return null;
-}
-
-export function PresenceReporter() {
-  const controller = useContext(ControllerContext);
-  if (!controller) return null;
-  return <LivePresenceReporter controller={controller} />;
 }

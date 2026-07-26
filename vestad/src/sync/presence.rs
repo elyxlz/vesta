@@ -56,10 +56,9 @@ impl Presence {
         let mut state = self.state.lock().expect("presence mutex");
         let was_present = Self::compute_any_focused(&state.contexts);
         let active_agent = ctx.active_agent.clone();
-        let focused = ctx.focused;
         state.contexts.insert(id, ctx);
         let is_present = Self::compute_any_focused(&state.contexts);
-        self.finish(&mut state, was_present, is_present, focused, active_agent, now)
+        self.finish(&mut state, was_present, is_present, active_agent, now)
     }
 
     pub(crate) fn disconnect(&self, id: ConnId, now: Instant) {
@@ -67,7 +66,7 @@ impl Presence {
         let was_present = Self::compute_any_focused(&state.contexts);
         state.contexts.remove(&id);
         let is_present = Self::compute_any_focused(&state.contexts);
-        let _ = self.finish(&mut state, was_present, is_present, false, None, now);
+        let _ = self.finish(&mut state, was_present, is_present, None, now);
     }
 
     pub(crate) fn any_focused(&self) -> bool {
@@ -89,7 +88,6 @@ impl Presence {
         state: &mut PresenceState,
         was_present: bool,
         is_present: bool,
-        focused: bool,
         active_agent: Option<String>,
         now: Instant,
     ) -> Vec<PresenceEvent> {
@@ -99,7 +97,9 @@ impl Presence {
             // fail and leave any_focused() reading a stale value); sessions still get the changed() wake.
             self.any_focused_tx.send_replace(is_present);
         }
-        if !was_present && is_present && focused {
+        // A record that raises the aggregate to present can only be the just-recorded client turning
+        // focused; disconnect never raises it, so a false->true edge always means "this client, focused".
+        if !was_present && is_present {
             let long_gap = state
                 .last_present_at
                 .is_none_or(|last| now.duration_since(last) >= PRESENCE_NOTIFY_DEBOUNCE);

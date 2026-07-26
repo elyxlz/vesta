@@ -14,11 +14,14 @@ function activeAgentName(): string | null {
   return null;
 }
 
+// Stable module-level reference so useSyncExternalStore doesn't tear down and re-add the router
+// listener on every re-render (focus/route change).
+function subscribeRouter(onChange: () => void): () => void {
+  return router.subscribe(onChange);
+}
+
 function useActiveAgent(): string | null {
-  return useSyncExternalStore(
-    (onChange) => router.subscribe(onChange),
-    activeAgentName,
-  );
+  return useSyncExternalStore(subscribeRouter, activeAgentName);
 }
 
 export function PresenceReporter() {

@@ -155,6 +155,14 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
       emit(reauthFrame(token))
     },
     reportPresence: (focused, activeAgent) => {
+      // Skip a repeat of the current context (mobile re-reports on every AppState change, which can
+      // map to the same {focused, activeAgent}); the cached value still drives the reconnect re-send.
+      if (
+        lastContext !== null &&
+        lastContext.focused === focused &&
+        lastContext.active_agent === activeAgent
+      )
+        return
       lastContext = clientContextFrame(focused, activeAgent)
       emit(lastContext)
     },
