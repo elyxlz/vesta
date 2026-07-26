@@ -244,6 +244,15 @@ def test_validate_config_accepts_every_preference(config, key, value):
     assert validate_config_updates(config, {key: value}) == {key: expected}
 
 
+def test_presence_notifications_defaults_enabled(config):
+    assert config.presence_notifications.enabled is True
+
+
+def test_validate_config_accepts_presence_notifications(config):
+    result = validate_config_updates(config, {"presence_notifications": {"enabled": False}})
+    assert result == {"presence_notifications": {"enabled": False}}
+
+
 @pytest.mark.parametrize("value", ["whatsapp", ["../core"], ["has/slash"], [""], [1]])
 def test_validate_config_rejects_bad_active_skills(config, value):
     with pytest.raises((pyd.ValidationError, ValueError)):
