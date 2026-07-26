@@ -3775,6 +3775,38 @@ mod tests {
             docker_cleanup(&["rm", "-f", &name]);
             Self { name }
         }
+
+        /// A container under its real `container_name()`, for the paths that rediscover an agent by
+        /// name rather than being handed one.
+        fn for_agent(agent: &str) -> Self {
+            let name = container_name(agent);
+            docker_cleanup(&["rm", "-f", &name]);
+            Self { name }
+        }
+    }
+
+    /// Owns rebuild-snapshot tags, which must carry the real `vesta-rebuild:` prefix for
+    /// `resume_interrupted_rebuilds` to see them, so a panic mid-test cannot leak multi-GB images.
+    struct TestSnapshots {
+        tags: Vec<String>,
+    }
+
+    impl TestSnapshots {
+        fn new(agent: &str, stamps: &[u64]) -> Self {
+            let tags = stamps
+                .iter()
+                .map(|ts| format!("{REBUILD_SNAPSHOT_PREFIX}{agent}_{ts}"))
+                .collect();
+            Self { tags }
+        }
+    }
+
+    impl Drop for TestSnapshots {
+        fn drop(&mut self) {
+            for tag in &self.tags {
+                docker_cleanup(&["rmi", "-f", tag]);
+            }
+        }
     }
 
     impl Drop for TestContainer {
@@ -3910,6 +3942,127 @@ mod tests {
         assert!(
             docker.inspect_image(&img.tag).await.is_ok(),
             "snapshot image should exist"
+        );
+    }
+
+    /// The state a rebuild that died at [4/4] leaves behind: the old container removed, one or more
+    /// snapshots on disk, and the agent's env file still present. Reconcile discovers agents by
+    /// listing containers, so without resume this agent is invisible to every later boot and its
+    /// snapshots are stranded for good.
+    #[tokio::test]
+    #[ignore]
+    async fn interrupted_rebuild_resumes_from_its_newest_snapshot() {
+        let docker = test_docker();
+        let agent = format!("resume-{}", std::process::id());
+        let tc = TestContainer::for_agent(&agent);
+        // Two attempts' worth: the newest is the agent's filesystem, the older is superseded.
+        let snapshots = TestSnapshots::new(&agent, &[1_785_000_000, 1_785_000_001]);
+        let (older, newest) = (&snapshots.tags[0], &snapshots.tags[1]);
+
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let env_config = AgentEnvConfig {
+            config_dir: dir.path().to_path_buf(),
+            agents_dir: dir.path().to_path_buf(),
+            vestad_port: 4111,
+            vestad_tunnel: None,
+        };
+        write_agent_env_file(&env_config, &agent, 45_999, "tok").expect("write env file");
+
+        create_test_container_with_binds_async(
+            &docker,
+            &tc,
+            Vec::new(),
+            agent_container_cmd(),
+            NETWORK_MODE,
+            RESTART_POLICY,
+        )
+        .await;
+        for tag in [older, newest] {
+            snapshot_container(&docker, &tc.name, tag, &[])
+                .await
+                .expect("snapshot should succeed");
+        }
+        ensure_container_removed(&docker, &tc.name)
+            .await
+            .expect("remove should succeed");
+        assert_eq!(
+            container_status(&docker, &tc.name).await,
+            ContainerStatus::NotFound,
+            "precondition: the interrupted rebuild left no container"
+        );
+
+        resume_interrupted_rebuilds(&docker, &env_config, &|_| Vec::new()).await;
+
+        assert_ne!(
+            container_status(&docker, &tc.name).await,
+            ContainerStatus::NotFound,
+            "resume should have recreated the container the failed rebuild removed"
+        );
+        let raw = docker
+            .inspect_container(&tc.name, None::<InspectContainerOptions>)
+            .await
+            .expect("inspect resumed container");
+        assert_eq!(
+            raw.config.and_then(|c| c.image).as_deref(),
+            Some(newest.as_str()),
+            "resume should build from the newest snapshot, not an earlier attempt"
+        );
+        assert!(
+            docker.inspect_image(older).await.is_err(),
+            "the superseded snapshot should be collected once the rebuild completes"
+        );
+        assert!(
+            docker.inspect_image(newest).await.is_ok(),
+            "the snapshot the resumed container runs on must be kept"
+        );
+    }
+
+    /// A snapshot whose agent was destroyed must be collected, never used to resurrect the agent.
+    /// Destroying an agent deletes its env file, which is the marker resume keys on.
+    #[tokio::test]
+    #[ignore]
+    async fn snapshots_of_a_deleted_agent_are_collected_not_resurrected() {
+        let docker = test_docker();
+        let agent = format!("deleted-{}", std::process::id());
+        let tc = TestContainer::for_agent(&agent);
+        let snapshots = TestSnapshots::new(&agent, &[1_785_000_000]);
+        let orphan = &snapshots.tags[0];
+
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let env_config = AgentEnvConfig {
+            config_dir: dir.path().to_path_buf(),
+            agents_dir: dir.path().to_path_buf(),
+            vestad_port: 4111,
+            vestad_tunnel: None,
+        };
+
+        create_test_container_with_binds_async(
+            &docker,
+            &tc,
+            Vec::new(),
+            agent_container_cmd(),
+            NETWORK_MODE,
+            RESTART_POLICY,
+        )
+        .await;
+        snapshot_container(&docker, &tc.name, orphan, &[])
+            .await
+            .expect("snapshot should succeed");
+        ensure_container_removed(&docker, &tc.name)
+            .await
+            .expect("remove should succeed");
+
+        // No env file was ever written, so this agent reads as destroyed.
+        resume_interrupted_rebuilds(&docker, &env_config, &|_| Vec::new()).await;
+
+        assert_eq!(
+            container_status(&docker, &tc.name).await,
+            ContainerStatus::NotFound,
+            "a deleted agent must not be recreated from a leftover snapshot"
+        );
+        assert!(
+            docker.inspect_image(orphan).await.is_err(),
+            "the deleted agent's snapshot should be collected"
         );
     }
 
