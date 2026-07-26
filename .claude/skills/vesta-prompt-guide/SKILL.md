@@ -1,17 +1,20 @@
 ---
 name: vesta-prompt-guide
 description: >
-  Use when writing or reviewing anything the Vesta agent itself reads as instruction: a SKILL.md body or
-  the setup and reference docs it points at, agent/core/prompts/**, agent/MEMORY.md, or the agent's
-  system prompt. TRIGGER when the user says "skill", "prompt", "system prompt", "agent instructions",
-  "agent behavior", or "prompt engineering" about what the agent reads.
+  Use when writing or reviewing anything the Vesta agent itself reads: a SKILL.md body, the setup and
+  reference docs it points at, comments and docstrings in a skill's own CLI code, agent/core/prompts/**,
+  agent/MEMORY.md, or the agent's system prompt. TRIGGER when the user says "skill", "prompt", "system
+  prompt", "agent instructions", "agent behavior", or "prompt engineering" about what the agent reads.
 ---
 
 # Vesta Prompt Engineering Guide
 
-This guide covers text the agent reads as instruction: skills, `agent/core/prompts/**`,
-`agent/MEMORY.md`, and the system prompt. Developer-facing docs such as CLAUDE.md are out of
-scope; they are written for a human reading the repo, and the rules differ.
+This guide covers everything the agent reads: `agent/core/prompts/**`, `agent/MEMORY.md`, the
+system prompt, and all of `agent/skills/**`. A skill is not just its `SKILL.md`; the agent reads
+and edits the CLI code under it, so comments and docstrings in that code are in scope too.
+
+Out of scope: the engine (`agent/core/*.py`), `vestad/`, and repo docs such as CLAUDE.md. Those
+are read by developers rather than the agent, and the rules differ.
 
 Before making any changes to that text, you MUST first fetch and review the official Claude Code
 prompting guides to ensure best practices are followed.
@@ -39,11 +42,11 @@ SDK-level system prompts or deeper prompt engineering.
 ## Key Principles to Watch For
 
 - Clear, explicit instructions over vague guidance
-- Structured prompts with proper XML tags and sections
-- Placing long context at the top, queries at the bottom
-- Using examples (multishot) where appropriate
-- Avoiding conflicting or redundant instructions
-- Testing prompt changes against expected behavior
+- Concrete examples of the command or shape being described, over prose about it
+- No conflicting or redundant instructions, including against what the agent already reads elsewhere
+- A `description` that states when to use the skill, never a summary of its steps: an agent that can
+  read the workflow from the description will follow that instead of opening the body
+- Changes tested against what the agent actually does, not just how the text reads
 
 ## Never describe a previous design
 
