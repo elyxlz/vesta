@@ -1,7 +1,8 @@
 use bollard::models::ContainerCreateBody;
 use bollard::query_parameters::{
     BuildImageOptions, CreateContainerOptions, CreateImageOptions, DownloadFromContainerOptions,
-    ImportImageOptions, InspectContainerOptions, ListContainersOptions, RemoveContainerOptions,
+    ImportImageOptions, InspectContainerOptions, ListContainersOptions, ListImagesOptions,
+    RemoveContainerOptions,
     RemoveImageOptions, RestartContainerOptions, StopContainerOptions, UploadToContainerOptions,
 };
 use bollard::Docker;
@@ -1317,7 +1318,8 @@ pub async fn remove_image(docker: &Docker, image: &str) -> Result<(), DockerErro
 /// Namespaces of the throwaway per-agent snapshot images that `rebuild_agent` / `rename_agent`
 /// create via `docker export | docker import`. Only tags in one of these are ever auto-removed
 /// -- never the base image, a pulled image, or a restore image.
-const SNAPSHOT_IMAGE_PREFIXES: [&str; 2] = ["vesta-rebuild:", "vesta-rename:"];
+const REBUILD_SNAPSHOT_PREFIX: &str = "vesta-rebuild:";
+const SNAPSHOT_IMAGE_PREFIXES: [&str; 2] = [REBUILD_SNAPSHOT_PREFIX, "vesta-rename:"];
 
 /// Remove the snapshot the just-replaced container was built from, so rebuilds and renames stop
 /// leaving a trail of multi-GB images. Deliberately narrow: it only ever touches the single
@@ -1342,6 +1344,95 @@ async fn remove_replaced_snapshot(docker: &Docker, prev: Option<&str>, keep: &st
 /// because every snapshot tag carries a unique timestamp).
 fn is_removable_snapshot(prev: &str, keep: &str) -> bool {
     prev != keep && SNAPSHOT_IMAGE_PREFIXES.iter().any(|p| prev.starts_with(p))
+}
+
+/// Split a rebuild snapshot tag into the agent it belongs to and the epoch it was taken at.
+/// Agent names may contain `_`, so the timestamp is taken from the last segment and must parse.
+fn parse_rebuild_snapshot(tag: &str) -> Option<(&str, u64)> {
+    let rest = tag.strip_prefix(REBUILD_SNAPSHOT_PREFIX)?;
+    let (name, ts) = rest.rsplit_once('_')?;
+    if name.is_empty() {
+        return None;
+    }
+    Some((name, ts.parse().ok()?))
+}
+
+/// Every rebuild snapshot Docker currently holds, grouped by agent and ordered oldest first.
+async fn rebuild_snapshots_by_agent(docker: &Docker) -> HashMap<String, Vec<(u64, String)>> {
+    let Ok(images) = docker.list_images(None::<ListImagesOptions>).await else {
+        return HashMap::new();
+    };
+    let mut by_agent: HashMap<String, Vec<(u64, String)>> = HashMap::new();
+    for tag in images.into_iter().flat_map(|image| image.repo_tags) {
+        if let Some((name, ts)) = parse_rebuild_snapshot(&tag) {
+            by_agent.entry(name.to_string()).or_default().push((ts, tag));
+        }
+    }
+    for snapshots in by_agent.values_mut() {
+        snapshots.sort_unstable();
+    }
+    by_agent
+}
+
+/// Finish rebuilds that died between removing the old container and creating the new one. The
+/// snapshot is that agent's only filesystem at this point, and reconcile discovers agents by
+/// listing containers, so without this the agent is invisible to every later boot and its
+/// multi-GB snapshot is stranded for good.
+///
+/// A surviving env file is what marks the agent as still wanted: destroying an agent deletes it,
+/// so a snapshot left over from a deleted agent is collected here rather than resurrected.
+async fn resume_interrupted_rebuilds(
+    docker: &Docker,
+    env_config: &AgentEnvConfig,
+    mounts_for: &(dyn Fn(&str) -> Vec<crate::mounts::HostMount> + Send + Sync),
+) {
+    for (name, snapshots) in rebuild_snapshots_by_agent(docker).await {
+        let cname = container_name(&name);
+        if container_status(docker, &cname).await != ContainerStatus::NotFound {
+            continue;
+        }
+        let Some((_, newest)) = snapshots.last() else {
+            continue;
+        };
+        if !env_config.agents_dir.join(format!("{name}.env")).is_file() {
+            tracing::info!(agent = %name, "snapshots left by a deleted agent, discarding");
+            remove_snapshots(docker, snapshots.iter().map(|(_, tag)| tag.as_str())).await;
+            continue;
+        }
+        let Some(port) = read_env_value(&env_config.agents_dir, &name, "WS_PORT")
+            .and_then(|value| value.parse::<u16>().ok())
+        else {
+            tracing::error!(agent = %name, "interrupted rebuild has no port in its env file, leaving the snapshot in place");
+            continue;
+        };
+        tracing::info!(agent = %name, image = %newest, "resuming interrupted rebuild from snapshot");
+        let spec = ContainerSpec {
+            cname: &cname,
+            image: newest,
+            port,
+            agent_name: &name,
+            user_mounts: &mounts_for(&name),
+        };
+        match create_container(docker, env_config, spec).await {
+            Ok(()) => {
+                tracing::info!(agent = %name, "interrupted rebuild resumed");
+                let superseded = snapshots.iter().rev().skip(1).map(|(_, tag)| tag.as_str());
+                remove_snapshots(docker, superseded).await;
+            }
+            Err(e) => {
+                tracing::error!(agent = %name, error = %e, "could not resume interrupted rebuild; snapshot kept for the next boot");
+            }
+        }
+    }
+}
+
+async fn remove_snapshots<'a>(docker: &Docker, tags: impl Iterator<Item = &'a str>) {
+    for tag in tags {
+        match remove_image(docker, tag).await {
+            Ok(()) => tracing::info!(image = %tag, "removed superseded rebuild snapshot"),
+            Err(e) => tracing::warn!(image = %tag, error = %e, "could not remove rebuild snapshot"),
+        }
+    }
 }
 
 /// Export a Docker image to a gzip-compressed tar file.
@@ -2127,6 +2218,10 @@ pub async fn reconcile_containers(
         mark: RebuildMark,
     }
 
+    // Before listing containers: an agent whose rebuild died after its old container was removed
+    // has none, so it would be invisible to every phase below.
+    resume_interrupted_rebuilds(docker, env_config, mounts_for).await;
+
     let agents = list_managed_agents(docker).await;
     if agents.is_empty() {
         return;
@@ -2543,30 +2638,63 @@ pub async fn rebuild_agent(
     tracing::info!(agent = %name, "[2/4] snapshotting container filesystem...");
     snapshot_container(docker, &cname, &backup_tag, &[]).await?;
 
-    tracing::info!(agent = %name, "[3/4] removing old container...");
-    // Confirm it's actually gone (don't swallow): the snapshot is safely captured, so failing here
-    // and re-running reconcile next boot is far better than letting [4/4] collide on the name and
-    // leave the agent stopped.
-    ensure_container_removed(docker, &cname).await?;
+    // Past the snapshot every exit runs through `settle`, so a failure can never leave the fresh
+    // snapshot behind with nothing pointing at it.
+    let replaced = async {
+        tracing::info!(agent = %name, "[3/4] removing old container...");
+        // Confirm it's actually gone (don't swallow): the snapshot is safely captured, so failing
+        // here and re-running reconcile next boot is far better than letting [4/4] collide on the
+        // name and leave the agent stopped.
+        ensure_container_removed(docker, &cname).await?;
 
-    tracing::info!(agent = %name, "[4/4] creating container with new config...");
-    create_container(
-        docker,
-        env_config,
-        ContainerSpec {
-            cname: &cname,
-            image: &backup_tag,
-            port,
-            agent_name: name,
-            user_mounts,
-        },
-    )
-    .await?;
+        tracing::info!(agent = %name, "[4/4] creating container with new config...");
+        create_container(
+            docker,
+            env_config,
+            ContainerSpec {
+                cname: &cname,
+                image: &backup_tag,
+                port,
+                agent_name: name,
+                user_mounts,
+            },
+        )
+        .await
+    }
+    .await;
+
+    if let Err(e) = replaced {
+        discard_unused_snapshot(docker, &cname, &backup_tag).await;
+        return Err(e);
+    }
 
     // Drop the snapshot the old container ran on so rebuilds don't pile up multi-GB images.
     remove_replaced_snapshot(docker, prev_image.as_deref(), &backup_tag).await;
 
     Ok(())
+}
+
+/// A failed rebuild's snapshot is redundant only while the old container still stands to serve the
+/// agent. With no container it is the agent's sole filesystem and must be kept to resume from.
+fn snapshot_is_redundant(old_container: ContainerStatus) -> bool {
+    old_container != ContainerStatus::NotFound
+}
+
+/// Drop a fresh snapshot after a rebuild failed, but only while the old container is still standing
+/// to serve the agent. Once that container is removed the snapshot holds the agent's only copy of
+/// its filesystem, so it is kept for `resume_interrupted_rebuilds` to finish from.
+async fn discard_unused_snapshot(docker: &Docker, cname: &str, snapshot: &str) {
+    if !snapshot_is_redundant(container_status(docker, cname).await) {
+        tracing::warn!(
+            image = %snapshot,
+            "rebuild failed with no container left; keeping the snapshot to resume from"
+        );
+        return;
+    }
+    match remove_image(docker, snapshot).await {
+        Ok(()) => tracing::info!(image = %snapshot, "removed snapshot from failed rebuild"),
+        Err(e) => tracing::warn!(image = %snapshot, error = %e, "could not remove failed rebuild's snapshot"),
+    }
 }
 
 /// Rename an agent: snapshot the existing container, destroy it, then create a fresh
@@ -2758,6 +2886,42 @@ mod tests {
             keep
         ));
         assert!(!is_removable_snapshot("vesta-restore:apollo", keep));
+    }
+
+    #[test]
+    fn a_failed_rebuilds_snapshot_is_kept_only_when_it_is_the_last_copy() {
+        // The old container still serves the agent -> the fresh snapshot is redundant.
+        assert!(snapshot_is_redundant(ContainerStatus::Running));
+        assert!(snapshot_is_redundant(ContainerStatus::Stopped));
+        // Removal already happened, so the snapshot holds the only copy of the filesystem.
+        assert!(!snapshot_is_redundant(ContainerStatus::NotFound));
+    }
+
+    #[test]
+    fn rebuild_snapshot_tags_split_into_agent_and_timestamp() {
+        assert_eq!(
+            parse_rebuild_snapshot("vesta-rebuild:apollo_1785004456"),
+            Some(("apollo", 1_785_004_456))
+        );
+        // Agent names may contain underscores, so only the last segment is the timestamp.
+        assert_eq!(
+            parse_rebuild_snapshot("vesta-rebuild:ro_shared_7_1785022922"),
+            Some(("ro_shared_7", 1_785_022_922))
+        );
+    }
+
+    #[test]
+    fn only_rebuild_snapshots_are_treated_as_resumable() {
+        // A rename snapshot resumes under a different name, and the rest are not ours to recreate
+        // an agent from.
+        assert_eq!(parse_rebuild_snapshot("vesta-rename:a-to-b_1"), None);
+        assert_eq!(parse_rebuild_snapshot("vesta-restore:apollo"), None);
+        assert_eq!(parse_rebuild_snapshot("ghcr.io/elyxlz/vesta:v0.1.179"), None);
+        assert_eq!(parse_rebuild_snapshot("vesta:local"), None);
+        // Malformed tags must not resolve to an agent named "" or a bogus epoch.
+        assert_eq!(parse_rebuild_snapshot("vesta-rebuild:apollo"), None);
+        assert_eq!(parse_rebuild_snapshot("vesta-rebuild:apollo_latest"), None);
+        assert_eq!(parse_rebuild_snapshot("vesta-rebuild:_1785004456"), None);
     }
 
     // The agent restart policy, as a string for the Docker-gated test helper below. Production
