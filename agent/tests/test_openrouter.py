@@ -3,8 +3,9 @@
 import pytest
 
 import core.config as cfg
-from core.client import build_client_options, resolve_openrouter_max_tokens
+from core.client import build_client_options
 from core.config import ClaudeConfig, OpenRouterConfig
+from core.openrouter_cache import resolve_openrouter_max_tokens
 
 
 def test_config_accepts_openrouter_provider(tmp_path):
@@ -127,11 +128,11 @@ class _ModelSession:
 
 @pytest.mark.anyio
 async def test_openrouter_context_resolver_uses_selected_model_metadata(tmp_path, monkeypatch):
-    import core.client as client_mod
+    import core.openrouter_cache as cache_mod
 
     config = _config_with_memory(tmp_path, provider=_openrouter("vendor/model"))
     response = _ModelResponse(200, {"data": [{"id": "other/model", "context_length": 1}, {"id": "vendor/model", "context_length": 131_072}]})
-    monkeypatch.setattr(client_mod.aiohttp, "ClientSession", lambda: _ModelSession(response))
+    monkeypatch.setattr(cache_mod.aiohttp, "ClientSession", lambda: _ModelSession(response))
     assert await resolve_openrouter_max_tokens(config) == 131_072
 
 
@@ -145,10 +146,10 @@ async def test_openrouter_context_resolver_uses_selected_model_metadata(tmp_path
     ],
 )
 async def test_openrouter_context_resolver_fails_closed_on_bad_metadata(tmp_path, monkeypatch, status, body, match):
-    import core.client as client_mod
+    import core.openrouter_cache as cache_mod
 
     config = _config_with_memory(tmp_path, provider=_openrouter("vendor/model"))
-    monkeypatch.setattr(client_mod.aiohttp, "ClientSession", lambda: _ModelSession(_ModelResponse(status, body)))
+    monkeypatch.setattr(cache_mod.aiohttp, "ClientSession", lambda: _ModelSession(_ModelResponse(status, body)))
     with pytest.raises(RuntimeError, match=match):
         await resolve_openrouter_max_tokens(config)
 

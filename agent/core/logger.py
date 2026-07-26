@@ -179,11 +179,11 @@ def _log(msg: tp.Any, *, prefix: str, level: int = logging.INFO, line_style: str
 
 
 def _system_phase(phase: str, msg: tp.Any, *, level: int = logging.INFO) -> None:
-    _log(msg, prefix=f"[SYSTEM] [{phase}] ", level=level, line_style=_SYSTEM_PHASE_STYLES.get(phase, "green"))
+    _log(msg, prefix=f"[SYSTEM] [{phase}] ", level=level, line_style=_SYSTEM_PHASE_STYLES[phase] if phase in _SYSTEM_PHASE_STYLES else "green")
 
 
 def _agent_phase(phase: str, msg: tp.Any, *, level: int = logging.INFO) -> None:
-    _log(msg, prefix=f"[AGENT] [{phase}] ", level=level, line_style=_AGENT_PHASE_STYLES.get(phase, "magenta"))
+    _log(msg, prefix=f"[AGENT] [{phase}] ", level=level, line_style=_AGENT_PHASE_STYLES[phase] if phase in _AGENT_PHASE_STYLES else "magenta")
 
 
 def _user_phase(phase: str, msg: tp.Any, *, level: int = logging.INFO) -> None:

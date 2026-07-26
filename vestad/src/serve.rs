@@ -2919,7 +2919,16 @@ pub async fn run_server(cfg: ServerConfig) {
         },
     );
     let state = Arc::new(app_state);
-    let mobile_app_handle = tokio::spawn(mobile_app_worker.run());
+    // Mobile delivery is a background worker: losing it costs TestFlight builds, not serving. A
+    // supervisor reports its exit so run_server's select never waits on it, because a branch that
+    // resolved would end the select and stop the shutdown handler from stopping the agents.
+    let mobile_app_task = tokio::spawn(mobile_app_worker.run());
+    tokio::spawn(async move {
+        match mobile_app_task.await {
+            Ok(()) => tracing::error!("mobile app delivery worker exited unexpectedly"),
+            Err(error) => tracing::error!(%error, "mobile app delivery worker failed"),
+        }
+    });
     // Reconcile in the background so the API serves immediately: a rebuild (command/mount change)
     // snapshots each container's filesystem (minutes), and awaiting it would leave vestad unreachable.
     let reconcile_docker = docker.clone();
@@ -3047,10 +3056,6 @@ pub async fn run_server(cfg: ServerConfig) {
         r = http_handle => r.expect("http task panicked"),
         r = tls_handle => r.expect("https task panicked"),
         r = agent_handle => r.expect("agent-gateway https task panicked"),
-        r = mobile_app_handle => match r {
-            Ok(()) => panic!("mobile app delivery worker exited unexpectedly"),
-            Err(error) => panic!("mobile app delivery worker failed: {error}"),
-        },
         () = shutdown_signal() => {
             tracing::info!("shutdown signal received, stopping all agents before exit");
             docker::stop_all_agents(&shutdown_docker).await;
