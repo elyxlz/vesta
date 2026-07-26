@@ -19,10 +19,13 @@ export interface ReauthFrame {
   token: string
 }
 
+// `resync` is true when the socket replays its cached context on reconnect (not a fresh user focus),
+// so vestad never fires the return-to-focus notification on a mere reconnect or a gateway restart.
 export interface ClientContextFrame {
   type: "client_context"
   focused: boolean
   active_agent: string | null
+  resync: boolean
 }
 
 export type ClientFrame = ReauthFrame | ClientContextFrame
@@ -34,8 +37,9 @@ export function reauthFrame(token: string): ReauthFrame {
 export function clientContextFrame(
   focused: boolean,
   activeAgent: string | null,
+  resync: boolean,
 ): ClientContextFrame {
-  return { type: "client_context", focused, active_agent: activeAgent }
+  return { type: "client_context", focused, active_agent: activeAgent, resync }
 }
 
 export function encodeFrame(frame: ClientFrame): string {

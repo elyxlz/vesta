@@ -56,9 +56,10 @@ impl Presence {
         let mut state = self.state.lock().expect("presence mutex");
         let was_present = Self::compute_any_focused(&state.contexts);
         let active_agent = ctx.active_agent.clone();
+        let resync = ctx.resync;
         state.contexts.insert(id, ctx);
         let is_present = Self::compute_any_focused(&state.contexts);
-        self.finish(&mut state, was_present, is_present, active_agent, now)
+        self.finish(&mut state, was_present, is_present, active_agent, resync, now)
     }
 
     pub(crate) fn disconnect(&self, id: ConnId, now: Instant) {
@@ -66,7 +67,7 @@ impl Presence {
         let was_present = Self::compute_any_focused(&state.contexts);
         state.contexts.remove(&id);
         let is_present = Self::compute_any_focused(&state.contexts);
-        let _ = self.finish(&mut state, was_present, is_present, None, now);
+        let _ = self.finish(&mut state, was_present, is_present, None, false, now);
     }
 
     pub(crate) fn any_focused(&self) -> bool {
@@ -89,6 +90,7 @@ impl Presence {
         was_present: bool,
         is_present: bool,
         active_agent: Option<String>,
+        resync: bool,
         now: Instant,
     ) -> Vec<PresenceEvent> {
         let mut events = Vec::new();
@@ -99,7 +101,8 @@ impl Presence {
         }
         // A record that raises the aggregate to present can only be the just-recorded client turning
         // focused; disconnect never raises it, so a false->true edge always means "this client, focused".
-        if !was_present && is_present {
+        // A resync frame (reconnect replay of cached focus) is not a fresh return, so it never notifies.
+        if !was_present && is_present && !resync {
             let long_gap = state
                 .last_present_at
                 .is_none_or(|last| now.duration_since(last) >= PRESENCE_NOTIFY_DEBOUNCE);
@@ -123,7 +126,22 @@ mod tests {
     use tokio::time::Instant;
 
     fn ctx(focused: bool, agent: Option<&str>) -> ClientContext {
-        ClientContext { focused, active_agent: agent.map(str::to_string) }
+        ClientContext { focused, active_agent: agent.map(str::to_string), resync: false }
+    }
+
+    #[test]
+    fn resync_context_does_not_emit_became_present() {
+        let presence = Presence::new();
+        let a = presence.connect();
+        // A reconnect replay (resync) that re-establishes focus is not a fresh return: no notification,
+        // but presence still becomes true so suppression works.
+        let events = presence.record(
+            a,
+            ClientContext { focused: true, active_agent: Some("scout".into()), resync: true },
+            Instant::now(),
+        );
+        assert!(events.is_empty());
+        assert!(presence.any_focused());
     }
 
     #[test]

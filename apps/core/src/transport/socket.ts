@@ -1,7 +1,7 @@
 import { clientContextFrame, encodeFrame, reauthFrame } from "../protocol/frames"
 import { parseServerFrame } from "../protocol/parse"
 import { clientAheadOfGateway, clientBelowMinimum } from "../protocol/release-version"
-import type { ClientContextFrame, ClientFrame, HelloFrame } from "../protocol/frames"
+import type { ClientFrame, HelloFrame } from "../protocol/frames"
 import type { Delta } from "../protocol/deltas"
 import type { Tree } from "../protocol/tree"
 
@@ -53,7 +53,7 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
   let delay = base
   let terminal = false
   let open = false
-  let lastContext: ClientContextFrame | null = null
+  let lastContext: { focused: boolean; activeAgent: string | null } | null = null
 
   const detach = (target: SocketLike): void => {
     target.onopen = null
@@ -133,7 +133,13 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
       if (socket !== current) return
       open = true
       delay = base
-      if (lastContext) current.send(encodeFrame(lastContext))
+      // Replay cached presence on reconnect as a resync (not a fresh focus), so vestad doesn't treat
+      // the reconnect as the user returning.
+      if (lastContext) {
+        current.send(
+          encodeFrame(clientContextFrame(lastContext.focused, lastContext.activeAgent, true)),
+        )
+      }
       callbacks.onStateChange("open")
     }
     current.onmessage = (data) => {
@@ -160,11 +166,12 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
       if (
         lastContext !== null &&
         lastContext.focused === focused &&
-        lastContext.active_agent === activeAgent
+        lastContext.activeAgent === activeAgent
       )
         return
-      lastContext = clientContextFrame(focused, activeAgent)
-      emit(lastContext)
+      lastContext = { focused, activeAgent }
+      // A genuine user-driven report (resync=false): vestad may fire the return-to-focus notification.
+      emit(clientContextFrame(focused, activeAgent, false))
     },
     close: () => {
       terminal = true

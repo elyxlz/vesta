@@ -739,7 +739,7 @@ mod tests {
         let conn = presence.connect();
         presence.record(
             conn,
-            crate::sync::protocol::ClientContext { focused: true, active_agent: None },
+            crate::sync::protocol::ClientContext { focused: true, active_agent: None, resync: false },
             tokio::time::Instant::now(),
         );
         assert!(presence.any_focused());

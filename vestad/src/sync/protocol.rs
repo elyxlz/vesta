@@ -109,11 +109,15 @@ pub(crate) enum ClientFrame {
 
 /// A client's reported context, sent up the `/sync` socket. Extensible: `focused` drives presence
 /// today; future fields (location, etc.) ride the same frame. `active_agent` is the agent whose chat
-/// the user has open (None on roster/settings), used to target the presence notification.
+/// the user has open (None on roster/settings), used to target the presence notification. `resync` is
+/// true when the socket replays its cached context on reconnect (not a fresh user focus), so the
+/// return-to-focus notification never fires on a mere reconnect or a vestad restart.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub(crate) struct ClientContext {
     pub focused: bool,
     pub active_agent: Option<String>,
+    #[serde(default)]
+    pub resync: bool,
 }
 
 /// Build one representative of every `/sync` frame through the real serde path, for the contract
@@ -269,19 +273,20 @@ mod tests {
 
     #[test]
     fn client_context_frame_round_trips() {
+        // resync defaults to false when the field is absent (older clients, additive-safe).
         let parsed: ClientFrame =
             serde_json::from_str(r#"{"type":"client_context","focused":true,"active_agent":"scout"}"#)
                 .expect("parse client_context");
         assert_eq!(
             parsed,
-            ClientFrame::ClientContext(ClientContext { focused: true, active_agent: Some("scout".into()) })
+            ClientFrame::ClientContext(ClientContext { focused: true, active_agent: Some("scout".into()), resync: false })
         );
-        let null_agent: ClientFrame =
-            serde_json::from_str(r#"{"type":"client_context","focused":false,"active_agent":null}"#)
-                .expect("parse client_context null agent");
+        let resync: ClientFrame =
+            serde_json::from_str(r#"{"type":"client_context","focused":false,"active_agent":null,"resync":true}"#)
+                .expect("parse client_context resync");
         assert_eq!(
-            null_agent,
-            ClientFrame::ClientContext(ClientContext { focused: false, active_agent: None })
+            resync,
+            ClientFrame::ClientContext(ClientContext { focused: false, active_agent: None, resync: true })
         );
     }
 
