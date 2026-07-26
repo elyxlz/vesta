@@ -1729,6 +1729,106 @@ async fn list_services_handler(
     Json(serde_json::json!({"services": services}))
 }
 
+// --- Service keys ---
+
+#[derive(Deserialize)]
+pub(crate) struct MintServiceKeyBody {
+    #[serde(default)]
+    pub(crate) label: Option<String>,
+    /// Seconds until expiry. Omitted uses `DEFAULT_KEY_TTL_SECS`.
+    #[serde(default)]
+    pub(crate) ttl_secs: Option<u64>,
+    /// Deliberate opt-out of expiry, for a key handed to a long-lived consumer.
+    #[serde(default)]
+    pub(crate) never_expires: bool,
+}
+
+#[derive(Serialize)]
+pub(crate) struct MintServiceKeyResponse {
+    pub(crate) id: String,
+    /// The secret, returned exactly once: the store keeps only its hash.
+    pub(crate) key: String,
+    pub(crate) expires_at: Option<u64>,
+}
+
+/// When the key stops working. `never_expires` overrides any requested ttl.
+pub(crate) fn mint_expiry(body: &MintServiceKeyBody, now: u64) -> Option<u64> {
+    if body.never_expires {
+        return None;
+    }
+    Some(now + body.ttl_secs.unwrap_or(crate::service_keys::DEFAULT_KEY_TTL_SECS))
+}
+
+/// Refuse to mint for a service that was never registered, so a typo does not silently
+/// produce a key that opens nothing.
+async fn require_registered_service(
+    state: &SharedState,
+    name: &str,
+    service: &str,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    let settings = state.settings.read().await;
+    if settings
+        .services
+        .get(name)
+        .is_some_and(|services| services.contains_key(service))
+    {
+        return Ok(());
+    }
+    Err(err_response(
+        StatusCode::NOT_FOUND,
+        &format!("service '{service}' is not registered for agent '{name}'"),
+    ))
+}
+
+async fn mint_service_key_handler(
+    State(state): State<SharedState>,
+    Path((name, service)): Path<(String, String)>,
+    Json(body): Json<MintServiceKeyBody>,
+) -> Result<Json<MintServiceKeyResponse>, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(&name).map_err(map_docker_err)?;
+    require_registered_service(&state, &name, &service).await?;
+
+    let now = crate::time_utils::now_epoch_secs();
+    let expires_at = mint_expiry(&body, now);
+    let mut store = state.service_keys.write().await;
+    let (info, secret) = store.mint(&name, &service, body.label, expires_at, now);
+    store.prune_expired(now);
+    crate::service_keys::save_store(&store);
+    tracing::info!(agent = %name, service = %service, id = %info.id, expires_at = ?info.expires_at, "service key minted");
+    Ok(Json(MintServiceKeyResponse {
+        id: info.id,
+        key: secret,
+        expires_at: info.expires_at,
+    }))
+}
+
+async fn list_service_keys_handler(
+    State(state): State<SharedState>,
+    Path((name, service)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(&name).map_err(map_docker_err)?;
+    let store = state.service_keys.read().await;
+    let keys = store.list(&name, &service, crate::time_utils::now_epoch_secs());
+    Ok(Json(serde_json::json!({"keys": keys})))
+}
+
+async fn revoke_service_key_handler(
+    State(state): State<SharedState>,
+    Path((name, service, id)): Path<(String, String, String)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(&name).map_err(map_docker_err)?;
+    let mut store = state.service_keys.write().await;
+    if !store.revoke(&name, &service, &id) {
+        return Err(err_response(
+            StatusCode::NOT_FOUND,
+            &format!("no service key '{id}' for '{service}'"),
+        ));
+    }
+    crate::service_keys::save_store(&store);
+    tracing::info!(agent = %name, service = %service, id = %id, "service key revoked");
+    Ok(ok_json())
+}
+
 // --- Backup/Restore ---
 
 /// Build the SSE `error` event a backup/restore stream emits when its pipeline fails,
@@ -2525,6 +2625,24 @@ pub fn build_router(state: SharedState) -> Router {
         ))
         .with_state(state.clone());
 
+    // Service keys: the api key (app) or the agent's own token (self-scoped), so an agent
+    // can mint a key for a service it runs and revoke it later, and never for another agent.
+    let agents_service_keys = Router::new()
+        .route(
+            "/agents/{name}/services/{service}/keys",
+            post(mint_service_key_handler).get(list_service_keys_handler),
+        )
+        .route(
+            "/agents/{name}/services/{service}/keys/{id}",
+            axum::routing::delete(revoke_service_key_handler),
+        )
+        .layer(control_timeout_layer())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_middleware_api_or_agent_token,
+        ))
+        .with_state(state.clone());
+
     // Service listing: read-only, accepts either API key or the agent's token
     let agents_services_read = Router::new()
         .route("/agents/{name}/services", get(list_services_handler))
@@ -2569,6 +2687,7 @@ pub fn build_router(state: SharedState) -> Router {
         .merge(agents_self_stop)
         .merge(agents_self_restart)
         .merge(agents_services)
+        .merge(agents_service_keys)
         .merge(agents_services_read)
         .merge(gateway_logs)
         .merge(agents_proxy)
@@ -3646,6 +3765,46 @@ mod tests {
         let tokens_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../apps/core/fixtures/restart-reason-tokens.json");
         sync_fixture_file(&tokens_path, &format!("{tokens_json}\n"), regen);
+    }
+
+    #[test]
+    fn mint_response_carries_the_secret_and_never_a_hash() {
+        let response = super::MintServiceKeyResponse {
+            id: "abcd1234".into(),
+            key: "f".repeat(64),
+            expires_at: Some(1_800_000_600),
+        };
+        let json = serde_json::to_value(&response).expect("serialize mint response");
+        assert_eq!(json["key"], "f".repeat(64));
+        assert_eq!(json["id"], "abcd1234");
+        assert_eq!(json["expires_at"], 1_800_000_600);
+        assert!(json.get("hash").is_none(), "the hash is never returned");
+    }
+
+    #[test]
+    fn omitting_ttl_uses_the_default_and_never_expires_wins() {
+        let now = 1_800_000_000;
+        let defaulted = super::MintServiceKeyBody {
+            label: None,
+            ttl_secs: None,
+            never_expires: false,
+        };
+        assert_eq!(
+            super::mint_expiry(&defaulted, now),
+            Some(now + crate::service_keys::DEFAULT_KEY_TTL_SECS)
+        );
+        let explicit = super::MintServiceKeyBody {
+            label: None,
+            ttl_secs: Some(600),
+            never_expires: false,
+        };
+        assert_eq!(super::mint_expiry(&explicit, now), Some(now + 600));
+        let forever = super::MintServiceKeyBody {
+            label: None,
+            ttl_secs: Some(600),
+            never_expires: true,
+        };
+        assert_eq!(super::mint_expiry(&forever, now), None);
     }
 }
 

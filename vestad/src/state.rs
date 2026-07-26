@@ -116,6 +116,8 @@ pub struct AppState {
     pub(crate) updating: AtomicBool,
     pub(crate) http_client: reqwest::Client,
     pub(crate) settings: RwLock<Settings>,
+    /// Revocable, per-service credentials the agent proxy accepts for a private service.
+    pub(crate) service_keys: RwLock<crate::service_keys::ServiceKeyStore>,
     pub(crate) mobile_app: mobile_app::MobileApp,
     pub(crate) dev_mode: bool,
     pub(crate) agent_status_cache: Arc<agent_status::AgentStatusCache>,
@@ -179,6 +181,7 @@ impl AppState {
                 updating: AtomicBool::new(false),
                 http_client,
                 settings: RwLock::new(settings),
+                service_keys: RwLock::new(crate::service_keys::load_store()),
                 mobile_app,
                 dev_mode,
                 agent_status_cache: Arc::new(agent_status::AgentStatusCache::new()),
