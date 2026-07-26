@@ -1756,7 +1756,8 @@ pub(crate) fn mint_expiry(body: &MintServiceKeyBody, now: u64) -> Option<u64> {
     if body.never_expires {
         return None;
     }
-    Some(now + body.ttl_secs.unwrap_or(crate::service_keys::DEFAULT_KEY_TTL_SECS))
+    // Saturating: an absurd caller-supplied ttl must not panic in debug or wrap in release.
+    Some(now.saturating_add(body.ttl_secs.unwrap_or(crate::service_keys::DEFAULT_KEY_TTL_SECS)))
 }
 
 /// A minted key must outlive `now`: the store counts `expires_at == now` as already expired, so
@@ -3817,6 +3818,13 @@ mod tests {
             never_expires: true,
         };
         assert_eq!(super::mint_expiry(&forever, now), None);
+        // An absurd ttl saturates instead of panicking in debug or wrapping into the past.
+        let absurd = super::MintServiceKeyBody {
+            label: None,
+            ttl_secs: Some(u64::MAX),
+            never_expires: false,
+        };
+        assert_eq!(super::mint_expiry(&absurd, now), Some(u64::MAX));
     }
 
     #[test]
