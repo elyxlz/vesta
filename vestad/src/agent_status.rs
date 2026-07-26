@@ -553,8 +553,9 @@ struct AgentWsHandle {
     abort_handle: tokio::task::AbortHandle,
 }
 
-/// A change relayed from an agent's WS: its live activity state, or its IANA timezone (sent once
-/// per connect on the snapshot). Multiplexed over one channel so the listener needs no second wire.
+/// A change relayed from an agent's WS: its live activity state, or a value sent once per connect on
+/// the snapshot (its IANA timezone, its presence-notifications toggle). Multiplexed over one channel
+/// so the listener needs no second wire.
 enum AgentUpdate {
     Activity(String),
     Timezone(String),

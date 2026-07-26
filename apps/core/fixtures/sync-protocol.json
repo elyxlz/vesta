@@ -34,6 +34,10 @@
       ],
       "type": "notifications"
     },
+    "presence": {
+      "any_focused": true,
+      "type": "presence"
+    },
     "state": {
       "scope": "gateway",
       "type": "state",

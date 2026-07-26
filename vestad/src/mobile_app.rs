@@ -734,7 +734,7 @@ mod tests {
     }
 
     #[test]
-    fn suppresses_delivery_when_a_client_is_focused() {
+    fn presence_gate_reports_focused_after_a_focused_client_record() {
         let presence = Arc::new(crate::sync::Presence::new());
         let conn = presence.connect();
         presence.record(

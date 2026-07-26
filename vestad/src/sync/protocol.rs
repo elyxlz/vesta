@@ -168,6 +168,7 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
             "user_notification": to_value(Frame::UserNotification {
                 agent: "sample-agent".into(), kind: "message".into(), title: "sample-agent".into(), body: "hello".into(),
             }).expect("serialize user_notification"),
+            "presence": to_value(Frame::Presence { any_focused: true }).expect("serialize presence"),
         }
     })
 }
@@ -240,6 +241,7 @@ mod tests {
             (Frame::AgentRemoved { name: "scout".into() }, "agent_removed"),
             (Frame::Notifications { agent: "scout".into(), pending: vec![] }, "notifications"),
             (Frame::UserNotification { agent: "scout".into(), kind: "message".into(), title: "scout".into(), body: "hi".into() }, "user_notification"),
+            (Frame::Presence { any_focused: true }, "presence"),
         ];
         for (frame, tag) in cases {
             let value = serde_json::to_value(&frame).expect("serialize frame");
