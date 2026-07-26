@@ -36,5 +36,10 @@ export interface UserNotificationDelta {
   body: string
 }
 
+export interface PresenceDelta {
+  type: "presence"
+  anyFocused: boolean
+}
+
 export type Delta =
-  StateDelta | AgentDelta | AgentRemovedDelta | NotificationsDelta | UserNotificationDelta
+  StateDelta | AgentDelta | AgentRemovedDelta | NotificationsDelta | UserNotificationDelta | PresenceDelta

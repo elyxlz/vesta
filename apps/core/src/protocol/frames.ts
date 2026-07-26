@@ -19,10 +19,20 @@ export interface ReauthFrame {
   token: string
 }
 
-export type ClientFrame = ReauthFrame
+export interface ClientContextFrame {
+  type: "client_context"
+  focused: boolean
+  active_agent: string | null
+}
+
+export type ClientFrame = ReauthFrame | ClientContextFrame
 
 export function reauthFrame(token: string): ReauthFrame {
   return { type: "reauth", token }
+}
+
+export function clientContextFrame(focused: boolean, activeAgent: string | null): ClientContextFrame {
+  return { type: "client_context", focused, active_agent: activeAgent }
 }
 
 export function encodeFrame(frame: ClientFrame): string {

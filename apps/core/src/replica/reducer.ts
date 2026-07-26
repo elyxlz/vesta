@@ -28,5 +28,7 @@ export function reduceDelta(tree: Tree, delta: Delta): Tree {
     }
     case "user_notification":
       return tree
+    case "presence":
+      return tree
   }
 }

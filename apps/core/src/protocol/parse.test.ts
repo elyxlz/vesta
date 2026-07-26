@@ -83,6 +83,15 @@ describe("parseServerFrame", () => {
     for (const raw of inputs) expect(parseServerFrame(raw)).toEqual({ kind: "unknown" })
   })
 
+  it("parses a presence frame", () => {
+    const parsed = parseServerFrame(JSON.stringify({ type: "presence", any_focused: true }))
+    expect(parsed).toEqual({ kind: "delta", delta: { type: "presence", anyFocused: true } })
+  })
+
+  it("treats a presence frame without any_focused as unknown", () => {
+    expect(parseServerFrame(JSON.stringify({ type: "presence" }))).toEqual({ kind: "unknown" })
+  })
+
   it("ignores unknown frame and delta types", () => {
     const inputs = [
       JSON.stringify({ type: "future_frame", data: 1 }),
