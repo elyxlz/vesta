@@ -204,7 +204,31 @@ pub(crate) fn has_valid_api_auth(
 /// api key or an access token opens anything; otherwise the request needs a live service
 /// key for exactly this agent and service. A key is never accepted on the raw-agent-port
 /// fallback (`service` is `None`), which is the only path carrying the injected agent
-/// token to the agent's own API.
+/// token to the agent's own API. Pure and total, so the whole table is unit-testable.
+fn authorizes(
+    presented: &[&str],
+    api_key: &str,
+    agent: &str,
+    service_name: &str,
+    service: Option<&crate::settings::ServiceEntry>,
+    keys: &crate::service_keys::ServiceKeyStore,
+    now: u64,
+) -> bool {
+    if service.is_some_and(|entry| entry.public) {
+        return true;
+    }
+    if presented.iter().any(|&token| verify_token(token, api_key)) {
+        return true;
+    }
+    if service.is_none() {
+        return false;
+    }
+    presented
+        .iter()
+        .any(|&token| keys.accepts(agent, service_name, token, now))
+}
+
+/// Read the key store and the clock, then apply `authorizes`.
 pub(crate) async fn proxy_authorized(
     state: &SharedState,
     headers: &HeaderMap,
@@ -213,18 +237,18 @@ pub(crate) async fn proxy_authorized(
     service_name: &str,
     service: Option<&crate::settings::ServiceEntry>,
 ) -> bool {
-    if service.is_some_and(|entry| entry.public) {
-        return true;
-    }
-    if has_valid_api_auth(headers, uri, &state.api_key) {
-        return true;
-    }
-    if service.is_none() {
-        return false;
-    }
+    let presented: Vec<&str> = presented_tokens(headers, uri).collect();
     let now = crate::time_utils::now_epoch_secs();
-    let store = state.service_keys.read().await;
-    presented_tokens(headers, uri).any(|token| store.accepts(agent, service_name, token, now))
+    let keys = state.service_keys.read().await;
+    authorizes(
+        &presented,
+        &state.api_key,
+        agent,
+        service_name,
+        service,
+        &keys,
+        now,
+    )
 }
 
 fn extract_agent_name(path: &str) -> Option<String> {
@@ -609,6 +633,151 @@ mod presented_tokens_tests {
     fn yields_nothing_when_no_credential_is_presented() {
         let uri = Uri::from_static("/agents/alpha/tasks/tasks");
         assert_eq!(presented_tokens(&HeaderMap::new(), &uri).count(), 0);
+    }
+}
+
+/// One row per security claim `authorizes` makes. Each `assert` is a claim that would be an
+/// escalation if it flipped, so the rows are deliberately not collapsed into a loop.
+#[cfg(test)]
+mod authorization_table {
+    use super::{authorizes, presented_tokens};
+    use crate::jwt;
+    use crate::service_keys::ServiceKeyStore;
+    use crate::settings::ServiceEntry;
+    use axum::http::{HeaderMap, HeaderValue, Uri};
+
+    const API_KEY: &str = "the-api-key";
+    const NOW: u64 = 1_800_000_000;
+    const AGENT: &str = "alpha";
+    const SERVICE: &str = "dashboard";
+    const PRIVATE: ServiceEntry = ServiceEntry {
+        port: 9000,
+        public: false,
+    };
+    const PUBLIC: ServiceEntry = ServiceEntry {
+        port: 9001,
+        public: true,
+    };
+
+    /// A store holding one live key for `(alpha, dashboard)`, plus that key's secret.
+    fn store_with_live_key() -> (ServiceKeyStore, String) {
+        let mut store = ServiceKeyStore::default();
+        let (_, secret) = store.mint(AGENT, SERVICE, None, Some(NOW + 600), NOW);
+        (store, secret)
+    }
+
+    /// The decision for a request to the private `(alpha, dashboard)` service.
+    fn opens_private(presented: &[&str], keys: &ServiceKeyStore) -> bool {
+        authorizes(presented, API_KEY, AGENT, SERVICE, Some(&PRIVATE), keys, NOW)
+    }
+
+    #[test]
+    fn a_public_service_opens_with_no_credential_at_all() {
+        let keys = ServiceKeyStore::default();
+        assert!(authorizes(
+            &[],
+            API_KEY,
+            AGENT,
+            SERVICE,
+            Some(&PUBLIC),
+            &keys,
+            NOW
+        ));
+    }
+
+    #[test]
+    fn the_raw_api_key_opens_a_private_registered_service() {
+        let keys = ServiceKeyStore::default();
+        assert!(opens_private(&[API_KEY], &keys));
+    }
+
+    #[test]
+    fn an_access_jwt_opens_a_private_registered_service() {
+        let keys = ServiceKeyStore::default();
+        let access = jwt::create_token(API_KEY, "access", jwt::ACCESS_TOKEN_TTL);
+        assert!(opens_private(&[access.as_str()], &keys));
+    }
+
+    #[test]
+    fn a_live_key_opens_its_own_service_through_the_bearer_header() {
+        let (keys, secret) = store_with_live_key();
+        let mut headers = HeaderMap::new();
+        let value = HeaderValue::from_str(&format!("Bearer {secret}")).expect("ascii header");
+        headers.insert("authorization", value);
+        let uri = Uri::from_static("/agents/alpha/dashboard/");
+        let presented: Vec<&str> = presented_tokens(&headers, &uri).collect();
+        assert!(opens_private(&presented, &keys));
+    }
+
+    #[test]
+    fn a_live_key_opens_its_own_service_through_the_token_query_param() {
+        let (keys, secret) = store_with_live_key();
+        let uri: Uri = format!("/agents/alpha/dashboard/?token={secret}")
+            .parse()
+            .expect("valid uri");
+        let headers = HeaderMap::new();
+        let presented: Vec<&str> = presented_tokens(&headers, &uri).collect();
+        assert!(opens_private(&presented, &keys));
+    }
+
+    #[test]
+    fn a_key_for_another_agent_is_refused() {
+        let (keys, secret) = store_with_live_key();
+        assert!(!authorizes(
+            &[secret.as_str()],
+            API_KEY,
+            "beta",
+            SERVICE,
+            Some(&PRIVATE),
+            &keys,
+            NOW
+        ));
+    }
+
+    #[test]
+    fn a_key_for_another_service_on_the_same_agent_is_refused() {
+        let (keys, secret) = store_with_live_key();
+        assert!(!authorizes(
+            &[secret.as_str()],
+            API_KEY,
+            AGENT,
+            "voice",
+            Some(&PRIVATE),
+            &keys,
+            NOW
+        ));
+    }
+
+    /// No registered service matched, so this is the raw-agent-port fallback, the one path
+    /// that injects `X-Agent-Token` for the agent's own privileged API. A key must not reach
+    /// it, while the api key still must.
+    #[test]
+    fn a_key_is_refused_when_no_registered_service_matched() {
+        let (keys, secret) = store_with_live_key();
+        assert!(!authorizes(
+            &[secret.as_str()],
+            API_KEY,
+            AGENT,
+            SERVICE,
+            None,
+            &keys,
+            NOW
+        ));
+        assert!(authorizes(&[API_KEY], API_KEY, AGENT, SERVICE, None, &keys, NOW));
+    }
+
+    #[test]
+    fn an_expired_key_is_refused() {
+        let mut keys = ServiceKeyStore::default();
+        let (_, secret) = keys.mint(AGENT, SERVICE, None, Some(NOW - 1), NOW);
+        assert!(!opens_private(&[secret.as_str()], &keys));
+    }
+
+    #[test]
+    fn a_bare_request_is_refused_on_a_private_registered_service() {
+        let (keys, _) = store_with_live_key();
+        assert!(!opens_private(&[], &keys));
+        assert!(!opens_private(&["not-a-credential"], &keys));
     }
 }
 
