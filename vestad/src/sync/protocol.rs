@@ -87,6 +87,7 @@ pub(crate) enum Frame {
     AgentRemoved { name: String },
     Notifications { agent: String, pending: Vec<serde_json::Value> },
     UserNotification { agent: String, kind: String, title: String, body: String },
+    Presence { any_focused: bool },
 }
 
 impl Frame {
@@ -103,6 +104,16 @@ impl Frame {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum ClientFrame {
     Reauth { token: String },
+    ClientContext(ClientContext),
+}
+
+/// A client's reported context, sent up the `/sync` socket. Extensible: `focused` drives presence
+/// today; future fields (location, etc.) ride the same frame. `active_agent` is the agent whose chat
+/// the user has open (None on roster/settings), used to target the presence notification.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+pub(crate) struct ClientContext {
+    pub focused: bool,
+    pub active_agent: Option<String>,
 }
 
 /// Build one representative of every `/sync` frame through the real serde path, for the contract
@@ -252,5 +263,30 @@ mod tests {
         assert_eq!(reauth, ClientFrame::Reauth { token: "tok".into() });
         // An unknown client frame is a parse error the handler treats as "ignore".
         assert!(serde_json::from_str::<ClientFrame>(r#"{"type":"future"}"#).is_err());
+    }
+
+    #[test]
+    fn client_context_frame_round_trips() {
+        let parsed: ClientFrame =
+            serde_json::from_str(r#"{"type":"client_context","focused":true,"active_agent":"scout"}"#)
+                .expect("parse client_context");
+        assert_eq!(
+            parsed,
+            ClientFrame::ClientContext(ClientContext { focused: true, active_agent: Some("scout".into()) })
+        );
+        let null_agent: ClientFrame =
+            serde_json::from_str(r#"{"type":"client_context","focused":false,"active_agent":null}"#)
+                .expect("parse client_context null agent");
+        assert_eq!(
+            null_agent,
+            ClientFrame::ClientContext(ClientContext { focused: false, active_agent: None })
+        );
+    }
+
+    #[test]
+    fn presence_frame_uses_its_wire_tag() {
+        let value = serde_json::to_value(Frame::Presence { any_focused: true }).expect("serialize presence");
+        assert_eq!(value["type"], serde_json::json!("presence"));
+        assert_eq!(value["any_focused"], serde_json::json!(true));
     }
 }

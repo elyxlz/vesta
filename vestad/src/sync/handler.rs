@@ -278,6 +278,8 @@ fn handle_client_frame(
                 return ControlFlow::Break(());
             }
         }
+        // Presence consumers land in a later task; the frame parses but is inert for now.
+        ClientFrame::ClientContext(_) => {}
     }
     ControlFlow::Continue(())
 }
