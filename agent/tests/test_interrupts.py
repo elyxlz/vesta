@@ -298,9 +298,9 @@ async def test_attempt_interrupt_timeout_warns_without_sigterm(tmp_path, state, 
 
 @pytest.mark.anyio
 async def test_attempt_interrupt_fires_while_tool_in_flight(tmp_path, state, event_bus):
-    """attempt_interrupt still asks the SDK to interrupt while a tool is executing. The SDK
-    services the request at its next yield point; a timeout no longer SIGTERMs (see issue #737),
-    so there is no reason to suppress the interrupt during tool work."""
+    """attempt_interrupt asks the SDK to interrupt while a tool is executing. The SDK services
+    the request at its next yield point; a timeout does not SIGTERM (see issue #737), so there
+    is no reason to suppress the interrupt during tool work."""
     from core.client import attempt_interrupt
 
     config = cfg.VestaConfig(agent_dir=tmp_path / "agent", interrupt_timeout=0.01)

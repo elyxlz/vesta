@@ -1,6 +1,6 @@
 ---
 name: reduce-loc
-description: Shrink a codebase's line count without changing behavior; dead code, dedup, then architectural simplification. Use when asked to reduce LOC, simplify, or trim a repo.
+description: Shrink a codebase's line count without changing behavior. Use when asked to reduce LOC, simplify, or trim a repo.
 ---
 
 # Reduce LOC

@@ -78,8 +78,8 @@ class NotificationEvent(_BaseEvent):
     # Structured facets for the notifications history view + rule-editor suggestions. `sender` is ""
     # when the source attached no identity field. `decided` is what actually happened given the rules
     # at arrival. `notif_id` is the notification file's stem, used to tell whether it's still pending
-    # (file on disk) or cleared. NotRequired because events predating the enrichment (and any
-    # non-monitor emitter) lack them; readers already tolerate their absence. The production emit in
+    # (file on disk) or cleared. NotRequired because older stored events (and any non-monitor
+    # emitter) lack them; readers already tolerate their absence. The production emit in
     # monitor_loop always supplies them.
     notif_type: tp.NotRequired[str]
     sender: tp.NotRequired[str]

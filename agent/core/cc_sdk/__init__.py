@@ -1,6 +1,6 @@
 """cc_sdk — a tmux-backed reimplementation of the Claude Code agent SDK surface.
 
-Vesta talks to Claude Code through this package exactly as it used to talk to the
+Vesta talks to Claude Code through this package exactly as it talks to the
 official `claude_agent_sdk`: same message/block types, same hook plumbing, same
 MCP-tool registration, same ClaudeSDKClient lifecycle. The difference is entirely
 under the hood — `client.py` runs the real `claude` CLI interactively in tmux and
