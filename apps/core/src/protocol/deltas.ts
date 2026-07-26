@@ -42,4 +42,9 @@ export interface PresenceDelta {
 }
 
 export type Delta =
-  StateDelta | AgentDelta | AgentRemovedDelta | NotificationsDelta | UserNotificationDelta | PresenceDelta
+  | StateDelta
+  | AgentDelta
+  | AgentRemovedDelta
+  | NotificationsDelta
+  | UserNotificationDelta
+  | PresenceDelta

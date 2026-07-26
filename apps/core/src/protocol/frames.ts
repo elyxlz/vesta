@@ -31,7 +31,10 @@ export function reauthFrame(token: string): ReauthFrame {
   return { type: "reauth", token }
 }
 
-export function clientContextFrame(focused: boolean, activeAgent: string | null): ClientContextFrame {
+export function clientContextFrame(
+  focused: boolean,
+  activeAgent: string | null,
+): ClientContextFrame {
   return { type: "client_context", focused, active_agent: activeAgent }
 }
 

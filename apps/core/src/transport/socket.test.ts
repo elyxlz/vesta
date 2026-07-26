@@ -156,7 +156,9 @@ describe("createSyncSocket", () => {
     const socket = start(h)
     h.sockets[0]?.onopen?.()
     socket.reportPresence(true, "scout")
-    expect(h.sockets[0]?.sent).toContainEqual(JSON.stringify({ type: "client_context", focused: true, active_agent: "scout" }))
+    expect(h.sockets[0]?.sent).toContainEqual(
+      JSON.stringify({ type: "client_context", focused: true, active_agent: "scout" }),
+    )
   })
 
   it("re-sends the last context on reconnect", () => {
@@ -167,7 +169,9 @@ describe("createSyncSocket", () => {
     h.sockets[0]?.onclose?.()
     h.advanceTimers()
     h.sockets[1]?.onopen?.()
-    expect(h.sockets[1]?.sent).toContainEqual(JSON.stringify({ type: "client_context", focused: true, active_agent: null }))
+    expect(h.sockets[1]?.sent).toContainEqual(
+      JSON.stringify({ type: "client_context", focused: true, active_agent: null }),
+    )
   })
 
   it("does not reconnect after close", () => {
