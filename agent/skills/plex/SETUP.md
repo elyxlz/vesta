@@ -6,9 +6,9 @@ The CLI needs the Plex server address and an auth token.
 
 The base URL of the Plex Media Server, including port. Examples:
 - Local network: `http://192.168.1.50:32400`
-- Same host as this container: `http://host.docker.internal:32400` (the agent no longer
-  shares the host's network namespace, so `localhost` does not reach a Plex instance
-  running on the same physical machine; `host.docker.internal` does)
+- Same host as this container: `http://host.docker.internal:32400` (this container has its
+  own network namespace, so `localhost` points at the container itself;
+  `host.docker.internal` is what reaches a Plex running on the physical machine)
 - Remote/DNS: `https://plex.yourdomain.com`
 
 ## 2. PLEX_TOKEN

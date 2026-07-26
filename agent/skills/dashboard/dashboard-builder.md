@@ -72,7 +72,7 @@ Subagent (general-purpose):
     STATUS=$(~/agent/skills/dashboard/scripts/daemon status); echo "$STATUS"
     PORT=$(echo "$STATUS" | python3 -c 'import sys, json; print(json.load(sys.stdin)["port"])')
     curl -s "http://localhost:$PORT/" | head -50 | grep -q '<div id="root"' || echo "ERROR: dashboard failed to load, check the build output"
-    curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services/dashboard/invalidate -H "X-Agent-Token: $AGENT_TOKEN"
+    curl -sk -X POST https://$VESTAD_HOST:$VESTAD_PORT/agents/$AGENT_NAME/services/dashboard/invalidate -H "X-Agent-Token: $AGENT_TOKEN"
     ```
 
     Do NOT pass `--base` to vite preview: the proxy strips the prefix, so assets would 404. If the

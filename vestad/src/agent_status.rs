@@ -122,20 +122,10 @@ async fn combined_status(
     match info.status {
         docker::ContainerStatus::Running => {
             let agent_name = docker::name_from_cname(cname);
-            // The one-time resolve right after start (`start_container_and_report_ip`) can race
-            // Docker's own network-attachment visibility and miss; a bare cache read would then
-            // never retry and this agent would report Starting forever. Try a live resolve on a
-            // cache miss instead, same as reconcile's post-boot sweep -- cheap (this poll already
-            // does one `inspect_container` per agent) and self-healing within one ~3s tick.
-            let host = match cache.bridge_ip(&agent_name) {
-                Some(host) => host,
-                None => match docker::resolve_bridge_ip(docker, cname, &agent_name).await {
-                    Some(ip) => {
-                        cache.set_bridge_ip(&agent_name, ip.clone());
-                        ip
-                    }
-                    None => return docker::AgentStatus::Starting,
-                },
+            // Unresolved right after a start/create races the caller (see
+            // AgentStatusCache::bridge_ip_or_resolve); the next ~3s poll retries.
+            let Some(host) = cache.bridge_ip_or_resolve(docker, cname, &agent_name).await else {
+                return docker::AgentStatus::Starting;
             };
             // WS port not yet bound → agent still booting.
             if !info.port.is_some_and(|port| is_agent_ready(&host, port)) {
@@ -219,9 +209,9 @@ pub struct AgentStatusCache {
     /// phase even before the container exists (Pulling/Building run first). Entries exist only for
     /// the duration of a create and are removed when it settles.
     build_phases: Mutex<HashMap<String, docker::BuildPhase>>,
-    /// Each agent's private bridge-network IP, resolved after container start/recreate.
-    /// `agent_proxy.rs` and the WS tap dial this instead of `localhost` now that agents no
-    /// longer share the host's network namespace.
+    /// Each agent's address on its own private bridge network. Cached because the proxy needs
+    /// it per request and a live Docker lookup there would cost a round trip each time; the WS
+    /// tap and the config/provider relay read it too.
     bridge_ips: Mutex<HashMap<String, String>>,
     /// In-flight long-running operation per agent, keyed by normalized name. Written by the backup
     /// and restore handlers for the duration of the work, so every connected client sees it and not
@@ -374,8 +364,9 @@ impl AgentStatusCache {
             .clone()
     }
 
-    /// Record the resolved bridge IP for `agent`, replacing any prior value.
-    pub fn set_bridge_ip(&self, agent: &str, ip: String) {
+    /// Record the resolved bridge IP for `agent`, replacing any prior value. Private: the cache
+    /// fills itself in `bridge_ip_or_resolve`, so no caller needs to push an address in.
+    fn set_bridge_ip(&self, agent: &str, ip: String) {
         self.bridge_ips
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -398,6 +389,24 @@ impl AgentStatusCache {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(agent);
+    }
+
+    /// The agent's bridge IP: cached if already resolved, otherwise a live Docker resolve that
+    /// populates the cache on success. Every caller that needs this address hits the same narrow
+    /// race (a request landing between container start and the one-shot resolve that follows
+    /// it), so they share one retry policy here instead of each inventing its own.
+    pub async fn bridge_ip_or_resolve(
+        &self,
+        docker: &Docker,
+        cname: &str,
+        agent: &str,
+    ) -> Option<String> {
+        if let Some(ip) = self.bridge_ip(agent) {
+            return Some(ip);
+        }
+        let ip = docker::resolve_bridge_ip(docker, cname, agent).await?;
+        self.set_bridge_ip(agent, ip.clone());
+        Some(ip)
     }
 }
 
@@ -572,9 +581,8 @@ async fn agent_event_listener(
         .ok()
         .flatten();
 
-        // Read fresh each attempt too: a self-healing retry if the container was recreated (a
-        // rebuild, a network reattach) between connect attempts, agents no longer sharing the
-        // host's network namespace to fall back on.
+        // Read fresh each attempt: a container recreated between attempts (a rebuild, a network
+        // reattach) comes back on a different address, and this loop is what picks it up.
         let Some(host) = cache.bridge_ip(&name) else {
             tracing::debug!(agent = %name, "bridge IP not yet resolved; will retry");
             tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;

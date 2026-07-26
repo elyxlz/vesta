@@ -517,11 +517,9 @@ async fn create_and_start(
         .map_err(map_docker_err)?;
 
     progress.set(docker::BuildPhase::Starting);
-    docker::start_agent(&state.docker, &name, None, &|n, ip| {
-        state.agent_status_cache.set_bridge_ip(n, ip);
-    })
-    .await
-    .map_err(map_docker_err)?;
+    docker::start_agent(&state.docker, &name, None)
+        .await
+        .map_err(map_docker_err)?;
 
     Ok(name)
 }
@@ -560,22 +558,14 @@ async fn start_agent_handler(
             .user_desired = UserDesired::Running;
         save_settings(&settings);
     }
-    docker::start_agent(
-        &state.docker,
-        &name,
-        Some(&crate::lifecycle::MANUAL_START),
-        &|n, ip| state.agent_status_cache.set_bridge_ip(n, ip),
-    )
-    .await
-    .map_err(map_docker_err)?;
+    docker::start_agent(&state.docker, &name, Some(&crate::lifecycle::MANUAL_START))
+        .await
+        .map_err(map_docker_err)?;
     Ok(ok_json())
 }
 
 async fn start_all_handler(State(state): State<SharedState>) -> impl IntoResponse {
-    let results = docker::start_all_agents(&state.docker, &|n, ip| {
-        state.agent_status_cache.set_bridge_ip(n, ip);
-    })
-    .await;
+    let results = docker::start_all_agents(&state.docker).await;
 
     // Starting all agents is an explicit "everything should run" — record it so boot-start agrees
     // (otherwise an agent the user had stopped comes up now but goes back down on the next reboot).
@@ -705,7 +695,6 @@ async fn restart_agent_handler(
             &user_mounts,
             reason,
             &state.rebuilding,
-            &|n, ip| state.agent_status_cache.set_bridge_ip(n, ip),
         )
         .await
         .map_err(map_docker_err)?;
@@ -789,6 +778,9 @@ async fn rename_agent_handler(
 
     // Repos are keyed by agent name, so carry the backup history across the rename.
     crate::restic::rename_repo(&name, &new_name).map_err(map_docker_err)?;
+    // The old name's network is gone with the rename; drop its cached address so nothing keeps
+    // dialing it (the new name's fills in when it starts, below).
+    state.agent_status_cache.clear_bridge_ip(&name);
 
     {
         let mut settings = state.settings.write().await;
@@ -808,11 +800,9 @@ async fn rename_agent_handler(
         tracing::warn!(old = %name, new = %new_name, error = %e, "failed to drop rename notification");
     }
 
-    docker::start_agent(&state.docker, &new_name, None, &|n, ip| {
-        state.agent_status_cache.set_bridge_ip(n, ip);
-    })
-    .await
-    .map_err(map_docker_err)?;
+    docker::start_agent(&state.docker, &new_name, None)
+        .await
+        .map_err(map_docker_err)?;
 
     Ok(Json(serde_json::json!({"name": new_name})))
 }
@@ -907,20 +897,12 @@ async fn write_to_agent(
             &state.docker,
             name,
             Some(&crate::lifecycle::CONFIG_WRITE_START),
-            &|n, ip| state.agent_status_cache.set_bridge_ip(n, ip),
         )
         .await
         .map_err(map_docker_err)?;
     }
 
-    let host = agent_bridge_host(state, name)?;
-    let provider = agent_provider::AgentProvider::new(
-        &state.http_client,
-        &state.env_config.agents_dir,
-        name,
-        host,
-    );
-
+    let provider = agent_provider_for(state, name).await?;
     let forwarded = match write {
         AgentWrite::Config(body) => provider.put_config(&body).await,
         AgentWrite::Provider(body) => provider.put_provider(&body).await,
@@ -933,18 +915,28 @@ async fn write_to_agent(
     ))
 }
 
-/// The agent's bridge-network IP, or `SERVICE_UNAVAILABLE` if it hasn't resolved yet (races a
-/// just-issued start/create; the cache fills in shortly after, same as `agent_proxy_handler`).
-fn agent_bridge_host(
-    state: &SharedState,
-    name: &str,
-) -> Result<String, (StatusCode, Json<serde_json::Value>)> {
-    state.agent_status_cache.bridge_ip(name).ok_or_else(|| {
-        err_response(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "agent's network address not yet resolved -- retry shortly",
-        )
-    })
+/// `AgentProvider` for `name`, or `SERVICE_UNAVAILABLE` if its bridge IP hasn't resolved yet
+/// (races a just-issued start/create; see `AgentStatusCache::bridge_ip_or_resolve`).
+async fn agent_provider_for<'a>(
+    state: &'a SharedState,
+    name: &'a str,
+) -> Result<agent_provider::AgentProvider<'a>, (StatusCode, Json<serde_json::Value>)> {
+    let host = state
+        .agent_status_cache
+        .bridge_ip_or_resolve(&state.docker, &docker::container_name(name), name)
+        .await
+        .ok_or_else(|| {
+            err_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "agent's network address not yet resolved -- retry shortly",
+            )
+        })?;
+    Ok(agent_provider::AgentProvider::new(
+        &state.http_client,
+        &state.env_config.agents_dir,
+        name,
+        host,
+    ))
 }
 
 /// Relay the agent's `GET /config` (prefs; the agent owns it, vestad proxies it to the app).
@@ -953,13 +945,7 @@ async fn get_config_handler(
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     docker::validate_name(&name).map_err(map_docker_err)?;
-    let host = agent_bridge_host(&state, &name)?;
-    let provider = agent_provider::AgentProvider::new(
-        &state.http_client,
-        &state.env_config.agents_dir,
-        &name,
-        host,
-    );
+    let provider = agent_provider_for(&state, &name).await?;
     provider
         .get_config()
         .await
@@ -982,13 +968,7 @@ async fn get_provider_handler(
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     docker::validate_name(&name).map_err(map_docker_err)?;
-    let host = agent_bridge_host(&state, &name)?;
-    let provider = agent_provider::AgentProvider::new(
-        &state.http_client,
-        &state.env_config.agents_dir,
-        &name,
-        host,
-    );
+    let provider = agent_provider_for(&state, &name).await?;
     provider
         .get_provider()
         .await
@@ -1592,9 +1572,9 @@ fn no_free_ports_err() -> (StatusCode, Json<serde_json::Value>) {
 }
 
 /// Find a free port for `agent`'s own services, scanning only that agent's currently
-/// registered set. vestad can no longer test bindability inside a different agent's own
-/// network namespace (each has its own now; see `ensure_agent_network`), so this is pure
-/// bookkeeping over a small in-memory set; the caller's own `bind()` is the real check.
+/// registered set. Each agent has its own network namespace (see `ensure_agent_network`), so
+/// vestad cannot test bindability inside one: this is pure bookkeeping over a small in-memory
+/// set, and the caller's own `bind()` is the real check.
 /// Prefers ports above the kernel's ephemeral range, since the kernel can reuse one as an
 /// outbound source port between allocation and the caller's bind, producing a spurious
 /// `EADDRINUSE` -- a single-host risk, unrelated to multi-tenancy.
@@ -2945,7 +2925,6 @@ pub async fn run_server(cfg: ServerConfig) {
     let reconcile_docker = docker.clone();
     let reconcile_env = state.env_config.clone();
     let reconcile_rebuilding = state.rebuilding.clone();
-    let reconcile_status_cache = state.agent_status_cache.clone();
     tokio::spawn(async move {
         Box::pin(docker::reconcile_containers(
             &reconcile_docker,
@@ -2963,16 +2942,31 @@ pub async fn run_server(cfg: ServerConfig) {
             // (or via a later agent restart) is reflected without needing a fresh vestad boot.
             &|name| load_settings().agent_mounts(name),
             &reconcile_rebuilding,
-            &|name, ip| reconcile_status_cache.set_bridge_ip(name, ip),
         ))
         .await;
     });
+    // Each agent has its own bridge network, so its calls into vestad (register-service,
+    // user-notification, health) cannot reach the loopback bind below; they dial `VESTAD_HOST`
+    // (host.docker.internal), which resolves to the docker bridge gateway. Bind there too so
+    // agent containers always have a reachable address for vestad, independent of
+    // `--expose-lan` (which stays scoped to real LAN devices reaching vestad, a separate
+    // concern). Skipped when `expose_lan` is set: the wildcard bind below already covers the
+    // gateway address too, so binding it a second time on the same port would conflict.
+    // Resolved here, before `docker` moves into spawn_agent_status_task below.
+    let agent_addr = if expose_lan {
+        None
+    } else {
+        let gateway = docker::resolve_docker_bridge_gateway(&docker)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::error!(error = %e, "failed to resolve the docker bridge gateway — aborting startup");
+                std::process::exit(1);
+            });
+        Some(std::net::SocketAddr::from((gateway, port)))
+    };
     // Keep a docker handle for the shutdown hook: vestad stops every agent when it exits, so a
     // vestad update/restart hands off with nothing running on a stale container.
     let shutdown_docker = docker.clone();
-    // ...and one more to resolve the docker bridge gateway address below, before `docker` moves
-    // into spawn_agent_status_task.
-    let gateway_docker = docker.clone();
     agent_status::spawn_agent_status_task(agent_status::AgentStatusTaskDeps {
         cache: state.agent_status_cache.clone(),
         docker,
@@ -3012,26 +3006,6 @@ pub async fn run_server(cfg: ServerConfig) {
         std::net::Ipv4Addr::LOCALHOST
     };
     let https_addr = std::net::SocketAddr::from((https_bind_addr, port));
-
-    // Agents no longer share the host's network namespace (per-agent bridge networks), so their
-    // calls into vestad (register-service, user-notification, health) can't reach the loopback
-    // bind above; they dial `VESTAD_HOST` (host.docker.internal), which resolves to the docker
-    // bridge gateway. Bind there too so agent containers can always reach vestad, independent of
-    // `--expose-lan` (which stays scoped to real LAN devices reaching vestad, a separate
-    // concern). Skipped when `expose_lan` is set: `https_addr` above is already the wildcard
-    // address, which covers the gateway address too, so binding it a second time on the same
-    // port would conflict.
-    let agent_addr = if expose_lan {
-        None
-    } else {
-        let gateway = docker::resolve_docker_bridge_gateway(&gateway_docker)
-            .await
-            .unwrap_or_else(|e| {
-                tracing::error!(error = %e, "failed to resolve the docker bridge gateway — aborting startup");
-                std::process::exit(1);
-            });
-        Some(std::net::SocketAddr::from((gateway, port)))
-    };
 
     tracing::info!(port, %https_bind_addr, "https listening");
     tracing::info!(http_port = port + 1, "http listening on 127.0.0.1");
@@ -3355,7 +3329,7 @@ mod tests {
         let empty: HashMap<String, HashMap<String, ServiceEntry>> = HashMap::new();
         let first_choice = allocate_service_port(&empty, "agent-b").expect("allocate");
 
-        // Two agents no longer share a port space (each gets its own network namespace), so
+        // Each agent gets its own network namespace, so two agents share no port space:
         // agent-a registering that exact port must not exclude it for agent-b.
         let mut registry: HashMap<String, HashMap<String, ServiceEntry>> = HashMap::new();
         registry.entry("agent-a".into()).or_default().insert(
@@ -3395,9 +3369,9 @@ mod tests {
         );
     }
 
-    // vestad's own process can no longer meaningfully probe bindability inside a different
-    // agent's network namespace (each agent has its own now), so an existing registration is
-    // always reused: no liveness check, no bind probe. The caller's own bind() is the only
+    // vestad cannot probe bindability inside an agent's network namespace, since each agent has
+    // its own, so an existing registration is always reused: no liveness check, no bind probe.
+    // The caller's own bind() is the only
     // real check, same as it is for every service. Replays register_service_handler's port
     // decision, which is now this simple.
     #[test]

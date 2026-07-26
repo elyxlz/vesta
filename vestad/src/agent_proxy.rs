@@ -42,8 +42,7 @@ async fn wait_for_upstream(host: &str, port: u16, timeout: Duration) {
     }
 }
 
-/// Build the URL the proxy dials on the agent's own network: no longer always `localhost` now
-/// that agents each have their own bridge IP.
+/// Build the URL the proxy dials: `host` is the agent's own address on its bridge network.
 fn build_target_url(scheme: &str, host: &str, port: u16, path: &str) -> String {
     format!("{scheme}://{host}:{port}{path}")
 }
@@ -105,15 +104,17 @@ pub async fn agent_proxy_handler(
             "agent has no port — check the agent's .env file in ~/.config/vesta/vestad/agents/",
         )
     })?;
-    // Agents no longer share the host's network namespace, so the proxy dials this instead of
-    // localhost. Unresolved right after a start/create races the caller; ask them to retry
-    // rather than fail hard (the bridge-IP cache fills in shortly after the container starts).
-    let target_host = state.agent_status_cache.bridge_ip(&name).ok_or_else(|| {
-        err_response(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "agent's network address not yet resolved — retry shortly",
-        )
-    })?;
+    // The agent answers on its own bridge network (see AgentStatusCache::bridge_ip_or_resolve).
+    let target_host = state
+        .agent_status_cache
+        .bridge_ip_or_resolve(&state.docker, &cname, &name)
+        .await
+        .ok_or_else(|| {
+            err_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "agent's network address not yet resolved -- retry shortly",
+            )
+        })?;
 
     let (first_segment, service_subpath) = split_service_subpath(&path);
     let resolved = if first_segment.is_empty() {

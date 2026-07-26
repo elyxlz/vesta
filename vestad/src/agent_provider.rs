@@ -43,8 +43,8 @@ pub struct AgentProvider<'a> {
     http_client: &'a reqwest::Client,
     agents_dir: &'a Path,
     name: String,
-    /// The agent's bridge-network IP (see `AgentStatusCache::bridge_ip`): agents no longer
-    /// share the host's network namespace, so this dials that instead of `localhost`.
+    /// The agent's address on its own bridge network (see `AgentStatusCache::bridge_ip`),
+    /// which is where its API answers: each agent has its own network namespace.
     host: String,
 }
 

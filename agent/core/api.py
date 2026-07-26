@@ -433,11 +433,10 @@ async def start_ws_server(
     config: VestaConfig,
     state: State | None = None,
     *,
-    # The container runs on its own Docker bridge network now, not the host's network
-    # namespace, so vestad's proxy reaches this server via that bridge IP, not loopback.
-    # Binding every interface exposes it only within the agent's own isolated network
-    # (vestad and this container are the only members); AGENT_TOKEN auth (_auth_middleware)
-    # is the real gate, same as it already is for the loopback bind this replaces.
+    # This container has its own Docker bridge network, and vestad's proxy reaches this
+    # server at the container's address on it, so loopback would be unreachable. Binding
+    # every interface exposes it only within that network, whose sole members are vestad
+    # and this container; AGENT_TOKEN auth (_auth_middleware) is the real gate.
     host: str = "0.0.0.0",
 ) -> web.AppRunner:
     app = web.Application(middlewares=[_auth_middleware])
