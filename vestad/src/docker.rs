@@ -1375,15 +1375,12 @@ async fn rebuild_snapshots_by_agent(docker: &Docker) -> HashMap<String, Vec<(u64
 }
 
 /// Finish rebuilds that died between removing the old container and creating the new one. The
-/// snapshot is that agent's only filesystem at this point, and reconcile discovers agents by
-/// listing containers, so without this the agent is invisible to every later boot and its
-/// multi-GB snapshot is stranded for good.
+/// snapshot is that agent's only filesystem then, and reconcile discovers agents by listing
+/// containers, so without this the agent is invisible to every later boot.
 ///
-/// A snapshot tag carries no user, and one host runs agents for several (`container_name` prefixes
-/// each with `current_user`). So a tag is only ever acted on when this user's env file for that
-/// agent exists, which both proves the agent is ours and that it is still wanted. Anything else is
-/// left strictly alone: absence of evidence here means another user's agent, not a dead one, and
-/// deleting a snapshot in use destroys the container that runs on it.
+/// A tag carries no user and one host runs agents for several, so a missing env file means "not
+/// mine", never "dead": unattributed snapshots are skipped, since force-removing a tag whose image
+/// backs a live container destroys it.
 async fn resume_interrupted_rebuilds(
     docker: &Docker,
     env_config: &AgentEnvConfig,
