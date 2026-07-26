@@ -1,20 +1,21 @@
 ---
 name: vesta-prompt-guide
 description: >
-  Use when writing or reviewing anything the Vesta agent itself reads: a SKILL.md body, the setup and
-  reference docs it points at, comments and docstrings in a skill's own CLI code, agent/core/prompts/**,
-  agent/MEMORY.md, or the agent's system prompt. TRIGGER when the user says "skill", "prompt", "system
-  prompt", "agent instructions", "agent behavior", or "prompt engineering" about what the agent reads.
+  Use when writing or reviewing anything under agent/, all of which the Vesta agent reads, runs, or
+  edits: a SKILL.md body, the docs it points at, the CLI code and scripts under a skill, the engine,
+  agent/core/prompts/**, agent/MEMORY.md, or the system prompt. TRIGGER when the user says "skill",
+  "prompt", "system prompt", "agent instructions", "agent behavior", or "prompt engineering", or edits
+  any file under agent/.
 ---
 
 # Vesta Prompt Engineering Guide
 
-This guide covers everything the agent reads: `agent/core/prompts/**`, `agent/MEMORY.md`, the
-system prompt, and all of `agent/skills/**`. A skill is not just its `SKILL.md`; the agent reads
-and edits the CLI code under it, so comments and docstrings in that code are in scope too.
+This guide covers everything under `agent/`, all of which the agent reads, runs, or edits:
+`agent/MEMORY.md`, `agent/core/prompts/**`, the system prompt, every skill, the CLI code and
+scripts under those skills, and the engine itself, which the agent can read even though it
+cannot edit it. Comments and docstrings in that code are as agent-facing as a `SKILL.md` body.
 
-Out of scope: the engine (`agent/core/*.py`), `vestad/`, and repo docs such as CLAUDE.md. Those
-are read by developers rather than the agent, and the rules differ.
+Out of scope: `vestad/`, `apps/`, and repo docs such as CLAUDE.md, which only developers read.
 
 Before making any changes to that text, you MUST first fetch and review the official Claude Code
 prompting guides to ensure best practices are followed.
