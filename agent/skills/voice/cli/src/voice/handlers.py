@@ -20,15 +20,16 @@ DATA_DIR = pl.Path.home() / ".voice"
 _PENDING_TTS: tts_pending.PendingStore = {}
 
 _VESTAD_PORT = os.environ.get("VESTAD_PORT", "")
+_VESTAD_HOST = os.environ.get("VESTAD_HOST", "")
 _AGENT_NAME = os.environ.get("AGENT_NAME", "")
 _AGENT_TOKEN = os.environ.get("AGENT_TOKEN", "")
 
 
 async def _notify_invalidation(scope: str) -> None:
     """Fire-and-forget POST to vestad to invalidate the voice service."""
-    if not _VESTAD_PORT or not _AGENT_NAME:
+    if not _VESTAD_PORT or not _VESTAD_HOST or not _AGENT_NAME:
         return
-    url = f"https://localhost:{_VESTAD_PORT}/agents/{_AGENT_NAME}/services/voice/invalidate"
+    url = f"https://{_VESTAD_HOST}:{_VESTAD_PORT}/agents/{_AGENT_NAME}/services/voice/invalidate"
     ssl_ctx = ssl.create_default_context()
     ssl_ctx.check_hostname = False
     ssl_ctx.verify_mode = ssl.CERT_NONE

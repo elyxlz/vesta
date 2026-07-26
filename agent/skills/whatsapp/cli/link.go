@@ -64,22 +64,23 @@ func linkPageURL(tunnel, agentName, serviceName string, port int) string {
 	return fmt.Sprintf("http://localhost:%d/", port)
 }
 
-// registerVestadService registers a public service with vestad over the
-// loopback (agent-token auth, self-signed TLS so verification is skipped, same
-// trust model as the vestad skill's register-service curl -k) and returns the
-// assigned port. Idempotent on vestad's side: same name, same port.
+// registerVestadService registers a public service with vestad (agent-token
+// auth, self-signed TLS so verification is skipped, same trust model as the
+// vestad skill's register-service curl -k) and returns the assigned port.
+// Idempotent on vestad's side: same name, same port.
 func registerVestadService(name string, requireBindable bool) (int, error) {
 	vestadPort := os.Getenv("VESTAD_PORT")
+	vestadHost := os.Getenv("VESTAD_HOST")
 	agentName := os.Getenv("AGENT_NAME")
 	agentToken := os.Getenv("AGENT_TOKEN")
-	if vestadPort == "" || agentName == "" || agentToken == "" {
-		return 0, fmt.Errorf("VESTAD_PORT/AGENT_NAME/AGENT_TOKEN not set (not on a vesta box?); pass --port and expose it yourself")
+	if vestadPort == "" || vestadHost == "" || agentName == "" || agentToken == "" {
+		return 0, fmt.Errorf("VESTAD_PORT/VESTAD_HOST/AGENT_NAME/AGENT_TOKEN not set (not on a vesta box?); pass --port and expose it yourself")
 	}
 	client := &http.Client{
 		Timeout:   vestadRequestTimeout,
 		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
 	}
-	url := fmt.Sprintf("https://localhost:%s/agents/%s/services", vestadPort, agentName)
+	url := fmt.Sprintf("https://%s:%s/agents/%s/services", vestadHost, vestadPort, agentName)
 	body := fmt.Sprintf(`{"name":%q,"public":true,"require_bindable":%t}`, name, requireBindable)
 	req, err := http.NewRequest("POST", url, strings.NewReader(body))
 	if err != nil {
@@ -103,9 +104,10 @@ func registerVestadService(name string, requireBindable bool) (int, error) {
 
 func unregisterVestadService(name string, expectedPort int) error {
 	vestadPort := os.Getenv("VESTAD_PORT")
+	vestadHost := os.Getenv("VESTAD_HOST")
 	agentName := os.Getenv("AGENT_NAME")
 	agentToken := os.Getenv("AGENT_TOKEN")
-	if vestadPort == "" || agentName == "" || agentToken == "" {
+	if vestadPort == "" || vestadHost == "" || agentName == "" || agentToken == "" {
 		return nil
 	}
 	client := &http.Client{
@@ -113,7 +115,8 @@ func unregisterVestadService(name string, expectedPort int) error {
 		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
 	}
 	endpoint := fmt.Sprintf(
-		"https://localhost:%s/agents/%s/services/%s/registrations/%d",
+		"https://%s:%s/agents/%s/services/%s/registrations/%d",
+		vestadHost,
 		vestadPort,
 		agentName,
 		name,

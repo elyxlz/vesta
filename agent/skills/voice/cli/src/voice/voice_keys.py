@@ -33,11 +33,12 @@ from . import daemon, providers
 def _notify_invalidation(scope: str) -> None:
     """Best-effort POST to vestad to invalidate the voice service."""
     vestad_port = os.environ.get("VESTAD_PORT", "")
+    vestad_host = os.environ.get("VESTAD_HOST", "")
     agent_name = os.environ.get("AGENT_NAME", "")
     agent_token = os.environ.get("AGENT_TOKEN", "")
-    if not vestad_port or not agent_name:
+    if not vestad_port or not vestad_host or not agent_name:
         return
-    url = f"https://localhost:{vestad_port}/agents/{agent_name}/services/voice/invalidate"
+    url = f"https://{vestad_host}:{vestad_port}/agents/{agent_name}/services/voice/invalidate"
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE

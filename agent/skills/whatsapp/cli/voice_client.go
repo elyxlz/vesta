@@ -26,8 +26,8 @@ const (
 	sttSendQueue        = 64 // peer frames buffered between the meowcaller sink and the STT socket
 )
 
-// insecureVestadClient talks to vestad over its self-signed loopback TLS (fingerprint-pinned
-// elsewhere; here the host is always localhost), so certificate verification is skipped by design.
+// insecureVestadClient talks to vestad over its self-signed TLS (fingerprint-pinned
+// elsewhere), so certificate verification is skipped by design.
 func insecureVestadClient(timeout time.Duration) *http.Client {
 	return &http.Client{
 		Timeout:   timeout,
@@ -42,13 +42,14 @@ func insecureVestadClient(timeout time.Duration) *http.Client {
 // here would make resolving a port silently rewrite the service's exposure.
 func resolveVoiceBaseURL(ctx context.Context) (string, error) {
 	vestadPort := os.Getenv("VESTAD_PORT")
+	vestadHost := os.Getenv("VESTAD_HOST")
 	agentName := os.Getenv("AGENT_NAME")
 	agentToken := os.Getenv("AGENT_TOKEN")
-	if vestadPort == "" || agentName == "" || agentToken == "" {
-		return "", fmt.Errorf("cannot reach the voice backend: identity env (VESTAD_PORT/AGENT_NAME/AGENT_TOKEN) is not set")
+	if vestadPort == "" || vestadHost == "" || agentName == "" || agentToken == "" {
+		return "", fmt.Errorf("cannot reach the voice backend: identity env (VESTAD_PORT/VESTAD_HOST/AGENT_NAME/AGENT_TOKEN) is not set")
 	}
 
-	url := fmt.Sprintf("https://localhost:%s/agents/%s/services", vestadPort, agentName)
+	url := fmt.Sprintf("https://%s:%s/agents/%s/services", vestadHost, vestadPort, agentName)
 	reqBody := strings.NewReader(`{"name":"voice"}`)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, reqBody)
 	if err != nil {

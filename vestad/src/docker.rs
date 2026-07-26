@@ -88,10 +88,18 @@ const NETWORK_MODE: &str = "host";
 /// inter-agent port-space isolation from Docker's own network boundary — no supplementary
 /// iptables rule to maintain or forget.
 const AGENT_NETWORK_PREFIX: &str = "vesta-agent-";
-/// `host.docker.internal` inside the container resolves to the host's bridge gateway (Docker
-/// Engine >= 20.10's `host-gateway` magic value), so an agent can still reach a host-local
-/// service bound to 0.0.0.0 or the bridge interface without host networking.
-const HOST_DOCKER_INTERNAL: &str = "host.docker.internal:host-gateway";
+/// How every agent reaches vestad's own API and a host-local service (Plex, etc.) now that
+/// agents no longer share the host's network namespace: the one owner of this hostname.
+/// Written into each agent's env file as `VESTAD_HOST` (`write_agent_env_file`,
+/// `update_all_agent_env_files`) so skills read it instead of hardcoding it, the same way
+/// they already read `VESTAD_PORT`/`AGENT_TOKEN`/`AGENT_NAME` rather than reconstructing them.
+const AGENT_VESTAD_HOST: &str = "host.docker.internal";
+
+/// The `--add-host` mapping for `AGENT_VESTAD_HOST`: Docker Engine >= 20.10's `host-gateway`
+/// magic value, so it actually resolves to the host's bridge gateway inside the container.
+fn host_docker_internal_mapping() -> String {
+    format!("{AGENT_VESTAD_HOST}:host-gateway")
+}
 
 pub(crate) fn agent_network_name(agent_name: &str) -> String {
     format!("{AGENT_NETWORK_PREFIX}{agent_name}")
@@ -1075,7 +1083,8 @@ pub fn write_agent_env_file(
          export AGENT_NAME={agent_name}\n\
          export AGENT_TOKEN={agent_token}\n\
          export IS_SANDBOX=1\n\
-         export VESTAD_PORT={}\n",
+         export VESTAD_PORT={}\n\
+         export VESTAD_HOST={AGENT_VESTAD_HOST}\n",
         env_config.vestad_port,
     );
     let mut append_optional = |key: &str, value: Option<&str>| {
@@ -1172,8 +1181,10 @@ fn delete_constitution_file(agents_dir: &std::path::Path, agent_name: &str) {
     std::fs::remove_file(constitution_host_path(agents_dir, agent_name)).ok();
 }
 
-/// Update `VESTAD_PORT` and `VESTAD_TUNNEL` in all existing per-agent env files.
-/// Called at vestad startup so running containers pick up the new values on restart.
+/// Update `VESTAD_PORT`, `VESTAD_TUNNEL`, and `VESTAD_HOST` in all existing per-agent env
+/// files. Called at vestad startup so running containers pick up the current values on
+/// restart; this is how an agent created before `VESTAD_HOST` existed converges onto it,
+/// with no separate migration needed.
 pub fn update_all_agent_env_files(
     agents_dir: &std::path::Path,
     vestad_port: u16,
@@ -1188,7 +1199,10 @@ pub fn update_all_agent_env_files(
             .lines()
             .filter_map(|line| {
                 let stripped = line.strip_prefix("export ").unwrap_or(line);
-                if stripped.starts_with("VESTAD_PORT=") || stripped.starts_with("VESTAD_TUNNEL=") {
+                if stripped.starts_with("VESTAD_PORT=")
+                    || stripped.starts_with("VESTAD_TUNNEL=")
+                    || stripped.starts_with("VESTAD_HOST=")
+                {
                     return None; // re-appended below with the current values
                 }
                 Some(line.to_string())
@@ -1198,6 +1212,7 @@ pub fn update_all_agent_env_files(
         if let Some(url) = vestad_tunnel {
             new_lines.push(format!("export VESTAD_TUNNEL={url}"));
         }
+        new_lines.push(format!("export VESTAD_HOST={AGENT_VESTAD_HOST}"));
         new_lines.push(String::new());
         let new_content = new_lines.join("\n");
         if new_content == content {
@@ -1779,7 +1794,7 @@ pub async fn create_container(
     let host_config = bollard::models::HostConfig {
         binds: Some(binds),
         network_mode: Some(network_name),
-        extra_hosts: Some(vec![HOST_DOCKER_INTERNAL.to_string()]),
+        extra_hosts: Some(vec![host_docker_internal_mapping()]),
         restart_policy: Some(bollard::models::RestartPolicy {
             name: Some(bollard::models::RestartPolicyNameEnum::ON_FAILURE),
             maximum_retry_count: Some(RESTART_MAX_RETRIES),
@@ -3194,6 +3209,46 @@ mod tests {
             !content2.contains("VESTA_CLOUD_CONTROL_URL"),
             "absent when unset: {content2}"
         );
+    }
+
+    #[test]
+    fn write_agent_env_file_carries_vestad_host() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let cfg = AgentEnvConfig {
+            config_dir: dir.path().to_path_buf(),
+            agents_dir: dir.path().to_path_buf(),
+            vestad_port: 1,
+            vestad_tunnel: None,
+        };
+        let path = write_agent_env_file(&cfg, "agent1", 2, "tok").expect("write env file");
+        let content = std::fs::read_to_string(&path).expect("read env file");
+        assert!(
+            content.contains(&format!("export VESTAD_HOST={AGENT_VESTAD_HOST}")),
+            "VESTAD_HOST written for a fresh agent: {content}"
+        );
+    }
+
+    #[test]
+    fn update_all_agent_env_files_adds_vestad_host_to_a_legacy_file() {
+        // A legacy env file predating VESTAD_HOST: no such line at all. This is exactly
+        // the fleet-convergence path — the agent picks it up on its next restart with no
+        // separate migration.
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let path = dir.path().join("agent1.env");
+        std::fs::write(
+            &path,
+            "export WS_PORT=4001\nexport AGENT_NAME=agent1\nexport AGENT_TOKEN=tok\nexport VESTAD_PORT=1\n",
+        )
+        .expect("write legacy env file");
+
+        update_all_agent_env_files(dir.path(), 9443, None);
+
+        let content = std::fs::read_to_string(&path).expect("read env file");
+        assert!(
+            content.contains(&format!("export VESTAD_HOST={AGENT_VESTAD_HOST}")),
+            "VESTAD_HOST added on convergence: {content}"
+        );
+        assert!(content.contains("export VESTAD_PORT=9443"));
     }
 
     #[test]
