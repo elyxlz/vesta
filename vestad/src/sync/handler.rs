@@ -292,7 +292,7 @@ fn notifications_deltas(
     (deltas, recorded)
 }
 
-/// Handle a reauth frame. Unknown/malformed frames and any non-reauth frame (e.g. client_context,
+/// Handle a reauth frame. Unknown/malformed frames and any non-reauth frame (e.g. `client_context`,
 /// handled at the call site) are ignored by rule. Returns Break only on a failed reauth (the loop
 /// then closes the socket).
 fn handle_reauth(api_key: &str, text: &str, deadline: &mut Option<tokio::time::Instant>) -> ControlFlow<()> {

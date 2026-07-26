@@ -10,7 +10,7 @@ use super::protocol::ClientContext;
 
 /// The user must have been away this long before a return-to-focus re-notifies the active agent, so
 /// glances and alt-tabs never spam it.
-pub(crate) const PRESENCE_NOTIFY_DEBOUNCE: Duration = Duration::from_secs(600);
+pub(crate) const PRESENCE_NOTIFY_DEBOUNCE: Duration = Duration::from_mins(10);
 
 pub(crate) type ConnId = u64;
 

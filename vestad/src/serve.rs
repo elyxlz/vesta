@@ -862,7 +862,7 @@ pub(crate) async fn drop_rename_notification(
 
 /// Build the presence notification payload. Pure (no IO) so its shape can be
 /// asserted without spinning up a container. `interrupt: false` snoozes it
-/// (ambient presence), overridable by the user's notification_rules.
+/// (ambient presence), overridable by the user's `notification_rules`.
 fn presence_notification_payload(epoch_secs: u64) -> Result<serde_json::Value, String> {
     let epoch = i64::try_from(epoch_secs).map_err(|e| format!("epoch out of range: {e}"))?;
     let timestamp = time::OffsetDateTime::from_unix_timestamp(epoch)
