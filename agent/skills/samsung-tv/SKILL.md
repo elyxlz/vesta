@@ -22,17 +22,19 @@ Auto-discover the TV's IP first. The IP can change after power cycles, so don't 
 ```python
 import subprocess, re
 
-def find_tv_ip(mac='<TV_MAC>'):
+
+def find_tv_ip(mac="<TV_MAC>"):
     """Find the TV's current IP from the ARP table. Always call this first."""
-    arp = open('/proc/net/arp').read()
+    arp = open("/proc/net/arp").read()
     best_ip = None
-    for line in arp.strip().split('\n')[1:]:
+    for line in arp.strip().split("\n")[1:]:
         parts = line.split()
         if len(parts) >= 4 and parts[3].lower() == mac.lower():
-            if parts[2] == '0x2':  # valid/reachable entry
+            if parts[2] == "0x2":  # valid/reachable entry
                 return parts[0]
             best_ip = parts[0]  # fallback to stale entry
     return best_ip
+
 
 TV_IP = find_tv_ip()
 if not TV_IP:
@@ -40,13 +42,7 @@ if not TV_IP:
 
 from samsungtvws import SamsungTVWS
 
-tv = SamsungTVWS(
-    host=TV_IP,
-    port=8002,
-    name='Vesta',
-    timeout=15,
-    token_file='~/.tv/samsung_tv_token.json'
-)
+tv = SamsungTVWS(host=TV_IP, port=8002, name="Vesta", timeout=15, token_file="~/.tv/samsung_tv_token.json")
 ```
 
 Always use `uv run python` to run scripts.
@@ -58,13 +54,13 @@ The TV can be woken from standby via a magic packet. If the TV is off (ports 800
 ```python
 import socket
 
-mac = '<TV_MAC>'
-mac_bytes = bytes.fromhex(mac.replace(':', ''))
-magic_packet = b'\xff' * 6 + mac_bytes * 16
+mac = "<TV_MAC>"
+mac_bytes = bytes.fromhex(mac.replace(":", ""))
+magic_packet = b"\xff" * 6 + mac_bytes * 16
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-sock.sendto(magic_packet, ('255.255.255.255', 9))
+sock.sendto(magic_packet, ("255.255.255.255", 9))
 sock.close()
 ```
 
@@ -80,7 +76,7 @@ info = tv.rest_device_info()
 # info['device']['name'] -> TV model name
 
 # Power off (via key)
-tv.send_key('KEY_POWER')
+tv.send_key("KEY_POWER")
 
 # Power on -> use Wake-on-LAN (above)
 ```
@@ -89,13 +85,13 @@ tv.send_key('KEY_POWER')
 
 ```python
 # Send a single key
-tv.send_key('KEY_VOLUP')
+tv.send_key("KEY_VOLUP")
 
 # Send a key multiple times
-tv.send_key('KEY_VOLUP', times=5)
+tv.send_key("KEY_VOLUP", times=5)
 
 # Hold a key for N seconds
-tv.hold_key('KEY_POWER', seconds=3)
+tv.hold_key("KEY_POWER", seconds=3)
 ```
 
 ### Common Keys
@@ -133,20 +129,20 @@ tv.hold_key('KEY_POWER', seconds=3)
 apps = tv.app_list()
 
 # Run an app (REST)
-tv.rest_app_run('APP_ID')
+tv.rest_app_run("APP_ID")
 
 # Run an app with deep link (WebSocket)
-tv.run_app('APP_ID', app_type='DEEP_LINK', meta_tag='payload')
+tv.run_app("APP_ID", app_type="DEEP_LINK", meta_tag="payload")
 
 # Check app status
-status = tv.rest_app_status('APP_ID')
+status = tv.rest_app_status("APP_ID")
 # -> {'id': '...', 'name': '...', 'running': True/False, 'visible': True/False, 'version': '...'}
 
 # Close an app
-tv.rest_app_close('APP_ID')
+tv.rest_app_close("APP_ID")
 
 # Install an app
-tv.rest_app_install('APP_ID')
+tv.rest_app_install("APP_ID")
 ```
 
 ### Known App IDs
@@ -167,7 +163,7 @@ tv.rest_app_install('APP_ID')
 ### Launch YouTube (home screen)
 
 ```python
-tv.rest_app_run('111299001912')
+tv.rest_app_run("111299001912")
 ```
 
 ### Play a Specific Video (YouTube Lounge API) -- WORKING METHOD
@@ -191,24 +187,27 @@ from pyytlounge import YtLoungeApi
 TV_IP = find_tv_ip()
 AUTH_FILE = "~/.tv/youtube_lounge_auth.json"
 
+
 def get_screen_id():
     """Get YouTube screen ID from TV's DIAL service on port 8080."""
     resp = requests.get(f"http://{TV_IP}:8080/ws/apps/YouTube", timeout=5)
     root = ET.fromstring(resp.text)
-    ns = {'dial': 'urn:dial-multiscreen-org:schemas:dial'}
-    additional = root.find('.//dial:additionalData', ns)
-    for child in (additional if additional is not None else []):
-        tag = child.tag.split('}')[-1] if '}' in child.tag else child.tag
-        if tag == 'screenId':
+    ns = {"dial": "urn:dial-multiscreen-org:schemas:dial"}
+    additional = root.find(".//dial:additionalData", ns)
+    for child in additional if additional is not None else []:
+        tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+        if tag == "screenId":
             return child.text
     return None
+
 
 def save_auth(api):
     """Save auth state after successful connection."""
     data = api.auth.serialize()
     os.makedirs(os.path.dirname(AUTH_FILE), exist_ok=True)
-    with open(AUTH_FILE, 'w') as f:
+    with open(AUTH_FILE, "w") as f:
         json.dump(data, f)
+
 
 def load_auth(api):
     """Load saved auth state. Returns True if loaded successfully."""
@@ -219,6 +218,7 @@ def load_auth(api):
         return bool(api.auth.screen_id)
     except (FileNotFoundError, json.JSONDecodeError, Exception):
         return False
+
 
 async def play_youtube_video(video_id: str):
     """Play a YouTube video on the TV via the Lounge API."""
@@ -244,6 +244,7 @@ async def play_youtube_video(video_id: str):
         else:
             raise Exception("Failed to connect to YouTube Lounge")
 
+
 # Usage:
 asyncio.run(play_youtube_video("VIDEO_ID"))
 ```
@@ -251,16 +252,16 @@ asyncio.run(play_youtube_video("VIDEO_ID"))
 Additional pyytlounge commands (after connect):
 
 ```python
-await api.pause()                        # Pause playback
-await api.play()                         # Resume playback
-await api.seek_to(120.0)                 # Seek to 2 minutes
-await api.next()                         # Next video in queue
-await api.previous()                     # Previous video
-await api.skip_ad()                      # Skip ad if possible
-await api.set_volume(50)                 # Set volume (0-100)
-await api.set_playback_speed(1.5)        # Playback speed (0.25-2)
-await api.get_now_playing()              # Request current state
-await api.disconnect()                   # Clean disconnect
+await api.pause()  # Pause playback
+await api.play()  # Resume playback
+await api.seek_to(120.0)  # Seek to 2 minutes
+await api.next()  # Next video in queue
+await api.previous()  # Previous video
+await api.skip_ad()  # Skip ad if possible
+await api.set_volume(50)  # Set volume (0-100)
+await api.set_playback_speed(1.5)  # Playback speed (0.25-2)
+await api.get_now_playing()  # Request current state
+await api.disconnect()  # Clean disconnect
 ```
 
 If pyytlounge is unavailable, the Lounge API is DIAL:8080 -> get_lounge_token_batch -> bind/setPlaylist.
@@ -287,17 +288,17 @@ Once a video is playing, you can control it via the Lounge API (see pyytlounge c
 
 ```python
 # Open any URL in the TV's built-in browser
-tv.open_browser('https://example.com')
+tv.open_browser("https://example.com")
 
 # Open a YouTube video in the browser (fallback method)
-tv.open_browser('https://www.youtube.com/watch?v=VIDEO_ID')
+tv.open_browser("https://www.youtube.com/watch?v=VIDEO_ID")
 ```
 
 ## Text Input
 
 ```python
 # Type text (when a text field is focused)
-tv.send_text('search query')
+tv.send_text("search query")
 
 # Clear text input
 tv.end_text()

@@ -38,7 +38,8 @@ The only way to get FRED data programmatically. Set `FRED_KEY` in your `.env` fi
 
 ```python
 import json, os
-FRED_KEY = os.environ["FRED_KEY"]   # 32-char lowercase alphanumeric
+
+FRED_KEY = os.environ["FRED_KEY"]  # 32-char lowercase alphanumeric
 BASE = "https://api.stlouisfed.org/fred"
 ```
 
@@ -46,46 +47,50 @@ BASE = "https://api.stlouisfed.org/fred"
 
 ```python
 import json, os
+
 FRED_KEY = os.environ["FRED_KEY"]
 BASE = "https://api.stlouisfed.org/fred"
 
 meta = json.loads(http_get(f"{BASE}/series?series_id=GDP&api_key={FRED_KEY}&file_type=json"))
-s = meta['seriess'][0]
-print(s['title'])               # "Gross Domestic Product"
-print(s['observation_start'])   # "1947-01-01"
-print(s['observation_end'])     # "2025-10-01"
-print(s['frequency'])           # "Quarterly"
-print(s['frequency_short'])     # "Q"
-print(s['units'])               # "Billions of Dollars"
-print(s['units_short'])         # "Bil. of $"
-print(s['seasonal_adjustment']) # "Seasonally Adjusted Annual Rate"
-print(s['popularity'])          # 81  (0-100)
-print(s['last_updated'])        # "2025-12-19 08:00:06-06"
+s = meta["seriess"][0]
+print(s["title"])  # "Gross Domestic Product"
+print(s["observation_start"])  # "1947-01-01"
+print(s["observation_end"])  # "2025-10-01"
+print(s["frequency"])  # "Quarterly"
+print(s["frequency_short"])  # "Q"
+print(s["units"])  # "Billions of Dollars"
+print(s["units_short"])  # "Bil. of $"
+print(s["seasonal_adjustment"])  # "Seasonally Adjusted Annual Rate"
+print(s["popularity"])  # 81  (0-100)
+print(s["last_updated"])  # "2025-12-19 08:00:06-06"
 ```
 
 ### Observations (the actual data)
 
 ```python
 import json, os
+
 FRED_KEY = os.environ["FRED_KEY"]
 BASE = "https://api.stlouisfed.org/fred"
 
 # Latest 10 values, most recent first
-obs = json.loads(http_get(
-    f"{BASE}/series/observations"
-    f"?series_id=GDP"
-    f"&api_key={FRED_KEY}"
-    f"&file_type=json"
-    f"&limit=10"
-    f"&sort_order=desc"      # "desc" = newest first, "asc" = oldest first (default)
-))
-print(obs['count'])              # 314  (total observations)
-print(obs['observation_start'])  # "1947-01-01"  (what's in the full series)
+obs = json.loads(
+    http_get(
+        f"{BASE}/series/observations"
+        f"?series_id=GDP"
+        f"&api_key={FRED_KEY}"
+        f"&file_type=json"
+        f"&limit=10"
+        f"&sort_order=desc"  # "desc" = newest first, "asc" = oldest first (default)
+    )
+)
+print(obs["count"])  # 314  (total observations)
+print(obs["observation_start"])  # "1947-01-01"  (what's in the full series)
 
-for o in obs['observations']:
-    date  = o['date']    # "2025-10-01"
-    value = o['value']   # "29726.4"  — always a STRING, may be "." for missing
-    if value != '.':
+for o in obs["observations"]:
+    date = o["date"]  # "2025-10-01"
+    value = o["value"]  # "29726.4"  — always a STRING, may be "." for missing
+    if value != ".":
         print(f"{date}: ${float(value):,.1f}B")
 # 2025-10-01: $29,726.4B
 # 2025-07-01: $29,339.1B
@@ -96,19 +101,22 @@ for o in obs['observations']:
 
 ```python
 import json, os
+
 FRED_KEY = os.environ["FRED_KEY"]
 BASE = "https://api.stlouisfed.org/fred"
 
-obs = json.loads(http_get(
-    f"{BASE}/series/observations"
-    f"?series_id=UNRATE"
-    f"&api_key={FRED_KEY}"
-    f"&file_type=json"
-    f"&observation_start=2020-01-01"
-    f"&observation_end=2024-12-31"
-    f"&sort_order=desc"
-))
-for o in obs['observations'][:5]:
+obs = json.loads(
+    http_get(
+        f"{BASE}/series/observations"
+        f"?series_id=UNRATE"
+        f"&api_key={FRED_KEY}"
+        f"&file_type=json"
+        f"&observation_start=2020-01-01"
+        f"&observation_end=2024-12-31"
+        f"&sort_order=desc"
+    )
+)
+for o in obs["observations"][:5]:
     print(f"{o['date']}: {o['value']}%")
 # 2024-12-01: 4.1%
 # 2024-11-01: 4.2%
@@ -142,19 +150,22 @@ for o in obs['observations'][:5]:
 
 ```python
 import json, os
+
 FRED_KEY = os.environ["FRED_KEY"]
 BASE = "https://api.stlouisfed.org/fred"
 
-results = json.loads(http_get(
-    f"{BASE}/series/search"
-    f"?search_text=unemployment+rate"
-    f"&api_key={FRED_KEY}"
-    f"&file_type=json"
-    f"&limit=5"
-    f"&order_by=popularity"    # "popularity" | "search_rank" | "series_id" | "title" | "units" | "frequency" | "seasonal_adjustment" | "realtime_start" | "realtime_end" | "last_updated" | "observation_start" | "observation_end"
-    f"&sort_order=desc"        # most popular first
-))
-for s in results['seriess']:
+results = json.loads(
+    http_get(
+        f"{BASE}/series/search"
+        f"?search_text=unemployment+rate"
+        f"&api_key={FRED_KEY}"
+        f"&file_type=json"
+        f"&limit=5"
+        f"&order_by=popularity"  # "popularity" | "search_rank" | "series_id" | "title" | "units" | "frequency" | "seasonal_adjustment" | "realtime_start" | "realtime_end" | "last_updated" | "observation_start" | "observation_end"
+        f"&sort_order=desc"  # most popular first
+    )
+)
+for s in results["seriess"]:
     print(f"{s['id']}: {s['title']} ({s['frequency_short']}, {s['units_short']})")
 # UNRATE: Unemployment Rate (M, %)
 # UNEMPLOY: Unemployment Level (M, Thous. of Persons)
@@ -165,16 +176,16 @@ for s in results['seriess']:
 ```python
 import json, os
 from concurrent.futures import ThreadPoolExecutor
+
 FRED_KEY = os.environ["FRED_KEY"]
 BASE = "https://api.stlouisfed.org/fred"
 
+
 def fetch_latest(series_id):
-    obs = json.loads(http_get(
-        f"{BASE}/series/observations?series_id={series_id}"
-        f"&api_key={FRED_KEY}&file_type=json&limit=1&sort_order=desc"
-    ))
-    o = obs['observations'][0]
-    return series_id, o['date'], o['value']
+    obs = json.loads(http_get(f"{BASE}/series/observations?series_id={series_id}&api_key={FRED_KEY}&file_type=json&limit=1&sort_order=desc"))
+    o = obs["observations"][0]
+    return series_id, o["date"], o["value"]
+
 
 series_ids = ["GDP", "UNRATE", "CPIAUCSL", "FEDFUNDS", "DGS10", "SP500"]
 with ThreadPoolExecutor(max_workers=6) as ex:
@@ -195,21 +206,21 @@ for sid, date, val in results:
 
 ```python
 import json, os
+
 FRED_KEY = os.environ["FRED_KEY"]
 BASE = "https://api.stlouisfed.org/fred"
 
-obs = json.loads(http_get(
-    f"{BASE}/series/observations?series_id=DGS10&api_key={FRED_KEY}&file_type=json"
-    f"&observation_start=2024-01-01&sort_order=asc"
-))
+obs = json.loads(
+    http_get(f"{BASE}/series/observations?series_id=DGS10&api_key={FRED_KEY}&file_type=json&observation_start=2024-01-01&sort_order=asc")
+)
 
 data = [
-    (o['date'], float(o['value']))
-    for o in obs['observations']
-    if o['value'] != '.'   # '.' = missing value, skip it
+    (o["date"], float(o["value"]))
+    for o in obs["observations"]
+    if o["value"] != "."  # '.' = missing value, skip it
 ]
 print(f"{len(data)} observations")
-print(f"First: {data[0]}")   # ('2024-01-02', 3.91)
+print(f"First: {data[0]}")  # ('2024-01-02', 3.91)
 print(f"Last:  {data[-1]}")  # ('2026-04-17', 4.34)
 ```
 
@@ -236,12 +247,13 @@ Bureau of Labor Statistics. Covers unemployment, CPI, payrolls — the most-quer
 
 ```python
 import json
+
 # Single series GET — no auth needed
 r = http_get("https://api.bls.gov/publicAPI/v2/timeseries/data/LNS14000000?startyear=2024&endyear=2024")
 data = json.loads(r)
 # data['status'] == 'REQUEST_SUCCEEDED'
-series = data['Results']['series'][0]
-for point in series['data'][:3]:
+series = data["Results"]["series"][0]
+for point in series["data"][:3]:
     print(f"{point['year']}-{point['period']} ({point['periodName']}): {point['value']}")
 # 2024-M12 (December): 4.1
 # 2024-M11 (November): 4.2
@@ -253,23 +265,21 @@ for point in series['data'][:3]:
 ```python
 import json, urllib.request
 
-payload = json.dumps({
-    "seriesid": ["LNS14000000", "CUSR0000SA0", "CES0000000001"],
-    "startyear": "2023",
-    "endyear": "2024"
-    # "registrationkey": "YOUR_BLS_KEY"  # optional: lifts to 500/day, 10yr range
-}).encode()
+payload = json.dumps(
+    {
+        "seriesid": ["LNS14000000", "CUSR0000SA0", "CES0000000001"],
+        "startyear": "2023",
+        "endyear": "2024",
+        # "registrationkey": "YOUR_BLS_KEY"  # optional: lifts to 500/day, 10yr range
+    }
+).encode()
 
-req = urllib.request.Request(
-    "https://api.bls.gov/publicAPI/v2/timeseries/data/",
-    data=payload,
-    headers={"Content-Type": "application/json"}
-)
+req = urllib.request.Request("https://api.bls.gov/publicAPI/v2/timeseries/data/", data=payload, headers={"Content-Type": "application/json"})
 with urllib.request.urlopen(req, timeout=20) as resp:
     data = json.loads(resp.read().decode())
 
-for s in data['Results']['series']:
-    pts = s['data']
+for s in data["Results"]["series"]:
+    pts = s["data"]
     print(f"{s['seriesID']}: {len(pts)} points, latest={pts[0]['value']}")
 # LNS14000000: 24 points, latest=4.1   (unemployment %)
 # CUSR0000SA0: 24 points, latest=317.604  (CPI index)
@@ -309,12 +319,12 @@ import json
 # Single country, single indicator
 r = http_get("https://api.worldbank.org/v2/country/US/indicator/NY.GDP.MKTP.CD?format=json&per_page=5&mrv=5")
 data = json.loads(r)
-page_info = data[0]   # {'page': 1, 'pages': 1, 'per_page': 5, 'total': 5, 'lastupdated': '2026-04-08'}
-items     = data[1]   # list of observations
+page_info = data[0]  # {'page': 1, 'pages': 1, 'per_page': 5, 'total': 5, 'lastupdated': '2026-04-08'}
+items = data[1]  # list of observations
 
 for item in items:
-    if item['value']:
-        print(f"{item['date']}: ${item['value']/1e12:.2f}T")
+    if item["value"]:
+        print(f"{item['date']}: ${item['value'] / 1e12:.2f}T")
 # 2024: $28.75T
 # 2023: $27.29T
 # 2022: $25.60T
@@ -328,7 +338,7 @@ import json
 # Historical range: date=YYYY:YYYY
 r = http_get("https://api.worldbank.org/v2/country/US/indicator/FP.CPI.TOTL.ZG?format=json&date=2015:2024&per_page=15")
 data = json.loads(r)
-items = [i for i in data[1] if i['value'] is not None]
+items = [i for i in data[1] if i["value"] is not None]
 for item in items:
     print(f"{item['date']}: {item['value']:.2f}%")
 # 2024: 2.95%
@@ -339,9 +349,9 @@ for item in items:
 # Multi-country: semicolon-separated ISO codes
 r = http_get("https://api.worldbank.org/v2/country/US;CN;DE;JP;GB/indicator/NY.GDP.MKTP.CD?format=json&date=2023&per_page=10")
 data = json.loads(r)
-items = sorted([i for i in data[1] if i['value']], key=lambda x: x['value'], reverse=True)
+items = sorted([i for i in data[1] if i["value"]], key=lambda x: x["value"], reverse=True)
 for item in items:
-    print(f"{item['country']['value']}: ${item['value']/1e12:.2f}T")
+    print(f"{item['country']['value']}: ${item['value'] / 1e12:.2f}T")
 # United States: $27.29T
 # China: $18.27T
 # Germany: $4.56T
@@ -367,6 +377,7 @@ Some economic indicators work with the `demo` key (no registration); most requir
 
 ```python
 import json
+
 AV_KEY = "demo"  # or your registered key
 
 # Unemployment rate (works with demo key — confirmed)
@@ -377,7 +388,7 @@ data = json.loads(r)
 # data['unit']     = 'percent'
 # data['data']     → list of {date, value}, newest first
 
-print(data['data'][0])   # {'date': '2026-03-01', 'value': '4.3'}
+print(data["data"][0])  # {'date': '2026-03-01', 'value': '4.3'}
 print(f"Total: {len(data['data'])} months since {data['data'][-1]['date']}")
 # Total: 939 months since 1948-01-01
 ```
@@ -400,12 +411,13 @@ print(f"Total: {len(data['data'])} months since {data['data'][-1]['date']}")
 
 ```python
 import json
+
 AV_KEY = "YOUR_FREE_KEY"  # from alphavantage.co/support/#api-key
 
 # Federal Funds Rate — monthly (requires registered key)
 r = http_get(f"https://www.alphavantage.co/query?function=FEDERAL_FUNDS_RATE&interval=monthly&apikey={AV_KEY}")
 data = json.loads(r)
-for item in data['data'][:3]:
+for item in data["data"][:3]:
     print(f"{item['date']}: {item['value']}%")
 # 2026-03-01: 4.33%
 # 2026-02-01: 4.33%
@@ -414,7 +426,7 @@ for item in data['data'][:3]:
 # 10-Year Treasury Yield
 r = http_get(f"https://www.alphavantage.co/query?function=TREASURY_YIELD&maturity=10year&interval=monthly&apikey={AV_KEY}")
 data = json.loads(r)
-print(data['data'][0])   # {'date': '2026-04-17', 'value': '4.34'}
+print(data["data"][0])  # {'date': '2026-04-17', 'value': '4.34'}
 ```
 
 ---

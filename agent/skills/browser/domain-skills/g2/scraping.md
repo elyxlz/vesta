@@ -36,15 +36,20 @@ import json, urllib.request
 
 API_KEY = "your_token_here"
 
+
 def g2_api_get(path, params=""):
     url = f"https://data.g2.com/api/v1/{path}?{params}"
-    req = urllib.request.Request(url, headers={
-        "Authorization": f"Token token={API_KEY}",
-        "Content-Type": "application/vnd.api+json",
-        "Accept": "application/json",
-    })
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Authorization": f"Token token={API_KEY}",
+            "Content-Type": "application/vnd.api+json",
+            "Accept": "application/json",
+        },
+    )
     with urllib.request.urlopen(req, timeout=20) as r:
         return json.loads(r.read())
+
 
 # 1. Lookup product UUID by slug
 products = g2_api_get("products", "filter[slug]=slack")
@@ -62,26 +67,25 @@ print(f"{attrs['name']}: {attrs['star_rating']} stars, {attrs['review_count']} r
 page = 1
 all_reviews = []
 while True:
-    batch = g2_api_get(
-        f"products/{product_id}/survey-responses",
-        f"page[number]={page}&page[size]=100"
-    )
+    batch = g2_api_get(f"products/{product_id}/survey-responses", f"page[number]={page}&page[size]=100")
     reviews = batch["data"]
     if not reviews:
         break
     for r in reviews:
         a = r["attributes"]
-        all_reviews.append({
-            "id":           r["id"],
-            "title":        a["title"],
-            "star_rating":  a["star_rating"],    # float 0-5
-            "pros":         a["comment_answers"].get("love", ""),  # varies by product
-            "cons":         a["comment_answers"].get("hate", ""),
-            "user_name":    a["user_name"],
-            "country":      a["country_name"],
-            "submitted_at": a["submitted_at"],
-            "source":       a["review_source"],
-        })
+        all_reviews.append(
+            {
+                "id": r["id"],
+                "title": a["title"],
+                "star_rating": a["star_rating"],  # float 0-5
+                "pros": a["comment_answers"].get("love", ""),  # varies by product
+                "cons": a["comment_answers"].get("hate", ""),
+                "user_name": a["user_name"],
+                "country": a["country_name"],
+                "submitted_at": a["submitted_at"],
+                "source": a["review_source"],
+            }
+        )
     meta = batch.get("meta", {})
     if page >= meta.get("page_count", 1):
         break
@@ -271,7 +275,7 @@ dist = js("""
 distribution = json.loads(dist)
 for star in ["5", "4", "3", "2", "1"]:
     d = distribution.get(star, {})
-    print(f"{star}★: {d.get('pct','?')} ({d.get('count','?')})")
+    print(f"{star}★: {d.get('pct', '?')} ({d.get('count', '?')})")
 ```
 
 If the distribution returns empty, take a screenshot and inspect the actual element structure:
@@ -369,9 +373,12 @@ reviews = js("""
 results = json.loads(reviews)
 for r in results:
     print(f"{r['stars']}★ | {r['title']} | {r['jobTitle']} | {r['date']}")
-    if r['pros']:  print(f"  + {r['pros'][:120]}")
-    if r['cons']:  print(f"  - {r['cons'][:120]}")
-    if r['body'] and not r['pros']: print(f"  {r['body'][:200]}")
+    if r["pros"]:
+        print(f"  + {r['pros'][:120]}")
+    if r["cons"]:
+        print(f"  - {r['cons'][:120]}")
+    if r["body"] and not r["pros"]:
+        print(f"  {r['body'][:200]}")
 ```
 
 **If `results` is empty:** G2 may have re-skinned. Take a screenshot and inspect the DOM:
@@ -496,12 +503,13 @@ for p in listing:
 def g2_is_datadome_blocked() -> bool:
     """True if DataDome challenge is still running (not on the real G2 page)."""
     url_now = page_info()["url"]
-    title   = js("document.title") or ""
+    title = js("document.title") or ""
     return (
         "captcha-delivery.com" in url_now
         or "datadome" in url_now.lower()
-        or title.strip() == "g2.com"          # DataDome 403 response has title="g2.com"
+        or title.strip() == "g2.com"  # DataDome 403 response has title="g2.com"
     )
+
 
 # Usage
 new_tab("https://www.g2.com/products/slack/reviews")

@@ -16,8 +16,10 @@ NOW = 1_000_000.0
     [
         (
             RateLimitInfo(status="rejected", rate_limit_type="five_hour", resets_at=int(NOW) + 12_000),
-            "Claude rate limit hit: the 5-hour usage window is exhausted, resets in 3h 20m. "
-            "This is the rolling usage limit, not a spend or billing limit.",
+            (
+                "Claude rate limit hit: the 5-hour usage window is exhausted, resets in 3h 20m. "
+                "This is the rolling usage limit, not a spend or billing limit."
+            ),
         ),
         (
             RateLimitInfo(status="rejected", rate_limit_type="seven_day"),
@@ -29,8 +31,10 @@ NOW = 1_000_000.0
         ),
         (
             RateLimitInfo(status="rejected", rate_limit_type="seven_day_sonnet"),
-            "Claude rate limit hit: the weekly Sonnet usage window is exhausted. "
-            "This is the rolling usage limit, not a spend or billing limit.",
+            (
+                "Claude rate limit hit: the weekly Sonnet usage window is exhausted. "
+                "This is the rolling usage limit, not a spend or billing limit."
+            ),
         ),
         (
             RateLimitInfo(status="rejected", rate_limit_type="overage", resets_at=int(NOW) + 1_500),

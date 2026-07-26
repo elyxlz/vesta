@@ -58,7 +58,8 @@ TARGET = 50  # how many posts to collect
 MAX_SCROLLS = 30
 
 for i in range(MAX_SCROLLS):
-    new_posts = js("""
+    new_posts = (
+        js("""
       Array.from(document.querySelectorAll('div[role="article"]')).map(el => {
         const link = el.querySelector('a[href*="/groups/"][href*="/posts/"], a[href*="/groups/"][href*="/permalink/"]');
         const body = el.querySelector('div[data-ad-preview="message"], div[data-ad-comet-preview="message"]');
@@ -74,7 +75,9 @@ for i in range(MAX_SCROLLS):
           externals: externals,
         };
       }).filter(p => p.url)
-    """) or []
+    """)
+        or []
+    )
     for p in new_posts:
         seen.setdefault(p["url"], p)
     if len(seen) >= TARGET:
@@ -94,6 +97,8 @@ You want the real URL, not the redirector.
 
 ```python
 from urllib.parse import urlparse, parse_qs, unquote
+
+
 def decode_fb_link(href):
     if not href.startswith("https://l.facebook.com/l.php"):
         return href
@@ -152,7 +157,8 @@ Paste this into a Harness stdin block to see what anchors currently exist in the
 visible feed. Run it on a group you're a member of.
 
 ```python
-print(js("""
+print(
+    js("""
   ({
     articles: document.querySelectorAll('div[role="article"]').length,
     body_preview_a: document.querySelectorAll('div[data-ad-preview="message"]').length,
@@ -161,7 +167,8 @@ print(js("""
     permalink_posts: document.querySelectorAll('a[href*="/groups/"][href*="/posts/"]').length,
     permalink_permalinks: document.querySelectorAll('a[href*="/groups/"][href*="/permalink/"]').length,
   })
-"""))
+""")
+)
 # If any count is 0, the selector drifted. Open DevTools, right-click a visible
 # post, inspect, find the new stable attribute (aria-*, data-*), and update the
 # DOM anchors table above.

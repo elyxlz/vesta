@@ -28,9 +28,9 @@ resp = http_get(
     "&limit=100&start=0"
 )
 data = json.loads(resp)
-courses = data["elements"]   # list of dicts
-next_start = data["paging"].get("next")   # e.g. "100", None when exhausted
-total = data["paging"].get("total")       # 20659
+courses = data["elements"]  # list of dicts
+next_start = data["paging"].get("next")  # e.g. "100", None when exhausted
+total = data["paging"].get("total")  # 20659
 ```
 
 ### Response structure (confirmed field names)
@@ -80,10 +80,7 @@ def iter_all_courses(fields=None, page_size=100):
         base_fields = fields
     start = 0
     while True:
-        url = (
-            f"https://api.coursera.org/api/courses.v1"
-            f"?fields={base_fields}&limit={page_size}&start={start}"
-        )
+        url = f"https://api.coursera.org/api/courses.v1?fields={base_fields}&limit={page_size}&start={start}"
         data = json.loads(http_get(url))
         yield from data["elements"]
         nxt = data["paging"].get("next")
@@ -103,10 +100,7 @@ def iter_all_courses(fields=None, page_size=100):
 422 partners (universities, companies) as of test date.
 
 ```python
-resp = http_get(
-    "https://api.coursera.org/api/partners.v1"
-    "?fields=name,squareLogo,description,shortName&limit=50&start=0"
-)
+resp = http_get("https://api.coursera.org/api/partners.v1?fields=name,squareLogo,description,shortName&limit=50&start=0")
 data = json.loads(resp)
 partners = data["elements"]
 # paging.next and paging.total follow same structure as courses
@@ -127,10 +121,7 @@ partners = data["elements"]
 ### Partner by ID (with courseIds)
 
 ```python
-resp = http_get(
-    "https://api.coursera.org/api/partners.v1"
-    "?ids=6&fields=name,squareLogo,description,shortName,courseIds"
-)
+resp = http_get("https://api.coursera.org/api/partners.v1?ids=6&fields=name,squareLogo,description,shortName,courseIds")
 data = json.loads(resp)
 partner = data["elements"][0]
 # partner["courseIds"] is a list of course ID strings (150+ for large universities)
@@ -142,8 +133,7 @@ partner = data["elements"][0]
 
 ```python
 resp = http_get(
-    "https://api.coursera.org/api/onDemandSpecializations.v1"
-    "?fields=name,slug,description,partnerIds,courseIds,tagline&limit=100&start=0"
+    "https://api.coursera.org/api/onDemandSpecializations.v1?fields=name,slug,description,partnerIds,courseIds,tagline&limit=100&start=0"
 )
 data = json.loads(resp)
 specs = data["elements"]
@@ -174,10 +164,7 @@ returns many empty records (empty name/bio).
 
 ```python
 # Lookup specific instructors by ID
-resp = http_get(
-    "https://api.coursera.org/api/instructors.v1"
-    "?ids=226710&fields=fullName,bio,department,title,photo"
-)
+resp = http_get("https://api.coursera.org/api/instructors.v1?ids=226710&fields=fullName,bio,department,title,photo")
 data = json.loads(resp)
 instructor = data["elements"][0]
 ```
@@ -203,10 +190,7 @@ Fetch multiple courses (or partners/instructors) in one request by passing a com
 
 ```python
 ids = ",".join(["69Bku0KoEeWZtA4u62x6lQ", "hOzhxVNuEfCW8Q55q1kSNQ", "0HiU7Oe4EeWTAQ4yevf_oQ"])
-resp = http_get(
-    f"https://api.coursera.org/api/courses.v1"
-    f"?ids={ids}&fields=name,slug,description,primaryLanguages,workload,partnerIds"
-)
+resp = http_get(f"https://api.coursera.org/api/courses.v1?ids={ids}&fields=name,slug,description,primaryLanguages,workload,partnerIds")
 data = json.loads(resp)
 # data["elements"] has exactly the courses you asked for
 ```
@@ -256,15 +240,15 @@ little machine-readable course data. What you can extract:
 import re, json
 
 # Page title (includes course name)
-title = re.search(r'<title[^>]*>(.*?)</title>', html).group(1)
+title = re.search(r"<title[^>]*>(.*?)</title>", html).group(1)
 # "Supervised Machine Learning: Regression and Classification  | Coursera"
 
 # JSON-LD blocks (2 present)
 jsonld_blocks = re.findall(r'<script type="application/ld\+json">(.*?)</script>', html, re.DOTALL)
 # Block 0: FAQPage schema (common Q&A about how courses work)
 # Block 1: BreadcrumbList (category path, e.g. Browse > Data Science > Machine Learning)
-faq   = json.loads(jsonld_blocks[0])   # {"@type": "FAQPage", "mainEntity": [...]}
-crumb = json.loads(jsonld_blocks[1])   # {"@type": "BreadcrumbList", "itemListElement": [...]}
+faq = json.loads(jsonld_blocks[0])  # {"@type": "FAQPage", "mainEntity": [...]}
+crumb = json.loads(jsonld_blocks[1])  # {"@type": "BreadcrumbList", "itemListElement": [...]}
 
 # Extract breadcrumb categories
 categories = [item["item"]["name"] for item in crumb["@graph"][0]["itemListElement"]]

@@ -11,7 +11,8 @@ The block page is ~13 KB, title `"Pardon Our Interruption..."`, and contains no 
 **Always check before parsing:**
 ```python
 def is_blocked(html):
-    return 'Pardon Our Interruption' in html or len(html) < 20_000
+    return "Pardon Our Interruption" in html or len(html) < 20_000
+
 
 html = http_get("https://www.ebay.com/sch/i.html?_nkw=laptop&LH_BIN=1", headers=HEADERS)
 if is_blocked(html):
@@ -120,21 +121,22 @@ Each result is an `<li>` element with `data-listingid=<id>`. Key elements within
 ```python
 import re
 
+
 def extract_search_results(html):
     """
     Parse eBay search results HTML into a list of dicts.
     Returns [] if blocked or no results.
     """
-    if 'Pardon Our Interruption' in html or len(html) < 20_000:
+    if "Pardon Our Interruption" in html or len(html) < 20_000:
         return []
 
-    cards = re.split(r'(?=<li[^>]+data-listingid=)', html)
+    cards = re.split(r"(?=<li[^>]+data-listingid=)", html)
     results = []
     seen_ids = set()
 
     for card in cards[1:]:  # skip preamble before first card
         # Listing ID (dedup)
-        lid_m = re.search(r'data-listingid=(\d+)', card)
+        lid_m = re.search(r"data-listingid=(\d+)", card)
         if not lid_m:
             continue
         listing_id = lid_m.group(1)
@@ -143,39 +145,41 @@ def extract_search_results(html):
         seen_ids.add(listing_id)
 
         # Item URL (clean, no tracking params)
-        url_m = re.search(r'href=(https://(?:www\.)?ebay\.com/itm/(\d+))', card)
-        item_url = url_m.group(1).split('?')[0] if url_m else None
+        url_m = re.search(r"href=(https://(?:www\.)?ebay\.com/itm/(\d+))", card)
+        item_url = url_m.group(1).split("?")[0] if url_m else None
 
         # Title from s-card__title
-        title_m = re.search(r's-card__title[^>]*>.*?primary[^>]*>([^<]+)', card, re.DOTALL)
+        title_m = re.search(r"s-card__title[^>]*>.*?primary[^>]*>([^<]+)", card, re.DOTALL)
         title = title_m.group(1).strip() if title_m else None
 
         # Skip placeholder "Shop on eBay" stub cards
-        if not title or title == 'Shop on eBay':
+        if not title or title == "Shop on eBay":
             continue
 
         # Current price
         price_m = re.search(r'class=(?:["\'])?[a-z- ]*price["\']?>\$([0-9,\.]+)<', card)
         if not price_m:
             price_m = re.search(r'price">\$([0-9,\.]+)<', card)
-        price = '$' + price_m.group(1) if price_m else None
+        price = "$" + price_m.group(1) if price_m else None
 
         # Original / list price (strikethrough — present when discounted)
-        orig_m = re.search(r'strikethrough[^>]*>\$([0-9,\.]+)', card)
-        original_price = '$' + orig_m.group(1) if orig_m else None
+        orig_m = re.search(r"strikethrough[^>]*>\$([0-9,\.]+)", card)
+        original_price = "$" + orig_m.group(1) if orig_m else None
 
         # Thumbnail image URL
-        img_m = re.search(r'class=s-card__image[^>]*src=([^\s>]+)', card)
+        img_m = re.search(r"class=s-card__image[^>]*src=([^\s>]+)", card)
         image = img_m.group(1) if img_m else None
 
-        results.append({
-            'listing_id': listing_id,
-            'url': item_url,
-            'title': title,
-            'price': price,
-            'original_price': original_price,  # None if not on sale
-            'image': image,
-        })
+        results.append(
+            {
+                "listing_id": listing_id,
+                "url": item_url,
+                "title": title,
+                "price": price,
+                "original_price": original_price,  # None if not on sale
+                "image": image,
+            }
+        )
 
     return results
 ```
@@ -209,15 +213,16 @@ The `Product` schema is the most useful — it contains price, condition, availa
 ```python
 import re, json
 
+
 def extract_item_detail(html):
     """
     Extract structured data from an eBay item page.
     Returns dict or None if blocked.
     """
-    if 'Pardon Our Interruption' in html:
+    if "Pardon Our Interruption" in html:
         return None
 
-    ld_blocks = re.findall(r'application/ld\+json[^>]*>(.*?)</script>', html, re.DOTALL)
+    ld_blocks = re.findall(r"application/ld\+json[^>]*>(.*?)</script>", html, re.DOTALL)
     product = None
     breadcrumbs = []
 
@@ -227,66 +232,66 @@ def extract_item_detail(html):
         except Exception:
             continue
 
-        if d.get('@type') == 'Product':
+        if d.get("@type") == "Product":
             product = d
-        elif d.get('@type') == 'BreadcrumbList':
-            breadcrumbs = [i.get('name') for i in d.get('itemListElement', [])]
+        elif d.get("@type") == "BreadcrumbList":
+            breadcrumbs = [i.get("name") for i in d.get("itemListElement", [])]
 
     if not product:
         return None
 
-    offers = product.get('offers', {})
+    offers = product.get("offers", {})
     if isinstance(offers, list):
         offers = offers[0]
 
     # Schema.org condition URL -> human label
     CONDITION_MAP = {
-        'NewCondition':          'New',
-        'UsedCondition':         'Used',
-        'RefurbishedCondition':  'Refurbished',
-        'DamagedCondition':      'For Parts / Not Working',
-        'LikeNewCondition':      'Like New',
-        'VeryGoodCondition':     'Very Good',
-        'GoodCondition':         'Good',
-        'AcceptableCondition':   'Acceptable',
+        "NewCondition": "New",
+        "UsedCondition": "Used",
+        "RefurbishedCondition": "Refurbished",
+        "DamagedCondition": "For Parts / Not Working",
+        "LikeNewCondition": "Like New",
+        "VeryGoodCondition": "Very Good",
+        "GoodCondition": "Good",
+        "AcceptableCondition": "Acceptable",
     }
-    cond_url = offers.get('itemCondition', '')
-    cond_key = cond_url.split('/')[-1]  # e.g. "RefurbishedCondition"
+    cond_url = offers.get("itemCondition", "")
+    cond_key = cond_url.split("/")[-1]  # e.g. "RefurbishedCondition"
     condition = CONDITION_MAP.get(cond_key, cond_key)
 
     # List price from priceSpecification (only present when there's a "was" price)
-    price_spec = offers.get('priceSpecification', {})
-    list_price = price_spec.get('price') if price_spec.get('name') == 'List Price' else None
+    price_spec = offers.get("priceSpecification", {})
+    list_price = price_spec.get("price") if price_spec.get("name") == "List Price" else None
 
     # Shipping (first destination)
-    shipping_details = offers.get('shippingDetails', [])
+    shipping_details = offers.get("shippingDetails", [])
     if shipping_details:
-        shipping_val = shipping_details[0].get('shippingRate', {}).get('value', '')
-        shipping = 'Free' if str(shipping_val) in ('0', '0.0') else f"${shipping_val}"
+        shipping_val = shipping_details[0].get("shippingRate", {}).get("value", "")
+        shipping = "Free" if str(shipping_val) in ("0", "0.0") else f"${shipping_val}"
     else:
         shipping = None
 
     # Return policy
-    return_policies = offers.get('hasMerchantReturnPolicy', [])
-    return_days = return_policies[0].get('merchantReturnDays') if return_policies else None
+    return_policies = offers.get("hasMerchantReturnPolicy", [])
+    return_days = return_policies[0].get("merchantReturnDays") if return_policies else None
 
     return {
-        'listing_id': offers.get('url', '').split('/itm/')[-1],
-        'name': product.get('name'),
-        'brand': product.get('brand', {}).get('name') if isinstance(product.get('brand'), dict) else product.get('brand'),
-        'price': offers.get('price'),
-        'list_price': list_price,     # was-price, None if no discount shown
-        'currency': offers.get('priceCurrency'),
-        'availability': offers.get('availability', '').split('/')[-1],  # e.g. "InStock"
-        'condition': condition,
-        'condition_url': cond_url,
-        'shipping': shipping,
-        'return_days': return_days,
-        'images': product.get('image', []),
-        'gtin13': product.get('gtin13'),
-        'mpn': product.get('mpn'),
-        'color': product.get('color'),
-        'breadcrumbs': breadcrumbs,
+        "listing_id": offers.get("url", "").split("/itm/")[-1],
+        "name": product.get("name"),
+        "brand": product.get("brand", {}).get("name") if isinstance(product.get("brand"), dict) else product.get("brand"),
+        "price": offers.get("price"),
+        "list_price": list_price,  # was-price, None if no discount shown
+        "currency": offers.get("priceCurrency"),
+        "availability": offers.get("availability", "").split("/")[-1],  # e.g. "InStock"
+        "condition": condition,
+        "condition_url": cond_url,
+        "shipping": shipping,
+        "return_days": return_days,
+        "images": product.get("image", []),
+        "gtin13": product.get("gtin13"),
+        "mpn": product.get("mpn"),
+        "color": product.get("color"),
+        "breadcrumbs": breadcrumbs,
     }
 ```
 
@@ -321,9 +326,11 @@ including seller name, feedback %, items sold, detailed condition text, and all 
 ```python
 import re
 
+
 def extract_ux_textspans(html):
     """Return list of all ux-textspans text values from an item page."""
-    return [m.group(1) for m in re.finditer(r'ux-textspans[^>]*>([^<]+)</span>', html)]
+    return [m.group(1) for m in re.finditer(r"ux-textspans[^>]*>([^<]+)</span>", html)]
+
 
 # From item 167040158614 (confirmed):
 # Index [3]  -> item title
@@ -380,14 +387,13 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 
+
 def is_blocked(html):
-    return 'Pardon Our Interruption' in html or len(html) < 20_000
+    return "Pardon Our Interruption" in html or len(html) < 20_000
+
 
 # Step 1: Search
-html = http_get(
-    "https://www.ebay.com/sch/i.html?_nkw=mechanical+keyboard&LH_BIN=1&_sop=15&LH_ItemCondition=1000",
-    headers=HEADERS
-)
+html = http_get("https://www.ebay.com/sch/i.html?_nkw=mechanical+keyboard&LH_BIN=1&_sop=15&LH_ItemCondition=1000", headers=HEADERS)
 if is_blocked(html):
     raise RuntimeError("Rate limited — wait 60-120s and retry")
 
@@ -398,7 +404,7 @@ print(f"Found {len(items)} items")
 details = []
 for item in items[:5]:
     time.sleep(3)
-    detail_html = http_get(item['url'], headers=HEADERS)
+    detail_html = http_get(item["url"], headers=HEADERS)
     if is_blocked(detail_html):
         print(f"Blocked on item {item['listing_id']}, stopping")
         break

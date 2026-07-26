@@ -27,7 +27,9 @@ one from the other:
 ```python
 # Match either — both are unique per card
 accepts = js("Array.from(document.querySelectorAll('button, a')).filter(b => (b.getAttribute('aria-label')||'').startsWith('Accept ')).length")
-ignores = js("Array.from(document.querySelectorAll('button')).filter(b => (b.getAttribute('aria-label')||'').toLowerCase().startsWith('ignore')).length")
+ignores = js(
+    "Array.from(document.querySelectorAll('button')).filter(b => (b.getAttribute('aria-label')||'').toLowerCase().startsWith('ignore')).length"
+)
 ```
 
 ## Trap: "follows you" cards render Accept as `<a>`, not `<button>`
@@ -89,6 +91,7 @@ proceed. Watch for it between accepts; it's intermittent, not per-row.
 ```python
 import time
 
+
 def chip():
     return js(r"""(() => {
       const el = Array.from(document.querySelectorAll('button, a')).map(e => (e.textContent||'').trim())
@@ -96,12 +99,15 @@ def chip():
       return el || '';
     })()""")
 
+
 while True:
     cdp("Page.navigate", url="https://www.linkedin.com/mynetwork/invitation-manager/received/PEOPLE_WITH_MUTUAL_CONNECTION/")
     wait_for_load()
     time.sleep(2.5)
-    n = int(js(r"""(() => Array.from(document.querySelectorAll('button, a'))
-      .filter(b => (b.getAttribute('aria-label')||'').startsWith('Accept ') && !b.disabled).length)()"""))
+    n = int(
+        js(r"""(() => Array.from(document.querySelectorAll('button, a'))
+      .filter(b => (b.getAttribute('aria-label')||'').startsWith('Accept ') && !b.disabled).length)()""")
+    )
     if n == 0:
         break
     # click each Accept (route tag === 'A' rows to Ignore — see trap above)

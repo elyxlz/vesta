@@ -19,17 +19,20 @@ list_cloud_profiles()
 list_local_profiles()
 # [{BrowserName, ProfileName, DisplayName, ProfilePath, ...}, ...] — detected on this machine
 
-sync_local_profile(local_profile_name, browser=None,
-                   cloud_profile_id=None,      # update an existing cloud profile instead of creating new
-                   include_domains=None,       # only these domains (and subdomains); leading dot optional
-                   exclude_domains=None)       # drop these domains; applied before include
+sync_local_profile(
+    local_profile_name,
+    browser=None,
+    cloud_profile_id=None,  # update an existing cloud profile instead of creating new
+    include_domains=None,  # only these domains (and subdomains); leading dot optional
+    exclude_domains=None,
+)  # drop these domains; applied before include
 # Shells out to `profile-use sync`. Returns the cloud profile UUID
 # (the existing one if cloud_profile_id was passed, else the newly-created one).
 
-start_remote_daemon("work", profileName="my-work")   # name→id resolved client-side
-start_remote_daemon("work", profileId="<uuid>")      # or pass UUID directly
+start_remote_daemon("work", profileName="my-work")  # name→id resolved client-side
+start_remote_daemon("work", profileId="<uuid>")  # or pass UUID directly
 
-stop_remote_daemon("work")                           # shut the daemon and PATCH the cloud browser to stop — billing ends
+stop_remote_daemon("work")  # shut the daemon and PATCH the cloud browser to stop — billing ends
 ```
 
 `sync_local_profile` prints `♻️  Using existing cloud profile` when `cloud_profile_id` is accepted, or `📝  Creating remote profile...` → `✓ Profile created: <uuid>` when it creates a new one. Check that line if you want to confirm which path ran.
@@ -64,9 +67,7 @@ start_remote_daemon("work", profileId=uuid)
 sync_local_profile("browser-use.com", cloud_profile_id=uuid)
 
 # 3c. Scoped: push *only* Stripe cookies into a dedicated cloud profile.
-sync_local_profile("browser-use.com",
-                   cloud_profile_id=uuid,
-                   include_domains=["stripe.com"])
+sync_local_profile("browser-use.com", cloud_profile_id=uuid, include_domains=["stripe.com"])
 ```
 
 ## What actually gets synced

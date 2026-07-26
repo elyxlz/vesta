@@ -29,6 +29,7 @@ client or includes a recognizable browser fingerprint triggers the JS challenge 
 ```python
 import json, re, gzip, urllib.request
 
+
 def fetch_walmart(url):
     """
     Fetch any walmart.com page.
@@ -47,6 +48,7 @@ def fetch_walmart(url):
     if "Robot or human" in html:
         raise RuntimeError(f"PerimeterX challenge triggered: {url}")
     return html
+
 
 def parse_next_data(html):
     m = re.search(r'id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL)
@@ -69,7 +71,7 @@ def parse_next_data(html):
 "https://www.walmart.com/search?q=laptop&page=2"
 
 # Sort options (confirmed working)
-"https://www.walmart.com/search?q=laptop&sort=best_match"    # default
+"https://www.walmart.com/search?q=laptop&sort=best_match"  # default
 "https://www.walmart.com/search?q=laptop&sort=best_seller"
 "https://www.walmart.com/search?q=laptop&sort=price_low"
 "https://www.walmart.com/search?q=laptop&sort=customer_rating"
@@ -110,21 +112,23 @@ def extract_search_results(html):
             img = item.get("imageInfo") or {}
             rating = item.get("rating") or {}
             avail = item.get("availabilityStatusV2") or {}
-            items.append({
-                "usItemId":        item.get("usItemId"),           # str, Walmart item ID
-                "name":            item.get("name"),               # str
-                "brand":           item.get("brand"),              # str or None
-                "price":           item.get("price"),              # int, current price in USD
-                "linePrice":       pi.get("linePrice"),            # str "$429.00"
-                "wasPrice":        pi.get("wasPrice") or None,     # str "$699.00" or None
-                "savings":         pi.get("savings") or None,      # str "SAVE $270.00" or None
-                "averageRating":   rating.get("averageRating"),    # float e.g. 4.3
-                "numberOfReviews": rating.get("numberOfReviews"),  # int
-                "availability":    avail.get("value"),             # "IN_STOCK" / "OUT_OF_STOCK"
-                "isSponsored":     bool(item.get("isSponsoredFlag")),
-                "url":             "https://www.walmart.com" + (item.get("canonicalUrl") or "").split("?")[0],
-                "thumbnailUrl":    img.get("thumbnailUrl"),
-            })
+            items.append(
+                {
+                    "usItemId": item.get("usItemId"),  # str, Walmart item ID
+                    "name": item.get("name"),  # str
+                    "brand": item.get("brand"),  # str or None
+                    "price": item.get("price"),  # int, current price in USD
+                    "linePrice": pi.get("linePrice"),  # str "$429.00"
+                    "wasPrice": pi.get("wasPrice") or None,  # str "$699.00" or None
+                    "savings": pi.get("savings") or None,  # str "SAVE $270.00" or None
+                    "averageRating": rating.get("averageRating"),  # float e.g. 4.3
+                    "numberOfReviews": rating.get("numberOfReviews"),  # int
+                    "availability": avail.get("value"),  # "IN_STOCK" / "OUT_OF_STOCK"
+                    "isSponsored": bool(item.get("isSponsoredFlag")),
+                    "url": "https://www.walmart.com" + (item.get("canonicalUrl") or "").split("?")[0],
+                    "thumbnailUrl": img.get("thumbnailUrl"),
+                }
+            )
 
     total = sr.get("aggregatedCount")
     max_page = (sr.get("paginationV2") or {}).get("maxPage")
@@ -205,7 +209,7 @@ def extract_product_detail(html):
     data = parse_next_data(html)
     d = data["props"]["pageProps"]["initialData"]["data"]
     product = d["product"]
-    idml    = d.get("idml") or {}
+    idml = d.get("idml") or {}
     reviews = d.get("reviews") or {}
 
     pi = product.get("priceInfo") or {}
@@ -213,70 +217,62 @@ def extract_product_detail(html):
     img = product.get("imageInfo") or {}
     avail = product.get("availabilityStatusV2") or {}
 
-    specs = {
-        spec.get("name"): spec.get("value")
-        for spec in (idml.get("specifications") or [])
-    }
+    specs = {spec.get("name"): spec.get("value") for spec in (idml.get("specifications") or [])}
 
-    all_images = [
-        img_item.get("url")
-        for img_item in (img.get("allImages") or [])
-        if img_item.get("url")
-    ]
+    all_images = [img_item.get("url") for img_item in (img.get("allImages") or []) if img_item.get("url")]
 
     customer_reviews = [
         {
-            "title":    r.get("reviewTitle"),
-            "rating":   r.get("rating"),           # int 1-5 (field is "rating", NOT "overallRating")
-            "text":     r.get("reviewText"),
-            "author":   r.get("userNickname"),
-            "date":     r.get("reviewSubmissionTime"),
+            "title": r.get("reviewTitle"),
+            "rating": r.get("rating"),  # int 1-5 (field is "rating", NOT "overallRating")
+            "text": r.get("reviewText"),
+            "author": r.get("userNickname"),
+            "date": r.get("reviewSubmissionTime"),
         }
         for r in (reviews.get("customerReviews") or [])
     ]
 
     return {
         # identity
-        "usItemId":            product.get("usItemId"),
-        "name":                product.get("name"),
-        "brand":               product.get("brand"),
-        "model":               product.get("model"),
-        "upc":                 product.get("upc"),
+        "usItemId": product.get("usItemId"),
+        "name": product.get("name"),
+        "brand": product.get("brand"),
+        "model": product.get("model"),
+        "upc": product.get("upc"),
         # price
-        "price":               cp.get("price"),            # float, e.g. 599
-        "priceString":         cp.get("priceString"),      # "$599.00"
-        "wasPrice":            (pi.get("wasPrice") or {}).get("priceString"),
-        "savings":             (pi.get("savings") or {}).get("savingsString"),
+        "price": cp.get("price"),  # float, e.g. 599
+        "priceString": cp.get("priceString"),  # "$599.00"
+        "wasPrice": (pi.get("wasPrice") or {}).get("priceString"),
+        "savings": (pi.get("savings") or {}).get("savingsString"),
         # availability
-        "availability":        avail.get("value"),         # "IN_STOCK" / "OUT_OF_STOCK"
-        "availabilityDisplay": avail.get("display"),       # "In stock"
+        "availability": avail.get("value"),  # "IN_STOCK" / "OUT_OF_STOCK"
+        "availabilityDisplay": avail.get("display"),  # "In stock"
         # ratings
-        "averageRating":       product.get("averageRating"),
-        "numberOfReviews":     product.get("numberOfReviews"),
+        "averageRating": product.get("averageRating"),
+        "numberOfReviews": product.get("numberOfReviews"),
         # text
-        "shortDescription":    product.get("shortDescription"),
-        "longDescription":     idml.get("longDescription"),  # HTML string
+        "shortDescription": product.get("shortDescription"),
+        "longDescription": idml.get("longDescription"),  # HTML string
         # media
-        "thumbnailUrl":        img.get("thumbnailUrl"),
-        "allImages":           all_images,          # up to 10 image URLs
+        "thumbnailUrl": img.get("thumbnailUrl"),
+        "allImages": all_images,  # up to 10 image URLs
         # specs
-        "specifications":      specs,               # {"Brand": "Apple", "Processor": "A18 Pro", ...}
-        "highlights":          [                    # top highlighted specs with icons
-            {"name": h.get("name"), "value": h.get("value")}
-            for h in (idml.get("productHighlights") or [])
+        "specifications": specs,  # {"Brand": "Apple", "Processor": "A18 Pro", ...}
+        "highlights": [  # top highlighted specs with icons
+            {"name": h.get("name"), "value": h.get("value")} for h in (idml.get("productHighlights") or [])
         ],
         # URL
-        "canonicalUrl":        "https://www.walmart.com" + (product.get("canonicalUrl") or ""),
+        "canonicalUrl": "https://www.walmart.com" + (product.get("canonicalUrl") or ""),
         # fulfillment
-        "fulfillmentOptions":  product.get("fulfillmentOptions") or [],
+        "fulfillmentOptions": product.get("fulfillmentOptions") or [],
         # reviews (SSR-rendered, first 10)
         "reviewSummary": {
-            "averageOverallRating":    reviews.get("averageOverallRating"),
-            "totalReviewCount":        reviews.get("totalReviewCount"),
-            "reviewsWithTextCount":    reviews.get("reviewsWithTextCount"),
-            "recommendedPercentage":   reviews.get("recommendedPercentage"),
+            "averageOverallRating": reviews.get("averageOverallRating"),
+            "totalReviewCount": reviews.get("totalReviewCount"),
+            "reviewsWithTextCount": reviews.get("reviewsWithTextCount"),
+            "recommendedPercentage": reviews.get("recommendedPercentage"),
         },
-        "customerReviews":     customer_reviews,
+        "customerReviews": customer_reviews,
     }
 
 
@@ -352,6 +348,7 @@ wait(2)  # JS renders product cards after readyState=complete
 
 # Extract via __NEXT_DATA__ in-browser (identical structure to http_get)
 import json
+
 nd = js("document.getElementById('__NEXT_DATA__')?.textContent")
 data = json.loads(nd)
 sr = data["props"]["pageProps"]["initialData"]["searchResult"]

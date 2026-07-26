@@ -12,7 +12,7 @@ from helpers import http_get
 
 # Simplest call: today's Astronomy Picture of the Day
 apod = json.loads(http_get("https://api.nasa.gov/planetary/apod?api_key=DEMO_KEY"))
-print(apod['date'], apod['title'], apod['media_type'])
+print(apod["date"], apod["title"], apod["media_type"])
 # Confirmed output (2026-04-18): 2026-04-18 PanSTARRS and Planets image
 ```
 
@@ -41,12 +41,12 @@ import json
 from helpers import http_get
 
 apod = json.loads(http_get("https://api.nasa.gov/planetary/apod?api_key=DEMO_KEY"))
-print(apod['date'])        # '2026-04-18'
-print(apod['title'])       # 'PanSTARRS and Planets'
-print(apod['media_type'])  # 'image' or 'video'
-print(apod['url'])         # full-res or YouTube embed URL
-print(apod['hdurl'])       # HD image URL (absent when media_type='video')
-print(apod.get('copyright'))  # None if public domain
+print(apod["date"])  # '2026-04-18'
+print(apod["title"])  # 'PanSTARRS and Planets'
+print(apod["media_type"])  # 'image' or 'video'
+print(apod["url"])  # full-res or YouTube embed URL
+print(apod["hdurl"])  # HD image URL (absent when media_type='video')
+print(apod.get("copyright"))  # None if public domain
 # Confirmed output (2026-04-18):
 # url:   https://apod.nasa.gov/apod/image/2604/PanstarrsPlanetsPerrotLab1024.jpg
 # hdurl: https://apod.nasa.gov/apod/image/2604/PanstarrsPlanetsPerrot.jpg
@@ -59,13 +59,10 @@ print(apod.get('copyright'))  # None if public domain
 import json
 from helpers import http_get
 
-apods = json.loads(http_get(
-    "https://api.nasa.gov/planetary/apod"
-    "?start_date=2024-01-01&end_date=2024-01-07&api_key=DEMO_KEY"
-))
+apods = json.loads(http_get("https://api.nasa.gov/planetary/apod?start_date=2024-01-01&end_date=2024-01-07&api_key=DEMO_KEY"))
 # Returns a list of 7 dicts — same schema as single-day response
 for a in apods:
-    print(a['date'], a['media_type'], a['title'][:50])
+    print(a["date"], a["media_type"], a["title"][:50])
 # Confirmed output (7 items):
 # 2024-01-01 image NGC 1232: A Grand Design Spiral Galaxy
 # 2024-01-02 image Rocket Transits Rippling Moon
@@ -84,11 +81,9 @@ Optional params: `date=YYYY-MM-DD` (specific day), `count=N` (N random entries),
 import json
 from helpers import http_get
 
-apods = json.loads(http_get(
-    "https://api.nasa.gov/planetary/apod?count=5&api_key=DEMO_KEY"
-))
+apods = json.loads(http_get("https://api.nasa.gov/planetary/apod?count=5&api_key=DEMO_KEY"))
 for a in apods:
-    print(a['date'], a['title'][:40])
+    print(a["date"], a["title"][:40])
 # Returns 5 random APOD entries — dates can be any day since 1995-06-16
 ```
 
@@ -98,20 +93,20 @@ for a in apods:
 import json
 from helpers import http_get
 
-data = json.loads(http_get(
-    "https://api.nasa.gov/neo/rest/v1/feed"
-    "?start_date=2024-01-01&end_date=2024-01-02&api_key=DEMO_KEY"
-))
-print(data['element_count'])   # 32 (total NEOs across both days)
-neos = data['near_earth_objects']  # dict keyed by date string
+data = json.loads(http_get("https://api.nasa.gov/neo/rest/v1/feed?start_date=2024-01-01&end_date=2024-01-02&api_key=DEMO_KEY"))
+print(data["element_count"])  # 32 (total NEOs across both days)
+neos = data["near_earth_objects"]  # dict keyed by date string
 for date, objects in sorted(neos.items()):
     for neo in objects:
-        ca = neo['close_approach_data'][0]
+        ca = neo["close_approach_data"][0]
         print(
-            neo['name'],
-            'hazardous:', neo['is_potentially_hazardous_asteroid'],
-            'miss km:', ca['miss_distance']['kilometers'][:12],
-            'vel kph:', ca['relative_velocity']['kilometers_per_hour'][:10]
+            neo["name"],
+            "hazardous:",
+            neo["is_potentially_hazardous_asteroid"],
+            "miss km:",
+            ca["miss_distance"]["kilometers"][:12],
+            "vel kph:",
+            ca["relative_velocity"]["kilometers_per_hour"][:10],
         )
 # Confirmed output (2 days, 32 total NEOs):
 # 415949 (2001 XY10) hazardous: False miss km: 50452409.34 vel kph: 57205.8951
@@ -133,11 +128,9 @@ import json
 from helpers import http_get
 
 # Asteroid ID comes from the feed's `id` field
-neo = json.loads(http_get(
-    "https://api.nasa.gov/neo/rest/v1/neo/2415949?api_key=DEMO_KEY"
-))
-print(neo['name'])
-print(neo['orbital_data']['orbit_class']['orbit_class_description'])
+neo = json.loads(http_get("https://api.nasa.gov/neo/rest/v1/neo/2415949?api_key=DEMO_KEY"))
+print(neo["name"])
+print(neo["orbital_data"]["orbit_class"]["orbit_class_description"])
 # Full orbital history + all close approaches are in `close_approach_data` (long list)
 ```
 
@@ -148,37 +141,28 @@ import json
 from helpers import http_get
 
 # sol = Martian solar day since landing
-data = json.loads(http_get(
-    "https://api.nasa.gov/mars-photos/api/v1/rovers/curiosity/photos"
-    "?sol=1000&api_key=DEMO_KEY"
-))
-photos = data['photos']
+data = json.loads(http_get("https://api.nasa.gov/mars-photos/api/v1/rovers/curiosity/photos?sol=1000&api_key=DEMO_KEY"))
+photos = data["photos"]
 print(f"Photos on sol 1000: {len(photos)}")
 p = photos[0]
-print(p['earth_date'])          # '2015-05-30'
-print(p['img_src'])             # direct JPEG URL
-print(p['camera']['name'])      # 'FHAZ'
-print(p['camera']['full_name']) # 'Front Hazard Avoidance Camera'
-print(p['rover']['name'])       # 'Curiosity'
-print(p['rover']['status'])     # 'active'
-print(p['rover']['max_sol'])    # highest sol with photos
+print(p["earth_date"])  # '2015-05-30'
+print(p["img_src"])  # direct JPEG URL
+print(p["camera"]["name"])  # 'FHAZ'
+print(p["camera"]["full_name"])  # 'Front Hazard Avoidance Camera'
+print(p["rover"]["name"])  # 'Curiosity'
+print(p["rover"]["status"])  # 'active'
+print(p["rover"]["max_sol"])  # highest sol with photos
 
 # Filter by camera
-data = json.loads(http_get(
-    "https://api.nasa.gov/mars-photos/api/v1/rovers/curiosity/photos"
-    "?sol=1000&camera=navcam&api_key=DEMO_KEY"
-))
+data = json.loads(http_get("https://api.nasa.gov/mars-photos/api/v1/rovers/curiosity/photos?sol=1000&camera=navcam&api_key=DEMO_KEY"))
 ```
 
 Available cameras for Curiosity: `fhaz`, `rhaz`, `mast`, `chemcam`, `mahli`, `mardi`, `navcam`. Other rovers: `opportunity`, `spirit`, `perseverance`.
 
 Use `latest_photos` to get the most recent available:
 ```python
-data = json.loads(http_get(
-    "https://api.nasa.gov/mars-photos/api/v1/rovers/curiosity/latest_photos"
-    "?api_key=DEMO_KEY"
-))
-photos = data['latest_photos']
+data = json.loads(http_get("https://api.nasa.gov/mars-photos/api/v1/rovers/curiosity/latest_photos?api_key=DEMO_KEY"))
+photos = data["latest_photos"]
 ```
 
 Add `&page=N` for pagination (25 photos/page by default).
@@ -196,14 +180,14 @@ images = json.loads(http_get("https://epic.gsfc.nasa.gov/api/natural"))
 print(f"Latest batch: {len(images)} images")  # Confirmed: 4 images on 2026-04-18
 
 img = images[0]
-print(img['identifier'])               # '20260416162050'
-print(img['image'])                    # 'epic_1b_20260416162050'
-print(img['date'])                     # '2026-04-16 16:16:01'
-print(img['centroid_coordinates'])     # {'lat': 13.25, 'lon': -75.59}
+print(img["identifier"])  # '20260416162050'
+print(img["image"])  # 'epic_1b_20260416162050'
+print(img["date"])  # '2026-04-16 16:16:01'
+print(img["centroid_coordinates"])  # {'lat': 13.25, 'lon': -75.59}
 
 # Construct PNG URL from image name + date
-date_str = img['date'].split(' ')[0]   # '2026-04-16'
-year, month, day = date_str.split('-')
+date_str = img["date"].split(" ")[0]  # '2026-04-16'
+year, month, day = date_str.split("-")
 png_url = f"https://epic.gsfc.nasa.gov/archive/natural/{year}/{month}/{day}/png/{img['image']}.png"
 jpg_thumb = f"https://epic.gsfc.nasa.gov/archive/natural/{year}/{month}/{day}/thumbs/{img['image']}.jpg"
 print(png_url)
@@ -213,21 +197,21 @@ print(png_url)
 ```python
 # Images for a specific date
 images = json.loads(http_get("https://epic.gsfc.nasa.gov/api/natural/date/2024-01-15"))
-print(len(images))   # 14 images on 2024-01-15
+print(len(images))  # 14 images on 2024-01-15
 
 # Enhanced (color-corrected) images — same API, different path
 enhanced = json.loads(http_get("https://epic.gsfc.nasa.gov/api/enhanced/date/2024-01-15"))
 # Enhanced image URL pattern uses 'enhanced' and 'epic_RGB_' prefix:
 img = enhanced[0]
-date_str = img['date'].split(' ')[0]
-year, month, day = date_str.split('-')
+date_str = img["date"].split(" ")[0]
+year, month, day = date_str.split("-")
 url = f"https://epic.gsfc.nasa.gov/archive/enhanced/{year}/{month}/{day}/png/{img['image']}.png"
 # e.g. .../archive/enhanced/2024/01/15/png/epic_RGB_20240115005515.png
 
 # All available dates
 all_dates = json.loads(http_get("https://epic.gsfc.nasa.gov/api/natural/all"))
 print(f"Available dates: {len(all_dates)}")  # 3477 dates (2015-06-13 to present)
-print(all_dates[0])   # {'date': '2026-04-16'}  (newest first)
+print(all_dates[0])  # {'date': '2026-04-16'}  (newest first)
 print(all_dates[-1])  # {'date': '2015-06-13'}  (oldest)
 ```
 
@@ -240,27 +224,29 @@ import json
 from helpers import http_get
 
 # Short-period planets with known radii
-planets = json.loads(http_get(
-    "https://exoplanetarchive.ipac.caltech.edu/TAP/sync"
-    "?query=select+pl_name,hostname,pl_orbper+from+ps+where+pl_orbper+%3C+10"
-    "&format=json"
-))
-print(f"Rows: {len(planets)}")      # 17675 (table 'ps' includes duplicate measurements)
+planets = json.loads(
+    http_get(
+        "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+pl_name,hostname,pl_orbper+from+ps+where+pl_orbper+%3C+10&format=json"
+    )
+)
+print(f"Rows: {len(planets)}")  # 17675 (table 'ps' includes duplicate measurements)
 print(planets[0])
 # {'pl_name': 'GJ 1214 b', 'hostname': 'GJ 1214', 'pl_orbper': 1.58040482}
 ```
 
 ```python
 # Use 'pscomppars' for one row per planet (composite best-estimate params)
-planets = json.loads(http_get(
-    "https://exoplanetarchive.ipac.caltech.edu/TAP/sync"
-    "?query=select+pl_name,hostname,disc_year,discoverymethod,pl_orbper,pl_rade,pl_masse,pl_eqt,sy_dist"
-    "+from+pscomppars+where+disc_year+%3E+2020+and+pl_rade+is+not+null"
-    "+order+by+disc_year+desc"
-    "&format=json&maxrec=5"
-))
+planets = json.loads(
+    http_get(
+        "https://exoplanetarchive.ipac.caltech.edu/TAP/sync"
+        "?query=select+pl_name,hostname,disc_year,discoverymethod,pl_orbper,pl_rade,pl_masse,pl_eqt,sy_dist"
+        "+from+pscomppars+where+disc_year+%3E+2020+and+pl_rade+is+not+null"
+        "+order+by+disc_year+desc"
+        "&format=json&maxrec=5"
+    )
+)
 for p in planets:
-    print(p['pl_name'], p['disc_year'], p['discoverymethod'], f"r={p['pl_rade']}Re")
+    print(p["pl_name"], p["disc_year"], p["discoverymethod"], f"r={p['pl_rade']}Re")
 # Confirmed output:
 # KMT-2024-BLG-1870L b 2026 Microlensing r=13.8Re
 # LHS 1903 b 2026 Transit r=1.382Re

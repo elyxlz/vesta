@@ -10,11 +10,13 @@
 import xml.etree.ElementTree as ET
 from helpers import http_get
 
-NS = {'atom': 'http://www.w3.org/2005/Atom', 'arxiv': 'http://arxiv.org/schemas/atom'}
+NS = {"atom": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
 
-xml = http_get("http://export.arxiv.org/api/query?search_query=ti:transformer+AND+cat:cs.LG&max_results=5&sortBy=submittedDate&sortOrder=descending")
+xml = http_get(
+    "http://export.arxiv.org/api/query?search_query=ti:transformer+AND+cat:cs.LG&max_results=5&sortBy=submittedDate&sortOrder=descending"
+)
 root = ET.fromstring(xml)
-entries = root.findall('atom:entry', NS)
+entries = root.findall("atom:entry", NS)
 ```
 
 Use `id_list` for known paper IDs — supports comma-separated batch fetch in a single call.
@@ -29,27 +31,25 @@ Use `http_get` on `https://arxiv.org/abs/{id}` + regex for `citation_*` meta tag
 import xml.etree.ElementTree as ET
 from helpers import http_get
 
-NS = {'atom': 'http://www.w3.org/2005/Atom', 'arxiv': 'http://arxiv.org/schemas/atom'}
+NS = {"atom": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
 
 xml = http_get(
-    "http://export.arxiv.org/api/query"
-    "?search_query=ti:transformer+AND+cat:cs.LG"
-    "&max_results=5&sortBy=submittedDate&sortOrder=descending"
+    "http://export.arxiv.org/api/query?search_query=ti:transformer+AND+cat:cs.LG&max_results=5&sortBy=submittedDate&sortOrder=descending"
 )
 root = ET.fromstring(xml)
-entries = root.findall('atom:entry', NS)
+entries = root.findall("atom:entry", NS)
 for e in entries:
-    title     = e.find('atom:title', NS).text.strip().replace('\n', ' ')
-    arxiv_id  = e.find('atom:id', NS).text.split('/')[-1]   # e.g. '2604.15259v1'
-    published = e.find('atom:published', NS).text[:10]       # '2026-04-16'
-    updated   = e.find('atom:updated', NS).text[:10]
-    abstract  = e.find('atom:summary', NS).text.strip()
-    authors   = [a.find('atom:name', NS).text for a in e.findall('atom:author', NS)]
-    cats      = [c.get('term') for c in e.findall('atom:category', NS)]
-    primary   = e.find('arxiv:primary_category', NS).get('term')
-    comment   = e.find('arxiv:comment', NS)
-    pdf_link  = next((l.get('href') for l in e.findall('atom:link', NS) if l.get('title') == 'pdf'), None)
-    abs_link  = next((l.get('href') for l in e.findall('atom:link', NS) if l.get('rel') == 'alternate'), None)
+    title = e.find("atom:title", NS).text.strip().replace("\n", " ")
+    arxiv_id = e.find("atom:id", NS).text.split("/")[-1]  # e.g. '2604.15259v1'
+    published = e.find("atom:published", NS).text[:10]  # '2026-04-16'
+    updated = e.find("atom:updated", NS).text[:10]
+    abstract = e.find("atom:summary", NS).text.strip()
+    authors = [a.find("atom:name", NS).text for a in e.findall("atom:author", NS)]
+    cats = [c.get("term") for c in e.findall("atom:category", NS)]
+    primary = e.find("arxiv:primary_category", NS).get("term")
+    comment = e.find("arxiv:comment", NS)
+    pdf_link = next((l.get("href") for l in e.findall("atom:link", NS) if l.get("title") == "pdf"), None)
+    abs_link = next((l.get("href") for l in e.findall("atom:link", NS) if l.get("rel") == "alternate"), None)
     print(arxiv_id, published, title[:60])
     print("  Authors:", authors[:2])
     print("  PDF:", pdf_link)
@@ -65,15 +65,15 @@ for e in entries:
 import xml.etree.ElementTree as ET
 from helpers import http_get
 
-NS = {'atom': 'http://www.w3.org/2005/Atom', 'arxiv': 'http://arxiv.org/schemas/atom'}
+NS = {"atom": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
 
 xml = http_get("http://export.arxiv.org/api/query?id_list=1706.03762")
 root = ET.fromstring(xml)
-e = root.find('atom:entry', NS)
-title      = e.find('atom:title', NS).text.strip()
-abstract   = e.find('atom:summary', NS).text.strip()
-categories = [c.get('term') for c in e.findall('atom:category', NS)]
-pdf_link   = next((l.get('href') for l in e.findall('atom:link', NS) if l.get('title') == 'pdf'), None)
+e = root.find("atom:entry", NS)
+title = e.find("atom:title", NS).text.strip()
+abstract = e.find("atom:summary", NS).text.strip()
+categories = [c.get("term") for c in e.findall("atom:category", NS)]
+pdf_link = next((l.get("href") for l in e.findall("atom:link", NS) if l.get("title") == "pdf"), None)
 print("Title:", title)
 print("Categories:", categories)
 print("PDF:", pdf_link)
@@ -93,15 +93,15 @@ Fetching 10 IDs in one call takes ~2s. Prefer this over parallel single-ID fetch
 import xml.etree.ElementTree as ET
 from helpers import http_get
 
-NS = {'atom': 'http://www.w3.org/2005/Atom'}
+NS = {"atom": "http://www.w3.org/2005/Atom"}
 
-ids = ['1706.03762', '1810.04805', '2005.14165']  # Transformer, BERT, GPT-3
+ids = ["1706.03762", "1810.04805", "2005.14165"]  # Transformer, BERT, GPT-3
 xml = http_get(f"http://export.arxiv.org/api/query?id_list={','.join(ids)}&max_results={len(ids)}")
 root = ET.fromstring(xml)
-for e in root.findall('atom:entry', NS):
-    arxiv_id  = e.find('atom:id', NS).text.split('/')[-1]
-    title     = e.find('atom:title', NS).text.strip()
-    published = e.find('atom:published', NS).text[:10]
+for e in root.findall("atom:entry", NS):
+    arxiv_id = e.find("atom:id", NS).text.split("/")[-1]
+    title = e.find("atom:title", NS).text.strip()
+    published = e.find("atom:published", NS).text[:10]
     print(arxiv_id, published, title[:60])
 # Confirmed output:
 # 1512.03385v1 2015-12-10 Deep Residual Learning for Image Recognition
@@ -120,25 +120,27 @@ import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 from helpers import http_get
 
-NS = {'atom': 'http://www.w3.org/2005/Atom'}
+NS = {"atom": "http://www.w3.org/2005/Atom"}
+
 
 def fetch_paper(arxiv_id):
     xml = http_get(f"http://export.arxiv.org/api/query?id_list={arxiv_id}")
     root = ET.fromstring(xml)
-    e = root.find('atom:entry', NS)
+    e = root.find("atom:entry", NS)
     if e is None:
         return None
     return {
-        'id': arxiv_id,
-        'title': e.find('atom:title', NS).text.strip(),
-        'published': e.find('atom:published', NS).text[:10],
+        "id": arxiv_id,
+        "title": e.find("atom:title", NS).text.strip(),
+        "published": e.find("atom:published", NS).text[:10],
     }
 
-ids = ['1706.03762', '1810.04805', '2005.14165']
+
+ids = ["1706.03762", "1810.04805", "2005.14165"]
 with ThreadPoolExecutor(max_workers=3) as ex:
     papers = list(ex.map(fetch_paper, ids))
 for p in papers:
-    print(p['id'], p['published'], p['title'][:60])
+    print(p["id"], p["published"], p["title"][:60])
 # Confirmed working — max_workers=3 is safe; don't exceed 5 for continuous crawling
 ```
 
@@ -153,10 +155,10 @@ from helpers import http_get
 html = http_get("https://arxiv.org/abs/1706.03762", headers={"User-Agent": "Mozilla/5.0"})
 # HTML page is ~48 KB, fully static, no JS required
 
-title   = re.search(r'<meta name="citation_title" content="([^"]+)"', html)
+title = re.search(r'<meta name="citation_title" content="([^"]+)"', html)
 pdf_url = re.search(r'<meta name="citation_pdf_url" content="([^"]+)"', html)
 authors = re.findall(r'<meta name="citation_author" content="([^"]+)"', html)
-date    = re.search(r'<meta name="citation_date" content="([^"]+)"', html)
+date = re.search(r'<meta name="citation_date" content="([^"]+)"', html)
 arxiv_id = re.search(r'<meta name="citation_arxiv_id" content="([^"]+)"', html)
 abstract = re.search(r'<meta name="citation_abstract" content="([^"]+)"', html)
 
@@ -189,30 +191,22 @@ import xml.etree.ElementTree as ET
 from helpers import http_get
 
 NS = {
-    'atom': 'http://www.w3.org/2005/Atom',
-    'opensearch': 'http://a9.com/-/spec/opensearch/1.1/',
+    "atom": "http://www.w3.org/2005/Atom",
+    "opensearch": "http://a9.com/-/spec/opensearch/1.1/",
 }
 
 # Page 1
-xml = http_get(
-    "http://export.arxiv.org/api/query"
-    "?search_query=cat:cs.AI"
-    "&max_results=10&start=0&sortBy=lastUpdatedDate&sortOrder=descending"
-)
+xml = http_get("http://export.arxiv.org/api/query?search_query=cat:cs.AI&max_results=10&start=0&sortBy=lastUpdatedDate&sortOrder=descending")
 root = ET.fromstring(xml)
-total   = root.find('opensearch:totalResults', NS).text   # e.g. '172726'
-start_i = root.find('opensearch:startIndex', NS).text
-per_pg  = root.find('opensearch:itemsPerPage', NS).text
+total = root.find("opensearch:totalResults", NS).text  # e.g. '172726'
+start_i = root.find("opensearch:startIndex", NS).text
+per_pg = root.find("opensearch:itemsPerPage", NS).text
 print(f"Total cs.AI papers: {total}")  # Confirmed: 172726 (2026-04-18)
 
-entries = root.findall('atom:entry', NS)
+entries = root.findall("atom:entry", NS)
 
 # Page 2: increment start
-xml2 = http_get(
-    "http://export.arxiv.org/api/query"
-    "?search_query=cat:cs.AI"
-    "&max_results=10&start=10&sortBy=lastUpdatedDate&sortOrder=descending"
-)
+xml2 = http_get("http://export.arxiv.org/api/query?search_query=cat:cs.AI&max_results=10&start=10&sortBy=lastUpdatedDate&sortOrder=descending")
 ```
 
 ## URL and ID reference
@@ -253,13 +247,13 @@ HTTPS also works: `https://export.arxiv.org/api/query`
 ```python
 import re
 
-arxiv_id = "1706.03762v7"                        # from API atom:id field
-bare_id = re.sub(r'v\d+$', '', arxiv_id)          # strip version: '1706.03762'
+arxiv_id = "1706.03762v7"  # from API atom:id field
+bare_id = re.sub(r"v\d+$", "", arxiv_id)  # strip version: '1706.03762'
 
-pdf_versioned   = f"https://arxiv.org/pdf/{arxiv_id}"   # specific version
-pdf_latest      = f"https://arxiv.org/pdf/{bare_id}"    # always redirects to latest
-abs_versioned   = f"https://arxiv.org/abs/{arxiv_id}"
-abs_latest      = f"https://arxiv.org/abs/{bare_id}"
+pdf_versioned = f"https://arxiv.org/pdf/{arxiv_id}"  # specific version
+pdf_latest = f"https://arxiv.org/pdf/{bare_id}"  # always redirects to latest
+abs_versioned = f"https://arxiv.org/abs/{arxiv_id}"
+abs_latest = f"https://arxiv.org/abs/{bare_id}"
 ```
 
 The API's `atom:link[@title='pdf']` href includes the version suffix. The HTML `citation_pdf_url` meta tag does not — it always resolves to the latest.

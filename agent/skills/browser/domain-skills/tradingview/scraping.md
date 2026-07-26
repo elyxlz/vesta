@@ -9,12 +9,11 @@
 ```python
 import json, urllib.request
 
+
 def tv_scan(payload, market="america"):
     data = json.dumps(payload).encode()
     req = urllib.request.Request(
-        f"https://scanner.tradingview.com/{market}/scan",
-        data=data,
-        headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
+        f"https://scanner.tradingview.com/{market}/scan", data=data, headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
     )
     with urllib.request.urlopen(req, timeout=20) as r:
         return json.loads(r.read())
@@ -34,14 +33,12 @@ payload = {
     "options": {"lang": "en"},
     "columns": ["name", "close", "change", "volume", "market_cap_basic"],
     "sort": {"sortBy": "market_cap_basic", "sortOrder": "desc"},
-    "range": [0, 10]   # [start, end] — half-open, so this returns rows 0–9
+    "range": [0, 10],  # [start, end] — half-open, so this returns rows 0–9
 }
 
 data = json.dumps(payload).encode()
 req = urllib.request.Request(
-    "https://scanner.tradingview.com/america/scan",
-    data=data,
-    headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
+    "https://scanner.tradingview.com/america/scan", data=data, headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
 )
 with urllib.request.urlopen(req, timeout=20) as r:
     resp = json.loads(r.read())
@@ -53,7 +50,7 @@ with urllib.request.urlopen(req, timeout=20) as r:
 cols = payload["columns"]
 for item in resp["data"]:
     row = dict(zip(cols, item["d"]))
-    symbol = item["s"]   # e.g. "NASDAQ:AAPL"
+    symbol = item["s"]  # e.g. "NASDAQ:AAPL"
     print(symbol, row["close"], row["change"], row["market_cap_basic"])
 # NASDAQ:NVDA  201.68  1.68  4900823822021.0
 # NASDAQ:AAPL  270.23  2.59  3967284528489.0
@@ -76,15 +73,14 @@ payload["range"] = [20, 40]
 payload = {
     "filter": [
         {"left": "market_cap_basic", "operation": "greater", "right": 10_000_000_000},
-        {"left": "volume",           "operation": "greater", "right": 5_000_000},
-        {"left": "change",           "operation": "in_range", "right": [2, 10]},
-        {"left": "exchange",         "operation": "equal",   "right": "NASDAQ"},
-        {"left": "sector",           "operation": "equal",   "right": "Electronic Technology"},
+        {"left": "volume", "operation": "greater", "right": 5_000_000},
+        {"left": "change", "operation": "in_range", "right": [2, 10]},
+        {"left": "exchange", "operation": "equal", "right": "NASDAQ"},
+        {"left": "sector", "operation": "equal", "right": "Electronic Technology"},
     ],
-    "columns": ["name", "close", "change", "volume", "market_cap_basic",
-                "description", "sector", "industry"],
+    "columns": ["name", "close", "change", "volume", "market_cap_basic", "description", "sector", "industry"],
     "sort": {"sortBy": "market_cap_basic", "sortOrder": "desc"},
-    "range": [0, 20]
+    "range": [0, 20],
 }
 ```
 
@@ -99,43 +95,44 @@ Sector names use TradingView taxonomy (not GICS). Confirmed working values:
 
 ```python
 # Price & volume
-"name"                     # ticker (e.g. "AAPL")
-"description"              # full name ("Apple Inc.")
-"close"                    # last price
+"name"  # ticker (e.g. "AAPL")
+
+"description"  # full name ("Apple Inc.")
+"close"  # last price
 "open", "high", "low"
 "volume"
-"change"                   # % change today
-"change_abs"               # absolute price change
-"change|1M"                # 1-month % change (also: |6M, |1Y)
-"High.1M", "High.6M"       # period high
-"High.All", "Low.All"      # all-time high/low
-"price_52_week_high"       # confirmed works
-"price_52_week_low"        # confirmed works
-"premarket_change"         # pre-market %
-"postmarket_change"        # after-hours %
-"gap"                      # overnight gap %
-"change_from_open_abs"     # intraday move from open
+"change"  # % change today
+"change_abs"  # absolute price change
+"change|1M"  # 1-month % change (also: |6M, |1Y)
+"High.1M", "High.6M"  # period high
+"High.All", "Low.All"  # all-time high/low
+"price_52_week_high"  # confirmed works
+"price_52_week_low"  # confirmed works
+"premarket_change"  # pre-market %
+"postmarket_change"  # after-hours %
+"gap"  # overnight gap %
+"change_from_open_abs"  # intraday move from open
 "average_volume_10d_calc"  # 10-day avg volume
-"relative_volume_10d_calc" # relative volume vs 10-day avg
+"relative_volume_10d_calc"  # relative volume vs 10-day avg
 "relative_volume_intraday|5"  # intraday relative vol (5m bars)
 
 # Fundamentals
-"market_cap_basic"          # market cap in USD
+"market_cap_basic"  # market cap in USD
 "earnings_per_share_diluted_ttm"  # EPS TTM
-"price_earnings_ttm"        # P/E TTM
-"P/E"                       # P/E (snapshot)
-"dividends_yield"           # dividend yield %
-"beta_1_year"               # beta
+"price_earnings_ttm"  # P/E TTM
+"P/E"  # P/E (snapshot)
+"dividends_yield"  # dividend yield %
+"beta_1_year"  # beta
 "float_shares_outstanding"  # float shares
 
 # Technical ratings & indicators
-"Recommend.All"   # composite rating: -1 (strong sell) to +1 (strong buy)
-"RSI"             # RSI 14
-"MACD.macd"       # MACD line
+"Recommend.All"  # composite rating: -1 (strong sell) to +1 (strong buy)
+"RSI"  # RSI 14
+"MACD.macd"  # MACD line
 
 # Classification
 "sector", "industry", "country", "exchange"
-"type"    # "stock", "fund", "dr" (depository receipt), etc.
+"type"  # "stock", "fund", "dr" (depository receipt), etc.
 
 # NOTE: "52_week_high" / "52_week_low" are INVALID — use "price_52_week_high" / "price_52_week_low"
 # NOTE: "EPS_diluted_net" is INVALID — use "earnings_per_share_diluted_ttm"
@@ -157,7 +154,7 @@ payload = {
     "filter": [],
     "columns": ["name", "close", "change", "volume", "market_cap_calc"],
     "sort": {"sortBy": "market_cap_calc", "sortOrder": "desc"},
-    "range": [0, 10]
+    "range": [0, 10],
 }
 resp = tv_scan(payload, market="crypto")
 # Returns BTC, ETH, etc. across Binance, Bybit, OKX...
@@ -168,18 +165,23 @@ resp = tv_scan(payload, market="crypto")
 ```python
 import json, urllib.request
 
+
 def symbol_search(query, exchange="", type_filter="", limit=50):
     url = (
         f"https://symbol-search.tradingview.com/symbol_search/v3/"
         f"?text={query}&hl=1&exchange={exchange}&lang=en"
         f"&search_type={type_filter or 'undefined'}&domain=production"
     )
-    req = urllib.request.Request(url, headers={
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-        "Origin": "https://www.tradingview.com",   # REQUIRED — 403 without this
-    })
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+            "Origin": "https://www.tradingview.com",  # REQUIRED — 403 without this
+        },
+    )
     with urllib.request.urlopen(req, timeout=15) as r:
         return json.loads(r.read())
+
 
 result = symbol_search("AAPL")
 # result["symbols_remaining"] = 137
@@ -205,16 +207,15 @@ result = symbol_search("AAPL", exchange="NASDAQ", type_filter="stock")
 ```python
 import json, urllib.request
 
+
 def get_news(symbol, limit=20):
     # symbol format: "NASDAQ:AAPL", "NYSE:TSLA"
-    url = (
-        f"https://news-headlines.tradingview.com/v2/view/headlines/symbol"
-        f"?symbol={symbol}&client=web&streaming=false&lang=en&limit={limit}"
-    )
+    url = f"https://news-headlines.tradingview.com/v2/view/headlines/symbol?symbol={symbol}&client=web&streaming=false&lang=en&limit={limit}"
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req, timeout=15) as r:
         data = json.loads(r.read())
     return data["items"]  # list of news items
+
 
 items = get_news("NASDAQ:AAPL", limit=10)
 # item keys: id, title, provider, sourceLogoId, published (unix ts),
@@ -233,6 +234,7 @@ No auth or special headers needed. Returns up to 200 items per request.
 ```python
 import json, urllib.request
 
+
 def get_ideas(sort="trending", page=1, symbol=None):
     # Valid sort values (others return 400):
     # "trending", "recent", "latest_popular", "week_popular",
@@ -243,6 +245,7 @@ def get_ideas(sort="trending", page=1, symbol=None):
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req, timeout=15) as r:
         return json.loads(r.read())
+
 
 data = get_ideas("trending")
 # data["count"]      = 1000 (always 1000 — soft cap)
@@ -304,6 +307,6 @@ The charting UI (`/chart/`), symbol detail pages (`/symbols/NASDAQ-AAPL/`), and 
 # Only if you need a chart screenshot:
 goto("https://www.tradingview.com/chart/?symbol=NASDAQ:AAPL")
 wait_for_load()
-wait(3)   # chart renders asynchronously after readyState
+wait(3)  # chart renders asynchronously after readyState
 screenshot("/tmp/aapl_chart.png", full=False)
 ```

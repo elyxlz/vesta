@@ -166,6 +166,7 @@ from urllib.parse import quote_plus
 # Decoy job keys are rotations of the hex alphabet and duplicate a real listing's title.
 HEX_RING = "0123456789abcdef"
 
+
 def is_honeypot_jk(jk: str) -> bool:
     """True for Indeed decoy keys like 789abcdef0123456 / fedcba9876543210."""
     j = (jk or "").lower()
@@ -173,6 +174,7 @@ def is_honeypot_jk(jk: str) -> bool:
         return False
     doubled, rdoubled = HEX_RING * 2, HEX_RING[::-1] * 2
     return j in doubled or j in rdoubled
+
 
 query, location = "machine learning engineer", "New York"
 goto(f"https://www.indeed.com/jobs?q={quote_plus(query)}&l={quote_plus(location)}")
@@ -257,12 +259,12 @@ base_url = f"https://www.indeed.com/jobs?q={quote_plus(query)}&l={quote_plus(loc
 
 all_jobs = []
 
-for page in range(3):   # 3 pages = up to ~30 results
+for page in range(3):  # 3 pages = up to ~30 results
     start = page * 10
     url = base_url if start == 0 else f"{base_url}&start={start}"
     goto(url)
     wait_for_load()
-    wait(2)   # mandatory — bot detection is aggressive on rapid loads
+    wait(2)  # mandatory — bot detection is aggressive on rapid loads
 
     if page == 0:
         dismiss_cookie_banner()
@@ -296,10 +298,10 @@ for page in range(3):   # 3 pages = up to ~30 results
 
     batch = json.loads(batch_json)
     if not batch:
-        break   # no results on this page — stop
+        break  # no results on this page — stop
     all_jobs.extend(batch)
 
-print(f"Collected {len(all_jobs)} jobs across {page+1} pages")
+print(f"Collected {len(all_jobs)} jobs across {page + 1} pages")
 ```
 
 **For `fromage` (date filter) + pagination**: keep the `fromage` param in the base URL:
@@ -330,6 +332,7 @@ Fetch the full job description from the detail page. The `viewjob?jk=` URL is ca
 
 ```python
 import json, re
+
 
 def get_indeed_job_detail(jk: str) -> dict:
     """Fetch full job details from an Indeed job key."""
@@ -372,6 +375,7 @@ def get_indeed_job_detail(jk: str) -> dict:
     """)
     return json.loads(detail)
 
+
 # Example
 detail = get_indeed_job_detail("abc123def456xyz")
 print(detail["title"], "—", detail["salary"])
@@ -391,7 +395,7 @@ from urllib.parse import quote_plus
 query = "product manager"
 goto(f"https://www.glassdoor.com/Job/jobs.htm?sc.keyword={quote_plus(query)}")
 wait_for_load()
-wait(3)   # Glassdoor JS rendering takes longer
+wait(3)  # Glassdoor JS rendering takes longer
 
 # Dismiss cookie banner if present
 dismiss_cookie_banner()
@@ -486,6 +490,7 @@ def dismiss_glassdoor_login_modal():
         wait(1)
     return closed
 
+
 # Strategy: extract as much as possible before the modal appears
 # If the modal blocks results, dismiss it and try again
 result = dismiss_glassdoor_login_modal()
@@ -562,7 +567,7 @@ for r in results:
 import json
 
 all_jobs = []
-for page in range(1, 4):   # pages 1-3
+for page in range(1, 4):  # pages 1-3
     if page == 1:
         url = f"https://www.stepstone.de/jobs/{kw_path}/in-{city_path}.html"
     else:
@@ -622,6 +627,7 @@ JSON.stringify(
 )
 """)
 import json
+
 jks = json.loads(job_keys)
 
 # Canonical job detail URL for any job key:
@@ -634,8 +640,10 @@ If you already have a redirect URL and need to extract the `jk` from it:
 
 ```python
 import re
+
+
 def extract_jk(url: str) -> str | None:
-    m = re.search(r'[?&]jk=([a-f0-9]+)', url)
+    m = re.search(r"[?&]jk=([a-f0-9]+)", url)
     return m.group(1) if m else None
 ```
 
@@ -649,6 +657,7 @@ Salary appears in different places and formats depending on the job and site.
 
 ```python
 import re
+
 
 def parse_indeed_salary(raw: str) -> dict:
     """
@@ -683,11 +692,12 @@ def parse_indeed_salary(raw: str) -> dict:
         period = "month"
 
     # Range: two dollar amounts
-    range_m = re.findall(r'\$?([\d]+(?:\.\d+)?)', raw_clean)
-    low  = float(range_m[0]) if len(range_m) >= 1 else None
+    range_m = re.findall(r"\$?([\d]+(?:\.\d+)?)", raw_clean)
+    low = float(range_m[0]) if len(range_m) >= 1 else None
     high = float(range_m[1]) if len(range_m) >= 2 else low
 
     return {"raw": raw, "low": low, "high": high, "period": period, "source": source}
+
 
 # Examples
 parse_indeed_salary("$85,000 - $110,000 a year")
@@ -720,6 +730,7 @@ All three sites use relative timestamps. Convert to absolute dates when needed.
 import re
 from datetime import datetime, timedelta
 
+
 def parse_relative_date(text: str, reference_date: datetime = None) -> datetime | None:
     """
     Convert relative job posting dates to datetime objects.
@@ -735,19 +746,19 @@ def parse_relative_date(text: str, reference_date: datetime = None) -> datetime 
     if text in ("just posted", "today", "active today"):
         return reference_date
     if "hour" in text:
-        m = re.search(r'(\d+)', text)
+        m = re.search(r"(\d+)", text)
         hours = int(m.group(1)) if m else 1
         return reference_date - timedelta(hours=hours)
     if "day" in text:
-        m = re.search(r'(\d+)', text)
+        m = re.search(r"(\d+)", text)
         days = int(m.group(1)) if m else 1
         return reference_date - timedelta(days=days)
     if "week" in text:
-        m = re.search(r'(\d+)', text)
+        m = re.search(r"(\d+)", text)
         weeks = int(m.group(1)) if m else 1
         return reference_date - timedelta(weeks=weeks)
     if "month" in text:
-        m = re.search(r'(\d+)', text)
+        m = re.search(r"(\d+)", text)
         months = int(m.group(1)) if m else 1
         return reference_date - timedelta(days=months * 30)
     if "30+" in text:
@@ -755,10 +766,11 @@ def parse_relative_date(text: str, reference_date: datetime = None) -> datetime 
 
     return None  # unparseable
 
+
 # Examples
-parse_relative_date("3 days ago")    # datetime ~3 days before now
+parse_relative_date("3 days ago")  # datetime ~3 days before now
 parse_relative_date("Just posted")  # datetime.utcnow()
-parse_relative_date("30+ days ago") # datetime 30 days ago
+parse_relative_date("30+ days ago")  # datetime 30 days ago
 ```
 
 ---
@@ -770,6 +782,7 @@ For Indeed, the raw HTML of search results contains structured JSON in a `window
 ```python
 import json, re
 from urllib.parse import quote_plus
+
 
 def indeed_http_search(query: str, location: str = "", fromage: int = 0, start: int = 0) -> list[dict]:
     """
@@ -785,7 +798,7 @@ def indeed_http_search(query: str, location: str = "", fromage: int = 0, start: 
         headers={
             "Accept-Language": "en-US,en;q=0.9",
             "Accept": "text/html,application/xhtml+xml",
-        }
+        },
     )
 
     # Check for CAPTCHA before parsing
@@ -793,10 +806,7 @@ def indeed_http_search(query: str, location: str = "", fromage: int = 0, start: 
         return []  # fall back to browser-based extraction
 
     # Indeed embeds job data in window.mosaic.providerData["mosaic-provider-jobcards"]
-    m = re.search(
-        r'window\.mosaic\.providerData\["mosaic-provider-jobcards"\]\s*=\s*(\{.*?\});',
-        html, re.DOTALL
-    )
+    m = re.search(r'window\.mosaic\.providerData\["mosaic-provider-jobcards"\]\s*=\s*(\{.*?\});', html, re.DOTALL)
     if not m:
         return []
 
@@ -805,27 +815,25 @@ def indeed_http_search(query: str, location: str = "", fromage: int = 0, start: 
     except json.JSONDecodeError:
         return []
 
-    results_list = (
-        data
-        .get("metaData", {})
-        .get("mosaicProviderJobCardsModel", {})
-        .get("results", [])
-    )
+    results_list = data.get("metaData", {}).get("mosaicProviderJobCardsModel", {}).get("results", [])
 
     jobs = []
     for r in results_list:
         jk = r.get("jobkey", "")
-        jobs.append({
-            "jk":       jk,
-            "title":    r.get("title", ""),
-            "company":  r.get("company", ""),
-            "location": r.get("formattedLocation", ""),
-            "salary":   r.get("salarySnippet", {}).get("text", ""),
-            "posted":   r.get("formattedRelativeTime", ""),
-            "url":      f"https://www.indeed.com/viewjob?jk={jk}",
-            "snippet":  r.get("snippet", ""),  # short description preview
-        })
+        jobs.append(
+            {
+                "jk": jk,
+                "title": r.get("title", ""),
+                "company": r.get("company", ""),
+                "location": r.get("formattedLocation", ""),
+                "salary": r.get("salarySnippet", {}).get("text", ""),
+                "posted": r.get("formattedRelativeTime", ""),
+                "url": f"https://www.indeed.com/viewjob?jk={jk}",
+                "snippet": r.get("snippet", ""),  # short description preview
+            }
+        )
     return jobs
+
 
 # Example — last 24h remote jobs
 jobs = indeed_http_search("software engineer", "remote", fromage=1)
@@ -883,7 +891,7 @@ Indeed and Glassdoor have active bot detection. Violating these limits leads to 
 
 ```python
 # Minimum wait between page loads
-INTER_PAGE_WAIT = 2.5   # seconds — don't go below 2
+INTER_PAGE_WAIT = 2.5  # seconds — don't go below 2
 
 # Between job detail page fetches
 INTER_DETAIL_WAIT = 3.0  # seconds
@@ -911,6 +919,7 @@ def is_captcha_page() -> bool:
         "sorry" in title.lower() and "indeed" in url,
     ]
     return any(signals)
+
 
 # Use after every goto:
 goto(some_url)
@@ -943,11 +952,12 @@ Glassdoor's bot detection is more fingerprint-based. If results stop loading:
 ```python
 from urllib.parse import quote_plus
 
+
 def build_indeed_url(
     query: str,
     location: str = "",
-    fromage: int = 0,       # days: 1=last 24h, 3=last 3 days, 7=last week
-    job_type: str = "",     # "fulltime", "parttime", "contract", "internship", "temporary"
+    fromage: int = 0,  # days: 1=last 24h, 3=last 3 days, 7=last week
+    job_type: str = "",  # "fulltime", "parttime", "contract", "internship", "temporary"
     remote: bool = False,
     start: int = 0,
 ) -> str:
@@ -962,6 +972,7 @@ def build_indeed_url(
         base += f"&start={start}"
     return base
 
+
 # Examples
 url = build_indeed_url("backend engineer", "Austin, TX", fromage=7, job_type="fulltime")
 url = build_indeed_url("data analyst", remote=True, fromage=1)
@@ -975,8 +986,8 @@ url = build_indeed_url("data analyst", remote=True, fromage=1)
 import json
 from urllib.parse import quote_plus
 
-def collect_indeed_jobs(query: str, location: str = "", max_results: int = 20,
-                        fromage: int = 0, job_type: str = "") -> list[dict]:
+
+def collect_indeed_jobs(query: str, location: str = "", max_results: int = 20, fromage: int = 0, job_type: str = "") -> list[dict]:
     """
     Collect up to max_results jobs from Indeed across multiple pages.
     Waits between pages to avoid bot detection.
@@ -996,7 +1007,7 @@ def collect_indeed_jobs(query: str, location: str = "", max_results: int = 20,
             dismiss_cookie_banner()
 
         if is_captcha_page():
-            print(f"CAPTCHA on page {page+1}, stopping")
+            print(f"CAPTCHA on page {page + 1}, stopping")
             break
 
         batch_json = js("""
@@ -1036,6 +1047,7 @@ def collect_indeed_jobs(query: str, location: str = "", max_results: int = 20,
         page += 1
 
     return all_jobs[:max_results]
+
 
 # Examples
 jobs = collect_indeed_jobs("Python developer", "San Francisco", max_results=20)

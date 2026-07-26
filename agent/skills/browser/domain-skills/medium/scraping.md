@@ -26,20 +26,21 @@ Every `?format=json` response starts with the anti-hijacking prefix `])}while(1)
 ```python
 import urllib.request, gzip, json, re
 
+
 def medium_json(url):
     """Fetch any Medium URL with ?format=json and return parsed dict.
     Strips the XSSI prefix ])}while(1);</x> automatically.
     Works on: article URLs, user profile URLs, publication URLs.
     Does NOT work on: search pages, /latest, profile stream API.
     """
-    sep = '&' if '?' in url else '?'
+    sep = "&" if "?" in url else "?"
     req = urllib.request.Request(
-        url + sep + 'format=json',
+        url + sep + "format=json",
         headers={
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
             "Accept": "application/json, */*",
             "Accept-Encoding": "gzip",
-        }
+        },
     )
     with urllib.request.urlopen(req, timeout=20) as r:
         raw = r.read()
@@ -47,7 +48,7 @@ def medium_json(url):
             raw = gzip.decompress(raw)
         text = raw.decode()
     # Strip everything before the first {
-    return json.loads(re.sub(r'^[^\{]+', '', text))
+    return json.loads(re.sub(r"^[^\{]+", "", text))
 ```
 
 ---
@@ -58,44 +59,44 @@ Append `?format=json` to any article URL. Returns full metadata, virtuals (metri
 
 ```python
 data = medium_json("https://medium.com/@karpathy/software-2-0-a64152b37c35")
-payload = data['payload']
-val     = payload['value']        # article fields
-refs    = payload['references']   # User, Social, SocialStats dicts keyed by ID
+payload = data["payload"]
+val = payload["value"]  # article fields
+refs = payload["references"]  # User, Social, SocialStats dicts keyed by ID
 
 # --- Article fields ---
-title       = val['title']                              # "Software 2.0"
-article_id  = val['id']                                 # "a64152b37c35"
-creator_id  = val['creatorId']                          # "ac9d9a35533e"
-slug        = val['uniqueSlug']                         # "software-2-0-a64152b37c35"
-url         = val['canonicalUrl']                       # "https://medium.com/@karpathy/..."
-first_pub   = val['firstPublishedAt']                   # unix ms: 1510438733751
-last_pub    = val['latestPublishedAt']                  # unix ms: 1615659523264
-visibility  = val['visibility']                         # 0=public, 2=subscriber-locked
-is_locked   = val['isSubscriptionLocked']               # True if paywalled
-locked_src  = val['lockedPostSource']                   # 0=free, 1=Medium Partner Program
+title = val["title"]  # "Software 2.0"
+article_id = val["id"]  # "a64152b37c35"
+creator_id = val["creatorId"]  # "ac9d9a35533e"
+slug = val["uniqueSlug"]  # "software-2-0-a64152b37c35"
+url = val["canonicalUrl"]  # "https://medium.com/@karpathy/..."
+first_pub = val["firstPublishedAt"]  # unix ms: 1510438733751
+last_pub = val["latestPublishedAt"]  # unix ms: 1615659523264
+visibility = val["visibility"]  # 0=public, 2=subscriber-locked
+is_locked = val["isSubscriptionLocked"]  # True if paywalled
+locked_src = val["lockedPostSource"]  # 0=free, 1=Medium Partner Program
 
 # --- Metrics (in val['virtuals']) ---
-virtuals    = val['virtuals']
-clap_count  = virtuals['totalClapCount']                # 60865 (all claps, including multi-clap)
-recommends  = virtuals['recommends']                    # 8846 (unique clappers)
-read_time   = virtuals['readingTime']                   # 8.79811320754717 (minutes, float)
-word_count  = virtuals['wordCount']                     # 2146
+virtuals = val["virtuals"]
+clap_count = virtuals["totalClapCount"]  # 60865 (all claps, including multi-clap)
+recommends = virtuals["recommends"]  # 8846 (unique clappers)
+read_time = virtuals["readingTime"]  # 8.79811320754717 (minutes, float)
+word_count = virtuals["wordCount"]  # 2146
 
 # --- Tags ---
-tags = [t['slug'] for t in virtuals['tags']]
+tags = [t["slug"] for t in virtuals["tags"]]
 # ['machine-learning', 'artificial-intelligence', 'programming', 'software-development', 'future']
 
 # --- Author (from references) ---
-user = refs['User'][creator_id]
-author_name = user['name']          # "Andrej Karpathy"
-author_handle = user['username']    # "karpathy"
-author_bio  = user['bio']           # "I like to train deep neural nets on large datasets."
-author_twitter = user['twitterScreenName']  # "karpathy"
+user = refs["User"][creator_id]
+author_name = user["name"]  # "Andrej Karpathy"
+author_handle = user["username"]  # "karpathy"
+author_bio = user["bio"]  # "I like to train deep neural nets on large datasets."
+author_twitter = user["twitterScreenName"]  # "karpathy"
 
 # --- Follower count (from SocialStats) ---
-ss = refs['SocialStats'][creator_id]
-follower_count  = ss['usersFollowedByCount']   # 60027
-following_count = ss['usersFollowedCount']     # 183
+ss = refs["SocialStats"][creator_id]
+follower_count = ss["usersFollowedByCount"]  # 60027
+following_count = ss["usersFollowedCount"]  # 183
 ```
 
 ### Detect paywall
@@ -103,7 +104,7 @@ following_count = ss['usersFollowedCount']     # 183
 ```python
 # Paywalled (Medium Partner Program): isSubscriptionLocked=True, visibility=2, lockedPostSource=1
 # Free: isSubscriptionLocked=False, visibility=0, lockedPostSource=0
-is_paywalled = val['isSubscriptionLocked']   # True / False
+is_paywalled = val["isSubscriptionLocked"]  # True / False
 ```
 
 Confirmed on real TDS articles: paywalled articles return `isSubscriptionLocked=True`, `visibility=2`, `lockedPostSource=1`. Free articles: all three are `False`/`0`.
@@ -113,7 +114,7 @@ Confirmed on real TDS articles: paywalled articles return `isSubscriptionLocked=
 The full body is in `val['content']['bodyModel']['paragraphs']` — a list of dicts:
 
 ```python
-paragraphs = val['content']['bodyModel']['paragraphs']
+paragraphs = val["content"]["bodyModel"]["paragraphs"]
 
 # Paragraph types (confirmed for this article):
 # type=1  -> body text (P)
@@ -121,8 +122,8 @@ paragraphs = val['content']['bodyModel']['paragraphs']
 # type=4  -> image (text is empty; metadata has image ID)
 
 # Reconstruct plain text:
-text_paras = [p['text'] for p in paragraphs if p.get('text')]
-full_text   = '\n\n'.join(text_paras)
+text_paras = [p["text"] for p in paragraphs if p.get("text")]
+full_text = "\n\n".join(text_paras)
 ```
 
 ---
@@ -135,9 +136,10 @@ Returns HTTP 200 with JSON even for unauthenticated queries. Invalid fields retu
 ```python
 import json, urllib.request, gzip
 
+
 def gql(query):
     body = json.dumps({"query": query}).encode()
-    req  = urllib.request.Request(
+    req = urllib.request.Request(
         "https://medium.com/_/graphql",
         data=body,
         headers={
@@ -176,7 +178,7 @@ result = gql("""
   }
 }
 """)
-post = result['data']['post']
+post = result["data"]["post"]
 # post['visibility']  -> "PUBLIC" | "LOCKED"  (string, not numeric)
 # post['isLocked']    -> False | True
 # post['clapCount']   -> 60865  (same as totalClapCount in format=json)
@@ -210,7 +212,7 @@ result = gql("""
   }
 }
 """)
-user = result['data']['user']
+user = result["data"]["user"]
 # user['name']                       -> "Andrej Karpathy"
 # user['id']                         -> "ac9d9a35533e"
 # user['bio']                        -> "I like to train deep neural nets on large datasets."
@@ -241,7 +243,7 @@ result = gql("""
   }
 }
 """)
-coll = result['data']['collection']
+coll = result["data"]["collection"]
 # coll['name'] -> "TDS Archive"
 # coll['slug'] -> "data-science"
 ```
@@ -256,25 +258,30 @@ Works with plain `http_get`. Returns up to 10 most recent posts. Full article HT
 import re
 from helpers import http_get
 
+
 def parse_rss_items(rss_xml):
     """Extract items from Medium RSS feed. Returns list of dicts."""
+
     def cdata(tag, text):
-        m = re.search(rf'<{tag}[^>]*><!\[CDATA\[(.*?)\]\]></{tag}>', text, re.DOTALL)
+        m = re.search(rf"<{tag}[^>]*><!\[CDATA\[(.*?)\]\]></{tag}>", text, re.DOTALL)
         return m.group(1).strip() if m else None
 
     items = []
-    for raw in re.findall(r'<item>(.*?)</item>', rss_xml, re.DOTALL):
+    for raw in re.findall(r"<item>(.*?)</item>", rss_xml, re.DOTALL):
         # link is plain text (not CDATA)
-        link_m = re.search(r'<link>(.*?)</link>', raw, re.DOTALL)
-        items.append({
-            'title':    cdata('title', raw),
-            'link':     link_m.group(1).strip() if link_m else None,
-            'pubDate':  cdata('pubDate', raw),
-            'creator':  cdata('dc:creator', raw),
-            'tags':     re.findall(r'<category><!\[CDATA\[(.*?)\]\]></category>', raw),
-            'body_html': cdata('content:encoded', raw),   # full article HTML
-        })
+        link_m = re.search(r"<link>(.*?)</link>", raw, re.DOTALL)
+        items.append(
+            {
+                "title": cdata("title", raw),
+                "link": link_m.group(1).strip() if link_m else None,
+                "pubDate": cdata("pubDate", raw),
+                "creator": cdata("dc:creator", raw),
+                "tags": re.findall(r"<category><!\[CDATA\[(.*?)\]\]></category>", raw),
+                "body_html": cdata("content:encoded", raw),  # full article HTML
+            }
+        )
     return items
+
 
 # User feed (up to 10 latest posts)
 rss = http_get("https://medium.com/feed/@karpathy")
@@ -304,26 +311,26 @@ Better than RSS when you need clap counts alongside post list. Returns up to `li
 
 ```python
 data = medium_json("https://medium.com/@karpathy?limit=10")
-payload = data['payload']
+payload = data["payload"]
 
-user = payload['user']
+user = payload["user"]
 # user['name']     -> "Andrej Karpathy"
 # user['username'] -> "karpathy"
 # user['bio']      -> "I like to train deep neural nets on large datasets."
 
-refs = payload['references']
-ss   = refs['SocialStats'][user['userId']]
+refs = payload["references"]
+ss = refs["SocialStats"][user["userId"]]
 # ss['usersFollowedByCount'] -> 60028 (followers)
 # ss['usersFollowedCount']   -> 183   (following)
 
-posts = refs.get('Post', {})  # dict keyed by post ID
+posts = refs.get("Post", {})  # dict keyed by post ID
 for pid, p in posts.items():
-    v = p['virtuals']
-    print(p['title'], v['totalClapCount'], round(v['readingTime'], 1))
+    v = p["virtuals"]
+    print(p["title"], v["totalClapCount"], round(v["readingTime"], 1))
 
 # Paginate: use paging['next'] from payload
-paging = payload['paging']
-next_params = paging['next']
+paging = payload["paging"]
+next_params = paging["next"]
 # next_params = {'limit': 10, 'to': '1495652975362', 'source': 'overview', 'page': 2, 'ignoredIds': []}
 # Append as query params to the same profile URL to get next page
 next_url = (
@@ -343,9 +350,9 @@ Returns publication metadata and recent posts with metrics.
 
 ```python
 data = medium_json("https://medium.com/towards-data-science")
-payload = data['payload']
+payload = data["payload"]
 
-coll = payload['collection']
+coll = payload["collection"]
 # coll['name']            -> "TDS Archive"
 # coll['slug']            -> "data-science"
 # coll['description']     -> full description string
@@ -353,14 +360,14 @@ coll = payload['collection']
 # coll['metadata']['followerCount'] -> 828527
 # coll['tags']            -> ['DATA SCIENCE', 'MACHINE LEARNING', ...]
 
-posts = payload['references'].get('Post', {})
+posts = payload["references"].get("Post", {})
 for pid, p in posts.items():
-    v = p['virtuals']
-    print(p['title'], v['totalClapCount'], p['isSubscriptionLocked'])
+    v = p["virtuals"]
+    print(p["title"], v["totalClapCount"], p["isSubscriptionLocked"])
 # Also includes: p['visibility'] (0=free, 2=paywalled)
 
 # Paginate (same pattern as user profile)
-paging = payload['paging']
+paging = payload["paging"]
 # paging['next'] = {'to': '1738573325936', 'page': 3}
 ```
 
@@ -374,9 +381,9 @@ The `id` is the last 12 hex chars of a Medium article URL slug:
 import re
 
 url = "https://medium.com/@karpathy/software-2-0-a64152b37c35"
-article_id = re.search(r'-([a-f0-9]{12})$', url.rstrip('/').split('?')[0])
+article_id = re.search(r"-([a-f0-9]{12})$", url.rstrip("/").split("?")[0])
 if article_id:
-    article_id = article_id.group(1)   # "a64152b37c35"
+    article_id = article_id.group(1)  # "a64152b37c35"
 ```
 
 This ID is the same across all URL forms (`medium.com/@user/slug`, `user.medium.com/slug`, `medium.com/publication/slug`).

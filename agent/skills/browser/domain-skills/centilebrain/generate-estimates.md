@@ -63,9 +63,12 @@ t = iframe_target("shinyapps.io/SV-MALE")
 upload_file("#file1", "/abs/path/JMT_subcortical_volume.xlsx", target_id=t)
 time.sleep(3)
 
-js("""const e=document.querySelector('#email');
+js(
+    """const e=document.querySelector('#email');
       e.value='user@example.com';
-      e.dispatchEvent(new Event('input',{bubbles:true}));""", target_id=t)
+      e.dispatchEvent(new Event('input',{bubbles:true}));""",
+    target_id=t,
+)
 
 js("document.querySelector('#confirm').click()", target_id=t)
 for _ in range(40):

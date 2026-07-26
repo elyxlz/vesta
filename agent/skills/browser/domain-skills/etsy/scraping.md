@@ -76,6 +76,7 @@ Body (816 bytes — a JavaScript challenge, not a hard block):
 
 ```python
 from helpers import http_get
+
 text = http_get("https://www.etsy.com/robots.txt")
 # Returns 51 KB plain-text file — no DataDome
 ```
@@ -92,16 +93,18 @@ from helpers import http_get
 
 API_KEY = "your_key_here"  # from developer.etsy.com
 
+
 def etsy_api(path, **params):
     from urllib.parse import urlencode
+
     qs = urlencode(params)
     url = f"https://openapi.etsy.com/v3/application/{path}?{qs}"
     data = http_get(url, headers={"x-api-key": API_KEY})
     return json.loads(data)
 
+
 # Search listings
-results = etsy_api("listings/active", limit=25, keywords="handmade candle",
-                   sort_on="created", sort_order="desc")
+results = etsy_api("listings/active", limit=25, keywords="handmade candle", sort_on="created", sort_order="desc")
 # results['results'] is a list of listing dicts
 # results['count'] is total match count
 
@@ -226,8 +229,8 @@ if ld_json_str:
     # ld_json_str.itemListElement is a list of:
     # { '@type': 'ListItem', 'position': 1,
     #   'url': 'https://www.etsy.com/listing/...', 'name': 'Handmade Soy Candle' }
-    for item in ld_json_str.get('itemListElement', []):
-        print(item['position'], item['url'], item.get('name'))
+    for item in ld_json_str.get("itemListElement", []):
+        print(item["position"], item["url"], item.get("name"))
 ```
 
 Expected output (ItemList typically has 48 items per search page):
@@ -459,14 +462,17 @@ from helpers import http_get
 
 API_KEY = "your_key_here"
 
+
 def etsy_search(keywords, max_results=200):
     results = []
     offset = 0
     limit = 100
     while offset < max_results:
-        url = (f"https://openapi.etsy.com/v3/application/listings/active"
-               f"?keywords={keywords}&limit={limit}&offset={offset}"
-               f"&sort_on=score&sort_order=desc")
+        url = (
+            f"https://openapi.etsy.com/v3/application/listings/active"
+            f"?keywords={keywords}&limit={limit}&offset={offset}"
+            f"&sort_on=score&sort_order=desc"
+        )
         data = json.loads(http_get(url, headers={"x-api-key": API_KEY}))
         batch = data.get("results", [])
         if not batch:

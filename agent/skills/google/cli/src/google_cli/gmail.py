@@ -293,8 +293,10 @@ def get_email(config: Config, *, message_id: str, include_attachments: bool = Tr
 
     if result["body_length"] > LONG_EMAIL_WARNING_THRESHOLD:
         result["warnings"] = [
-            f"Email body is {result['body_length']} characters; inspect {result['body_saved_to']} "
-            "and grep/crop/filter before pasting snippets to avoid overflowing context."
+            (
+                f"Email body is {result['body_length']} characters; inspect {result['body_saved_to']} "
+                "and grep/crop/filter before pasting snippets to avoid overflowing context."
+            )
         ]
 
     return result

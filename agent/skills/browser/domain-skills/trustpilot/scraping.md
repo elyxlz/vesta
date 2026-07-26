@@ -16,7 +16,8 @@ metadata, all 20 reviews for the current page, pagination info, and rating distr
 import re, json
 from helpers import http_get
 
-def get_trustpilot_page(domain, page=1, stars=None, languages='en', verified=False):
+
+def get_trustpilot_page(domain, page=1, stars=None, languages="en", verified=False):
     """
     Fetch one page of reviews for a company domain.
     Returns (business_unit, reviews, pagination, rating_distribution).
@@ -29,20 +30,17 @@ def get_trustpilot_page(domain, page=1, stars=None, languages='en', verified=Fal
         url += "&verified=true"
 
     html = http_get(url)
-    m = re.search(
-        r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>',
-        html, re.DOTALL
-    )
+    m = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', html, re.DOTALL)
     if not m:
         return None, [], {}, {}
 
     data = json.loads(m.group(1))
-    pp = data['props']['pageProps']
-    bu = pp['businessUnit']
-    filters = pp.get('filters') or {}
-    pagination = filters.get('pagination', {})
-    ratings = filters.get('reviewStatistics', {}).get('ratings', {})
-    reviews = pp.get('reviews', [])
+    pp = data["props"]["pageProps"]
+    bu = pp["businessUnit"]
+    filters = pp.get("filters") or {}
+    pagination = filters.get("pagination", {})
+    ratings = filters.get("reviewStatistics", {}).get("ratings", {})
+    reviews = pp.get("reviews", [])
 
     return bu, reviews, pagination, ratings
 ```
@@ -55,16 +53,16 @@ def get_trustpilot_page(domain, page=1, stars=None, languages='en', verified=Fal
 bu, reviews, pagination, ratings = get_trustpilot_page("amazon.com")
 
 # Confirmed fields (tested 2026-04-18):
-bu['id']               # '46ad346800006400050092d0'  — stable MongoDB ObjectId
-bu['displayName']      # 'Amazon'
-bu['identifyingName']  # 'www.amazon.com'
-bu['trustScore']       # 1.7  (float, 1.0–5.0)
-bu['stars']            # 1.5  (display stars: 1, 1.5, 2, 2.5 … 5)
-bu['numberOfReviews']  # 45228  — total across all languages
-bu['websiteUrl']       # 'https://www.amazon.com'
-bu['isClaimed']        # True/False
-bu['isClosed']         # True/False
-bu['isCollectingReviews']  # True/False
+bu["id"]  # '46ad346800006400050092d0'  — stable MongoDB ObjectId
+bu["displayName"]  # 'Amazon'
+bu["identifyingName"]  # 'www.amazon.com'
+bu["trustScore"]  # 1.7  (float, 1.0–5.0)
+bu["stars"]  # 1.5  (display stars: 1, 1.5, 2, 2.5 … 5)
+bu["numberOfReviews"]  # 45228  — total across all languages
+bu["websiteUrl"]  # 'https://www.amazon.com'
+bu["isClaimed"]  # True/False
+bu["isClosed"]  # True/False
+bu["isCollectingReviews"]  # True/False
 
 # Rating distribution (from filters.reviewStatistics.ratings):
 ratings  # {'total': 45228, 'one': 29718, 'two': 2701, 'three': 1759, 'four': 2367, 'five': 8683}
@@ -81,48 +79,44 @@ Each review in the `reviews` list has these confirmed fields:
 
 ```python
 review = {
-    'id':      '69e3103e09f46d6b5910f3c1',  # hex ObjectId, unique
-    'rating':  1,                             # int 1–5
-    'title':   'UNDELIVERABLE',
-    'text':    'UNDELIVERABLE\nThis is the only explanation...',
-    'language': 'en',
-    'likes':   0,                             # upvote count
-    'source':  'Organic',                     # 'Organic' or 'Invitation'
-    'filtered': False,
-    'isPending': False,
-
-    'dates': {
-        'experiencedDate': '2026-03-29T00:00:00.000Z',  # when they used the service
-        'publishedDate':   '2026-04-18T07:01:50.000Z',  # when review was posted
-        'updatedDate':     None,
-        'submittedDate':   None,
+    "id": "69e3103e09f46d6b5910f3c1",  # hex ObjectId, unique
+    "rating": 1,  # int 1–5
+    "title": "UNDELIVERABLE",
+    "text": "UNDELIVERABLE\nThis is the only explanation...",
+    "language": "en",
+    "likes": 0,  # upvote count
+    "source": "Organic",  # 'Organic' or 'Invitation'
+    "filtered": False,
+    "isPending": False,
+    "dates": {
+        "experiencedDate": "2026-03-29T00:00:00.000Z",  # when they used the service
+        "publishedDate": "2026-04-18T07:01:50.000Z",  # when review was posted
+        "updatedDate": None,
+        "submittedDate": None,
     },
-
-    'consumer': {
-        'id':              '5cafe2feb158a8533b443467',
-        'displayName':     'Baldy Bloke',
-        'imageUrl':        'https://user-images.trustpilot.com/...',
-        'numberOfReviews': 17,
-        'countryCode':     'GB',
-        'hasImage':        True,
-        'isVerified':      False,
+    "consumer": {
+        "id": "5cafe2feb158a8533b443467",
+        "displayName": "Baldy Bloke",
+        "imageUrl": "https://user-images.trustpilot.com/...",
+        "numberOfReviews": 17,
+        "countryCode": "GB",
+        "hasImage": True,
+        "isVerified": False,
     },
-
-    'labels': {
-        'verification': {
-            'isVerified':        False,
-            'verificationLevel': 'not-verified',   # or 'verified'
-            'reviewSourceName':  'Organic',
-            'verificationSource': 'invitation',
-            'createdDateTime':   '2026-04-18T07:01:50.000Z',
-            'hasDachExclusion':  False,
+    "labels": {
+        "verification": {
+            "isVerified": False,
+            "verificationLevel": "not-verified",  # or 'verified'
+            "reviewSourceName": "Organic",
+            "verificationSource": "invitation",
+            "createdDateTime": "2026-04-18T07:01:50.000Z",
+            "hasDachExclusion": False,
         },
-        'merged': None,
+        "merged": None,
     },
-
-    'reply': None,           # or {'message': '...', 'publishedDate': '...', 'updatedDate': None}
-    'location': None,        # populated for multi-location businesses
-    'productReviews': [],    # non-empty for product-level reviews
+    "reply": None,  # or {'message': '...', 'publishedDate': '...', 'updatedDate': None}
+    "location": None,  # populated for multi-location businesses
+    "productReviews": [],  # non-empty for product-level reviews
 }
 ```
 
@@ -138,7 +132,8 @@ This cap applies per filter combination, so `stars=1` gives 200 reviews, `stars=
 import re, json, time
 from helpers import http_get
 
-def collect_reviews(domain, stars=None, languages='en', max_pages=10, delay=0.5):
+
+def collect_reviews(domain, stars=None, languages="en", max_pages=10, delay=0.5):
     """
     Collect up to max_pages*20 = 200 reviews. Returns list of review dicts.
     stars: 1-5 to filter by rating (None = all)
@@ -156,19 +151,16 @@ def collect_reviews(domain, stars=None, languages='en', max_pages=10, delay=0.5)
     for page in range(1, max_pages + 1):
         url = f"{base}{params}&page={page}"
         html = http_get(url)
-        m = re.search(
-            r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>',
-            html, re.DOTALL
-        )
+        m = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', html, re.DOTALL)
         if not m:
             break
         data = json.loads(m.group(1))
-        reviews = data['props']['pageProps'].get('reviews', [])
+        reviews = data["props"]["pageProps"].get("reviews", [])
         if not reviews:
-            break   # hit the page 10 cap or truly no more reviews
+            break  # hit the page 10 cap or truly no more reviews
 
-        new = [r for r in reviews if r['id'] not in seen_ids]
-        seen_ids.update(r['id'] for r in reviews)
+        new = [r for r in reviews if r["id"] not in seen_ids]
+        seen_ids.update(r["id"] for r in reviews)
         all_reviews.extend(new)
 
         if page < max_pages:
@@ -178,9 +170,9 @@ def collect_reviews(domain, stars=None, languages='en', max_pages=10, delay=0.5)
 
 
 # Usage — 200 reviews per call:
-reviews = collect_reviews("shopify.com")               # English only, all ratings
-reviews_1star = collect_reviews("amazon.com", stars=1) # 200 x 1-star reviews
-reviews_all = collect_reviews("stripe.com", languages='all')  # all languages
+reviews = collect_reviews("shopify.com")  # English only, all ratings
+reviews_1star = collect_reviews("amazon.com", stars=1)  # 200 x 1-star reviews
+reviews_all = collect_reviews("stripe.com", languages="all")  # all languages
 ```
 
 ### Maximize unique reviews by sweeping all star ratings
@@ -192,7 +184,7 @@ reviews per company (pages are deduplicated across filters):
 all_reviews = {}
 for stars in range(1, 6):
     for r in collect_reviews("amazon.com", stars=stars, delay=0.5):
-        all_reviews[r['id']] = r
+        all_reviews[r["id"]] = r
 
 print(f"Total unique reviews: {len(all_reviews)}")
 ```
@@ -219,10 +211,10 @@ All filter params are appended to the base URL `https://www.trustpilot.com/revie
 ```python
 # From filters.pagination (present on pages 1–10 when data exists):
 pagination = {
-    'currentPage': 1,
-    'perPage':     20,
-    'totalCount':  28039,   # filtered count (e.g. English only)
-    'totalPages':  1402,    # math: ceil(totalCount / 20)
+    "currentPage": 1,
+    "perPage": 20,
+    "totalCount": 28039,  # filtered count (e.g. English only)
+    "totalPages": 1402,  # math: ceil(totalCount / 20)
 }
 
 # NOTE: totalPages can be 1402 but you can only access pages 1–10 (200 reviews).
@@ -300,25 +292,24 @@ Consumer API, so if you have an API key, you can use it directly without a separ
 import re, json, time
 from helpers import http_get
 
+
 def scrape_trustpilot(domain, max_unique=200):
     """
     Scrape up to max_unique reviews. Returns (company_info, reviews_list).
     With max_unique=1000, sweeps all 5 star ratings to maximize coverage.
     """
-    def _fetch_page(domain, page, stars=None, languages='en'):
+
+    def _fetch_page(domain, page, stars=None, languages="en"):
         url = f"https://www.trustpilot.com/review/{domain}?languages={languages}&page={page}"
         if stars:
             url += f"&stars={stars}"
         html = http_get(url)
-        m = re.search(
-            r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>',
-            html, re.DOTALL
-        )
+        m = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', html, re.DOTALL)
         if not m:
             return None, []
         d = json.loads(m.group(1))
-        pp = d['props']['pageProps']
-        return pp['businessUnit'], pp.get('reviews', [])
+        pp = d["props"]["pageProps"]
+        return pp["businessUnit"], pp.get("reviews", [])
 
     company_info = None
     all_reviews = {}
@@ -326,16 +317,16 @@ def scrape_trustpilot(domain, max_unique=200):
     # First page to get company info
     bu, reviews = _fetch_page(domain, 1)
     company_info = {
-        'id':           bu['id'],
-        'name':         bu['displayName'],
-        'domain':       bu['identifyingName'],
-        'trust_score':  bu['trustScore'],
-        'stars':        bu['stars'],
-        'total_reviews': bu['numberOfReviews'],
-        'is_claimed':   bu['isClaimed'],
+        "id": bu["id"],
+        "name": bu["displayName"],
+        "domain": bu["identifyingName"],
+        "trust_score": bu["trustScore"],
+        "stars": bu["stars"],
+        "total_reviews": bu["numberOfReviews"],
+        "is_claimed": bu["isClaimed"],
     }
     for r in reviews:
-        all_reviews[r['id']] = r
+        all_reviews[r["id"]] = r
 
     if max_unique <= 20:
         return company_info, list(all_reviews.values())
@@ -348,7 +339,7 @@ def scrape_trustpilot(domain, max_unique=200):
         if not reviews:
             break
         for r in reviews:
-            all_reviews[r['id']] = r
+            all_reviews[r["id"]] = r
         time.sleep(0.5)
 
     # If we want more, sweep by star rating
@@ -361,7 +352,7 @@ def scrape_trustpilot(domain, max_unique=200):
                 if not reviews:
                     break
                 for r in reviews:
-                    all_reviews[r['id']] = r
+                    all_reviews[r["id"]] = r
                 time.sleep(0.5)
 
     return company_info, list(all_reviews.values())[:max_unique]

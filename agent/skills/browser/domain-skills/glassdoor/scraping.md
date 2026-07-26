@@ -82,7 +82,7 @@ from urllib.parse import quote_plus
 query = "software engineer"
 new_tab(f"https://www.glassdoor.com/Job/jobs.htm?sc.keyword={quote_plus(query)}")
 wait_for_load()
-wait(5)   # CF challenge + JS render
+wait(5)  # CF challenge + JS render
 
 # Dismiss cookie banner if present (GDPR regions)
 dismiss_cookie_banner()
@@ -145,7 +145,7 @@ from urllib.parse import quote_plus
 query = "data scientist"
 all_jobs = []
 
-for page in range(1, 4):   # pages 1-3, ~10 cards each
+for page in range(1, 4):  # pages 1-3, ~10 cards each
     url = f"https://www.glassdoor.com/Job/jobs.htm?sc.keyword={quote_plus(query)}&p={page}"
     goto(url)
     wait_for_load()
@@ -181,7 +181,7 @@ for page in range(1, 4):   # pages 1-3, ~10 cards each
 
     batch = json.loads(batch_json)
     if not batch:
-        break   # no more results
+        break  # no more results
     all_jobs.extend(batch)
 
 print(f"Collected {len(all_jobs)} jobs across {page} pages")
@@ -203,7 +203,7 @@ company_slug = "Google"
 
 goto(f"https://www.glassdoor.com/Overview/Working-at-{company_slug}-EI_IE{employer_id}.htm")
 wait_for_load()
-wait(5)   # CF challenge
+wait(5)  # CF challenge
 
 # Try __NEXT_DATA__ first — fastest and most complete
 next_data_raw = js("document.getElementById('__NEXT_DATA__') ? document.getElementById('__NEXT_DATA__').textContent : null")
@@ -384,6 +384,7 @@ def dismiss_glassdoor_login_modal():
         wait(1)
     return closed
 
+
 def dismiss_cookie_banner():
     """Dismiss GDPR consent overlay. Safe to call even if no banner is present."""
     dismissed = js("""
@@ -424,8 +425,9 @@ After `goto()` + `wait(5)`, confirm you are on the real page:
 def glassdoor_is_cf_blocked() -> bool:
     """True if the CF managed challenge is still running."""
     title = js("document.title") or ""
-    url   = page_info()["url"]
+    url = page_info()["url"]
     return "Security" in title or "__cf_chl_tk" in url
+
 
 # Usage
 goto("https://www.glassdoor.com/Reviews/Google-Reviews-E9079.htm")
@@ -433,7 +435,7 @@ wait_for_load()
 wait(5)
 
 if glassdoor_is_cf_blocked():
-    wait(10)   # give CF extra time
+    wait(10)  # give CF extra time
     if glassdoor_is_cf_blocked():
         screenshot("/tmp/glassdoor_cf_block.png")
         raise RuntimeError("CF challenge did not resolve — check screenshot")
@@ -479,6 +481,7 @@ companies = js("""
 """)
 
 import json
+
 for c in json.loads(companies):
     print(c["empId"], c["name"], c["href"][:60])
 ```

@@ -169,7 +169,7 @@ No CAPTCHA was encountered during testing with a logged-in Chrome session. To de
 ```python
 def check_captcha():
     text = js("document.body.innerText.slice(0,500)") or ""
-    url  = page_info()["url"]
+    url = page_info()["url"]
     return (
         "captcha" in text.lower()
         or "enter the characters" in text.lower()
@@ -177,6 +177,7 @@ def check_captcha():
         or "captcha" in url.lower()
         or "validateCaptcha" in url
     )
+
 
 if check_captcha():
     raise RuntimeError("Amazon CAPTCHA hit — stop and notify user")

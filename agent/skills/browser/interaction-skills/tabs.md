@@ -6,13 +6,13 @@ top-level BiDi browsing contexts you open, attach to, and close.
 ## The BiDi tab model
 
 ```python
-tabs = list_tabs()                     # top-level contexts; includes about: pages
+tabs = list_tabs()  # top-level contexts; includes about: pages
 real_tabs = list_tabs(include_internal=False)  # drop about:/moz-extension:/etc
-ctx = new_tab("https://example.com")   # create + switch + navigate; returns the context id
-switch_tab(ctx)                        # make this context current (also activates it)
-print(current_tab())                   # {target_id, url, title} for the current context
+ctx = new_tab("https://example.com")  # create + switch + navigate; returns the context id
+switch_tab(ctx)  # make this context current (also activates it)
+print(current_tab())  # {target_id, url, title} for the current context
 print(page_info())
-close_tab(ctx)                         # close a context by id
+close_tab(ctx)  # close a context by id
 ```
 
 `target_id` in every helper is the BiDi **context id** (a stable UUID for the tab), the analog
