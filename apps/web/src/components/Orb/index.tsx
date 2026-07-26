@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
+import { orbIsLive, type OrbVisualState } from "@vesta/core";
 import { usePrefersReducedMotion } from "@/hooks/use-reduced-motion";
-import { orbColors, type OrbVisualState } from "./styles";
+import { orbColors } from "./styles";
 
 interface OrbProps {
   state: OrbVisualState;
@@ -11,8 +12,6 @@ interface OrbProps {
   glowGradientFade?: number;
   label?: string;
 }
-
-const LIVE_STATES = new Set<OrbVisualState>(["alive", "thinking", "busy"]);
 
 const COLOR_LERP_SPEED = 3;
 const VALUE_LERP_SPEED = 4;
@@ -243,7 +242,7 @@ function getVisualTarget(
     VisualTarget["midColor"],
     VisualTarget["darkColor"],
   ];
-  const isLive = LIVE_STATES.has(state);
+  const isLive = orbIsLive(state);
   const thinking = state === "thinking";
 
   const target: VisualTarget = {
@@ -299,7 +298,7 @@ export function Orb({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const prefersReducedMotion = usePrefersReducedMotion();
   const motionSuppressed = suppressMotion || prefersReducedMotion;
-  const isLive = LIVE_STATES.has(state);
+  const isLive = orbIsLive(state);
   const shouldTrack = enableTracking && isLive;
   const targetTrackRef = useRef({ x: 0, y: 0 });
   const targetVisualRef = useRef<VisualTarget | null>(null);

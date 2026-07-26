@@ -18,6 +18,7 @@ function agentRow(name: string, buildPhase: AgentRow["buildPhase"]): AgentRow {
     status: "starting",
     activityState: "idle",
     buildPhase,
+    operation: null,
     startedAt: null,
     services: {},
   };

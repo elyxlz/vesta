@@ -1823,6 +1823,18 @@ pub enum BuildPhase {
     Starting,
 }
 
+/// A long-running operation vestad runs against an agent that already exists. Distinct from
+/// `AgentStatus`, which describes the container: a backup snapshots a live agent and a restore
+/// replaces it, so neither is visible in the container state a client can otherwise read. Both
+/// outlive the request that started them, so without carrying them on the roster every client
+/// except the initiator sees an idle agent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentOperation {
+    BackingUp,
+    Restoring,
+}
+
 /// A cheap, clonable sink for `BuildPhase` updates. The create handler wires one
 /// that records into shared state, which the roster (and the replica tree) carries.
 #[derive(Clone)]

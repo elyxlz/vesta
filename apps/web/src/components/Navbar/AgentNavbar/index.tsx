@@ -26,7 +26,7 @@ import { useModals } from "@/providers/ModalsProvider";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useLayout } from "@/stores/use-layout";
 import { useRestartPending } from "@/stores/use-restart-pending";
-import type { AgentStatus } from "@vesta/core";
+import { agentNeedsUser, type AgentStatus } from "@vesta/core";
 import { Navbar } from "..";
 
 export function AgentNavbar({
@@ -182,9 +182,7 @@ function AgentNavbarTrailing({
   showChatButton: boolean;
   onExpandChat: () => void;
 }) {
-  const needsAuth =
-    (agentStatus === "not_authenticated" || agentStatus === "unprovisioned") &&
-    reachable;
+  const needsAuth = agentNeedsUser(agentStatus) && reachable;
 
   return (
     <div className="flex items-center gap-2">

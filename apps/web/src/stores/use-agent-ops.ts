@@ -1,7 +1,12 @@
 import { create } from "zustand";
+import { agentOperationLabel } from "@vesta/core";
 import { errorMessage } from "@/lib/utils";
 
-export type AgentOperation =
+// This client's own in-flight request, which the state tree cannot carry: it covers the gap between
+// the POST and the delta reflecting it, guards against a double submit, and owns the failure
+// message. Backup and restore additionally ride the roster's `operation`, which is what every other
+// client and a reloaded page see.
+export type AgentRequest =
   | "idle"
   | "stopping"
   | "starting"
@@ -11,20 +16,20 @@ export type AgentOperation =
   | "restoring";
 
 interface AgentOpState {
-  operation: AgentOperation;
+  operation: AgentRequest;
   error: string;
 }
 
 interface AgentOpsStore {
   states: Record<string, AgentOpState>;
   getOp: (name: string) => AgentOpState;
-  setOp: (name: string, operation: AgentOperation, error?: string) => void;
+  setOp: (name: string, operation: AgentRequest, error?: string) => void;
   setError: (name: string, error: string) => void;
   clearOp: (name: string) => void;
   reconcile: (agents: { name: string }[]) => void;
   withOp: (
     name: string,
-    op: AgentOperation,
+    op: AgentRequest,
     fn: () => Promise<void>,
     fallback: string,
   ) => Promise<void>;
@@ -86,7 +91,7 @@ export const useAgentOps = create<AgentOpsStore>((set, get) => ({
   },
 }));
 
-export function getOpLabel(op: AgentOperation): string {
+export function getOpLabel(op: AgentRequest): string {
   switch (op) {
     case "starting":
       return "starting...";
@@ -94,10 +99,12 @@ export function getOpLabel(op: AgentOperation): string {
       return "stopping...";
     case "deleting":
       return "deleting...";
+    // The words for the two vestad tracks live with the operation it publishes, so the local
+    // request and the roster row cannot describe the same work differently.
     case "backing-up":
-      return "backing up...";
+      return agentOperationLabel("backing_up");
     case "restoring":
-      return "restoring...";
+      return agentOperationLabel("restoring");
     case "authenticating":
       return "signing in...";
     default:

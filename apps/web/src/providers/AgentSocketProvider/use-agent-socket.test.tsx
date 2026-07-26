@@ -70,6 +70,7 @@ function tree(): Tree {
           status: "alive",
           activityState: "idle",
           buildPhase: null,
+          operation: null,
           startedAt: null,
           services: {},
         },

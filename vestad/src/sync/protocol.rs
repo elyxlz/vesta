@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::docker::{AgentStatus, BuildPhase};
+use crate::docker::{AgentOperation, AgentStatus, BuildPhase};
 
 /// The gateway (host) branch of the state tree. camelCase on the wire to match
 /// `apps/core/src/protocol/tree.ts` `GatewayInfo`.
@@ -41,6 +41,7 @@ pub(crate) struct AgentInfo {
     pub status: AgentStatus,
     pub activity_state: String,
     pub build_phase: Option<BuildPhase>,
+    pub operation: Option<AgentOperation>,
     pub started_at: Option<String>,
     pub services: BTreeMap<String, ServiceInfo>,
 }
@@ -127,6 +128,7 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
         status: AgentStatus::Alive,
         activity_state: "thinking".into(),
         build_phase: None,
+        operation: Some(AgentOperation::BackingUp),
         started_at: Some("2026-01-01T00:00:00Z".into()),
         services,
     };
@@ -194,6 +196,7 @@ mod tests {
             status: crate::docker::AgentStatus::Alive,
             activity_state: "idle".into(),
             build_phase: None,
+            operation: None,
             started_at: Some("2026-07-18T00:00:00Z".into()),
             services: std::collections::BTreeMap::new(),
         };
@@ -201,6 +204,7 @@ mod tests {
         assert_eq!(value["status"], serde_json::json!("alive"));
         assert!(value.get("activityState").is_some());
         assert!(value.get("buildPhase").is_some());
+        assert!(value.get("operation").is_some());
         assert!(value.get("startedAt").is_some());
     }
 
@@ -209,6 +213,7 @@ mod tests {
             status: crate::docker::AgentStatus::Alive,
             activity_state: "idle".into(),
             build_phase: None,
+            operation: None,
             started_at: None,
             services: BTreeMap::new(),
         }

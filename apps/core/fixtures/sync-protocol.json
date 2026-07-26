@@ -4,6 +4,7 @@
       "info": {
         "activityState": "thinking",
         "buildPhase": null,
+        "operation": "backing_up",
         "services": {
           "dashboard": {
             "port": 8080,
@@ -71,6 +72,7 @@
           "info": {
             "activityState": "thinking",
             "buildPhase": null,
+            "operation": "backing_up",
             "services": {
               "dashboard": {
                 "port": 8080,

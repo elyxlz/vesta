@@ -64,6 +64,7 @@ function AgentSettingsContent() {
           name={name}
           status={agent?.status ?? "not_found"}
           activityState={activityState}
+          operation={agent?.operation ?? null}
           style={styles.identityCard}
         />
         {action.error ? (

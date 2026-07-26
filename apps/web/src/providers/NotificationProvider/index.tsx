@@ -7,7 +7,12 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import type { Controller, Delta, Tree } from "@vesta/core";
+import {
+  agentNeedsUser,
+  type Controller,
+  type Delta,
+  type Tree,
+} from "@vesta/core";
 import { useReplica } from "@vesta/core/react";
 import { useGateway } from "@/providers/GatewayProvider";
 import { ControllerContext } from "@/providers/ControllerProvider";
@@ -219,11 +224,7 @@ export function NotificationProvider({
       const previous = prevStatusRef.current.get(agent.name);
       prevStatusRef.current.set(agent.name, agent.status);
       if (!previous || previous === agent.status) continue;
-      if (
-        agent.status !== "not_authenticated" &&
-        agent.status !== "unprovisioned"
-      )
-        continue;
+      if (!agentNeedsUser(agent.status)) continue;
       if (!permissionRef.current) continue;
       const unprovisioned = agent.status === "unprovisioned";
       const title = unprovisioned

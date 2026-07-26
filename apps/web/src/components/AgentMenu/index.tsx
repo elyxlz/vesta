@@ -16,6 +16,7 @@ import { useAppMode } from "@/stores/use-app-mode";
 import type { MenuState } from "./types";
 import { MobileMenu } from "./MobileMenu";
 import { DesktopMenu } from "./DesktopMenu";
+import { agentNeedsUser } from "@vesta/core";
 
 export function AgentMenu() {
   const navigate = useNavigate();
@@ -58,8 +59,7 @@ export function AgentMenu() {
     onRestart: () => void restart(),
     onBackup: () => backup(),
     onAuthenticate: gateway.reachable ? () => handleOpenAuth() : undefined,
-    isAuthenticated:
-      agent.status !== "not_authenticated" && agent.status !== "unprovisioned",
+    isAuthenticated: !agentNeedsUser(agent.status),
     onDelete: () => setDeleteDialogOpen(true),
     onDebugInfo: appMode === "advanced" ? () => setDebugOpen(true) : undefined,
   };

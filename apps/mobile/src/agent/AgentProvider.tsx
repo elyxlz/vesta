@@ -5,7 +5,11 @@ import { ControllerContext } from "@/controller/context";
 import { setVisibleAgentSocket } from "@/notifications/foreground-policy";
 import { useRoster } from "@/session/RosterProvider";
 import { useSession } from "@/session/SessionProvider";
-import type { AgentActivityState, AgentRow } from "@vesta/core";
+import {
+  agentIsConnectable,
+  type AgentActivityState,
+  type AgentRow,
+} from "@vesta/core";
 import { writeLastUsedAgent } from "@/storage/recent-agent";
 import { servedAgentActivity } from "@/chat/agent-activity-model";
 
@@ -58,10 +62,7 @@ export function AgentProvider({ children }: { children: ReactNode }) {
   const controller = use(ControllerContext);
   const { agents } = useRoster();
   const agent = agents.find((candidate) => candidate.name === name) ?? null;
-  const connectable =
-    agent?.status === "alive" ||
-    agent?.status === "not_authenticated" ||
-    agent?.status === "unprovisioned";
+  const connectable = agent !== null && agentIsConnectable(agent.status);
   const socket = useAgentSocket(
     name,
     Boolean(controller && name && connectable),
