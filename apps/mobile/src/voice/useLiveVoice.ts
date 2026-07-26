@@ -6,7 +6,9 @@ import {
   useAudioPlayer,
   useAudioStream,
 } from "expo-audio";
+import { serviceKeyQueryUrl } from "@vesta/core";
 import { fetchVoiceStatus, prepareSpeech } from "@/api/endpoints";
+import { serviceKeyCacheFor } from "@/api/service-key-cache";
 import { useSession } from "@/session/SessionProvider";
 import { setRecordingHapticsEnabled } from "@/voice/recording-haptics";
 
@@ -179,9 +181,18 @@ export function useLiveVoice({
       await prepareAudioMode();
       if (!isCurrent()) return;
 
+      const connection = api.getConnection();
+      if (!connection) throw new Error("Not connected to a Vesta gateway.");
+      const key = await serviceKeyCacheFor(api).get(name, "voice");
+      if (!isCurrent()) return;
+
       const socket = new WebSocket(
-        api.websocketUrl(
-          `/agents/${encodeURIComponent(name)}/voice/stt/listen`,
+        serviceKeyQueryUrl(
+          connection.url.replace(/^http/, "ws"),
+          name,
+          "voice",
+          key,
+          "/stt/listen",
         ),
       );
       socket.binaryType = "arraybuffer";
@@ -305,11 +316,19 @@ export function useSpeechPlayer(name: string, latestText: string | null) {
   useEffect(() => {
     if (!enabled || !latestText) return;
     let active = true;
-    void prepareSpeech(api, name, latestText).then((identifier) => {
+    void prepareSpeech(api, name, latestText).then(async (identifier) => {
+      if (!active) return;
+      const connection = api.getConnection();
+      if (!connection) return;
+      const key = await serviceKeyCacheFor(api).get(name, "voice");
       if (!active) return;
       player.replace(
-        api.mediaUrl(
-          `/agents/${encodeURIComponent(name)}/voice/tts/stream/${encodeURIComponent(identifier)}`,
+        serviceKeyQueryUrl(
+          connection.url,
+          name,
+          "voice",
+          key,
+          `/tts/stream/${encodeURIComponent(identifier)}`,
         ),
       );
       player.play();
@@ -322,10 +341,17 @@ export function useSpeechPlayer(name: string, latestText: string | null) {
   const play = useCallback(
     async (text: string): Promise<void> => {
       if (!enabled || !text.trim()) return;
+      const connection = api.getConnection();
+      if (!connection) return;
       const identifier = await prepareSpeech(api, name, text);
+      const key = await serviceKeyCacheFor(api).get(name, "voice");
       player.replace(
-        api.mediaUrl(
-          `/agents/${encodeURIComponent(name)}/voice/tts/stream/${encodeURIComponent(identifier)}`,
+        serviceKeyQueryUrl(
+          connection.url,
+          name,
+          "voice",
+          key,
+          `/tts/stream/${encodeURIComponent(identifier)}`,
         ),
       );
       player.play();
