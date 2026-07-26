@@ -1759,6 +1759,12 @@ pub(crate) fn mint_expiry(body: &MintServiceKeyBody, now: u64) -> Option<u64> {
     Some(now + body.ttl_secs.unwrap_or(crate::service_keys::DEFAULT_KEY_TTL_SECS))
 }
 
+/// A minted key must outlive `now`: the store counts `expires_at == now` as already expired, so
+/// minting one hands the caller a secret its own prune drops on the spot.
+fn expiry_is_already_dead(expires_at: Option<u64>, now: u64) -> bool {
+    expires_at.is_some_and(|expires_at| expires_at <= now)
+}
+
 /// Refuse to mint for a service that was never registered, so a typo does not silently
 /// produce a key that opens nothing.
 async fn require_registered_service(
@@ -1786,10 +1792,16 @@ async fn mint_service_key_handler(
     Json(body): Json<MintServiceKeyBody>,
 ) -> Result<Json<MintServiceKeyResponse>, (StatusCode, Json<serde_json::Value>)> {
     docker::validate_name(&name).map_err(map_docker_err)?;
-    require_registered_service(&state, &name, &service).await?;
-
     let now = crate::time_utils::now_epoch_secs();
     let expires_at = mint_expiry(&body, now);
+    if expiry_is_already_dead(expires_at, now) {
+        return Err(err_response(
+            StatusCode::BAD_REQUEST,
+            "ttl_secs must be greater than 0; omit it for the default, or pass never_expires",
+        ));
+    }
+    require_registered_service(&state, &name, &service).await?;
+
     let mut store = state.service_keys.write().await;
     let (info, secret) = store.mint(&name, &service, body.label, expires_at, now);
     store.prune_expired(now);
@@ -3805,6 +3817,45 @@ mod tests {
             never_expires: true,
         };
         assert_eq!(super::mint_expiry(&forever, now), None);
+    }
+
+    #[test]
+    fn a_zero_ttl_is_refused_rather_than_minting_a_dead_key() {
+        let now = 1_800_000_000;
+        // Why the guard exists: the store counts a key expiring at `now` as already expired, so
+        // minting one hands the caller a secret that never authenticates.
+        let mut store = crate::service_keys::ServiceKeyStore::default();
+        let (_, born_dead) = store.mint("alpha", "dashboard", None, Some(now), now);
+        assert!(!store.accepts("alpha", "dashboard", &born_dead, now));
+
+        let zero = super::MintServiceKeyBody {
+            label: None,
+            ttl_secs: Some(0),
+            never_expires: false,
+        };
+        assert!(super::expiry_is_already_dead(
+            super::mint_expiry(&zero, now),
+            now
+        ));
+        // never_expires overrides the ttl, so that combination still mints.
+        let forever = super::MintServiceKeyBody {
+            label: None,
+            ttl_secs: Some(0),
+            never_expires: true,
+        };
+        assert!(!super::expiry_is_already_dead(
+            super::mint_expiry(&forever, now),
+            now
+        ));
+        let live = super::MintServiceKeyBody {
+            label: None,
+            ttl_secs: Some(600),
+            never_expires: false,
+        };
+        assert!(!super::expiry_is_already_dead(
+            super::mint_expiry(&live, now),
+            now
+        ));
     }
 }
 
