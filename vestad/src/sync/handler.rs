@@ -18,7 +18,7 @@ use super::protocol::{
     AgentInfo, AgentNode, ClientFrame, Frame, GatewayInfo, GatewayLan, GatewayScope,
     NotificationsBranch, ServiceInfo, Tree,
 };
-use super::MIN_SUPPORTED_CLIENT_VERSION;
+use super::{MIN_SUPPORTED_CLIENT_VERSION, PresenceEvent};
 
 type Tx = futures_util::stream::SplitSink<WebSocket, Message>;
 
@@ -62,6 +62,12 @@ fn token_deadline(token: &str, api_key: &str) -> Option<tokio::time::Instant> {
 async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Option<String>) {
     let (mut tx, mut rx) = socket.split();
 
+    // Register this connection's presence and a RAII guard that clears it on every break path, then
+    // subscribe to the aggregate-focus watch before the snapshot so no flip is missed in the gap.
+    let conn = state.presence.connect();
+    let _presence_guard = PresenceGuard { presence: state.presence.clone(), conn };
+    let mut presence_rx = state.presence.subscribe_any_focused();
+
     // 1. hello: the served compatibility window (this gateway's version + the oldest client it accepts)
     let hello = Frame::Hello {
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -98,6 +104,12 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
         return;
     }
 
+    // Presence baseline: mark the current aggregate-focus seen and send it as the opening delta.
+    let any_focused = *presence_rx.borrow_and_update();
+    if send_frame(&mut tx, &Frame::Presence { any_focused }).await.is_err() {
+        return;
+    }
+
     let mut deadline = connect_token.as_deref().and_then(|t| token_deadline(t, &state.api_key));
 
     // The ping keeps an idle socket alive through the Cloudflare tunnel (reaps ~100s silence), same
@@ -114,6 +126,7 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
             r = services_rx.changed() => { if r.is_err() { break } Wake::Roster }
             r = invalidations_rx.changed() => { if r.is_err() { break } Wake::Roster }
             r = notifications_rx.changed() => { if r.is_err() { break } Wake::Notifications }
+            r = presence_rx.changed() => { if r.is_err() { break } Wake::Presence }
             user_notification = user_notifications_rx.recv() => Wake::UserNotification(user_notification),
             client = rx.next() => Wake::Client(client),
             _ = keepalive.tick() => Wake::Keepalive,
@@ -139,6 +152,12 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
                     break;
                 }
             }
+            Wake::Presence => {
+                let any_focused = *presence_rx.borrow();
+                if send_frame(&mut tx, &Frame::Presence { any_focused }).await.is_err() {
+                    break;
+                }
+            }
             Wake::UserNotification(Ok(user_notification)) => {
                 let frame = Frame::UserNotification {
                     agent: user_notification.agent.clone(),
@@ -151,10 +170,23 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
                 }
             }
             Wake::Client(Some(Ok(Message::Text(text)))) => {
-                if let ControlFlow::Break(()) =
-                    handle_client_frame(&state.api_key, text.as_str(), &mut deadline)
-                {
-                    break;
+                match serde_json::from_str::<ClientFrame>(text.as_str()) {
+                    Ok(ClientFrame::ClientContext(ctx)) => {
+                        let events = state.presence.record(conn, ctx, tokio::time::Instant::now());
+                        for PresenceEvent::BecamePresent { agent } in events {
+                            if state.agent_status_cache.presence_notifications_enabled(&agent) {
+                                if let Err(error) = crate::serve::drop_presence_notification(&state.docker, &agent).await {
+                                    tracing::warn!(%agent, %error, "could not drop presence notification");
+                                }
+                            }
+                        }
+                    }
+                    // Reauth (and any unknown/malformed frame, ignored by rule) go through the reauth path.
+                    _ => {
+                        if let ControlFlow::Break(()) = handle_reauth(&state.api_key, text.as_str(), &mut deadline) {
+                            break;
+                        }
+                    }
                 }
             }
             // End the session: the peer closed, the stream ended, a transport error, the deadline, or
@@ -174,6 +206,7 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
 enum Wake {
     Roster,
     Notifications,
+    Presence,
     UserNotification(Result<std::sync::Arc<UserNotification>, broadcast::error::RecvError>),
     Client(Option<Result<Message, axum::Error>>),
     Keepalive,
@@ -259,29 +292,33 @@ fn notifications_deltas(
     (deltas, recorded)
 }
 
-/// Handle one client frame. Unknown/malformed frames are ignored by rule. Returns Break only on a
-/// failed reauth (the loop then closes the socket).
-fn handle_client_frame(
-    api_key: &str,
-    text: &str,
-    deadline: &mut Option<tokio::time::Instant>,
-) -> ControlFlow<()> {
-    let Ok(frame) = serde_json::from_str::<ClientFrame>(text) else {
+/// Handle a reauth frame. Unknown/malformed frames and any non-reauth frame (e.g. client_context,
+/// handled at the call site) are ignored by rule. Returns Break only on a failed reauth (the loop
+/// then closes the socket).
+fn handle_reauth(api_key: &str, text: &str, deadline: &mut Option<tokio::time::Instant>) -> ControlFlow<()> {
+    let Ok(ClientFrame::Reauth { token }) = serde_json::from_str::<ClientFrame>(text) else {
         return ControlFlow::Continue(());
     };
-    match frame {
-        ClientFrame::Reauth { token } => {
-            if crate::auth::verify_token(&token, api_key) {
-                *deadline = token_deadline(&token, api_key);
-            } else {
-                tracing::warn!("sync reauth failed; closing socket");
-                return ControlFlow::Break(());
-            }
-        }
-        // Presence consumers land in a later task; the frame parses but is inert for now.
-        ClientFrame::ClientContext(_) => {}
+    if crate::auth::verify_token(&token, api_key) {
+        *deadline = token_deadline(&token, api_key);
+        ControlFlow::Continue(())
+    } else {
+        tracing::warn!("sync reauth failed; closing socket");
+        ControlFlow::Break(())
     }
-    ControlFlow::Continue(())
+}
+
+/// Clears a `/sync` connection's presence when the session task ends, on every break path. Sync Drop
+/// runs inside the runtime during teardown, so `disconnect` needs no await.
+struct PresenceGuard {
+    presence: std::sync::Arc<crate::sync::Presence>,
+    conn: crate::sync::ConnId,
+}
+
+impl Drop for PresenceGuard {
+    fn drop(&mut self) {
+        self.presence.disconnect(self.conn, tokio::time::Instant::now());
+    }
 }
 
 fn current_roster(state: &SharedState) -> BTreeMap<String, AgentInfo> {
@@ -595,13 +632,24 @@ mod tests {
 
         let token = crate::jwt::create_token("secret", "access", crate::jwt::ACCESS_TOKEN_TTL);
         let valid = format!(r#"{{"type":"reauth","token":"{token}"}}"#);
-        let flow = handle_client_frame("secret", &valid, &mut deadline);
+        let flow = handle_reauth("secret", &valid, &mut deadline);
         assert!(matches!(flow, ControlFlow::Continue(())));
         assert!(deadline.is_some(), "a valid reauth extends the deadline");
 
         let before = deadline;
-        let flow = handle_client_frame("secret", r#"{"type":"reauth","token":"bad.token.here"}"#, &mut deadline);
+        let flow = handle_reauth("secret", r#"{"type":"reauth","token":"bad.token.here"}"#, &mut deadline);
         assert!(matches!(flow, ControlFlow::Break(())), "a bad reauth breaks the loop");
         assert_eq!(deadline, before, "a failed reauth leaves the deadline unchanged");
+    }
+
+    #[test]
+    fn handle_reauth_still_ignores_unknown_frames() {
+        let mut deadline = None;
+        // A non-reauth (client_context) frame is not a reauth failure: the loop continues.
+        assert_eq!(
+            handle_reauth("key", r#"{"type":"client_context","focused":true,"active_agent":null}"#, &mut deadline),
+            ControlFlow::Continue(())
+        );
+        assert_eq!(handle_reauth("key", r#"{"type":"mystery"}"#, &mut deadline), ControlFlow::Continue(()));
     }
 }
