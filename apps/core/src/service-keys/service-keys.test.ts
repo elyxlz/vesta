@@ -91,7 +91,7 @@ describe("isKeyFresh", () => {
 describe("createServiceKeyCache", () => {
   it("mints once per agent and service, then reuses the key", async () => {
     const { http, calls } = fakeHttp({ key: "minted", expires_at: null })
-    const cache = createServiceKeyCache({ http })
+    const cache = createServiceKeyCache({ http, gateway: () => "https://gw-a" })
     expect(await cache.get("alpha", "dashboard")).toBe("minted")
     expect(await cache.get("alpha", "dashboard")).toBe("minted")
     expect(calls).toEqual(["/agents/alpha/services/dashboard/keys"])
@@ -99,7 +99,7 @@ describe("createServiceKeyCache", () => {
 
   it("keeps one entry per agent and service pair", async () => {
     const { http, calls } = fakeHttp({ key: "one", expires_at: null })
-    const cache = createServiceKeyCache({ http })
+    const cache = createServiceKeyCache({ http, gateway: () => "https://gw-a" })
     await cache.get("alpha", "dashboard")
     await cache.get("beta", "dashboard")
     await cache.get("alpha", "voice")
@@ -109,7 +109,7 @@ describe("createServiceKeyCache", () => {
   it("re-mints when the cached key is close to expiry", async () => {
     vi.spyOn(Date, "now").mockReturnValue(NOW_SECS * 1000)
     const { http, calls } = fakeHttp({ key: "stale", expires_at: NOW_SECS + 60 })
-    const cache = createServiceKeyCache({ http })
+    const cache = createServiceKeyCache({ http, gateway: () => "https://gw-a" })
     await cache.get("alpha", "dashboard")
     await cache.get("alpha", "dashboard")
     expect(calls).toHaveLength(2)
@@ -119,15 +119,28 @@ describe("createServiceKeyCache", () => {
   // app states the lifetime it wants.
   it("asks for a bounded, non-zero lifetime", async () => {
     const { http, inits } = fakeHttp({ key: "k", expires_at: null })
-    const cache = createServiceKeyCache({ http })
+    const cache = createServiceKeyCache({ http, gateway: () => "https://gw-a" })
     await cache.get("alpha", "dashboard")
 
     expect(onlyInit(inits).body).toBe(JSON.stringify({ ttl_secs: 12 * 3600 }))
   })
 
+  // Agents share the same default name across gateways, and an app can reconnect elsewhere
+  // without reloading, so a key cached under gateway A must not be served at gateway B: it
+  // would be refused for hours, with nothing to invalidate it.
+  it("re-mints for the same agent and service after reconnecting to another gateway", async () => {
+    const { http, calls } = fakeHttp({ key: "k", expires_at: null })
+    let gateway = "https://gw-a"
+    const cache = createServiceKeyCache({ http, gateway: () => gateway })
+    await cache.get("alpha", "dashboard")
+    gateway = "https://gw-b"
+    await cache.get("alpha", "dashboard")
+    expect(calls).toHaveLength(2)
+  })
+
   it("percent-encodes the agent and service in the mint path", async () => {
     const { http, calls } = fakeHttp({ key: "k", expires_at: null })
-    const cache = createServiceKeyCache({ http })
+    const cache = createServiceKeyCache({ http, gateway: () => "https://gw-a" })
     await cache.get("a b", "we/ird")
     expect(calls).toEqual(["/agents/a%20b/services/we%2Fird/keys"])
   })
@@ -149,6 +162,9 @@ describe("url builders", () => {
   it("percent-encodes every caller-supplied segment", () => {
     expect(serviceKeyPathUrl("https://host", "a b", "dash board", "a/b")).toBe(
       "https://host/agents/a%20b/dash%20board/k/a%2Fb/",
+    )
+    expect(serviceKeyQueryUrl("https://host", "a b", "dash board", "a/b", "/tts")).toBe(
+      "https://host/agents/a%20b/dash%20board/tts?token=a%2Fb",
     )
   })
 })

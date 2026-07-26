@@ -19,7 +19,9 @@ export interface ServiceKeyCache {
   get: (agent: string, service: string) => Promise<string>
 }
 
-// Re-mint this far ahead of expiry so a frame holding a key never reaches a dead one.
+// The margin `get` demands of a cached key: anything handed out has more than an hour of life
+// left. Freshness is only ever evaluated on the way out, so a consumer holding a key past its
+// expiry keeps holding it until it asks again.
 const REMINT_MARGIN_SECS = 3600
 // Lifetime the app asks for: long enough that an open dashboard rarely remounts, short
 // enough that a leaked URL stops working the same day.
@@ -53,11 +55,17 @@ export function isKeyFresh(entry: CachedServiceKey | null, nowSecs: number): boo
 
 // A factory rather than module state, so a test builds its own and two connections never
 // share keys.
-export function createServiceKeyCache(deps: { http: HttpClient }): ServiceKeyCache {
+export function createServiceKeyCache(deps: {
+  http: HttpClient
+  // Which gateway minted the key. A key is only valid at the gateway that issued it, so the
+  // gateway is part of the cache identity: reconnecting elsewhere must miss rather than serve a
+  // key the new gateway will refuse.
+  gateway: () => string | null
+}): ServiceKeyCache {
   const cached = new Map<string, CachedServiceKey>()
   return {
     get: async (agent, service) => {
-      const cacheKey = `${agent}/${service}`
+      const cacheKey = `${deps.gateway() ?? ""}/${agent}/${service}`
       const nowSecs = Math.floor(Date.now() / 1000)
       const existing = cached.get(cacheKey) ?? null
       if (existing && isKeyFresh(existing, nowSecs)) return existing.key
@@ -87,6 +95,8 @@ export function serviceKeyQueryUrl(
   agent: string,
   service: string,
   key: string,
+  // Appended verbatim after the service segment: it must start with a slash and carry no query
+  // string of its own, or the result is a run-on path or a url with two `?`.
   subpath: string,
 ): string {
   const params = new URLSearchParams({ token: key })
