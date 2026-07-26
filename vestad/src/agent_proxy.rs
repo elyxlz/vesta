@@ -80,6 +80,21 @@ fn split_service_subpath(path: &str) -> (&str, &str) {
     }
 }
 
+/// Split a `/k/{key}/...` service subpath into its key and the path forwarded upstream.
+/// A path prefix is the only carrier a relative sub-resource inherits, which is how an
+/// iframe's assets authenticate without headers or a query string.
+fn split_key_subpath(subpath: &str) -> Option<(&str, String)> {
+    let rest = subpath.strip_prefix("/k/")?;
+    let (key, tail) = match rest.split_once('/') {
+        Some((key, tail)) => (key, format!("/{tail}")),
+        None => (rest, "/".to_string()),
+    };
+    if key.is_empty() {
+        return None;
+    }
+    Some((key, tail))
+}
+
 pub async fn agent_proxy_handler(
     State(state): State<SharedState>,
     Path((name, path)): Path<(String, String)>,
@@ -122,19 +137,57 @@ pub async fn agent_proxy_handler(
     } else {
         resolve_service(&state, &name, first_segment).await
     };
+
+    // A `/k/{key}/` prefix is stripped only when the key actually opens this service, so a
+    // wrong key can never reshape the forwarded path: it falls through to normal auth.
+    let keyed_subpath = match resolved.as_ref() {
+        Some(_) => match split_key_subpath(service_subpath) {
+            Some((key, forwarded)) => {
+                let now = crate::time_utils::now_epoch_secs();
+                let accepted = state
+                    .service_keys
+                    .read()
+                    .await
+                    .accepts(&name, first_segment, key, now);
+                if accepted {
+                    Some(forwarded)
+                } else {
+                    None
+                }
+            }
+            None => None,
+        },
+        None => None,
+    };
+    let via_key = keyed_subpath.is_some();
+
     let (target_port, stripped_path, service) = match resolved {
-        Some(entry) => (entry.port, service_subpath.to_string(), Some(entry)),
+        Some(entry) => (
+            entry.port,
+            keyed_subpath.unwrap_or_else(|| service_subpath.to_string()),
+            Some(entry),
+        ),
         None => (agent_port, format!("/{path}"), None),
     };
 
-    // Public services are fully open; everything else requires auth.
-    let is_public = service.as_ref().is_some_and(|s| s.public);
-    if !is_public && !auth::has_valid_api_auth(request.headers(), request.uri(), &state.api_key) {
+    if !via_key
+        && !auth::proxy_authorized(
+            &state,
+            request.headers(),
+            request.uri(),
+            &name,
+            first_segment,
+            service.as_ref(),
+        )
+        .await
+    {
         return Err(err_response(
             StatusCode::UNAUTHORIZED,
-            "unauthorized — pass a valid Bearer token or ?token= query parameter",
+            "unauthorized — pass a valid Bearer token, ?token= query parameter, or /k/{key}/ path prefix",
         ));
     }
+
+    let is_public = service.as_ref().is_some_and(|entry| entry.public);
 
     let mut target_path = stripped_path;
     if let Some(q) = request.uri().query() {
@@ -378,7 +431,10 @@ async fn forward_http_to_container(
 
 #[cfg(test)]
 mod tests {
-    use super::{build_target_url, pump_agent_to_client, split_service_subpath, wait_for_upstream};
+    use super::{
+        build_target_url, pump_agent_to_client, split_key_subpath, split_service_subpath,
+        wait_for_upstream,
+    };
     use axum::extract::ws::Message as AxumMsg;
     use futures_util::stream;
     use std::convert::Infallible;
@@ -494,6 +550,24 @@ mod tests {
                 "split_service_subpath({path:?})"
             );
         }
+    }
+
+    #[test]
+    fn splits_the_key_prefix_from_the_forwarded_subpath() {
+        assert_eq!(
+            split_key_subpath("/k/abc123/assets/index.js"),
+            Some(("abc123", "/assets/index.js".to_string()))
+        );
+        assert_eq!(split_key_subpath("/k/abc123/"), Some(("abc123", "/".to_string())));
+        assert_eq!(split_key_subpath("/k/abc123"), Some(("abc123", "/".to_string())));
+    }
+
+    #[test]
+    fn rejects_a_missing_or_empty_key_prefix() {
+        assert_eq!(split_key_subpath("/assets/index.js"), None);
+        assert_eq!(split_key_subpath("/"), None);
+        assert_eq!(split_key_subpath("/k/"), None);
+        assert_eq!(split_key_subpath("/k//assets/index.js"), None);
     }
 
     #[tokio::test]
