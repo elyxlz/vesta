@@ -35,8 +35,8 @@
     "fast-check": "^4.9.0",
     "jsdom": "^29.1.1",
     "prettier": "^3.9.6",
-    "react": "^19.2.7",
-    "react-dom": "^19.2.7",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
     "typescript": "^7.0.2",
     "typescript-eslint": "^8.65.0",
     "vitest": "^4.1.10"

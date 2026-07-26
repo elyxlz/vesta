@@ -503,7 +503,7 @@ function HomeWordmark() {
   const { colors } = usePreferences();
   return (
     <View style={styles.wordmarkContainer}>
-      <Text family="heading" style={[styles.wordmark, { color: colors.text }]}>
+      <Text family="wordmark" style={[styles.wordmark, { color: colors.text }]}>
         vesta
       </Text>
     </View>

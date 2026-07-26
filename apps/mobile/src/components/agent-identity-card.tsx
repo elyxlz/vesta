@@ -33,11 +33,12 @@ export function AgentIdentityCard({
         />
       )}
       <View style={styles.details}>
-        <AgentStatusBadge status={status} centered />
-        <Text
-          family="heading"
-          style={[styles.name, { color: colors.text }]}
-        >
+        <AgentStatusBadge
+          status={status}
+          activityState={activityState}
+          centered
+        />
+        <Text family="heading" style={[styles.name, { color: colors.text }]}>
           {name}
         </Text>
       </View>

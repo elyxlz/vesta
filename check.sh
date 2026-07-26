@@ -137,13 +137,13 @@ check_app_desktop() {
 check_app_mobile() {
   (
     cd apps
-    if [ ! -d mobile/node_modules ]; then
-      npm --prefix mobile install
+    if [ ! -e node_modules/@vesta/mobile ]; then
+      npm install
     fi
     (cd mobile && npx expo install --check)
-    npm --prefix mobile run lint
-    npm --prefix mobile run check
-    npm --prefix mobile run test
+    npm -w @vesta/mobile run lint
+    npm -w @vesta/mobile run check
+    npm -w @vesta/mobile run test
     bash ../scripts/check-mobile-prebuild.sh
   )
 }

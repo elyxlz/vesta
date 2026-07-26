@@ -23,27 +23,35 @@ export interface BootTargetFrame {
 
 interface BootTransitionValue {
   active: boolean;
+  pageRevealed: boolean;
   reportTarget: (destination: BootDestination, frame: BootTargetFrame) => void;
   targetVisible: boolean;
 }
 
 const BootTransitionContext = createContext<BootTransitionValue | null>(null);
 const BootTransitionTargetFrozenContext = createContext(false);
+const inactiveBootTransition = {
+  active: false,
+  pageRevealed: true,
+  targetVisible: true,
+} as const;
 
 export function BootTransitionProvider({
   active,
   children,
   onTarget,
+  pageRevealed = false,
   targetVisible = false,
 }: {
   active: boolean;
   children: ReactNode;
   onTarget: (destination: BootDestination, frame: BootTargetFrame) => void;
+  pageRevealed?: boolean;
   targetVisible?: boolean;
 }) {
   const value = useMemo(
-    () => ({ active, reportTarget: onTarget, targetVisible }),
-    [active, onTarget, targetVisible],
+    () => ({ active, pageRevealed, reportTarget: onTarget, targetVisible }),
+    [active, onTarget, pageRevealed, targetVisible],
   );
   return (
     <BootTransitionContext.Provider value={value}>
@@ -111,6 +119,14 @@ export function BootTransitionTarget({
 
 export function useBootTransitionTargetFrozen(): boolean {
   return useContext(BootTransitionTargetFrozenContext);
+}
+
+export function useBootTransitionPhase(): {
+  active: boolean;
+  pageRevealed: boolean;
+  targetVisible: boolean;
+} {
+  return useContext(BootTransitionContext) ?? inactiveBootTransition;
 }
 
 const styles = StyleSheet.create({

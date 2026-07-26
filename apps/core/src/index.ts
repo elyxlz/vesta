@@ -4,6 +4,14 @@ export {
   compareReleaseVersions,
 } from "./protocol/release-version"
 
+export {
+  extractWhatsNew,
+  fetchReleaseNotes,
+  filterReleaseNotes,
+  parseReleaseNotes,
+} from "./release-notes/release-notes"
+export type { ReleaseNote } from "./release-notes/release-notes"
+
 export { parseAnsi, resolveAnsiColor, stripAnsi } from "./ansi/ansi"
 export type { AnsiColor, AnsiSpan, AnsiStyle } from "./ansi/ansi"
 

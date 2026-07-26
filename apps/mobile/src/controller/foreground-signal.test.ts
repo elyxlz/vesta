@@ -37,19 +37,23 @@ describe("createAppStateForegroundSignal", () => {
     appState.currentState = "active";
     expect(signal.isForeground()).toBe(true);
 
+    appState.currentState = "inactive";
+    expect(signal.isForeground()).toBe(true);
+
     appState.currentState = "background";
     expect(signal.isForeground()).toBe(false);
   });
 
-  it("maps active and background changes to true and false", () => {
+  it("keeps transient inactive transitions alive and closes only in background", () => {
     const signal = createAppStateForegroundSignal();
     const listener = vi.fn();
     signal.subscribe(listener);
 
     appState.changeListener?.("active");
+    appState.changeListener?.("inactive");
     appState.changeListener?.("background");
 
-    expect(listener.mock.calls).toEqual([[true], [false]]);
+    expect(listener.mock.calls).toEqual([[true], [true], [false]]);
   });
 
   it("removes the subscription when the disposer runs", () => {
