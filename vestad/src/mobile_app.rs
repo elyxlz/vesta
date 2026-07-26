@@ -77,6 +77,7 @@ struct DeliveryContext {
     config_dir: PathBuf,
     http_client: reqwest::Client,
     push_slots: Arc<Semaphore>,
+    presence: Arc<crate::sync::Presence>,
 }
 
 #[derive(Clone, Debug)]
@@ -239,6 +240,7 @@ impl MobileApp {
     pub(crate) fn new(
         config_dir: PathBuf,
         http_client: reqwest::Client,
+        presence: Arc<crate::sync::Presence>,
     ) -> (Self, MobileAppWorker) {
         let devices = Arc::new(Mutex::new(load_devices(&config_dir)));
         let update_lock = Arc::new(Mutex::new(()));
@@ -250,6 +252,7 @@ impl MobileApp {
             config_dir: config_dir.clone(),
             http_client,
             push_slots,
+            presence,
         };
         (
             Self {
@@ -562,6 +565,10 @@ async fn send_push_chunk(
 }
 
 async fn deliver_agent_event(context: DeliveryContext, event: QueuedAgentEvent) {
+    if context.presence.any_focused() {
+        tracing::debug!(agent = %event.agent, "client focused; suppressing push");
+        return;
+    }
     let devices = context.devices.lock().await.clone();
     let messages: Vec<ExpoPushMessage> = devices
         .iter()
@@ -727,16 +734,35 @@ mod tests {
     }
 
     #[test]
+    fn suppresses_delivery_when_a_client_is_focused() {
+        let presence = Arc::new(crate::sync::Presence::new());
+        let conn = presence.connect();
+        presence.record(
+            conn,
+            crate::sync::protocol::ClientContext { focused: true, active_agent: None },
+            tokio::time::Instant::now(),
+        );
+        assert!(presence.any_focused());
+    }
+
+    #[test]
     fn constructor_does_not_spawn_or_require_a_runtime() {
         let directory = tempfile::tempdir().expect("tempdir");
-        let (_app, _worker) =
-            MobileApp::new(directory.path().to_path_buf(), reqwest::Client::new());
+        let (_app, _worker) = MobileApp::new(
+            directory.path().to_path_buf(),
+            reqwest::Client::new(),
+            Arc::new(crate::sync::Presence::new()),
+        );
     }
 
     #[tokio::test]
     async fn registration_is_durable_before_it_becomes_visible() {
         let directory = tempfile::tempdir().expect("tempdir");
-        let (app, _worker) = MobileApp::new(directory.path().to_path_buf(), reqwest::Client::new());
+        let (app, _worker) = MobileApp::new(
+            directory.path().to_path_buf(),
+            reqwest::Client::new(),
+            Arc::new(crate::sync::Presence::new()),
+        );
         app.register_device(registration("ExponentPushToken[durable]"))
             .await
             .expect("registration");
@@ -754,7 +780,11 @@ mod tests {
     #[tokio::test]
     async fn registration_replaces_the_token_for_an_installation() {
         let directory = tempfile::tempdir().expect("tempdir");
-        let (app, _worker) = MobileApp::new(directory.path().to_path_buf(), reqwest::Client::new());
+        let (app, _worker) = MobileApp::new(
+            directory.path().to_path_buf(),
+            reqwest::Client::new(),
+            Arc::new(crate::sync::Presence::new()),
+        );
         app.register_device(registration("ExponentPushToken[first]"))
             .await
             .expect("first registration");
@@ -771,7 +801,11 @@ mod tests {
     async fn registration_failure_does_not_mutate_memory() {
         let directory = tempfile::tempdir().expect("tempdir");
         let missing = directory.path().join("missing");
-        let (app, _worker) = MobileApp::new(missing, reqwest::Client::new());
+        let (app, _worker) = MobileApp::new(
+            missing,
+            reqwest::Client::new(),
+            Arc::new(crate::sync::Presence::new()),
+        );
         let error = app
             .register_device(registration("ExponentPushToken[not-durable]"))
             .await

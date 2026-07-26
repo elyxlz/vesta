@@ -21,6 +21,7 @@ pub(crate) enum PresenceEvent {
     BecamePresent { agent: String },
 }
 
+#[derive(Debug)]
 struct PresenceState {
     contexts: HashMap<ConnId, ClientContext>,
     /// The last instant any client was focused; seeds the debounce gap on the next return-to-focus.
@@ -30,6 +31,7 @@ struct PresenceState {
 /// Per-connection client presence. The socket lifecycle owns an entry (connect/disconnect), so there
 /// is no heartbeat or TTL: a dropped socket clears its presence. `any_focused` is fanned to every
 /// `/sync` session through a watch channel.
+#[derive(Debug)]
 pub(crate) struct Presence {
     state: Mutex<PresenceState>,
     next_id: AtomicU64,
