@@ -2478,6 +2478,12 @@ pub async fn destroy_agent(
             .ok();
     }
     remove_container_force(docker, &cname).await?;
+    // Best-effort: Docker's default address-pool has a finite size, and a network never
+    // removed here would sit claimed forever, eventually exhausting it for every future
+    // agent create. A failure (already gone, transient error) isn't fatal to the destroy.
+    if let Err(e) = docker.remove_network(&agent_network_name(name)).await {
+        tracing::warn!(agent = %name, error = %e, "failed to remove agent network on destroy");
+    }
     delete_agent_env_file(agents_dir, name);
     delete_constitution_file(agents_dir, name);
     Ok(())
@@ -3908,6 +3914,52 @@ mod tests {
                 .iter()
                 .any(|h| h.starts_with("host.docker.internal:")),
             "expected a host.docker.internal mapping, got {extra_hosts:?}"
+        );
+    }
+
+    /// Docker's default address pool is finite; a network never removed on destroy sits
+    /// claimed forever, and enough abandoned agents eventually exhaust it for every future
+    /// create. destroy_agent must undo everything create_agent set up, not just the container.
+    #[tokio::test]
+    #[ignore]
+    async fn destroy_agent_removes_its_network() {
+        let docker = test_docker();
+        let agent_name = format!("dnet-{}", std::process::id());
+        let cname = container_name(&agent_name);
+        docker_cleanup(&["rm", "-f", &cname]);
+        let network_name = agent_network_name(&agent_name);
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let env_config = AgentEnvConfig {
+            config_dir: dir.path().to_path_buf(),
+            agents_dir: dir.path().to_path_buf(),
+            vestad_port: 1,
+            vestad_tunnel: None,
+        };
+        let spec = ContainerSpec {
+            cname: &cname,
+            image: &test_agent_image(),
+            port: 41996,
+            agent_name: &agent_name,
+            user_mounts: &[],
+        };
+        create_container(&docker, &env_config, spec)
+            .await
+            .expect("create");
+        assert!(
+            docker
+                .inspect_network(&network_name, None)
+                .await
+                .is_ok(),
+            "network should exist right after create"
+        );
+
+        destroy_agent(&docker, &agent_name, dir.path())
+            .await
+            .expect("destroy");
+
+        assert!(
+            docker.inspect_network(&network_name, None).await.is_err(),
+            "network should be gone after destroy"
         );
     }
 
