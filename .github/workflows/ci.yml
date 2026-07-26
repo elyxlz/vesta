@@ -58,7 +58,7 @@ jobs:
       mobile: ${{ steps.filter.outputs.mobile }}
       mobile_native: ${{ steps.filter.outputs.mobile_native }}
       agent: ${{ steps.filter.outputs.agent }}
-      go: ${{ steps.filter.outputs.go }}
+      comms: ${{ steps.filter.outputs.comms }}
       mac_universal: ${{ steps.flags.outputs.mac_universal }}
       mobile_matrix: ${{ steps.flags.outputs.mobile_matrix }}
     steps:
@@ -137,9 +137,10 @@ jobs:
               - 'agent/**'
               - '.github/workflows/ci.yml'
               - 'check.sh'
-            go:
+            comms:
               - 'agent/skills/whatsapp/cli/**'
               - 'agent/skills/telegram/cli/**'
+              - 'agent/skills/app-chat/cli/**'
               - '.github/workflows/ci.yml'
               - 'check.sh'
 
@@ -311,11 +312,11 @@ jobs:
       - name: Run agent checks
         run: ./check.sh agent
 
-  # ── Go checks (whatsapp + telegram CLIs) ──────────────────────────────
-  go-checks:
-    name: WhatsApp & Telegram · Lint, build, and test
+  # ── Communication channels (whatsapp + telegram Go CLIs, app-chat Python CLI) ──
+  comms-checks:
+    name: Communication channels · Lint, build, and test
     needs: detect-changes
-    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.go == 'true'
+    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.comms == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -329,6 +330,9 @@ jobs:
             agent/skills/whatsapp/cli/go.sum
             agent/skills/telegram/cli/go.sum
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+
       - name: Cache whisper.cpp static build
         uses: actions/cache@v6
         with:
@@ -340,6 +344,9 @@ jobs:
 
       - name: Run telegram checks
         run: ./check.sh telegram
+
+      - name: Run app-chat checks
+        run: ./check.sh app-chat
 
   # ── Frontend unit tests (one job per app, gated on its dependency closure) ──
   # @vesta/core is the shared controller: web bundles it, desktop bundles web,
@@ -1067,7 +1074,7 @@ jobs:
       - workflow-lint
       - dependency-review
       - agent-tests
-      - go-checks
+      - comms-checks
       - test-app-core
       - test-app-web
       - test-app-desktop
