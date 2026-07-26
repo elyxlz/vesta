@@ -6,7 +6,9 @@ The CLI needs the Plex server address and an auth token.
 
 The base URL of the Plex Media Server, including port. Examples:
 - Local network: `http://192.168.1.50:32400`
-- Same host as this container (host networking): `http://localhost:32400`
+- Same host as this container: `http://host.docker.internal:32400` (the agent no longer
+  shares the host's network namespace, so `localhost` does not reach a Plex instance
+  running on the same physical machine; `host.docker.internal` does)
 - Remote/DNS: `https://plex.yourdomain.com`
 
 ## 2. PLEX_TOKEN
@@ -26,14 +28,14 @@ Two options (env wins if both present):
 ```bash
 mkdir -p ~/.plex
 cat > ~/.plex/config.json <<'EOF'
-{ "url": "http://localhost:32400", "token": "YOURTOKEN" }
+{ "url": "http://host.docker.internal:32400", "token": "YOURTOKEN" }
 EOF
 chmod 600 ~/.plex/config.json
 ```
 
 **B. Environment (add to `~/.bashrc` so it persists):**
 ```bash
-export PLEX_URL="http://localhost:32400"
+export PLEX_URL="http://host.docker.internal:32400"
 export PLEX_TOKEN="YOURTOKEN"
 ```
 
