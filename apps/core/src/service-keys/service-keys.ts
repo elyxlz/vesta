@@ -1,0 +1,96 @@
+import type { HttpClient } from "../transport/http"
+
+// A service key opens exactly one service on one agent. It is the only credential the
+// dashboard frame and the voice media URLs ever carry, so the api key and access tokens
+// stay out of every service URL. vestad keeps only a hash, so a key cannot be re-read: a
+// cache miss simply mints a fresh one.
+export interface ServiceKey {
+  id: string
+  key: string
+  expires_at: number | null
+}
+
+export interface CachedServiceKey {
+  key: string
+  expiresAt: number | null
+}
+
+export interface ServiceKeyCache {
+  get: (agent: string, service: string) => Promise<string>
+}
+
+// Re-mint this far ahead of expiry so a frame holding a key never reaches a dead one.
+const REMINT_MARGIN_SECS = 3600
+// Lifetime the app asks for: long enough that an open dashboard rarely remounts, short
+// enough that a leaked URL stops working the same day.
+const APP_KEY_TTL_SECS = 12 * 3600
+
+// The one owner of the mint request, mirroring intents/gateway-update.ts: it takes core's
+// HttpClient, so web and mobile share it along with their own auth and refresh wiring.
+// The body and its content type are not optional: vestad extracts Json<T>, so a bodyless
+// POST is a 415 and an empty one a 400. Only a literal `{}` reaches the serde defaults.
+export async function mintServiceKey(
+  http: HttpClient,
+  agent: string,
+  service: string,
+  ttlSecs?: number,
+): Promise<ServiceKey> {
+  return http.json<ServiceKey>(
+    `/agents/${encodeURIComponent(agent)}/services/${encodeURIComponent(service)}/keys`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(ttlSecs === undefined ? {} : { ttl_secs: ttlSecs }),
+    },
+  )
+}
+
+export function isKeyFresh(entry: CachedServiceKey | null, nowSecs: number): boolean {
+  if (!entry) return false
+  if (entry.expiresAt === null) return true
+  return entry.expiresAt - nowSecs > REMINT_MARGIN_SECS
+}
+
+// A factory rather than module state, so a test builds its own and two connections never
+// share keys.
+export function createServiceKeyCache(deps: { http: HttpClient }): ServiceKeyCache {
+  const cached = new Map<string, CachedServiceKey>()
+  return {
+    get: async (agent, service) => {
+      const cacheKey = `${agent}/${service}`
+      const nowSecs = Math.floor(Date.now() / 1000)
+      const existing = cached.get(cacheKey) ?? null
+      if (existing && isKeyFresh(existing, nowSecs)) return existing.key
+      const minted = await mintServiceKey(deps.http, agent, service, APP_KEY_TTL_SECS)
+      cached.set(cacheKey, { key: minted.key, expiresAt: minted.expires_at })
+      return minted.key
+    },
+  }
+}
+
+// The path form. A prefix is the only carrier a relative sub-resource inherits, which is
+// how an iframe's assets authenticate with no header and no query string.
+export function serviceKeyPathUrl(
+  baseUrl: string,
+  agent: string,
+  service: string,
+  key: string,
+): string {
+  const agentSegment = encodeURIComponent(agent)
+  const serviceSegment = encodeURIComponent(service)
+  return `${baseUrl}/agents/${agentSegment}/${serviceSegment}/k/${encodeURIComponent(key)}/`
+}
+
+// The query form, for a media element or a WebSocket, neither of which can send a header.
+export function serviceKeyQueryUrl(
+  baseUrl: string,
+  agent: string,
+  service: string,
+  key: string,
+  subpath: string,
+): string {
+  const params = new URLSearchParams({ token: key })
+  const agentSegment = encodeURIComponent(agent)
+  const serviceSegment = encodeURIComponent(service)
+  return `${baseUrl}/agents/${agentSegment}/${serviceSegment}${subpath}?${params.toString()}`
+}

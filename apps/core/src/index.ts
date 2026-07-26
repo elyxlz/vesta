@@ -88,6 +88,15 @@ export {
   triggerGatewayUpdate,
 } from "./intents/gateway-update"
 
+export {
+  createServiceKeyCache,
+  isKeyFresh,
+  mintServiceKey,
+  serviceKeyPathUrl,
+  serviceKeyQueryUrl,
+} from "./service-keys/service-keys"
+export type { CachedServiceKey, ServiceKey, ServiceKeyCache } from "./service-keys/service-keys"
+
 export { rosterFromTree, rostersEqual } from "./tree/roster"
 export type { AgentRow } from "./tree/roster"
 
