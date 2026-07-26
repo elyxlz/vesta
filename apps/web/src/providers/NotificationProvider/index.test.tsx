@@ -90,7 +90,10 @@ function tree(statuses: Record<string, AgentRow["status"]>): Tree {
   };
 }
 
-function makeController(statuses: Record<string, AgentRow["status"]>) {
+function makeController(
+  statuses: Record<string, AgentRow["status"]>,
+  anyFocused = false,
+) {
   const replica = createReplica();
   replica.applySnapshot(tree(statuses));
   const listeners = new Set<(delta: Delta) => void>();
@@ -105,7 +108,7 @@ function makeController(statuses: Record<string, AgentRow["status"]>) {
     getSyncState: () => "open",
     subscribeSyncState: () => () => undefined,
     reportPresence: () => undefined,
-    getAnyFocused: () => false,
+    getAnyFocused: () => anyFocused,
     subscribeAnyFocused: () => () => undefined,
     close: () => undefined,
   };
@@ -242,6 +245,25 @@ describe("NotificationProvider", () => {
     mount(controller, [agentInfo("ada", "alive")]);
     await flush();
     focus();
+
+    act(() => {
+      emit({
+        type: "user_notification",
+        agent: "ada",
+        kind: "message",
+        title: "ada",
+        body: "hi",
+      });
+    });
+
+    expect(built).toEqual([]);
+  });
+
+  it("does not toast a background chat alert while another client is focused", async () => {
+    const { controller, emit } = makeController({ ada: "alive" }, true);
+    mount(controller, [agentInfo("ada", "alive")]);
+    await flush();
+    blur();
 
     act(() => {
       emit({
