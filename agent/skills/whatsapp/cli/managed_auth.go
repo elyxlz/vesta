@@ -114,7 +114,7 @@ type managedConfig struct {
 	directURL  string // home box base, e.g. https://<tunnel> (direct mode)
 	directKey  string // per-account key (wak_...) for direct mode
 	controlURL string // vesta.run control-plane base, e.g. https://vesta.run/api (cloud mode)
-	vestadBase string // this box's vestad over the loopback, e.g. https://localhost:<port>
+	vestadBase string // this box's vestad, https://$BOX_HOST:$VESTAD_PORT
 	agentName  string
 	agentToken string
 	// cloudManaged is the paid-tenant signal: the control plane's cloud-init sets
@@ -133,8 +133,10 @@ type managedConfig struct {
 // loadManagedConfig reads the managed-auth environment (mirrors the account skill).
 func loadManagedConfig() managedConfig {
 	base := ""
-	if port := strings.TrimSpace(os.Getenv("VESTAD_PORT")); port != "" {
-		base = "https://localhost:" + port
+	port := strings.TrimSpace(os.Getenv("VESTAD_PORT"))
+	host := strings.TrimSpace(os.Getenv("BOX_HOST"))
+	if port != "" && host != "" {
+		base = "https://" + host + ":" + port
 	}
 	directURL := strings.TrimSpace(os.Getenv("DOUBLETICK_API_URL"))
 	directKey := strings.TrimSpace(os.Getenv("DOUBLETICK_API_KEY"))

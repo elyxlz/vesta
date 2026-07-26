@@ -3356,7 +3356,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
- "socket2",
  "tar",
  "tempfile",
  "time",

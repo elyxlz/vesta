@@ -180,7 +180,7 @@ def _print_summary(inbox: dict, webhook_url: str) -> None:
     click.echo("    --to recipient@example.com --subject 'hi' --text 'hello'")
     click.echo("\nnext: register and start the local webhook receiver")
     click.echo(
-        "  PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services "
+        "  PORT=$(curl -sk -X POST https://$BOX_HOST:$VESTAD_PORT/agents/$AGENT_NAME/services "
         "-H \"X-Agent-Token: $AGENT_TOKEN\" -H 'Content-Type: application/json' "
         '-d \'{"name":"agentmail","public":true}\' | '
         "python3 -c \"import sys,json; print(json.load(sys.stdin)['port'])\")"

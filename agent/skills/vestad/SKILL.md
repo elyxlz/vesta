@@ -13,9 +13,9 @@ Every call authenticates with the agent's own token:
 -H "X-Agent-Token: $AGENT_TOKEN"
 ```
 
-`$VESTAD_PORT`, `$AGENT_TOKEN`, `$AGENT_NAME`, and `$VESTAD_TUNNEL` come from
-`/run/vestad-env`, already exported into the environment. The API is
-`https://localhost:$VESTAD_PORT` (self-signed cert, so always `curl -sk`).
+`$VESTAD_PORT`, `$AGENT_TOKEN`, `$AGENT_NAME`, `$VESTAD_TUNNEL`, and `$BOX_HOST` come
+from `/run/vestad-env`, already exported into the environment. The API is
+`https://$BOX_HOST:$VESTAD_PORT`, with a self-signed cert, so always `curl -sk`.
 
 Restarting or stopping this agent is not a curl: use the `restart_vesta` / `stop_vesta`
 tools, which call vestad's self-scoped lifecycle endpoints.
@@ -34,8 +34,10 @@ bug, not an outage. The local config/provider API is a separate thing: plain htt
 ## Services (get a port, keep it alive)
 
 A service is a port inside the container that vestad reverse-proxies, optionally public
-(reachable through the tunnel without a token) or token-gated. Register one when something
-outside the process needs to reach it: a web UI, an inbound webhook, an API the app calls.
+(reachable through the tunnel without a token) or token-gated. Bind it to `0.0.0.0`: vestad
+reaches it over this container's network, so a `127.0.0.1` bind is invisible to the proxy even
+with the port registered correctly. Register one when something outside the process needs to
+reach it: a web UI, an inbound webhook, an API the app calls.
 A background process that needs no inbound port is just a daemon: it does not register here,
 it only goes in the restart skill's `## Daemons` section.
 
@@ -71,9 +73,9 @@ registration, then register it again without `--public`), or tell connected clie
 after changing what a service serves:
 
 ```bash
-curl -sk https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services -H "X-Agent-Token: $AGENT_TOKEN"
-curl -sk -X DELETE https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services/<name> -H "X-Agent-Token: $AGENT_TOKEN"
-curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services/<name>/invalidate -H "X-Agent-Token: $AGENT_TOKEN"
+curl -sk https://$BOX_HOST:$VESTAD_PORT/agents/$AGENT_NAME/services -H "X-Agent-Token: $AGENT_TOKEN"
+curl -sk -X DELETE https://$BOX_HOST:$VESTAD_PORT/agents/$AGENT_NAME/services/<name> -H "X-Agent-Token: $AGENT_TOKEN"
+curl -sk -X POST https://$BOX_HOST:$VESTAD_PORT/agents/$AGENT_NAME/services/<name>/invalidate -H "X-Agent-Token: $AGENT_TOKEN"
 ```
 
 Invalidate optionally takes `{"scope": "<part>"}` (e.g. `{"scope": "stt"}`) to mark what
@@ -92,8 +94,8 @@ Reach for these instead of reverse-engineering the route when you need to hand t
 Check the running version and whether a newer release exists, then apply it:
 
 ```bash
-curl -sk https://localhost:$VESTAD_PORT/version -H "X-Agent-Token: $AGENT_TOKEN"
-curl -sk -X POST https://localhost:$VESTAD_PORT/gateway/update -H "X-Agent-Token: $AGENT_TOKEN"
+curl -sk https://$BOX_HOST:$VESTAD_PORT/version -H "X-Agent-Token: $AGENT_TOKEN"
+curl -sk -X POST https://$BOX_HOST:$VESTAD_PORT/gateway/update -H "X-Agent-Token: $AGENT_TOKEN"
 ```
 
 `GET /version` returns `{version, latest_version, update_available, channel, ...}` from a
@@ -109,7 +111,7 @@ returns 400 (self-update disabled).
 Read vestad's own logs to debug gateway or container issues:
 
 ```bash
-curl -sk "https://localhost:$VESTAD_PORT/gateway/logs?tail=200" -H "X-Agent-Token: $AGENT_TOKEN"
+curl -sk "https://$BOX_HOST:$VESTAD_PORT/gateway/logs?tail=200" -H "X-Agent-Token: $AGENT_TOKEN"
 ```
 
 Returns the last N lines as Server-Sent Events, so parse the `data:` lines; it closes after

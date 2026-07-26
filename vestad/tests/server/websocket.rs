@@ -104,7 +104,7 @@ async fn raw_bus_ws_rejected_but_registered_service_ws_upgrades() {
         &cname,
         ". /run/vestad-env && curl -fsSk -X POST -H \"X-Agent-Token: $AGENT_TOKEN\" \
          -H 'Content-Type: application/json' -d '{\"name\":\"probe\"}' \
-         \"https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services\"",
+         \"https://$BOX_HOST:$VESTAD_PORT/agents/$AGENT_NAME/services\"",
     )
     .expect("register probe service");
 

@@ -48,6 +48,7 @@ pub async fn invalidate_service_handler(
 pub async fn get_status(
     docker: &Docker,
     http_client: &reqwest::Client,
+    cache: &AgentStatusCache,
     name: &str,
     agents_dir: &std::path::Path,
     rebuilding: &docker::RebuildTracker,
@@ -59,7 +60,7 @@ pub async fn get_status(
     let status = if rebuilding.is_rebuilding(name) {
         docker::AgentStatus::Rebuilding
     } else {
-        combined_status(http_client, agents_dir, &cname, &info).await
+        combined_status(docker, http_client, agents_dir, cache, &cname, &info).await
     };
     Ok(docker::StatusJson {
         name: name.to_string(),
@@ -72,6 +73,7 @@ pub async fn get_status(
 pub async fn list_agents(
     docker: &Docker,
     http_client: &reqwest::Client,
+    cache: &AgentStatusCache,
     agents_dir: &std::path::Path,
     rebuilding: &docker::RebuildTracker,
 ) -> Vec<ListEntry> {
@@ -81,7 +83,7 @@ pub async fn list_agents(
         let info = docker::inspect_container(docker, cname, Some(agents_dir)).await;
         entries.push(ListEntry {
             name: agent_name.clone(),
-            status: combined_status(http_client, agents_dir, cname, &info).await,
+            status: combined_status(docker, http_client, agents_dir, cache, cname, &info).await,
             ws_port: info.port.unwrap_or(0),
             started_at: info.started_at.clone(),
         });
@@ -110,23 +112,34 @@ fn apply_rebuilding(mut entries: Vec<ListEntry>, mut rebuilding: Vec<String>) ->
 }
 
 async fn combined_status(
+    docker: &Docker,
     http_client: &reqwest::Client,
     agents_dir: &std::path::Path,
+    cache: &AgentStatusCache,
     cname: &str,
     info: &docker::ContainerInfo,
 ) -> docker::AgentStatus {
     match info.status {
         docker::ContainerStatus::Running => {
+            let agent_name = docker::name_from_cname(cname);
+            // Unresolved right after a start/create races the caller (see
+            // AgentStatusCache::bridge_ip_or_resolve); the next ~3s poll retries.
+            let Some(host) = cache.bridge_ip_or_resolve(docker, cname, &agent_name).await else {
+                return docker::AgentStatus::Starting;
+            };
             // WS port not yet bound → agent still booting.
-            if !info.port.is_some_and(is_agent_ready) {
+            if !info.port.is_some_and(|port| is_agent_ready(&host, port)) {
                 return docker::AgentStatus::Starting;
             }
             // Agent's own GET /config is the source of truth for provider auth.
             // If the WS server is up but /config isn't responding yet (transient
             // mid-boot state), treat as Starting; the next ~3s poll will resolve.
-            let agent_name = docker::name_from_cname(cname);
-            let provider =
-                crate::agent_provider::AgentProvider::new(http_client, agents_dir, agent_name);
+            let provider = crate::agent_provider::AgentProvider::new(
+                http_client,
+                agents_dir,
+                agent_name,
+                host,
+            );
             match provider.status().await {
                 Ok(s) => status_from_readiness(s.authed, s.setup_complete, s.provider_configured),
                 Err(_) => docker::AgentStatus::Starting,
@@ -157,9 +170,12 @@ fn status_from_readiness(
 /// The agent binds its WS port only once it's ready to serve requests.
 const AGENT_READY_TIMEOUT_MS: u64 = 200;
 
-fn is_agent_ready(port: u16) -> bool {
+fn is_agent_ready(host: &str, port: u16) -> bool {
+    let Ok(ip) = host.parse::<std::net::IpAddr>() else {
+        return false;
+    };
     std::net::TcpStream::connect_timeout(
-        &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+        &std::net::SocketAddr::new(ip, port),
         std::time::Duration::from_millis(AGENT_READY_TIMEOUT_MS),
     )
     .is_ok()
@@ -193,6 +209,10 @@ pub struct AgentStatusCache {
     /// phase even before the container exists (Pulling/Building run first). Entries exist only for
     /// the duration of a create and are removed when it settles.
     build_phases: Mutex<HashMap<String, docker::BuildPhase>>,
+    /// Each agent's address on its own private bridge network. Cached because the proxy needs
+    /// it per request and a live Docker lookup there would cost a round trip each time; the WS
+    /// tap and the config/provider relay read it too.
+    bridge_ips: Mutex<HashMap<String, String>>,
     /// In-flight long-running operation per agent, keyed by normalized name. Written by the backup
     /// and restore handlers for the duration of the work, so every connected client sees it and not
     /// just the one holding the SSE stream.
@@ -219,6 +239,7 @@ impl AgentStatusCache {
             invalidations_rx,
             revs: Mutex::new(HashMap::new()),
             build_phases: Mutex::new(HashMap::new()),
+            bridge_ips: Mutex::new(HashMap::new()),
             operations: Mutex::new(HashMap::new()),
         }
     }
@@ -342,6 +363,51 @@ impl AgentStatusCache {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
     }
+
+    /// Record the resolved bridge IP for `agent`, replacing any prior value. Private: the cache
+    /// fills itself in `bridge_ip_or_resolve`, so no caller needs to push an address in.
+    fn set_bridge_ip(&self, agent: &str, ip: String) {
+        self.bridge_ips
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(agent.to_string(), ip);
+    }
+
+    /// The agent's current bridge IP, if resolved.
+    pub fn bridge_ip(&self, agent: &str) -> Option<String> {
+        self.bridge_ips
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(agent)
+            .cloned()
+    }
+
+    /// Drop the cached bridge IP (agent removed, or a resolve failed and the caller wants a
+    /// clean retry next time rather than an indefinitely stale address).
+    pub fn clear_bridge_ip(&self, agent: &str) {
+        self.bridge_ips
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(agent);
+    }
+
+    /// The agent's bridge IP: cached if already resolved, otherwise a live Docker resolve that
+    /// populates the cache on success. Every caller that needs this address hits the same narrow
+    /// race (a request landing between container start and the one-shot resolve that follows
+    /// it), so they share one retry policy here instead of each inventing its own.
+    pub async fn bridge_ip_or_resolve(
+        &self,
+        docker: &Docker,
+        cname: &str,
+        agent: &str,
+    ) -> Option<String> {
+        if let Some(ip) = self.bridge_ip(agent) {
+            return Some(ip);
+        }
+        let ip = docker::resolve_bridge_ip(docker, cname, agent).await?;
+        self.set_bridge_ip(agent, ip.clone());
+        Some(ip)
+    }
 }
 
 /// The collaborators the agent-status poll task owns for its lifetime: the shared cache, a docker
@@ -379,7 +445,7 @@ pub fn spawn_agent_status_task(deps: AgentStatusTaskDeps) {
 
         loop {
             // Poll agent list via async bollard
-            let agents = list_agents(&docker, &http_client, &agents_dir, &rebuilding).await;
+            let agents = list_agents(&docker, &http_client, &cache, &agents_dir, &rebuilding).await;
 
             // Mobile lifecycle notifications come from vestad's authoritative
             // agent list, never the agent EventBus's thinking/idle activity. The
@@ -437,9 +503,10 @@ pub fn spawn_agent_status_task(deps: AgentStatusTaskDeps) {
                 let tx = activity_event_tx.clone();
                 let dir = agents_dir.clone();
                 let hub = sync_hub.clone();
+                let listener_cache = cache.clone();
 
                 let join_handle = tokio::spawn(async move {
-                    agent_event_listener(agent_name, port, dir, tx, hub).await;
+                    agent_event_listener(agent_name, port, dir, tx, hub, listener_cache).await;
                 });
 
                 agent_ws_handles.insert(
@@ -496,6 +563,7 @@ async fn agent_event_listener(
     agents_dir: PathBuf,
     tx: tokio::sync::mpsc::Sender<(String, AgentUpdate)>,
     hub: Arc<SyncHub>,
+    cache: Arc<AgentStatusCache>,
 ) {
     const RECONNECT_BASE_MS: u64 = 1000;
     const RECONNECT_MAX_MS: u64 = 15000;
@@ -513,9 +581,18 @@ async fn agent_event_listener(
         .ok()
         .flatten();
 
+        // Read fresh each attempt: a container recreated between attempts (a rebuild, a network
+        // reattach) comes back on a different address, and this loop is what picks it up.
+        let Some(host) = cache.bridge_ip(&name) else {
+            tracing::debug!(agent = %name, "bridge IP not yet resolved; will retry");
+            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+            delay_ms = (delay_ms * 2).min(RECONNECT_MAX_MS);
+            continue;
+        };
+
         let url = match &token {
-            Some(t) => format!("ws://localhost:{ws_port}/ws?agent_token={t}"),
-            None => format!("ws://localhost:{ws_port}/ws"),
+            Some(t) => format!("ws://{host}:{ws_port}/ws?agent_token={t}"),
+            None => format!("ws://{host}:{ws_port}/ws"),
         };
 
         match tokio_tungstenite::connect_async(&url).await {
@@ -591,6 +668,21 @@ fn pending_ids(snapshot: &serde_json::Value) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bridge_ip_round_trips_and_clears() {
+        let cache = AgentStatusCache::new();
+        assert_eq!(cache.bridge_ip("ada"), None);
+
+        cache.set_bridge_ip("ada", "172.20.0.5".to_string());
+        assert_eq!(cache.bridge_ip("ada"), Some("172.20.0.5".to_string()));
+
+        cache.set_bridge_ip("ada", "172.20.0.9".to_string());
+        assert_eq!(cache.bridge_ip("ada"), Some("172.20.0.9".to_string()));
+
+        cache.clear_bridge_ip("ada");
+        assert_eq!(cache.bridge_ip("ada"), None);
+    }
 
     #[test]
     fn apply_rebuilding_overrides_status_and_keeps_missing_agents_listed() {
@@ -694,12 +786,15 @@ mod tests {
         let hub = std::sync::Arc::new(SyncHub::new());
         let dir = tempfile::tempdir().expect("tempdir");
         let port = fake_agent().await;
+        let cache = std::sync::Arc::new(AgentStatusCache::new());
+        cache.set_bridge_ip("fake", "127.0.0.1".to_string());
 
         let listener = tokio::spawn({
             let hub = hub.clone();
             let (tx, _rx) = tokio::sync::mpsc::channel::<(String, AgentUpdate)>(16);
             let dir = dir.path().to_path_buf();
-            async move { agent_event_listener("fake".into(), port, dir, tx, hub).await }
+            let cache = cache.clone();
+            async move { agent_event_listener("fake".into(), port, dir, tx, hub, cache).await }
         });
 
         // The tap seeds one pending notification from the snapshot's authoritative id set; the live

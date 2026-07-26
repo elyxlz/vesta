@@ -3,7 +3,7 @@
 Most of it is read from the environment:
 
 * the control-plane base URL (`VESTA_CLOUD_CONTROL_URL`);
-* how to reach **this box's vestad** over the loopback (`VESTAD_PORT`) to read
+* how to reach **this box's vestad** (`BOX_HOST` + `VESTAD_PORT`) to read
   reference data (personalities / models) for the create-agent step. Onboarding
   itself is public (issue #79): the account pre-create needs no server-identity
   token, so a self-hosted box can onboard too.
@@ -59,11 +59,14 @@ class Config:
         # Non-secret per-account attribution id, set by `vesta-cloud-account
         # set-referral`; absent (or admin-set) on self-hosted boxes.
         ref = referral_store.get_referral_code()
-        # vestad listens on the loopback with a self-signed cert (see the account /
-        # voice skills); the agent reaches it at https://localhost:<port> to read
-        # reference data (personalities / models) for the create-agent step.
+        # vestad runs natively on the host, never in a container (see the account /
+        # voice skills); BOX_HOST (from /run/vestad-env) is how the agent reaches
+        # it to read reference data (personalities / models) for the create-agent step.
+        # Missing either half leaves vestad_base empty, tripping the same "not a
+        # hosted vesta" check a missing port already does.
         port = os.environ.get("VESTAD_PORT", "").strip()
-        vestad_base = f"https://localhost:{port}" if port else ""
+        host = os.environ.get("BOX_HOST", "").strip()
+        vestad_base = f"https://{host}:{port}" if port and host else ""
         return cls(
             base_url=base,
             referral_code=ref,

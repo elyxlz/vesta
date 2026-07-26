@@ -21,7 +21,7 @@ either way.
 
 - **Cloud (vesta.run tenant):** the agent holds no WhatsApp secret. It mints a
   short-lived **server-identity token** from its own vestad (`POST
-  https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/account-token`, `X-Agent-Token`
+  https://$BOX_HOST:$VESTAD_PORT/agents/$AGENT_NAME/account-token`, `X-Agent-Token`
   authed; vestad signs it locally from the box `api_key`, no network call) and
   calls `https://vesta.run/api/integrations/whatsapp/*` with it as a Bearer. vesta.run is a
   **pure auth-forward**: it verifies the token + the paid-membership gate, then

@@ -28,7 +28,10 @@ else
 fi
 
 WAIT_SECONDS="${REGISTER_SERVICE_WAIT:-30}"
-URL="https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services"
+# BOX_HOST comes from /run/vestad-env; vestad is the one owner of how to reach it
+# (it runs natively on the host, never in a container). set -u below fails loudly if
+# it's missing, same as an unset VESTAD_PORT/AGENT_NAME already would.
+URL="https://$BOX_HOST:$VESTAD_PORT/agents/$AGENT_NAME/services"
 DEADLINE=$(( $(date +%s) + WAIT_SECONDS ))
 
 while :; do

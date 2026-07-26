@@ -1,16 +1,15 @@
 use bollard::models::ContainerCreateBody;
 use bollard::query_parameters::{
     BuildImageOptions, CreateContainerOptions, CreateImageOptions, DownloadFromContainerOptions,
-    ImportImageOptions, InspectContainerOptions, ListContainersOptions, ListImagesOptions,
-    RemoveContainerOptions,
-    RemoveImageOptions, RestartContainerOptions, StopContainerOptions, UploadToContainerOptions,
+    ImportImageOptions, InspectContainerOptions, InspectNetworkOptionsBuilder,
+    ListContainersOptions, ListImagesOptions, RemoveContainerOptions, RemoveImageOptions,
+    RestartContainerOptions, StopContainerOptions, UploadToContainerOptions,
 };
 use bollard::Docker;
 use bytes::Bytes;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::collections::HashSet;
 
 #[derive(Debug, Clone)]
 pub enum DockerError {
@@ -74,7 +73,6 @@ pub const LOCAL_IMAGE_TAG: &str = "vesta:local";
 pub const AGENT_IMAGE_ENV: &str = "VESTAD_AGENT_IMAGE";
 const MAX_DOCKERFILE_SEARCH_DEPTH: usize = 5;
 const AGENT_TOKEN_BYTES: usize = 32;
-const PORT_ALLOC_RETRIES: usize = 10;
 const NAME_MAX_LEN: usize = 32;
 const DOCKER_DAEMON_PING_RETRIES: usize = 10;
 const LABEL_USER: &str = "vesta.user";
@@ -82,7 +80,104 @@ const LABEL_AGENT_NAME: &str = "vesta.agent_name";
 
 // --- Expected container config (single source of truth) ---
 
+/// Host networking, which fleet containers predating per-agent networks still run under.
+/// Test-only: it is what a test builds a drifted container from to exercise the rebuild
+/// predicate that migrates such a container onto its own network.
+#[cfg(test)]
 const NETWORK_MODE: &str = "host";
+/// Prefix for each agent's dedicated Docker bridge network. One network per agent gives full
+/// inter-agent port-space isolation from Docker's own network boundary — no supplementary
+/// iptables rule to maintain or forget.
+const AGENT_NETWORK_PREFIX: &str = "vesta-agent-";
+/// How an agent reaches vestad's own API and any host-local service (Plex, etc.): each agent
+/// has its own network namespace, so the host is a distinct address rather than loopback.
+/// This is that address's one owner. Written into each agent's env file as `BOX_HOST`
+/// (`write_agent_env_file`, `update_all_agent_env_files`) so skills read it the same way they
+/// read `VESTAD_PORT`/`AGENT_TOKEN`/`AGENT_NAME`, rather than hardcoding a hostname.
+const AGENT_BOX_HOST: &str = "host.docker.internal";
+
+/// The `--add-host` mapping for `AGENT_BOX_HOST`: Docker Engine >= 20.10's `host-gateway`
+/// magic value, so it actually resolves to the host's bridge gateway inside the container.
+fn host_docker_internal_mapping() -> String {
+    format!("{AGENT_BOX_HOST}:host-gateway")
+}
+
+/// User-scoped, matching `container_name`: Docker networks are a daemon-global namespace, so two
+/// independent vestad instances on the same host provisioning an agent under the same name would
+/// otherwise attach to the very same bridge network via `ensure_agent_network`'s idempotent
+/// "already exists" path, reintroducing cross-tenant collision at the network layer.
+pub(crate) fn agent_network_name(agent_name: &str) -> String {
+    format!("{AGENT_NETWORK_PREFIX}{}-{agent_name}", crate::paths::current_user())
+}
+
+/// Idempotently ensure `agent_name`'s dedicated bridge network exists, returning its name.
+/// "Already exists" is success, not an error — two overlapping reconcile passes can race here
+/// harmlessly, same as the existing `ensure_constitution_file` idempotent-creation shape.
+pub(crate) async fn ensure_agent_network(
+    docker: &Docker,
+    agent_name: &str,
+) -> Result<String, DockerError> {
+    let name = agent_network_name(agent_name);
+    let inspect_opts = InspectNetworkOptionsBuilder::default().build();
+    if docker.inspect_network(&name, Some(inspect_opts)).await.is_ok() {
+        return Ok(name);
+    }
+    let create_opts = bollard::models::NetworkCreateRequest {
+        name: name.clone(),
+        driver: Some("bridge".to_string()),
+        ..Default::default()
+    };
+    match docker.create_network(create_opts).await {
+        // A concurrent reconcile pass created it between our inspect and create: treat as success.
+        Ok(_)
+        | Err(bollard::errors::Error::DockerResponseServerError { status_code: 409, .. }) => {
+            Ok(name)
+        }
+        Err(e) => Err(DockerError::Failed(format!(
+            "failed to create agent network {name}: {e}"
+        ))),
+    }
+}
+
+/// The default `bridge` network's gateway address on the host. Every per-agent network can
+/// route to it regardless of Docker's isolation between user-defined networks, because it's a
+/// host-owned address rather than another container; it's also what `AGENT_BOX_HOST`'s
+/// `host-gateway` mapping resolves to inside every container. `run_server` binds vestad's API
+/// here in addition to loopback, independent of `--expose-lan` (which only controls whether
+/// other machines on the LAN can reach vestad), so agent-initiated calls (`register-service`,
+/// `user-notification`, health checks) always have a reachable address from inside a container.
+pub async fn resolve_docker_bridge_gateway(docker: &Docker) -> Result<std::net::Ipv4Addr, DockerError> {
+    let inspect_opts = InspectNetworkOptionsBuilder::default().build();
+    let network = docker.inspect_network("bridge", Some(inspect_opts)).await?;
+    let gateway = network
+        .ipam
+        .and_then(|ipam| ipam.config)
+        .and_then(|configs| configs.into_iter().find_map(|c| c.gateway))
+        .ok_or_else(|| {
+            DockerError::Failed("default bridge network has no gateway configured".to_string())
+        })?;
+    gateway.parse().map_err(|e| {
+        DockerError::Failed(format!("invalid default bridge gateway address {gateway}: {e}"))
+    })
+}
+
+/// The container's IP on its own agent network, as seen by `docker inspect`. `None` if the
+/// container isn't found, isn't attached to its expected network yet, or inspect fails --
+/// callers treat a `None` as "try again on the next reconcile/proxy call", never as fatal.
+pub(crate) async fn resolve_bridge_ip(
+    docker: &Docker,
+    cname: &str,
+    agent_name: &str,
+) -> Option<String> {
+    let info = docker.inspect_container(cname, None).await.ok()?;
+    let networks = info.network_settings?.networks?;
+    let network_name = agent_network_name(agent_name);
+    networks
+        .get(&network_name)?
+        .ip_address
+        .clone()
+        .filter(|ip| !ip.is_empty())
+}
 // on-failure (not unless-stopped) so Docker recovers genuine crashes but never auto-starts a
 // stale container on daemon/host boot: vestad owns boot-start (reconcile -> rebuild -> start),
 // so an agent that needs a rebuild is never reachable on its pre-update container. The bound caps
@@ -893,13 +988,6 @@ pub async fn resolve_image(
     }
 }
 
-fn all_agent_ports(agents_dir: &std::path::Path) -> HashSet<u16> {
-    env_file_names(agents_dir)
-        .iter()
-        .filter_map(|name| read_env_value(agents_dir, name, "WS_PORT")?.parse().ok())
-        .collect()
-}
-
 /// List agent names that have env files in the agents directory.
 pub(crate) fn env_file_names(agents_dir: &std::path::Path) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(agents_dir) else {
@@ -917,23 +1005,16 @@ pub(crate) fn env_file_names(agents_dir: &std::path::Path) -> Vec<String> {
         .collect()
 }
 
-pub fn allocate_port(agents_dir: &std::path::Path) -> Result<u16, DockerError> {
-    let reserved = all_agent_ports(agents_dir);
-    for _ in 0..PORT_ALLOC_RETRIES {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0")
-            .map_err(|e| DockerError::Failed(format!("failed to bind port: {e}")))?;
-        let port = listener
-            .local_addr()
-            .map_err(|e| DockerError::Failed(format!("failed to get port: {e}")))?
-            .port();
-        drop(listener);
-        if !reserved.contains(&port) {
-            return Ok(port);
-        }
-    }
-    Err(DockerError::Failed(
-        "could not allocate a free port after retries".into(),
-    ))
+/// A fresh ephemeral WS port for a new container. Each agent has its own network namespace
+/// (see `ensure_agent_network`), so this port only needs to be free on the host at the moment
+/// of allocation; it does not need to be reserved against any other agent's port.
+pub fn allocate_port() -> Result<u16, DockerError> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")
+        .map_err(|e| DockerError::Failed(format!("failed to bind port: {e}")))?;
+    listener
+        .local_addr()
+        .map(|addr| addr.port())
+        .map_err(|e| DockerError::Failed(format!("failed to get port: {e}")))
 }
 
 /// Read the agent's port and token from the per-agent env file in a single read.
@@ -1031,7 +1112,8 @@ pub fn write_agent_env_file(
          export AGENT_NAME={agent_name}\n\
          export AGENT_TOKEN={agent_token}\n\
          export IS_SANDBOX=1\n\
-         export VESTAD_PORT={}\n",
+         export VESTAD_PORT={}\n\
+         export BOX_HOST={AGENT_BOX_HOST}\n",
         env_config.vestad_port,
     );
     let mut append_optional = |key: &str, value: Option<&str>| {
@@ -1128,8 +1210,10 @@ fn delete_constitution_file(agents_dir: &std::path::Path, agent_name: &str) {
     std::fs::remove_file(constitution_host_path(agents_dir, agent_name)).ok();
 }
 
-/// Update `VESTAD_PORT` and `VESTAD_TUNNEL` in all existing per-agent env files.
-/// Called at vestad startup so running containers pick up the new values on restart.
+/// Update `VESTAD_PORT`, `VESTAD_TUNNEL`, and `BOX_HOST` in all existing per-agent env
+/// files. Called at vestad startup so running containers pick up the current values on
+/// restart; this is how an agent created before `BOX_HOST` existed converges onto it,
+/// with no separate migration needed.
 pub fn update_all_agent_env_files(
     agents_dir: &std::path::Path,
     vestad_port: u16,
@@ -1144,7 +1228,10 @@ pub fn update_all_agent_env_files(
             .lines()
             .filter_map(|line| {
                 let stripped = line.strip_prefix("export ").unwrap_or(line);
-                if stripped.starts_with("VESTAD_PORT=") || stripped.starts_with("VESTAD_TUNNEL=") {
+                if stripped.starts_with("VESTAD_PORT=")
+                    || stripped.starts_with("VESTAD_TUNNEL=")
+                    || stripped.starts_with("BOX_HOST=")
+                {
                     return None; // re-appended below with the current values
                 }
                 Some(line.to_string())
@@ -1154,6 +1241,7 @@ pub fn update_all_agent_env_files(
         if let Some(url) = vestad_tunnel {
             new_lines.push(format!("export VESTAD_TUNNEL={url}"));
         }
+        new_lines.push(format!("export BOX_HOST={AGENT_BOX_HOST}"));
         new_lines.push(String::new());
         let new_content = new_lines.join("\n");
         if new_content == content {
@@ -1809,9 +1897,12 @@ pub async fn create_container(
 
     tracing::info!(agent = %agent_name, image = %image, "creating container");
 
+    let network_name = ensure_agent_network(docker, agent_name).await?;
+
     let host_config = bollard::models::HostConfig {
         binds: Some(binds),
-        network_mode: Some(NETWORK_MODE.to_string()),
+        network_mode: Some(network_name),
+        extra_hosts: Some(vec![host_docker_internal_mapping()]),
         restart_policy: Some(bollard::models::RestartPolicy {
             name: Some(bollard::models::RestartPolicyNameEnum::ON_FAILURE),
             maximum_retry_count: Some(RESTART_MAX_RETRIES),
@@ -1995,7 +2086,7 @@ pub async fn create_agent(
         .map_err(|e| DockerError::Failed(format!("agent code: {e}")))?;
 
     progress.set(BuildPhase::Creating);
-    let port = allocate_port(&env_config.agents_dir)?;
+    let port = allocate_port()?;
     create_container(
         docker,
         env_config,
@@ -2276,7 +2367,7 @@ pub async fn reconcile_containers(
             let port = read_container_env(docker, cname, "WS_PORT")
                 .await
                 .and_then(|v| v.parse::<u16>().ok())
-                .or_else(|| allocate_port(&env_config.agents_dir).ok());
+                .or_else(|| allocate_port().ok());
             if let Some(port) = port {
                 let token = generate_agent_token();
                 if let Err(e) = write_agent_env_file(env_config, name, port, &token) {
@@ -2307,7 +2398,7 @@ pub async fn reconcile_containers(
             }
         };
         let desired_mounts = mounts_for(name);
-        if !needs_rebuild(cname, &raw, &desired_mounts) {
+        if !needs_rebuild(cname, name, &raw, &desired_mounts) {
             tracing::info!(agent = %name, "config ok, no rebuild needed");
             continue;
         }
@@ -2416,7 +2507,9 @@ pub async fn reconcile_containers(
         }
     }
 
-    // Summary: log which agents are running after reconciliation
+    // Summary: log which agents are running after reconciliation. Agents this pass left alone
+    // (already running, no rebuild) have no cached bridge address yet; the cache resolves one
+    // on first miss (`AgentStatusCache::bridge_ip_or_resolve`), so nothing pre-warms it here.
     let mut running = Vec::new();
     let mut stopped = Vec::new();
     for ManagedAgent {
@@ -2452,9 +2545,20 @@ pub async fn destroy_agent(
             .ok();
     }
     remove_container_force(docker, &cname).await?;
+    remove_agent_network(docker, name).await;
     delete_agent_env_file(agents_dir, name);
     delete_constitution_file(agents_dir, name);
     Ok(())
+}
+
+/// Drop `name`'s dedicated network. Best-effort: a failure (already gone, transient error) must
+/// not fail the destroy/rename that called it. Skipping it is what leaks, though -- Docker's
+/// default address pool is finite, so a network nothing removes sits claimed forever and enough
+/// of them exhaust it for every future agent create.
+async fn remove_agent_network(docker: &Docker, name: &str) {
+    if let Err(e) = docker.remove_network(&agent_network_name(name)).await {
+        tracing::warn!(agent = %name, error = %e, "failed to remove agent network");
+    }
 }
 
 /// Check if a container's config diverges from what `create_container` would produce.
@@ -2500,6 +2604,7 @@ fn user_mounts_drifted(
 
 fn needs_rebuild(
     cname: &str,
+    agent_name: &str,
     info: &bollard::models::ContainerInspectResponse,
     desired_mounts: &[crate::mounts::HostMount],
 ) -> bool {
@@ -2550,8 +2655,9 @@ fn needs_rebuild(
         .as_ref()
         .and_then(|h| h.network_mode.as_deref())
         .unwrap_or("");
-    if network != NETWORK_MODE {
-        tracing::info!(container = %cname, actual = network, expected = NETWORK_MODE, "rebuild needed: wrong network mode");
+    let expected_network = agent_network_name(agent_name);
+    if network != expected_network {
+        tracing::info!(container = %cname, actual = network, expected = %expected_network, "rebuild needed: not on its own agent network");
         return true;
     }
 
@@ -2597,14 +2703,13 @@ async fn resolve_existing_port(
     cname: &str,
     info: &ContainerInfo,
     name: &str,
-    agents_dir: &std::path::Path,
 ) -> Result<u16, DockerError> {
     let baked = read_container_env(docker, cname, "WS_PORT")
         .await
         .and_then(|v| v.parse::<u16>().ok());
     if let Some(port) = info.port.or(baked) { Ok(port) } else {
         tracing::warn!(agent = %name, "no port found in env file or container, allocating new port");
-        allocate_port(agents_dir)
+        allocate_port()
     }
 }
 
@@ -2634,7 +2739,7 @@ pub async fn rebuild_agent(
     // the container below. Captured before removal so we can drop it afterwards.
     let prev_image = raw.config.as_ref().and_then(|c| c.image.clone());
 
-    let port = resolve_existing_port(docker, &cname, &info, name, &env_config.agents_dir).await?;
+    let port = resolve_existing_port(docker, &cname, &info, name).await?;
 
     let ts = crate::time_utils::now_epoch_secs();
     let backup_tag = format!("{}{name}_{ts}", rebuild_snapshot_prefix());
@@ -2762,7 +2867,7 @@ pub async fn rename_agent(
     }
 
     let port =
-        resolve_existing_port(docker, &old_container, &info, old_name, &env_config.agents_dir).await?;
+        resolve_existing_port(docker, &old_container, &info, old_name).await?;
     let lifecycle_reason = crate::lifecycle::rename(old_name, new_name);
 
     // Stop cleanly so the snapshot captures a quiesced filesystem (SQLite mid-write would
@@ -2794,6 +2899,9 @@ pub async fn rename_agent(
     }
     delete_agent_env_file(&env_config.agents_dir, old_name);
     delete_constitution_file(&env_config.agents_dir, old_name);
+    // The new container attaches to a network keyed by the NEW name, so the old one is now
+    // orphaned; drop it here with the rest of the old name's resources.
+    remove_agent_network(docker, old_name).await;
 
     tracing::info!(new = %new_name, "[4/4] creating renamed container from snapshot...");
     create_container(
@@ -2820,6 +2928,24 @@ pub async fn rename_agent(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_network_name_is_prefixed_scoped_by_user_and_stable() {
+        let name = agent_network_name("ada");
+        assert!(name.starts_with("vesta-agent-"));
+        assert!(name.contains(&crate::paths::current_user()));
+        assert!(name.ends_with("-ada"));
+        assert_eq!(name, agent_network_name("ada"));
+    }
+
+    #[test]
+    fn allocate_port_returns_a_bindable_port() {
+        // A WS port lives inside one agent's own network namespace, so it needs no host-wide
+        // uniqueness and nothing scans other agents' env files. Proves it hands back a
+        // usable ephemeral port.
+        let port = allocate_port().expect("allocate");
+        assert!(port > 0);
+    }
 
     #[test]
     fn serves_ws_covers_every_running_reachable_state() {
@@ -3308,6 +3434,46 @@ mod tests {
     }
 
     #[test]
+    fn write_agent_env_file_carries_vestad_host() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let cfg = AgentEnvConfig {
+            config_dir: dir.path().to_path_buf(),
+            agents_dir: dir.path().to_path_buf(),
+            vestad_port: 1,
+            vestad_tunnel: None,
+        };
+        let path = write_agent_env_file(&cfg, "agent1", 2, "tok").expect("write env file");
+        let content = std::fs::read_to_string(&path).expect("read env file");
+        assert!(
+            content.contains(&format!("export BOX_HOST={AGENT_BOX_HOST}")),
+            "BOX_HOST written for a fresh agent: {content}"
+        );
+    }
+
+    #[test]
+    fn update_all_agent_env_files_adds_vestad_host_to_a_legacy_file() {
+        // A legacy env file predating BOX_HOST: no such line at all. This is exactly
+        // the fleet-convergence path — the agent picks it up on its next restart with no
+        // separate migration.
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let path = dir.path().join("agent1.env");
+        std::fs::write(
+            &path,
+            "export WS_PORT=4001\nexport AGENT_NAME=agent1\nexport AGENT_TOKEN=tok\nexport VESTAD_PORT=1\n",
+        )
+        .expect("write legacy env file");
+
+        update_all_agent_env_files(dir.path(), 9443, None);
+
+        let content = std::fs::read_to_string(&path).expect("read env file");
+        assert!(
+            content.contains(&format!("export BOX_HOST={AGENT_BOX_HOST}")),
+            "BOX_HOST added on convergence: {content}"
+        );
+        assert!(content.contains("export VESTAD_PORT=9443"));
+    }
+
+    #[test]
     fn constitution_unset_reads_empty() {
         let dir = tempfile::TempDir::new().expect("tempdir");
         assert_eq!(read_constitution(dir.path(), "vesta").expect("read"), "");
@@ -3734,7 +3900,7 @@ mod tests {
         // rename_agent has the same shape (snapshot, remove, create) and the same failure mode:
         // a surviving old container keeps the same baked-in WS_PORT while its env file and
         // constitution are deleted, and the next reconcile boot-starts it alongside the new one.
-        let tests_start = src.find("#[cfg(test)]").expect("test module present");
+        let tests_start = src.find("mod tests").expect("test module present");
         let rename_body = &src[rename_start..tests_start];
         let rename_remove_pos = rename_body
             .find("ensure_container_removed")
@@ -3776,7 +3942,8 @@ mod tests {
             .inspect_container(cname, None)
             .await
             .expect("inspect");
-        needs_rebuild(cname, &info, desired)
+        // Every caller in this file names its test container the same as its agent name.
+        needs_rebuild(cname, cname, &info, desired)
     }
 
     fn temp_core_mount() -> tempfile::TempDir {
@@ -3848,6 +4015,29 @@ mod tests {
         }
     }
 
+    /// Clean up every image whose tag starts with `prefix`, for snapshots whose tag carries a
+    /// timestamp the test can't predict (rename's `vesta-rename:{old}-to-{new}_{ts}`).
+    struct TestSnapshotPrefix {
+        prefix: String,
+    }
+
+    impl Drop for TestSnapshotPrefix {
+        fn drop(&mut self) {
+            let Ok(out) = std::process::Command::new("docker")
+                .args(["images", "--format", "{{.Repository}}:{{.Tag}}"])
+                .output()
+            else {
+                return;
+            };
+            for tag in String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .filter(|line| line.starts_with(&self.prefix))
+            {
+                docker_cleanup(&["rmi", "-f", tag]);
+            }
+        }
+    }
+
     impl Drop for TestContainer {
         fn drop(&mut self) {
             docker_cleanup(&["rm", "-f", &self.name]);
@@ -3881,6 +4071,372 @@ mod tests {
         fn drop(&mut self) {
             docker_cleanup(&["rmi", &self.tag]);
         }
+    }
+
+    /// Clean up a test agent network on drop.
+    struct TestNetwork {
+        name: String,
+    }
+
+    impl Drop for TestNetwork {
+        fn drop(&mut self) {
+            docker_cleanup(&["network", "rm", &self.name]);
+        }
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn create_container_attaches_to_its_own_agent_network() {
+        let docker = test_docker();
+        let tc = TestContainer::new("network-attach");
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let env_config = AgentEnvConfig {
+            config_dir: dir.path().to_path_buf(),
+            agents_dir: dir.path().to_path_buf(),
+            vestad_port: 1,
+            vestad_tunnel: None,
+        };
+        let _net_cleanup = TestNetwork {
+            name: agent_network_name(&tc.name),
+        };
+
+        let spec = ContainerSpec {
+            cname: &tc.name,
+            image: &test_agent_image(),
+            port: 41999,
+            agent_name: &tc.name,
+            user_mounts: &[],
+        };
+        create_container(&docker, &env_config, spec)
+            .await
+            .expect("create");
+
+        let info = docker.inspect_container(&tc.name, None).await.unwrap();
+        let networks = info
+            .network_settings
+            .as_ref()
+            .and_then(|s| s.networks.as_ref())
+            .expect("network settings present");
+        assert!(
+            networks.contains_key(&agent_network_name(&tc.name)),
+            "container should be attached to its own agent network, got {networks:?}"
+        );
+        assert_ne!(
+            info.host_config
+                .as_ref()
+                .and_then(|h| h.network_mode.as_deref()),
+            Some("host"),
+            "an agent container must not use host networking"
+        );
+
+        let extra_hosts = info
+            .host_config
+            .as_ref()
+            .and_then(|h| h.extra_hosts.as_ref())
+            .expect("extra_hosts present");
+        assert!(
+            extra_hosts
+                .iter()
+                .any(|h| h.starts_with("host.docker.internal:")),
+            "expected a host.docker.internal mapping, got {extra_hosts:?}"
+        );
+    }
+
+    /// Docker's default address pool is finite; a network never removed on destroy sits
+    /// claimed forever, and enough abandoned agents eventually exhaust it for every future
+    /// create. destroy_agent must undo everything create_agent set up, not just the container.
+    #[tokio::test]
+    #[ignore]
+    async fn destroy_agent_removes_its_network() {
+        let docker = test_docker();
+        let agent_name = format!("dnet-{}", std::process::id());
+        let cname = container_name(&agent_name);
+        docker_cleanup(&["rm", "-f", &cname]);
+        let network_name = agent_network_name(&agent_name);
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let env_config = AgentEnvConfig {
+            config_dir: dir.path().to_path_buf(),
+            agents_dir: dir.path().to_path_buf(),
+            vestad_port: 1,
+            vestad_tunnel: None,
+        };
+        let spec = ContainerSpec {
+            cname: &cname,
+            image: &test_agent_image(),
+            port: 41996,
+            agent_name: &agent_name,
+            user_mounts: &[],
+        };
+        create_container(&docker, &env_config, spec)
+            .await
+            .expect("create");
+        assert!(
+            docker
+                .inspect_network(&network_name, None)
+                .await
+                .is_ok(),
+            "network should exist right after create"
+        );
+
+        destroy_agent(&docker, &agent_name, dir.path())
+            .await
+            .expect("destroy");
+
+        assert!(
+            docker.inspect_network(&network_name, None).await.is_err(),
+            "network should be gone after destroy"
+        );
+    }
+
+    /// Same finite-address-pool exposure as destroy: the renamed container attaches to a network
+    /// keyed by the NEW name, so leaving the old name's behind leaks one slot per rename.
+    #[tokio::test]
+    #[ignore]
+    async fn rename_agent_removes_the_old_names_network() {
+        let docker = test_docker();
+        let old_name = format!("rold-{}", std::process::id());
+        let new_name = format!("rnew-{}", std::process::id());
+        let old_cname = container_name(&old_name);
+        let new_cname = container_name(&new_name);
+        docker_cleanup(&["rm", "-f", &old_cname]);
+        docker_cleanup(&["rm", "-f", &new_cname]);
+        let _old_net = TestNetwork {
+            name: agent_network_name(&old_name),
+        };
+        let _new_net = TestNetwork {
+            name: agent_network_name(&new_name),
+        };
+        // rename tags its snapshot with a timestamp, so clean up by prefix rather than exact tag.
+        let _snapshot = TestSnapshotPrefix {
+            prefix: format!("vesta-rename:{old_name}-to-{new_name}_"),
+        };
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let env_config = AgentEnvConfig {
+            config_dir: dir.path().to_path_buf(),
+            agents_dir: dir.path().to_path_buf(),
+            vestad_port: 1,
+            vestad_tunnel: None,
+        };
+        create_container(
+            &docker,
+            &env_config,
+            ContainerSpec {
+                cname: &old_cname,
+                image: &test_agent_image(),
+                port: 41995,
+                agent_name: &old_name,
+                user_mounts: &[],
+            },
+        )
+        .await
+        .expect("create");
+
+        rename_agent(&docker, &old_name, &new_name, &env_config, &[])
+            .await
+            .expect("rename");
+
+        assert!(
+            docker
+                .inspect_network(&agent_network_name(&new_name), None)
+                .await
+                .is_ok(),
+            "the renamed agent's own network should exist"
+        );
+        assert!(
+            docker
+                .inspect_network(&agent_network_name(&old_name), None)
+                .await
+                .is_err(),
+            "the old name's network should be gone after rename"
+        );
+        docker_cleanup(&["rm", "-f", &new_cname]);
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn resolve_bridge_ip_returns_the_containers_network_address() {
+        let docker = test_docker();
+        let tc = TestContainer::new("bridge-ip");
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let env_config = AgentEnvConfig {
+            config_dir: dir.path().to_path_buf(),
+            agents_dir: dir.path().to_path_buf(),
+            vestad_port: 1,
+            vestad_tunnel: None,
+        };
+        let _net_cleanup = TestNetwork {
+            name: agent_network_name(&tc.name),
+        };
+
+        let spec = ContainerSpec {
+            cname: &tc.name,
+            image: &test_agent_image(),
+            port: 41998,
+            agent_name: &tc.name,
+            user_mounts: &[],
+        };
+        create_container(&docker, &env_config, spec)
+            .await
+            .expect("create");
+        assert!(start_container(&docker, &tc.name).await, "start");
+
+        let ip = resolve_bridge_ip(&docker, &tc.name, &tc.name)
+            .await
+            .expect("bridge ip resolved");
+        assert_eq!(
+            ip.split('.').count(),
+            4,
+            "expected an IPv4 dotted address, got {ip}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn resolve_bridge_ip_is_none_for_a_nonexistent_container() {
+        let docker = test_docker();
+        assert_eq!(
+            resolve_bridge_ip(&docker, "vesta-no-such-container", "no-such-agent").await,
+            None
+        );
+    }
+
+    /// The direct behavioral proof that the cross-tenant port race is closed: two agents,
+    /// each on their own network, bind the exact same port number with no collision, and
+    /// vestad reaches both independently by their distinct bridge IPs.
+    #[tokio::test]
+    #[ignore]
+    async fn two_agents_can_independently_use_the_same_port_number() {
+        let docker = test_docker();
+        let a = TestContainer::new("isolation-a");
+        let b = TestContainer::new("isolation-b");
+        let _net_a = TestNetwork {
+            name: agent_network_name(&a.name),
+        };
+        let _net_b = TestNetwork {
+            name: agent_network_name(&b.name),
+        };
+
+        const SHARED_PORT: u16 = 9500;
+        for tc in [&a, &b] {
+            let network = ensure_agent_network(&docker, &tc.name)
+                .await
+                .expect("ensure agent network");
+            // A minimal, config-independent container that just stays running: the real agent
+            // entrypoint would error out under this test's fake identity (no real VESTAD_PORT/
+            // AGENT_TOKEN) and get recycled by the on-failure restart policy, which tears down
+            // whatever was `docker exec`'d into the old process before this test can observe it.
+            create_test_container_async(&docker, tc, &[], sleeping_test_container_cmd(), &network, "no")
+                .await;
+            assert!(start_container(&docker, &tc.name).await, "start");
+            // Each binds the SAME port number inside its own namespace: no collision is
+            // possible even though both listeners share a number, since the only way
+            // that would matter is if the two containers shared a network, and they don't.
+            // `docker exec -d` backgrounds the process inside the container and returns
+            // immediately, so this doesn't block on the long-running server.
+            let status = std::process::Command::new("docker")
+                .args(["exec", "-d", &tc.name, "python3", "-m", "http.server"])
+                .arg(SHARED_PORT.to_string())
+                .status()
+                .expect("failed to run docker exec -d");
+            assert!(status.success(), "failed to start listener in {}", tc.name);
+        }
+
+        let ip_a = poll_for_bridge_ip(&docker, &a.name).await;
+        let ip_b = poll_for_bridge_ip(&docker, &b.name).await;
+        assert_ne!(ip_a, ip_b, "each agent must get a distinct bridge IP");
+
+        assert!(
+            wait_for_port(&ip_a, SHARED_PORT).await,
+            "agent a's listener on port {SHARED_PORT} never became reachable at {ip_a}"
+        );
+        assert!(
+            wait_for_port(&ip_b, SHARED_PORT).await,
+            "agent b's listener on the SAME port {SHARED_PORT} never became reachable at {ip_b}, \
+             proving the two agents did not collide"
+        );
+    }
+
+    async fn poll_for_bridge_ip(docker: &Docker, cname: &str) -> String {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            if let Some(ip) = resolve_bridge_ip(docker, cname, cname).await {
+                return ip;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "bridge IP for {cname} never resolved"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+    }
+
+    async fn wait_for_port(host: &str, port: u16) -> bool {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
+            if tokio::net::TcpStream::connect((host, port)).await.is_ok() {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+        false
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn ensure_agent_network_is_idempotent() {
+        let docker = test_docker();
+        let agent_name = format!("{TEST_PREFIX}-net-{}", std::process::id());
+        let _cleanup = TestNetwork {
+            name: agent_network_name(&agent_name),
+        };
+
+        let first = ensure_agent_network(&docker, &agent_name)
+            .await
+            .expect("first create");
+        let second = ensure_agent_network(&docker, &agent_name)
+            .await
+            .expect("second create is a no-op, not an error");
+
+        assert_eq!(first, second);
+        assert_eq!(first, agent_network_name(&agent_name));
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn resolve_docker_bridge_gateway_matches_the_default_networks_own_gateway() {
+        let docker = test_docker();
+
+        let gateway = resolve_docker_bridge_gateway(&docker)
+            .await
+            .expect("default bridge network always exists and has a gateway");
+
+        let inspect_opts = InspectNetworkOptionsBuilder::default().build();
+        let network = docker
+            .inspect_network("bridge", Some(inspect_opts))
+            .await
+            .expect("inspect default bridge network");
+        let expected: std::net::Ipv4Addr = network
+            .ipam
+            .expect("bridge network has ipam")
+            .config
+            .expect("bridge network has ipam config")
+            .into_iter()
+            .find_map(|c| c.gateway)
+            .expect("bridge network has a gateway")
+            .parse()
+            .expect("gateway is a valid IPv4 address");
+
+        assert_eq!(gateway, expected);
+    }
+
+    /// A minimal command for test containers that need to actually stay running (e.g. to
+    /// `docker exec` into them and observe something afterward) rather than just successfully
+    /// starting: the real agent entrypoint (`agent_container_cmd`) depends on a real identity
+    /// (`VESTAD_PORT`/`AGENT_TOKEN`) and errors out under a fake one, and the on-failure restart
+    /// policy then recycles the container's process, tearing down anything exec'd into the old
+    /// one before a test can observe it. Reusable by any future test with the same need.
+    fn sleeping_test_container_cmd() -> Vec<String> {
+        vec!["sleep".into(), "infinity".into()]
     }
 
     async fn create_test_container_async(
@@ -4221,13 +4777,16 @@ mod tests {
             (core_dir.path().to_str().unwrap(), CORE_MOUNT_DEST),
             (upstream_dir.path().to_str().unwrap(), UPSTREAM_MOUNT_DEST),
         ];
+        let _net_cleanup = TestNetwork {
+            name: agent_network_name(&tc.name),
+        };
 
         create_test_container_async(
             &docker,
             &tc,
             &mounts,
             agent_container_cmd(),
-            NETWORK_MODE,
+            &agent_network_name(&tc.name),
             RESTART_POLICY,
         )
         .await;
@@ -4288,13 +4847,16 @@ mod tests {
             (src_core.to_str().unwrap(), MOUNT_DESTS[1]),
             (upstream_dir.path().to_str().unwrap(), UPSTREAM_MOUNT_DEST),
         ];
+        let _net_cleanup = TestNetwork {
+            name: agent_network_name(&tc.name),
+        };
 
         create_test_container_async(
             &docker,
             &tc,
             &mounts,
             agent_container_cmd(),
-            NETWORK_MODE,
+            &agent_network_name(&tc.name),
             RESTART_POLICY,
         )
         .await;
@@ -4435,13 +4997,16 @@ mod tests {
             (core_dir.path().to_str().unwrap(), CORE_MOUNT_DEST),
             (upstream_dir.path().to_str().unwrap(), UPSTREAM_MOUNT_DEST),
         ];
+        let _net_cleanup = TestNetwork {
+            name: agent_network_name(&tc.name),
+        };
 
         create_test_container_async(
             &docker,
             &tc,
             &mounts,
             agent_container_cmd(),
-            NETWORK_MODE,
+            &agent_network_name(&tc.name),
             "unless-stopped",
         )
         .await;
@@ -4479,6 +5044,9 @@ mod tests {
             (core_dir.path().to_str().unwrap(), CORE_MOUNT_DEST),
             (upstream_dir.path().to_str().unwrap(), UPSTREAM_MOUNT_DEST),
         ];
+        let _net_cleanup = TestNetwork {
+            name: agent_network_name(&tc.name),
+        };
 
         // Create with wrong network to force rebuild
         create_test_container_async(
@@ -4507,7 +5075,7 @@ mod tests {
             &tc,
             &mounts,
             agent_container_cmd(),
-            NETWORK_MODE,
+            &agent_network_name(&tc.name),
             RESTART_POLICY,
         )
         .await;
