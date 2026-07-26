@@ -1379,14 +1379,20 @@ async fn rebuild_snapshots_by_agent(docker: &Docker) -> HashMap<String, Vec<(u64
 /// listing containers, so without this the agent is invisible to every later boot and its
 /// multi-GB snapshot is stranded for good.
 ///
-/// A surviving env file is what marks the agent as still wanted: destroying an agent deletes it,
-/// so a snapshot left over from a deleted agent is collected here rather than resurrected.
+/// A snapshot tag carries no user, and one host runs agents for several (`container_name` prefixes
+/// each with `current_user`). So a tag is only ever acted on when this user's env file for that
+/// agent exists, which both proves the agent is ours and that it is still wanted. Anything else is
+/// left strictly alone: absence of evidence here means another user's agent, not a dead one, and
+/// deleting a snapshot in use destroys the container that runs on it.
 async fn resume_interrupted_rebuilds(
     docker: &Docker,
     env_config: &AgentEnvConfig,
     mounts_for: &(dyn Fn(&str) -> Vec<crate::mounts::HostMount> + Send + Sync),
 ) {
     for (name, snapshots) in rebuild_snapshots_by_agent(docker).await {
+        if !env_config.agents_dir.join(format!("{name}.env")).is_file() {
+            continue;
+        }
         let cname = container_name(&name);
         if container_status(docker, &cname).await != ContainerStatus::NotFound {
             continue;
@@ -1394,11 +1400,6 @@ async fn resume_interrupted_rebuilds(
         let Some((_, newest)) = snapshots.last() else {
             continue;
         };
-        if !env_config.agents_dir.join(format!("{name}.env")).is_file() {
-            tracing::info!(agent = %name, "snapshots left by a deleted agent, discarding");
-            remove_snapshots(docker, snapshots.iter().map(|(_, tag)| tag.as_str())).await;
-            continue;
-        }
         let Some(port) = read_env_value(&env_config.agents_dir, &name, "WS_PORT")
             .and_then(|value| value.parse::<u16>().ok())
         else {
@@ -4017,17 +4018,20 @@ mod tests {
         );
     }
 
-    /// A snapshot whose agent was destroyed must be collected, never used to resurrect the agent.
-    /// Destroying an agent deletes its env file, which is the marker resume keys on.
+    /// A snapshot this user cannot attribute to one of their own agents must be left completely
+    /// alone. One host runs agents for several users and a snapshot tag carries no user, so a
+    /// missing env file means "not mine", not "dead" -- and force-removing a tag whose image backs
+    /// a live container destroys that container.
     #[tokio::test]
     #[ignore]
-    async fn snapshots_of_a_deleted_agent_are_collected_not_resurrected() {
+    async fn snapshots_this_user_cannot_attribute_are_left_untouched() {
         let docker = test_docker();
-        let agent = format!("deleted-{}", std::process::id());
+        let agent = format!("unattributed-{}", std::process::id());
         let tc = TestContainer::for_agent(&agent);
         let snapshots = TestSnapshots::new(&agent, &[1_785_000_000]);
-        let orphan = &snapshots.tags[0];
+        let foreign = &snapshots.tags[0];
 
+        // An agents_dir with no env file for this agent: exactly how another user's agent looks.
         let dir = tempfile::TempDir::new().expect("tempdir");
         let env_config = AgentEnvConfig {
             config_dir: dir.path().to_path_buf(),
@@ -4045,24 +4049,23 @@ mod tests {
             RESTART_POLICY,
         )
         .await;
-        snapshot_container(&docker, &tc.name, orphan, &[])
+        snapshot_container(&docker, &tc.name, foreign, &[])
             .await
             .expect("snapshot should succeed");
         ensure_container_removed(&docker, &tc.name)
             .await
             .expect("remove should succeed");
 
-        // No env file was ever written, so this agent reads as destroyed.
         resume_interrupted_rebuilds(&docker, &env_config, &|_| Vec::new()).await;
 
         assert_eq!(
             container_status(&docker, &tc.name).await,
             ContainerStatus::NotFound,
-            "a deleted agent must not be recreated from a leftover snapshot"
+            "an unattributable snapshot must not be used to create a container"
         );
         assert!(
-            docker.inspect_image(orphan).await.is_err(),
-            "the deleted agent's snapshot should be collected"
+            docker.inspect_image(foreign).await.is_ok(),
+            "an unattributable snapshot must be left in place, not collected"
         );
     }
 
