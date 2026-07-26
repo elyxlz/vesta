@@ -148,68 +148,6 @@ tl_search() {
     echo "$response"
 }
 
-format_results() {
-    local json="$1"
-    local limit="${2:-20}"
-
-    python3 << 'PYEOF'
-import json, sys
-
-try:
-    data = json.loads(r"""JSONDATA""")
-except (json.JSONDecodeError, Exception) as e:
-    # Try to detect common errors
-    raw = r"""JSONDATA"""
-    if "site-blocked" in raw.lower() or "blocked" in raw.lower():
-        print("ERROR: Connection blocked by ISP. Use a VPN/SOCKS5 proxy.", file=sys.stderr)
-    elif "login" in raw.lower() or "account" in raw.lower():
-        print("ERROR: Not authenticated. Run with --relogin flag.", file=sys.stderr)
-    elif "SSL" in raw or "ssl" in raw or "wrong version" in raw:
-        print("ERROR: SSL/TLS error - likely ISP blocking. Use a VPN/SOCKS5 proxy.", file=sys.stderr)
-        print(f"Raw: {raw[:200]}", file=sys.stderr)
-    else:
-        print(f"ERROR: Could not parse response: {e}", file=sys.stderr)
-        print(f"Raw: {raw[:300]}", file=sys.stderr)
-    sys.exit(1)
-
-torrents = data.get("torrentList", data.get("torrents", []))
-total = data.get("numFound", len(torrents))
-limit = LIMIT_VAL
-
-print(f"Found {total} results (showing {min(limit, len(torrents))}):")
-print()
-print(f"{'#':>3}  {'Seeds':>5}  {'Leech':>5}  {'Size':>10}  {'Name'}")
-print(f"{'':->3}  {'':->5}  {'':->5}  {'':->10}  {'':->60}")
-
-for i, t in enumerate(torrents[:limit]):
-    name = t.get("name", t.get("filename", "Unknown"))
-    seeds = t.get("seeders", 0)
-    leech = t.get("leechers", 0)
-    size = t.get("size", 0)
-    fid = t.get("fid", t.get("id", ""))
-    filename = t.get("filename", name)
-    cat = t.get("categoryID", "")
-
-    # Format size
-    if isinstance(size, (int, float)):
-        if size > 1073741824:
-            size_str = f"{size/1073741824:.2f} GB"
-        elif size > 1048576:
-            size_str = f"{size/1048576:.1f} MB"
-        else:
-            size_str = f"{size/1024:.0f} KB"
-    else:
-        size_str = str(size)
-
-    print(f"{i+1:3d}  {seeds:5d}  {leech:5d}  {size_str:>10}  {name[:80]}")
-
-    # Store download info for --add
-    dl_url = f"/download/{fid}/{filename}.torrent"
-    print(f"     -> fid={fid}  dl={dl_url}")
-    print()
-PYEOF
-}
-
 download_torrent() {
     local fid="$1"
     local filename="$2"

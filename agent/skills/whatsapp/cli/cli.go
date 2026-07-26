@@ -507,8 +507,8 @@ func cleanupRejectedPairing(cleanup func(), activePort, requestedPort int) {
 // serve the scan page on --port (when set), then block until the user scans or the
 // window elapses, returning a terminal status. Single-flighted with every other
 // pairing op, so a link during an in-flight provision is refused (never burns a
-// rate-limit slot or serves a blank QR). Replaces the old link-start/status/stop
-// trio and the client-side poll loop.
+// rate-limit slot or serves a blank QR). One call is the whole flow: no start/status/stop
+// trio and no client-side poll loop.
 func cmdLink(args []string, wac *WhatsAppClient) (any, error) {
 	return linkViaQR("link", args, wac, func(port int) (linkResult, error) {
 		return wac.linker.linkQR(wac, port)

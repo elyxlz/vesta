@@ -89,8 +89,10 @@ resolve_env() {
 }
 
 build_proxy_url() {
-    local provider="${1:-$(get_active_provider)}"
-    local ptype host port user_env pass_env username password
+    local provider ptype host port user_env pass_env username password
+    # An unreadable active_provider falls through to the unknown-provider diagnostic below rather
+    # than aborting here under `set -e` with no message.
+    provider=$(get_active_provider) || provider=""
 
     ptype=$(get_provider_field "$provider" "type") || { echo "error: unknown provider '$provider'" >&2; return 1; }
     host=$(get_provider_field "$provider" "host") || { echo "error: missing host for '$provider'" >&2; return 1; }

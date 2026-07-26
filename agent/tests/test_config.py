@@ -225,7 +225,7 @@ def test_stored_config_serializes_null_provider(agentdir, monkeypatch, tmp_path)
 
 @pytest.mark.parametrize("key", ["openrouter_key", "agent_provider", "agent_model", "max_context_tokens", "thinking"])
 def test_validate_config_rejects_non_pref_keys(config, key):
-    # Flat provider keys are not config fields anymore; the provider is set via /provider.
+    # Flat provider keys are not config fields; the provider is set via /provider.
     with pytest.raises(ValueError, match="not config fields"):
         validate_config_updates(config, {key: "x"})
 
