@@ -536,8 +536,8 @@ async def test_notification_file_deleted_on_normal_processing(tmp_path):
 async def test_cancellation_triggers_restart(tmp_path):
     """If process_message raises CancelledError, restart_reason + graceful_shutdown must be set.
 
-    Regression test for a silent-death bug: CancelledError used to propagate uncaught,
-    bypassing the restart trigger and leaving the agent wedged until backup SIGTERM hours later.
+    An uncaught CancelledError bypasses the restart trigger and leaves the agent silently
+    wedged until the backup SIGTERM hours later.
     """
     from core.loops import _run_messages_with_preempts
 
@@ -594,8 +594,8 @@ async def test_cancellation_during_shutdown_is_silent(tmp_path):
 
 @pytest.mark.anyio
 async def test_handle_processor_done_silent_cancel_triggers_restart(tmp_path):
-    """Regression: a cancelled processor task used to return silently, leaving the agent wedged.
-    Now it must log + set restart_reason + set graceful_shutdown."""
+    """A cancelled processor task must log + set restart_reason + set graceful_shutdown.
+    Returning silently leaves the agent wedged."""
     from core.main import handle_processor_done
 
     config = cfg.VestaConfig(agent_dir=tmp_path / "agent")

@@ -423,7 +423,7 @@ def _safe_filename(name: str | None, fallback: str) -> str:
 def _msg_summary(msg, *, include_to: bool = True) -> dict:
     """Return the JSON summary used by ``list`` / ``search`` / poll daemon.
 
-    ``list`` includes ``to``; ``search`` historically does not.
+    ``list`` includes ``to``; ``search`` does not.
     """
     out: dict = {"uid": msg.uid, "from": _from_full(msg)}
     if include_to:

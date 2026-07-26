@@ -1,6 +1,6 @@
 ---
 name: birth
-description: Vesta's first-wake setup and onboarding, run once on a brand-new agent's very first boot. Come online, meet the user, move to their preferred channel, connect their email, and set up the highest-leverage skills. Invoked by the first-wake boot turn; not for later boots or restarts.
+description: Vesta's first-wake setup and onboarding, run once on a brand-new agent's very first boot. Invoked by the first-wake boot turn; not for later boots or restarts.
 ---
 
 # Birth

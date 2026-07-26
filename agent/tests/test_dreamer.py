@@ -378,8 +378,8 @@ async def test_processor_drains_turnless_compaction_on_idle_tick():
     """A compaction can be requested by a turn the processor never ran: a delivered preempt
     executing as its own CLI turn calls compact_context turnlessly while the processor is parked
     on queue.get(). The idle tick must drain it, and only once the whole session is idle (the
-    bus state tracks turnless work), never mid-stream. Regression: the drain used to fire only
-    after queue items, stranding exactly this request (v0.1.177 release, live dreamer test)."""
+    bus state tracks turnless work), never mid-stream. A drain that fires only after queue
+    items strands exactly this request."""
     from claude_agent_sdk import TextBlock
     from conftest import assistant_msg, make_stream_harness, result_msg
 

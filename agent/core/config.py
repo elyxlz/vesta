@@ -474,8 +474,8 @@ class VestaConfig(pyd_settings.BaseSettings):
     """Vesta agent configuration: one central config.json (nested), per-agent.
 
     The active provider (model + context + credential) is a discriminated union under `provider`; the
-    rest are provider-independent prefs. Defaults are this model's field defaults (the manifest is the
-    generated projection of them). The store wins over env; see settings_customise_sources.
+    rest are provider-independent prefs. This model's field defaults are read from the hand-authored
+    manifest (MANIFEST_PATH). The store wins over env; see settings_customise_sources.
 
     Key env overrides (operational scalars only; provider fields live in the nested store, not env):
         LOG_LEVEL                - DEBUG | INFO | WARNING | ERROR (default: "INFO")

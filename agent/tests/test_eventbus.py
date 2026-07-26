@@ -124,7 +124,7 @@ def test_stalled_subscriber_is_evicted_on_overflow(event_bus):
     replaced by a single EvictedEvent telling the send loop to close (the client reconnects and
     resyncs from the connect snapshot), and further emits no longer reach it. A subscriber
     either receives every event or gets a clean disconnect; nothing is dropped silently
-    (regression: issue #1160's unbounded drop-oldest storm)."""
+    (issue #1160)."""
     q = event_bus.subscribe()
     for i in range(SUBSCRIBER_QUEUE_MAXSIZE + 1):
         event_bus.emit(AssistantEvent(type="assistant", text=f"msg {i}"))

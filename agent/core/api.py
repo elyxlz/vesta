@@ -63,8 +63,8 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     """Event bus WebSocket.
 
     Send: all events from the event bus are pushed to connected clients.
-    Recv: drained only to keep the socket live and notice a close (see _recv_loop); nothing injects
-    events anymore. On connect: sends a `snapshot` seed (state + pending notifications + config)."""
+    Recv: drained only to keep the socket live and notice a close (see _recv_loop); no inbound frame
+    injects an event. On connect: sends a `snapshot` seed (state + pending notifications + config)."""
     event_bus: EventBus = request.app["event_bus"]
     config: VestaConfig = request.app["config"]
 
@@ -105,8 +105,8 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
 
 
 async def _recv_loop(ws: web.WebSocketResponse) -> None:
-    """Drain inbound frames. Nothing injects events into the bus anymore (app-chat owns chat on its own
-    service socket); this only keeps the connection live and notices a close."""
+    """Drain inbound frames. No inbound frame injects an event into the bus (app-chat owns chat on its
+    own service socket); this only keeps the connection live and notices a close."""
     async for msg in ws:
         if msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):
             break

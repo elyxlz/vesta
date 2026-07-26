@@ -969,7 +969,7 @@ func (ms *MessageStore) GetLastMessageInfo(chatJID string) (time.Time, string, e
 func (ms *MessageStore) DeleteChatMessages(chatJID string) (int64, error) {
 	// Remove FTS entries for this chat before deleting messages.
 	// This is faster than letting the per-row AFTER DELETE trigger fire for each message,
-	// and avoids the old approach of wiping+rebuilding the entire FTS index.
+	// and avoids wiping and rebuilding the entire FTS index.
 	ms.db.Exec(`DELETE FROM messages_fts WHERE rowid IN (SELECT rowid FROM messages WHERE chat_jid = ?)`, chatJID)
 
 	res, err := ms.db.Exec(`DELETE FROM messages WHERE chat_jid = ?`, chatJID)

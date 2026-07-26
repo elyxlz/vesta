@@ -1,6 +1,6 @@
 ---
 name: upstream-sync
-description: Sync your workspace after a Vesta upgrade by merging the new stock snapshot into your own history. Use during the upgrade boot turn, or when the user asks you to get up to date or get the latest changes.
+description: Sync your workspace after a Vesta upgrade. Use during the upgrade boot turn, or when the user asks you to get up to date or get the latest changes.
 ---
 
 # Upstream Sync
@@ -37,7 +37,7 @@ git -C ~ rev-parse -q --verify HEAD >/dev/null 2>&1 || \
 
 Then fetch the stock snapshots from Vesta's read-only local repository. A normal current
 container has the mount and uses plain `git fetch`; the fallback exists only for a fleet box
-whose container rebuild was deferred before this mount shipped:
+whose container is still awaiting the rebuild that adds the mount:
 
 ```bash
 cd ~
