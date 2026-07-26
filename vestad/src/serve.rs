@@ -2946,7 +2946,7 @@ pub async fn run_server(cfg: ServerConfig) {
         .await;
     });
     // Each agent has its own bridge network, so its calls into vestad (register-service,
-    // user-notification, health) cannot reach the loopback bind below; they dial `VESTAD_HOST`
+    // user-notification, health) cannot reach the loopback bind below; they dial `BOX_HOST`
     // (host.docker.internal), which resolves to the docker bridge gateway. Bind there too so
     // agent containers always have a reachable address for vestad, independent of
     // `--expose-lan` (which stays scoped to real LAN devices reaching vestad, a separate

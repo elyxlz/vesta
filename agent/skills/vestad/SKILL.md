@@ -13,9 +13,9 @@ Every call authenticates with the agent's own token:
 -H "X-Agent-Token: $AGENT_TOKEN"
 ```
 
-`$VESTAD_PORT`, `$AGENT_TOKEN`, `$AGENT_NAME`, `$VESTAD_TUNNEL`, and `$VESTAD_HOST` come
+`$VESTAD_PORT`, `$AGENT_TOKEN`, `$AGENT_NAME`, `$VESTAD_TUNNEL`, and `$BOX_HOST` come
 from `/run/vestad-env`, already exported into the environment. The API is
-`https://$VESTAD_HOST:$VESTAD_PORT`, with a self-signed cert, so always `curl -sk`.
+`https://$BOX_HOST:$VESTAD_PORT`, with a self-signed cert, so always `curl -sk`.
 
 Restarting or stopping this agent is not a curl: use the `restart_vesta` / `stop_vesta`
 tools, which call vestad's self-scoped lifecycle endpoints.
@@ -73,9 +73,9 @@ registration, then register it again without `--public`), or tell connected clie
 after changing what a service serves:
 
 ```bash
-curl -sk https://$VESTAD_HOST:$VESTAD_PORT/agents/$AGENT_NAME/services -H "X-Agent-Token: $AGENT_TOKEN"
-curl -sk -X DELETE https://$VESTAD_HOST:$VESTAD_PORT/agents/$AGENT_NAME/services/<name> -H "X-Agent-Token: $AGENT_TOKEN"
-curl -sk -X POST https://$VESTAD_HOST:$VESTAD_PORT/agents/$AGENT_NAME/services/<name>/invalidate -H "X-Agent-Token: $AGENT_TOKEN"
+curl -sk https://$BOX_HOST:$VESTAD_PORT/agents/$AGENT_NAME/services -H "X-Agent-Token: $AGENT_TOKEN"
+curl -sk -X DELETE https://$BOX_HOST:$VESTAD_PORT/agents/$AGENT_NAME/services/<name> -H "X-Agent-Token: $AGENT_TOKEN"
+curl -sk -X POST https://$BOX_HOST:$VESTAD_PORT/agents/$AGENT_NAME/services/<name>/invalidate -H "X-Agent-Token: $AGENT_TOKEN"
 ```
 
 Invalidate optionally takes `{"scope": "<part>"}` (e.g. `{"scope": "stt"}`) to mark what
@@ -94,8 +94,8 @@ Reach for these instead of reverse-engineering the route when you need to hand t
 Check the running version and whether a newer release exists, then apply it:
 
 ```bash
-curl -sk https://$VESTAD_HOST:$VESTAD_PORT/version -H "X-Agent-Token: $AGENT_TOKEN"
-curl -sk -X POST https://$VESTAD_HOST:$VESTAD_PORT/gateway/update -H "X-Agent-Token: $AGENT_TOKEN"
+curl -sk https://$BOX_HOST:$VESTAD_PORT/version -H "X-Agent-Token: $AGENT_TOKEN"
+curl -sk -X POST https://$BOX_HOST:$VESTAD_PORT/gateway/update -H "X-Agent-Token: $AGENT_TOKEN"
 ```
 
 `GET /version` returns `{version, latest_version, update_available, channel, ...}` from a
@@ -111,7 +111,7 @@ returns 400 (self-update disabled).
 Read vestad's own logs to debug gateway or container issues:
 
 ```bash
-curl -sk "https://$VESTAD_HOST:$VESTAD_PORT/gateway/logs?tail=200" -H "X-Agent-Token: $AGENT_TOKEN"
+curl -sk "https://$BOX_HOST:$VESTAD_PORT/gateway/logs?tail=200" -H "X-Agent-Token: $AGENT_TOKEN"
 ```
 
 Returns the last N lines as Server-Sent Events, so parse the `data:` lines; it closes after

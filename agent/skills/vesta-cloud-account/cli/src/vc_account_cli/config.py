@@ -4,7 +4,7 @@ Everything is read from the environment the agent container already has:
 
 * the control-plane base URL (`https://vesta.run/api`, override with
   `VESTA_CLOUD_CONTROL_URL`);
-* how to reach **this box's vestad**: `VESTAD_HOST` + `VESTAD_PORT` +
+* how to reach **this box's vestad**: `BOX_HOST` + `VESTAD_PORT` +
   `AGENT_NAME` + `AGENT_TOKEN` (the same agent-token tier the voice / app-chat
   skills use). The CLI calls vestad to mint a server-identity token; it never
   holds the box's `api_key`.
@@ -33,12 +33,12 @@ class Config:
     @classmethod
     def load(cls) -> Config:
         control = os.environ.get("VESTA_CLOUD_CONTROL_URL", DEFAULT_CONTROL_URL).rstrip("/")
-        # vestad runs natively on the host, never in a container, so VESTAD_HOST
+        # vestad runs natively on the host, never in a container, so BOX_HOST
         # (from /run/vestad-env) is how the agent reaches it, not localhost. Missing
         # either half leaves vestad_base empty, tripping the same "not running inside
         # an agent container" check mint_token() already does for a missing port.
         port = os.environ.get("VESTAD_PORT", "").strip()
-        host = os.environ.get("VESTAD_HOST", "").strip()
+        host = os.environ.get("BOX_HOST", "").strip()
         vestad_base = f"https://{host}:{port}" if port and host else ""
         return cls(
             control_url=control,

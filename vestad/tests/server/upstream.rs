@@ -42,7 +42,7 @@ fn agent_attaches_to_the_upstream_through_the_mounted_repo() {
     let legacy = exec_in_container(
         &container,
         ". /run/vestad-env && curl -fsSk -H \"X-Agent-Token: $AGENT_TOKEN\" \
-         \"https://$VESTAD_HOST:$VESTAD_PORT/agents/$AGENT_NAME/workspace.bundle\" -o /tmp/legacy.bundle \
+         \"https://$BOX_HOST:$VESTAD_PORT/agents/$AGENT_NAME/workspace.bundle\" -o /tmp/legacy.bundle \
          && git -C ~ fetch --no-tags /tmp/legacy.bundle \
          '+refs/heads/agent-workspace:refs/remotes/origin/agent-workspace' \
          && git -C ~ rev-parse refs/remotes/origin/agent-workspace",

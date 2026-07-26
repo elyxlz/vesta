@@ -15,7 +15,7 @@ if [ "$SOURCE" = "$MOUNTED_REPO" ] && [ ! -d "$MOUNTED_REPO" ]; then
   # rebuild was deferred (disk-full reconcile, failed rebuild) boots with the new core
   # but without the mount; fall back to the bundle endpoint the old script used so the
   # sync boot turn still lands on the first try.
-  HOST="${VESTAD_HOST:?VESTAD_HOST is unset (source /run/vestad-env)}"
+  HOST="${BOX_HOST:?BOX_HOST is unset (source /run/vestad-env)}"
   PORT="${VESTAD_PORT:?VESTAD_PORT is unset (source /run/vestad-env)}"
   NAME="${AGENT_NAME:?AGENT_NAME is unset (source /run/vestad-env)}"
   TOKEN="${AGENT_TOKEN:?AGENT_TOKEN is unset (source /run/vestad-env)}"

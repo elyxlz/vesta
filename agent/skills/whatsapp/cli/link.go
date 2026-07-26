@@ -70,11 +70,11 @@ func linkPageURL(tunnel, agentName, serviceName string, port int) string {
 // Idempotent on vestad's side: same name, same port.
 func registerVestadService(name string, requireBindable bool) (int, error) {
 	vestadPort := os.Getenv("VESTAD_PORT")
-	vestadHost := os.Getenv("VESTAD_HOST")
+	vestadHost := os.Getenv("BOX_HOST")
 	agentName := os.Getenv("AGENT_NAME")
 	agentToken := os.Getenv("AGENT_TOKEN")
 	if vestadPort == "" || vestadHost == "" || agentName == "" || agentToken == "" {
-		return 0, fmt.Errorf("VESTAD_PORT/VESTAD_HOST/AGENT_NAME/AGENT_TOKEN not set (not on a vesta box?); pass --port and expose it yourself")
+		return 0, fmt.Errorf("VESTAD_PORT/BOX_HOST/AGENT_NAME/AGENT_TOKEN not set (not on a vesta box?); pass --port and expose it yourself")
 	}
 	client := &http.Client{
 		Timeout:   vestadRequestTimeout,
@@ -104,7 +104,7 @@ func registerVestadService(name string, requireBindable bool) (int, error) {
 
 func unregisterVestadService(name string, expectedPort int) error {
 	vestadPort := os.Getenv("VESTAD_PORT")
-	vestadHost := os.Getenv("VESTAD_HOST")
+	vestadHost := os.Getenv("BOX_HOST")
 	agentName := os.Getenv("AGENT_NAME")
 	agentToken := os.Getenv("AGENT_TOKEN")
 	if vestadPort == "" || vestadHost == "" || agentName == "" || agentToken == "" {

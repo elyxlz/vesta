@@ -698,8 +698,8 @@ def test_fetch_without_mount_falls_into_the_endpoint_fallback(tmp_path):
     home = tmp_path / "home"
     home.mkdir()
     env = _env(home, {"AGENT_NAME": "testbox"})
-    env.pop("VESTAD_HOST", None)
+    env.pop("BOX_HOST", None)
     env.pop("VESTAD_PORT", None)
     r = subprocess.run(["bash", str(FETCH)], cwd=str(home), env=env, capture_output=True, text=True, check=False)
     assert r.returncode != 0
-    assert "VESTAD_HOST" in r.stderr
+    assert "BOX_HOST" in r.stderr

@@ -13,7 +13,7 @@ QUIET="false"
 [ "${1:-}" = "-q" ] && QUIET="true"
 
 CODE=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 5 \
-  "https://${VESTAD_HOST}:${VESTAD_PORT}/agents/${AGENT_NAME}/services" \
+  "https://${BOX_HOST}:${VESTAD_PORT}/agents/${AGENT_NAME}/services" \
   -H "X-Agent-Token: ${AGENT_TOKEN}" 2>/dev/null)
 
 if [ "$CODE" = "200" ]; then

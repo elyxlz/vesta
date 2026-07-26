@@ -42,11 +42,11 @@ func insecureVestadClient(timeout time.Duration) *http.Client {
 // here would make resolving a port silently rewrite the service's exposure.
 func resolveVoiceBaseURL(ctx context.Context) (string, error) {
 	vestadPort := os.Getenv("VESTAD_PORT")
-	vestadHost := os.Getenv("VESTAD_HOST")
+	vestadHost := os.Getenv("BOX_HOST")
 	agentName := os.Getenv("AGENT_NAME")
 	agentToken := os.Getenv("AGENT_TOKEN")
 	if vestadPort == "" || vestadHost == "" || agentName == "" || agentToken == "" {
-		return "", fmt.Errorf("cannot reach the voice backend: identity env (VESTAD_PORT/VESTAD_HOST/AGENT_NAME/AGENT_TOKEN) is not set")
+		return "", fmt.Errorf("cannot reach the voice backend: identity env (VESTAD_PORT/BOX_HOST/AGENT_NAME/AGENT_TOKEN) is not set")
 	}
 
 	url := fmt.Sprintf("https://%s:%s/agents/%s/services", vestadHost, vestadPort, agentName)

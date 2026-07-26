@@ -2,7 +2,7 @@
 
 Two hops, both authenticated WITHOUT any standing secret reaching the agent:
 
-* **vestad** (`https://<VESTAD_HOST>:<VESTAD_PORT>`, agent-token authed): mint a
+* **vestad** (`https://<BOX_HOST>:<VESTAD_PORT>`, agent-token authed): mint a
   short-lived server-identity token. vestad signs it locally with the box's
   `api_key` — a pure crypto operation, no network call — and hands it back.
 
@@ -43,12 +43,12 @@ class Client:
         """POST <vestad>/agents/<name>/account-token -> a server-identity token.
 
         Agent-token authenticated. Fails clearly when not running inside an agent
-        container (no VESTAD_PORT / VESTAD_HOST / AGENT_NAME / AGENT_TOKEN) so the
+        container (no VESTAD_PORT / BOX_HOST / AGENT_NAME / AGENT_TOKEN) so the
         skill can tell the owner this isn't a hosted box rather than emit a transport error.
         """
         cfg = self._cfg
         if not cfg.vestad_base or not cfg.agent_name:
-            raise AccountError("not running inside an agent container (no VESTAD_PORT/VESTAD_HOST/AGENT_NAME)")
+            raise AccountError("not running inside an agent container (no VESTAD_PORT/BOX_HOST/AGENT_NAME)")
         if not cfg.agent_token:
             raise AccountError("missing AGENT_TOKEN — cannot authenticate to vestad")
         url = f"{cfg.vestad_base}/agents/{cfg.agent_name}/account-token"
