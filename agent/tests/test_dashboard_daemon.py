@@ -9,6 +9,7 @@ import subprocess
 
 REPO_ROOT = pl.Path(__file__).resolve().parents[2]
 DAEMON = REPO_ROOT / "agent/skills/dashboard/scripts/daemon"
+SERVE = REPO_ROOT / "agent/skills/dashboard/scripts/serve"
 SETUP = REPO_ROOT / "agent/skills/dashboard/scripts/setup.sh"
 
 FAKE_SCREEN = """#!/bin/sh
@@ -45,7 +46,13 @@ exit "${FAKE_CURL_EXIT:-0}"
 """
 
 FAKE_REGISTER_SERVICE = """#!/bin/sh
+# Records each invocation's arguments in $SCREEN_STATE_DIR/register-args.
+echo "$*" >> "$SCREEN_STATE_DIR/register-args"
 echo "${FAKE_DASHBOARD_PORT:-4321}"
+"""
+
+FAKE_NPX = """#!/bin/sh
+exit 0
 """
 
 
@@ -155,6 +162,33 @@ def test_unknown_subcommand_exits_nonzero(tmp_path):
     env = _rig(tmp_path)
     result = _run(DAEMON, ["bogus"], env)
     assert result.returncode != 0
+
+
+def test_daemon_registers_the_dashboard_privately(tmp_path):
+    """A public dashboard loads for anyone holding the tunnel URL, so the daemon
+    registers it private; the app reaches it with a minted service key."""
+    env = _rig(tmp_path)
+    result = _run(DAEMON, ["start"], env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (tmp_path / "screen-state/register-args").read_text().splitlines() == ["dashboard"]
+
+
+def test_serve_registers_the_dashboard_privately(tmp_path):
+    """The launcher registers the same private service the daemon probes."""
+    env = _rig(tmp_path)
+    home = pl.Path(env["HOME"])
+    (home / "agent/skills/dashboard/scripts").mkdir(parents=True)
+    serve = home / "agent/skills/dashboard/scripts/serve"
+    shutil.copy(SERVE, serve)
+    (home / "agent/skills/dashboard/app/node_modules").mkdir(parents=True)
+    (home / "agent/skills/dashboard/app/dist").mkdir(parents=True)
+    npx = tmp_path / "bin/npx"
+    npx.write_text(FAKE_NPX)
+    npx.chmod(0o755)
+
+    result = subprocess.run(["sh", str(serve)], env=env, capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (tmp_path / "screen-state/register-args").read_text().splitlines() == ["dashboard"]
 
 
 def test_setup_starts_daemon_and_appends_restart_line_once(tmp_path):

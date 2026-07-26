@@ -5,11 +5,13 @@ message, no Python traceback) instead of emitting an empty port that launches a
 portless daemon (issue #960)."""
 
 import http.server
+import json
 import pathlib as pl
 import socket
 import ssl
 import subprocess
 import threading
+import typing as tp
 
 REPO_ROOT = pl.Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "agent/skills/vestad/scripts/register-service"
@@ -47,7 +49,7 @@ def _self_signed(tmp_path):
     return cert, key
 
 
-def _run(port, tmp_path, wait="2"):
+def _run(port, tmp_path, wait="2", args=("tasks",)):
     env = {
         "PATH": "/usr/bin:/bin",
         "BOX_HOST": "127.0.0.1",
@@ -57,15 +59,16 @@ def _run(port, tmp_path, wait="2"):
         "REGISTER_SERVICE_WAIT": wait,
         "HOME": str(tmp_path),
     }
-    return subprocess.run(["bash", str(SCRIPT), "tasks"], env=env, capture_output=True, text=True, timeout=30, check=False)
+    return subprocess.run(["bash", str(SCRIPT), *args], env=env, capture_output=True, text=True, timeout=30, check=False)
 
 
 class _PortHandler(http.server.BaseHTTPRequestHandler):
     port_value = 45321
+    posted_bodies: tp.ClassVar[list[str]] = []
 
     def do_POST(self):
         length = int(self.headers["Content-Length"])
-        self.rfile.read(length)
+        self.posted_bodies.append(self.rfile.read(length).decode())
         body = f'{{"port":{self.port_value}}}'.encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -85,6 +88,21 @@ def _serve_https(port, cert, key):
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server
+
+
+def _request_body(args, tmp_path):
+    """Runs the real script against the HTTPS stub and returns the JSON body it POSTed."""
+    cert, key = _self_signed(tmp_path)
+    port = _free_port()
+    _PortHandler.posted_bodies.clear()
+    server = _serve_https(port, cert, key)
+    try:
+        result = _run(port, tmp_path, args=args)
+    finally:
+        server.shutdown()
+    assert result.returncode == 0, result.stderr
+    assert len(_PortHandler.posted_bodies) == 1, _PortHandler.posted_bodies
+    return json.loads(_PortHandler.posted_bodies[0])
 
 
 def test_prints_port_when_vestad_answers(tmp_path):
@@ -107,6 +125,15 @@ def test_fails_cleanly_when_vestad_unreachable(tmp_path):
     assert "Traceback" not in result.stderr
     assert "JSONDecodeError" not in result.stderr
     assert "vestad unreachable" in result.stderr
+
+
+def test_omitting_public_sends_an_explicit_false(tmp_path):
+    """An omitted flag must not inherit a stale cached `public: true` on the box."""
+    assert _request_body(["dashboard"], tmp_path) == {"name": "dashboard", "public": False}
+
+
+def test_public_flag_sends_true(tmp_path):
+    assert _request_body(["dashboard", "--public"], tmp_path) == {"name": "dashboard", "public": True}
 
 
 def test_caller_and_chain_short_circuits_on_failure(tmp_path):

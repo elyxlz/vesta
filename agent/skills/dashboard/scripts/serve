@@ -11,5 +11,5 @@ set -e
 cd ~/agent/skills/dashboard/app
 [ -d node_modules ] || npm install
 [ -d dist ] || npx vite build
-PORT=$(~/agent/skills/vestad/scripts/register-service dashboard --public)
+PORT=$(~/agent/skills/vestad/scripts/register-service dashboard)
 exec npx vite preview --port "$PORT" --host 0.0.0.0

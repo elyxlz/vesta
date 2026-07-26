@@ -42,16 +42,20 @@ A background process that needs no inbound port is just a daemon: it does not re
 it only goes in the restart skill's `## Daemons` section.
 
 Skills that run a service register it with vestad to get a port, then start it. The
-`register-service` helper does the curl and prints the port (idempotent: same port per name,
-and re-registering without `--public` keeps the service's current exposure rather than
-revoking it, so a re-register that only wants the port is safe):
+`register-service` helper does the curl and prints the port (idempotent: same port per name, so
+a re-register that only wants the port is safe). Exposure is sent on every call, so a service
+registered without `--public` is private:
 
 ```bash
-# token-only service
+# private service: the api key or a minted service key reaches it
 PORT=$(~/agent/skills/vestad/scripts/register-service tasks)
-# public service
-PORT=$(~/agent/skills/vestad/scripts/register-service dashboard --public)
+# public service: loads with no credential at all
+PORT=$(~/agent/skills/vestad/scripts/register-service file-host --public)
 ```
+
+The dashboard is private, and the app reaches it with a minted service key, so pass `--public`
+only for something that must load with no credential at all, like a QR link a stranger's phone
+opens or a webhook an external service posts to.
 
 So the service comes back after a container restart, add its startup command to the
 `## Daemons` section of `~/agent/skills/restart/SKILL.md`, one fenced block per skill. Use a
@@ -68,9 +72,8 @@ a failed registration short-circuits the chain, so the daemon never launches por
 whole line in the `running <name> ||` guard the Daemons block defines, so re-running it (crash
 recovery re-enters the block) never stacks a duplicate daemon.
 
-List registrations, unregister a service (also how you make a public service private: drop the
-registration, then register it again without `--public`), or tell connected clients to reload
-after changing what a service serves:
+List registrations, unregister a service, or tell connected clients to reload after changing
+what a service serves:
 
 ```bash
 curl -sk https://$BOX_HOST:$VESTAD_PORT/agents/$AGENT_NAME/services -H "X-Agent-Token: $AGENT_TOKEN"
