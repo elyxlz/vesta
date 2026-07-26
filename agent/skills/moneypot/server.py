@@ -25,9 +25,7 @@ Endpoints
 from __future__ import annotations
 
 import argparse
-import hmac
 import json
-import os
 import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -60,23 +58,6 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _authed(self) -> bool:
-        """Allow health checks and credentials matching the app or agent key."""
-        if urlparse(self.path).path.rstrip("/") in ("/health", ""):
-            return True
-        valid = [credential for credential in (self.server.api_key, self.server.agent_token) if credential]
-        if not valid:
-            return True
-        presented = []
-        auth = self.headers.get("Authorization", "")
-        if auth.startswith("Bearer "):
-            presented.append(auth[7:].strip())
-        for h in ("X-API-Key", "X-Agent-Token"):
-            v = self.headers.get(h, "").strip()
-            if v:
-                presented.append(v)
-        return any(hmac.compare_digest(candidate, credential) for candidate in presented for credential in valid)
-
     def _body(self) -> dict:
         n = int(self.headers.get("Content-Length", 0) or 0)
         if not n:
@@ -102,8 +83,8 @@ class Handler(BaseHTTPRequestHandler):
         self._dispatch(self._route_delete)
 
     def _dispatch(self, route):
-        if not self._authed():
-            return self._send(401, {"error": "missing or invalid API key"})
+        # vestad is the only path in: each agent sits on its own bridge network and the proxy
+        # authenticates every request before forwarding, so this server needs no credential.
         try:
             route()
         except mp.MoneypotError as exc:
@@ -111,7 +92,6 @@ class Handler(BaseHTTPRequestHandler):
         except (KeyError, OSError, TypeError) as exc:
             self.log_error("request failed: %s", exc)
             self._send(500, {"error": "internal server error"})
-        return None
 
     def _route_get(self):
         u = urlparse(self.path)
@@ -214,28 +194,13 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(404, {"error": f"no route DELETE {path}"})
 
 
-class Server(ThreadingHTTPServer):
-    def __init__(self, address, handler, api_key, agent_token):
-        super().__init__(address, handler)
-        self.api_key = api_key
-        self.agent_token = agent_token
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--host", default="0.0.0.0")
-    ap.add_argument(
-        "--api-key",
-        default=os.environ.get("MONEYPOT_API_KEY"),
-        help="require this key on all routes except /health (also via MONEYPOT_API_KEY). Omit for an open API.",
-    )
     args = ap.parse_args()
-    api_key = args.api_key or None
-    agent_token = os.environ.get("AGENT_TOKEN") or None
-    srv = Server((args.host, args.port), Handler, api_key, agent_token)
-    mode = "private (credential required)" if api_key or agent_token else "open (no auth configured)"
-    print(f"moneypot API on {args.host}:{args.port} - {mode}", flush=True)
+    srv = ThreadingHTTPServer((args.host, args.port), Handler)
+    print(f"moneypot API on {args.host}:{args.port}", flush=True)
     srv.serve_forever()
 
 

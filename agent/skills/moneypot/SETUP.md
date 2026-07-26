@@ -11,21 +11,22 @@ The **HTTP API is optional**. To run it as a vestad-proxied service:
    screen -dmS moneypot bash -c "cd ~/agent/skills/moneypot && PYTHONUNBUFFERED=1 python3 server.py --port $P > ~/agent/logs/moneypot.log 2>&1"
    ```
 
-   The server automatically accepts the vesta `AGENT_TOKEN`, and vestad also
-   requires that token before proxying a private service.
+   The service is private, so vestad authenticates every request before proxying it and the
+   server itself needs no credential.
 
-   **Public with a separate app key:** only use a public registration when an
-   external caller cannot send the vesta agent token. Generate and store a key:
+   **An external caller** gets its own service key, scoped to moneypot and revocable:
 
    ```bash
-   KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))")
-   install -m 600 /dev/null ~/agent/data/moneypot-api-key
-   printf '%s\n' "$KEY" > ~/agent/data/moneypot-api-key
-   P=$(~/agent/skills/vestad/scripts/register-service moneypot --public) &&
-   screen -dmS moneypot bash -c 'cd ~/agent/skills/moneypot && PYTHONUNBUFFERED=1 python3 server.py --api-key "$(cat ~/agent/data/moneypot-api-key)" --port '"$P"' > ~/agent/logs/moneypot.log 2>&1'
+   curl -sk -X POST https://$BOX_HOST:$VESTAD_PORT/agents/$AGENT_NAME/services/moneypot/keys \
+     -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' \
+     -d '{"label": "budget app"}'
    ```
 
-   Callers then send `X-API-Key: <key>` (or `Authorization: Bearer <key>`).
+   The reply is `{"id": ..., "key": ..., "expires_at": ...}`, and `key` is shown this once
+   only. The caller sends it as `Authorization: Bearer <key>` or as `?token=<key>`. A key
+   lasts 30 days unless the body asks for `{"ttl_secs": 604800}` or
+   `{"never_expires": true}`. List the live keys with a `GET` on that same URL, and revoke
+   one with `curl -sk -X DELETE .../services/moneypot/keys/<id>` plus the same header.
 
 2. Add the startup line to the `## Daemons` section of `~/agent/skills/restart/SKILL.md` so it comes back after a restart:
 
@@ -33,10 +34,12 @@ The **HTTP API is optional**. To run it as a vestad-proxied service:
    running moneypot || { P=$(~/agent/skills/vestad/scripts/register-service moneypot) && screen -dmS moneypot bash -c "cd ~/agent/skills/moneypot && PYTHONUNBUFFERED=1 python3 server.py --port $P > ~/agent/logs/moneypot.log 2>&1"; sleep 1; }
    ```
 
-3. Verify:
+3. Verify, with a key from step 1:
 
    ```bash
-   curl -s "$VESTAD_TUNNEL/agents/$AGENT_NAME/moneypot/health"
+   curl -s "$VESTAD_TUNNEL/agents/$AGENT_NAME/moneypot/health?token=<key>"
    ```
+
+   A request with no credential gets a 401 from vestad before the server ever sees it.
 
 Stdlib only, no dependencies to install.

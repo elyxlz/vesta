@@ -109,6 +109,16 @@ fn keyed_forward_path(
     keys.accepts(agent, service, key, now).then_some(forwarded)
 }
 
+/// The agent token vestad injects upstream. Only the raw agent port consumes it, so a
+/// registered service is never handed one.
+fn injected_agent_token(agent_token: Option<&str>, is_registered_service: bool) -> Option<&str> {
+    if is_registered_service {
+        None
+    } else {
+        agent_token
+    }
+}
+
 pub async fn agent_proxy_handler(
     State(state): State<SharedState>,
     Path((name, path)): Path<(String, String)>,
@@ -190,8 +200,6 @@ pub async fn agent_proxy_handler(
         ));
     }
 
-    let is_public = service.as_ref().is_some_and(|entry| entry.public);
-
     let mut target_path = stripped_path;
     if let Some(q) = request.uri().query() {
         target_path.push('?');
@@ -226,7 +234,8 @@ pub async fn agent_proxy_handler(
                 ));
             }
         };
-        let ws_token = if is_public { None } else { agent_token.clone() };
+        let ws_token = injected_agent_token(agent_token.as_deref(), is_registered_service)
+            .map(str::to_string);
         Ok(ws.on_upgrade(move |socket| async move {
             drop(guard);
             if is_registered_service {
@@ -236,11 +245,7 @@ pub async fn agent_proxy_handler(
         }))
     } else {
         drop(guard);
-        let token = if is_public {
-            None
-        } else {
-            agent_token.as_deref()
-        };
+        let token = injected_agent_token(agent_token.as_deref(), is_registered_service);
         if is_registered_service {
             wait_for_upstream(&target_host, target_port, UPSTREAM_READY_TIMEOUT).await;
         }
@@ -514,8 +519,8 @@ mod keyed_forward_path_tests {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_target_url, pump_agent_to_client, split_key_subpath, split_service_subpath,
-        wait_for_upstream,
+        build_target_url, injected_agent_token, pump_agent_to_client, split_key_subpath,
+        split_service_subpath, wait_for_upstream,
     };
     use axum::extract::ws::Message as AxumMsg;
     use futures_util::stream;
@@ -525,6 +530,18 @@ mod tests {
     use tokio::net::TcpListener;
     use tokio::time::Instant;
     use tokio_tungstenite::tungstenite::Message as TungMsg;
+
+    #[test]
+    fn only_the_raw_agent_port_receives_the_injected_agent_token() {
+        // The agent's own API is the one consumer of X-Agent-Token
+        // (agent/core/api.py), and it lives on the raw agent port. A registered
+        // service is reached only through this proxy, so it needs no credential of
+        // its own and must not be handed a gateway-tier one.
+        assert_eq!(injected_agent_token(Some("tok"), true), None);
+        assert_eq!(injected_agent_token(Some("tok"), false), Some("tok"));
+        assert_eq!(injected_agent_token(None, false), None);
+        assert_eq!(injected_agent_token(None, true), None);
+    }
 
     #[test]
     fn build_target_url_uses_the_given_host_not_localhost() {

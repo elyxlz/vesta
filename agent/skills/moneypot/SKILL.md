@@ -94,9 +94,9 @@ GET    /pots/{id}/balance
 GET    /pots/{id}/contributions?account=X
 ```
 
-Errors return `{"error": "..."}` with HTTP 400 (bad input), 404 (no route), or 401 (bad key).
+Errors return `{"error": "..."}` with HTTP 400 (bad input) or 404 (no route).
 
-**Authentication.** Inside vesta, the API automatically requires the vestad agent token (`AGENT_TOKEN`) on every route except `/health`. A separate app key can be added with `--api-key KEY` (or `MONEYPOT_API_KEY`) and sent as `Authorization: Bearer KEY` or `X-API-Key: KEY`. Outside vesta, with neither credential configured, the API is open.
+**Authentication.** The server checks nothing: it is registered as a private vestad service, so vestad authenticates every request before proxying it and nothing outside this container reaches the port any other way. An external caller reaches it with a service key vestad mints for moneypot (see `SETUP.md`).
 
 ## Notes
 
