@@ -234,14 +234,12 @@ pub async fn agent_proxy_handler(
                 ));
             }
         };
-        let ws_token = injected_agent_token(agent_token.as_deref(), is_registered_service)
-            .map(str::to_string);
         Ok(ws.on_upgrade(move |socket| async move {
             drop(guard);
             if is_registered_service {
                 wait_for_upstream(&target_host, target_port, UPSTREAM_READY_TIMEOUT).await;
             }
-            ws_proxy(socket, &target_host, target_port, &target_path, ws_token.as_deref()).await;
+            ws_proxy(socket, &target_host, target_port, &target_path).await;
         }))
     } else {
         drop(guard);
@@ -261,23 +259,19 @@ pub async fn agent_proxy_handler(
     }
 }
 
+/// Bridge a client socket to a registered service's upstream. Only registered services reach
+/// here (the raw agent port 404s on upgrade), so the socket carries no injected credential.
 async fn ws_proxy(
     client_ws: axum::extract::ws::WebSocket,
     host: &str,
     agent_port: u16,
     path: &str,
-    agent_token: Option<&str>,
 ) {
     use axum::extract::ws::Message as AxumMsg;
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message as TungMsg;
 
-    let url = if let Some(token) = agent_token {
-        let sep = if path.contains('?') { "&" } else { "?" };
-        build_target_url("ws", host, agent_port, &format!("{path}{sep}agent_token={token}"))
-    } else {
-        build_target_url("ws", host, agent_port, path)
-    };
+    let url = build_target_url("ws", host, agent_port, path);
     let agent_ws = match tokio_tungstenite::connect_async(&url).await {
         Ok((ws, _)) => ws,
         Err(e) => {
@@ -550,8 +544,8 @@ mod tests {
             "http://172.20.0.5:8080/health"
         );
         assert_eq!(
-            build_target_url("ws", "172.20.0.5", 8080, "/ws?agent_token=tok"),
-            "ws://172.20.0.5:8080/ws?agent_token=tok"
+            build_target_url("ws", "172.20.0.5", 8080, "/voice/stt?lang=en"),
+            "ws://172.20.0.5:8080/voice/stt?lang=en"
         );
     }
 
