@@ -23,30 +23,30 @@
 import json, urllib.parse
 from helpers import http_get
 
+
 def ddg_instant(query: str) -> dict:
     q = urllib.parse.quote(query)
-    raw = http_get(
-        f"https://api.duckduckgo.com/?q={q}&format=json&no_html=1&skip_disambig=1"
-    )
+    raw = http_get(f"https://api.duckduckgo.com/?q={q}&format=json&no_html=1&skip_disambig=1")
     return json.loads(raw)
+
 
 # Entity with Wikipedia abstract + infobox
 data = ddg_instant("openai")
 # data['Type'] == 'A'
-print(data['Heading'])        # 'OpenAI'
-print(data['AbstractText'])   # 'OpenAI is an American artificial intelligence research...'
-print(data['AbstractURL'])    # 'https://en.wikipedia.org/wiki/OpenAI'
-print(data['OfficialWebsite'])# 'https://openai.com/'
-print(data['Entity'])         # 'company'
+print(data["Heading"])  # 'OpenAI'
+print(data["AbstractText"])  # 'OpenAI is an American artificial intelligence research...'
+print(data["AbstractURL"])  # 'https://en.wikipedia.org/wiki/OpenAI'
+print(data["OfficialWebsite"])  # 'https://openai.com/'
+print(data["Entity"])  # 'company'
 
 # Person lookup (skip_disambig resolves D→A automatically)
 data = ddg_instant("elon musk")
-print(data['Type'])           # 'A' (was 'D' without skip_disambig)
-print(data['AbstractText'][:100])  # 'Elon Reeve Musk is a businessman...'
-print(data['Image'])          # '/i/be2a8644.jpg' — prepend https://duckduckgo.com
+print(data["Type"])  # 'A' (was 'D' without skip_disambig)
+print(data["AbstractText"][:100])  # 'Elon Reeve Musk is a businessman...'
+print(data["Image"])  # '/i/be2a8644.jpg' — prepend https://duckduckgo.com
 
 # Full image URL
-img_url = f"https://duckduckgo.com{data['Image']}" if data['Image'] else None
+img_url = f"https://duckduckgo.com{data['Image']}" if data["Image"] else None
 ```
 
 ---
@@ -57,16 +57,16 @@ img_url = f"https://duckduckgo.com{data['Image']}" if data['Image'] else None
 import json, urllib.parse
 from helpers import http_get
 
+
 def ddg_answer(query: str) -> tuple[str, str]:
     """Returns (answer_text, answer_type). answer_text is '' if no result."""
     q = urllib.parse.quote(query)
-    raw = http_get(
-        f"https://api.duckduckgo.com/?q={q}&format=json&no_html=1&no_redirect=1"
-    )
+    raw = http_get(f"https://api.duckduckgo.com/?q={q}&format=json&no_html=1&no_redirect=1")
     data = json.loads(raw)
-    ans = data.get('Answer', '')
+    ans = data.get("Answer", "")
     # Answer can be a dict when it's a widget (calculator, converter) — only string Answers are usable
-    return (ans if isinstance(ans, str) else '', data.get('AnswerType', ''))
+    return (ans if isinstance(ans, str) else "", data.get("AnswerType", ""))
+
 
 # Confirmed working instant answers:
 text, kind = ddg_answer("random number")
@@ -144,19 +144,19 @@ Each item is one of two shapes:
 {
     "FirstURL": "https://duckduckgo.com/Deep_learning",
     "Icon": {"Height": "", "URL": "/i/abc123.png", "Width": ""},  # URL often ""
-    "Result": "<a href=\"...\">Deep learning</a>— branch of ML...",  # HTML
-    "Text": "Deep learning — branch of ML concerned with artificial neural networks."
+    "Result": '<a href="...">Deep learning</a>— branch of ML...',  # HTML
+    "Text": "Deep learning — branch of ML concerned with artificial neural networks.",
 }
 ```
 
 **Section** (disambiguation pages only — when `Type` is `D` without `skip_disambig`):
 ```python
 {
-    "Name": "Science & Technology",   # section heading
-    "Topics": [                        # list of plain topic objects
+    "Name": "Science & Technology",  # section heading
+    "Topics": [  # list of plain topic objects
         {"FirstURL": "...", "Icon": {...}, "Result": "...", "Text": "..."},
-        ...
-    ]
+        ...,
+    ],
 }
 ```
 
@@ -169,8 +169,8 @@ Usually 0 or 1 item. When present, it's the official website:
 {
     "FirstURL": "https://www.apple.com/",
     "Icon": {"Height": 16, "URL": "/i/apple.com.ico", "Width": 16},
-    "Result": "<a href=\"https://www.apple.com/\">Official site</a>...",
-    "Text": "Official site"
+    "Result": '<a href="https://www.apple.com/">Official site</a>...',
+    "Text": "Official site",
 }
 ```
 Icon URLs in `Results` are relative — prepend `https://duckduckgo.com`.
@@ -178,20 +178,20 @@ Icon URLs in `Results` are relative — prepend `https://duckduckgo.com`.
 ### `Infobox` structure
 
 ```python
-ib = data['Infobox']  # dict or "" (empty string when absent)
+ib = data["Infobox"]  # dict or "" (empty string when absent)
 if isinstance(ib, dict):
-    content = ib['content']  # list of structured fields
+    content = ib["content"]  # list of structured fields
     # Each content item:
     # {"data_type": "string", "label": "Founded", "value": "December 08, 2015"}
     # {"data_type": "string", "label": "Founders", "value": "Sam Altman, Elon Musk, ..."}
-    
-    meta = ib['meta']    # list of metadata items
+
+    meta = ib["meta"]  # list of metadata items
     # {"data_type": "string", "label": "article_title", "value": "OpenAI"}
     # {"data_type": "string", "label": "template_name", "value": "infobox company"}
 
 # Extract infobox as flat dict:
-if isinstance(data['Infobox'], dict):
-    fields = {item['label']: item['value'] for item in data['Infobox']['content']}
+if isinstance(data["Infobox"], dict):
+    fields = {item["label"]: item["value"] for item in data["Infobox"]["content"]}
     # fields['Founded'] == 'December 08, 2015'
     # fields['Products'] == 'ChatGPT, GPT-5...'
 ```
@@ -292,43 +292,40 @@ In practice, C and N types are rare. A, D, E, and empty cover nearly all queries
 import json, urllib.parse
 from helpers import http_get
 
+
 def ddg_entity(query: str) -> dict | None:
     """
     Fetch a DuckDuckGo Instant Answer for a named entity.
     Returns structured data or None if no result.
     """
     q = urllib.parse.quote(query)
-    raw = http_get(
-        f"https://api.duckduckgo.com/?q={q}&format=json&no_html=1&skip_disambig=1"
-    )
+    raw = http_get(f"https://api.duckduckgo.com/?q={q}&format=json&no_html=1&skip_disambig=1")
     data = json.loads(raw)
-    if not data.get('AbstractText') and not data.get('Answer'):
+    if not data.get("AbstractText") and not data.get("Answer"):
         return None
 
     result = {
-        'type': data['Type'],
-        'heading': data['Heading'],
-        'abstract': data['AbstractText'],
-        'abstract_url': data['AbstractURL'],
-        'entity': data['Entity'],
-        'official_website': data['OfficialWebsite'],
-        'image': f"https://duckduckgo.com{data['Image']}" if data['Image'] else None,
-        'answer': data['Answer'] if isinstance(data['Answer'], str) else None,
-        'answer_type': data['AnswerType'],
+        "type": data["Type"],
+        "heading": data["Heading"],
+        "abstract": data["AbstractText"],
+        "abstract_url": data["AbstractURL"],
+        "entity": data["Entity"],
+        "official_website": data["OfficialWebsite"],
+        "image": f"https://duckduckgo.com{data['Image']}" if data["Image"] else None,
+        "answer": data["Answer"] if isinstance(data["Answer"], str) else None,
+        "answer_type": data["AnswerType"],
     }
 
     # Extract infobox as flat dict
-    if isinstance(data['Infobox'], dict):
-        result['infobox'] = {
-            item['label']: item['value']
-            for item in data['Infobox']['content']
-        }
+    if isinstance(data["Infobox"], dict):
+        result["infobox"] = {item["label"]: item["value"] for item in data["Infobox"]["content"]}
 
     # Official site URL (from Results)
-    if data['Results']:
-        result['official_site_url'] = data['Results'][0]['FirstURL']
+    if data["Results"]:
+        result["official_site_url"] = data["Results"][0]["FirstURL"]
 
     return result
+
 
 # Example outputs (validated 2026-04-18):
 r = ddg_entity("openai")

@@ -10,9 +10,7 @@
 from helpers import http_get
 import json
 
-data = json.loads(http_get(
-    "https://api.openalex.org/works?search=transformer+attention&per-page=5&mailto=you@example.com"
-))
+data = json.loads(http_get("https://api.openalex.org/works?search=transformer+attention&per-page=5&mailto=you@example.com"))
 works = data["results"]
 total = data["meta"]["count"]
 ```
@@ -27,19 +25,21 @@ Always include `mailto=` to stay in the polite pool. Always parse with `json.loa
 from helpers import http_get
 import json
 
-data = json.loads(http_get(
-    "https://api.openalex.org/works"
-    "?search=transformer+attention"
-    "&per-page=5"
-    "&sort=cited_by_count:desc"
-    "&select=id,doi,display_name,publication_year,cited_by_count,open_access,primary_location"
-    "&mailto=you@example.com"
-))
+data = json.loads(
+    http_get(
+        "https://api.openalex.org/works"
+        "?search=transformer+attention"
+        "&per-page=5"
+        "&sort=cited_by_count:desc"
+        "&select=id,doi,display_name,publication_year,cited_by_count,open_access,primary_location"
+        "&mailto=you@example.com"
+    )
+)
 print("total matching:", data["meta"]["count"])
 for w in data["results"]:
-    oa   = w["open_access"]
-    loc  = w["primary_location"] or {}
-    src  = loc.get("source") or {}
+    oa = w["open_access"]
+    loc = w["primary_location"] or {}
+    src = loc.get("source") or {}
     print(w["id"].split("/")[-1], w["publication_year"], w["cited_by_count"], w["display_name"][:60])
     print("  doi:", w["doi"])
     print("  open access:", oa["is_oa"], "| pdf:", oa["oa_url"])
@@ -63,9 +63,7 @@ print(w["display_name"], w["cited_by_count"])
 # Confirmed: Attention Is All You Need 6526
 
 # By DOI (pass the full DOI URL as the entity ID)
-w = json.loads(http_get(
-    "https://api.openalex.org/works/https://doi.org/10.1038/nature14539?mailto=you@example.com"
-))
+w = json.loads(http_get("https://api.openalex.org/works/https://doi.org/10.1038/nature14539?mailto=you@example.com"))
 print(w["display_name"], w["cited_by_count"])
 # Confirmed: Deep learning 79790
 ```
@@ -78,11 +76,7 @@ OpenAlex does not return abstracts as plain strings — they come as an inverted
 from helpers import http_get
 import json
 
-w = json.loads(http_get(
-    "https://api.openalex.org/works/W2626778328"
-    "?select=id,display_name,abstract_inverted_index"
-    "&mailto=you@example.com"
-))
+w = json.loads(http_get("https://api.openalex.org/works/W2626778328?select=id,display_name,abstract_inverted_index&mailto=you@example.com"))
 aii = w.get("abstract_inverted_index") or {}
 words_pos = [(pos, word) for word, positions in aii.items() for pos in positions]
 abstract = " ".join(word for _, word in sorted(words_pos))
@@ -98,11 +92,9 @@ from helpers import http_get
 import json
 
 # Search by name
-data = json.loads(http_get(
-    "https://api.openalex.org/authors?search=geoffrey+hinton&per-page=3&mailto=you@example.com"
-))
+data = json.loads(http_get("https://api.openalex.org/authors?search=geoffrey+hinton&per-page=3&mailto=you@example.com"))
 for a in data["results"]:
-    bare_id = a["id"].split("/")[-1]    # e.g. A5108093963
+    bare_id = a["id"].split("/")[-1]  # e.g. A5108093963
     print(bare_id, a["display_name"], a["works_count"], "works |", a["cited_by_count"], "cites")
     affils = a.get("affiliations", [])
     if affils:
@@ -117,13 +109,15 @@ print(a["display_name"], a["works_count"])
 # Confirmed: Geoffrey E. Hinton 384
 
 # Get all works by this author (sorted by citations)
-works_data = json.loads(http_get(
-    "https://api.openalex.org/works"
-    "?filter=author.id:A5108093963"
-    "&per-page=5&sort=cited_by_count:desc"
-    "&select=id,display_name,cited_by_count,publication_year"
-    "&mailto=you@example.com"
-))
+works_data = json.loads(
+    http_get(
+        "https://api.openalex.org/works"
+        "?filter=author.id:A5108093963"
+        "&per-page=5&sort=cited_by_count:desc"
+        "&select=id,display_name,cited_by_count,publication_year"
+        "&mailto=you@example.com"
+    )
+)
 for w in works_data["results"]:
     print(w["publication_year"], w["display_name"][:55], w["cited_by_count"])
 # Confirmed:
@@ -138,22 +132,22 @@ for w in works_data["results"]:
 from helpers import http_get
 import json
 
-data = json.loads(http_get(
-    "https://api.openalex.org/institutions?search=MIT&per-page=3&mailto=you@example.com"
-))
+data = json.loads(http_get("https://api.openalex.org/institutions?search=MIT&per-page=3&mailto=you@example.com"))
 for inst in data["results"]:
-    bare_id = inst["id"].split("/")[-1]     # e.g. I63966007
+    bare_id = inst["id"].split("/")[-1]  # e.g. I63966007
     print(bare_id, inst["display_name"], inst["country_code"], inst["works_count"], "works")
 # Confirmed: I63966007 Massachusetts Institute of Technology US 340302 works
 
 # Works from an institution
-works = json.loads(http_get(
-    "https://api.openalex.org/works"
-    "?filter=institutions.id:I63966007"
-    "&per-page=3&sort=cited_by_count:desc"
-    "&select=id,display_name,cited_by_count,publication_year"
-    "&mailto=you@example.com"
-))
+works = json.loads(
+    http_get(
+        "https://api.openalex.org/works"
+        "?filter=institutions.id:I63966007"
+        "&per-page=3&sort=cited_by_count:desc"
+        "&select=id,display_name,cited_by_count,publication_year"
+        "&mailto=you@example.com"
+    )
+)
 print("total MIT works:", works["meta"]["count"])
 # Confirmed: 323992
 ```
@@ -167,23 +161,24 @@ from helpers import http_get
 import json
 
 # Concepts endpoint (Wikidata-linked)
-data = json.loads(http_get(
-    "https://api.openalex.org/concepts?search=machine+learning&per-page=5&mailto=you@example.com"
-))
+data = json.loads(http_get("https://api.openalex.org/concepts?search=machine+learning&per-page=5&mailto=you@example.com"))
 for c in data["results"]:
-    bare_id = c["id"].split("/")[-1]    # e.g. C119857082
+    bare_id = c["id"].split("/")[-1]  # e.g. C119857082
     print(bare_id, c["display_name"], "level:", c["level"], "works:", c["works_count"])
 # Confirmed: C119857082 Machine learning level: 1 works: 4960536
 
 # Topics endpoint (newer: domain > field > subfield > topic)
-data2 = json.loads(http_get(
-    "https://api.openalex.org/topics?search=machine+learning&per-page=3&mailto=you@example.com"
-))
+data2 = json.loads(http_get("https://api.openalex.org/topics?search=machine+learning&per-page=3&mailto=you@example.com"))
 for t in data2["results"]:
     print(t["id"].split("/")[-1], t["display_name"])
-    print("  ", t.get("domain", {}).get("display_name"), ">",
-          t.get("field", {}).get("display_name"), ">",
-          t.get("subfield", {}).get("display_name"))
+    print(
+        "  ",
+        t.get("domain", {}).get("display_name"),
+        ">",
+        t.get("field", {}).get("display_name"),
+        ">",
+        t.get("subfield", {}).get("display_name"),
+    )
 # Confirmed: T11948 Machine Learning in Materials Science
 #   Physical Sciences > Materials Science > Materials Chemistry
 ```
@@ -194,21 +189,21 @@ for t in data2["results"]:
 from helpers import http_get
 import json
 
-data = json.loads(http_get(
-    "https://api.openalex.org/sources?search=nature&per-page=3&mailto=you@example.com"
-))
+data = json.loads(http_get("https://api.openalex.org/sources?search=nature&per-page=3&mailto=you@example.com"))
 for s in data["results"]:
-    bare_id = s["id"].split("/")[-1]    # e.g. S137773608
+    bare_id = s["id"].split("/")[-1]  # e.g. S137773608
     print(bare_id, s["display_name"], s["type"], "issn:", s["issn"], "oa:", s["is_oa"])
 # Confirmed: S137773608 Nature journal issn: ['0028-0836', '1476-4687'] oa: False
 
 # Works in a source
-works = json.loads(http_get(
-    "https://api.openalex.org/works?filter=primary_location.source.id:S137773608"
-    "&per-page=3&sort=cited_by_count:desc"
-    "&select=id,display_name,cited_by_count"
-    "&mailto=you@example.com"
-))
+works = json.loads(
+    http_get(
+        "https://api.openalex.org/works?filter=primary_location.source.id:S137773608"
+        "&per-page=3&sort=cited_by_count:desc"
+        "&select=id,display_name,cited_by_count"
+        "&mailto=you@example.com"
+    )
+)
 print("Nature works:", works["meta"]["count"])
 ```
 
@@ -218,11 +213,9 @@ print("Nature works:", works["meta"]["count"])
 from helpers import http_get
 import json
 
-data = json.loads(http_get(
-    "https://api.openalex.org/funders?search=national+science+foundation&per-page=3&mailto=you@example.com"
-))
+data = json.loads(http_get("https://api.openalex.org/funders?search=national+science+foundation&per-page=3&mailto=you@example.com"))
 for f in data["results"]:
-    bare_id = f["id"].split("/")[-1]    # e.g. F4320306076
+    bare_id = f["id"].split("/")[-1]  # e.g. F4320306076
     print(bare_id, f["display_name"], f["country_code"], f["works_count"], "works")
 # Confirmed: F4320306076 National Science Foundation US
 ```
@@ -236,23 +229,23 @@ import json
 paper_id = "W2626778328"  # Attention Is All You Need
 
 # Papers that CITE this paper (forward citations)
-citing = json.loads(http_get(
-    f"https://api.openalex.org/works?filter=cites:{paper_id}"
-    "&per-page=5&sort=cited_by_count:desc"
-    "&select=id,display_name,publication_year,cited_by_count"
-    "&mailto=you@example.com"
-))
+citing = json.loads(
+    http_get(
+        f"https://api.openalex.org/works?filter=cites:{paper_id}"
+        "&per-page=5&sort=cited_by_count:desc"
+        "&select=id,display_name,publication_year,cited_by_count"
+        "&mailto=you@example.com"
+    )
+)
 print("papers citing Attention:", citing["meta"]["count"])
 for w in citing["results"]:
     print(f"  {w['publication_year']} {w['display_name'][:55]} ({w['cited_by_count']} cites)")
 # Confirmed: 6536 papers cite it; top: AlphaFold2 (43435), ViT (21409)
 
 # Papers THIS paper cites (backward — list of IDs in the work object)
-paper = json.loads(http_get(
-    f"https://api.openalex.org/works/{paper_id}?select=referenced_works&mailto=you@example.com"
-))
+paper = json.loads(http_get(f"https://api.openalex.org/works/{paper_id}?select=referenced_works&mailto=you@example.com"))
 refs = paper.get("referenced_works", [])
-ref_ids = [r.split("/")[-1] for r in refs]     # bare IDs like W1632114991
+ref_ids = [r.split("/")[-1] for r in refs]  # bare IDs like W1632114991
 print(f"references {len(ref_ids)} works:", ref_ids[:3])
 # Confirmed: references 28 works
 ```
@@ -264,6 +257,7 @@ Use cursor pagination (not page-based) for more than 10,000 results. Page-based 
 ```python
 from helpers import http_get
 import json, urllib.parse
+
 
 def harvest_works(query_filter, max_results=1000, mailto="you@example.com"):
     """Yield work dicts using cursor pagination."""
@@ -292,6 +286,7 @@ def harvest_works(query_filter, max_results=1000, mailto="you@example.com"):
             break
         cursor = next_cursor
 
+
 for w in harvest_works("concepts.id:C119857082,publication_year:2023", max_results=400):
     print(w["id"].split("/")[-1], w["display_name"][:55])
 ```
@@ -303,12 +298,14 @@ from helpers import http_get
 import json
 
 # Publication counts by year for machine learning papers
-data = json.loads(http_get(
-    "https://api.openalex.org/works"
-    "?filter=concepts.id:C119857082"    # C119857082 = Machine learning concept
-    "&group_by=publication_year"
-    "&mailto=you@example.com"
-))
+data = json.loads(
+    http_get(
+        "https://api.openalex.org/works"
+        "?filter=concepts.id:C119857082"  # C119857082 = Machine learning concept
+        "&group_by=publication_year"
+        "&mailto=you@example.com"
+    )
+)
 print("groups_count:", data["meta"]["groups_count"])
 for g in data.get("group_by", [])[:5]:
     print(f"  {g['key']}: {g['count']:,} works")

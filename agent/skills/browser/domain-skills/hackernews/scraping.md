@@ -29,47 +29,38 @@ page = http_get("https://news.ycombinator.com")
 story_ids = re.findall(r'<tr class="athing submission" id="(\d+)">', page)
 
 # Extract titles + URLs (same order as IDs)
-titles_urls = re.findall(
-    r'class="titleline"[^>]*><a href="([^"]*)"[^>]*>(.*?)</a>', page
-)
+titles_urls = re.findall(r'class="titleline"[^>]*><a href="([^"]*)"[^>]*>(.*?)</a>', page)
 
 # Extract scores keyed by story ID (job posts have no score row)
-scores_by_id = {
-    m.group(1): int(m.group(2))
-    for m in re.finditer(
-        r'<span class="score" id="score_(\d+)">(\d+) points</span>', page
-    )
-}
+scores_by_id = {m.group(1): int(m.group(2)) for m in re.finditer(r'<span class="score" id="score_(\d+)">(\d+) points</span>', page)}
 
 # Extract authors keyed by story ID (anchor on score span)
 authors_by_id = {}
 for m in re.finditer(
     r'<span class="score" id="score_(\d+)">\d+ points</span>'
     r'.*?class="hnuser">(.*?)</a>',
-    page, re.DOTALL
+    page,
+    re.DOTALL,
 ):
     authors_by_id[m.group(1)] = m.group(2)
 
 # Extract comment counts keyed by story ID
-comments_by_id = {
-    m.group(1): int(m.group(2))
-    for m in re.finditer(
-        r'href="item\?id=(\d+)">(\d+)&nbsp;comments</a>', page
-    )
-}
+comments_by_id = {m.group(1): int(m.group(2)) for m in re.finditer(r'href="item\?id=(\d+)">(\d+)&nbsp;comments</a>', page)}
 
 stories = []
 for i, sid in enumerate(story_ids):
-    url, raw_title = titles_urls[i] if i < len(titles_urls) else ('', '')
-    stories.append({
-        'rank': i + 1,
-        'id': sid,
-        'title': htmllib.unescape(raw_title),   # MUST unescape — titles contain &#x27; etc.
-        'url': url,
-        'score': scores_by_id.get(sid),          # None for job posts
-        'author': authors_by_id.get(sid),
-        'comments': comments_by_id.get(sid, 0),
-    })
+    url, raw_title = titles_urls[i] if i < len(titles_urls) else ("", "")
+    stories.append(
+        {
+            "rank": i + 1,
+            "id": sid,
+            "title": htmllib.unescape(raw_title),  # MUST unescape — titles contain &#x27; etc.
+            "url": url,
+            "score": scores_by_id.get(sid),  # None for job posts
+            "author": authors_by_id.get(sid),
+            "comments": comments_by_id.get(sid, 0),
+        }
+    )
 ```
 
 **Gotchas:**
@@ -89,16 +80,10 @@ No rate limiting observed. Returns up to 1000 hits per query (`hitsPerPage` max 
 import json
 
 # Keyword search — sorted by relevance
-data = json.loads(http_get(
-    "https://hn.algolia.com/api/v1/search"
-    "?query=llm&tags=story&hitsPerPage=20"
-))
+data = json.loads(http_get("https://hn.algolia.com/api/v1/search?query=llm&tags=story&hitsPerPage=20"))
 
 # Date-sorted (most recent first)
-data = json.loads(http_get(
-    "https://hn.algolia.com/api/v1/search_by_date"
-    "?tags=story&hitsPerPage=20"
-))
+data = json.loads(http_get("https://hn.algolia.com/api/v1/search_by_date?tags=story&hitsPerPage=20"))
 
 # Paginate: add &page=N (0-indexed), up to data['nbPages']-1
 ```
@@ -124,18 +109,19 @@ Tags are AND by default, OR with parentheses:
 
 ```python
 # Story types
-"tags=story"           # regular link/self posts
-"tags=show_hn"         # Show HN
-"tags=ask_hn"          # Ask HN
-"tags=poll"            # polls
-"tags=job"             # job posts
+"tags=story"  # regular link/self posts
+
+"tags=show_hn"  # Show HN
+"tags=ask_hn"  # Ask HN
+"tags=poll"  # polls
+"tags=job"  # job posts
 
 # Combined AND
-"tags=story,front_page"          # currently on front page
-"tags=story,author_pg"           # stories submitted by pg
+"tags=story,front_page"  # currently on front page
+"tags=story,author_pg"  # stories submitted by pg
 
 # OR
-"tags=(ask_hn,show_hn),story"    # Ask OR Show HN
+"tags=(ask_hn,show_hn),story"  # Ask OR Show HN
 
 # By story ID (gets story + all its comments)
 "tags=story_47806725"
@@ -146,6 +132,7 @@ Tags are AND by default, OR with parentheses:
 ```python
 # Date range (unix timestamps)
 "numericFilters=created_at_i>1745000000"
+
 "numericFilters=created_at_i>1700000000,created_at_i<1750000000"
 
 # Point threshold
@@ -158,20 +145,18 @@ Tags are AND by default, OR with parentheses:
 ```python
 import json
 
-thread = json.loads(http_get(
-    "https://hn.algolia.com/api/v1/items/47806725"
-))
+thread = json.loads(http_get("https://hn.algolia.com/api/v1/items/47806725"))
 # thread['children'] = list of top-level comment objects
 # Each comment: author, text (HTML), created_at, children (nested replies)
 # Recursively walk children for full thread
 
 # Total comment count (recursive walk with stack):
-stack = list(thread.get('children', []))
+stack = list(thread.get("children", []))
 total = 0
 while stack:
     node = stack.pop()
     total += 1
-    stack.extend(node.get('children', []))
+    stack.extend(node.get("children", []))
 ```
 
 Confirmed: Algolia items returns 653 total comments for a 659-comment thread (some deleted). `text` field in items API is HTML with `<p>` tags and `<a>` links — may need to strip tags.
@@ -186,24 +171,20 @@ Clean JSON, no scraping. Use for fetching specific items or building live feeds.
 import json
 
 # Ranked story ID lists (no metadata — just IDs)
-top   = json.loads(http_get("https://hacker-news.firebaseio.com/v0/topstories.json"))  # 500 IDs
-new   = json.loads(http_get("https://hacker-news.firebaseio.com/v0/newstories.json"))  # 500 IDs
-best  = json.loads(http_get("https://hacker-news.firebaseio.com/v0/beststories.json")) # 200 IDs
-ask   = json.loads(http_get("https://hacker-news.firebaseio.com/v0/askstories.json"))  # ~32 IDs
-show  = json.loads(http_get("https://hacker-news.firebaseio.com/v0/showstories.json")) # ~119 IDs
-jobs  = json.loads(http_get("https://hacker-news.firebaseio.com/v0/jobstories.json"))  # ~31 IDs
+top = json.loads(http_get("https://hacker-news.firebaseio.com/v0/topstories.json"))  # 500 IDs
+new = json.loads(http_get("https://hacker-news.firebaseio.com/v0/newstories.json"))  # 500 IDs
+best = json.loads(http_get("https://hacker-news.firebaseio.com/v0/beststories.json"))  # 200 IDs
+ask = json.loads(http_get("https://hacker-news.firebaseio.com/v0/askstories.json"))  # ~32 IDs
+show = json.loads(http_get("https://hacker-news.firebaseio.com/v0/showstories.json"))  # ~119 IDs
+jobs = json.loads(http_get("https://hacker-news.firebaseio.com/v0/jobstories.json"))  # ~31 IDs
 
 # Fetch a single item
-item = json.loads(http_get(
-    "https://hacker-news.firebaseio.com/v0/item/47806725.json"
-))
+item = json.loads(http_get("https://hacker-news.firebaseio.com/v0/item/47806725.json"))
 # Fields: id, type, by, title, url, score, descendants (total comment count),
 #         time (unix ts), kids (list of top-level comment IDs), text (self-post body)
 
 # Fetch a user profile
-user = json.loads(http_get(
-    "https://hacker-news.firebaseio.com/v0/user/pg.json"
-))
+user = json.loads(http_get("https://hacker-news.firebaseio.com/v0/user/pg.json"))
 # Fields: id, karma, created (unix ts), about (HTML), submitted (list of item IDs)
 
 # Highest current item ID (useful for polling new items)

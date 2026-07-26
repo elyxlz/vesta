@@ -10,22 +10,22 @@ The `appdetails` endpoint is the primary source for all game data. No API key, n
 import json
 from helpers import http_get
 
+
 def get_app(appid, cc="US"):
     """
     Fetch full game/DLC/software data by Steam appid.
     cc = ISO-3166 country code for correct regional pricing (default: US).
     Returns None if appid not found or no longer on Steam.
     """
-    resp = http_get(
-        f"https://store.steampowered.com/api/appdetails?appids={appid}&cc={cc}"
-    )
+    resp = http_get(f"https://store.steampowered.com/api/appdetails?appids={appid}&cc={cc}")
     data = json.loads(resp)
     entry = data[str(appid)]
     if not entry["success"]:
         return None
     return entry["data"]
 
-game = get_app(292030)   # The Witcher 3
+
+game = get_app(292030)  # The Witcher 3
 # game["name"]               -> "The Witcher 3: Wild Hunt"
 # game["steam_appid"]        -> 292030
 # game["type"]               -> "game" | "dlc" | "demo" | "advertising" | "mod" | "video"
@@ -70,13 +70,13 @@ po = game.get("price_overview")
 # po is None for free-to-play games (is_free=True)
 
 if po:
-    print(po["currency"])           # "USD"
-    print(po["final"])              # 3999          (cents — $39.99)
-    print(po["initial"])            # 3999          (original price in cents)
-    print(po["discount_percent"])   # 0             (0–100)
-    print(po["final_formatted"])    # "$39.99"       (always present, ready to display)
+    print(po["currency"])  # "USD"
+    print(po["final"])  # 3999          (cents — $39.99)
+    print(po["initial"])  # 3999          (original price in cents)
+    print(po["discount_percent"])  # 0             (0–100)
+    print(po["final_formatted"])  # "$39.99"       (always present, ready to display)
     print(po["initial_formatted"])  # ""             (EMPTY when not discounted!)
-                                    # "$49.99"       (only set when discount_percent > 0)
+    # "$49.99"       (only set when discount_percent > 0)
 ```
 
 **Critical**: `initial_formatted` is an empty string when `discount_percent == 0`.
@@ -93,6 +93,7 @@ def price_display(game):
     disc = po["discount_percent"]
     orig = po["initial_formatted"] if disc > 0 else None
     return (po["final_formatted"], orig, disc)
+
 
 # Witcher3: ("$39.99", None, 0)
 # Discounted game: ("$24.99", "$49.99", 50)
@@ -122,13 +123,13 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from helpers import http_get
 
+
 def fetch_game(appid, cc="US"):
-    resp = http_get(
-        f"https://store.steampowered.com/api/appdetails?appids={appid}&cc={cc}"
-    )
+    resp = http_get(f"https://store.steampowered.com/api/appdetails?appids={appid}&cc={cc}")
     data = json.loads(resp)
     entry = data[str(appid)]
     return entry["data"] if entry["success"] else None
+
 
 appids = [292030, 570, 413150, 427520, 730, 550, 220, 400, 218620, 105600]
 
@@ -176,20 +177,20 @@ resp = http_get("https://store.steampowered.com/api/appdetails?appids=292030&fil
 
 ```python
 game = get_app(292030)
-for ss in game["screenshots"]:       # 18 screenshots for Witcher 3
-    print(ss["id"])                  # 0, 1, 2, ...
-    print(ss["path_thumbnail"])      # 600x338 JPEG URL
-    print(ss["path_full"])           # 1920x1080 JPEG URL
+for ss in game["screenshots"]:  # 18 screenshots for Witcher 3
+    print(ss["id"])  # 0, 1, 2, ...
+    print(ss["path_thumbnail"])  # 600x338 JPEG URL
+    print(ss["path_full"])  # 1920x1080 JPEG URL
 ```
 
 ### Movies / trailers
 
 ```python
-for m in game["movies"]:             # 4 trailers for Witcher 3
-    print(m["id"])                   # integer
-    print(m["name"])                 # trailer title
-    print(m["thumbnail"])            # thumbnail URL
-    print(m["highlight"])            # bool — main trailer flag
+for m in game["movies"]:  # 4 trailers for Witcher 3
+    print(m["id"])  # integer
+    print(m["name"])  # trailer title
+    print(m["thumbnail"])  # thumbnail URL
+    print(m["highlight"])  # bool — main trailer flag
     # m["webm"]  -> None (old format, mostly absent)
     # m["mp4"]   -> None (old format, mostly absent)
     # m["dash_av1"]  -> dash_av1 stream URL (present on modern entries)
@@ -208,29 +209,29 @@ game = get_app(292030)
 
 # ESRB (North America)
 esrb = game["ratings"].get("esrb", {})
-esrb["rating"]          # "m" (lowercase)  -> M for Mature
-esrb["descriptors"]     # "Blood and Gore\r\nIntense Violence\r\nNudity\r\n..."
-esrb["use_age_gate"]    # "true" (string, not bool)
-esrb["required_age"]    # "17" (string, not int)
+esrb["rating"]  # "m" (lowercase)  -> M for Mature
+esrb["descriptors"]  # "Blood and Gore\r\nIntense Violence\r\nNudity\r\n..."
+esrb["use_age_gate"]  # "true" (string, not bool)
+esrb["required_age"]  # "17" (string, not int)
 
 # PEGI (Europe)
 pegi = game["ratings"].get("pegi", {})
-pegi["rating"]          # "18"
-pegi["descriptors"]     # "Violence\r\nBad language"
+pegi["rating"]  # "18"
+pegi["descriptors"]  # "Violence\r\nBad language"
 
 # USK (Germany)
 usk = game["ratings"].get("usk", {})
-usk["rating"]           # "18"
+usk["rating"]  # "18"
 
 # steam_germany (Germany digital-only classification)
 sg = game["ratings"].get("steam_germany", {})
-sg["rating"]            # "16"
-sg["banned"]            # "0"  (1 = banned in Germany)
+sg["rating"]  # "16"
+sg["banned"]  # "0"  (1 = banned in Germany)
 
 # igrs (Indonesia)
 igrs = game["ratings"].get("igrs", {})
-igrs["rating"]          # "BANNED" if banned there
-igrs["banned"]          # "1"
+igrs["rating"]  # "BANNED" if banned there
+igrs["banned"]  # "1"
 
 # Other keys: oflc, nzoflc, kgrb, dejus, mda, fpb, csrr, crl
 ```
@@ -257,19 +258,17 @@ To bypass the age gate on the store page, send the `birthtime` cookie:
 ```python
 import urllib.request
 
+
 def get_store_page(appid):
     """Fetch game store HTML page, bypassing age gate."""
     req = urllib.request.Request(
         f"https://store.steampowered.com/app/{appid}/",
-        headers={
-            "User-Agent": "Mozilla/5.0",
-            "Cookie": "birthtime=631152001; lastagecheckage=1-January-1990"
-        }
+        headers={"User-Agent": "Mozilla/5.0", "Cookie": "birthtime=631152001; lastagecheckage=1-January-1990"},
     )
     with urllib.request.urlopen(req, timeout=15) as r:
         html = r.read().decode("utf-8", errors="replace")
         if "agecheck" in r.url:
-            return None   # Age gate not bypassed
+            return None  # Age gate not bypassed
         return html
 ```
 
@@ -285,17 +284,17 @@ def get_store_page(appid):
 import json, urllib.parse
 from helpers import http_get
 
+
 def search_games(term, cc="US", lang="english"):
     """
     Returns up to 10 matching apps/DLC/bundles.
     No pagination — always exactly 10 results max.
     """
     q = urllib.parse.quote(term)
-    resp = http_get(
-        f"https://store.steampowered.com/api/storesearch/?term={q}&l={lang}&cc={cc}"
-    )
+    resp = http_get(f"https://store.steampowered.com/api/storesearch/?term={q}&l={lang}&cc={cc}")
     data = json.loads(resp)
     return data["items"]
+
 
 results = search_games("witcher")
 # [
@@ -329,8 +328,8 @@ results = search_games("witcher")
 import json, urllib.parse
 from helpers import http_get
 
-def get_reviews(appid, num=10, language="english", filter="recent",
-                review_type="all", purchase_type="all", cursor="*"):
+
+def get_reviews(appid, num=10, language="english", filter="recent", review_type="all", purchase_type="all", cursor="*"):
     """
     filter: "recent" | "updated" | "all"
     review_type: "all" | "positive" | "negative"
@@ -346,6 +345,7 @@ def get_reviews(appid, num=10, language="english", filter="recent",
         f"&purchase_type={purchase_type}&cursor={encoded_cursor}"
     )
     return json.loads(resp)
+
 
 result = get_reviews(292030, num=5, language="english")
 
@@ -380,29 +380,29 @@ result = get_reviews(292030, num=5, language="english")
 
 ```python
 review = result["reviews"][0]
-review["recommendationid"]           # "221423937"  — unique review ID
-review["voted_up"]                   # True/False  — positive/negative
-review["votes_up"]                   # 213         — helpful votes
-review["votes_funny"]                # 66
-review["weighted_vote_score"]        # 0.8405...   — Steam's helpfulness score
-review["comment_count"]              # 20
-review["steam_purchase"]             # True
-review["received_for_free"]          # False
-review["written_during_early_access"]# False
-review["timestamp_created"]          # 1774209092  (Unix timestamp)
-review["timestamp_updated"]          # Unix timestamp
-review["language"]                   # "english"
-review["review"]                     # review text
-review["app_release_date"]           # Unix timestamp of game release
+review["recommendationid"]  # "221423937"  — unique review ID
+review["voted_up"]  # True/False  — positive/negative
+review["votes_up"]  # 213         — helpful votes
+review["votes_funny"]  # 66
+review["weighted_vote_score"]  # 0.8405...   — Steam's helpfulness score
+review["comment_count"]  # 20
+review["steam_purchase"]  # True
+review["received_for_free"]  # False
+review["written_during_early_access"]  # False
+review["timestamp_created"]  # 1774209092  (Unix timestamp)
+review["timestamp_updated"]  # Unix timestamp
+review["language"]  # "english"
+review["review"]  # review text
+review["app_release_date"]  # Unix timestamp of game release
 
-review["author"]["steamid"]              # "76561198..."
-review["author"]["personaname"]          # display name
-review["author"]["num_games_owned"]      # 1039
-review["author"]["num_reviews"]          # 180
-review["author"]["playtime_forever"]     # 1146  (minutes total)
-review["author"]["playtime_last_two_weeks"] # minutes in last 2 weeks
-review["author"]["playtime_at_review"]   # minutes at time of review
-review["author"]["last_played"]          # Unix timestamp
+review["author"]["steamid"]  # "76561198..."
+review["author"]["personaname"]  # display name
+review["author"]["num_games_owned"]  # 1039
+review["author"]["num_reviews"]  # 180
+review["author"]["playtime_forever"]  # 1146  (minutes total)
+review["author"]["playtime_last_two_weeks"]  # minutes in last 2 weeks
+review["author"]["playtime_at_review"]  # minutes at time of review
+review["author"]["last_played"]  # Unix timestamp
 ```
 
 ### Cursor-based pagination
@@ -410,6 +410,7 @@ review["author"]["last_played"]          # Unix timestamp
 ```python
 import urllib.parse, json
 from helpers import http_get
+
 
 def get_all_reviews(appid, max_pages=5, num_per_page=100, language="all"):
     """Paginate through reviews using cursor."""
@@ -472,9 +473,9 @@ item = data["featured_win"][0]
 data = json.loads(http_get("https://store.steampowered.com/api/featuredcategories/"))
 
 # Named sections (most useful):
-specials    = data["specials"]["items"]      # 10 on-sale games
+specials = data["specials"]["items"]  # 10 on-sale games
 top_sellers = data["top_sellers"]["items"]  # 10 top sellers
-new_releases= data["new_releases"]["items"] # 30 new releases
+new_releases = data["new_releases"]["items"]  # 30 new releases
 coming_soon = data["coming_soon"]["items"]  # 10 upcoming games
 
 # Numbered keys "0" through "7" are spotlight banners (deals/events)
@@ -507,6 +508,7 @@ The `ISteamApps/GetAppList` API endpoint (v1, v2, v0001, v0002) currently return
 import json
 from helpers import http_get
 
+
 def get_all_store_appids():
     data = json.loads(http_get("https://store.steampowered.com/api/featuredcategories/"))
     appids = set()
@@ -517,6 +519,7 @@ def get_all_store_appids():
         for item in data.get(key, []):
             appids.add(item["id"])
     return sorted(appids)
+
 
 # Returns ~50 store-front appids (enough to seed further discovery)
 ```
@@ -544,7 +547,7 @@ Practical limits (undocumented, inferred from community reports):
 ```python
 entry = json.loads(resp)[str(appid)]
 if not entry["success"]:
-    return None   # game removed or never existed
+    return None  # game removed or never existed
 game = entry["data"]
 ```
 

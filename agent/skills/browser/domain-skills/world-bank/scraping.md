@@ -12,8 +12,8 @@ import json
 
 raw = http_get("https://api.worldbank.org/v2/country/US/indicator/NY.GDP.MKTP.CD?format=json")
 d = json.loads(raw)
-meta = d[0]   # {"page": 1, "pages": 2, "per_page": 50, "total": 66, ...}
-rows = d[1]   # list of data records
+meta = d[0]  # {"page": 1, "pages": 2, "per_page": 50, "total": 66, ...}
+rows = d[1]  # list of data records
 ```
 
 Always append `?format=json` — default response is XML.
@@ -31,7 +31,7 @@ d = json.loads(raw)
 meta, rows = d[0], d[1]
 
 for r in rows:
-    if r["value"] is not None:   # recent years often have null values
+    if r["value"] is not None:  # recent years often have null values
         print(r["date"], r["value"])
 # Confirmed output (2026-04-18):
 # 2024 28750956130731.2
@@ -48,10 +48,7 @@ for r in rows:
 from helpers import http_get
 import json
 
-raw = http_get(
-    "https://api.worldbank.org/v2/country/US/indicator/NY.GDP.MKTP.CD"
-    "?format=json&mrv=5"
-)
+raw = http_get("https://api.worldbank.org/v2/country/US/indicator/NY.GDP.MKTP.CD?format=json&mrv=5")
 d = json.loads(raw)
 for r in d[1]:
     print(r["date"], r["value"])
@@ -71,10 +68,7 @@ Semicolon-delimit country codes in the URL path. Use `date=YYYY:YYYY` for a rang
 from helpers import http_get
 import json
 
-raw = http_get(
-    "https://api.worldbank.org/v2/country/US;CN;GB/indicator/SP.POP.TOTL"
-    "?format=json&date=2000:2023&per_page=100"
-)
+raw = http_get("https://api.worldbank.org/v2/country/US;CN;GB/indicator/SP.POP.TOTL?format=json&date=2000:2023&per_page=100")
 d = json.loads(raw)
 meta, rows = d[0], d[1]
 print(f"Total records: {meta['total']}, pages: {meta['pages']}")
@@ -94,10 +88,7 @@ Use `mrv=1` with `per_page=1000` to get all 266 countries in a single call.
 from helpers import http_get
 import json
 
-raw = http_get(
-    "https://api.worldbank.org/v2/country/all/indicator/NY.GDP.PCAP.CD"
-    "?format=json&mrv=1&per_page=1000"
-)
+raw = http_get("https://api.worldbank.org/v2/country/all/indicator/NY.GDP.PCAP.CD?format=json&mrv=1&per_page=1000")
 d = json.loads(raw)
 meta, rows = d[0], d[1]
 print(f"Countries returned: {len(rows)}")  # 266 (includes aggregates)
@@ -118,6 +109,7 @@ for r in sorted(countries_only, key=lambda x: -(x["value"] or 0))[:5]:
 from helpers import http_get
 import json
 
+
 def fetch_all_pages(base_url):
     """Fetch all pages of a World Bank API endpoint."""
     all_rows = []
@@ -132,11 +124,9 @@ def fetch_all_pages(base_url):
         page += 1
     return all_rows
 
+
 # Example: all US GDP data (66 years, 2 pages)
-rows = fetch_all_pages(
-    "https://api.worldbank.org/v2/country/US/indicator/NY.GDP.MKTP.CD"
-    "?format=json&per_page=50"
-)
+rows = fetch_all_pages("https://api.worldbank.org/v2/country/US/indicator/NY.GDP.MKTP.CD?format=json&per_page=50")
 print(f"Total rows: {len(rows)}")  # 66
 non_null = [(r["date"], r["value"]) for r in rows if r["value"] is not None]
 print(f"Non-null: {len(non_null)}, range: {non_null[-1][0]}–{non_null[0][0]}")
@@ -222,13 +212,12 @@ INDICATORS = {
     "NY.GDP.PCAP.CD": "GDP per capita",
 }
 
+
 def fetch_indicator(ind_id):
-    url = (
-        f"https://api.worldbank.org/v2/country/US/indicator/{ind_id}"
-        f"?format=json&mrv=5"
-    )
+    url = f"https://api.worldbank.org/v2/country/US/indicator/{ind_id}?format=json&mrv=5"
     d = json.loads(http_get(url))
     return ind_id, d[1]
+
 
 with ThreadPoolExecutor(max_workers=3) as ex:
     results = dict(ex.map(lambda i: fetch_indicator(i), INDICATORS))

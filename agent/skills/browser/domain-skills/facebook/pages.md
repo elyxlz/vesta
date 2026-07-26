@@ -101,7 +101,8 @@ TARGET = 50
 MAX_SCROLLS = 30
 
 for i in range(MAX_SCROLLS):
-    batch = js("""
+    batch = (
+        js("""
       Array.from(document.querySelectorAll('div[role="article"]')).map(el => {
         const link = el.querySelector('a[href*="/posts/"][href*="pfbid"], a[href*="/permalink.php"], a[href*="/story.php"]');
         const body = el.querySelector('div[data-ad-preview="message"], div[data-ad-comet-preview="message"]');
@@ -115,7 +116,9 @@ for i in range(MAX_SCROLLS):
           externals: externals,
         };
       }).filter(p => p.url)
-    """) or []
+    """)
+        or []
+    )
     for p in batch:
         seen.setdefault(p["url"], p)
     if len(seen) >= TARGET:
@@ -138,6 +141,8 @@ Identical to groups.md — every outbound link is wrapped in
 
 ```python
 from urllib.parse import urlparse, parse_qs, unquote
+
+
 def decode_fb_link(href):
     if not href.startswith("https://l.facebook.com/l.php"):
         return href
@@ -177,7 +182,8 @@ at the screen, and don't try to auto-resolve.
 ## Self-inspection block (run when selectors stop working)
 
 ```python
-print(js("""
+print(
+    js("""
   ({
     articles: document.querySelectorAll('div[role="article"]').length,
     body_preview_a: document.querySelectorAll('div[data-ad-preview="message"]').length,
@@ -188,7 +194,8 @@ print(js("""
     story_php: document.querySelectorAll('a[href*="/story.php"]').length,
     h1_present: !!document.querySelector('h1'),
   })
-"""))
+""")
+)
 # If any count is 0 on a Page you know has posts, the selector drifted.
 # Open DevTools, inspect a post, find the new stable attribute, update the
 # DOM anchors table above.

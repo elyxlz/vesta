@@ -22,7 +22,7 @@ wait(2)
 wait_for_load()
 
 # Verify — the toggle swaps which form is present
-starred = js('!!document.querySelector(\'form[action$="/unstar"]\')')
+starred = js("!!document.querySelector('form[action$=\"/unstar\"]')")
 ```
 
 Same pattern for the reverse (`form[action$="/unstar"]`) and for watch/unwatch (`form[action$="/subscription"]` + a hidden `_method` field, see below).

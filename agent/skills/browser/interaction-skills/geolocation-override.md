@@ -12,13 +12,13 @@ the site's own **"Use my current location"** button. The site geocodes the coord
 right country's results directly.
 
 ```python
-browser <<'PY'
+browser << "PY"
 # 1. grant the origin geolocation permission (else the browser blocks the API)
 cdp("Browser.grantPermissions", origin="https://getsupport.apple.com", permissions=["geolocation"])
 # 2. override the position to your target (lat, lon). Rome city centre here.
 cdp("Emulation.setGeolocationOverride", latitude=41.9028, longitude=12.4810, accuracy=50)
 # 3. now click the site's own "Use my current location" control
-click(472, 349)   # or click a ref
+click(472, 349)  # or click a ref
 wait(5)
 PY
 ```

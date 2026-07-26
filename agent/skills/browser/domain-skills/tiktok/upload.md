@@ -30,12 +30,13 @@ wait(12)  # processing takes ~10s for 5-10MB
 TikTok pre-fills caption with the filename. Clear it first:
 
 ```python
-js("document.querySelector('div[contenteditable=\"true\"][role=\"combobox\"]').focus()")
+js('document.querySelector(\'div[contenteditable="true"][role="combobox"]\').focus()')
 press_key("End")
-for _ in range(25): press_key("Backspace")  # clear filename
+for _ in range(25):
+    press_key("Backspace")  # clear filename
 type_text("your caption here #hashtag1 #hashtag2")
 press_key("Escape")  # dismiss hashtag suggestions
-click(700, 50)        # click away to deselect
+click(700, 50)  # click away to deselect
 ```
 
 Verify: `js('document.querySelector(\'div[contenteditable="true"][role="combobox"]\').innerText')`
@@ -44,7 +45,9 @@ Verify: `js('document.querySelector(\'div[contenteditable="true"][role="combobox
 
 Click the Schedule radio label:
 ```python
-js("(()=>{var l=document.querySelectorAll('label');for(var i=0;i<l.length;i++){if(l[i].textContent.trim()==='Schedule'){l[i].click();break}}})()")
+js(
+    "(()=>{var l=document.querySelectorAll('label');for(var i=0;i<l.length;i++){if(l[i].textContent.trim()==='Schedule'){l[i].click();break}}})()"
+)
 ```
 
 **Time picker** — uses a scroll-wheel list, NOT a native select. Each `scroll(dy=32)` steps +1 unit, `dy=-32` steps -1 unit.

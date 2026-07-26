@@ -34,7 +34,8 @@ from urllib.parse import quote_plus
 
 # Keyword search. Note: /jobs?keywords=... 302s to a slug like /business-development-jobs
 goto("https://hk.jobsdb.com/jobs?keywords=" + quote_plus("business development"))
-wait_for_load(); wait(2)
+wait_for_load()
+wait(2)
 ```
 
 ### URL grammar
@@ -101,7 +102,8 @@ Detail page:
 ```python
 def jobsdb_detail(job_id, host="hk.jobsdb.com"):
     goto(f"https://{host}/job/{job_id}")
-    wait_for_load(); wait(2)
+    wait_for_load()
+    wait(2)
     return js("""(function(){
       var g = function(a){ var e=document.querySelector('[data-automation="'+a+'"]'); return e?e.innerText.trim():''; };
       return {title: g('job-detail-title'), company: g('advertiser-name'), body: g('jobAdDetails')};
@@ -128,8 +130,10 @@ auth** and, unlike most boards, **exact ISO dates**:
 
 ```python
 # f_TPR is a lookback in seconds: r432000 = 5d, r604800 = 7d
-goto("https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
-     "?keywords=business%20development&location=Shanghai&f_TPR=r432000&start=0")
+goto(
+    "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
+    "?keywords=business%20development&location=Shanghai&f_TPR=r432000&start=0"
+)
 ```
 
 Returns 10 `<li>` cards per call, each with `<time datetime="ISO">`. Detail pages live at

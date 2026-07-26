@@ -13,10 +13,8 @@ import json
 
 # Find all snapshots of a URL — the minimal starting query
 r = http_get(
-    "https://web.archive.org/cdx/search/cdx"
-    "?url=example.com&output=json&limit=10"
-    "&fl=timestamp,original,statuscode,mimetype,length",
-    timeout=40.0   # CDX is slow — never use less than 40s
+    "https://web.archive.org/cdx/search/cdx?url=example.com&output=json&limit=10&fl=timestamp,original,statuscode,mimetype,length",
+    timeout=40.0,  # CDX is slow — never use less than 40s
 )
 rows = json.loads(r)
 # rows[0] is ALWAYS the header row — slice rows[1:] for data
@@ -40,10 +38,10 @@ r = http_get(
     "?url=example.com&output=json&limit=1"
     "&fl=timestamp,original,statuscode"
     "&closest=20230601120000&sort=closest",
-    timeout=60.0
+    timeout=60.0,
 )
 rows = json.loads(r)
-ts, orig, status = rows[1]   # rows[0] is header
+ts, orig, status = rows[1]  # rows[0] is header
 snap_url = f"https://web.archive.org/web/{ts}/{orig}"
 # Timestamp format: 14-digit YYYYMMDDHHMMSS
 # Prefix shorthand: '20230601' (day), '202306' (month), '2023' (year)
@@ -57,10 +55,10 @@ import json
 r = http_get(
     "https://web.archive.org/cdx/search/cdx"
     "?url=example.com&output=json"
-    "&collapse=timestamp:6"   # :6 = one per YYYYMM
+    "&collapse=timestamp:6"  # :6 = one per YYYYMM
     "&from=20220101&to=20230101"
     "&fl=timestamp,original,statuscode",
-    timeout=60.0
+    timeout=60.0,
 )
 rows = json.loads(r)
 for ts, orig, status in rows[1:]:
@@ -84,8 +82,8 @@ r = http_get(
     "https://web.archive.org/cdx/search/cdx"
     "?url=example.com/blog/&matchType=prefix&output=json"
     "&limit=20&fl=timestamp,original,statuscode"
-    "&filter=statuscode:200",   # only successful captures
-    timeout=60.0
+    "&filter=statuscode:200",  # only successful captures
+    timeout=60.0,
 )
 rows = json.loads(r)
 for row in rows[1:]:
@@ -111,7 +109,7 @@ r = http_get(
     "&filter=mimetype:text/html"
     "&fl=timestamp,original,length"
     "&limit=10",
-    timeout=40.0
+    timeout=40.0,
 )
 rows = json.loads(r)
 
@@ -150,11 +148,7 @@ import json
 # Use CDX with ?sort=closest&limit=1 instead (see above).
 
 # Left here for reference only — do not rely on it:
-r = http_get(
-    "https://archive.org/wayback/available"
-    "?url=example.com&timestamp=20240101",
-    timeout=20.0
-)
+r = http_get("https://archive.org/wayback/available?url=example.com&timestamp=20240101", timeout=20.0)
 data = json.loads(r)
 # Returns: {"url": "example.com", "archived_snapshots": {}}
 # Even for well-archived URLs. Do not trust empty results.
@@ -165,7 +159,7 @@ r = http_get(
     "?url=example.com&output=json&limit=1"
     "&fl=timestamp,original,statuscode"
     "&closest=20240101000000&sort=closest",
-    timeout=60.0
+    timeout=60.0,
 )
 rows = json.loads(r)
 if len(rows) > 1:
@@ -181,13 +175,10 @@ if len(rows) > 1:
 import json
 from urllib.parse import quote
 
+
 def cdx_all_snapshots(url, fl="timestamp,original,statuscode", page_size=500):
     """Yield all CDX rows for a URL, page by page."""
-    base = (
-        "https://web.archive.org/cdx/search/cdx"
-        f"?url={quote(url, safe='')}&output=json"
-        f"&fl={fl}&limit={page_size}&showResumeKey=true"
-    )
+    base = f"https://web.archive.org/cdx/search/cdx?url={quote(url, safe='')}&output=json&fl={fl}&limit={page_size}&showResumeKey=true"
     resume_key = None
     while True:
         endpoint = base if resume_key is None else f"{base}&resumeKey={quote(resume_key)}"
@@ -200,6 +191,7 @@ def cdx_all_snapshots(url, fl="timestamp,original,statuscode", page_size=500):
         if not has_resume:
             break
         resume_key = rows[-1][0]
+
 
 for ts, orig, status in cdx_all_snapshots("example.com"):
     snap_url = f"https://web.archive.org/web/{ts}/{orig}"
@@ -235,10 +227,10 @@ import json
 r = http_get(
     "https://web.archive.org/cdx/search/cdx"
     "?url=example.com&output=json"
-    "&collapse=digest"           # one capture per unique body hash
+    "&collapse=digest"  # one capture per unique body hash
     "&fl=timestamp,original,digest,length"
     "&filter=statuscode:200",
-    timeout=60.0
+    timeout=60.0,
 )
 rows = json.loads(r)
 # rows[1:] are unique content versions across all time
@@ -254,13 +246,8 @@ import json
 
 # showNumPages=true returns total page count, not records
 # Use for estimating result size before a full fetch
-r = http_get(
-    "https://web.archive.org/cdx/search/cdx"
-    "?url=example.com&matchType=prefix"
-    "&showNumPages=true",
-    timeout=30.0
-)
-page_count = int(r.strip())   # returns plain integer, not JSON
+r = http_get("https://web.archive.org/cdx/search/cdx?url=example.com&matchType=prefix&showNumPages=true", timeout=30.0)
+page_count = int(r.strip())  # returns plain integer, not JSON
 # 1 page ~ 150,000 records by default
 # Combine with &page=N for manual page-based pagination:
 # ?url=...&output=json&page=0, ?url=...&output=json&page=1, etc.

@@ -15,13 +15,13 @@ countries = json.loads(data)
 # countries is a list of 250 dicts — confirmed 2026-04-18
 
 for c in countries:
-    name       = c["name"]["common"]          # "Germany"
-    official   = c["name"]["official"]        # "Federal Republic of Germany"
-    code       = c["cca2"]                    # "DE"
-    capital    = c["capital"][0] if c.get("capital") else None   # list — may be empty
-    population = c["population"]              # 83491249
-    area       = c["area"]                    # 357114.0 (km²)
-    region     = c["region"]                  # "Europe"
+    name = c["name"]["common"]  # "Germany"
+    official = c["name"]["official"]  # "Federal Republic of Germany"
+    code = c["cca2"]  # "DE"
+    capital = c["capital"][0] if c.get("capital") else None  # list — may be empty
+    population = c["population"]  # 83491249
+    area = c["area"]  # 357114.0 (km²)
+    region = c["region"]  # "Europe"
     print(code, name, population)
 # Confirmed output (first result varies — API returns unsorted):
 # CI Ivory Coast 31719275
@@ -43,17 +43,17 @@ country = json.loads(data)[0]
 
 # But: /alpha/CODE?fields=... returns a plain dict, not a list — watch for this
 data2 = http_get("https://restcountries.com/v3.1/alpha/DE?fields=name,cca2,currencies,languages,flags")
-country2 = json.loads(data2)          # dict, NOT list
+country2 = json.loads(data2)  # dict, NOT list
 
-name       = country2["name"]["common"]                             # "Germany"
-currencies = country2["currencies"]                                 # {"EUR": {"name": "euro", "symbol": "€"}}
-currency_codes = list(currencies.keys())                            # ["EUR"]
-currency_name  = currencies["EUR"]["name"]                          # "euro"
-languages  = country2["languages"]                                  # {"deu": "German"}
-lang_names = list(languages.values())                               # ["German"]
-flag_png   = country2["flags"]["png"]                               # "https://flagcdn.com/w320/de.png"
-flag_svg   = country2["flags"]["svg"]                               # "https://flagcdn.com/de.svg"
-flag_alt   = country2["flags"]["alt"]                               # description text
+name = country2["name"]["common"]  # "Germany"
+currencies = country2["currencies"]  # {"EUR": {"name": "euro", "symbol": "€"}}
+currency_codes = list(currencies.keys())  # ["EUR"]
+currency_name = currencies["EUR"]["name"]  # "euro"
+languages = country2["languages"]  # {"deu": "German"}
+lang_names = list(languages.values())  # ["German"]
+flag_png = country2["flags"]["png"]  # "https://flagcdn.com/w320/de.png"
+flag_svg = country2["flags"]["svg"]  # "https://flagcdn.com/de.svg"
+flag_alt = country2["flags"]["alt"]  # description text
 
 print(name, currency_codes, lang_names)
 # Confirmed: Germany ['EUR'] ['German']
@@ -184,12 +184,12 @@ c = json.loads(data)[0]
 # maps, population, gini, fifa, car, timezones, continents, flags,
 # coatOfArms, startOfWeek, capitalInfo, postalCode
 
-print(c["idd"])          # {"root": "+1", "suffixes": ["201", "202", ...]}
+print(c["idd"])  # {"root": "+1", "suffixes": ["201", "202", ...]}
 print(c["car"]["side"])  # "right" or "left"
-print(c["gini"])         # {"2018": 41.4}  — year keyed, may be absent
-print(c["timezones"])    # list of UTC offset strings
-print(c["borders"])      # list of cca3 codes for bordering countries
-print(c["latlng"])       # [lat, lng] of geographic center
+print(c["gini"])  # {"2018": 41.4}  — year keyed, may be absent
+print(c["timezones"])  # list of UTC offset strings
+print(c["borders"])  # list of cca3 codes for bordering countries
+print(c["latlng"])  # [lat, lng] of geographic center
 ```
 
 ## URL reference

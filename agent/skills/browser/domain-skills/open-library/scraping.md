@@ -33,17 +33,15 @@ from helpers import http_get
 r = json.loads(http_get("https://openlibrary.org/search.json?q=dune+frank+herbert&limit=5"))
 
 # Author search
-r = json.loads(http_get(
-    "https://openlibrary.org/search.json?author=tolkien&limit=5"
-    "&fields=title,author_name,first_publish_year,isbn"
-))
+r = json.loads(http_get("https://openlibrary.org/search.json?author=tolkien&limit=5&fields=title,author_name,first_publish_year,isbn"))
 # fields=* returns all available fields; default returns ~15
 
 # Title + author combined
-r = json.loads(http_get(
-    "https://openlibrary.org/search.json?title=dune&author=frank+herbert&limit=3"
-    "&fields=title,author_name,edition_count,first_publish_year"
-))
+r = json.loads(
+    http_get(
+        "https://openlibrary.org/search.json?title=dune&author=frank+herbert&limit=3&fields=title,author_name,edition_count,first_publish_year"
+    )
+)
 # r['docs'][0]['title']              == 'Dune'
 # r['docs'][0]['author_name']        == ['Frank Herbert']
 # r['docs'][0]['first_publish_year'] == 1965
@@ -116,16 +114,23 @@ import json
 from helpers import http_get
 from concurrent.futures import ThreadPoolExecutor
 
-isbns = ['9780743273565', '9780451524935', '9780618346257']
+isbns = ["9780743273565", "9780451524935", "9780618346257"]
+
 
 def lookup_isbn(isbn):
     url = f"https://openlibrary.org/search.json?isbn={isbn}&fields=title,author_name,first_publish_year,key"
     r = json.loads(http_get(url))
-    if r['docs']:
-        d = r['docs'][0]
-        return {'isbn': isbn, 'title': d.get('title'), 'author': d.get('author_name', [None])[0],
-                'year': d.get('first_publish_year'), 'key': d.get('key')}
-    return {'isbn': isbn, 'found': False}
+    if r["docs"]:
+        d = r["docs"][0]
+        return {
+            "isbn": isbn,
+            "title": d.get("title"),
+            "author": d.get("author_name", [None])[0],
+            "year": d.get("first_publish_year"),
+            "key": d.get("key"),
+        }
+    return {"isbn": isbn, "found": False}
+
 
 with ThreadPoolExecutor(max_workers=5) as ex:
     books = list(ex.map(lookup_isbn, isbns))
@@ -145,7 +150,7 @@ Returns all metadata for a work (all editions combined). Get the work ID from `k
 import json
 from helpers import http_get
 
-work_id = 'OL893415W'  # from search doc['key'] = '/works/OL893415W'
+work_id = "OL893415W"  # from search doc['key'] = '/works/OL893415W'
 work = json.loads(http_get(f"https://openlibrary.org/works/{work_id}.json"))
 
 # work['title']           == 'Dune'
@@ -165,24 +170,22 @@ Helper for the description field (which has two possible shapes):
 
 ```python
 def get_description(work: dict) -> str:
-    desc = work.get('description', '')
+    desc = work.get("description", "")
     if isinstance(desc, dict):
-        return desc.get('value', '')
-    return desc or ''
+        return desc.get("value", "")
+    return desc or ""
 ```
 
 #### Works editions (paginated list of all editions)
 
 ```python
-editions_resp = json.loads(http_get(
-    f"https://openlibrary.org/works/{work_id}/editions.json?limit=10&offset=0"
-))
+editions_resp = json.loads(http_get(f"https://openlibrary.org/works/{work_id}/editions.json?limit=10&offset=0"))
 # editions_resp['size']    == 120      (total edition count)
 # editions_resp['entries'] == [...]    (up to limit items)
 # editions_resp['links']   == {'self': '...', 'work': '...', 'next': '...', 'prev': '...'}
 # ← use links['next'] for pagination when offset+limit < size
 
-e = editions_resp['entries'][0]
+e = editions_resp["entries"][0]
 # e['title']           == 'Duna'
 # e['publishers']      == ['Editora Aleph']
 # e['publish_date']    == '19/08/2017'   ← inconsistent format, string
@@ -208,7 +211,7 @@ Two sub-APIs: direct JSON for raw data, or `api/books` for enriched data.
 import json
 from helpers import http_get
 
-edition_id = 'OL7353617M'  # from editions list e['key'] or cover_edition_key in search
+edition_id = "OL7353617M"  # from editions list e['key'] or cover_edition_key in search
 edition = json.loads(http_get(f"https://openlibrary.org/books/{edition_id}.json"))
 
 # edition['title']           == 'Fantastic Mr. Fox'
@@ -230,14 +233,10 @@ edition = json.loads(http_get(f"https://openlibrary.org/books/{edition_id}.json"
 
 ```python
 # jscmd=data: cleaned up dict with cover URLs pre-built
-r = json.loads(http_get(
-    "https://openlibrary.org/api/books"
-    "?bibkeys=ISBN:9780743273565,ISBN:9780451524935"
-    "&format=json&jscmd=data"
-))
+r = json.loads(http_get("https://openlibrary.org/api/books?bibkeys=ISBN:9780743273565,ISBN:9780451524935&format=json&jscmd=data"))
 # r == {'ISBN:9780743273565': {...}, 'ISBN:9780451524935': {...}}
 
-book = r['ISBN:9780743273565']
+book = r["ISBN:9780743273565"]
 # book['title']           == 'The Great Gatsby'
 # book['authors']         == [{'url': '...', 'name': 'F. Scott Fitzgerald'}]
 # book['publish_date']    == '2021'
@@ -251,11 +250,8 @@ book = r['ISBN:9780743273565']
 # book['subject_places']  == None  ← often null even with jscmd=data
 
 # jscmd=details: raw edition JSON + extra fields
-r2 = json.loads(http_get(
-    "https://openlibrary.org/api/books"
-    "?bibkeys=ISBN:9780743273565&format=json&jscmd=details"
-))
-item = r2['ISBN:9780743273565']
+r2 = json.loads(http_get("https://openlibrary.org/api/books?bibkeys=ISBN:9780743273565&format=json&jscmd=details"))
+item = r2["ISBN:9780743273565"]
 # item['bib_key']      == 'ISBN:9780743273565'
 # item['info_url']     == 'http://openlibrary.org/books/OL...'
 # item['preview']      == 'noview' | 'restricted' | 'full'
@@ -339,24 +335,28 @@ https://covers.openlibrary.org/a/id/{photo_id}-{size}.jpg
 ```python
 import urllib.request
 
-def get_cover_bytes(cover_id: int, size: str = 'M') -> bytes | None:
+
+def get_cover_bytes(cover_id: int, size: str = "M") -> bytes | None:
     """Fetch cover image bytes. Returns None if no cover (43-byte GIF placeholder)."""
     url = f"https://covers.openlibrary.org/b/id/{cover_id}-{size}.jpg"
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req, timeout=15) as resp:
         data = resp.read()
-    return None if len(data) == 43 else data   # 43-byte GIF = no cover placeholder
+    return None if len(data) == 43 else data  # 43-byte GIF = no cover placeholder
+
 
 # Or just get the URL for embedding:
-def cover_url(cover_id: int, size: str = 'M') -> str:
+def cover_url(cover_id: int, size: str = "M") -> str:
     return f"https://covers.openlibrary.org/b/id/{cover_id}-{size}.jpg"
+
 
 # Usage:
 from helpers import http_get
 import json
+
 work = json.loads(http_get("https://openlibrary.org/works/OL893415W.json"))
-if work.get('covers'):
-    img = get_cover_bytes(work['covers'][0], 'L')   # first cover, large
+if work.get("covers"):
+    img = get_cover_bytes(work["covers"][0], "L")  # first cover, large
     # img is ~20–80KB JPEG bytes, redirected from ia*.archive.org
 ```
 
@@ -384,7 +384,7 @@ r = json.loads(http_get("https://openlibrary.org/subjects/science_fiction.json?l
 # r['work_count']    == 20973
 # r['works']         == [{title, key, cover_id, authors, edition_count, ...}, ...]
 
-w = r['works'][0]
+w = r["works"][0]
 # w['title']           == 'Alice\'s Adventures in Wonderland'
 # w['key']             == '/works/OL138052W'
 # w['cover_id']        == 10527843
@@ -418,13 +418,13 @@ r3 = json.loads(http_get("https://openlibrary.org/subjects/science_fiction.json?
 import json
 from helpers import http_get
 
-for period in ['daily', 'weekly', 'monthly']:
+for period in ["daily", "weekly", "monthly"]:
     r = json.loads(http_get(f"https://openlibrary.org/trending/{period}.json?limit=10"))
     # r['works']  == list of search-doc-style objects
     # r['days']   == int (time window)
     # r['hours']  == int
     # Same fields as search docs (title, author_name, cover_i, key, ...)
-    print(period, r['works'][0]['title'])  # e.g. 'Atomic Habits'
+    print(period, r["works"][0]["title"])  # e.g. 'Atomic Habits'
 ```
 
 ---
@@ -443,8 +443,8 @@ Observed in testing: 5 requests completed in ~1 second with no throttling, no 42
 
 **`description` field has two shapes.** Both are real — check at runtime:
 ```python
-desc = work.get('description', '')
-text = desc.get('value', '') if isinstance(desc, dict) else (desc or '')
+desc = work.get("description", "")
+text = desc.get("value", "") if isinstance(desc, dict) else (desc or "")
 ```
 
 **`/works/OL45804W` is Fantastic Mr. Fox, not Dune.** The OL IDs in the original prompt were placeholders. Always resolve real IDs via the search API rather than hardcoding them.
@@ -462,8 +462,8 @@ text = desc.get('value', '') if isinstance(desc, dict) else (desc or '')
 **`/works/.../editions.json` pagination uses `links.next`.** Unlike search (which uses `offset=`), check `links['next']` in the response to know if more pages exist:
 ```python
 resp = json.loads(http_get("https://openlibrary.org/works/OL893415W/editions.json?limit=50"))
-while 'next' in resp.get('links', {}):
-    resp = json.loads(http_get("https://openlibrary.org" + resp['links']['next']))
+while "next" in resp.get("links", {}):
+    resp = json.loads(http_get("https://openlibrary.org" + resp["links"]["next"]))
     # process resp['entries']
 ```
 

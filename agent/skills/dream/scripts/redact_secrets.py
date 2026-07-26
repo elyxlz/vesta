@@ -68,7 +68,7 @@ def mask(match: re.Match[str]) -> str:
     return match.group(0) if REDACTED in match.group(0) else REDACTED
 
 
-type JsonValue = str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
+type JsonValue = str | int | float | bool | list["JsonValue"] | dict[str, "JsonValue"] | None
 
 
 def redact_json(value: JsonValue) -> JsonValue:

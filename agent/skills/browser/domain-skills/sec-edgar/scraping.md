@@ -8,6 +8,7 @@
 
 ```python
 import json
+
 UA = {"User-Agent": "browser-harness research@example.com"}
 # Format required: "CompanyName contact@email.com"
 # "Mozilla/5.0" (http_get default) works on efts.sec.gov and data.sec.gov
@@ -18,17 +19,18 @@ Start with `company_tickers.json` to resolve any ticker → CIK in one call, the
 
 ```python
 import json
+
 UA = {"User-Agent": "browser-harness research@example.com"}
 tickers = json.loads(http_get("https://www.sec.gov/files/company_tickers.json", headers=UA))
 # 10,391 public companies, ~50KB, always fresh
 # Entry format: {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."}
 
 # Look up by ticker (exact, case-sensitive in the data)
-aapl = next(v for v in tickers.values() if v['ticker'] == 'AAPL')
+aapl = next(v for v in tickers.values() if v["ticker"] == "AAPL")
 # {'cik_str': 320193, 'ticker': 'AAPL', 'title': 'Apple Inc.'}
 
 # CIK is an int here; pad to 10 digits for API URLs
-cik = str(aapl['cik_str']).zfill(10)  # "0000320193"
+cik = str(aapl["cik_str"]).zfill(10)  # "0000320193"
 ```
 
 ## Common workflows
@@ -37,15 +39,16 @@ cik = str(aapl['cik_str']).zfill(10)  # "0000320193"
 
 ```python
 import json
+
 UA = {"User-Agent": "browser-harness research@example.com"}
 tickers = json.loads(http_get("https://www.sec.gov/files/company_tickers.json", headers=UA))
 
 # By ticker
-tsla = next((v for v in tickers.values() if v['ticker'] == 'TSLA'), None)
+tsla = next((v for v in tickers.values() if v["ticker"] == "TSLA"), None)
 # {'cik_str': 1318605, 'ticker': 'TSLA', 'title': 'Tesla, Inc.'}
 
 # By partial name match
-apples = [v for v in tickers.values() if 'APPLE' in v['title'].upper()]
+apples = [v for v in tickers.values() if "APPLE" in v["title"].upper()]
 # [{'cik_str': 320193, 'ticker': 'AAPL', 'title': 'Apple Inc.'}, ...]
 ```
 
@@ -53,19 +56,20 @@ apples = [v for v in tickers.values() if 'APPLE' in v['title'].upper()]
 
 ```python
 import json
+
 UA = {"User-Agent": "browser-harness research@example.com"}
 cik = "0000320193"  # Apple - always zero-pad to 10 digits
 data = json.loads(http_get(f"https://data.sec.gov/submissions/CIK{cik}.json", headers=UA))
 
-print(data['name'])             # "Apple Inc."
-print(data['cik'])              # "0000320193"
-print(data['sic'])              # "3571"
-print(data['sicDescription'])   # "Electronic Computers"
-print(data['tickers'])          # ["AAPL"]
-print(data['exchanges'])        # ["Nasdaq"]
+print(data["name"])  # "Apple Inc."
+print(data["cik"])  # "0000320193"
+print(data["sic"])  # "3571"
+print(data["sicDescription"])  # "Electronic Computers"
+print(data["tickers"])  # ["AAPL"]
+print(data["exchanges"])  # ["Nasdaq"]
 
 # Most recent ~1,000 filings are in data['filings']['recent']
-recent = data['filings']['recent']
+recent = data["filings"]["recent"]
 # Fields per filing (parallel arrays, same index):
 # accessionNumber, filingDate, reportDate, form, primaryDocument,
 # primaryDocDescription, size, isXBRL, items, fileNumber
@@ -73,11 +77,8 @@ recent = data['filings']['recent']
 # Filter for 10-K and 10-Q only
 filings_10k = [
     (f, d, a, doc)
-    for f, d, a, doc in zip(
-        recent['form'], recent['filingDate'],
-        recent['accessionNumber'], recent['primaryDocument']
-    )
-    if f in ('10-K', '10-Q')
+    for f, d, a, doc in zip(recent["form"], recent["filingDate"], recent["accessionNumber"], recent["primaryDocument"])
+    if f in ("10-K", "10-Q")
 ]
 # Result: [('10-Q', '2026-01-30', '0000320193-26-000006', 'aapl-20251227.htm'), ...]
 ```
@@ -87,8 +88,8 @@ filings_10k = [
 ```python
 # Given accessionNumber and primaryDocument from submissions JSON:
 accn = "0000320193-25-000079"
-doc  = "aapl-20250927.htm"
-cik  = "320193"  # int part only (no leading zeros) for Archives path
+doc = "aapl-20250927.htm"
+cik = "320193"  # int part only (no leading zeros) for Archives path
 
 accn_nodash = accn.replace("-", "")
 url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{accn_nodash}/{doc}"
@@ -102,32 +103,32 @@ content = http_get(url, headers=UA)  # UA required on www.sec.gov
 
 ```python
 import json
+
 UA = {"User-Agent": "browser-harness research@example.com"}
 cik_padded = "0000320193"
 
 # companyconcept: one metric, all reported values (quarterly + annual)
-data = json.loads(http_get(
-    f"https://data.sec.gov/api/xbrl/companyconcept/CIK{cik_padded}/us-gaap/Assets.json",
-    headers=UA
-))
+data = json.loads(http_get(f"https://data.sec.gov/api/xbrl/companyconcept/CIK{cik_padded}/us-gaap/Assets.json", headers=UA))
 # data keys: cik, taxonomy, tag, label, description, entityName, units
 # data['units']['USD'] -> list of {end, val, accn, fy, fp, form, filed}
 
-entries = data['units']['USD']
+entries = data["units"]["USD"]
+
 
 # Deduplicate: same period re-reported across multiple filings — keep latest
 def annual_series(entries):
     seen = {}
     for e in entries:
-        if e.get('form') == '10-K' and e.get('fp') == 'FY':
-            end = e['end']
-            if end not in seen or e['filed'] > seen[end]['filed']:
+        if e.get("form") == "10-K" and e.get("fp") == "FY":
+            end = e["end"]
+            if end not in seen or e["filed"] > seen[end]["filed"]:
                 seen[end] = e
     return [seen[k] for k in sorted(seen)]
 
+
 assets = annual_series(entries)
 for e in assets[-5:]:
-    print(f"{e['end']}  ${e['val']/1e9:.1f}B")
+    print(f"{e['end']}  ${e['val'] / 1e9:.1f}B")
 # 2021-09-25  $351.0B
 # 2022-09-24  $352.8B
 # 2023-09-30  $352.6B
@@ -139,18 +140,16 @@ for e in assets[-5:]:
 
 ```python
 import json
+
 UA = {"User-Agent": "browser-harness research@example.com"}
 
 # companyfacts: all reported XBRL concepts in one ~5MB call
-data = json.loads(http_get(
-    "https://data.sec.gov/api/xbrl/companyfacts/CIK0000320193.json",
-    headers=UA
-))
+data = json.loads(http_get("https://data.sec.gov/api/xbrl/companyfacts/CIK0000320193.json", headers=UA))
 # data['entityName'] = "Apple Inc."
 # data['facts'] = {'us-gaap': {...503 concepts...}, 'dei': {...}}
 
-usgaap = data['facts']['us-gaap']
-print(len(usgaap))   # 503 concepts for Apple
+usgaap = data["facts"]["us-gaap"]
+print(len(usgaap))  # 503 concepts for Apple
 
 # Common concept names (companies vary — check what's available):
 # Revenue:     RevenueFromContractWithCustomerExcludingAssessedTax  (post-2018 standard)
@@ -162,22 +161,22 @@ print(len(usgaap))   # 503 concepts for Apple
 # EPS:         EarningsPerShareBasic, EarningsPerShareDiluted
 
 # Find all revenue-related concepts this company reported:
-revenue_keys = [k for k in usgaap if 'Revenue' in k]
+revenue_keys = [k for k in usgaap if "Revenue" in k]
 
 # Extract annual revenue — handle company-specific concept name
-for concept in ['RevenueFromContractWithCustomerExcludingAssessedTax', 'SalesRevenueNet', 'Revenues']:
+for concept in ["RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet", "Revenues"]:
     if concept in usgaap:
-        entries = usgaap[concept]['units'].get('USD', [])
+        entries = usgaap[concept]["units"].get("USD", [])
         annual = {}
         for e in entries:
-            if e.get('form') == '10-K' and e.get('fp') == 'FY':
-                end = e['end']
-                if end not in annual or e['filed'] > annual[end]['filed']:
+            if e.get("form") == "10-K" and e.get("fp") == "FY":
+                end = e["end"]
+                if end not in annual or e["filed"] > annual[end]["filed"]:
                     annual[end] = e
         if annual:
             print(f"Using: {concept}")
             for end in sorted(annual)[-3:]:
-                print(f"  {end}  ${annual[end]['val']/1e9:.1f}B")
+                print(f"  {end}  ${annual[end]['val'] / 1e9:.1f}B")
             break
 # Apple output:
 # Using: RevenueFromContractWithCustomerExcludingAssessedTax
@@ -190,6 +189,7 @@ for concept in ['RevenueFromContractWithCustomerExcludingAssessedTax', 'SalesRev
 
 ```python
 import json
+
 UA = {"User-Agent": "browser-harness research@example.com"}
 
 # frames: one concept, one period, all companies that reported it
@@ -199,14 +199,13 @@ UA = {"User-Agent": "browser-harness research@example.com"}
 #   CY2024Q4         = Q4 2024 duration (income statement items)
 
 # Top companies by annual revenue (2024)
-data = json.loads(http_get(
-    "https://data.sec.gov/api/xbrl/frames/us-gaap/RevenueFromContractWithCustomerExcludingAssessedTax/USD/CY2024.json",
-    headers=UA
-))
-companies = sorted(data['data'], key=lambda x: x['val'], reverse=True)
+data = json.loads(
+    http_get("https://data.sec.gov/api/xbrl/frames/us-gaap/RevenueFromContractWithCustomerExcludingAssessedTax/USD/CY2024.json", headers=UA)
+)
+companies = sorted(data["data"], key=lambda x: x["val"], reverse=True)
 # data['data'] entries: {accn, cik, entityName, loc, start, end, val}
 for c in companies[:5]:
-    print(f"{c['entityName']:<40}  ${c['val']/1e9:.0f}B")
+    print(f"{c['entityName']:<40}  ${c['val'] / 1e9:.0f}B")
 # Walmart Inc.                              $675B
 # AMAZON.COM, INC.                          $638B
 # Apple Inc.                                $391B
@@ -214,10 +213,7 @@ for c in companies[:5]:
 # Alphabet Inc.                             $350B
 
 # Total assets snapshot end of 2024 (balance sheet = instantaneous)
-data2 = json.loads(http_get(
-    "https://data.sec.gov/api/xbrl/frames/us-gaap/Assets/USD/CY2024Q4I.json",
-    headers=UA
-))
+data2 = json.loads(http_get("https://data.sec.gov/api/xbrl/frames/us-gaap/Assets/USD/CY2024Q4I.json", headers=UA))
 # 6,229 companies for this frame
 ```
 
@@ -225,29 +221,24 @@ data2 = json.loads(http_get(
 
 ```python
 import json
+
 UA = {"User-Agent": "browser-harness research@example.com"}
 
 # Search for any phrase across filing documents
 # Params: q (quoted phrase), forms (comma-separated), dateRange=custom,
 #         startdt, enddt, size (max 100), from (offset for pagination)
-url = (
-    "https://efts.sec.gov/LATEST/search-index"
-    "?q=%22climate+risk%22"
-    "&forms=10-K"
-    "&dateRange=custom&startdt=2024-01-01"
-    "&size=10&from=0"
-)
+url = "https://efts.sec.gov/LATEST/search-index?q=%22climate+risk%22&forms=10-K&dateRange=custom&startdt=2024-01-01&size=10&from=0"
 data = json.loads(http_get(url, headers=UA))
 # Note: default http_get UA (Mozilla/5.0) works fine on efts.sec.gov
 
-print(data['hits']['total']['value'])   # e.g. 1438 matching documents
-hits = data['hits']['hits']             # up to 100 per call
+print(data["hits"]["total"]["value"])  # e.g. 1438 matching documents
+hits = data["hits"]["hits"]  # up to 100 per call
 
 for h in hits:
-    src = h['_source']
+    src = h["_source"]
     # Key fields: display_names, ciks, form, file_date, adsh (accession), period_ending
-    name = src['display_names'][0] if src.get('display_names') else '?'
-    cik  = src['ciks'][0] if src.get('ciks') else '?'
+    name = src["display_names"][0] if src.get("display_names") else "?"
+    cik = src["ciks"][0] if src.get("ciks") else "?"
     print(f"{name}  form={src['form']}  filed={src['file_date']}  accn={src['adsh']}")
 
 # Pagination: max 100 per page, use from= to walk through results
@@ -255,37 +246,35 @@ for h in hits:
 for page in range(0, 300, 100):
     page_url = url + f"&from={page}"
     page_data = json.loads(http_get(page_url, headers=UA))
-    if not page_data['hits']['hits']:
+    if not page_data["hits"]["hits"]:
         break
     # process...
 
 # Aggregations — group hits by entity, SIC, state
-aggs = data['aggregations']
-top_entities = aggs['entity_filter']['buckets']   # [{key: "Name (CIK...)", doc_count: N}, ...]
-top_sics     = aggs['sic_filter']['buckets']
-top_states   = aggs['biz_states_filter']['buckets']
+aggs = data["aggregations"]
+top_entities = aggs["entity_filter"]["buckets"]  # [{key: "Name (CIK...)", doc_count: N}, ...]
+top_sics = aggs["sic_filter"]["buckets"]
+top_states = aggs["biz_states_filter"]["buckets"]
 ```
 
 ### Find a company's CIK by name search (via search aggregations)
 
 ```python
 import json, re
+
 UA = {"User-Agent": "browser-harness research@example.com"}
 
 # Best method: company_tickers.json (fastest, all tickers)
 tickers = json.loads(http_get("https://www.sec.gov/files/company_tickers.json", headers=UA))
-msft = next(v for v in tickers.values() if v['ticker'] == 'MSFT')
+msft = next(v for v in tickers.values() if v["ticker"] == "MSFT")
 # CIK = msft['cik_str']  → 789019
 
 # Alternative: full-text search aggregations (finds CIK from company name)
-data = json.loads(http_get(
-    "https://efts.sec.gov/LATEST/search-index?q=%22microsoft+corporation%22&forms=10-K",
-    headers=UA
-))
-buckets = data['aggregations']['entity_filter']['buckets']
+data = json.loads(http_get("https://efts.sec.gov/LATEST/search-index?q=%22microsoft+corporation%22&forms=10-K", headers=UA))
+buckets = data["aggregations"]["entity_filter"]["buckets"]
 # [{'key': 'MICROSOFT CORP  (MSFT)  (CIK 0000789019)', 'doc_count': 11}, ...]
 for b in buckets[:3]:
-    m = re.search(r'\(CIK (\d+)\)', b['key'])
+    m = re.search(r"\(CIK (\d+)\)", b["key"])
     if m:
         print(f"{b['key'][:50]}  →  CIK {m.group(1)}")
 ```
@@ -298,10 +287,12 @@ from concurrent.futures import ThreadPoolExecutor
 
 UA = {"User-Agent": "browser-harness research@example.com"}
 
+
 def get_company_meta(ticker_cik):
     ticker, cik = ticker_cik
     subs = json.loads(http_get(f"https://data.sec.gov/submissions/CIK{cik}.json", headers=UA))
-    return {"ticker": ticker, "name": subs['name'], "sic": subs['sic']}
+    return {"ticker": ticker, "name": subs["name"], "sic": subs["sic"]}
+
 
 companies = [("AAPL", "0000320193"), ("TSLA", "0001318605"), ("MSFT", "0000789019")]
 with ThreadPoolExecutor(max_workers=3) as ex:

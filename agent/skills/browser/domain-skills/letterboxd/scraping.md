@@ -34,6 +34,7 @@ Film pages at `letterboxd.com/film/{slug}/` are fully accessible. The JSON-LD bl
 import json, re, html as htmllib
 from helpers import http_get
 
+
 def extract_film_data(slug):
     """
     Fetch and parse a Letterboxd film page.
@@ -46,71 +47,71 @@ def extract_film_data(slug):
     jsonld_raw = re.findall(r'<script type="application/ld\+json">(.*?)</script>', html, re.DOTALL)
     for block in jsonld_raw:
         # Strip CDATA wrapper that Letterboxd wraps around JSON-LD
-        cleaned = re.sub(r'/\*\s*<!\[CDATA\[.*?\*/\s*', '', block, flags=re.DOTALL)
-        cleaned = re.sub(r'/\*\s*\]\]>.*?\*/', '', cleaned, flags=re.DOTALL)
+        cleaned = re.sub(r"/\*\s*<!\[CDATA\[.*?\*/\s*", "", block, flags=re.DOTALL)
+        cleaned = re.sub(r"/\*\s*\]\]>.*?\*/", "", cleaned, flags=re.DOTALL)
         try:
             data = json.loads(cleaned.strip())
         except json.JSONDecodeError:
             continue
-        if data.get('@type') != 'Movie':
+        if data.get("@type") != "Movie":
             continue
 
-        result['title']     = data['name']
-        result['year']      = data['releasedEvent'][0]['startDate'] if data.get('releasedEvent') else None
-        result['directors'] = [d['name'] for d in data.get('director', [])]
-        result['genres']    = data.get('genre', [])
-        result['countries'] = [c['name'] for c in data.get('countryOfOrigin', [])]
-        result['studios']   = [s['name'] for s in data.get('productionCompany', [])]
-        result['actors']    = [a['name'] for a in data.get('actors', [])]
-        result['poster_url'] = data.get('image')
-        result['url']       = data.get('url')
-        r = data.get('aggregateRating', {})
-        result['rating']       = r.get('ratingValue')   # float 0.0–5.0
-        result['rating_count'] = r.get('ratingCount')   # int, total ratings cast
-        result['review_count'] = r.get('reviewCount')   # int, written reviews only
+        result["title"] = data["name"]
+        result["year"] = data["releasedEvent"][0]["startDate"] if data.get("releasedEvent") else None
+        result["directors"] = [d["name"] for d in data.get("director", [])]
+        result["genres"] = data.get("genre", [])
+        result["countries"] = [c["name"] for c in data.get("countryOfOrigin", [])]
+        result["studios"] = [s["name"] for s in data.get("productionCompany", [])]
+        result["actors"] = [a["name"] for a in data.get("actors", [])]
+        result["poster_url"] = data.get("image")
+        result["url"] = data.get("url")
+        r = data.get("aggregateRating", {})
+        result["rating"] = r.get("ratingValue")  # float 0.0–5.0
+        result["rating_count"] = r.get("ratingCount")  # int, total ratings cast
+        result["review_count"] = r.get("reviewCount")  # int, written reviews only
 
     # --- OG / meta tags (fast fallback, redundant) ---
-    og = lambda prop: next(iter(re.findall(
-        rf'<meta[^>]+property="og:{prop}"[^>]+content="([^"]*)"', html)), None)
-    result['og_title']  = og('title')    # includes year: "The Godfather (1972)"
-    result['synopsis']  = htmllib.unescape(og('description') or '')
-    result['og_image']  = og('image')    # large 1200x675 crop
+    og = lambda prop: next(iter(re.findall(rf'<meta[^>]+property="og:{prop}"[^>]+content="([^"]*)"', html)), None)
+    result["og_title"] = og("title")  # includes year: "The Godfather (1972)"
+    result["synopsis"] = htmllib.unescape(og("description") or "")
+    result["og_image"] = og("image")  # large 1200x675 crop
 
     # --- Film ID (internal numeric ID) ---
     m = re.search(r'data-film-id="(\d+)"', html)
-    result['film_id'] = m.group(1) if m else None
+    result["film_id"] = m.group(1) if m else None
 
     # --- Tagline ---
     m = re.search(r'<h4 class="tagline">([^<]+)</h4>', html)
-    result['tagline'] = htmllib.unescape(m.group(1)) if m else None
+    result["tagline"] = htmllib.unescape(m.group(1)) if m else None
 
     # --- Themes (from tab-genres section) ---
-    m = re.search(r'<h3><span>Themes</span></h3>.*?<p>(.*?)</p>', html, re.DOTALL)
-    result['themes'] = re.findall(r'class="text-slug">([^<]+)</a>', m.group(1)) if m else []
+    m = re.search(r"<h3><span>Themes</span></h3>.*?<p>(.*?)</p>", html, re.DOTALL)
+    result["themes"] = re.findall(r'class="text-slug">([^<]+)</a>', m.group(1)) if m else []
 
     # --- Languages ---
-    result['languages'] = re.findall(r'href="/films/language/[^/]+/"[^>]*>([^<]+)</a>', html)
+    result["languages"] = re.findall(r'href="/films/language/[^/]+/"[^>]*>([^<]+)</a>', html)
 
     # --- Fans count ---
     m = re.search(r'class="accessory"[^>]*>\s*([\d,KkMm]+)\s*fans</a>', html)
-    result['fans'] = m.group(1) if m else None  # e.g. "133K"
+    result["fans"] = m.group(1) if m else None  # e.g. "133K"
 
     # --- Popular reviews (top 12 inline on the page) ---
-    result['reviews'] = []
+    result["reviews"] = []
     for vid, person, block in re.findall(
-        r'<article class="production-viewing[^"]*"[^>]*data-viewing-id="(\d+)"[^>]*data-person="([^"]+)">(.*?)</article>',
-        html, re.DOTALL
+        r'<article class="production-viewing[^"]*"[^>]*data-viewing-id="(\d+)"[^>]*data-person="([^"]+)">(.*?)</article>', html, re.DOTALL
     ):
         dm = re.search(r'<strong class="displayname">([^<]+)</strong>', block)
         tm = re.search(r'class="body-text -prose -reset[^"]*"[^>]*>(.*?)</div>', block, re.DOTALL)
         lm = re.search(r'data-count="(\d+)"', block)
-        result['reviews'].append({
-            'viewing_id':   vid,
-            'username':     person,
-            'display_name': dm.group(1) if dm else person,
-            'review':       re.sub(r'<[^>]+>', '', tm.group(1)).strip() if tm else '',
-            'likes':        int(lm.group(1)) if lm else 0,
-        })
+        result["reviews"].append(
+            {
+                "viewing_id": vid,
+                "username": person,
+                "display_name": dm.group(1) if dm else person,
+                "review": re.sub(r"<[^>]+>", "", tm.group(1)).strip() if tm else "",
+                "likes": int(lm.group(1)) if lm else 0,
+            }
+        )
 
     return result
 ```
@@ -118,7 +119,7 @@ def extract_film_data(slug):
 ### Verified output (2026-04-18)
 
 ```python
-data = extract_film_data('the-godfather')
+data = extract_film_data("the-godfather")
 # {
 #   'title': 'The Godfather',
 #   'year': '1972',
@@ -147,11 +148,11 @@ data = extract_film_data('the-godfather')
 #   ]
 # }
 
-data = extract_film_data('parasite-2019')
+data = extract_film_data("parasite-2019")
 # title: 'Parasite', year: '2019', rating: 4.53, rating_count: 5264520, review_count: 690652
 # fans: '175K', directors: ['Bong Joon Ho'], countries: ['South Korea']
 
-data = extract_film_data('inception')
+data = extract_film_data("inception")
 # title: 'Inception', year: '2010', rating: 4.23, rating_count: 3913620
 ```
 
@@ -165,6 +166,7 @@ Only the user root page `letterboxd.com/{username}/` is accessible. Sub-pages (`
 import re, html as htmllib
 from helpers import http_get
 
+
 def extract_user_profile(username):
     html = http_get(f"https://letterboxd.com/{username}/")
 
@@ -175,33 +177,33 @@ def extract_user_profile(username):
     stats = re.findall(
         r'<span class="value">(\d[\d,]*)</span>'
         r'<span class="definition[^"]*">([^<]+)</span>',
-        html
+        html,
     )
 
     # Favorites from OG description
     od = re.search(r'<meta[^>]+property="og:description"[^>]+content="([^"]*)"', html)
     favorites = []
     if od:
-        fm = re.search(r'Favorites:\s*([^.]+)\.', od.group(1))
+        fm = re.search(r"Favorites:\s*([^.]+)\.", od.group(1))
         if fm:
-            favorites = [f.strip() for f in fm.group(1).split(',')]
+            favorites = [f.strip() for f in fm.group(1).split(",")]
 
     # Film IDs of films shown on profile page (recent activity)
     film_ids_on_page = list(set(re.findall(r'data-film-id="(\d+)"', html)))
 
     return {
-        'username':    username,
-        'display_name': dm.group(1) if dm else None,
-        'stats':       {label.strip(): int(val.replace(',', '')) for val, label in stats},
-        'favorites':   favorites,
-        'film_ids_on_page': film_ids_on_page,
+        "username": username,
+        "display_name": dm.group(1) if dm else None,
+        "stats": {label.strip(): int(val.replace(",", "")) for val, label in stats},
+        "favorites": favorites,
+        "film_ids_on_page": film_ids_on_page,
     }
 ```
 
 ### Verified output
 
 ```python
-data = extract_user_profile('dave')
+data = extract_user_profile("dave")
 # {
 #   'username': 'dave',
 #   'display_name': 'Dave Vis',
@@ -221,25 +223,25 @@ data = extract_user_profile('dave')
 import re, html as htmllib
 from helpers import http_get
 
+
 def extract_activity_stream():
     html = http_get("https://letterboxd.com/films/")
     entries = []
     for owner, obj_id, block in re.findall(
-        r'class="production-viewing[^"]*"[^>]*data-owner="([^"]+)"[^>]*data-object-id="([^"]+)"[^>]*>(.*?)</article>',
-        html, re.DOTALL
+        r'class="production-viewing[^"]*"[^>]*data-owner="([^"]+)"[^>]*data-object-id="([^"]+)"[^>]*>(.*?)</article>', html, re.DOTALL
     ):
-        film_m = re.search(
-            r'data-item-name="([^"]*)".*?data-item-slug="([^"]*)".*?data-film-id="(\d+)"',
-            block, re.DOTALL
-        )
+        film_m = re.search(r'data-item-name="([^"]*)".*?data-item-slug="([^"]*)".*?data-film-id="(\d+)"', block, re.DOTALL)
         if film_m:
-            entries.append({
-                'owner':     owner,
-                'film_name': htmllib.unescape(film_m.group(1)),
-                'film_slug': film_m.group(2),
-                'film_id':   film_m.group(3),
-            })
+            entries.append(
+                {
+                    "owner": owner,
+                    "film_name": htmllib.unescape(film_m.group(1)),
+                    "film_slug": film_m.group(2),
+                    "film_id": film_m.group(3),
+                }
+            )
     return entries
+
 
 # Returns ~6 entries. Film names are in "Title (Year)" format.
 # Example: [{'owner': 'sidduww', 'film_name': 'The Drama (2026)',
@@ -261,7 +263,8 @@ goto("https://letterboxd.com/films/popular/")
 wait_for_load()
 wait(2)
 
-films = json.loads(js("""
+films = json.loads(
+    js("""
 (function() {
   var items = Array.from(document.querySelectorAll('li.film-list-entry, li[class*="poster-container"]'));
   return JSON.stringify(items.slice(0, 30).map(function(el) {
@@ -273,14 +276,16 @@ films = json.loads(js("""
     };
   }).filter(function(x){ return x.slug; }));
 })()
-"""))
+""")
+)
 
 # User watched films list (paginated, 72/page)
 goto("https://letterboxd.com/dave/films/")
 wait_for_load()
 wait(2)
 
-films = json.loads(js("""
+films = json.loads(
+    js("""
 (function() {
   var items = Array.from(document.querySelectorAll('li[data-film-id]'));
   return JSON.stringify(items.map(function(el) {
@@ -291,7 +296,8 @@ films = json.loads(js("""
     };
   }));
 })()
-"""))
+""")
+)
 
 # User diary entries
 goto("https://letterboxd.com/dave/diary/")
@@ -314,8 +320,8 @@ next_page_url = js("""
 
 **JSON-LD is wrapped in CDATA comments** — `json.loads(block)` will fail without stripping the wrapper. Always strip `/* <![CDATA[ */` and `/* ]]> */` first:
 ```python
-cleaned = re.sub(r'/\*\s*<!\[CDATA\[.*?\*/\s*', '', block, flags=re.DOTALL)
-cleaned = re.sub(r'/\*\s*\]\]>.*?\*/', '', cleaned, flags=re.DOTALL)
+cleaned = re.sub(r"/\*\s*<!\[CDATA\[.*?\*/\s*", "", block, flags=re.DOTALL)
+cleaned = re.sub(r"/\*\s*\]\]>.*?\*/", "", cleaned, flags=re.DOTALL)
 data = json.loads(cleaned.strip())
 ```
 
@@ -341,9 +347,11 @@ data = json.loads(cleaned.strip())
 ```python
 def parse_abbrev(s):
     s = s.strip().upper()
-    if s.endswith('K'): return int(float(s[:-1]) * 1000)
-    if s.endswith('M'): return int(float(s[:-1]) * 1000000)
-    return int(s.replace(',', ''))
+    if s.endswith("K"):
+        return int(float(s[:-1]) * 1000)
+    if s.endswith("M"):
+        return int(float(s[:-1]) * 1000000)
+    return int(s.replace(",", ""))
 ```
 
 **Film slug from unknown title** — Letterboxd has no public search API. Construct the slug by lowercasing the title and replacing spaces with hyphens, then `http_get` and check for a 403/404 vs a valid JSON-LD block.

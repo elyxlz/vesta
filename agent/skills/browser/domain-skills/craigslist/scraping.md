@@ -138,10 +138,13 @@ URL pattern: `https://{city}.craigslist.org/{area}/{category_code}/d/{slug}/{pos
 import re
 from helpers import http_get
 
+
 def search_craigslist(city, category, query, min_price=None, max_price=None):
     params = f"query={query.replace(' ', '+')}&sort=rel"
-    if min_price: params += f"&min_price={min_price}"
-    if max_price: params += f"&max_price={max_price}"
+    if min_price:
+        params += f"&min_price={min_price}"
+    if max_price:
+        params += f"&max_price={max_price}"
     url = f"https://{city}.craigslist.org/search/{category}?{params}"
     headers = {"User-Agent": "Mozilla/5.0"}
     html = http_get(url, headers=headers)
@@ -151,20 +154,24 @@ def search_craigslist(city, category, query, min_price=None, max_price=None):
         r'<a href="([^"]+)"[^>]*>.*?'
         r'<div class="price">([^<]*)</div>.*?'
         r'<div class="location">\s*([^<]*?)\s*</div>',
-        html, re.DOTALL
+        html,
+        re.DOTALL,
     )
 
     results = []
     for title, url, price, location in listings:
-        pid_match = re.search(r'/(\d+)\.html$', url)
-        results.append({
-            "post_id": pid_match.group(1) if pid_match else None,
-            "title": title,
-            "url": url,
-            "price": price.strip() or None,  # None if listing has no price
-            "location": location.strip(),
-        })
+        pid_match = re.search(r"/(\d+)\.html$", url)
+        results.append(
+            {
+                "post_id": pid_match.group(1) if pid_match else None,
+                "title": title,
+                "url": url,
+                "price": price.strip() or None,  # None if listing has no price
+                "location": location.strip(),
+            }
+        )
     return results
+
 
 # Usage
 results = search_craigslist("sfbay", "sss", "macbook pro", max_price=1000)
@@ -182,19 +189,22 @@ def parse_listings(html):
     results = []
     for block in re.findall(r'<li class="cl-static-search-result"(.*?)</li>', html, re.DOTALL):
         title = re.search(r'title="([^"]+)"', block)
-        url   = re.search(r'href="([^"]+)"', block)
+        url = re.search(r'href="([^"]+)"', block)
         price = re.search(r'<div class="price">([^<]+)</div>', block)
-        loc   = re.search(r'<div class="location">\s*([^<]*?)\s*</div>', block)
-        if not url: continue
+        loc = re.search(r'<div class="location">\s*([^<]*?)\s*</div>', block)
+        if not url:
+            continue
         url_str = url.group(1)
-        pid = re.search(r'/(\d+)\.html$', url_str)
-        results.append({
-            "post_id": pid.group(1) if pid else None,
-            "title": title.group(1) if title else None,
-            "url": url_str,
-            "price": price.group(1).strip() if price else None,
-            "location": loc.group(1).strip() if loc else None,
-        })
+        pid = re.search(r"/(\d+)\.html$", url_str)
+        results.append(
+            {
+                "post_id": pid.group(1) if pid else None,
+                "title": title.group(1) if title else None,
+                "url": url_str,
+                "price": price.group(1).strip() if price else None,
+                "location": loc.group(1).strip() if loc else None,
+            }
+        )
     return results
 ```
 
@@ -207,23 +217,21 @@ def get_listing(url):
     headers = {"User-Agent": "Mozilla/5.0"}
     html = http_get(url, headers=headers)
 
-    title    = re.search(r'<span id="titletextonly">([^<]+)</span>', html)
-    price    = re.search(r'<span class="price">(\$[\d,]+)</span>', html)
+    title = re.search(r'<span id="titletextonly">([^<]+)</span>', html)
+    price = re.search(r'<span class="price">(\$[\d,]+)</span>', html)
     # Location is in parentheses right after the price span
-    location = re.search(
-        r'<span class="price">[^<]+</span><span>\s*\(([^)]+)\)\s*</span>', html
-    )
-    posted   = re.search(r'class="date timeago"[^>]+datetime="([^"]+)"', html)
-    post_id  = re.search(r'post id:\s*(\d+)', html)
+    location = re.search(r'<span class="price">[^<]+</span><span>\s*\(([^)]+)\)\s*</span>', html)
+    posted = re.search(r'class="date timeago"[^>]+datetime="([^"]+)"', html)
+    post_id = re.search(r"post id:\s*(\d+)", html)
 
     # Description body
     body_block = re.search(r'section id="postingbody"[^>]*>(.*?)</section>', html, re.DOTALL)
-    body_text  = ""
+    body_text = ""
     if body_block:
-        raw = re.sub(r'<[^>]+>', '', body_block.group(1)).strip()
+        raw = re.sub(r"<[^>]+>", "", body_block.group(1)).strip()
         # Remove the "QR Code Link to This Post" print-only block
-        body_text = re.sub(r'QR Code Link to This Post\s*', '', raw).strip()
-        body_text = re.sub(r'\s+', ' ', body_text)
+        body_text = re.sub(r"QR Code Link to This Post\s*", "", raw).strip()
+        body_text = re.sub(r"\s+", " ", body_text)
 
     # Images
     images = re.findall(r'https://images\.craigslist\.org/[^\s"\']+_600x450\.jpg', html)
@@ -231,34 +239,33 @@ def get_listing(url):
     # Attributes (condition, make, model, etc.)
     attrs = {}
     for labl, valu in re.findall(
-        r'<span class="labl">([^<]+)</span>.*?<span class="valu">\s*(?:<[^>]+>\s*)*([^<\n]+?)(?:\s*</|\s*<a)',
-        html, re.DOTALL
+        r'<span class="labl">([^<]+)</span>.*?<span class="valu">\s*(?:<[^>]+>\s*)*([^<\n]+?)(?:\s*</|\s*<a)', html, re.DOTALL
     ):
-        attrs[labl.strip().rstrip(':')] = valu.strip()
+        attrs[labl.strip().rstrip(":")] = valu.strip()
 
     return {
-        "post_id":  post_id.group(1) if post_id else None,
-        "title":    title.group(1) if title else None,
-        "price":    price.group(1) if price else None,
+        "post_id": post_id.group(1) if post_id else None,
+        "title": title.group(1) if title else None,
+        "price": price.group(1) if price else None,
         "location": location.group(1) if location else None,
-        "posted":   posted.group(1) if posted else None,  # ISO 8601 with TZ
-        "body":     body_text,
-        "images":   images,
-        "attrs":    attrs,
+        "posted": posted.group(1) if posted else None,  # ISO 8601 with TZ
+        "body": body_text,
+        "images": images,
+        "attrs": attrs,
     }
 ```
 
 ### Sample output — for-sale listing
 ```python
 {
-    "post_id":  "7917381408",
-    "title":    "Brand new iphone 15 case and screen protector",
-    "price":    "$6",
+    "post_id": "7917381408",
+    "title": "Brand new iphone 15 case and screen protector",
+    "price": "$6",
     "location": "cupertino",
-    "posted":   "2026-02-24T16:08:38-0800",
-    "body":     "I bought a new phone. These are brand new! Plz lmk if you are interested.",
-    "images":   ["https://images.craigslist.org/00e0e_xxx_600x450.jpg"],
-    "attrs":    {"condition": "like new", "make / manufacturer": "Apple", "model name / number": "iPhone 15 Plus"},
+    "posted": "2026-02-24T16:08:38-0800",
+    "body": "I bought a new phone. These are brand new! Plz lmk if you are interested.",
+    "images": ["https://images.craigslist.org/00e0e_xxx_600x450.jpg"],
+    "attrs": {"condition": "like new", "make / manufacturer": "Apple", "model name / number": "iPhone 15 Plus"},
 }
 ```
 
@@ -269,12 +276,14 @@ separate from the `<div class="attr">` attribute grid:
 
 ```python
 # BR/BA
-br_ba  = re.search(r'(\d+)BR\s*/\s*(\d+(?:\.\d+)?)Ba', html)
+br_ba = re.search(r"(\d+)BR\s*/\s*(\d+(?:\.\d+)?)Ba", html)
 # Square footage
-sqft   = re.search(r'(\d+)ft<sup>2</sup>', html)
+sqft = re.search(r"(\d+)ft<sup>2</sup>", html)
 
-if br_ba: bedrooms, bathrooms = br_ba.groups()
-if sqft:  sqft_val = sqft.group(1)
+if br_ba:
+    bedrooms, bathrooms = br_ba.groups()
+if sqft:
+    sqft_val = sqft.group(1)
 ```
 
 ## JSON-LD structured data (alternative extraction path)
@@ -291,14 +300,14 @@ ld_blocks = re.findall(r'<script type="application/ld\+json"[^>]*>(.*?)</script>
 
 for raw in ld_blocks:
     data = json.loads(raw)
-    if data.get('@type') == 'ItemList':
-        for item in data['itemListElement']:
-            listing = item['item']
+    if data.get("@type") == "ItemList":
+        for item in data["itemListElement"]:
+            listing = item["item"]
             print(
-                listing.get('name'),
-                listing.get('offers', {}).get('price'),
-                listing.get('offers', {}).get('priceCurrency'),
-                listing.get('offers', {}).get('availableAtOrFrom', {}).get('address', {}).get('addressLocality'),
+                listing.get("name"),
+                listing.get("offers", {}).get("price"),
+                listing.get("offers", {}).get("priceCurrency"),
+                listing.get("offers", {}).get("availableAtOrFrom", {}).get("address", {}).get("addressLocality"),
             )
 ```
 
@@ -325,7 +334,7 @@ s=300 → same 342 listings
 ```python
 # Instead of paginating, narrow by price range
 under_500 = search_craigslist("sfbay", "sss", "macbook", max_price=500)
-over_500  = search_craigslist("sfbay", "sss", "macbook", min_price=501)
+over_500 = search_craigslist("sfbay", "sss", "macbook", min_price=501)
 ```
 
 If true pagination is required (e.g. you need more than 350 results), you must use a browser session
@@ -343,12 +352,7 @@ Defensive check (in case behavior changes):
 
 ```python
 def is_blocked(html):
-    return (
-        len(html) < 5000 or
-        "blocked" in html[:2000].lower() or
-        "captcha" in html[:2000].lower() or
-        "cl-static-search-result" not in html
-    )
+    return len(html) < 5000 or "blocked" in html[:2000].lower() or "captcha" in html[:2000].lower() or "cl-static-search-result" not in html
 ```
 
 ## Gotchas
@@ -386,5 +390,6 @@ def is_blocked(html):
 - **HTML-escaped body text**: Description bodies may contain `&amp;`, `&lt;`, etc. Unescape if needed:
   ```python
   import html as html_lib
+
   body_clean = html_lib.unescape(body_text)
   ```

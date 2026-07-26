@@ -59,7 +59,7 @@ Implications:
 ```python
 new_tab("https://wellfound.com/company/stripe")
 wait_for_load()
-wait(5)   # DataDome JS fingerprinting runs ~2-4s after readyState=complete
+wait(5)  # DataDome JS fingerprinting runs ~2-4s after readyState=complete
 ```
 
 Verify you are past the DataDome challenge before extracting:
@@ -145,6 +145,7 @@ if apollo_raw:
     except json.JSONDecodeError:
         # Raw script tag — parse key fields with regex
         import re
+
         name = re.search(r'"name"\s*:\s*"([^"]+)"', apollo_raw)
         desc = re.search(r'"description"\s*:\s*"([^"]+)"', apollo_raw)
         print("Name:", name.group(1) if name else "not found")
@@ -245,7 +246,7 @@ jobs = js("""
 results = json.loads(jobs)
 print(f"Found {len(results)} jobs")
 for j in results:
-    print(f"  {j['title']} | {j.get('location','?')} | {j.get('comp','?')}")
+    print(f"  {j['title']} | {j.get('location', '?')} | {j.get('comp', '?')}")
 ```
 
 ---
@@ -316,7 +317,9 @@ wait_for_load()
 wait(5)
 
 # Step 2: Extract CSRF token from meta tag
-csrf = js("document.querySelector('meta[name=\"csrf-token\"]') ? document.querySelector('meta[name=\"csrf-token\"]').getAttribute('content') : null")
+csrf = js(
+    "document.querySelector('meta[name=\"csrf-token\"]') ? document.querySelector('meta[name=\"csrf-token\"]').getAttribute('content') : null"
+)
 if not csrf:
     raise RuntimeError("CSRF token not found — page may not have loaded correctly")
 
@@ -385,7 +388,9 @@ fetch('/graphql', {
 'pending'
 """)
 # Wait for async result
-import time; time.sleep(3)
+import time
+
+time.sleep(3)
 gql_result = js("window._wf_gql_result || null")
 if gql_result:
     data = json.loads(gql_result)
@@ -455,15 +460,13 @@ After `new_tab()` + `wait(5)`, verify you are on a real Wellfound page:
 def wellfound_is_blocked() -> bool:
     """True if DataDome or Cloudflare challenge is still showing."""
     title = js("document.title") or ""
-    url   = page_info()["url"]
+    url = page_info()["url"]
     # DataDome challenge page has no useful title; CF shows "Just a moment..."
     blocked = (
-        "Just a moment" in title or
-        "wellfound.com" not in url or
-        "captcha-delivery.com" in js("document.body.innerHTML or ''") or
-        not title
+        "Just a moment" in title or "wellfound.com" not in url or "captcha-delivery.com" in js("document.body.innerHTML or ''") or not title
     )
     return blocked
+
 
 # Usage
 new_tab("https://wellfound.com/company/stripe")
@@ -471,7 +474,7 @@ wait_for_load()
 wait(5)
 
 if wellfound_is_blocked():
-    wait(8)   # DataDome sometimes needs up to 10s total
+    wait(8)  # DataDome sometimes needs up to 10s total
     if wellfound_is_blocked():
         screenshot("/tmp/wellfound_blocked.png")
         raise RuntimeError("DataDome/CF challenge did not resolve — see /tmp/wellfound_blocked.png")

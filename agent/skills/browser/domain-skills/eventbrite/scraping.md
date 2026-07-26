@@ -15,10 +15,10 @@ html = http_get("https://www.eventbrite.com/d/ca--san-francisco/tech/", headers=
 ld_blocks = re.findall(r'<script type="application/ld\+json">(.*?)</script>', html, re.DOTALL)
 for block in ld_blocks:
     parsed = json.loads(block)
-    if isinstance(parsed, dict) and parsed.get('@type') == 'ItemList':
-        for item in parsed['itemListElement']:
-            ev = item['item']
-            print(ev['name'], ev['startDate'], ev['url'])
+    if isinstance(parsed, dict) and parsed.get("@type") == "ItemList":
+        for item in parsed["itemListElement"]:
+            ev = item["item"]
+            print(ev["name"], ev["startDate"], ev["url"])
         break
 # Returns 18–40 events per page
 ```
@@ -135,19 +135,19 @@ ld_blocks = re.findall(r'<script type="application/ld\+json">(.*?)</script>', ht
 event_data = None
 for block in ld_blocks:
     parsed = json.loads(block)
-    if isinstance(parsed, dict) and parsed.get('@type') in ('Event', 'BusinessEvent', 'MusicEvent', 'EducationEvent'):
+    if isinstance(parsed, dict) and parsed.get("@type") in ("Event", "BusinessEvent", "MusicEvent", "EducationEvent"):
         event_data = parsed
         break
 
-print(event_data['name'])              # "iContact the tactile tech opera"
-print(event_data['startDate'])         # "2026-06-21T17:05:00-07:00"  (ISO 8601 with TZ)
-print(event_data['endDate'])           # "2026-06-21T20:08:00-07:00"
-print(event_data['eventStatus'])       # "https://schema.org/EventScheduled"
-print(event_data['eventAttendanceMode'])  # "https://schema.org/OfflineEventAttendanceMode"
-print(event_data['location']['name'])  # "Little Boxes Theater"
-print(event_data['location']['address']['streetAddress'])   # "94107 1661 Tennessee Street, San Francisco, CA 94107"
-print(event_data['organizer']['name'])  # "Beth McNamara"
-print(event_data['organizer']['url'])   # "https://www.eventbrite.com/o/beth-mcnamara-120755148166"
+print(event_data["name"])  # "iContact the tactile tech opera"
+print(event_data["startDate"])  # "2026-06-21T17:05:00-07:00"  (ISO 8601 with TZ)
+print(event_data["endDate"])  # "2026-06-21T20:08:00-07:00"
+print(event_data["eventStatus"])  # "https://schema.org/EventScheduled"
+print(event_data["eventAttendanceMode"])  # "https://schema.org/OfflineEventAttendanceMode"
+print(event_data["location"]["name"])  # "Little Boxes Theater"
+print(event_data["location"]["address"]["streetAddress"])  # "94107 1661 Tennessee Street, San Francisco, CA 94107"
+print(event_data["organizer"]["name"])  # "Beth McNamara"
+print(event_data["organizer"]["url"])  # "https://www.eventbrite.com/o/beth-mcnamara-120755148166"
 ```
 
 Full confirmed schema on detail page:
@@ -174,16 +174,16 @@ offers             list    AggregateOffer object(s)
 ### Offers / pricing
 
 ```python
-offers = event_data.get('offers', [])
+offers = event_data.get("offers", [])
 if offers:
-    offer = offers[0]   # always a list; typically one AggregateOffer
-    print(offer['@type'])           # "AggregateOffer"
-    print(offer['lowPrice'])        # "50.0"  (string, not float)
-    print(offer['highPrice'])       # "50.0"
-    print(offer['priceCurrency'])   # "USD"
-    print(offer['availability'])    # "InStock" / "SoldOut"
-    print(offer['availabilityStarts'])   # ISO 8601 UTC
-    print(offer['availabilityEnds'])     # ISO 8601 UTC
+    offer = offers[0]  # always a list; typically one AggregateOffer
+    print(offer["@type"])  # "AggregateOffer"
+    print(offer["lowPrice"])  # "50.0"  (string, not float)
+    print(offer["highPrice"])  # "50.0"
+    print(offer["priceCurrency"])  # "USD"
+    print(offer["availability"])  # "InStock" / "SoldOut"
+    print(offer["availabilityStarts"])  # ISO 8601 UTC
+    print(offer["availabilityEnds"])  # ISO 8601 UTC
 
 # Free events: lowPrice="0.0", highPrice="0.0"
 # Free check: float(offer['lowPrice']) == 0.0
@@ -204,65 +204,66 @@ import re, json
 
 nextjs = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL)
 nd = json.loads(nextjs.group(1))
-context = nd['props']['pageProps']['context']
+context = nd["props"]["pageProps"]["context"]
 
-bi = context['basicInfo']
-print(bi['id'])               # "1982861003639"  (event ID string)
-print(bi['name'])             # event title
-print(bi['isFree'])           # bool
-print(bi['isOnline'])         # bool
-print(bi['currency'])         # "USD"
-print(bi['status'])           # "live" / "completed" / "canceled"
-print(bi['organizationId'])   # numeric string
-print(bi['formatId'])         # numeric string (event format category)
-print(bi['isProtected'])      # bool — password-protected events
-print(bi['isSeries'])         # bool — recurring series
-print(bi['created'])          # ISO 8601 UTC creation timestamp
+bi = context["basicInfo"]
+print(bi["id"])  # "1982861003639"  (event ID string)
+print(bi["name"])  # event title
+print(bi["isFree"])  # bool
+print(bi["isOnline"])  # bool
+print(bi["currency"])  # "USD"
+print(bi["status"])  # "live" / "completed" / "canceled"
+print(bi["organizationId"])  # numeric string
+print(bi["formatId"])  # numeric string (event format category)
+print(bi["isProtected"])  # bool — password-protected events
+print(bi["isSeries"])  # bool — recurring series
+print(bi["created"])  # ISO 8601 UTC creation timestamp
 
 # Venue with coordinates
-venue = bi['venue']
-print(venue['name'])                              # "Little Boxes Theater"
-print(venue['address']['city'])                   # "San Francisco"
-print(venue['address']['region'])                 # "CA"
-print(venue['address']['latitude'])               # "37.7508806"
-print(venue['address']['longitude'])              # "-122.3881427"
-print(venue['address']['localizedMultiLineAddressDisplay'])  # list of strings
+venue = bi["venue"]
+print(venue["name"])  # "Little Boxes Theater"
+print(venue["address"]["city"])  # "San Francisco"
+print(venue["address"]["region"])  # "CA"
+print(venue["address"]["latitude"])  # "37.7508806"
+print(venue["address"]["longitude"])  # "-122.3881427"
+print(venue["address"]["localizedMultiLineAddressDisplay"])  # list of strings
 
 # Organizer details
-org = bi['organizer']
-print(org['name'])            # "Beth McNamara"
-print(org['url'])             # organizer profile URL
-print(org['numEvents'])       # int
-print(org['verified'])        # bool
+org = bi["organizer"]
+print(org["name"])  # "Beth McNamara"
+print(org["url"])  # organizer profile URL
+print(org["numEvents"])  # int
+print(org["verified"])  # bool
 
 # Sales status
-ss = context['salesStatus']
-print(ss['salesStatus'])      # "on_sale" / "sold_out" / "sales_ended"
-print(ss['startSalesDate']['local'])   # local datetime string
+ss = context["salesStatus"]
+print(ss["salesStatus"])  # "on_sale" / "sold_out" / "sales_ended"
+print(ss["startSalesDate"]["local"])  # local datetime string
 
 # Good to know
-gtk = context['goodToKnow']['highlights']
-print(gtk['ageRestriction'])          # "18+" or null
-print(gtk['durationInMinutes'])       # int (e.g. 183)
-print(gtk['doorTime'])                # local datetime string or null
-print(gtk['locationType'])            # "in_person" or "online"
+gtk = context["goodToKnow"]["highlights"]
+print(gtk["ageRestriction"])  # "18+" or null
+print(gtk["durationInMinutes"])  # int (e.g. 183)
+print(gtk["doorTime"])  # local datetime string or null
+print(gtk["locationType"])  # "in_person" or "online"
 
 # Refund policy
-refund = context['goodToKnow']['refundPolicy']
-print(refund['policyType'])           # "custom" / "no_refunds" / "standard"
-print(refund['isRefundAllowed'])      # bool
-print(refund['validDays'])            # int or null
+refund = context["goodToKnow"]["refundPolicy"]
+print(refund["policyType"])  # "custom" / "no_refunds" / "standard"
+print(refund["isRefundAllowed"])  # bool
+print(refund["validDays"])  # int or null
 
 # Full event description (HTML)
-for module in context['structuredContent']['modules']:
-    if module['type'] == 'text':
-        print(module['text'])         # raw HTML, may need BeautifulSoup to strip tags
+for module in context["structuredContent"]["modules"]:
+    if module["type"] == "text":
+        print(module["text"])  # raw HTML, may need BeautifulSoup to strip tags
 ```
 
 ## Complete workflow: scrape events from a category
 
 ```python
 import re, json
+
 
 def get_events_from_listing(location, category, page=1):
     """Returns list of event dicts with name, url, startDate, endDate, location."""
@@ -272,9 +273,10 @@ def get_events_from_listing(location, category, page=1):
     ld_blocks = re.findall(r'<script type="application/ld\+json">(.*?)</script>', html, re.DOTALL)
     for block in ld_blocks:
         parsed = json.loads(block)
-        if isinstance(parsed, dict) and parsed.get('@type') == 'ItemList':
-            return [item['item'] for item in parsed.get('itemListElement', [])]
+        if isinstance(parsed, dict) and parsed.get("@type") == "ItemList":
+            return [item["item"] for item in parsed.get("itemListElement", [])]
     return []
+
 
 def get_event_detail(event_url):
     """Returns full Event JSON-LD + NEXT_DATA context for a single event."""
@@ -286,7 +288,7 @@ def get_event_detail(event_url):
     event_ld = None
     for block in ld_blocks:
         parsed = json.loads(block)
-        if isinstance(parsed, dict) and parsed.get('@type') in ('Event', 'BusinessEvent', 'MusicEvent', 'EducationEvent'):
+        if isinstance(parsed, dict) and parsed.get("@type") in ("Event", "BusinessEvent", "MusicEvent", "EducationEvent"):
             event_ld = parsed
             break
 
@@ -295,23 +297,24 @@ def get_event_detail(event_url):
     context = None
     if nextjs:
         nd = json.loads(nextjs.group(1))
-        context = nd['props']['pageProps']['context']
+        context = nd["props"]["pageProps"]["context"]
 
     return event_ld, context
+
 
 # Usage
 events = get_events_from_listing("ca--san-francisco", "tech", page=1)
 print(f"Found {len(events)} events")  # 18–20 typical
 
 for ev in events[:3]:
-    print(ev['name'], ev['startDate'], ev['url'])
+    print(ev["name"], ev["startDate"], ev["url"])
 
 # Deep-fetch one event
-ld, ctx = get_event_detail(events[0]['url'])
-if ld and ld.get('offers'):
-    price = float(ld['offers'][0]['lowPrice'])
-    currency = ld['offers'][0]['priceCurrency']
-    print(f"Price: {price} {currency}")   # 0.0 USD (free) or e.g. 50.0 USD
+ld, ctx = get_event_detail(events[0]["url"])
+if ld and ld.get("offers"):
+    price = float(ld["offers"][0]["lowPrice"])
+    currency = ld["offers"][0]["priceCurrency"]
+    print(f"Price: {price} {currency}")  # 0.0 USD (free) or e.g. 50.0 USD
 ```
 
 ## Public API: requires auth
@@ -326,11 +329,9 @@ The Eventbrite REST API (`https://www.eventbriteapi.com/v3/`) requires an OAuth 
 If you have a token (`EVENTBRITE_TOKEN`):
 ```python
 import os
-token = os.environ.get('EVENTBRITE_TOKEN')
-headers = {
-    "User-Agent": "Mozilla/5.0",
-    "Authorization": f"Bearer {token}"
-}
+
+token = os.environ.get("EVENTBRITE_TOKEN")
+headers = {"User-Agent": "Mozilla/5.0", "Authorization": f"Bearer {token}"}
 data = json.loads(http_get(f"https://www.eventbriteapi.com/v3/events/{event_id}/", headers=headers))
 ```
 

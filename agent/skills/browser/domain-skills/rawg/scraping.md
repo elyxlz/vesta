@@ -36,6 +36,7 @@ Confirmed working on all tested game pages.
 import json
 from helpers import http_get
 
+
 def extract_game(slug):
     """
     Fetch full game data from rawg.io/games/{slug}.
@@ -44,35 +45,37 @@ def extract_game(slug):
     Returns game dict or None.
     """
     resp = http_get(f"https://rawg.io/games/{slug}")
-    idx = resp.find('window.CLIENT_PARAMS = {')
+    idx = resp.find("window.CLIENT_PARAMS = {")
     if idx < 0:
         return None
-    chunk = resp[idx + len('window.CLIENT_PARAMS = '):]
+    chunk = resp[idx + len("window.CLIENT_PARAMS = ") :]
     # Extract JSON by counting braces
     depth, end = 0, 0
     for i, c in enumerate(chunk):
-        if c == '{': depth += 1
-        elif c == '}':
+        if c == "{":
+            depth += 1
+        elif c == "}":
             depth -= 1
             if depth == 0:
                 end = i + 1
                 break
     params = json.loads(chunk[:end])
-    initial_state = params['initialState']
-    entities = initial_state['entities']
-    games = entities.get('games', {})
+    initial_state = params["initialState"]
+    entities = initial_state["entities"]
+    games = entities.get("games", {})
     # game.slug has 'g-' prefix and reflects the canonical slug after any redirect
-    canonical_key = initial_state.get('game', {}).get('slug', '')
+    canonical_key = initial_state.get("game", {}).get("slug", "")
     game = games.get(canonical_key)
     if not game:
-        game = games.get(f'g-{slug}')
+        game = games.get(f"g-{slug}")
     if not game:
         for g in games.values():
-            if isinstance(g, dict) and g.get('slug') == slug:
+            if isinstance(g, dict) and g.get("slug") == slug:
                 return g
     return game
 
-game = extract_game('the-witcher-3-wild-hunt')
+
+game = extract_game("the-witcher-3-wild-hunt")
 # All fields confirmed present:
 # game['name']             -> 'The Witcher 3: Wild Hunt'
 # game['id']               -> 3328
@@ -108,25 +111,26 @@ def game_summary(slug):
     if not g:
         return None
     return {
-        'id':           g['id'],
-        'name':         g['name'],
-        'slug':         g['slug'],
-        'rating':       g['rating'],
-        'metacritic':   g['metacritic'],
-        'released':     g['released'],
-        'playtime_hrs': g['playtime'],
-        'website':      g.get('website'),
-        'esrb':         (g.get('esrb_rating') or {}).get('name'),
-        'genres':       [ge['name'] for ge in g.get('genres', []) if isinstance(ge, dict)],
-        'platforms':    g.get('parent_platforms', []),
-        'developers':   [d['name'] for d in g.get('developers', []) if isinstance(d, dict)],
-        'publishers':   [p['name'] for p in g.get('publishers', []) if isinstance(p, dict)],
-        'tags':         [t['name'] for t in g.get('tags', []) if isinstance(t, dict)][:10],
-        'image':        g.get('background_image'),
+        "id": g["id"],
+        "name": g["name"],
+        "slug": g["slug"],
+        "rating": g["rating"],
+        "metacritic": g["metacritic"],
+        "released": g["released"],
+        "playtime_hrs": g["playtime"],
+        "website": g.get("website"),
+        "esrb": (g.get("esrb_rating") or {}).get("name"),
+        "genres": [ge["name"] for ge in g.get("genres", []) if isinstance(ge, dict)],
+        "platforms": g.get("parent_platforms", []),
+        "developers": [d["name"] for d in g.get("developers", []) if isinstance(d, dict)],
+        "publishers": [p["name"] for p in g.get("publishers", []) if isinstance(p, dict)],
+        "tags": [t["name"] for t in g.get("tags", []) if isinstance(t, dict)][:10],
+        "image": g.get("background_image"),
     }
 
+
 # Confirmed results:
-print(game_summary('red-dead-redemption-2'))
+print(game_summary("red-dead-redemption-2"))
 # {'id': 28, 'name': 'Red Dead Redemption 2', 'rating': 4.59, 'metacritic': 96,
 #  'released': '2018-10-26', 'playtime_hrs': 21,
 #  'esrb': 'Mature',
@@ -145,20 +149,22 @@ The listing page always returns the same ~40 popular games regardless of URL par
 def top_games():
     """Returns list of 40 game dicts from rawg.io/games listing page."""
     resp = http_get("https://rawg.io/games")
-    idx = resp.find('window.CLIENT_PARAMS = {')
+    idx = resp.find("window.CLIENT_PARAMS = {")
     if idx < 0:
         return []
-    chunk = resp[idx + len('window.CLIENT_PARAMS = '):]
+    chunk = resp[idx + len("window.CLIENT_PARAMS = ") :]
     depth, end = 0, 0
     for i, c in enumerate(chunk):
-        if c == '{': depth += 1
-        elif c == '}':
+        if c == "{":
+            depth += 1
+        elif c == "}":
             depth -= 1
             if depth == 0:
                 end = i + 1
                 break
     params = json.loads(chunk[:end])
-    return list(params['initialState']['entities'].get('games', {}).values())
+    return list(params["initialState"]["entities"].get("games", {}).values())
+
 
 games = top_games()
 # 40 games, each with: id, slug, name, released, rating, rating_top, ratings_count,
@@ -180,7 +186,7 @@ for g in games[:5]:
 ```python
 from concurrent.futures import ThreadPoolExecutor
 
-slugs = ['portal-2', 'dark-souls-iii', 'minecraft', 'hades', 'celeste']
+slugs = ["portal-2", "dark-souls-iii", "minecraft", "hades", "celeste"]
 with ThreadPoolExecutor(max_workers=3) as ex:
     results = list(ex.map(extract_game, slugs))
 # Tested: 4 games in ~2.8s at max_workers=4
@@ -206,30 +212,22 @@ All endpoints live at `https://api.rawg.io/api/`. Append `&key=YOUR_API_KEY` to 
 import json, os
 from helpers import http_get
 
-KEY = os.environ['RAWG_API_KEY']
+KEY = os.environ["RAWG_API_KEY"]
 
 # Search
-results = json.loads(http_get(
-    f"https://api.rawg.io/api/games?search=witcher&page_size=5&key={KEY}"
-))
+results = json.loads(http_get(f"https://api.rawg.io/api/games?search=witcher&page_size=5&key={KEY}"))
 # results['count']   -> total matching games
 # results['next']    -> next page URL (pagination)
 # results['results'] -> list of game objects
 
 # Top-rated
-top = json.loads(http_get(
-    f"https://api.rawg.io/api/games?ordering=-metacritic&page_size=10&key={KEY}"
-))
+top = json.loads(http_get(f"https://api.rawg.io/api/games?ordering=-metacritic&page_size=10&key={KEY}"))
 
 # By date range
-recent = json.loads(http_get(
-    f"https://api.rawg.io/api/games?dates=2024-01-01,2024-12-31&ordering=-added&page_size=20&key={KEY}"
-))
+recent = json.loads(http_get(f"https://api.rawg.io/api/games?dates=2024-01-01,2024-12-31&ordering=-added&page_size=20&key={KEY}"))
 
 # By platform (PC=4, PS4=18, Xbox One=1, Switch=7)
-pc_games = json.loads(http_get(
-    f"https://api.rawg.io/api/games?platforms=4&ordering=-rating&page_size=10&key={KEY}"
-))
+pc_games = json.loads(http_get(f"https://api.rawg.io/api/games?platforms=4&ordering=-rating&page_size=10&key={KEY}"))
 ```
 
 ### Game detail
@@ -240,9 +238,7 @@ game = json.loads(http_get(f"https://api.rawg.io/api/games/3328?key={KEY}"))
 # game['name'], game['rating'], game['metacritic'], game['description_raw'], ...
 
 # By slug
-game = json.loads(http_get(
-    f"https://api.rawg.io/api/games/the-witcher-3-wild-hunt?key={KEY}"
-))
+game = json.loads(http_get(f"https://api.rawg.io/api/games/the-witcher-3-wild-hunt?key={KEY}"))
 ```
 
 ### API response fields (same as HTML scraping)
@@ -288,10 +284,10 @@ def get_all_pages(url_template, max_pages=5):
     url = url_template + "&page=1"
     for _ in range(max_pages):
         data = json.loads(http_get(url))
-        results.extend(data.get('results', []))
-        if not data.get('next'):
+        results.extend(data.get("results", []))
+        if not data.get("next"):
             break
-        url = data['next']
+        url = data["next"]
     return results
 ```
 

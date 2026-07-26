@@ -8,6 +8,7 @@
 
 ```python
 import json
+
 data = json.loads(http_get("https://api.github.com/repos/{owner}/{repo}"))
 # Key fields: stargazers_count, forks_count, description, language, topics,
 #             open_issues_count, created_at, updated_at, pushed_at,
@@ -30,8 +31,9 @@ Use the browser **only** for the trending page — it's server-side rendered HTM
 
 ```python
 import json
+
 data = json.loads(http_get("https://api.github.com/repos/browser-use/browser-use"))
-print(data['stargazers_count'], data['forks_count'], data['description'])
+print(data["stargazers_count"], data["forks_count"], data["description"])
 # returns: 88349  10136  '🌐 Make websites accessible for AI agents.'
 ```
 
@@ -39,8 +41,9 @@ print(data['stargazers_count'], data['forks_count'], data['description'])
 
 ```python
 import json
+
 user = json.loads(http_get("https://api.github.com/users/browser-use"))
-print(user['type'], user['followers'], user['public_repos'], user['blog'])
+print(user["type"], user["followers"], user["public_repos"], user["blog"])
 # returns: 'Organization'  3046  39  'https://browser-use.com'
 ```
 
@@ -50,9 +53,10 @@ The trending page is JS-rendered. `article.Box-row` selector confirmed working (
 
 ```python
 import json
-goto("https://github.com/trending")          # or /trending/python?since=weekly
+
+goto("https://github.com/trending")  # or /trending/python?since=weekly
 wait_for_load()
-wait(2)                                       # extra 2s — React hydration completes after readyState
+wait(2)  # extra 2s — React hydration completes after readyState
 
 result = js("""
 (function(){
@@ -90,12 +94,11 @@ Supported URL params:
 
 ```python
 import json
-results = json.loads(http_get(
-    "https://api.github.com/search/repositories?q=browser+automation+language:python&sort=stars&per_page=10"
-))
-print(results['total_count'])   # e.g. 3250
-for r in results['items']:
-    print(r['full_name'], r['stargazers_count'])
+
+results = json.loads(http_get("https://api.github.com/search/repositories?q=browser+automation+language:python&sort=stars&per_page=10"))
+print(results["total_count"])  # e.g. 3250
+for r in results["items"]:
+    print(r["full_name"], r["stargazers_count"])
 ```
 
 Search API rate limit is **10 req/min** unauthenticated (separate from the 60/hour core limit). Runs out fast if called in a loop.
@@ -104,6 +107,7 @@ Search API rate limit is **10 req/min** unauthenticated (separate from the 60/ho
 
 ```python
 import json
+
 # Commits
 commits = json.loads(http_get("https://api.github.com/repos/owner/repo/commits?per_page=10"))
 # Fields: sha, commit.message, commit.author.date, author.login
@@ -125,8 +129,9 @@ contribs = json.loads(http_get("https://api.github.com/repos/owner/repo/contribu
 
 ```python
 import json, base64
+
 resp = json.loads(http_get("https://api.github.com/repos/owner/repo/contents/path/to/file.py"))
-content = base64.b64decode(resp['content']).decode()
+content = base64.b64decode(resp["content"]).decode()
 # resp also has: size, sha, html_url
 # Prefer raw.githubusercontent.com for large files — no base64, no rate limit hit
 ```
@@ -137,9 +142,11 @@ content = base64.b64decode(resp['content']).decode()
 import json
 from concurrent.futures import ThreadPoolExecutor
 
+
 def fetch_repo(name):
     data = json.loads(http_get(f"https://api.github.com/repos/{name}"))
-    return {"name": name, "stars": data['stargazers_count'], "lang": data['language']}
+    return {"name": name, "stars": data["stargazers_count"], "lang": data["language"]}
+
 
 repos = ["owner/repo1", "owner/repo2", "owner/repo3"]
 with ThreadPoolExecutor(max_workers=3) as ex:
@@ -154,7 +161,8 @@ with ThreadPoolExecutor(max_workers=3) as ex:
 - **Token header format** — Use `Authorization: Bearer <token>` (not `token <token>`), plus `X-GitHub-Api-Version: 2022-11-28`:
   ```python
   import os
-  token = os.environ.get('GITHUB_TOKEN', '')
+
+  token = os.environ.get("GITHUB_TOKEN", "")
   headers = {"Authorization": f"Bearer {token}", "X-GitHub-Api-Version": "2022-11-28"} if token else {}
   data = json.loads(http_get("https://api.github.com/repos/owner/repo", headers=headers))
   ```
