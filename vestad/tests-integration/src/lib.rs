@@ -8,6 +8,7 @@ use std::sync::LazyLock;
 use std::time::Duration;
 
 use client::Client;
+pub use client::ProxyAuth;
 use types::ServerConfig;
 
 pub static SERVER: LazyLock<TestServer> = LazyLock::new(|| {

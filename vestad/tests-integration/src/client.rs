@@ -92,6 +92,17 @@ fn read_sse_result(resp: Response<Body>) -> Result<String, String> {
     Err("server closed connection before completing".into())
 }
 
+/// How a proxied request authenticates, for `Client::proxy_get`.
+#[derive(Debug)]
+pub enum ProxyAuth<'cred> {
+    /// No credential at all: the browser's plain iframe request.
+    None,
+    /// The vestad api key as a Bearer token.
+    ApiKey,
+    /// A minted service key as a Bearer token.
+    Bearer(&'cred str),
+}
+
 pub struct Client {
     agent: ureq::Agent,
     base_url: String,
@@ -553,6 +564,74 @@ impl Client {
             .call()
             .map_err(|e| map_error(&e))?;
         check_response(resp)?;
+        Ok(())
+    }
+
+    /// GET a proxied path with a chosen credential, returning `(status, body)`. Never treats a
+    /// non-2xx as an error: the whole point is asserting on the refusals.
+    pub fn proxy_get(&self, path: &str, auth: ProxyAuth) -> Result<(u16, String), String> {
+        let mut request = self.agent.get(&format!("{}{}", self.base_url, path));
+        match auth {
+            ProxyAuth::None => {}
+            ProxyAuth::ApiKey => {
+                request = request.header("Authorization", &format!("Bearer {}", self.api_key));
+            }
+            ProxyAuth::Bearer(token) => {
+                request = request.header("Authorization", &format!("Bearer {token}"));
+            }
+        }
+        let response = request.call().map_err(|e| map_error(&e))?;
+        let status = response.status().as_u16();
+        let body = response
+            .into_body()
+            .read_to_string()
+            .map_err(|e| format!("read body: {e}"))?;
+        Ok((status, body))
+    }
+
+    /// The status of a proxied GET, for the authorization table where the body is noise.
+    pub fn proxy_status(&self, path: &str, auth: ProxyAuth) -> Result<u16, String> {
+        Ok(self.proxy_get(path, auth)?.0)
+    }
+
+    /// Register a service via `POST /agents/{name}/services`, the agent-token tier the
+    /// in-container `register-service` script calls. Exposure is left unspecified, so the
+    /// response's `public` reports vestad's own default for a fresh registration.
+    pub fn register_service(&self, name: &str, service: &str) -> Result<serde_json::Value, String> {
+        let agent_token = self.read_agent_token(name)?;
+        let response = self
+            .agent
+            .post(&format!("{}/agents/{name}/services", self.base_url))
+            .header("X-Agent-Token", &agent_token)
+            .send_json(serde_json::json!({ "name": service }))
+            .map_err(|e| map_error(&e))?;
+        check_response(response)?
+            .into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {e}"))
+    }
+
+    /// Mint a service key scoped to one service on one agent via
+    /// `POST /agents/{name}/services/{service}/keys`. The `key` in the response is the secret,
+    /// returned exactly once.
+    pub fn mint_service_key(&self, name: &str, service: &str) -> Result<serde_json::Value, String> {
+        let response = self
+            .agent
+            .post(&format!(
+                "{}/agents/{name}/services/{service}/keys",
+                self.base_url
+            ))
+            .header("Authorization", &format!("Bearer {}", self.api_key))
+            .send_json(serde_json::json!({}))
+            .map_err(|e| map_error(&e))?;
+        check_response(response)?
+            .into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {e}"))
+    }
+
+    pub fn revoke_service_key(&self, name: &str, service: &str, id: &str) -> Result<(), String> {
+        self.delete(&format!("/agents/{name}/services/{service}/keys/{id}"))?;
         Ok(())
     }
 
