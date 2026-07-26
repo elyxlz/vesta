@@ -22,7 +22,10 @@ export default function DashboardPage() {
   const { name, agent } = useAgent();
   const { connection, api } = useSession();
   const { colors, dark } = usePreferences();
-  const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState<{
+    url: string;
+    message: string;
+  } | null>(null);
   const dashboard = agent?.services.dashboard;
   const hasDashboard = !!dashboard;
 
@@ -36,14 +39,18 @@ export default function DashboardPage() {
     hasDashboard,
   );
 
-  // Derived rather than mirrored into state: the hook retries a failed mint and clears its own
-  // error, so a page latched onto the first failure would never recover.
-  const shownError = error || (keyError == null ? "" : String(keyError));
-
   const dashboardUrl =
     dashboard && connection && dashboardKey
       ? serviceKeyPathUrl(connection.url, name, "dashboard", dashboardKey)
       : null;
+
+  // Both errors are derived rather than latched into state. The hook retries a failed mint and
+  // clears its own error, so a mirrored copy would outlive the failure; a load failure is scoped
+  // to the URL that produced it, so a fresh key replacing a revoked one gets its own try.
+  const shownError =
+    (loadError !== null && loadError.url === dashboardUrl
+      ? loadError.message
+      : "") || (keyError == null ? "" : String(keyError));
 
   const bridgeMessages = useMemo<readonly Record<string, unknown>[]>(
     () =>
@@ -143,7 +150,12 @@ export default function DashboardPage() {
               onLoad={sendContext}
               onMessage={onMessage}
               onShouldStartLoadWithRequest={allowNavigation}
-              onError={(event) => setError(event.nativeEvent.description)}
+              onError={(event) =>
+                setLoadError({
+                  url: dashboardUrl,
+                  message: event.nativeEvent.description,
+                })
+              }
             />
           )}
         </View>
