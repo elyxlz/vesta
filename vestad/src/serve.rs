@@ -688,6 +688,10 @@ async fn restart_agent_handler(
             let settings = state.settings.read().await;
             settings.agent_mounts(&name)
         };
+        if take_scheduled_backups_during_restart(&state, &name, &user_mounts, reason.as_ref()).await
+        {
+            return Ok(ok_json());
+        }
         docker::restart_agent(
             &state.docker,
             &name,
@@ -701,6 +705,81 @@ async fn restart_agent_handler(
         Ok(ok_json())
     })
     .await
+}
+
+/// The category the agent's post-compaction restart carries (`lifecycle.py`'s `COMPACTION_RESTART`).
+/// The nightly dream ends in one, which is what makes it the moment a scheduled backup is free.
+const COMPACTION_RESTART_CATEGORY: &str = "compaction:";
+
+/// Fold the agent's due scheduled backups into a restart it asked for itself, returning whether the
+/// restart is now done. A backup is a stop, a snapshot, and a start; a restart is a stop and a
+/// start. Snapshotting inside a stop already happening is what keeps the scheduler from ever having
+/// to stop a working agent, and loses nothing the restart was not about to lose anyway. Declined,
+/// leaving the caller to restart normally, when the agent did not initiate the restart (a user
+/// should not wait on a snapshot), backups are off, nothing is due, grants drifted so the container
+/// needs the recreate a plain stop/start cannot do, or every snapshot failed, since a batch that
+/// fails preflight never cycles the container at all.
+async fn take_scheduled_backups_during_restart(
+    state: &SharedState,
+    name: &str,
+    user_mounts: &[crate::mounts::HostMount],
+    reason: Option<&crate::lifecycle::LifecycleReason>,
+) -> bool {
+    let Some(reason) =
+        reason.filter(|reason| reason.log_reason.starts_with(COMPACTION_RESTART_CATEGORY))
+    else {
+        return false;
+    };
+    let (enabled, retention) = {
+        let settings = state.settings.read().await;
+        settings.backup.effective_for(name)
+    };
+    if !enabled {
+        return false;
+    }
+    let mut backups = match backup::list_backups(&state.env_config.agents_dir, name).await {
+        Ok(backups) => backups,
+        Err(e) => {
+            tracing::warn!(agent = %name, error = %e, "restart-backup: failed to list backups");
+            return false;
+        }
+    };
+    let due = backup::due_scheduled_types(&backups, crate::time_utils::now_epoch_secs());
+    if due.is_empty() || docker::restart_needs_recreate(&state.docker, name, user_mounts).await {
+        return false;
+    }
+    // A backup only starts a container it stopped itself, so it cannot double as the restart of one
+    // that is already down; that agent still has to come up.
+    if docker::container_status(&state.docker, &docker::container_name(name)).await
+        != docker::ContainerStatus::Running
+    {
+        return false;
+    }
+    let Ok(_file_lock) = backup::agent_file_lock(name) else {
+        tracing::warn!(agent = %name, "restart-backup: failed to acquire lock");
+        return false;
+    };
+    tracing::info!(agent = %name, types = ?due, "restart-backup: agent restarting, taking due backups");
+    let mut created_any = false;
+    for (backup_type, result) in
+        backup::create_backups_batch(&state.docker, name, due, reason).await
+    {
+        match result {
+            Ok(info) => {
+                tracing::info!(agent = %name, backup_type = %backup_type, backup_id = %info.id, "restart-backup: created");
+                backups.insert(0, info);
+                created_any = true;
+            }
+            Err(e) => {
+                tracing::error!(agent = %name, backup_type = %backup_type, error = %e, "restart-backup: failed");
+            }
+        }
+    }
+    if !created_any {
+        return false;
+    }
+    backup::cleanup_backups(name, &backups, &retention).await;
+    true
 }
 
 async fn destroy_agent_handler(
@@ -2506,8 +2585,9 @@ pub fn build_router(state: SharedState) -> Router {
     // token against the agent name in the path — so an agent can stop/restart only itself. This is
     // how the agent's restart_vesta/stop_vesta tools reach vestad (it then does the docker action).
     // Stop is quick (control tier); restart can trigger a full snapshot+recreate when host-folder
-    // grants drifted (docker export|import), which for a multi-GB agent exceeds the control deadline —
-    // so it rides the longrun timeout like the create route, not the control tier.
+    // grants drifted (docker export|import), and folds the agent's due scheduled backups into its
+    // stop, either of which for a multi-GB agent exceeds the control deadline — so it rides the
+    // longrun timeout like the create route, not the control tier.
     let agents_self_stop = Router::new()
         .route("/agents/{name}/stop", post(stop_agent_handler))
         .layer(control_timeout_layer())
@@ -2642,10 +2722,6 @@ fn spawn_auto_backup_task(state: SharedState) {
             tracing::info!(agent_count = agents.len(), "auto-backup: starting cycle");
 
             let now_epoch = crate::time_utils::now_epoch_secs();
-            let today_local = crate::time_utils::local_date_of_epoch(now_epoch);
-            let seven_days_ago = crate::time_utils::now_timestamp_from_epoch(now_epoch - 7 * 86400);
-            let thirty_days_ago =
-                crate::time_utils::now_timestamp_from_epoch(now_epoch - 30 * 86400);
 
             for name in &agents {
                 // Resolve per-agent settings (override or global fallback)
@@ -2674,36 +2750,12 @@ fn spawn_auto_backup_task(state: SharedState) {
                     }
                 };
 
-                let mut needed = Vec::new();
+                let needed = backup::due_scheduled_types(&backups, now_epoch);
 
-                let has_daily_today = backups.iter().any(|b| {
-                    b.backup_type == crate::types::BackupType::Daily
-                        && crate::time_utils::parse_compact_utc_epoch(&b.created_at)
-                            .map(crate::time_utils::local_date_of_epoch)
-                            .as_deref()
-                            == Some(today_local.as_str())
-                });
-                if !has_daily_today {
-                    needed.push(crate::types::BackupType::Daily);
-                }
-
-                let has_recent_weekly = backups.iter().any(|b| {
-                    b.backup_type == crate::types::BackupType::Weekly
-                        && b.created_at >= seven_days_ago
-                });
-                if !has_recent_weekly {
-                    needed.push(crate::types::BackupType::Weekly);
-                }
-
-                let has_recent_monthly = backups.iter().any(|b| {
-                    b.backup_type == crate::types::BackupType::Monthly
-                        && b.created_at >= thirty_days_ago
-                });
-                if !has_recent_monthly {
-                    needed.push(crate::types::BackupType::Monthly);
-                }
-
-                if !needed.is_empty() {
+                // The safety net, not the normal path: an agent that restarts itself nightly to
+                // compact has already had these taken during a stop it was making anyway. Stopping
+                // a working agent is only worth it once its newest daily has gone properly stale.
+                if !needed.is_empty() && backup::forced_backup_is_overdue(&backups, now_epoch) {
                     let _file_lock = match backup::agent_file_lock(name) {
                         Ok(lock) => lock,
                         Err(e) => {
@@ -2712,8 +2764,13 @@ fn spawn_auto_backup_task(state: SharedState) {
                         }
                     };
                     tracing::info!(agent = %name, types = ?needed, "auto-backup: creating backups");
-                    for (bt, result) in
-                        backup::create_backups_batch(&state.docker, name, needed).await
+                    for (bt, result) in backup::create_backups_batch(
+                        &state.docker,
+                        name,
+                        needed,
+                        &crate::lifecycle::SCHEDULED_BACKUP,
+                    )
+                    .await
                     {
                         match result {
                             Ok(info) => {

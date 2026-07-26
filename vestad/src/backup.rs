@@ -17,6 +17,58 @@ const MIN_DISK_SPACE_BYTES: u64 = 1_000_000_000; // 1 GB
 const DISK_SPACE_MARGIN_BYTES: u64 = 500_000_000; // 500 MB margin above container size
 pub const BACKUP_STOP_TIMEOUT_SECS: i32 = 30;
 pub const MIN_AGE_FOR_BACKUP_SECS: u64 = 6 * 3600;
+/// How stale the newest daily may get before the scheduler stops an agent to back it up. Above the
+/// ~30h two nightly dream-restarts can legitimately be apart (the dreamer's own catch-up window),
+/// so an agent that dreams keeps riding its restarts and is never stopped by the scheduler.
+pub const FORCED_BACKUP_STALENESS_SECS: u64 = 36 * 3600;
+
+/// The scheduled backup types `backups` does not yet cover: one daily per local day, one weekly per
+/// 7 days, one monthly per 30 days. Taking these is free while the container is already stopped;
+/// `forced_backup_is_overdue` is the separate, stricter bar for causing a stop.
+pub fn due_scheduled_types(backups: &[BackupInfo], now_epoch: u64) -> Vec<BackupType> {
+    let today_local = crate::time_utils::local_date_of_epoch(now_epoch);
+    let seven_days_ago = crate::time_utils::now_timestamp_from_epoch(now_epoch - 7 * 86400);
+    let thirty_days_ago = crate::time_utils::now_timestamp_from_epoch(now_epoch - 30 * 86400);
+
+    let mut due = Vec::new();
+    let has_daily_today = backups.iter().any(|b| {
+        b.backup_type == BackupType::Daily
+            && crate::time_utils::parse_compact_utc_epoch(&b.created_at)
+                .map(crate::time_utils::local_date_of_epoch)
+                .as_deref()
+                == Some(today_local.as_str())
+    });
+    if !has_daily_today {
+        due.push(BackupType::Daily);
+    }
+    let has_recent_weekly = backups
+        .iter()
+        .any(|b| b.backup_type == BackupType::Weekly && b.created_at >= seven_days_ago);
+    if !has_recent_weekly {
+        due.push(BackupType::Weekly);
+    }
+    let has_recent_monthly = backups
+        .iter()
+        .any(|b| b.backup_type == BackupType::Monthly && b.created_at >= thirty_days_ago);
+    if !has_recent_monthly {
+        due.push(BackupType::Monthly);
+    }
+    due
+}
+
+/// Whether the newest daily is stale enough to justify stopping the agent for a backup. An agent
+/// that dreams nightly rides the backup into its own compaction restart and never gets here.
+pub fn forced_backup_is_overdue(backups: &[BackupInfo], now_epoch: u64) -> bool {
+    let newest_daily = backups
+        .iter()
+        .filter(|b| b.backup_type == BackupType::Daily)
+        .filter_map(|b| crate::time_utils::parse_compact_utc_epoch(&b.created_at))
+        .max();
+    match newest_daily {
+        Some(created) => now_epoch.saturating_sub(created) >= FORCED_BACKUP_STALENESS_SECS,
+        None => true,
+    }
+}
 
 /// Acquire an exclusive file lock for the given agent. The lock is held for the
 /// lifetime of the returned Flock. Used to coordinate between the vestad API and
@@ -180,12 +232,15 @@ pub async fn create_backup(
     result
 }
 
-/// Create multiple backup types in one stop/start cycle (separate restic
-/// snapshots, deduplicated). Returns a result per type; failures don't block others.
+/// Create multiple backup types in one stop/start cycle (separate restic snapshots, deduplicated).
+/// Returns a result per type; failures don't block others. `resume_reason` is the transition the
+/// agent reads on the way back up: the scheduler's own pause, or the restart this batch folded
+/// itself into, which the agent must still see as the reason it restarted.
 pub async fn create_backups_batch(
     docker: &Docker,
     name: &str,
     types: Vec<BackupType>,
+    resume_reason: &crate::lifecycle::LifecycleReason,
 ) -> Vec<(BackupType, Result<BackupInfo, DockerError>)> {
     let fail_all = |types: Vec<BackupType>,
                     e: DockerError|
@@ -203,8 +258,7 @@ pub async fn create_backups_batch(
     };
     let types_for_stop_failure = types.clone();
 
-    // Batch backups are only ever the auto-backup's scheduled set, so one scheduled reason fits.
-    let paused_result = with_container_paused(docker, name, cs, &crate::lifecycle::SCHEDULED_BACKUP, || async {
+    let paused_result = with_container_paused(docker, name, cs, resume_reason, || async {
         let mut results = Vec::new();
         for bt in types {
             let result = crate::restic::snapshot(name, &bt).await;
@@ -443,6 +497,104 @@ mod tests {
             !restore_body.contains("remove_container_force"),
             "restore_backup must use ensure_container_removed (confirms gone), not the best-effort remove_container_force"
         );
+    }
+
+    // ── Scheduled-backup scheduling tests ─────────────────────────
+
+    // Fixed so the local-date arithmetic is deterministic in any host timezone: every expectation
+    // below derives its timestamps from this same epoch.
+    const NOW: u64 = 1_780_000_000;
+
+    fn backup_at(bt: BackupType, secs_ago: u64) -> BackupInfo {
+        make_backup(
+            "a",
+            bt,
+            &crate::time_utils::now_timestamp_from_epoch(NOW - secs_ago),
+        )
+    }
+
+    #[test]
+    fn every_type_is_due_when_the_agent_has_never_been_backed_up() {
+        assert_eq!(
+            due_scheduled_types(&[], NOW),
+            vec![BackupType::Daily, BackupType::Weekly, BackupType::Monthly]
+        );
+    }
+
+    #[test]
+    fn nothing_is_due_while_each_type_is_inside_its_window() {
+        let backups = vec![
+            backup_at(BackupType::Daily, 0),
+            backup_at(BackupType::Weekly, 2 * 86400),
+            backup_at(BackupType::Monthly, 10 * 86400),
+        ];
+        assert!(due_scheduled_types(&backups, NOW).is_empty());
+    }
+
+    #[test]
+    fn a_daily_from_a_previous_day_comes_due_again() {
+        let backups = vec![
+            backup_at(BackupType::Daily, 86400),
+            backup_at(BackupType::Weekly, 2 * 86400),
+            backup_at(BackupType::Monthly, 10 * 86400),
+        ];
+        assert_eq!(due_scheduled_types(&backups, NOW), vec![BackupType::Daily]);
+    }
+
+    #[test]
+    fn a_lapsed_weekly_and_monthly_ride_along_with_the_daily() {
+        let backups = vec![
+            backup_at(BackupType::Daily, 86400),
+            backup_at(BackupType::Weekly, 8 * 86400),
+            backup_at(BackupType::Monthly, 31 * 86400),
+        ];
+        assert_eq!(
+            due_scheduled_types(&backups, NOW),
+            vec![BackupType::Daily, BackupType::Weekly, BackupType::Monthly]
+        );
+    }
+
+    #[test]
+    fn a_never_backed_up_agent_is_overdue_enough_to_stop() {
+        assert!(forced_backup_is_overdue(&[], NOW));
+    }
+
+    #[test]
+    fn a_daily_inside_the_staleness_window_does_not_justify_a_stop() {
+        let backups = vec![backup_at(
+            BackupType::Daily,
+            FORCED_BACKUP_STALENESS_SECS - 1,
+        )];
+        assert!(!forced_backup_is_overdue(&backups, NOW));
+    }
+
+    #[test]
+    fn a_daily_past_the_staleness_window_justifies_a_stop() {
+        let backups = vec![backup_at(BackupType::Daily, FORCED_BACKUP_STALENESS_SECS)];
+        assert!(forced_backup_is_overdue(&backups, NOW));
+    }
+
+    #[test]
+    fn only_the_newest_daily_decides_staleness() {
+        let backups = vec![
+            backup_at(BackupType::Daily, 30 * 86400),
+            backup_at(BackupType::Daily, 3600),
+        ];
+        assert!(!forced_backup_is_overdue(&backups, NOW));
+    }
+
+    #[test]
+    fn an_agent_backed_up_by_its_nightly_restart_is_never_stopped_by_the_scheduler() {
+        // The dream restart takes the daily and the next one lands up to 30h later (the dreamer's
+        // catch-up window). The type is due again, but never stale enough to be worth a stop.
+        for secs_ago in [24 * 3600, 30 * 3600] {
+            let backups = vec![backup_at(BackupType::Daily, secs_ago)];
+            assert_eq!(
+                due_scheduled_types(&backups, NOW),
+                vec![BackupType::Daily, BackupType::Weekly, BackupType::Monthly]
+            );
+            assert!(!forced_backup_is_overdue(&backups, NOW));
+        }
     }
 
     // ── Retention policy tests ────────────────────────────────────

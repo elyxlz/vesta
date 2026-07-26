@@ -256,6 +256,14 @@ impl Client {
         Ok(())
     }
 
+    /// Restart naming the transition, the way the agent itself does when it restarts after
+    /// compacting its context.
+    pub fn restart_agent_with_reason(&self, name: &str, reason: &str) -> Result<(), String> {
+        let body = serde_json::json!({"reason": reason});
+        self.post_json(&format!("/agents/{name}/restart"), &body)?;
+        Ok(())
+    }
+
     pub fn destroy_agent(&self, name: &str) -> Result<(), String> {
         self.delete(&format!("/agents/{name}"))?;
         Ok(())

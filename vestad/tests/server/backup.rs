@@ -27,6 +27,89 @@ fn wait_for_events_db(cname: &str) {
     }
 }
 
+/// The reason the agent sends when it restarts after compacting, which the nightly dream ends with.
+const COMPACTION_RESTART_REASON: &str = "compaction: context compacted";
+
+/// The scheduler must never be the thing that stops a working agent. It doesn't have to be, because
+/// the agent already restarts itself nightly to compact: the snapshot rides that stop.
+///
+/// The restart handler runs to completion before it answers, and a folded backup is taken while the
+/// container is down, so a backup that exists once the call returns was taken during the restart.
+#[test]
+fn a_compaction_restart_takes_the_due_scheduled_backups() {
+    let c = SERVER.client();
+    let agent = TestAgent::create(&c, &unique_agent("bk-dream")).unwrap();
+    wait_for_events_db(&agent_container_name(&agent.name));
+    assert!(
+        c.list_backups(&agent.name).unwrap().is_empty(),
+        "a fresh agent starts with no backups"
+    );
+
+    c.restart_agent_with_reason(&agent.name, COMPACTION_RESTART_REASON)
+        .unwrap();
+
+    let backups = c.list_backups(&agent.name).unwrap();
+    for backup_type in [BackupType::Daily, BackupType::Weekly, BackupType::Monthly] {
+        assert!(
+            backups.iter().any(|b| b.backup_type == backup_type),
+            "the restart should have taken the due {backup_type:?} backup, got {backups:?}"
+        );
+    }
+    c.wait_until_running(&agent.name, 60)
+        .expect("agent should be up after the restart it asked for");
+
+    for b in &backups {
+        c.delete_backup(&agent.name, &b.id).ok();
+    }
+}
+
+/// A user waiting on the app must not wait on a multi-GB snapshot, so only the agent's own
+/// compaction restart carries backups.
+#[test]
+fn a_user_restart_takes_no_backup() {
+    let c = SERVER.client();
+    let agent = TestAgent::create(&c, &unique_agent("bk-userrst")).unwrap();
+    wait_for_events_db(&agent_container_name(&agent.name));
+
+    c.restart_agent(&agent.name).unwrap();
+
+    let backups = c.list_backups(&agent.name).unwrap();
+    assert!(
+        backups.is_empty(),
+        "a user-initiated restart must not snapshot, got {backups:?}"
+    );
+    c.wait_until_running(&agent.name, 60)
+        .expect("agent should be up after restart");
+}
+
+/// Nothing due means nothing to fold in, so the restart stays a plain restart.
+#[test]
+fn a_second_compaction_restart_the_same_day_takes_no_further_backup() {
+    let c = SERVER.client();
+    let agent = TestAgent::create(&c, &unique_agent("bk-dream2")).unwrap();
+    wait_for_events_db(&agent_container_name(&agent.name));
+
+    c.restart_agent_with_reason(&agent.name, COMPACTION_RESTART_REASON)
+        .unwrap();
+    let after_first = c.list_backups(&agent.name).unwrap();
+    assert!(!after_first.is_empty(), "the first restart backs up");
+
+    c.wait_until_running(&agent.name, 60).unwrap();
+    c.restart_agent_with_reason(&agent.name, COMPACTION_RESTART_REASON)
+        .unwrap();
+
+    let after_second = c.list_backups(&agent.name).unwrap();
+    assert_eq!(
+        after_second.len(),
+        after_first.len(),
+        "every type is still inside its window, so nothing more is due"
+    );
+
+    for b in &after_second {
+        c.delete_backup(&agent.name, &b.id).ok();
+    }
+}
+
 #[test]
 fn backup_create() {
     let c = SERVER.client();

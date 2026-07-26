@@ -2216,6 +2216,20 @@ fn restart_reason_for_mount_change(
         .unwrap_or_else(|| crate::lifecycle::DEFAULT_RESTART.clone())
 }
 
+/// Whether a restart of `name` must recreate the container to apply changed host-folder grants,
+/// rather than the plain stop/start a backup can fold itself into. An inspect failure answers
+/// false, matching the plain-restart fallback `restart_agent` takes on the same failure.
+pub async fn restart_needs_recreate(
+    docker: &Docker,
+    name: &str,
+    user_mounts: &[crate::mounts::HostMount],
+) -> bool {
+    match docker.inspect_container(&container_name(name), None).await {
+        Ok(raw) => user_mounts_drifted(&actual_user_mounts(&raw), user_mounts),
+        Err(_) => false,
+    }
+}
+
 pub async fn restart_agent(
     docker: &Docker,
     name: &str,
