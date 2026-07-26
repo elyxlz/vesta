@@ -114,7 +114,7 @@ type managedConfig struct {
 	directURL  string // home box base, e.g. https://<tunnel> (direct mode)
 	directKey  string // per-account key (wak_...) for direct mode
 	controlURL string // vesta.run control-plane base, e.g. https://vesta.run/api (cloud mode)
-	vestadBase string // this box's vestad, e.g. https://host.docker.internal:<port>
+	vestadBase string // this box's vestad, https://$VESTAD_HOST:$VESTAD_PORT
 	agentName  string
 	agentToken string
 	// cloudManaged is the paid-tenant signal: the control plane's cloud-init sets
