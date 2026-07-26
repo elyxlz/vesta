@@ -196,6 +196,10 @@ pub struct AgentStatusCache {
     /// The auto-update scheduler reads it to aim the fleet restart at each agent's local quiet window.
     timezones_tx: watch::Sender<HashMap<String, String>>,
     timezones_rx: watch::Receiver<HashMap<String, String>>,
+    /// Per-agent presence-notification preference (agent name -> enabled), reported on each agent's
+    /// connect snapshot. The push path reads it to suppress a push when the user is focused.
+    presence_notifications_tx: watch::Sender<HashMap<String, bool>>,
+    presence_notifications_rx: watch::Receiver<HashMap<String, bool>>,
     services_tx: watch::Sender<HashMap<String, HashMap<String, ServiceEntry>>>,
     services_rx: watch::Receiver<HashMap<String, HashMap<String, ServiceEntry>>>,
     /// Notification-only channel -- wakes WS loops when any invalidation occurs.
@@ -224,6 +228,7 @@ impl AgentStatusCache {
         let (agents_tx, agents_rx) = watch::channel(Vec::new());
         let (activity_tx, activity_rx) = watch::channel(HashMap::new());
         let (timezones_tx, timezones_rx) = watch::channel(HashMap::new());
+        let (presence_notifications_tx, presence_notifications_rx) = watch::channel(HashMap::new());
         let (services_tx, services_rx) = watch::channel(HashMap::new());
         let (invalidations_tx, invalidations_rx) = watch::channel(());
         Self {
@@ -233,6 +238,8 @@ impl AgentStatusCache {
             activity_rx,
             timezones_tx,
             timezones_rx,
+            presence_notifications_tx,
+            presence_notifications_rx,
             services_tx,
             services_rx,
             invalidations_tx,
@@ -260,6 +267,12 @@ impl AgentStatusCache {
     /// Snapshot of each alive agent's IANA timezone, as last reported on its connect snapshot.
     pub fn timezones(&self) -> HashMap<String, String> {
         self.timezones_rx.borrow().clone()
+    }
+
+    /// Whether the agent wants presence notifications, as last reported on its connect snapshot.
+    /// Absent (never reported) defaults to enabled, matching the config default.
+    pub fn presence_notifications_enabled(&self, agent: &str) -> bool {
+        self.presence_notifications_rx.borrow().get(agent).copied().unwrap_or(true)
     }
 
     pub fn subscribe_services(
@@ -488,6 +501,9 @@ pub fn spawn_agent_status_task(deps: AgentStatusTaskDeps) {
                     cache.timezones_tx.send_modify(|zones| {
                         zones.remove(name);
                     });
+                    cache.presence_notifications_tx.send_modify(|map| {
+                        map.remove(name);
+                    });
                     sync_hub.forget_agent(name);
                     false
                 }
@@ -542,6 +558,7 @@ struct AgentWsHandle {
 enum AgentUpdate {
     Activity(String),
     Timezone(String),
+    PresenceNotificationsEnabled(bool),
 }
 
 fn apply_agent_update(cache: &AgentStatusCache, name: String, update: AgentUpdate) {
@@ -551,6 +568,9 @@ fn apply_agent_update(cache: &AgentStatusCache, name: String, update: AgentUpdat
         }),
         AgentUpdate::Timezone(zone) => cache.timezones_tx.send_modify(|zones| {
             zones.insert(name, zone);
+        }),
+        AgentUpdate::PresenceNotificationsEnabled(enabled) => cache.presence_notifications_tx.send_modify(|map| {
+            map.insert(name, enabled);
         }),
     }
 }
@@ -626,6 +646,13 @@ async fn agent_event_listener(
                             .and_then(|value| value.as_str())
                         {
                             let _ = tx.send((name.clone(), AgentUpdate::Timezone(zone.to_string()))).await;
+                        }
+                        if let Some(enabled) = parsed
+                            .get("config")
+                            .and_then(|config| config.get("presence_notifications_enabled"))
+                            .and_then(serde_json::Value::as_bool)
+                        {
+                            let _ = tx.send((name.clone(), AgentUpdate::PresenceNotificationsEnabled(enabled))).await;
                         }
                         // Reseed pending notifications from the snapshot's authoritative id set,
                         // deduped by id against later live changes.
@@ -754,6 +781,16 @@ mod tests {
     fn empty_revs_when_nothing_invalidated() {
         let cache = AgentStatusCache::new();
         assert!(cache.service_revs().is_empty());
+    }
+
+    #[test]
+    fn presence_notifications_default_enabled_until_reported() {
+        let cache = AgentStatusCache::new();
+        assert!(cache.presence_notifications_enabled("scout"));
+        cache.presence_notifications_tx.send_modify(|m| {
+            m.insert("scout".into(), false);
+        });
+        assert!(!cache.presence_notifications_enabled("scout"));
     }
 
     use crate::sync::SyncHub;
