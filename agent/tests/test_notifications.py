@@ -642,10 +642,14 @@ async def test_notification_watcher_signals_then_stops_on_shutdown(tmp_path):
 
     task = asyncio.create_task(_notification_watcher(notify, notifications_dir=notifications_dir, shutdown=shutdown))
     try:
-        # awatch needs a moment to install its filesystem watch before changes register.
-        await asyncio.sleep(0.2)
-        (notifications_dir / "new.json").write_text('{"x": 1}')
-        await wait_for_condition(notify.is_set, message="watcher never signalled notify on a new .json file")
+        # awatch installs its filesystem watch asynchronously, so rewrite the file until the watcher
+        # reports it rather than guessing how long that takes. Polling the real file keeps the
+        # assertion honest: only a signal caused by this .json file can satisfy it.
+        def new_json_observed() -> bool:
+            (notifications_dir / "new.json").write_text('{"x": 1}')
+            return notify.is_set()
+
+        await wait_for_condition(new_json_observed, message="watcher never signalled notify on a new .json file")
 
         # Setting the SHARED shutdown event must bridge into the watcher's local stop and end the coroutine.
         shutdown.set()
