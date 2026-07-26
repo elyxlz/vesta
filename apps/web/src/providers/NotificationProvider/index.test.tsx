@@ -104,6 +104,9 @@ function makeController(statuses: Record<string, AgentRow["status"]>) {
     },
     getSyncState: () => "open",
     subscribeSyncState: () => () => undefined,
+    reportPresence: () => undefined,
+    getAnyFocused: () => false,
+    subscribeAnyFocused: () => () => undefined,
     close: () => undefined,
   };
   const emit = (delta: Delta): void => {
