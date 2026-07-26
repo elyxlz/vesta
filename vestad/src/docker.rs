@@ -1318,8 +1318,22 @@ pub async fn remove_image(docker: &Docker, image: &str) -> Result<(), DockerErro
 /// Namespaces of the throwaway per-agent snapshot images that `rebuild_agent` / `rename_agent`
 /// create via `docker export | docker import`. Only tags in one of these are ever auto-removed
 /// -- never the base image, a pulled image, or a restore image.
-const REBUILD_SNAPSHOT_PREFIX: &str = "vesta-rebuild:";
-const SNAPSHOT_IMAGE_PREFIXES: [&str; 2] = [REBUILD_SNAPSHOT_PREFIX, "vesta-rename:"];
+const SNAPSHOT_IMAGE_PREFIXES: [&str; 3] =
+    ["vesta-rebuild-", LEGACY_REBUILD_SNAPSHOT_PREFIX, "vesta-rename:"];
+
+/// LEGACY(remove-when: no `vesta-rebuild:` tag is left on any host, i.e. every agent has rebuilt
+/// once past the release carrying the user-scoped namespace): snapshots taken before the user moved
+/// into the repository name. They are unattributable (a host runs agents for several users and the
+/// tag names none), so they are never scanned -- only collected as a predecessor by
+/// `remove_replaced_snapshot`, which drains them on each agent's next successful rebuild.
+const LEGACY_REBUILD_SNAPSHOT_PREFIX: &str = "vesta-rebuild:";
+
+/// The rebuild-snapshot namespace for this user. Containers are scoped by the `vesta.user` label;
+/// images carry no labels we can filter on, so the owner lives in the repository name instead. That
+/// is what makes a snapshot attributable, and an unattributable one is never touched.
+fn rebuild_snapshot_prefix() -> String {
+    format!("vesta-rebuild-{}:", crate::paths::current_user())
+}
 
 /// Remove the snapshot the just-replaced container was built from, so rebuilds and renames stop
 /// leaving a trail of multi-GB images. Deliberately narrow: it only ever touches the single
@@ -1349,7 +1363,7 @@ fn is_removable_snapshot(prev: &str, keep: &str) -> bool {
 /// Split a rebuild snapshot tag into the agent it belongs to and the epoch it was taken at.
 /// Agent names may contain `_`, so the timestamp is taken from the last segment and must parse.
 fn parse_rebuild_snapshot(tag: &str) -> Option<(&str, u64)> {
-    let rest = tag.strip_prefix(REBUILD_SNAPSHOT_PREFIX)?;
+    let rest = tag.strip_prefix(rebuild_snapshot_prefix().as_str())?;
     let (name, ts) = rest.rsplit_once('_')?;
     if name.is_empty() {
         return None;
@@ -1378,18 +1392,14 @@ async fn rebuild_snapshots_by_agent(docker: &Docker) -> HashMap<String, Vec<(u64
 /// snapshot is that agent's only filesystem then, and reconcile discovers agents by listing
 /// containers, so without this the agent is invisible to every later boot.
 ///
-/// A tag carries no user and one host runs agents for several, so a missing env file means "not
-/// mine", never "dead": unattributed snapshots are skipped, since force-removing a tag whose image
-/// backs a live container destroys it.
+/// Only this user's namespace is scanned, so every tag here is ours and a missing env file means
+/// the agent was destroyed rather than that it belongs to someone else.
 async fn resume_interrupted_rebuilds(
     docker: &Docker,
     env_config: &AgentEnvConfig,
     mounts_for: &(dyn Fn(&str) -> Vec<crate::mounts::HostMount> + Send + Sync),
 ) {
     for (name, snapshots) in rebuild_snapshots_by_agent(docker).await {
-        if !env_config.agents_dir.join(format!("{name}.env")).is_file() {
-            continue;
-        }
         let cname = container_name(&name);
         if container_status(docker, &cname).await != ContainerStatus::NotFound {
             continue;
@@ -1397,6 +1407,11 @@ async fn resume_interrupted_rebuilds(
         let Some((_, newest)) = snapshots.last() else {
             continue;
         };
+        if !env_config.agents_dir.join(format!("{name}.env")).is_file() {
+            tracing::info!(agent = %name, "snapshots left by a destroyed agent, collecting");
+            remove_snapshots(docker, snapshots.iter().map(|(_, tag)| tag.as_str())).await;
+            continue;
+        }
         let Some(port) = read_env_value(&env_config.agents_dir, &name, "WS_PORT")
             .and_then(|value| value.parse::<u16>().ok())
         else {
@@ -2622,7 +2637,7 @@ pub async fn rebuild_agent(
     let port = resolve_existing_port(docker, &cname, &info, name, &env_config.agents_dir).await?;
 
     let ts = crate::time_utils::now_epoch_secs();
-    let backup_tag = format!("vesta-rebuild:{name}_{ts}");
+    let backup_tag = format!("{}{name}_{ts}", rebuild_snapshot_prefix());
 
     // Stop cleanly so the snapshot captures a quiesced filesystem (SQLite mid-write would
     // be the main concern). Best-effort — snapshot will still proceed if stop fails.
@@ -2897,19 +2912,36 @@ mod tests {
 
     #[test]
     fn rebuild_snapshot_tags_split_into_agent_and_timestamp() {
+        let mine = rebuild_snapshot_prefix();
         assert_eq!(
-            parse_rebuild_snapshot("vesta-rebuild:apollo_1785004456"),
+            parse_rebuild_snapshot(&format!("{mine}apollo_1785004456")),
             Some(("apollo", 1_785_004_456))
         );
         // Agent names may contain underscores, so only the last segment is the timestamp.
         assert_eq!(
-            parse_rebuild_snapshot("vesta-rebuild:ro_shared_7_1785022922"),
+            parse_rebuild_snapshot(&format!("{mine}ro_shared_7_1785022922")),
             Some(("ro_shared_7", 1_785_022_922))
         );
     }
 
     #[test]
+    fn snapshots_outside_this_users_namespace_do_not_parse() {
+        // The incident: a host runs agents for several users, and a tag names none of them. Only
+        // this user's namespace may resolve to an agent we are willing to act on.
+        assert_eq!(
+            parse_rebuild_snapshot("vesta-rebuild-someone-else:apollo_1785004456"),
+            None
+        );
+        // LEGACY: pre-namespace tags are equally unattributable.
+        assert_eq!(
+            parse_rebuild_snapshot("vesta-rebuild:apollo_1785004456"),
+            None
+        );
+    }
+
+    #[test]
     fn only_rebuild_snapshots_are_treated_as_resumable() {
+        let mine = rebuild_snapshot_prefix();
         // A rename snapshot resumes under a different name, and the rest are not ours to recreate
         // an agent from.
         assert_eq!(parse_rebuild_snapshot("vesta-rename:a-to-b_1"), None);
@@ -2917,9 +2949,9 @@ mod tests {
         assert_eq!(parse_rebuild_snapshot("ghcr.io/elyxlz/vesta:v0.1.179"), None);
         assert_eq!(parse_rebuild_snapshot("vesta:local"), None);
         // Malformed tags must not resolve to an agent named "" or a bogus epoch.
-        assert_eq!(parse_rebuild_snapshot("vesta-rebuild:apollo"), None);
-        assert_eq!(parse_rebuild_snapshot("vesta-rebuild:apollo_latest"), None);
-        assert_eq!(parse_rebuild_snapshot("vesta-rebuild:_1785004456"), None);
+        assert_eq!(parse_rebuild_snapshot(&format!("{mine}apollo")), None);
+        assert_eq!(parse_rebuild_snapshot(&format!("{mine}apollo_latest")), None);
+        assert_eq!(parse_rebuild_snapshot(&format!("{mine}_1785004456")), None);
     }
 
     // The agent restart policy, as a string for the Docker-gated test helper below. Production
@@ -3791,9 +3823,18 @@ mod tests {
 
     impl TestSnapshots {
         fn new(agent: &str, stamps: &[u64]) -> Self {
+            Self::in_namespace(&rebuild_snapshot_prefix(), agent, stamps)
+        }
+
+        /// Tags in another user's namespace, which this vestad must never touch.
+        fn foreign(agent: &str, stamps: &[u64]) -> Self {
+            Self::in_namespace("vesta-rebuild-someone-else:", agent, stamps)
+        }
+
+        fn in_namespace(prefix: &str, agent: &str, stamps: &[u64]) -> Self {
             let tags = stamps
                 .iter()
-                .map(|ts| format!("{REBUILD_SNAPSHOT_PREFIX}{agent}_{ts}"))
+                .map(|ts| format!("{prefix}{agent}_{ts}"))
                 .collect();
             Self { tags }
         }
@@ -4015,20 +4056,20 @@ mod tests {
         );
     }
 
-    /// A snapshot this user cannot attribute to one of their own agents must be left completely
-    /// alone. One host runs agents for several users and a snapshot tag carries no user, so a
-    /// missing env file means "not mine", not "dead" -- and force-removing a tag whose image backs
-    /// a live container destroys that container.
+    /// The regression guard for the incident that produced this change: scanning every
+    /// `vesta-rebuild` tag on a host that runs agents for several users read the others' snapshots
+    /// as destroyed agents and force-removed them, untagging nine live images and deleting one
+    /// outright. Another user's namespace must be invisible here.
     #[tokio::test]
     #[ignore]
-    async fn snapshots_this_user_cannot_attribute_are_left_untouched() {
+    async fn another_users_snapshots_are_invisible() {
         let docker = test_docker();
-        let agent = format!("unattributed-{}", std::process::id());
+        let agent = format!("foreign-{}", std::process::id());
         let tc = TestContainer::for_agent(&agent);
-        let snapshots = TestSnapshots::new(&agent, &[1_785_000_000]);
+        let snapshots = TestSnapshots::foreign(&agent, &[1_785_000_000]);
         let foreign = &snapshots.tags[0];
 
-        // An agents_dir with no env file for this agent: exactly how another user's agent looks.
+        // No env file for this agent, which is what previously made it look destroyed.
         let dir = tempfile::TempDir::new().expect("tempdir");
         let env_config = AgentEnvConfig {
             config_dir: dir.path().to_path_buf(),
@@ -4055,14 +4096,62 @@ mod tests {
 
         resume_interrupted_rebuilds(&docker, &env_config, &|_| Vec::new()).await;
 
+        assert!(
+            docker.inspect_image(foreign).await.is_ok(),
+            "another user's snapshot must never be collected"
+        );
         assert_eq!(
             container_status(&docker, &tc.name).await,
             ContainerStatus::NotFound,
-            "an unattributable snapshot must not be used to create a container"
+            "another user's snapshot must never be used to create a container"
+        );
+    }
+
+    /// Within this user's own namespace a missing env file does mean the agent was destroyed
+    /// (`destroy_agent` deletes it), so its snapshots are collected rather than left forever.
+    #[tokio::test]
+    #[ignore]
+    async fn destroyed_agents_snapshots_are_collected() {
+        let docker = test_docker();
+        let agent = format!("destroyed-{}", std::process::id());
+        let tc = TestContainer::for_agent(&agent);
+        let snapshots = TestSnapshots::new(&agent, &[1_785_000_000]);
+        let orphan = &snapshots.tags[0];
+
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let env_config = AgentEnvConfig {
+            config_dir: dir.path().to_path_buf(),
+            agents_dir: dir.path().to_path_buf(),
+            vestad_port: 4111,
+            vestad_tunnel: None,
+        };
+
+        create_test_container_with_binds_async(
+            &docker,
+            &tc,
+            Vec::new(),
+            agent_container_cmd(),
+            NETWORK_MODE,
+            RESTART_POLICY,
+        )
+        .await;
+        snapshot_container(&docker, &tc.name, orphan, &[])
+            .await
+            .expect("snapshot should succeed");
+        ensure_container_removed(&docker, &tc.name)
+            .await
+            .expect("remove should succeed");
+
+        resume_interrupted_rebuilds(&docker, &env_config, &|_| Vec::new()).await;
+
+        assert_eq!(
+            container_status(&docker, &tc.name).await,
+            ContainerStatus::NotFound,
+            "a destroyed agent must not be recreated from a leftover snapshot"
         );
         assert!(
-            docker.inspect_image(foreign).await.is_ok(),
-            "an unattributable snapshot must be left in place, not collected"
+            docker.inspect_image(orphan).await.is_err(),
+            "a destroyed agent's snapshot should be collected"
         );
     }
 
