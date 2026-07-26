@@ -83,6 +83,7 @@ const LABEL_AGENT_NAME: &str = "vesta.agent_name";
 /// The network mode every agent container used before per-agent bridge networks: kept as a
 /// named value so tests can construct a legacy container to exercise the drift-detection
 /// migration path against. No longer the mode `create_container` creates with.
+#[cfg(test)]
 const NETWORK_MODE: &str = "host";
 /// Prefix for each agent's dedicated Docker bridge network. One network per agent gives full
 /// inter-agent port-space isolation from Docker's own network boundary — no supplementary
@@ -123,13 +124,38 @@ pub(crate) async fn ensure_agent_network(
         ..Default::default()
     };
     match docker.create_network(create_opts).await {
-        Ok(_) => Ok(name),
         // A concurrent reconcile pass created it between our inspect and create: treat as success.
-        Err(bollard::errors::Error::DockerResponseServerError { status_code: 409, .. }) => Ok(name),
+        Ok(_)
+        | Err(bollard::errors::Error::DockerResponseServerError { status_code: 409, .. }) => {
+            Ok(name)
+        }
         Err(e) => Err(DockerError::Failed(format!(
             "failed to create agent network {name}: {e}"
         ))),
     }
+}
+
+/// The default `bridge` network's gateway address on the host. Every per-agent network can
+/// route to it regardless of Docker's isolation between user-defined networks, because it's a
+/// host-owned address rather than another container; it's also what `AGENT_VESTAD_HOST`'s
+/// `host-gateway` mapping resolves to inside every container. `run_server` binds vestad's API
+/// here in addition to loopback, unconditionally (independent of `--expose-lan`, which only
+/// controls whether other machines on the LAN can reach vestad), so agent-initiated calls
+/// (`register-service`, `user-notification`, health checks) can always reach vestad now that
+/// agents no longer share the host's network namespace.
+pub async fn resolve_docker_bridge_gateway(docker: &Docker) -> Result<std::net::Ipv4Addr, DockerError> {
+    let inspect_opts = InspectNetworkOptionsBuilder::default().build();
+    let network = docker.inspect_network("bridge", Some(inspect_opts)).await?;
+    let gateway = network
+        .ipam
+        .and_then(|ipam| ipam.config)
+        .and_then(|configs| configs.into_iter().find_map(|c| c.gateway))
+        .ok_or_else(|| {
+            DockerError::Failed("default bridge network has no gateway configured".to_string())
+        })?;
+    gateway.parse().map_err(|e| {
+        DockerError::Failed(format!("invalid default bridge gateway address {gateway}: {e}"))
+    })
 }
 
 /// The container's IP on its own agent network, as seen by `docker inspect`. `None` if the
@@ -1325,9 +1351,9 @@ pub async fn start_container(docker: &Docker, cname: &str) -> bool {
 }
 
 /// Start the container and, on success, resolve its bridge IP and report it via `on_bridge_ip`
-/// so the caller can cache it for the proxy layer. docker.rs cannot depend on agent_status.rs's
-/// cache type directly (agent_status already depends on docker; a reverse import would create a
-/// cycle), so the cache write is injected as a callback -- the same pattern reconcile_containers
+/// so the caller can cache it for the proxy layer. `docker.rs` cannot depend on `agent_status.rs`'s
+/// cache type directly (`agent_status` already depends on docker; a reverse import would create a
+/// cycle), so the cache write is injected as a callback -- the same pattern `reconcile_containers`
 /// already uses for `wants_running`/`mounts_for`. A resolve failure is logged, not fatal: the
 /// proxy's own retry-on-cache-miss recovers on the next request.
 async fn start_container_and_report_ip(
@@ -3678,7 +3704,7 @@ mod tests {
         // rename_agent has the same shape (snapshot, remove, create) and the same failure mode:
         // a surviving old container keeps the same baked-in WS_PORT while its env file and
         // constitution are deleted, and the next reconcile boot-starts it alongside the new one.
-        let tests_start = src.find("#[cfg(test)]").expect("test module present");
+        let tests_start = src.find("mod tests").expect("test module present");
         let rename_body = &src[rename_start..tests_start];
         let rename_remove_pos = rename_body
             .find("ensure_container_removed")
@@ -3904,6 +3930,87 @@ mod tests {
         );
     }
 
+    /// The direct behavioral proof that the cross-tenant port race is closed: two agents,
+    /// each on their own network, bind the exact same port number with no collision, and
+    /// vestad reaches both independently by their distinct bridge IPs.
+    #[tokio::test]
+    #[ignore]
+    async fn two_agents_can_independently_use_the_same_port_number() {
+        let docker = test_docker();
+        let a = TestContainer::new("isolation-a");
+        let b = TestContainer::new("isolation-b");
+        let _net_a = TestNetwork {
+            name: agent_network_name(&a.name),
+        };
+        let _net_b = TestNetwork {
+            name: agent_network_name(&b.name),
+        };
+
+        const SHARED_PORT: u16 = 9500;
+        for tc in [&a, &b] {
+            let network = ensure_agent_network(&docker, &tc.name)
+                .await
+                .expect("ensure agent network");
+            // A minimal, config-independent container that just stays running: the real agent
+            // entrypoint would error out under this test's fake identity (no real VESTAD_PORT/
+            // AGENT_TOKEN) and get recycled by the on-failure restart policy, which tears down
+            // whatever was `docker exec`'d into the old process before this test can observe it.
+            create_test_container_async(&docker, tc, &[], sleeping_test_container_cmd(), &network, "no")
+                .await;
+            assert!(start_container(&docker, &tc.name).await, "start");
+            // Each binds the SAME port number inside its own namespace: no collision is
+            // possible even though both listeners share a number, since the only way
+            // that would matter is if the two containers shared a network, and they don't.
+            // `docker exec -d` backgrounds the process inside the container and returns
+            // immediately, so this doesn't block on the long-running server.
+            let status = std::process::Command::new("docker")
+                .args(["exec", "-d", &tc.name, "python3", "-m", "http.server"])
+                .arg(SHARED_PORT.to_string())
+                .status()
+                .expect("failed to run docker exec -d");
+            assert!(status.success(), "failed to start listener in {}", tc.name);
+        }
+
+        let ip_a = poll_for_bridge_ip(&docker, &a.name).await;
+        let ip_b = poll_for_bridge_ip(&docker, &b.name).await;
+        assert_ne!(ip_a, ip_b, "each agent must get a distinct bridge IP");
+
+        assert!(
+            wait_for_port(&ip_a, SHARED_PORT).await,
+            "agent a's listener on port {SHARED_PORT} never became reachable at {ip_a}"
+        );
+        assert!(
+            wait_for_port(&ip_b, SHARED_PORT).await,
+            "agent b's listener on the SAME port {SHARED_PORT} never became reachable at {ip_b}, \
+             proving the two agents did not collide"
+        );
+    }
+
+    async fn poll_for_bridge_ip(docker: &Docker, cname: &str) -> String {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            if let Some(ip) = resolve_bridge_ip(docker, cname, cname).await {
+                return ip;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "bridge IP for {cname} never resolved"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+    }
+
+    async fn wait_for_port(host: &str, port: u16) -> bool {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
+            if tokio::net::TcpStream::connect((host, port)).await.is_ok() {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+        false
+    }
+
     #[tokio::test]
     #[ignore]
     async fn ensure_agent_network_is_idempotent() {
@@ -3922,6 +4029,44 @@ mod tests {
 
         assert_eq!(first, second);
         assert_eq!(first, agent_network_name(&agent_name));
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn resolve_docker_bridge_gateway_matches_the_default_networks_own_gateway() {
+        let docker = test_docker();
+
+        let gateway = resolve_docker_bridge_gateway(&docker)
+            .await
+            .expect("default bridge network always exists and has a gateway");
+
+        let inspect_opts = InspectNetworkOptionsBuilder::default().build();
+        let network = docker
+            .inspect_network("bridge", Some(inspect_opts))
+            .await
+            .expect("inspect default bridge network");
+        let expected: std::net::Ipv4Addr = network
+            .ipam
+            .expect("bridge network has ipam")
+            .config
+            .expect("bridge network has ipam config")
+            .into_iter()
+            .find_map(|c| c.gateway)
+            .expect("bridge network has a gateway")
+            .parse()
+            .expect("gateway is a valid IPv4 address");
+
+        assert_eq!(gateway, expected);
+    }
+
+    /// A minimal command for test containers that need to actually stay running (e.g. to
+    /// `docker exec` into them and observe something afterward) rather than just successfully
+    /// starting: the real agent entrypoint (`agent_container_cmd`) depends on a real identity
+    /// (`VESTAD_PORT`/`AGENT_TOKEN`) and errors out under a fake one, and the on-failure restart
+    /// policy then recycles the container's process, tearing down anything exec'd into the old
+    /// one before a test can observe it. Reusable by any future test with the same need.
+    fn sleeping_test_container_cmd() -> Vec<String> {
+        vec!["sleep".into(), "infinity".into()]
     }
 
     async fn create_test_container_async(

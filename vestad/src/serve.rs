@@ -724,6 +724,7 @@ async fn destroy_agent_handler(
         .await
         .map_err(map_docker_err)?;
     crate::restic::remove_repo(&name);
+    state.agent_status_cache.clear_bridge_ip(&name);
     {
         let mut settings = state.settings.write().await;
         settings.services.remove(&name);
@@ -2916,6 +2917,9 @@ pub async fn run_server(cfg: ServerConfig) {
     // Keep a docker handle for the shutdown hook: vestad stops every agent when it exits, so a
     // vestad update/restart hands off with nothing running on a stale container.
     let shutdown_docker = docker.clone();
+    // ...and one more to resolve the docker bridge gateway address below, before `docker` moves
+    // into spawn_agent_status_task.
+    let gateway_docker = docker.clone();
     agent_status::spawn_agent_status_task(agent_status::AgentStatusTaskDeps {
         cache: state.agent_status_cache.clone(),
         docker,
@@ -2956,8 +2960,31 @@ pub async fn run_server(cfg: ServerConfig) {
     };
     let https_addr = std::net::SocketAddr::from((https_bind_addr, port));
 
+    // Agents no longer share the host's network namespace (per-agent bridge networks), so their
+    // calls into vestad (register-service, user-notification, health) can't reach the loopback
+    // bind above; they dial `VESTAD_HOST` (host.docker.internal), which resolves to the docker
+    // bridge gateway. Bind there too so agent containers can always reach vestad, independent of
+    // `--expose-lan` (which stays scoped to real LAN devices reaching vestad, a separate
+    // concern). Skipped when `expose_lan` is set: `https_addr` above is already the wildcard
+    // address, which covers the gateway address too, so binding it a second time on the same
+    // port would conflict.
+    let agent_addr = if expose_lan {
+        None
+    } else {
+        let gateway = docker::resolve_docker_bridge_gateway(&gateway_docker)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::error!(error = %e, "failed to resolve the docker bridge gateway — aborting startup");
+                std::process::exit(1);
+            });
+        Some(std::net::SocketAddr::from((gateway, port)))
+    };
+
     tracing::info!(port, %https_bind_addr, "https listening");
     tracing::info!(http_port = port + 1, "http listening on 127.0.0.1");
+    if let Some(addr) = agent_addr {
+        tracing::info!(%addr, "https listening for agent-initiated calls");
+    }
 
     let http_app = app.clone();
     let http_handle = tokio::spawn(async move {
@@ -2967,6 +2994,19 @@ pub async fn run_server(cfg: ServerConfig) {
         )
         .await
         .expect("http server failed");
+    });
+
+    let agent_app = app.clone();
+    let agent_rustls_config = rustls_config.clone();
+    let agent_handle = tokio::spawn(async move {
+        match agent_addr {
+            Some(addr) => axum_server::bind_rustls(addr, agent_rustls_config)
+                .serve(agent_app.into_make_service_with_connect_info::<std::net::SocketAddr>())
+                .await
+                .expect("agent-gateway https server failed"),
+            // `--expose-lan` already binds the wildcard address, which covers agent traffic too.
+            None => std::future::pending().await,
+        }
     });
 
     let tls_handle = tokio::spawn(async move {
@@ -2979,6 +3019,7 @@ pub async fn run_server(cfg: ServerConfig) {
     tokio::select! {
         r = http_handle => r.expect("http task panicked"),
         r = tls_handle => r.expect("https task panicked"),
+        r = agent_handle => r.expect("agent-gateway https task panicked"),
         r = mobile_app_handle => match r {
             Ok(()) => panic!("mobile app delivery worker exited unexpectedly"),
             Err(error) => panic!("mobile app delivery worker failed: {error}"),
