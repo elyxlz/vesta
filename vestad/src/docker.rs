@@ -10,7 +10,6 @@ use bytes::Bytes;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::collections::HashSet;
 
 #[derive(Debug, Clone)]
 pub enum DockerError {
@@ -74,7 +73,6 @@ pub const LOCAL_IMAGE_TAG: &str = "vesta:local";
 pub const AGENT_IMAGE_ENV: &str = "VESTAD_AGENT_IMAGE";
 const MAX_DOCKERFILE_SEARCH_DEPTH: usize = 5;
 const AGENT_TOKEN_BYTES: usize = 32;
-const PORT_ALLOC_RETRIES: usize = 10;
 const NAME_MAX_LEN: usize = 32;
 const DOCKER_DAEMON_PING_RETRIES: usize = 10;
 const LABEL_USER: &str = "vesta.user";
@@ -953,13 +951,6 @@ pub async fn resolve_image(
     }
 }
 
-fn all_agent_ports(agents_dir: &std::path::Path) -> HashSet<u16> {
-    env_file_names(agents_dir)
-        .iter()
-        .filter_map(|name| read_env_value(agents_dir, name, "WS_PORT")?.parse().ok())
-        .collect()
-}
-
 /// List agent names that have env files in the agents directory.
 pub(crate) fn env_file_names(agents_dir: &std::path::Path) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(agents_dir) else {
@@ -977,23 +968,16 @@ pub(crate) fn env_file_names(agents_dir: &std::path::Path) -> Vec<String> {
         .collect()
 }
 
-pub fn allocate_port(agents_dir: &std::path::Path) -> Result<u16, DockerError> {
-    let reserved = all_agent_ports(agents_dir);
-    for _ in 0..PORT_ALLOC_RETRIES {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0")
-            .map_err(|e| DockerError::Failed(format!("failed to bind port: {e}")))?;
-        let port = listener
-            .local_addr()
-            .map_err(|e| DockerError::Failed(format!("failed to get port: {e}")))?
-            .port();
-        drop(listener);
-        if !reserved.contains(&port) {
-            return Ok(port);
-        }
-    }
-    Err(DockerError::Failed(
-        "could not allocate a free port after retries".into(),
-    ))
+/// A fresh ephemeral WS port for a new container. Each agent has its own network namespace
+/// (see `ensure_agent_network`), so this port only needs to be free on the host at the moment
+/// of allocation; it does not need to be reserved against any other agent's port.
+pub fn allocate_port() -> Result<u16, DockerError> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")
+        .map_err(|e| DockerError::Failed(format!("failed to bind port: {e}")))?;
+    listener
+        .local_addr()
+        .map(|addr| addr.port())
+        .map_err(|e| DockerError::Failed(format!("failed to get port: {e}")))
 }
 
 /// Read the agent's port and token from the per-agent env file in a single read.
@@ -1967,7 +1951,7 @@ pub async fn create_agent(
         .map_err(|e| DockerError::Failed(format!("agent code: {e}")))?;
 
     progress.set(BuildPhase::Creating);
-    let port = allocate_port(&env_config.agents_dir)?;
+    let port = allocate_port()?;
     create_container(
         docker,
         env_config,
@@ -2251,7 +2235,7 @@ pub async fn reconcile_containers(
             let port = read_container_env(docker, cname, "WS_PORT")
                 .await
                 .and_then(|v| v.parse::<u16>().ok())
-                .or_else(|| allocate_port(&env_config.agents_dir).ok());
+                .or_else(|| allocate_port().ok());
             if let Some(port) = port {
                 let token = generate_agent_token();
                 if let Err(e) = write_agent_env_file(env_config, name, port, &token) {
@@ -2574,14 +2558,13 @@ async fn resolve_existing_port(
     cname: &str,
     info: &ContainerInfo,
     name: &str,
-    agents_dir: &std::path::Path,
 ) -> Result<u16, DockerError> {
     let baked = read_container_env(docker, cname, "WS_PORT")
         .await
         .and_then(|v| v.parse::<u16>().ok());
     if let Some(port) = info.port.or(baked) { Ok(port) } else {
         tracing::warn!(agent = %name, "no port found in env file or container, allocating new port");
-        allocate_port(agents_dir)
+        allocate_port()
     }
 }
 
@@ -2611,7 +2594,7 @@ pub async fn rebuild_agent(
     // the container below. Captured before removal so we can drop it afterwards.
     let prev_image = raw.config.as_ref().and_then(|c| c.image.clone());
 
-    let port = resolve_existing_port(docker, &cname, &info, name, &env_config.agents_dir).await?;
+    let port = resolve_existing_port(docker, &cname, &info, name).await?;
 
     let ts = crate::time_utils::now_epoch_secs();
     let backup_tag = format!("vesta-rebuild:{name}_{ts}");
@@ -2706,7 +2689,7 @@ pub async fn rename_agent(
     }
 
     let port =
-        resolve_existing_port(docker, &old_container, &info, old_name, &env_config.agents_dir).await?;
+        resolve_existing_port(docker, &old_container, &info, old_name).await?;
     let lifecycle_reason = crate::lifecycle::rename(old_name, new_name);
 
     // Stop cleanly so the snapshot captures a quiesced filesystem (SQLite mid-write would
@@ -2769,6 +2752,15 @@ mod tests {
     fn agent_network_name_is_prefixed_and_stable() {
         assert_eq!(agent_network_name("ada"), "vesta-agent-ada");
         assert_eq!(agent_network_name("ada"), agent_network_name("ada"));
+    }
+
+    #[test]
+    fn allocate_port_returns_a_bindable_port() {
+        // Each agent has its own network namespace now, so a WS port no longer needs
+        // host-wide uniqueness: allocate_port has nothing to scan another agent's env file
+        // for. This just proves it still hands back a usable ephemeral port.
+        let port = allocate_port().expect("allocate");
+        assert!(port > 0);
     }
 
     #[test]
