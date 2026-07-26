@@ -95,7 +95,9 @@ impl Presence {
     ) -> Vec<PresenceEvent> {
         let mut events = Vec::new();
         if is_present != was_present {
-            let _ = self.any_focused_tx.send(is_present);
+            // send_replace updates the stored value even with no live receivers (a plain send would
+            // fail and leave any_focused() reading a stale value); sessions still get the changed() wake.
+            self.any_focused_tx.send_replace(is_present);
         }
         if !was_present && is_present && focused {
             let long_gap = state
