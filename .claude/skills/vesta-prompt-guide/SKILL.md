@@ -1,17 +1,21 @@
 ---
 name: vesta-prompt-guide
 description: >
-  Use when writing or reviewing anything the Vesta agent itself reads as instruction: a SKILL.md body or
-  the setup and reference docs it points at, agent/core/prompts/**, agent/MEMORY.md, or the agent's
-  system prompt. TRIGGER when the user says "skill", "prompt", "system prompt", "agent instructions",
-  "agent behavior", or "prompt engineering" about what the agent reads.
+  Use when writing or reviewing anything under agent/, all of which the Vesta agent reads, runs, or
+  edits: a SKILL.md body, the docs it points at, the CLI code and scripts under a skill, the engine,
+  agent/core/prompts/**, agent/MEMORY.md, or the system prompt. TRIGGER when the user says "skill",
+  "prompt", "system prompt", "agent instructions", "agent behavior", or "prompt engineering", or edits
+  any file under agent/.
 ---
 
 # Vesta Prompt Engineering Guide
 
-This guide covers text the agent reads as instruction: skills, `agent/core/prompts/**`,
-`agent/MEMORY.md`, and the system prompt. Developer-facing docs such as CLAUDE.md are out of
-scope; they are written for a human reading the repo, and the rules differ.
+This guide covers everything under `agent/`, all of which the agent reads, runs, or edits:
+`agent/MEMORY.md`, `agent/core/prompts/**`, the system prompt, every skill, the CLI code and
+scripts under those skills, and the engine itself, which the agent can read even though it
+cannot edit it. Comments and docstrings in that code are as agent-facing as a `SKILL.md` body.
+
+Out of scope: `vestad/`, `apps/`, and repo docs such as CLAUDE.md, which only developers read.
 
 Before making any changes to that text, you MUST first fetch and review the official Claude Code
 prompting guides to ensure best practices are followed.
@@ -39,11 +43,11 @@ SDK-level system prompts or deeper prompt engineering.
 ## Key Principles to Watch For
 
 - Clear, explicit instructions over vague guidance
-- Structured prompts with proper XML tags and sections
-- Placing long context at the top, queries at the bottom
-- Using examples (multishot) where appropriate
-- Avoiding conflicting or redundant instructions
-- Testing prompt changes against expected behavior
+- Concrete examples of the command or shape being described, over prose about it
+- No conflicting or redundant instructions, including against what the agent already reads elsewhere
+- A `description` that states when to use the skill, never a summary of its steps: an agent that can
+  read the workflow from the description will follow that instead of opening the body
+- Changes tested against what the agent actually does, not just how the text reads
 
 ## Never describe a previous design
 
