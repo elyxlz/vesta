@@ -19,13 +19,14 @@ async def _request_lifecycle(action: str, *, reason: lifecycle.RestartReason | N
     """POST /agents/{me}/{action} to vestad (action = "restart" | "stop"). Returns True when vestad
     accepted it — including the connection being cut mid-request, the expected path once vestad
     starts tearing the container down — and False only when vestad could not be reached at all."""
+    host = os.environ["VESTAD_HOST"] if "VESTAD_HOST" in os.environ else ""
     port = os.environ["VESTAD_PORT"] if "VESTAD_PORT" in os.environ else ""
     name = os.environ["AGENT_NAME"] if "AGENT_NAME" in os.environ else ""
     token = os.environ["AGENT_TOKEN"] if "AGENT_TOKEN" in os.environ else ""
-    if not (port and name and token):
-        logger.error("cannot reach vestad: missing VESTAD_PORT/AGENT_NAME/AGENT_TOKEN")
+    if not (host and port and name and token):
+        logger.error("cannot reach vestad: missing VESTAD_HOST/VESTAD_PORT/AGENT_NAME/AGENT_TOKEN")
         return False
-    url = f"https://localhost:{port}/agents/{name}/{action}"
+    url = f"https://{host}:{port}/agents/{name}/{action}"
     body = None if reason is None else {"reason": reason.log_reason, "agent_message": reason.agent_message}
     connector = aiohttp.TCPConnector(ssl=False)
     try:
@@ -59,13 +60,14 @@ async def send_user_notification(kind: str, title: str, body: str) -> None:
     transport failure, non-2xx, or timeout is logged and swallowed, so surfacing a user notification
     never disrupts the turn that emitted it (the durable work it describes already happened). `kind` is
     one of "message"/"rate_limited"."""
+    host = os.environ["VESTAD_HOST"] if "VESTAD_HOST" in os.environ else ""
     port = os.environ["VESTAD_PORT"] if "VESTAD_PORT" in os.environ else ""
     name = os.environ["AGENT_NAME"] if "AGENT_NAME" in os.environ else ""
     token = os.environ["AGENT_TOKEN"] if "AGENT_TOKEN" in os.environ else ""
-    if not (port and name and token):
-        logger.error("cannot send user notification to vestad: missing VESTAD_PORT/AGENT_NAME/AGENT_TOKEN")
+    if not (host and port and name and token):
+        logger.error("cannot send user notification to vestad: missing VESTAD_HOST/VESTAD_PORT/AGENT_NAME/AGENT_TOKEN")
         return
-    url = f"https://localhost:{port}/agents/{name}/user-notification"
+    url = f"https://{host}:{port}/agents/{name}/user-notification"
     payload = {"kind": kind, "title": title, "body": body}
     connector = aiohttp.TCPConnector(ssl=False)
     try:

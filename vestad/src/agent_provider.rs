@@ -43,6 +43,9 @@ pub struct AgentProvider<'a> {
     http_client: &'a reqwest::Client,
     agents_dir: &'a Path,
     name: String,
+    /// The agent's bridge-network IP (see `AgentStatusCache::bridge_ip`): agents no longer
+    /// share the host's network namespace, so this dials that instead of `localhost`.
+    host: String,
 }
 
 impl<'a> AgentProvider<'a> {
@@ -50,11 +53,13 @@ impl<'a> AgentProvider<'a> {
         http_client: &'a reqwest::Client,
         agents_dir: &'a Path,
         name: impl Into<String>,
+        host: impl Into<String>,
     ) -> Self {
         Self {
             http_client,
             agents_dir,
             name: name.into(),
+            host: host.into(),
         }
     }
 
@@ -105,7 +110,7 @@ impl<'a> AgentProvider<'a> {
         let (port, token) = self.port_and_token()?;
         let resp = self
             .http_client
-            .get(format!("http://127.0.0.1:{port}{path}"))
+            .get(format!("http://{}:{port}{path}", self.host))
             .header("X-Agent-Token", token)
             .timeout(timeout)
             .send()
@@ -128,7 +133,7 @@ impl<'a> AgentProvider<'a> {
         body: Option<&serde_json::Value>,
     ) -> Result<(), String> {
         let (port, token) = self.port_and_token()?;
-        let url = format!("http://127.0.0.1:{port}{path}");
+        let url = format!("http://{}:{port}{path}", self.host);
         let mut req = match method {
             "PUT" => self.http_client.put(url),
             "PATCH" => self.http_client.patch(url),

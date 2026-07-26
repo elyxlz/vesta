@@ -16,8 +16,8 @@ Every call authenticates with the agent's own token:
 `$VESTAD_PORT`, `$AGENT_TOKEN`, `$AGENT_NAME`, `$VESTAD_TUNNEL`, and `$VESTAD_HOST` come
 from `/run/vestad-env`, already exported into the environment. The API is
 `https://$VESTAD_HOST:$VESTAD_PORT` (self-signed cert, so always `curl -sk`; vestad runs
-natively on the host, never in a container, so `localhost` does not reach it — `$VESTAD_HOST`
-is `host.docker.internal`).
+natively on the host, never in a container, so `localhost` does not reach it: use
+`$VESTAD_HOST`, which is `host.docker.internal`).
 
 Restarting or stopping this agent is not a curl: use the `restart_vesta` / `stop_vesta`
 tools, which call vestad's self-scoped lifecycle endpoints.

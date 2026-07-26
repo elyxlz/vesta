@@ -50,6 +50,7 @@ def _self_signed(tmp_path):
 def _run(port, tmp_path, wait="2"):
     env = {
         "PATH": "/usr/bin:/bin",
+        "VESTAD_HOST": "127.0.0.1",
         "VESTAD_PORT": str(port),
         "AGENT_NAME": "test-agent",
         "AGENT_TOKEN": "test-token",
@@ -114,6 +115,7 @@ def test_caller_and_chain_short_circuits_on_failure(tmp_path):
     port = _free_port()
     env = {
         "PATH": "/usr/bin:/bin",
+        "VESTAD_HOST": "127.0.0.1",
         "VESTAD_PORT": str(port),
         "AGENT_NAME": "test-agent",
         "AGENT_TOKEN": "test-token",

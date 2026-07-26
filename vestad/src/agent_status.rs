@@ -48,6 +48,7 @@ pub async fn invalidate_service_handler(
 pub async fn get_status(
     docker: &Docker,
     http_client: &reqwest::Client,
+    cache: &AgentStatusCache,
     name: &str,
     agents_dir: &std::path::Path,
     rebuilding: &docker::RebuildTracker,
@@ -59,7 +60,7 @@ pub async fn get_status(
     let status = if rebuilding.is_rebuilding(name) {
         docker::AgentStatus::Rebuilding
     } else {
-        combined_status(http_client, agents_dir, &cname, &info).await
+        combined_status(http_client, agents_dir, cache, &cname, &info).await
     };
     Ok(docker::StatusJson {
         name: name.to_string(),
@@ -72,6 +73,7 @@ pub async fn get_status(
 pub async fn list_agents(
     docker: &Docker,
     http_client: &reqwest::Client,
+    cache: &AgentStatusCache,
     agents_dir: &std::path::Path,
     rebuilding: &docker::RebuildTracker,
 ) -> Vec<ListEntry> {
@@ -81,7 +83,7 @@ pub async fn list_agents(
         let info = docker::inspect_container(docker, cname, Some(agents_dir)).await;
         entries.push(ListEntry {
             name: agent_name.clone(),
-            status: combined_status(http_client, agents_dir, cname, &info).await,
+            status: combined_status(http_client, agents_dir, cache, cname, &info).await,
             ws_port: info.port.unwrap_or(0),
             started_at: info.started_at.clone(),
         });
@@ -112,21 +114,31 @@ fn apply_rebuilding(mut entries: Vec<ListEntry>, mut rebuilding: Vec<String>) ->
 async fn combined_status(
     http_client: &reqwest::Client,
     agents_dir: &std::path::Path,
+    cache: &AgentStatusCache,
     cname: &str,
     info: &docker::ContainerInfo,
 ) -> docker::AgentStatus {
     match info.status {
         docker::ContainerStatus::Running => {
+            let agent_name = docker::name_from_cname(cname);
+            // Unresolved right after a start/create races the caller: the bridge-IP cache
+            // fills in shortly after the container starts, and the next ~3s poll retries.
+            let Some(host) = cache.bridge_ip(&agent_name) else {
+                return docker::AgentStatus::Starting;
+            };
             // WS port not yet bound → agent still booting.
-            if !info.port.is_some_and(is_agent_ready) {
+            if !info.port.is_some_and(|port| is_agent_ready(&host, port)) {
                 return docker::AgentStatus::Starting;
             }
             // Agent's own GET /config is the source of truth for provider auth.
             // If the WS server is up but /config isn't responding yet (transient
             // mid-boot state), treat as Starting; the next ~3s poll will resolve.
-            let agent_name = docker::name_from_cname(cname);
-            let provider =
-                crate::agent_provider::AgentProvider::new(http_client, agents_dir, agent_name);
+            let provider = crate::agent_provider::AgentProvider::new(
+                http_client,
+                agents_dir,
+                agent_name,
+                host,
+            );
             match provider.status().await {
                 Ok(s) => status_from_readiness(s.authed, s.setup_complete, s.provider_configured),
                 Err(_) => docker::AgentStatus::Starting,
@@ -157,9 +169,12 @@ fn status_from_readiness(
 /// The agent binds its WS port only once it's ready to serve requests.
 const AGENT_READY_TIMEOUT_MS: u64 = 200;
 
-fn is_agent_ready(port: u16) -> bool {
+fn is_agent_ready(host: &str, port: u16) -> bool {
+    let Ok(ip) = host.parse::<std::net::IpAddr>() else {
+        return false;
+    };
     std::net::TcpStream::connect_timeout(
-        &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+        &std::net::SocketAddr::new(ip, port),
         std::time::Duration::from_millis(AGENT_READY_TIMEOUT_MS),
     )
     .is_ok()
@@ -378,7 +393,7 @@ pub fn spawn_agent_status_task(deps: AgentStatusTaskDeps) {
 
         loop {
             // Poll agent list via async bollard
-            let agents = list_agents(&docker, &http_client, &agents_dir, &rebuilding).await;
+            let agents = list_agents(&docker, &http_client, &cache, &agents_dir, &rebuilding).await;
 
             // Mobile lifecycle notifications come from vestad's authoritative
             // agent list, never the agent EventBus's thinking/idle activity. The

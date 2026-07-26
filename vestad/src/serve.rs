@@ -434,6 +434,7 @@ async fn list_agents_handler(State(state): State<SharedState>) -> impl IntoRespo
     let agents = agent_status::list_agents(
         &state.docker,
         &state.http_client,
+        &state.agent_status_cache,
         &state.env_config.agents_dir,
         &state.rebuilding,
     )
@@ -532,6 +533,7 @@ async fn agent_status_handler(
     let status = agent_status::get_status(
         &state.docker,
         &state.http_client,
+        &state.agent_status_cache,
         &name,
         &state.env_config.agents_dir,
         &state.rebuilding,
@@ -911,8 +913,14 @@ async fn write_to_agent(
         .map_err(map_docker_err)?;
     }
 
-    let provider =
-        agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, name);
+    let host = agent_bridge_host(state, name)?;
+    let provider = agent_provider::AgentProvider::new(
+        &state.http_client,
+        &state.env_config.agents_dir,
+        name,
+        host,
+    );
+
     let forwarded = match write {
         AgentWrite::Config(body) => provider.put_config(&body).await,
         AgentWrite::Provider(body) => provider.put_provider(&body).await,
@@ -925,14 +933,33 @@ async fn write_to_agent(
     ))
 }
 
+/// The agent's bridge-network IP, or `SERVICE_UNAVAILABLE` if it hasn't resolved yet (races a
+/// just-issued start/create; the cache fills in shortly after, same as `agent_proxy_handler`).
+fn agent_bridge_host(
+    state: &SharedState,
+    name: &str,
+) -> Result<String, (StatusCode, Json<serde_json::Value>)> {
+    state.agent_status_cache.bridge_ip(name).ok_or_else(|| {
+        err_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "agent's network address not yet resolved -- retry shortly",
+        )
+    })
+}
+
 /// Relay the agent's `GET /config` (prefs; the agent owns it, vestad proxies it to the app).
 async fn get_config_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     docker::validate_name(&name).map_err(map_docker_err)?;
-    let provider =
-        agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, &name);
+    let host = agent_bridge_host(&state, &name)?;
+    let provider = agent_provider::AgentProvider::new(
+        &state.http_client,
+        &state.env_config.agents_dir,
+        &name,
+        host,
+    );
     provider
         .get_config()
         .await
@@ -955,8 +982,13 @@ async fn get_provider_handler(
     Path(name): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     docker::validate_name(&name).map_err(map_docker_err)?;
-    let provider =
-        agent_provider::AgentProvider::new(&state.http_client, &state.env_config.agents_dir, &name);
+    let host = agent_bridge_host(&state, &name)?;
+    let provider = agent_provider::AgentProvider::new(
+        &state.http_client,
+        &state.env_config.agents_dir,
+        &name,
+        host,
+    );
     provider
         .get_provider()
         .await
@@ -1560,16 +1592,12 @@ fn no_free_ports_err() -> (StatusCode, Json<serde_json::Value>) {
 }
 
 /// Find a free port for `agent`'s own services, scanning only that agent's currently
-/// registered set.
-///
-/// vestad's own process can no longer meaningfully test bindability inside a different
-/// agent's network namespace (each agent has its own now; see `ensure_agent_network` in
-/// docker.rs), so this is pure bookkeeping over a small, already-in-memory set, no bind
-/// probe. The caller's own `bind()` is the real check, same as it is for every service.
-/// Still prefers ports above the kernel's ephemeral source-port range, since a port in that
-/// range can be reused as an outbound source port by the kernel between allocation and the
-/// caller's own bind, producing a spurious `EADDRINUSE`; that risk is orthogonal to
-/// multi-tenancy and applies equally on a single host regardless of network namespacing.
+/// registered set. vestad can no longer test bindability inside a different agent's own
+/// network namespace (each has its own now; see `ensure_agent_network`), so this is pure
+/// bookkeeping over a small in-memory set; the caller's own `bind()` is the real check.
+/// Prefers ports above the kernel's ephemeral range, since the kernel can reuse one as an
+/// outbound source port between allocation and the caller's bind, producing a spurious
+/// `EADDRINUSE` -- a single-host risk, unrelated to multi-tenancy.
 fn allocate_service_port(registry: &HashMap<String, HashMap<String, ServiceEntry>>, agent: &str) -> Option<u16> {
     let used: std::collections::HashSet<u16> = registry
         .get(agent)

@@ -102,8 +102,12 @@ fn host_docker_internal_mapping() -> String {
     format!("{AGENT_VESTAD_HOST}:host-gateway")
 }
 
+/// User-scoped, matching `container_name`: Docker networks are a daemon-global namespace, so two
+/// independent vestad instances on the same host provisioning an agent under the same name would
+/// otherwise attach to the very same bridge network via `ensure_agent_network`'s idempotent
+/// "already exists" path, reintroducing cross-tenant collision at the network layer.
 pub(crate) fn agent_network_name(agent_name: &str) -> String {
-    format!("{AGENT_NETWORK_PREFIX}{agent_name}")
+    format!("{AGENT_NETWORK_PREFIX}{}-{agent_name}", crate::paths::current_user())
 }
 
 /// Idempotently ensure `agent_name`'s dedicated bridge network exists, returning its name.
@@ -2416,7 +2420,12 @@ pub async fn reconcile_containers(
         }
     }
 
-    // Summary: log which agents are running after reconciliation
+    // Summary: log which agents are running after reconciliation. Also (re-)report each running
+    // agent's bridge IP here, unconditionally: this vestad process's cache starts empty on every
+    // boot, and an agent that was already running and untouched by phase 3 above (no rebuild, no
+    // code-update restart) would otherwise never get reported, leaving it stuck unresolved for
+    // the proxy and WS tap until its next restart for an unrelated reason. Idempotent -- a
+    // still-correct cached value is just overwritten with itself.
     let mut running = Vec::new();
     let mut stopped = Vec::new();
     for ManagedAgent {
@@ -2426,6 +2435,11 @@ pub async fn reconcile_containers(
     {
         if container_status(docker, cname).await == ContainerStatus::Running {
             running.push(name.clone());
+            if let Some(ip) = resolve_bridge_ip(docker, cname, name).await {
+                on_bridge_ip(name, ip);
+            } else {
+                tracing::warn!(agent = %name, "could not resolve bridge IP during reconcile; proxy calls will retry");
+            }
         } else {
             stopped.push(name.clone());
         }
@@ -2790,9 +2804,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn agent_network_name_is_prefixed_and_stable() {
-        assert_eq!(agent_network_name("ada"), "vesta-agent-ada");
-        assert_eq!(agent_network_name("ada"), agent_network_name("ada"));
+    fn agent_network_name_is_prefixed_scoped_by_user_and_stable() {
+        let name = agent_network_name("ada");
+        assert!(name.starts_with("vesta-agent-"));
+        assert!(name.contains(&crate::paths::current_user()));
+        assert!(name.ends_with("-ada"));
+        assert_eq!(name, agent_network_name("ada"));
     }
 
     #[test]
