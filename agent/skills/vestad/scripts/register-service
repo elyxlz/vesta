@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
-
 # Register a background service with vestad and print the assigned port.
 # Pass --public for services that need a public tunnel route (no token), omit
 # it for token-only services. Registration is idempotent: vestad returns the
@@ -19,6 +17,8 @@ set -euo pipefail
 # Usage: register-service <name> [--public]
 #   PORT=$(~/agent/skills/vestad/scripts/register-service tasks)
 #   PORT=$(~/agent/skills/vestad/scripts/register-service dashboard --public)
+
+set -euo pipefail
 
 NAME="${1:?Usage: register-service <name> [--public]}"
 if [ "${2:-}" = "--public" ]; then
