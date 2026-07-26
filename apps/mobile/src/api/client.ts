@@ -28,7 +28,6 @@ export interface ApiClient {
     init?: RequestInit,
   ) => Promise<ResponseBody>;
   jsonInit: (method: string, body: unknown) => RequestInit;
-  websocketUrl: (path: string, query?: URLSearchParams) => string;
   mediaUrl: (path: string, query?: URLSearchParams) => string;
   getConnection: () => ConnectionConfig | null;
   forceRefresh: () => Promise<boolean>;
@@ -139,19 +138,11 @@ export function createApiClient(options: ClientOptions): ApiClient {
     init?: RequestInit,
   ): Promise<ResponseBody> => http.json<ResponseBody>(path, init);
 
-  const withToken = (
-    path: string,
-    query: URLSearchParams,
-    protocol: "http" | "ws",
-  ): string => {
+  const withToken = (path: string, query: URLSearchParams): string => {
     const connection = options.getConnection();
     if (!connection) throw new Error("Not connected to a Vesta gateway.");
     query.set("token", connection.accessToken);
-    const base =
-      protocol === "ws"
-        ? connection.url.replace(/^http/, "ws")
-        : connection.url;
-    return `${base}${path}?${query.toString()}`;
+    return `${connection.url}${path}?${query.toString()}`;
   };
 
   return {
@@ -162,10 +153,7 @@ export function createApiClient(options: ClientOptions): ApiClient {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
-    websocketUrl: (path, query = new URLSearchParams()) =>
-      withToken(path, query, "ws"),
-    mediaUrl: (path, query = new URLSearchParams()) =>
-      withToken(path, query, "http"),
+    mediaUrl: (path, query = new URLSearchParams()) => withToken(path, query),
     getConnection: options.getConnection,
     forceRefresh: async () => (await refresh(true)) !== null,
   };

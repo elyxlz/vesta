@@ -38,7 +38,6 @@ function stubClient(gatewayUrls: readonly string[]): {
       return Promise.resolve(minted as ResponseBody);
     },
     jsonInit: unused,
-    websocketUrl: unused,
     mediaUrl: unused,
     getConnection: () => {
       const url = gatewayUrls.at(Math.min(reads, gatewayUrls.length - 1));
