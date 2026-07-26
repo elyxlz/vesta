@@ -1,4 +1,4 @@
-import type { AgentActivityState, AgentStatus } from "../protocol/tree"
+import type { AgentActivityState, AgentOperation, AgentStatus } from "../protocol/tree"
 
 // The visual buckets the orb renders. `deleting` has no matching AgentStatus: it is a client-side
 // operation, mapped by the surface that tracks operations.
@@ -9,7 +9,11 @@ export type OrbVisualState = "alive" | "thinking" | "busy" | "off" | "deleting"
 export function agentOrbState(
   status: AgentStatus,
   activityState: AgentActivityState,
+  operation: AgentOperation | null = null,
 ): OrbVisualState {
+  // A running operation outranks the container's own status: a backup pauses the container, so the
+  // status alone would read as a plainly stopped agent that the user has to restart.
+  if (operation !== null) return "busy"
   switch (status) {
     case "alive":
       return activityState === "thinking" ? "thinking" : "alive"
@@ -36,7 +40,12 @@ export function orbIsLive(state: OrbVisualState): boolean {
 
 // The words for a status, shared so web's orb line and mobile's badge cannot drift apart. The two
 // waiting states name the user as the actor, matching the notification and push copy for them.
-export function agentStatusLabel(status: AgentStatus, activityState: AgentActivityState): string {
+export function agentStatusLabel(
+  status: AgentStatus,
+  activityState: AgentActivityState,
+  operation: AgentOperation | null = null,
+): string {
+  if (operation !== null) return agentOperationLabel(operation)
   switch (status) {
     case "alive":
       return activityState === "thinking" ? "thinking" : "alive"
@@ -58,5 +67,14 @@ export function agentStatusLabel(status: AgentStatus, activityState: AgentActivi
       return "broken"
     case "not_found":
       return "unavailable"
+  }
+}
+
+export function agentOperationLabel(operation: AgentOperation): string {
+  switch (operation) {
+    case "backing_up":
+      return "backing up..."
+    case "restoring":
+      return "restoring..."
   }
 }

@@ -2,6 +2,7 @@ import { StyleSheet, View } from "react-native";
 import {
   agentStatusLabel,
   type AgentActivityState,
+  type AgentOperation,
   type AgentStatus,
 } from "@vesta/core";
 import { usePreferences } from "@/preferences/PreferencesProvider";
@@ -10,17 +11,20 @@ import { Text } from "@/components/ui/Typography";
 export function AgentStatusBadge({
   status,
   activityState = "idle",
+  operation = null,
   centered = false,
 }: {
   status: AgentStatus;
   activityState?: AgentActivityState;
+  operation?: AgentOperation | null;
   centered?: boolean;
 }) {
   const { colors } = usePreferences();
   const active = status === "alive";
   const thinking = active && activityState === "thinking";
   const attention =
-    status === "not_authenticated" || status === "unprovisioned";
+    operation === null &&
+    (status === "not_authenticated" || status === "unprovisioned");
   const color = thinking
     ? colors.warning
     : active
@@ -38,7 +42,7 @@ export function AgentStatusBadge({
     >
       <View style={[styles.dot, { backgroundColor: color }]} />
       <Text style={[styles.label, { color }]}>
-        {agentStatusLabel(status, activityState)}
+        {agentStatusLabel(status, activityState, operation)}
       </Text>
     </View>
   );

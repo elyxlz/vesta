@@ -41,6 +41,7 @@ describe("server frame and tree shapes", () => {
             status: "alive",
             activityState: "idle",
             buildPhase: null,
+            operation: null,
             startedAt: "2026-07-18T00:00:00Z",
             services: {},
           },

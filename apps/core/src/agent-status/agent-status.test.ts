@@ -46,6 +46,30 @@ describe("agentOrbState", () => {
   })
 })
 
+describe("a running operation", () => {
+  // A backup pauses the container, so the raw status reads `stopped` while restic works. Without
+  // the operation winning, the orb would tell the user to restart an agent that is mid-backup.
+  it("outranks a status the operation itself caused", () => {
+    expect(agentOrbState("stopped", "idle", "backing_up")).toBe("busy")
+    expect(agentStatusLabel("stopped", "idle", "backing_up")).toBe("backing up...")
+  })
+
+  it("keeps the orb alive while a restore tears the container down", () => {
+    expect(agentOrbState("not_found", "idle", "restoring")).toBe("busy")
+    expect(agentStatusLabel("not_found", "idle", "restoring")).toBe("restoring...")
+  })
+
+  it("leaves the status alone once the operation settles", () => {
+    expect(agentOrbState("stopped", "idle", null)).toBe("off")
+    expect(agentStatusLabel("stopped", "idle", null)).toBe("stopped")
+  })
+
+  it("defaults to no operation so a caller that has none reads the status", () => {
+    expect(agentOrbState("alive", "idle")).toBe("alive")
+    expect(agentStatusLabel("alive", "idle")).toBe("alive")
+  })
+})
+
 describe("orbIsLive", () => {
   it.each<OrbVisualState>(["alive", "thinking", "busy"])("animates the %s orb", (state) => {
     expect(orbIsLive(state)).toBe(true)

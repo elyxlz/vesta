@@ -193,6 +193,10 @@ pub struct AgentStatusCache {
     /// phase even before the container exists (Pulling/Building run first). Entries exist only for
     /// the duration of a create and are removed when it settles.
     build_phases: Mutex<HashMap<String, docker::BuildPhase>>,
+    /// In-flight long-running operation per agent, keyed by normalized name. Written by the backup
+    /// and restore handlers for the duration of the work, so every connected client sees it and not
+    /// just the one holding the SSE stream.
+    operations: Mutex<HashMap<String, docker::AgentOperation>>,
 }
 
 impl AgentStatusCache {
@@ -215,6 +219,7 @@ impl AgentStatusCache {
             invalidations_rx,
             revs: Mutex::new(HashMap::new()),
             build_phases: Mutex::new(HashMap::new()),
+            operations: Mutex::new(HashMap::new()),
         }
     }
 
@@ -298,6 +303,33 @@ impl AgentStatusCache {
     /// Snapshot of every in-flight build phase (normalized name -> phase).
     pub fn build_phases(&self) -> HashMap<String, docker::BuildPhase> {
         self.build_phases
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Record the long-running operation now running against `name` and wake WS loops so every
+    /// client picks it up within a tick.
+    pub fn set_operation(&self, name: &str, operation: docker::AgentOperation) {
+        self.operations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(name.to_string(), operation);
+        let _ = self.invalidations_tx.send(());
+    }
+
+    /// Drop the operation entry for `name` once the work settles, success or error.
+    pub fn clear_operation(&self, name: &str) {
+        self.operations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(name);
+        let _ = self.invalidations_tx.send(());
+    }
+
+    /// Snapshot of every in-flight operation (normalized name -> operation).
+    pub fn operations(&self) -> HashMap<String, docker::AgentOperation> {
+        self.operations
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()

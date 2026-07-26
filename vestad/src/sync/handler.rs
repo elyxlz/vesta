@@ -9,7 +9,7 @@ use axum::response::Response;
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::broadcast;
 
-use crate::docker::{AgentStatus, BuildPhase, ListEntry};
+use crate::docker::{AgentOperation, AgentStatus, BuildPhase, ListEntry};
 use crate::settings::ServiceEntry;
 use crate::state::{SharedState, WS_KEEPALIVE_INTERVAL_SECS};
 
@@ -290,6 +290,7 @@ fn current_roster(state: &SharedState) -> BTreeMap<String, AgentInfo> {
         &cache.subscribe_services().borrow(),
         &cache.service_revs(),
         cache.build_phases(),
+        &cache.operations(),
     )
 }
 
@@ -303,12 +304,15 @@ fn build_roster(
     services: &HashMap<String, HashMap<String, ServiceEntry>>,
     revs: &HashMap<String, HashMap<String, u64>>,
     mut build_phases: HashMap<String, BuildPhase>,
+    operations: &HashMap<String, AgentOperation>,
 ) -> BTreeMap<String, AgentInfo> {
     let mut roster: BTreeMap<String, AgentInfo> = agents
         .iter()
         .map(|entry| {
-            let build_phase = build_phases.remove(&crate::docker::normalize_name(&entry.name));
-            (entry.name.clone(), agent_info(entry, activity, services, revs, build_phase))
+            let normalized = crate::docker::normalize_name(&entry.name);
+            let build_phase = build_phases.remove(&normalized);
+            let operation = operations.get(&normalized).copied();
+            (entry.name.clone(), agent_info(entry, activity, services, revs, build_phase, operation))
         })
         .collect();
     for (name, phase) in build_phases {
@@ -323,6 +327,7 @@ fn synthetic_building_info(phase: BuildPhase) -> AgentInfo {
         status: AgentStatus::SettingUp,
         activity_state: "idle".into(),
         build_phase: Some(phase),
+        operation: None,
         started_at: None,
         services: BTreeMap::new(),
     }
@@ -334,6 +339,7 @@ fn agent_info(
     services: &HashMap<String, HashMap<String, ServiceEntry>>,
     revs: &HashMap<String, HashMap<String, u64>>,
     build_phase: Option<crate::docker::BuildPhase>,
+    operation: Option<AgentOperation>,
 ) -> AgentInfo {
     let activity_state = activity.get(&entry.name).cloned().unwrap_or_else(|| "idle".to_string());
     let agent_revs = revs.get(&entry.name);
@@ -352,6 +358,7 @@ fn agent_info(
         status: entry.status,
         activity_state,
         build_phase,
+        operation,
         started_at: entry.started_at.clone(),
         services,
     }
@@ -433,17 +440,17 @@ mod tests {
         let mut revs = HashMap::new();
         revs.insert("scout".to_string(), HashMap::from([("dashboard".to_string(), 3u64)]));
 
-        let info = agent_info(&entry("scout", AgentStatus::Alive), &activity, &svc, &revs, None);
+        let info = agent_info(&entry("scout", AgentStatus::Alive), &activity, &svc, &revs, None, None);
         assert_eq!(info.activity_state, "thinking");
         assert_eq!(info.services["dashboard"], ServiceInfo { port: 8080, rev: 3 });
 
         // An agent with no activity entry defaults to idle.
-        let idle = agent_info(&entry("mona", AgentStatus::Alive), &HashMap::new(), &HashMap::new(), &HashMap::new(), None);
+        let idle = agent_info(&entry("mona", AgentStatus::Alive), &HashMap::new(), &HashMap::new(), &HashMap::new(), None, None);
         assert_eq!(idle.activity_state, "idle");
     }
 
     fn info_of(status: AgentStatus) -> AgentInfo {
-        AgentInfo { status, activity_state: "idle".into(), build_phase: None, started_at: None, services: BTreeMap::new() }
+        AgentInfo { status, activity_state: "idle".into(), build_phase: None, operation: None, started_at: None, services: BTreeMap::new() }
     }
 
     #[test]
@@ -487,7 +494,7 @@ mod tests {
     #[test]
     fn build_roster_synthesizes_a_mid_build_agent_without_a_container() {
         let build_phases = HashMap::from([("luna".to_string(), BuildPhase::Pulling)]);
-        let roster = build_roster(&[], &HashMap::new(), &HashMap::new(), &HashMap::new(), build_phases);
+        let roster = build_roster(&[], &HashMap::new(), &HashMap::new(), &HashMap::new(), build_phases, &HashMap::new());
 
         let luna = roster.get("luna").expect("synthetic row for the creating agent");
         assert_eq!(luna.status, AgentStatus::SettingUp);
@@ -497,12 +504,39 @@ mod tests {
     }
 
     #[test]
+    fn build_roster_carries_an_in_flight_operation_onto_the_agents_row() {
+        let agents = [entry("luna", AgentStatus::Alive)];
+        let operations = HashMap::from([("luna".to_string(), AgentOperation::BackingUp)]);
+        let roster = build_roster(
+            &agents,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            HashMap::new(),
+            &operations,
+        );
+        // The container stays alive through a backup: only the operation says work is in flight.
+        assert_eq!(roster["luna"].status, AgentStatus::Alive);
+        assert_eq!(roster["luna"].operation, Some(AgentOperation::BackingUp));
+
+        let settled = build_roster(
+            &agents,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            HashMap::new(),
+            &HashMap::new(),
+        );
+        assert_eq!(settled["luna"].operation, None);
+    }
+
+    #[test]
     fn build_roster_replaces_the_synthetic_row_when_the_container_appears() {
         // The container now exists while the phase is still recorded: one real row carries the
         // phase, with no lingering synthetic ghost.
         let agents = [entry("luna", AgentStatus::SettingUp)];
         let build_phases = HashMap::from([("luna".to_string(), BuildPhase::Starting)]);
-        let roster = build_roster(&agents, &HashMap::new(), &HashMap::new(), &HashMap::new(), build_phases);
+        let roster = build_roster(&agents, &HashMap::new(), &HashMap::new(), &HashMap::new(), build_phases, &HashMap::new());
         assert_eq!(roster.len(), 1);
         assert_eq!(roster["luna"].build_phase, Some(BuildPhase::Starting));
 
@@ -513,6 +547,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             HashMap::new(),
+            &HashMap::new(),
         );
         assert_eq!(settled.len(), 1);
         assert_eq!(settled["luna"].build_phase, None);

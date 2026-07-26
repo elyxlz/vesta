@@ -2,6 +2,7 @@ import {
   agentOrbState,
   agentStatusLabel,
   type AgentActivityState,
+  type AgentOperation as ServerOperation,
   type AgentStatus,
   type OrbVisualState,
 } from "@vesta/core";
@@ -11,6 +12,7 @@ export type { OrbVisualState };
 
 interface AgentLike {
   status: AgentStatus;
+  operation: ServerOperation | null;
 }
 
 export function getAgentVisualStatus(
@@ -38,24 +40,21 @@ function resolveStatus(
   if (!agent) return { label: "", orbState: "off" };
 
   return {
-    label: agentStatusLabel(agent.status, activityState),
-    orbState: agentOrbState(agent.status, activityState),
+    label: agentStatusLabel(agent.status, activityState, agent.operation),
+    orbState: agentOrbState(agent.status, activityState, agent.operation),
   };
 }
 
-// A backup runs against a live agent, so it keeps the alive orb; everything else in flight reads as
-// work in progress.
 function operationOrbState(
   operation: Exclude<AgentOperation, "idle">,
 ): OrbVisualState {
   switch (operation) {
     case "deleting":
       return "deleting";
-    case "backing-up":
-      return "alive";
     case "stopping":
     case "starting":
     case "authenticating":
+    case "backing-up":
     case "restoring":
       return "busy";
   }

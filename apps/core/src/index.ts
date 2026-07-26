@@ -19,6 +19,7 @@ export type {
   AgentActivityState,
   AgentInfo,
   AgentNode,
+  AgentOperation,
   AgentStatus,
   BuildPhase,
   GatewayInfo,
@@ -90,7 +91,12 @@ export {
 export { rosterFromTree, rostersEqual } from "./tree/roster"
 export type { AgentRow } from "./tree/roster"
 
-export { agentOrbState, agentStatusLabel, orbIsLive } from "./agent-status/agent-status"
+export {
+  agentOperationLabel,
+  agentOrbState,
+  agentStatusLabel,
+  orbIsLive,
+} from "./agent-status/agent-status"
 export type { OrbVisualState } from "./agent-status/agent-status"
 
 export { normalizeProviderInfo, providerPutBody } from "./provider/provider"

@@ -6,6 +6,7 @@ import {
   agentOrbState,
   orbIsLive,
   type AgentActivityState,
+  type AgentOperation,
   type AgentStatus,
 } from "@vesta/core";
 import { useBootTransitionTargetFrozen } from "@/components/BootTransition";
@@ -14,6 +15,7 @@ import { designTokens } from "@/theme/generated";
 interface AgentOrbProps {
   status: AgentStatus;
   activityState?: AgentActivityState;
+  operation?: AgentOperation | null;
   size?: number;
   animated?: boolean;
   pulseScale?: number;
@@ -24,6 +26,7 @@ interface AgentOrbProps {
 export function AgentOrb({
   status,
   activityState = "idle",
+  operation = null,
   size = 88,
   animated = true,
   pulseScale,
@@ -34,7 +37,7 @@ export function AgentOrb({
   const [pulse] = useState(() => new Animated.Value(1));
   const pulseHapticsEnabled = useRef(pulseHaptics);
   const transitionFrozen = useBootTransitionTargetFrozen();
-  const orbState = agentOrbState(status, activityState);
+  const orbState = agentOrbState(status, activityState, operation);
   const shouldAnimate = animated && !transitionFrozen && orbIsLive(orbState);
   const colors = designTokens.orb[orbState];
   const maximumPulseScale =

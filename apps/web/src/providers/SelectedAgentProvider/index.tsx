@@ -36,7 +36,8 @@ export function SelectedAgentProvider({
   const withOp = useAgentOps((s) => s.withOp);
   const clearRestartPending = useRestartPending((s) => s.clearPending);
   const opState = useAgentOps((s) => s.getOp(name));
-  const isBusy = opState.operation !== "idle";
+  // Long-running work started anywhere disables the actions here too, not just work this tab began.
+  const isBusy = opState.operation !== "idle" || agent.operation !== null;
 
   const { label: statusLabel, orbState } = getAgentVisualStatus(
     agent,
