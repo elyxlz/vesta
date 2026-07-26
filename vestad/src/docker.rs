@@ -125,6 +125,24 @@ pub(crate) async fn ensure_agent_network(
         ))),
     }
 }
+
+/// The container's IP on its own agent network, as seen by `docker inspect`. `None` if the
+/// container isn't found, isn't attached to its expected network yet, or inspect fails --
+/// callers treat a `None` as "try again on the next reconcile/proxy call", never as fatal.
+pub(crate) async fn resolve_bridge_ip(
+    docker: &Docker,
+    cname: &str,
+    agent_name: &str,
+) -> Option<String> {
+    let info = docker.inspect_container(cname, None).await.ok()?;
+    let networks = info.network_settings?.networks?;
+    let network_name = agent_network_name(agent_name);
+    networks
+        .get(&network_name)?
+        .ip_address
+        .clone()
+        .filter(|ip| !ip.is_empty())
+}
 // on-failure (not unless-stopped) so Docker recovers genuine crashes but never auto-starts a
 // stale container on daemon/host boot: vestad owns boot-start (reconcile -> rebuild -> start),
 // so an agent that needs a rebuild is never reachable on its pre-update container. The bound caps
@@ -1307,6 +1325,30 @@ pub async fn start_container(docker: &Docker, cname: &str) -> bool {
     docker.start_container(cname, None).await.is_ok()
 }
 
+/// Start the container and, on success, resolve its bridge IP and report it via `on_bridge_ip`
+/// so the caller can cache it for the proxy layer. docker.rs cannot depend on agent_status.rs's
+/// cache type directly (agent_status already depends on docker; a reverse import would create a
+/// cycle), so the cache write is injected as a callback -- the same pattern reconcile_containers
+/// already uses for `wants_running`/`mounts_for`. A resolve failure is logged, not fatal: the
+/// proxy's own retry-on-cache-miss recovers on the next request.
+async fn start_container_and_report_ip(
+    docker: &Docker,
+    cname: &str,
+    agent_name: &str,
+    on_bridge_ip: &(dyn Fn(&str, String) + Send + Sync),
+) -> bool {
+    if !start_container(docker, cname).await {
+        return false;
+    }
+    match resolve_bridge_ip(docker, cname, agent_name).await {
+        Some(ip) => on_bridge_ip(agent_name, ip),
+        None => {
+            tracing::warn!(agent = %agent_name, "could not resolve bridge IP after start; proxy calls will retry");
+        }
+    }
+    true
+}
+
 /// Ensure a container carries the `on-failure:N` restart policy, updating in place (`docker
 /// update`, no recreate) only when it differs. Migrates legacy `unless-stopped` agents at reconcile
 /// without a snapshot. `unless-stopped` would auto-start the container on daemon boot, which would
@@ -1948,6 +1990,7 @@ pub async fn start_agent(
     docker: &Docker,
     name: &str,
     reason: Option<&crate::lifecycle::LifecycleReason>,
+    on_bridge_ip: &(dyn Fn(&str, String) + Send + Sync),
 ) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
@@ -1957,7 +2000,7 @@ pub async fn start_agent(
     if let Some(reason) = reason {
         handoff_boot_reason(docker, name, &cname, reason).await;
     }
-    if !start_container(docker, &cname).await {
+    if !start_container_and_report_ip(docker, &cname, name, on_bridge_ip).await {
         return Err(DockerError::Failed(format!("failed to start '{name}'")));
     }
     Ok(())
@@ -1971,14 +2014,18 @@ pub struct StartAllResult {
     pub error: Option<String>,
 }
 
-pub async fn start_all_agents(docker: &Docker) -> Vec<StartAllResult> {
+pub async fn start_all_agents(
+    docker: &Docker,
+    on_bridge_ip: &(dyn Fn(&str, String) + Send + Sync),
+) -> Vec<StartAllResult> {
     let mut results = Vec::new();
     for ManagedAgent { cname, agent_name } in list_managed_agents(docker).await {
         let running = container_status(docker, &cname).await == ContainerStatus::Running;
         if !running {
             handoff_boot_reason(docker, &agent_name, &cname, &crate::lifecycle::START_ALL).await;
         }
-        let ok = running || start_container(docker, &cname).await;
+        let ok = running
+            || start_container_and_report_ip(docker, &cname, &agent_name, on_bridge_ip).await;
         let error = (!ok).then(|| "failed to start".to_string());
         results.push(StartAllResult {
             name: agent_name,
@@ -2062,6 +2109,7 @@ pub async fn restart_agent(
     user_mounts: &[crate::mounts::HostMount],
     reason: Option<crate::lifecycle::LifecycleReason>,
     rebuilding: &RebuildTracker,
+    on_bridge_ip: &(dyn Fn(&str, String) + Send + Sync),
 ) -> Result<(), DockerError> {
     validate_name(name)?;
     let cname = container_name(name);
@@ -2094,7 +2142,7 @@ pub async fn restart_agent(
             // would survive a failed rebuild in the old container, claiming access that was
             // never applied (and would bake the reason into the rebuild snapshot).
             handoff_boot_reason(docker, name, &cname, &effective).await;
-            return start_agent(docker, name, None).await;
+            return start_agent(docker, name, None, on_bridge_ip).await;
         }
     } else {
         tracing::warn!(agent = %name, "restart: container inspect failed; doing a plain restart (mount changes apply on next reconcile)");
@@ -2148,6 +2196,7 @@ pub async fn reconcile_containers(
     wants_running: &(dyn Fn(&str) -> bool + Send + Sync),
     mounts_for: &(dyn Fn(&str) -> Vec<crate::mounts::HostMount> + Send + Sync),
     rebuilding: &RebuildTracker,
+    on_bridge_ip: &(dyn Fn(&str, String) + Send + Sync),
 ) {
     struct PendingRebuild<'a> {
         name: &'a str,
@@ -2311,7 +2360,7 @@ pub async fn reconcile_containers(
         if wants_running(name) {
             if !running {
                 tracing::info!(agent = %name, "starting (desired running)");
-                if !start_container(docker, cname).await {
+                if !start_container_and_report_ip(docker, cname, name, on_bridge_ip).await {
                     tracing::error!(agent = %name, "boot-start failed");
                 }
             } else if agent_code_changed {
@@ -3757,6 +3806,54 @@ mod tests {
                 .iter()
                 .any(|h| h.starts_with("host.docker.internal:")),
             "expected a host.docker.internal mapping, got {extra_hosts:?}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn resolve_bridge_ip_returns_the_containers_network_address() {
+        let docker = test_docker();
+        let tc = TestContainer::new("bridge-ip");
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let env_config = AgentEnvConfig {
+            config_dir: dir.path().to_path_buf(),
+            agents_dir: dir.path().to_path_buf(),
+            vestad_port: 1,
+            vestad_tunnel: None,
+        };
+        let _net_cleanup = TestNetwork {
+            name: agent_network_name(&tc.name),
+        };
+
+        let spec = ContainerSpec {
+            cname: &tc.name,
+            image: &test_agent_image(),
+            port: 41998,
+            agent_name: &tc.name,
+            user_mounts: &[],
+        };
+        create_container(&docker, &env_config, spec)
+            .await
+            .expect("create");
+        assert!(start_container(&docker, &tc.name).await, "start");
+
+        let ip = resolve_bridge_ip(&docker, &tc.name, &tc.name)
+            .await
+            .expect("bridge ip resolved");
+        assert_eq!(
+            ip.split('.').count(),
+            4,
+            "expected an IPv4 dotted address, got {ip}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn resolve_bridge_ip_is_none_for_a_nonexistent_container() {
+        let docker = test_docker();
+        assert_eq!(
+            resolve_bridge_ip(&docker, "vesta-no-such-container", "no-such-agent").await,
+            None
         );
     }
 

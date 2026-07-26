@@ -516,9 +516,11 @@ async fn create_and_start(
         .map_err(map_docker_err)?;
 
     progress.set(docker::BuildPhase::Starting);
-    docker::start_agent(&state.docker, &name, None)
-        .await
-        .map_err(map_docker_err)?;
+    docker::start_agent(&state.docker, &name, None, &|n, ip| {
+        state.agent_status_cache.set_bridge_ip(n, ip);
+    })
+    .await
+    .map_err(map_docker_err)?;
 
     Ok(name)
 }
@@ -556,14 +558,22 @@ async fn start_agent_handler(
             .user_desired = UserDesired::Running;
         save_settings(&settings);
     }
-    docker::start_agent(&state.docker, &name, Some(&crate::lifecycle::MANUAL_START))
-        .await
-        .map_err(map_docker_err)?;
+    docker::start_agent(
+        &state.docker,
+        &name,
+        Some(&crate::lifecycle::MANUAL_START),
+        &|n, ip| state.agent_status_cache.set_bridge_ip(n, ip),
+    )
+    .await
+    .map_err(map_docker_err)?;
     Ok(ok_json())
 }
 
 async fn start_all_handler(State(state): State<SharedState>) -> impl IntoResponse {
-    let results = docker::start_all_agents(&state.docker).await;
+    let results = docker::start_all_agents(&state.docker, &|n, ip| {
+        state.agent_status_cache.set_bridge_ip(n, ip);
+    })
+    .await;
 
     // Starting all agents is an explicit "everything should run" — record it so boot-start agrees
     // (otherwise an agent the user had stopped comes up now but goes back down on the next reboot).
@@ -693,6 +703,7 @@ async fn restart_agent_handler(
             &user_mounts,
             reason,
             &state.rebuilding,
+            &|n, ip| state.agent_status_cache.set_bridge_ip(n, ip),
         )
         .await
         .map_err(map_docker_err)?;
@@ -794,9 +805,11 @@ async fn rename_agent_handler(
         tracing::warn!(old = %name, new = %new_name, error = %e, "failed to drop rename notification");
     }
 
-    docker::start_agent(&state.docker, &new_name, None)
-        .await
-        .map_err(map_docker_err)?;
+    docker::start_agent(&state.docker, &new_name, None, &|n, ip| {
+        state.agent_status_cache.set_bridge_ip(n, ip);
+    })
+    .await
+    .map_err(map_docker_err)?;
 
     Ok(Json(serde_json::json!({"name": new_name})))
 }
@@ -887,9 +900,14 @@ async fn write_to_agent(
 
     // Agent must be running to receive the proxy call; auto-start stopped agents.
     if docker::container_status(&state.docker, &cname).await != docker::ContainerStatus::Running {
-        docker::start_agent(&state.docker, name, Some(&crate::lifecycle::CONFIG_WRITE_START))
-            .await
-            .map_err(map_docker_err)?;
+        docker::start_agent(
+            &state.docker,
+            name,
+            Some(&crate::lifecycle::CONFIG_WRITE_START),
+            &|n, ip| state.agent_status_cache.set_bridge_ip(n, ip),
+        )
+        .await
+        .map_err(map_docker_err)?;
     }
 
     let provider =
@@ -2905,6 +2923,7 @@ pub async fn run_server(cfg: ServerConfig) {
     let reconcile_docker = docker.clone();
     let reconcile_env = state.env_config.clone();
     let reconcile_rebuilding = state.rebuilding.clone();
+    let reconcile_status_cache = state.agent_status_cache.clone();
     tokio::spawn(async move {
         Box::pin(docker::reconcile_containers(
             &reconcile_docker,
@@ -2922,6 +2941,7 @@ pub async fn run_server(cfg: ServerConfig) {
             // (or via a later agent restart) is reflected without needing a fresh vestad boot.
             &|name| load_settings().agent_mounts(name),
             &reconcile_rebuilding,
+            &|name, ip| reconcile_status_cache.set_bridge_ip(name, ip),
         ))
         .await;
     });
