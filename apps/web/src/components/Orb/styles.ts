@@ -5,7 +5,7 @@ import {
   type AgentStatus,
   type OrbVisualState,
 } from "@vesta/core";
-import type { AgentOperation } from "@/stores/use-agent-ops";
+import { getOpLabel, type AgentOperation } from "@/stores/use-agent-ops";
 export { orbColors } from "@/design-tokens";
 export type { OrbVisualState };
 
@@ -28,19 +28,11 @@ function resolveStatus(
   operation: AgentOperation,
   activityState: AgentActivityState,
 ): { label: string; orbState: OrbVisualState } {
-  switch (operation) {
-    case "stopping":
-      return { label: "stopping...", orbState: "busy" };
-    case "starting":
-      return { label: "starting...", orbState: "busy" };
-    case "authenticating":
-      return { label: "signing in...", orbState: "busy" };
-    case "deleting":
-      return { label: "deleting...", orbState: "deleting" };
-    case "backing-up":
-      return { label: "backing up...", orbState: "alive" };
-    case "restoring":
-      return { label: "restoring...", orbState: "busy" };
+  if (operation !== "idle") {
+    return {
+      label: getOpLabel(operation),
+      orbState: operationOrbState(operation),
+    };
   }
 
   if (!agent) return { label: "", orbState: "off" };
@@ -49,4 +41,22 @@ function resolveStatus(
     label: agentStatusLabel(agent.status, activityState),
     orbState: agentOrbState(agent.status, activityState),
   };
+}
+
+// A backup runs against a live agent, so it keeps the alive orb; everything else in flight reads as
+// work in progress.
+function operationOrbState(
+  operation: Exclude<AgentOperation, "idle">,
+): OrbVisualState {
+  switch (operation) {
+    case "deleting":
+      return "deleting";
+    case "backing-up":
+      return "alive";
+    case "stopping":
+    case "starting":
+    case "authenticating":
+    case "restoring":
+      return "busy";
+  }
 }
