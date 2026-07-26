@@ -6,11 +6,14 @@ import {
   type ReactNode,
 } from "react";
 import { LayoutDashboard, AlertCircle } from "lucide-react";
+import { serviceKeyPathUrl } from "@vesta/core";
+import { useServiceKey } from "@vesta/core/react";
 import { Card } from "@/components/ui/card";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useTheme } from "@/providers/ThemeProvider";
 import { useRuntime } from "@/providers/RuntimeProvider";
 import { getConnection } from "@/lib/connection";
+import { serviceKeys } from "@/lib/service-key-cache";
 import { openExternalUrl } from "@/lib/open-external-url";
 import {
   Empty,
@@ -79,10 +82,32 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
   }, [iframeKey]);
 
   const conn = getConnection();
+  // The dashboard is a private service, so the frame authenticates with a minted service key
+  // carried in the path: an iframe document sends no header, and its relative asset requests
+  // inherit neither a header nor a query string.
+  const { key: dashboardKey, error: keyError } = useServiceKey(
+    serviceKeys,
+    name,
+    "dashboard",
+    hasDashboard,
+  );
   const dashboardUrl =
-    hasDashboard && conn
-      ? `${conn.url}/agents/${encodeURIComponent(name)}/dashboard/`
+    hasDashboard && conn && dashboardKey
+      ? serviceKeyPathUrl(conn.url, name, "dashboard", dashboardKey)
       : null;
+
+  // A key that replaces a previous one invalidates the frame: its document loaded under the
+  // old credential, so drop it and load again. The first key of all is skipped, since mounting
+  // the frame with it is already a fresh load.
+  const prevDashboardKey = useRef(dashboardKey);
+  useEffect(() => {
+    const previous = prevDashboardKey.current;
+    prevDashboardKey.current = dashboardKey;
+    if (previous === null || previous === dashboardKey) return;
+    setError(false);
+    setLoaded(false);
+    setIframeKey((k) => k + 1);
+  }, [dashboardKey]);
 
   const sendContext = useCallback(() => {
     const frame = iframeRef.current?.contentWindow;
@@ -186,7 +211,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
     );
   }
 
-  if (error) {
+  if (error || keyError != null) {
     return (
       <DashboardShell>
         <Empty className="flex-1 h-full w-full border-0">
@@ -210,36 +235,38 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
 
   return (
     <div className="relative h-full w-full">
-      {!loaded && (
+      {(!loaded || !dashboardUrl) && (
         <div className="absolute inset-0">
           <DashboardShell />
         </div>
       )}
-      <iframe
-        key={iframeKey}
-        ref={iframeRef}
-        src={dashboardUrl ?? undefined}
-        allow="microphone; camera; display-capture; autoplay; fullscreen; picture-in-picture; clipboard-read; clipboard-write; geolocation; screen-wake-lock; web-share; payment; publickey-credentials-get; publickey-credentials-create; encrypted-media; midi; gamepad; xr-spatial-tracking; hid; serial; usb; bluetooth; idle-detection; local-fonts; storage-access; compute-pressure; window-management"
-        className={`w-full h-full bg-transparent transition-opacity duration-200 ${loaded ? "opacity-100" : "opacity-0"}`}
-        onLoad={() => {
-          sendContext();
-          if (handshakeRef.current) {
-            setLoaded(true);
-          } else {
-            if (handshakeTimerRef.current)
-              clearTimeout(handshakeTimerRef.current);
-            handshakeTimerRef.current = setTimeout(() => {
-              handshakeTimerRef.current = null;
-              if (handshakeRef.current) {
-                setLoaded(true);
-              } else {
-                setError(true);
-              }
-            }, 500);
-          }
-        }}
-        onError={() => setError(true)}
-      />
+      {dashboardUrl && (
+        <iframe
+          key={iframeKey}
+          ref={iframeRef}
+          src={dashboardUrl}
+          allow="microphone; camera; display-capture; autoplay; fullscreen; picture-in-picture; clipboard-read; clipboard-write; geolocation; screen-wake-lock; web-share; payment; publickey-credentials-get; publickey-credentials-create; encrypted-media; midi; gamepad; xr-spatial-tracking; hid; serial; usb; bluetooth; idle-detection; local-fonts; storage-access; compute-pressure; window-management"
+          className={`w-full h-full bg-transparent transition-opacity duration-200 ${loaded ? "opacity-100" : "opacity-0"}`}
+          onLoad={() => {
+            sendContext();
+            if (handshakeRef.current) {
+              setLoaded(true);
+            } else {
+              if (handshakeTimerRef.current)
+                clearTimeout(handshakeTimerRef.current);
+              handshakeTimerRef.current = setTimeout(() => {
+                handshakeTimerRef.current = null;
+                if (handshakeRef.current) {
+                  setLoaded(true);
+                } else {
+                  setError(true);
+                }
+              }, 500);
+            }
+          }}
+          onError={() => setError(true)}
+        />
+      )}
     </div>
   );
 }
