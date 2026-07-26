@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
-import { orbIsLive } from "@vesta/core";
+import { orbIsLive, type OrbVisualState } from "@vesta/core";
 import { usePrefersReducedMotion } from "@/hooks/use-reduced-motion";
-import { orbColors, type OrbVisualState } from "./styles";
+import { orbColors } from "./styles";
 
 interface OrbProps {
   state: OrbVisualState;

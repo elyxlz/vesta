@@ -9,8 +9,16 @@ import {
   agentStatusKind,
   agentStatusLabel,
   orbIsLive,
+  type AgentStatusKind,
   type OrbVisualState,
 } from "./agent-status"
+
+const KIND_MEMBERS: Record<AgentStatusKind, AgentStatus[]> = {
+  alive: ["alive"],
+  working: ["starting", "setting_up", "restarting", "rebuilding"],
+  "needs-user": ["not_authenticated", "unprovisioned"],
+  down: ["stopped", "dead", "not_found"],
+}
 
 const EVERY_STATUS: AgentStatus[] = [
   "alive",
@@ -25,30 +33,20 @@ const EVERY_STATUS: AgentStatus[] = [
   "not_found",
 ]
 
+// Membership rather than case-by-case: asserting the whole set catches a status silently joining or
+// leaving a group, which a per-status table does not.
 describe("agentStatusKind", () => {
-  it.each<[AgentStatus, string]>([
-    ["alive", "alive"],
-    ["starting", "working"],
-    ["setting_up", "working"],
-    ["restarting", "working"],
-    ["rebuilding", "working"],
-    ["not_authenticated", "needs-user"],
-    ["unprovisioned", "needs-user"],
-    ["stopped", "down"],
-    ["dead", "down"],
-    ["not_found", "down"],
-  ])("sorts %s as %s", (status, kind) => {
-    expect(agentStatusKind(status)).toBe(kind)
-  })
+  it.each<AgentStatusKind>(["alive", "working", "needs-user", "down"])(
+    "puts exactly the right statuses in %s",
+    (kind) => {
+      expect(EVERY_STATUS.filter((status) => agentStatusKind(status) === kind)).toEqual(
+        KIND_MEMBERS[kind],
+      )
+    },
+  )
 
-  it("classifies every status, so no caller falls through a gap", () => {
-    expect(EVERY_STATUS.map(agentStatusKind)).toHaveLength(EVERY_STATUS.length)
-  })
-})
-
-describe("the derived predicates", () => {
   it("waits on the user only where the user is the one who can act", () => {
-    expect(EVERY_STATUS.filter(agentNeedsUser)).toEqual(["not_authenticated", "unprovisioned"])
+    expect(EVERY_STATUS.filter(agentNeedsUser)).toEqual(KIND_MEMBERS["needs-user"])
   })
 
   // An agent waiting on the user still answers, which is why chat history loads before sign-in.
@@ -61,7 +59,7 @@ describe("the derived predicates", () => {
   })
 
   it("treats only the states with no container as down", () => {
-    expect(EVERY_STATUS.filter(agentIsDown)).toEqual(["stopped", "dead", "not_found"])
+    expect(EVERY_STATUS.filter(agentIsDown)).toEqual(KIND_MEMBERS.down)
   })
 
   it("never calls a status both connectable and down", () => {

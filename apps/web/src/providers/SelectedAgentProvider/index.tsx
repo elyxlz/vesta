@@ -10,7 +10,7 @@ import {
   deleteAgent,
   type BackupInfo,
 } from "@/api";
-import { useAgentOps, type AgentOperation } from "@/stores/use-agent-ops";
+import { useAgentOps, type AgentRequest } from "@/stores/use-agent-ops";
 import { useRestartPending } from "@/stores/use-restart-pending";
 import type { AgentActivityState } from "@vesta/core";
 import type { AgentRow } from "@/lib/types";
@@ -47,7 +47,7 @@ export function SelectedAgentProvider({
   );
 
   const op =
-    (operation: AgentOperation, run: () => Promise<unknown>, failure: string) =>
+    (operation: AgentRequest, run: () => Promise<unknown>, failure: string) =>
     () =>
       withOp(
         name,
@@ -68,7 +68,7 @@ export function SelectedAgentProvider({
   // alone (its mount needs a recreate a boot-time change can't confirm), this button IS the owner:
   // it runs restartAgent, which recreates on mount drift and thus actually applies the grant.
   const applyPending = (
-    operation: AgentOperation,
+    operation: AgentRequest,
     run: () => Promise<unknown>,
     failure: string,
   ) =>

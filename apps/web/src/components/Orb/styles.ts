@@ -6,9 +6,8 @@ import {
   type AgentStatus,
   type OrbVisualState,
 } from "@vesta/core";
-import { getOpLabel, type AgentOperation } from "@/stores/use-agent-ops";
+import { getOpLabel, type AgentRequest } from "@/stores/use-agent-ops";
 export { orbColors } from "@/design-tokens";
-export type { OrbVisualState };
 
 interface AgentLike {
   status: AgentStatus;
@@ -17,7 +16,7 @@ interface AgentLike {
 
 export function getAgentVisualStatus(
   agent: AgentLike | null,
-  operation: AgentOperation,
+  operation: AgentRequest,
   error: string,
   activityState: AgentActivityState,
 ): { label: string; orbState: OrbVisualState } {
@@ -27,7 +26,7 @@ export function getAgentVisualStatus(
 
 function resolveStatus(
   agent: AgentLike | null,
-  operation: AgentOperation,
+  operation: AgentRequest,
   activityState: AgentActivityState,
 ): { label: string; orbState: OrbVisualState } {
   if (operation !== "idle") {
@@ -46,7 +45,7 @@ function resolveStatus(
 }
 
 function operationOrbState(
-  operation: Exclude<AgentOperation, "idle">,
+  operation: Exclude<AgentRequest, "idle">,
 ): OrbVisualState {
   switch (operation) {
     case "deleting":

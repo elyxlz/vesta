@@ -40,10 +40,12 @@ export function AgentOrb({
   const orbState = agentOrbState(status, activityState, operation);
   const shouldAnimate = animated && !transitionFrozen && orbIsLive(orbState);
   const colors = designTokens.orb[orbState];
-  const maximumPulseScale =
-    pulseScale ?? (activityState === "thinking" ? 1.1 : 1.04);
-  const halfPulseDuration =
-    pulseDuration ?? (activityState === "thinking" ? 1200 : 1800);
+  // Breathing is what "the agent itself is up" looks like, so it follows the resolved orb state:
+  // a restore on a still-alive agent reads busy and must not keep breathing.
+  const thinking = orbState === "thinking";
+  const breathes = orbState === "alive" || thinking;
+  const maximumPulseScale = pulseScale ?? (thinking ? 1.1 : 1.04);
+  const halfPulseDuration = pulseDuration ?? (thinking ? 1200 : 1800);
 
   useEffect(() => {
     pulseHapticsEnabled.current = pulseHaptics;
@@ -58,17 +60,17 @@ export function AgentOrb({
     const rotate = Animated.loop(
       Animated.timing(rotation, {
         toValue: 1,
-        duration: activityState === "thinking" ? 2600 : 9000,
+        duration: thinking ? 2600 : 9000,
         easing: Easing.linear,
         useNativeDriver: true,
       }),
     );
     rotate.start();
     return () => rotate.stop();
-  }, [activityState, rotation, shouldAnimate]);
+  }, [rotation, shouldAnimate, thinking]);
 
   useEffect(() => {
-    if (!shouldAnimate || status !== "alive") {
+    if (!shouldAnimate || !breathes) {
       pulse.stopAnimation();
       pulse.setValue(1);
       return;
@@ -118,7 +120,7 @@ export function AgentOrb({
       active = false;
       currentAnimation?.stop();
     };
-  }, [halfPulseDuration, maximumPulseScale, pulse, shouldAnimate, status]);
+  }, [breathes, halfPulseDuration, maximumPulseScale, pulse, shouldAnimate]);
 
   const rotate = rotation.interpolate({
     inputRange: [0, 1],
