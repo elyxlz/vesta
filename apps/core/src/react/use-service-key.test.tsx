@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import { act, cleanup, render, screen } from "@testing-library/react"
 
-import { useServiceKey } from "./use-service-key"
+import { MINT_RETRY_DELAY_MS, useServiceKey } from "./use-service-key"
 import type { ReactElement } from "react"
 import type { ServiceKeyCache } from "../service-keys/service-keys"
 
@@ -82,7 +82,17 @@ async function flush(): Promise<void> {
   })
 }
 
-afterEach(cleanup)
+// Let the scheduled retry fire and its mint request land.
+async function advance(ms: number): Promise<void> {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms)
+  })
+}
+
+afterEach(() => {
+  cleanup()
+  vi.useRealTimers()
+})
 
 describe("useServiceKey", () => {
   it("resolves the key for the requested agent", async () => {
@@ -178,6 +188,57 @@ describe("useServiceKey", () => {
     await flush()
     expect(errorText()).toBe("mint refused")
     expect(keyText()).toBe("none")
+  })
+
+  // A gateway restart fails the mint, and nothing else would ever ask again: without the retry
+  // the panel stays on its terminal error for the whole mount.
+  it("retries a failed mint and clears the error once one succeeds", async () => {
+    vi.useFakeTimers()
+    const { cache, requests, fail, settle } = deferredCache()
+    render(<Probe cache={cache} agent="alpha" />)
+
+    fail("alpha", "dashboard", new Error("gateway restarting"))
+    await flush()
+    expect(errorText()).toBe("gateway restarting")
+    expect(requests).toHaveLength(1)
+
+    await advance(MINT_RETRY_DELAY_MS - 1)
+    expect(requests).toHaveLength(1)
+
+    await advance(1)
+    expect(requests).toEqual(["alpha/dashboard", "alpha/dashboard"])
+
+    settle("alpha", "dashboard", "minted-on-retry")
+    await flush()
+    expect(keyText()).toBe("minted-on-retry")
+    expect(errorText()).toBe("none")
+  })
+
+  it("keeps retrying while the mint keeps failing", async () => {
+    vi.useFakeTimers()
+    const { cache, requests, fail } = deferredCache()
+    render(<Probe cache={cache} agent="alpha" />)
+
+    for (const attempt of [1, 2, 3]) {
+      fail("alpha", "dashboard", new Error(`refused ${String(attempt)}`))
+      await flush()
+      await advance(MINT_RETRY_DELAY_MS)
+    }
+    expect(requests).toHaveLength(4)
+    expect(errorText()).toBe("refused 3")
+  })
+
+  it("cancels a pending retry when the component unmounts", async () => {
+    vi.useFakeTimers()
+    const { cache, requests, fail } = deferredCache()
+    const { unmount } = render(<Probe cache={cache} agent="alpha" />)
+
+    fail("alpha", "dashboard", new Error("mint refused"))
+    await flush()
+    unmount()
+
+    await advance(MINT_RETRY_DELAY_MS * 3)
+    expect(requests).toHaveLength(1)
   })
 
   it("clears a previous failure when a new pair is requested", async () => {

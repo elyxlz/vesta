@@ -7,6 +7,10 @@ interface ServiceKeyState {
   error: unknown
 }
 
+// A mint fails when the gateway is briefly unreachable, so the hook keeps asking: nothing else
+// retries, and a panel with no key has nothing to show until one arrives.
+export const MINT_RETRY_DELAY_MS = 5000
+
 // Resolve the service key for one agent and service. The result is derived from the pair it
 // was minted for, never reset, so a key that arrives for a previous agent or service is
 // dropped rather than briefly rendered and a frame can never load carrying the wrong
@@ -27,17 +31,26 @@ export function useServiceKey(
   useEffect(() => {
     if (!enabled || !cache) return
     let cancelled = false
+    let retry: ReturnType<typeof setTimeout> | null = null
+    const attempt = (): void => {
+      void cache
+        .get(agent, service)
+        .then((key) => {
+          if (cancelled) return
+          setResolved({ agent, service, key })
+          setError(null)
+        })
+        .catch((reason: unknown) => {
+          if (cancelled) return
+          setError(reason)
+          retry = setTimeout(attempt, MINT_RETRY_DELAY_MS)
+        })
+    }
     setError(null)
-    void cache
-      .get(agent, service)
-      .then((key) => {
-        if (!cancelled) setResolved({ agent, service, key })
-      })
-      .catch((reason: unknown) => {
-        if (!cancelled) setError(reason)
-      })
+    attempt()
     return () => {
       cancelled = true
+      if (retry) clearTimeout(retry)
     }
   }, [agent, cache, enabled, service])
 
