@@ -2233,7 +2233,7 @@ pub async fn reconcile_containers(
             }
         };
         let desired_mounts = mounts_for(name);
-        if !needs_rebuild(cname, &raw, &desired_mounts) {
+        if !needs_rebuild(cname, name, &raw, &desired_mounts) {
             tracing::info!(agent = %name, "config ok, no rebuild needed");
             continue;
         }
@@ -2426,6 +2426,7 @@ fn user_mounts_drifted(
 
 fn needs_rebuild(
     cname: &str,
+    agent_name: &str,
     info: &bollard::models::ContainerInspectResponse,
     desired_mounts: &[crate::mounts::HostMount],
 ) -> bool {
@@ -2476,8 +2477,9 @@ fn needs_rebuild(
         .as_ref()
         .and_then(|h| h.network_mode.as_deref())
         .unwrap_or("");
-    if network != NETWORK_MODE {
-        tracing::info!(container = %cname, actual = network, expected = NETWORK_MODE, "rebuild needed: wrong network mode");
+    let expected_network = agent_network_name(agent_name);
+    if network != expected_network {
+        tracing::info!(container = %cname, actual = network, expected = %expected_network, "rebuild needed: not on its own agent network");
         return true;
     }
 
@@ -3622,7 +3624,8 @@ mod tests {
             .inspect_container(cname, None)
             .await
             .expect("inspect");
-        needs_rebuild(cname, &info, desired)
+        // Every caller in this file names its test container the same as its agent name.
+        needs_rebuild(cname, cname, &info, desired)
     }
 
     fn temp_core_mount() -> tempfile::TempDir {
@@ -3944,13 +3947,16 @@ mod tests {
             (core_dir.path().to_str().unwrap(), CORE_MOUNT_DEST),
             (upstream_dir.path().to_str().unwrap(), UPSTREAM_MOUNT_DEST),
         ];
+        let _net_cleanup = TestNetwork {
+            name: agent_network_name(&tc.name),
+        };
 
         create_test_container_async(
             &docker,
             &tc,
             &mounts,
             agent_container_cmd(),
-            NETWORK_MODE,
+            &agent_network_name(&tc.name),
             RESTART_POLICY,
         )
         .await;
@@ -4011,13 +4017,16 @@ mod tests {
             (src_core.to_str().unwrap(), MOUNT_DESTS[1]),
             (upstream_dir.path().to_str().unwrap(), UPSTREAM_MOUNT_DEST),
         ];
+        let _net_cleanup = TestNetwork {
+            name: agent_network_name(&tc.name),
+        };
 
         create_test_container_async(
             &docker,
             &tc,
             &mounts,
             agent_container_cmd(),
-            NETWORK_MODE,
+            &agent_network_name(&tc.name),
             RESTART_POLICY,
         )
         .await;
@@ -4158,13 +4167,16 @@ mod tests {
             (core_dir.path().to_str().unwrap(), CORE_MOUNT_DEST),
             (upstream_dir.path().to_str().unwrap(), UPSTREAM_MOUNT_DEST),
         ];
+        let _net_cleanup = TestNetwork {
+            name: agent_network_name(&tc.name),
+        };
 
         create_test_container_async(
             &docker,
             &tc,
             &mounts,
             agent_container_cmd(),
-            NETWORK_MODE,
+            &agent_network_name(&tc.name),
             "unless-stopped",
         )
         .await;
@@ -4202,6 +4214,9 @@ mod tests {
             (core_dir.path().to_str().unwrap(), CORE_MOUNT_DEST),
             (upstream_dir.path().to_str().unwrap(), UPSTREAM_MOUNT_DEST),
         ];
+        let _net_cleanup = TestNetwork {
+            name: agent_network_name(&tc.name),
+        };
 
         // Create with wrong network to force rebuild
         create_test_container_async(
@@ -4230,7 +4245,7 @@ mod tests {
             &tc,
             &mounts,
             agent_container_cmd(),
-            NETWORK_MODE,
+            &agent_network_name(&tc.name),
             RESTART_POLICY,
         )
         .await;
