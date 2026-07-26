@@ -175,7 +175,13 @@ check_guards() {
   uv run --project agent/core python scripts/check-conventions.py || failed=1
 
   if command -v shellcheck >/dev/null; then
-    git ls-files '*.sh' | xargs shellcheck -S warning || failed=1
+    # Selected by shebang, not just extension: several skill CLIs are bare command names
+    # (hue, daemon, skills-install) that must keep those names to stay invocable. The shebang
+    # pattern matches scripts/check-conventions.py so both guards cover the same set.
+    { git ls-files '*.sh'; git ls-files | while IFS= read -r f; do
+        case "${f##*/}" in *.*) continue ;; esac
+        if head -n1 -- "$f" 2>/dev/null | grep -qE '^#!.*\b(ba|da|k|z)?sh\b'; then echo "$f"; fi
+      done; } | sort -u | xargs shellcheck -S warning || failed=1
   else
     echo "error: shellcheck is not installed (apt install shellcheck / brew install shellcheck)" >&2
     failed=1
