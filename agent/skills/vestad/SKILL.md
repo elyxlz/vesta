@@ -34,8 +34,10 @@ bug, not an outage. The local config/provider API is a separate thing: plain htt
 ## Services (get a port, keep it alive)
 
 A service is a port inside the container that vestad reverse-proxies, optionally public
-(reachable through the tunnel without a token) or token-gated. Register one when something
-outside the process needs to reach it: a web UI, an inbound webhook, an API the app calls.
+(reachable through the tunnel without a token) or token-gated. Bind it to `0.0.0.0`: vestad
+reaches it over this container's network, so a `127.0.0.1` bind is invisible to the proxy even
+with the port registered correctly. Register one when something outside the process needs to
+reach it: a web UI, an inbound webhook, an API the app calls.
 A background process that needs no inbound port is just a daemon: it does not register here,
 it only goes in the restart skill's `## Daemons` section.
 
