@@ -1,7 +1,7 @@
-import { encodeFrame, reauthFrame } from "../protocol/frames"
+import { clientContextFrame, encodeFrame, reauthFrame } from "../protocol/frames"
 import { parseServerFrame } from "../protocol/parse"
 import { clientAheadOfGateway, clientBelowMinimum } from "../protocol/release-version"
-import type { ClientFrame, HelloFrame } from "../protocol/frames"
+import type { ClientContextFrame, ClientFrame, HelloFrame } from "../protocol/frames"
 import type { Delta } from "../protocol/deltas"
 import type { Tree } from "../protocol/tree"
 
@@ -41,6 +41,7 @@ export interface SyncSocketCallbacks {
 
 export interface SyncSocket {
   reauth: (token: string) => void
+  reportPresence: (focused: boolean, activeAgent: string | null) => void
   close: () => void
 }
 
@@ -52,6 +53,7 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
   let delay = base
   let terminal = false
   let open = false
+  let lastContext: ClientContextFrame | null = null
 
   const detach = (target: SocketLike): void => {
     target.onopen = null
@@ -131,6 +133,7 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
       if (socket !== current) return
       open = true
       delay = base
+      if (lastContext) current.send(encodeFrame(lastContext))
       callbacks.onStateChange("open")
     }
     current.onmessage = (data) => {
@@ -150,6 +153,10 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
   return {
     reauth: (token) => {
       emit(reauthFrame(token))
+    },
+    reportPresence: (focused, activeAgent) => {
+      lastContext = clientContextFrame(focused, activeAgent)
+      emit(lastContext)
     },
     close: () => {
       terminal = true
