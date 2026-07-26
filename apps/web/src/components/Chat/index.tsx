@@ -19,6 +19,7 @@ import { ChatComposer } from "./ChatComposer";
 import { ChatHeaderActions } from "./ChatHeaderActions";
 import { ChatMessageArea, type ChatScrollHandle } from "./ChatMessageArea";
 import { useChatKeyboardFocus } from "./use-chat-keyboard-focus";
+import { agentNeedsUser } from "@vesta/core";
 
 interface ChatProps {
   onCollapse?: () => void;
@@ -27,8 +28,7 @@ interface ChatProps {
 
 export function Chat({ onCollapse, fullscreen }: ChatProps = {}) {
   const { name, agent } = useSelectedAgent();
-  const notAuthenticated =
-    agent.status === "not_authenticated" || agent.status === "unprovisioned";
+  const notAuthenticated = agentNeedsUser(agent.status);
   const isMobile = useIsMobile();
   const navbarHeight = useLayout((s) => s.navbarHeight);
   const {

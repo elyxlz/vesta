@@ -1,11 +1,54 @@
 import type { AgentActivityState, AgentOperation, AgentStatus } from "../protocol/tree"
 
+// What an AgentStatus means for the user, which is what every surface actually branches on: is the
+// agent working, is it waiting on me, is it down. The only exhaustive switch over AgentStatus in the
+// codebase, so adding a status is a compile error here instead of a silent "healthy" at ten sites.
+export type AgentStatusKind = "alive" | "working" | "needs-user" | "down"
+
+export function agentStatusKind(status: AgentStatus): AgentStatusKind {
+  switch (status) {
+    case "alive":
+      return "alive"
+    case "starting":
+    case "setting_up":
+    case "restarting":
+    case "rebuilding":
+      return "working"
+    case "not_authenticated":
+    case "unprovisioned":
+      return "needs-user"
+    case "stopped":
+    case "dead":
+    case "not_found":
+      return "down"
+  }
+}
+
+// Up and answering, but unable to work until the user signs in or finishes setting it up. Nothing
+// resolves this on its own.
+export function agentNeedsUser(status: AgentStatus): boolean {
+  return agentStatusKind(status) === "needs-user"
+}
+
+// Whether the agent's own server answers, which is what a chat socket or a start poll waits for. An
+// agent waiting on the user is still connectable: history loads, the composer stays disabled.
+export function agentIsConnectable(status: AgentStatus): boolean {
+  const kind = agentStatusKind(status)
+  return kind === "alive" || kind === "needs-user"
+}
+
+// No container to reach and nothing in flight that will produce one, so a poller waiting for this
+// agent to come up should give up rather than time out.
+export function agentIsDown(status: AgentStatus): boolean {
+  return agentStatusKind(status) === "down"
+}
+
 // The visual buckets the orb renders. `deleting` has no matching AgentStatus: it is a client-side
 // operation, mapped by the surface that tracks operations.
 export type OrbVisualState = "alive" | "thinking" | "busy" | "off" | "deleting"
 
-// The one status-to-orb mapping both surfaces read, so a new AgentStatus is a compile error here
-// rather than a silent `off` on web and mobile independently.
+// The one status-to-orb mapping both surfaces read, so a new AgentStatus is a compile error in
+// agentStatusKind rather than a silent `off` on web and mobile independently.
 export function agentOrbState(
   status: AgentStatus,
   activityState: AgentActivityState,
@@ -14,19 +57,13 @@ export function agentOrbState(
   // A running operation outranks the container's own status: a backup pauses the container, so the
   // status alone would read as a plainly stopped agent that the user has to restart.
   if (operation !== null) return "busy"
-  switch (status) {
+  switch (agentStatusKind(status)) {
     case "alive":
       return activityState === "thinking" ? "thinking" : "alive"
-    case "starting":
-    case "setting_up":
-    case "restarting":
-    case "rebuilding":
+    case "working":
       return "busy"
-    case "not_authenticated":
-    case "unprovisioned":
-    case "stopped":
-    case "dead":
-    case "not_found":
+    case "needs-user":
+    case "down":
       return "off"
   }
 }

@@ -1,5 +1,6 @@
 import { StyleSheet, View } from "react-native";
 import {
+  agentNeedsUser,
   agentStatusLabel,
   type AgentActivityState,
   type AgentOperation,
@@ -22,9 +23,7 @@ export function AgentStatusBadge({
   const { colors } = usePreferences();
   const active = status === "alive";
   const thinking = active && activityState === "thinking";
-  const attention =
-    operation === null &&
-    (status === "not_authenticated" || status === "unprovisioned");
+  const attention = operation === null && agentNeedsUser(status);
   const color = thinking
     ? colors.warning
     : active

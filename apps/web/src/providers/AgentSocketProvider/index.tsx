@@ -4,6 +4,7 @@ import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useNotifications } from "@/providers/NotificationProvider";
 import { useVoice } from "@/stores/use-voice";
 import { AgentSocketContext, type AgentSocketValue } from "./context";
+import { agentIsConnectable } from "@vesta/core";
 
 export { useAgentSocket } from "./context";
 
@@ -19,10 +20,7 @@ export function AgentSocketProvider({ children }: { children: ReactNode }) {
 
   // Connect once the agent's WS is up so chat history loads — including when the
   // agent isn't authenticated yet (the composer stays disabled until sign-in).
-  const connectable =
-    agent.status === "alive" ||
-    agent.status === "not_authenticated" ||
-    agent.status === "unprovisioned";
+  const connectable = agentIsConnectable(agent.status);
   const socket = useAgentSocketState({
     name,
     active: connectable,

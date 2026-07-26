@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest"
 
 import type { AgentStatus } from "../protocol/tree"
-import { agentOrbState, agentStatusLabel, orbIsLive, type OrbVisualState } from "./agent-status"
+import {
+  agentIsConnectable,
+  agentIsDown,
+  agentNeedsUser,
+  agentOrbState,
+  agentStatusKind,
+  agentStatusLabel,
+  orbIsLive,
+  type OrbVisualState,
+} from "./agent-status"
 
 const EVERY_STATUS: AgentStatus[] = [
   "alive",
@@ -15,6 +24,50 @@ const EVERY_STATUS: AgentStatus[] = [
   "dead",
   "not_found",
 ]
+
+describe("agentStatusKind", () => {
+  it.each<[AgentStatus, string]>([
+    ["alive", "alive"],
+    ["starting", "working"],
+    ["setting_up", "working"],
+    ["restarting", "working"],
+    ["rebuilding", "working"],
+    ["not_authenticated", "needs-user"],
+    ["unprovisioned", "needs-user"],
+    ["stopped", "down"],
+    ["dead", "down"],
+    ["not_found", "down"],
+  ])("sorts %s as %s", (status, kind) => {
+    expect(agentStatusKind(status)).toBe(kind)
+  })
+
+  it("classifies every status, so no caller falls through a gap", () => {
+    expect(EVERY_STATUS.map(agentStatusKind)).toHaveLength(EVERY_STATUS.length)
+  })
+})
+
+describe("the derived predicates", () => {
+  it("waits on the user only where the user is the one who can act", () => {
+    expect(EVERY_STATUS.filter(agentNeedsUser)).toEqual(["not_authenticated", "unprovisioned"])
+  })
+
+  // An agent waiting on the user still answers, which is why chat history loads before sign-in.
+  it("counts a waiting agent as connectable", () => {
+    expect(EVERY_STATUS.filter(agentIsConnectable)).toEqual([
+      "alive",
+      "not_authenticated",
+      "unprovisioned",
+    ])
+  })
+
+  it("treats only the states with no container as down", () => {
+    expect(EVERY_STATUS.filter(agentIsDown)).toEqual(["stopped", "dead", "not_found"])
+  })
+
+  it("never calls a status both connectable and down", () => {
+    expect(EVERY_STATUS.filter((s) => agentIsConnectable(s) && agentIsDown(s))).toEqual([])
+  })
+})
 
 describe("agentOrbState", () => {
   it("distinguishes a thinking agent from an idle one", () => {
