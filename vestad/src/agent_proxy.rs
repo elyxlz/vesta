@@ -95,6 +95,20 @@ fn split_key_subpath(subpath: &str) -> Option<(&str, String)> {
     Some((key, tail))
 }
 
+/// The path forwarded upstream for a keyed request, or `None` when the subpath carries no
+/// key prefix or one that does not open this service. A wrong key never reshapes the
+/// forwarded path: the caller keeps the original subpath and falls through to normal auth.
+fn keyed_forward_path(
+    subpath: &str,
+    keys: &crate::service_keys::ServiceKeyStore,
+    agent: &str,
+    service: &str,
+    now: u64,
+) -> Option<String> {
+    let (key, forwarded) = split_key_subpath(subpath)?;
+    keys.accepts(agent, service, key, now).then_some(forwarded)
+}
+
 pub async fn agent_proxy_handler(
     State(state): State<SharedState>,
     Path((name, path)): Path<(String, String)>,
@@ -141,22 +155,11 @@ pub async fn agent_proxy_handler(
     // A `/k/{key}/` prefix is stripped only when the key actually opens this service, so a
     // wrong key can never reshape the forwarded path: it falls through to normal auth.
     let keyed_subpath = match resolved.as_ref() {
-        Some(_) => match split_key_subpath(service_subpath) {
-            Some((key, forwarded)) => {
-                let now = crate::time_utils::now_epoch_secs();
-                let accepted = state
-                    .service_keys
-                    .read()
-                    .await
-                    .accepts(&name, first_segment, key, now);
-                if accepted {
-                    Some(forwarded)
-                } else {
-                    None
-                }
-            }
-            None => None,
-        },
+        Some(_) => {
+            let now = crate::time_utils::now_epoch_secs();
+            let keys = state.service_keys.read().await;
+            keyed_forward_path(service_subpath, &keys, &name, first_segment, now)
+        }
         None => None,
     };
     let via_key = keyed_subpath.is_some();
@@ -427,6 +430,85 @@ async fn forward_http_to_container(
             &format!("build response: {e}"),
         )
     })
+}
+
+/// The join between the path carrier and the key check. The rule each row pins is that a
+/// prefix is stripped only when the key opens this exact service, so a wrong key leaves the
+/// forwarded path untouched instead of reshaping it.
+#[cfg(test)]
+mod keyed_forward_path_tests {
+    use super::keyed_forward_path;
+    use crate::service_keys::ServiceKeyStore;
+
+    const NOW: u64 = 1_800_000_000;
+    const AGENT: &str = "alpha";
+    const SERVICE: &str = "dashboard";
+
+    /// A store holding one live key for `(alpha, dashboard)`, plus that key's secret.
+    fn store_with_live_key() -> (ServiceKeyStore, String) {
+        let mut keys = ServiceKeyStore::default();
+        let (_, secret) = keys.mint(AGENT, SERVICE, None, Some(NOW + 600), NOW);
+        (keys, secret)
+    }
+
+    /// The forwarded path for a request to `(alpha, dashboard)`.
+    fn forwarded(subpath: &str, keys: &ServiceKeyStore) -> Option<String> {
+        keyed_forward_path(subpath, keys, AGENT, SERVICE, NOW)
+    }
+
+    #[test]
+    fn a_valid_key_strips_the_prefix_from_the_forwarded_path() {
+        let (keys, secret) = store_with_live_key();
+        assert_eq!(
+            forwarded(&format!("/k/{secret}/assets/index.js"), &keys),
+            Some("/assets/index.js".to_string())
+        );
+    }
+
+    #[test]
+    fn a_valid_key_on_the_bare_form_forwards_the_root() {
+        let (keys, secret) = store_with_live_key();
+        assert_eq!(forwarded(&format!("/k/{secret}/"), &keys), Some("/".to_string()));
+    }
+
+    /// The rule this whole seam exists for: the caller must keep the original subpath
+    /// verbatim and fall through to normal auth, never forward a reshaped path.
+    #[test]
+    fn a_wrong_key_yields_nothing_so_the_original_subpath_survives() {
+        let (keys, _) = store_with_live_key();
+        assert_eq!(forwarded("/k/not-the-secret/assets/index.js", &keys), None);
+    }
+
+    #[test]
+    fn an_expired_key_yields_nothing() {
+        let mut keys = ServiceKeyStore::default();
+        let (_, secret) = keys.mint(AGENT, SERVICE, None, Some(NOW - 1), NOW);
+        assert_eq!(forwarded(&format!("/k/{secret}/assets/index.js"), &keys), None);
+    }
+
+    #[test]
+    fn a_key_for_another_service_yields_nothing() {
+        let mut keys = ServiceKeyStore::default();
+        let (_, secret) = keys.mint(AGENT, "voice", None, Some(NOW + 600), NOW);
+        assert_eq!(forwarded(&format!("/k/{secret}/assets/index.js"), &keys), None);
+    }
+
+    #[test]
+    fn a_key_for_another_agent_yields_nothing() {
+        let mut keys = ServiceKeyStore::default();
+        let (_, secret) = keys.mint("beta", SERVICE, None, Some(NOW + 600), NOW);
+        assert_eq!(forwarded(&format!("/k/{secret}/assets/index.js"), &keys), None);
+    }
+
+    /// No `/k/` prefix means the store is never consulted, so even a live secret sitting
+    /// elsewhere in the path buys nothing.
+    #[test]
+    fn a_subpath_without_the_key_prefix_yields_nothing() {
+        let (keys, secret) = store_with_live_key();
+        assert_eq!(forwarded("/assets/index.js", &keys), None);
+        assert_eq!(forwarded(&format!("/assets/{secret}.js"), &keys), None);
+        assert_eq!(forwarded(&format!("/k2/{secret}/assets/index.js"), &keys), None);
+    }
 }
 
 #[cfg(test)]
