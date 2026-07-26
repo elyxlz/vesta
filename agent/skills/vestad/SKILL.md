@@ -84,10 +84,33 @@ curl -sk -X POST https://$BOX_HOST:$VESTAD_PORT/agents/$AGENT_NAME/services/<nam
 Invalidate optionally takes `{"scope": "<part>"}` (e.g. `{"scope": "stt"}`) to mark what
 changed; omit the body for a full invalidation.
 
+## Share a private service (mint a service key)
+
+vestad is the only gate in front of a private service, and a service key is the credential
+that opens one without handing out the app's api key. A key is scoped to one service on one
+agent, is stored only as a hash, expires in 30 days by default, and can be revoked at any
+time. Mint one when someone or something that has no Vesta login needs to reach a service:
+
+```bash
+BASE=https://$BOX_HOST:$VESTAD_PORT/agents/$AGENT_NAME/services
+curl -sk -X POST "$BASE/<service>/keys" -H "X-Agent-Token: $AGENT_TOKEN" \
+  -H 'Content-Type: application/json' -d '{"label": "who it is for", "ttl_secs": 604800}'
+```
+
+It returns `{"id": ..., "key": ..., "expires_at": ...}`; the `key` is shown exactly once, so
+put it straight into the link. Omit `ttl_secs` for the default, or pass
+`{"never_expires": true}` for a long-lived consumer. List the live keys with a `GET` on the
+same path (ids and labels only, never the secrets), and revoke one by id:
+
+```bash
+curl -sk "$BASE/<service>/keys" -H "X-Agent-Token: $AGENT_TOKEN"
+curl -sk -X DELETE "$BASE/<service>/keys/<id>" -H "X-Agent-Token: $AGENT_TOKEN"
+```
+
 ## Public URLs (how to reach a service from outside)
 
 vestad exposes registered services under the tunnel. The stable patterns:
-- **Skill/service routes**: `$VESTAD_TUNNEL/agents/$AGENT_NAME/<service>/...` (a service registered `public: true` needs no auth; otherwise pass `X-Agent-Token`). A dashboard registered as service `dashboard` is at `$VESTAD_TUNNEL/agents/$AGENT_NAME/dashboard/`.
+- **Skill/service routes**: `$VESTAD_TUNNEL/agents/$AGENT_NAME/<service>/...`. A service registered `public: true` needs no credential. A private one is gated by vestad, which accepts the app's api key or a service key minted for that service, carried as an `Authorization: Bearer <key>` header, a `?token=<key>` query param, or a `/k/<key>/` prefix right after the service name. `X-Agent-Token` is not a credential here: the proxy never accepts it, so a curl that only sets that header gets a 401. A dashboard registered as service `dashboard` is at `$VESTAD_TUNNEL/agents/$AGENT_NAME/dashboard/`, and a link someone else can open is `$VESTAD_TUNNEL/agents/$AGENT_NAME/dashboard/k/<key>/`. Prefer the path form for anything a browser loads: a page's relative assets inherit the prefix, while a header or a query param reaches only the first request.
 - **User-facing web app**: `$VESTAD_TUNNEL/app`.
 
 Reach for these instead of reverse-engineering the route when you need to hand the user a link.
