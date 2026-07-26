@@ -60,7 +60,7 @@ pub async fn get_status(
     let status = if rebuilding.is_rebuilding(name) {
         docker::AgentStatus::Rebuilding
     } else {
-        combined_status(http_client, agents_dir, cache, &cname, &info).await
+        combined_status(docker, http_client, agents_dir, cache, &cname, &info).await
     };
     Ok(docker::StatusJson {
         name: name.to_string(),
@@ -83,7 +83,7 @@ pub async fn list_agents(
         let info = docker::inspect_container(docker, cname, Some(agents_dir)).await;
         entries.push(ListEntry {
             name: agent_name.clone(),
-            status: combined_status(http_client, agents_dir, cache, cname, &info).await,
+            status: combined_status(docker, http_client, agents_dir, cache, cname, &info).await,
             ws_port: info.port.unwrap_or(0),
             started_at: info.started_at.clone(),
         });
@@ -112,6 +112,7 @@ fn apply_rebuilding(mut entries: Vec<ListEntry>, mut rebuilding: Vec<String>) ->
 }
 
 async fn combined_status(
+    docker: &Docker,
     http_client: &reqwest::Client,
     agents_dir: &std::path::Path,
     cache: &AgentStatusCache,
@@ -121,10 +122,20 @@ async fn combined_status(
     match info.status {
         docker::ContainerStatus::Running => {
             let agent_name = docker::name_from_cname(cname);
-            // Unresolved right after a start/create races the caller: the bridge-IP cache
-            // fills in shortly after the container starts, and the next ~3s poll retries.
-            let Some(host) = cache.bridge_ip(&agent_name) else {
-                return docker::AgentStatus::Starting;
+            // The one-time resolve right after start (`start_container_and_report_ip`) can race
+            // Docker's own network-attachment visibility and miss; a bare cache read would then
+            // never retry and this agent would report Starting forever. Try a live resolve on a
+            // cache miss instead, same as reconcile's post-boot sweep -- cheap (this poll already
+            // does one `inspect_container` per agent) and self-healing within one ~3s tick.
+            let host = match cache.bridge_ip(&agent_name) {
+                Some(host) => host,
+                None => match docker::resolve_bridge_ip(docker, cname, &agent_name).await {
+                    Some(ip) => {
+                        cache.set_bridge_ip(&agent_name, ip.clone());
+                        ip
+                    }
+                    None => return docker::AgentStatus::Starting,
+                },
             };
             // WS port not yet bound → agent still booting.
             if !info.port.is_some_and(|port| is_agent_ready(&host, port)) {
