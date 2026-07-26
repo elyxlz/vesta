@@ -1,11 +1,15 @@
-import type { AgentActivityState } from "@vesta/core";
+import {
+  agentOrbState,
+  type AgentActivityState,
+  type AgentStatus,
+  type OrbVisualState,
+} from "@vesta/core";
 import type { AgentOperation } from "@/stores/use-agent-ops";
 export { orbColors } from "@/design-tokens";
-
-export type OrbVisualState = "alive" | "thinking" | "busy" | "off" | "deleting";
+export type { OrbVisualState };
 
 interface AgentLike {
-  status: string;
+  status: AgentStatus;
 }
 
 export function getAgentVisualStatus(
@@ -40,38 +44,31 @@ function resolveStatus(
 
   if (!agent) return { label: "", orbState: "off" };
 
-  return resolveAgentStatus(agent.status, activityState);
+  const orbState = agentOrbState(agent.status, activityState);
+  return { label: statusLabel(agent.status, orbState), orbState };
 }
 
-function resolveAgentStatus(
-  status: string,
-  activityState: AgentActivityState,
-): { label: string; orbState: OrbVisualState } {
+function statusLabel(status: AgentStatus, orbState: OrbVisualState): string {
   switch (status) {
     case "alive":
-      if (activityState === "thinking")
-        return { label: "thinking", orbState: "thinking" };
-      return { label: "alive", orbState: "alive" };
+      return orbState === "thinking" ? "thinking" : "alive";
     case "starting":
-      return { label: "waking up...", orbState: "busy" };
+      return "waking up...";
     case "setting_up":
-      return { label: "setting up...", orbState: "busy" };
+      return "setting up...";
     case "not_authenticated":
-      return { label: "needs you to sign in again", orbState: "off" };
+      return "needs you to sign in again";
     case "unprovisioned":
-      return { label: "needs to be set up", orbState: "off" };
+      return "needs to be set up";
     case "restarting":
-      return { label: "restarting...", orbState: "busy" };
+      return "restarting...";
     case "rebuilding":
-      return { label: "updating...", orbState: "busy" };
+      return "updating...";
     case "stopped":
-      return { label: "stopped", orbState: "off" };
+      return "stopped";
     case "dead":
-      return {
-        label: "broken, delete and recreate it in settings",
-        orbState: "off",
-      };
-    default:
-      return { label: status, orbState: "off" };
+      return "broken, delete and recreate it in settings";
+    case "not_found":
+      return "unavailable";
   }
 }

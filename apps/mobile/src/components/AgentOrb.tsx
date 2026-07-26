@@ -2,7 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { Animated, Easing, StyleSheet, View } from "react-native";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
-import type { AgentActivityState, AgentStatus } from "@vesta/core";
+import {
+  agentOrbState,
+  orbIsLive,
+  type AgentActivityState,
+  type AgentStatus,
+} from "@vesta/core";
 import { useBootTransitionTargetFrozen } from "@/components/BootTransition";
 import { designTokens } from "@/theme/generated";
 
@@ -14,26 +19,6 @@ interface AgentOrbProps {
   pulseScale?: number;
   pulseDuration?: number;
   pulseHaptics?: boolean;
-}
-
-function orbColors(
-  status: AgentStatus,
-  activityState: AgentActivityState,
-): readonly [string, string, string] {
-  if (status === "alive") {
-    return activityState === "thinking"
-      ? designTokens.orb.thinking
-      : designTokens.orb.alive;
-  }
-  if (
-    status === "starting" ||
-    status === "restarting" ||
-    status === "rebuilding" ||
-    status === "setting_up"
-  ) {
-    return designTokens.orb.busy;
-  }
-  return designTokens.orb.off;
 }
 
 export function AgentOrb({
@@ -49,8 +34,9 @@ export function AgentOrb({
   const [pulse] = useState(() => new Animated.Value(1));
   const pulseHapticsEnabled = useRef(pulseHaptics);
   const transitionFrozen = useBootTransitionTargetFrozen();
-  const shouldAnimate = animated && !transitionFrozen;
-  const colors = orbColors(status, activityState);
+  const orbState = agentOrbState(status, activityState);
+  const shouldAnimate = animated && !transitionFrozen && orbIsLive(orbState);
+  const colors = designTokens.orb[orbState];
   const maximumPulseScale =
     pulseScale ?? (activityState === "thinking" ? 1.1 : 1.04);
   const halfPulseDuration =
