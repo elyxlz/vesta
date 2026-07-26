@@ -42,12 +42,20 @@ from .config import (
     update_config_store,
     validate_config_updates,
 )
-from .events import EventBus, SnapshotEvent, VestaEvent
+from .events import EventBus, SnapshotConfig, SnapshotEvent, VestaEvent
 from .helpers import get_memory_path
 from .models import State
 from .provider import ProviderAuthState, UsageError, clear_provider, get_usage, set_claude, set_key_provider, set_openai
 
 logger = logging.getLogger("vesta.api")
+
+
+def _snapshot_config(config: VestaConfig) -> SnapshotConfig:
+    """The connect snapshot's config domain: timezone plus the presence toggle vestad's status tap reads."""
+    return {
+        "timezone": config.timezone,
+        "presence_notifications_enabled": config.presence_notifications.enabled,
+    }
 
 
 def _pending_notification_ids(config: VestaConfig) -> list[str]:
@@ -87,7 +95,7 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
                 type="snapshot",
                 state=event_bus.state,
                 notifications={"pending": pending},
-                config={"timezone": config.timezone},
+                config=_snapshot_config(config),
             )
         )
         recv_task = asyncio.create_task(_recv_loop(ws))
