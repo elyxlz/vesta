@@ -1,4 +1,3 @@
-use std::net::Ipv4Addr;
 use std::time::Duration;
 
 use axum::{
@@ -26,14 +25,11 @@ const UPSTREAM_READY_TIMEOUT: Duration = Duration::from_secs(5);
 const UPSTREAM_READY_POLL_INITIAL: Duration = Duration::from_millis(25);
 const UPSTREAM_READY_POLL_MAX: Duration = Duration::from_millis(250);
 
-async fn wait_for_upstream(port: u16, timeout: Duration) {
+async fn wait_for_upstream(host: &str, port: u16, timeout: Duration) {
     let deadline = Instant::now() + timeout;
     let mut delay = UPSTREAM_READY_POLL_INITIAL;
     loop {
-        if TcpStream::connect((Ipv4Addr::LOCALHOST, port))
-            .await
-            .is_ok()
-        {
+        if TcpStream::connect((host, port)).await.is_ok() {
             return;
         }
         let now = Instant::now();
@@ -44,6 +40,12 @@ async fn wait_for_upstream(port: u16, timeout: Duration) {
         tokio::time::sleep(delay.min(remaining)).await;
         delay = (delay * 2).min(UPSTREAM_READY_POLL_MAX);
     }
+}
+
+/// Build the URL the proxy dials on the agent's own network: no longer always `localhost` now
+/// that agents each have their own bridge IP.
+fn build_target_url(scheme: &str, host: &str, port: u16, path: &str) -> String {
+    format!("{scheme}://{host}:{port}{path}")
 }
 
 async fn resolve_service(
@@ -101,6 +103,15 @@ pub async fn agent_proxy_handler(
         err_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "agent has no port — check the agent's .env file in ~/.config/vesta/vestad/agents/",
+        )
+    })?;
+    // Agents no longer share the host's network namespace, so the proxy dials this instead of
+    // localhost. Unresolved right after a start/create races the caller; ask them to retry
+    // rather than fail hard (the bridge-IP cache fills in shortly after the container starts).
+    let target_host = state.agent_status_cache.bridge_ip(&name).ok_or_else(|| {
+        err_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "agent's network address not yet resolved — retry shortly",
         )
     })?;
 
@@ -162,9 +173,9 @@ pub async fn agent_proxy_handler(
         Ok(ws.on_upgrade(move |socket| async move {
             drop(guard);
             if is_registered_service {
-                wait_for_upstream(target_port, UPSTREAM_READY_TIMEOUT).await;
+                wait_for_upstream(&target_host, target_port, UPSTREAM_READY_TIMEOUT).await;
             }
-            ws_proxy(socket, target_port, &target_path, ws_token.as_deref()).await;
+            ws_proxy(socket, &target_host, target_port, &target_path, ws_token.as_deref()).await;
         }))
     } else {
         drop(guard);
@@ -174,10 +185,11 @@ pub async fn agent_proxy_handler(
             agent_token.as_deref()
         };
         if is_registered_service {
-            wait_for_upstream(target_port, UPSTREAM_READY_TIMEOUT).await;
+            wait_for_upstream(&target_host, target_port, UPSTREAM_READY_TIMEOUT).await;
         }
         forward_http_to_container(
             &state.http_client,
+            &target_host,
             target_port,
             &target_path,
             request,
@@ -189,6 +201,7 @@ pub async fn agent_proxy_handler(
 
 async fn ws_proxy(
     client_ws: axum::extract::ws::WebSocket,
+    host: &str,
     agent_port: u16,
     path: &str,
     agent_token: Option<&str>,
@@ -199,11 +212,9 @@ async fn ws_proxy(
 
     let url = if let Some(token) = agent_token {
         let sep = if path.contains('?') { "&" } else { "?" };
-        format!(
-            "ws://localhost:{agent_port}{path}{sep}agent_token={token}"
-        )
+        build_target_url("ws", host, agent_port, &format!("{path}{sep}agent_token={token}"))
     } else {
-        format!("ws://localhost:{agent_port}{path}")
+        build_target_url("ws", host, agent_port, path)
     };
     let agent_ws = match tokio_tungstenite::connect_async(&url).await {
         Ok((ws, _)) => ws,
@@ -297,13 +308,14 @@ async fn pump_agent_to_client<ClientSink, AgentStream, AgentErr>(
 
 async fn forward_http_to_container(
     client: &reqwest::Client,
+    host: &str,
     port: u16,
     target_path: &str,
     request: Request,
     agent_token: Option<&str>,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     let (parts, body) = request.into_parts();
-    let url = format!("http://localhost:{port}{target_path}");
+    let url = build_target_url("http", host, port, target_path);
 
     let method = reqwest::Method::from_bytes(parts.method.as_str().as_bytes())
         .map_err(|e| err_response(StatusCode::BAD_REQUEST, &format!("bad method: {e}")))?;
@@ -365,7 +377,7 @@ async fn forward_http_to_container(
 
 #[cfg(test)]
 mod tests {
-    use super::{pump_agent_to_client, split_service_subpath, wait_for_upstream};
+    use super::{build_target_url, pump_agent_to_client, split_service_subpath, wait_for_upstream};
     use axum::extract::ws::Message as AxumMsg;
     use futures_util::stream;
     use std::convert::Infallible;
@@ -374,6 +386,18 @@ mod tests {
     use tokio::net::TcpListener;
     use tokio::time::Instant;
     use tokio_tungstenite::tungstenite::Message as TungMsg;
+
+    #[test]
+    fn build_target_url_uses_the_given_host_not_localhost() {
+        assert_eq!(
+            build_target_url("http", "172.20.0.5", 8080, "/health"),
+            "http://172.20.0.5:8080/health"
+        );
+        assert_eq!(
+            build_target_url("ws", "172.20.0.5", 8080, "/ws?agent_token=tok"),
+            "ws://172.20.0.5:8080/ws?agent_token=tok"
+        );
+    }
 
     /// A `Sink<AxumMsg>` that records every frame to an unbounded channel, so a test can
     /// observe exactly what the pump sent to the client.
@@ -477,7 +501,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
 
         let start = Instant::now();
-        wait_for_upstream(port, Duration::from_secs(5)).await;
+        wait_for_upstream("127.0.0.1", port, Duration::from_secs(5)).await;
         assert!(start.elapsed() < Duration::from_millis(100));
     }
 
@@ -490,7 +514,7 @@ mod tests {
         };
 
         let start = Instant::now();
-        wait_for_upstream(port, Duration::from_millis(300)).await;
+        wait_for_upstream("127.0.0.1", port, Duration::from_millis(300)).await;
         let elapsed = start.elapsed();
         assert!(elapsed >= Duration::from_millis(300));
         assert!(elapsed < Duration::from_millis(1200));
@@ -511,7 +535,7 @@ mod tests {
         });
 
         let start = Instant::now();
-        wait_for_upstream(port, Duration::from_secs(5)).await;
+        wait_for_upstream("127.0.0.1", port, Duration::from_secs(5)).await;
         let elapsed = start.elapsed();
         assert!(elapsed >= Duration::from_millis(150));
         assert!(elapsed < Duration::from_millis(800));

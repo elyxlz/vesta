@@ -436,9 +436,10 @@ pub fn spawn_agent_status_task(deps: AgentStatusTaskDeps) {
                 let tx = activity_event_tx.clone();
                 let dir = agents_dir.clone();
                 let hub = sync_hub.clone();
+                let listener_cache = cache.clone();
 
                 let join_handle = tokio::spawn(async move {
-                    agent_event_listener(agent_name, port, dir, tx, hub).await;
+                    agent_event_listener(agent_name, port, dir, tx, hub, listener_cache).await;
                 });
 
                 agent_ws_handles.insert(
@@ -495,6 +496,7 @@ async fn agent_event_listener(
     agents_dir: PathBuf,
     tx: tokio::sync::mpsc::Sender<(String, AgentUpdate)>,
     hub: Arc<SyncHub>,
+    cache: Arc<AgentStatusCache>,
 ) {
     const RECONNECT_BASE_MS: u64 = 1000;
     const RECONNECT_MAX_MS: u64 = 15000;
@@ -512,9 +514,19 @@ async fn agent_event_listener(
         .ok()
         .flatten();
 
+        // Read fresh each attempt too: a self-healing retry if the container was recreated (a
+        // rebuild, a network reattach) between connect attempts, agents no longer sharing the
+        // host's network namespace to fall back on.
+        let Some(host) = cache.bridge_ip(&name) else {
+            tracing::debug!(agent = %name, "bridge IP not yet resolved; will retry");
+            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+            delay_ms = (delay_ms * 2).min(RECONNECT_MAX_MS);
+            continue;
+        };
+
         let url = match &token {
-            Some(t) => format!("ws://localhost:{ws_port}/ws?agent_token={t}"),
-            None => format!("ws://localhost:{ws_port}/ws"),
+            Some(t) => format!("ws://{host}:{ws_port}/ws?agent_token={t}"),
+            None => format!("ws://{host}:{ws_port}/ws"),
         };
 
         match tokio_tungstenite::connect_async(&url).await {
@@ -708,12 +720,15 @@ mod tests {
         let hub = std::sync::Arc::new(SyncHub::new());
         let dir = tempfile::tempdir().expect("tempdir");
         let port = fake_agent().await;
+        let cache = std::sync::Arc::new(AgentStatusCache::new());
+        cache.set_bridge_ip("fake", "127.0.0.1".to_string());
 
         let listener = tokio::spawn({
             let hub = hub.clone();
             let (tx, _rx) = tokio::sync::mpsc::channel::<(String, AgentUpdate)>(16);
             let dir = dir.path().to_path_buf();
-            async move { agent_event_listener("fake".into(), port, dir, tx, hub).await }
+            let cache = cache.clone();
+            async move { agent_event_listener("fake".into(), port, dir, tx, hub, cache).await }
         });
 
         // The tap seeds one pending notification from the snapshot's authoritative id set; the live
