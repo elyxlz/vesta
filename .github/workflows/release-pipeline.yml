@@ -300,11 +300,9 @@ jobs:
           token: ${{ secrets.EXPO_TOKEN }}
 
       # eas workflow:run reads apps/mobile/app.config.ts locally, which needs the
-      # workspace's TypeScript toolchain installed or the read fails.
-      - name: Install mobile deps
-        run: |
-          npm --prefix apps ci
-          npm --prefix apps/mobile ci
+      # monorepo's TypeScript toolchain installed or the read fails.
+      - name: Install app deps
+        run: npm --prefix apps ci
 
       - name: Build and deliver the tagged app to TestFlight
         working-directory: apps/mobile

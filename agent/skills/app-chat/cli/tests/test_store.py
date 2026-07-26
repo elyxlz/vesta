@@ -103,7 +103,13 @@ def test_import_rows_preserves_ids_idempotently_and_indexes_fts(tmp_path):
 
     events, _ = store.page()
     assert [e["id"] for e in events] == [10, 20]
-    assert [e["text"] for e in store.search("imported")]
+    assert [e["ts"] for e in events] == ["2026-01-01T00:00:00", "2026-01-01T00:00:01"]
+    search_results = store.search("imported")
+    assert [e["text"] for e in search_results]
+    assert sorted(e["ts"] for e in search_results) == [
+        "2026-01-01T00:00:00",
+        "2026-01-01T00:00:01",
+    ]
     store.close()
 
 

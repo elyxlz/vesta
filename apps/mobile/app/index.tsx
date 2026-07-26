@@ -309,6 +309,7 @@ function AgentCarouselItem({
         name={agent.name}
         status={agent.status}
         activityState={agent.activityState}
+        operation={agent.operation}
         orb={
           <Animated.View
             style={[styles.orbHandoff, { transform: [{ scale: orbScale }] }]}
@@ -325,6 +326,7 @@ function AgentCarouselItem({
                 <AgentOrb
                   status={agent.status}
                   activityState={agent.activityState}
+                  operation={agent.operation}
                   size={AGENT_IDENTITY_ORB_SIZE}
                 />
               </BootTransitionTarget>
@@ -503,7 +505,7 @@ function HomeWordmark() {
   const { colors } = usePreferences();
   return (
     <View style={styles.wordmarkContainer}>
-      <Text family="heading" style={[styles.wordmark, { color: colors.text }]}>
+      <Text family="wordmark" style={[styles.wordmark, { color: colors.text }]}>
         vesta
       </Text>
     </View>

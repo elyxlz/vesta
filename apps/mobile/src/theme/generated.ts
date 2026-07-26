@@ -139,6 +139,15 @@ export const designTokens = {
           "700": "SourceSerif4_700Bold",
         },
       },
+      wordmark: {
+        css: '"Source Serif 4 Variable", Georgia, serif',
+        native: {
+          "400": "SourceSerif4_400Regular",
+          "500": "SourceSerif4_500Medium",
+          "600": "SourceSerif4_600SemiBold",
+          "700": "SourceSerif4_700Bold",
+        },
+      },
       mono: {
         css: '"JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
         native: {
@@ -161,7 +170,7 @@ export const designTokens = {
   },
   radii: {
     base: 10,
-    card: 22,
+    card: 28,
     control: 14,
     button: 15,
     bubble: 20,

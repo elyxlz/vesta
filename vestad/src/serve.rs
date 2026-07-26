@@ -1787,6 +1787,27 @@ where
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
+/// Publishes an agent's in-flight operation on the roster for as long as it is held, clearing it on
+/// drop so an early `?` return cannot strand the agent looking busy forever.
+struct PublishedOperation {
+    cache: Arc<crate::agent_status::AgentStatusCache>,
+    name: String,
+}
+
+impl PublishedOperation {
+    fn new(state: &SharedState, name: &str, operation: crate::docker::AgentOperation) -> Self {
+        let normalized = crate::docker::normalize_name(name);
+        state.agent_status_cache.set_operation(&normalized, operation);
+        Self { cache: state.agent_status_cache.clone(), name: normalized }
+    }
+}
+
+impl Drop for PublishedOperation {
+    fn drop(&mut self) {
+        self.cache.clear_operation(&self.name);
+    }
+}
+
 async fn create_backup_handler(
     State(state): State<SharedState>,
     Path(name): Path<String>,
@@ -1797,6 +1818,8 @@ async fn create_backup_handler(
     spawn_pipeline_sse(async move {
         let _guard = agent_write_guard(&state, &name).await;
         let _file_lock = backup::agent_file_lock(&name)?;
+        let _operation =
+            PublishedOperation::new(&state, &name, crate::docker::AgentOperation::BackingUp);
         let info =
             backup::create_backup(&state.docker, &name, crate::types::BackupType::Manual).await?;
         tracing::info!(backup_id = %info.id, size = info.size, "backup created");
@@ -1842,6 +1865,8 @@ async fn restore_backup_handler(
     spawn_pipeline_sse(async move {
         let _guard = agent_write_guard(&state, &path.name).await;
         let _file_lock = backup::agent_file_lock(&path.name)?;
+        let _operation =
+            PublishedOperation::new(&state, &path.name, crate::docker::AgentOperation::Restoring);
         let user_mounts = {
             let settings = state.settings.read().await;
             settings.agent_mounts(&path.name)

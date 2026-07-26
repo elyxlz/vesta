@@ -68,11 +68,14 @@ def _open(db_path: pl.Path) -> sqlite3.Connection:
     return conn
 
 
-def _rows_to_events(rows: list[tuple[int, str]]) -> list[StoredEvent]:
+def _rows_to_events(rows: list[tuple[int, str, str]]) -> list[StoredEvent]:
     events: list[StoredEvent] = []
     for row in rows:
-        event: StoredEvent = json.loads(row[1])
+        event: StoredEvent = json.loads(row[2])
         event["id"] = row[0]
+        # Legacy imports stored the timestamp in the indexed SQLite column but not inside the JSON
+        # payload. Hydrate it on every read so clients can bucket those messages by their real date.
+        event.setdefault("ts", row[1])
         events.append(event)
     return events
 
@@ -108,7 +111,7 @@ class Store:
         conn = sqlite3.connect(str(self._db_path), timeout=30)
         try:
             rows = conn.execute(
-                f"SELECT id, data FROM events WHERE json_extract(data, '$.type') IN ({placeholders}) {upper}ORDER BY id DESC LIMIT ?",
+                f"SELECT id, ts, data FROM events WHERE json_extract(data, '$.type') IN ({placeholders}) {upper}ORDER BY id DESC LIMIT ?",
                 (*_CONVERSATION_TYPES, *params, limit + 1),
             ).fetchall()
         finally:
@@ -127,7 +130,7 @@ class Store:
         try:
             rows = conn.execute(
                 """
-                SELECT e.id, e.data,
+                SELECT e.id, e.ts, e.data,
                        f.rank / (1.0 + ? * max(julianday('now') - julianday(e.ts), 0)) AS score
                 FROM events_fts f
                 JOIN events e ON e.id = f.rowid
@@ -139,7 +142,7 @@ class Store:
             ).fetchall()
         finally:
             conn.close()
-        return _rows_to_events([(row[0], row[1]) for row in rows])
+        return _rows_to_events([(row[0], row[1], row[2]) for row in rows])
 
     def import_rows(self, rows: list[tuple[int, str, str]]) -> tuple[int, int]:
         """Copy (id, ts, data) triples from events.db preserving ids, idempotently (INSERT OR IGNORE).

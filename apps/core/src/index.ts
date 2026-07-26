@@ -4,6 +4,14 @@ export {
   compareReleaseVersions,
 } from "./protocol/release-version"
 
+export {
+  extractWhatsNew,
+  fetchReleaseNotes,
+  filterReleaseNotes,
+  parseReleaseNotes,
+} from "./release-notes/release-notes"
+export type { ReleaseNote } from "./release-notes/release-notes"
+
 export { parseAnsi, resolveAnsiColor, stripAnsi } from "./ansi/ansi"
 export type { AnsiColor, AnsiSpan, AnsiStyle } from "./ansi/ansi"
 
@@ -11,6 +19,7 @@ export type {
   AgentActivityState,
   AgentInfo,
   AgentNode,
+  AgentOperation,
   AgentStatus,
   BuildPhase,
   GatewayInfo,
@@ -81,6 +90,18 @@ export {
 
 export { rosterFromTree, rostersEqual } from "./tree/roster"
 export type { AgentRow } from "./tree/roster"
+
+export {
+  agentIsConnectable,
+  agentIsDown,
+  agentNeedsUser,
+  agentOperationLabel,
+  agentOrbState,
+  agentStatusKind,
+  agentStatusLabel,
+  orbIsLive,
+} from "./agent-status/agent-status"
+export type { AgentStatusKind, OrbVisualState } from "./agent-status/agent-status"
 
 export { normalizeProviderInfo, providerPutBody } from "./provider/provider"
 export type {

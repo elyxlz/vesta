@@ -36,6 +36,7 @@ function agentInfo(overrides: Partial<CoreAgentInfo> = {}): CoreAgentInfo {
     status: "alive",
     activityState: "idle",
     buildPhase: null,
+    operation: null,
     startedAt: "2026-01-01T00:00:00Z",
     services: {},
     ...overrides,

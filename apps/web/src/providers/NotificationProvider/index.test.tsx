@@ -50,6 +50,7 @@ function agentInfo(name: string, status: AgentRow["status"]): AgentRow {
     status,
     activityState: "idle",
     buildPhase: null,
+    operation: null,
     startedAt: null,
     services: {},
   };
@@ -61,6 +62,7 @@ function node(status: AgentRow["status"]) {
       status,
       activityState: "idle" as const,
       buildPhase: null,
+      operation: null,
       startedAt: null,
       services: {},
     },

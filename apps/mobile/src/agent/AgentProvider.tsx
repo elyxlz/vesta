@@ -1,46 +1,28 @@
-import {
-  createContext,
-  use,
-  useEffect,
-  type ReactNode,
-} from "react";
+import { createContext, use, useEffect, type ReactNode } from "react";
 import { useLocalSearchParams } from "expo-router";
 import { useAgentSocket } from "@/chat/useAgentSocket";
 import { ControllerContext } from "@/controller/context";
 import { setVisibleAgentSocket } from "@/notifications/foreground-policy";
 import { useRoster } from "@/session/RosterProvider";
 import { useSession } from "@/session/SessionProvider";
-import type { AgentRow } from "@vesta/core";
+import {
+  agentIsConnectable,
+  type AgentActivityState,
+  type AgentRow,
+} from "@vesta/core";
 import { writeLastUsedAgent } from "@/storage/recent-agent";
+import { servedAgentActivity } from "@/chat/agent-activity-model";
 
 type AgentSocket = ReturnType<typeof useAgentSocket>;
 
 interface AgentValue {
   name: string;
   agent: AgentRow | null;
+  activityState: AgentActivityState;
   socket: AgentSocket;
 }
 
 const AgentContext = createContext<AgentValue | null>(null);
-
-// The disconnected socket served while the controller is torn down (pre-connect / backgrounded):
-// no live edge, no history. Foregrounding rebuilds the controller and remounts LiveAgent, which
-// re-seeds the tail. Every field matches the live socket's shape so consumers need no null checks.
-const DISCONNECTED_SOCKET: AgentSocket = {
-  events: [],
-  agentState: "idle",
-  isTyping: false,
-  connected: false,
-  historyLoaded: false,
-  pendingNotifications: [],
-  latestLiveChat: null,
-  hasMore: false,
-  loadingMore: false,
-  loadMore: async () => undefined,
-  send: () => false,
-  retry: () => undefined,
-  reseedRevision: 0,
-};
 
 function AgentContent({
   name,
@@ -54,65 +36,47 @@ function AgentContent({
   children: ReactNode;
 }) {
   const { connection } = useSession();
+  const activityState = servedAgentActivity(
+    {
+      state: socket.agentState,
+      ready: socket.agentStateReady,
+    },
+    agent?.activityState,
+  );
   useEffect(
     () => setVisibleAgentSocket(connection?.url ?? "", name, socket.connected),
     [connection?.url, name, socket.connected],
   );
   return (
-    <AgentContext.Provider value={{ name, agent, socket }}>
+    <AgentContext.Provider value={{ name, agent, activityState, socket }}>
       {children}
     </AgentContext.Provider>
   );
 }
 
-function LiveAgent({
-  name,
-  agent,
-  active,
-  children,
-}: {
-  name: string;
-  agent: AgentRow | null;
-  active: boolean;
-  children: ReactNode;
-}) {
-  const socket = useAgentSocket(name, active);
-  return (
-    <AgentContent name={name} agent={agent} socket={socket}>
-      {children}
-    </AgentContent>
-  );
-}
-
-// Tolerates the null controller context (pre-connect / backgrounded): read it nullable rather than
-// useController(), which throws when there is no live controller. LiveAgent runs the view-model only
-// when the controller exists; otherwise the disconnected socket keeps the surface intact.
+// The provider and socket hook stay mounted across controller epochs. Backgrounding disables the
+// live edges without replacing the nested navigation tree, so an open agent sheet retains its state.
 export function AgentProvider({ children }: { children: ReactNode }) {
   const parameters = useLocalSearchParams<{ name?: string }>();
   const name = typeof parameters.name === "string" ? parameters.name : "";
   const controller = use(ControllerContext);
   const { agents } = useRoster();
   const agent = agents.find((candidate) => candidate.name === name) ?? null;
-  const connectable =
-    agent?.status === "alive" ||
-    agent?.status === "not_authenticated" ||
-    agent?.status === "unprovisioned";
+  const connectable = agent !== null && agentIsConnectable(agent.status);
+  const socket = useAgentSocket(
+    name,
+    Boolean(controller && name && connectable),
+    controller,
+  );
 
   useEffect(() => {
     if (name) void writeLastUsedAgent(name);
   }, [name]);
 
-  if (!controller) {
-    return (
-      <AgentContent name={name} agent={agent} socket={DISCONNECTED_SOCKET}>
-        {children}
-      </AgentContent>
-    );
-  }
   return (
-    <LiveAgent name={name} agent={agent} active={Boolean(name && connectable)}>
+    <AgentContent name={name} agent={agent} socket={socket}>
       {children}
-    </LiveAgent>
+    </AgentContent>
   );
 }
 

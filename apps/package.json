@@ -4,8 +4,18 @@
   "workspaces": [
     "web",
     "desktop",
-    "core"
+    "core",
+    "mobile"
   ],
+  "overrides": {
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  },
+  "devDependencies": {
+    "expo-router": "~57.0.8",
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  },
   "scripts": {
     "core:lint": "npm -w @vesta/core run lint",
     "core:check": "npm -w @vesta/core run check",
@@ -17,9 +27,9 @@
     "web:test": "npm -w @vesta/web run test",
     "desktop:dev": "npm -w @vesta/desktop run dev",
     "desktop:build": "npm -w @vesta/desktop run build",
-    "mobile:start": "npm --prefix mobile run start",
-    "mobile:ios": "npm --prefix mobile run ios",
-    "mobile:android": "npm --prefix mobile run android",
-    "mobile:check": "npm --prefix mobile run check"
+    "mobile:start": "npm -w @vesta/mobile run start --",
+    "mobile:ios": "npm -w @vesta/mobile run ios --",
+    "mobile:android": "npm -w @vesta/mobile run android --",
+    "mobile:check": "npm -w @vesta/mobile run check"
   }
 }

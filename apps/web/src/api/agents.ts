@@ -2,8 +2,12 @@ import { apiJson, apiFetch, jsonInit } from "./client";
 import {
   RESTART_REASONS,
   normalizeProviderInfo,
+  agentIsConnectable,
+  agentIsDown,
+  agentNeedsUser,
   providerPutBody,
   restartBody,
+  type AgentStatus,
   type BuildPhase,
   type NotificationEvent,
   type ProviderInfo,
@@ -113,8 +117,8 @@ export function buildPhaseMessage(phase: BuildPhase | null): string {
 }
 
 interface StatusWait {
-  ready: readonly string[];
-  failed: readonly string[];
+  ready: (status: AgentStatus) => boolean;
+  failed: (status: AgentStatus) => boolean;
   timeoutLabel: string;
 }
 
@@ -128,11 +132,11 @@ async function waitForStatus(
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const resp = await apiJson<{ status: string }>(
+    const resp = await apiJson<{ status: AgentStatus }>(
       `/agents/${encodeURIComponent(name)}`,
     );
-    if (wait.ready.includes(resp.status)) return;
-    if (wait.failed.includes(resp.status)) {
+    if (wait.ready(resp.status)) return;
+    if (wait.failed(resp.status)) {
       throw new Error(`${name}: ${resp.status}`);
     }
     await new Promise((r) => setTimeout(r, pollIntervalMs));
@@ -148,8 +152,8 @@ export async function waitUntilRunning(
   pollIntervalMs = 500,
 ): Promise<void> {
   await waitForStatus(name, timeoutMs, pollIntervalMs, {
-    ready: ["alive", "not_authenticated", "unprovisioned"],
-    failed: ["dead", "stopped", "not_found"],
+    ready: agentIsConnectable,
+    failed: agentIsDown,
     timeoutLabel: "timed out waiting for HTTP server",
   });
 }
@@ -160,14 +164,10 @@ export async function waitUntilAlive(
   pollIntervalMs = 500,
 ): Promise<void> {
   await waitForStatus(name, timeoutMs, pollIntervalMs, {
-    ready: ["alive"],
-    failed: [
-      "dead",
-      "stopped",
-      "not_found",
-      "not_authenticated",
-      "unprovisioned",
-    ],
+    ready: (status) => status === "alive",
+    // A waiting agent never becomes alive on its own, so it is a failure here even though the
+    // HTTP-up poll above treats it as ready.
+    failed: (status) => agentIsDown(status) || agentNeedsUser(status),
     timeoutLabel: "timed out waiting to become alive",
   });
 }

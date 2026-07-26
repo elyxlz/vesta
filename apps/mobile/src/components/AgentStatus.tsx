@@ -1,37 +1,36 @@
 import { StyleSheet, View } from "react-native";
-import type { AgentStatus } from "@vesta/core";
+import {
+  agentNeedsUser,
+  agentStatusLabel,
+  type AgentActivityState,
+  type AgentOperation,
+  type AgentStatus,
+} from "@vesta/core";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { Text } from "@/components/ui/Typography";
 
-const STATUS_LABELS: Record<AgentStatus, string> = {
-  alive: "online",
-  starting: "starting",
-  setting_up: "setting up",
-  not_authenticated: "sign-in needed",
-  unprovisioned: "setup needed",
-  restarting: "restarting",
-  rebuilding: "rebuilding",
-  stopped: "stopped",
-  dead: "offline",
-  not_found: "unavailable",
-};
-
 export function AgentStatusBadge({
   status,
+  activityState = "idle",
+  operation = null,
   centered = false,
 }: {
   status: AgentStatus;
+  activityState?: AgentActivityState;
+  operation?: AgentOperation | null;
   centered?: boolean;
 }) {
   const { colors } = usePreferences();
   const active = status === "alive";
-  const attention =
-    status === "not_authenticated" || status === "unprovisioned";
-  const color = active
-    ? colors.success
-    : attention
-      ? colors.warning
-      : colors.tertiaryText;
+  const thinking = active && activityState === "thinking";
+  const attention = operation === null && agentNeedsUser(status);
+  const color = thinking
+    ? colors.warning
+    : active
+      ? colors.success
+      : attention
+        ? colors.warning
+        : colors.tertiaryText;
   return (
     <View
       style={[
@@ -41,7 +40,9 @@ export function AgentStatusBadge({
       ]}
     >
       <View style={[styles.dot, { backgroundColor: color }]} />
-      <Text style={[styles.label, { color }]}>{STATUS_LABELS[status]}</Text>
+      <Text style={[styles.label, { color }]}>
+        {agentStatusLabel(status, activityState, operation)}
+      </Text>
     </View>
   );
 }

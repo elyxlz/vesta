@@ -1,7 +1,7 @@
 import { Orb } from "@/components/Orb";
 import { CardDescription, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import type { OrbVisualState } from "@/components/Orb/styles";
+import type { OrbVisualState } from "@vesta/core";
 
 interface AgentIslandExpandedProps {
   name: string;

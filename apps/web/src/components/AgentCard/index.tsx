@@ -14,7 +14,7 @@ import {
 import { Orb } from "@/components/Orb";
 import type { AgentRow } from "@/lib/types";
 import { useNavigate } from "react-router-dom";
-import { useAgentOps, getOpLabel } from "@/stores/use-agent-ops";
+import { useAgentOps } from "@/stores/use-agent-ops";
 import { useOrbStatus } from "@/hooks/use-orb-state";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
@@ -30,6 +30,8 @@ export function AgentCard({ agent, enableTracking = false }: AgentCardProps) {
 
   const opState = useAgentOps((s) => s.getOp(agent.name));
   const { orbState, label } = useOrbStatus(agent, agent.activityState);
+  // Work vestad is running counts even when this tab did not start it.
+  const inFlight = opState.operation !== "idle" || agent.operation !== null;
 
   return (
     <Card className="flex items-center justify-center h-full w-full">
@@ -60,7 +62,7 @@ export function AgentCard({ agent, enableTracking = false }: AgentCardProps) {
           </CardTitle>
 
           <AnimatePresence>
-            {(opState.operation !== "idle" || opState.error) && (
+            {(inFlight || opState.error) && (
               <motion.div
                 initial={{ opacity: 0, height: 0 }}
                 animate={{ opacity: 1, height: "auto" }}
@@ -68,7 +70,7 @@ export function AgentCard({ agent, enableTracking = false }: AgentCardProps) {
                 transition={{ duration: 0.15 }}
                 className="flex items-center gap-1.5"
               >
-                {opState.operation !== "idle" && (
+                {inFlight && (
                   <Spinner className="size-3 text-muted-foreground" />
                 )}
                 <CardDescription
@@ -79,7 +81,7 @@ export function AgentCard({ agent, enableTracking = false }: AgentCardProps) {
                       : "text-muted-foreground",
                   )}
                 >
-                  {opState.error || getOpLabel(opState.operation)}
+                  {opState.error || label}
                 </CardDescription>
               </motion.div>
             )}

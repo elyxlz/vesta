@@ -8,6 +8,7 @@ import { buildController } from "./build-controller";
 import { controllerGateAction, type GateInput } from "./controller-gate";
 import { ControllerContext } from "./context";
 import { createAppStateForegroundSignal } from "./foreground-signal";
+import { useOptionalControllerSyncState } from "./optional-controller-store";
 import { runReauthCheck } from "./reauth-poll";
 import { AppBehindScreen } from "./AppBehindScreen";
 import { GatewayBehindScreen } from "./GatewayBehindScreen";
@@ -31,6 +32,7 @@ function ConnectedController({ children }: { children: ReactNode }) {
   const [signal] = useState(createAppStateForegroundSignal);
   const [controller, setController] = useState<Controller | null>(null);
   const connectionKey = connectionKeyOf(connection);
+  const syncState = useOptionalControllerSyncState(controller);
 
   useEffect(() => {
     let prev: GateInput = { connected: false, foreground: false };
@@ -81,24 +83,6 @@ function ConnectedController({ children }: { children: ReactNode }) {
     };
   }, [controller, api, refreshAccessToken]);
 
-  if (!controller) {
-    return (
-      <ControllerContext.Provider value={null}>
-        {children}
-      </ControllerContext.Provider>
-    );
-  }
-  return <LiveController controller={controller}>{children}</LiveController>;
-}
-
-function LiveController({
-  controller,
-  children,
-}: {
-  controller: Controller;
-  children: ReactNode;
-}) {
-  const syncState = useSyncState(controller);
   return (
     <ControllerContext.Provider value={controller}>
       {routeTakeover(syncState) ?? children}

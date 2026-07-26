@@ -1,9 +1,9 @@
 import { createContext, use, useState, type ReactNode } from "react";
 import { emptyChatHold, type ChatHold } from "./chat-hold-model";
 
-// The chat hold lives ABOVE ControllerProvider: the chat view-model (LiveAgent) remounts on every
-// background/foreground (the controller flips null), so a hold kept inside it would reset and blank
-// the conversation. One in-memory cell, keyed to agent + gateway; a mismatched read clears it.
+// The chat hold lives above the controller epoch and preserves the last committed conversation
+// through socket rebuilds or agent-surface remounts. It is keyed to agent + gateway, and a
+// mismatched read clears it so one conversation can never bleed into another.
 function createChatHoldStore() {
   let hold: ChatHold = emptyChatHold;
   return {
@@ -21,7 +21,9 @@ const ChatHoldContext = createContext<ChatHoldStore | null>(null);
 export function ChatHoldProvider({ children }: { children: ReactNode }) {
   const [store] = useState(createChatHoldStore);
   return (
-    <ChatHoldContext.Provider value={store}>{children}</ChatHoldContext.Provider>
+    <ChatHoldContext.Provider value={store}>
+      {children}
+    </ChatHoldContext.Provider>
   );
 }
 

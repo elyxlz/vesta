@@ -1,5 +1,6 @@
 {
   "background": "#0c0a08",
-  "splashBackground": "#ffffff",
+  "splashBackground": "#fffdfa",
+  "splashBackgroundDark": "#0c0a08",
   "primary": "#d5b993"
 }

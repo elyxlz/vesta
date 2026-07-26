@@ -1,8 +1,11 @@
 import {
   RESTART_REASONS,
+  agentIsConnectable,
+  agentIsDown,
   normalizeProviderInfo,
   providerPutBody,
   restartBody,
+  type AgentStatus,
   type NotificationEvent,
   type ProviderInfo,
   type ProviderSelection,
@@ -51,21 +54,11 @@ export async function waitUntilRunning(
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const response = await api.json<{ status: string }>(
+    const response = await api.json<{ status: AgentStatus }>(
       `/agents/${encodeURIComponent(name)}`,
     );
-    if (
-      response.status === "alive" ||
-      response.status === "not_authenticated" ||
-      response.status === "unprovisioned"
-    ) {
-      return;
-    }
-    if (
-      response.status === "dead" ||
-      response.status === "stopped" ||
-      response.status === "not_found"
-    ) {
+    if (agentIsConnectable(response.status)) return;
+    if (agentIsDown(response.status)) {
       throw new Error(`${name} could not start: ${response.status}.`);
     }
     await new Promise((resolve) => setTimeout(resolve, 750));
@@ -441,6 +434,13 @@ export async function fetchGatewaySettings(
   api: ApiClient,
 ): Promise<GatewaySettings> {
   return api.json("/gateway/settings");
+}
+
+export async function updateGatewaySettings(
+  api: ApiClient,
+  patch: Partial<Pick<GatewaySettings, "auto_update" | "channel">>,
+): Promise<GatewaySettings> {
+  return api.json("/gateway/settings", api.jsonInit("PUT", patch));
 }
 
 export async function registerMobileDevice(
