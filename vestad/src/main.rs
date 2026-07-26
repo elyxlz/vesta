@@ -24,6 +24,7 @@ mod restic;
 mod self_log;
 mod self_update;
 mod serve;
+mod service_keys;
 mod settings;
 mod state;
 mod status;
