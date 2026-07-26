@@ -90,8 +90,8 @@ export {
 export { rosterFromTree, rostersEqual } from "./tree/roster"
 export type { AgentRow } from "./tree/roster"
 
-export { agentOrbState, orbIsLive } from "./orb/orb-state"
-export type { OrbVisualState } from "./orb/orb-state"
+export { agentOrbState, agentStatusLabel, orbIsLive } from "./agent-status/agent-status"
+export type { OrbVisualState } from "./agent-status/agent-status"
 
 export { normalizeProviderInfo, providerPutBody } from "./provider/provider"
 export type {

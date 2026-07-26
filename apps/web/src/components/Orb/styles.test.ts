@@ -21,7 +21,7 @@ describe("getAgentVisualStatus", () => {
       "",
       "idle",
     );
-    expect(label).toBe("needs you to sign in again");
+    expect(label).toBe("needs you to sign in");
     expect(orbState).toBe("off");
   });
 

@@ -33,3 +33,30 @@ const LIVE_STATES: ReadonlySet<OrbVisualState> = new Set(["alive", "thinking", "
 export function orbIsLive(state: OrbVisualState): boolean {
   return LIVE_STATES.has(state)
 }
+
+// The words for a status, shared so web's orb line and mobile's badge cannot drift apart. The two
+// waiting states name the user as the actor, matching the notification and push copy for them.
+export function agentStatusLabel(status: AgentStatus, activityState: AgentActivityState): string {
+  switch (status) {
+    case "alive":
+      return activityState === "thinking" ? "thinking" : "alive"
+    case "starting":
+      return "waking up..."
+    case "setting_up":
+      return "setting up..."
+    case "not_authenticated":
+      return "needs you to sign in"
+    case "unprovisioned":
+      return "needs to be set up"
+    case "restarting":
+      return "restarting..."
+    case "rebuilding":
+      return "updating..."
+    case "stopped":
+      return "stopped"
+    case "dead":
+      return "broken"
+    case "not_found":
+      return "unavailable"
+  }
+}

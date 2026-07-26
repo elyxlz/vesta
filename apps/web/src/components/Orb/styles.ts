@@ -1,5 +1,6 @@
 import {
   agentOrbState,
+  agentStatusLabel,
   type AgentActivityState,
   type AgentStatus,
   type OrbVisualState,
@@ -44,31 +45,8 @@ function resolveStatus(
 
   if (!agent) return { label: "", orbState: "off" };
 
-  const orbState = agentOrbState(agent.status, activityState);
-  return { label: statusLabel(agent.status, orbState), orbState };
-}
-
-function statusLabel(status: AgentStatus, orbState: OrbVisualState): string {
-  switch (status) {
-    case "alive":
-      return orbState === "thinking" ? "thinking" : "alive";
-    case "starting":
-      return "waking up...";
-    case "setting_up":
-      return "setting up...";
-    case "not_authenticated":
-      return "needs you to sign in again";
-    case "unprovisioned":
-      return "needs to be set up";
-    case "restarting":
-      return "restarting...";
-    case "rebuilding":
-      return "updating...";
-    case "stopped":
-      return "stopped";
-    case "dead":
-      return "broken, delete and recreate it in settings";
-    case "not_found":
-      return "unavailable";
-  }
+  return {
+    label: agentStatusLabel(agent.status, activityState),
+    orbState: agentOrbState(agent.status, activityState),
+  };
 }
