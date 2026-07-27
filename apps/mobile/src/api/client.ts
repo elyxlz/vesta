@@ -1,4 +1,5 @@
-import { ApiError, createHttpClient } from "@vesta/core";
+import { ApiError, createHttpClient, createServiceKeyCache } from "@vesta/core";
+import type { ServiceKeyCache } from "@vesta/core";
 import type { ConnectionConfig } from "./types";
 
 // The Bearer-auth + refresh-on-401 + retry mechanics live once in @vesta/core; this module
@@ -31,6 +32,9 @@ export interface ApiClient {
   mediaUrl: (path: string, query?: URLSearchParams) => string;
   getConnection: () => ConnectionConfig | null;
   forceRefresh: () => Promise<boolean>;
+  // The client's own service keys, so a client built by a test never shares them and
+  // reconnecting to another gateway keeps the client while missing the cache.
+  serviceKeys: ServiceKeyCache;
 }
 
 function apiErrorMessage(response: Response, body: string): string {
@@ -156,5 +160,9 @@ export function createApiClient(options: ClientOptions): ApiClient {
     mediaUrl: (path, query = new URLSearchParams()) => withToken(path, query),
     getConnection: options.getConnection,
     forceRefresh: async () => (await refresh(true)) !== null,
+    serviceKeys: createServiceKeyCache({
+      http,
+      gateway: () => options.getConnection()?.url ?? null,
+    }),
   };
 }

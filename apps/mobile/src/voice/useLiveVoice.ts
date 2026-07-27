@@ -7,8 +7,8 @@ import {
   useAudioStream,
 } from "expo-audio";
 import { serviceKeyQueryUrl } from "@vesta/core";
+import type { ApiClient } from "@/api/client";
 import { fetchVoiceStatus, prepareSpeech } from "@/api/endpoints";
-import { serviceKeyCacheFor } from "@/api/service-key-cache";
 import { useSession } from "@/session/SessionProvider";
 import { setRecordingHapticsEnabled } from "@/voice/recording-haptics";
 
@@ -183,7 +183,7 @@ export function useLiveVoice({
 
       const connection = api.getConnection();
       if (!connection) throw new Error("Not connected to a Vesta gateway.");
-      const key = await serviceKeyCacheFor(api).get(name, "voice");
+      const key = await api.serviceKeys.get(name, "voice");
       if (!isCurrent()) return;
 
       const socket = new WebSocket(
@@ -294,6 +294,25 @@ export function useLiveVoice({
   return { start, stop, active };
 }
 
+// The URL the audio player streams a prepared utterance from, carrying a minted service key:
+// a media element sends no header. Null when the session has no gateway to stream from.
+async function ttsStreamUrl(
+  api: ApiClient,
+  name: string,
+  identifier: string,
+): Promise<string | null> {
+  const connection = api.getConnection();
+  if (!connection) return null;
+  const key = await api.serviceKeys.get(name, "voice");
+  return serviceKeyQueryUrl(
+    connection.url,
+    name,
+    "voice",
+    key,
+    `/tts/stream/${encodeURIComponent(identifier)}`,
+  );
+}
+
 export function useSpeechPlayer(name: string, latestText: string | null) {
   const { api } = useSession();
   const player = useAudioPlayer(null);
@@ -318,19 +337,9 @@ export function useSpeechPlayer(name: string, latestText: string | null) {
     let active = true;
     void prepareSpeech(api, name, latestText).then(async (identifier) => {
       if (!active) return;
-      const connection = api.getConnection();
-      if (!connection) return;
-      const key = await serviceKeyCacheFor(api).get(name, "voice");
-      if (!active) return;
-      player.replace(
-        serviceKeyQueryUrl(
-          connection.url,
-          name,
-          "voice",
-          key,
-          `/tts/stream/${encodeURIComponent(identifier)}`,
-        ),
-      );
+      const url = await ttsStreamUrl(api, name, identifier);
+      if (!active || !url) return;
+      player.replace(url);
       player.play();
     });
     return () => {
@@ -341,19 +350,11 @@ export function useSpeechPlayer(name: string, latestText: string | null) {
   const play = useCallback(
     async (text: string): Promise<void> => {
       if (!enabled || !text.trim()) return;
-      const connection = api.getConnection();
-      if (!connection) return;
+      if (!api.getConnection()) return;
       const identifier = await prepareSpeech(api, name, text);
-      const key = await serviceKeyCacheFor(api).get(name, "voice");
-      player.replace(
-        serviceKeyQueryUrl(
-          connection.url,
-          name,
-          "voice",
-          key,
-          `/tts/stream/${encodeURIComponent(identifier)}`,
-        ),
-      );
+      const url = await ttsStreamUrl(api, name, identifier);
+      if (!url) return;
+      player.replace(url);
       player.play();
     },
     [api, enabled, name, player],

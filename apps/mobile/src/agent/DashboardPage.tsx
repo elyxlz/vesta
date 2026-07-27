@@ -5,7 +5,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { serviceKeyPathUrl } from "@vesta/core";
 import { useServiceKey } from "@vesta/core/react";
 import { useAgent } from "@/agent/AgentProvider";
-import { serviceKeyCacheFor } from "@/api/service-key-cache";
 import { DashboardWebView, type DashboardWebViewHandle } from "@/components/DashboardWebView";
 import { EmptyState } from "@/components/ui/States";
 import { usePreferences } from "@/preferences/PreferencesProvider";
@@ -33,7 +32,7 @@ export default function DashboardPage() {
   // carried in the path: the document sends no header, and its relative asset requests inherit
   // neither a header nor a query string.
   const { key: dashboardKey, error: keyError } = useServiceKey(
-    serviceKeyCacheFor(api),
+    api.serviceKeys,
     name,
     "dashboard",
     hasDashboard,
