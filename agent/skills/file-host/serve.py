@@ -14,11 +14,8 @@ Usage:
 """
 
 import argparse
-import datetime as dt
 import http.server
-import json
 import socketserver
-import time
 from pathlib import Path
 
 parser = argparse.ArgumentParser()
@@ -48,28 +45,6 @@ class Server(socketserver.TCPServer):
     allow_reuse_address = True
 
 
-def write_daemon_died(reason: str) -> None:
-    """Record this server's exit so the agent restarts it. interrupt off: a dead file host
-    is not worth preempting the agent mid-task. A deliberate stop sends SIGTERM, which
-    terminates before this runs, so stopping the daemon raises no false alarm."""
-    notif_dir = Path("~/agent/notifications").expanduser()
-    notif_dir.mkdir(parents=True, exist_ok=True)
-    notif = {
-        "source": "file-host",
-        "type": "daemon_died",
-        "reason": reason,
-        "interrupt": False,
-        "timestamp": dt.datetime.now(dt.UTC).isoformat(),
-    }
-    fname = f"{int(time.time() * 1e6)}-file-host-daemon_died.json"
-    tmp = notif_dir / f"{fname}.tmp"
-    tmp.write_text(json.dumps(notif, indent=2))
-    tmp.replace(notif_dir / fname)
-
-
 with Server(("0.0.0.0", args.port), Handler) as httpd:
     print(f"file-host serving {serve_dir} on 0.0.0.0:{args.port} (no_cache={args.no_cache})", flush=True)
-    try:
-        httpd.serve_forever()
-    finally:
-        write_daemon_died("exited")
+    httpd.serve_forever()

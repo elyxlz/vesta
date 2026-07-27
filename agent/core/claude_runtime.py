@@ -110,8 +110,21 @@ def _link_skill_commands(bin_dir: pl.Path, skills_dir: pl.Path) -> None:
         link.symlink_to(source)
 
 
+def _clear_daemon_records(daemons_dir: pl.Path) -> None:
+    """Empty the daemon pid/port records, whose one writer is a skill's own daemon start.
+
+    Boot runs before any daemon does, so every record present is from a process the container
+    no longer has. A pid it names can already belong to something else in the fresh pid space,
+    which would read as live and turn the next start into a silent no-op.
+    """
+    if not daemons_dir.is_dir():
+        return
+    for record in daemons_dir.iterdir():
+        record.unlink(missing_ok=True)
+
+
 def reconcile_claude_runtime(config: cfg.VestaConfig) -> None:
-    """Seed active skills, rebuild their symlinks, put the skill commands on PATH, and ensure Claude has default settings."""
+    """Seed active skills, rebuild their symlinks, put commands on PATH, clear stale daemon records, and ensure Claude's default settings."""
     legacy_active = config.data_dir / "active-skills.txt"
     _bridge_legacy_sparse_skills(config, legacy_active)
 
@@ -127,6 +140,7 @@ def reconcile_claude_runtime(config: cfg.VestaConfig) -> None:
     claude_dir.mkdir(parents=True, exist_ok=True)
     _replace_skill_links(claude_dir / "skills", config.agent_dir / "skills", config.agent_dir / "core/skills", active)
     _link_skill_commands(pl.Path.home() / ".local/bin", config.agent_dir / "skills")
+    _clear_daemon_records(config.data_dir / "daemons")
 
     settings = claude_dir / "settings.json"
     if not settings.exists():

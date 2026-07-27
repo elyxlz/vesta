@@ -703,6 +703,24 @@ def test_agent_startup_ignores_a_skill_with_no_launcher(tmp_path):
     assert not _bin(home, "tasks").exists()  # tasks ships a CLI, installed as its own console script
 
 
+def test_agent_startup_clears_the_daemon_records(tmp_path):
+    """A record names a pid in the pid space of a container that is gone. Boot runs before any
+    daemon does, so leaving one behind lets a foreign pid read as live and a start do nothing."""
+    home = _bin_box(tmp_path)
+    daemons = home / "agent/data/daemons"
+    daemons.mkdir(parents=True)
+    (daemons / "file-host.pid").write_text("1\n")
+    (daemons / "file-host.port").write_text("8770\n")
+    assert _run_agent_startup(home).returncode == 0
+    assert list(daemons.iterdir()) == []
+
+
+def test_agent_startup_needs_no_daemon_records_dir(tmp_path):
+    home = _bin_box(tmp_path)
+    assert _run_agent_startup(home).returncode == 0
+    assert not (home / "agent/data/daemons").exists()
+
+
 # --- the cone->flat boot migration spine (2026-08-flat-checkout.md) ----------------------
 
 

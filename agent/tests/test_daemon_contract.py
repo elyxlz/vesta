@@ -1,8 +1,9 @@
 """Black-box conformance harness for the skill daemon contract.
 
 Drives each skill's real command as a subprocess in a hermetic HOME. The
-contract: four verbs, JSON out, pidfile at ~/agent/data/daemons/<name>.pid,
-detached process, SIGTERM is the deliberate stop. One table row per skill.
+contract: four verbs, JSON out, a pid and port record under ~/agent/data/daemons/,
+a detached process, SIGTERM as the deliberate stop, and a status that reads those
+records rather than vestad. One table row per skill.
 """
 
 import contextlib
@@ -19,6 +20,8 @@ import pytest
 
 REPO_ROOT = pl.Path(__file__).resolve().parents[2]
 SKILLS_DIR = REPO_ROOT / "agent/skills"
+# status is a local read of two files, so anything near a registration round trip is a regression.
+STATUS_TIMEOUT = 10
 
 FAKE_REGISTER_SERVICE = """#!/bin/sh
 echo "$*" >> "$HOME/register-args"
@@ -52,7 +55,7 @@ SKILLS = [
         command=[str(SKILLS_DIR / "file-host/file-host")],
         name="file-host",
         serves_port=True,
-        emits_daemon_died=True,
+        emits_daemon_died=False,
         rig=_rig_file_host,
     ),
 ]
@@ -119,7 +122,9 @@ def test_start_fails_closed_when_registration_fails(daemon):
     (pl.Path(env["PATH"].split(":")[0]) / "register-service").write_text("#!/bin/sh\nexit 1\n")
     result = _verb(spec, env, "start")
     assert result.returncode != 0
-    assert _pid(spec, home) is None
+    error = json.loads(result.stderr)["error"]
+    assert isinstance(error, str) and error
+    assert not (home / "agent/data/daemons" / f"{spec.name}.pid").exists()
 
 
 def test_stop_kills_the_process_and_status_tells_the_truth(daemon):
@@ -146,6 +151,18 @@ def test_deliberate_stop_is_not_reported_as_a_crash(daemon):
     notif_dir = home / "agent/notifications"
     died = list(notif_dir.glob("*daemon_died*")) if notif_dir.exists() else []
     assert died == []
+
+
+def test_status_reads_the_port_record_and_never_re_registers(daemon):
+    """A daemon outlives vestad restarts, so status answers from what start recorded."""
+    spec, home, env = daemon
+    if not spec.serves_port:
+        pytest.skip("portless")
+    assert json.loads(_verb(spec, env, "start").stdout) == {"status": "started"}
+    (pl.Path(env["PATH"].split(":")[0]) / "register-service").unlink()
+    result = subprocess.run([*spec.command, "daemon", "status"], env=env, capture_output=True, text=True, check=False, timeout=STATUS_TIMEOUT)
+    assert json.loads(result.stdout) == {"running": True, "port": int((home / "fake-port").read_text())}
+    _verb(spec, env, "stop")
 
 
 def test_registration_declares_the_expected_exposure(daemon):

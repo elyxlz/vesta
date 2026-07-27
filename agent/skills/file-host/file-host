@@ -6,6 +6,7 @@ set -eu
 # stay stable across restarts because registration is idempotent.
 
 PIDFILE="$HOME/agent/data/daemons/file-host.pid"
+PORTFILE="$HOME/agent/data/daemons/file-host.port"
 LOG="$HOME/agent/logs/file-host.log"
 USAGE="Usage: file-host daemon <start|stop|restart|status>"
 
@@ -28,6 +29,7 @@ do_start() {
   PORT=$(register-service file-host --public) || fail "could not register file-host with vestad"
   [ -n "$PORT" ] || fail "could not register file-host with vestad"
   mkdir -p "$HOME/agent/data/daemons" "$HOME/agent/logs" "$HOME/.file-host"
+  echo "$PORT" > "$PORTFILE"
   setsid python3 "$HOME/agent/skills/file-host/serve.py" --dir "$HOME/.file-host" --port "$PORT" >> "$LOG" 2>&1 &
   echo "$!" > "$PIDFILE"
   i=0
@@ -46,15 +48,17 @@ do_stop() {
   kill -TERM "$pid" 2>/dev/null || true
   i=0
   while [ "$i" -lt 30 ]; do
-    kill -0 "$pid" 2>/dev/null || { rm -f "$PIDFILE"; echo '{"status":"stopped"}'; return 0; }
+    kill -0 "$pid" 2>/dev/null || { rm -f "$PIDFILE" "$PORTFILE"; echo '{"status":"stopped"}'; return 0; }
     sleep 0.5; i=$((i + 1))
   done
   fail "file-host still running after SIGTERM (pid=$pid)"
 }
 
+# Reads the port start recorded, never registration: status stays a local read that
+# answers instantly and truthfully while vestad is down.
 do_status() {
-  if pid=$(live_pid); then
-    port=$(register-service file-host --public 2>/dev/null || true)
+  if live_pid >/dev/null; then
+    port=$(cat "$PORTFILE" 2>/dev/null) || port=""
     printf '{"running":true,"port":%s}\n' "${port:-null}"
   else
     printf '{"running":false,"port":null}\n'
