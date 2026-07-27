@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import signal
+import subprocess
 import sys
 import threading
 from pathlib import Path
@@ -27,6 +28,38 @@ def _draft_only_enabled() -> bool:
     return os.environ.get("EMAIL_DRAFT_ONLY", "").strip().lower() in {"1", "true", "yes"}
 
 
+DAEMON_LIFECYCLE = Path.home() / "agent" / "skills" / "vestad" / "scripts" / "daemon-lifecycle"
+
+
+def stop_marker_path(config: Config) -> Path:
+    return config.data_dir / "stop-requested"
+
+
+def emit_daemon_died(notif_dir: Path, *, reason: str, stop_marker: Path) -> None:
+    """Announce an unexpected exit. A stop marker means the shutdown was asked for, so this
+    clears the marker and stays silent rather than crying wolf on a deliberate stop."""
+    if stop_marker.exists():
+        stop_marker.unlink()
+        return
+    notifications.write_notification(notif_dir, "daemon_died", reason=reason)
+
+
+def daemon_lifecycle_args(action: str, config: Config) -> list[str]:
+    return [
+        str(DAEMON_LIFECYCLE),
+        action,
+        "--session",
+        "microsoft",
+        "--stop-marker",
+        str(stop_marker_path(config)),
+        "--",
+        "microsoft",
+        "serve",
+        "--notifications-dir",
+        str(Path.home() / "agent" / "notifications"),
+    ]
+
+
 def _write_pid(config):
     (config.data_dir / "serve.pid").write_text(str(os.getpid()))
 
@@ -46,13 +79,13 @@ def _add_format_flags(parser: argparse.ArgumentParser) -> None:
 def _require_daemon(config):
     pid_file = config.data_dir / "serve.pid"
     if not pid_file.exists():
-        print(json.dumps({"error": "daemon not running — start with: screen -dmS microsoft microsoft serve"}), file=sys.stderr)
+        print(json.dumps({"error": "daemon not running, start it with: microsoft daemon start"}), file=sys.stderr)
         sys.exit(1)
     try:
         os.kill(int(pid_file.read_text().strip()), 0)
     except (ValueError, ProcessLookupError, OSError):
         pid_file.unlink(missing_ok=True)
-        print(json.dumps({"error": "daemon not running (stale pid file) — start with: screen -dmS microsoft microsoft serve"}), file=sys.stderr)
+        print(json.dumps({"error": "daemon not running (stale pid file), start it with: microsoft daemon start"}), file=sys.stderr)
         sys.exit(1)
 
 
@@ -62,6 +95,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_serve = group.add_parser("serve")
     p_serve.add_argument("--notifications-dir", required=True)
+
+    p_daemon = group.add_parser("daemon", help="Manage the background daemon: start|stop|restart|status")
+    p_daemon.add_argument("action", choices=["start", "stop", "restart", "status"])
 
     _add_auth_parsers(group)
     email_sub = _add_email_parsers(group)
@@ -489,6 +525,9 @@ def main():
     config.log_dir.mkdir(parents=True, exist_ok=True)
 
     try:
+        if args.group == "daemon":
+            sys.exit(subprocess.run(daemon_lifecycle_args(args.action, config), check=False).returncode)
+
         if args.group == "serve":
             _run_serve(config, Path(args.notifications_dir))
             return
@@ -991,6 +1030,6 @@ def _run_serve(config: Config, notif_dir: Path):
     try:
         monitor.run(ctx)
     finally:
-        notifications.write_notification(notif_dir, "daemon_died", reason=shutdown_reason)
+        emit_daemon_died(notif_dir, reason=shutdown_reason, stop_marker=stop_marker_path(config))
         _remove_pid(config)
         http_client.close()
