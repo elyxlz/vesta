@@ -459,7 +459,7 @@ DREAMER_CATCHUP_HOURS = 6
 
 
 def process_nightly_memory(*, state: vm.State, config: cfg.VestaConfig) -> None:
-    """Drop a dream notification if today's dream hasn't completed yet. Caller (`monitor_loop`)
+    """Drop a dream notification if this night's dream hasn't completed yet. Caller (`monitor_loop`)
     rate-limits this to once an hour and we bound retries to `DREAMER_CATCHUP_HOURS` after the
     configured hour, so a silent failure to call `mark_dreamer_complete` retries a few times but
     cannot preempt the agent for the rest of the day. Naming the file after its night makes a re-drop
@@ -476,14 +476,17 @@ def process_nightly_memory(*, state: vm.State, config: cfg.VestaConfig) -> None:
     hours_since_start = (now.hour - config.nightly_memory_hour) % 24
     if hours_since_start >= DREAMER_CATCHUP_HOURS:
         return
+    # The instant this night's window opened, and the one owner of which night this is. Checks land at
+    # an arbitrary minute, so the hour is truncated to match the hour-granular window: an unaligned
+    # boundary would read a completion earlier in the same hour as belonging to an older night.
+    night_start = now.replace(minute=0, second=0, microsecond=0) - dt.timedelta(hours=hours_since_start)
     last = state.persisted.last_dreamer_run
-    if last is not None and last.date() >= now.date():
+    if last is not None and last >= night_start:
         return
     logger.dreamer("Nightly dreamer starting...")
     prompt = load_prompt("nightly_dream", config) or ""
-    # The date the window opened, not today's: a late hour catches up past midnight on the same night.
-    night = (now - dt.timedelta(hours=hours_since_start)).date()
-    drop_core_notification(type_=TYPE_NIGHTLY_DREAM, body=prompt, config=config, name=f"{TYPE_NIGHTLY_DREAM}-{night.isoformat()}")
+    name = f"{TYPE_NIGHTLY_DREAM}-{night_start.date().isoformat()}"
+    drop_core_notification(type_=TYPE_NIGHTLY_DREAM, body=prompt, config=config, name=name)
     logger.dreamer("Dreamer notification dropped")
 
 
