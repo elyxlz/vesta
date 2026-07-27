@@ -19,7 +19,6 @@ from pathlib import Path
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 49180
 OUT = Path(sys.argv[2]) if len(sys.argv) > 2 else Path("/tmp/sign-service/signature.png")
-DONE = OUT.parent / "SIGNED"
 NOTIF_DIR = Path(os.environ.get("VESTA_NOTIF_DIR", "~/agent/notifications")).expanduser()
 
 PAGE = """<!doctype html>
@@ -75,19 +74,22 @@ def _drop_notification():
     NOTIF_DIR.mkdir(parents=True, exist_ok=True)
     now = datetime.datetime.now().astimezone()
     nid = NOTIF_DIR / f"signature-received-{int(now.timestamp())}.json"
-    nid.write_text(
-        json.dumps(
-            {
-                "timestamp": now.isoformat(),
-                "source": "sign-service",
-                "type": "signature_received",
-                "interrupt": True,
-                "body": f"A signature was submitted at {OUT}. Run stamp.py to place it on the "
-                "PDF, render the preview, show the user for approval, then deliver only on "
-                "their explicit go-ahead.",
-            }
-        )
+    payload = json.dumps(
+        {
+            "timestamp": now.isoformat(),
+            "source": "sign-service",
+            "type": "signature_received",
+            "interrupt": True,
+            "body": f"A signature was submitted at {OUT}. Run stamp.py to place it on the "
+            "PDF, render the preview, show the user for approval, then deliver only on "
+            "their explicit go-ahead.",
+        }
     )
+    # Rename a non-.json temp onto the target so the monitor never reads a half-written file
+    # (it deletes notifications that fail to parse).
+    tmp = nid.with_suffix(".tmp")
+    tmp.write_text(payload)
+    tmp.replace(nid)
 
 
 class H(http.server.BaseHTTPRequestHandler):
@@ -116,7 +118,6 @@ class H(http.server.BaseHTTPRequestHandler):
             b64 = data.split(",", 1)[1]
             OUT.parent.mkdir(parents=True, exist_ok=True)
             OUT.write_bytes(base64.b64decode(b64))
-            DONE.write_text("1")
             try:
                 _drop_notification()
             except Exception:
