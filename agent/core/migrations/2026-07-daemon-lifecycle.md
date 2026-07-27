@@ -15,7 +15,20 @@ grep -n 'screen -dmS\|register-service\|whatsapp start' ~/agent/skills/restart/S
 
 If grep finds nothing, skip to the final step.
 
-### 2. Replace each launch, keeping your own guard
+### 2. Put the launchers on PATH
+
+`moneypot`, `file-host`, `sign-service` and `dashboard` run their daemons through a command of the
+same name. Link whichever of them you use, so the lines you write in the next step resolve. Safe to
+re-run, and harmless for a skill you do not use:
+
+```bash
+mkdir -p ~/.local/bin
+for s in moneypot file-host sign-service dashboard; do
+  [ -f ~/agent/skills/$s/$s ] && ln -sf ~/agent/skills/$s/$s ~/.local/bin/$s
+done
+```
+
+### 3. Replace each launch, keeping your own guard
 
 For each matched line, replace ONLY the launch command, the part your guard runs when the daemon is
 missing. Keep your guard exactly as it is: this file is yours, and your guard may not be the stock
@@ -32,10 +45,11 @@ missing. Keep your guard exactly as it is: this file is yours, and your guard ma
 | `agentmail serve` | `agentmail daemon start` |
 | `spotify organize watch` | `spotify daemon start` |
 | `finance_cli.transaction_watcher serve` | `finance daemon start` |
-| `moneypot/server.py` | `~/agent/skills/moneypot/scripts/daemon start` |
-| `file-host/serve.py` | `~/agent/skills/file-host/scripts/daemon start` |
-| `sign-service/sign_server.py` | `~/agent/skills/sign-service/scripts/daemon start` |
+| `moneypot/server.py` | `moneypot daemon start` |
+| `file-host/serve.py` | `file-host daemon start` |
+| `sign-service/sign_server.py` | `sign-service daemon start` |
 | `whatsapp start` | `whatsapp daemon start` |
+| `~/agent/skills/dashboard/scripts/daemon start` | `dashboard daemon start` |
 
 Worked example. If your line reads:
 
@@ -55,7 +69,7 @@ command applies the same defaults, and the port is registered for you.
 
 `whatsapp start` keeps working, so that row can never break you whether you convert it or not.
 
-### 3. Check moneypot's exposure, if you run it
+### 4. Check moneypot's exposure, if you run it
 
 The API key file now decides whether moneypot is public: it registers public when
 `~/agent/data/moneypot-api-key` exists, private when it does not.
@@ -65,7 +79,7 @@ The API key file now decides whether moneypot is public: it registers public whe
 - Ran it publicly with NO key: it was serving an open API through your tunnel. It becomes private.
   If an external caller genuinely needs in, create the key file and give that caller the key.
 
-### 4. Verify, without restarting anything
+### 5. Verify, without restarting anything
 
 For each daemon you converted, confirm the new command sees the daemon already running. Daemons are
 identified by their screen session, so this works against a session started the old way:
@@ -80,6 +94,6 @@ nothing is dropped, so a daemon mid-work keeps working.
 If one reports `"running":false` while `screen -ls` shows the session alive, your session name
 differs from that skill's default; leave that line alone and keep the launch you had.
 
-### 5. Mark this migration applied
+### 6. Mark this migration applied
 
 Call `mark_migration_applied` with `name="2026-07-daemon-lifecycle"`.

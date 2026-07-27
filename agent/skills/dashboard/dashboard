@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+
+# `dashboard` on PATH. `dashboard daemon <action>` drives the daemon lifecycle.
+
+SKILL_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+
+if [ "${1:-}" = "daemon" ]; then
+  shift
+  exec "$SKILL_DIR/scripts/daemon" "$@"
+fi
+
+echo "usage: dashboard daemon <start|stop|restart|status>" >&2
+exit 1

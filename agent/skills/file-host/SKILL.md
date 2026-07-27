@@ -17,7 +17,8 @@ mkdir -p ~/.file-host && cp /path/to/report.pdf ~/.file-host/
 
 
 # 3. serve it (run in a screen so it persists)
-~/agent/skills/file-host/scripts/daemon start
+mkdir -p ~/.local/bin && ln -sf ~/agent/skills/file-host/file-host ~/.local/bin/file-host
+file-host daemon start
 ```
 
 Shareable URL: `$VESTAD_TUNNEL/agents/$AGENT_NAME/file-host/<filename>` (public route, no token needed).

@@ -1,13 +1,19 @@
 # Moneypot setup
 
-The **CLI needs no setup**: `python3 ~/agent/skills/moneypot/moneypot.py ...` works immediately and creates `~/agent/data/moneypot.json` on first write.
+Put `moneypot` on PATH (idempotent, safe to re-run):
+
+```bash
+mkdir -p ~/.local/bin && ln -sf ~/agent/skills/moneypot/moneypot ~/.local/bin/moneypot
+```
+
+The **CLI then needs no further setup**: `moneypot ...` works immediately and creates `~/agent/data/moneypot.json` on first write.
 
 The **HTTP API is optional**. To run it as a vestad-proxied service:
 
 1. Start it:
 
    ```bash
-   ~/agent/skills/moneypot/scripts/daemon start
+   moneypot daemon start
    ```
 
    It registers a private port, which vestad proxies only to callers sending the vesta
@@ -19,7 +25,7 @@ The **HTTP API is optional**. To run it as a vestad-proxied service:
    ```bash
    install -m 600 /dev/null ~/agent/data/moneypot-api-key
    python3 -c "import secrets; print(secrets.token_urlsafe(24))" > ~/agent/data/moneypot-api-key
-   ~/agent/skills/moneypot/scripts/daemon restart
+   moneypot daemon restart
    ```
 
    Callers then send `X-API-Key: <key>` (or `Authorization: Bearer <key>`).
@@ -28,7 +34,7 @@ The **HTTP API is optional**. To run it as a vestad-proxied service:
    `~/agent/skills/restart/SKILL.md`:
 
    ```
-   running moneypot || { ~/agent/skills/moneypot/scripts/daemon start; sleep 1; }
+   running moneypot || { moneypot daemon start; sleep 1; }
    ```
 
 4. Verify:

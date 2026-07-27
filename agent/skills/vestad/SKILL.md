@@ -60,8 +60,10 @@ only what is its own:
 | `--pidfile PATH` | the daemon's own pid file, so stop signals the process and a live pid counts as running |
 | `-- COMMAND ...` | what runs inside the session; it sees `$PORT` when a port was registered |
 
-A skill with a CLI adds a `daemon` subcommand that shells the runner, so the agent types
-`tasks daemon start`. A skill without one adds a `scripts/daemon` wrapper:
+Every skill is driven by name, `<skill> daemon start`, never by a script path. A skill with a CLI
+adds a `daemon` subcommand that shells the runner. A skill without one adds a `scripts/daemon`
+wrapper plus a launcher of the skill's own name that forwards to it, linked onto PATH at setup
+(`ln -sf ~/agent/skills/<skill>/<skill> ~/.local/bin/<skill>`). The wrapper:
 
 ```sh
 #!/bin/sh

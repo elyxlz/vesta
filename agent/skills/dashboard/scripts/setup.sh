@@ -9,6 +9,10 @@ set -eu
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# `dashboard` on PATH, so the daemon is driven by name rather than by script path.
+mkdir -p "$HOME/.local/bin"
+ln -sf "$DIR/../dashboard" "$HOME/.local/bin/dashboard"
+
 cd "$DIR/../app"
 
 if [ ! -d node_modules ]; then
