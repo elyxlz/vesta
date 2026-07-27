@@ -3,10 +3,9 @@ name: check-pr
 description: >
   Use when the user asks to check a PR, review a PR, sanity-check a pull request,
   ask whether a PR is correct or ready, or run "check-pr <number>". Also runs
-  automatically on newly opened PRs. Critiques the diff and the solution behind
-  it, attacks the change rather than confirming it, checks it fixes the issue it
-  claims to and matches this repository's conventions, and reports with a merge
-  verdict. Read only: never pushes, merges, or closes.
+  automatically on newly opened PRs. Use it whenever the question is whether a
+  change should be merged. Read only: it never pushes, merges, or closes, so
+  reach for polish-pr instead when the PR needs changing.
 ---
 
 # Check a PR
@@ -28,11 +27,13 @@ Read the diff closely, then judge the thinking behind it:
 
 Try to break the change rather than reading it for plausibility. Find the input, state, or ordering where it misbehaves, and look hardest where there are no tests: a suite tells you what the author thought of, not what is true.
 
-Verify rather than trust. Read the code paths the diff touches, and where running something settles a question, run it. The `check.sh` subcommands in `CLAUDE.md` are the ones CI uses.
+Never speculate about code you have not opened. Read the code paths the diff touches before saying anything about them, and where running something settles a question, run it. The `check.sh` subcommands in `CLAUDE.md` are the ones CI uses.
 
-When the diff is large enough that one reading will miss things, spawn subagents in parallel, each attacking from a different angle (correctness, failure modes, conventions, the issue it claims to fix) and each told to refute the change rather than approve it. Report only what survives that: a finding you could not substantiate is noise, and noise teaches the reader to stop reading you.
+Find everything first, then filter once. While reading, collect every concern at any severity rather than deciding as you go whether one is worth mentioning: judging severity while looking suppresses real findings. Then make one pass over the list and drop only what you could not substantiate, keeping anything real however small. Filter on "is this true", never on "is this important enough".
 
 Say so plainly when the change is simply good. A review that manufactures objections to look thorough is worth as little as one that rubber-stamps.
+
+Work through the diff yourself. Delegate to a subagent only when the diff is genuinely too large to hold in one reading, and then split it by area so each subagent owns a different part rather than re-reviewing the same code. One is usually enough. Do not spawn a subagent to double-check a finding you already have.
 
 ## Also confirm
 
@@ -44,15 +45,21 @@ Say so plainly when the change is simply good. A review that manufactures object
 
 ## Reporting
 
-Post one comment. Lead with what matters rather than a walkthrough of the diff: a reader who merges on your word should not need to open the files. Findings that change the merge decision come first, and anything you verified empirically is worth stating as verified.
+Post one comment, and keep it as short as the substance allows. A maintainer reads it to decide whether to merge, so cover what bears on that decision and cut the rest: no walkthrough of the diff, no restating the PR description back, no summary section repeating what you just said.
 
-Close with a verdict line:
+Findings first, ordered by what changes the decision. Cite `file:line`, say what breaks and the input or state that breaks it, and mark what you checked empirically as checked. `NOT YET` means right in substance but blocked on something mechanical like CI or a conflict, so the reader can tell "wrong" from "wait".
 
-```
-Verdict: MERGE | DO NOT MERGE | NOT YET
-```
+<example>
+**Fixes #412.** The retry wrapper is on the right call, and the backoff is bounded.
 
-One sentence of reasoning after it. `NOT YET` is for a PR that is right in substance but blocked on something mechanical, CI or a conflict, so the reader knows the difference between "wrong" and "wait".
+**Findings**
+- `core/loops.py:88` deletes the notification file before the send is confirmed, so a failed send loses the message. Reproduced by pointing it at a closed socket.
+- `core/loops.py:120` catches bare `Exception` around the whole batch, so one bad notification silently drops the rest of it.
+
+**Checked and fine:** concurrent batches (ran `uv run pytest tests/test_notifications.py`), empty batch, 10k-item batch.
+
+Verdict: NOT YET, the file-delete ordering will drop messages under a send failure, and it is a two-line fix.
+</example>
 
 Judge the change on its merits even when you wrote the code yourself, and say `DO NOT MERGE` when you believe it. A verdict that always says MERGE is worth less than no verdict.
 
