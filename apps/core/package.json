@@ -8,6 +8,7 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./release-version": "./src/protocol/release-version.ts",
     "./react": "./src/react/index.ts"
   },
   "scripts": {

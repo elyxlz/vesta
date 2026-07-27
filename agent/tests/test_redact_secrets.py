@@ -172,6 +172,80 @@ def test_scan_catches_space_padded_credential_assignments(event_bus, db_conn, te
     assert "[REDACTED]" in matches[0][1]
 
 
+# Payment-card (PAN) detection: a Luhn-checked pass layered on top of the regex patterns. Well-known
+# test PANs, never real cards. Amex is 15 digits (4-6-5 groups), Visa/Mastercard 16 digits.
+VISA = "4111111111111111"
+AMEX = "378282246310005"
+
+
+def test_luhn_valid_accepts_real_pans_and_rejects_a_tampered_one():
+    assert redact.luhn_valid(VISA)
+    assert redact.luhn_valid(AMEX)
+    assert redact.luhn_valid("5555555555554444")
+    assert not redact.luhn_valid("4111111111111112")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        f"charge to {VISA} today",
+        "card 4111 1111 1111 1111 on file",
+        "card 4111-1111-1111-1111 on file",
+        f"amex {AMEX} expires soon",
+        "amex 3782 822463 10005 expires soon",
+        "amex 3782-822463-10005 expires soon",
+    ],
+)
+def test_scan_flags_luhn_valid_cards_with_or_without_separators(text):
+    matches = redact.find_matches(text)
+
+    assert len(matches) == 1
+    assert VISA not in matches[0] and AMEX not in matches[0]
+    assert "4111" not in matches[0] and "3782" not in matches[0]
+    assert "[REDACTED]" in matches[0]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "order 1234567890123456 shipped",  # 16 digits, fails Luhn: an order number, not a PAN
+        "tracking 1234 5678 9012 3456 today",
+        "ts 20240101000000 logged",
+        "call 15551234567 back",
+    ],
+)
+def test_scan_ignores_non_luhn_digit_runs(text):
+    assert redact.find_matches(text) == []
+
+
+def test_scan_still_flags_existing_key_and_jwt_patterns():
+    jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0"
+    assert len(redact.find_matches("token sk-abcdefghijklmnopqrstuvwxyz1234")) == 1
+    assert len(redact.find_matches(f"auth {jwt} header")) == 1
+
+
+def test_scan_still_ignores_the_news_slug_false_positive():
+    assert redact.find_matches("read sk-hynix-raises-full-year-guidance-on-ai-demand today") == []
+
+
+def test_card_scan_is_idempotent_on_already_redacted_text():
+    assert redact.find_matches(f"charge to {VISA} today") != []
+    assert redact.find_matches("charge to [REDACTED] today") == []
+
+
+def test_scrub_redacts_a_card_in_place_and_keeps_valid_json(event_bus, db_conn):
+    event_bus.emit(AssistantEvent(type="assistant", text=f"paid with {VISA} last night"))
+    ids = sorted({row_id for row_id, _ in redact.scan(db_conn)})
+
+    assert redact.scrub(db_conn, ids) == 1
+
+    data = db_conn.execute("SELECT data FROM events").fetchone()[0]
+    json.loads(data)  # still valid JSON after the in-place scrub
+    assert VISA not in data
+    assert "paid with [REDACTED] last night" in json.loads(data)["text"]
+    assert redact.scan(db_conn) == []  # converges: a second scan finds nothing
+
+
 def test_main_scan_then_scrub_end_to_end(tmp_path, event_bus, db_conn, monkeypatch, capsys):
     event_bus.emit(AssistantEvent(type="assistant", text=f"my key is {SECRET}"))
     event_bus.emit(AssistantEvent(type="assistant", text="just a normal message"))

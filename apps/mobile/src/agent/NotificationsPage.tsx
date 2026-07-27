@@ -8,7 +8,11 @@ import {
   getPendingNotificationIds,
   mergeLiveNotifications,
 } from "@/agent/notification-list-model";
-import { parseNotificationContent, type NotificationView } from "@vesta/core";
+import {
+  notificationRowKey,
+  parseNotificationContent,
+  type NotificationView,
+} from "@vesta/core";
 import { useBottomAnchoredFeed } from "@/agent/use-bottom-anchored-feed";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
@@ -168,9 +172,7 @@ export default function NotificationsPage({
         ]}
         data={displayItems}
         inverted={!standalone}
-        keyExtractor={(event, index) =>
-          `${event.notif_id ?? `${event.ts}-${event.source}`}-${index}`
-        }
+        keyExtractor={notificationRowKey}
         renderItem={({ item }) => (
           <NotificationRow
             event={item}

@@ -4,8 +4,6 @@ import { useSyncState } from "@vesta/core/react";
 import { getConnection, isTokenExpiringSoon } from "@/lib/connection";
 import { ensureFreshToken } from "@/lib/token-refresh";
 import { useAuth } from "@/providers/AuthProvider";
-import { AppBehindScreen } from "@/components/AppBehindScreen";
-import { GatewayBehindScreen } from "@/components/GatewayBehindScreen";
 import { DisconnectedOverlay } from "@/components/DisconnectedOverlay";
 import { createBrowserSocket } from "./browser-socket";
 import { ControllerContext, ControllerReconnectContext } from "./context";
@@ -35,7 +33,7 @@ function buildController(): Controller {
       createSocket: createBrowserSocket,
       setTimer: (fn, ms) => window.setTimeout(fn, ms),
       clearTimer: (handle) => window.clearTimeout(handle),
-      clientVersion: __APP_VERSION__,
+      clientVersion: __CLIENT_VERSION__,
     },
     http: {
       baseUrl: () => getConnection()?.url ?? "",
@@ -62,21 +60,13 @@ function ActiveController({ children }: { children: ReactNode }) {
   );
 }
 
-// The two blocking sync states take over the whole app in place of children; every other
-// state renders the app (a transient disconnect shows the overlay on top instead).
-function routeTakeover(syncState: string): ReactNode {
-  if (syncState === "app_behind") return <AppBehindScreen />;
-  if (syncState === "gateway_behind") return <GatewayBehindScreen />;
-  return null;
-}
-
 // One live controller for the lifetime of a session mount. Built once via a lazy useState
 // initializer (run exactly once per mount and never discarded, so it avoids the
 // useMemo-side-effect-in-render caveat), closed on unmount. Reauth rotates the socket's token
 // in-band before it expires; the overlay tracks the sync sub-store. Like mobile, the desktop
 // app is a drifting client: it opens /sync and the served version window (min_supported..version)
-// decides compatibility. A client below the window takes over with AppBehindScreen (the app must
-// update); a client ahead of the gateway takes over with GatewayBehindScreen.
+// decides compatibility. GatewayProvider turns incompatible states into blocking screens while
+// keeping the gateway context mounted for their shared UI.
 function ControllerSession({ children }: { children: ReactNode }) {
   const [controller] = useState(buildController);
   const syncState = useSyncState(controller);
@@ -122,7 +112,7 @@ function ControllerSession({ children }: { children: ReactNode }) {
 
   return (
     <ControllerContext.Provider value={controller}>
-      {routeTakeover(syncState) ?? children}
+      {children}
       {showDisconnected && <DisconnectedOverlay />}
     </ControllerContext.Provider>
   );

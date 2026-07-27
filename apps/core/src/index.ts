@@ -2,6 +2,7 @@ export {
   clientAheadOfGateway,
   clientBelowMinimum,
   compareReleaseVersions,
+  resolveClientVersion,
 } from "./protocol/release-version"
 
 export {
@@ -47,7 +48,10 @@ export { PACING, typingDelay } from "./pacing/pacing"
 export { RESTART_REASONS, restartBody } from "./lifecycle/restart-reasons"
 export type { RestartBody, RestartReason } from "./lifecycle/restart-reasons"
 
-export { parseNotificationContent } from "./notification-content/notification-content"
+export {
+  notificationRowKey,
+  parseNotificationContent,
+} from "./notification-content/notification-content"
 export type {
   NotificationContent,
   NotificationView,

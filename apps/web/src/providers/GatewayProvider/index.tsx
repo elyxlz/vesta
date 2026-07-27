@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, type ReactNode } from "react";
-import type { Controller, Tree } from "@vesta/core";
+import type { Controller, SyncState, Tree } from "@vesta/core";
 import {
   checkForGatewayUpdate,
   rosterFromTree,
@@ -8,6 +8,8 @@ import {
   triggerGatewayUpdate as requestGatewayUpdate,
 } from "@vesta/core";
 import { useReplica, useSyncState } from "@vesta/core/react";
+import { AppBehindScreen } from "@/components/AppBehindScreen";
+import { GatewayBehindScreen } from "@/components/GatewayBehindScreen";
 import { useAuth } from "@/providers/AuthProvider";
 import {
   ControllerContext,
@@ -32,6 +34,13 @@ const checkingValue: GatewayContextValue = {
 
 function selectGateway(tree: Tree | null) {
   return tree?.gateway ?? null;
+}
+
+// Route compatibility screens inside the provider because their shared navbar reads gateway state.
+function routeContent(syncState: SyncState, children: ReactNode): ReactNode {
+  if (syncState === "app_behind") return <AppBehindScreen />;
+  if (syncState === "gateway_behind") return <GatewayBehindScreen />;
+  return children;
 }
 
 function ReplicaGateway({
@@ -95,7 +104,9 @@ function ReplicaGateway({
   };
 
   return (
-    <GatewayContext.Provider value={value}>{children}</GatewayContext.Provider>
+    <GatewayContext.Provider value={value}>
+      {routeContent(syncState, children)}
+    </GatewayContext.Provider>
   );
 }
 

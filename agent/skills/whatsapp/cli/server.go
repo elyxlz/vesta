@@ -21,6 +21,20 @@ type SocketResponse struct {
 	Error  string `json:"error,omitempty"`
 }
 
+// render is the one owner of what a response prints and exits with, for every decoder of it: a
+// failure that produced a result prints that result; {"error": ...} carries one that produced none.
+func (resp SocketResponse) render() ([]byte, int) {
+	body := resp.Result
+	if body == nil && resp.Error != "" {
+		body = map[string]any{"error": resp.Error}
+	}
+	data, _ := json.MarshalIndent(body, "", "  ")
+	if resp.Error != "" {
+		return data, 1
+	}
+	return data, 0
+}
+
 func startSocketServer(sockPath string, wac *WhatsAppClient) (net.Listener, error) {
 	os.Remove(sockPath)
 
@@ -78,6 +92,7 @@ func handleSocketConn(conn net.Conn, wac *WhatsAppClient) {
 		resp.Error = err.Error()
 	} else {
 		resp.Result = result
+		resp.Error = resultFailure(result)
 	}
 
 	json.NewEncoder(conn).Encode(resp)
@@ -105,11 +120,6 @@ func trySocketCommand(sockPath string, command string, args []string) ([]byte, i
 		return nil, 0, false
 	}
 
-	if resp.Error != "" {
-		data, _ := json.MarshalIndent(map[string]any{"error": resp.Error}, "", "  ")
-		return data, 1, true
-	}
-
-	data, _ := json.MarshalIndent(resp.Result, "", "  ")
-	return data, 0, true
+	data, exitCode := resp.render()
+	return data, exitCode, true
 }
