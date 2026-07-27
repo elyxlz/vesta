@@ -2,6 +2,7 @@ export {
   clientAheadOfGateway,
   clientBelowMinimum,
   compareReleaseVersions,
+  resolveClientVersion,
 } from "./protocol/release-version"
 
 export {
