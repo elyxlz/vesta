@@ -17,6 +17,11 @@ MODEL="${PR_MONITOR_MODEL:-claude-opus-5}"
 STATE_ROOT="${PR_MONITOR_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/pr-monitor}"
 ME="$(gh api /user -q .login 2>/dev/null)"
 
+repos=("$@")
+if [ "${#repos[@]}" -eq 0 ]; then
+  repos=("$(gh repo view --json nameWithOwner -q .nameWithOwner)")
+fi
+
 session_file() {
   local dir="$STATE_ROOT/${1//\//__}/sessions"
   mkdir -p "$dir"
@@ -46,6 +51,32 @@ release() {
   gh api -X DELETE "$base/$rid" >/dev/null 2>&1
 }
 
+remove_transcript() {
+  [ -n "${1:-}" ] || return 0
+  find "$HOME/.claude/projects" -name "$1.jsonl" -delete 2>/dev/null || true
+}
+
+# A PR's session is resumed only while the PR is open, so once it closes the
+# pointer is dead weight and its transcript is never read again. Transcripts are
+# the part that grows without bound, so removing them is opt-in rather than
+# silent. A failed listing returns early: an empty one legitimately means every
+# PR closed, but an errored one must never be read as "prune everything".
+prune_sessions() {
+  local repo="$1" dir open file pr
+  dir="$STATE_ROOT/${repo//\//__}/sessions"
+  [ -d "$dir" ] || return 0
+  open=$(gh pr list --repo "$repo" --state open --limit 200 --json number -q '.[].number' 2>/dev/null) || return 0
+  for file in "$dir"/pr-*.session; do
+    [ -e "$file" ] || continue
+    pr="${file##*/pr-}"
+    pr="${pr%.session}"
+    printf '%s\n' "$open" | grep -qx "$pr" && continue
+    [ "${PR_MONITOR_PRUNE_TRANSCRIPTS:-0}" = "1" ] && remove_transcript "$(cat "$file")"
+    rm -f "$file"
+    echo "dispatch: pruned session for closed $repo#$pr" >&2
+  done
+}
+
 handle() {
   local repo="$1" kind="$2" id="$3" pr="$4" prompt="$5"
   local sf sid out rc
@@ -69,9 +100,12 @@ handle() {
     return 1
   fi
   echo "dispatch: handled $repo#$pr ($kind $id)" >&2
+  prune_sessions "$repo"
 }
 
-bash "$MONITOR" "$@" | while IFS=$'\t' read -r tag f1 f2 f3 f4 f5; do
+for repo in "${repos[@]}"; do prune_sessions "$repo"; done
+
+bash "$MONITOR" "${repos[@]}" | while IFS=$'\t' read -r tag f1 f2 f3 f4 f5; do
   case "$tag" in
     HIT)
       handle "$f1" "$f2" "$f3" "$f4" "A developer addressed you in a comment on $f1 PR #$f4: $f5

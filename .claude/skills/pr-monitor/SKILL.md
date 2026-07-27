@@ -53,6 +53,10 @@ Do not reach for `claude --from-pr` here. It resumes a session already linked to
 
 Events are handled one at a time, so a burst of comments cannot start overlapping runs against the same session.
 
+**Sessions are closed out when their PR closes.** A PR's session is only ever resumed while the PR is open, so once it closes the pointer is dead weight. Dispatch prunes those pointers at startup and after each event. Session transcripts under `~/.claude/projects/` are the part that actually grows, so removing them is opt-in via `PR_MONITOR_PRUNE_TRANSCRIPTS=1` rather than silent, since they are also the only record of what the agent did. Leave it off and transcripts accumulate; watch the disk on a busy repo.
+
+A long-lived PR is the one case still unbounded: every event resumes and extends the same session, so a PR with many rounds of review grows a large transcript and a large context. Nothing caps that today.
+
 A systemd user unit, needing `loginctl enable-linger <user>` so it runs without a login:
 
 ```ini
@@ -101,6 +105,7 @@ Two consequences worth knowing:
 | `PR_MONITOR_INTERVAL` | `45` | Seconds between polls |
 | `PR_MONITOR_STATE` | `$XDG_STATE_HOME/pr-monitor` | Review-summary ledger and per-PR session ids |
 | `PR_MONITOR_MODEL` | `claude-opus-5` | Model `dispatch.sh` runs each event on |
+| `PR_MONITOR_PRUNE_TRANSCRIPTS` | `0` | Delete a closed PR session transcript, not just its pointer |
 
 ## Cost
 
