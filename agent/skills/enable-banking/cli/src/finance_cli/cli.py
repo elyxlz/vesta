@@ -18,6 +18,8 @@ Commands:
 
 import argparse
 import json
+import pathlib as pl
+import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 
@@ -311,9 +313,35 @@ def cmd_summary(args) -> dict:
 # ---------------------------------------------------------------------------
 
 
+DAEMON_LIFECYCLE = pl.Path.home() / "agent" / "skills" / "vestad" / "scripts" / "daemon-lifecycle"
+
+
+def daemon_lifecycle_args(action: str) -> list[str]:
+    """Argv for the shared runner. The screen session is `finance`, not the skill name, so it is
+    declared explicitly. `finance-watcher` is this project's own console script for the watcher
+    entry point, so the launch needs no interpreter path."""
+    return [
+        str(DAEMON_LIFECYCLE),
+        action,
+        "--session",
+        "finance",
+        "--",
+        "finance-watcher",
+    ]
+
+
+def _cmd_daemon(args):
+    sys.exit(subprocess.run(daemon_lifecycle_args(args.action), check=False).returncode)
+
+
 def main():
     parser = argparse.ArgumentParser(prog="finance", description="Enable Banking finance CLI")
     sub = parser.add_subparsers(dest="command", required=True)
+
+    # --- daemon ---
+    p_daemon = sub.add_parser("daemon", help="Manage the transaction watcher daemon: start|stop|restart|status")
+    p_daemon.add_argument("action", choices=["start", "stop", "restart", "status"])
+    p_daemon.set_defaults(func=_cmd_daemon)
 
     # --- config ---
     p_config = sub.add_parser("config", help="Manage configuration")

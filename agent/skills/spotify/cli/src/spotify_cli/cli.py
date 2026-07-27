@@ -2,6 +2,8 @@
 
 import argparse
 import json
+import pathlib as pl
+import subprocess
 import sys
 
 from . import auth, organize, playback, playlists, search
@@ -163,6 +165,35 @@ def _add_playback_parsers(subparsers) -> None:
     xfer_p.set_defaults(func=lambda args, config: playback.transfer(config, device_id=args.device_id, force_play=args.play))
 
 
+DAEMON_LIFECYCLE = pl.Path.home() / "agent" / "skills" / "vestad" / "scripts" / "daemon-lifecycle"
+
+
+def daemon_lifecycle_args(action: str) -> list[str]:
+    """Argv for the shared runner. The screen session is `spotify-watch`, not the skill name, so
+    it is declared explicitly. The watcher is portless and lets SIGHUP terminate it."""
+    return [
+        str(DAEMON_LIFECYCLE),
+        action,
+        "--session",
+        "spotify-watch",
+        "--",
+        "spotify",
+        "organize",
+        "watch",
+    ]
+
+
+def _run_daemon(args, _config) -> dict:
+    completed = subprocess.run(daemon_lifecycle_args(args.action), check=False)
+    sys.exit(completed.returncode)
+
+
+def _add_daemon_parser(subparsers) -> None:
+    p = subparsers.add_parser("daemon", help="Manage the organize watcher daemon: start|stop|restart|status")
+    p.add_argument("action", choices=["start", "stop", "restart", "status"])
+    p.set_defaults(func=_run_daemon)
+
+
 def main():
     parser = argparse.ArgumentParser(prog="spotify", description="Spotify CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -172,6 +203,7 @@ def main():
     _add_search_parser(subparsers)
     _add_organize_parsers(subparsers)
     _add_playback_parsers(subparsers)
+    _add_daemon_parser(subparsers)
 
     args = parser.parse_args()
 
