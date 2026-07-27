@@ -462,7 +462,9 @@ def process_nightly_memory(*, state: vm.State, config: cfg.VestaConfig) -> None:
     """Drop a dream notification if today's dream hasn't completed yet. Caller (`monitor_loop`)
     rate-limits this to once an hour and we bound retries to `DREAMER_CATCHUP_HOURS` after the
     configured hour, so a silent failure to call `mark_dreamer_complete` retries a few times but
-    cannot preempt the agent for the rest of the day."""
+    cannot preempt the agent for the rest of the day. The file is named after the night it belongs
+    to, so a re-drop while that dream is still pending overwrites it instead of queueing a second
+    one; once the dream is consumed the file is gone and a retry recreates it."""
     if config.ephemeral or config.nightly_memory_hour is None:
         return
     # A brand-new agent has no history to curate; a catch-up dream firing inside the morning
@@ -479,7 +481,10 @@ def process_nightly_memory(*, state: vm.State, config: cfg.VestaConfig) -> None:
         return
     logger.dreamer("Nightly dreamer starting...")
     prompt = load_prompt("nightly_dream", config) or ""
-    drop_core_notification(type_=TYPE_NIGHTLY_DREAM, body=prompt, config=config)
+    # The night the window opened, not today's date: a late hour's post-midnight catch-up belongs
+    # to the same night and must reuse the same name.
+    night = (now - dt.timedelta(hours=hours_since_start)).date()
+    drop_core_notification(type_=TYPE_NIGHTLY_DREAM, body=prompt, config=config, name=f"{TYPE_NIGHTLY_DREAM}-{night.isoformat()}")
     logger.dreamer("Dreamer notification dropped")
 
 

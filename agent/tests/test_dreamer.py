@@ -95,6 +95,70 @@ def test_nightly_memory_scheduling(tmp_path, dreamer_hour, last_dreamer_run, now
     assert len(list(config.notifications_dir.glob("nightly_dream-*.json"))) == expected_files
 
 
+def _drop_dream(config, state, now):
+    from core.loops import process_nightly_memory
+
+    with (
+        patch("core.loops._now", return_value=now),
+        patch("core.loops.load_prompt", return_value="dreamer prompt"),
+    ):
+        process_nightly_memory(state=state, config=config)
+
+
+def _dream_files(config):
+    return sorted(f.name for f in config.notifications_dir.glob("nightly_dream-*.json"))
+
+
+@pytest.mark.parametrize(
+    "dreamer_hour,first,second",
+    [
+        (4, dt.datetime(2025, 6, 15, 4, 0, 0), dt.datetime(2025, 6, 15, 4, 20, 0)),
+        (22, dt.datetime(2025, 6, 14, 22, 0, 0), dt.datetime(2025, 6, 15, 1, 0, 0)),
+    ],
+    ids=["same-day", "catchup-past-midnight"],
+)
+def test_redrop_over_a_pending_dream_queues_only_one(tmp_path, dreamer_hour, first, second):
+    """A restart landing between the drop and mark_dreamer_complete re-runs the check while the
+    dream is still pending. That re-drop must overwrite the pending file, not queue a second dream,
+    including when a late dreamer hour's catch-up lands after midnight."""
+    config = _setup(tmp_path, dreamer_hour=dreamer_hour)
+    state = vm.State()
+    state.persisted.first_start_done = True
+
+    _drop_dream(config, state, first)
+    _drop_dream(config, state, second)
+
+    assert len(_dream_files(config)) == 1
+
+
+def test_unconsumed_dream_from_yesterday_does_not_suppress_today(tmp_path):
+    """The name is per night, never a fixed stem: a dream left unconsumed from yesterday must not
+    swallow today's."""
+    config = _setup(tmp_path)
+    state = vm.State()
+    state.persisted.first_start_done = True
+
+    _drop_dream(config, state, dt.datetime(2025, 6, 15, 4, 0, 0))
+    _drop_dream(config, state, dt.datetime(2025, 6, 16, 4, 0, 0))
+
+    assert _dream_files(config) == ["nightly_dream-2025-06-15.json", "nightly_dream-2025-06-16.json"]
+
+
+def test_consumed_dream_is_recreated_by_the_catchup_retry(tmp_path):
+    """Retry semantics are unchanged: once the pending dream is consumed (file deleted) and the
+    agent never marked it complete, a later check inside the catch-up window drops it again."""
+    config = _setup(tmp_path)
+    state = vm.State()
+    state.persisted.first_start_done = True
+
+    _drop_dream(config, state, dt.datetime(2025, 6, 15, 4, 0, 0))
+    for dream in config.notifications_dir.glob("nightly_dream-*.json"):
+        dream.unlink()
+    _drop_dream(config, state, dt.datetime(2025, 6, 15, 7, 30, 0))
+
+    assert _dream_files(config) == ["nightly_dream-2025-06-15.json"]
+
+
 # --- mark_dreamer_complete: keep the session, then compact + restart (not a hard reset) ---
 
 
