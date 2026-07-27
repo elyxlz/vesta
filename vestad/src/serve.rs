@@ -1732,27 +1732,27 @@ async fn list_services_handler(
 // --- Service keys ---
 
 #[derive(Deserialize)]
-pub(crate) struct MintServiceKeyBody {
+struct MintServiceKeyBody {
     #[serde(default)]
-    pub(crate) label: Option<String>,
+    label: Option<String>,
     /// Seconds until expiry. Omitted uses `DEFAULT_KEY_TTL_SECS`.
     #[serde(default)]
-    pub(crate) ttl_secs: Option<u64>,
+    ttl_secs: Option<u64>,
     /// Deliberate opt-out of expiry, for a key handed to a long-lived consumer.
     #[serde(default)]
-    pub(crate) never_expires: bool,
+    never_expires: bool,
 }
 
 #[derive(Serialize)]
-pub(crate) struct MintServiceKeyResponse {
-    pub(crate) id: String,
+struct MintServiceKeyResponse {
+    id: String,
     /// The secret, returned exactly once: the store keeps only its hash.
-    pub(crate) key: String,
-    pub(crate) expires_at: Option<u64>,
+    key: String,
+    expires_at: Option<u64>,
 }
 
 /// When the key stops working. `never_expires` overrides any requested ttl.
-pub(crate) fn mint_expiry(body: &MintServiceKeyBody, now: u64) -> Option<u64> {
+fn mint_expiry(body: &MintServiceKeyBody, now: u64) -> Option<u64> {
     if body.never_expires {
         return None;
     }
@@ -3794,76 +3794,60 @@ mod tests {
         assert!(json.get("hash").is_none(), "the hash is never returned");
     }
 
+    const MINT_NOW: u64 = 1_800_000_000;
+
+    fn mint_body(ttl_secs: Option<u64>, never_expires: bool) -> super::MintServiceKeyBody {
+        super::MintServiceKeyBody {
+            label: None,
+            ttl_secs,
+            never_expires,
+        }
+    }
+
     #[test]
     fn omitting_ttl_uses_the_default_and_never_expires_wins() {
-        let now = 1_800_000_000;
-        let defaulted = super::MintServiceKeyBody {
-            label: None,
-            ttl_secs: None,
-            never_expires: false,
-        };
-        assert_eq!(
-            super::mint_expiry(&defaulted, now),
-            Some(now + crate::service_keys::DEFAULT_KEY_TTL_SECS)
-        );
-        let explicit = super::MintServiceKeyBody {
-            label: None,
-            ttl_secs: Some(600),
-            never_expires: false,
-        };
-        assert_eq!(super::mint_expiry(&explicit, now), Some(now + 600));
-        let forever = super::MintServiceKeyBody {
-            label: None,
-            ttl_secs: Some(600),
-            never_expires: true,
-        };
-        assert_eq!(super::mint_expiry(&forever, now), None);
         // An absurd ttl saturates instead of panicking in debug or wrapping into the past.
-        let absurd = super::MintServiceKeyBody {
-            label: None,
-            ttl_secs: Some(u64::MAX),
-            never_expires: false,
-        };
-        assert_eq!(super::mint_expiry(&absurd, now), Some(u64::MAX));
+        let cases: [(Option<u64>, bool, Option<u64>); 4] = [
+            (
+                None,
+                false,
+                Some(MINT_NOW + crate::service_keys::DEFAULT_KEY_TTL_SECS),
+            ),
+            (Some(600), false, Some(MINT_NOW + 600)),
+            (Some(600), true, None),
+            (Some(u64::MAX), false, Some(u64::MAX)),
+        ];
+        for (ttl_secs, never_expires, expected) in cases {
+            assert_eq!(
+                super::mint_expiry(&mint_body(ttl_secs, never_expires), MINT_NOW),
+                expected,
+                "ttl_secs {ttl_secs:?}, never_expires {never_expires}"
+            );
+        }
     }
 
     #[test]
     fn a_zero_ttl_is_refused_rather_than_minting_a_dead_key() {
-        let now = 1_800_000_000;
         // Why the guard exists: the store counts a key expiring at `now` as already expired, so
         // minting one hands the caller a secret that never authenticates.
         let mut store = crate::service_keys::ServiceKeyStore::default();
-        let (_, born_dead) = store.mint("alpha", "dashboard", None, Some(now), now);
-        assert!(!store.accepts("alpha", "dashboard", &born_dead, now));
+        let (_, born_dead) = store.mint("alpha", "dashboard", None, Some(MINT_NOW), MINT_NOW);
+        assert!(!store.accepts("alpha", "dashboard", &born_dead, MINT_NOW));
 
-        let zero = super::MintServiceKeyBody {
-            label: None,
-            ttl_secs: Some(0),
-            never_expires: false,
-        };
-        assert!(super::expiry_is_already_dead(
-            super::mint_expiry(&zero, now),
-            now
-        ));
         // never_expires overrides the ttl, so that combination still mints.
-        let forever = super::MintServiceKeyBody {
-            label: None,
-            ttl_secs: Some(0),
-            never_expires: true,
-        };
-        assert!(!super::expiry_is_already_dead(
-            super::mint_expiry(&forever, now),
-            now
-        ));
-        let live = super::MintServiceKeyBody {
-            label: None,
-            ttl_secs: Some(600),
-            never_expires: false,
-        };
-        assert!(!super::expiry_is_already_dead(
-            super::mint_expiry(&live, now),
-            now
-        ));
+        let cases: [(Option<u64>, bool, bool); 3] = [
+            (Some(0), false, true),
+            (Some(0), true, false),
+            (Some(600), false, false),
+        ];
+        for (ttl_secs, never_expires, expected) in cases {
+            let expiry = super::mint_expiry(&mint_body(ttl_secs, never_expires), MINT_NOW);
+            assert_eq!(
+                super::expiry_is_already_dead(expiry, MINT_NOW),
+                expected,
+                "ttl_secs {ttl_secs:?}, never_expires {never_expires}"
+            );
+        }
     }
 }
 

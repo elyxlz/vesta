@@ -127,18 +127,20 @@ impl ServiceKeyStore {
 
     /// True when `presented` is a live key for exactly this `(agent, service)` pair.
     pub(crate) fn accepts(&self, agent: &str, service: &str, presented: &str, now: u64) -> bool {
+        let Some(keys) = self
+            .by_agent
+            .get(agent)
+            .and_then(|services| services.get(service))
+        else {
+            return false;
+        };
         // Comparing SHA-256 digests, not secrets, so an ordinary `==` is right here: a timing
         // oracle on it reveals at most the stored digest, and recovering a 32 byte random secret
         // from its digest needs a preimage. `auth.rs`'s constant-time compare stays correct for
         // what it guards, the raw api key presented in a header.
         let presented_hash = hash_secret(presented);
-        self.by_agent
-            .get(agent)
-            .and_then(|services| services.get(service))
-            .is_some_and(|keys| {
-                keys.iter()
-                    .any(|key| key.is_live_at(now) && key.hash == presented_hash)
-            })
+        keys.iter()
+            .any(|key| key.is_live_at(now) && key.hash == presented_hash)
     }
 
     /// Drop every expired key, returning how many went. Called on load and after each write.
