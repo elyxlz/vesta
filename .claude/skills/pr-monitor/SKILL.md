@@ -84,6 +84,22 @@ A comment is surfaced only when its body mentions `@vestabot`. Everything else o
 
 Dependabot PRs deliberately bypass this rule, since nobody is going to write a comment on one.
 
+## Only from people you trust
+
+Anyone with a GitHub account can comment on a public repository's PRs, and a comment reaching this loop drives an agent that holds your credentials and can write to the repo. So the mention alone is never enough: the commenter must be trusted.
+
+Set `PR_MONITOR_TRUSTED` to a list of logins and only those people can drive the agent:
+
+```bash
+PR_MONITOR_TRUSTED="alice,bob"
+```
+
+With it unset, trust falls back to the commenter's `author_association`, accepting `OWNER`, `MEMBER`, and `COLLABORATOR`. That is a reasonable default for a private repo, but on a public one prefer the explicit list, since the fallback trusts every collaborator rather than the specific people you meant.
+
+An untrusted comment gets a 😕 (`PR_MONITOR_DENIED_REACTION`) instead of silence, so the person can see it was read and declined, and the loop stops reconsidering it. Review summaries cannot be marked this way, having no reactions endpoint, so those are recorded in the ledger and ignored.
+
+Trust decides **whether** the agent acts, not **what** it may do. The dispatch prompt tells the agent that a comment is a request rather than an override, and that repository rules such as the force-push ban outrank it. Treat a trusted commenter as able to ask for anything the repo's own rules already permit.
+
 ## How events are deduplicated
 
 A surfaced item gets a 👀 reaction on the comment (or on the PR itself, for dependabot). The next cycle sees that reaction and skips it. That state lives on GitHub, so it survives losing the working directory, a reboot, or a move to another machine.
@@ -102,6 +118,8 @@ Two consequences worth knowing:
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `PR_MONITOR_TRIGGER` | `@vestabot` | Mention that makes a comment an event |
+| `PR_MONITOR_TRUSTED` | (author_association) | Logins allowed to drive the agent |
+| `PR_MONITOR_DENIED_REACTION` | `confused` | Reaction marking a refused comment |
 | `PR_MONITOR_INTERVAL` | `45` | Seconds between polls |
 | `PR_MONITOR_STATE` | `$XDG_STATE_HOME/pr-monitor` | Review-summary ledger and per-PR session ids |
 | `PR_MONITOR_MODEL` | `claude-opus-5` | Model `dispatch.sh` runs each event on |
