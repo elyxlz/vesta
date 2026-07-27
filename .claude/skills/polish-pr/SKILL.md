@@ -1,15 +1,9 @@
 ---
 name: polish-pr
 description: >
-  Use when the user asks to polish a PR, clean up a PR before merge, or run
-  "polish-pr <number>". Takes ONE named PR and dispatches a single Opus,
-  worktree-isolated agent to run four scoped passes over its diff: a code review
-  (with fixes), a simplify pass, a prompt-quality sweep of any touched
-  prompts/skills, and a CLAUDE.md staleness pass that corrects docs the PR
-  falsified and adds a section when the PR introduces a CLAUDE.md-altitude
-  surface. The agent then verifies with the relevant check.sh suites, pushes a
-  single polish commit to the PR branch, and comments a summary. Never pushes if
-  verification is red.
+  Use when the user asks to polish a PR, clean up or tidy a PR before merge,
+  do a review plus simplify plus docs pass on a PR, get a PR reviewer-ready, or
+  run "polish-pr <number>". For one named PR at a time.
 ---
 
 # Polish a PR
