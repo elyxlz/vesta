@@ -98,7 +98,9 @@ With it unset, trust falls back to the commenter's `author_association`, accepti
 
 An untrusted comment gets a 😕 (`PR_MONITOR_DENIED_REACTION`) instead of silence, so the person can see it was read and declined, and the loop stops reconsidering it. Review summaries cannot be marked this way, having no reactions endpoint, so those are recorded in the ledger and ignored.
 
-Trust decides **whether** the agent acts, not **what** it may do. The dispatch prompt tells the agent that a comment is a request rather than an override, and that repository rules such as the force-push ban outrank it. Treat a trusted commenter as able to ask for anything the repo's own rules already permit.
+The trust list is the whole gate, and it carries real authority. A trusted commenter can tell the agent to do things the repository's conventions otherwise discourage, a force push or a rebase for instance, and the agent will comply and say so in its reply. That is deliberate: the people on the list are maintainers who know when an exception is warranted, and asking them to work around their own agent would only push them back to doing it by hand.
+
+Keep the list to people you would let push to the branch yourself.
 
 ## How events are deduplicated
 
