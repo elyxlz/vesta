@@ -13,9 +13,12 @@ TRIGGER="${PR_MONITOR_TRIGGER:-@vestabot}"
 
 valid() { grep -E "^(issue|review|reviewbody)$(printf '\t')"; }
 
-# Must address the bot, and must not be one of our own replies, which quote the
-# developer's text and would otherwise re-trigger on their own mention.
-G='select(.body != null) | select(.body | test("'"$TRIGGER"'"; "i")) | select((.body|ascii_downcase|contains("generated with")) and (.body|ascii_downcase|contains("claude code")) | not)'
+# Must address the bot, and must not be one of our own comments. Our replies name
+# the trigger when telling a reader how to reach us, and they are posted by an
+# account that is also a trusted human, so nothing about the author distinguishes
+# them: only the marker does. Every comment the agent posts carries it.
+MARKER="${PR_MONITOR_MARKER:-vestabot:reply}"
+G='select(.body != null) | select(.body | test("'"$TRIGGER"'"; "i")) | select(.body | contains("'"$MARKER"'") | not) | select((.body|ascii_downcase|contains("generated with")) and (.body|ascii_downcase|contains("claude code")) | not)'
 
 prs=$(gh pr list --repo "$REPO" --state open --json number -q '.[].number' 2>/dev/null)
 for pr in $prs; do

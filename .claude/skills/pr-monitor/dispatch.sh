@@ -41,7 +41,15 @@ Report what you find even when nobody asked for a review.
 
 <comment_length>
 The comment is what a maintainer reads to decide whether to merge. Cover what bears on that decision and cut everything else: no walkthrough of the diff, no restating the PR description, no closing summary that repeats what you just said.
-</comment_length>"
+</comment_length>
+
+<signing_every_comment>
+End every comment you post on a PR or issue with this exact line, alone on the last line:
+
+<!-- vestabot:reply -->
+
+It renders as nothing, and it is how the loop that woke you recognises its own writing. You post under an account that also belongs to a human maintainer, and your comments name the trigger when they tell a reader how to reach you, so without that marker your own comment reads as a fresh request and wakes you again on the next poll. Never put the marker on anything you did not write, and never omit it from anything you did.
+</signing_every_comment>"
 
 session_file() {
   local dir="$STATE_ROOT/${1//\//__}/sessions"
@@ -146,7 +154,7 @@ Stay read only. Do not push a commit, merge, close, or edit the PR. If it would 
     DEPPR)
       handle "$f1" pr "$f2" "$f2" "<event>A new dependabot pull request is open: $f1 PR #$f2: $f3</event>
 Review it against this repository's dependency policy, check whether its checks pass, and act accordingly. Leave a comment recording what you decided.
-Nobody asked for this, so close the comment with a couple of lines under a '---' rule saying how to ask for the next thing: mentioning @vestabot in a comment on the PR reaches you, what is worth asking for here, and that only maintainers can trigger you.
+Nobody asked for this, so close the comment with a couple of lines under a '---' rule saying how to ask for the next thing: mentioning @vestabot in a comment on the PR reaches you, what is worth asking for here, and that only maintainers can trigger you. The marker line goes last, after that.
 End that comment with a line starting 'Verdict:' giving your own call on merging: MERGE, DO NOT MERGE, or NOT YET, then one sentence of reasoning. Never merge or close the PR yourself: the verdict is advice and the decision stays with the maintainer."
       ;;
     *) [ -n "${tag:-}" ] && echo "dispatch: ignoring line: $tag" >&2 ;;
