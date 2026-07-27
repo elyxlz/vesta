@@ -375,6 +375,45 @@ async def test_process_message_sends_correction_on_em_dash(tmp_path):
     assert responses == ["something \u2014 with an em dash"]
 
 
+@pytest.mark.anyio
+async def test_process_message_no_correction_when_dash_is_only_in_an_earlier_block(tmp_path):
+    """A dash in mid-turn narration leaves the clean final message alone: asking for it back would
+    only resend it verbatim, since the correction can address the last message and nothing else."""
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
+    state = vm.State()
+    converse_calls: list[str] = []
+
+    async def mock_converse(prompt, *, state, config, show_output):
+        converse_calls.append(prompt)
+        return vm.TurnSignals(texts=["narrating \u2014 with an em dash", "clean final message"])
+
+    with patch("core.client.converse", side_effect=mock_converse):
+        responses, _ = await process_message("hello", state=state, config=config)
+
+    assert len(converse_calls) == 1
+    assert responses == ["narrating \u2014 with an em dash", "clean final message"]
+
+
+@pytest.mark.anyio
+async def test_process_message_sends_correction_when_the_final_block_has_a_dash(tmp_path):
+    """A dash in the last block of a multi-block turn is still corrected."""
+    config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
+    state = vm.State()
+    converse_calls: list[str] = []
+
+    async def mock_converse(prompt, *, state, config, show_output):
+        converse_calls.append(prompt)
+        if len(converse_calls) == 1:
+            return vm.TurnSignals(texts=["clean narration", "final \u2014 with an em dash"])
+        return vm.TurnSignals(texts=["corrected response"])
+
+    with patch("core.client.converse", side_effect=mock_converse):
+        await process_message("hello", state=state, config=config)
+
+    assert len(converse_calls) == 2
+    assert "em dash" in converse_calls[1].lower()
+
+
 @pytest.mark.parametrize(
     "response",
     [["clean response, no dashes here"], []],
