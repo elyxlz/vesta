@@ -9,7 +9,7 @@ set -e
 cd ~/agent/skills/dashboard/app
 [ -d node_modules ] || npm install
 [ -d dist ] || npx vite build
-# LEGACY(remove-when: the 2026-08 daemon migration is fleet-applied): restart lines from the
+# LEGACY(remove-when: the 2026-07-daemon-lifecycle migration is fleet-applied): restart lines from the
 # shipped self-heal migration launch this script directly with no PORT in the environment.
 # `dashboard daemon start` exports one, so the fallback never fires on that path.
 PORT="${PORT:-$(register-service dashboard)}"
