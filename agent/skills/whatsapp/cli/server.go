@@ -106,8 +106,7 @@ func trySocketCommand(sockPath string, command string, args []string) ([]byte, i
 		return nil, 0, false
 	}
 
-	// A command that failed reports its reason in the result it produced, so that result
-	// is what prints; the {"error": ...} object carries a failure that produced none.
+	// A failure that produced a result prints that result; {"error": ...} carries one that produced none.
 	body := resp.Result
 	if body == nil && resp.Error != "" {
 		body = map[string]any{"error": resp.Error}
