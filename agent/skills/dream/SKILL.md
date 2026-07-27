@@ -75,6 +75,10 @@ You can change anything. If a fix requires code, write the code, if a fix requir
 
 Re-read the failing exchange and simulate: would the updated version have changed the outcome? If no or unclear, revise further or note it as unresolved. Don't mark something fixed if you can't convince yourself it would have helped. If relevant, spawn a subagent and replay the cause of the issue, does the agent using the new skill fix the issue?
 
+**Exercise the real channel, don't reason counterfactually.** Counterfactual simulation ("I would have done better") approves your own fixes too easily; this is the recurring failure mode. For a fix touching code or an output path, run the cheapest real check that proves it: grep the generated DOCX/email file for the banned token, run the tracker on a sample input and list what it skips, send a test message and read it back. If you cannot run it (no code locus, pure behavior), say so explicitly and mark the fix lower-confidence. A claim that a fix "held" must cite the command you ran and its output, not a thought experiment.
+
+**Check memory against the code that enforces it.** When a memory rule encodes a filtering/categorization decision ("X is generic, ignore it", "Y maps to Z"), grep the relevant scripts for any hardcoded rule that silently enforces the same assumption. A memory note plus a hardcoded skip-rule reinforce each other and a fix that touches only one leaves the failure armed. The two must agree, or you have not fixed it.
+
 Simulating it yourself tends to approve your own fixes, so for a failure that has already recurred, hand a fresh subagent (no knowledge of the fix) the original failing exchange plus the updated skill or prompt and see if it independently produces the right behavior. If it doesn't, flag the fix unresolved.
 
 ### 5. Upstream
