@@ -35,6 +35,7 @@ import { PrivacyGate } from "@/privacy/privacy-gate";
 import { PrivacyProvider } from "@/privacy/privacy-provider";
 import { UserNotifications } from "@/notifications/UserNotifications";
 import { PushCoordinator } from "@/notifications/PushCoordinator";
+import { PresenceReporter } from "@/presence/PresenceReporter";
 import { WhatsNewAutoOpen } from "@/releases/whats-new-auto-open";
 import {
   RosterHoldProvider,
@@ -346,6 +347,7 @@ export default function RootLayout() {
                       <ControllerProvider>
                         <RosterProvider>
                           <UserNotifications />
+                          <PresenceReporter />
                           <PushCoordinator />
                           <SessionNavigation />
                         </RosterProvider>

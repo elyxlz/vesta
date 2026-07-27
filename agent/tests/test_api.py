@@ -647,3 +647,10 @@ async def test_history_rejects_app_chat_channel_with_410(event_bus):
                 assert resp.status == 200
     finally:
         await runner.cleanup()
+
+
+def test_snapshot_config_includes_presence_toggle(config):
+    """The connect snapshot's config dict carries the presence toggle vestad's status tap reads."""
+    from core.api import _snapshot_config
+
+    assert _snapshot_config(config)["presence_notifications_enabled"] is True

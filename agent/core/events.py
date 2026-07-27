@@ -138,6 +138,7 @@ class SnapshotNotifications(tp.TypedDict):
 
 class SnapshotConfig(tp.TypedDict):
     timezone: str  # IANA name; vestad reads it to schedule auto-updates in the agent's local 3-5am window
+    presence_notifications_enabled: bool  # vestad's status tap reads it to gate the return-to-focus notification
 
 
 class SnapshotEvent(tp.TypedDict):

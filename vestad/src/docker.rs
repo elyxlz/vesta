@@ -5183,6 +5183,58 @@ mod tests {
         assert_eq!(payload["new_name"], agent_name);
     }
 
+    #[tokio::test]
+    #[ignore]
+    async fn drop_presence_notification_writes_payload_into_container() {
+        let docker = test_docker();
+        let agent_name = format!("presence-notif-{}", std::process::id());
+        let cname = container_name(&agent_name);
+        // Explicit name so it matches container_name(agent_name); Drop still cleans up.
+        let tc = TestContainer {
+            name: cname.clone(),
+        };
+        docker_cleanup(&["rm", "-f", &cname]);
+
+        // A bare sleeper that owns the notifications dir but never runs the agent's
+        // monitor loop, so nothing deletes the dropped file out from under us.
+        let cmd = vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "mkdir -p /root/agent/notifications && sleep 600".to_string(),
+        ];
+        create_test_container_async(&docker, &tc, &[], cmd, NETWORK_MODE, RESTART_POLICY).await;
+        assert!(
+            start_container(&docker, &cname).await,
+            "test container should start"
+        );
+
+        // mkdir runs asynchronously after start; retry the drop until the dir exists.
+        let mut file_name = None;
+        for _ in 0..RENAME_NOTIF_DROP_TRIES {
+            match crate::serve::drop_presence_notification(&docker, &agent_name).await {
+                Ok(name) => {
+                    file_name = Some(name);
+                    break;
+                }
+                Err(_) => tokio::time::sleep(std::time::Duration::from_millis(200)).await,
+            }
+        }
+        let file_name = file_name.expect("presence notification should drop once the dir exists");
+
+        let body = download_from_container(
+            &docker,
+            &cname,
+            &format!("/root/agent/notifications/{file_name}"),
+        )
+        .await
+        .expect("dropped notification file should be readable");
+        let payload: serde_json::Value =
+            serde_json::from_str(&body).expect("notification is valid json");
+        assert_eq!(payload["source"], "vestad");
+        assert_eq!(payload["type"], "user-present");
+        assert_eq!(payload["interrupt"], false);
+    }
+
     /// Result of a `docker exec` invocation against a running test container.
     struct ExecResult {
         success: bool,

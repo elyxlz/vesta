@@ -49,6 +49,15 @@ class _ContextPreset(pyd.BaseModel):
     plans: list[str] | None = None
 
 
+class PresenceNotifications(pyd.BaseModel):
+    """Whether vestad drops a notification when the user returns to focus on a client. Read by vestad
+    through the status tap; the notification's disposition is governed by notification_rules."""
+
+    model_config = pyd.ConfigDict(extra="forbid")
+
+    enabled: bool = True
+
+
 class _ContextPolicy(pyd.BaseModel):
     model_config = pyd.ConfigDict(extra="forbid")
 
@@ -499,6 +508,7 @@ class VestaConfig(pyd_settings.BaseSettings):
     # Optional skills linked into Claude Code at boot. Agent startup unions shipped defaults from
     # core/default-skills.txt into this list before the first SDK session starts.
     active_skills: list[str] = pyd.Field(default_factory=list)
+    presence_notifications: PresenceNotifications = pyd.Field(default_factory=PresenceNotifications)
 
     ephemeral: bool = False
     log_level: tp.Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"

@@ -29,6 +29,15 @@ pub fn now_timestamp_from_epoch(epoch_secs: u64) -> String {
     dt.format(&fmt).expect("timestamp format never fails")
 }
 
+/// The RFC3339 timestamp for an epoch, fallible so no unwrap rides the notification send path.
+pub fn epoch_to_rfc3339(epoch_secs: u64) -> Result<String, String> {
+    let epoch = i64::try_from(epoch_secs).map_err(|e| format!("epoch out of range: {e}"))?;
+    time::OffsetDateTime::from_unix_timestamp(epoch)
+        .map_err(|e| format!("epoch out of range: {e}"))?
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(|e| format!("format timestamp: {e}"))
+}
+
 /// Parse a compact `YYYYMMDD-HHMMSS` UTC timestamp back to epoch seconds.
 /// Inverse of `now_timestamp_from_epoch`; returns None on malformed input.
 pub fn parse_compact_utc_epoch(created_at: &str) -> Option<u64> {

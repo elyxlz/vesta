@@ -95,6 +95,9 @@ function makeController() {
     },
     getSyncState: () => "open",
     subscribeSyncState: () => () => undefined,
+    reportPresence: () => undefined,
+    getAnyFocused: () => false,
+    subscribeAnyFocused: () => () => undefined,
     close: () => undefined,
   };
   return { controller, json };

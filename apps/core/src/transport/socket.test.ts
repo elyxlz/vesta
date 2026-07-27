@@ -26,6 +26,7 @@ interface Harness {
   snapshots: Tree[]
   deltas: Delta[]
   deps: SyncSocketDeps
+  advanceTimers: () => void
 }
 
 function harness(): Harness {
@@ -34,6 +35,7 @@ function harness(): Harness {
   const states: SyncState[] = []
   const snapshots: Tree[] = []
   const deltas: Delta[] = []
+  let fired = 0
   const deps: SyncSocketDeps = {
     buildUrl: () => "wss://vestad.test/sync",
     createSocket: () => {
@@ -48,7 +50,12 @@ function harness(): Harness {
     clearTimer: () => undefined,
     clientVersion: "0.1.179",
   }
-  return { sockets, timers, states, snapshots, deltas, deps }
+  const advanceTimers = (): void => {
+    while (fired < timers.length) {
+      timers[fired++]?.fn()
+    }
+  }
+  return { sockets, timers, states, snapshots, deltas, deps, advanceTimers }
 }
 
 function start(h: Harness): ReturnType<typeof createSyncSocket> {
@@ -142,6 +149,36 @@ describe("createSyncSocket", () => {
     h.sockets[0]?.onopen?.()
     sync.reauth("fresh")
     expect(h.sockets[0]?.sent).toEqual([JSON.stringify({ type: "reauth", token: "fresh" })])
+  })
+
+  it("sends client_context on reportPresence when open", () => {
+    const h = harness()
+    const socket = start(h)
+    h.sockets[0]?.onopen?.()
+    socket.reportPresence(true, "scout")
+    // A genuine report is not a resync, so vestad may treat it as a return to focus.
+    expect(h.sockets[0]?.sent).toContainEqual(
+      JSON.stringify({
+        type: "client_context",
+        focused: true,
+        active_agent: "scout",
+        resync: false,
+      }),
+    )
+  })
+
+  it("re-sends the last context on reconnect as a resync", () => {
+    const h = harness()
+    const socket = start(h)
+    h.sockets[0]?.onopen?.()
+    socket.reportPresence(true, null)
+    h.sockets[0]?.onclose?.()
+    h.advanceTimers()
+    h.sockets[1]?.onopen?.()
+    // The reconnect replay carries resync:true so it isn't mistaken for a fresh focus.
+    expect(h.sockets[1]?.sent).toContainEqual(
+      JSON.stringify({ type: "client_context", focused: true, active_agent: null, resync: true }),
+    )
   })
 
   it("does not reconnect after close", () => {

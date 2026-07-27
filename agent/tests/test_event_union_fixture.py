@@ -68,7 +68,7 @@ def _snapshot() -> SnapshotEvent:
         type="snapshot",
         state="idle",
         notifications={"pending": ["whatsapp-123"]},
-        config={"timezone": "America/New_York"},
+        config={"timezone": "America/New_York", "presence_notifications_enabled": True},
     )
 
 

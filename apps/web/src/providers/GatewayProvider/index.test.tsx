@@ -65,6 +65,9 @@ function stubController(replica: ReturnType<typeof createReplica>): Controller {
     subscribeDeltas: () => () => undefined,
     getSyncState: () => "open",
     subscribeSyncState: () => () => undefined,
+    reportPresence: () => undefined,
+    getAnyFocused: () => false,
+    subscribeAnyFocused: () => () => undefined,
     close: () => undefined,
   };
 }
