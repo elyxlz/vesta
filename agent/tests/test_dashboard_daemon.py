@@ -157,7 +157,7 @@ def test_unknown_subcommand_exits_nonzero(tmp_path):
     assert result.returncode != 0
 
 
-def test_setup_starts_daemon_and_appends_restart_line_once(tmp_path):
+def test_setup_starts_daemon_and_never_edits_the_restart_skill(tmp_path):
     env = _rig(tmp_path)
     # Copy the skill scripts into tmp_path (preserving the scripts/../app layout)
     # and pre-seed the app build artifacts there, so setup.sh never shells out to
@@ -169,16 +169,15 @@ def test_setup_starts_daemon_and_appends_restart_line_once(tmp_path):
     setup = skill_dir / "scripts/setup.sh"
 
     restart_skill = pl.Path(env["HOME"]) / "agent/skills/restart/SKILL.md"
-    restart_skill.write_text("# Restart\n\n## Daemons\n")
+    original = "# Restart\n\n## Daemons\n\n```bash\nrunning() { :; }\n```\n"
+    restart_skill.write_text(original)
 
-    first = subprocess.run(["sh", str(setup)], env=env, capture_output=True, text=True, check=False)
-    assert first.returncode == 0, first.stdout + first.stderr
+    result = subprocess.run(["sh", str(setup)], env=env, capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
     assert json.loads(_run(DAEMON, ["status"], env).stdout)["running"] is True
 
-    line = "running dashboard || { ~/agent/skills/dashboard/scripts/daemon start; sleep 1; }"
-    content_after_first = restart_skill.read_text()
-    assert content_after_first.count(line) == 1
+    # The agent owns this file: only it can match the guard form actually in use.
+    assert restart_skill.read_text() == original
 
-    second = subprocess.run(["sh", str(setup)], env=env, capture_output=True, text=True, check=False)
-    assert second.returncode == 0, second.stdout + second.stderr
-    assert restart_skill.read_text().count(line) == 1
+    line = "running dashboard || { ~/agent/skills/dashboard/scripts/daemon start; sleep 1; }"
+    assert line in result.stdout
