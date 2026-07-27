@@ -11,7 +11,7 @@ Run the Daemons block below; it is safe to re-run and starts only what's missing
 
 ## Daemons
 
-When a skill's setup gives you a daemon startup line, add it here yourself, inside the single fenced block below, on its own line before the closing fence. A setup script never edits this file: only you can see the guard form this block actually uses. (A daemon that vestad proxies on a port is a service, registered via the `vestad` skill; a portless background process goes here too.)
+When a skill's setup gives you a daemon startup line, add it here yourself, inside the single fenced block below, on its own line before the closing fence. A setup script never edits this file: only you can see the guard form this block actually uses. (A daemon that vestad proxies on a port gets that port from its `daemon start`; a portless background process goes here too.)
 
 Keep it to one fenced block. A line in a second block cannot see the `running()` helper defined in this one, so its guard fails open and every restart stacks another daemon.
 

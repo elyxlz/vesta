@@ -342,16 +342,32 @@ def test_register_public_service_none_off_box(monkeypatch):
     assert handover._register_public_service() is None
 
 
+def _recording_register_service(tmp_path, monkeypatch):
+    """A register-service stub that records the arguments it was called with."""
+    script = tmp_path / "register-service"
+    script.write_text(f'#!/bin/sh\necho "$*" > {tmp_path / "register-args"}\necho 7431\n')
+    script.chmod(0o755)
+    monkeypatch.setattr(handover, "REGISTER_SERVICE", script)
+    return tmp_path / "register-args"
+
+
 def test_register_public_service_returns_port_and_public_url(monkeypatch, tmp_path):
     monkeypatch.setenv("VESTAD_TUNNEL", "https://box.vesta.run/")
     monkeypatch.setenv("AGENT_NAME", "ada")
-    script = tmp_path / "register-service"
-    script.write_text("#!/bin/sh\necho 7431\n")
-    script.chmod(0o755)
-    monkeypatch.setattr(handover, "REGISTER_SERVICE", script)
+    _recording_register_service(tmp_path, monkeypatch)
     port, url = handover._register_public_service()
     assert port == 7431
     assert url == "https://box.vesta.run/agents/ada/browser/handover.html"
+
+
+def test_register_public_service_asks_for_a_public_port(monkeypatch, tmp_path):
+    """The handover page is opened by a browser holding no Vesta credential, so this is one of
+    the few services that must load ungated. Registering it private would break the handover."""
+    monkeypatch.setenv("VESTAD_TUNNEL", "https://box.vesta.run/")
+    monkeypatch.setenv("AGENT_NAME", "ada")
+    args = _recording_register_service(tmp_path, monkeypatch)
+    handover._register_public_service()
+    assert args.read_text().split() == [handover.HANDOVER_SERVICE, "--public"]
 
 
 # ── ports + liveness ──────────────────────────────────────────

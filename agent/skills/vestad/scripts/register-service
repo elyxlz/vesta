@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Register a background service with vestad and print the assigned port.
 # Pass --public only for something that must load with no credential at all (a
-# whatsapp QR link, a shareable file link, an inbound webhook). Everything else
+# whatsapp QR link, a shareable file link, an inbound webhook, a browser handover
+# page). Everything else
 # is private and is reached with the api key or a minted service key. The flag is
 # always sent explicitly, so a service that once registered public becomes
 # private again on its next registration.
@@ -16,8 +17,8 @@
 # stdout, so `PORT=$(register-service ...) && start` short-circuits cleanly.
 #
 # Usage: register-service <name> [--public]
-#   PORT=$(~/agent/skills/vestad/scripts/register-service tasks)
-#   PORT=$(~/agent/skills/vestad/scripts/register-service file-host --public)
+#   PORT=$(register-service tasks)
+#   PORT=$(register-service file-host --public)
 
 set -euo pipefail
 

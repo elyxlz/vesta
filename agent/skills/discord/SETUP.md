@@ -17,5 +17,8 @@
    ```bash
    discord daemon start
    ```
-7. Add that same line to the `## Daemons` section of `~/agent/skills/restart/SKILL.md` so the daemon survives restarts.
+7. Add this line to the `## Daemons` section of `~/agent/skills/restart/SKILL.md` so the daemon survives restarts:
+   ```
+   running discord || { discord daemon start; sleep 1; }
+   ```
 8. Send a test message both ways (channel and DM) to confirm.

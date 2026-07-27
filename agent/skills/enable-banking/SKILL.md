@@ -27,18 +27,12 @@ The watcher (`finance-watcher` / `python -m finance_cli.transaction_watcher`) po
 
 **Check if running:**
 ```bash
-screen -ls | grep finance
+finance daemon status
 ```
 
 **Start if not running:**
 ```bash
 finance daemon start
-```
-
-**View logs (attach to screen):**
-```bash
-screen -r finance
-# Detach: Ctrl+A, D
 ```
 
 - **Seen transactions**: tracked in `~/.finance/seen_transactions.json`

@@ -25,9 +25,9 @@ In https://console.cloud.google.com/ with the user's Google account:
 
 1. Install: `uv tool install --editable ~/agent/skills/google/cli`
 2. Start background daemon: `google daemon start`
-3. Register it for restart (see [vestad](../vestad/SKILL.md)) with this startup command:
+3. Register it for restart (see [vestad](../vestad/SKILL.md)) with this startup line:
    ```
-   google daemon start
+   running google || { google daemon start; sleep 1; }
    ```
 
 ## 3. Authentication

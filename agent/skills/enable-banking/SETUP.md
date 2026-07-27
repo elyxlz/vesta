@@ -61,8 +61,8 @@ finance daemon start
 
 ## 6. Register the service
 
-So the watcher comes back after a container restart, register it for restart (see [vestad](../vestad/SKILL.md)) with this startup command:
+So the watcher comes back after a container restart, register it for restart (see [vestad](../vestad/SKILL.md)) with this startup line:
 
 ```
-finance daemon start
+running finance || { finance daemon start; sleep 1; }
 ```

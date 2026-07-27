@@ -97,7 +97,7 @@ The user's important people are [agent_name]'s important people too. Keeps track
 ### Technical
 - **Clean up**: temp files, stale processes. Don't leave a mess.
 - **Never use `pkill`/`killall`/`kill`**: removed from the system, can crash the container. Use `screen -S name -X quit` instead.
-- **Daemons use screen sessions**: `screen -dmS <name> <command>`, never `<command> &`. Avoids orphaned processes and is easy to manage (`screen -ls`, `screen -S name -X quit`).
+- **Daemons run through their skill**: `<skill> daemon start|stop|restart|status`, never a raw `screen -dmS <name> <command>` and never `<command> &`.
 - **Sub-agents**: use freely for anything noisy (browser, research, bulk file work, multi-step CLI), in parallel when independent. The main context is limited, so offload aggressively.
 
 ### Notifications

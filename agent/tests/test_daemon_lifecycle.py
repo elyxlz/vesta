@@ -132,6 +132,18 @@ def test_start_refuses_to_launch_when_registration_fails(tmp_path):
     assert not (tmp_path / "screen-state/launched").exists()
 
 
+@pytest.mark.parametrize("flag,value", [("--port-mode", "publik"), ("--port-mode", "Public"), ("--probe", "htp")])
+def test_start_refuses_a_mode_it_does_not_know(tmp_path, flag, value):
+    """Both modes act on a string match, so an unrecognized value would take the fallback branch
+    and register private, or probe, when the caller asked for neither."""
+    env = _rig(tmp_path)
+    result = _run(env, "start", "--session", "widget", "--service", "widget", flag, value, "--", "widget", "serve")
+    assert result.returncode != 0
+    assert "error" in json.loads(result.stderr)
+    assert not (tmp_path / "screen-state/launched").exists()
+    assert not (tmp_path / "screen-state/registered").exists()
+
+
 def test_private_and_public_registration_differ(tmp_path):
     env = _rig(tmp_path)
     _run(env, "start", "--session", "a", "--service", "a", "--port-mode", "private", "--", "a", "serve")

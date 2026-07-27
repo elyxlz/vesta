@@ -15,9 +15,7 @@ The server binds to localhost, so it needs a public route.
 # 1. drop the file(s) into the served directory
 mkdir -p ~/.file-host && cp /path/to/report.pdf ~/.file-host/
 
-
-# 3. serve it (run in a screen so it persists)
-mkdir -p ~/.local/bin && ln -sf ~/agent/skills/file-host/file-host ~/.local/bin/file-host
+# 2. serve it
 file-host daemon start
 ```
 
@@ -28,11 +26,11 @@ Off vesta, bind any port with `serve.py --port N` and expose it with your own tu
 ## Flags
 
 - `--dir DIR`: directory to serve (default `~/.file-host`).
-- `--port N`: port to bind on `127.0.0.1` (default 8770; on vesta use the port from the service registration).
+- `--port N`: port to bind on `127.0.0.1` (default 8770; on vesta the daemon runner supplies the port).
 - `--no-cache`: send `Cache-Control: no-store` on every response. Use when serving a file that is rewritten in place, e.g. a rotating QR image, so browsers always re-fetch the current version.
 
 ## Rules
 
 - **Public means public.** Anything in the served directory is reachable by anyone with the URL (the route has no auth). Never host secrets, credentials, or sensitive personal documents unless the user explicitly asked you to share that exact file, and use an unguessable filename when sharing anything personal.
-- **Clean up.** Remove files from the served directory once the user has them, and stop the screen (`screen -S file-host -X quit`) when no longer needed.
+- **Clean up.** Remove files from the served directory once the user has them, and run `file-host daemon stop` when no longer needed.
 - **Persist it** by adding the serve command to the `## Daemons` section of `~/agent/skills/restart/SKILL.md` if you want it always available.

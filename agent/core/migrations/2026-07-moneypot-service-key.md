@@ -16,20 +16,19 @@ ls -l ~/agent/data/moneypot-api-key 2>/dev/null
 If both come back empty (no moneypot daemon line and no key file), there is nothing to do:
 call `mark_migration_applied` with `name="2026-07-moneypot-service-key"` and STOP.
 
-### 1. Clean the moneypot daemon line
+### 1. Check the moneypot daemon line
 
-In the `## Daemons` section of `~/agent/skills/restart/SKILL.md`, the moneypot line must pass
-no key to the server and must register privately. Drop `--api-key ...` (and any
-`--api-key "$(cat ~/agent/data/moneypot-api-key)"` form) from the `server.py` call, and drop
-`--public` from its `register-service moneypot` call. Keep the `running moneypot ||` guard, the
-`&&` between registration and start, and any port or log path you personalized. The converged
-line reads:
+`moneypot daemon start` registers the service privately and passes the server no key, so the
+line in the `## Daemons` section of `~/agent/skills/restart/SKILL.md` needs nothing beyond that
+launch, keeping your own guard:
 
 ```
-running moneypot || { P=$(~/agent/skills/vestad/scripts/register-service moneypot) && screen -dmS moneypot bash -c "cd ~/agent/skills/moneypot && PYTHONUNBUFFERED=1 python3 server.py --port $P > ~/agent/logs/moneypot.log 2>&1"; sleep 1; }
+running moneypot || { moneypot daemon start; sleep 1; }
 ```
 
-If the line already reads that way, this step is done.
+If a previous migration in this batch already converted the line, this step is done. If the line
+still spells out `server.py`, and that migration told you to stop because your workspace sync had
+not merged, leave it alone here too: both are converted on your next boot.
 
 ### 2. Register moneypot privately now
 
@@ -37,7 +36,7 @@ Registration is idempotent and always sends the exposure explicitly, so this ret
 port and makes the service private without waiting for a restart:
 
 ```bash
-~/agent/skills/vestad/scripts/register-service moneypot
+register-service moneypot
 ```
 
 ### 3. Delete the leftover key file
@@ -65,11 +64,12 @@ so pass `never_expires` for a caller you do not want to re-key. A `GET` on that 
 the live keys, and `curl -sk -X DELETE .../services/moneypot/keys/<id>` with the same header
 revokes one.
 
-Once your workspace sync has merged, `~/agent/skills/vestad/scripts/service-key mint moneypot`
-is the helper that does this same call and prints the key alone.
+Once your workspace sync has merged, `service-key mint moneypot` is the helper that does this
+same call and prints the key alone.
 
-Your server picks up the cleaned line at its next start, so if a caller needs its key working
-right away, bring the daemon back on the converged line once your workspace sync has merged.
+Your server picks up the converged line at its next start, so if a caller needs its key working
+right away, bring the daemon back with `moneypot daemon restart` once your workspace sync has
+merged.
 Tell the user which caller you re-keyed, and never paste a key into a chat you would not paste
 a password into.
 

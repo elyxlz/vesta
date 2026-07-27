@@ -10,7 +10,7 @@
 # Usage: service-key mint <service> [--label <text>] [--ttl <secs>] [--never-expires]
 #        service-key list <service>
 #        service-key revoke <service> <id>
-#   KEY=$(~/agent/skills/vestad/scripts/service-key mint expenses --label accountant)
+#   KEY=$(service-key mint expenses --label accountant)
 #   echo "$VESTAD_TUNNEL/agents/$AGENT_NAME/expenses/k/$KEY/"
 #
 # Omit --ttl for vestad's 30 day default; --never-expires wins over any --ttl.
