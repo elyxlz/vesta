@@ -78,6 +78,7 @@ func handleSocketConn(conn net.Conn, wac *WhatsAppClient) {
 		resp.Error = err.Error()
 	} else {
 		resp.Result = result
+		resp.Error = resultFailure(result)
 	}
 
 	json.NewEncoder(conn).Encode(resp)
@@ -105,11 +106,15 @@ func trySocketCommand(sockPath string, command string, args []string) ([]byte, i
 		return nil, 0, false
 	}
 
+	// A command that failed reports its reason in the result it produced, so that result
+	// is what prints; the {"error": ...} object carries a failure that produced none.
+	body := resp.Result
+	if body == nil && resp.Error != "" {
+		body = map[string]any{"error": resp.Error}
+	}
+	data, _ := json.MarshalIndent(body, "", "  ")
 	if resp.Error != "" {
-		data, _ := json.MarshalIndent(map[string]any{"error": resp.Error}, "", "  ")
 		return data, 1, true
 	}
-
-	data, _ := json.MarshalIndent(resp.Result, "", "  ")
 	return data, 0, true
 }

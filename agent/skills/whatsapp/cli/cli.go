@@ -91,6 +91,25 @@ func successResult(success bool, msg string) map[string]any {
 	return map[string]any{"success": success, "message": msg}
 }
 
+// resultFailure reports the reason a result carries a false "success", the one reading
+// of that field: a write that did not happen is a failed command, so the response layer
+// carries it as an error and the client exits nonzero. Empty for a result that succeeded
+// or carries no verdict.
+func resultFailure(result any) string {
+	fields, ok := result.(map[string]any)
+	if !ok {
+		return ""
+	}
+	success, ok := fields["success"].(bool)
+	if !ok || success {
+		return ""
+	}
+	if message, ok := fields["message"].(string); ok && message != "" {
+		return message
+	}
+	return "command failed"
+}
+
 func printJSON(v any) {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
