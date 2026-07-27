@@ -14,6 +14,7 @@ from wait_util import wait_for_condition
 import core.config as cfg
 import core.models as vm
 from core import lifecycle
+from core.loops import process_nightly_memory
 from core.notification import TYPE_COMPACTION_FOLLOWUP, Notification
 
 
@@ -27,8 +28,6 @@ def _setup(tmp_path, *, dreamer_hour=4):
 def test_skips_dream_before_first_start_done(tmp_path):
     """A brand-new agent (first_start_done=False) has nothing to curate, so a catch-up dream
     landing inside the morning window must not fire mid-onboarding."""
-    from core.loops import process_nightly_memory
-
     config = _setup(tmp_path)
     state = vm.State()
     assert state.persisted.first_start_done is False
@@ -42,8 +41,6 @@ def test_skips_dream_before_first_start_done(tmp_path):
 
 
 def test_drops_dream_notification(tmp_path):
-    from core.loops import process_nightly_memory
-
     config = _setup(tmp_path)
     state = vm.State()
     state.persisted.first_start_done = True
@@ -79,8 +76,6 @@ def test_drops_dream_notification(tmp_path):
     ids=["already-ran-today", "before-hour", "retry-past-hour", "catchup-past-midnight", "outside-window"],
 )
 def test_nightly_memory_scheduling(tmp_path, dreamer_hour, last_dreamer_run, now, expected_files):
-    from core.loops import process_nightly_memory
-
     config = _setup(tmp_path, dreamer_hour=dreamer_hour)
     state = vm.State()
     state.persisted.first_start_done = True
@@ -96,8 +91,6 @@ def test_nightly_memory_scheduling(tmp_path, dreamer_hour, last_dreamer_run, now
 
 
 def _drop_dream(config, state, now):
-    from core.loops import process_nightly_memory
-
     with (
         patch("core.loops._now", return_value=now),
         patch("core.loops.load_prompt", return_value="dreamer prompt"),
@@ -118,9 +111,8 @@ def _dream_files(config):
     ids=["same-day", "catchup-past-midnight"],
 )
 def test_redrop_over_a_pending_dream_queues_only_one(tmp_path, dreamer_hour, first, second):
-    """A restart landing between the drop and mark_dreamer_complete re-runs the check while the
-    dream is still pending. That re-drop must overwrite the pending file, not queue a second dream,
-    including when a late dreamer hour's catch-up lands after midnight."""
+    """A re-drop while the dream is still pending must overwrite the pending file rather than queue a
+    second dream, including when a late dreamer hour catches up after midnight."""
     config = _setup(tmp_path, dreamer_hour=dreamer_hour)
     state = vm.State()
     state.persisted.first_start_done = True
@@ -132,8 +124,7 @@ def test_redrop_over_a_pending_dream_queues_only_one(tmp_path, dreamer_hour, fir
 
 
 def test_unconsumed_dream_from_yesterday_does_not_suppress_today(tmp_path):
-    """The name is per night, never a fixed stem: a dream left unconsumed from yesterday must not
-    swallow today's."""
+    """The stem is per night, never fixed, so yesterday's unconsumed dream cannot swallow today's."""
     config = _setup(tmp_path)
     state = vm.State()
     state.persisted.first_start_done = True
@@ -145,8 +136,7 @@ def test_unconsumed_dream_from_yesterday_does_not_suppress_today(tmp_path):
 
 
 def test_consumed_dream_is_recreated_by_the_catchup_retry(tmp_path):
-    """Retry semantics are unchanged: once the pending dream is consumed (file deleted) and the
-    agent never marked it complete, a later check inside the catch-up window drops it again."""
+    """Once the dream is consumed and never marked complete, a later check inside the window drops it again."""
     config = _setup(tmp_path)
     state = vm.State()
     state.persisted.first_start_done = True
