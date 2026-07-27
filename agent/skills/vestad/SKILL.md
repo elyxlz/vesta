@@ -17,12 +17,17 @@ Every call authenticates with the agent's own token:
 from `/run/vestad-env`, already exported into the environment. The API is
 `https://$BOX_HOST:$VESTAD_PORT`, with a self-signed cert, so always `curl -sk`.
 
+This skill's helpers are commands: `register-service`, `service-key`, `user-notification`, and
+`vestad-health`. Agent startup links each one onto `PATH` from this skill's `scripts/` directory
+(`vestad-health` is `scripts/health`), so a full path like
+`~/agent/skills/vestad/scripts/register-service` runs exactly the same script.
+
 Restarting or stopping this agent is not a curl: use the `restart_vesta` / `stop_vesta`
 tools, which call vestad's self-scoped lifecycle endpoints.
 
 ## Health check (is vestad up?)
 
-Run `~/agent/skills/vestad/scripts/health` (add `-q` for exit-code only). It prints
+Run `vestad-health` (add `-q` for exit-code only). It prints
 `UP` / `DOWN <code>`. Use this instead of hand-typing a curl: vestad is HTTPS with a
 self-signed cert and the path is `/agents/$AGENT_NAME/services`, so a plain
 `http://127.0.0.1:$VESTAD_PORT/services` returns `000` unconditionally and mimics an
@@ -48,9 +53,9 @@ registered without `--public` is private:
 
 ```bash
 # private service: the api key or a minted service key reaches it
-PORT=$(~/agent/skills/vestad/scripts/register-service tasks)
+PORT=$(register-service tasks)
 # public service: loads with no credential at all
-PORT=$(~/agent/skills/vestad/scripts/register-service file-host --public)
+PORT=$(register-service file-host --public)
 ```
 
 The dashboard is private, and the app reaches it with a minted service key, so pass `--public`
@@ -62,7 +67,7 @@ So the service comes back after a container restart, add its startup command to 
 single line that re-registers and starts, e.g.:
 
 ```bash
-running tasks || { PORT=$(~/agent/skills/vestad/scripts/register-service tasks) && screen -dmS tasks tasks serve --notifications-dir ~/agent/notifications --port $PORT; sleep 1; }
+running tasks || { PORT=$(register-service tasks) && screen -dmS tasks tasks serve --notifications-dir ~/agent/notifications --port $PORT; sleep 1; }
 ```
 
 vestad's API may still be coming up when the daemon block runs, so `register-service` polls
@@ -95,7 +100,7 @@ The `service-key` helper does the curl. `mint` prints the secret alone, because 
 it exactly once, so put it straight into the link:
 
 ```bash
-KEY=$(~/agent/skills/vestad/scripts/service-key mint expenses --label accountant)
+KEY=$(service-key mint expenses --label accountant)
 echo "$VESTAD_TUNNEL/agents/$AGENT_NAME/expenses/k/$KEY/"
 ```
 
@@ -104,8 +109,8 @@ long-lived consumer. List the live keys (ids and labels only, never the secrets)
 one by id:
 
 ```bash
-~/agent/skills/vestad/scripts/service-key list expenses
-~/agent/skills/vestad/scripts/service-key revoke expenses <id>
+service-key list expenses
+service-key revoke expenses <id>
 ```
 
 Minting fails loudly rather than printing an empty key: if the service is not registered,
@@ -114,7 +119,7 @@ the helper says so and exits non-zero, so register it first.
 ## Public URLs (how to reach a service from outside)
 
 vestad exposes registered services under the tunnel. The stable patterns:
-- **Skill/service routes**: `$VESTAD_TUNNEL/agents/$AGENT_NAME/<service>/...`. A service registered `public: true` needs no credential. A private one is gated by vestad, which accepts the app's api key or a service key minted for that service, carried as an `Authorization: Bearer <key>` header, a `?token=<key>` query param, or a `/k/<key>/` prefix right after the service name. `X-Agent-Token` is not a credential here: the proxy never accepts it, so a curl that only sets that header gets a 401. A dashboard registered as service `dashboard` is at `$VESTAD_TUNNEL/agents/$AGENT_NAME/dashboard/`, and a link someone else can open is `$VESTAD_TUNNEL/agents/$AGENT_NAME/dashboard/k/<key>/`. Prefer the path form for anything a browser loads: a page's relative assets inherit the prefix, while a header or a query param reaches only the first request.
+- **Skill/service routes**: `$VESTAD_TUNNEL/agents/$AGENT_NAME/<service>/...`. A service registered `public: true` needs no credential. A private one is gated by vestad, which accepts the app's api key or a service key minted for that service, carried as an `Authorization: Bearer <key>` header, a `?token=<key>` query param, or a `/k/<key>/` prefix right after the service name. `X-Agent-Token` is not a credential here: the proxy never accepts it, so a curl that only sets that header gets a 401. A dashboard registered as service `dashboard` is at `$VESTAD_TUNNEL/agents/$AGENT_NAME/dashboard/`, and a link someone else can open is `$VESTAD_TUNNEL/agents/$AGENT_NAME/dashboard/k/<key>/`. Prefer the path form for anything a browser loads: a page's relative assets inherit the prefix, while a header or a query param reaches only the first request. Reach for the `?token=` form when the client cannot send a header at all, which in practice means a media element's `src` or a browser `WebSocket`. The voice service's audio stream and STT socket URLs carry their service key that way for that reason.
 - **User-facing web app**: `$VESTAD_TUNNEL/app`.
 
 Reach for these instead of reverse-engineering the route when you need to hand the user a link.
