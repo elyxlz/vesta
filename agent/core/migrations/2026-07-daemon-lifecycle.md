@@ -49,6 +49,7 @@ missing. Keep your guard exactly as it is: this file is yours, and your guard ma
 | `sign-service/sign_server.py` | `sign-service daemon start` |
 | `whatsapp start` | `whatsapp daemon start` |
 | `~/agent/skills/dashboard/scripts/daemon start` | `dashboard daemon start` |
+| `~/agent/skills/dashboard/scripts/serve` | `dashboard daemon start` |
 
 Worked example. If your line reads:
 
@@ -68,20 +69,26 @@ command applies the same defaults, and the port is registered for you.
 
 `whatsapp start` keeps working, so that row can never break you whether you convert it or not.
 
-### 4. Verify, without restarting anything
+### 4. Verify each converted daemon
 
-For each daemon you converted, confirm the new command sees the daemon already running. Daemons are
-identified by their screen session, so this works against a session started the old way:
+For each daemon you converted, ask its own command how it is doing:
 
 ```bash
 tasks daemon status
 ```
 
-Expect JSON reporting `"running":true`. Do this for each converted skill. Nothing restarts and
-nothing is dropped, so a daemon mid-work keeps working.
+Expect JSON reporting `"running":true`: the daemon is up and the new command sees it, so nothing
+restarts and a daemon mid-work keeps working.
 
-If one reports `"running":false` while `screen -ls` shows the session alive, your session name
-differs from that skill's default; leave that line alone and keep the launch you had.
+If one reports `"running":false` while `screen -ls` still shows a session for it, that daemon is
+running outside what its command tracks. Quit the session and start it through the command:
+
+```bash
+screen -S <session> -X quit
+tasks daemon start
+```
+
+Then re-check `tasks daemon status` and expect `"running":true`.
 
 ### 5. Mark this migration applied
 

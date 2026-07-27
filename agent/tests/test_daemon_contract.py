@@ -36,6 +36,7 @@ class Daemon:
     serves_port: bool
     emits_daemon_died: bool
     service: str | None = None  # vestad service name, when it differs from the command name
+    legacy_command: list[str] | None = None  # a script path fleet restart files still launch by
     rig: tp.Callable[[pl.Path, pl.Path], None] | None = None
 
 
@@ -59,6 +60,8 @@ def _rig_dashboard(home: pl.Path, bin_dir: pl.Path) -> None:
     (skill / "app/dist").mkdir(parents=True)
     (skill / "scripts").mkdir()
     (skill / "scripts/serve").symlink_to(SKILLS_DIR / "dashboard/scripts/serve")
+    # The legacy forwarder execs the launcher through $HOME, so the tree carries it too.
+    (skill / "dashboard").symlink_to(SKILLS_DIR / "dashboard/dashboard")
     vite = skill / "app/node_modules/.bin/vite"
     vite.parent.mkdir(parents=True)
     # `vite preview --port <port> --host 0.0.0.0`, so the port is the third argument.
@@ -92,6 +95,7 @@ SKILLS = [
         name="dashboard",
         serves_port=True,
         emits_daemon_died=False,
+        legacy_command=[str(SKILLS_DIR / "dashboard/scripts/daemon")],
         rig=_rig_dashboard,
     ),
 ]
@@ -195,7 +199,10 @@ def test_restart_replaces_a_running_daemon_and_starts_a_stopped_one(daemon):
     assert after != before
     with pytest.raises(ProcessLookupError):
         os.kill(before, 0)
-    assert json.loads(_verb(spec, env, "status").stdout)["running"] is True
+    status = json.loads(_verb(spec, env, "status").stdout)
+    assert status["running"] is True
+    if spec.serves_port:
+        assert str(status["port"]) == (home / "agent/data/daemons" / f"{spec.name}.port").read_text().strip()
 
     assert json.loads(_verb(spec, env, "stop").stdout) == {"status": "stopped"}
     from_stopped = _verb(spec, env, "restart")
@@ -238,6 +245,20 @@ def test_registration_declares_the_expected_exposure(daemon):
     service = spec.service or spec.name
     expected = f"{service} --public" if service in public else service
     assert args.splitlines()[0] == expected
+    _verb(spec, env, "stop")
+
+
+def test_a_legacy_script_path_still_starts_the_daemon(daemon):
+    """A restart file written before the daemon verb launches by script path, and that path
+    outlives the sync that converts it, so it has to land on the same daemon."""
+    spec, home, env = daemon
+    if spec.legacy_command is None:
+        pytest.skip("no legacy launch path")
+    result = subprocess.run([*spec.legacy_command, "start"], env=env, capture_output=True, text=True, check=False, timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout) == {"status": "started"}
+    assert _pid(spec, home) is not None
+    assert json.loads(_verb(spec, env, "status").stdout)["running"] is True
     _verb(spec, env, "stop")
 
 
