@@ -68,16 +68,54 @@ def mask(match: re.Match[str]) -> str:
     return match.group(0) if REDACTED in match.group(0) else REDACTED
 
 
+# Payment-card PANs carry no fixed prefix to key a regex on and collide with order numbers,
+# timestamps, and phone/tracking concatenations, so a bare \d{13,19} match floods false positives.
+# The Luhn checksum is the real filter: only candidates whose separator-stripped digits pass Luhn
+# and land in the 13 to 19 digit PAN range are treated as leaks. A run of 13 to 19 digits may be
+# split into groups by single spaces or hyphens (4111 1111 1111 1111, 3782-822463-10005). The
+# lookarounds forbid a digit on either side so a longer numeric id is never sliced into a fake PAN.
+CARD_CANDIDATE = re.compile(r"(?<!\d)\d(?:[ -]?\d){12,18}(?!\d)")
+# Characters of surrounding text kept on each side of a hit, so the agent can judge it from context.
+CONTEXT_CHARS = 40
+
+
+def luhn_valid(digits: str) -> bool:
+    """Standard Luhn checksum over a bare digit string, the payment-card industry's own check digit."""
+    total = 0
+    for i, ch in enumerate(reversed(digits)):
+        d = int(ch)
+        if i % 2:
+            d *= 2
+            if d > 9:
+                d -= 9
+        total += d
+    return total % 10 == 0
+
+
+def _is_card(candidate: str) -> bool:
+    """A candidate run is a real PAN only when its stripped digits pass Luhn and count 13 to 19."""
+    digits = candidate.replace(" ", "").replace("-", "")
+    return 13 <= len(digits) <= 19 and luhn_valid(digits)
+
+
+def redact_cards(text: str) -> str:
+    """Replace every Luhn-valid PAN with the placeholder, leaving non-Luhn digit runs (order numbers,
+    timestamps, tracking ids) untouched. Luhn cannot live inside the combined REGEX, so this is its
+    own pass, run after REGEX everywhere REGEX runs. `[REDACTED]` holds no digit run, so a re-run
+    never re-flags or mangles one, matching the regex path's idempotency."""
+    return CARD_CANDIDATE.sub(lambda m: REDACTED if _is_card(m.group(0)) else m.group(0), text)
+
+
 type JsonValue = str | int | float | bool | list["JsonValue"] | dict[str, "JsonValue"] | None
 
 
 def redact_json(value: JsonValue) -> JsonValue:
-    """Recursively apply the mask regex to every string inside a parsed JSON value. Redacting the
-    decoded structure (not the serialized blob) guarantees the re-serialized event is still valid
+    """Recursively apply both redaction passes to every string inside a parsed JSON value. Redacting
+    the decoded structure (not the serialized blob) guarantees the re-serialized event is still valid
     JSON: a raw text .sub can splice `[REDACTED]` across a `\"`/escape boundary and corrupt the blob,
     which then breaks the json_extract in the FTS resync and rolls back the whole scrub."""
     if isinstance(value, str):
-        return REGEX.sub(mask, value)
+        return redact_cards(REGEX.sub(mask, value))
     if isinstance(value, list):
         return [redact_json(v) for v in value]
     if isinstance(value, dict):
@@ -85,30 +123,39 @@ def redact_json(value: JsonValue) -> JsonValue:
     return value
 
 
+def _mask_context(window: str) -> str:
+    """Mask both pattern hits and Luhn-valid cards in a scan snippet, so reviewing a candidate never
+    re-leaks the value back into a new event (the old redaction loop's self-reseeding)."""
+    return redact_cards(REGEX.sub(mask, window)).replace("\n", " ")
+
+
+def find_matches(text: str) -> list[str]:
+    """Every secret in one string as a masked context snippet: the combined REGEX (already-redacted
+    spans and news-slug false positives filtered out) plus the Luhn-checked payment-card pass. Pure
+    and DB-free, so the DB scan and the tests share exactly one detection path."""
+    spans = [m.span() for m in REGEX.finditer(text) if REDACTED not in m.group(0) and not _looks_like_word_slug(m.group(0))]
+    spans += [m.span() for m in CARD_CANDIDATE.finditer(text) if _is_card(m.group(0))]
+    return [_mask_context(text[max(0, start - CONTEXT_CHARS) : end + CONTEXT_CHARS]) for start, end in spans]
+
+
 def scan(conn: sqlite3.Connection) -> list[tuple[int, str]]:
-    """Every pattern hit as (event id, masked context snippet). The secret itself is replaced with
-    [REDACTED] in the snippet, so reviewing candidates never re-leaks the value into a new event
-    (the old redaction loop's self-reseeding). Reports every match per event, not just the first,
-    so a benign first hit can't mask a real secret later on. Scans the FULL event: secrets often sit
+    """Every hit as (event id, masked context snippet), regex patterns plus Luhn-valid payment
+    cards. The secret itself is replaced with [REDACTED] in the snippet, so reviewing candidates
+    never re-leaks the value into a new event. Reports every match per event, not just the first, so
+    a benign first hit can't mask a real secret later on. Scans the FULL event: secrets often sit
     deep inside long bash commands / tool payloads (an old PAT once survived weeks because
     substr(data,1,200) never saw it)."""
     matches = []
     for row_id, data in conn.execute("SELECT id, data FROM events"):
         if not data:
             continue
-        for m in REGEX.finditer(data):
-            if REDACTED in m.group(0):
-                continue
-            if _looks_like_word_slug(m.group(0)):
-                continue  # news/URL slug (hyphenated words), not a secret
-            window = data[max(0, m.start() - 40) : m.end() + 40]
-            matches.append((row_id, REGEX.sub(mask, window).replace("\n", " ")))
+        matches.extend((row_id, snippet) for snippet in find_matches(data))
     return matches
 
 
 def scrub(conn: sqlite3.Connection, ids: list[int]) -> int:
-    """Redact every pattern hit in the given events in place, keeping their context and events_fts.
-    Regex-driven and keyed by id, so the caller never has to pass (and thereby re-leak) the literal."""
+    """Redact every hit in the given events in place, keeping their context and events_fts. Driven by
+    the same patterns and keyed by id, so the caller never has to pass (and thereby re-leak) the literal."""
     changed: dict[int, str] = {}
     for row_id in ids:
         row = conn.execute("SELECT data FROM events WHERE id = ?", (row_id,)).fetchone()
@@ -118,7 +165,7 @@ def scrub(conn: sqlite3.Connection, ids: list[int]) -> int:
             obj = json.loads(row[0])
         except (json.JSONDecodeError, TypeError):
             # Non-JSON payload: fall back to a raw text sub (nothing to keep valid).
-            new_data = REGEX.sub(mask, row[0])
+            new_data = redact_cards(REGEX.sub(mask, row[0]))
             if new_data != row[0]:
                 changed[row_id] = new_data
             continue
