@@ -70,10 +70,27 @@ def test_drops_dream_notification(tmp_path):
         (4, dt.datetime(2025, 6, 14, 4, 0, 0), dt.datetime(2025, 6, 15, 7, 30, 0), 1),  # not done today, retry past the hour
         # Late dreamer_hour (22:00) must catch up after midnight: the window is circular (modulo-24), so
         # post-midnight hours (0-3) must not fall through and drop the dream for the day.
-        (22, dt.datetime(2025, 6, 14, 22, 0, 0), dt.datetime(2025, 6, 15, 1, 0, 0), 1),  # within 22:00 + 6h window
+        (22, dt.datetime(2025, 6, 13, 22, 30, 0), dt.datetime(2025, 6, 15, 1, 0, 0), 1),  # within 22:00 + 6h window
         (22, None, dt.datetime(2025, 6, 15, 14, 0, 0), 0),  # afternoon is outside the circular window
+        # Completion is judged against the night the window opened, not the calendar day, so a dream
+        # that finished before midnight suppresses the rest of its own night and only its own night.
+        (22, dt.datetime(2025, 6, 15, 22, 30, 0), dt.datetime(2025, 6, 16, 0, 0, 0), 0),  # same night, past midnight
+        (22, dt.datetime(2025, 6, 15, 22, 30, 0), dt.datetime(2025, 6, 16, 22, 0, 0), 1),  # the next night still fires
+        # Checks land at an arbitrary minute: a completion earlier in its hour still counts as this night's.
+        (4, dt.datetime(2025, 6, 15, 4, 10, 0), dt.datetime(2025, 6, 15, 5, 50, 0), 0),  # unaligned check
+        (4, None, dt.datetime(2025, 6, 15, 7, 30, 0), 1),  # never marked complete: retries inside the window
     ],
-    ids=["already-ran-today", "before-hour", "retry-past-hour", "catchup-past-midnight", "outside-window"],
+    ids=[
+        "already-ran-today",
+        "before-hour",
+        "retry-past-hour",
+        "catchup-past-midnight",
+        "outside-window",
+        "late-hour-done-before-midnight",
+        "late-hour-next-night",
+        "unaligned-check-same-night",
+        "never-marked-retries",
+    ],
 )
 def test_nightly_memory_scheduling(tmp_path, dreamer_hour, last_dreamer_run, now, expected_files):
     config = _setup(tmp_path, dreamer_hour=dreamer_hour)
