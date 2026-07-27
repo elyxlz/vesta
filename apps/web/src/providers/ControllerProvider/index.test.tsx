@@ -1,9 +1,18 @@
 import { useContext, useEffect } from "react";
-import { act, render, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, render, waitFor } from "@testing-library/react";
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import type { Controller } from "@vesta/core";
 import { ControllerProvider } from "./index";
 import { ControllerContext } from "./context";
+import { GatewayProvider } from "@/providers/GatewayProvider";
 
 const mockConn = vi.hoisted(() => ({ tokenExpiring: false }));
 
@@ -35,14 +44,6 @@ vi.mock("@/providers/AuthProvider", () => ({
   }),
 }));
 
-// The screens are their own tested units pulling in the navbar / router; here we only assert
-// ControllerProvider's choice to render them, so stub them to markers.
-vi.mock("@/components/AppBehindScreen", () => ({
-  AppBehindScreen: () => <div>app behind</div>,
-}));
-vi.mock("@/components/GatewayBehindScreen", () => ({
-  GatewayBehindScreen: () => <div>gateway behind</div>,
-}));
 vi.mock("@/components/DisconnectedOverlay", () => ({
   DisconnectedOverlay: () => <div>disconnected</div>,
 }));
@@ -89,7 +90,7 @@ const helloFrame = JSON.stringify({
   version: "0.2.0",
   min_supported: "0.0.0",
 });
-// min_supported (9.9.9) sits above the client (__APP_VERSION__), so the client is below the
+// min_supported (9.9.9) sits above the client (__CLIENT_VERSION__), so the client is below the
 // served window and must update the app (terminal).
 const appBehindHelloFrame = JSON.stringify({
   type: "hello",
@@ -97,7 +98,7 @@ const appBehindHelloFrame = JSON.stringify({
   min_supported: "9.9.9",
 });
 // within the window's floor but the gateway release (0.0.1) is older than the client
-// (__APP_VERSION__), so the client runs ahead and must block on a gateway update.
+// (__CLIENT_VERSION__), so the client runs ahead and must block on a gateway update.
 const gatewayBehindHelloFrame = JSON.stringify({
   type: "hello",
   version: "0.0.1",
@@ -115,14 +116,20 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  cleanup();
+});
+
+afterAll(() => {
   vi.unstubAllGlobals();
 });
 
 describe("ControllerProvider", () => {
-  it("takes over with AppBehindScreen when the client is below the served window", async () => {
-    const { findByText } = render(
+  it("renders AppBehindScreen with gateway context below the served window", async () => {
+    const { findByRole, findByText, queryByText } = render(
       <ControllerProvider>
-        <div>app body</div>
+        <GatewayProvider>
+          <div>app body</div>
+        </GatewayProvider>
       </ControllerProvider>,
     );
 
@@ -137,13 +144,19 @@ describe("ControllerProvider", () => {
       socket.onmessage?.({ data: appBehindHelloFrame });
     });
 
-    expect(await findByText("app behind")).toBeTruthy();
+    expect(await findByText("update required")).toBeTruthy();
+    expect(
+      await findByRole("img", { name: "can't reach gateway" }),
+    ).toBeTruthy();
+    expect(queryByText("app body")).toBeNull();
   });
 
-  it("takes over with GatewayBehindScreen when the client is newer than the gateway", async () => {
-    const { findByText } = render(
+  it("renders GatewayBehindScreen with gateway context when the client is newer", async () => {
+    const { findByRole, findByText, queryByText } = render(
       <ControllerProvider>
-        <div>app body</div>
+        <GatewayProvider>
+          <div>app body</div>
+        </GatewayProvider>
       </ControllerProvider>,
     );
 
@@ -158,7 +171,11 @@ describe("ControllerProvider", () => {
       socket.onmessage?.({ data: gatewayBehindHelloFrame });
     });
 
-    expect(await findByText("gateway behind")).toBeTruthy();
+    expect(await findByText("gateway is behind")).toBeTruthy();
+    expect(
+      await findByRole("img", { name: "can't reach gateway" }),
+    ).toBeTruthy();
+    expect(queryByText("app body")).toBeNull();
   });
 
   it("builds the controller and reduces hello+snapshot into the replica", async () => {

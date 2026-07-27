@@ -4,6 +4,7 @@ import tailwindcss from "@tailwindcss/vite";
 import basicSsl from "@vitejs/plugin-basic-ssl";
 import { defineConfig } from "vitest/config";
 import type { Plugin } from "vite";
+import { resolveClientVersion } from "@vesta/core/release-version";
 import path from "path";
 
 // Set by apps/desktop/scripts/dev.mjs: plain http on a fixed port so the
@@ -50,45 +51,53 @@ function installScriptsPlugin(): Plugin {
   };
 }
 
-export default defineConfig({
-  base: vestadHosted ? "/app/" : "/",
-  define: {
-    __APP_VERSION__: JSON.stringify(version),
-  },
-  plugins: [
-    react(),
-    tailwindcss(),
-    ...(useHttps ? [basicSsl()] : []),
-    installScriptsPlugin(),
-  ],
-  resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "./src"),
+export default defineConfig(({ command, mode }) => {
+  const developmentClient =
+    process.env.VITE_VESTA_DEV_BUILD === "true" ||
+    (command === "serve" && mode !== "test");
+  const clientVersion = resolveClientVersion(version, developmentClient);
+
+  return {
+    base: vestadHosted ? "/app/" : "/",
+    define: {
+      __APP_VERSION__: JSON.stringify(version),
+      __CLIENT_VERSION__: JSON.stringify(clientVersion),
     },
-  },
-  test: {
-    projects: [
-      {
-        extends: true,
-        test: {
-          include: ["src/**/*.test.tsx"],
-          environment: "jsdom",
-          setupFiles: ["./src/vitest.setup.ts"],
-        },
-      },
-      {
-        extends: true,
-        test: {
-          include: ["src/**/*.test.ts"],
-          environment: "node",
-        },
-      },
+    plugins: [
+      react(),
+      tailwindcss(),
+      ...(useHttps ? [basicSsl()] : []),
+      installScriptsPlugin(),
     ],
-  },
-  clearScreen: false,
-  server: {
-    port: desktopDev ? 1420 : 1430,
-    strictPort: true,
-    host: "0.0.0.0",
-  },
+    resolve: {
+      alias: {
+        "@": path.resolve(__dirname, "./src"),
+      },
+    },
+    test: {
+      projects: [
+        {
+          extends: true,
+          test: {
+            include: ["src/**/*.test.tsx"],
+            environment: "jsdom",
+            setupFiles: ["./src/vitest.setup.ts"],
+          },
+        },
+        {
+          extends: true,
+          test: {
+            include: ["src/**/*.test.ts"],
+            environment: "node",
+          },
+        },
+      ],
+    },
+    clearScreen: false,
+    server: {
+      port: desktopDev ? 1420 : 1430,
+      strictPort: true,
+      host: "0.0.0.0",
+    },
+  };
 });

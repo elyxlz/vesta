@@ -13,6 +13,13 @@ function parseParts(version: string): number[] | null {
   return nums.length > 0 ? nums : null
 }
 
+export function resolveClientVersion(
+  releaseVersion: string | undefined,
+  development: boolean,
+): string | undefined {
+  return development ? "dev" : releaseVersion
+}
+
 // 1 when `a` is newer, -1 when older, 0 when equal, null when either side is unparseable.
 export function compareReleaseVersions(a: string, b: string): number | null {
   const left = parseParts(a)

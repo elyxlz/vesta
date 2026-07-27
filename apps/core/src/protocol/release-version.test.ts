@@ -1,5 +1,23 @@
 import { describe, expect, it } from "vitest"
-import { clientAheadOfGateway, clientBelowMinimum, compareReleaseVersions } from "./release-version"
+import {
+  clientAheadOfGateway,
+  clientBelowMinimum,
+  compareReleaseVersions,
+  resolveClientVersion,
+} from "./release-version"
+
+describe("resolveClientVersion", () => {
+  it.each([
+    { release: "0.1.180", development: true, expected: "dev" },
+    { release: "0.1.180", development: false, expected: "0.1.180" },
+    { release: undefined, development: false, expected: undefined },
+  ])(
+    "resolves $release with development=$development to $expected",
+    ({ release, development, expected }) => {
+      expect(resolveClientVersion(release, development)).toBe(expected)
+    },
+  )
+})
 
 describe("compareReleaseVersions", () => {
   it.each([

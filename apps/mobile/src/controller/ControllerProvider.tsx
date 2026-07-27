@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import Constants from "expo-constants";
-import type { Controller } from "@vesta/core";
+import { resolveClientVersion, type Controller } from "@vesta/core";
 import { useSyncState } from "@vesta/core/react";
 import { useSession } from "@/session/SessionProvider";
 import { connectionKeyOf } from "@/session/session-model";
@@ -13,9 +13,12 @@ import { runReauthCheck } from "./reauth-poll";
 import { AppBehindScreen } from "./AppBehindScreen";
 import { GatewayBehindScreen } from "./GatewayBehindScreen";
 
-// This app's own release version, used to block running ahead of the gateway. Undefined (or
-// non-semver) fails open in core, so a dev build never blocks.
-const CLIENT_VERSION = Constants.expoConfig?.version ?? undefined;
+// Development variants drift with source rather than releases, so they deliberately fail open.
+// Production variants send their release and enforce the gateway's compatibility window.
+const CLIENT_VERSION = resolveClientVersion(
+  Constants.expoConfig?.version,
+  Constants.expoConfig?.extra?.appVariant === "development",
+);
 
 export { useController } from "./context";
 export { useSyncState };
