@@ -621,11 +621,13 @@ impl Client {
     /// `POST /agents/{name}/services/{service}/keys`. The `key` in the response is the secret,
     /// returned exactly once.
     pub fn mint_service_key(&self, name: &str, service: &str) -> Result<serde_json::Value, String> {
-        let (status, body) = self.mint_service_key_as(name, service, ProxyAuth::ApiKey)?;
-        if !(200..300).contains(&status) {
-            return Err(format!("mint {name}/{service}: HTTP {status}: {body}"));
-        }
-        serde_json::from_str(&body).map_err(|e| format!("parse error: {e}"))
+        let resp = self.post_json(
+            &format!("/agents/{name}/services/{service}/keys"),
+            &serde_json::json!({}),
+        )?;
+        resp.into_body()
+            .read_json()
+            .map_err(|e| format!("parse error: {e}"))
     }
 
     /// Mint with a chosen credential, returning `(status, body)` rather than mapping a refusal to
@@ -655,10 +657,7 @@ impl Client {
     }
 
     pub fn revoke_service_key(&self, name: &str, service: &str, id: &str) -> Result<(), String> {
-        let status = self.revoke_service_key_as(name, service, id, ProxyAuth::ApiKey)?;
-        if !(200..300).contains(&status) {
-            return Err(format!("revoke {name}/{service}/{id}: HTTP {status}"));
-        }
+        self.delete(&format!("/agents/{name}/services/{service}/keys/{id}"))?;
         Ok(())
     }
 
