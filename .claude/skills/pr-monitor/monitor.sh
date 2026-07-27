@@ -10,10 +10,12 @@
 #   DEPPR  <repo> <pr> <url>               a newly seen open dependabot PR
 # Usage: monitor.sh [owner/repo ...]   (defaults to the current repo)
 #
-# Dedup is a 👀 reaction placed on the comment or PR itself, not a local ledger,
-# so the state lives on GitHub and survives losing the working directory. The 👀
-# is posted here at emit time rather than by whatever consumes these lines, so an
-# event cannot re-fire every cycle while it waits to be handled.
+# Dedup is a 👀 reaction on the comment or PR itself, not a local ledger, so the
+# state lives on GitHub and survives losing the working directory. The consumer
+# posts it when it picks the event up, never this loop: an event claimed here but
+# never consumed, because the consumer was busy or restarted, would be lost with
+# no way to notice. Unclaimed events are simply re-emitted next cycle, so the
+# consumer must tolerate seeing one more than once.
 set -uo pipefail
 
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -45,8 +47,6 @@ react() {
     *) return 1 ;;
   esac
 }
-
-ack() { react "$1" "$2" "$3" eyes; }
 
 # Anyone who can comment on a public repo can reach this loop, so only trusted
 # commenters may drive the agent. An explicit login list wins when set;
@@ -87,8 +87,8 @@ emit_comments() {
         printf 'HIT\t%s\t%s\t%s\t%s\t%s\n' "$repo" "$kind" "$id" "$pr" "$url"
       else
         echo "monitor: ignoring $repo#$pr review from untrusted $author" >&2
+        echo "$id" >> "$ledger"
       fi
-      echo "$id" >> "$ledger"
       continue
     fi
 
@@ -104,11 +104,7 @@ emit_comments() {
       continue
     fi
 
-    if ack "$repo" "$kind" "$id"; then
-      printf 'HIT\t%s\t%s\t%s\t%s\t%s\n' "$repo" "$kind" "$id" "$pr" "$url"
-    else
-      echo "WARN: could not ack $repo $kind $id, not emitting" >&2
-    fi
+    printf 'HIT\t%s\t%s\t%s\t%s\t%s\n' "$repo" "$kind" "$id" "$pr" "$url"
   done < "$tsv"
 }
 
@@ -122,11 +118,7 @@ emit_open_prs() {
     -q '.[] | select(.isDraft | not) | select((([.reactionGroups[]? | select(.content=="EYES") | .users.totalCount] | add) // 0) == 0) | "\(if (.headRefName|startswith("dependabot/")) then "DEPPR" else "NEWPR" end)\t\(.number)\t\(.url)"' 2>/dev/null | \
   while IFS=$'\t' read -r kind num url; do
     [ -z "${num:-}" ] && continue
-    if ack "$repo" pr "$num"; then
-      printf '%s\t%s\t%s\t%s\n' "$kind" "$repo" "$num" "$url"
-    else
-      echo "WARN: could not ack $repo#$num, not emitting" >&2
-    fi
+    printf '%s\t%s\t%s\t%s\n' "$kind" "$repo" "$num" "$url"
   done
 }
 
