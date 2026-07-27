@@ -14,6 +14,7 @@ from wait_util import wait_for_condition
 import core.config as cfg
 import core.models as vm
 from core import lifecycle
+from core.loops import process_nightly_memory
 from core.notification import TYPE_COMPACTION_FOLLOWUP, Notification
 
 
@@ -27,8 +28,6 @@ def _setup(tmp_path, *, dreamer_hour=4):
 def test_skips_dream_before_first_start_done(tmp_path):
     """A brand-new agent (first_start_done=False) has nothing to curate, so a catch-up dream
     landing inside the morning window must not fire mid-onboarding."""
-    from core.loops import process_nightly_memory
-
     config = _setup(tmp_path)
     state = vm.State()
     assert state.persisted.first_start_done is False
@@ -42,8 +41,6 @@ def test_skips_dream_before_first_start_done(tmp_path):
 
 
 def test_drops_dream_notification(tmp_path):
-    from core.loops import process_nightly_memory
-
     config = _setup(tmp_path)
     state = vm.State()
     state.persisted.first_start_done = True
@@ -73,14 +70,29 @@ def test_drops_dream_notification(tmp_path):
         (4, dt.datetime(2025, 6, 14, 4, 0, 0), dt.datetime(2025, 6, 15, 7, 30, 0), 1),  # not done today, retry past the hour
         # Late dreamer_hour (22:00) must catch up after midnight: the window is circular (modulo-24), so
         # post-midnight hours (0-3) must not fall through and drop the dream for the day.
-        (22, dt.datetime(2025, 6, 14, 22, 0, 0), dt.datetime(2025, 6, 15, 1, 0, 0), 1),  # within 22:00 + 6h window
+        (22, dt.datetime(2025, 6, 13, 22, 30, 0), dt.datetime(2025, 6, 15, 1, 0, 0), 1),  # within 22:00 + 6h window
         (22, None, dt.datetime(2025, 6, 15, 14, 0, 0), 0),  # afternoon is outside the circular window
+        # Completion is judged against the night the window opened, not the calendar day, so a dream
+        # that finished before midnight suppresses the rest of its own night and only its own night.
+        (22, dt.datetime(2025, 6, 15, 22, 30, 0), dt.datetime(2025, 6, 16, 0, 0, 0), 0),  # same night, past midnight
+        (22, dt.datetime(2025, 6, 15, 22, 30, 0), dt.datetime(2025, 6, 16, 22, 0, 0), 1),  # the next night still fires
+        # Checks land at an arbitrary minute: a completion earlier in its hour still counts as this night's.
+        (4, dt.datetime(2025, 6, 15, 4, 10, 0), dt.datetime(2025, 6, 15, 5, 50, 0), 0),  # unaligned check
+        (4, None, dt.datetime(2025, 6, 15, 7, 30, 0), 1),  # never marked complete: retries inside the window
     ],
-    ids=["already-ran-today", "before-hour", "retry-past-hour", "catchup-past-midnight", "outside-window"],
+    ids=[
+        "already-ran-today",
+        "before-hour",
+        "retry-past-hour",
+        "catchup-past-midnight",
+        "outside-window",
+        "late-hour-done-before-midnight",
+        "late-hour-next-night",
+        "unaligned-check-same-night",
+        "never-marked-retries",
+    ],
 )
 def test_nightly_memory_scheduling(tmp_path, dreamer_hour, last_dreamer_run, now, expected_files):
-    from core.loops import process_nightly_memory
-
     config = _setup(tmp_path, dreamer_hour=dreamer_hour)
     state = vm.State()
     state.persisted.first_start_done = True
@@ -93,6 +105,65 @@ def test_nightly_memory_scheduling(tmp_path, dreamer_hour, last_dreamer_run, now
         process_nightly_memory(state=state, config=config)
 
     assert len(list(config.notifications_dir.glob("nightly_dream-*.json"))) == expected_files
+
+
+def _drop_dream(config, state, now):
+    with (
+        patch("core.loops._now", return_value=now),
+        patch("core.loops.load_prompt", return_value="dreamer prompt"),
+    ):
+        process_nightly_memory(state=state, config=config)
+
+
+def _dream_files(config):
+    return sorted(f.name for f in config.notifications_dir.glob("nightly_dream-*.json"))
+
+
+@pytest.mark.parametrize(
+    "dreamer_hour,first,second",
+    [
+        (4, dt.datetime(2025, 6, 15, 4, 0, 0), dt.datetime(2025, 6, 15, 4, 20, 0)),
+        (22, dt.datetime(2025, 6, 14, 22, 0, 0), dt.datetime(2025, 6, 15, 1, 0, 0)),
+    ],
+    ids=["same-day", "catchup-past-midnight"],
+)
+def test_redrop_over_a_pending_dream_queues_only_one(tmp_path, dreamer_hour, first, second):
+    """A re-drop while the dream is still pending must overwrite the pending file rather than queue a
+    second dream, including when a late dreamer hour catches up after midnight."""
+    config = _setup(tmp_path, dreamer_hour=dreamer_hour)
+    state = vm.State()
+    state.persisted.first_start_done = True
+
+    _drop_dream(config, state, first)
+    _drop_dream(config, state, second)
+
+    assert len(_dream_files(config)) == 1
+
+
+def test_unconsumed_dream_from_yesterday_does_not_suppress_today(tmp_path):
+    """The stem is per night, never fixed, so yesterday's unconsumed dream cannot swallow today's."""
+    config = _setup(tmp_path)
+    state = vm.State()
+    state.persisted.first_start_done = True
+
+    _drop_dream(config, state, dt.datetime(2025, 6, 15, 4, 0, 0))
+    _drop_dream(config, state, dt.datetime(2025, 6, 16, 4, 0, 0))
+
+    assert _dream_files(config) == ["nightly_dream-2025-06-15.json", "nightly_dream-2025-06-16.json"]
+
+
+def test_consumed_dream_is_recreated_by_the_catchup_retry(tmp_path):
+    """Once the dream is consumed and never marked complete, a later check inside the window drops it again."""
+    config = _setup(tmp_path)
+    state = vm.State()
+    state.persisted.first_start_done = True
+
+    _drop_dream(config, state, dt.datetime(2025, 6, 15, 4, 0, 0))
+    for dream in config.notifications_dir.glob("nightly_dream-*.json"):
+        dream.unlink()
+    _drop_dream(config, state, dt.datetime(2025, 6, 15, 7, 30, 0))
+
+    assert _dream_files(config) == ["nightly_dream-2025-06-15.json"]
 
 
 # --- mark_dreamer_complete: keep the session, then compact + restart (not a hard reset) ---

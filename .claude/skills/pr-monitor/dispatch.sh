@@ -7,8 +7,10 @@
 # what it already pushed and tried there. Context is not shared across PRs.
 #
 # Events are handled serially, so a burst cannot start overlapping runs against
-# the same session. The 👀 monitor.sh posts is a claim rather than a completion:
-# a failed run releases it, and the event surfaces again on the next cycle.
+# the same session. The 👀 is claimed here, when the event is picked up, and a
+# failed run releases it so the event surfaces again. The monitor re-emits
+# anything still unclaimed, so the same event can arrive more than once and the
+# claim is what makes handling it exactly once.
 set -uo pipefail
 
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -106,9 +108,36 @@ prune_sessions() {
   done
 }
 
+# Take the event, or report that somebody already has it. The monitor re-emits
+# whatever it has not seen claimed, so this is what keeps a repeated event from
+# being handled twice, and claiming here rather than at emit time is what keeps
+# an event that was never picked up from being lost.
+claim() {
+  local repo="$1" kind="$2" id="$3" base ledger
+  if [ "$kind" = "reviewbody" ]; then
+    ledger="$STATE_ROOT/${repo//\//__}/seen_reviewbody.txt"
+    mkdir -p "$(dirname "$ledger")"
+    touch "$ledger"
+    grep -qx "$id" "$ledger" 2>/dev/null && return 1
+    echo "$id" >> "$ledger"
+    return 0
+  fi
+  case "$kind" in
+    issue)  base="/repos/$repo/issues/comments/$id/reactions" ;;
+    review) base="/repos/$repo/pulls/comments/$id/reactions" ;;
+    pr)     base="/repos/$repo/issues/$id/reactions" ;;
+    *) return 1 ;;
+  esac
+  gh api "$base" -q '.[] | select(.content=="eyes") | .user.login' 2>/dev/null | grep -qxF "$ME" && return 1
+  gh api -X POST "$base" -f content=eyes >/dev/null 2>&1
+}
+
 handle() {
   local repo="$1" kind="$2" id="$3" pr="$4" prompt="$5"
   local sf sid out rc
+  if ! claim "$repo" "$kind" "$id"; then
+    return 0
+  fi
   sf="$(session_file "$repo" "$pr")"
   local args=(-p --model "$MODEL" --output-format json --dangerously-skip-permissions)
   [ -s "$sf" ] && args+=(--resume "$(cat "$sf")")
