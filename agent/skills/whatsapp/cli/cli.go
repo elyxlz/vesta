@@ -1372,6 +1372,12 @@ func cmdArchiveChat(args []string, wac *WhatsAppClient) (any, error) {
 	return cmdChatTarget("archive-chat", "Chat to archive (contact name, phone, group, or JID)", args, wac.ArchiveChat)
 }
 
+// sweptSuccessfully is the verdict of a bulk chat command: a sweep with nothing to do succeeds,
+// partial progress succeeds, and only a sweep that had work and completed none of it failed.
+func sweptSuccessfully(succeeded, failed int) bool {
+	return succeeded > 0 || failed == 0
+}
+
 func cmdArchiveAllChats(args []string, wac *WhatsAppClient) (any, error) {
 	if err := parseNoFlags("archive-all-chats", args); err != nil {
 		return nil, err
@@ -1380,7 +1386,7 @@ func cmdArchiveAllChats(args []string, wac *WhatsAppClient) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	result := map[string]any{"archived": archived}
+	result := map[string]any{"archived": archived, "success": sweptSuccessfully(archived, len(errs))}
 	if len(errs) > 0 {
 		result["errors"] = errs
 	}
@@ -1411,6 +1417,7 @@ func cmdClearAllChats(args []string, wac *WhatsAppClient) (any, error) {
 		}
 	}
 	result := map[string]any{
+		"success": sweptSuccessfully(deleted, failed),
 		"deleted": deleted,
 		"failed":  failed,
 		"total":   len(jids),

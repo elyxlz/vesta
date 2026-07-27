@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	waLog "go.mau.fi/whatsmeow/util/log"
 )
@@ -106,6 +107,57 @@ func TestSucceededWriteExitsZero(t *testing.T) {
 	body, exitCode := runTestCommand(t, startTestSocket(t, store), "remove-contact", "--identifier", "Alice")
 	if exitCode != 0 {
 		t.Errorf("a write reporting success:true must exit 0, got %d with body %v", exitCode, body)
+	}
+}
+
+// A wipe that cleared nothing must not look like a clean sweep at the shell. The chats are seeded
+// under identifiers that no longer resolve, which is what fails every delete in the loop.
+func TestBulkSweepThatClearedNothingExitsNonZero(t *testing.T) {
+	store := newTestStore(t)
+	for _, jid := range []string{"vanished chat one", "vanished chat two"} {
+		if err := store.StoreChat(jid, "Gone", time.Now()); err != nil {
+			t.Fatalf("failed to seed a chat: %v", err)
+		}
+	}
+	body, exitCode := runTestCommand(t, startTestSocket(t, store), "clear-all-chats")
+	if exitCode == 0 {
+		t.Errorf("a sweep that cleared none of two chats must exit nonzero, got exit 0 with body %v", body)
+	}
+	if body["deleted"] != float64(0) || body["failed"] != float64(2) || body["total"] != float64(2) {
+		t.Errorf("the failing sweep must keep reporting its counts, got %v", body)
+	}
+	if errs, ok := body["errors"].([]any); !ok || len(errs) != 2 {
+		t.Errorf("the failing sweep must keep one error per chat, got %v", body)
+	}
+}
+
+func TestBulkSweepWithNothingToClearExitsZero(t *testing.T) {
+	body, exitCode := runTestCommand(t, startTestSocket(t, newTestStore(t)), "clear-all-chats")
+	if exitCode != 0 {
+		t.Errorf("a sweep with no chats to clear must exit 0, got %d with body %v", exitCode, body)
+	}
+	if body["total"] != float64(0) {
+		t.Errorf("an empty sweep must report that it had nothing to do, got %v", body)
+	}
+}
+
+// The verdict the exit code above is wired to. archive-all-chats reports the same way, from
+// counts it can only produce over a live WhatsApp connection.
+func TestABulkSweepFailsOnlyWhenItCompletedNothing(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		succeeded int
+		failed    int
+		want      bool
+	}{
+		{"nothing to sweep", 0, 0, true},
+		{"every item failed", 0, 3, false},
+		{"one of three failed", 2, 1, true},
+		{"every item succeeded", 3, 0, true},
+	} {
+		if got := sweptSuccessfully(tc.succeeded, tc.failed); got != tc.want {
+			t.Errorf("%s: sweptSuccessfully(%d, %d) = %v, want %v", tc.name, tc.succeeded, tc.failed, got, tc.want)
+		}
 	}
 }
 
