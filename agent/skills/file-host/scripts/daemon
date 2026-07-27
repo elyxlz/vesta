@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+
+# File-host daemon lifecycle: start|stop|restart|status. Registered public because the
+# user's share links are fetched from outside the tunnel, and those links stay stable
+# across restarts because registration is idempotent.
+
+SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+
+exec "$HOME/agent/skills/vestad/scripts/daemon-lifecycle" "$@" \
+  --session file-host \
+  --service file-host \
+  --port-mode public \
+  -- /bin/sh -c "exec python3 '$SKILL_DIR/serve.py' --dir \"\$HOME/.file-host\" --port \"\$PORT\""

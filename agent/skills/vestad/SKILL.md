@@ -41,32 +41,66 @@ reach it: a web UI, an inbound webhook, an API the app calls.
 A background process that needs no inbound port is just a daemon: it does not register here,
 it only goes in the restart skill's `## Daemons` section.
 
-Skills that run a service register it with vestad to get a port, then start it. The
-`register-service` helper does the curl and prints the port (idempotent: same port per name,
-and re-registering without `--public` keeps the service's current exposure rather than
-revoking it, so a re-register that only wants the port is safe):
+## Giving a skill a daemon
 
-```bash
-# token-only service
-PORT=$(~/agent/skills/vestad/scripts/register-service tasks)
-# public service
-PORT=$(~/agent/skills/vestad/scripts/register-service dashboard --public)
+Every skill that runs a background process exposes the same four verbs,
+`daemon start|stop|restart|status`, and delegates the behavior to one shared runner,
+`~/agent/skills/vestad/scripts/daemon-lifecycle`. The runner owns the screen guard, port
+registration, readiness polling, stopping the process, and the JSON status, so a skill declares
+only what is its own:
+
+| flag | meaning |
+| --- | --- |
+| `--session NAME` | the screen session; not always the skill name (`spotify` runs `spotify-watch`) |
+| `--service NAME` | the name registered with vestad; not always the session name (`sign-service` registers as `sign`) |
+| `--port-mode MODE` | `none` (default), `private`, or `public` |
+| `--workdir DIR` | cd here before launching |
+| `--probe MODE` | `none` (default), or `http` for a 200 on the registered port |
+| `--stop-marker PATH` | written before stopping, so the daemon can tell a deliberate stop from a crash |
+| `--pidfile PATH` | the daemon's own pid file, so stop signals the process and a live pid counts as running |
+| `-- COMMAND ...` | what runs inside the session; it sees `$PORT` when a port was registered |
+
+A skill with a CLI adds a `daemon` subcommand that shells the runner, so the agent types
+`tasks daemon start`. A skill without one adds a `scripts/daemon` wrapper:
+
+```sh
+#!/bin/sh
+set -eu
+exec "$HOME/agent/skills/vestad/scripts/daemon-lifecycle" "$@" \
+  --session file-host \
+  --service file-host \
+  --port-mode public \
+  -- /bin/sh -c 'exec python3 ~/agent/skills/file-host/serve.py --port "$PORT"'
 ```
 
-So the service comes back after a container restart, add its startup command yourself, inside the
-single fenced block in the `## Daemons` section of `~/agent/skills/restart/SKILL.md`. Use a
-single line that re-registers and starts, e.g.:
+Two rules that are easy to miss:
+
+- **A daemon that ignores SIGHUP must pass `--pidfile`.** Quitting a screen session only sends
+  SIGHUP, so such a daemon outlives the quit, runs no shutdown path, and would read as stopped
+  while still alive, letting the next start stack a second copy.
+- **A daemon that writes a `daemon_died` notification must honor the stop marker**: check for it
+  on shutdown, clear it, and stay silent, so a deliberate stop is not reported as a crash.
+
+Then add the guarded startup line yourself, inside the single fenced block in the `## Daemons`
+section of `~/agent/skills/restart/SKILL.md`, so the daemon comes back after a container restart:
 
 ```bash
-running tasks || { PORT=$(~/agent/skills/vestad/scripts/register-service tasks) && screen -dmS tasks tasks serve --notifications-dir ~/agent/notifications --port $PORT; sleep 1; }
+running tasks || { tasks daemon start; sleep 1; }
+```
+
+`register-service` prints a port and is idempotent (same port per name, and re-registering
+without `--public` keeps the service's current exposure rather than revoking it). The runner
+calls it for you; call it directly only when you need a port outside a daemon:
+
+```bash
+PORT=$(~/agent/skills/vestad/scripts/register-service tasks)
+PORT=$(~/agent/skills/vestad/scripts/register-service dashboard --public)
 ```
 
 vestad's API may still be coming up when the daemon block runs, so `register-service` polls
 until vestad answers (up to `REGISTER_SERVICE_WAIT` seconds, default 30) and, if it never does,
-exits non-zero with a stderr message and no port. Keep the `&&` between registration and start:
-a failed registration short-circuits the chain, so the daemon never launches portless. Wrap the
-whole line in the `running <name> ||` guard the Daemons block defines, so re-running it (crash
-recovery re-enters the block) never stacks a duplicate daemon.
+exits non-zero with a stderr message and no port. The runner treats that as fatal and does not
+launch, because a daemon on a port vestad does not know about is worse than one that did not start.
 
 List registrations, unregister a service (also how you make a public service private: drop the
 registration, then register it again without `--public`), or tell connected clients to reload

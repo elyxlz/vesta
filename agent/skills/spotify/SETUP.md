@@ -66,5 +66,5 @@ Edit `~/.spotify/organize.json` to customize:
 
 If using the watch daemon, register it for restart (see [vestad](../vestad/SKILL.md)) with this startup command:
 ```
-screen -dmS spotify-watch spotify organize watch
+spotify daemon start
 ```

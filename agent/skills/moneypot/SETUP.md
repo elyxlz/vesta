@@ -4,36 +4,34 @@ The **CLI needs no setup**: `python3 ~/agent/skills/moneypot/moneypot.py ...` wo
 
 The **HTTP API is optional**. To run it as a vestad-proxied service:
 
-1. Register a private port and start the server (uses the `vestad` skill):
+1. Start it:
 
    ```bash
-   P=$(~/agent/skills/vestad/scripts/register-service moneypot) &&
-   screen -dmS moneypot bash -c "cd ~/agent/skills/moneypot && PYTHONUNBUFFERED=1 python3 server.py --port $P > ~/agent/logs/moneypot.log 2>&1"
+   ~/agent/skills/moneypot/scripts/daemon start
    ```
 
-   The server automatically accepts the vesta `AGENT_TOKEN`, and vestad also
-   requires that token before proxying a private service.
+   It registers a private port, which vestad proxies only to callers sending the vesta
+   `AGENT_TOKEN`. Manage it with `daemon start|stop|restart|status`, never raw `screen`.
 
-   **Public with a separate app key:** only use a public registration when an
-   external caller cannot send the vesta agent token. Generate and store a key:
+2. **Only if an external caller cannot send the agent token**, give that caller its own key.
+   The key file is what makes the service public, so create it and then restart:
 
    ```bash
-   KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))")
    install -m 600 /dev/null ~/agent/data/moneypot-api-key
-   printf '%s\n' "$KEY" > ~/agent/data/moneypot-api-key
-   P=$(~/agent/skills/vestad/scripts/register-service moneypot --public) &&
-   screen -dmS moneypot bash -c 'cd ~/agent/skills/moneypot && PYTHONUNBUFFERED=1 python3 server.py --api-key "$(cat ~/agent/data/moneypot-api-key)" --port '"$P"' > ~/agent/logs/moneypot.log 2>&1'
+   python3 -c "import secrets; print(secrets.token_urlsafe(24))" > ~/agent/data/moneypot-api-key
+   ~/agent/skills/moneypot/scripts/daemon restart
    ```
 
    Callers then send `X-API-Key: <key>` (or `Authorization: Bearer <key>`).
 
-2. Add the startup line to the `## Daemons` section of `~/agent/skills/restart/SKILL.md` so it comes back after a restart:
+3. Add this line yourself, inside the fenced block in the `## Daemons` section of
+   `~/agent/skills/restart/SKILL.md`:
 
-   ```bash
-   running moneypot || { P=$(~/agent/skills/vestad/scripts/register-service moneypot) && screen -dmS moneypot bash -c "cd ~/agent/skills/moneypot && PYTHONUNBUFFERED=1 python3 server.py --port $P > ~/agent/logs/moneypot.log 2>&1"; sleep 1; }
+   ```
+   running moneypot || { ~/agent/skills/moneypot/scripts/daemon start; sleep 1; }
    ```
 
-3. Verify:
+4. Verify:
 
    ```bash
    curl -s "$VESTAD_TUNNEL/agents/$AGENT_NAME/moneypot/health"

@@ -1,0 +1,26 @@
+#!/bin/sh
+set -eu
+
+# Moneypot daemon lifecycle: start|stop|restart|status. The API key file is the switch:
+# it exists exactly when an external caller cannot send the agent token, which is exactly
+# when the service has to be public. server.py reads MONEYPOT_API_KEY from the environment,
+# so there is one launch path rather than a private and a public variant.
+
+SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+KEY_FILE="$HOME/agent/data/moneypot-api-key"
+
+PORT_MODE=private
+if [ -f "$KEY_FILE" ]; then
+  PORT_MODE=public
+  MONEYPOT_API_KEY=$(cat "$KEY_FILE")
+  export MONEYPOT_API_KEY
+fi
+
+mkdir -p "$HOME/agent/logs"
+
+exec "$HOME/agent/skills/vestad/scripts/daemon-lifecycle" "$@" \
+  --session moneypot \
+  --service moneypot \
+  --port-mode "$PORT_MODE" \
+  --workdir "$SKILL_DIR" \
+  -- /bin/sh -c 'PYTHONUNBUFFERED=1 exec python3 server.py --port "$PORT" >> "$HOME/agent/logs/moneypot.log" 2>&1'

@@ -123,7 +123,7 @@ Change detection uses a state file at `~/.tricount/watch-state.json` mapping eac
 Run it in the background alongside the other daemons:
 
 ```bash
-screen -dmS tricount tricount serve --notifications-dir ~/agent/notifications
+tricount daemon start
 ```
 
 ## Notes

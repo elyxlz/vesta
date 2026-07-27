@@ -11,15 +11,17 @@ the agent image. Setup is two steps: a script, then one edit you make.
    here), downloads the whisper voice-transcription model, and starts the daemon
    now. Re-run it any time; it only does what's missing.
 
-2. **Register the restart line yourself**, so the daemon comes back after a
-   container restart. Add this line inside the fenced block in the `## Daemons`
-   section of `~/agent/skills/restart/SKILL.md`, matching the guard form already
-   there. `whatsapp start` brings the daemon up and waits until it answers, so
-   inbound notifications flow before you send anything:
-   ```
-   running whatsapp || { whatsapp start; sleep 1; }
-   ```
-   Skip this and WhatsApp is live now but silent after the next restart.
+It links the launcher onto PATH, warms the build cache (compile errors surface
+here), downloads the whisper voice-transcription model, and starts the daemon now.
+Re-run it any time; it only does what's missing.
+
+Then add this line yourself, inside the fenced block in the `## Daemons` section of
+`~/agent/skills/restart/SKILL.md`, so the daemon comes back after a container restart with
+notifications flowing before you send anything:
+
+```
+running whatsapp || { whatsapp daemon start; sleep 1; }
+```
 
 ## Linking an account
 
@@ -69,7 +71,7 @@ Sending is fine during the sync window; only stop/restart is locked.
 - `whatsapp status` is the one health check (linked, number, connected).
   `whatsapp daemon status` adds the internals: sync-window lock, pairing attempts,
   whatsmeow version.
-- Bring the daemon up (or confirm it is up) with `whatsapp start`; it is
+- Bring the daemon up (or confirm it is up) with `whatsapp daemon start`; it is
   idempotent and the restart skill runs it at boot.
 - Daemon won't start: run `whatsapp serve` in the foreground; the compile or
   serve error prints directly.

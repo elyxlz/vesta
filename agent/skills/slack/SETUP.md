@@ -43,7 +43,7 @@
    ```
 6. Start the daemon:
    ```bash
-   screen -dmS slack slack serve --notifications-dir ~/agent/notifications
+   slack daemon start
    ```
 7. Add that same line to the `## Daemons` section of `~/agent/skills/restart/SKILL.md` so the daemon survives restarts.
 8. The user invites Vesta to the channels that matter (`/invite @Vesta` in Slack); DMs work immediately. Send a test DM both ways to confirm.

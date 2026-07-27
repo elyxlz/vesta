@@ -33,6 +33,6 @@ running() { test -n "$(screen -ls 2>/dev/null | grep -E "[0-9]+\.$1[[:space:]]" 
 # stacking duplicate daemons.
 
 # Add guarded startup lines below, e.g.:
-#   running foo || { screen -dmS foo foo serve --notifications-dir ~/agent/notifications; sleep 1; }
-# The trailing `sleep 1` keeps back-to-back `screen -dmS` launches from racing and dropping sessions.
+#   running foo || { foo daemon start; sleep 1; }
+# The trailing `sleep 1` keeps back-to-back launches from racing and dropping sessions.
 ```

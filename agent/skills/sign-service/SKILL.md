@@ -25,7 +25,7 @@ A tiny "DocuSign-style" flow you host yourself, no third-party account:
 PORT=$(curl -sk -X POST https://localhost:$VESTAD_PORT/agents/$AGENT_NAME/services \
   -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' \
   -d '{"name":"sign","public":true}' | python3 -c "import sys,json;print(json.load(sys.stdin)['port'])")
-screen -dmS sign-service /root/agent/.venv/bin/python3 ~/agent/skills/sign-service/sign_server.py $PORT /tmp/sign-service/signature.png
+~/agent/skills/sign-service/scripts/daemon start
 # 2. Send the user:  $VESTAD_TUNNEL/agents/$AGENT_NAME/sign/
 # 3. On the signature_received notification, stamp + preview:
 uv run --with PyMuPDF python3 ~/agent/skills/sign-service/stamp.py \
