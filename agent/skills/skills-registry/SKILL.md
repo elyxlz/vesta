@@ -85,10 +85,11 @@ the fleet is driven the same way, `<skill> daemon start|stop|restart|status`, de
 `~/agent/skills/vestad/scripts/daemon-lifecycle`, which owns the guard against duplicates, the
 port registration, waiting until the daemon is actually up, and stopping it cleanly. A skill with
 a CLI adds a `daemon` subcommand; a skill without one adds a `scripts/daemon` wrapper plus a
-launcher of the skill's own name on PATH. Read the `vestad` skill for the flag list and a worked
-example, including the two things the runner cannot work out for itself: a daemon that ignores
-SIGHUP has to hand over its pid file, and a daemon that reports its own death has to recognize a
-deliberate stop.
+launcher of the skill's own name, which agent startup puts on PATH. Register the port private
+unless the service is a page that must load with no credential at all. Read the `vestad` skill
+for the flag list and a worked example, including the two things the runner cannot work out for
+itself: a daemon that ignores SIGHUP has to hand over its pid file, and a daemon that reports its
+own death has to recognize a deliberate stop.
 
 Then add the guarded startup line yourself to the `## Daemons` section of the `restart` skill, so
 the daemon comes back after a container restart.

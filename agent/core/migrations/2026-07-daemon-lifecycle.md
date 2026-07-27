@@ -15,18 +15,17 @@ grep -n 'screen -dmS\|register-service\|whatsapp start' ~/agent/skills/restart/S
 
 If grep finds nothing, skip to the final step.
 
-### 2. Put the launchers on PATH
-
-`moneypot`, `file-host`, `sign-service` and `dashboard` run their daemons through a command of the
-same name. Link whichever of them you use, so the lines you write in the next step resolve. Safe to
-re-run, and harmless for a skill you do not use:
+### 2. Confirm the lifecycle is on disk before converting anything
 
 ```bash
-mkdir -p ~/.local/bin
-for s in moneypot file-host sign-service dashboard; do
-  [ -f ~/agent/skills/$s/$s ] && ln -sf ~/agent/skills/$s/$s ~/.local/bin/$s
-done
+ls ~/agent/skills/vestad/scripts/daemon-lifecycle
 ```
+
+If that path does not exist, your workspace sync has not merged yet, so the commands the next step
+writes would not resolve. STOP here and do NOT call `mark_migration_applied`: this migration runs
+again on your next boot, and converting before the sync would leave every daemon line pointing at a
+command that is not there. Nothing else is needed once it does exist, since agent startup puts each
+skill's command on PATH on every boot.
 
 ### 3. Replace each launch, keeping your own guard
 
@@ -69,17 +68,7 @@ command applies the same defaults, and the port is registered for you.
 
 `whatsapp start` keeps working, so that row can never break you whether you convert it or not.
 
-### 4. Check moneypot's exposure, if you run it
-
-The API key file now decides whether moneypot is public: it registers public when
-`~/agent/data/moneypot-api-key` exists, private when it does not.
-
-- Ran it privately: nothing changes.
-- Ran it publicly with an API key: nothing changes, same port and same key, now read from the file.
-- Ran it publicly with NO key: it was serving an open API through your tunnel. It becomes private.
-  If an external caller genuinely needs in, create the key file and give that caller the key.
-
-### 5. Verify, without restarting anything
+### 4. Verify, without restarting anything
 
 For each daemon you converted, confirm the new command sees the daemon already running. Daemons are
 identified by their screen session, so this works against a session started the old way:
@@ -94,6 +83,6 @@ nothing is dropped, so a daemon mid-work keeps working.
 If one reports `"running":false` while `screen -ls` shows the session alive, your session name
 differs from that skill's default; leave that line alone and keep the launch you had.
 
-### 6. Mark this migration applied
+### 5. Mark this migration applied
 
 Call `mark_migration_applied` with `name="2026-07-daemon-lifecycle"`.

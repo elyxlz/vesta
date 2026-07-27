@@ -241,5 +241,6 @@ def test_setup_starts_daemon_and_never_edits_the_restart_skill(tmp_path):
     # The agent owns this file: only it can match the guard form actually in use.
     assert restart_skill.read_text() == original
 
-    line = "running dashboard || { ~/agent/skills/dashboard/scripts/daemon start; sleep 1; }"
+    # The daemon is driven by name, which is how the restart skill's own guard block reads it.
+    line = "running dashboard || { dashboard daemon start; sleep 1; }"
     assert line in result.stdout

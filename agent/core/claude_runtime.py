@@ -75,29 +75,43 @@ def _replace_skill_links(link_dir: pl.Path, optional_dir: pl.Path, core_dir: pl.
                 link_skill(skill_dir)
 
 
-def _link_vestad_commands(bin_dir: pl.Path, scripts_dir: pl.Path) -> None:
-    """Put the vestad helper scripts on PATH, one symlink at a time.
+def _command_sources(skills_dir: pl.Path) -> dict[str, pl.Path]:
+    """Maps command name to the script it runs: the vestad helpers, then each skill's launcher."""
+    scripts_dir = skills_dir / "vestad/scripts"
+    sources = {command: scripts_dir / script for command, script in _VESTAD_COMMANDS.items()}
+    if skills_dir.is_dir():
+        for skill_dir in sorted(skills_dir.iterdir()):
+            launcher = skill_dir / skill_dir.name
+            if skill_dir.is_dir() and launcher.is_file():
+                sources.setdefault(skill_dir.name, launcher)
+    return sources
+
+
+def _link_skill_commands(bin_dir: pl.Path, skills_dir: pl.Path) -> None:
+    """Put the vestad helpers and every skill launcher on PATH, one symlink at a time.
 
     The bin dir is shared with uv tool installs, so only our own links are touched: a path held
     by anything else keeps it, and a link of ours is rewritten so a moved script leaves nothing
-    dangling behind it.
+    dangling behind it. Linking here rather than in a skill's setup means a command resolves on
+    the boot after its script reaches the checkout, with no setup step to re-run. A launcher is
+    linked whether or not its skill is active, matching the CLIs a skill installs, because the
+    checkout keeps every skill's files on disk either way.
     """
     bin_dir.mkdir(parents=True, exist_ok=True)
-    for command, script in _VESTAD_COMMANDS.items():
-        source = scripts_dir / script
+    for command, source in _command_sources(skills_dir).items():
         link = bin_dir / command
         if not source.is_file():
             continue
-        if link.is_symlink() and link.readlink().parent == scripts_dir:
+        if link.is_symlink() and skills_dir in link.readlink().parents:
             link.unlink()
         elif link.is_symlink() or link.exists():
-            logger.warning(f"leaving {link} alone: occupied by something other than the vestad helper link")
+            logger.warning(f"leaving {link} alone: occupied by something other than a skill command link")
             continue
         link.symlink_to(source)
 
 
 def reconcile_claude_runtime(config: cfg.VestaConfig) -> None:
-    """Seed active skills, rebuild their symlinks, put the vestad helpers on PATH, and ensure Claude has default settings."""
+    """Seed active skills, rebuild their symlinks, put the skill commands on PATH, and ensure Claude has default settings."""
     legacy_active = config.data_dir / "active-skills.txt"
     _bridge_legacy_sparse_skills(config, legacy_active)
 
@@ -112,7 +126,7 @@ def reconcile_claude_runtime(config: cfg.VestaConfig) -> None:
     claude_dir = pl.Path.home() / ".claude"
     claude_dir.mkdir(parents=True, exist_ok=True)
     _replace_skill_links(claude_dir / "skills", config.agent_dir / "skills", config.agent_dir / "core/skills", active)
-    _link_vestad_commands(pl.Path.home() / ".local/bin", config.agent_dir / "skills/vestad/scripts")
+    _link_skill_commands(pl.Path.home() / ".local/bin", config.agent_dir / "skills")
 
     settings = claude_dir / "settings.json"
     if not settings.exists():

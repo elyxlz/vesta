@@ -9,10 +9,6 @@ set -eu
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# `dashboard` on PATH, so the daemon is driven by name rather than by script path.
-mkdir -p "$HOME/.local/bin"
-ln -sf "$DIR/../dashboard" "$HOME/.local/bin/dashboard"
-
 cd "$DIR/../app"
 
 if [ ! -d node_modules ]; then
@@ -42,4 +38,4 @@ echo "Dashboard setup complete."
 echo
 echo "Remaining step, yours to do: add this line inside the fenced Daemons block"
 echo "of ~/agent/skills/restart/SKILL.md, matching the guard form already there."
-echo '  running dashboard || { ~/agent/skills/dashboard/scripts/daemon start; sleep 1; }'
+echo '  running dashboard || { dashboard daemon start; sleep 1; }'

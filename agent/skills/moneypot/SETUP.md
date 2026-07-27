@@ -1,12 +1,6 @@
 # Moneypot setup
 
-Put `moneypot` on PATH (idempotent, safe to re-run):
-
-```bash
-mkdir -p ~/.local/bin && ln -sf ~/agent/skills/moneypot/moneypot ~/.local/bin/moneypot
-```
-
-The **CLI then needs no further setup**: `moneypot ...` works immediately and creates `~/agent/data/moneypot.json` on first write.
+The **CLI needs no setup**: `moneypot ...` works immediately and creates `~/agent/data/moneypot.json` on first write.
 
 The **HTTP API is optional**. To run it as a vestad-proxied service:
 

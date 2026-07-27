@@ -20,7 +20,8 @@ from `/run/vestad-env`, already exported into the environment. The API is
 This skill's helpers are commands: `register-service`, `service-key`, `user-notification`, and
 `vestad-health`. Agent startup links each one onto `PATH` from this skill's `scripts/` directory
 (`vestad-health` is `scripts/health`), so a full path like
-`~/agent/skills/vestad/scripts/register-service` runs exactly the same script.
+`~/agent/skills/vestad/scripts/register-service` runs exactly the same script. The same startup
+step links every skill's own launcher, so a skill's command resolves with no setup of its own.
 
 Restarting or stopping this agent is not a curl: use the `restart_vesta` / `stop_vesta`
 tools, which call vestad's self-scoped lifecycle endpoints.
@@ -38,8 +39,9 @@ bug, not an outage. The local config/provider API is a separate thing: plain htt
 
 ## Services (get a port, keep it alive)
 
-A service is a port inside the container that vestad reverse-proxies, optionally public
-(reachable through the tunnel without a token) or token-gated. Bind it to `0.0.0.0`: vestad
+A service is a port inside the container that vestad reverse-proxies, either public (loads
+through the tunnel with no credential at all) or private (gated by vestad, which accepts the api
+key, an access token, or a service key minted for that service). Bind it to `0.0.0.0`: vestad
 reaches it over this container's network, so a `127.0.0.1` bind is invisible to the proxy even
 with the port registered correctly. Register one when something outside the process needs to
 reach it: a web UI, an inbound webhook, an API the app calls.
@@ -83,8 +85,10 @@ only what is its own:
 
 Every skill is driven by name, `<skill> daemon start`, never by a script path. A skill with a CLI
 adds a `daemon` subcommand that shells the runner. A skill without one adds a `scripts/daemon`
-wrapper plus a launcher of the skill's own name that forwards to it, linked onto PATH at setup
-(`ln -sf ~/agent/skills/<skill>/<skill> ~/.local/bin/<skill>`). The wrapper:
+wrapper plus a launcher of its own name at `~/agent/skills/<skill>/<skill>` that forwards to it,
+which agent startup puts on PATH. Pass `--port-mode private` unless the service is a page that
+must load with no credential at all; a private service is reached with a minted service key. The
+wrapper:
 
 ```sh
 #!/bin/sh

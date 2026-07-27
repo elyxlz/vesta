@@ -664,6 +664,45 @@ def test_agent_startup_links_a_helper_that_arrives_later(tmp_path):
     assert _bin(home, "service-key").readlink() == _target(home, "service-key")
 
 
+def _launcher(home, skill):
+    return home / "agent/skills" / skill / skill
+
+
+def test_agent_startup_puts_a_skill_launcher_on_path(tmp_path):
+    """A skill driven by name needs its own launcher on PATH, not just the vestad helpers."""
+    home = _bin_box(tmp_path)
+    _launcher(home, "whatsapp").write_text("#!/usr/bin/env bash\necho whatsapp\n")
+    assert _run_agent_startup(home).returncode == 0
+    assert _bin(home, "whatsapp").readlink() == _launcher(home, "whatsapp").resolve()
+
+
+def test_agent_startup_links_a_launcher_that_arrives_with_the_sync(tmp_path):
+    """Launchers live in the checkout, so one lands a boot later than the migration that
+    writes `<skill> daemon start` into the restart skill. The next boot links it."""
+    home = _bin_box(tmp_path)
+    assert _run_agent_startup(home).returncode == 0
+    assert not _bin(home, "whatsapp").is_symlink()
+    _launcher(home, "whatsapp").write_text("#!/usr/bin/env bash\necho whatsapp\n")
+    assert _run_agent_startup(home).returncode == 0
+    assert _bin(home, "whatsapp").readlink() == _launcher(home, "whatsapp").resolve()
+
+
+def test_agent_startup_links_a_launcher_of_an_inactive_skill(tmp_path):
+    """The checkout keeps every skill on disk, so a command resolves whether or not the skill
+    is active, exactly as an installed CLI does."""
+    home = _bin_box(tmp_path)
+    _launcher(home, "microsoft").write_text("#!/usr/bin/env bash\necho microsoft\n")
+    assert _run_agent_startup(home).returncode == 0
+    assert "microsoft" not in _active(home)
+    assert _bin(home, "microsoft").readlink() == _launcher(home, "microsoft").resolve()
+
+
+def test_agent_startup_ignores_a_skill_with_no_launcher(tmp_path):
+    home = _bin_box(tmp_path)
+    assert _run_agent_startup(home).returncode == 0
+    assert not _bin(home, "tasks").exists()  # tasks ships a CLI, installed as its own console script
+
+
 # --- the cone->flat boot migration spine (2026-08-flat-checkout.md) ----------------------
 
 
