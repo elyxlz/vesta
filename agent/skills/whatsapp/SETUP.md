@@ -11,17 +11,13 @@ the agent image. Setup is two steps: a script, then one edit you make.
    here), downloads the whisper voice-transcription model, and starts the daemon
    now. Re-run it any time; it only does what's missing.
 
-It links the launcher onto PATH, warms the build cache (compile errors surface
-here), downloads the whisper voice-transcription model, and starts the daemon now.
-Re-run it any time; it only does what's missing.
-
-Then add this line yourself, inside the fenced block in the `## Daemons` section of
-`~/agent/skills/restart/SKILL.md`, so the daemon comes back after a container restart with
-notifications flowing before you send anything:
-
-```
-running whatsapp || { whatsapp daemon start; sleep 1; }
-```
+2. **Register the restart line yourself**, so the daemon comes back after a container
+   restart with notifications flowing before you send anything. Add this line inside the
+   fenced block in the `## Daemons` section of `~/agent/skills/restart/SKILL.md`, matching
+   the guard form already there:
+   ```
+   running whatsapp || { whatsapp daemon start; sleep 1; }
+   ```
 
 ## Linking an account
 
