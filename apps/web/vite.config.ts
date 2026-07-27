@@ -51,6 +51,9 @@ function installScriptsPlugin(): Plugin {
   };
 }
 
+// __APP_VERSION__ is the release the UI shows; __CLIENT_VERSION__ is what the sync version gate
+// compares, and it drops to the unparseable "dev" sentinel for dev servers and debug vestad
+// bundles. `mode !== "test"` keeps vitest on the real version, so the gate's tests still assert.
 export default defineConfig(({ command, mode }) => {
   const developmentClient =
     process.env.VITE_VESTA_DEV_BUILD === "true" ||

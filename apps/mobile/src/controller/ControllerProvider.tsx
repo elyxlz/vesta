@@ -14,7 +14,7 @@ import { AppBehindScreen } from "./AppBehindScreen";
 import { GatewayBehindScreen } from "./GatewayBehindScreen";
 
 // Development variants drift with source rather than releases, so they deliberately fail open.
-// Production variants send their release and enforce the gateway's compatibility window.
+// Production variants compare their release against the gateway's compatibility window.
 const CLIENT_VERSION = resolveClientVersion(
   Constants.expoConfig?.version,
   Constants.expoConfig?.extra?.appVariant === "development",

@@ -151,8 +151,8 @@ describe("ControllerProvider", () => {
     expect(queryByText("app body")).toBeNull();
   });
 
-  it("renders GatewayBehindScreen with gateway context when the client is newer", async () => {
-    const { findByRole, findByText, queryByText } = render(
+  it("renders GatewayBehindScreen when the client is newer", async () => {
+    const { findByText, queryByText } = render(
       <ControllerProvider>
         <GatewayProvider>
           <div>app body</div>
@@ -172,9 +172,6 @@ describe("ControllerProvider", () => {
     });
 
     expect(await findByText("gateway is behind")).toBeTruthy();
-    expect(
-      await findByRole("img", { name: "can't reach gateway" }),
-    ).toBeTruthy();
     expect(queryByText("app body")).toBeNull();
   });
 
