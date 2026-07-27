@@ -45,20 +45,37 @@ Work through the diff yourself. Delegate to a subagent only when the diff is gen
 
 ## Reporting
 
-Post one comment, and keep it as short as the substance allows. A maintainer reads it to decide whether to merge, so cover what bears on that decision and cut the rest: no walkthrough of the diff, no restating the PR description back, no summary section repeating what you just said.
+Post one comment. Engineers read it, not markers: it is a bug list and a verdict, not an essay.
 
-Findings first, ordered by what changes the decision. Cite `file:line`, say what breaks and the input or state that breaks it, and mark what you checked empirically as checked. `NOT YET` means right in substance but blocked on something mechanical like CI or a conflict, so the reader can tell "wrong" from "wait".
+The whole comment is a one-line verdict plus one bullet per finding. Nothing else. **80 words is a normal length. Past 150 you are padding.**
+
+Each finding is **one sentence**: `file:line`, what breaks, what triggers it. Two only when the trigger genuinely needs it.
+
+Never write any of these:
+
+- a paragraph narrating your review ("I audited the claim that...", "Both mutation claims reproduce...")
+- a list of what you checked that turned out fine, in any form
+- a restatement of the PR description or the issue
+- hedging on a finding you already decided to report
+
+`NOT YET` means right in substance, blocked on something mechanical like CI or a conflict.
 
 <example>
-**Fixes #412.** The retry wrapper is on the right call, and the backoff is bounded.
+Fixes #412.
 
-**Findings**
-- `core/loops.py:88` deletes the notification file before the send is confirmed, so a failed send loses the message. Reproduced by pointing it at a closed socket.
-- `core/loops.py:120` catches bare `Exception` around the whole batch, so one bad notification silently drops the rest of it.
+- `core/loops.py:88` deletes the notification file before the send is confirmed, so a failed send loses the message.
+- `core/loops.py:120` catches bare `Exception` around the whole batch, so one bad notification drops the rest.
 
-**Checked and fine:** concurrent batches (ran `uv run pytest tests/test_notifications.py`), empty batch, 10k-item batch.
+Verdict: NOT YET, the delete ordering drops messages on send failure, two-line fix.
+</example>
 
-Verdict: NOT YET, the file-delete ordering will drop messages under a send failure, and it is a two-line fix.
+<example>
+Fixes #1529, in one place rather than twelve edits.
+
+- `groups.go:84`, `chat_ops.go:124` return false after the remote write landed, so both now exit 1 when the WhatsApp side succeeded.
+- `link.go:245` decodes `SocketResponse` separately and did not get the new rule, so a `success`-carrying command routed through it would lose the body.
+
+Verdict: MERGE once the vestad jobs land.
 </example>
 
 Judge the change on its merits even when you wrote the code yourself, and say `DO NOT MERGE` when you believe it. A verdict that always says MERGE is worth less than no verdict.
@@ -73,4 +90,9 @@ End the comment with this exact line, alone on the last line, after everything e
 
 It renders as nothing, and it is what stops the loop treating your own comment as a fresh request. The footer below names the trigger, and you post under an account that also belongs to a human, so without that line your comment wakes you again on the next poll.
 
-Nobody asked for this check, so close the comment by saying how to ask for the next thing. Keep it to a couple of lines under a `---` rule: mentioning `@vestabot` in a comment on the PR is what reaches you, name the two or three things worth asking for here (re-checking after new commits, running `polish-pr`, fixing red CI), and say that only maintainers can trigger you so a drive-by contributor is not left waiting on a reply that will never come.
+Nobody asked for this check, so close with one line under a `---` rule saying how to ask for the next thing. One line, not a paragraph:
+
+```
+---
+Maintainers: mention `@vestabot` to re-check, run `polish-pr`, or fix red CI.
+```
