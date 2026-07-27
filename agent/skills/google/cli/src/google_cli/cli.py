@@ -12,7 +12,6 @@ from . import auth_commands, calendar, gmail, monitor, notifications
 from .config import Config
 from .context import GoogleContext
 
-
 DAEMON_LIFECYCLE = Path.home() / "agent" / "skills" / "vestad" / "scripts" / "daemon-lifecycle"
 
 
