@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# Mint, list, and revoke service keys for this agent's own services. A service key
+# is the credential that opens one private service for someone or something holding
+# no Vesta login; vestad stores only its hash and returns the secret exactly once,
+# so `mint` prints the key alone on stdout, ready to drop straight into a link.
+# This is an on-demand call, made when sharing something, never from the restart
+# skill's daemon block, so it makes a single request and reports what vestad said
+# rather than waiting for an API that is still coming up.
+#
+# Usage: service-key mint <service> [--label <text>] [--ttl <secs>] [--never-expires]
+#        service-key list <service>
+#        service-key revoke <service> <id>
+#   KEY=$(~/agent/skills/vestad/scripts/service-key mint expenses --label accountant)
+#   echo "$VESTAD_TUNNEL/agents/$AGENT_NAME/expenses/k/$KEY/"
+#
+# Omit --ttl for vestad's 30 day default; --never-expires wins over any --ttl.
+
+set -euo pipefail
+
+USAGE="Usage: service-key mint <service> [--label <text>] [--ttl <secs>] [--never-expires]
+       service-key list <service>
+       service-key revoke <service> <id>"
+
+COMMAND="${1:?$USAGE}"
+SERVICE="${2:?$USAGE}"
+shift 2
+
+# BOX_HOST comes from /run/vestad-env; vestad is the one owner of how to reach it
+# (it runs natively on the host, never in a container). set -u above fails loudly if
+# it's missing, same as an unset VESTAD_PORT/AGENT_NAME already would.
+BASE="https://$BOX_HOST:$VESTAD_PORT/agents/$AGENT_NAME/services/$SERVICE/keys"
+
+# Runs one curl and sets STATUS + BODY. A refused connection reports status 000, so
+# an unreachable vestad and a rejected request leave on the same path.
+call_vestad() {
+    local response
+    response=$(curl -sk -w '\n%{http_code}' "$@" -H "X-Agent-Token: $AGENT_TOKEN") || response=$'\n000'
+    STATUS="${response##*$'\n'}"
+    BODY="${response%$'\n'*}"
+}
+
+# On anything but a 2xx, print vestad's own message and stop with nothing on stdout.
+# Its 404 names the service that is not registered, the common and actionable case.
+exit_unless_ok() {
+    if [ "$STATUS" -ge 200 ] && [ "$STATUS" -lt 300 ]; then
+        return
+    fi
+    local message
+    message=$(printf '%s' "$BODY" | python3 -c \
+        'import sys, json
+try:
+    print(json.load(sys.stdin)["error"])
+except Exception:
+    sys.exit(1)' 2>/dev/null) || message=""
+    if [ -z "$message" ]; then
+        message="vestad returned no message (HTTP $STATUS)"
+    fi
+    echo "service-key: $message" >&2
+    exit 1
+}
+
+case "$COMMAND" in
+mint)
+    LABEL=""
+    TTL=""
+    NEVER=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --label) LABEL="${2:?--label takes text}"; shift 2 ;;
+            --ttl) TTL="${2:?--ttl takes seconds}"; shift 2 ;;
+            --never-expires) NEVER="1"; shift ;;
+            *) echo "service-key: unknown option '$1'" >&2; echo "$USAGE" >&2; exit 2 ;;
+        esac
+    done
+    case "$TTL" in
+        *[!0-9]*) echo "service-key: --ttl takes whole seconds, got '$TTL'" >&2; exit 2 ;;
+    esac
+    REQUEST=$(python3 -c \
+        'import sys, json
+label, ttl, never = sys.argv[1:4]
+body = {}
+if label:
+    body["label"] = label
+if never:
+    body["never_expires"] = True
+elif ttl:
+    body["ttl_secs"] = int(ttl)
+print(json.dumps(body))' "$LABEL" "$TTL" "$NEVER")
+    call_vestad -X POST "$BASE" -H 'Content-Type: application/json' -d "$REQUEST"
+    exit_unless_ok
+    KEY=$(printf '%s' "$BODY" | python3 -c \
+        'import sys, json
+try:
+    print(json.load(sys.stdin)["key"])
+except Exception:
+    sys.exit(1)' 2>/dev/null) || KEY=""
+    if [ -z "$KEY" ]; then
+        echo "service-key: vestad answered without a key" >&2
+        exit 1
+    fi
+    printf '%s\n' "$KEY"
+    ;;
+list)
+    call_vestad "$BASE"
+    exit_unless_ok
+    printf '%s\n' "$BODY"
+    ;;
+revoke)
+    ID="${1:?Usage: service-key revoke <service> <id>}"
+    call_vestad -X DELETE "$BASE/$ID"
+    exit_unless_ok
+    ;;
+*)
+    echo "service-key: unknown command '$COMMAND'" >&2
+    echo "$USAGE" >&2
+    exit 2
+    ;;
+esac

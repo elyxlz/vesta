@@ -65,6 +65,9 @@ so pass `never_expires` for a caller you do not want to re-key. A `GET` on that 
 the live keys, and `curl -sk -X DELETE .../services/moneypot/keys/<id>` with the same header
 revokes one.
 
+Once your workspace sync has merged, `~/agent/skills/vestad/scripts/service-key mint moneypot`
+is the helper that does this same call and prints the key alone.
+
 Your server picks up the cleaned line at its next start, so if a caller needs its key working
 right away, bring the daemon back on the converged line once your workspace sync has merged.
 Tell the user which caller you re-keyed, and never paste a key into a chat you would not paste

@@ -91,21 +91,25 @@ that opens one without handing out the app's api key. A key is scoped to one ser
 agent, is stored only as a hash, expires in 30 days by default, and can be revoked at any
 time. Mint one when someone or something that has no Vesta login needs to reach a service:
 
-```bash
-BASE=https://$BOX_HOST:$VESTAD_PORT/agents/$AGENT_NAME/services
-curl -sk -X POST "$BASE/<service>/keys" -H "X-Agent-Token: $AGENT_TOKEN" \
-  -H 'Content-Type: application/json' -d '{"label": "who it is for", "ttl_secs": 604800}'
-```
-
-It returns `{"id": ..., "key": ..., "expires_at": ...}`; the `key` is shown exactly once, so
-put it straight into the link. Omit `ttl_secs` for the default, or pass
-`{"never_expires": true}` for a long-lived consumer. List the live keys with a `GET` on the
-same path (ids and labels only, never the secrets), and revoke one by id:
+The `service-key` helper does the curl. `mint` prints the secret alone, because vestad shows
+it exactly once, so put it straight into the link:
 
 ```bash
-curl -sk "$BASE/<service>/keys" -H "X-Agent-Token: $AGENT_TOKEN"
-curl -sk -X DELETE "$BASE/<service>/keys/<id>" -H "X-Agent-Token: $AGENT_TOKEN"
+KEY=$(~/agent/skills/vestad/scripts/service-key mint expenses --label accountant)
+echo "$VESTAD_TUNNEL/agents/$AGENT_NAME/expenses/k/$KEY/"
 ```
+
+Add `--ttl <secs>` for a shorter life than the 30 day default, or `--never-expires` for a
+long-lived consumer. List the live keys (ids and labels only, never the secrets) and revoke
+one by id:
+
+```bash
+~/agent/skills/vestad/scripts/service-key list expenses
+~/agent/skills/vestad/scripts/service-key revoke expenses <id>
+```
+
+Minting fails loudly rather than printing an empty key: if the service is not registered,
+the helper says so and exits non-zero, so register it first.
 
 ## Public URLs (how to reach a service from outside)
 

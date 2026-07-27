@@ -17,16 +17,13 @@ The **HTTP API is optional**. To run it as a vestad-proxied service:
    **An external caller** gets its own service key, scoped to moneypot and revocable:
 
    ```bash
-   curl -sk -X POST https://$BOX_HOST:$VESTAD_PORT/agents/$AGENT_NAME/services/moneypot/keys \
-     -H "X-Agent-Token: $AGENT_TOKEN" -H 'Content-Type: application/json' \
-     -d '{"label": "budget app"}'
+   KEY=$(~/agent/skills/vestad/scripts/service-key mint moneypot --label "budget app")
    ```
 
-   The reply is `{"id": ..., "key": ..., "expires_at": ...}`, and `key` is shown this once
-   only. The caller sends it as `Authorization: Bearer <key>` or as `?token=<key>`. A key
-   lasts 30 days unless the body asks for `{"ttl_secs": 604800}` or
-   `{"never_expires": true}`. List the live keys with a `GET` on that same URL, and revoke
-   one with `curl -sk -X DELETE .../services/moneypot/keys/<id>` plus the same header.
+   The secret is printed once and never again, so hand it to the caller as you mint it. The
+   caller sends it as `Authorization: Bearer <key>` or as `?token=<key>`. A key lasts 30 days
+   unless you pass `--ttl <secs>` or `--never-expires`. List the live keys with
+   `service-key list moneypot`, and revoke one with `service-key revoke moneypot <id>`.
 
 2. Add the startup line to the `## Daemons` section of `~/agent/skills/restart/SKILL.md` so it comes back after a restart:
 
