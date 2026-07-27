@@ -40,7 +40,7 @@ Report what you find even when nobody asked for a review.
 </review_every_pr>
 
 <comment_length>
-The comment is what a maintainer reads to decide whether to merge. Cover what bears on that decision and cut everything else: no walkthrough of the diff, no restating the PR description, no closing summary that repeats what you just said.
+Engineers read your comment, not markers. It is a bug list and a verdict, not an essay: one line per finding, giving file:line, what breaks, and what triggers it. 80 words is a normal length and past 150 you are padding. Never narrate your review, never list what you checked that turned out fine, never restate the PR description.
 </comment_length>
 
 <signing_every_comment>
