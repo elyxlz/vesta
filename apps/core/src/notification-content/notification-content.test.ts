@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest"
-import { parseNotificationContent, type NotificationView } from "./notification-content"
+import {
+  notificationRowKey,
+  parseNotificationContent,
+  type NotificationView,
+} from "./notification-content"
 
 function notification(summary: string, patch: Partial<NotificationView> = {}): NotificationView {
   return {
@@ -107,5 +111,48 @@ describe("parseNotificationContent", () => {
       body: null,
       context: null,
     })
+  })
+})
+
+describe("notificationRowKey", () => {
+  const dream = (ts?: string) =>
+    notification("time to dream", { notif_id: "nightly_dream-2026-01-01", ts })
+
+  it("separates two arrivals of one notif_id at different timestamps", () => {
+    expect(notificationRowKey(dream("2026-01-01T03:00:00Z"))).not.toEqual(
+      notificationRowKey(dream("2026-01-01T05:00:00Z")),
+    )
+  })
+
+  it("gives a replayed arrival the same key", () => {
+    expect(notificationRowKey(dream("2026-01-01T03:00:00Z"))).toEqual(
+      notificationRowKey(dream("2026-01-01T03:00:00Z")),
+    )
+  })
+
+  it("separates a timestamped arrival from a timestampless one", () => {
+    expect(notificationRowKey(dream())).not.toEqual(
+      notificationRowKey(dream("2026-01-01T03:00:00Z")),
+    )
+  })
+
+  it("keys an event predating notif_id on its timestamp", () => {
+    const ts = "2026-01-01T03:00:00Z"
+    expect(notificationRowKey(notification("a", { ts }))).toEqual(
+      notificationRowKey(notification("b", { ts, source: "email" })),
+    )
+  })
+
+  it("keys an event with neither id nor timestamp on its content", () => {
+    expect(notificationRowKey(notification("a"))).not.toEqual(notificationRowKey(notification("b")))
+  })
+
+  it("never lets one rung produce another rung's key", () => {
+    const keys = [
+      notificationRowKey(notification("a", { notif_id: "x" })),
+      notificationRowKey(notification("a", { ts: "x" })),
+      notificationRowKey(notification("a")),
+    ]
+    expect(new Set(keys).size).toBe(keys.length)
   })
 })

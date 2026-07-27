@@ -1,23 +1,19 @@
-import type { ChatMessage, NotificationView } from "@vesta/core";
-
-function notificationKey(event: NotificationView): string {
-  return (
-    event.notif_id ??
-    event.ts ??
-    `${event.source}\u0000${event.sender ?? ""}\u0000${event.summary}`
-  );
-}
+import {
+  notificationRowKey,
+  type ChatMessage,
+  type NotificationView,
+} from "@vesta/core";
 
 export function mergeLiveNotifications(
   history: readonly NotificationView[],
   liveEvents: readonly ChatMessage[],
 ): NotificationView[] {
-  const seen = new Set(history.map(notificationKey));
+  const seen = new Set(history.map(notificationRowKey));
   const arrivals: NotificationView[] = [];
 
   for (const event of liveEvents) {
     if (event.type !== "notification") continue;
-    const key = notificationKey(event);
+    const key = notificationRowKey(event);
     if (seen.has(key)) continue;
     seen.add(key);
     arrivals.push(event);
