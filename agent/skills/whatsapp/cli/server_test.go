@@ -34,6 +34,46 @@ func runTestCommand(t *testing.T, sockPath, command string, args ...string) (map
 	return body, exitCode
 }
 
+// runAsyncTestCommand drives the second decoder of SocketResponse, the one behind the pairing
+// commands, so both decoders are held to the same body-and-exit-code rule.
+func runAsyncTestCommand(t *testing.T, sockPath, command string, args ...string) (map[string]any, int) {
+	t.Helper()
+	result, stopWaiting, connected := startSocketCommand(sockPath, command, args)
+	if !connected {
+		t.Fatalf("test socket did not answer %q", command)
+	}
+	defer stopWaiting()
+	res := <-result
+	if !res.connected {
+		t.Fatalf("test socket dropped %q before answering", command)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(res.output, &body); err != nil {
+		t.Fatalf("command %q produced unparseable output %q: %v", command, res.output, err)
+	}
+	return body, res.exitCode
+}
+
+func TestAsyncFailedWriteKeepsItsResultBody(t *testing.T) {
+	body, exitCode := runAsyncTestCommand(t, startTestSocket(t, newTestStore(t)), "archive-chat", "--to", "Nobody Saved")
+	if exitCode == 0 {
+		t.Errorf("a failed write must exit nonzero, got exit 0 with body %v", body)
+	}
+	if body["success"] != false {
+		t.Errorf("the failure body must stay the command's own result, got %v", body)
+	}
+}
+
+func TestAsyncFailureWithoutResultReportsError(t *testing.T) {
+	body, exitCode := runAsyncTestCommand(t, startTestSocket(t, newTestStore(t)), "send-message", "--to", "+15551234567")
+	if exitCode == 0 {
+		t.Errorf("a validation failure must exit nonzero, got exit 0 with body %v", body)
+	}
+	if _, ok := body["error"].(string); !ok {
+		t.Errorf("a failure that produced no result must report its reason under error, got %v", body)
+	}
+}
+
 func TestFailedWriteExitsNonZero(t *testing.T) {
 	body, exitCode := runTestCommand(t, startTestSocket(t, newTestStore(t)), "archive-chat", "--to", "Nobody Saved")
 	if exitCode == 0 {
