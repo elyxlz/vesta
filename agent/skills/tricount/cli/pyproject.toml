@@ -11,15 +11,5 @@ dependencies = [
 [project.scripts]
 tricount = "tricount_cli.cli:main"
 
-[dependency-groups]
-dev = [
-    "pytest>=8.4.0",
-]
-
-# This project declares no build backend, so uv does not install it into the test
-# venv; point pytest at the sources instead of changing how the skill installs.
-[tool.pytest.ini_options]
-pythonpath = ["src"]
-
 [tool.hatch.build.targets.wheel]
 packages = ["src/tricount_cli"]
