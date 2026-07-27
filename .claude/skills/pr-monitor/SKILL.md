@@ -56,6 +56,8 @@ Events are handled one at a time, so a burst of comments cannot start overlappin
 
 **Every new PR is checked automatically.** A non-draft PR that has never been seen surfaces as `NEWPR` without anyone asking, and dispatch runs the `check-pr` skill on it: does it fix the issue it claims to fix, does it match this repository's conventions, does it actually work. That pass is read only. It never pushes, merges, or closes, so a PR opening cannot cause a write. Where the change would benefit from the simplify and tidy pass, the reply names `polish-pr` and stops there, leaving the maintainer to ask for it.
 
+An unprompted comment closes by saying how to reach the agent: that mentioning `@vestabot` on the PR is what triggers it, what is worth asking for, and that only trusted commenters can. Nobody asked for that comment, so it carries its own instructions rather than assuming the reader knows the loop exists. Replies to an explicit mention skip it, since whoever wrote the mention already knows.
+
 **Seed before switching this on.** "Never seen" means "carries no 👀", so the first cycle treats every open PR as new and checks all of them at once. On a repo with a dozen open PRs that is a dozen agent runs back to back. Mark the existing ones first:
 
 ```bash

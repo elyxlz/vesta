@@ -138,6 +138,7 @@ Stay read only. Do not push a commit, merge, close, or edit the PR. If it would 
     DEPPR)
       handle "$f1" pr "$f2" "$f2" "A new dependabot pull request is open: $f1 PR #$f2: $f3
 Review it against this repository's dependency policy, check whether its checks pass, and act accordingly. Leave a comment recording what you decided.
+Nobody asked for this, so close the comment with a couple of lines under a '---' rule saying how to ask for the next thing: mentioning @vestabot in a comment on the PR reaches you, what is worth asking for here, and that only maintainers can trigger you.
 End that comment with a line starting 'Verdict:' giving your own call on merging: MERGE, DO NOT MERGE, or NOT YET, then one sentence of reasoning. Never merge or close the PR yourself: the verdict is advice and the decision stays with the maintainer."
       ;;
     *) [ -n "${tag:-}" ] && echo "dispatch: ignoring line: $tag" >&2 ;;

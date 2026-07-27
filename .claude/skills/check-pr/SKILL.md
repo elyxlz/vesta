@@ -47,3 +47,5 @@ One sentence of reasoning after it. `NOT YET` is for a PR that is right in subst
 Judge the change on its merits even when you wrote the code yourself, and say `DO NOT MERGE` when you believe it. A verdict that always says MERGE is worth less than no verdict.
 
 When the PR would benefit from the simplify and tidy pass that `polish-pr` does, say so in one line and name the skill, so a maintainer can ask for it. Do not run it yourself: it pushes commits, and that is the maintainer's call.
+
+Nobody asked for this check, so close the comment by saying how to ask for the next thing. Keep it to a couple of lines under a `---` rule: mentioning `@vestabot` in a comment on the PR is what reaches you, name the two or three things worth asking for here (re-checking after new commits, running `polish-pr`, fixing red CI), and say that only maintainers can trigger you so a drive-by contributor is not left waiting on a reply that will never come.
