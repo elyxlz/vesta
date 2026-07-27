@@ -32,7 +32,7 @@ running() { test -n "$(screen -ls 2>/dev/null | grep -E "[0-9]+\.$1[[:space:]]" 
 # and `false || spawn` re-spawns on every guarded restart line, silently
 # stacking duplicate daemons.
 
-# Skills append guarded startup lines below, e.g.:
+# Add guarded startup lines below, e.g.:
 #   running foo || { screen -dmS foo foo serve --notifications-dir ~/agent/notifications; sleep 1; }
 # The trailing `sleep 1` keeps back-to-back `screen -dmS` launches from racing and dropping sessions.
 ```

@@ -53,8 +53,8 @@ PORT=$(~/agent/skills/vestad/scripts/register-service tasks)
 PORT=$(~/agent/skills/vestad/scripts/register-service dashboard --public)
 ```
 
-So the service comes back after a container restart, add its startup command to the
-`## Daemons` section of `~/agent/skills/restart/SKILL.md`, one fenced block per skill. Use a
+So the service comes back after a container restart, add its startup command yourself, inside the
+single fenced block in the `## Daemons` section of `~/agent/skills/restart/SKILL.md`. Use a
 single line that re-registers and starts, e.g.:
 
 ```bash
