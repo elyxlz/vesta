@@ -92,8 +92,8 @@ fn read_sse_result(resp: Response<Body>) -> Result<String, String> {
     Err("server closed connection before completing".into())
 }
 
-/// How a proxied request authenticates, for `Client::proxy_get`.
-#[derive(Debug)]
+/// Which credential a request presents, for `Client::proxy_get` and the service-key endpoints.
+#[derive(Debug, Clone, Copy)]
 pub enum ProxyAuth<'cred> {
     /// No credential at all: the browser's plain iframe request.
     None,
@@ -101,6 +101,8 @@ pub enum ProxyAuth<'cred> {
     ApiKey,
     /// A minted service key as a Bearer token.
     Bearer(&'cred str),
+    /// An agent's own `AGENT_TOKEN` (from `read_agent_token`) as `X-Agent-Token`.
+    AgentToken(&'cred str),
 }
 
 pub struct Client {
@@ -567,18 +569,22 @@ impl Client {
         Ok(())
     }
 
+    /// The single header a `ProxyAuth` credential presents, if any.
+    fn auth_header(&self, auth: ProxyAuth) -> Option<(&'static str, String)> {
+        match auth {
+            ProxyAuth::None => None,
+            ProxyAuth::ApiKey => Some(("Authorization", format!("Bearer {}", self.api_key))),
+            ProxyAuth::Bearer(token) => Some(("Authorization", format!("Bearer {token}"))),
+            ProxyAuth::AgentToken(token) => Some(("X-Agent-Token", token.to_string())),
+        }
+    }
+
     /// GET a proxied path with a chosen credential, returning `(status, body)`. Never treats a
     /// non-2xx as an error: the whole point is asserting on the refusals.
     pub fn proxy_get(&self, path: &str, auth: ProxyAuth) -> Result<(u16, String), String> {
         let mut request = self.agent.get(&format!("{}{}", self.base_url, path));
-        match auth {
-            ProxyAuth::None => {}
-            ProxyAuth::ApiKey => {
-                request = request.header("Authorization", &format!("Bearer {}", self.api_key));
-            }
-            ProxyAuth::Bearer(token) => {
-                request = request.header("Authorization", &format!("Bearer {token}"));
-            }
+        if let Some((header, value)) = self.auth_header(auth) {
+            request = request.header(header, &value);
         }
         let response = request.call().map_err(|e| map_error(&e))?;
         let status = response.status().as_u16();
@@ -615,24 +621,65 @@ impl Client {
     /// `POST /agents/{name}/services/{service}/keys`. The `key` in the response is the secret,
     /// returned exactly once.
     pub fn mint_service_key(&self, name: &str, service: &str) -> Result<serde_json::Value, String> {
-        let response = self
-            .agent
-            .post(&format!(
-                "{}/agents/{name}/services/{service}/keys",
-                self.base_url
-            ))
-            .header("Authorization", &format!("Bearer {}", self.api_key))
+        let (status, body) = self.mint_service_key_as(name, service, ProxyAuth::ApiKey)?;
+        if !(200..300).contains(&status) {
+            return Err(format!("mint {name}/{service}: HTTP {status}: {body}"));
+        }
+        serde_json::from_str(&body).map_err(|e| format!("parse error: {e}"))
+    }
+
+    /// Mint with a chosen credential, returning `(status, body)` rather than mapping a refusal to
+    /// an error, so a test can assert who the endpoint accepts.
+    pub fn mint_service_key_as(
+        &self,
+        name: &str,
+        service: &str,
+        auth: ProxyAuth,
+    ) -> Result<(u16, String), String> {
+        let mut request = self.agent.post(&format!(
+            "{}/agents/{name}/services/{service}/keys",
+            self.base_url
+        ));
+        if let Some((header, value)) = self.auth_header(auth) {
+            request = request.header(header, &value);
+        }
+        let response = request
             .send_json(serde_json::json!({}))
             .map_err(|e| map_error(&e))?;
-        check_response(response)?
+        let status = response.status().as_u16();
+        let body = response
             .into_body()
-            .read_json()
-            .map_err(|e| format!("parse error: {e}"))
+            .read_to_string()
+            .map_err(|e| format!("read body: {e}"))?;
+        Ok((status, body))
     }
 
     pub fn revoke_service_key(&self, name: &str, service: &str, id: &str) -> Result<(), String> {
-        self.delete(&format!("/agents/{name}/services/{service}/keys/{id}"))?;
+        let status = self.revoke_service_key_as(name, service, id, ProxyAuth::ApiKey)?;
+        if !(200..300).contains(&status) {
+            return Err(format!("revoke {name}/{service}/{id}: HTTP {status}"));
+        }
         Ok(())
+    }
+
+    /// Revoke with a chosen credential, returning the status rather than mapping a refusal to an
+    /// error.
+    pub fn revoke_service_key_as(
+        &self,
+        name: &str,
+        service: &str,
+        id: &str,
+        auth: ProxyAuth,
+    ) -> Result<u16, String> {
+        let mut request = self.agent.delete(&format!(
+            "{}/agents/{name}/services/{service}/keys/{id}",
+            self.base_url
+        ));
+        if let Some((header, value)) = self.auth_header(auth) {
+            request = request.header(header, &value);
+        }
+        let response = request.call().map_err(|e| map_error(&e))?;
+        Ok(response.status().as_u16())
     }
 
     pub fn stream_logs(&self, name: &str) -> Result<(), String> {

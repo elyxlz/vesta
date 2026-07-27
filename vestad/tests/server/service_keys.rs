@@ -1,7 +1,8 @@
 //! End-to-end proof of the service-key gate against the real vestad proxy and a real agent
 //! container: a private service is reachable only with the api key or a live service key, the
 //! key works in the path prefix an iframe's sub-resources inherit, revoking it takes effect
-//! immediately, and vestad hands its inner-proxy agent token to the raw agent port alone.
+//! immediately, the mint and revoke endpoints are authenticated and self-scoped to one agent,
+//! and vestad hands its inner-proxy agent token to the raw agent port alone.
 
 use vesta_tests::{
     agent_container_name, exec_in_container, unique_agent, ProxyAuth, TestAgent, SERVER,
@@ -130,6 +131,86 @@ fn a_private_service_needs_the_api_key_or_a_live_service_key() {
         client.proxy_status(&keyed, ProxyAuth::None).unwrap(),
         401,
         "revocation takes effect immediately"
+    );
+}
+
+/// Minting is a real privilege, so the endpoints behind it are authenticated and self-scoped:
+/// an agent's own token mints and revokes for its own services and for nobody else's. The
+/// mutation this pins is one word in `serve.rs`, `auth_middleware_api_or_any_agent_token` in
+/// place of `auth_middleware_api_or_agent_token`, which would let every agent on the host mint
+/// a permanent key for every other agent's services.
+#[test]
+fn key_endpoints_are_authenticated_and_scoped_to_one_agent() {
+    let client = SERVER.client();
+    let (owner, _) = agent_serving(&client, "svc-scope-a", "dashboard");
+    let (other, _) = agent_serving(&client, "svc-scope-b", "dashboard");
+    let owner_token = client
+        .read_agent_token(&owner.name)
+        .expect("owner agent token");
+
+    let (unauthenticated, body) = client
+        .mint_service_key_as(&owner.name, "dashboard", ProxyAuth::None)
+        .expect("mint request reaches vestad");
+    assert_eq!(
+        unauthenticated, 401,
+        "minting with no credential is refused, got: {body}"
+    );
+
+    let (own_status, own_body) = client
+        .mint_service_key_as(&owner.name, "dashboard", ProxyAuth::AgentToken(&owner_token))
+        .expect("mint request reaches vestad");
+    assert_eq!(
+        own_status, 200,
+        "an agent's own token mints for its own service, got: {own_body}"
+    );
+    let own_key: serde_json::Value =
+        serde_json::from_str(&own_body).expect("mint response is JSON");
+    let key = own_key["key"].as_str().expect("secret in mint response");
+    assert_eq!(
+        client
+            .proxy_status(
+                &format!("/agents/{}/dashboard/", owner.name),
+                ProxyAuth::Bearer(key)
+            )
+            .unwrap(),
+        200,
+        "the self-minted key opens the service it is scoped to"
+    );
+
+    let (cross_mint, cross_body) = client
+        .mint_service_key_as(&other.name, "dashboard", ProxyAuth::AgentToken(&owner_token))
+        .expect("mint request reaches vestad");
+    assert_eq!(
+        cross_mint, 401,
+        "one agent's token must not mint for another agent's service, got: {cross_body}"
+    );
+
+    let victim = client
+        .mint_service_key(&other.name, "dashboard")
+        .expect("mint a key belonging to the other agent");
+    let victim_id = victim["id"].as_str().expect("id in mint response");
+    let victim_key = victim["key"].as_str().expect("secret in mint response");
+    assert_eq!(
+        client
+            .revoke_service_key_as(
+                &other.name,
+                "dashboard",
+                victim_id,
+                ProxyAuth::AgentToken(&owner_token)
+            )
+            .expect("revoke request reaches vestad"),
+        401,
+        "one agent's token must not revoke another agent's key"
+    );
+    assert_eq!(
+        client
+            .proxy_status(
+                &format!("/agents/{}/dashboard/", other.name),
+                ProxyAuth::Bearer(victim_key)
+            )
+            .unwrap(),
+        200,
+        "and the refused revoke left that key live"
     );
 }
 
