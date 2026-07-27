@@ -105,6 +105,9 @@ class _KeyHandler(http.server.BaseHTTPRequestHandler):
 def _serve_https(port, cert, key):
     server = http.server.HTTPServer(("127.0.0.1", port), _KeyHandler)
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    # Pin the floor so the stub cannot negotiate TLS 1.0 or 1.1, which the default
+    # context still permits and which code scanning flags as an insecure protocol.
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     ctx.load_cert_chain(str(cert), str(key))
     server.socket = ctx.wrap_socket(server.socket, server_side=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
