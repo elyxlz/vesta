@@ -53,6 +53,8 @@ Do not reach for `claude --from-pr` here. It resumes a session already linked to
 
 Events are handled one at a time, so a burst of comments cannot start overlapping runs against the same session.
 
+**Every reply ends with a verdict.** The agent closes each comment with a line reading `Verdict: MERGE`, `DO NOT MERGE`, or `NOT YET`, plus one sentence of reasoning, so a maintainer scanning the PR list gets a recommendation rather than a wall of findings. The agent never merges or closes anything: the verdict is advice and the decision stays with whoever is watching. It is told to judge the change on its merits even when it wrote the code itself, and to say `DO NOT MERGE` when it means it.
+
 **Sessions are closed out when their PR closes.** A PR's session is only ever resumed while the PR is open, so once it closes the pointer is dead weight. Dispatch prunes those pointers at startup and after each event. Session transcripts under `~/.claude/projects/` are the part that actually grows, so removing them is opt-in via `PR_MONITOR_PRUNE_TRANSCRIPTS=1` rather than silent, since they are also the only record of what the agent did. Leave it off and transcripts accumulate; watch the disk on a busy repo.
 
 A long-lived PR is the one case still unbounded: every event resumes and extends the same session, so a PR with many rounds of review grows a large transcript and a large context. Nothing caps that today.
