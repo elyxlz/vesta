@@ -63,15 +63,28 @@ export function createServiceKeyCache(deps: {
   gateway: () => string | null
 }): ServiceKeyCache {
   const cached = new Map<string, CachedServiceKey>()
+  // Mints in flight, so two callers asking at once (a TTS stream and an STT socket, or React's
+  // double effect in dev) share one mint instead of racing to overwrite each other's key. The
+  // entry goes as soon as the mint settles, so a failure is retried rather than kept.
+  const minting = new Map<string, Promise<string>>()
   return {
     get: async (agent, service) => {
       const cacheKey = `${deps.gateway() ?? ""}/${agent}/${service}`
       const nowSecs = Math.floor(Date.now() / 1000)
       const existing = cached.get(cacheKey) ?? null
       if (existing && isKeyFresh(existing, nowSecs)) return existing.key
-      const minted = await mintServiceKey(deps.http, agent, service, APP_KEY_TTL_SECS)
-      cached.set(cacheKey, { key: minted.key, expiresAt: minted.expires_at })
-      return minted.key
+      const inFlight = minting.get(cacheKey)
+      if (inFlight) return inFlight
+      const pending = mintServiceKey(deps.http, agent, service, APP_KEY_TTL_SECS)
+        .then((minted) => {
+          cached.set(cacheKey, { key: minted.key, expiresAt: minted.expires_at })
+          return minted.key
+        })
+        .finally(() => {
+          minting.delete(cacheKey)
+        })
+      minting.set(cacheKey, pending)
+      return pending
     },
   }
 }

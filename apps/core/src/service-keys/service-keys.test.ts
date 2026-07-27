@@ -138,6 +138,40 @@ describe("createServiceKeyCache", () => {
     expect(calls).toHaveLength(2)
   })
 
+  // Two consumers ask on a cold cache in the same tick: mobile's TTS stream and its STT socket
+  // both want the voice key, and React's double effect in dev asks twice. Without one shared
+  // in-flight mint each would mint, and the later one would overwrite the other's cached key.
+  it("mints once for two callers asking at the same time", async () => {
+    const { http, calls } = fakeHttp({ key: "shared", expires_at: null })
+    const cache = createServiceKeyCache({ http, gateway: () => "https://gw-a" })
+
+    const [first, second] = await Promise.all([
+      cache.get("alpha", "voice"),
+      cache.get("alpha", "voice"),
+    ])
+
+    expect(calls).toEqual(["/agents/alpha/services/voice/keys"])
+    expect(second).toBe(first)
+  })
+
+  it("mints again after a failed mint rather than holding on to it", async () => {
+    const calls: string[] = []
+    const http: HttpClient = {
+      request: () => Promise.reject(new Error("unused")),
+      json: <T>(path: string) => {
+        calls.push(path)
+        return calls.length === 1
+          ? Promise.reject(new Error("gateway unreachable"))
+          : Promise.resolve({ id: "id-2", key: "second", expires_at: null } as T)
+      },
+    }
+    const cache = createServiceKeyCache({ http, gateway: () => "https://gw-a" })
+
+    await expect(cache.get("alpha", "voice")).rejects.toThrow("gateway unreachable")
+    expect(await cache.get("alpha", "voice")).toBe("second")
+    expect(calls).toHaveLength(2)
+  })
+
   it("percent-encodes the agent and service in the mint path", async () => {
     const { http, calls } = fakeHttp({ key: "k", expires_at: null })
     const cache = createServiceKeyCache({ http, gateway: () => "https://gw-a" })
