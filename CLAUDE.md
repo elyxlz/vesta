@@ -147,7 +147,7 @@ REGEN_EVENT_FIXTURES=1 uv run pytest tests/test_event_union_fixture.py  # agent 
 # Agent (from agent/)
 uv run pytest tests/                       # All agent tests
 uv run pytest tests/ -k "test_batch"       # Single test by name
-uv run pytest skills/tasks/cli/tests/      # Skill CLI tests
+uv run pytest skills/notifications/cli/tests/  # Skill CLI tests
 
 # Rust (from vestad/; builds trigger the web build via build.rs, VESTAD_SKIP_APP_BUILD=1 skips it)
 cargo build

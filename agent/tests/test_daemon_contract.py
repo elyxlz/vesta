@@ -14,6 +14,7 @@ import pathlib as pl
 import signal
 import socket
 import subprocess
+import time
 import typing as tp
 
 import pytest
@@ -22,6 +23,8 @@ REPO_ROOT = pl.Path(__file__).resolve().parents[2]
 SKILLS_DIR = REPO_ROOT / "agent/skills"
 # status is a local read of two files, so anything near a registration round trip is a regression.
 STATUS_TIMEOUT = 10
+DEATH_REPORT_TIMEOUT = 30
+DEATH_POLL_SECS = 0.2
 
 FAKE_REGISTER_SERVICE = """#!/bin/sh
 echo "$*" >> "$HOME/register-args"
@@ -98,6 +101,12 @@ SKILLS = [
         legacy_command=[str(SKILLS_DIR / "dashboard/scripts/daemon")],
         rig=_rig_dashboard,
     ),
+    Daemon(
+        command=["uv", "run", "--project", str(SKILLS_DIR / "tasks/cli"), "tasks"],
+        name="tasks",
+        serves_port=True,
+        emits_daemon_died=True,
+    ),
 ]
 
 
@@ -122,7 +131,10 @@ def daemon(request, tmp_path):
     (home / "fake-port").write_text(str(_free_port()))
     if spec.rig:
         spec.rig(home, bin_dir)
-    env = dict(os.environ)
+    # A skill CLI runs in its own project environment. Whichever venv is running this suite
+    # would otherwise capture it: the override redirects the CLI's environment into this one
+    # and resyncs it to the skill's lockfile, and the mismatch warning lands on its stderr.
+    env = {key: value for key, value in os.environ.items() if key not in ("UV_PROJECT_ENVIRONMENT", "VIRTUAL_ENV")}
     env["HOME"] = str(home)
     env["PATH"] = f"{bin_dir}:{env['PATH']}"
     yield spec, home, env
@@ -145,6 +157,11 @@ def _pid(spec, home) -> int | None:
     except (FileNotFoundError, ValueError, ProcessLookupError):
         return None
     return pid
+
+
+def _death_notices(home) -> list[pl.Path]:
+    notif_dir = home / "agent/notifications"
+    return list(notif_dir.glob("*daemon_died*")) if notif_dir.exists() else []
 
 
 def test_start_is_idempotent_and_never_stacks(daemon):
@@ -218,9 +235,23 @@ def test_deliberate_stop_is_not_reported_as_a_crash(daemon):
         pytest.skip("does not self-report death")
     assert json.loads(_verb(spec, env, "start").stdout) == {"status": "started"}
     assert json.loads(_verb(spec, env, "stop").stdout) == {"status": "stopped"}
-    notif_dir = home / "agent/notifications"
-    died = list(notif_dir.glob("*daemon_died*")) if notif_dir.exists() else []
-    assert died == []
+    assert _death_notices(home) == []
+
+
+def test_a_death_nobody_asked_for_is_reported(daemon):
+    """The other half of that rule: an exit the daemon did not get asked for has to reach the
+    agent, since nothing else notices a daemon that quietly went away."""
+    spec, home, env = daemon
+    if not spec.emits_daemon_died:
+        pytest.skip("does not self-report death")
+    assert json.loads(_verb(spec, env, "start").stdout) == {"status": "started"}
+    pid = _pid(spec, home)
+    assert pid is not None
+    os.kill(pid, signal.SIGINT)
+    deadline = time.monotonic() + DEATH_REPORT_TIMEOUT
+    while time.monotonic() < deadline and not _death_notices(home):
+        time.sleep(DEATH_POLL_SECS)
+    assert _death_notices(home) != []
 
 
 def test_status_reads_the_port_record_and_never_re_registers(daemon):
@@ -267,5 +298,6 @@ def test_usage_and_unknown_verbs(daemon):
     for args in ([], ["-h"], ["--help"]):
         result = subprocess.run([*spec.command, *args], env=env, capture_output=True, text=True, check=False)
         assert result.returncode == 0
-        assert "Usage" in result.stdout
+        # A skill whose command is a CLI answers with that CLI's own help.
+        assert "usage" in result.stdout.lower()
     assert _verb(spec, env, "bogus").returncode != 0

@@ -3,13 +3,12 @@ import json
 import logging
 import os
 import signal
-import subprocess
 import sys
 import time
-from contextlib import closing, suppress
+from contextlib import closing
 from pathlib import Path
 
-from . import commands, db
+from . import commands, daemon, db
 from . import format as fmt
 from .config import Config
 from .scheduler import create_scheduler, write_notification
@@ -22,76 +21,17 @@ def _add_format_flags(parser: argparse.ArgumentParser) -> None:
     group.add_argument("--json-pretty", action="store_true", help="Emit indented JSON instead of a table.")
 
 
-DAEMON_LIFECYCLE = Path.home() / "agent" / "skills" / "vestad" / "scripts" / "daemon-lifecycle"
-
-
-def stop_marker_path(config: Config) -> Path:
-    return config.data_dir / "stop-requested"
-
-
-def emit_daemon_died(notif_dir: Path, *, reason: str, stop_marker: Path) -> None:
-    """Announce an unexpected exit. A stop marker means the shutdown was asked for, so this
-    clears the marker and stays silent rather than crying wolf on a deliberate stop."""
-    if stop_marker.exists():
-        stop_marker.unlink()
-        return
-    write_notification(notif_dir, "daemon_died", reason=reason)
-
-
-def daemon_lifecycle_args(action: str, config: Config) -> list[str]:
-    """Argv for the shared runner. `$PORT` stays a literal: the runner exports the port it
-    registered into the session, and the shell inside the session expands it."""
-    return [
-        str(DAEMON_LIFECYCLE),
-        action,
-        "--session",
-        "tasks",
-        "--service",
-        "tasks",
-        "--port-mode",
-        "private",
-        "--stop-marker",
-        str(stop_marker_path(config)),
-        "--pidfile",
-        str(config.data_dir / "serve.pid"),
-        "--",
-        "tasks",
-        "serve",
-        "--port",
-        "$PORT",
-    ]
-
-
-def _write_pid(config):
-    (config.data_dir / "serve.pid").write_text(str(os.getpid()))
-
-
-def _remove_pid(config):
-    with suppress(FileNotFoundError):
-        (config.data_dir / "serve.pid").unlink()
-
-
-def _fail_daemon_not_running(detail: str):
-    msg = f"daemon not running{detail}, start it with: tasks daemon start"
-    print(json.dumps({"error": msg}), file=sys.stderr)
-    sys.exit(1)
-
-
 def _require_arg(value: str | None, name: str, usage: str) -> str:
     if not value:
         raise ValueError(f"{name} is required: {usage}")
     return value
 
 
-def _require_daemon(config):
-    pid_file = config.data_dir / "serve.pid"
-    if not pid_file.exists():
-        _fail_daemon_not_running("")
-    try:
-        os.kill(int(pid_file.read_text().strip()), 0)
-    except (ValueError, ProcessLookupError, OSError):
-        pid_file.unlink(missing_ok=True)
-        _fail_daemon_not_running(" (stale pid file)")
+def _require_daemon():
+    if daemon.live_pid() is None:
+        msg = "daemon not running, start it with: tasks daemon start"
+        print(json.dumps({"error": msg}), file=sys.stderr)
+        sys.exit(1)
 
 
 def _sync_jobs(config: Config, scheduler, notif_dir: Path):
@@ -138,7 +78,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # daemon
     p_daemon = sub.add_parser("daemon", help="Manage the background daemon: start|stop|restart|status")
-    p_daemon.add_argument("action", choices=["start", "stop", "restart", "status"])
+    p_daemon.add_argument("action", metavar="start|stop|restart|status")
 
     # add
     p_add = sub.add_parser("add", help="Add a new task")
@@ -218,7 +158,12 @@ def main():
     if len(sys.argv) >= 2 and sys.argv[1] == "remind":
         return _main_remind()
 
-    args = _build_parser().parse_args()
+    parser = _build_parser()
+    if len(sys.argv) == 1:
+        parser.print_help()
+        return None
+
+    args = parser.parse_args()
     config = Config()
 
     config.data_dir.mkdir(parents=True, exist_ok=True)
@@ -232,9 +177,9 @@ def main():
             return None
 
         if args.command == "daemon":
-            sys.exit(subprocess.run(daemon_lifecycle_args(args.action, config), check=False).returncode)
+            sys.exit(daemon.daemon_cmd(args.action))
 
-        _require_daemon(config)
+        _require_daemon()
         _handle_task(args, config)
 
     except ValueError as e:
@@ -348,7 +293,7 @@ def _main_remind():
         sys.exit(1)
 
     try:
-        _require_daemon(config)
+        _require_daemon()
 
         if subcmd == "list":
             _remind_list_cmd(config, remind_args[1:])
@@ -510,26 +455,26 @@ def _run_serve(config: Config, notif_dir: Path, *, port: int):
     scheduler = create_scheduler()
     scheduler.start()
     commands.restore_all_jobs(config, scheduler, notif_dir=notif_dir)
-    stop = False
     shutdown_reason = "unknown"
+    asked_to_stop = False
 
     def handle_signal(signum, _frame):
-        nonlocal stop, shutdown_reason
+        # SIGTERM is what `tasks daemon stop` sends, so it is the one exit the agent asked
+        # for; every other way out of the loop below is news the agent needs.
+        nonlocal shutdown_reason, asked_to_stop
         shutdown_reason = signal.Signals(signum).name
-        stop = True
+        asked_to_stop = signum == signal.SIGTERM
+        raise SystemExit(0)
 
-    signal.signal(signal.SIGHUP, signal.SIG_IGN)
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
 
     sync_interval = int(os.environ["TASKS_SYNC_INTERVAL"]) if "TASKS_SYNC_INTERVAL" in os.environ else 5
 
-    _write_pid(config)
-
     print(json.dumps({"status": "serving", "sync_interval": sync_interval, "http_port": port}))
     sys.stdout.flush()
     try:
-        while not stop:
+        while True:
             time.sleep(sync_interval)
             try:
                 _sync_jobs(config, scheduler, notif_dir)
@@ -539,6 +484,6 @@ def _run_serve(config: Config, notif_dir: Path, *, port: int):
                 logging.getLogger(__name__).exception("serve tick failed")
     finally:
         http_server.should_exit = True
-        emit_daemon_died(notif_dir, reason=shutdown_reason, stop_marker=stop_marker_path(config))
-        _remove_pid(config)
+        if not asked_to_stop:
+            write_notification(notif_dir, "daemon_died", reason=shutdown_reason)
         scheduler.shutdown(wait=True)

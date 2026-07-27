@@ -21,7 +21,6 @@ EXPOSURE_OWNERS = {SKILLS_DIR / "vestad/scripts/register-service", SKILLS_DIR / 
 # holding no app credential reaches it with a minted service key.
 EXPECTED_PORT_MODE = {
     "agentmail": "public",
-    "tasks": "private",
 }
 
 # A skill that registers its own port rather than declaring one to the runner. Keyed by file
