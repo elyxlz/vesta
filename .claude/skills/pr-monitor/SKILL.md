@@ -39,6 +39,41 @@ DEPPR   <repo> <pr> <url>                a newly seen open dependabot PR
 
 The loop keeps running until the session stops. Nothing survives the session: restarting it is safe and cheap, because dedup state lives on GitHub rather than on disk.
 
+## Running unattended
+
+`dispatch.sh` runs the loop without a supervising session: it reads the event stream and hands each event to `claude` in print mode, so it can be supervised by systemd instead of a terminal.
+
+```bash
+.claude/skills/pr-monitor/dispatch.sh elyxlz/vesta elyxlz/vesta-cloud
+```
+
+**One session per PR.** The session id from a PR's first event is stored under `PR_MONITOR_STATE` and resumed for every later event on that PR, so the agent remembers what it already pushed and tried there. Different PRs never share context. Losing that file costs continuity on the next event, never correctness.
+
+Do not reach for `claude --from-pr` here. It resumes a session already linked to a PR, but a print-mode run does not create that link, so in a service it quietly starts a fresh session every time.
+
+Events are handled one at a time, so a burst of comments cannot start overlapping runs against the same session.
+
+A systemd user unit, needing `loginctl enable-linger <user>` so it runs without a login:
+
+```ini
+[Unit]
+Description=PR monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/pr-monitor
+ExecStart=%h/pr-monitor/.claude/skills/pr-monitor/dispatch.sh elyxlz/vesta
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=default.target
+```
+
+Point `WorkingDirectory` at a checkout kept for the service rather than a working one, so the code cannot change under a running loop.
+
 ## Only comments that address the bot
 
 A comment is surfaced only when its body mentions `@vestabot`. Everything else on the PR is ignored, so developers can talk to each other freely without waking an agent. Override the mention with `PR_MONITOR_TRIGGER`.
@@ -51,6 +86,8 @@ A surfaced item gets a 👀 reaction on the comment (or on the PR itself, for de
 
 The reaction is posted at emit time, not by whatever handles the event. Without that, an item would re-fire every cycle for as long as it sat unhandled. The ack is also posted *before* the line is printed: if it fails, nothing is emitted and the item is retried next cycle, so a failure can never produce an event that gets handled twice.
 
+The reaction is therefore a **claim, not a completion**. Under `dispatch.sh` a failed run releases the claim, removing only this account's reaction, and the event surfaces again on the next cycle. That is what makes a usage limit recoverable: the runs fail, the claims are released, and the events come back once the limit resets. A consumer that emits events some other way should release claims the same way, or a failure will drop the event silently.
+
 Two consequences worth knowing:
 
 - **Anyone's 👀 counts.** The check reads the reaction count, not who left it. A human reacting 👀 to a comment hides it from the loop. Removing the reaction surfaces it again.
@@ -62,7 +99,8 @@ Two consequences worth knowing:
 | --- | --- | --- |
 | `PR_MONITOR_TRIGGER` | `@vestabot` | Mention that makes a comment an event |
 | `PR_MONITOR_INTERVAL` | `45` | Seconds between polls |
-| `PR_MONITOR_STATE` | `$XDG_STATE_HOME/pr-monitor` | Where the review-summary ledger lives |
+| `PR_MONITOR_STATE` | `$XDG_STATE_HOME/pr-monitor` | Review-summary ledger and per-PR session ids |
+| `PR_MONITOR_MODEL` | `claude-opus-5` | Model `dispatch.sh` runs each event on |
 
 ## Cost
 
