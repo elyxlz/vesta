@@ -420,8 +420,7 @@ def _contains_dashes(text: str) -> bool:
 
 async def process_message(msg: str, *, state: vm.State, config: cfg.VestaConfig) -> tuple[list[str], vm.State]:
     turn = await converse(msg, state=state, config=config, show_output=True)
-    # turn.texts accumulates every text block of the turn; the warning asks for the last message
-    # back, so only the last block can be corrected.
+    # turn.texts holds one entry per assistant message of the turn, and the warning can only ask for the last message back.
     if config.block_dashes and turn.texts and _contains_dashes(turn.texts[-1]) and not turn.preempted:
         # A preempted turn's reply was cut short at a step boundary; correcting a truncated
         # reply would re-send it after the preempting prompt's work, so skip it.

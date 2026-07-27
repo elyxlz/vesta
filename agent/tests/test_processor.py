@@ -377,8 +377,7 @@ async def test_process_message_sends_correction_on_em_dash(tmp_path):
 
 @pytest.mark.anyio
 async def test_process_message_no_correction_when_dash_is_only_in_an_earlier_block(tmp_path):
-    """A dash in mid-turn narration leaves the clean final message alone: asking for it back would
-    only resend it verbatim, since the correction can address the last message and nothing else."""
+    """A dash in mid-turn narration leaves the clean final message alone: the correction can only ask for the last message back."""
     config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
     state = vm.State()
     converse_calls: list[str] = []
