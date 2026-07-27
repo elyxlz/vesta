@@ -3,34 +3,44 @@ name: check-pr
 description: >
   Use when the user asks to check a PR, review a PR, sanity-check a pull request,
   ask whether a PR is correct or ready, or run "check-pr <number>". Also runs
-  automatically on newly opened PRs. Reads the issue the PR claims to fix, judges
-  whether it actually fixes it, checks it against this repository's conventions,
-  and reports with a merge verdict. Read only: never pushes, merges, or closes.
+  automatically on newly opened PRs. Critiques the diff and the solution behind
+  it, attacks the change rather than confirming it, checks it fixes the issue it
+  claims to and matches this repository's conventions, and reports with a merge
+  verdict. Read only: never pushes, merges, or closes.
 ---
 
 # Check a PR
 
-Answer one question about a pull request: should this be merged? Read only. Never push a commit, never merge, never close, never edit the PR. Changing the PR is `polish-pr`'s job, and it runs only when a human asks for it.
+Critique a pull request's diff and the solution behind it, and answer one question: should this be merged? Read only. Never push a commit, never merge, never close, never edit the PR. Changing the PR is `polish-pr`'s job, and it runs only when a human asks for it.
 
-## What to check
+You are not here to confirm the change works. Assume the description is optimistic and that the author stopped looking once it passed. Your value is the objection nobody else raised.
 
-**1. Does it fix the issue it claims to fix?**
+## Critique the solution, not only the code
 
-Find the issue from a closing keyword in the PR body (`fixes #N`, `closes #N`, `resolves #N`). Read the issue itself, not just the PR's description of it, then decide whether this change resolves it. Distinguish clearly between fixing the issue, fixing part of it, fixing something adjacent, and not addressing it at all.
+Read the diff closely, then judge the thinking behind it:
 
-When no issue is linked, say what problem the PR appears to solve and whether it is worth carrying. A change with no traceable motivation is worth flagging on its own.
+- **Is it the right fix?** Trace the failure to its cause and check the change addresses that rather than the symptom that happened to be visible. A guard at the call site, when the bug is in the callee, is a patch over a symptom.
+- **Is it the smallest fix?** Name a simpler change when one exists. Abstractions for a single caller, options nobody asked for, and defensive branches for impossible states all belong in the review.
+- **What did the author not consider?** Concurrency, partial failure, restart, empty and enormous inputs, the second caller, the fleet already running the old shape.
+- **What does it cost?** New coupling, a widened interface, a dependency, or state somebody has to migrate later.
 
-**2. Is it right for this repository?**
+## Attack it before accepting it
 
-Judge against this repo's rules rather than generic taste. `CLAUDE.md` governs architecture principles, code conventions, brand voice, and the PR rules; the language section for whatever it touches applies; a skill covering that area applies too. Watch specifically for the repo-wide bans that CI does not always catch on a PR: inline lint escapes, comment blocks over 8 lines, banned Python accessors, `.unwrap()` on fallible Rust paths, `any` in TypeScript.
+Try to break the change rather than reading it for plausibility. Find the input, state, or ordering where it misbehaves, and look hardest where there are no tests: a suite tells you what the author thought of, not what is true.
 
-**3. Is it actually correct?**
+Verify rather than trust. Read the code paths the diff touches, and where running something settles a question, run it. The `check.sh` subcommands in `CLAUDE.md` are the ones CI uses.
 
-Read the code paths the change touches. Do not trust the description, the comments, or the tests' names. Where running something settles a question, run it: the check subcommands in `CLAUDE.md` are the same ones CI uses. Look for the cases the author did not write a test for.
+When the diff is large enough that one reading will miss things, spawn subagents in parallel, each attacking from a different angle (correctness, failure modes, conventions, the issue it claims to fix) and each told to refute the change rather than approve it. Report only what survives that: a finding you could not substantiate is noise, and noise teaches the reader to stop reading you.
 
-**4. Is it in a mergeable state?**
+Say so plainly when the change is simply good. A review that manufactures objections to look thorough is worth as little as one that rubber-stamps.
 
-CI green, no conflicts, not draft, and scoped to one concern.
+## Also confirm
+
+**It fixes the issue it claims to.** Find the issue from a closing keyword in the PR body (`fixes #N`, `closes #N`, `resolves #N`) and read the issue itself, not the PR's description of it. Distinguish fixing it from fixing part of it, fixing something adjacent, and not addressing it at all. With no issue linked, say what problem the PR appears to solve and whether it is worth carrying.
+
+**It is right for this repository.** Judge against this repo's rules rather than generic taste. `CLAUDE.md` governs architecture principles, code conventions, and the PR rules; the language section for whatever it touches applies; a skill covering that area applies too. Watch for the repo-wide bans CI does not always catch on a PR: inline lint escapes, comment blocks over 8 lines, banned Python accessors, `.unwrap()` on fallible Rust paths, `any` in TypeScript.
+
+**It is mergeable.** CI green, no conflicts, not draft, scoped to one concern.
 
 ## Reporting
 
