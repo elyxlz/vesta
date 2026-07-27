@@ -10,6 +10,18 @@ import type { NotificationEvent } from "../protocol/events"
 // chat stream leaves optional (ChatMessage) and notification display never reads.
 export type NotificationView = Omit<NotificationEvent, "id"> & { id?: number }
 
+// Identity of one notification ARRIVAL, for list dedup and React keys, the single owner shared by web
+// and mobile. `notif_id` is the notification file's stem, so it names the pending slot rather than the
+// event: the same stem can legitimately arrive again once the first one has been consumed. Pairing it
+// with the arrival timestamp keeps those two rows distinct while a replayed identical event (same id
+// and same ts) still dedups. Events predating `notif_id` fall back to the timestamp, then to their
+// content; each rung carries its own prefix so no two rungs can produce the same key.
+export function notificationRowKey(event: NotificationView): string {
+  if (event.notif_id != null) return `id\u0000${event.notif_id}\u0000${event.ts ?? ""}`
+  if (event.ts != null) return `ts\u0000${event.ts}`
+  return `sig\u0000${event.source}\u0000${event.sender ?? ""}\u0000${event.summary}`
+}
+
 export interface NotificationContent {
   headline: string
   body: string | null
