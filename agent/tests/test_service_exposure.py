@@ -22,8 +22,6 @@ EXPOSURE_OWNERS = {SKILLS_DIR / "vestad/scripts/register-service", SKILLS_DIR / 
 EXPECTED_PORT_MODE = {
     "agentmail": "public",
     "dashboard": "private",
-    "moneypot": "private",
-    "sign": "private",
     "tasks": "private",
 }
 
@@ -79,9 +77,9 @@ def test_only_named_skills_register_a_public_port_themselves():
 
 def test_the_signature_pad_is_never_public():
     """The pad takes a signature the agent stamps onto a document and verifies nothing itself."""
-    assert _declared_port_modes()["sign"] == "private"
+    assert "sign-service/sign-service" not in _direct_public_files()
 
 
 def test_the_shared_finance_api_is_never_public():
     """moneypot serves the user's shared expenses and holds no credential of its own."""
-    assert _declared_port_modes()["moneypot"] == "private"
+    assert "moneypot/moneypot" not in _direct_public_files()

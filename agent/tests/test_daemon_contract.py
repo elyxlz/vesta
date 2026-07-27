@@ -35,6 +35,7 @@ class Daemon:
     name: str  # pidfile name and log name
     serves_port: bool
     emits_daemon_died: bool
+    service: str | None = None  # vestad service name, when it differs from the command name
     rig: tp.Callable[[pl.Path, pl.Path], None] | None = None
 
 
@@ -57,6 +58,19 @@ SKILLS = [
         serves_port=True,
         emits_daemon_died=False,
         rig=_rig_file_host,
+    ),
+    Daemon(
+        command=[str(SKILLS_DIR / "sign-service/sign-service")],
+        name="sign-service",
+        serves_port=True,
+        emits_daemon_died=False,
+        service="sign",
+    ),
+    Daemon(
+        command=[str(SKILLS_DIR / "moneypot/moneypot")],
+        name="moneypot",
+        serves_port=True,
+        emits_daemon_died=False,
     ),
 ]
 
@@ -172,7 +186,8 @@ def test_registration_declares_the_expected_exposure(daemon):
     _verb(spec, env, "start")
     args = (home / "register-args").read_text().strip()
     public = {"file-host", "agentmail"}
-    expected = f"{spec.name} --public" if spec.name in public else spec.name
+    service = spec.service or spec.name
+    expected = f"{service} --public" if service in public else service
     assert args.splitlines()[0] == expected
     _verb(spec, env, "stop")
 

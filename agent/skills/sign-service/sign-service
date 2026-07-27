@@ -2,19 +2,79 @@
 set -eu
 
 # `sign-service` on PATH; the skill's whole surface is its daemon. The vestad service is
-# registered as `sign` while the screen session is `sign-service`, so both names are
-# declared explicitly. The pad accepts a signature the agent then stamps onto a document
-# and the server verifies nothing, so it is private and the signer opens a keyed link.
+# named `sign` while the command is `sign-service`, so both names are spelled out below.
+# The pad accepts a signature the agent then stamps onto a document and the server verifies
+# nothing, so it is private and the signer opens a keyed link.
 
+PIDFILE="$HOME/agent/data/daemons/sign-service.pid"
+PORTFILE="$HOME/agent/data/daemons/sign-service.port"
+LOG="$HOME/agent/logs/sign-service.log"
+SIGNATURE=/tmp/sign-service/signature.png
 USAGE="Usage: sign-service daemon <start|stop|restart|status>"
+
 case "${1:-}" in
   daemon) shift ;;
   "" | -h | --help | help) echo "$USAGE"; exit 0 ;;
   *) echo "$USAGE" >&2; exit 1 ;;
 esac
 
-exec "$HOME/agent/skills/vestad/scripts/daemon-lifecycle" "$@" \
-  --session sign-service \
-  --service sign \
-  --port-mode private \
-  -- /bin/sh -c "exec \"\$HOME/agent/.venv/bin/python3\" \"\$HOME/agent/skills/sign-service/sign_server.py\" \"\$PORT\" /tmp/sign-service/signature.png"
+fail() { printf '{"error":"%s"}\n' "$1" >&2; exit 1; }
+
+live_pid() {
+  pid=$(cat "$PIDFILE" 2>/dev/null) || return 1
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 1
+  printf %s "$pid"
+}
+
+do_start() {
+  if live_pid >/dev/null; then echo '{"status":"already_running"}'; return 0; fi
+  PORT=$(register-service sign) || fail "could not register sign with vestad"
+  [ -n "$PORT" ] || fail "could not register sign with vestad"
+  mkdir -p "$HOME/agent/data/daemons" "$HOME/agent/logs"
+  echo "$PORT" > "$PORTFILE"
+  # sign_server.py imports nothing outside the standard library, so the box's venv
+  # interpreter and a plain python3 both run it.
+  python="$HOME/agent/.venv/bin/python3"
+  [ -x "$python" ] || python=python3
+  setsid "$python" "$HOME/agent/skills/sign-service/sign_server.py" "$PORT" "$SIGNATURE" >> "$LOG" 2>&1 &
+  echo "$!" > "$PIDFILE"
+  i=0
+  while [ "$i" -lt 60 ]; do
+    kill -0 "$(cat "$PIDFILE")" 2>/dev/null || fail "sign-service exited during startup; see $LOG"
+    if curl -fsS -o /dev/null "http://localhost:$PORT" 2>/dev/null; then
+      echo '{"status":"started"}'; return 0
+    fi
+    sleep 0.5; i=$((i + 1))
+  done
+  fail "sign-service never answered on port $PORT; see $LOG"
+}
+
+do_stop() {
+  pid=$(live_pid) || { echo '{"status":"already_stopped"}'; return 0; }
+  kill -TERM "$pid" 2>/dev/null || true
+  i=0
+  while [ "$i" -lt 30 ]; do
+    kill -0 "$pid" 2>/dev/null || { rm -f "$PIDFILE" "$PORTFILE"; echo '{"status":"stopped"}'; return 0; }
+    sleep 0.5; i=$((i + 1))
+  done
+  fail "sign-service still running after SIGTERM (pid=$pid)"
+}
+
+# Reads the port start recorded, never registration: status stays a local read that
+# answers instantly and truthfully while vestad is down.
+do_status() {
+  if live_pid >/dev/null; then
+    port=$(cat "$PORTFILE" 2>/dev/null) || port=""
+    printf '{"running":true,"port":%s}\n' "${port:-null}"
+  else
+    printf '{"running":false,"port":null}\n'
+  fi
+}
+
+case "${1:-}" in
+  start) do_start ;;
+  stop) do_stop ;;
+  restart) do_stop >/dev/null; do_start ;;
+  status) do_status ;;
+  *) echo "$USAGE" >&2; exit 1 ;;
+esac

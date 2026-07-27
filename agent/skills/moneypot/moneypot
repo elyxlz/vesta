@@ -2,21 +2,76 @@
 set -eu
 
 # `moneypot` on PATH. `moneypot daemon <action>` drives the daemon; anything else is a
-# moneypot.py command, so the skill has one entry point rather than one per surface. The
-# service is private and the server holds no credential, so vestad authenticates every
-# request before proxying it and an external caller reaches it with a minted service key.
+# moneypot.py command, so the skill has one entry point rather than one per surface, and a
+# help request prints both surfaces. The service is private and the server holds no
+# credential, so vestad authenticates every request before proxying it and an external
+# caller reaches it with a minted service key.
 
 SKILL_DIR="$HOME/agent/skills/moneypot"
+PIDFILE="$HOME/agent/data/daemons/moneypot.pid"
+PORTFILE="$HOME/agent/data/daemons/moneypot.port"
+LOG="$HOME/agent/logs/moneypot.log"
+USAGE="Usage: moneypot daemon <start|stop|restart|status>"
 
-if [ "${1:-}" = "daemon" ]; then
-  shift
-  mkdir -p "$HOME/agent/logs"
-  exec "$HOME/agent/skills/vestad/scripts/daemon-lifecycle" "$@" \
-    --session moneypot \
-    --service moneypot \
-    --port-mode private \
-    --workdir "$SKILL_DIR" \
-    -- /bin/sh -c 'PYTHONUNBUFFERED=1 exec python3 server.py --port "$PORT" >> "$HOME/agent/logs/moneypot.log" 2>&1'
-fi
+case "${1:-}" in
+  daemon) shift ;;
+  "" | -h | --help | help) echo "$USAGE"; exec python3 "$SKILL_DIR/moneypot.py" --help ;;
+  *) exec python3 "$SKILL_DIR/moneypot.py" "$@" ;;
+esac
 
-exec python3 "$SKILL_DIR/moneypot.py" "$@"
+fail() { printf '{"error":"%s"}\n' "$1" >&2; exit 1; }
+
+live_pid() {
+  pid=$(cat "$PIDFILE" 2>/dev/null) || return 1
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 1
+  printf %s "$pid"
+}
+
+do_start() {
+  if live_pid >/dev/null; then echo '{"status":"already_running"}'; return 0; fi
+  PORT=$(register-service moneypot) || fail "could not register moneypot with vestad"
+  [ -n "$PORT" ] || fail "could not register moneypot with vestad"
+  mkdir -p "$HOME/agent/data/daemons" "$HOME/agent/logs"
+  echo "$PORT" > "$PORTFILE"
+  (cd "$SKILL_DIR" && exec setsid python3 -u server.py --port "$PORT" >> "$LOG" 2>&1) &
+  echo "$!" > "$PIDFILE"
+  i=0
+  while [ "$i" -lt 60 ]; do
+    kill -0 "$(cat "$PIDFILE")" 2>/dev/null || fail "moneypot exited during startup; see $LOG"
+    if curl -fsS -o /dev/null "http://localhost:$PORT/health" 2>/dev/null; then
+      echo '{"status":"started"}'; return 0
+    fi
+    sleep 0.5; i=$((i + 1))
+  done
+  fail "moneypot never answered on port $PORT; see $LOG"
+}
+
+do_stop() {
+  pid=$(live_pid) || { echo '{"status":"already_stopped"}'; return 0; }
+  kill -TERM "$pid" 2>/dev/null || true
+  i=0
+  while [ "$i" -lt 30 ]; do
+    kill -0 "$pid" 2>/dev/null || { rm -f "$PIDFILE" "$PORTFILE"; echo '{"status":"stopped"}'; return 0; }
+    sleep 0.5; i=$((i + 1))
+  done
+  fail "moneypot still running after SIGTERM (pid=$pid)"
+}
+
+# Reads the port start recorded, never registration: status stays a local read that
+# answers instantly and truthfully while vestad is down.
+do_status() {
+  if live_pid >/dev/null; then
+    port=$(cat "$PORTFILE" 2>/dev/null) || port=""
+    printf '{"running":true,"port":%s}\n' "${port:-null}"
+  else
+    printf '{"running":false,"port":null}\n'
+  fi
+}
+
+case "${1:-}" in
+  start) do_start ;;
+  stop) do_stop ;;
+  restart) do_stop >/dev/null; do_start ;;
+  status) do_status ;;
+  *) echo "$USAGE" >&2; exit 1 ;;
+esac
