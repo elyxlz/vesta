@@ -5,6 +5,16 @@ import shutil
 import subprocess
 
 from . import config as cfg
+from . import logger
+
+# The vestad helpers, exposed on PATH as bare commands: link name -> script name. `health` is
+# too generic a command name to own, so it lands as `vestad-health`.
+_VESTAD_COMMANDS = {
+    "register-service": "register-service",
+    "service-key": "service-key",
+    "user-notification": "user-notification",
+    "vestad-health": "health",
+}
 
 
 def _text_names(path: pl.Path) -> list[str]:
@@ -65,8 +75,29 @@ def _replace_skill_links(link_dir: pl.Path, optional_dir: pl.Path, core_dir: pl.
                 link_skill(skill_dir)
 
 
+def _link_vestad_commands(bin_dir: pl.Path, scripts_dir: pl.Path) -> None:
+    """Put the vestad helper scripts on PATH, one symlink at a time.
+
+    The bin dir is shared with uv tool installs, so only our own links are touched: a path held
+    by anything else keeps it, and a link of ours is rewritten so a moved script leaves nothing
+    dangling behind it.
+    """
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    for command, script in _VESTAD_COMMANDS.items():
+        source = scripts_dir / script
+        link = bin_dir / command
+        if not source.is_file():
+            continue
+        if link.is_symlink() and link.readlink().parent == scripts_dir:
+            link.unlink()
+        elif link.is_symlink() or link.exists():
+            logger.warning(f"leaving {link} alone: occupied by something other than the vestad helper link")
+            continue
+        link.symlink_to(source)
+
+
 def reconcile_claude_runtime(config: cfg.VestaConfig) -> None:
-    """Seed active skills, rebuild their symlinks, and ensure Claude has default settings."""
+    """Seed active skills, rebuild their symlinks, put the vestad helpers on PATH, and ensure Claude has default settings."""
     legacy_active = config.data_dir / "active-skills.txt"
     _bridge_legacy_sparse_skills(config, legacy_active)
 
@@ -81,6 +112,7 @@ def reconcile_claude_runtime(config: cfg.VestaConfig) -> None:
     claude_dir = pl.Path.home() / ".claude"
     claude_dir.mkdir(parents=True, exist_ok=True)
     _replace_skill_links(claude_dir / "skills", config.agent_dir / "skills", config.agent_dir / "core/skills", active)
+    _link_vestad_commands(pl.Path.home() / ".local/bin", config.agent_dir / "skills/vestad/scripts")
 
     settings = claude_dir / "settings.json"
     if not settings.exists():

@@ -590,6 +590,80 @@ def test_agent_startup_bridges_the_cone_on_first_flat_boot(tmp_path):
     assert "whatsapp" in _links(home)  # and linked (on disk in the cone)
 
 
+# --- agent startup: the vestad helpers as bare commands on PATH ---
+
+VESTAD_SCRIPTS = ("register-service", "service-key", "user-notification", "health")
+
+
+def _bin_box(tmp_path, scripts=VESTAD_SCRIPTS):
+    home = _skill_link_box(tmp_path)
+    scripts_dir = home / "agent/skills/vestad/scripts"
+    scripts_dir.mkdir(parents=True)
+    for script in scripts:
+        (scripts_dir / script).write_text(f"#!/usr/bin/env bash\necho {script}\n")
+    (home / ".local/bin").mkdir(parents=True)
+    return home
+
+
+def _bin(home, name):
+    return home / ".local/bin" / name
+
+
+def _target(home, script):
+    return (home / "agent/skills/vestad/scripts" / script).resolve()
+
+
+def _bin_state(home):
+    return sorted((p.name, p.readlink() if p.is_symlink() else p.read_text()) for p in (home / ".local/bin").iterdir())
+
+
+def test_agent_startup_puts_the_vestad_helpers_on_path(tmp_path):
+    home = _bin_box(tmp_path)
+    assert _run_agent_startup(home).returncode == 0
+    for command in ("register-service", "service-key", "user-notification"):
+        assert _bin(home, command).readlink() == _target(home, command)
+    assert _bin(home, "vestad-health").readlink() == _target(home, "health")  # `health` alone is too generic to own
+    assert not _bin(home, "health").is_symlink()
+
+
+def test_agent_startup_leaves_a_foreign_bin_entry_alone(tmp_path):
+    """The bin dir is shared with uv tool installs, so it is never wiped and never clobbered."""
+    home = _bin_box(tmp_path)
+    occupied = _bin(home, "user-notification")
+    occupied.write_text("#!/bin/sh\necho not ours\n")
+    unrelated = _bin(home, "some-tool")
+    unrelated.write_text("#!/bin/sh\necho a uv tool\n")
+    assert _run_agent_startup(home).returncode == 0
+    assert not occupied.is_symlink() and occupied.read_text() == "#!/bin/sh\necho not ours\n"
+    assert unrelated.read_text() == "#!/bin/sh\necho a uv tool\n"
+    assert _bin(home, "register-service").readlink() == _target(home, "register-service")  # the rest still land
+
+
+def test_agent_startup_replaces_a_stale_helper_link(tmp_path):
+    home = _bin_box(tmp_path)
+    stale = _bin(home, "register-service")
+    stale.symlink_to(home / "agent/skills/vestad/scripts/register-service-under-its-old-name")
+    assert _run_agent_startup(home).returncode == 0
+    assert stale.readlink() == _target(home, "register-service")  # no dangling link survives
+
+
+def test_agent_startup_links_are_idempotent(tmp_path):
+    home = _bin_box(tmp_path)
+    assert _run_agent_startup(home).returncode == 0
+    before = _bin_state(home)
+    assert _run_agent_startup(home).returncode == 0
+    assert _bin_state(home) == before
+
+
+def test_agent_startup_links_a_helper_that_arrives_later(tmp_path):
+    home = _bin_box(tmp_path, scripts=("register-service", "user-notification", "health"))
+    assert _run_agent_startup(home).returncode == 0
+    assert not _bin(home, "service-key").is_symlink()  # not on disk yet, so nothing to point at
+    (home / "agent/skills/vestad/scripts/service-key").write_text("#!/usr/bin/env bash\necho service-key\n")
+    assert _run_agent_startup(home).returncode == 0
+    assert _bin(home, "service-key").readlink() == _target(home, "service-key")
+
+
 # --- the cone->flat boot migration spine (2026-08-flat-checkout.md) ----------------------
 
 
