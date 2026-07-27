@@ -22,16 +22,16 @@ EXPOSURE_OWNERS = {SKILLS_DIR / "vestad/scripts/register-service", SKILLS_DIR / 
 EXPECTED_PORT_MODE = {
     "agentmail": "public",
     "dashboard": "private",
-    "file-host": "public",
     "moneypot": "private",
     "sign": "private",
     "tasks": "private",
 }
 
 # A skill that registers its own port rather than declaring one to the runner. Keyed by file
-# because the service name is built at runtime, from an instance or a constant.
+# because a service name is often built at runtime, from an instance or a constant.
 EXPECTED_DIRECT_PUBLIC = {
     "browser/cli/src/vesta_browser/handover.py",  # the handover page opens with no credential
+    "file-host/file-host",  # the share link is fetched from outside the tunnel
     "whatsapp/cli/link.go",  # the QR link page a stranger's phone opens
 }
 

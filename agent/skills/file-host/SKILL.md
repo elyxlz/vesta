@@ -9,7 +9,7 @@ Serve a directory of files over HTTP and hand someone a link. Use when the user 
 
 ## Serve a file and get a shareable link (on vesta)
 
-The server binds to localhost, so it needs a public route.
+The server has no auth of its own, so it is reached through a public vestad route rather than directly.
 
 ```bash
 # 1. drop the file(s) into the served directory
@@ -26,7 +26,7 @@ Off vesta, bind any port with `serve.py --port N` and expose it with your own tu
 ## Flags
 
 - `--dir DIR`: directory to serve (default `~/.file-host`).
-- `--port N`: port to bind on `127.0.0.1` (default 8770; on vesta the daemon runner supplies the port).
+- `--port N`: port to bind on `0.0.0.0` (default 8770; on vesta `file-host daemon start` supplies the port vestad assigned).
 - `--no-cache`: send `Cache-Control: no-store` on every response. Use when serving a file that is rewritten in place, e.g. a rotating QR image, so browsers always re-fetch the current version.
 
 ## Rules
