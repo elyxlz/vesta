@@ -7,7 +7,7 @@ description: Use for any Microsoft account, personal or work (Outlook.com, Hotma
 
 **Setup / sign-in**: run **`microsoft auth setup --account <email>`**, one command provisions mail, calendar, and Teams and auto-picks device-code (personal / permissive) or a one-URL browser sign-in (locked work/school tenants), then auto-refreshes so the user signs in only once. Details and the two backends (Graph + browser-capture fallback): see [SETUP.md](SETUP.md).
 
-**Background daemon**: `screen -dmS microsoft microsoft serve --notifications-dir ~/agent/notifications`
+**Background daemon**: `microsoft daemon start`
 
 ## Command groups
 

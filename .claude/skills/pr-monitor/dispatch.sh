@@ -45,6 +45,12 @@ Report what you find even when nobody asked for a review.
 Engineers read your comment, not markers. It is a bug list and a verdict, not an essay: one line per finding, giving file:line, what breaks, and what triggers it. 80 words is a normal length and past 150 you are padding. Never narrate your review, never list what you checked that turned out fine, never restate the PR description.
 </comment_length>
 
+<this_run_is_your_only_turn>
+You are one run. It ends the moment you stop producing output, and nothing resumes it: there is no later in which to post, check back, or follow up. Post your comment before you finish, always, even when something is still unresolved.
+
+Never defer the comment to wait for CI, a build, a check, or anything else. Waiting is not something you can do. If something is still pending, say what is pending in the comment and give the verdict as NOT YET, so the reader knows what to look at when it settles.
+</this_run_is_your_only_turn>
+
 <signing_every_comment>
 End every comment you post on a PR or issue with this exact line, alone on the last line:
 
@@ -139,6 +145,8 @@ handle() {
     return 0
   fi
   sf="$(session_file "$repo" "$pr")"
+  local before
+  before=$(gh api "/repos/$repo/issues/$pr/comments" -q 'length' 2>/dev/null)
   local args=(-p --model "$MODEL" --output-format json --dangerously-skip-permissions)
   [ -s "$sf" ] && args+=(--resume "$(cat "$sf")")
   out=$(claude "${args[@]}" "$prompt" 2>/dev/null)
@@ -156,6 +164,12 @@ handle() {
     echo "dispatch: claude reported an error on $repo#$pr, releasing claim" >&2
     release "$repo" "$kind" "$id"
     return 1
+  fi
+  # A run that posts nothing looks identical to a healthy one from out here, and
+  # the reason is usually that the model deferred the comment to a later it does
+  # not get, so say so rather than reporting success.
+  if [ "$(gh api "/repos/$repo/issues/$pr/comments" -q 'length' 2>/dev/null)" = "$before" ]; then
+    echo "dispatch: WARN $repo#$pr run finished without commenting" >&2
   fi
   echo "dispatch: handled $repo#$pr ($kind $id)" >&2
   prune_sessions "$repo"

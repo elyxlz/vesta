@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+# Sign-service daemon lifecycle: start|stop|restart|status. The vestad service is registered
+# as `sign` while the screen session is `sign-service`, so both names are declared explicitly.
+
+SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+
+exec "$HOME/agent/skills/vestad/scripts/daemon-lifecycle" "$@" \
+  --session sign-service \
+  --service sign \
+  --port-mode public \
+  -- /bin/sh -c "exec \"\$HOME/agent/.venv/bin/python3\" '$SKILL_DIR/sign_server.py' \"\$PORT\" /tmp/sign-service/signature.png"

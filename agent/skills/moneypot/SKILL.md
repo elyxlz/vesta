@@ -7,7 +7,7 @@ description: Track shared expenses and joint money pots (Splitwise/Tricount styl
 
 A shared expense and pot tracker. A **pot** is a group (a trip, a household, a project) with members. You log two kinds of entries against it, and it computes net balances and a compact way to settle up. CLI plus an optional HTTP API. Data lives in `~/agent/data/moneypot.json` (shared by both).
 
-Run the CLI with `python3 ~/agent/skills/moneypot/moneypot.py <command>`.
+Run the CLI with `moneypot <command>`.
 
 ## Model
 
@@ -21,7 +21,7 @@ Amounts are stored as integer minor units (pence/cents), so there's no float dri
 ## CLI
 
 ```bash
-PY="python3 ~/agent/skills/moneypot/moneypot.py"
+PY="moneypot"
 
 # create a pot
 $PY pot create trip --name "Ski Trip" --currency GBP --members "Alice,Bob,Cara"

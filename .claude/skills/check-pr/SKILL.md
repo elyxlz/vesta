@@ -45,6 +45,9 @@ Work through the diff yourself. Delegate to a subagent only when the diff is gen
 
 ## Reporting
 
+You get one run, and it ends when you stop. Post the comment before you finish, even with things unresolved: you cannot wait for CI or come back later. Something still pending goes in the comment as `NOT YET`, naming what to watch.
+
+
 Post one comment. Engineers read it, not markers: it is a bug list and a verdict, not an essay.
 
 The whole comment is a one-line verdict plus one bullet per finding. Nothing else. **80 words is a normal length. Past 150 you are padding.**

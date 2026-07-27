@@ -32,7 +32,7 @@ screen -ls | grep finance
 
 **Start if not running:**
 ```bash
-screen -dmS finance /root/.local/share/uv/tools/finance/bin/python -m finance_cli.transaction_watcher serve
+finance daemon start
 ```
 
 **View logs (attach to screen):**

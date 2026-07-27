@@ -4,6 +4,8 @@ import argparse
 import datetime as dt
 import logging
 import pathlib
+import subprocess
+import sys
 import threading
 import typing as tp
 
@@ -18,6 +20,26 @@ from slack_sdk.web import SlackResponse
 from slack_cli.notif import ResolveName, SlackMessageEvent, build_notification, humanize_mentions, write_notification
 
 CREDENTIALS_PATH = pathlib.Path.home() / ".slack" / "credentials.json"
+
+DAEMON_LIFECYCLE = pathlib.Path.home() / "agent" / "skills" / "vestad" / "scripts" / "daemon-lifecycle"
+
+
+def daemon_lifecycle_args(action: str) -> list[str]:
+    """Argv for the shared runner. This daemon is portless and lets SIGHUP terminate it, so the
+    runner needs neither a service port nor a stop marker."""
+    return [
+        str(DAEMON_LIFECYCLE),
+        action,
+        "--session",
+        "slack",
+        "--",
+        "slack",
+        "serve",
+        "--notifications-dir",
+        str(pathlib.Path.home() / "agent" / "notifications"),
+    ]
+
+
 PAGE_LIMIT = 200
 
 logger = logging.getLogger("slack")
@@ -222,6 +244,9 @@ def main() -> None:
     serve = sub.add_parser("serve", help="run the Socket Mode daemon that writes notifications")
     serve.add_argument("--notifications-dir", required=True, type=pathlib.Path)
 
+    daemon = sub.add_parser("daemon", help="manage the background daemon: start|stop|restart|status")
+    daemon.add_argument("action", choices=["start", "stop", "restart", "status"])
+
     send = sub.add_parser("send", help="post a message")
     send.add_argument("target", help="#channel, @user, or a raw id (C.../D.../U...)")
     send.add_argument("message")
@@ -240,6 +265,8 @@ def main() -> None:
     try:
         if args.command == "authenticate":
             cmd_authenticate(args.bot_token, args.app_token)
+        elif args.command == "daemon":
+            sys.exit(subprocess.run(daemon_lifecycle_args(args.action), check=False).returncode)
         elif args.command == "serve":
             cmd_serve(args.notifications_dir)
         else:

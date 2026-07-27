@@ -13,7 +13,7 @@ skill is the right choice (zero-setup sign-in, no Google Cloud project). Every
 command prints JSON to stdout.
 
 **Setup**: See [SETUP.md](SETUP.md)
-**Background**: `screen -dmS google google serve --notifications-dir ~/agent/notifications`
+**Background**: `google daemon start`
 
 ## Email (Gmail)
 

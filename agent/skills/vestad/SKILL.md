@@ -62,20 +62,62 @@ The dashboard is private, and the app reaches it with a minted service key, so p
 only for something that must load with no credential at all, like a QR link a stranger's phone
 opens or a webhook an external service posts to.
 
-So the service comes back after a container restart, add its startup command to the
-`## Daemons` section of `~/agent/skills/restart/SKILL.md`, one fenced block per skill. Use a
-single line that re-registers and starts, e.g.:
+## Giving a skill a daemon
+
+Every skill that runs a background process exposes the same four verbs,
+`daemon start|stop|restart|status`, and delegates the behavior to one shared runner,
+`~/agent/skills/vestad/scripts/daemon-lifecycle`. The runner owns the screen guard, port
+registration, readiness polling, stopping the process, and the JSON status, so a skill declares
+only what is its own:
+
+| flag | meaning |
+| --- | --- |
+| `--session NAME` | the screen session; not always the skill name (`spotify` runs `spotify-watch`) |
+| `--service NAME` | the name registered with vestad; not always the session name (`sign-service` registers as `sign`) |
+| `--port-mode MODE` | `none` (default), `private`, or `public` |
+| `--workdir DIR` | cd here before launching |
+| `--probe MODE` | `none` (default), or `http` for a 200 on the registered port |
+| `--stop-marker PATH` | written before stopping, so the daemon can tell a deliberate stop from a crash |
+| `--pidfile PATH` | the daemon's own pid file, so stop signals the process and a live pid counts as running |
+| `-- COMMAND ...` | what runs inside the session; it sees `$PORT` when a port was registered |
+
+Every skill is driven by name, `<skill> daemon start`, never by a script path. A skill with a CLI
+adds a `daemon` subcommand that shells the runner. A skill without one adds a `scripts/daemon`
+wrapper plus a launcher of the skill's own name that forwards to it, linked onto PATH at setup
+(`ln -sf ~/agent/skills/<skill>/<skill> ~/.local/bin/<skill>`). The wrapper:
+
+```sh
+#!/bin/sh
+set -eu
+exec "$HOME/agent/skills/vestad/scripts/daemon-lifecycle" "$@" \
+  --session file-host \
+  --service file-host \
+  --port-mode public \
+  -- /bin/sh -c 'exec python3 ~/agent/skills/file-host/serve.py --port "$PORT"'
+```
+
+Two rules that are easy to miss:
+
+- **A daemon that ignores SIGHUP must pass `--pidfile`.** Quitting a screen session only sends
+  SIGHUP, so such a daemon outlives the quit, runs no shutdown path, and would read as stopped
+  while still alive, letting the next start stack a second copy.
+- **A daemon that writes a `daemon_died` notification must honor the stop marker**: check for it
+  on shutdown, clear it, and stay silent, so a deliberate stop is not reported as a crash.
+
+Then add the guarded startup line yourself, inside the single fenced block in the `## Daemons`
+section of `~/agent/skills/restart/SKILL.md`, so the daemon comes back after a container restart:
 
 ```bash
-running tasks || { PORT=$(register-service tasks) && screen -dmS tasks tasks serve --notifications-dir ~/agent/notifications --port $PORT; sleep 1; }
+running tasks || { tasks daemon start; sleep 1; }
 ```
+
+The runner registers the port for you, so call `register-service` directly only when you need a
+port outside a daemon.
 
 vestad's API may still be coming up when the daemon block runs, so `register-service` polls
 until vestad answers (up to `REGISTER_SERVICE_WAIT` seconds, default 30) and, if it never does,
-exits non-zero with a stderr message and no port. Keep the `&&` between registration and start:
-a failed registration short-circuits the chain, so the daemon never launches portless. Wrap the
-whole line in the `running <name> ||` guard the Daemons block defines, so re-running it (crash
-recovery re-enters the block) never stacks a duplicate daemon.
+exits non-zero with a stderr message and no port. The runner treats that as fatal and does not
+launch, because a daemon on a port vestad does not know about is worse than one that did not start.
 
 List registrations, unregister a service, or tell connected clients to reload after changing
 what a service serves:

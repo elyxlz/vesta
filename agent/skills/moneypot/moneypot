@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+
+# `moneypot` on PATH. `moneypot daemon <action>` drives the daemon lifecycle; anything
+# else is a moneypot.py command, so the skill has one entry point instead of a script
+# path for the CLI and another for the daemon.
+
+SKILL_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+
+if [ "${1:-}" = "daemon" ]; then
+  shift
+  exec "$SKILL_DIR/scripts/daemon" "$@"
+fi
+
+exec python3 "$SKILL_DIR/moneypot.py" "$@"

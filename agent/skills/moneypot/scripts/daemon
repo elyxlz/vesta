@@ -1,0 +1,17 @@
+#!/bin/sh
+set -eu
+
+# Moneypot daemon lifecycle: start|stop|restart|status. The service is private and the
+# server itself holds no credential, so vestad authenticates every request before proxying
+# it and an external caller reaches it with a minted service key.
+
+SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+
+mkdir -p "$HOME/agent/logs"
+
+exec "$HOME/agent/skills/vestad/scripts/daemon-lifecycle" "$@" \
+  --session moneypot \
+  --service moneypot \
+  --port-mode private \
+  --workdir "$SKILL_DIR" \
+  -- /bin/sh -c 'PYTHONUNBUFFERED=1 exec python3 server.py --port "$PORT" >> "$HOME/agent/logs/moneypot.log" 2>&1'

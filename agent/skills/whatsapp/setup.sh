@@ -25,18 +25,13 @@ if [ ! -f "$MODEL" ]; then
   mv "$MODEL.tmp" "$MODEL"
 fi
 
-# 4. Restart-skill daemon line so the daemon survives container restarts.
-# `whatsapp start` brings the daemon up (idempotent) and waits until it answers,
-# so inbound notifications flow before the agent sends anything. The grep also
-# matches older forms (`whatsapp daemon start`, a raw `screen -dmS whatsapp`) so a
-# re-run never appends a duplicate line; a migration converts those in place.
-RESTART_MD="$HOME/agent/skills/restart/SKILL.md"
-DAEMON_LINE='running whatsapp || { whatsapp start; sleep 1; }'
-if [ -f "$RESTART_MD" ] && ! grep -qE 'whatsapp (start|daemon start)|screen -dmS whatsapp' "$RESTART_MD"; then
-  printf '\n```bash\n# whatsapp\n%s\n```\n' "$DAEMON_LINE" >> "$RESTART_MD"
-fi
-
-# 5. Start the daemon (idempotent; defaults --notifications-dir to ~/agent/notifications).
-whatsapp start
+# 4. Start the daemon (idempotent; defaults --notifications-dir to ~/agent/notifications).
+whatsapp daemon start
 
 echo "setup complete, link an account with: whatsapp link"
+echo
+echo "Remaining step, yours to do: add this line inside the fenced Daemons block"
+echo "of ~/agent/skills/restart/SKILL.md, matching the guard form already there."
+echo "\`whatsapp daemon start\` brings the daemon up and waits until it answers, so"
+echo "inbound notifications flow before you send anything."
+echo '  running whatsapp || { whatsapp daemon start; sleep 1; }'

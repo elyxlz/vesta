@@ -1,0 +1,212 @@
+#!/bin/sh
+set -u
+
+# Daemon lifecycle shared by every skill that runs one: start|stop|restart|status.
+# Owns the screen guard, port registration, readiness polling, and the stop marker
+# that tells a daemon its shutdown was deliberate, so a skill declares only what is
+# its own: session, service, port mode, workdir, probe, command.
+
+REGISTER_SERVICE="${REGISTER_SERVICE:-$HOME/agent/skills/vestad/scripts/register-service}"
+START_POLL_MAX=60
+STOP_POLL_MAX=30
+POLL_INTERVAL=0.5
+# screen registers a session within milliseconds, so if none has appeared after this
+# many polls the command died on launch. Without this the whole start budget is spent
+# waiting on a daemon that is never coming back.
+NEVER_SEEN_MAX=6
+
+SESSION=""
+SERVICE=""
+PORT_MODE="none"
+WORKDIR=""
+PROBE="none"
+STOP_MARKER=""
+PIDFILE=""
+
+fail() {
+  printf '{"error":"%s"}\n' "$1" >&2
+  exit 1
+}
+
+usage() {
+  echo "Usage: daemon <start|stop|restart|status>"
+}
+
+# A real action never starts with a dash, so a leading flag means the caller gave
+# none: a skill wrapper invoked bare forwards its own options as the first word.
+ACTION="${1:-}"
+case "$ACTION" in
+  "" | -h | --help | help | -*)
+    usage
+    exit 0
+    ;;
+esac
+shift
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --session) SESSION="${2:-}"; shift 2 ;;
+    --service) SERVICE="${2:-}"; shift 2 ;;
+    --port-mode) PORT_MODE="${2:-}"; shift 2 ;;
+    --workdir) WORKDIR="${2:-}"; shift 2 ;;
+    --probe) PROBE="${2:-}"; shift 2 ;;
+    --stop-marker) STOP_MARKER="${2:-}"; shift 2 ;;
+    --pidfile) PIDFILE="${2:-}"; shift 2 ;;
+    --) shift; break ;;
+    *) fail "unknown option $1" ;;
+  esac
+done
+
+[ -n "$SESSION" ] || fail "--session is required"
+
+# Both modes decide behavior by string match, so an unrecognized value would take the
+# fallback branch and register private or probe when the caller asked for neither.
+case "$PORT_MODE" in
+  none | private | public) ;;
+  *) fail "unknown --port-mode '$PORT_MODE' (use none|private|public)" ;;
+esac
+case "$PROBE" in
+  none | http) ;;
+  *) fail "unknown --probe '$PROBE' (use none|http)" ;;
+esac
+
+# The daemon's own pid, when it publishes one and is still alive.
+daemon_pid() {
+  [ -n "$PIDFILE" ] || return 1
+  [ -f "$PIDFILE" ] || return 1
+  pid=$(cat "$PIDFILE" 2>/dev/null)
+  [ -n "$pid" ] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  printf '%s' "$pid"
+}
+
+# True iff a LIVE screen session exists, judged by captured output rather than exit
+# code, wiping first so a "(Dead ???)" corpse never reads as live. A daemon that
+# ignores SIGHUP outlives `screen -X quit`, so a live pid counts as running too:
+# without that, a stop that orphaned the process would report stopped and the next
+# start would sail past its guard and stack a second daemon.
+running() {
+  screen -wipe >/dev/null 2>&1 || true
+  if test -n "$(screen -ls 2>/dev/null | grep -E "[0-9]+\.${SESSION}[[:space:]]" | grep -v "Dead")"; then
+    return 0
+  fi
+  daemon_pid >/dev/null
+}
+
+# Prints the registered port, or nothing. Empty is fatal for the caller: launching
+# on a port vestad does not know about is worse than not launching at all.
+service_port() {
+  [ "$PORT_MODE" = "none" ] && return 0
+  [ -n "$SERVICE" ] || fail "--service is required when --port-mode is not none"
+  if [ "$PORT_MODE" = "public" ]; then
+    "$REGISTER_SERVICE" "$SERVICE" --public 2>/dev/null || true
+  else
+    "$REGISTER_SERVICE" "$SERVICE" 2>/dev/null || true
+  fi
+}
+
+probe_ok() {
+  [ "$PROBE" = "none" ] && return 0
+  [ -n "$1" ] || return 1
+  curl -fsS -o /dev/null "http://localhost:$1" 2>/dev/null
+}
+
+do_start() {
+  [ $# -gt 0 ] || fail "no launch command given; pass it after --"
+  if running; then
+    printf '{"status":"already_running"}\n'
+    return 0
+  fi
+
+  port=""
+  if [ "$PORT_MODE" != "none" ]; then
+    port=$(service_port)
+    [ -n "$port" ] || fail "could not register service '$SERVICE' with vestad; not launching $SESSION"
+  fi
+
+  # A marker left by an earlier stop would silence the next real crash.
+  [ -n "$STOP_MARKER" ] && rm -f "$STOP_MARKER"
+
+  if [ -n "$WORKDIR" ]; then
+    screen -dmS "$SESSION" /bin/sh -c 'cd "$1" || exit 1; PORT="$2"; export PORT; shift 2; exec "$@"' sh "$WORKDIR" "$port" "$@"
+  else
+    screen -dmS "$SESSION" /bin/sh -c 'PORT="$1"; export PORT; shift; exec "$@"' sh "$port" "$@"
+  fi
+
+  seen="false"
+  i=0
+  while [ "$i" -lt "$START_POLL_MAX" ]; do
+    if running; then
+      seen="true"
+      if probe_ok "$port"; then
+        printf '{"status":"started"}\n'
+        return 0
+      fi
+    elif [ "$seen" = "true" ]; then
+      break
+    elif [ "$i" -ge "$NEVER_SEEN_MAX" ]; then
+      break
+    fi
+    sleep "$POLL_INTERVAL"
+    i=$((i + 1))
+  done
+
+  if running; then
+    fail "$SESSION is up but never answered on its port; inspect with: screen -r $SESSION"
+  fi
+  fail "$SESSION exited during startup; run its command in the foreground to see the error"
+}
+
+do_stop() {
+  if ! running; then
+    printf '{"status":"already_stopped"}\n'
+    return 0
+  fi
+  # Written before anything is signalled so the daemon's shutdown path finds it and
+  # skips the daemon_died notification a crash would fire.
+  [ -n "$STOP_MARKER" ] && : > "$STOP_MARKER"
+
+  # SIGTERM the process itself where it publishes a pid. Quitting the session only
+  # sends SIGHUP, which several daemons ignore: they would outlive the session, run
+  # no shutdown path, and never consume the marker.
+  pid=$(daemon_pid) && kill -TERM "$pid" 2>/dev/null
+  screen -S "$SESSION" -X quit >/dev/null 2>&1 || true
+  i=0
+  while [ "$i" -lt "$STOP_POLL_MAX" ]; do
+    running || break
+    sleep "$POLL_INTERVAL"
+    i=$((i + 1))
+  done
+  if running; then
+    fail "$SESSION still running after screen quit; inspect with: screen -r $SESSION"
+  fi
+  printf '{"status":"stopped"}\n'
+}
+
+do_status() {
+  running_flag="false"
+  running && running_flag="true"
+  port=""
+  http_ok="false"
+  if [ "$running_flag" = "true" ]; then
+    port=$(service_port)
+    if [ "$PROBE" != "none" ] && probe_ok "$port"; then
+      http_ok="true"
+    fi
+  fi
+  if [ -n "$port" ]; then
+    port_json="\"$port\""
+  else
+    port_json="null"
+  fi
+  printf '{"running":%s,"session":"%s","port":%s,"http_ok":%s}\n' \
+    "$running_flag" "$SESSION" "$port_json" "$http_ok"
+}
+
+case "$ACTION" in
+  start) do_start "$@" ;;
+  stop) do_stop ;;
+  restart) do_stop >/dev/null; do_start "$@" ;;
+  status) do_status ;;
+  *) fail "unknown action '$ACTION' (use start|stop|restart|status)" ;;
+esac

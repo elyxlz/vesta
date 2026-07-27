@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import signal
+import subprocess
 import sys
 import threading
 from pathlib import Path
@@ -10,6 +11,39 @@ from pathlib import Path
 from . import auth_commands, calendar, gmail, monitor, notifications
 from .config import Config
 from .context import GoogleContext
+
+DAEMON_LIFECYCLE = Path.home() / "agent" / "skills" / "vestad" / "scripts" / "daemon-lifecycle"
+
+
+def stop_marker_path(config: Config) -> Path:
+    return config.data_dir / "stop-requested"
+
+
+def emit_daemon_died(notif_dir: Path, *, reason: str, stop_marker: Path) -> None:
+    """Announce an unexpected exit. A stop marker means the shutdown was asked for, so this
+    clears the marker and stays silent rather than crying wolf on a deliberate stop."""
+    if stop_marker.exists():
+        stop_marker.unlink()
+        return
+    notifications.write_notification(notif_dir, "daemon_died", reason=reason)
+
+
+def daemon_lifecycle_args(action: str, config: Config) -> list[str]:
+    return [
+        str(DAEMON_LIFECYCLE),
+        action,
+        "--session",
+        "google",
+        "--stop-marker",
+        str(stop_marker_path(config)),
+        "--pidfile",
+        str(config.data_dir / "serve.pid"),
+        "--",
+        "google",
+        "serve",
+        "--notifications-dir",
+        str(Path.home() / "agent" / "notifications"),
+    ]
 
 
 def _write_pid(config):
@@ -23,13 +57,13 @@ def _remove_pid(config):
 def _require_daemon(config):
     pid_file = config.data_dir / "serve.pid"
     if not pid_file.exists():
-        print(json.dumps({"error": "daemon not running - start with: screen -dmS google google serve"}), file=sys.stderr)
+        print(json.dumps({"error": "daemon not running, start it with: google daemon start"}), file=sys.stderr)
         sys.exit(1)
     try:
         os.kill(int(pid_file.read_text().strip()), 0)
     except (ValueError, ProcessLookupError, OSError):
         pid_file.unlink(missing_ok=True)
-        print(json.dumps({"error": "daemon not running (stale pid file) - start with: screen -dmS google google serve"}), file=sys.stderr)
+        print(json.dumps({"error": "daemon not running (stale pid file), start it with: google daemon start"}), file=sys.stderr)
         sys.exit(1)
 
 
@@ -39,6 +73,9 @@ def _build_parser():
 
     serve_parser = group.add_parser("serve")
     serve_parser.add_argument("--notifications-dir", required=True)
+
+    daemon_parser = group.add_parser("daemon", help="Manage the background daemon: start|stop|restart|status")
+    daemon_parser.add_argument("action", choices=["start", "stop", "restart", "status"])
 
     auth_parser = group.add_parser("auth")
     auth_sub = auth_parser.add_subparsers(dest="command", required=True)
@@ -163,6 +200,9 @@ def main():
     config.log_dir.mkdir(parents=True, exist_ok=True)
 
     try:
+        if args.group == "daemon":
+            sys.exit(subprocess.run(daemon_lifecycle_args(args.action, config), check=False).returncode)
+
         if args.group == "serve":
             _run_serve(config, Path(args.notifications_dir))
             return
@@ -327,5 +367,5 @@ def _run_serve(config: Config, notif_dir: Path):
     try:
         monitor.run(ctx)
     finally:
-        notifications.write_notification(notif_dir, "daemon_died", reason=shutdown_reason)
+        emit_daemon_died(notif_dir, reason=shutdown_reason, stop_marker=stop_marker_path(config))
         _remove_pid(config)

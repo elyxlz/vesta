@@ -4,6 +4,8 @@ import argparse
 import asyncio
 import logging
 import pathlib
+import subprocess
+import sys
 
 import aiohttp
 import discord
@@ -13,6 +15,26 @@ from discord_cli.notif import MessageFacts, build_notification, daemon_died_noti
 
 CREDENTIALS_PATH = pathlib.Path.home() / ".discord" / "credentials.json"
 API_BASE = "https://discord.com/api/v10"
+
+DAEMON_LIFECYCLE = pathlib.Path.home() / "agent" / "skills" / "vestad" / "scripts" / "daemon-lifecycle"
+
+
+def daemon_lifecycle_args(action: str) -> list[str]:
+    """Argv for the shared runner. This daemon is portless and lets SIGHUP terminate it, so the
+    runner needs neither a service port nor a stop marker."""
+    return [
+        str(DAEMON_LIFECYCLE),
+        action,
+        "--session",
+        "discord",
+        "--",
+        "discord",
+        "serve",
+        "--notifications-dir",
+        str(pathlib.Path.home() / "agent" / "notifications"),
+    ]
+
+
 # View Channels (1024) + Send Messages (2048) + Read Message History (65536).
 INVITE_PERMISSIONS = 68608
 TEXT_CHANNEL_TYPES = (0, 5)
@@ -181,6 +203,9 @@ def main() -> None:
     serve = sub.add_parser("serve", help="run the gateway daemon that writes notifications")
     serve.add_argument("--notifications-dir", required=True, type=pathlib.Path)
 
+    daemon = sub.add_parser("daemon", help="manage the background daemon: start|stop|restart|status")
+    daemon.add_argument("action", choices=["start", "stop", "restart", "status"])
+
     send = sub.add_parser("send", help="post a message")
     send.add_argument("target", help="a channel id, or @<user id> to DM that user")
     send.add_argument("message")
@@ -196,6 +221,8 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     if args.command == "authenticate":
         asyncio.run(cmd_authenticate(args.token))
+    elif args.command == "daemon":
+        sys.exit(subprocess.run(daemon_lifecycle_args(args.action), check=False).returncode)
     elif args.command == "serve":
         cmd_serve(args.notifications_dir)
     else:

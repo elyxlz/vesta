@@ -11,5 +11,7 @@ set -e
 cd ~/agent/skills/dashboard/app
 [ -d node_modules ] || npm install
 [ -d dist ] || npx vite build
-PORT=$(~/agent/skills/vestad/scripts/register-service dashboard)
+# The daemon runner registers the service and hands the port down, so registering again
+# here would give the exposure a second owner. Fall back only for a foreground debug run.
+PORT="${PORT:-$(register-service dashboard)}"
 exec npx vite preview --port "$PORT" --host 0.0.0.0

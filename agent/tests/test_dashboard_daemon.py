@@ -64,9 +64,18 @@ def _rig(tmp_path):
     register_service = home / "agent/skills/vestad/scripts/register-service"
     register_service.write_text(FAKE_REGISTER_SERVICE)
     register_service.chmod(0o755)
+    # The real shared runner, so these tests exercise the lifecycle the dashboard
+    # actually delegates to rather than a stand-in for it.
+    runner = home / "agent/skills/vestad/scripts/daemon-lifecycle"
+    shutil.copy(REPO_ROOT / "agent/skills/vestad/scripts/daemon-lifecycle", runner)
+    runner.chmod(0o755)
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
+    # The helpers are bare commands on PATH, which is how a launcher run by hand finds them.
+    on_path = bin_dir / "register-service"
+    on_path.write_text(FAKE_REGISTER_SERVICE)
+    on_path.chmod(0o755)
     screen = bin_dir / "screen"
     screen.write_text(FAKE_SCREEN)
     screen.chmod(0o755)
@@ -173,8 +182,27 @@ def test_daemon_registers_the_dashboard_privately(tmp_path):
     assert (tmp_path / "screen-state/register-args").read_text().splitlines() == ["dashboard"]
 
 
-def test_serve_registers_the_dashboard_privately(tmp_path):
-    """The launcher registers the same private service the daemon probes."""
+def test_serve_takes_the_port_from_the_runner_without_re_registering(tmp_path):
+    """The runner owns the exposure, so a launcher handed a port never registers again."""
+    env = _rig(tmp_path)
+    env["PORT"] = "4321"
+    home = pl.Path(env["HOME"])
+    (home / "agent/skills/dashboard/scripts").mkdir(parents=True)
+    serve = home / "agent/skills/dashboard/scripts/serve"
+    shutil.copy(SERVE, serve)
+    (home / "agent/skills/dashboard/app/node_modules").mkdir(parents=True)
+    (home / "agent/skills/dashboard/app/dist").mkdir(parents=True)
+    npx = tmp_path / "bin/npx"
+    npx.write_text(FAKE_NPX)
+    npx.chmod(0o755)
+
+    result = subprocess.run(["sh", str(serve)], env=env, capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not (tmp_path / "screen-state/register-args").exists()
+
+
+def test_serve_run_by_hand_registers_the_dashboard_privately(tmp_path):
+    """A foreground debug run has no port handed to it, so it registers one itself."""
     env = _rig(tmp_path)
     home = pl.Path(env["HOME"])
     (home / "agent/skills/dashboard/scripts").mkdir(parents=True)
@@ -191,7 +219,7 @@ def test_serve_registers_the_dashboard_privately(tmp_path):
     assert (tmp_path / "screen-state/register-args").read_text().splitlines() == ["dashboard"]
 
 
-def test_setup_starts_daemon_and_appends_restart_line_once(tmp_path):
+def test_setup_starts_daemon_and_never_edits_the_restart_skill(tmp_path):
     env = _rig(tmp_path)
     # Copy the skill scripts into tmp_path (preserving the scripts/../app layout)
     # and pre-seed the app build artifacts there, so setup.sh never shells out to
@@ -203,16 +231,15 @@ def test_setup_starts_daemon_and_appends_restart_line_once(tmp_path):
     setup = skill_dir / "scripts/setup.sh"
 
     restart_skill = pl.Path(env["HOME"]) / "agent/skills/restart/SKILL.md"
-    restart_skill.write_text("# Restart\n\n## Daemons\n")
+    original = "# Restart\n\n## Daemons\n\n```bash\nrunning() { :; }\n```\n"
+    restart_skill.write_text(original)
 
-    first = subprocess.run(["sh", str(setup)], env=env, capture_output=True, text=True, check=False)
-    assert first.returncode == 0, first.stdout + first.stderr
+    result = subprocess.run(["sh", str(setup)], env=env, capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
     assert json.loads(_run(DAEMON, ["status"], env).stdout)["running"] is True
 
-    line = "running dashboard || { ~/agent/skills/dashboard/scripts/daemon start; sleep 1; }"
-    content_after_first = restart_skill.read_text()
-    assert content_after_first.count(line) == 1
+    # The agent owns this file: only it can match the guard form actually in use.
+    assert restart_skill.read_text() == original
 
-    second = subprocess.run(["sh", str(setup)], env=env, capture_output=True, text=True, check=False)
-    assert second.returncode == 0, second.stdout + second.stderr
-    assert restart_skill.read_text().count(line) == 1
+    line = "running dashboard || { ~/agent/skills/dashboard/scripts/daemon start; sleep 1; }"
+    assert line in result.stdout

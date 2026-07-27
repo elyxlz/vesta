@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import signal
+import subprocess
 import sys
 import time
 from contextlib import closing, suppress
@@ -21,6 +22,46 @@ def _add_format_flags(parser: argparse.ArgumentParser) -> None:
     group.add_argument("--json-pretty", action="store_true", help="Emit indented JSON instead of a table.")
 
 
+DAEMON_LIFECYCLE = Path.home() / "agent" / "skills" / "vestad" / "scripts" / "daemon-lifecycle"
+
+
+def stop_marker_path(config: Config) -> Path:
+    return config.data_dir / "stop-requested"
+
+
+def emit_daemon_died(notif_dir: Path, *, reason: str, stop_marker: Path) -> None:
+    """Announce an unexpected exit. A stop marker means the shutdown was asked for, so this
+    clears the marker and stays silent rather than crying wolf on a deliberate stop."""
+    if stop_marker.exists():
+        stop_marker.unlink()
+        return
+    write_notification(notif_dir, "daemon_died", reason=reason)
+
+
+def daemon_lifecycle_args(action: str, config: Config) -> list[str]:
+    """Argv for the shared runner. `$PORT` stays a literal: the runner exports the port it
+    registered into the session, and the shell inside the session expands it."""
+    return [
+        str(DAEMON_LIFECYCLE),
+        action,
+        "--session",
+        "tasks",
+        "--service",
+        "tasks",
+        "--port-mode",
+        "private",
+        "--stop-marker",
+        str(stop_marker_path(config)),
+        "--pidfile",
+        str(config.data_dir / "serve.pid"),
+        "--",
+        "tasks",
+        "serve",
+        "--port",
+        "$PORT",
+    ]
+
+
 def _write_pid(config):
     (config.data_dir / "serve.pid").write_text(str(os.getpid()))
 
@@ -31,7 +72,7 @@ def _remove_pid(config):
 
 
 def _fail_daemon_not_running(detail: str):
-    msg = f"daemon not running{detail} — start with: screen -dmS tasks tasks serve --notifications-dir ~/agent/notifications"
+    msg = f"daemon not running{detail}, start it with: tasks daemon start"
     print(json.dumps({"error": msg}), file=sys.stderr)
     sys.exit(1)
 
@@ -94,6 +135,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p_serve = sub.add_parser("serve", help="Run background daemon (scheduler + reminder engine)")
     p_serve.add_argument("--notifications-dir", default=str(Path.home() / "agent" / "notifications"))
     p_serve.add_argument("--port", type=int, required=True, help="HTTP server port (allocated by vestad)")
+
+    # daemon
+    p_daemon = sub.add_parser("daemon", help="Manage the background daemon: start|stop|restart|status")
+    p_daemon.add_argument("action", choices=["start", "stop", "restart", "status"])
 
     # add
     p_add = sub.add_parser("add", help="Add a new task")
@@ -185,6 +230,9 @@ def main():
         if args.command == "serve":
             _run_serve(config, Path(args.notifications_dir), port=args.port)
             return None
+
+        if args.command == "daemon":
+            sys.exit(subprocess.run(daemon_lifecycle_args(args.action, config), check=False).returncode)
 
         _require_daemon(config)
         _handle_task(args, config)
@@ -491,6 +539,6 @@ def _run_serve(config: Config, notif_dir: Path, *, port: int):
                 logging.getLogger(__name__).exception("serve tick failed")
     finally:
         http_server.should_exit = True
-        write_notification(notif_dir, "daemon_died", reason=shutdown_reason)
+        emit_daemon_died(notif_dir, reason=shutdown_reason, stop_marker=stop_marker_path(config))
         _remove_pid(config)
         scheduler.shutdown(wait=True)

@@ -1,23 +1,28 @@
 # Moneypot setup
 
-The **CLI needs no setup**: `python3 ~/agent/skills/moneypot/moneypot.py ...` works immediately and creates `~/agent/data/moneypot.json` on first write.
+Put `moneypot` on PATH (idempotent, safe to re-run):
+
+```bash
+mkdir -p ~/.local/bin && ln -sf ~/agent/skills/moneypot/moneypot ~/.local/bin/moneypot
+```
+
+The **CLI then needs no further setup**: `moneypot ...` works immediately and creates `~/agent/data/moneypot.json` on first write.
 
 The **HTTP API is optional**. To run it as a vestad-proxied service:
 
-1. Register a private port and start the server (uses the `vestad` skill):
+1. Start it:
 
    ```bash
-   P=$(~/agent/skills/vestad/scripts/register-service moneypot) &&
-   screen -dmS moneypot bash -c "cd ~/agent/skills/moneypot && PYTHONUNBUFFERED=1 python3 server.py --port $P > ~/agent/logs/moneypot.log 2>&1"
+   moneypot daemon start
    ```
 
    The service is private, so vestad authenticates every request before proxying it and the
-   server itself needs no credential.
+   server itself needs no credential. Manage it with `daemon start|stop|restart|status`.
 
    **An external caller** gets its own service key, scoped to moneypot and revocable:
 
    ```bash
-   KEY=$(~/agent/skills/vestad/scripts/service-key mint moneypot --label "budget app")
+   KEY=$(service-key mint moneypot --label "budget app")
    ```
 
    The secret is printed once and never again, so hand it to the caller as you mint it. The
@@ -25,10 +30,11 @@ The **HTTP API is optional**. To run it as a vestad-proxied service:
    unless you pass `--ttl <secs>` or `--never-expires`. List the live keys with
    `service-key list moneypot`, and revoke one with `service-key revoke moneypot <id>`.
 
-2. Add the startup line to the `## Daemons` section of `~/agent/skills/restart/SKILL.md` so it comes back after a restart:
+2. Add this line yourself, inside the fenced block in the `## Daemons` section of
+   `~/agent/skills/restart/SKILL.md`:
 
-   ```bash
-   running moneypot || { P=$(~/agent/skills/vestad/scripts/register-service moneypot) && screen -dmS moneypot bash -c "cd ~/agent/skills/moneypot && PYTHONUNBUFFERED=1 python3 server.py --port $P > ~/agent/logs/moneypot.log 2>&1"; sleep 1; }
+   ```
+   running moneypot || { moneypot daemon start; sleep 1; }
    ```
 
 3. Verify, with a key from step 1:
