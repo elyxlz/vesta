@@ -20,5 +20,5 @@ These replace step 1 above; step 2 stays yours either way.
 
 1. **Install dependencies**: `cd ~/agent/skills/dashboard/app && npm install`
 2. **Build**: `cd ~/agent/skills/dashboard/app && npx vite build`
-3. **Start the daemon**: `~/agent/skills/dashboard/scripts/daemon start` (idempotent, never stacks a duplicate)
+3. **Start the daemon**: `~/agent/skills/dashboard/scripts/daemon start`. Manage it with `daemon start|stop|restart|status`, never raw `screen`. Start is idempotent and never stacks a duplicate.
 4. **Check it's alive**: `~/agent/skills/dashboard/scripts/daemon status` reports `running`, `port`, and `http_ok` in one JSON blob.

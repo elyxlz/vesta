@@ -57,6 +57,11 @@ def _rig(tmp_path):
     register_service = home / "agent/skills/vestad/scripts/register-service"
     register_service.write_text(FAKE_REGISTER_SERVICE)
     register_service.chmod(0o755)
+    # The real shared runner, so these tests exercise the lifecycle the dashboard
+    # actually delegates to rather than a stand-in for it.
+    runner = home / "agent/skills/vestad/scripts/daemon-lifecycle"
+    shutil.copy(REPO_ROOT / "agent/skills/vestad/scripts/daemon-lifecycle", runner)
+    runner.chmod(0o755)
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()

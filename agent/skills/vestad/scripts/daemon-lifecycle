@@ -27,8 +27,19 @@ fail() {
   exit 1
 }
 
+usage() {
+  echo "Usage: daemon <start|stop|restart|status>"
+}
+
+# A real action never starts with a dash, so a leading flag means the caller gave
+# none: a skill wrapper invoked bare forwards its own options as the first word.
 ACTION="${1:-}"
-[ -n "$ACTION" ] || fail "usage: daemon-lifecycle <start|stop|restart|status> --session NAME [opts] -- CMD"
+case "$ACTION" in
+  "" | -h | --help | help | -*)
+    usage
+    exit 0
+    ;;
+esac
 shift
 
 while [ $# -gt 0 ]; do
