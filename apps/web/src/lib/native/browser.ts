@@ -1,4 +1,5 @@
 import type { ConnectionConfig } from "@/lib/connection";
+import { parseGatewayUrl } from "@/lib/gateway-url";
 import { detectPlatform } from "@/lib/platform";
 import type { NativeBridge } from "./types";
 
@@ -9,14 +10,11 @@ export function parseConnection(raw: string): ConnectionConfig | null {
     const parsed: unknown = JSON.parse(raw);
     if (parsed === null || typeof parsed !== "object") return null;
     const config = parsed as ConnectionConfig;
-    if (
-      config.url &&
-      config.accessToken &&
-      (config.refreshToken || config.hosted)
-    ) {
-      return config;
-    }
-    return null;
+    if (!config.accessToken || !(config.refreshToken || config.hosted))
+      return null;
+    const url = parseGatewayUrl(config.url);
+    if (url === null) return null;
+    return { ...config, url };
   } catch {
     return null;
   }

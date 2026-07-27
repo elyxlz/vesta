@@ -32,6 +32,14 @@ describe("browser bridge", () => {
     expect(await createBrowserBridge().connectionStore.read()).toBeNull();
   });
 
+  it("rejects a stored connection whose url is not an http origin", async () => {
+    localStorage.setItem(
+      "vesta-connection",
+      JSON.stringify({ ...CONFIG, url: "javascript:alert(1)" }),
+    );
+    expect(await createBrowserBridge().connectionStore.read()).toBeNull();
+  });
+
   it("accepts a hosted connection without a refresh token", async () => {
     const hosted: ConnectionConfig = {
       url: "https://box.example",
@@ -101,6 +109,15 @@ describe("electron bridge", () => {
     expect(await createElectronBridge(good).connectionStore.read()).toEqual(
       CONFIG,
     );
+  });
+
+  it("rejects a stored connection whose url is not an http origin", async () => {
+    const api = fakeApi({
+      storeRead: vi.fn(() =>
+        Promise.resolve({ ...CONFIG, url: "javascript:alert(1)" }),
+      ),
+    });
+    expect(await createElectronBridge(api).connectionStore.read()).toBeNull();
   });
 
   it("exposes the oauth loopback", async () => {
