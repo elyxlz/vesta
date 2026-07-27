@@ -1,6 +1,6 @@
 ---
 name: trivia
-description: Run a trivia game with the user. Use when the user says "let's play trivia", "trivia game", "quiz", or asks for trivia questions on a topic. Generates 15 multiple-choice questions easy to hard, marks correct answers, and tallies scores across multiple players.
+description: Run a trivia game with the user, solo or scored across several players. Use when the user says "let's play trivia", "trivia game", "quiz", or asks for trivia questions on a topic.
 ---
 
 # Trivia

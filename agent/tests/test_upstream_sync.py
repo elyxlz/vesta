@@ -670,8 +670,8 @@ def test_forwarding_workspace_sync_scripts_behave_identically(tmp_path):
 
 def test_legacy_workspace_skill_routes_released_migration_to_the_current_merge_flow():
     text = WORKSPACE_SYNC_SKILL.read_text()
-    assert "summary is historical" in text
-    assert "current upstream-sync Sync section is authoritative" in text
+    assert "ignore that summary" in text
+    assert "upstream-sync Sync section is authoritative" in text
     assert "uses a merge" in text
 
 

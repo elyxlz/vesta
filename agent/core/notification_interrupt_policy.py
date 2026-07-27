@@ -103,8 +103,8 @@ class NotificationInterruptRule(pyd.BaseModel):
     @classmethod
     def _coerce_legacy_pool_action(cls, data: object) -> object:
         # LEGACY(remove-when: no stored rule still carries action="pool" — every agent rewrites its
-        # rules in canonical shape on its next rule edit): the snooze action was previously named
-        # "pool"; coerce stored rules on read so fleet rulesets keep validating.
+        # rules in canonical shape on its next rule edit): a stored rule may spell the snooze action
+        # "pool"; coerce it on read so fleet rulesets keep validating.
         if not isinstance(data, dict) or "action" not in data:
             return data
         data = dict(data)

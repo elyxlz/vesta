@@ -87,6 +87,7 @@ pub(crate) enum Frame {
     AgentRemoved { name: String },
     Notifications { agent: String, pending: Vec<serde_json::Value> },
     UserNotification { agent: String, kind: String, title: String, body: String },
+    Presence { any_focused: bool },
 }
 
 impl Frame {
@@ -103,6 +104,20 @@ impl Frame {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum ClientFrame {
     Reauth { token: String },
+    ClientContext(ClientContext),
+}
+
+/// A client's reported context, sent up the `/sync` socket. Extensible: `focused` drives presence
+/// today; future fields (location, etc.) ride the same frame. `active_agent` is the agent whose chat
+/// the user has open (None on roster/settings), used to target the presence notification. `resync` is
+/// true when the socket replays its cached context on reconnect (not a fresh user focus), so the
+/// return-to-focus notification never fires on a mere reconnect or a vestad restart.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+pub(crate) struct ClientContext {
+    pub focused: bool,
+    pub active_agent: Option<String>,
+    #[serde(default)]
+    pub resync: bool,
 }
 
 /// Build one representative of every `/sync` frame through the real serde path, for the contract
@@ -157,6 +172,7 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
             "user_notification": to_value(Frame::UserNotification {
                 agent: "sample-agent".into(), kind: "message".into(), title: "sample-agent".into(), body: "hello".into(),
             }).expect("serialize user_notification"),
+            "presence": to_value(Frame::Presence { any_focused: true }).expect("serialize presence"),
         }
     })
 }
@@ -229,6 +245,7 @@ mod tests {
             (Frame::AgentRemoved { name: "scout".into() }, "agent_removed"),
             (Frame::Notifications { agent: "scout".into(), pending: vec![] }, "notifications"),
             (Frame::UserNotification { agent: "scout".into(), kind: "message".into(), title: "scout".into(), body: "hi".into() }, "user_notification"),
+            (Frame::Presence { any_focused: true }, "presence"),
         ];
         for (frame, tag) in cases {
             let value = serde_json::to_value(&frame).expect("serialize frame");
@@ -252,5 +269,31 @@ mod tests {
         assert_eq!(reauth, ClientFrame::Reauth { token: "tok".into() });
         // An unknown client frame is a parse error the handler treats as "ignore".
         assert!(serde_json::from_str::<ClientFrame>(r#"{"type":"future"}"#).is_err());
+    }
+
+    #[test]
+    fn client_context_frame_round_trips() {
+        // resync defaults to false when the field is absent (older clients, additive-safe).
+        let parsed: ClientFrame =
+            serde_json::from_str(r#"{"type":"client_context","focused":true,"active_agent":"scout"}"#)
+                .expect("parse client_context");
+        assert_eq!(
+            parsed,
+            ClientFrame::ClientContext(ClientContext { focused: true, active_agent: Some("scout".into()), resync: false })
+        );
+        let resync: ClientFrame =
+            serde_json::from_str(r#"{"type":"client_context","focused":false,"active_agent":null,"resync":true}"#)
+                .expect("parse client_context resync");
+        assert_eq!(
+            resync,
+            ClientFrame::ClientContext(ClientContext { focused: false, active_agent: None, resync: true })
+        );
+    }
+
+    #[test]
+    fn presence_frame_uses_its_wire_tag() {
+        let value = serde_json::to_value(Frame::Presence { any_focused: true }).expect("serialize presence");
+        assert_eq!(value["type"], serde_json::json!("presence"));
+        assert_eq!(value["any_focused"], serde_json::json!(true));
     }
 }

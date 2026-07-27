@@ -26,6 +26,9 @@ function fakeController(initial: SyncState = "connecting"): {
       listeners.add(listener)
       return () => listeners.delete(listener)
     },
+    reportPresence: () => undefined,
+    getAnyFocused: () => false,
+    subscribeAnyFocused: () => () => undefined,
     close: () => undefined,
   }
   const setState = (next: SyncState): void => {

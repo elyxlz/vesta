@@ -119,6 +119,9 @@ pub struct AppState {
     /// Revocable, per-service credentials the agent proxy accepts for a private service.
     pub(crate) service_keys: RwLock<crate::service_keys::ServiceKeyStore>,
     pub(crate) mobile_app: mobile_app::MobileApp,
+    /// Per-connection client presence fed by the `/sync` socket. Read by the mobile push path to
+    /// suppress a push while any client is focused, and fanned to sessions for return-to-focus.
+    pub(crate) presence: Arc<crate::sync::Presence>,
     pub(crate) dev_mode: bool,
     pub(crate) agent_status_cache: Arc<agent_status::AgentStatusCache>,
     /// The client-protocol aggregator's fan-out state: the per-agent pending-notifications
@@ -165,8 +168,9 @@ impl AppState {
         // is moved into the struct below.
         let refresh_live = load_refresh_live(&env_config.config_dir);
         let http_client = reqwest::Client::new();
+        let presence = Arc::new(crate::sync::Presence::new());
         let (mobile_app, mobile_app_worker) =
-            mobile_app::MobileApp::new(env_config.config_dir.clone(), http_client.clone());
+            mobile_app::MobileApp::new(env_config.config_dir.clone(), http_client.clone(), presence.clone());
         (
             Self {
                 api_key,
@@ -183,6 +187,7 @@ impl AppState {
                 settings: RwLock::new(settings),
                 service_keys: RwLock::new(crate::service_keys::load_store()),
                 mobile_app,
+                presence,
                 dev_mode,
                 agent_status_cache: Arc::new(agent_status::AgentStatusCache::new()),
                 sync_hub: Arc::new(crate::sync::SyncHub::new()),

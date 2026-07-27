@@ -153,7 +153,7 @@ def daemon_start(
     if running:
         return {"status": "already_running", "pid": pid, "session": SESSION_NAME}
     if screen_session_live():
-        # A pidfile-less daemon (launched by a raw screen line before this CLI existed)
+        # A pidfile-less daemon (launched by a raw screen line rather than this CLI)
         # is still running; `screen -dmS` would stack a second poller next to it.
         return {"error": f"a live '{SESSION_NAME}' screen session has no pidfile; quit it with `screen -S {SESSION_NAME} -X quit`, then retry"}
     stop_requested_path(state_dir).unlink(missing_ok=True)

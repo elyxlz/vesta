@@ -68,7 +68,7 @@ def _snapshot() -> SnapshotEvent:
         type="snapshot",
         state="idle",
         notifications={"pending": ["whatsapp-123"]},
-        config={"timezone": "America/New_York"},
+        config={"timezone": "America/New_York", "presence_notifications_enabled": True},
     )
 
 
@@ -122,7 +122,7 @@ def test_every_variant_carries_a_stable_id(tmp_path):
 
 def test_variants_cover_the_tap_read_subset():
     """Pin the fixture to exactly the tap-read set (D11): a variant added or dropped here fails against
-    the hardcoded contract, since the fixture no longer mirrors the full StreamEvent union."""
+    the hardcoded contract, since the fixture covers that subset rather than the full StreamEvent union."""
     variant_types = {event["type"] for event in _variants()}
     assert variant_types == set(_TAP_READ_TYPES)
     assert len(_variants()) == len(_TAP_READ_TYPES)

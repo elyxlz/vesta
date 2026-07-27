@@ -149,6 +149,18 @@ describe("createController", () => {
     expect(seen).toEqual([])
   })
 
+  it("tracks anyFocused from presence deltas", () => {
+    const h = harness()
+    const listener = vi.fn()
+    h.controller.subscribeAnyFocused(listener)
+    expect(h.controller.getAnyFocused()).toBe(false)
+    const socket = h.sockets[0]
+    socket?.onopen?.()
+    socket?.onmessage?.(JSON.stringify({ type: "presence", any_focused: true }))
+    expect(h.controller.getAnyFocused()).toBe(true)
+    expect(listener).toHaveBeenCalled()
+  })
+
   it("closes the socket and reports the closed state", () => {
     const h = harness()
     h.sockets[0]?.onopen?.()

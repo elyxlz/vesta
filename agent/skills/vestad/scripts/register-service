@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
-
 # Register a background service with vestad and print the assigned port.
 # Pass --public only for something that must load with no credential at all (a
 # whatsapp QR link, a shareable file link, an inbound webhook). Everything else
@@ -20,6 +18,8 @@ set -euo pipefail
 # Usage: register-service <name> [--public]
 #   PORT=$(~/agent/skills/vestad/scripts/register-service tasks)
 #   PORT=$(~/agent/skills/vestad/scripts/register-service file-host --public)
+
+set -euo pipefail
 
 NAME="${1:?Usage: register-service <name> [--public]}"
 if [ "${2:-}" = "--public" ]; then

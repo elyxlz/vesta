@@ -21,14 +21,13 @@ from .client import (
     client_session,
     compact_session,
     process_message,
-    resolve_openrouter_max_tokens,
     send_preempt,
 )
 from .codex_proxy import start_codex_proxy
 from .diagnostics import format_crash_detail
 from .helpers import build_restart_context, clear_notifications, load_prompt
 from .notification import CORE_SNOOZE_TYPES, CORE_SOURCE, TYPE_COMPACTION_FOLLOWUP, TYPE_NIGHTLY_DREAM, TYPE_PROACTIVE_CHECK, Notification
-from .openrouter_cache import start_cache_proxy
+from .openrouter_cache import resolve_openrouter_max_tokens, start_cache_proxy
 from .provider import ProviderAuthState, is_unauthenticated
 
 

@@ -77,7 +77,7 @@ func TestServeLinkPage(t *testing.T) {
 
 // TestClearQRClearsCode proves a finished/abandoned link session leaves no stale
 // code for the page to serve (the QR link is single-flighted and self-contained,
-// so there is no generation machinery to reason about anymore).
+// so there is no generation machinery to reason about).
 func TestClearQRClearsCode(t *testing.T) {
 	state := newStateStore(t.TempDir())
 	state.update(func(s *daemonState) { s.AuthStatus = string(AuthStatusQRReady) })

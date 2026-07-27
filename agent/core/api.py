@@ -42,12 +42,20 @@ from .config import (
     update_config_store,
     validate_config_updates,
 )
-from .events import EventBus, SnapshotEvent, VestaEvent
+from .events import EventBus, SnapshotConfig, SnapshotEvent, VestaEvent
 from .helpers import get_memory_path
 from .models import State
 from .provider import ProviderAuthState, UsageError, clear_provider, get_usage, set_claude, set_key_provider, set_openai
 
 logger = logging.getLogger("vesta.api")
+
+
+def _snapshot_config(config: VestaConfig) -> SnapshotConfig:
+    """The connect snapshot's config domain: timezone plus the presence toggle vestad's status tap reads."""
+    return {
+        "timezone": config.timezone,
+        "presence_notifications_enabled": config.presence_notifications.enabled,
+    }
 
 
 def _pending_notification_ids(config: VestaConfig) -> list[str]:
@@ -63,8 +71,8 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     """Event bus WebSocket.
 
     Send: all events from the event bus are pushed to connected clients.
-    Recv: drained only to keep the socket live and notice a close (see _recv_loop); nothing injects
-    events anymore. On connect: sends a `snapshot` seed (state + pending notifications + config)."""
+    Recv: drained only to keep the socket live and notice a close (see _recv_loop); no inbound frame
+    injects an event. On connect: sends a `snapshot` seed (state + pending notifications + config)."""
     event_bus: EventBus = request.app["event_bus"]
     config: VestaConfig = request.app["config"]
 
@@ -87,7 +95,7 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
                 type="snapshot",
                 state=event_bus.state,
                 notifications={"pending": pending},
-                config={"timezone": config.timezone},
+                config=_snapshot_config(config),
             )
         )
         recv_task = asyncio.create_task(_recv_loop(ws))
@@ -105,8 +113,8 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
 
 
 async def _recv_loop(ws: web.WebSocketResponse) -> None:
-    """Drain inbound frames. Nothing injects events into the bus anymore (app-chat owns chat on its own
-    service socket); this only keeps the connection live and notices a close."""
+    """Drain inbound frames. No inbound frame injects an event into the bus (app-chat owns chat on its
+    own service socket); this only keeps the connection live and notices a close."""
     async for msg in ws:
         if msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):
             break

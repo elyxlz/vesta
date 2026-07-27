@@ -32,12 +32,12 @@ goroutine can race an explicit command.
 ### One state file, one owner
 
 All daemon state lives in a single `<dataDir>/state.json` owned by `state.go`
-(`stateStore`: a pure load + atomic temp+rename save). It folds what used to be six
-separate files (managed number + pool creds, auth-status cache, last-exit reason,
-daemon-info, pairing-attempts, linked-at). The serve process is the **sole writer**;
-transient CLI commands only read it (and only when no daemon answers the socket, so
-there is no cross-process write clobber). On first start the new daemon imports any
-legacy files into `state.json` and deletes them (lossless, idempotent). `daemon.log`
+(`stateStore`: a pure load + atomic temp+rename save). It holds the managed number +
+pool creds, auth-status cache, last-exit reason, daemon-info, pairing-attempts, and
+linked-at. The serve process is the **sole writer**; transient CLI commands only read
+it (and only when no daemon answers the socket, so there is no cross-process write
+clobber). On first start the daemon imports any legacy per-key files it finds into
+`state.json` and deletes them (lossless, idempotent). `daemon.log`
 (the ~5 MB self-capping debug log), `qr-code.png`, `daemon.lock`, `whatsapp.sock`,
 and the `stop-requested` IPC marker are NOT state and stay separate.
 

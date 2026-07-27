@@ -225,7 +225,7 @@ def test_stored_config_serializes_null_provider(agentdir, monkeypatch, tmp_path)
 
 @pytest.mark.parametrize("key", ["openrouter_key", "agent_provider", "agent_model", "max_context_tokens", "thinking"])
 def test_validate_config_rejects_non_pref_keys(config, key):
-    # Flat provider keys are not config fields anymore; the provider is set via /provider.
+    # Flat provider keys are not config fields; the provider is set via /provider.
     with pytest.raises(ValueError, match="not config fields"):
         validate_config_updates(config, {key: "x"})
 
@@ -242,6 +242,15 @@ def test_validate_config_rejects_non_pref_keys(config, key):
 def test_validate_config_accepts_every_preference(config, key, value):
     expected = ["tasks", "whatsapp"] if key == "active_skills" else value
     assert validate_config_updates(config, {key: value}) == {key: expected}
+
+
+def test_presence_notifications_defaults_enabled(config):
+    assert config.presence_notifications.enabled is True
+
+
+def test_validate_config_accepts_presence_notifications(config):
+    result = validate_config_updates(config, {"presence_notifications": {"enabled": False}})
+    assert result == {"presence_notifications": {"enabled": False}}
 
 
 @pytest.mark.parametrize("value", ["whatsapp", ["../core"], ["has/slash"], [""], [1]])

@@ -2,8 +2,8 @@ package main
 
 import "testing"
 
-// TestLookupCommandAliases pins the short-alias-to-canonical resolution that the
-// command registry replaced (previously the aliases map in main.go).
+// TestLookupCommandAliases pins the short-alias-to-canonical resolution the command
+// registry performs.
 func TestLookupCommandAliases(t *testing.T) {
 	cases := []struct {
 		input string
@@ -69,8 +69,7 @@ func TestLookupCommandUnknown(t *testing.T) {
 	}
 }
 
-// TestCommandWriteFlags pins the read-only block set that the registry replaced
-// (previously the writeCommands map in cli.go).
+// TestCommandWriteFlags pins the read-only block set the registry carries.
 func TestCommandWriteFlags(t *testing.T) {
 	writeExpected := map[string]bool{
 		"send-message": true, "send-file": true, "send-reaction": true,
@@ -90,8 +89,7 @@ func TestCommandWriteFlags(t *testing.T) {
 	}
 }
 
-// TestCommandPositionals pins the positional-to-flag rewrite specs that the
-// registry replaced (previously the positionalSpecs map in main.go).
+// TestCommandPositionals pins the positional-to-flag rewrite specs the registry carries.
 func TestCommandPositionals(t *testing.T) {
 	positionalExpected := map[string][]string{
 		"send-message":          {"to", "message"},

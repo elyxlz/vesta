@@ -814,11 +814,7 @@ fn rename_notification_payload(
     new_name: &str,
     epoch_secs: u64,
 ) -> Result<serde_json::Value, String> {
-    let epoch = i64::try_from(epoch_secs).map_err(|e| format!("epoch out of range: {e}"))?;
-    let timestamp = time::OffsetDateTime::from_unix_timestamp(epoch)
-        .map_err(|e| format!("epoch out of range: {e}"))?
-        .format(&time::format_description::well_known::Rfc3339)
-        .map_err(|e| format!("format timestamp: {e}"))?;
+    let timestamp = crate::time_utils::epoch_to_rfc3339(epoch_secs)?;
     Ok(serde_json::json!({
         "timestamp": timestamp,
         "source": "vestad",
@@ -834,6 +830,22 @@ fn rename_notification_payload(
     }))
 }
 
+/// Write a vestad-authored notification JSON into an agent's notification intake. Best-effort: the
+/// caller decides whether a failure is fatal. Returns the file name written.
+async fn drop_notification(
+    docker: &bollard::Docker,
+    agent: &str,
+    file_name: &str,
+    payload: &serde_json::Value,
+) -> Result<String, String> {
+    let cname = docker::container_name(agent);
+    let bytes = serde_json::to_vec(payload).map_err(|e| format!("serialize notification: {e}"))?;
+    docker::upload_to_container(docker, &cname, "/root/agent/notifications", file_name, &bytes)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(file_name.to_string())
+}
+
 /// Drop a high-priority notification into the renamed agent so it self-updates
 /// MEMORY.md and any prompts that reference the old name. Best-effort: failure
 /// to write the notification doesn't block the rename. Returns the notification
@@ -843,21 +855,35 @@ pub(crate) async fn drop_rename_notification(
     new_name: &str,
     old_name: &str,
 ) -> Result<String, String> {
-    let cname = docker::container_name(new_name);
     let epoch = crate::time_utils::now_epoch_secs();
     let payload = rename_notification_payload(old_name, new_name, epoch)?;
-    let bytes = serde_json::to_vec(&payload).map_err(|e| format!("serialize notification: {e}"))?;
-    let file_name = format!("rename-{epoch}.json");
-    docker::upload_to_container(
-        docker,
-        &cname,
-        "/root/agent/notifications",
-        &file_name,
-        &bytes,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-    Ok(file_name)
+    drop_notification(docker, new_name, &format!("rename-{epoch}.json"), &payload).await
+}
+
+/// Build the presence notification payload. Pure (no IO) so its shape can be
+/// asserted without spinning up a container. `interrupt: false` snoozes it
+/// (ambient presence), overridable by the user's `notification_rules`.
+fn presence_notification_payload(epoch_secs: u64) -> Result<serde_json::Value, String> {
+    let timestamp = crate::time_utils::epoch_to_rfc3339(epoch_secs)?;
+    Ok(serde_json::json!({
+        "timestamp": timestamp,
+        "source": "vestad",
+        "type": "user-present",
+        "interrupt": false,
+        "message": "the user just opened Vesta and is here now.",
+    }))
+}
+
+/// Drop a snoozed presence notification into the agent so Vesta knows the user
+/// just returned to a client. Best-effort: a stopped agent or write failure is
+/// logged, never fatal. Returns the notification file name written.
+pub(crate) async fn drop_presence_notification(
+    docker: &bollard::Docker,
+    agent: &str,
+) -> Result<String, String> {
+    let epoch = crate::time_utils::now_epoch_secs();
+    let payload = presence_notification_payload(epoch)?;
+    drop_notification(docker, agent, &format!("user-present-{epoch}.json"), &payload).await
 }
 
 /// Which write to forward to the agent's own HTTP API. Dispatched inside `write_to_agent` so the
@@ -3051,7 +3077,16 @@ pub async fn run_server(cfg: ServerConfig) {
         },
     );
     let state = Arc::new(app_state);
-    let mobile_app_handle = tokio::spawn(mobile_app_worker.run());
+    // Mobile delivery is a background worker: losing it costs TestFlight builds, not serving. A
+    // supervisor reports its exit so run_server's select never waits on it, because a branch that
+    // resolved would end the select and stop the shutdown handler from stopping the agents.
+    let mobile_app_task = tokio::spawn(mobile_app_worker.run());
+    tokio::spawn(async move {
+        match mobile_app_task.await {
+            Ok(()) => tracing::error!("mobile app delivery worker exited unexpectedly"),
+            Err(error) => tracing::error!(%error, "mobile app delivery worker failed"),
+        }
+    });
     // Reconcile in the background so the API serves immediately: a rebuild (command/mount change)
     // snapshots each container's filesystem (minutes), and awaiting it would leave vestad unreachable.
     let reconcile_docker = docker.clone();
@@ -3179,10 +3214,6 @@ pub async fn run_server(cfg: ServerConfig) {
         r = http_handle => r.expect("http task panicked"),
         r = tls_handle => r.expect("https task panicked"),
         r = agent_handle => r.expect("agent-gateway https task panicked"),
-        r = mobile_app_handle => match r {
-            Ok(()) => panic!("mobile app delivery worker exited unexpectedly"),
-            Err(error) => panic!("mobile app delivery worker failed: {error}"),
-        },
         () = shutdown_signal() => {
             tracing::info!("shutdown signal received, stopping all agents before exit");
             docker::stop_all_agents(&shutdown_docker).await;
@@ -3314,6 +3345,14 @@ mod tests {
             message.contains("new-bot"),
             "message missing new name: {message}"
         );
+    }
+
+    #[test]
+    fn presence_payload_is_snoozed_vestad_notification() {
+        let payload = super::presence_notification_payload(1_700_000_000).expect("payload");
+        assert_eq!(payload["source"], "vestad");
+        assert_eq!(payload["type"], "user-present");
+        assert_eq!(payload["interrupt"], false);
     }
 
     // --- Legacy workspace.bundle endpoint: 404 before first build, bytes after ---

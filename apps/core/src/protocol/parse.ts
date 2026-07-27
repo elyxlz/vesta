@@ -27,6 +27,10 @@ function arr(value: unknown): unknown[] | null {
   return Array.isArray(value) ? (value as unknown[]) : null
 }
 
+function bool(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null
+}
+
 export function parseServerFrame(raw: string): ParsedFrame {
   let json: unknown
   try {
@@ -48,6 +52,7 @@ export function parseServerFrame(raw: string): ParsedFrame {
     case "agent_removed":
     case "notifications":
     case "user_notification":
+    case "presence":
       return parseDelta(type, frame)
     default:
       return UNKNOWN
@@ -101,6 +106,11 @@ function parseDelta(type: string, frame: Record<string, unknown>): ParsedFrame {
       const body = str(frame.body)
       if (agent === null || kind === null || title === null || body === null) return UNKNOWN
       return { kind: "delta", delta: { type: "user_notification", agent, kind, title, body } }
+    }
+    case "presence": {
+      const anyFocused = bool(frame.any_focused)
+      if (anyFocused === null) return UNKNOWN
+      return { kind: "delta", delta: { type: "presence", anyFocused } }
     }
     default:
       return UNKNOWN

@@ -1,6 +1,6 @@
 ---
 name: dashboard
-description: Use before building or modifying the user's dashboard: widgets, pages, layouts, custom UI. Understand what the user wants, design it, write a spec, then dispatch the dashboard-builder to build it.
+description: Use before building or modifying the user's dashboard: widgets, pages, layouts, custom UI.
 serve: ~/agent/skills/dashboard/scripts/daemon start
 ---
 

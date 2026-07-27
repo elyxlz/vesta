@@ -48,7 +48,7 @@ _SNAPSHOT_FIXTURE: SnapshotEvent = SnapshotEvent(
     type="snapshot",
     state="idle",
     notifications={"pending": ["email-123"]},
-    config={"timezone": "America/New_York"},
+    config={"timezone": "America/New_York", "presence_notifications_enabled": True},
 )
 
 

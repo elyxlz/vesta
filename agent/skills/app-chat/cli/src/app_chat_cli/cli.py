@@ -23,11 +23,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     serve_p = sub.add_parser("serve", help="Run the app-chat daemon in the foreground")
     # LEGACY(remove-when: no running agent's restart-skill `## Daemons` line still passes
-    # --notifications-dir): accepted and ignored. Intake moved to the HTTP service; kept so
+    # --notifications-dir): accepted and ignored. Intake is owned by the HTTP service; kept so
     # existing launch lines don't break argparse.
     serve_p.add_argument("--notifications-dir", default=None, help=argparse.SUPPRESS)
     # LEGACY(remove-when: no running agent's restart-skill `## Daemons` line still passes --ws-url):
-    # accepted and ignored. The daemon no longer connects to core's /ws; the live echo fans out
+    # accepted and ignored. The daemon does not connect to core's /ws; the live echo fans out
     # in-process to the service's /ws subscribers. Kept so an existing launch line doesn't break argparse.
     serve_p.add_argument("--ws-url", default=None, help=argparse.SUPPRESS)
     serve_p.add_argument("--data-dir", default=None, help="Data directory (default: ~/.app-chat)")

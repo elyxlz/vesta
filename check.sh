@@ -28,6 +28,7 @@ Suites:
   whatsapp       gofmt + go vet + go build + go test for the whatsapp skill CLI
                  (builds whisper.cpp static libs to ~/.cache/vesta-whisper on first run)
   telegram       gofmt + go vet + go build + go test for the telegram skill CLI
+  app-chat       pytest for the app-chat skill CLI (its own standalone uv project)
   integration    vestad integration tests (needs Docker)
   live           live agent e2e tests, incl. the upgrade gate (needs Docker + ~/.claude/.credentials.json; real Claude)
   upgrade        just the upgrade e2e: create an agent on the previous release, update in place
@@ -70,6 +71,9 @@ check_agent() {
     (
       unset UV_PROJECT_ENVIRONMENT
       for tool in skills/*/cli core/skills/*/cli; do
+        # app-chat has its own dedicated suite (check_app_chat), run in the
+        # communication-channels CI job alongside whatsapp/telegram.
+        [ "$tool" = "skills/app-chat/cli" ] && continue
         if [ -d "$tool/tests" ]; then
           uv run --project "$tool" pytest "$tool/tests" -q
         fi
@@ -175,7 +179,13 @@ check_guards() {
   uv run --project agent/core python scripts/check-conventions.py || failed=1
 
   if command -v shellcheck >/dev/null; then
-    git ls-files '*.sh' | xargs shellcheck -S warning || failed=1
+    # Selected by shebang, not just extension: several skill CLIs are bare command names
+    # (hue, daemon, skills-install) that must keep those names to stay invocable. The shebang
+    # pattern matches scripts/check-conventions.py so both guards cover the same set.
+    { git ls-files '*.sh'; git ls-files | while IFS= read -r f; do
+        case "${f##*/}" in *.*) continue ;; esac
+        if head -n1 -- "$f" 2>/dev/null | grep -qE '^#!.*\b(ba|da|k|z)?sh\b'; then echo "$f"; fi
+      done; } | sort -u | xargs shellcheck -S warning || failed=1
   else
     echo "error: shellcheck is not installed (apt install shellcheck / brew install shellcheck)" >&2
     failed=1
@@ -241,6 +251,14 @@ check_telegram() {
     go vet -tags fts5 ./...
     go build -tags fts5 -o /tmp/telegram-check-build .
     go test -tags fts5 ./...
+  )
+}
+
+check_app_chat() {
+  (
+    cd agent/skills/app-chat/cli
+    # Standalone uv project (own venv + lockfile), like every skill CLI.
+    uv run --project . pytest tests -q
   )
 }
 
@@ -315,6 +333,7 @@ for suite in "$@"; do
     guards) check_guards ;;
     whatsapp) check_whatsapp ;;
     telegram) check_telegram ;;
+    app-chat) check_app_chat ;;
     integration) check_integration ;;
     live) check_live ;;
     all) check_guards && check_agent && check_vestad && check_web ;;
