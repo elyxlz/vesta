@@ -242,13 +242,8 @@ func startSocketCommand(sockPath, command string, args []string) (<-chan socketC
 			result <- socketCommandResult{connected: false}
 			return
 		}
-		if resp.Error != "" {
-			data, _ := json.MarshalIndent(map[string]any{"error": resp.Error}, "", "  ")
-			result <- socketCommandResult{output: data, exitCode: 1, connected: true}
-			return
-		}
-		data, _ := json.MarshalIndent(resp.Result, "", "  ")
-		result <- socketCommandResult{output: data, connected: true}
+		data, exitCode := resp.render()
+		result <- socketCommandResult{output: data, exitCode: exitCode, connected: true}
 	}()
 	return result, func() { conn.Close() }, true
 }
