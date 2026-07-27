@@ -1,7 +1,6 @@
 ---
 name: dashboard
 description: Use before building or modifying the user's dashboard: widgets, pages, layouts, custom UI.
-serve: dashboard daemon start
 ---
 
 # Dashboard

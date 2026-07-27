@@ -1,7 +1,6 @@
 ---
 name: voice
 description: Voice input/output, transcription, TTS, API keys; manages ~/.voice/voice_config.json.
-serve: voice-keys daemon start
 ---
 
 # Voice setup (STT/TTS)
