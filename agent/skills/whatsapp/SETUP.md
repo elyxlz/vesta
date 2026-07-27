@@ -1,17 +1,25 @@
 # WhatsApp Setup
 
 Everything the build needs (Go, whisper.cpp static libs, gcc, ffmpeg) ships in
-the agent image. Setup is one idempotent script:
+the agent image. Setup is two steps: a script, then one edit you make.
 
-```bash
-~/agent/skills/whatsapp/setup.sh
-```
+1. Run the setup script:
+   ```bash
+   ~/agent/skills/whatsapp/setup.sh
+   ```
+   It links the launcher onto PATH, warms the build cache (compile errors surface
+   here), downloads the whisper voice-transcription model, and starts the daemon
+   now. Re-run it any time; it only does what's missing.
 
-It links the launcher onto PATH, warms the build cache (compile errors surface
-here), downloads the whisper voice-transcription model, registers `whatsapp start`
-in the restart skill (so the daemon comes back after a container restart, with
-notifications flowing before you send anything), and starts the daemon now.
-Re-run it any time; it only does what's missing.
+2. **Register the restart line yourself**, so the daemon comes back after a
+   container restart. Add this line inside the fenced block in the `## Daemons`
+   section of `~/agent/skills/restart/SKILL.md`, matching the guard form already
+   there. `whatsapp start` brings the daemon up and waits until it answers, so
+   inbound notifications flow before you send anything:
+   ```
+   running whatsapp || { whatsapp start; sleep 1; }
+   ```
+   Skip this and WhatsApp is live now but silent after the next restart.
 
 ## Linking an account
 

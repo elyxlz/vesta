@@ -11,7 +11,11 @@ Run the Daemons block below; it is safe to re-run and starts only what's missing
 
 ## Daemons
 
-Skill setup steps add their daemon startup commands here, one fenced block per skill (a daemon that vestad proxies on a port is a service, registered via the `vestad` skill; a portless background process still goes here). Every line MUST be guarded with `running <session> ||` so re-running the block can't spawn a duplicate: crash/timeout recovery re-enters this skill repeatedly, and an unguarded line piles up duplicate daemons.
+When a skill's setup gives you a daemon startup line, add it here yourself, inside the single fenced block below, on its own line before the closing fence. A setup script never edits this file: only you can see the guard form this block actually uses. (A daemon that vestad proxies on a port is a service, registered via the `vestad` skill; a portless background process goes here too.)
+
+Keep it to one fenced block. A line in a second block cannot see the `running()` helper defined in this one, so its guard fails open and every restart stacks another daemon.
+
+Every line MUST be guarded with `running <session> ||` so re-running the block can't spawn a duplicate: crash/timeout recovery re-enters this skill repeatedly, and an unguarded line piles up duplicate daemons.
 
 ```bash
 # Wipe dead sockets a restart may have left in /run/screen, else the guard treats
