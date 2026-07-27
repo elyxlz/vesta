@@ -119,6 +119,12 @@ The trust list is the whole gate, and it carries real authority. A trusted comme
 
 Keep the list to people you would let push to the branch yourself.
 
+## The agent must not wake itself
+
+Every comment the agent posts ends with `<!-- vestabot:reply -->`, which renders as nothing, and any comment carrying it is skipped. That marker is the only thing separating the agent's writing from a human's: its comments name the trigger when telling a reader how to reach it, and it posts under an account that also belongs to a maintainer, so neither the body nor the author distinguishes them. Without the marker its own comment reads as a fresh request and it wakes itself on the next poll, once per cycle, forever.
+
+The marker is written by the agent, so it holds only while the agent follows instructions. A separate bot identity would make it structural instead: comments from `<name>[bot]` are already skipped by author, needing nothing from the model. Override the string with `PR_MONITOR_MARKER`.
+
 ## How events are deduplicated
 
 A surfaced item gets a 👀 reaction on the comment (or on the PR itself, for dependabot). The next cycle sees that reaction and skips it. That state lives on GitHub, so it survives losing the working directory, a reboot, or a move to another machine.
@@ -139,6 +145,7 @@ Two consequences worth knowing:
 | `PR_MONITOR_TRIGGER` | `@vestabot` | Mention that makes a comment an event |
 | `PR_MONITOR_TRUSTED` | (author_association) | Logins allowed to drive the agent |
 | `PR_MONITOR_DENIED_REACTION` | `confused` | Reaction marking a refused comment |
+| `PR_MONITOR_MARKER` | `vestabot:reply` | Marker identifying the agent's own comments |
 | `PR_MONITOR_INTERVAL` | `45` | Seconds between polls |
 | `PR_MONITOR_STATE` | `$XDG_STATE_HOME/pr-monitor` | Review-summary ledger and per-PR session ids |
 | `PR_MONITOR_MODEL` | `claude-opus-5` | Model `dispatch.sh` runs each event on |
