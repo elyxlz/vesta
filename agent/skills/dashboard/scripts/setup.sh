@@ -27,12 +27,18 @@ echo "Starting daemon..."
 STATUS=$("$DIR/../dashboard" daemon status)
 echo "$STATUS"
 case "$STATUS" in
-  *'"http_ok":true'*) ;;
+  *'"running":true'*) ;;
   *)
-    echo "ERROR: dashboard did not answer a 200 after start; see 'screen -r dashboard'" >&2
+    echo "ERROR: dashboard is not running after start; see ~/agent/logs/dashboard.log" >&2
     exit 1
     ;;
 esac
+
+PORT=$(printf '%s' "$STATUS" | sed -n 's/.*"port":\([0-9]*\).*/\1/p')
+if ! curl -fsS -o /dev/null "http://localhost:$PORT"; then
+  echo "ERROR: dashboard did not answer a 200 on port $PORT; see ~/agent/logs/dashboard.log" >&2
+  exit 1
+fi
 
 echo "Dashboard setup complete."
 echo

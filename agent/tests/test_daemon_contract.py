@@ -51,6 +51,21 @@ def _rig_file_host(home: pl.Path, bin_dir: pl.Path) -> None:
     (served / "hello.txt").write_text("hi")
 
 
+def _rig_dashboard(home: pl.Path, bin_dir: pl.Path) -> None:
+    """The app is served from build artifacts, so the skill's link is swapped for a tree
+    holding both plus the real launch script, with a fake vite standing in for the server."""
+    skill = home / "agent/skills/dashboard"
+    skill.unlink()
+    (skill / "app/dist").mkdir(parents=True)
+    (skill / "scripts").mkdir()
+    (skill / "scripts/serve").symlink_to(SKILLS_DIR / "dashboard/scripts/serve")
+    vite = skill / "app/node_modules/.bin/vite"
+    vite.parent.mkdir(parents=True)
+    # `vite preview --port <port> --host 0.0.0.0`, so the port is the third argument.
+    vite.write_text('#!/bin/sh\nexec python3 -m http.server "$3" --bind 0.0.0.0\n')
+    vite.chmod(0o755)
+
+
 SKILLS = [
     Daemon(
         command=[str(SKILLS_DIR / "file-host/file-host")],
@@ -72,6 +87,13 @@ SKILLS = [
         serves_port=True,
         emits_daemon_died=False,
     ),
+    Daemon(
+        command=[str(SKILLS_DIR / "dashboard/dashboard")],
+        name="dashboard",
+        serves_port=True,
+        emits_daemon_died=False,
+        rig=_rig_dashboard,
+    ),
 ]
 
 
@@ -82,8 +104,12 @@ def daemon(request, tmp_path):
     (home / "agent/data/daemons").mkdir(parents=True)
     (home / "agent/logs").mkdir(parents=True)
     # A box's HOME is the checkout, so every launcher reaches its own files through
-    # $HOME/agent/skills. The symlink gives the hermetic HOME that same layout.
-    (home / "agent/skills").symlink_to(SKILLS_DIR)
+    # $HOME/agent/skills. One link per skill gives the hermetic HOME that same layout while
+    # leaving a rig free to swap a single skill for a writable stand-in.
+    skills = home / "agent/skills"
+    skills.mkdir()
+    for skill in SKILLS_DIR.iterdir():
+        (skills / skill.name).symlink_to(skill)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     reg = bin_dir / "register-service"
@@ -154,6 +180,29 @@ def test_stop_kills_the_process_and_status_tells_the_truth(daemon):
         os.kill(pid, 0)
     assert json.loads(_verb(spec, env, "status").stdout)["running"] is False
     assert json.loads(_verb(spec, env, "stop").stdout) == {"status": "already_stopped"}
+
+
+def test_restart_replaces_a_running_daemon_and_starts_a_stopped_one(daemon):
+    """The verb a restart file calls, so it has to land on a live daemon either way."""
+    spec, home, env = daemon
+    assert json.loads(_verb(spec, env, "start").stdout) == {"status": "started"}
+    before = _pid(spec, home)
+    assert before is not None
+    restarted = _verb(spec, env, "restart")
+    assert json.loads(restarted.stdout) == {"status": "started"}, restarted.stdout + restarted.stderr
+    after = _pid(spec, home)
+    assert after is not None
+    assert after != before
+    with pytest.raises(ProcessLookupError):
+        os.kill(before, 0)
+    assert json.loads(_verb(spec, env, "status").stdout)["running"] is True
+
+    assert json.loads(_verb(spec, env, "stop").stdout) == {"status": "stopped"}
+    from_stopped = _verb(spec, env, "restart")
+    assert json.loads(from_stopped.stdout) == {"status": "started"}, from_stopped.stdout + from_stopped.stderr
+    assert _pid(spec, home) is not None
+    assert json.loads(_verb(spec, env, "status").stdout)["running"] is True
+    _verb(spec, env, "stop")
 
 
 def test_deliberate_stop_is_not_reported_as_a_crash(daemon):

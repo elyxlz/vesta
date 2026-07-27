@@ -5,16 +5,71 @@ set -eu
 # rebuilds node_modules/dist when a checkout or clean dropped them, and the service is
 # private, so the app reaches it with a service key rather than the link alone.
 
+PIDFILE="$HOME/agent/data/daemons/dashboard.pid"
+PORTFILE="$HOME/agent/data/daemons/dashboard.port"
+LOG="$HOME/agent/logs/dashboard.log"
 USAGE="Usage: dashboard daemon <start|stop|restart|status>"
+
 case "${1:-}" in
   daemon) shift ;;
   "" | -h | --help | help) echo "$USAGE"; exit 0 ;;
   *) echo "$USAGE" >&2; exit 1 ;;
 esac
 
-exec "$HOME/agent/skills/vestad/scripts/daemon-lifecycle" "$@" \
-  --session dashboard \
-  --service dashboard \
-  --port-mode private \
-  --probe http \
-  -- "$HOME/agent/skills/dashboard/scripts/serve"
+fail() { printf '{"error":"%s"}\n' "$1" >&2; exit 1; }
+
+live_pid() {
+  pid=$(cat "$PIDFILE" 2>/dev/null) || return 1
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 1
+  printf %s "$pid"
+}
+
+do_start() {
+  if live_pid >/dev/null; then echo '{"status":"already_running"}'; return 0; fi
+  PORT=$(register-service dashboard) || fail "could not register dashboard with vestad"
+  [ -n "$PORT" ] || fail "could not register dashboard with vestad"
+  export PORT
+  mkdir -p "$HOME/agent/data/daemons" "$HOME/agent/logs"
+  echo "$PORT" > "$PORTFILE"
+  setsid "$HOME/agent/skills/dashboard/scripts/serve" >> "$LOG" 2>&1 &
+  echo "$!" > "$PIDFILE"
+  i=0
+  while [ "$i" -lt 60 ]; do
+    kill -0 "$(cat "$PIDFILE")" 2>/dev/null || fail "dashboard exited during startup; see $LOG"
+    if curl -fsS -o /dev/null "http://localhost:$PORT" 2>/dev/null; then
+      echo '{"status":"started"}'; return 0
+    fi
+    sleep 0.5; i=$((i + 1))
+  done
+  fail "dashboard never answered on port $PORT; see $LOG"
+}
+
+do_stop() {
+  pid=$(live_pid) || { echo '{"status":"already_stopped"}'; return 0; }
+  kill -TERM "$pid" 2>/dev/null || true
+  i=0
+  while [ "$i" -lt 30 ]; do
+    kill -0 "$pid" 2>/dev/null || { rm -f "$PIDFILE" "$PORTFILE"; echo '{"status":"stopped"}'; return 0; }
+    sleep 0.5; i=$((i + 1))
+  done
+  fail "dashboard still running after SIGTERM (pid=$pid)"
+}
+
+# Reads the port start recorded, never registration: status stays a local read that
+# answers instantly and truthfully while vestad is down.
+do_status() {
+  if live_pid >/dev/null; then
+    port=$(cat "$PORTFILE" 2>/dev/null) || port=""
+    printf '{"running":true,"port":%s}\n' "${port:-null}"
+  else
+    printf '{"running":false,"port":null}\n'
+  fi
+}
+
+case "${1:-}" in
+  start) do_start ;;
+  stop) do_stop ;;
+  restart) do_stop >/dev/null; do_start ;;
+  status) do_status ;;
+  *) echo "$USAGE" >&2; exit 1 ;;
+esac

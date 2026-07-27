@@ -89,7 +89,7 @@ Subagent (general-purpose):
     - Completeness: did you build everything in the spec? Any content or interaction missed?
     - Quality: is it your best work, dense, and consistent with the app's theme?
     - Discipline: did you stay inside the spec (YAGNI) and touch no synced files?
-    - Verified: did the build succeed and the daemon report `http_ok`?
+    - Verified: did the build succeed, the daemon report `running`, and the page load?
 
     Fix anything you find before reporting.
 
@@ -99,7 +99,7 @@ Subagent (general-purpose):
 
     - Status: DONE | DONE_WITH_CONCERNS | BLOCKED
     - What you built, and which files you changed
-    - The daemon status line (`running`, `port`, `http_ok`) as evidence it serves
+    - The daemon status line (`running`, `port`) as evidence it serves
     - Which live-data pages you exercised in a browser, so the requester knows what to re-verify
     - Any concern, or if BLOCKED, exactly what was underspecified or what failed
 
