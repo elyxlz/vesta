@@ -1,15 +1,22 @@
 #!/bin/sh
 set -eu
 
-# `moneypot` on PATH. `moneypot daemon <action>` drives the daemon lifecycle; anything
-# else is a moneypot.py command, so the skill has one entry point instead of a script
-# path for the CLI and another for the daemon.
+# `moneypot` on PATH. `moneypot daemon <action>` drives the daemon; anything else is a
+# moneypot.py command, so the skill has one entry point rather than one per surface. The
+# service is private and the server holds no credential, so vestad authenticates every
+# request before proxying it and an external caller reaches it with a minted service key.
 
-SKILL_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+SKILL_DIR="$HOME/agent/skills/moneypot"
 
 if [ "${1:-}" = "daemon" ]; then
   shift
-  exec "$SKILL_DIR/scripts/daemon" "$@"
+  mkdir -p "$HOME/agent/logs"
+  exec "$HOME/agent/skills/vestad/scripts/daemon-lifecycle" "$@" \
+    --session moneypot \
+    --service moneypot \
+    --port-mode private \
+    --workdir "$SKILL_DIR" \
+    -- /bin/sh -c 'PYTHONUNBUFFERED=1 exec python3 server.py --port "$PORT" >> "$HOME/agent/logs/moneypot.log" 2>&1'
 fi
 
 exec python3 "$SKILL_DIR/moneypot.py" "$@"

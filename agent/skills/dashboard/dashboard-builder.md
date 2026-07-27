@@ -67,9 +67,8 @@ Subagent (general-purpose):
 
     ```bash
     cd ~/agent/skills/dashboard/app && { [ -d node_modules ] || npm install; } && npx vite build
-    ~/agent/skills/dashboard/scripts/daemon stop
-    ~/agent/skills/dashboard/scripts/daemon start
-    STATUS=$(~/agent/skills/dashboard/scripts/daemon status); echo "$STATUS"
+    dashboard daemon restart
+    STATUS=$(dashboard daemon status); echo "$STATUS"
     PORT=$(echo "$STATUS" | python3 -c 'import sys, json; print(json.load(sys.stdin)["port"])')
     curl -s "http://localhost:$PORT/" | head -50 | grep -q '<div id="root"' || echo "ERROR: dashboard failed to load, check the build output"
     curl -sk -X POST https://$BOX_HOST:$VESTAD_PORT/agents/$AGENT_NAME/services/dashboard/invalidate -H "X-Agent-Token: $AGENT_TOKEN"

@@ -1,4 +1,4 @@
-"""Exercises the REAL dashboard scripts/daemon and scripts/setup.sh against a fake
+"""Exercises the REAL dashboard launcher and scripts/setup.sh against a fake
 screen/curl/register-service, mirroring the telegram/tasks lifecycle transplant."""
 
 import json
@@ -8,7 +8,8 @@ import shutil
 import subprocess
 
 REPO_ROOT = pl.Path(__file__).resolve().parents[2]
-DAEMON = REPO_ROOT / "agent/skills/dashboard/scripts/daemon"
+DAEMON = REPO_ROOT / "agent/skills/dashboard/dashboard"
+LEGACY_DAEMON = REPO_ROOT / "agent/skills/dashboard/scripts/daemon"
 SERVE = REPO_ROOT / "agent/skills/dashboard/scripts/serve"
 SETUP = REPO_ROOT / "agent/skills/dashboard/scripts/setup.sh"
 
@@ -97,13 +98,18 @@ def _run(script, args, env):
     return subprocess.run([str(script), *args], env=env, capture_output=True, text=True, check=False)
 
 
+def _daemon(args, env):
+    """The skill is one command with a `daemon` verb, which is how the restart skill drives it."""
+    return _run(DAEMON, ["daemon", *args], env)
+
+
 def test_daemon_start_is_idempotent(tmp_path):
     env = _rig(tmp_path)
-    first = _run(DAEMON, ["start"], env)
+    first = _daemon(["start"], env)
     assert first.returncode == 0, first.stdout + first.stderr
     assert json.loads(first.stdout) == {"status": "started"}
 
-    second = _run(DAEMON, ["start"], env)
+    second = _daemon(["start"], env)
     assert second.returncode == 0
     assert json.loads(second.stdout) == {"status": "already_running"}
 
@@ -111,7 +117,7 @@ def test_daemon_start_is_idempotent(tmp_path):
 def test_daemon_start_polls_until_the_server_answers(tmp_path):
     env = _rig(tmp_path)
     env["FAKE_CURL_FAIL_FIRST"] = "3"
-    result = _run(DAEMON, ["start"], env)
+    result = _daemon(["start"], env)
     assert result.returncode == 0, result.stdout + result.stderr
     assert json.loads(result.stdout) == {"status": "started"}
     assert int((tmp_path / "screen-state/curl-calls").read_text()) == 4
@@ -120,9 +126,9 @@ def test_daemon_start_polls_until_the_server_answers(tmp_path):
 def test_daemon_status_reports_running_port_and_http(tmp_path):
     env = _rig(tmp_path)
     env["FAKE_DASHBOARD_PORT"] = "9999"
-    _run(DAEMON, ["start"], env)
+    _daemon(["start"], env)
 
-    status = _run(DAEMON, ["status"], env)
+    status = _daemon(["status"], env)
     assert status.returncode == 0, status.stdout + status.stderr
     body = json.loads(status.stdout)
     assert body == {"running": True, "session": "dashboard", "port": "9999", "http_ok": True}
@@ -130,17 +136,17 @@ def test_daemon_status_reports_running_port_and_http(tmp_path):
 
 def test_daemon_status_when_stopped_reports_no_port(tmp_path):
     env = _rig(tmp_path)
-    status = _run(DAEMON, ["status"], env)
+    status = _daemon(["status"], env)
     assert status.returncode == 0
     assert json.loads(status.stdout) == {"running": False, "session": "dashboard", "port": None, "http_ok": False}
 
 
 def test_daemon_status_running_but_probe_failing_is_not_http_ok(tmp_path):
     env = _rig(tmp_path)
-    _run(DAEMON, ["start"], env)
+    _daemon(["start"], env)
     env["FAKE_CURL_EXIT"] = "22"
 
-    status = _run(DAEMON, ["status"], env)
+    status = _daemon(["status"], env)
     body = json.loads(status.stdout)
     assert body["running"] is True
     assert body["http_ok"] is False
@@ -148,15 +154,15 @@ def test_daemon_status_running_but_probe_failing_is_not_http_ok(tmp_path):
 
 def test_daemon_stop_is_idempotent(tmp_path):
     env = _rig(tmp_path)
-    already = _run(DAEMON, ["stop"], env)
+    already = _daemon(["stop"], env)
     assert already.returncode == 0
     assert json.loads(already.stdout) == {"status": "already_stopped"}
 
-    _run(DAEMON, ["start"], env)
-    stopped = _run(DAEMON, ["stop"], env)
+    _daemon(["start"], env)
+    stopped = _daemon(["stop"], env)
     assert stopped.returncode == 0
     assert json.loads(stopped.stdout) == {"status": "stopped"}
-    assert json.loads(_run(DAEMON, ["status"], env).stdout)["running"] is False
+    assert json.loads(_daemon(["status"], env).stdout)["running"] is False
 
 
 def test_bare_invocation_and_help_print_usage_and_exit_zero(tmp_path):
@@ -177,7 +183,7 @@ def test_daemon_registers_the_dashboard_privately(tmp_path):
     """A public dashboard loads for anyone holding the tunnel URL, so the daemon
     registers it private; the app reaches it with a minted service key."""
     env = _rig(tmp_path)
-    result = _run(DAEMON, ["start"], env)
+    result = _daemon(["start"], env)
     assert result.returncode == 0, result.stdout + result.stderr
     assert (tmp_path / "screen-state/register-args").read_text().splitlines() == ["dashboard"]
 
@@ -226,6 +232,8 @@ def test_setup_starts_daemon_and_never_edits_the_restart_skill(tmp_path):
     # npm/vite and the test never touches the real checkout.
     skill_dir = tmp_path / "dashboard"
     shutil.copytree(SETUP.parent, skill_dir / "scripts")
+    shutil.copy(DAEMON, skill_dir / DAEMON.name)
+    (skill_dir / DAEMON.name).chmod(0o755)
     (skill_dir / "app/node_modules").mkdir(parents=True)
     (skill_dir / "app/dist").mkdir(parents=True)
     setup = skill_dir / "scripts/setup.sh"
@@ -236,7 +244,7 @@ def test_setup_starts_daemon_and_never_edits_the_restart_skill(tmp_path):
 
     result = subprocess.run(["sh", str(setup)], env=env, capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert json.loads(_run(DAEMON, ["status"], env).stdout)["running"] is True
+    assert json.loads(_daemon(["status"], env).stdout)["running"] is True
 
     # The agent owns this file: only it can match the guard form actually in use.
     assert restart_skill.read_text() == original
@@ -244,3 +252,18 @@ def test_setup_starts_daemon_and_never_edits_the_restart_skill(tmp_path):
     # The daemon is driven by name, which is how the restart skill's own guard block reads it.
     line = "running dashboard || { dashboard daemon start; sleep 1; }"
     assert line in result.stdout
+
+
+def test_the_legacy_script_path_still_drives_the_daemon(tmp_path):
+    """A restart skill written before the daemon verb launches by this path, and the path
+    outlives the sync that converts it, so it has to keep working."""
+    env = _rig(tmp_path)
+    home = pl.Path(env["HOME"])
+    (home / "agent/skills/dashboard/scripts").mkdir(parents=True)
+    shutil.copy(DAEMON, home / "agent/skills/dashboard/dashboard")
+    (home / "agent/skills/dashboard/dashboard").chmod(0o755)
+
+    result = _run(LEGACY_DAEMON, ["start"], env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout) == {"status": "started"}
+    assert json.loads(_daemon(["status"], env).stdout)["running"] is True

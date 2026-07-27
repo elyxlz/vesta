@@ -1,14 +1,20 @@
 #!/bin/sh
 set -eu
 
-# `dashboard` on PATH. `dashboard daemon <action>` drives the daemon lifecycle.
+# `dashboard` on PATH; the skill's whole surface is its daemon. The `serve` launcher
+# rebuilds node_modules/dist when a checkout or clean dropped them, and the service is
+# private, so the app reaches it with a service key rather than the link alone.
 
-SKILL_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+USAGE="Usage: dashboard daemon <start|stop|restart|status>"
+case "${1:-}" in
+  daemon) shift ;;
+  "" | -h | --help | help) echo "$USAGE"; exit 0 ;;
+  *) echo "$USAGE" >&2; exit 1 ;;
+esac
 
-if [ "${1:-}" = "daemon" ]; then
-  shift
-  exec "$SKILL_DIR/scripts/daemon" "$@"
-fi
-
-echo "usage: dashboard daemon <start|stop|restart|status>" >&2
-exit 1
+exec "$HOME/agent/skills/vestad/scripts/daemon-lifecycle" "$@" \
+  --session dashboard \
+  --service dashboard \
+  --port-mode private \
+  --probe http \
+  -- "$HOME/agent/skills/dashboard/scripts/serve"

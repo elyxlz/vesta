@@ -83,22 +83,31 @@ only what is its own:
 | `--pidfile PATH` | the daemon's own pid file, so stop signals the process and a live pid counts as running |
 | `-- COMMAND ...` | what runs inside the session; it sees `$PORT` when a port was registered |
 
-Every skill is driven by name, `<skill> daemon start`, never by a script path. A skill with a CLI
-adds a `daemon` subcommand that shells the runner. A skill without one adds a `scripts/daemon`
-wrapper plus a launcher of its own name at `~/agent/skills/<skill>/<skill>` that forwards to it,
-which agent startup puts on PATH. Pass `--port-mode private` unless the service is a page that
-must load with no credential at all; a private service is reached with a minted service key. The
-wrapper:
+A skill has one command, named after the skill, and the daemon is a verb on it:
+`<skill> daemon start`, never a script path. A skill with a CLI declares the daemon in a `daemon`
+subcommand. A skill without one is a single executable at `~/agent/skills/<skill>/<skill>`, which
+agent startup puts on PATH. Pass `--port-mode private` unless the service is a page that must load
+with no credential at all; a private service is reached with a minted service key. The whole file:
 
 ```sh
 #!/bin/sh
 set -eu
+
+USAGE="Usage: file-host daemon <start|stop|restart|status>"
+case "${1:-}" in
+  daemon) shift ;;
+  "" | -h | --help | help) echo "$USAGE"; exit 0 ;;
+  *) echo "$USAGE" >&2; exit 1 ;;
+esac
+
 exec "$HOME/agent/skills/vestad/scripts/daemon-lifecycle" "$@" \
   --session file-host \
   --service file-host \
   --port-mode public \
   -- /bin/sh -c 'exec python3 ~/agent/skills/file-host/serve.py --port "$PORT"'
 ```
+
+A command lands on PATH at the next boot, so a skill you just wrote runs by its path until then.
 
 Two rules that are easy to miss:
 

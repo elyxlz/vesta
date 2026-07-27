@@ -1,15 +1,20 @@
 #!/bin/sh
 set -eu
 
-# `sign-service` on PATH. The skill's whole surface is its daemon, so this forwards
-# `sign-service daemon <action>` to the lifecycle script.
+# `sign-service` on PATH; the skill's whole surface is its daemon. The vestad service is
+# registered as `sign` while the screen session is `sign-service`, so both names are
+# declared explicitly. The pad accepts a signature the agent then stamps onto a document
+# and the server verifies nothing, so it is private and the signer opens a keyed link.
 
-SKILL_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+USAGE="Usage: sign-service daemon <start|stop|restart|status>"
+case "${1:-}" in
+  daemon) shift ;;
+  "" | -h | --help | help) echo "$USAGE"; exit 0 ;;
+  *) echo "$USAGE" >&2; exit 1 ;;
+esac
 
-if [ "${1:-}" = "daemon" ]; then
-  shift
-  exec "$SKILL_DIR/scripts/daemon" "$@"
-fi
-
-echo "usage: sign-service daemon <start|stop|restart|status>" >&2
-exit 1
+exec "$HOME/agent/skills/vestad/scripts/daemon-lifecycle" "$@" \
+  --session sign-service \
+  --service sign \
+  --port-mode private \
+  -- /bin/sh -c "exec \"\$HOME/agent/.venv/bin/python3\" \"\$HOME/agent/skills/sign-service/sign_server.py\" \"\$PORT\" /tmp/sign-service/signature.png"

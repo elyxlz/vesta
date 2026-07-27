@@ -1,15 +1,19 @@
 #!/bin/sh
 set -eu
 
-# `file-host` on PATH. The skill's whole surface is its daemon, so this forwards
-# `file-host daemon <action>` to the lifecycle script.
+# `file-host` on PATH; the skill's whole surface is its daemon. Registered public because
+# the user's share links are fetched from outside the tunnel, and those links stay stable
+# across restarts because registration is idempotent.
 
-SKILL_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+USAGE="Usage: file-host daemon <start|stop|restart|status>"
+case "${1:-}" in
+  daemon) shift ;;
+  "" | -h | --help | help) echo "$USAGE"; exit 0 ;;
+  *) echo "$USAGE" >&2; exit 1 ;;
+esac
 
-if [ "${1:-}" = "daemon" ]; then
-  shift
-  exec "$SKILL_DIR/scripts/daemon" "$@"
-fi
-
-echo "usage: file-host daemon <start|stop|restart|status>" >&2
-exit 1
+exec "$HOME/agent/skills/vestad/scripts/daemon-lifecycle" "$@" \
+  --session file-host \
+  --service file-host \
+  --port-mode public \
+  -- /bin/sh -c "exec python3 \"\$HOME/agent/skills/file-host/serve.py\" --dir \"\$HOME/.file-host\" --port \"\$PORT\""

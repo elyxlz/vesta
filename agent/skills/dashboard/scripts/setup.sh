@@ -22,9 +22,9 @@ if [ ! -d dist ]; then
 fi
 
 echo "Starting daemon..."
-"$DIR/daemon" start
+"$DIR/../dashboard" daemon start
 
-STATUS=$("$DIR/daemon" status)
+STATUS=$("$DIR/../dashboard" daemon status)
 echo "$STATUS"
 case "$STATUS" in
   *'"http_ok":true'*) ;;

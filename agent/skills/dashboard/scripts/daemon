@@ -1,16 +1,8 @@
 #!/bin/sh
 set -eu
 
-# Dashboard daemon lifecycle: start|stop|restart|status. Declares what is specific
-# to the dashboard and delegates the rest to the shared runner. The `serve` launcher
-# rebuilds node_modules/dist when a checkout or clean dropped them, and the service is
-# private, so the app reaches it with a service key rather than the link alone.
+# LEGACY(remove-when: the 2026-07-daemon-lifecycle migration is fleet-applied): restart
+# skills written before the daemon verb still launch the dashboard by this path, and the
+# path outlives the sync that converts them, so it forwards rather than breaking.
 
-DIR="$(cd "$(dirname "$0")" && pwd)"
-
-exec "$HOME/agent/skills/vestad/scripts/daemon-lifecycle" "$@" \
-  --session dashboard \
-  --service dashboard \
-  --port-mode private \
-  --probe http \
-  -- "$DIR/serve"
+exec "$HOME/agent/skills/dashboard/dashboard" daemon "$@"
