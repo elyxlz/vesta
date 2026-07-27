@@ -6,6 +6,7 @@
 #
 # Loops forever, printing one line per new event:
 #   HIT    <repo> <kind> <id> <pr> <url>   a developer comment addressing the bot
+#   NEWPR  <repo> <pr> <url>               a newly seen open PR, for its first check
 #   DEPPR  <repo> <pr> <url>               a newly seen open dependabot PR
 # Usage: monitor.sh [owner/repo ...]   (defaults to the current repo)
 #
@@ -111,18 +112,20 @@ emit_comments() {
   done < "$tsv"
 }
 
-# Dependabot PRs deliberately bypass the trigger and surface on sight.
-# reactionGroups rides along in the same listing, so the check costs nothing.
-emit_dependabot() {
+# Open PRs surface once each, on sight, without needing the trigger: dependabot
+# ones as DEPPR, everything else as NEWPR. Drafts are skipped. A 👀 on the PR
+# itself is the record that it was seen, and reactionGroups rides along in the
+# same listing, so the check costs nothing extra.
+emit_open_prs() {
   local repo="$1"
-  gh pr list --repo "$repo" --state open --json number,headRefName,url,reactionGroups \
-    -q '.[] | select(.headRefName|startswith("dependabot/")) | select((([.reactionGroups[]? | select(.content=="EYES") | .users.totalCount] | add) // 0) == 0) | "\(.number)\t\(.url)"' 2>/dev/null | \
-  while IFS=$'\t' read -r num url; do
+  gh pr list --repo "$repo" --state open --limit 200 --json number,headRefName,url,isDraft,reactionGroups \
+    -q '.[] | select(.isDraft | not) | select((([.reactionGroups[]? | select(.content=="EYES") | .users.totalCount] | add) // 0) == 0) | "\(if (.headRefName|startswith("dependabot/")) then "DEPPR" else "NEWPR" end)\t\(.number)\t\(.url)"' 2>/dev/null | \
+  while IFS=$'\t' read -r kind num url; do
     [ -z "${num:-}" ] && continue
     if ack "$repo" pr "$num"; then
-      printf 'DEPPR\t%s\t%s\t%s\n' "$repo" "$num" "$url"
+      printf '%s\t%s\t%s\t%s\n' "$kind" "$repo" "$num" "$url"
     else
-      echo "WARN: could not ack dependabot PR $repo#$num, not emitting" >&2
+      echo "WARN: could not ack $repo#$num, not emitting" >&2
     fi
   done
 }
@@ -130,7 +133,7 @@ emit_dependabot() {
 while true; do
   for repo in "${repos[@]}"; do
     emit_comments "$repo"
-    emit_dependabot "$repo"
+    emit_open_prs "$repo"
   done
   sleep "$INTERVAL"
 done

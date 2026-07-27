@@ -17,6 +17,7 @@ A background loop that watches open PRs and prints one line per new event. Pair 
 
 ```
 HIT     <repo> <kind> <id> <pr> <url>    a developer comment addressing the bot
+NEWPR   <repo> <pr> <url>                a newly seen open PR, for its first check
 DEPPR   <repo> <pr> <url>                a newly seen open dependabot PR
 ```
 
@@ -52,6 +53,16 @@ The loop keeps running until the session stops. Nothing survives the session: re
 Do not reach for `claude --from-pr` here. It resumes a session already linked to a PR, but a print-mode run does not create that link, so in a service it quietly starts a fresh session every time.
 
 Events are handled one at a time, so a burst of comments cannot start overlapping runs against the same session.
+
+**Every new PR is checked automatically.** A non-draft PR that has never been seen surfaces as `NEWPR` without anyone asking, and dispatch runs the `check-pr` skill on it: does it fix the issue it claims to fix, does it match this repository's conventions, does it actually work. That pass is read only. It never pushes, merges, or closes, so a PR opening cannot cause a write. Where the change would benefit from the simplify and tidy pass, the reply names `polish-pr` and stops there, leaving the maintainer to ask for it.
+
+**Seed before switching this on.** "Never seen" means "carries no 👀", so the first cycle treats every open PR as new and checks all of them at once. On a repo with a dozen open PRs that is a dozen agent runs back to back. Mark the existing ones first:
+
+```bash
+for n in $(gh pr list --repo owner/name --state open --json number -q '.[].number'); do
+  gh api -X POST "/repos/owner/name/issues/$n/reactions" -f content=eyes >/dev/null
+done
+```
 
 **The agent knows it is a reviewer.** Each comment event carries standing context ahead of the request itself: read the issue the PR claims to fix and judge whether it actually resolves it, check the change against this repository's own rules rather than generic taste (CLAUDE.md, the language conventions, any skill covering the area), and verify claims by reading the code and running things rather than trusting the description. That review happens whether or not the comment asked for one, so a bare mention still gets a real review instead of an ad-hoc answer.
 

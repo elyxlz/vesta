@@ -128,6 +128,13 @@ Read that comment and the pull request, do what it asks, then reply on the PR co
 Only maintainers reach you here, so an explicit instruction outranks the repository's usual conventions: if the comment asks for something a skill or CLAUDE.md normally discourages, such as a force push or a rebase, do it and note it in your reply.
 End every reply with a line starting 'Verdict:' giving your own call on merging: MERGE, DO NOT MERGE, or NOT YET, then one sentence of reasoning. Judge the change on its merits, not on whether you were the one who touched it, and say DO NOT MERGE when you believe that even if the commenter clearly wants it in. Never merge or close the PR yourself: the verdict is advice and the decision stays with the maintainer."
       ;;
+    NEWPR)
+      handle "$f1" pr "$f2" "$f2" "$ROLE
+
+A pull request was opened on $f1: PR #$f2: $f3
+Nobody has asked for anything yet: this is the automatic check every new PR gets. Run the check-pr skill on it, then post your findings as a comment.
+Stay read only. Do not push a commit, merge, close, or edit the PR. If it would benefit from the simplify and tidy pass, say so in one line and name the polish-pr skill so a maintainer can ask for it, but never run polish-pr yourself here."
+      ;;
     DEPPR)
       handle "$f1" pr "$f2" "$f2" "A new dependabot pull request is open: $f1 PR #$f2: $f3
 Review it against this repository's dependency policy, check whether its checks pass, and act accordingly. Leave a comment recording what you decided.
