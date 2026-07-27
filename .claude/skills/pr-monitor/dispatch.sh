@@ -110,11 +110,13 @@ bash "$MONITOR" "${repos[@]}" | while IFS=$'\t' read -r tag f1 f2 f3 f4 f5; do
     HIT)
       handle "$f1" "$f2" "$f3" "$f4" "A developer addressed you in a comment on $f1 PR #$f4: $f5
 Read that comment and the pull request, do what it asks, then reply on the PR describing what you changed. If its checks need fixing, use the babysit-prs skill. If the request is unclear or you decide not to act, say so in a reply rather than staying silent.
-Only maintainers reach you here, so an explicit instruction outranks the repository's usual conventions: if the comment asks for something a skill or CLAUDE.md normally discourages, such as a force push or a rebase, do it and note it in your reply."
+Only maintainers reach you here, so an explicit instruction outranks the repository's usual conventions: if the comment asks for something a skill or CLAUDE.md normally discourages, such as a force push or a rebase, do it and note it in your reply.
+End every reply with a line starting 'Verdict:' giving your own call on merging: MERGE, DO NOT MERGE, or NOT YET, then one sentence of reasoning. Judge the change on its merits, not on whether you were the one who touched it, and say DO NOT MERGE when you believe that even if the commenter clearly wants it in. Never merge or close the PR yourself: the verdict is advice and the decision stays with the maintainer."
       ;;
     DEPPR)
       handle "$f1" pr "$f2" "$f2" "A new dependabot pull request is open: $f1 PR #$f2: $f3
-Review it against this repository's dependency policy, check whether its checks pass, and act accordingly. Leave a comment recording what you decided."
+Review it against this repository's dependency policy, check whether its checks pass, and act accordingly. Leave a comment recording what you decided.
+End that comment with a line starting 'Verdict:' giving your own call on merging: MERGE, DO NOT MERGE, or NOT YET, then one sentence of reasoning. Never merge or close the PR yourself: the verdict is advice and the decision stays with the maintainer."
       ;;
     *) [ -n "${tag:-}" ] && echo "dispatch: ignoring line: $tag" >&2 ;;
   esac
