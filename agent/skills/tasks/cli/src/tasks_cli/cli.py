@@ -52,6 +52,8 @@ def daemon_lifecycle_args(action: str, config: Config) -> list[str]:
         "private",
         "--stop-marker",
         str(stop_marker_path(config)),
+        "--pidfile",
+        str(config.data_dir / "serve.pid"),
         "--",
         "tasks",
         "serve",

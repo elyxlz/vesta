@@ -9,6 +9,8 @@ import os
 import pathlib as pl
 import subprocess
 
+import pytest
+
 REPO_ROOT = pl.Path(__file__).resolve().parents[2]
 RUNNER = REPO_ROOT / "agent/skills/vestad/scripts/daemon-lifecycle"
 
@@ -200,6 +202,50 @@ def test_restart_relaunches_the_session(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     assert json.loads(result.stdout) == {"status": "started"}
     assert _launched(tmp_path).count("widget serve") == 2
+
+
+def test_a_live_pid_counts_as_running_without_a_session(tmp_path):
+    """A daemon that ignores SIGHUP outlives `screen -X quit`. If that read as stopped, the
+    next start would pass its guard and stack a second daemon."""
+    env = _rig(tmp_path)
+    pidfile = tmp_path / "serve.pid"
+    pidfile.write_text(str(os.getpid()))
+    status = json.loads(_run(env, "status", "--session", "widget", "--pidfile", str(pidfile)).stdout)
+    assert status["running"] is True
+
+
+def test_a_dead_pid_does_not_count_as_running(tmp_path):
+    env = _rig(tmp_path)
+    pidfile = tmp_path / "serve.pid"
+    pidfile.write_text("999999")
+    status = json.loads(_run(env, "status", "--session", "widget", "--pidfile", str(pidfile)).stdout)
+    assert status["running"] is False
+
+
+def test_start_refuses_when_an_orphaned_daemon_is_still_alive(tmp_path):
+    env = _rig(tmp_path)
+    pidfile = tmp_path / "serve.pid"
+    pidfile.write_text(str(os.getpid()))
+    result = _run(env, "start", "--session", "widget", "--pidfile", str(pidfile), "--", "widget", "serve")
+    assert json.loads(result.stdout) == {"status": "already_running"}
+    assert not (tmp_path / "screen-state/launched").exists()
+
+
+def test_stop_signals_the_process_it_published(tmp_path):
+    """The victim is spawned detached, so it reparents to init like a real daemon does. A direct
+    child would linger as a zombie after SIGTERM, and `kill -0` succeeds on zombies."""
+    env = _rig(tmp_path)
+    pidfile = tmp_path / "serve.pid"
+    subprocess.run(["sh", "-c", f"sleep 120 & echo $! > {pidfile}"], check=True)
+    pid = int(pidfile.read_text().strip())
+    marker = tmp_path / "stop-requested"
+
+    result = _run(env, "stop", "--session", "widget", "--pidfile", str(pidfile), "--stop-marker", str(marker))
+
+    assert json.loads(result.stdout) == {"status": "stopped"}
+    assert marker.exists()
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
 
 
 def test_unknown_action_exits_nonzero(tmp_path):

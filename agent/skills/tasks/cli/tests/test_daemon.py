@@ -47,4 +47,5 @@ def test_daemon_lifecycle_args_declare_session_service_and_port(tmp_path):
     assert "--service" in args and args[args.index("--service") + 1] == "tasks"
     assert args[args.index("--port-mode") + 1] == "private"
     assert args[args.index("--stop-marker") + 1] == str(tmp_path / ".tasks/stop-requested")
+    assert args[args.index("--pidfile") + 1] == str(tmp_path / ".tasks/serve.pid")
     assert args[args.index("--") + 1 :] == ["tasks", "serve", "--port", "$PORT"]

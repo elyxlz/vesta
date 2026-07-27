@@ -21,6 +21,7 @@ PORT_MODE="none"
 WORKDIR=""
 PROBE="none"
 STOP_MARKER=""
+PIDFILE=""
 
 fail() {
   printf '{"error":"%s"}\n' "$1" >&2
@@ -50,6 +51,7 @@ while [ $# -gt 0 ]; do
     --workdir) WORKDIR="${2:-}"; shift 2 ;;
     --probe) PROBE="${2:-}"; shift 2 ;;
     --stop-marker) STOP_MARKER="${2:-}"; shift 2 ;;
+    --pidfile) PIDFILE="${2:-}"; shift 2 ;;
     --) shift; break ;;
     *) fail "unknown option $1" ;;
   esac
@@ -57,11 +59,27 @@ done
 
 [ -n "$SESSION" ] || fail "--session is required"
 
-# True iff a LIVE screen session with this exact name exists. Judge by captured
-# output, not exit code, and wipe first so a "(Dead ???)" corpse never reads as live.
+# The daemon's own pid, when it publishes one and is still alive.
+daemon_pid() {
+  [ -n "$PIDFILE" ] || return 1
+  [ -f "$PIDFILE" ] || return 1
+  pid=$(cat "$PIDFILE" 2>/dev/null)
+  [ -n "$pid" ] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  printf '%s' "$pid"
+}
+
+# True iff a LIVE screen session exists, judged by captured output rather than exit
+# code, wiping first so a "(Dead ???)" corpse never reads as live. A daemon that
+# ignores SIGHUP outlives `screen -X quit`, so a live pid counts as running too:
+# without that, a stop that orphaned the process would report stopped and the next
+# start would sail past its guard and stack a second daemon.
 running() {
   screen -wipe >/dev/null 2>&1 || true
-  test -n "$(screen -ls 2>/dev/null | grep -E "[0-9]+\.${SESSION}[[:space:]]" | grep -v "Dead")"
+  if test -n "$(screen -ls 2>/dev/null | grep -E "[0-9]+\.${SESSION}[[:space:]]" | grep -v "Dead")"; then
+    return 0
+  fi
+  daemon_pid >/dev/null
 }
 
 # Prints the registered port, or nothing. Empty is fatal for the caller: launching
@@ -133,9 +151,14 @@ do_stop() {
     printf '{"status":"already_stopped"}\n'
     return 0
   fi
-  # Written before the quit so the daemon's shutdown path can tell a deliberate
-  # stop from a crash and skip its daemon_died notification.
+  # Written before anything is signalled so the daemon's shutdown path finds it and
+  # skips the daemon_died notification a crash would fire.
   [ -n "$STOP_MARKER" ] && : > "$STOP_MARKER"
+
+  # SIGTERM the process itself where it publishes a pid. Quitting the session only
+  # sends SIGHUP, which several daemons ignore: they would outlive the session, run
+  # no shutdown path, and never consume the marker.
+  pid=$(daemon_pid) && kill -TERM "$pid" 2>/dev/null
   screen -S "$SESSION" -X quit >/dev/null 2>&1 || true
   i=0
   while [ "$i" -lt "$STOP_POLL_MAX" ]; do
