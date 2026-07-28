@@ -8,16 +8,17 @@ This migration points each daemon line at its command, hands each running daemon
 reduces your restart lines to that form. Convert only the daemons you actually run. Every step
 checks before acting and no-ops when already converged, so it is safe to run more than once.
 
-### 1. Confirm the commands are on disk before touching anything
+### 1. Confirm the commands resolve before touching anything
+
+Agent startup links every skill's command onto PATH on each boot, so one check covers them all:
 
 ```bash
-ls ~/agent/skills/ssh/ssh-tunnel
+command -v ssh-tunnel
 ```
 
-If that path does not exist, your workspace sync has not merged yet. STOP here and do NOT call
-`mark_migration_applied`: this migration runs again on your next boot, and converting now would stop
-your daemons with nothing able to start them again. Nothing else is needed once it does exist, since
-agent startup puts every skill's command on PATH on every boot.
+If that prints nothing, STOP here, leave this migration unmarked, and tell the user: converting
+daemon lines while the commands do not resolve would stop your daemons with nothing able to start
+them again.
 
 ### 2. Find your daemon lines
 

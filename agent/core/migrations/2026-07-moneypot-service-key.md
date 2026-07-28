@@ -28,9 +28,7 @@ moneypot daemon start
 
 If the line already reads that way, this step is done: the `2026-08-daemon-pidfile` migration's
 "Reduce every restart line to its command" step owns the whole Daemons block and runs after this
-one in the same batch. If the line still spells out `server.py`, leave it: that step converts it,
-or tells you to stop because your workspace sync has not merged, in which case both are converted
-on your next boot.
+one in the same batch. If the line still spells out `server.py`, leave it: that step converts it.
 
 ### 2. Register moneypot privately now
 
@@ -66,12 +64,10 @@ so pass `never_expires` for a caller you do not want to re-key. A `GET` on that 
 the live keys, and `curl -sk -X DELETE .../services/moneypot/keys/<id>` with the same header
 revokes one.
 
-Once your workspace sync has merged, `service-key mint moneypot` is the helper that does this
-same call and prints the key alone.
+`service-key mint moneypot` is the helper that makes this same call and prints the key alone.
 
 Your server picks up the converged line at its next start, so if a caller needs its key working
-right away, bring the daemon back with `moneypot daemon restart` once your workspace sync has
-merged.
+right away, bring the daemon back with `moneypot daemon restart`.
 Tell the user which caller you re-keyed, and never paste a key into a chat you would not paste
 a password into.
 

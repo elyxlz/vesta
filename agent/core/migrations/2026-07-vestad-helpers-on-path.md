@@ -20,8 +20,9 @@ If that comes back empty, there is nothing to do: call `mark_migration_applied` 
 command -v register-service user-notification vestad-health
 ```
 
-Rewrite only the paths whose bare command this prints. Anything it does not print stays spelled
-out as a full path, which runs exactly as it does today.
+That prints all three: agent startup links them on every boot. If any is missing, STOP here,
+leave this migration unmarked, and tell the user, since a line rewritten to a command that does
+not resolve would break that daemon's next start.
 
 ### 2. Rewrite those paths in the daemon lines
 
@@ -55,8 +56,8 @@ PORT=$(register-service tasks) && <the rest of your line, untouched>
 grep -n 'skills/vestad/scripts/' ~/agent/skills/restart/SKILL.md
 ```
 
-What is left should be only the helpers step 1 did not print. Running daemons are untouched:
-the rewritten lines are read at the next restart.
+Expect no matches for the three helpers. Running daemons are untouched: the rewritten lines are
+read at the next restart.
 
 ### 4. Mark this migration applied
 
