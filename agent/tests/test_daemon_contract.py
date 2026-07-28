@@ -333,6 +333,16 @@ def _json(result: subprocess.CompletedProcess[str]):
         raise AssertionError(f"no JSON answer on stdout: stdout={result.stdout!r} stderr={result.stderr!r}") from None
 
 
+def _error(stdout: str, stderr: str) -> str:
+    """The failure's envelope, or the whole run as the evidence when it did not answer in JSON."""
+    try:
+        envelope = json.loads(stderr)
+    except json.JSONDecodeError:
+        raise AssertionError(f"no error envelope on stderr: stdout={stdout!r} stderr={stderr!r}") from None
+    assert "error" in envelope, f"the envelope carries no error: stdout={stdout!r} stderr={stderr!r}"
+    return envelope["error"]
+
+
 def _pid(spec, home) -> int | None:
     pidfile = home / "agent/data/daemons" / f"{spec.name}.pid"
     try:
@@ -398,7 +408,7 @@ def test_start_fails_closed_when_registration_fails(daemon):
     (pl.Path(env["PATH"].split(":")[0]) / "register-service").write_text("#!/bin/sh\nexit 1\n")
     result = _verb(spec, env, "start")
     assert result.returncode != 0
-    error = json.loads(result.stderr)["error"]
+    error = _error(result.stdout, result.stderr)
     assert isinstance(error, str) and error
     assert not (home / "agent/data/daemons" / f"{spec.name}.pid").exists()
 
@@ -433,9 +443,9 @@ def test_a_start_that_never_gets_an_answer_leaves_nothing_behind(daemon):
         unready = {**env, "MUTE_PORT": str(mute.getsockname()[1]), "DAEMON_READY_TIMEOUT_SECS": UNREADY_TIMEOUT_SECS}
         start = subprocess.Popen([*spec.command, "daemon", "start"], env=unready, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         spawned = _spawned_pid(spec, home, start)
-        _out, err = start.communicate(timeout=120)
+        out, err = start.communicate(timeout=120)
     assert start.returncode != 0
-    assert json.loads(err)["error"]
+    assert _error(out, err)
     assert not (home / "agent/data/daemons" / f"{spec.name}.pid").exists()
     assert not (home / "agent/data/daemons" / f"{spec.name}.port").exists()
     assert spawned is not None

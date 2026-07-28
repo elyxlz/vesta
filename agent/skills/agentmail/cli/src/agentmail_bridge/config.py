@@ -42,13 +42,6 @@ def agent_name() -> str:
     return name
 
 
-def email_address() -> str:
-    cfg = load_config()
-    if "email_address" in cfg:
-        return cfg["email_address"]
-    return f"{agent_name().lower()}@agentmail.to"
-
-
 def bashrc_set(key: str, value: str) -> None:
     """Persist KEY=VALUE in ~/.bashrc and the current process env. Replaces any
     prior export for the same key. Values are shell-quoted so special chars
