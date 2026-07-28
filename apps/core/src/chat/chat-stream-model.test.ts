@@ -156,6 +156,20 @@ describe("chat-stream-model", () => {
     expect(state.cursor).toBe(1)
   })
 
+  it("restarts paging from the reseed page when the disconnect outran a whole page", () => {
+    let state = seedTail(initialChatState(), {
+      events: [chat(1, "a"), chat(2, "b")],
+      cursor: null,
+    })
+
+    // Nothing on the reconnect page overlaps what is held, so ids 3-9 are a hole between them that
+    // no cursor reaches. Keeping 1-2 would show them under that hole; drop them and page from 10.
+    state = seedTail(state, { events: [chat(10, "j"), chat(11, "k")], cursor: 10 })
+
+    expect(state.messages.map((message) => message.id)).toEqual([10, 11])
+    expect(state.cursor).toBe(10)
+  })
+
   it("preserves a pending optimistic bubble across a resync reseed and confirms its later echo", () => {
     let state = beginSend(initialChatState(), "hi", "typed", "i-1")
 
