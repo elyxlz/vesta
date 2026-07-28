@@ -83,7 +83,7 @@ def test_corrupt_state_with_existing_events_db_stays_a_veteran(tmp_path):
     """A corrupt state.json on a veteran agent (events.db already exists) must not re-onboard or
     silently pre-mark pending migrations on top of months of memory: it comes back as
     first_start_done=True so migrations re-run idempotently instead of being skipped."""
-    from core.migrations import pending_migration_turns
+    from core.migrations import after_sync_migration_turns
 
     config = _config(tmp_path)
     (config.data_dir / "events.db").write_text("pretend this is a real sqlite file")
@@ -96,7 +96,7 @@ def test_corrupt_state_with_existing_events_db_stays_a_veteran(tmp_path):
     migrations_dir.mkdir(parents=True)
     (migrations_dir / "001-first.md").write_text("do the thing")
 
-    turns = pending_migration_turns(state=vm.State(persisted=state), config=config, first_start=not state.first_start_done)
+    turns = after_sync_migration_turns(state=vm.State(persisted=state), config=config, first_start=not state.first_start_done)
 
     assert len(turns) == 1, "the migration must queue as a real turn, not be pre-marked applied"
     assert state.applied_migrations == [], "pre-marking never happens on the veteran recovery path"
