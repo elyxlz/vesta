@@ -225,27 +225,53 @@ func claimRecord(record string) (claimed bool, err error) {
 	return true, nil
 }
 
-// signalRecorded ends a recorded process and everything it launched. Every process this
-// lifecycle spawns leads its own group, so the signal goes to the group: a watchdog signalled
-// alone leaves the `telegram daemon start` it is running mid-restart, which then brings back
-// what the stop just ended. A pid that leads no group (a start still holding its claim) is
-// signalled by itself.
-func signalRecorded(pid int, sig syscall.Signal) error {
-	if pgid, err := syscall.Getpgid(pid); err == nil && pgid == pid {
+// leadsGroup reports whether a pid is its own process group leader, which everything this
+// lifecycle spawns is (Setsid) and a start still holding its claim is not.
+func leadsGroup(pid int) bool {
+	pgid, err := syscall.Getpgid(pid)
+	return err == nil && pgid == pid
+}
+
+// signalProcess ends a process and, when it leads a group, everything it launched: a watchdog
+// signalled alone leaves the `telegram daemon start` it is running mid-restart, which then
+// brings back what the stop just ended. The caller decides once whether the pid leads a group,
+// since after the leader dies the kernel can no longer say.
+func signalProcess(pid int, group bool, sig syscall.Signal) error {
+	if group {
 		return syscall.Kill(-pid, sig)
 	}
 	return syscall.Kill(pid, sig)
+}
+
+// awaitGone waits out a stopped process, and a group leader's whole group with it: the leader
+// goes first while what it launched is still being reaped, so answering on the leader alone
+// would report a stop complete while a live member can still undo it.
+func awaitGone(pid int, group bool, budget time.Duration) bool {
+	deadline := time.Now().Add(budget)
+	for time.Now().Before(deadline) {
+		target := pid
+		if group {
+			target = -pid
+		}
+		if syscall.Kill(target, 0) != nil {
+			return true
+		}
+		time.Sleep(DaemonPollInterval)
+	}
+	return false
 }
 
 // abandon ends a start that gave up, taking the child and its pid record with it: a process
 // nothing can reach, with a record that says it is up, reads as running and turns every later
 // start into a no-op.
 func abandon(name string, child *exec.Cmd, exited <-chan struct{}, message string) error {
-	signalRecorded(child.Process.Pid, syscall.SIGTERM)
+	pid := child.Process.Pid
+	group := leadsGroup(pid)
+	signalProcess(pid, group, syscall.SIGTERM)
 	select {
 	case <-exited:
 	case <-time.After(daemonBudget(DaemonStopTimeoutEnv, DaemonStopTimeout)):
-		signalRecorded(child.Process.Pid, syscall.SIGKILL)
+		signalProcess(pid, group, syscall.SIGKILL)
 		<-exited
 	}
 	os.Remove(pidfileFor(name))
@@ -376,19 +402,21 @@ func endRecorded(name string) (bool, error) {
 		os.Remove(record)
 		return false, nil
 	}
-	if err := signalRecorded(pid, syscall.SIGTERM); err != nil {
+	group := leadsGroup(pid)
+	if err := signalProcess(pid, group, syscall.SIGTERM); err != nil {
 		return false, fmt.Errorf("could not signal %s (pid %d): %v", name, pid, err)
 	}
 	budget := daemonBudget(DaemonStopTimeoutEnv, DaemonStopTimeout)
-	deadline := time.Now().Add(budget)
-	for time.Now().Before(deadline) {
-		if _, alive := livePidIn(record); !alive {
-			os.Remove(record)
-			return true, nil
-		}
-		time.Sleep(DaemonPollInterval)
+	if awaitGone(pid, group, budget) {
+		os.Remove(record)
+		return true, nil
 	}
-	return false, fmt.Errorf("%s is still running %s after SIGTERM (pid %d); see %s", name, budget, pid, logFor(name))
+	signalProcess(pid, group, syscall.SIGKILL)
+	if awaitGone(pid, group, budget) {
+		os.Remove(record)
+		return true, nil
+	}
+	return false, fmt.Errorf("%s is still running %s after SIGKILL (pid %d); see %s", name, budget, pid, logFor(name))
 }
 
 func daemonStart(serveArgs []string) {
