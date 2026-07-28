@@ -13,7 +13,11 @@ import {
   resumeGatewaySession,
   signInWithVestaAccount,
 } from "@/api/auth";
-import { createApiClient, type ApiClient } from "@/api/client";
+import {
+  createApiClient,
+  isTokenExpiringSoon,
+  type ApiClient,
+} from "@/api/client";
 import { parseConnectLink } from "@/api/connection-link";
 import type { ConnectionConfig } from "@/api/types";
 import {
@@ -131,12 +135,21 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (!active) return;
 
       connectionStore.write(stored);
-      setConnection(stored);
-      setStatus(stored ? "connected" : "disconnected");
+      if (stored && isTokenExpiringSoon(stored)) {
+        await api.forceRefresh();
+      }
+      if (!active) return;
+
+      // Refresh may rotate the stored credentials or reject and clear the
+      // session. Only expose the resulting state, so ControllerProvider never
+      // opens /sync with the stale startup token.
+      const restored = connectionStore.read();
+      setConnection(restored);
+      setStatus(restored ? "connected" : "disconnected");
 
       try {
-        const recent = stored
-          ? await saveRecentGateway(stored, { touch: false })
+        const recent = restored
+          ? await saveRecentGateway(restored, { touch: false })
           : await readRecentGateways();
         if (active) setRecentGateways(recent);
       } catch (cause) {
@@ -149,7 +162,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     return () => {
       active = false;
     };
-  }, [connectionStore]);
+  }, [api, connectionStore]);
 
   const connectLink = useCallback(
     async (link: string): Promise<void> => {
