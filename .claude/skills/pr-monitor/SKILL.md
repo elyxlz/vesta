@@ -60,6 +60,8 @@ Those worktrees are cleaned up as their work concludes, at most once every `PR_M
 
 A run is also capped at `PR_MONITOR_TIMEOUT` and stopped past it. A run whose connection dies waits on a socket that never speaks again, consuming no CPU and looking alive from outside, and without the cap it holds its slot for as long as the process lives.
 
+Each repo is polled by its own loop, on its own clock, and the interval counts from the start of a pass rather than its end. A repo with a long backlog therefore delays only itself, and the time a pass takes is never added to the gap before the next one. That matters for more than latency: two events noticed a cycle apart are handled a cycle apart no matter how many runs may go at once, so how fast events are noticed is what decides whether concurrency is ever reached.
+
 **Every new PR is checked automatically.** A non-draft PR that has never been seen surfaces as `NEWPR` without anyone asking, and dispatch runs the `check-pr` skill on it: does it fix the issue it claims to fix, does it match this repository's conventions, does it actually work. That pass is read only. It never pushes, merges, or closes, so a PR opening cannot cause a write. Where the change would benefit from the simplify and tidy pass, the reply names `polish-pr` and stops there, leaving the maintainer to ask for it.
 
 An unprompted comment closes by saying how to reach the agent: that mentioning `@vestabot` on the PR is what triggers it, what is worth asking for, and that only trusted commenters can. Nobody asked for that comment, so it carries its own instructions rather than assuming the reader knows the loop exists. Replies to an explicit mention skip it, since whoever wrote the mention already knows.
@@ -152,7 +154,7 @@ Two consequences worth knowing:
 | `PR_MONITOR_TRUSTED` | (author_association) | Logins allowed to drive the agent |
 | `PR_MONITOR_DENIED_REACTION` | `confused` | Reaction marking a refused comment |
 | `PR_MONITOR_MARKER` | `vestabot:reply` | Marker identifying the agent's own comments |
-| `PR_MONITOR_INTERVAL` | `45` | Seconds between polls |
+| `PR_MONITOR_INTERVAL` | `45` | Seconds between the starts of one repo's polls |
 | `PR_MONITOR_STATE` | `$XDG_STATE_HOME/pr-monitor` | Review-summary ledger and per-PR session ids |
 | `PR_MONITOR_MODEL` | `claude-opus-5` | Model `dispatch.sh` runs each event on |
 | `PR_MONITOR_TIMEOUT` | `1800` | Seconds a single run may take before it is stopped |
