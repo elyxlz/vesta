@@ -27,7 +27,6 @@ import {
 } from "@/controller/optional-controller-store";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
-import { refreshIfExpiring } from "@/controller/reauth-poll";
 import { connectionKeyOf } from "@/session/session-model";
 import {
   agentActivitySnapshotsEqual,
@@ -57,16 +56,11 @@ export function useAgentSocket(
   controller: Controller | null,
 ) {
   const preferences = usePreferences();
-  const { connection, api, refreshAccessToken } = useSession();
+  const { connection, api } = useSession();
   const connectionRef = useRef(connection);
   connectionRef.current = connection;
-  // The URL builder reads the store, not the rendered connection: a refresh it just awaited
-  // lands in the store immediately but only reaches this render on the next pass.
-  const sessionRef = useRef({
-    getConnection: api.getConnection,
-    refreshAccessToken,
-  });
-  sessionRef.current = { getConnection: api.getConnection, refreshAccessToken };
+  const apiRef = useRef(api);
+  apiRef.current = api;
   const holdStore = useChatHold();
   const key = chatHoldKey(name, connectionKeyOf(connection) ?? "");
   const keyRef = useRef(key);
@@ -77,15 +71,13 @@ export function useAgentSocket(
 
   const connected = useOptionalControllerSyncState(controller) === "open";
 
-  // The app-chat live socket URL through vestad's authenticated proxy, mirroring the /sync URL
-  // builder: refresh an expiring token, then swap http->ws and carry it as a query param.
-  const chatSocketUrl = useCallback(async (): Promise<string> => {
-    await refreshIfExpiring(sessionRef.current);
-    const current = sessionRef.current.getConnection();
-    if (!current) throw new Error("not connected to a Vesta gateway");
-    const base = current.url.replace(/^http/, "ws");
-    return `${base}/agents/${encodeURIComponent(name)}/app-chat/ws?token=${encodeURIComponent(current.accessToken)}`;
-  }, [name]);
+  const chatSocketUrl = useCallback(
+    (): Promise<string> =>
+      apiRef.current.websocketUrl(
+        `/agents/${encodeURIComponent(name)}/app-chat/ws`,
+      ),
+    [name],
+  );
 
   const activitySelector = useCallback(
     (tree: Tree | null) => selectAgentActivitySnapshot(tree, active, name),

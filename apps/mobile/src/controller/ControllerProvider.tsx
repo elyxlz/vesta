@@ -49,6 +49,7 @@ function ConnectedController({ children }: { children: ReactNode }) {
           {
             getConnection: api.getConnection,
             refreshAccessToken,
+            websocketUrl: api.websocketUrl,
           },
           CLIENT_VERSION,
         );

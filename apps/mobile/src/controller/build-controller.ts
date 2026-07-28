@@ -1,7 +1,6 @@
 import { createController, type Controller } from "@vesta/core";
 import type { ConnectionConfig } from "@/api/types";
 import { createRnSocket } from "./rn-socket";
-import { refreshIfExpiring } from "./reauth-poll";
 
 // The controller's view of the session: a LIVE connection accessor (base URL + token, read
 // fresh on every socket build and http call) and the single force-refresh path owned by
@@ -10,6 +9,8 @@ import { refreshIfExpiring } from "./reauth-poll";
 export interface ControllerSession {
   getConnection: () => ConnectionConfig | null;
   refreshAccessToken: () => Promise<boolean>;
+  // The api client's URL builder, which stamps the token and refreshes an expiring one first.
+  websocketUrl: (path: string) => Promise<string>;
 }
 
 export function buildController(
@@ -17,16 +18,9 @@ export function buildController(
   clientVersion?: string,
 ): Controller {
   const conn = () => session.getConnection();
-  const syncUrl = async () => {
-    await refreshIfExpiring(session);
-    const current = conn();
-    if (!current) throw new Error("not connected to a Vesta gateway");
-    const base = current.url.replace(/^http/, "ws");
-    return `${base}/sync?token=${encodeURIComponent(current.accessToken)}`;
-  };
   return createController({
     sync: {
-      buildUrl: syncUrl,
+      buildUrl: () => session.websocketUrl("/sync"),
       createSocket: createRnSocket,
       setTimer: (fn, ms) => setTimeout(fn, ms) as unknown as number,
       clearTimer: (handle) => clearTimeout(handle),

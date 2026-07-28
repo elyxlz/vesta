@@ -13,6 +13,10 @@ vi.mock("@/lib/connection", () => ({
     accessToken: "tok",
   })),
 }));
+// The stream URL is built by the authed-url owner, which refreshes before stamping the token.
+vi.mock("@/lib/token-refresh", () => ({
+  ensureFreshToken: vi.fn(() => Promise.resolve("ok")),
+}));
 
 import { apiJson } from "@/api/client";
 import { useVoice } from "@/stores/use-voice";

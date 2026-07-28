@@ -1,5 +1,5 @@
 import { apiJson } from "@/api/client";
-import { getConnection } from "@/lib/connection";
+import { mediaUrl, websocketUrl } from "@/lib/authed-url";
 
 const SAMPLE_RATE = 16000;
 
@@ -138,22 +138,10 @@ export function prepareSpeech(
   ).then((res) => res.id);
 }
 
-// Exported for testing: the token rides the query string because a media
-// element's request cannot carry an Authorization header.
-export function buildTtsStreamUrl(
-  baseUrl: string,
-  accessToken: string,
-  agentName: string,
-  id: string,
-): string {
-  const params = new URLSearchParams({ token: accessToken });
-  return `${baseUrl}/agents/${encodeURIComponent(agentName)}/voice/tts/stream/${encodeURIComponent(id)}?${params.toString()}`;
-}
-
-function ttsStreamUrl(agentName: string, id: string): string {
-  const conn = getConnection();
-  if (!conn) throw new Error("not connected to vestad");
-  return buildTtsStreamUrl(conn.url, conn.accessToken, agentName, id);
+function ttsStreamUrl(agentName: string, id: string): Promise<string> {
+  return mediaUrl(
+    `/agents/${encodeURIComponent(agentName)}/voice/tts/stream/${encodeURIComponent(id)}`,
+  );
 }
 
 export async function streamSpeech(
@@ -165,7 +153,7 @@ export async function streamSpeech(
   const id = preparedId ?? (await prepareSpeech(text, agentName, signal));
   if (signal?.aborted) return;
 
-  const audio = new Audio(ttsStreamUrl(agentName, id));
+  const audio = new Audio(await ttsStreamUrl(agentName, id));
   audio.preload = "auto";
 
   await new Promise<void>((resolve, reject) => {
@@ -285,7 +273,7 @@ export class Transcriber {
 
     let socket: WebSocket;
     try {
-      const url = this.buildWsUrl();
+      const url = await this.buildWsUrl();
       socket = new WebSocket(url);
       socket.binaryType = "arraybuffer";
       await new Promise<void>((resolve, reject) => {
@@ -416,12 +404,10 @@ export class Transcriber {
     return this.active;
   }
 
-  private buildWsUrl(): string {
-    const conn = getConnection();
-    if (!conn) throw new Error("not connected to vestad");
-    const base = conn.url.replace(/^http/, "ws");
-    const params = new URLSearchParams({ token: conn.accessToken });
-    return `${base}/agents/${encodeURIComponent(this.opts.agentName)}/voice/stt/listen?${params.toString()}`;
+  private buildWsUrl(): Promise<string> {
+    return websocketUrl(
+      `/agents/${encodeURIComponent(this.opts.agentName)}/voice/stt/listen`,
+    );
   }
 
   private cleanup(): void {
