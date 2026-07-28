@@ -126,12 +126,14 @@ def _clear_daemon_records(daemons_dir: pl.Path) -> None:
 
     Boot runs before any daemon does, so every record present is from a process the container
     no longer has. A pid it names can already belong to something else in the fresh pid space,
-    which would read as live and turn the next start into a silent no-op.
+    which would read as live and turn the next start into a silent no-op. A record is a file, so
+    a directory here belongs to whoever put it there and boot leaves it standing.
     """
     if not daemons_dir.is_dir():
         return
     for record in daemons_dir.iterdir():
-        record.unlink(missing_ok=True)
+        if not record.is_dir():
+            record.unlink(missing_ok=True)
 
 
 def reconcile_claude_runtime(config: cfg.VestaConfig) -> None:

@@ -749,6 +749,17 @@ def test_agent_startup_clears_the_daemon_records(tmp_path):
     assert list(daemons.iterdir()) == []
 
 
+def test_agent_startup_clears_records_around_a_directory(tmp_path):
+    """A record is a file. A directory beside the records is not one, and boot has to step over
+    it: an unlink that raises there takes the whole startup down and the container never boots."""
+    home = _bin_box(tmp_path)
+    daemons = home / "agent/data/daemons"
+    (daemons / "browser-sessions").mkdir(parents=True)
+    (daemons / "file-host.pid").write_text("1\n")
+    assert _run_agent_startup(home).returncode == 0
+    assert [entry.name for entry in daemons.iterdir()] == ["browser-sessions"]
+
+
 def test_agent_startup_needs_no_daemon_records_dir(tmp_path):
     home = _bin_box(tmp_path)
     assert _run_agent_startup(home).returncode == 0
