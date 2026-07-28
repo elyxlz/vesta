@@ -50,7 +50,7 @@ guessing:
 | `moneypot/server.py` | `moneypot daemon start` |
 | `file-host/serve.py` | `file-host daemon start` |
 | `sign-service/sign_server.py` | `sign-service daemon start` |
-| `whatsapp serve` or `whatsapp start` | `whatsapp daemon start` |
+| `whatsapp serve` or `whatsapp start` | `whatsapp daemon start`, keeping any `--instance` and other serve flags the old line carries |
 | `telegram serve` | `telegram daemon start` |
 | `telegram-watchdog.sh` | nothing: delete that line, `telegram daemon start` brings the watchdog up too |
 | `poll_daemon.py` or `email-client daemon start --interval N` | `email-client daemon start` |
@@ -109,16 +109,21 @@ from step 3, alone:
 tasks daemon start
 ```
 
-Whatever else the line holds goes: a `running <name> ||` guard, a `screen -dmS`, a `$PORT` capture,
-a `register-service` call, a script path, a trailing `sleep 1`, a log redirection, and the flags the
-command now applies itself (a port, a `--notifications-dir`, `email-client`'s `--interval`, which
-lives in `EMAIL_CLIENT_POLL_INTERVAL` in `~/.bashrc` when the user wants a cadence other than the
-default). A trailing comment of your own may stay, such as a `# TEMP` marking a service you will
-tear down.
+The shell around the launch goes: a `running <name> ||` guard, a `screen -dmS`, a `$PORT` capture, a
+`register-service` call, a script path, a trailing `sleep 1`, a log redirection. A trailing comment
+of your own may stay, such as a `# TEMP` marking a service you will tear down.
 
-**Keep the flags that say WHICH daemon to run.** A whatsapp instance line names an account, so
-dropping its flags would leave that account never starting again. `--instance <name>` and its
-per-instance companions `--read-only` and `--no-notifications` stay on the converged line:
+**Exactly three flags go, and every other flag stays.** The three the command now applies itself:
+
+- a port (`--port N`), registered by the start
+- `--notifications-dir`, which is `~/agent/notifications`
+- `email-client`'s `--interval`, which lives in `EMAIL_CLIENT_POLL_INTERVAL` in `~/.bashrc` when the
+  user wants a cadence other than the default
+
+Anything else on the line is a choice the user made for that daemon, so it stays exactly as written.
+A whatsapp instance line is the case that makes this concrete: it names an account, and dropping its
+flags would both leave that account never starting again and make the line a duplicate of the
+default one.
 
 ```
 whatsapp daemon start --instance personal --read-only --no-notifications

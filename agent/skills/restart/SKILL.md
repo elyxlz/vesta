@@ -15,7 +15,7 @@ When a skill's setup gives you a daemon startup line, add it here yourself, insi
 
 Every line is `<skill> daemon start`, with no guard around it (a trailing comment of your own, like `# TEMP` on a service you will tear down, is fine). A start is idempotent: a daemon that is already up answers `{"status":"already_running"}` and spawns nothing, so re-running this whole block cannot stack duplicates, which is what makes it safe for crash and timeout recovery to re-enter this skill repeatedly. A start also returns only once its daemon is actually up, so the lines never race each other and need no sleep between them.
 
-The one thing a line carries beyond the command is a flag that says WHICH daemon to run, because the command cannot infer it. That means whatsapp named instances: one line per account, each keeping `--instance <name>` and the per-instance `--read-only` / `--no-notifications` it was set up with, e.g. `whatsapp daemon start --instance personal --read-only`. Ports, notification dirs, poll intervals, and log redirections are never on a line: the command applies those itself.
+Three flags never appear on a line, because the command applies them itself: a port, a `--notifications-dir`, and a poll interval. Every other flag a skill's setup gives you stays on the line, because it is something chosen for that daemon and the command cannot infer it. Whatsapp named instances are the case you will meet: one line per account, each keeping the `--instance <name>` and per-instance flags it was set up with, e.g. `whatsapp daemon start --instance personal --read-only`.
 
 Keep every line in the one fenced block below, so a single read shows you every daemon this container runs.
 
