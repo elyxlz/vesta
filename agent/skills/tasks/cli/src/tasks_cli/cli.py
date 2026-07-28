@@ -78,7 +78,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # daemon
     p_daemon = sub.add_parser("daemon", help="Manage the background daemon: start|stop|restart|status")
-    p_daemon.add_argument("action", metavar="start|stop|restart|status")
+    p_daemon.add_argument("action", nargs="?", default="", metavar="start|stop|restart|status")
 
     # add
     p_add = sub.add_parser("add", help="Add a new task")
@@ -159,7 +159,7 @@ def main():
         return _main_remind()
 
     parser = _build_parser()
-    if len(sys.argv) == 1:
+    if len(sys.argv) == 1 or sys.argv[1] == "help":
         parser.print_help()
         return None
 
@@ -450,11 +450,6 @@ def _run_serve(config: Config, notif_dir: Path, *, port: int):
 
     from .server import start_server
 
-    http_server = start_server(config, port)
-
-    scheduler = create_scheduler()
-    scheduler.start()
-    commands.restore_all_jobs(config, scheduler, notif_dir=notif_dir)
     shutdown_reason = "unknown"
     asked_to_stop = False
 
@@ -466,8 +461,15 @@ def _run_serve(config: Config, notif_dir: Path, *, port: int):
         asked_to_stop = signum == signal.SIGTERM
         raise SystemExit(0)
 
+    # Installed before anything is brought up, so a signal arriving during startup is answered.
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
+
+    http_server = start_server(config, port)
+
+    scheduler = create_scheduler()
+    scheduler.start()
+    commands.restore_all_jobs(config, scheduler, notif_dir=notif_dir)
 
     sync_interval = int(os.environ["TASKS_SYNC_INTERVAL"]) if "TASKS_SYNC_INTERVAL" in os.environ else 5
 

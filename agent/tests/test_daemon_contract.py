@@ -11,6 +11,7 @@ import dataclasses
 import json
 import os
 import pathlib as pl
+import shutil
 import signal
 import socket
 import subprocess
@@ -25,10 +26,26 @@ SKILLS_DIR = REPO_ROOT / "agent/skills"
 STATUS_TIMEOUT = 10
 DEATH_REPORT_TIMEOUT = 30
 DEATH_POLL_SECS = 0.2
+# Short enough that a start which gives up is a test rather than a wait.
+UNREADY_TIMEOUT_SECS = "2"
+PID_CAPTURE_POLL_SECS = 0.02
 
 FAKE_REGISTER_SERVICE = """#!/bin/sh
 echo "$*" >> "$HOME/register-args"
 cat "$HOME/fake-port"
+"""
+
+# Sends every readiness probe, flags and all, to a listener that accepts and then says nothing.
+# The daemon still comes up on its own port, so this is a daemon that is alive and unreachable.
+MUTE_CURL = """#!/bin/sh
+for arg do
+  shift
+  case "$arg" in
+    http://*) set -- "$@" "http://127.0.0.1:$MUTE_PORT/" ;;
+    *) set -- "$@" "$arg" ;;
+  esac
+done
+exec {curl} "$@"
 """
 
 
@@ -188,6 +205,45 @@ def test_start_fails_closed_when_registration_fails(daemon):
     assert not (home / "agent/data/daemons" / f"{spec.name}.pid").exists()
 
 
+def _spawned_pid(spec, home, start) -> int | None:
+    """The pid start records while it waits, read back before the failure path clears it."""
+    pidfile = home / "agent/data/daemons" / f"{spec.name}.pid"
+    while start.poll() is None:
+        try:
+            return int(pidfile.read_text().strip())
+        except (FileNotFoundError, ValueError):
+            time.sleep(PID_CAPTURE_POLL_SECS)
+    return None
+
+
+def test_a_start_that_never_gets_an_answer_leaves_nothing_behind(daemon):
+    """A daemon that is up but unreachable is the worst of both: with its records in place status
+    reads running and every later start declines, so only a stop then a start recovers. The probe
+    is aimed at a listener that never answers, which is also what puts a bound on each probe."""
+    spec, home, env = daemon
+    if not spec.serves_port:
+        pytest.skip("portless")
+    curl = shutil.which("curl")
+    assert curl is not None
+    with socket.socket() as mute:
+        mute.bind(("127.0.0.1", 0))
+        mute.listen(8)
+        shim = pl.Path(env["PATH"].split(":")[0]) / "curl"
+        shim.write_text(MUTE_CURL.format(curl=curl))
+        shim.chmod(0o755)
+        unready = {**env, "MUTE_PORT": str(mute.getsockname()[1]), "DAEMON_READY_TIMEOUT_SECS": UNREADY_TIMEOUT_SECS}
+        start = subprocess.Popen([*spec.command, "daemon", "start"], env=unready, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        spawned = _spawned_pid(spec, home, start)
+        _out, err = start.communicate(timeout=120)
+    assert start.returncode != 0
+    assert json.loads(err)["error"]
+    assert not (home / "agent/data/daemons" / f"{spec.name}.pid").exists()
+    assert not (home / "agent/data/daemons" / f"{spec.name}.port").exists()
+    assert spawned is not None
+    with pytest.raises(ProcessLookupError):
+        os.kill(spawned, 0)
+
+
 def test_stop_kills_the_process_and_status_tells_the_truth(daemon):
     spec, home, env = daemon
     _verb(spec, env, "start")
@@ -295,7 +351,7 @@ def test_a_legacy_script_path_still_starts_the_daemon(daemon):
 
 def test_usage_and_unknown_verbs(daemon):
     spec, _home, env = daemon
-    for args in ([], ["-h"], ["--help"]):
+    for args in ([], ["-h"], ["--help"], ["help"], ["daemon"]):
         result = subprocess.run([*spec.command, *args], env=env, capture_output=True, text=True, check=False)
         assert result.returncode == 0
         # A skill whose command is a CLI answers with that CLI's own help.

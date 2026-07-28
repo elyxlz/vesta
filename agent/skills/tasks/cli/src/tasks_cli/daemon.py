@@ -22,9 +22,17 @@ LOG = pl.Path.home() / "agent/logs" / f"{NAME}.log"
 # The task list is the first thing the HTTP server can answer, so it doubles as the readiness probe.
 READY_URL_PATH = "tasks"
 USAGE = f"Usage: {NAME} daemon <start|stop|restart|status>"
-READY_TIMEOUT_SECS = 30
-STOP_TIMEOUT_SECS = 15
 POLL_SECS = 0.5
+# One hung connection must not eat the whole readiness budget.
+PROBE_TIMEOUT_SECS = 2
+
+
+def _budget(name: str, default: int) -> int:
+    return int(os.environ[name]) if name in os.environ else default
+
+
+READY_TIMEOUT_SECS = _budget("DAEMON_READY_TIMEOUT_SECS", 30)
+STOP_TIMEOUT_SECS = _budget("DAEMON_STOP_TIMEOUT_SECS", 15)
 
 
 def _fail(message: str) -> int:
@@ -49,11 +57,25 @@ def _register_port() -> str | None:
 
 def _ready(port: str) -> bool:
     probe = subprocess.run(
-        ["curl", "-fsS", "-o", "/dev/null", f"http://localhost:{port}/{READY_URL_PATH}"],
+        ["curl", "-m", str(PROBE_TIMEOUT_SECS), "-fsS", "-o", "/dev/null", f"http://localhost:{port}/{READY_URL_PATH}"],
         capture_output=True,
         check=False,
     )
     return probe.returncode == 0
+
+
+def _abandon(child: subprocess.Popen[bytes], message: str) -> int:
+    """A start that gives up takes its child and both records with it: a daemon nothing can reach,
+    with records that say it is up, reads as running and turns every later start into a no-op."""
+    child.terminate()
+    try:
+        child.wait(timeout=STOP_TIMEOUT_SECS)
+    except subprocess.TimeoutExpired:
+        child.kill()
+        child.wait()
+    PIDFILE.unlink(missing_ok=True)
+    PORTFILE.unlink(missing_ok=True)
+    return _fail(message)
 
 
 def _start() -> int:
@@ -72,13 +94,12 @@ def _start() -> int:
     deadline = time.monotonic() + READY_TIMEOUT_SECS
     while time.monotonic() < deadline:
         if child.poll() is not None:
-            PIDFILE.unlink(missing_ok=True)
-            return _fail(f"{NAME} exited during startup; see {LOG}")
+            return _abandon(child, f"{NAME} exited during startup; see {LOG}")
         if _ready(port):
             print(json.dumps({"status": "started"}))
             return 0
         time.sleep(POLL_SECS)
-    return _fail(f"{NAME} never answered on port {port}; see {LOG}")
+    return _abandon(child, f"{NAME} never answered on port {port}; see {LOG}")
 
 
 def _stop() -> int:
@@ -108,6 +129,9 @@ def _status() -> int:
 
 
 def daemon_cmd(action: str) -> int:
+    if action in ("", "-h", "--help", "help"):
+        print(USAGE)
+        return 0
     if action == "start":
         return _start()
     if action == "stop":
