@@ -56,6 +56,8 @@ Events on different PRs run at the same time, up to `PR_MONITOR_PARALLEL`. Event
 
 Each run can build a worktree of several hundred megabytes, so the ceiling is disk as much as cost.
 
+Those worktrees are cleaned up as their work concludes, at most once every `PR_MONITOR_PRUNE_WORKTREES` seconds. A worktree goes only when losing it cannot lose work: its branch belongs to a closed or merged PR, or its commits are already on master by content, which is how a squash merge is recognised despite the rewritten hashes. Anything holding uncommitted changes is left alone, as is anything whose commits exist nowhere else, and a failed PR listing prunes nothing rather than reading an empty answer as "everything is closed".
+
 A run is also capped at `PR_MONITOR_TIMEOUT` and stopped past it. A run whose connection dies waits on a socket that never speaks again, consuming no CPU and looking alive from outside, and without the cap it holds its slot for as long as the process lives.
 
 **Every new PR is checked automatically.** A non-draft PR that has never been seen surfaces as `NEWPR` without anyone asking, and dispatch runs the `check-pr` skill on it: does it fix the issue it claims to fix, does it match this repository's conventions, does it actually work. That pass is read only. It never pushes, merges, or closes, so a PR opening cannot cause a write. Where the change would benefit from the simplify and tidy pass, the reply names `polish-pr` and stops there, leaving the maintainer to ask for it.
@@ -155,6 +157,7 @@ Two consequences worth knowing:
 | `PR_MONITOR_MODEL` | `claude-opus-5` | Model `dispatch.sh` runs each event on |
 | `PR_MONITOR_TIMEOUT` | `1800` | Seconds a single run may take before it is stopped |
 | `PR_MONITOR_PARALLEL` | `3` | Runs allowed at once, across different PRs |
+| `PR_MONITOR_PRUNE_WORKTREES` | `3600` | Seconds between sweeps for finished agent worktrees |
 | `PR_MONITOR_PRUNE_TRANSCRIPTS` | `0` | Delete a closed PR session transcript, not just its pointer |
 
 ## Cost

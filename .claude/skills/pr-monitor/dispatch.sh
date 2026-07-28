@@ -20,6 +20,7 @@ MONITOR="$SKILL_DIR/monitor.sh"
 MODEL="${PR_MONITOR_MODEL:-claude-opus-5}"
 RUN_TIMEOUT="${PR_MONITOR_TIMEOUT:-1800}"
 PARALLEL="${PR_MONITOR_PARALLEL:-3}"
+PRUNE_WORKTREES_EVERY="${PR_MONITOR_PRUNE_WORKTREES:-3600}"
 STATE_ROOT="${PR_MONITOR_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/pr-monitor}"
 ME="$(gh api /user -q .login 2>/dev/null)"
 
@@ -142,6 +143,44 @@ claim() {
   gh api -X POST "$base" -f content=eyes >/dev/null 2>&1
 }
 
+# Subagents that fan out get a worktree each, and the harness keeps any that
+# carries commits so work is never silently deleted, so they accumulate one per
+# run forever. A worktree is removed here only once its work is provably safe to
+# lose: its PR is merged or closed, or its commits are already on master by
+# content. Anything with uncommitted changes is left alone, and `git worktree
+# remove` without --force refuses a dirty tree anyway, so a race cannot delete
+# work that appeared after the check.
+prune_worktrees() {
+  local repo="$1" root marker wt branch head state
+  root="$(cd "$(git rev-parse --git-common-dir 2>/dev/null)/.." 2>/dev/null && pwd)/.claude/worktrees"
+  [ -d "$root" ] || return 0
+  marker="$STATE_ROOT/last-worktree-prune"
+  if [ -f "$marker" ] && [ "$(( $(date +%s) - $(stat -c %Y "$marker") ))" -lt "$PRUNE_WORKTREES_EVERY" ]; then
+    return 0
+  fi
+  mkdir -p "$STATE_ROOT"; touch "$marker"
+  local closed
+  closed=$(gh pr list --repo "$repo" --state closed --limit 400 --json headRefName -q '.[].headRefName' 2>/dev/null) || return 0
+  git fetch -q origin 2>/dev/null || true
+  for wt in "$root"/*/; do
+    [ -d "$wt" ] || continue
+    [ -n "$(git -C "$wt" status --porcelain 2>/dev/null | head -1)" ] && continue
+    head=$(git -C "$wt" rev-parse HEAD 2>/dev/null) || continue
+    state=keep
+    branch=$(git -C "$wt" symbolic-ref --quiet --short HEAD 2>/dev/null)
+    if [ -n "$branch" ] && printf '%s\n' "$closed" | grep -qxF "$branch"; then
+      state=merged
+    elif [ -z "$(git -C "$wt" cherry origin/master "$head" 2>/dev/null | grep '^+')" ]; then
+      state=landed
+    fi
+    [ "$state" = keep ] && continue
+    if git -C "$root" worktree remove "$wt" 2>/dev/null || git -C "$wt" worktree remove "$wt" 2>/dev/null; then
+      echo "dispatch: removed worktree $(basename "$wt") ($state)" >&2
+    fi
+  done
+  git -C "$root" worktree prune 2>/dev/null || true
+}
+
 handle() {
   local repo="$1" kind="$2" id="$3" pr="$4" prompt="$5"
   local sf sid out rc lock
@@ -189,9 +228,10 @@ handle() {
   fi
   echo "dispatch: handled $repo#$pr ($kind $id)" >&2
   prune_sessions "$repo"
+  prune_worktrees "$repo"
 }
 
-for repo in "${repos[@]}"; do prune_sessions "$repo"; done
+for repo in "${repos[@]}"; do prune_sessions "$repo"; prune_worktrees "$repo"; done
 
 bash "$MONITOR" "${repos[@]}" | while IFS=$'\t' read -r tag f1 f2 f3 f4 f5; do
   while [ "$(jobs -rp | wc -l)" -ge "$PARALLEL" ]; do wait -n; done
