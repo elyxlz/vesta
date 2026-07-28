@@ -35,19 +35,18 @@ substitute inside each daemon line:
 The same paths may be written as `$HOME/agent/skills/vestad/scripts/...` or
 `/root/agent/skills/vestad/scripts/...`; those forms substitute the same way.
 
-Change nothing else on a line. Keep the `running <name> ||` guard, the `&&` between registration
-and start, the `$PORT` capture, the `screen -dmS` invocation, the trailing `sleep 1`, and every
-port, path, flag, and log location you personalized. A daemon line is yours, so the command name
-is the only thing this touches. For example, this line:
+Change nothing else on a line, whatever shape it has: leave every guard, launch, `$PORT` capture,
+port, path, flag, log location, and trailing command exactly as you find them. A daemon line is
+yours, so the helper's name is the only thing this touches. So if a line reads:
 
 ```
-running tasks || { PORT=$(~/agent/skills/vestad/scripts/register-service tasks) && screen -dmS tasks tasks serve --notifications-dir ~/agent/notifications --port $PORT; sleep 1; }
+PORT=$(~/agent/skills/vestad/scripts/register-service tasks) && <the rest of your line, untouched>
 ```
 
-becomes:
+it becomes:
 
 ```
-running tasks || { PORT=$(register-service tasks) && screen -dmS tasks tasks serve --notifications-dir ~/agent/notifications --port $PORT; sleep 1; }
+PORT=$(register-service tasks) && <the rest of your line, untouched>
 ```
 
 ### 3. Verify

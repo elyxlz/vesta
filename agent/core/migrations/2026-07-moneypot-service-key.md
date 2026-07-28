@@ -26,9 +26,11 @@ launch:
 moneypot daemon start
 ```
 
-If a previous migration in this batch already converted the line, this step is done. If the line
-still spells out `server.py`, and that migration told you to stop because your workspace sync had
-not merged, leave it alone here too: both are converted on your next boot.
+If the line already reads that way, this step is done: the `2026-08-daemon-pidfile` migration's
+"Reduce every restart line to its command" step owns the whole Daemons block and runs after this
+one in the same batch. If the line still spells out `server.py`, leave it: that step converts it,
+or tells you to stop because your workspace sync has not merged, in which case both are converted
+on your next boot.
 
 ### 2. Register moneypot privately now
 

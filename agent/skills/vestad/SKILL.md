@@ -67,12 +67,17 @@ opens or a webhook an external service posts to.
 ## Giving a skill a daemon: the contract
 
 A skill that runs a background process owns its whole lifecycle itself, in its own language,
-behind one command named after the skill: `<skill> daemon start|stop|restart|status`. There is no
-shared runner, and no script path: a skill with a CLI adds a `daemon` subcommand, a skill without
-one is a single executable at `~/agent/skills/<skill>/<skill>`, and agent startup links that
-command onto PATH on every boot. A command you just wrote runs by its path until the next boot.
-(`ssh` is the one skill whose command is not its name. It is `ssh-tunnel`, because `ssh` is the
-system client and a skill never shadows a system command.)
+behind one command, with the daemon as verbs on it: `<skill> daemon start|stop|restart|status`.
+There is no shared runner, and no script path: a skill with a CLI adds a `daemon` subcommand, a
+skill without one is a single executable at `~/agent/skills/<skill>/<skill>`, and agent startup
+links that command onto PATH on every boot. A command you just wrote runs by its path until the
+next boot.
+
+A skill's command is normally its directory name, and each skill's own docs name the command it
+installs, so read those rather than assuming. `ssh-tunnel` is the one suffixed name, taken because
+`ssh` is the system client and a skill never shadows a system command; `voice-keys` (the `voice`
+skill) and `finance` (the `enable-banking` skill) are commands that simply differ from their
+skill's directory.
 
 Each verb prints exactly one line of JSON on stdout:
 
@@ -91,8 +96,9 @@ State lives in the same three places for every skill, under one name the daemon 
 
 - pid: `~/agent/data/daemons/<name>.pid`, port: `~/agent/data/daemons/<name>.port`
 - log: `~/agent/logs/<name>.log`, appended, never truncated
-- budgets: `DAEMON_READY_TIMEOUT_SECS` (default 30) bounds a start, `DAEMON_STOP_TIMEOUT_SECS`
-  (default 15) bounds a stop
+- budgets: `DAEMON_READY_TIMEOUT_SECS` bounds a start (default 30, and 300 for whatsapp and
+  telegram, which compile their CLI on the way up), `DAEMON_STOP_TIMEOUT_SECS` bounds a stop
+  (default 15)
 
 Boot empties the records directory before any daemon runs, because a pid written by the previous
 container can already belong to something else in the fresh pid space, which would read as live
@@ -152,7 +158,7 @@ do_start() {
   i=0
   while [ "$i" -lt "$READY_POLLS" ]; do
     kill -0 "$pid" 2>/dev/null || { rm -f "$PIDFILE" "$PORTFILE"; fail "file-host exited during startup; see $LOG"; }
-    if curl -m 2 -fsS -o /dev/null "http://localhost:$PORT"; then echo '{"status":"started"}'; return 0; fi
+    if curl -m 2 -fsS -o /dev/null "http://localhost:$PORT" 2>/dev/null; then echo '{"status":"started"}'; return 0; fi
     sleep 0.5; i=$((i + 1))
   done
   kill -TERM "$pid" 2>/dev/null || true

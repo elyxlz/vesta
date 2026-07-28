@@ -169,7 +169,7 @@ def config_issues_turn(issues: list[str]) -> str | None:
 # a plain restart, before tunnelling into the migration or upgrade.
 BOOT_RESTORE_ORIENTATION = (
     "Your daemons are down after this boot, just like any restart. Before the task below, read the "
-    "`restart` skill and run its daemon guard block to bring your daemons back (it is idempotent, so "
+    "`restart` skill and run its Daemons block to bring your daemons back (it is idempotent, so "
     "running it when everything is already up is a safe no-op). Then continue with the task."
 )
 
