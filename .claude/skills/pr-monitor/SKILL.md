@@ -158,8 +158,11 @@ Two consequences worth knowing:
 | `PR_MONITOR_TIMEOUT` | `1800` | Seconds a single run may take before it is stopped |
 | `PR_MONITOR_PARALLEL` | `3` | Runs allowed at once, across different PRs |
 | `PR_MONITOR_PRUNE_WORKTREES` | `3600` | Seconds between sweeps for finished agent worktrees |
+| `PR_MONITOR_WINDOW` | `7 days ago` | How far back the repo-wide comment listings reach |
 | `PR_MONITOR_PRUNE_TRANSCRIPTS` | `0` | Delete a closed PR session transcript, not just its pointer |
 
 ## Cost
 
-One `gh pr list` per repo per cycle, plus three API calls per open PR. The trigger match and the reaction count are both read out of those same list payloads inside the jq expression, so neither adds a call. Only acking an event costs an extra request. At the default interval a repo with a handful of open PRs sits far under the 5000 per hour limit; a repo with many open PRs wants a longer `PR_MONITOR_INTERVAL`.
+One `gh pr list` per repo per cycle, two repo-wide comment listings windowed by `PR_MONITOR_WINDOW`, and one call per open PR for review summaries, which have no repo-wide equivalent. Cost grows with the number of open PRs only through that last one.
+
+The window bounds those listings, so a comment older than it that has never been claimed is not seen. Claims happen within a cycle of a comment appearing, so the default leaves days of margin, but widen it on a repo where the loop is often stopped for long stretches. The trigger match and the reaction count are both read out of those same list payloads inside the jq expression, so neither adds a call. Only acking an event costs an extra request. At the default interval a repo with a handful of open PRs sits far under the 5000 per hour limit; a repo with many open PRs wants a longer `PR_MONITOR_INTERVAL`.
