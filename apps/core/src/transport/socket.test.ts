@@ -166,6 +166,39 @@ describe("createSyncSocket", () => {
     )
   })
 
+  it("sends a report issued while connecting as a fresh focus once open", () => {
+    const h = harness()
+    const socket = start(h)
+    // Every client reports from a mount effect, so the very first report always lands before the
+    // handshake completes. It is still the user arriving, so it must not be downgraded to a resync.
+    socket.reportPresence(true)
+    expect(h.sockets[0]?.sent).toEqual([])
+    h.sockets[0]?.onopen?.()
+    expect(h.sockets[0]?.sent).toEqual([
+      JSON.stringify({ type: "client_context", focused: true, resync: false }),
+    ])
+  })
+
+  it("skips a repeat report of the current focus", () => {
+    const h = harness()
+    const socket = start(h)
+    h.sockets[0]?.onopen?.()
+    socket.reportPresence(true)
+    socket.reportPresence(true)
+    expect(h.sockets[0]?.sent).toHaveLength(1)
+  })
+
+  it("sends a reauth issued while connecting once open", () => {
+    const h = harness()
+    const sync = start(h)
+    // The mount-time refresh reauths before the handshake completes. The gateway armed this
+    // session's deadline from the connect token, so dropping the frame would expire a live socket.
+    sync.reauth("fresh")
+    expect(h.sockets[0]?.sent).toEqual([])
+    h.sockets[0]?.onopen?.()
+    expect(h.sockets[0]?.sent).toEqual([JSON.stringify({ type: "reauth", token: "fresh" })])
+  })
+
   it("re-sends the last context on reconnect as a resync", () => {
     const h = harness()
     const socket = start(h)

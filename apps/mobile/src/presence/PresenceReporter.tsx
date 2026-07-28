@@ -6,8 +6,8 @@ function isFocused(state: AppStateStatus): boolean {
   return state === "active";
 }
 
-// Reports app foreground + the visible agent to vestad so the gateway can suppress a push while a
-// client is focused. Reports on mount and on every AppState transition (foreground/background).
+// Reports app foreground to vestad so the gateway can suppress a push while a client is focused.
+// Reports on mount and on every AppState transition (foreground/background).
 export function PresenceReporter() {
   const controller = useContext(ControllerContext);
   useEffect(() => {

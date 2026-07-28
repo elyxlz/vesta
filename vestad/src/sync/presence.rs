@@ -14,13 +14,6 @@ pub(crate) const PRESENCE_NOTIFY_DEBOUNCE: Duration = Duration::from_mins(10);
 
 pub(crate) type ConnId = u64;
 
-/// An aggregate-presence edge worth acting on. `any_focused` fan-out rides the watch channel, so the
-/// only returned event is the debounced global return-to-focus.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum PresenceEvent {
-    BecamePresent,
-}
-
 #[derive(Debug)]
 struct PresenceState {
     contexts: HashMap<ConnId, ClientContext>,
@@ -53,7 +46,9 @@ impl Presence {
         self.next_id.fetch_add(1, Ordering::Relaxed)
     }
 
-    pub(crate) fn record(&self, id: ConnId, ctx: ClientContext, now: Instant) -> Vec<PresenceEvent> {
+    /// True when this record is the debounced global return-to-focus. The `any_focused` fan-out
+    /// rides the watch channel, so that edge is the only one a caller has to act on.
+    pub(crate) fn record(&self, id: ConnId, ctx: ClientContext, now: Instant) -> bool {
         let mut state = self.state.lock().expect("presence mutex");
         let was_present = Self::compute_any_focused(&state.contexts);
         let resync = ctx.resync;
@@ -67,7 +62,7 @@ impl Presence {
         let was_present = Self::compute_any_focused(&state.contexts);
         state.contexts.remove(&id);
         let is_present = Self::compute_any_focused(&state.contexts);
-        let _ = self.finish(&mut state, was_present, is_present, false, now);
+        self.finish(&mut state, was_present, is_present, false, now);
     }
 
     pub(crate) fn any_focused(&self) -> bool {
@@ -82,8 +77,8 @@ impl Presence {
         contexts.values().any(|c| c.focused)
     }
 
-    /// Reconcile a presence change: publish `any_focused` if it flipped, and emit a debounced
-    /// `BecamePresent` when the aggregate rose to focused after a long-enough gap.
+    /// Reconcile a presence change: publish `any_focused` if it flipped, and report a return to
+    /// focus when the aggregate rose to focused after a long-enough gap.
     fn finish(
         &self,
         state: &mut PresenceState,
@@ -91,8 +86,7 @@ impl Presence {
         is_present: bool,
         resync: bool,
         now: Instant,
-    ) -> Vec<PresenceEvent> {
-        let mut events = Vec::new();
+    ) -> bool {
         if is_present != was_present {
             // send_replace updates the stored value even with no live receivers (a plain send would
             // fail and leave any_focused() reading a stale value); sessions still get the changed() wake.
@@ -101,18 +95,16 @@ impl Presence {
         // A record that raises the aggregate to present can only be the just-recorded client turning
         // focused; disconnect never raises it, so a false->true edge always means "this client, focused".
         // A resync frame (reconnect replay of cached focus) is not a fresh return, so it never notifies.
-        if !was_present && is_present && !resync {
-            let long_gap = state
+        let became_present = !was_present
+            && is_present
+            && !resync
+            && state
                 .last_online_at
                 .is_none_or(|last| now.duration_since(last) >= PRESENCE_NOTIFY_DEBOUNCE);
-            if long_gap {
-                events.push(PresenceEvent::BecamePresent);
-            }
-        }
         if was_present || is_present {
             state.last_online_at = Some(now);
         }
-        events
+        became_present
     }
 }
 
@@ -132,12 +124,9 @@ mod tests {
         let a = presence.connect();
         // A reconnect replay (resync) that re-establishes focus is not a fresh return: no notification,
         // but presence still becomes true so suppression works.
-        let events = presence.record(
-            a,
-            ClientContext { focused: true, resync: true },
-            Instant::now(),
-        );
-        assert!(events.is_empty());
+        let became_present =
+            presence.record(a, ClientContext { focused: true, resync: true }, Instant::now());
+        assert!(!became_present);
         assert!(presence.any_focused());
     }
 
@@ -167,21 +156,38 @@ mod tests {
         let presence = Presence::new();
         let a = presence.connect();
         let t0 = Instant::now();
-        // Cold start: first genuine app focus emits BecamePresent.
-        let events = presence.record(a, ctx(true), t0);
-        assert_eq!(events, vec![PresenceEvent::BecamePresent]);
-        // Blur, then refocus within the debounce window: no event.
+        // Cold start: first genuine app focus is a return to focus.
+        assert!(presence.record(a, ctx(true), t0));
+        // Blur, then refocus within the debounce window: nothing.
         presence.record(a, ctx(false), t0 + Duration::from_secs(60));
-        let quick = presence.record(a, ctx(true), t0 + Duration::from_secs(120));
-        assert!(quick.is_empty());
+        assert!(!presence.record(a, ctx(true), t0 + Duration::from_secs(120)));
         // Blur, then refocus after the debounce window: fires again.
         presence.record(a, ctx(false), t0 + Duration::from_secs(180));
-        let slow = presence.record(
-            a,
-            ctx(true),
-            t0 + Duration::from_secs(180) + PRESENCE_NOTIFY_DEBOUNCE,
-        );
-        assert_eq!(slow, vec![PresenceEvent::BecamePresent]);
+        assert!(presence.record(a, ctx(true), t0 + Duration::from_secs(180) + PRESENCE_NOTIFY_DEBOUNCE));
+    }
+
+    #[test]
+    fn debounce_measures_time_away_not_time_since_focusing() {
+        let presence = Presence::new();
+        let a = presence.connect();
+        let t0 = Instant::now();
+        assert!(presence.record(a, ctx(true), t0));
+        // A client reports only on a change, so a long focused session sends nothing between these
+        // two frames: the gap has to run from the blur, never from the focus that opened the session.
+        presence.record(a, ctx(false), t0 + Duration::from_mins(30));
+        assert!(!presence.record(a, ctx(true), t0 + Duration::from_mins(31)));
+    }
+
+    #[test]
+    fn disconnect_while_focused_starts_the_gap() {
+        let presence = Presence::new();
+        let a = presence.connect();
+        let t0 = Instant::now();
+        assert!(presence.record(a, ctx(true), t0));
+        // Closing the app is leaving, so the gap runs from the disconnect, not from the last frame.
+        presence.disconnect(a, t0 + Duration::from_mins(30));
+        let b = presence.connect();
+        assert!(!presence.record(b, ctx(true), t0 + Duration::from_mins(31)));
     }
 
     #[tokio::test]

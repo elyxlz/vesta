@@ -54,6 +54,13 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
   let terminal = false
   let open = false
   let lastFocused: boolean | null = null
+  // Whether the gateway already has `lastFocused`. False while a report is still undelivered, so
+  // its replay goes out as the fresh focus it is rather than as a resync.
+  let focusSynced = false
+  // A token whose reauth was issued before the socket opened, held for that open. The gateway arms
+  // the session deadline from the connect token and only a reauth extends it, so dropping the frame
+  // would strand a live socket on a token that is about to expire.
+  let pendingToken: string | null = null
 
   const detach = (target: SocketLike): void => {
     target.onopen = null
@@ -61,10 +68,13 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
     target.onclose = null
   }
 
-  // Only send on an open socket: a browser WebSocket throws before OPEN, so the connecting
-  // window sends nothing (a reauth issued then is simply dropped; the next rotation resends).
-  const emit = (frame: ClientFrame): void => {
-    if (open && socket) socket.send(encodeFrame(frame))
+  // A browser WebSocket throws before OPEN, so the connecting window never sends. Reports whether
+  // the frame reached the gateway; both client frames are last-write-wins, so an undelivered one is
+  // re-issued from its cached value on open.
+  const emit = (frame: ClientFrame): boolean => {
+    if (!open || !socket) return false
+    socket.send(encodeFrame(frame))
+    return true
   }
 
   const scheduleReconnect = (): void => {
@@ -133,10 +143,16 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
       if (socket !== current) return
       open = true
       delay = base
-      // Replay cached presence on reconnect as a resync (not a fresh focus), so vestad doesn't treat
-      // the reconnect as the user returning.
+      if (pendingToken !== null) {
+        current.send(encodeFrame(reauthFrame(pendingToken)))
+        pendingToken = null
+      }
+      // Replay cached presence. Already delivered means this is a reconnect, so it goes out as a
+      // resync and vestad doesn't read it as the user returning; never delivered (the report was
+      // issued while the socket was still connecting) means this is that first genuine focus.
       if (lastFocused !== null) {
-        current.send(encodeFrame(clientContextFrame(lastFocused, true)))
+        current.send(encodeFrame(clientContextFrame(lastFocused, focusSynced)))
+        focusSynced = true
       }
       callbacks.onStateChange("open")
     }
@@ -156,18 +172,19 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
 
   return {
     reauth: (token) => {
-      emit(reauthFrame(token))
+      if (!emit(reauthFrame(token))) pendingToken = token
     },
     reportPresence: (focused) => {
       // Skip repeated AppState/window-focus reports; the cached value still drives reconnect replay.
       if (lastFocused === focused) return
       lastFocused = focused
       // A genuine user-driven report (resync=false): vestad may fire the return-to-focus notification.
-      emit(clientContextFrame(focused, false))
+      focusSynced = emit(clientContextFrame(focused, false))
     },
     close: () => {
       terminal = true
       open = false
+      pendingToken = null
       if (timer !== null) {
         deps.clearTimer(timer)
         timer = null

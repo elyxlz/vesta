@@ -18,7 +18,7 @@ use super::protocol::{
     AgentInfo, AgentNode, ClientFrame, Frame, GatewayInfo, GatewayLan, GatewayScope,
     NotificationsBranch, ServiceInfo, Tree,
 };
-use super::{MIN_SUPPORTED_CLIENT_VERSION, PresenceEvent};
+use super::MIN_SUPPORTED_CLIENT_VERSION;
 
 type Tx = futures_util::stream::SplitSink<WebSocket, Message>;
 
@@ -172,8 +172,7 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
             Wake::Client(Some(Ok(Message::Text(text)))) => {
                 match serde_json::from_str::<ClientFrame>(text.as_str()) {
                     Ok(ClientFrame::ClientContext(ctx)) => {
-                        let events = state.presence.record(conn, ctx, tokio::time::Instant::now());
-                        for PresenceEvent::BecamePresent in events {
+                        if state.presence.record(conn, ctx, tokio::time::Instant::now()) {
                             for agent in state.agent_status_cache.presence_notification_agents() {
                                 // Drop the notification off the session loop: the docker upload has no
                                 // timeout, and awaiting it here would stall this client's keepalive and
