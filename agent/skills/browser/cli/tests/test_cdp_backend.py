@@ -1,0 +1,426 @@
+"""Unit tests for the BiDi -> CDP translator (the connect-to-Chrome backend).
+
+The full stack over a real Chromium is exercised in the live smoke; here we pin the
+translation logic against a recording fake transport so a wrong CDP mapping fails fast.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+
+import pytest
+import websockets
+from vesta_browser import cdp_backend
+from vesta_browser.bidi import BidiError
+from vesta_browser.cdp_backend import CdpBackend, _CdpTransport, _printable_key, _remote_to_bidi, _translate_event
+
+
+class FakeTransport:
+    """Records CDP sends and replies from a canned table keyed by method."""
+
+    def __init__(self, replies: dict | None = None) -> None:
+        self.calls: list[tuple[str, dict, str | None]] = []
+        self.replies = replies or {}
+
+    async def send(self, method: str, params: dict | None = None, session_id: str | None = None) -> dict:
+        self.calls.append((method, params or {}, session_id))
+        return self.replies[method] if method in self.replies else {}
+
+
+def _backend(replies: dict | None = None, context: str = "T1") -> CdpBackend:
+    backend = CdpBackend()
+    backend._cdp = FakeTransport(replies)
+    # Preseed the attach so translations don't need a live Target.attachToTarget.
+    backend._sessions[context] = "S1"
+    backend._session_targets["S1"] = context
+    backend._context = context
+    return backend
+
+
+def _cdp_calls(backend: CdpBackend, method: str) -> list[dict]:
+    return [params for (name, params, _sid) in backend._cdp.calls if name == method]
+
+
+# ── Pure translation helpers ──────────────────────────────────
+
+
+def test_remote_to_bidi_undefined():
+    assert _remote_to_bidi({"type": "undefined"}) == {"type": "undefined"}
+    assert _remote_to_bidi({}) == {"type": "undefined"}
+
+
+def test_remote_to_bidi_null():
+    assert _remote_to_bidi({"type": "object", "value": None}) == {"type": "null"}
+
+
+def test_remote_to_bidi_string():
+    assert _remote_to_bidi({"type": "string", "value": '{"a":1}'}) == {"type": "string", "value": '{"a":1}'}
+
+
+def test_printable_key_letter():
+    info = _printable_key("a")
+    assert info["text"] == "a"
+    assert info["code"] == "KeyA"
+    assert info["vk"] == ord("A")
+
+
+def test_key_map_covers_enter_and_modifiers():
+    values = list(cdp_backend._KEY_MAP.values())
+    assert any(v["key"] == "Enter" and v["vk"] == 13 for v in values)
+    assert any(v["key"] == "Control" and v["mod"] == 2 for v in values)
+    assert any(v["key"] == "Shift" and v["mod"] == 8 for v in values)
+
+
+def test_translate_event_load():
+    assert _translate_event("Page.loadEventFired", {}, "T9") == ("browsingContext.load", {"context": "T9"})
+
+
+def test_translate_event_dialog():
+    method, params = _translate_event("Page.javascriptDialogOpening", {"type": "confirm", "message": "ok?"}, "T1")
+    assert method == "browsingContext.userPromptOpened"
+    assert params["type"] == "confirm"
+    assert params["message"] == "ok?"
+
+
+def test_translate_event_unmapped_returns_none():
+    assert _translate_event("Network.requestWillBeSent", {}, "T1") is None
+
+
+# ── Command translation via a recording transport ─────────────
+
+
+def test_navigate_maps_to_page_navigate():
+    backend = _backend()
+    asyncio.run(backend.send("browsingContext.navigate", {"context": "T1", "url": "https://x/"}))
+    calls = _cdp_calls(backend, "Page.navigate")
+    assert calls == [{"url": "https://x/"}]
+
+
+def test_navigate_wait_complete_polls_ready_state():
+    backend = _backend(replies={"Runtime.evaluate": {"result": {"type": "string", "value": "complete"}}})
+    asyncio.run(backend.send("browsingContext.navigate", {"context": "T1", "url": "https://x/", "wait": "complete"}))
+    assert any(c["expression"] == "document.readyState" for c in _cdp_calls(backend, "Runtime.evaluate"))
+
+
+def test_evaluate_returns_bidi_success_shape():
+    backend = _backend(replies={"Runtime.evaluate": {"result": {"type": "string", "value": '{"ok":1}'}}})
+    out = asyncio.run(backend.send("script.evaluate", {"expression": "x", "target": {"context": "T1"}, "awaitPromise": True}))
+    assert out == {"type": "success", "result": {"type": "string", "value": '{"ok":1}'}}
+    assert _cdp_calls(backend, "Runtime.evaluate")[0]["returnByValue"] is True
+
+
+def test_evaluate_exception_maps_to_bidi_exception():
+    backend = _backend(replies={"Runtime.evaluate": {"result": {}, "exceptionDetails": {"text": "boom"}}})
+    out = asyncio.run(backend.send("script.evaluate", {"expression": "bad", "target": {"context": "T1"}}))
+    assert out["type"] == "exception"
+    assert out["exceptionDetails"]["text"] == "boom"
+
+
+def test_evaluate_result_ownership_root_returns_node_handle():
+    backend = _backend(replies={"Runtime.evaluate": {"result": {"type": "object", "objectId": "OBJ-9"}}})
+    out = asyncio.run(backend.send("script.evaluate", {"expression": "el", "target": {"context": "T1"}, "resultOwnership": "root"}))
+    assert out == {"type": "success", "result": {"type": "node", "sharedId": "OBJ-9"}}
+    assert _cdp_calls(backend, "Runtime.evaluate")[0]["returnByValue"] is False
+
+
+def test_pointer_actions_map_to_mouse_events():
+    backend = _backend()
+    actions = [
+        {
+            "type": "pointer",
+            "id": "m",
+            "actions": [
+                {"type": "pointerMove", "x": 10, "y": 20},
+                {"type": "pointerDown", "button": 2},
+                {"type": "pointerUp", "button": 2},
+            ],
+        }
+    ]
+    asyncio.run(backend.send("input.performActions", {"context": "T1", "actions": actions}))
+    mouse = _cdp_calls(backend, "Input.dispatchMouseEvent")
+    assert mouse[0] == {"type": "mouseMoved", "x": 10, "y": 20}
+    assert mouse[1]["type"] == "mousePressed" and mouse[1]["button"] == "right"
+    assert mouse[2]["type"] == "mouseReleased"
+
+
+def test_key_actions_track_modifiers():
+    backend = _backend()
+    ctrl = cdp_backend._KEY_MAP  # locate the Control code point
+    control_cp = next(k for k, v in ctrl.items() if v["key"] == "Control")
+    actions = [
+        {
+            "type": "key",
+            "id": "k",
+            "actions": [
+                {"type": "keyDown", "value": control_cp},
+                {"type": "keyDown", "value": "a"},
+                {"type": "keyUp", "value": "a"},
+                {"type": "keyUp", "value": control_cp},
+            ],
+        }
+    ]
+    asyncio.run(backend.send("input.performActions", {"context": "T1", "actions": actions}))
+    keys = _cdp_calls(backend, "Input.dispatchKeyEvent")
+    a_down = next(k for k in keys if k["key"] == "a" and k["type"] == "keyDown")
+    assert a_down["modifiers"] == 2  # Control held while 'a' pressed
+
+
+def test_wheel_actions_map_to_mouse_wheel():
+    backend = _backend()
+    actions = [{"type": "wheel", "id": "w", "actions": [{"type": "scroll", "x": 5, "y": 6, "deltaX": 0, "deltaY": -100}]}]
+    asyncio.run(backend.send("input.performActions", {"context": "T1", "actions": actions}))
+    wheel = _cdp_calls(backend, "Input.dispatchMouseEvent")[0]
+    assert wheel["type"] == "mouseWheel" and wheel["deltaY"] == -100
+
+
+def test_screenshot_maps_format_and_quality():
+    backend = _backend(replies={"Page.captureScreenshot": {"data": "AAA"}})
+    out = asyncio.run(
+        backend.send(
+            "browsingContext.captureScreenshot",
+            {"context": "T1", "origin": "document", "format": {"type": "image/jpeg", "quality": 0.5}},
+        )
+    )
+    assert out == {"data": "AAA"}
+    call = _cdp_calls(backend, "Page.captureScreenshot")[0]
+    assert call["format"] == "jpeg" and call["quality"] == 50 and call["captureBeyondViewport"] is True
+
+
+def test_get_tree_maps_targets_to_contexts():
+    replies = {
+        "Target.getTargets": {
+            "targetInfos": [
+                {"targetId": "P1", "type": "page", "url": "https://a/"},
+                {"targetId": "W1", "type": "service_worker", "url": "https://a/sw.js"},
+            ]
+        }
+    }
+    backend = _backend(replies)
+    out = asyncio.run(backend.send("browsingContext.getTree", {}))
+    assert out["contexts"] == [{"context": "P1", "url": "https://a/", "children": []}]
+
+
+def test_create_returns_context():
+    backend = _backend(replies={"Target.createTarget": {"targetId": "NEW"}})
+    out = asyncio.run(backend.send("browsingContext.create", {"type": "tab"}))
+    assert out == {"context": "NEW"}
+
+
+def test_handle_prompt_maps_to_cdp():
+    backend = _backend()
+    asyncio.run(backend.send("browsingContext.handleUserPrompt", {"context": "T1", "accept": True, "userText": "hi"}))
+    call = _cdp_calls(backend, "Page.handleJavaScriptDialog")[0]
+    assert call["accept"] is True and call["promptText"] == "hi"
+
+
+def test_set_files_uses_object_id():
+    backend = _backend()
+    asyncio.run(backend.send("input.setFiles", {"context": "T1", "element": {"sharedId": "OBJ-1"}, "files": ["/tmp/f"]}))
+    call = _cdp_calls(backend, "DOM.setFileInputFiles")[0]
+    assert call["objectId"] == "OBJ-1" and call["files"] == ["/tmp/f"]
+
+
+def test_unsupported_method_raises_bidi_error():
+    backend = _backend()
+    with pytest.raises(BidiError, match="unsupported operation"):
+        asyncio.run(backend.send("storage.getCookies", {}))
+
+
+# ── Transport-level request bounding ──────────────────────────
+
+CREATE_TARGET = "Target.createTarget"
+TEST_TIMEOUT_S = 0.2
+CANCEL_AFTER_S = 0.1
+HANG_GUARD_S = 5
+
+
+class SilentCdpServer:
+    """Accepts CDP commands and never answers, as a wedged Chrome does; an optional answer hook may reply to some before the silence."""
+
+    def __init__(self, answer=None) -> None:
+        self._server: websockets.Server | None = None
+        self._answer = answer
+
+    async def start(self) -> str:
+        self._server = await websockets.serve(self._handle, "127.0.0.1", 0)
+        port = self._server.sockets[0].getsockname()[1]
+        return f"ws://127.0.0.1:{port}/devtools/browser/fake"
+
+    async def stop(self) -> None:
+        if self._server is not None:
+            self._server.close()
+            await self._server.wait_closed()
+
+    async def _handle(self, ws: websockets.ServerConnection) -> None:
+        async for raw in ws:
+            if self._answer is not None:
+                await self._answer(ws, json.loads(raw))
+
+
+async def _unused_event_cb(method: str, params: dict, session_id: str | None) -> None:
+    raise AssertionError(f"a silent server pushes no events, got {method!r}")
+
+
+async def _with_silent_transport(body):
+    server = SilentCdpServer()
+    url = await server.start()
+    transport = _CdpTransport()
+    await transport.connect(url, _unused_event_cb)
+    try:
+        return await asyncio.wait_for(body(transport), timeout=HANG_GUARD_S)
+    finally:
+        await transport.close()
+        await server.stop()
+
+
+async def _with_silent_backend(body, server=None):
+    server = server or SilentCdpServer()
+    url = await server.start()
+    backend = CdpBackend()
+    await backend.connect(url)
+    try:
+        return await asyncio.wait_for(body(backend), timeout=HANG_GUARD_S)
+    finally:
+        await backend.close()
+        await server.stop()
+
+
+def test_withheld_cdp_response_raises_timeout_naming_the_method(monkeypatch):
+    """A Chrome that accepts a command and never answers must error, not hang forever."""
+    monkeypatch.setattr(cdp_backend, "_CDP_RESPONSE_TIMEOUT_S", TEST_TIMEOUT_S)
+
+    async def body(transport):
+        with pytest.raises(BidiError) as excinfo:
+            await transport.send(CREATE_TARGET, {"url": "about:blank"})
+        return excinfo.value
+
+    error = asyncio.run(_with_silent_transport(body))
+    assert error.code == "timeout"
+    assert CREATE_TARGET in error.message
+
+
+def test_timed_out_cdp_request_is_dropped_from_pending(monkeypatch):
+    """The abandoned future is released, so a wedged Chrome cannot accumulate them."""
+    monkeypatch.setattr(cdp_backend, "_CDP_RESPONSE_TIMEOUT_S", TEST_TIMEOUT_S)
+
+    async def body(transport):
+        with pytest.raises(BidiError):
+            await transport.send(CREATE_TARGET, {"url": "about:blank"})
+        return dict(transport._pending)
+
+    assert asyncio.run(_with_silent_transport(body)) == {}
+
+
+def test_wedged_attach_reports_timeout_not_a_retryable_frame_error(monkeypatch):
+    """A withheld attach means the browser is wedged; reporting 'no such frame' would send the daemon to re-derive and replay it."""
+    monkeypatch.setattr(cdp_backend, "_CDP_RESPONSE_TIMEOUT_S", TEST_TIMEOUT_S)
+
+    async def body(backend):
+        with pytest.raises(BidiError) as excinfo:
+            await backend.send("browsingContext.navigate", {"context": "T1", "url": "about:blank"})
+        return excinfo.value
+
+    error = asyncio.run(_with_silent_backend(body))
+    assert error.code == "timeout"
+    assert "Target.attachToTarget" in error.message
+
+
+def test_cancelled_cdp_request_is_dropped_from_pending():
+    """Cleanup rides a finally, so a caller cancelled while waiting leaks no pending entry either."""
+
+    async def body(transport):
+        # Cancelled from outside well inside the un-patched 60s bound, so only the finally can clear it.
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(transport.send(CREATE_TARGET, {"url": "about:blank"}), timeout=CANCEL_AFTER_S)
+        return dict(transport._pending)
+
+    assert asyncio.run(_with_silent_transport(body)) == {}
+
+
+class BlockingSendWs:
+    """A websocket whose send never returns, so a cancel lands on ws.send itself (backpressure when the buffer fills)."""
+
+    def __init__(self) -> None:
+        self.send_started = asyncio.Event()
+
+    async def send(self, _data: str) -> None:
+        self.send_started.set()
+        await asyncio.Event().wait()
+
+
+def test_cancel_landing_on_the_send_is_dropped_from_pending():
+    """Registration stays before the send, so a cancel that lands on ws.send itself must still clear the entry via the finally."""
+
+    async def body():
+        transport = _CdpTransport()
+        transport._ws = BlockingSendWs()
+        request = asyncio.ensure_future(transport.send(CREATE_TARGET, {"url": "about:blank"}))
+        await asyncio.wait_for(transport._ws.send_started.wait(), timeout=HANG_GUARD_S)
+        assert transport._pending
+        request.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await request
+        return dict(transport._pending)
+
+    assert asyncio.run(body()) == {}
+
+
+def test_wedged_domain_enable_propagates_timeout_instead_of_being_swallowed(monkeypatch):
+    """A withheld domain-enable reply means a wedged browser: the timeout must propagate, not be swallowed as a missing-domain refusal."""
+    monkeypatch.setattr(cdp_backend, "_CDP_RESPONSE_TIMEOUT_S", TEST_TIMEOUT_S)
+
+    async def answer_attach(ws, message):
+        if message["method"] == "Target.attachToTarget":
+            await ws.send(json.dumps({"id": message["id"], "result": {"sessionId": "S1"}}))
+
+    async def body(backend):
+        with pytest.raises(BidiError) as excinfo:
+            await backend._session_for("T1")
+        return excinfo.value
+
+    error = asyncio.run(_with_silent_backend(body, SilentCdpServer(answer_attach)))
+    assert error.code == "timeout"
+    assert ".enable" in error.message
+
+
+def test_wedged_domain_enable_does_not_cache_the_half_enabled_session(monkeypatch):
+    """A wedged enable must leave the target->session memo unset, so a later _session_for retries the
+    attach+enable instead of returning a cached session that has no domains enabled."""
+    monkeypatch.setattr(cdp_backend, "_CDP_RESPONSE_TIMEOUT_S", TEST_TIMEOUT_S)
+
+    async def answer_attach(ws, message):
+        if message["method"] == "Target.attachToTarget":
+            await ws.send(json.dumps({"id": message["id"], "result": {"sessionId": "S1"}}))
+
+    async def body(backend):
+        with pytest.raises(BidiError):
+            await backend._session_for("T1")
+        return dict(backend._sessions)
+
+    assert asyncio.run(_with_silent_backend(body, SilentCdpServer(answer_attach))) == {}
+
+
+def test_event_arriving_mid_enable_routes_to_its_target_not_the_context(monkeypatch):
+    """A CDP event arriving while the domain-enables are still in flight must resolve to the attaching target,
+    not regress to the self._context fallback while the _sessions memo is briefly unset."""
+    monkeypatch.setattr(cdp_backend, "_CDP_RESPONSE_TIMEOUT_S", TEST_TIMEOUT_S)
+
+    async def answer(ws, message):
+        method = message["method"]
+        if method == "Target.attachToTarget":
+            await ws.send(json.dumps({"id": message["id"], "result": {"sessionId": "S1"}}))
+        elif method == "Page.enable":
+            # Push a load event mid-enable: it arrives before this reply, while _sessions has no T1 entry.
+            await ws.send(json.dumps({"method": "Page.loadEventFired", "params": {}, "sessionId": "S1"}))
+            await ws.send(json.dumps({"id": message["id"], "result": {}}))
+        else:
+            await ws.send(json.dumps({"id": message["id"], "result": {}}))
+
+    async def body(backend):
+        loads = backend.on_event("browsingContext.load")
+        await backend._session_for("T1")
+        return await asyncio.wait_for(loads.get(), timeout=HANG_GUARD_S)
+
+    # backend._context is "" on a fresh backend, so a routing regression would yield {"context": ""}.
+    assert asyncio.run(_with_silent_backend(body, SilentCdpServer(answer))) == {"context": "T1"}
