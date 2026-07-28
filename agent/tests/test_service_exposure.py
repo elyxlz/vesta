@@ -1,11 +1,10 @@
 """Pins which services reach the tunnel without a credential.
 
 vestad is the single gate in front of a private service, so a service registered public is
-gated by nothing and must carry nothing sensitive. Exposure is asked for by two routes, and
-both are scanned here: a daemon declares `--port-mode` to the shared runner, and a skill that
-registers a port of its own passes `--public` (or posts `"public": true`) directly. Adding a
-public service by either route fails these tests until it is named, which is what stops a
-sensitive surface from reaching the tunnel ungated.
+gated by nothing and must carry nothing sensitive. A skill asks for a port by calling
+`register-service`, passing `--public` (or posting `"public": true`) for an ungated one.
+Adding a public service fails these tests until it is named, which is what stops a sensitive
+surface from reaching the tunnel ungated.
 """
 
 import pathlib as pl
@@ -13,17 +12,14 @@ import re
 
 REPO_ROOT = pl.Path(__file__).resolve().parents[2]
 SKILLS_DIR = REPO_ROOT / "agent/skills"
-# The helper and the runner carry the flag as their own interface, not as a request for it.
-EXPOSURE_OWNERS = {SKILLS_DIR / "vestad/scripts/register-service", SKILLS_DIR / "vestad/scripts/daemon-lifecycle"}
+# The helper carries the flag as its own interface, not as a request for it.
+EXPOSURE_OWNERS = {SKILLS_DIR / "vestad/scripts/register-service"}
 
-# A daemon that hands its exposure to the shared runner is named here with the mode it declares.
-EXPECTED_PORT_MODE: dict[str, str] = {}
-
-# A skill that registers its own port rather than declaring one to the runner. Keyed by file
-# because a service name is often built at runtime, from an instance or a constant. Public means
-# a page that must load with no credential at all: an inbound webhook from a sender that can hold
-# no key, and a shareable file link. Everything else is private, and a consumer holding no app
-# credential reaches it with a minted service key.
+# A skill registers its own port. Keyed by file because a service name is often built at
+# runtime, from an instance or a constant. Public means a page that must load with no credential
+# at all: an inbound webhook from a sender that can hold no key, and a shareable file link.
+# Everything else is private, and a consumer holding no app credential reaches it with a minted
+# service key.
 EXPECTED_DIRECT_PUBLIC = {
     "agentmail/cli/src/agentmail_bridge/daemon.py",  # the webhook an external mail sender posts to
     "browser/cli/src/vesta_browser/handover.py",  # the handover page opens with no credential
@@ -46,27 +42,14 @@ def _declaring_files():
             continue
 
 
-def _declared_port_modes() -> dict[str, str]:
-    """Maps service name to the port mode its daemon declares to the shared runner."""
-    modes = {}
-    for path, text in _declaring_files():
-        # Both a shell wrapper and a CLI argument list spell the flag and its value as adjacent
-        # tokens, so quoting and commas are the only difference between them.
-        tokens = re.sub(r"[\"',\\]", " ", text).split()
-        if tokens.count("--port-mode") == 0:
-            continue
-        assert tokens.count("--port-mode") == 1, f"{path} declares more than one daemon, so its service pairing is ambiguous"
-        modes[tokens[tokens.index("--service") + 1]] = tokens[tokens.index("--port-mode") + 1]
-    return modes
-
-
 def _direct_public_files() -> set[str]:
-    """Files asking vestad for a public port without going through the runner."""
+    """Files asking vestad for a public port."""
     return {str(path.relative_to(SKILLS_DIR)) for path, text in _declaring_files() if DIRECT_PUBLIC.search(text)}
 
 
-def test_every_daemon_declares_the_exposure_it_is_allowed():
-    assert _declared_port_modes() == EXPECTED_PORT_MODE
+def test_no_skill_declares_a_port_mode():
+    """`--port-mode` is not part of any interface here: a skill names its exposure to `register-service`."""
+    assert [str(path.relative_to(SKILLS_DIR)) for path, text in _declaring_files() if "--port-mode" in text] == []
 
 
 def test_only_named_skills_register_a_public_port_themselves():
