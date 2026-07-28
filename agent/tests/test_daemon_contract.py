@@ -32,6 +32,9 @@ PID_CAPTURE_POLL_SECS = 0.02
 # Two starts, launched with no stagger: whoever wins the record is the one that spawns.
 RACE_STARTS = 2
 RACE_TIMEOUT = 120
+# The whatsapp launcher answers --help off its cached binary, so this only has to outlast a cold
+# disk; the one path that would compile first is the one this probe is never taken on.
+WHATSAPP_PROBE_TIMEOUT = 120
 
 # Every registration hands out a port that is free right now, as vestad does. A constant one
 # reused across a test's starts races the kernel: the port a stopped daemon just released can be
@@ -98,18 +101,34 @@ def _rig_dashboard(home: pl.Path, bin_dir: pl.Path) -> None:
 
 def _rig_whatsapp(home: pl.Path, bin_dir: pl.Path) -> None:
     """The launcher runs the cached CLI binary and rebuilds it from source when an input changed,
-    so the row needs either that warm binary or the cgo toolchain to make one (the Go suite covers
-    the same contract wherever neither is). The caches are the developer's own: a hermetic HOME
-    would recompile the whole CLI once per test."""
+    so the row needs either the cgo toolchain to build one or a cached binary the launcher accepts
+    as current (the Go suite covers the same contract wherever neither is). Where it cannot build,
+    a probe run is what tells the two apart: a source edit since the cache was written makes the
+    launcher want a compiler it does not have, and the row skips rather than reporting the missing
+    toolchain as a contract failure. The caches are the developer's own: a hermetic HOME would
+    recompile the whole CLI once per test."""
     real_home = pl.Path(os.environ["HOME"])
     cache_home = pl.Path(os.environ["XDG_CACHE_HOME"]) if "XDG_CACHE_HOME" in os.environ else real_home / ".cache"
     whisper = pl.Path(os.environ["WHISPER_CPP_DIR"] if "WHISPER_CPP_DIR" in os.environ else "/opt/whisper.cpp")
     buildable = (shutil.which("go") or pl.Path("/usr/local/go/bin/go").exists()) and (whisper / "build-static/src/libwhisper.a").exists()
-    if not (cache_home / "whatsapp/whatsapp").exists() and not buildable:
+    binary = cache_home / "whatsapp/whatsapp"
+    if not binary.exists() and not buildable:
         pytest.skip("no built whatsapp CLI, and no Go toolchain plus whisper static libs to build one")
     for cache in (".cache", "go"):
         (real_home / cache).mkdir(exist_ok=True)
         (home / cache).symlink_to(real_home / cache)
+    if buildable:
+        return
+    probe = subprocess.run(
+        [str(SKILLS_DIR / "whatsapp/whatsapp"), "--help"],
+        env={**os.environ, "HOME": str(home)},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=WHATSAPP_PROBE_TIMEOUT,
+    )
+    if probe.returncode != 0:
+        pytest.skip(f"the cached whatsapp CLI at {binary} is stale, and there is no Go toolchain plus whisper static libs to rebuild it")
 
 
 def _rig_telegram(home: pl.Path, bin_dir: pl.Path) -> None:
