@@ -1,17 +1,29 @@
 import argparse
-import contextlib
 import json
 import logging
 import os
 import signal
-import subprocess
 import sys
 import threading
 from pathlib import Path
 
 import httpx
 
-from . import auth_commands, backend, block, calendar, email, folders, monitor, notifications, notify, owa_rest, owa_rest_commands, teams
+from . import (
+    auth_commands,
+    backend,
+    block,
+    calendar,
+    daemon,
+    email,
+    folders,
+    monitor,
+    notifications,
+    notify,
+    owa_rest,
+    owa_rest_commands,
+    teams,
+)
 from . import format as fmt
 from .config import Config
 from .context import MicrosoftContext
@@ -28,47 +40,7 @@ def _draft_only_enabled() -> bool:
     return os.environ.get("EMAIL_DRAFT_ONLY", "").strip().lower() in {"1", "true", "yes"}
 
 
-DAEMON_LIFECYCLE = Path.home() / "agent" / "skills" / "vestad" / "scripts" / "daemon-lifecycle"
-
-
-def stop_marker_path(config: Config) -> Path:
-    return config.data_dir / "stop-requested"
-
-
-def emit_daemon_died(notif_dir: Path, *, reason: str, stop_marker: Path) -> None:
-    """Announce an unexpected exit. A stop marker means the shutdown was asked for, so this
-    clears the marker and stays silent rather than crying wolf on a deliberate stop."""
-    if stop_marker.exists():
-        stop_marker.unlink()
-        return
-    notifications.write_notification(notif_dir, "daemon_died", reason=reason)
-
-
-def daemon_lifecycle_args(action: str, config: Config) -> list[str]:
-    return [
-        str(DAEMON_LIFECYCLE),
-        action,
-        "--session",
-        "microsoft",
-        "--stop-marker",
-        str(stop_marker_path(config)),
-        "--pidfile",
-        str(config.data_dir / "serve.pid"),
-        "--",
-        "microsoft",
-        "serve",
-        "--notifications-dir",
-        str(Path.home() / "agent" / "notifications"),
-    ]
-
-
-def _write_pid(config):
-    (config.data_dir / "serve.pid").write_text(str(os.getpid()))
-
-
-def _remove_pid(config):
-    with contextlib.suppress(FileNotFoundError):
-        (config.data_dir / "serve.pid").unlink()
+NOTIFICATIONS_DIR = Path.home() / "agent" / "notifications"
 
 
 def _add_format_flags(parser: argparse.ArgumentParser) -> None:
@@ -78,16 +50,9 @@ def _add_format_flags(parser: argparse.ArgumentParser) -> None:
     group.add_argument("--json-pretty", action="store_true", help="Emit indented JSON instead of a table.")
 
 
-def _require_daemon(config):
-    pid_file = config.data_dir / "serve.pid"
-    if not pid_file.exists():
+def _require_daemon():
+    if daemon.live_pid() is None:
         print(json.dumps({"error": "daemon not running, start it with: microsoft daemon start"}), file=sys.stderr)
-        sys.exit(1)
-    try:
-        os.kill(int(pid_file.read_text().strip()), 0)
-    except (ValueError, ProcessLookupError, OSError):
-        pid_file.unlink(missing_ok=True)
-        print(json.dumps({"error": "daemon not running (stale pid file), start it with: microsoft daemon start"}), file=sys.stderr)
         sys.exit(1)
 
 
@@ -96,10 +61,10 @@ def build_parser() -> argparse.ArgumentParser:
     group = parser.add_subparsers(dest="group", required=True)
 
     p_serve = group.add_parser("serve")
-    p_serve.add_argument("--notifications-dir", required=True)
+    p_serve.add_argument("--notifications-dir", default=str(NOTIFICATIONS_DIR))
 
     p_daemon = group.add_parser("daemon", help="Manage the background daemon: start|stop|restart|status")
-    p_daemon.add_argument("action", choices=["start", "stop", "restart", "status"])
+    p_daemon.add_argument("action", nargs="?", default="", metavar="start|stop|restart|status")
 
     _add_auth_parsers(group)
     email_sub = _add_email_parsers(group)
@@ -520,6 +485,10 @@ def _add_teams_channel_parsers(teams_sub) -> None:
 
 def main():
     parser = build_parser()
+    if len(sys.argv) == 1 or sys.argv[1] == "help":
+        parser.print_help()
+        return
+
     args = parser.parse_args()
     config = Config()
 
@@ -528,14 +497,14 @@ def main():
 
     try:
         if args.group == "daemon":
-            sys.exit(subprocess.run(daemon_lifecycle_args(args.action, config), check=False).returncode)
+            sys.exit(daemon.daemon_cmd(args.action))
 
         if args.group == "serve":
             _run_serve(config, Path(args.notifications_dir))
             return
 
         if args.group != "auth":
-            _require_daemon(config)
+            _require_daemon()
 
         if args.group == "auth":
             result = _dispatch_auth(args, config)
@@ -979,6 +948,22 @@ def _dispatch_teams(args, config, client):
 
 def _run_serve(config: Config, notif_dir: Path):
     notif_dir.mkdir(parents=True, exist_ok=True)
+    monitor_stop_event = threading.Event()
+    shutdown_reason = "unknown"
+    asked_to_stop = False
+
+    def handle_signal(signum, _frame):
+        # SIGTERM is what `microsoft daemon stop` sends, so it is the one exit the agent asked
+        # for; every other way out of the loop below is news the agent needs.
+        nonlocal shutdown_reason, asked_to_stop
+        shutdown_reason = signal.Signals(signum).name
+        asked_to_stop = signum == signal.SIGTERM
+        monitor_stop_event.set()
+
+    # Installed before anything is brought up, so a signal arriving during startup is answered.
+    signal.signal(signal.SIGINT, handle_signal)
+    signal.signal(signal.SIGTERM, handle_signal)
+
     http_client = httpx.Client(timeout=30.0, follow_redirects=True)
 
     monitor_base_dir = config.data_dir / "monitor"
@@ -993,8 +978,6 @@ def _run_serve(config: Config, notif_dir: Path):
         file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
         monitor_logger.addHandler(file_handler)
         monitor_logger.addHandler(logging.StreamHandler())
-
-    monitor_stop_event = threading.Event()
 
     ctx = MicrosoftContext(
         cache_file=config.cache_file,
@@ -1014,24 +997,12 @@ def _run_serve(config: Config, notif_dir: Path):
         calendar_notify_thresholds=config.calendar_notify_thresholds,
     )
 
-    shutdown_reason = "unknown"
-
-    def handle_signal(signum, _frame):
-        nonlocal shutdown_reason
-        shutdown_reason = signal.Signals(signum).name
-        monitor_stop_event.set()
-
-    signal.signal(signal.SIGHUP, signal.SIG_IGN)
-    signal.signal(signal.SIGINT, handle_signal)
-    signal.signal(signal.SIGTERM, handle_signal)
-
     print(json.dumps({"status": "serving"}))
     sys.stdout.flush()
 
-    _write_pid(config)
     try:
         monitor.run(ctx)
     finally:
-        emit_daemon_died(notif_dir, reason=shutdown_reason, stop_marker=stop_marker_path(config))
-        _remove_pid(config)
+        if not asked_to_stop:
+            notifications.write_notification(notif_dir, "daemon_died", reason=shutdown_reason)
         http_client.close()

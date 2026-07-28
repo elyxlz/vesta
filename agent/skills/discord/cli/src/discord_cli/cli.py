@@ -4,36 +4,20 @@ import argparse
 import asyncio
 import logging
 import pathlib
-import subprocess
 import sys
+import time
 
 import aiohttp
 import discord
 import pydantic as pyd
 
+from discord_cli import daemon
 from discord_cli.notif import MessageFacts, build_notification, daemon_died_notification, write_notification
 
 CREDENTIALS_PATH = pathlib.Path.home() / ".discord" / "credentials.json"
 API_BASE = "https://discord.com/api/v10"
-
-DAEMON_LIFECYCLE = pathlib.Path.home() / "agent" / "skills" / "vestad" / "scripts" / "daemon-lifecycle"
-
-
-def daemon_lifecycle_args(action: str) -> list[str]:
-    """Argv for the shared runner. This daemon is portless and lets SIGHUP terminate it, so the
-    runner needs neither a service port nor a stop marker."""
-    return [
-        str(DAEMON_LIFECYCLE),
-        action,
-        "--session",
-        "discord",
-        "--",
-        "discord",
-        "serve",
-        "--notifications-dir",
-        str(pathlib.Path.home() / "agent" / "notifications"),
-    ]
-
+NOTIFICATIONS_DIR = pathlib.Path.home() / "agent" / "notifications"
+CREDENTIALS_POLL_SECS = 60
 
 # View Channels (1024) + Send Messages (2048) + Read Message History (65536).
 INVITE_PERMISSIONS = 68608
@@ -137,8 +121,17 @@ async def cmd_authenticate(token: str) -> None:
     print(f"invite url: https://discord.com/oauth2/authorize?client_id={application.id}&scope=bot&permissions={INVITE_PERMISSIONS}")
 
 
+def wait_for_credentials() -> Credentials:
+    """The watcher outlives setup, so one started before the bot token is stored waits for it
+    instead of exiting and leaving the agent with a daemon that is down."""
+    while not CREDENTIALS_PATH.exists():
+        logger.info("no credentials at %s yet; waiting", CREDENTIALS_PATH)
+        time.sleep(CREDENTIALS_POLL_SECS)
+    return Credentials.model_validate_json(CREDENTIALS_PATH.read_text())
+
+
 def cmd_serve(notifications_dir: pathlib.Path) -> None:
-    token = load_credentials().bot_token
+    token = wait_for_credentials().bot_token
     intents = discord.Intents.default()
     intents.message_content = True
     client = discord.Client(intents=intents)
@@ -160,9 +153,8 @@ def cmd_serve(notifications_dir: pathlib.Path) -> None:
     try:
         client.run(token)
     finally:
-        # client.run returns on SIGTERM/SIGINT and re-raises on a fatal gateway error;
-        # either way the daemon is gone, so tell the agent to restart it. An intentional
-        # screen quit sends SIGHUP, which terminates before this runs, so no false alarm.
+        # An exit nobody asked for, so tell the agent to restart it. `discord daemon stop`
+        # sends SIGTERM, which ends the process before this runs, so no false alarm.
         write_notification(notifications_dir, daemon_died_notification())
 
 
@@ -201,10 +193,10 @@ def main() -> None:
     authenticate.add_argument("--token", required=True)
 
     serve = sub.add_parser("serve", help="run the gateway daemon that writes notifications")
-    serve.add_argument("--notifications-dir", required=True, type=pathlib.Path)
+    serve.add_argument("--notifications-dir", default=NOTIFICATIONS_DIR, type=pathlib.Path)
 
-    daemon = sub.add_parser("daemon", help="manage the background daemon: start|stop|restart|status")
-    daemon.add_argument("action", choices=["start", "stop", "restart", "status"])
+    daemon_parser = sub.add_parser("daemon", help="manage the background daemon: start|stop|restart|status")
+    daemon_parser.add_argument("action", nargs="?", default="", metavar="start|stop|restart|status")
 
     send = sub.add_parser("send", help="post a message")
     send.add_argument("target", help="a channel id, or @<user id> to DM that user")
@@ -217,12 +209,16 @@ def main() -> None:
     history.add_argument("channel_id")
     history.add_argument("--limit", type=int, default=20)
 
+    if len(sys.argv) == 1 or sys.argv[1] == "help":
+        parser.print_help()
+        return
+
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     if args.command == "authenticate":
         asyncio.run(cmd_authenticate(args.token))
     elif args.command == "daemon":
-        sys.exit(subprocess.run(daemon_lifecycle_args(args.action), check=False).returncode)
+        sys.exit(daemon.daemon_cmd(args.action))
     elif args.command == "serve":
         cmd_serve(args.notifications_dir)
     else:

@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 from pathlib import Path
 from typing import NoReturn
 
+from . import daemon
 from .client import SplitSpec, TricountClient
 
 
@@ -599,7 +599,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # --- daemon (watcher lifecycle) ---
     daemon_p = subparsers.add_parser("daemon", help="Manage the watcher daemon: start|stop|restart|status")
-    daemon_p.add_argument("action", choices=["start", "stop", "restart", "status"])
+    daemon_p.add_argument("action", nargs="?", default="", metavar="start|stop|restart|status")
     daemon_p.set_defaults(func=cmd_daemon)
 
     # --- serve (watcher daemon) ---
@@ -623,31 +623,17 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-DAEMON_LIFECYCLE = Path.home() / "agent" / "skills" / "vestad" / "scripts" / "daemon-lifecycle"
-
-
-def daemon_lifecycle_args(action: str) -> list[str]:
-    """Argv for the shared runner. The watcher is portless and lets SIGHUP terminate it, so the
-    runner needs neither a service port nor a stop marker."""
-    return [
-        str(DAEMON_LIFECYCLE),
-        action,
-        "--session",
-        "tricount",
-        "--",
-        "tricount",
-        "serve",
-        "--notifications-dir",
-        str(Path.home() / "agent" / "notifications"),
-    ]
-
-
 def cmd_daemon(args, _client):
-    sys.exit(subprocess.run(daemon_lifecycle_args(args.action), check=False).returncode)
+    sys.exit(daemon.daemon_cmd(args.action))
 
 
 def main() -> None:
-    args = _build_parser().parse_args()
+    parser = _build_parser()
+    if len(sys.argv) == 1 or sys.argv[1] == "help":
+        parser.print_help()
+        return
+
+    args = parser.parse_args()
 
     client = TricountClient()
 

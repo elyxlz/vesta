@@ -519,22 +519,31 @@ def init_watch(config: Config) -> dict:
     }
 
 
+def _wait_for_signin(config: Config, interval: int) -> None:
+    """The watcher outlives setup, so one started before sign-in waits for the token rather
+    than exiting: get_client ends the process outright when either file is missing."""
+    while not (config.credentials_file.exists() and config.token_cache.exists()):
+        _log(f"Not signed in yet (need {config.credentials_file} and {config.token_cache}); waiting")
+        time.sleep(interval)
+
+
 def watch_daemon(config: Config, interval: int = 60) -> None:
     """Run the watch daemon — polls liked songs and notifies on new likes."""
     _log(f"Starting watch daemon (poll interval: {interval}s)")
     _log(f"State file: {WATCH_STATE_FILE}")
     _log(f"Notifications dir: {NOTIFICATIONS_DIR}")
 
-    # Auto-init if state file doesn't exist
-    state = _load_watch_state()
-    if not state.get("known_liked_ids") and state.get("last_poll") is None:
-        _log("No state file found — initializing (snapshotting current liked songs, no processing)...")
-        init_watch(config)
-        state = _load_watch_state()
-        _log(f"Initialized with {len(state['known_liked_ids'])} known songs. Watching for new likes...")
-
     while True:
+        _wait_for_signin(config, interval)
         try:
+            # The snapshot needs an authorized client, which a watcher started before sign-in
+            # does not have, so it is retried each cycle until one succeeds.
+            state = _load_watch_state()
+            if not state.get("known_liked_ids") and state.get("last_poll") is None:
+                _log("No state file found — initializing (snapshotting current liked songs, no processing)...")
+                init_watch(config)
+                state = _load_watch_state()
+                _log(f"Initialized with {len(state['known_liked_ids'])} known songs. Watching for new likes...")
             _poll_cycle(config, state)
         except Exception as e:
             _log(f"Error during poll cycle: {type(e).__name__}: {e}")

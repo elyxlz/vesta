@@ -4,6 +4,9 @@ Commands:
   finance config set --app-id <uuid> --key-path <path-to-pem>
   finance config show
 
+  finance daemon start        # run the transaction watcher in the background
+  finance serve               # run the transaction watcher in the foreground
+
   finance auth login          # print URL, start local server, exchange code
   finance auth status         # check if session is active
   finance auth revoke         # delete session
@@ -18,12 +21,11 @@ Commands:
 
 import argparse
 import json
-import pathlib as pl
-import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 
 from . import config as cfg
+from . import daemon, transaction_watcher
 from . import enablebanking as eb
 
 # ---------------------------------------------------------------------------
@@ -313,25 +315,12 @@ def cmd_summary(args) -> dict:
 # ---------------------------------------------------------------------------
 
 
-DAEMON_LIFECYCLE = pl.Path.home() / "agent" / "skills" / "vestad" / "scripts" / "daemon-lifecycle"
-
-
-def daemon_lifecycle_args(action: str) -> list[str]:
-    """Argv for the shared runner. The screen session is `finance`, not the skill name, so it is
-    declared explicitly. `finance-watcher` is this project's own console script for the watcher
-    entry point, so the launch needs no interpreter path."""
-    return [
-        str(DAEMON_LIFECYCLE),
-        action,
-        "--session",
-        "finance",
-        "--",
-        "finance-watcher",
-    ]
-
-
 def _cmd_daemon(args):
-    sys.exit(subprocess.run(daemon_lifecycle_args(args.action), check=False).returncode)
+    sys.exit(daemon.daemon_cmd(args.action))
+
+
+def _cmd_serve(_args):
+    transaction_watcher.serve()
 
 
 def main():
@@ -340,8 +329,11 @@ def main():
 
     # --- daemon ---
     p_daemon = sub.add_parser("daemon", help="Manage the transaction watcher daemon: start|stop|restart|status")
-    p_daemon.add_argument("action", choices=["start", "stop", "restart", "status"])
+    p_daemon.add_argument("action", nargs="?", default="", metavar="start|stop|restart|status")
     p_daemon.set_defaults(func=_cmd_daemon)
+
+    # --- serve ---
+    sub.add_parser("serve", help="Run the transaction watcher in the foreground").set_defaults(func=_cmd_serve)
 
     # --- config ---
     p_config = sub.add_parser("config", help="Manage configuration")
@@ -396,6 +388,10 @@ def main():
     p_summary.add_argument("--from", dest="from_date", default=None, metavar="YYYY-MM-DD")
     p_summary.add_argument("--to", dest="to_date", default=None, metavar="YYYY-MM-DD")
     p_summary.set_defaults(func=cmd_summary)
+
+    if len(sys.argv) == 1 or sys.argv[1] == "help":
+        parser.print_help()
+        return
 
     args = parser.parse_args()
 

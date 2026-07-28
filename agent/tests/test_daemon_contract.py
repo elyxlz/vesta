@@ -124,6 +124,48 @@ SKILLS = [
         serves_port=True,
         emits_daemon_died=True,
     ),
+    Daemon(
+        command=["uv", "run", "--project", str(SKILLS_DIR / "google/cli"), "google"],
+        name="google",
+        serves_port=False,
+        emits_daemon_died=True,
+    ),
+    Daemon(
+        command=["uv", "run", "--project", str(SKILLS_DIR / "microsoft/cli"), "microsoft"],
+        name="microsoft",
+        serves_port=False,
+        emits_daemon_died=True,
+    ),
+    Daemon(
+        command=["uv", "run", "--project", str(SKILLS_DIR / "slack/cli"), "slack"],
+        name="slack",
+        serves_port=False,
+        emits_daemon_died=False,
+    ),
+    Daemon(
+        command=["uv", "run", "--project", str(SKILLS_DIR / "discord/cli"), "discord"],
+        name="discord",
+        serves_port=False,
+        emits_daemon_died=False,
+    ),
+    Daemon(
+        command=["uv", "run", "--project", str(SKILLS_DIR / "tricount/cli"), "tricount"],
+        name="tricount",
+        serves_port=False,
+        emits_daemon_died=False,
+    ),
+    Daemon(
+        command=["uv", "run", "--project", str(SKILLS_DIR / "spotify/cli"), "spotify"],
+        name="spotify",
+        serves_port=False,
+        emits_daemon_died=False,
+    ),
+    Daemon(
+        command=["uv", "run", "--project", str(SKILLS_DIR / "enable-banking/cli"), "finance"],
+        name="finance",
+        serves_port=False,
+        emits_daemon_died=False,
+    ),
 ]
 
 
@@ -351,7 +393,7 @@ def test_a_legacy_script_path_still_starts_the_daemon(daemon):
 
 def test_usage_and_unknown_verbs(daemon):
     spec, _home, env = daemon
-    for args in ([], ["-h"], ["--help"], ["help"], ["daemon"]):
+    for args in ([], ["-h"], ["--help"], ["help"], ["daemon"], ["daemon", "help"]):
         result = subprocess.run([*spec.command, *args], env=env, capture_output=True, text=True, check=False)
         assert result.returncode == 0
         # A skill whose command is a CLI answers with that CLI's own help.

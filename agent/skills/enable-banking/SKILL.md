@@ -3,7 +3,7 @@ name: enable-banking
 description: Personal bank spending, transactions, balances via Enable Banking open banking (EU/EEA only, no UK).
 ---
 
-# Enable Banking - CLI: finance / finance-watcher
+# Enable Banking - CLI: finance
 
 Tracks personal bank spending via Enable Banking open banking API.
 
@@ -23,7 +23,7 @@ Do not infer the liveness of a connection from a string in a config file. Read t
 
 ## Transaction Watcher (daemon)
 
-The watcher (`finance-watcher` / `python -m finance_cli.transaction_watcher`) polls Enable Banking every 5 minutes and writes new transaction notifications to `~/agent/notifications/<time_ns>-finance-message.json`. It must be running at all times.
+The watcher (`finance serve`) polls Enable Banking every 5 minutes and writes new transaction notifications to `~/agent/notifications/<time_ns>-finance-message.json`. It must be running at all times, so drive it with the daemon verb below rather than launching `finance serve` yourself.
 
 **Check if running:**
 ```bash

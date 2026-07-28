@@ -74,7 +74,7 @@ only what is its own:
 
 | flag | meaning |
 | --- | --- |
-| `--session NAME` | the screen session; not always the skill name (`spotify` runs `spotify-watch`) |
+| `--session NAME` | the screen session; not always the skill name |
 | `--service NAME` | the name registered with vestad; not always the session name (`sign-service` registers as `sign`) |
 | `--port-mode MODE` | `none` (default), `private`, or `public` |
 | `--workdir DIR` | cd here before launching |

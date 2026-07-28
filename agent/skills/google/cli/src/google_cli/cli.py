@@ -3,67 +3,20 @@ import json
 import logging
 import os
 import signal
-import subprocess
 import sys
 import threading
 from pathlib import Path
 
-from . import auth_commands, calendar, gmail, monitor, notifications
+from . import auth_commands, calendar, daemon, gmail, monitor, notifications
 from .config import Config
 from .context import GoogleContext
 
-DAEMON_LIFECYCLE = Path.home() / "agent" / "skills" / "vestad" / "scripts" / "daemon-lifecycle"
+NOTIFICATIONS_DIR = Path.home() / "agent" / "notifications"
 
 
-def stop_marker_path(config: Config) -> Path:
-    return config.data_dir / "stop-requested"
-
-
-def emit_daemon_died(notif_dir: Path, *, reason: str, stop_marker: Path) -> None:
-    """Announce an unexpected exit. A stop marker means the shutdown was asked for, so this
-    clears the marker and stays silent rather than crying wolf on a deliberate stop."""
-    if stop_marker.exists():
-        stop_marker.unlink()
-        return
-    notifications.write_notification(notif_dir, "daemon_died", reason=reason)
-
-
-def daemon_lifecycle_args(action: str, config: Config) -> list[str]:
-    return [
-        str(DAEMON_LIFECYCLE),
-        action,
-        "--session",
-        "google",
-        "--stop-marker",
-        str(stop_marker_path(config)),
-        "--pidfile",
-        str(config.data_dir / "serve.pid"),
-        "--",
-        "google",
-        "serve",
-        "--notifications-dir",
-        str(Path.home() / "agent" / "notifications"),
-    ]
-
-
-def _write_pid(config):
-    (config.data_dir / "serve.pid").write_text(str(os.getpid()))
-
-
-def _remove_pid(config):
-    (config.data_dir / "serve.pid").unlink(missing_ok=True)
-
-
-def _require_daemon(config):
-    pid_file = config.data_dir / "serve.pid"
-    if not pid_file.exists():
+def _require_daemon():
+    if daemon.live_pid() is None:
         print(json.dumps({"error": "daemon not running, start it with: google daemon start"}), file=sys.stderr)
-        sys.exit(1)
-    try:
-        os.kill(int(pid_file.read_text().strip()), 0)
-    except (ValueError, ProcessLookupError, OSError):
-        pid_file.unlink(missing_ok=True)
-        print(json.dumps({"error": "daemon not running (stale pid file), start it with: google daemon start"}), file=sys.stderr)
         sys.exit(1)
 
 
@@ -72,10 +25,10 @@ def _build_parser():
     group = parser.add_subparsers(dest="group", required=True)
 
     serve_parser = group.add_parser("serve")
-    serve_parser.add_argument("--notifications-dir", required=True)
+    serve_parser.add_argument("--notifications-dir", default=str(NOTIFICATIONS_DIR))
 
     daemon_parser = group.add_parser("daemon", help="Manage the background daemon: start|stop|restart|status")
-    daemon_parser.add_argument("action", choices=["start", "stop", "restart", "status"])
+    daemon_parser.add_argument("action", nargs="?", default="", metavar="start|stop|restart|status")
 
     auth_parser = group.add_parser("auth")
     auth_sub = auth_parser.add_subparsers(dest="command", required=True)
@@ -193,7 +146,12 @@ def _add_calendar_commands(group):
 
 
 def main():
-    args = _build_parser().parse_args()
+    parser = _build_parser()
+    if len(sys.argv) == 1 or sys.argv[1] == "help":
+        parser.print_help()
+        return
+
+    args = parser.parse_args()
     config = Config()
 
     config.data_dir.mkdir(parents=True, exist_ok=True)
@@ -201,14 +159,14 @@ def main():
 
     try:
         if args.group == "daemon":
-            sys.exit(subprocess.run(daemon_lifecycle_args(args.action, config), check=False).returncode)
+            sys.exit(daemon.daemon_cmd(args.action))
 
         if args.group == "serve":
             _run_serve(config, Path(args.notifications_dir))
             return
 
         if args.group != "auth":
-            _require_daemon(config)
+            _require_daemon()
 
         dispatchers = {
             "auth": _dispatch_auth,
@@ -324,6 +282,22 @@ def _dispatch_calendar(args, config):
 
 def _run_serve(config: Config, notif_dir: Path):
     notif_dir.mkdir(parents=True, exist_ok=True)
+    monitor_stop_event = threading.Event()
+    shutdown_reason = "unknown"
+    asked_to_stop = False
+
+    def handle_signal(signum, _frame):
+        # SIGTERM is what `google daemon stop` sends, so it is the one exit the agent asked
+        # for; every other way out of the loop below is news the agent needs.
+        nonlocal shutdown_reason, asked_to_stop
+        shutdown_reason = signal.Signals(signum).name
+        asked_to_stop = signum == signal.SIGTERM
+        monitor_stop_event.set()
+
+    # Installed before anything is brought up, so a signal arriving during startup is answered.
+    signal.signal(signal.SIGINT, handle_signal)
+    signal.signal(signal.SIGTERM, handle_signal)
+
     monitor_base_dir = config.data_dir / "monitor"
     monitor_base_dir.mkdir(parents=True, exist_ok=True)
     monitor_state_file = monitor_base_dir / "state.txt"
@@ -337,8 +311,6 @@ def _run_serve(config: Config, notif_dir: Path):
         monitor_logger.addHandler(file_handler)
         monitor_logger.addHandler(logging.StreamHandler())
 
-    monitor_stop_event = threading.Event()
-
     ctx = GoogleContext(
         config=config,
         notif_dir=notif_dir,
@@ -349,23 +321,11 @@ def _run_serve(config: Config, notif_dir: Path):
         monitor_stop_event=monitor_stop_event,
     )
 
-    shutdown_reason = "unknown"
-
-    def handle_signal(signum, _frame):
-        nonlocal shutdown_reason
-        shutdown_reason = signal.Signals(signum).name
-        monitor_stop_event.set()
-
-    signal.signal(signal.SIGHUP, signal.SIG_IGN)
-    signal.signal(signal.SIGINT, handle_signal)
-    signal.signal(signal.SIGTERM, handle_signal)
-
     print(json.dumps({"status": "serving"}))
     sys.stdout.flush()
 
-    _write_pid(config)
     try:
         monitor.run(ctx)
     finally:
-        emit_daemon_died(notif_dir, reason=shutdown_reason, stop_marker=stop_marker_path(config))
-        _remove_pid(config)
+        if not asked_to_stop:
+            notifications.write_notification(notif_dir, "daemon_died", reason=shutdown_reason)

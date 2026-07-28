@@ -59,7 +59,7 @@ spotify organize watch --init            # initialize state file without process
 ```
 
 - `sort` matches by artist genre keywords (`~/.spotify/organize.json` holds `genre_rules` + `skip_playlists`); only playlists you own are touched. Always `--dry-run` first.
-- `watch` only DETECTS newly liked songs and writes a notification to `~/agent/notifications/spotify_liked_{timestamp}.json` (track name, artist, IDs, artist genres); the sorting decision is left to the agent. Run in a screen session; state lives at `~/.spotify/watch_state.json`.
+- `watch` only DETECTS newly liked songs and writes a notification to `~/agent/notifications/spotify_liked_{timestamp}.json` (track name, artist, IDs, artist genres); the sorting decision is left to the agent. Run it in the background with `spotify daemon start|stop|restart|status`; state lives at `~/.spotify/watch_state.json`.
 
 ### Playlists
 ```bash
