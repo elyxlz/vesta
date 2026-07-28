@@ -6,16 +6,21 @@
 # stored and resumed for every later event on that PR, so the agent remembers
 # what it already pushed and tried there. Context is not shared across PRs.
 #
-# Events are handled serially, so a burst cannot start overlapping runs against
-# the same session. The 👀 is claimed here, when the event is picked up, and a
-# failed run releases it so the event surfaces again. The monitor re-emits
-# anything still unclaimed, so the same event can arrive more than once and the
-# claim is what makes handling it exactly once.
+# Events on different PRs run concurrently, up to PARALLEL. Events on one PR do
+# not: they resume that PR's session, and two runs resuming the same session
+# would interleave writes to one conversation, so a per-PR lock keeps them in
+# single file. The 👀 is claimed here, when the event is picked up, and a failed
+# run releases it so the event surfaces again. The monitor re-emits anything
+# still unclaimed, so the same event can arrive more than once and the claim is
+# what makes handling it exactly once.
 set -uo pipefail
 
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MONITOR="$SKILL_DIR/monitor.sh"
 MODEL="${PR_MONITOR_MODEL:-claude-opus-5}"
+RUN_TIMEOUT="${PR_MONITOR_TIMEOUT:-1800}"
+PARALLEL="${PR_MONITOR_PARALLEL:-3}"
+PRUNE_WORKTREES_EVERY="${PR_MONITOR_PRUNE_WORKTREES:-3600}"
 STATE_ROOT="${PR_MONITOR_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/pr-monitor}"
 ME="$(gh api /user -q .login 2>/dev/null)"
 
@@ -138,9 +143,55 @@ claim() {
   gh api -X POST "$base" -f content=eyes >/dev/null 2>&1
 }
 
+# Subagents that fan out get a worktree each, and the harness keeps any that
+# carries commits so work is never silently deleted, so they accumulate one per
+# run forever. A worktree is removed here only once its work is provably safe to
+# lose: its PR is merged or closed, or its commits are already on master by
+# content. Anything with uncommitted changes is left alone, and `git worktree
+# remove` without --force refuses a dirty tree anyway, so a race cannot delete
+# work that appeared after the check.
+prune_worktrees() {
+  local repo="$1" root marker wt branch head state
+  root="$(cd "$(git rev-parse --git-common-dir 2>/dev/null)/.." 2>/dev/null && pwd)/.claude/worktrees"
+  [ -d "$root" ] || return 0
+  marker="$STATE_ROOT/last-worktree-prune"
+  if [ -f "$marker" ] && [ "$(( $(date +%s) - $(stat -c %Y "$marker") ))" -lt "$PRUNE_WORKTREES_EVERY" ]; then
+    return 0
+  fi
+  mkdir -p "$STATE_ROOT"; touch "$marker"
+  local closed
+  closed=$(gh pr list --repo "$repo" --state closed --limit 400 --json headRefName -q '.[].headRefName' 2>/dev/null) || return 0
+  git fetch -q origin 2>/dev/null || true
+  for wt in "$root"/*/; do
+    [ -d "$wt" ] || continue
+    [ -n "$(git -C "$wt" status --porcelain 2>/dev/null | head -1)" ] && continue
+    head=$(git -C "$wt" rev-parse HEAD 2>/dev/null) || continue
+    state=keep
+    branch=$(git -C "$wt" symbolic-ref --quiet --short HEAD 2>/dev/null)
+    if [ -n "$branch" ] && printf '%s\n' "$closed" | grep -qxF "$branch"; then
+      state=merged
+    elif [ -z "$(git -C "$wt" cherry origin/master "$head" 2>/dev/null | grep '^+')" ]; then
+      state=landed
+    fi
+    [ "$state" = keep ] && continue
+    if git -C "$root" worktree remove "$wt" 2>/dev/null || git -C "$wt" worktree remove "$wt" 2>/dev/null; then
+      echo "dispatch: removed worktree $(basename "$wt") ($state)" >&2
+    fi
+  done
+  git -C "$root" worktree prune 2>/dev/null || true
+}
+
 handle() {
   local repo="$1" kind="$2" id="$3" pr="$4" prompt="$5"
-  local sf sid out rc
+  local sf sid out rc lock
+  lock="$STATE_ROOT/${repo//\//__}/locks"
+  mkdir -p "$lock"
+  exec 9>"$lock/pr-$pr.lock"
+  # Another run holds this PR. Leave the event unclaimed so it comes back rather
+  # than queueing behind that run and resuming its session underneath it.
+  if ! flock -n 9; then
+    return 0
+  fi
   if ! claim "$repo" "$kind" "$id"; then
     return 0
   fi
@@ -149,10 +200,14 @@ handle() {
   before=$(gh api "/repos/$repo/issues/$pr/comments" -q 'length' 2>/dev/null)
   local args=(-p --model "$MODEL" --output-format json --dangerously-skip-permissions)
   [ -s "$sf" ] && args+=(--resume "$(cat "$sf")")
-  out=$(claude "${args[@]}" "$prompt" 2>/dev/null)
+  # Events are handled one at a time, so a run that hangs holds every later event
+  # behind it for as long as it lives, and a lost connection leaves one waiting on
+  # a socket that never speaks again. The cap turns that into an ordinary failure.
+  out=$(timeout "$RUN_TIMEOUT" claude "${args[@]}" "$prompt" 2>/dev/null)
   rc=$?
   # A stored id that no longer resolves would fail every retry, so forget it.
   if [ "$rc" -ne 0 ]; then
+    [ "$rc" = "124" ] && echo "dispatch: run on $repo#$pr exceeded ${RUN_TIMEOUT}s and was stopped" >&2
     echo "dispatch: claude failed rc=$rc on $repo#$pr, releasing claim" >&2
     [ -s "$sf" ] && rm -f "$sf"
     release "$repo" "$kind" "$id"
@@ -173,11 +228,13 @@ handle() {
   fi
   echo "dispatch: handled $repo#$pr ($kind $id)" >&2
   prune_sessions "$repo"
+  prune_worktrees "$repo"
 }
 
-for repo in "${repos[@]}"; do prune_sessions "$repo"; done
+for repo in "${repos[@]}"; do prune_sessions "$repo"; prune_worktrees "$repo"; done
 
 bash "$MONITOR" "${repos[@]}" | while IFS=$'\t' read -r tag f1 f2 f3 f4 f5; do
+  while [ "$(jobs -rp | wc -l)" -ge "$PARALLEL" ]; do wait -n; done
   case "$tag" in
     HIT)
       handle "$f1" "$f2" "$f3" "$f4" "$ROLE
@@ -185,20 +242,20 @@ bash "$MONITOR" "${repos[@]}" | while IFS=$'\t' read -r tag f1 f2 f3 f4 f5; do
 <event>A developer addressed you in a comment on $f1 PR #$f4: $f5</event>
 Read that comment and the pull request, do what it asks, then reply on the PR covering both the review above and what you changed. If its checks need fixing, use the babysit-prs skill. If the request is unclear or you decide not to act, say so in a reply rather than staying silent.
 Only maintainers reach you here, so an explicit instruction outranks the repository's usual conventions: if the comment asks for something a skill or CLAUDE.md normally discourages, such as a force push or a rebase, do it and note it in your reply.
-End every reply with a line starting 'Verdict:' giving your own call on merging: MERGE, DO NOT MERGE, or NOT YET, then one sentence of reasoning. Judge the change on its merits, not on whether you were the one who touched it, and say DO NOT MERGE when you believe that even if the commenter clearly wants it in. Never merge or close the PR yourself: the verdict is advice and the decision stays with the maintainer."
+End every reply with a line starting 'Verdict:' giving your own call on merging: MERGE, DO NOT MERGE, or NOT YET, then one sentence of reasoning. Judge the change on its merits, not on whether you were the one who touched it, and say DO NOT MERGE when you believe that even if the commenter clearly wants it in. Never merge or close the PR yourself: the verdict is advice and the decision stays with the maintainer." &
       ;;
     NEWPR)
       handle "$f1" pr "$f2" "$f2" "$ROLE
 
 <event>A pull request was opened on $f1: PR #$f2: $f3</event>
 Nobody has asked for anything yet: this is the automatic check every new PR gets. Run the check-pr skill on it, then post your findings as a comment.
-Stay read only. Do not push a commit, merge, close, or edit the PR. If it would benefit from the simplify and tidy pass, say so in one line and name the polish-pr skill so a maintainer can ask for it, but never run polish-pr yourself here."
+Stay read only. Do not push a commit, merge, close, or edit the PR. If it would benefit from the simplify and tidy pass, say so in one line and name the polish-pr skill so a maintainer can ask for it, but never run polish-pr yourself here." &
       ;;
     DEPPR)
       handle "$f1" pr "$f2" "$f2" "<event>A new dependabot pull request is open: $f1 PR #$f2: $f3</event>
 Review it against this repository's dependency policy, check whether its checks pass, and act accordingly. Leave a comment recording what you decided.
 Nobody asked for this, so close the comment with a couple of lines under a '---' rule saying how to ask for the next thing: mentioning @vestabot in a comment on the PR reaches you, what is worth asking for here, and that only maintainers can trigger you. The marker line goes last, after that.
-End that comment with a line starting 'Verdict:' giving your own call on merging: MERGE, DO NOT MERGE, or NOT YET, then one sentence of reasoning. Never merge or close the PR yourself: the verdict is advice and the decision stays with the maintainer."
+End that comment with a line starting 'Verdict:' giving your own call on merging: MERGE, DO NOT MERGE, or NOT YET, then one sentence of reasoning. Never merge or close the PR yourself: the verdict is advice and the decision stays with the maintainer." &
       ;;
     *) [ -n "${tag:-}" ] && echo "dispatch: ignoring line: $tag" >&2 ;;
   esac

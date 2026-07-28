@@ -22,6 +22,7 @@ from . import (
     notify,
     owa_rest,
     owa_rest_commands,
+    pending_send,
     teams,
 )
 from . import format as fmt
@@ -32,7 +33,10 @@ from .payloads import EventFields, EventPatch, MailDraft
 # Commands whose effect is to actually transmit mail. In draft-only mode these are
 # refused before any Graph/OWA-REST call; drafting (`email draft`) stays allowed.
 _TRANSMIT_COMMANDS = {"send", "reply", "forward"}
+_PENDING_COMMANDS = {"send-delay", "pending", "undo"}
 _DRAFT_ONLY_MESSAGE = "draft-only mode (EMAIL_DRAFT_ONLY): sending is disabled. Create a draft instead (--draft / the draft command)."
+_PENDING_POLL_SECONDS = 1
+_PENDING_JOIN_TIMEOUT_SECONDS = 5
 
 
 def _draft_only_enabled() -> bool:
@@ -78,7 +82,9 @@ def build_parser() -> argparse.ArgumentParser:
     # graph    - force the official Graph API.
     # owa-rest - force the OWA REST path (browser-captured token; requires: microsoft auth owa-login).
     for sub in (email_sub, cal_sub, folder_sub, teams_sub):
-        for sp in sub.choices.values():
+        for command, sp in sub.choices.items():
+            if sub is email_sub and command in _PENDING_COMMANDS:
+                continue
             sp.add_argument(
                 "--backend",
                 choices=[backend.AUTO, backend.GRAPH, backend.OWA_REST],
@@ -248,6 +254,15 @@ def _add_email_compose_parsers(email_sub) -> None:
 
 
 def _add_email_manage_parsers(email_sub) -> None:
+    p_send_delay = email_sub.add_parser("send-delay")
+    p_send_delay.add_argument("--seconds", type=int, default=None)
+
+    p_pending = email_sub.add_parser("pending")
+    p_pending.add_argument("--account", default=None)
+
+    p_undo = email_sub.add_parser("undo")
+    p_undo.add_argument("--id", required=True, dest="pending_id")
+
     p_move = email_sub.add_parser("move")
     p_move.add_argument("--account", required=True)
     p_move.add_argument("--id", required=True, dest="email_id")
@@ -684,12 +699,15 @@ def _email_routes():
 
 
 def _dispatch_email(args, config, client):
-    acct = args.account
-
     # Hard draft-only guard: refuse any transmitting command before it can reach
     # EITHER backend (Graph or OWA-REST). Drafting still flows through untouched.
     if args.command in _TRANSMIT_COMMANDS and _draft_only_enabled():
         raise RuntimeError(_DRAFT_ONLY_MESSAGE)
+
+    if args.command in _PENDING_COMMANDS:
+        return _dispatch_pending_email(args, config, client)
+
+    acct = args.account
 
     if args.command == "list" and args.search is not None:
         # `list --search/--query` is an alias for `email search`: run the identical search path,
@@ -705,13 +723,22 @@ def _dispatch_email(args, config, client):
             lambda: email.search_emails(config, client, **kw),
             lambda: owa_rest_commands.search_emails(config, client, **kw),
         )
+    if args.command in ("reply-draft", "attachment", "block", "unblock"):
+        return _dispatch_special_email(args, config, client)
+    routes = _email_routes()
+    if args.command in routes:
+        graph_impl, rest_impl, kw_of = routes[args.command]
+        kw = {"account_email": acct, **kw_of(args)}
+        return _route(args, config, acct, lambda: graph_impl(config, client, **kw), lambda: rest_impl(config, client, **kw))
+    return None
+
+
+def _dispatch_special_email(args, config, client):
     if args.command == "reply-draft":
-        # Graph-only: leaving a properly-threaded unsent draft over the preserved quote
-        # has no OWA REST counterpart, so this bypasses the backend router.
         return email.reply_draft(
             config,
             client,
-            account_email=acct,
+            account_email=args.account,
             email_id=args.email_id,
             body=args.body,
             attachments=args.attachments,
@@ -720,14 +747,20 @@ def _dispatch_email(args, config, client):
         )
     if args.command == "attachment":
         return _dispatch_attachment(args, config, client)
-    if args.command in ("block", "unblock"):
-        return _dispatch_block(args, config, client)
-    routes = _email_routes()
-    if args.command in routes:
-        graph_impl, rest_impl, kw_of = routes[args.command]
-        kw = {"account_email": acct, **kw_of(args)}
-        return _route(args, config, acct, lambda: graph_impl(config, client, **kw), lambda: rest_impl(config, client, **kw))
-    return None
+    return _dispatch_block(args, config, client)
+
+
+def _dispatch_pending_email(args, config, client):
+    if args.command == "send-delay":
+        seconds = (
+            pending_send.delay_seconds(config.data_dir)
+            if args.seconds is None
+            else pending_send.set_delay_seconds(config.data_dir, args.seconds)
+        )
+        return {"send_delay_seconds": seconds}
+    if args.command == "pending":
+        return [queued.public() for queued in pending_send.list_pending(config.data_dir, account=args.account)]
+    return pending_send.undo(config, client, args.pending_id)
 
 
 def _dispatch_block(args, config, client):
@@ -1000,9 +1033,30 @@ def _run_serve(config: Config, notif_dir: Path):
     print(json.dumps({"status": "serving"}))
     sys.stdout.flush()
 
+    pending_thread = threading.Thread(
+        target=_run_pending_dispatcher,
+        args=(config, monitor_stop_event, monitor_logger),
+        name="microsoft-pending-send",
+        daemon=True,
+    )
     try:
+        pending_thread.start()
         monitor.run(ctx)
     finally:
+        monitor_stop_event.set()
+        pending_thread.join(timeout=_PENDING_JOIN_TIMEOUT_SECONDS)
         if not asked_to_stop:
             notifications.write_notification(notif_dir, "daemon_died", reason=shutdown_reason)
         http_client.close()
+
+
+def _run_pending_dispatcher(config: Config, stop_event: threading.Event, logger: logging.Logger) -> None:
+    pending_send.recover_dispatching(config.data_dir)
+    with httpx.Client(timeout=30.0, follow_redirects=True) as client:
+        while not stop_event.is_set():
+            try:
+                if pending_send.dispatch_due(config, client):
+                    continue
+            except Exception:
+                logger.exception("Error dispatching pending email")
+            stop_event.wait(_PENDING_POLL_SECONDS)

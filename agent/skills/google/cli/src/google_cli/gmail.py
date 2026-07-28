@@ -1,6 +1,7 @@
 import base64
 import pathlib as pl
 import re
+from datetime import datetime
 from email import encoders
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
@@ -8,7 +9,7 @@ from email.mime.text import MIMEText
 from html.parser import HTMLParser
 from typing import Any
 
-from . import api
+from . import api, pending_send
 from .config import Config
 
 EMAIL_SAVE_SUBDIR = "emails"
@@ -307,8 +308,14 @@ def send_email(
 ) -> dict[str, str]:
     service = api.gmail_service(config)
     raw = _build_mime_message(to, subject, body, cc=cc, attachments=attachments)
-    result = api.retry(lambda: service.users().messages().send(userId="me", body={"raw": raw}).execute())
-    return {"status": "sent", "id": result["id"] if "id" in result else ""}
+    return _send_or_queue(
+        config,
+        service,
+        message={"raw": raw},
+        action="send",
+        subject=subject,
+        recipients=", ".join([*to, *(cc or [])]),
+    )
 
 
 def create_draft(
@@ -374,12 +381,70 @@ def reply_to_email(
         msg["References"] = f"{references} {message_id_header}".strip() if references else message_id_header
 
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
-    send_body: dict[str, Any] = {"raw": raw}
+    send_body: dict[str, str] = {"raw": raw}
     if thread_id:
         send_body["threadId"] = thread_id
 
-    result = api.retry(lambda: service.users().messages().send(userId="me", body=send_body).execute())
-    return {"status": "sent", "id": result["id"] if "id" in result else ""}
+    return _send_or_queue(
+        config,
+        service,
+        message=send_body,
+        action="reply-all" if reply_all else "reply",
+        subject=subject,
+        recipients=", ".join([*to_addrs, *(cc or [])]),
+    )
+
+
+def _send_or_queue(
+    config: Config,
+    service,
+    *,
+    message: dict[str, str],
+    action: str,
+    subject: str,
+    recipients: str,
+) -> dict[str, str]:
+    if pending_send.delay_seconds(config.data_dir) == 0:
+        result = api.retry(lambda: service.users().messages().send(userId="me", body=message).execute())
+        return {"status": "sent", "id": result["id"] if "id" in result else ""}
+
+    draft = api.retry(lambda: service.users().drafts().create(userId="me", body={"message": message}).execute())
+    draft_id = draft["id"] if "id" in draft else ""
+    if not draft_id:
+        raise ValueError("Gmail did not return an id for the pending draft")
+    queued = pending_send.enqueue(
+        config.data_dir,
+        account="google",
+        action=action,
+        subject=subject,
+        recipients=recipients,
+        backend="gmail",
+        payload=draft_id.encode(),
+    )
+    return queued.public()
+
+
+def dispatch_due(config: Config, *, now: datetime | None = None) -> bool:
+    queued = pending_send.claim_due(config.data_dir, now=now)
+    if queued is None:
+        return False
+    try:
+        service = api.gmail_service(config)
+        draft_id = queued.payload.decode()
+        api.retry(lambda: service.users().drafts().send(userId="me", body={"id": draft_id}).execute())
+    except Exception as error:
+        pending_send.retry(config.data_dir, queued.id, str(error), now=now)
+        raise
+    pending_send.complete(config.data_dir, queued.id)
+    return True
+
+
+def undo_pending(config: Config, pending_id: str) -> dict[str, str]:
+    queued = pending_send.cancel(config.data_dir, pending_id)
+    service = api.gmail_service(config)
+    api.retry(lambda: service.users().drafts().delete(userId="me", id=queued.payload.decode()).execute())
+    pending_send.finish_cancel(config.data_dir, pending_id)
+    return {"id": pending_id, "status": "cancelled"}
 
 
 def get_attachment(config: Config, *, email_id: str, attachment_id: str, save_path: str) -> dict[str, Any]:

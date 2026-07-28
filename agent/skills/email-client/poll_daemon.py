@@ -60,6 +60,7 @@ INDEX_CHECK_SECS = 10
 # IMAP transaction trying to pull thousands of headers. Caller re-enters
 # on the next IDLE/poll cycle to pick up the remaining backlog.
 FETCH_BATCH_LIMIT = 500
+PENDING_POLL_SECONDS = 1
 
 
 def _sanitize_folder(folder: str) -> str:
@@ -281,6 +282,27 @@ def _interval_default() -> int:
     return DEFAULT_POLL_INTERVAL_SECS
 
 
+def pending_send_worker(log, stop_event: threading.Event) -> None:
+    """Send queued mail whose undo window has expired."""
+    try:
+        import pending_send
+        import smtp_send
+        from imap_client import _state_dir
+
+        state_dir = _state_dir()
+        pending_send.recover_dispatching(state_dir)
+    except Exception as error:
+        log(f"[pending-send] disabled: {error}")
+        return
+    while not stop_event.is_set():
+        try:
+            if smtp_send.dispatch_due(state_dir):
+                continue
+        except Exception as error:
+            log(f"[pending-send] dispatch failed: {error}")
+        stop_event.wait(PENDING_POLL_SECONDS)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument(
@@ -314,8 +336,15 @@ def main():
 
     workers: dict[tuple[str, str], tuple[threading.Thread, threading.Event]] = {}
     last_desired: set[tuple[str, str]] | None = None
+    pending_thread = threading.Thread(
+        target=pending_send_worker,
+        args=(log, shutdown_event),
+        name="pending-send",
+        daemon=True,
+    )
 
     try:
+        pending_thread.start()
         while not shutdown_event.is_set():
             try:
                 wanted = desired_workers()
@@ -330,8 +359,10 @@ def main():
             _reconcile_workers(workers, wanted, args.interval, log)
             shutdown_event.wait(INDEX_CHECK_SECS)
     finally:
+        shutdown_event.set()
         for _, stop_event in workers.values():
             stop_event.set()
+        pending_thread.join(timeout=WORKER_JOIN_TIMEOUT_SECS)
         for thread, _ in workers.values():
             thread.join(timeout=WORKER_JOIN_TIMEOUT_SECS)
         if asked_to_stop:

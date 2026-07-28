@@ -1,6 +1,6 @@
 # Email (CLI: microsoft email / folder)
 
-Every command takes `--account <email>` and `--backend {auto,graph,owa-rest}` (see [SETUP.md](../SETUP.md)).
+Mailbox commands take `--account <email>` and `--backend {auto,graph,owa-rest}` (see [SETUP.md](../SETUP.md)). Delayed-send management is client-wide as described below.
 
 ## Read and send
 
@@ -17,6 +17,22 @@ microsoft email search --account user@example.com --query "invoice" --since 2021
 ```
 
 `send`, `reply`, and `forward` accept `--attachments file1 file2` and `--html` (treats `--body` as HTML). `forward` requires `--to` and also takes `--cc`.
+
+## Delayed send and undo
+
+Send, reply, and forward operations wait 30 seconds by default across all Microsoft accounts and both email backends. The delay is one persisted setting for the Microsoft client and cannot be overridden on an individual send:
+
+```bash
+microsoft email send-delay
+microsoft email send-delay --seconds 60
+microsoft email pending
+microsoft email pending --account user@example.com
+microsoft email undo --id <pending_id>
+```
+
+Each send, reply, or forward command creates a provider draft and returns a `pending` status with its id and scheduled send time. `microsoft serve` sends due drafts through the backend that created them, and every email command already requires it to be running. Use `undo` to cancel a pending send and delete its provider draft: it works right up until the daemon starts dispatching that message. Set `--seconds 0` for immediate delivery. Explicit drafts are never queued.
+
+`pending` also lists messages whose status is `failed`, with `last_error` saying why: delivery kept erroring, or it was cut off mid-dispatch. A message cut off mid-dispatch may already have been sent, so read the Sent folder before you `undo` it or send it again.
 
 ## Organize messages
 

@@ -56,6 +56,7 @@ import argparse
 import base64
 import dataclasses
 import datetime as _dt
+import json
 import mimetypes
 import os
 import pathlib
@@ -63,7 +64,10 @@ import re as _re
 import smtplib
 import sys
 import time
+from email import policy
 from email.message import EmailMessage
+from email.parser import BytesParser
+from typing import TypedDict, cast
 
 from imap_tools import AND, MailMessageFlags
 
@@ -75,9 +79,12 @@ MAX_ATTACH_TOTAL_BYTES = 25 * 1024 * 1024
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import contextlib
 
+import daemon_lifecycle
+import pending_send
 from imap_client import (
     _env,
     _from_full,
+    _state_dir,
     _to_full,
     account_profile,
     account_user,
@@ -292,6 +299,13 @@ class Outbound:
     attachments: list[dict]
 
 
+class _PendingMetadata(TypedDict):
+    user: str
+    reply_uid: str
+    reply_folder: str
+    sent_sync: bool
+
+
 def _build_message(out: Outbound) -> EmailMessage:
     """Assemble the outbound EmailMessage from parts."""
     msg = EmailMessage()
@@ -450,13 +464,17 @@ def _mark_answered(acc: str | None, folder: str, uid: str) -> None:
 
 
 def _sync_sent(acc: str | None, profile: dict, out: Outbound) -> None:
+    _sync_sent_message(acc, profile, _build_message(out))
+
+
+def _sync_sent_message(acc: str | None, profile: dict, message: EmailMessage) -> None:
     # Strip Bcc before APPEND (those addresses must not appear in
     # the stored copy that the user can later read in their mail UI).
-    copy = _build_message(dataclasses.replace(out, bcc=[]))
+    del message["Bcc"]
     sent_fallback = profile["sent_folder"] if "sent_folder" in profile else None
     ok, info = _append_message(
         acc,
-        copy.as_bytes(),
+        message.as_bytes(),
         role="sent",
         profile_fallback=sent_fallback,
         flags=[MailMessageFlags.SEEN],
@@ -504,6 +522,27 @@ def send(req: SendRequest) -> None:
             return
         sys.exit(f"draft save failed: {info}")
 
+    state_dir = _state_dir()
+    if pending_send.delay_seconds(state_dir) > 0:
+        running, _ = daemon_lifecycle.daemon_running(state_dir)
+        if not running:
+            sys.exit(
+                "the poll daemon dispatches delayed sends and is not running, so this message would never leave; "
+                "start it with `email-client daemon start`, or send immediately with `email-client send-delay --seconds 0`"
+            )
+        action = "reply" if req.reply_to_uid else "forward" if req.forward_uid else "send"
+        queued = pending_send.enqueue(
+            state_dir,
+            account=acc,
+            action=action,
+            subject=out.subject,
+            recipients=", ".join([out.to, *out.cc, *out.bcc]),
+            backend="smtp",
+            payload=_encode_pending_payload(msg, req, user),
+        )
+        print(json.dumps(queued.public(), indent=2))
+        return
+
     _smtp_deliver(acc, profile, user, smtp_host, smtp_port, msg)
     print("OK")
 
@@ -513,7 +552,64 @@ def send(req: SendRequest) -> None:
         _sync_sent(acc, profile, out)
 
 
-def main():
+def _encode_pending_payload(message: EmailMessage, request: SendRequest, user: str) -> bytes:
+    metadata = _PendingMetadata(
+        user=user,
+        reply_uid=request.reply_to_uid or "",
+        reply_folder=request.reply_folder,
+        sent_sync=request.sent_sync,
+    )
+    return json.dumps(metadata, separators=(",", ":")).encode() + b"\n" + message.as_bytes()
+
+
+def _decode_pending_payload(payload: bytes) -> tuple[_PendingMetadata, EmailMessage]:
+    encoded_metadata, separator, encoded_message = payload.partition(b"\n")
+    if not separator:
+        raise ValueError("pending SMTP payload is malformed")
+    raw_metadata = json.loads(encoded_metadata)
+    if not isinstance(raw_metadata, dict):
+        raise ValueError("pending SMTP metadata is malformed")
+    metadata = _PendingMetadata(
+        user=str(raw_metadata["user"]),
+        reply_uid=str(raw_metadata["reply_uid"]),
+        reply_folder=str(raw_metadata["reply_folder"]),
+        sent_sync=bool(raw_metadata["sent_sync"]),
+    )
+    message = cast(EmailMessage, BytesParser(policy=policy.default).parsebytes(encoded_message))
+    return metadata, message
+
+
+def _deliver_pending(queued: pending_send.PendingSend) -> None:
+    metadata, message = _decode_pending_payload(queued.payload)
+    _, profile = account_profile(queued.account)
+    smtp_host = profile["smtp_host"] if "smtp_host" in profile else None
+    smtp_port = int(profile["smtp_port"] if "smtp_port" in profile else 587)
+    if not smtp_host:
+        raise ValueError(f"account {queued.account!r} has no SMTP host configured")
+    try:
+        _smtp_deliver(queued.account, profile, metadata["user"], smtp_host, smtp_port, message)
+    except SystemExit as error:
+        raise RuntimeError(str(error)) from error
+    if metadata["reply_uid"]:
+        _mark_answered(queued.account, metadata["reply_folder"], metadata["reply_uid"])
+    if metadata["sent_sync"]:
+        _sync_sent_message(queued.account, profile, message)
+
+
+def dispatch_due(data_dir: pathlib.Path, *, now: _dt.datetime | None = None) -> bool:
+    queued = pending_send.claim_due(data_dir, now=now)
+    if queued is None:
+        return False
+    try:
+        _deliver_pending(queued)
+    except Exception as error:
+        pending_send.retry(data_dir, queued.id, str(error), now=now)
+        raise
+    pending_send.complete(data_dir, queued.id)
+    return True
+
+
+def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--to",
@@ -600,7 +696,11 @@ def main():
         action="store_true",
         help="save the composed message to the Drafts folder instead of sending; works with --reply-to-uid / --forward-uid to draft for review",
     )
-    args = ap.parse_args()
+    return ap
+
+
+def main():
+    args = _build_parser().parse_args()
     # Hard draft-only guard: refuse any transmitting invocation (send/reply/forward)
     # before touching SMTP. Drafting (--draft) and the no-network preview (--dry-run)
     # stay allowed. Default off: no behavior change when EMAIL_DRAFT_ONLY is unset.

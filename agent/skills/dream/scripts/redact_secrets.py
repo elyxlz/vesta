@@ -68,12 +68,10 @@ def mask(match: re.Match[str]) -> str:
     return match.group(0) if REDACTED in match.group(0) else REDACTED
 
 
-# Payment-card PANs carry no fixed prefix to key a regex on and collide with order numbers,
-# timestamps, and phone/tracking concatenations, so a bare \d{13,19} match floods false positives.
-# The Luhn checksum is the real filter: only candidates whose separator-stripped digits pass Luhn
-# and land in the 13 to 19 digit PAN range are treated as leaks. A run of 13 to 19 digits may be
-# split into groups by single spaces or hyphens (4111 1111 1111 1111, 3782-822463-10005). The
-# lookarounds forbid a digit on either side so a longer numeric id is never sliced into a fake PAN.
+# Payment-card PANs carry no fixed prefix to key a regex on, so this matches any candidate run and
+# `_is_card` decides. A run of 13 to 19 digits may be split into groups by single spaces or hyphens
+# (4111 1111 1111 1111, 3782-822463-10005). The lookarounds forbid a digit on either side so a
+# longer numeric id is never sliced into a fake PAN.
 CARD_CANDIDATE = re.compile(r"(?<!\d)\d(?:[ -]?\d){12,18}(?!\d)")
 # Characters of surrounding text kept on each side of a hit, so the agent can judge it from context.
 CONTEXT_CHARS = 40
@@ -92,16 +90,29 @@ def luhn_valid(digits: str) -> bool:
     return total % 10 == 0
 
 
+def _has_card_iin(digits: str) -> bool:
+    """True iff the leading digits fall in an assigned card-issuer range (ISO/IEC 7812 MII): 3
+    (Amex/Diners/JCB), 4 (Visa), 5 (Mastercard/Maestro), 6 (Discover/UnionPay/Maestro), or a
+    Mastercard 2-series (2221 to 2720). Every major network issues inside those, so what this
+    rejects (MII 0/1/7/8/9) is ids. The one card type left out is UATP airline travel (MII 1),
+    deliberately: admitting MII 1 would re-flag more timestamp ids than it would catch cards."""
+    if digits[0] in "3456":
+        return True
+    return digits[0] == "2" and 2221 <= int(digits[:4]) <= 2720
+
+
 def _is_card(candidate: str) -> bool:
-    """A candidate run is a real PAN only when its stripped digits pass Luhn and count 13 to 19."""
+    """A candidate run is a real PAN only when its stripped digits count 13 to 19, pass Luhn, AND open
+    with an assigned card issuer prefix. Luhn alone flags ~1 in 10 non-card digit runs (a 13-digit
+    timestamp can pass by chance); the IIN gate removes that class without dropping a major-network card."""
     digits = candidate.replace(" ", "").replace("-", "")
-    return 13 <= len(digits) <= 19 and luhn_valid(digits)
+    return 13 <= len(digits) <= 19 and _has_card_iin(digits) and luhn_valid(digits)
 
 
 def redact_cards(text: str) -> str:
-    """Replace every Luhn-valid PAN with the placeholder, leaving non-Luhn digit runs (order numbers,
-    timestamps, tracking ids) untouched. Luhn cannot live inside the combined REGEX, so this is its
-    own pass, run after REGEX everywhere REGEX runs. `[REDACTED]` holds no digit run, so a re-run
+    """Replace every PAN with the placeholder, leaving other digit runs (order numbers, timestamps,
+    tracking ids) untouched. The `_is_card` check cannot live inside the combined REGEX, so this is
+    its own pass, run after REGEX everywhere REGEX runs. `[REDACTED]` holds no digit run, so a re-run
     never re-flags or mangles one, matching the regex path's idempotency."""
     return CARD_CANDIDATE.sub(lambda m: REDACTED if _is_card(m.group(0)) else m.group(0), text)
 
@@ -124,14 +135,14 @@ def redact_json(value: JsonValue) -> JsonValue:
 
 
 def _mask_context(window: str) -> str:
-    """Mask both pattern hits and Luhn-valid cards in a scan snippet, so reviewing a candidate never
+    """Mask both pattern hits and payment cards in a scan snippet, so reviewing a candidate never
     re-leaks the value back into a new event (the old redaction loop's self-reseeding)."""
     return redact_cards(REGEX.sub(mask, window)).replace("\n", " ")
 
 
 def find_matches(text: str) -> list[str]:
     """Every secret in one string as a masked context snippet: the combined REGEX (already-redacted
-    spans and news-slug false positives filtered out) plus the Luhn-checked payment-card pass. Pure
+    spans and news-slug false positives filtered out) plus the payment-card pass. Pure
     and DB-free, so the DB scan and the tests share exactly one detection path."""
     spans = [m.span() for m in REGEX.finditer(text) if REDACTED not in m.group(0) and not _looks_like_word_slug(m.group(0))]
     spans += [m.span() for m in CARD_CANDIDATE.finditer(text) if _is_card(m.group(0))]
@@ -139,8 +150,8 @@ def find_matches(text: str) -> list[str]:
 
 
 def scan(conn: sqlite3.Connection) -> list[tuple[int, str]]:
-    """Every hit as (event id, masked context snippet), regex patterns plus Luhn-valid payment
-    cards. The secret itself is replaced with [REDACTED] in the snippet, so reviewing candidates
+    """Every hit as (event id, masked context snippet), regex patterns plus payment cards. The
+    secret itself is replaced with [REDACTED] in the snippet, so reviewing candidates
     never re-leaks the value into a new event. Reports every match per event, not just the first, so
     a benign first hit can't mask a real secret later on. Scans the FULL event: secrets often sit
     deep inside long bash commands / tool payloads (an old PAT once survived weeks because

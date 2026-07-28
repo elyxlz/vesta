@@ -25,6 +25,6 @@ dev = [
     "ruff>=0.16.0",
     "pytest>=9.1.1",
     "pytest-timeout>=2.4.0",
-    "hypothesis>=6.161.5",
-    "ty>=0.0.63",
+    "hypothesis>=6.161.7",
+    "ty>=0.0.64",
 ]

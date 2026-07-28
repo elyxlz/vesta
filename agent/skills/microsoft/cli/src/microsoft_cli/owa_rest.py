@@ -392,15 +392,20 @@ def send_message(client: httpx.Client, account_email: str, config, *, mail: Mail
     return {"status": "sent"}
 
 
+def send_draft(client: httpx.Client, account_email: str, config, *, item_id: str) -> None:
+    token = load_token(account_email, config)
+    _post(client, token, f"/me/messages/{item_id}/send")
+
+
 def create_draft(client: httpx.Client, account_email: str, config, *, mail: MailDraft) -> dict:
     token = load_token(account_email, config)
 
     if mail.reply_to_id or mail.forward_id:
         source_id = mail.reply_to_id or mail.forward_id
-        endpoint = "createreply" if mail.reply_to_id else "createforward"
+        endpoint = "createreplyall" if mail.reply_to_id and mail.reply_all else "createreply" if mail.reply_to_id else "createforward"
         draft = _post(client, token, f"/me/messages/{source_id}/{endpoint}")
         draft_id = draft.get("id")
-        patch: dict[str, Any] = {"body": {"contentType": "Text", "content": mail.body}}
+        patch: dict[str, Any] = {"body": {"contentType": "HTML" if mail.html else "Text", "content": mail.body}}
         if mail.subject:
             patch["subject"] = mail.subject
         if mail.to:
@@ -413,7 +418,7 @@ def create_draft(client: httpx.Client, account_email: str, config, *, mail: Mail
         _attach_files(client, token, draft_id, mail.attachments)
         return {"status": "drafted", "id": draft_id, "source_id": source_id}
 
-    result = _post(client, token, "/me/messages", _message_body(mail.subject or "", mail.body, mail.to, mail.cc, mail.bcc, False))
+    result = _post(client, token, "/me/messages", _message_body(mail.subject or "", mail.body, mail.to, mail.cc, mail.bcc, mail.html))
     draft_id = result.get("id")
     _attach_files(client, token, draft_id, mail.attachments)
     return {"status": "drafted", "id": draft_id}

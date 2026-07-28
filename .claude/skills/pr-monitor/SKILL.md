@@ -52,7 +52,15 @@ The loop keeps running until the session stops. Nothing survives the session: re
 
 Do not reach for `claude --from-pr` here. It resumes a session already linked to a PR, but a print-mode run does not create that link, so in a service it quietly starts a fresh session every time.
 
-Events are handled one at a time, so a burst of comments cannot start overlapping runs against the same session.
+Events on different PRs run at the same time, up to `PR_MONITOR_PARALLEL`. Events on one PR do not: they resume that PR's session, and two runs resuming one conversation would interleave their writes, so a per-PR lock keeps them in single file. An event arriving while its PR is busy is left unclaimed rather than queued behind the run, so it comes back on a later cycle instead of resuming a session out from under whoever holds it.
+
+Each run can build a worktree of several hundred megabytes, so the ceiling is disk as much as cost.
+
+Those worktrees are cleaned up as their work concludes, at most once every `PR_MONITOR_PRUNE_WORKTREES` seconds. A worktree goes only when losing it cannot lose work: its branch belongs to a closed or merged PR, or its commits are already on master by content, which is how a squash merge is recognised despite the rewritten hashes. Anything holding uncommitted changes is left alone, as is anything whose commits exist nowhere else, and a failed PR listing prunes nothing rather than reading an empty answer as "everything is closed".
+
+A run is also capped at `PR_MONITOR_TIMEOUT` and stopped past it. A run whose connection dies waits on a socket that never speaks again, consuming no CPU and looking alive from outside, and without the cap it holds its slot for as long as the process lives.
+
+Each repo is polled by its own loop, on its own clock, and the interval counts from the start of a pass rather than its end. A repo with a long backlog therefore delays only itself, and the time a pass takes is never added to the gap before the next one. That matters for more than latency: two events noticed a cycle apart are handled a cycle apart no matter how many runs may go at once, so how fast events are noticed is what decides whether concurrency is ever reached.
 
 **Every new PR is checked automatically.** A non-draft PR that has never been seen surfaces as `NEWPR` without anyone asking, and dispatch runs the `check-pr` skill on it: does it fix the issue it claims to fix, does it match this repository's conventions, does it actually work. That pass is read only. It never pushes, merges, or closes, so a PR opening cannot cause a write. Where the change would benefit from the simplify and tidy pass, the reply names `polish-pr` and stops there, leaving the maintainer to ask for it.
 
@@ -146,11 +154,17 @@ Two consequences worth knowing:
 | `PR_MONITOR_TRUSTED` | (author_association) | Logins allowed to drive the agent |
 | `PR_MONITOR_DENIED_REACTION` | `confused` | Reaction marking a refused comment |
 | `PR_MONITOR_MARKER` | `vestabot:reply` | Marker identifying the agent's own comments |
-| `PR_MONITOR_INTERVAL` | `45` | Seconds between polls |
+| `PR_MONITOR_INTERVAL` | `45` | Seconds between the starts of one repo's polls |
 | `PR_MONITOR_STATE` | `$XDG_STATE_HOME/pr-monitor` | Review-summary ledger and per-PR session ids |
 | `PR_MONITOR_MODEL` | `claude-opus-5` | Model `dispatch.sh` runs each event on |
+| `PR_MONITOR_TIMEOUT` | `1800` | Seconds a single run may take before it is stopped |
+| `PR_MONITOR_PARALLEL` | `3` | Runs allowed at once, across different PRs |
+| `PR_MONITOR_PRUNE_WORKTREES` | `3600` | Seconds between sweeps for finished agent worktrees |
+| `PR_MONITOR_WINDOW` | `7 days ago` | How far back the repo-wide comment listings reach |
 | `PR_MONITOR_PRUNE_TRANSCRIPTS` | `0` | Delete a closed PR session transcript, not just its pointer |
 
 ## Cost
 
-One `gh pr list` per repo per cycle, plus three API calls per open PR. The trigger match and the reaction count are both read out of those same list payloads inside the jq expression, so neither adds a call. Only acking an event costs an extra request. At the default interval a repo with a handful of open PRs sits far under the 5000 per hour limit; a repo with many open PRs wants a longer `PR_MONITOR_INTERVAL`.
+One `gh pr list` per repo per cycle, two repo-wide comment listings windowed by `PR_MONITOR_WINDOW`, and one call per open PR for review summaries, which have no repo-wide equivalent. Cost grows with the number of open PRs only through that last one.
+
+The window bounds those listings, so a comment older than it that has never been claimed is not seen. Claims happen within a cycle of a comment appearing, so the default leaves days of margin, but widen it on a repo where the loop is often stopped for long stretches. The trigger match and the reaction count are both read out of those same list payloads inside the jq expression, so neither adds a call. Only acking an event costs an extra request. At the default interval a repo with a handful of open PRs sits far under the 5000 per hour limit; a repo with many open PRs wants a longer `PR_MONITOR_INTERVAL`.

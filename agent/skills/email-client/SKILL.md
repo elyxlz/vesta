@@ -130,6 +130,22 @@ Repeat `--cc` / `--bcc` / `--attach` for multiple values. `--body-html` sends HT
 
 After a successful send the message is IMAP-APPENDed (with attachments) to the Sent folder so it shows in the user's mail UI. Skip with `--no-sent-sync`. The Sent folder is auto-detected from the server's RFC 6154 SPECIAL-USE attribute (`\Sent`), falling back to the provider profile's `sent_folder` then `Sent` - so it works even when a server names the folder unusually.
 
+### Delayed send and undo
+
+Send, reply, and forward operations wait 30 seconds by default. The delay is one persisted setting for the entire email client, not an option on an individual send:
+
+```bash
+email-client send-delay
+email-client send-delay --seconds 60
+email-client pending
+email-client pending --account work
+email-client undo --id <pending_id>
+```
+
+`email-client-send` returns a `pending` status with the pending id and scheduled send time. Use that id with `undo` to cancel delivery: it works right up until the poll daemon starts dispatching that message, which is what delivers it, syncs it to Sent, and marks a replied-to original as answered. Only that daemon dispatches, so `email-client-send` refuses to queue while it is stopped; `email-client daemon start` or `email-client send-delay --seconds 0` unblocks it. Drafts and dry runs are never queued.
+
+`pending` also lists messages whose status is `failed`, with `last_error` saying why: delivery kept erroring, or it was cut off mid-dispatch. A message cut off mid-dispatch may already have reached the server, so read the Sent folder before you `undo` it or send it again.
+
 ### Reply
 
 ```bash
