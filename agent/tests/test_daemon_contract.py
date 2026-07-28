@@ -89,6 +89,20 @@ def _rig_dashboard(home: pl.Path, bin_dir: pl.Path) -> None:
     vite.chmod(0o755)
 
 
+def _rig_whatsapp(home: pl.Path, bin_dir: pl.Path) -> None:
+    """The launcher builds the CLI from source against the whisper static libs, so the row runs
+    only where that toolchain is (the Go suite covers the same contract wherever it is not), and
+    it borrows the developer's build caches: a hermetic HOME would recompile the CLI per test."""
+    whisper = pl.Path(os.environ["WHISPER_CPP_DIR"] if "WHISPER_CPP_DIR" in os.environ else "/opt/whisper.cpp")
+    go = shutil.which("go") or pl.Path("/usr/local/go/bin/go").exists()
+    if not go or not (whisper / "build-static/src/libwhisper.a").exists():
+        pytest.skip("no Go toolchain or whisper static libs to build the whatsapp CLI with")
+    real_home = pl.Path(os.environ["HOME"])
+    for cache in (".cache", "go"):
+        (real_home / cache).mkdir(exist_ok=True)
+        (home / cache).symlink_to(real_home / cache)
+
+
 SKILLS = [
     Daemon(
         command=[str(SKILLS_DIR / "file-host/file-host")],
@@ -189,6 +203,13 @@ SKILLS = [
         name="finance",
         serves_port=False,
         emits_daemon_died=False,
+    ),
+    Daemon(
+        command=[str(SKILLS_DIR / "whatsapp/whatsapp")],
+        name="whatsapp",
+        serves_port=False,
+        emits_daemon_died=True,
+        rig=_rig_whatsapp,
     ),
 ]
 

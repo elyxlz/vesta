@@ -69,8 +69,9 @@ Sending is fine during the sync window; only stop/restart is locked.
   whatsmeow version.
 - Bring the daemon up (or confirm it is up) with `whatsapp daemon start`; it is
   idempotent and the restart skill runs it at boot.
-- Daemon won't start: run `whatsapp serve` in the foreground; the compile or
-  serve error prints directly.
+- Daemon won't start: read `~/agent/logs/whatsapp.log`, where the detached
+  daemon's own output goes, or run `whatsapp serve` in the foreground to see the
+  compile or serve error directly.
 - Auth state not linked after a restore/restart: the device session was lost;
   re-link (with the user's go-ahead) via `whatsapp connect`.
 

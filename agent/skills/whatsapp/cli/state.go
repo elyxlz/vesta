@@ -88,14 +88,6 @@ func defaultNotificationsDir() string {
 	return filepath.Join(os.Getenv("HOME"), "agent", "notifications")
 }
 
-// stopRequestedPath is a standalone 0-byte IPC marker, not part of state.json: it
-// is the one signal the transient `daemon stop` process writes and the dying serve
-// process reads. Folding it in would make a second process a blob writer and
-// reintroduce the cross-process clobber consolidation removes, so it stays a marker.
-func stopRequestedPath(dataDir string) string {
-	return filepath.Join(dataDir, "stop-requested")
-}
-
 // stateStore owns state.json for the serve process: the authoritative in-memory
 // copy, every mutation serialized behind one mutex and persisted atomically. The
 // single writer.

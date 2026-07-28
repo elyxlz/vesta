@@ -197,12 +197,6 @@ func runServe() {
 		os.Exit(1)
 	}
 
-	// A stop-requested marker present at boot is stale: daemonStop only writes it
-	// against a live daemon, so this fresh boot can't own it. Clearing it means a
-	// marker leaked by a previous daemon (killed before it consumed it) can't
-	// suppress THIS boot's genuine death notification.
-	os.Remove(stopRequestedPath(dataDir))
-
 	// Single-instance guard: take the exclusive device-store lock BEFORE opening
 	// the whatsmeow store, so two daemons can never connect with the same device
 	// identity (the device-session conflict). A held lock means another daemon is
@@ -307,9 +301,7 @@ func runServe() {
 	sig := <-sigChan
 
 	fmt.Fprintf(os.Stderr, "Shutting down (signal: %v)...\n", sig)
-	if _, err := os.Stat(stopRequestedPath(dataDir)); err == nil {
-		os.Remove(stopRequestedPath(dataDir))
-	} else {
+	if deathIsNews(sig) {
 		writeDeathNotification(notifDir, sig.String())
 	}
 	if listener != nil {
