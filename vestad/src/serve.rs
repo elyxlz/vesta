@@ -1793,18 +1793,13 @@ fn expiry_is_already_dead(expires_at: Option<u64>, now: u64) -> bool {
 }
 
 /// Refuse to mint for a service that was never registered, so a typo does not silently
-/// produce a key that opens nothing.
+/// produce a key that opens nothing. Registration truth is the proxy's own lookup.
 async fn require_registered_service(
     state: &SharedState,
     name: &str,
     service: &str,
 ) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
-    let settings = state.settings.read().await;
-    if settings
-        .services
-        .get(name)
-        .is_some_and(|services| services.contains_key(service))
-    {
+    if agent_proxy::resolve_service(state, name, service).await.is_some() {
         return Ok(());
     }
     Err(err_response(

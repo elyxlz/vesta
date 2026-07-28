@@ -6,6 +6,7 @@ import {
   mintServiceKey,
   serviceKeyPathUrl,
   serviceKeyQueryUrl,
+  serviceKeySocketUrl,
 } from "./service-keys"
 import type { HttpClient } from "../transport/http"
 
@@ -190,6 +191,15 @@ describe("url builders", () => {
   it("puts the key in a query param for media and socket URLs", () => {
     expect(serviceKeyQueryUrl("https://host", "alpha", "voice", "abc", "/tts/stream/one")).toBe(
       "https://host/agents/alpha/voice/tts/stream/one?token=abc",
+    )
+  })
+
+  it("swaps the scheme to ws(s) for socket URLs", () => {
+    expect(serviceKeySocketUrl("https://host", "alpha", "voice", "abc", "/stt/listen")).toBe(
+      "wss://host/agents/alpha/voice/stt/listen?token=abc",
+    )
+    expect(serviceKeySocketUrl("http://host", "alpha", "voice", "abc", "/stt/listen")).toBe(
+      "ws://host/agents/alpha/voice/stt/listen?token=abc",
     )
   })
 

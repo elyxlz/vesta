@@ -47,7 +47,7 @@ fn build_target_url(scheme: &str, host: &str, port: u16, path: &str) -> String {
     format!("{scheme}://{host}:{port}{path}")
 }
 
-async fn resolve_service(
+pub(crate) async fn resolve_service(
     state: &crate::state::AppState,
     agent_name: &str,
     service_name: &str,
@@ -163,14 +163,15 @@ pub async fn agent_proxy_handler(
     };
 
     // A `/k/{key}/` prefix is stripped only when the key actually opens this service, so a
-    // wrong key can never reshape the forwarded path: it falls through to normal auth.
-    let keyed_subpath = match resolved.as_ref() {
-        Some(_) => {
-            let now = crate::time_utils::now_epoch_secs();
-            let keys = state.service_keys.read().await;
-            keyed_forward_path(service_subpath, &keys, &name, first_segment, now)
-        }
-        None => None,
+    // wrong key can never reshape the forwarded path: it falls through to normal auth. The
+    // key store is only consulted when a prefix is present, keeping the common prefix-less
+    // request off its lock.
+    let keyed_subpath = if resolved.is_some() && split_key_subpath(service_subpath).is_some() {
+        let now = crate::time_utils::now_epoch_secs();
+        let keys = state.service_keys.read().await;
+        keyed_forward_path(service_subpath, &keys, &name, first_segment, now)
+    } else {
+        None
     };
     let via_key = keyed_subpath.is_some();
 

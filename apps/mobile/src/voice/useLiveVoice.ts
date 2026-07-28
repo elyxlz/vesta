@@ -6,7 +6,7 @@ import {
   useAudioPlayer,
   useAudioStream,
 } from "expo-audio";
-import { serviceKeyQueryUrl } from "@vesta/core";
+import { serviceKeyQueryUrl, serviceKeySocketUrl } from "@vesta/core";
 import type { ApiClient } from "@/api/client";
 import { fetchVoiceStatus, prepareSpeech } from "@/api/endpoints";
 import { useSession } from "@/session/SessionProvider";
@@ -187,8 +187,8 @@ export function useLiveVoice({
       if (!isCurrent()) return;
 
       const socket = new WebSocket(
-        serviceKeyQueryUrl(
-          connection.url.replace(/^http/, "ws"),
+        serviceKeySocketUrl(
+          connection.url,
           name,
           "voice",
           key,

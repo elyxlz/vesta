@@ -117,3 +117,15 @@ export function serviceKeyQueryUrl(
   const serviceSegment = encodeURIComponent(service)
   return `${baseUrl}/agents/${agentSegment}/${serviceSegment}${subpath}?${params.toString()}`
 }
+
+// The socket form: the query carrier on the ws(s) scheme a WebSocket needs, derived from
+// the http(s) gateway url every caller holds.
+export function serviceKeySocketUrl(
+  baseUrl: string,
+  agent: string,
+  service: string,
+  key: string,
+  subpath: string,
+): string {
+  return serviceKeyQueryUrl(baseUrl.replace(/^http/, "ws"), agent, service, key, subpath)
+}

@@ -36,6 +36,18 @@ function DashboardShell({ children }: { children?: ReactNode }) {
   );
 }
 
+// The frame's identity: which document, under which credential. A change means the mounted
+// document is stale (the service appeared, was invalidated, or its key rotated, since the
+// document loaded under the old credential), so the keyed iframe remounts and the load and
+// handshake state reset with it.
+function frameIdentityOf(
+  hasDashboard: boolean,
+  rev: number,
+  key: string | null,
+): string {
+  return `${hasDashboard ? "up" : "down"}:${String(rev)}:${key ?? ""}`;
+}
+
 export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
   const { name, agent } = useSelectedAgent();
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -44,42 +56,12 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
     useRuntime();
   const [error, setError] = useState(false);
   const [loaded, setLoaded] = useState(false);
-  const [iframeKey, setIframeKey] = useState(0);
   const handshakeRef = useRef(false);
   const handshakeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const dashboardService = agent.services.dashboard;
   const hasDashboard = !!dashboardService;
-
-  // Reset iframe when the dashboard service appears
-  const prevHadDashboard = useRef(hasDashboard);
-  useEffect(() => {
-    if (hasDashboard && !prevHadDashboard.current) {
-      setError(false);
-      setLoaded(false);
-      setIframeKey((k) => k + 1);
-    }
-    prevHadDashboard.current = hasDashboard;
-  }, [hasDashboard]);
-
-  // Reload iframe when the dashboard service is invalidated
   const dashboardRev = dashboardService?.rev ?? 0;
-  const prevDashboardRev = useRef(dashboardRev);
-  useEffect(() => {
-    if (dashboardRev !== prevDashboardRev.current && hasDashboard) {
-      setError(false);
-      setLoaded(false);
-      setIframeKey((k) => k + 1);
-    }
-    prevDashboardRev.current = dashboardRev;
-  }, [dashboardRev, hasDashboard]);
-
-  useEffect(() => {
-    handshakeRef.current = false;
-    return () => {
-      if (handshakeTimerRef.current) clearTimeout(handshakeTimerRef.current);
-    };
-  }, [iframeKey]);
 
   const conn = getConnection();
   // The dashboard is a private service, so the frame authenticates with a minted service key
@@ -96,18 +78,27 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
       ? serviceKeyPathUrl(conn.url, name, "dashboard", dashboardKey)
       : null;
 
-  // A key that replaces a previous one invalidates the frame: its document loaded under the
-  // old credential, so drop it and load again. The first key of all is skipped, since mounting
-  // the frame with it is already a fresh load.
-  const prevDashboardKey = useRef(dashboardKey);
+  const frameIdentity = frameIdentityOf(
+    hasDashboard,
+    dashboardRev,
+    dashboardKey,
+  );
+  const prevFrameIdentity = useRef(frameIdentity);
   useEffect(() => {
-    const previous = prevDashboardKey.current;
-    prevDashboardKey.current = dashboardKey;
-    if (previous === null || previous === dashboardKey) return;
+    if (prevFrameIdentity.current === frameIdentity) return;
+    prevFrameIdentity.current = frameIdentity;
+    if (handshakeTimerRef.current) clearTimeout(handshakeTimerRef.current);
+    handshakeTimerRef.current = null;
+    handshakeRef.current = false;
     setError(false);
     setLoaded(false);
-    setIframeKey((k) => k + 1);
-  }, [dashboardKey]);
+  }, [frameIdentity]);
+
+  useEffect(() => {
+    return () => {
+      if (handshakeTimerRef.current) clearTimeout(handshakeTimerRef.current);
+    };
+  }, []);
 
   const sendContext = useCallback(() => {
     const frame = iframeRef.current?.contentWindow;
@@ -242,7 +233,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
       )}
       {dashboardUrl && (
         <iframe
-          key={iframeKey}
+          key={frameIdentity}
           ref={iframeRef}
           src={dashboardUrl}
           allow="microphone; camera; display-capture; autoplay; fullscreen; picture-in-picture; clipboard-read; clipboard-write; geolocation; screen-wake-lock; web-share; payment; publickey-credentials-get; publickey-credentials-create; encrypted-media; midi; gamepad; xr-spatial-tracking; hid; serial; usb; bluetooth; idle-detection; local-fonts; storage-access; compute-pressure; window-management"

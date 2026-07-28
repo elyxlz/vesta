@@ -1,4 +1,4 @@
-import { serviceKeyQueryUrl } from "@vesta/core";
+import { serviceKeyQueryUrl, serviceKeySocketUrl } from "@vesta/core";
 import { apiJson } from "@/api/client";
 import { getConnection } from "@/lib/connection";
 import { serviceKeys } from "@/lib/service-key-cache";
@@ -420,8 +420,8 @@ export class Transcriber {
     const conn = getConnection();
     if (!conn) throw new Error("not connected to vestad");
     const key = await serviceKeys.get(this.opts.agentName, "voice");
-    return serviceKeyQueryUrl(
-      conn.url.replace(/^http/, "ws"),
+    return serviceKeySocketUrl(
+      conn.url,
       this.opts.agentName,
       "voice",
       key,

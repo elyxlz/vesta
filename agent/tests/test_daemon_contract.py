@@ -64,6 +64,7 @@ class Daemon:
     name: str  # pidfile name and log name
     serves_port: bool
     emits_daemon_died: bool
+    public: bool = False  # registers `--public`; anything new is private plus a service key
     service: str | None = None  # vestad service name, when it differs from the command name
     legacy_command: list[str] | None = None  # a script path fleet restart files still launch by
     rig: tp.Callable[[pl.Path, pl.Path], None] | None = None
@@ -159,6 +160,7 @@ SKILLS = [
         name="file-host",
         serves_port=True,
         emits_daemon_died=False,
+        public=True,
         rig=_rig_file_host,
     ),
     Daemon(
@@ -187,6 +189,7 @@ SKILLS = [
         name="agentmail",
         serves_port=True,
         emits_daemon_died=True,
+        public=True,
     ),
     Daemon(
         command=["uv", "run", "--project", str(SKILLS_DIR / "voice/cli"), "voice-keys"],
@@ -525,9 +528,8 @@ def test_registration_declares_the_expected_exposure(daemon):
         pytest.skip("portless")
     _verb(spec, env, "start")
     args = (home / "register-args").read_text().strip()
-    public = {"file-host", "agentmail"}
     service = spec.service or spec.name
-    expected = f"{service} --public" if service in public else service
+    expected = f"{service} --public" if spec.public else service
     assert args.splitlines()[0] == expected
     _verb(spec, env, "stop")
 

@@ -592,7 +592,7 @@ def test_agent_startup_bridges_the_cone_on_first_flat_boot(tmp_path):
 
 # --- agent startup: the vestad helpers as bare commands on PATH ---
 
-VESTAD_SCRIPTS = ("register-service", "service-key", "user-notification", "health")
+VESTAD_SCRIPTS = ("register-service", "service-key", "user-notification", "vestad-health")
 
 
 def _bin_box(tmp_path, scripts=VESTAD_SCRIPTS):
@@ -600,7 +600,9 @@ def _bin_box(tmp_path, scripts=VESTAD_SCRIPTS):
     scripts_dir = home / "agent/skills/vestad/scripts"
     scripts_dir.mkdir(parents=True)
     for script in scripts:
-        (scripts_dir / script).write_text(f"#!/usr/bin/env bash\necho {script}\n")
+        path = scripts_dir / script
+        path.write_text(f"#!/usr/bin/env bash\necho {script}\n")
+        path.chmod(0o755)
     (home / ".local/bin").mkdir(parents=True)
     return home
 
@@ -620,10 +622,8 @@ def _bin_state(home):
 def test_agent_startup_puts_the_vestad_helpers_on_path(tmp_path):
     home = _bin_box(tmp_path)
     assert _run_agent_startup(home).returncode == 0
-    for command in ("register-service", "service-key", "user-notification"):
+    for command in VESTAD_SCRIPTS:
         assert _bin(home, command).readlink() == _target(home, command)
-    assert _bin(home, "vestad-health").readlink() == _target(home, "health")  # `health` alone is too generic to own
-    assert not _bin(home, "health").is_symlink()
 
 
 def test_agent_startup_leaves_a_foreign_bin_entry_alone(tmp_path):
@@ -656,12 +656,24 @@ def test_agent_startup_links_are_idempotent(tmp_path):
 
 
 def test_agent_startup_links_a_helper_that_arrives_later(tmp_path):
-    home = _bin_box(tmp_path, scripts=("register-service", "user-notification", "health"))
+    home = _bin_box(tmp_path, scripts=("register-service", "user-notification", "vestad-health"))
     assert _run_agent_startup(home).returncode == 0
     assert not _bin(home, "service-key").is_symlink()  # not on disk yet, so nothing to point at
-    (home / "agent/skills/vestad/scripts/service-key").write_text("#!/usr/bin/env bash\necho service-key\n")
+    late = home / "agent/skills/vestad/scripts/service-key"
+    late.write_text("#!/usr/bin/env bash\necho service-key\n")
+    late.chmod(0o755)
     assert _run_agent_startup(home).returncode == 0
     assert _bin(home, "service-key").readlink() == _target(home, "service-key")
+
+
+def test_agent_startup_removes_a_dangling_link_of_ours(tmp_path):
+    """A helper that leaves the checkout takes its command with it, instead of leaving a
+    link that resolves to nothing."""
+    home = _bin_box(tmp_path)
+    assert _run_agent_startup(home).returncode == 0
+    (home / "agent/skills/vestad/scripts/service-key").unlink()
+    assert _run_agent_startup(home).returncode == 0
+    assert not _bin(home, "service-key").is_symlink()
 
 
 def _launcher(home, skill):

@@ -7,46 +7,13 @@ must fail loudly on stderr instead of printing an empty key into a broken link."
 import http.server
 import json
 import pathlib as pl
-import socket
-import ssl
 import subprocess
-import threading
 import typing as tp
+
+from https_stub import free_port, self_signed, serve_https
 
 REPO_ROOT = pl.Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "agent/skills/vestad/scripts/service-key"
-
-
-def _free_port():
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-def _self_signed(tmp_path):
-    cert = tmp_path / "cert.pem"
-    key = tmp_path / "key.pem"
-    subprocess.run(
-        [
-            "openssl",
-            "req",
-            "-x509",
-            "-newkey",
-            "rsa:2048",
-            "-nodes",
-            "-keyout",
-            str(key),
-            "-out",
-            str(cert),
-            "-days",
-            "1",
-            "-subj",
-            "/CN=localhost",
-        ],
-        check=True,
-        capture_output=True,
-    )
-    return cert, key
 
 
 class _Request(tp.NamedTuple):
@@ -102,26 +69,13 @@ class _KeyHandler(http.server.BaseHTTPRequestHandler):
         pass
 
 
-def _serve_https(port, cert, key):
-    server = http.server.HTTPServer(("127.0.0.1", port), _KeyHandler)
-    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    # Pin the floor so the stub cannot negotiate TLS 1.0 or 1.1, which the default
-    # context still permits and which code scanning flags as an insecure protocol.
-    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
-    ctx.load_cert_chain(str(cert), str(key))
-    server.socket = ctx.wrap_socket(server.socket, server_side=True)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    return server
-
-
 def _run(args, tmp_path, status=200):
     """Runs the real script against the HTTPS stub, returning (result, recorded requests)."""
-    cert, key = _self_signed(tmp_path)
-    port = _free_port()
+    cert, key = self_signed(tmp_path)
+    port = free_port()
     _KeyHandler.requests.clear()
     _KeyHandler.status = status
-    server = _serve_https(port, cert, key)
+    server = serve_https(port, cert, key, _KeyHandler)
     env = {
         "PATH": "/usr/bin:/bin",
         "BOX_HOST": "127.0.0.1",
@@ -189,7 +143,7 @@ def test_mint_fails_loudly_on_a_rejected_request(tmp_path):
 
 
 def test_mint_fails_cleanly_when_vestad_is_unreachable(tmp_path):
-    port = _free_port()  # nothing listens here -> connection refused
+    port = free_port()  # nothing listens here -> connection refused
     env = {
         "PATH": "/usr/bin:/bin",
         "BOX_HOST": "127.0.0.1",

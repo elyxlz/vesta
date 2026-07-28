@@ -18,8 +18,8 @@ from `/run/vestad-env`, already exported into the environment. The API is
 `https://$BOX_HOST:$VESTAD_PORT`, with a self-signed cert, so always `curl -sk`.
 
 This skill's helpers are commands: `register-service`, `service-key`, `user-notification`, and
-`vestad-health`. Agent startup links each one onto `PATH` from this skill's `scripts/` directory
-(`vestad-health` is `scripts/health`), so a full path like
+`vestad-health`. Agent startup links every executable in this skill's `scripts/` directory onto
+`PATH` under its filename, so a full path like
 `~/agent/skills/vestad/scripts/register-service` runs exactly the same script. The same startup
 step links every skill's own launcher, so a skill's command resolves with no setup of its own.
 
@@ -140,96 +140,11 @@ Two obligations that are easy to miss:
   silent for it, so a deliberate stop is never reported as a crash. Every other way out is
   reported, since nothing else notices a daemon that quietly went away.
 
-A whole launcher, `~/agent/skills/file-host/file-host`, condensed:
-
-```sh
-#!/bin/sh
-set -eu
-
-PIDFILE="$HOME/agent/data/daemons/file-host.pid"
-PORTFILE="$HOME/agent/data/daemons/file-host.port"
-LOG="$HOME/agent/logs/file-host.log"
-USAGE="Usage: file-host daemon <start|stop|restart|status>"
-READY_POLLS=$(( ${DAEMON_READY_TIMEOUT_SECS:-30} * 2 ))
-STOP_POLLS=$(( ${DAEMON_STOP_TIMEOUT_SECS:-15} * 2 ))
-CLAIM_POLLS=6
-
-fail() { printf '{"error":"%s"}\n' "$1" >&2; exit 1; }
-give_up() { rm -f "$PIDFILE" "$PORTFILE"; fail "$1"; }
-
-live_pid() {
-  pid=$(cat "$PIDFILE" 2>/dev/null) || return 1
-  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 1
-  printf %s "$pid"
-}
-
-claim_start() {
-  if ( set -C; echo $$ > "$PIDFILE" ) 2>/dev/null; then echo claimed; return 0; fi
-  i=0
-  while [ "$i" -lt "$CLAIM_POLLS" ]; do
-    if live_pid >/dev/null; then echo running; return 0; fi
-    [ -f "$PIDFILE" ] || break
-    sleep 0.5; i=$((i + 1))
-  done
-  rm -f "$PIDFILE"
-  if ( set -C; echo $$ > "$PIDFILE" ) 2>/dev/null; then echo claimed; else echo lost; fi
-}
-
-do_start() {
-  if live_pid >/dev/null; then echo '{"status":"already_running"}'; return 0; fi
-  mkdir -p "$HOME/agent/data/daemons" "$HOME/agent/logs"
-  case "$(claim_start)" in
-    running) echo '{"status":"already_running"}'; return 0 ;;
-    lost) fail "another file-host start holds $PIDFILE" ;;
-  esac
-  PORT=$(register-service file-host --public) || give_up "could not register file-host with vestad"
-  echo "$PORT" > "$PORTFILE"
-  setsid python3 "$HOME/agent/skills/file-host/serve.py" --port "$PORT" >> "$LOG" 2>&1 &
-  pid=$!
-  echo "$pid" > "$PIDFILE"
-  i=0
-  while [ "$i" -lt "$READY_POLLS" ]; do
-    kill -0 "$pid" 2>/dev/null || give_up "file-host exited during startup; see $LOG"
-    if curl -m 2 -fsS -o /dev/null "http://localhost:$PORT" 2>/dev/null; then echo '{"status":"started"}'; return 0; fi
-    sleep 0.5; i=$((i + 1))
-  done
-  kill -TERM "$pid" 2>/dev/null || true
-  give_up "file-host never answered on port $PORT; see $LOG"
-}
-
-do_stop() {
-  pid=$(live_pid) || { echo '{"status":"already_stopped"}'; return 0; }
-  kill -TERM "$pid" 2>/dev/null || true
-  i=0
-  while [ "$i" -lt "$STOP_POLLS" ]; do
-    kill -0 "$pid" 2>/dev/null || { rm -f "$PIDFILE" "$PORTFILE"; echo '{"status":"stopped"}'; return 0; }
-    sleep 0.5; i=$((i + 1))
-  done
-  fail "file-host still running after SIGTERM (pid=$pid)"
-}
-
-do_status() {
-  if live_pid >/dev/null; then
-    port=$(cat "$PORTFILE" 2>/dev/null) || port=""
-    printf '{"running":true,"port":%s}\n' "${port:-null}"
-  else
-    printf '{"running":false,"port":null}\n'
-  fi
-}
-
-case "${1:-}" in daemon) shift ;; esac
-case "${1:-}" in
-  start) do_start ;;
-  stop) do_stop ;;
-  restart) do_stop >/dev/null; do_start ;;
-  status) do_status ;;
-  "" | -h | --help | help) echo "$USAGE" ;;
-  *) echo "$USAGE" >&2; exit 1 ;;
-esac
-```
-
-The same contract in Python is `~/agent/skills/tasks/cli/src/tasks_cli/daemon.py`, and in Go
-`~/agent/skills/whatsapp/cli/daemon.go`. Read whichever language you are writing in and follow it.
+The contract has one exemplar per language, each a real launcher this repo's conformance
+tests hold to the behavior above: shell is `~/agent/skills/file-host/file-host`, Python is
+`~/agent/skills/tasks/cli/src/tasks_cli/daemon.py`, and Go is
+`~/agent/skills/whatsapp/cli/daemon.go`. Read the one in the language you are writing in
+and follow it.
 
 Then add the startup line yourself, inside the fenced block in the `## Daemons` section of
 `~/agent/skills/restart/SKILL.md`, so the daemon comes back after a container restart. It is the

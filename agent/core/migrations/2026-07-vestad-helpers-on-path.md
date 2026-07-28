@@ -1,6 +1,5 @@
 The vestad helper scripts are on PATH as bare commands, linked into `~/.local/bin` by agent
-startup on every boot: `register-service`, `user-notification`, and `vestad-health` (the
-`health` script, under a name specific enough not to collide with anything else in the image).
+startup on every boot: `register-service`, `user-notification`, and `vestad-health`.
 Their full paths keep working, so this migration is a readability pass over the daemon lines in
 your restart skill and nothing else. Every step checks before acting and no-ops when there is
 nothing to change, so it is safe to run more than once.

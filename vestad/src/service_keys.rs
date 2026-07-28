@@ -14,6 +14,8 @@ const SERVICE_KEY_ID_BYTES: usize = 8;
 /// Lifetime of a minted key when the caller does not ask for one, so a key the agent
 /// mints and forgets ages out instead of living forever.
 pub(crate) const DEFAULT_KEY_TTL_SECS: u64 = 30 * 86_400;
+/// Permissions for the store file on disk.
+const OWNER_ONLY_FILE_MODE: u32 = 0o600;
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
 pub(crate) struct ServiceKey {
@@ -196,33 +198,9 @@ pub(crate) fn save_store(store: &ServiceKeyStore) {
     save_store_at(&store_file(), store);
 }
 
+/// Owner-only at rest: the file holds the key hashes.
 fn save_store_at(path: &std::path::Path, store: &ServiceKeyStore) {
-    if let Some(parent) = path.parent() {
-        if let Err(err) = std::fs::create_dir_all(parent) {
-            tracing::warn!(error = %err, "failed to create service-keys dir");
-            return;
-        }
-    }
-    let data = match serde_json::to_string_pretty(store) {
-        Ok(data) => data,
-        Err(err) => {
-            tracing::warn!(error = %err, "failed to serialize service keys");
-            return;
-        }
-    };
-    let tmp = path.with_extension("json.tmp");
-    if let Err(err) = std::fs::write(&tmp, &data) {
-        tracing::warn!(error = %err, "failed to write service-keys.json.tmp");
-        return;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600)).ok();
-    }
-    if let Err(err) = std::fs::rename(&tmp, path) {
-        tracing::warn!(error = %err, "failed to replace service-keys.json");
-    }
+    crate::settings::save_json_atomic(path, store, Some(OWNER_ONLY_FILE_MODE));
 }
 
 #[cfg(test)]

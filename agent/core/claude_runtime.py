@@ -8,15 +8,6 @@ import subprocess
 from . import config as cfg
 from . import logger
 
-# The vestad helpers, exposed on PATH as bare commands: link name -> script name. `health` is
-# too generic a command name to own, so it lands as `vestad-health`.
-_VESTAD_COMMANDS = {
-    "register-service": "register-service",
-    "service-key": "service-key",
-    "user-notification": "user-notification",
-    "vestad-health": "health",
-}
-
 
 def _text_names(path: pl.Path) -> list[str]:
     if not path.is_file():
@@ -79,12 +70,19 @@ def _replace_skill_links(link_dir: pl.Path, optional_dir: pl.Path, core_dir: pl.
 def _command_sources(skills_dir: pl.Path) -> dict[str, pl.Path]:
     """Maps command name to the script it runs: the vestad helpers, then each skill's launchers.
 
-    A skill is driven by its own name, except where that name belongs to something else on PATH
-    already (`ssh`), which the skill answers by extending it (`ssh-tunnel`). An extension marks
-    a command, so the executables a skill keeps for itself carry one.
+    Every executable in the vestad skill's `scripts/` lands under its own filename, so the
+    skill owns its command surface (`vestad-health` is named for PATH there: `health` alone
+    is too generic to own). A skill is driven by its own name, except where that name belongs
+    to something else on PATH already (`ssh`), which the skill answers by extending it
+    (`ssh-tunnel`). An extension marks a command, so the executables a skill keeps for itself
+    carry one.
     """
     scripts_dir = skills_dir / "vestad/scripts"
-    sources = {command: scripts_dir / script for command, script in _VESTAD_COMMANDS.items()}
+    sources: dict[str, pl.Path] = {}
+    if scripts_dir.is_dir():
+        for script in sorted(scripts_dir.iterdir()):
+            if script.is_file() and "." not in script.name and os.access(script, os.X_OK):
+                sources[script.name] = script
     if skills_dir.is_dir():
         for skill_dir in sorted(skills_dir.iterdir()):
             if not skill_dir.is_dir():
@@ -102,13 +100,17 @@ def _link_skill_commands(bin_dir: pl.Path, skills_dir: pl.Path) -> None:
     """Put the vestad helpers and every skill launcher on PATH, one symlink at a time.
 
     The bin dir is shared with uv tool installs, so only our own links are touched: a path held
-    by anything else keeps it, and a link of ours is rewritten so a moved script leaves nothing
-    dangling behind it. Linking here rather than in a skill's setup means a command resolves on
-    the boot after its script reaches the checkout, with no setup step to re-run. A launcher is
-    linked whether or not its skill is active, matching the CLIs a skill installs, because the
-    checkout keeps every skill's files on disk either way.
+    by anything else keeps it, a link of ours is rewritten, and one whose script is gone is
+    removed, so a moved, renamed, or deleted script leaves nothing dangling behind it. Linking
+    here rather than in a skill's setup means a command resolves on the boot after its script
+    reaches the checkout, with no setup step to re-run. A launcher is linked whether or not its
+    skill is active, matching the CLIs a skill installs, because the checkout keeps every
+    skill's files on disk either way.
     """
     bin_dir.mkdir(parents=True, exist_ok=True)
+    for link in bin_dir.iterdir():
+        if link.is_symlink() and skills_dir in link.readlink().parents and not link.exists():
+            link.unlink()
     for command, source in _command_sources(skills_dir).items():
         link = bin_dir / command
         if not source.is_file():
