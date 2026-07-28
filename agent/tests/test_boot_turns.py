@@ -9,6 +9,8 @@ import core.models as vm
 from core.main import BOOT_RESTORE_ORIENTATION, collect_boot_turns
 from core.provider import ProviderAuthState, ProviderStatus
 
+BEFORE_SYNC_FRONTMATTER = "---\nmigration_phase: before_sync\n---\n\n"
+
 
 def _boot_config(tmp_path):
     config = cfg.VestaConfig(agent_dir=tmp_path / "agent")
@@ -24,7 +26,7 @@ def _authed_state() -> vm.State:
     return state
 
 
-def test_boot_turns_ordered_migrations_then_sync_then_config_then_greeting(tmp_path):
+def test_boot_turns_ordered_sync_then_migrations_then_config_then_greeting(tmp_path):
     config = _boot_config(tmp_path)
     (config.agent_dir / "core" / "migrations" / "001-x.md").write_text("do migration x")
     (config.agent_dir / "core" / "migrations" / "002-y.md").write_text("do migration y")
@@ -43,15 +45,56 @@ def test_boot_turns_ordered_migrations_then_sync_then_config_then_greeting(tmp_p
     # The first converge turn carries the daemon-restore orientation so a migration/upgrade boot
     # restores daemons via the restart skill first, exactly as a plain restart would.
     assert turns[0].startswith(BOOT_RESTORE_ORIENTATION)
-    assert "[Migration: 001-x]" in turns[0]
-    assert "[Migration: 002-y]" in turns[0]
-    assert "[Upstream sync]" in turns[1]
+    assert "[Upstream sync]" in turns[0]
+    assert "[Migration: 001-x]" in turns[1]
+    assert "[Migration: 002-y]" in turns[1]
     assert "BAD=1" in turns[2]
     assert "[System Restart]\nReason: You restarted after a routine shutdown." in turns[3]
     # The orientation rides only the first converge turn, never the restart greeting (it already
     # runs the restart skill) or the later converge turns.
     assert BOOT_RESTORE_ORIENTATION not in turns[1]
     assert BOOT_RESTORE_ORIENTATION not in turns[3]
+
+
+def test_before_sync_migrations_are_a_boot_barrier(tmp_path):
+    config = _boot_config(tmp_path)
+    (config.agent_dir / "core" / "migrations" / "001-before.md").write_text(f"{BEFORE_SYNC_FRONTMATTER}prepare workspace")
+    (config.agent_dir / "core" / "migrations" / "999-later.md").write_text("later migration")
+    (config.agent_dir / "core" / "pyproject.toml").write_text('[project]\nname = "vesta"\nversion = "9.9.9"\n')
+
+    turns = collect_boot_turns(
+        state=_authed_state(),
+        config=config,
+        config_issues=[],
+        agent_message="You restarted after an upgrade.",
+        first_start=False,
+    )
+
+    assert "[Migration: 001-before]" in turns[0]
+    assert BOOT_RESTORE_ORIENTATION in turns[0]
+    assert "call `restart_vesta` once" in turns[0]
+    assert all("[Upstream sync]" not in turn for turn in turns)
+    assert all("[Migration: 999-later]" not in turn for turn in turns)
+
+
+def test_applied_before_sync_migration_allows_sync_then_after_sync_migrations(tmp_path):
+    config = _boot_config(tmp_path)
+    (config.agent_dir / "core" / "migrations" / "001-before.md").write_text(f"{BEFORE_SYNC_FRONTMATTER}prepare workspace")
+    (config.agent_dir / "core" / "migrations" / "999-later.md").write_text("later migration")
+    (config.agent_dir / "core" / "pyproject.toml").write_text('[project]\nname = "vesta"\nversion = "9.9.9"\n')
+    state = _authed_state()
+    state.persisted.applied_migrations = ["001-before"]
+
+    turns = collect_boot_turns(
+        state=state,
+        config=config,
+        config_issues=[],
+        agent_message="You restarted after workspace repair.",
+        first_start=False,
+    )
+
+    assert "[Upstream sync]" in turns[0]
+    assert "[Migration: 999-later]" in turns[1]
 
 
 def test_restart_only_boot_carries_no_daemon_orientation(tmp_path):
@@ -79,6 +122,7 @@ def test_restart_only_boot_carries_no_daemon_orientation(tmp_path):
 def test_first_start_pre_marks_migrations_and_greets_with_setup(tmp_path):
     config = _boot_config(tmp_path)
     (config.agent_dir / "core" / "migrations" / "001-x.md").write_text("x")  # pre-marked, not run
+    (config.agent_dir / "core" / "migrations" / "002-before.md").write_text(f"{BEFORE_SYNC_FRONTMATTER}before")
     (config.agent_dir / "core" / "pyproject.toml").write_text('[project]\nname = "vesta"\nversion = "9.9.9"\n')
     (config.core_prompts_dir / "birth.md").write_text("welcome, run setup")
     state = _authed_state()
@@ -87,7 +131,7 @@ def test_first_start_pre_marks_migrations_and_greets_with_setup(tmp_path):
 
     assert len(turns) == 1
     assert "welcome, run setup" in turns[0]
-    assert state.persisted.applied_migrations == ["001-x"]
+    assert state.persisted.applied_migrations == ["001-x", "002-before"]
     # Birth owns the initial attach, so no separate sync turn fires on first start.
 
 
