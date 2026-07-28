@@ -39,7 +39,8 @@ except json.JSONDecodeError:
     loaded = {}
 data = loaded if isinstance(loaded, dict) else {}
 cone = subprocess.run(["git", "sparse-checkout", "list"], capture_output=True, text=True, check=False)
-captured = [line.removeprefix("agent/skills/") for line in cone.stdout.splitlines() if line.startswith("agent/skills/")]
+cone_lines = [line.strip().lstrip("/") for line in cone.stdout.splitlines()]
+captured = [line.removeprefix("agent/skills/").rstrip("/") for line in cone_lines if line.startswith("agent/skills/")]
 existing = data["active_skills"] if isinstance(data.get("active_skills"), list) else []
 data["active_skills"] = sorted({name.strip() for name in [*existing, *captured] if isinstance(name, str) and skill_name_re.fullmatch(name.strip())})
 tmp = config_path.with_name(f"{config_path.name}.tmp")
