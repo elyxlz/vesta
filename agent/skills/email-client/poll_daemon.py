@@ -24,7 +24,9 @@ simultaneous notifications never collide.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+import os
 import pathlib
 import re
 import signal
@@ -33,26 +35,13 @@ import threading
 import time
 import uuid
 
-from imap_tools import AND
-
-# Reuse imap_client helpers. resolve() follows the ~/.email-client/poll_daemon.py
-# symlink back to the skill's real directory.
+# resolve() follows the ~/.email-client/poll_daemon.py symlink back to the skill's real
+# directory, which is what makes the account layer importable. Each import of it happens
+# where it is used, so the daemon comes up and stays up before any account exists.
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import contextlib
-
-import daemon_lifecycle
-from imap_client import (
-    _env,
-    _from_full,
-    _state_dir,
-    _to_full,
-    account_dir,
-    connect,
-    list_accounts,
-    notify_folders,
-)
 
 NOTIF_DIR = pathlib.Path.home() / "agent" / "notifications"
+DEFAULT_POLL_INTERVAL_SECS = 15
 # Bounded wait for worker threads to notice a stop_event and exit, so shutdown
 # on SIGTERM cannot hang forever on a wedged IMAP connection.
 WORKER_JOIN_TIMEOUT_SECS = 5
@@ -81,9 +70,11 @@ def _sanitize_folder(folder: str) -> str:
 def watermark_path(account: str, folder: str) -> pathlib.Path:
     """Per-(account, folder) high-UID watermark path.
 
-    INBOX keeps the legacy ``high_uid.txt`` name so existing installs do
-    not lose their watermark on upgrade.
+    INBOX keeps the plain ``high_uid.txt`` name; every other folder carries its own
+    sanitized suffix.
     """
+    from imap_client import account_dir
+
     base = account_dir(account)
     if folder == "INBOX":
         return base / "high_uid.txt"
@@ -127,6 +118,9 @@ def set_high_uid(path: pathlib.Path, n: int) -> None:
 
 def emit_new(account: str, folder: str, mb, log, high_uid_path: pathlib.Path) -> None:
     """Notify on every message in ``folder`` with UID above the watermark."""
+    from imap_client import _from_full, _to_full
+    from imap_tools import AND
+
     mb.folder.set(folder)
     high = get_high_uid(high_uid_path)
     if high == 0:
@@ -173,6 +167,8 @@ def folder_worker(account: str, folder: str, interval: int, log, stop_event: thr
     otherwise sleeps ``interval`` between checks. Reconnects on error
     (with backoff) and on the periodic refresh interval.
     """
+    from imap_client import connect
+
     high_uid_path = watermark_path(account, folder)
     while not stop_event.is_set():
         mb = None
@@ -223,6 +219,8 @@ def write_daemon_died_notification(reason: str) -> None:
 
 def desired_workers() -> set[tuple[str, str]]:
     """The set of ``(account, folder)`` pairs that should be watched now."""
+    from imap_client import list_accounts, notify_folders
+
     wanted: set[tuple[str, str]] = set()
     for account in list_accounts():
         for folder in notify_folders(account):
@@ -230,7 +228,7 @@ def desired_workers() -> set[tuple[str, str]]:
     return wanted
 
 
-def _maybe_probe(state_dir: pathlib.Path, log) -> None:
+def _maybe_probe(log) -> None:
     """Low-frequency (once/day) Google OAuth client health-probe.
 
     Runs off the supervisor thread so a dead upstream client is caught and
@@ -238,8 +236,9 @@ def _maybe_probe(state_dir: pathlib.Path, log) -> None:
     """
     try:
         import google_health
+        from imap_client import _state_dir
 
-        google_health.maybe_run_daily_probe(state_dir, log)
+        google_health.maybe_run_daily_probe(_state_dir(), log)
     except Exception as e:
         log(f"[google-health] probe skipped: {e}")
 
@@ -276,17 +275,21 @@ def _reconcile_workers(
             log(f"[{key[0]}:{key[1]}] worker stopping")
 
 
+def _interval_default() -> int:
+    if "EMAIL_CLIENT_POLL_INTERVAL" in os.environ:
+        return int(os.environ["EMAIL_CLIENT_POLL_INTERVAL"])
+    return DEFAULT_POLL_INTERVAL_SECS
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--interval",
         type=int,
-        default=int(_env("EMAIL_CLIENT_POLL_INTERVAL", str(daemon_lifecycle.DEFAULT_POLL_INTERVAL_SECS))),
+        default=_interval_default(),
         help="poll seconds (fallback only; servers with IDLE push in real time)",
     )
     args = ap.parse_args()
-
-    state_dir = _state_dir()
 
     log_lock = threading.Lock()
 
@@ -296,23 +299,21 @@ def main():
 
     shutdown_event = threading.Event()
     shutdown_reason = "unknown"
+    asked_to_stop = False
 
     def handle_signal(signum, _frame):
-        nonlocal shutdown_reason
+        # SIGTERM is what `email-client daemon stop` sends, so it is the one exit the agent
+        # asked for; every other way out of the loop below is news the agent needs.
+        nonlocal shutdown_reason, asked_to_stop
         shutdown_reason = signal.Signals(signum).name
+        asked_to_stop = signum == signal.SIGTERM
         shutdown_event.set()
 
-    # SIGHUP fires when the controlling screen session quits; ignored so only an
-    # explicit `daemon stop`/`restart` (SIGTERM) or Ctrl-C (SIGINT) triggers shutdown.
-    signal.signal(signal.SIGHUP, signal.SIG_IGN)
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
 
     workers: dict[tuple[str, str], tuple[threading.Thread, threading.Event]] = {}
     last_desired: set[tuple[str, str]] | None = None
-
-    daemon_lifecycle.write_pid(state_dir)
-    daemon_lifecycle.write_daemon_info(state_dir, args.interval)
 
     try:
         while not shutdown_event.is_set():
@@ -325,7 +326,7 @@ def main():
             if wanted != last_desired:
                 last_desired = wanted
                 log(f"watching: {sorted(wanted)}")
-            _maybe_probe(state_dir, log)
+            _maybe_probe(log)
             _reconcile_workers(workers, wanted, args.interval, log)
             shutdown_event.wait(INDEX_CHECK_SECS)
     finally:
@@ -333,12 +334,11 @@ def main():
             stop_event.set()
         for thread, _ in workers.values():
             thread.join(timeout=WORKER_JOIN_TIMEOUT_SECS)
-        if daemon_lifecycle.consume_stop_requested(state_dir):
+        if asked_to_stop:
             log(f"intentional stop ({shutdown_reason}); skipping daemon_died notification")
         else:
             log(f"shutting down ({shutdown_reason}); writing daemon_died notification")
             write_daemon_died_notification(shutdown_reason)
-        daemon_lifecycle.remove_pid(state_dir)
 
 
 if __name__ == "__main__":

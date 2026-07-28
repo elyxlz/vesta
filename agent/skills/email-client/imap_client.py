@@ -751,68 +751,6 @@ def cmd_notify_remove(args):
     _save_notify_folders(acc, [f for f in notify_folders(acc) if f != args.folder])
 
 
-# -- daemon lifecycle (start/stop/restart/status of poll_daemon.py) -
-
-
-def _daemon_layout() -> tuple[pathlib.Path, pathlib.Path, pathlib.Path, pathlib.Path]:
-    """Return (state_dir, runtime_dir, poll_daemon_path, log_path) per SETUP.md's install layout."""
-    state_dir = _state_dir()
-    return state_dir, state_dir / "runtime", state_dir / "poll_daemon.py", state_dir / "poll_daemon.log"
-
-
-def _print_daemon_result(result: dict) -> None:
-    print(json.dumps(result, indent=2))
-    if "error" in result:
-        sys.exit(1)
-
-
-def cmd_daemon_start(args):
-    state_dir, runtime_dir, poll_daemon_path, log_path = _daemon_layout()
-    interval = (
-        args.interval
-        if args.interval is not None
-        else int(_env("EMAIL_CLIENT_POLL_INTERVAL", str(daemon_lifecycle.DEFAULT_POLL_INTERVAL_SECS)))
-    )
-    _print_daemon_result(
-        daemon_lifecycle.daemon_start(
-            state_dir=state_dir,
-            runtime_dir=runtime_dir,
-            poll_daemon_path=poll_daemon_path,
-            log_path=log_path,
-            interval=interval,
-        )
-    )
-
-
-def cmd_daemon_stop(_args):
-    state_dir, _, _, _ = _daemon_layout()
-    _print_daemon_result(daemon_lifecycle.daemon_stop(state_dir=state_dir))
-
-
-def cmd_daemon_restart(args):
-    state_dir, runtime_dir, poll_daemon_path, log_path = _daemon_layout()
-    _print_daemon_result(
-        daemon_lifecycle.daemon_restart(
-            state_dir=state_dir,
-            runtime_dir=runtime_dir,
-            poll_daemon_path=poll_daemon_path,
-            log_path=log_path,
-            interval=args.interval,
-        )
-    )
-
-
-def cmd_daemon_status(_args):
-    state_dir, _, _, _ = _daemon_layout()
-    accounts = []
-    for acc in list_accounts():
-        cfg = load_config(acc)
-        tok = load_token(acc)
-        provider, _ = account_profile(acc)
-        accounts.append(daemon_lifecycle.account_auth_summary(acc, cfg, tok, provider))
-    print(json.dumps(daemon_lifecycle.daemon_status(state_dir=state_dir, accounts=accounts), indent=2))
-
-
 # -- auth subcommands (multi-account management) -------------------
 
 
@@ -1068,18 +1006,7 @@ def _add_admin_parsers(sub):
     )
 
     pd = sub.add_parser("daemon", help="manage the poll daemon: start|stop|restart|status")
-    dsub = pd.add_subparsers(dest="daemon_cmd", required=True)
-    pd_start = dsub.add_parser("start", help="start the poll daemon if not already running (idempotent)")
-    pd_start.add_argument(
-        "--interval",
-        type=int,
-        default=None,
-        help="poll seconds fallback (default $EMAIL_CLIENT_POLL_INTERVAL or 15)",
-    )
-    dsub.add_parser("stop", help="stop the poll daemon (marks the stop intentional first)")
-    pd_restart = dsub.add_parser("restart", help="stop then start, reusing the last --interval unless overridden")
-    pd_restart.add_argument("--interval", type=int, default=None)
-    dsub.add_parser("status", help="daemon process state plus per-account auth health, in one JSON blob")
+    pd.add_argument("action", nargs="?", default="", metavar="start|stop|restart|status")
 
 
 def _build_parser():
@@ -1138,12 +1065,7 @@ def _dispatch(args):
             "remove": cmd_notify_remove,
         }[args.notify_cmd](args)
     elif args.cmd == "daemon":
-        {
-            "start": cmd_daemon_start,
-            "stop": cmd_daemon_stop,
-            "restart": cmd_daemon_restart,
-            "status": cmd_daemon_status,
-        }[args.daemon_cmd](args)
+        sys.exit(daemon_lifecycle.daemon_cmd(args.action))
     elif args.cmd == "calendar":
         _cmd_calendar(args)
     else:

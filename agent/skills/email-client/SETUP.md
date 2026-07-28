@@ -150,9 +150,9 @@ If a Gmail `list-calendars` reports a refused request or a scope error, the acco
 email-client daemon start
 ```
 
-Idempotent (a running daemon is a no-op) and defaults `--interval` to `$EMAIL_CLIENT_POLL_INTERVAL` or 15 seconds. Check with `email-client daemon status`, which reports process state plus per-account auth health in one JSON blob, so there's no need to `screen -X hardcopy` or read the log by hand. `email-client daemon stop` and `email-client daemon restart` are also available; a deliberate stop or restart marks itself intentional first, so it never fires the `daemon_died` notification the agent would otherwise investigate.
+Idempotent (a running daemon is a no-op) and polls every `$EMAIL_CLIENT_POLL_INTERVAL` seconds, 15 by default. Check with `email-client daemon status`, which answers `{"running": ...}` from the pid record at `~/agent/data/daemons/email-client.pid`; the daemon's output is at `~/agent/logs/email-client.log`. `email-client daemon stop` and `email-client daemon restart` are also available; stop is a SIGTERM, which the daemon reads as the exit it was asked for, so it never fires the `daemon_died` notification the agent would otherwise investigate.
 
-The daemon runs one worker per watched `(account, folder)`. Where the server supports IMAP **IDLE** (Gmail, Microsoft, most others) the worker is pushed on new mail in real time; otherwise it polls every `--interval` seconds (the flag is the fallback cadence, not the primary mechanism). It recomputes the watch set as accounts or folders change, so neither adding an account nor changing the watch list needs a restart.
+The daemon runs one worker per watched `(account, folder)`. Where the server supports IMAP **IDLE** (Gmail, Microsoft, most others) the worker is pushed on new mail in real time; otherwise it polls on that interval (the fallback cadence, not the primary mechanism). It recomputes the watch set as accounts or folders change, so neither adding an account nor changing the watch list needs a restart, and it waits rather than exiting while no account is configured.
 
 **Ask the user which folders they want to be notified about, per account.** If they have no preference, default to **all** folders. Then set the watch list (see SKILL.md "Choosing which folders notify"):
 
@@ -240,10 +240,9 @@ $EMAIL_CLIENT_DIR/                # default ~/.email-client
       high_uid.txt                # INBOX watermark
       high_uid_Archive.txt        # per-folder watermark (one per extra watched folder)
     work/ ...
-  daemon.pid                      # poll daemon pid; owned by `email-client daemon start|stop|restart|status`
-  daemon-info.json                # {"interval", "started_at"} of the running daemon, for `daemon restart`
-  stop-requested                  # marker `daemon stop`/`restart` writes so a deliberate exit skips daemon_died
 ```
+
+The daemon's own records live with every other daemon's: the pid at `~/agent/data/daemons/email-client.pid`, the log at `~/agent/logs/email-client.log`.
 
 `token.json` always carries a `provider` key alongside the credential (access/refresh token for OAuth, `app_password` otherwise), so the daemon knows the auth strategy even if env vars change later.
 

@@ -155,6 +155,12 @@ SKILLS = [
         emits_daemon_died=True,
     ),
     Daemon(
+        command=["python3", str(SKILLS_DIR / "email-client/daemon_lifecycle.py")],
+        name="email-client",
+        serves_port=False,
+        emits_daemon_died=True,
+    ),
+    Daemon(
         command=["uv", "run", "--project", str(SKILLS_DIR / "slack/cli"), "slack"],
         name="slack",
         serves_port=False,
