@@ -57,7 +57,7 @@ func NewTelegramClient(dataDir, notificationsDir, instance string, readOnly bool
 	bot, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
 		store.Close()
-		return nil, fmt.Errorf("failed to authenticate with Telegram: %v", err)
+		return nil, fmt.Errorf("failed to authenticate with Telegram: %w", err)
 	}
 
 	tc := &TelegramClient{

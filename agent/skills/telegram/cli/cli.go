@@ -3,10 +3,12 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -16,6 +18,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 // ConnectRetryInterval paces the wait for a bot token (and for Telegram itself) in a daemon
@@ -123,9 +127,22 @@ func writeAuthStatus(dataDir string, status map[string]string) {
 	}
 }
 
+// authOutcome classifies a connect that failed. Telegram answering 401 is a verdict on the token
+// itself, so it reads as rejected; anything else (the store, the network, Telegram being down) is
+// the service out of reach, and calling that a rejection sends the user off to mint a new token
+// for a token that is fine.
+func authOutcome(err error) map[string]string {
+	var apiErr *tgbotapi.Error
+	if errors.As(err, &apiErr) && apiErr.Code == http.StatusUnauthorized {
+		return map[string]string{"status": "rejected", "error": err.Error()}
+	}
+	return map[string]string{"status": "unreachable", "error": err.Error()}
+}
+
 // readAuthStatus answers with the recorded outcome of the last connect, so a token Telegram
-// rejects reads as rejected instead of authenticated. No token on disk outranks it: whatever an
-// older run recorded is about a token that is gone.
+// rejects reads as rejected and one it never got to try reads as unreachable, rather than either
+// reading as authenticated. No token on disk outranks it: whatever an older run recorded is about
+// a token that is gone.
 func readAuthStatus(dataDir string) map[string]string {
 	tokenPath := filepath.Join(dataDir, "bot-token")
 	if _, err := os.Stat(tokenPath); err != nil {
@@ -243,11 +260,12 @@ func connectClient(dataDir, notifDir string, signals <-chan os.Signal) (*Telegra
 		if err == nil {
 			return tc, nil
 		}
-		writeAuthStatus(dataDir, map[string]string{"status": "rejected", "error": err.Error()})
-		// One line per distinct reason, not one per retry: the same failure every 15 seconds
-		// buries the log it is written to without adding anything.
+		// One write and one log line per distinct reason, not one per retry: the same failure
+		// every 15 seconds buries the log it is written to and rewrites a status nothing learned
+		// from.
 		if err.Error() != reported {
 			reported = err.Error()
+			writeAuthStatus(dataDir, authOutcome(err))
 			fmt.Fprintf(os.Stderr, "Not serving yet: %v\n", err)
 		}
 		select {

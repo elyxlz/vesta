@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -15,6 +17,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 // testModeEnv re-runs the test binary as something other than the suite, which is how these
@@ -742,9 +746,28 @@ func TestStopEndsAWatchdogMidRestart(t *testing.T) {
 	}
 }
 
+// authOutcome is what keeps "your token is bad" apart from "Telegram is not answering". Calling
+// an outage a rejection sends the user off to mint a replacement for a token that is fine, and
+// the reverse leaves a genuinely dead token looking like weather that will pass.
+func TestAuthOutcomeTellsARejectionFromAnOutage(t *testing.T) {
+	refused := fmt.Errorf("failed to authenticate with Telegram: %w", &tgbotapi.Error{Code: http.StatusUnauthorized, Message: "Unauthorized"})
+	rejected := authOutcome(refused)
+	if rejected["status"] != "rejected" || !strings.Contains(rejected["error"], "Unauthorized") {
+		t.Errorf("authOutcome(401) = %v, want a rejection carrying the reason", rejected)
+	}
+	offline := authOutcome(errors.New("dial tcp 149.154.167.220:443: connect: network is unreachable"))
+	if offline["status"] != "unreachable" || !strings.Contains(offline["error"], "network is unreachable") {
+		t.Errorf("authOutcome(network) = %v, want unreachable carrying the reason", offline)
+	}
+	// A 500 from Telegram is Telegram's problem, not a verdict on the token.
+	if broken := authOutcome(&tgbotapi.Error{Code: http.StatusInternalServerError, Message: "Internal Server Error"}); broken["status"] != "unreachable" {
+		t.Errorf("authOutcome(500) = %v, want unreachable", broken)
+	}
+}
+
 // A token on disk is not a token Telegram accepts, so status reports what the last connect
-// actually learned. Without that a daemon idling on a rejected token reads as authenticated and
-// nothing says why the channel is silent.
+// actually learned. Without that a daemon idling on a token nothing can use reads as
+// authenticated and nothing says why the channel is silent.
 func TestAConnectFailureShowsUpInStatus(t *testing.T) {
 	hermeticHome(t, modeServe)
 	dataDir, _ := parseStateDir()
@@ -760,9 +783,15 @@ func TestAConnectFailureShowsUpInStatus(t *testing.T) {
 	if err := os.WriteFile(tokenPath, []byte("bogus"), 0600); err != nil {
 		t.Fatalf("failed to write the token: %v", err)
 	}
-	rejected := readAuthStatus(dataDir)
-	if rejected["status"] != "rejected" || rejected["error"] == "" {
-		t.Errorf("auth = %v, want a rejection carrying the reason", rejected)
+	// The connect above never reached Telegram (there was no token to try), so what it recorded
+	// and status passes through is the outage, not a verdict on the token now on disk.
+	unreachable := readAuthStatus(dataDir)
+	if unreachable["status"] != "unreachable" || unreachable["error"] == "" {
+		t.Errorf("auth = %v, want unreachable carrying the reason", unreachable)
+	}
+	writeAuthStatus(dataDir, map[string]string{"status": "rejected", "error": "Unauthorized"})
+	if refused := readAuthStatus(dataDir); refused["status"] != "rejected" || refused["error"] == "" {
+		t.Errorf("auth after a refused token = %v, want the rejection passed through", refused)
 	}
 	writeAuthStatus(dataDir, map[string]string{"status": "authenticated"})
 	if authenticated := readAuthStatus(dataDir); authenticated["status"] != "authenticated" {
