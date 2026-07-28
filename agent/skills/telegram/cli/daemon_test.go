@@ -817,3 +817,35 @@ func TestRestartWithoutARecordedRunFallsBackToInstanceArgs(t *testing.T) {
 		}
 	})
 }
+
+// TestClaimTakesOverARecordTheRivalDropped pins the narrower of the two takeover paths: a rival
+// start that dropped its own claim leaves nothing to remove, so the exclusive create alone is the
+// takeover and no window opens in which a third start could claim the same record.
+func TestClaimTakesOverARecordTheRivalDropped(t *testing.T) {
+	hermeticHome(t, modeServe)
+	record := daemonPidfile()
+	if err := makeRecordDirs(); err != nil {
+		t.Fatalf("failed to create the record directory: %v", err)
+	}
+	gone := exec.Command("/bin/sh", "-c", "exit 0")
+	if err := gone.Run(); err != nil {
+		t.Fatalf("failed to run the short-lived process: %v", err)
+	}
+	if err := writePidRecord(record, gone.Process.Pid, 0); err != nil {
+		t.Fatalf("failed to seed the stale record: %v", err)
+	}
+	dropped := make(chan struct{})
+	go func() {
+		time.Sleep(DaemonPollInterval)
+		os.Remove(record)
+		close(dropped)
+	}()
+	claimed, err := claimRecord(record)
+	<-dropped
+	if err != nil || !claimed {
+		t.Fatalf("claimRecord = (%v, %v), want the record claimed", claimed, err)
+	}
+	if pid, alive := livePidIn(record); !alive || pid != os.Getpid() {
+		t.Errorf("record names (%d, %v), want this start", pid, alive)
+	}
+}

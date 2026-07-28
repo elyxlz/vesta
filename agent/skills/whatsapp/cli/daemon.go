@@ -174,12 +174,20 @@ func claimStart() (claimed bool, err error) {
 		if _, alive := livePid(); alive {
 			return false, nil
 		}
+		// The rival dropped its own claim, so there is nothing to remove: the exclusive create
+		// alone is the takeover, which is the narrowest window in which two starts can both get one.
 		if _, err := os.Stat(daemonPidfile()); errors.Is(err, os.ErrNotExist) {
-			break
+			return takeOverRecord()
 		}
 		time.Sleep(DaemonPollInterval)
 	}
 	os.Remove(daemonPidfile())
+	return takeOverRecord()
+}
+
+// takeOverRecord claims a record no live process stands behind, which is the one path on which
+// two starts can both spawn, and the duplicate loses on the device-store lock.
+func takeOverRecord() (bool, error) {
 	if err := writePidRecord(os.Getpid(), os.O_EXCL); err != nil {
 		return false, fmt.Errorf("another whatsapp start holds %s: %v", daemonPidfile(), err)
 	}

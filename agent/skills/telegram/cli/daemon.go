@@ -216,12 +216,20 @@ func claimRecord(record string) (claimed bool, err error) {
 		if _, alive := livePidIn(record); alive {
 			return false, nil
 		}
+		// The rival dropped its own claim, so there is nothing to remove: the exclusive create
+		// alone is the takeover, which is the narrowest window in which two starts can both get one.
 		if _, err := os.Stat(record); errors.Is(err, os.ErrNotExist) {
-			break
+			return takeOverRecord(record)
 		}
 		time.Sleep(DaemonPollInterval)
 	}
 	os.Remove(record)
+	return takeOverRecord(record)
+}
+
+// takeOverRecord claims a record no live process stands behind, which is the one path on which
+// two starts can both spawn, and the duplicate loses on its own socket.
+func takeOverRecord(record string) (bool, error) {
 	if err := writePidRecord(record, os.Getpid(), os.O_EXCL); err != nil {
 		return false, fmt.Errorf("another telegram start holds %s: %v", record, err)
 	}
