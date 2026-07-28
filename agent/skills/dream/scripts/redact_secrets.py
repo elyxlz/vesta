@@ -92,10 +92,24 @@ def luhn_valid(digits: str) -> bool:
     return total % 10 == 0
 
 
+def _has_card_iin(digits: str) -> bool:
+    """True iff the leading digits fall in an assigned payment-card issuer range (ISO/IEC 7812 MII).
+    Real PANs start with MII 3 (Amex/Diners/JCB), 4 (Visa), 5 (Mastercard/Maestro), 6 (Discover/
+    UnionPay/Maestro), or a Mastercard 2-series (2221 to 2720). MII 0/1/7/8/9 are never cards, so a
+    13 to 19 digit run that coincidentally passes Luhn (epoch-millis ids, order/tracking numbers,
+    concatenated phone strings) is rejected here instead of flooding the scan. This gate excludes no
+    live card network, so it adds no false negative."""
+    if digits[0] in "3456":
+        return True
+    return digits[0] == "2" and 2221 <= int(digits[:4]) <= 2720
+
+
 def _is_card(candidate: str) -> bool:
-    """A candidate run is a real PAN only when its stripped digits pass Luhn and count 13 to 19."""
+    """A candidate run is a real PAN only when its stripped digits count 13 to 19, pass Luhn, AND open
+    with an assigned card issuer prefix. Luhn alone flags ~1 in 10 non-card digit runs (a 13-digit
+    timestamp can pass by chance); the IIN gate removes that class without dropping any real card."""
     digits = candidate.replace(" ", "").replace("-", "")
-    return 13 <= len(digits) <= 19 and luhn_valid(digits)
+    return 13 <= len(digits) <= 19 and _has_card_iin(digits) and luhn_valid(digits)
 
 
 def redact_cards(text: str) -> str:

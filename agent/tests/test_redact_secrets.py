@@ -218,6 +218,38 @@ def test_scan_ignores_non_luhn_digit_runs(text):
     assert redact.find_matches(text) == []
 
 
+# IIN gate: Luhn alone flags ~1 in 10 non-card digit runs, so a 13-digit epoch-millis id or a
+# Luhn-passing order number sails through. Real PANs open with an assigned issuer prefix (MII 3/4/5/6
+# or a Mastercard 2-series 2221 to 2720), which the gate requires on top of Luhn. These are well-known
+# test PANs across every live network, never real cards. EPOCH_MILLIS and ORDER_16 both pass Luhn but
+# open with MII 1, so the gate rejects them with no risk to any real card.
+EPOCH_MILLIS = "1785121902428"  # 13-digit notification-id timestamp, passes Luhn by chance
+ORDER_16 = "1000000000000008"  # 16-digit order number, passes Luhn but opens with MII 1
+MC_2SERIES = "2223003122003222"  # Mastercard 2-series (2221 to 2720)
+DISCOVER = "6011111111111117"
+JCB = "3530111333300000"
+
+
+def test_iin_gate_rejects_luhn_passing_non_cards():
+    # Both pass Luhn but open with MII 1, so they are timestamps/order ids, not PANs.
+    assert redact.luhn_valid(EPOCH_MILLIS) and not redact._is_card(EPOCH_MILLIS)
+    assert redact.luhn_valid(ORDER_16) and not redact._is_card(ORDER_16)
+    assert redact.find_matches(f"notification {EPOCH_MILLIS} delivered") == []
+    assert redact.find_matches(f"order {ORDER_16} shipped") == []
+
+
+@pytest.mark.parametrize(
+    "pan",
+    [VISA, AMEX, MC_2SERIES, DISCOVER, JCB],
+)
+def test_iin_gate_still_flags_real_pans_across_networks(pan):
+    assert redact._is_card(pan)
+    matches = redact.find_matches(f"charge to {pan} today")
+    assert len(matches) == 1
+    assert pan not in matches[0]
+    assert "[REDACTED]" in matches[0]
+
+
 def test_scan_still_flags_existing_key_and_jwt_patterns():
     jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0"
     assert len(redact.find_matches("token sk-abcdefghijklmnopqrstuvwxyz1234")) == 1
