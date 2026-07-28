@@ -16,6 +16,7 @@ set -uo pipefail
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MONITOR="$SKILL_DIR/monitor.sh"
 MODEL="${PR_MONITOR_MODEL:-claude-opus-5}"
+RUN_TIMEOUT="${PR_MONITOR_TIMEOUT:-1800}"
 STATE_ROOT="${PR_MONITOR_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/pr-monitor}"
 ME="$(gh api /user -q .login 2>/dev/null)"
 
@@ -149,10 +150,14 @@ handle() {
   before=$(gh api "/repos/$repo/issues/$pr/comments" -q 'length' 2>/dev/null)
   local args=(-p --model "$MODEL" --output-format json --dangerously-skip-permissions)
   [ -s "$sf" ] && args+=(--resume "$(cat "$sf")")
-  out=$(claude "${args[@]}" "$prompt" 2>/dev/null)
+  # Events are handled one at a time, so a run that hangs holds every later event
+  # behind it for as long as it lives, and a lost connection leaves one waiting on
+  # a socket that never speaks again. The cap turns that into an ordinary failure.
+  out=$(timeout "$RUN_TIMEOUT" claude "${args[@]}" "$prompt" 2>/dev/null)
   rc=$?
   # A stored id that no longer resolves would fail every retry, so forget it.
   if [ "$rc" -ne 0 ]; then
+    [ "$rc" = "124" ] && echo "dispatch: run on $repo#$pr exceeded ${RUN_TIMEOUT}s and was stopped" >&2
     echo "dispatch: claude failed rc=$rc on $repo#$pr, releasing claim" >&2
     [ -s "$sf" ] && rm -f "$sf"
     release "$repo" "$kind" "$id"
