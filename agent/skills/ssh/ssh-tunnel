@@ -14,8 +14,11 @@ AUTHKEYS="$HOME/.ssh/authorized_keys"
 LOG="$HOME/agent/logs/ssh-tunnel.log"
 BORE_VERSION="0.5.1"
 BORE_BIN="$HOME/.local/bin/bore"
-USAGE="Usage: ssh-tunnel setup <public key> | ssh-tunnel daemon <start|stop|restart|status>"
+USAGE="Usage: ssh-tunnel setup [public key] | ssh-tunnel daemon <start|stop|restart|status>"
 SETTLE_SECS=2
+# A start that has to fetch bore must not hang on a stalled release download.
+DOWNLOAD_TIMEOUT=60
+CONNECT_TIMEOUT=10
 STOP_BUDGET=${DAEMON_STOP_TIMEOUT_SECS:-15}
 # SIGTERM is the deliberate stop, and this is the point in the one budget at which a tunnel that
 # has not honoured it is killed instead, leaving the remainder to reap it.
@@ -96,17 +99,24 @@ ensure_bore() {
   esac
   mkdir -p "$HOME/.local/bin"
   url="https://github.com/ekzhang/bore/releases/download/v$BORE_VERSION/bore-v$BORE_VERSION-$triple.tar.gz"
-  curl -fsSL "$url" | tar -xz -C "$HOME/.local/bin" bore || return 1
+  curl -fsSL -m "$DOWNLOAD_TIMEOUT" --connect-timeout "$CONNECT_TIMEOUT" "$url" | tar -xz -C "$HOME/.local/bin" bore || return 1
   chmod +x "$BORE_BIN"
   printf '%s\n' "$BORE_BIN"
 }
 
 do_setup() {
   key="${1:-}"
-  [ -n "$key" ] || fail "a public key is required: ssh-tunnel setup 'ssh-ed25519 AAAA... user@host'"
+  # A restart takes sshd with it but leaves the authorized keys, so setup with no argument is how
+  # an already-authorized machine gets its sshd back. A key is only required the first time, when
+  # there is nothing to bring back up for.
+  if [ -z "$key" ] && [ ! -s "$AUTHKEYS" ]; then
+    fail "a public key is required the first time: ssh-tunnel setup 'ssh-ed25519 AAAA... user@host'"
+  fi
   mkdir -p "$HOME/.ssh" "$DAEMONS"
   chmod 700 "$HOME/.ssh"
-  grep -qF "$key" "$AUTHKEYS" 2>/dev/null || echo "$key" >> "$AUTHKEYS"
+  if [ -n "$key" ]; then
+    grep -qF "$key" "$AUTHKEYS" 2>/dev/null || echo "$key" >> "$AUTHKEYS"
+  fi
   chmod 600 "$AUTHKEYS"
   sshd_running || start_sshd
   printf '{"status":"ready","sshd_port":%s}\n' "$(cat "$SSHD_PORTFILE")"
@@ -147,12 +157,14 @@ do_stop() {
 }
 
 # The tunnel registers no port with vestad: bore assigns the public one, and the log it writes
-# carries it.
+# carries it. `sshd` is the other half of reachability, and a stop leaves it up, so it is reported
+# beside the tunnel rather than folded into `running`.
 do_status() {
+  if sshd_running; then sshd=true; else sshd=false; fi
   if live_pid >/dev/null; then
-    printf '{"running":true,"port":null}\n'
+    printf '{"running":true,"port":null,"sshd":%s}\n' "$sshd"
   else
-    printf '{"running":false,"port":null}\n'
+    printf '{"running":false,"port":null,"sshd":%s}\n' "$sshd"
   fi
 }
 

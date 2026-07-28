@@ -35,13 +35,15 @@ ssh-tunnel setup "ssh-ed25519 AAAA... user@laptop"
 
 Authorizes the key and starts the sshd the tunnel points at, printing `{"status":"ready","sshd_port":<port>}`. Idempotent: a second key is added alongside the first, and an sshd already running keeps its port, so authorizing another machine never disturbs a live tunnel.
 
+A container restart takes sshd with it but leaves `~/.ssh/authorized_keys` alone, so once any key is authorized `ssh-tunnel setup` with no argument brings sshd back up on a fresh port. The key argument is only required the first time, and passing one still authorizes it.
+
 ## Start the tunnel
 
 ```bash
 ssh-tunnel daemon start
 ```
 
-`start`, `stop`, `restart`, and `status` each print one line of JSON. Log: `~/agent/logs/ssh-tunnel.log`.
+`start`, `stop`, `restart`, and `status` each print one line of JSON. `status` also carries `"sshd"`, since the sshd is the other half of reachability and the daemon verbs never touch it: `{"running":false,"port":null,"sshd":true}` is a machine with sshd up and no tunnel to it, and `"sshd":false` is the state `ssh-tunnel setup` fixes. Log: `~/agent/logs/ssh-tunnel.log`.
 
 ## Connect from the other machine
 
@@ -70,7 +72,7 @@ ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=accept-new root@bore.pub -p 12
 ssh-tunnel daemon stop
 ```
 
-Ends the tunnel, which is what makes the machine unreachable from outside. Authorized keys stay in `~/.ssh/authorized_keys` for the next session.
+Ends the tunnel, which is what makes the machine unreachable from outside. The sshd stays up (`ssh-tunnel status` shows it as `"sshd":true`) and the authorized keys stay in `~/.ssh/authorized_keys`, so the next `daemon start` needs no setup.
 
 ## Notes
 

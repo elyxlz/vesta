@@ -80,8 +80,18 @@ def test_setup_adds_a_second_machine_without_moving_the_sshd_port(box):
     assert (box / "agent/data/daemons/ssh-tunnel.sshd-port").read_text() == str(SSHD_PORT)
 
 
-def test_setup_without_a_key_answers_with_an_envelope(box):
+def test_setup_without_a_key_on_a_box_that_has_none_answers_with_an_envelope(box):
     result = _setup(box)
     assert result.returncode == 1
     assert json.loads(result.stderr)["error"]
     assert not (box / ".ssh").exists()
+
+
+def test_setup_without_a_key_brings_sshd_back_for_an_authorized_machine(box):
+    """A restart takes sshd with it and leaves the keys, so the machine that was already
+    authorized gets back in without pasting its key again."""
+    assert _setup(box, KEY).returncode == 0
+    result = _setup(box)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout) == {"status": "ready", "sshd_port": SSHD_PORT}
+    assert _authorized(box) == [KEY]
