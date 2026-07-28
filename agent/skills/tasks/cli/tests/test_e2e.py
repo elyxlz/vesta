@@ -35,7 +35,17 @@ def tasks_cli(home: Path, *args: str, timeout: float = 10) -> subprocess.Complet
     )
 
 
+def pidfile(home: Path) -> Path:
+    return home / "agent/data/daemons/tasks.pid"
+
+
+def portfile(home: Path) -> Path:
+    return home / "agent/data/daemons/tasks.port"
+
+
 def start_daemon(home: Path, notif_dir: Path, sync_interval: int = 1) -> subprocess.Popen:
+    """Spawns the same serve child `tasks daemon start` spawns and lays down the same two
+    records, because every other verb refuses to run until the pid record says a daemon is up."""
     port = _free_port()
     proc = subprocess.Popen(
         [TASKS_BIN, "serve", "--notifications-dir", str(notif_dir), "--port", str(port)],
@@ -47,16 +57,35 @@ def start_daemon(home: Path, notif_dir: Path, sync_interval: int = 1) -> subproc
     )
     line = proc.stdout.readline()
     assert "serving" in line, f"daemon failed to start: {line}"
+    pidfile(home).parent.mkdir(parents=True, exist_ok=True)
+    pidfile(home).write_text(str(proc.pid))
+    portfile(home).write_text(str(port))
     return proc
 
 
-def stop_daemon(proc: subprocess.Popen):
-    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+def stop_daemon(proc: subprocess.Popen, home: Path, sig: int = signal.SIGTERM):
+    os.killpg(os.getpgid(proc.pid), sig)
     try:
         proc.wait(timeout=10)
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.wait()
+    pidfile(home).unlink(missing_ok=True)
+    portfile(home).unlink(missing_ok=True)
+
+
+def daemon_cli(home: Path, action: str, timeout: float = 60) -> subprocess.CompletedProcess:
+    """Drives the real daemon verb. There is no vestad here, so a register-service stub on PATH
+    hands out a port that is free right now, exactly as a registration would."""
+    stub_dir = home / "stub-bin"
+    stub_dir.mkdir(parents=True, exist_ok=True)
+    register = stub_dir / "register-service"
+    register.write_text(
+        "#!/bin/sh\nexec python3 -c 'import socket; s=socket.socket(); s.bind((\"127.0.0.1\",0)); print(s.getsockname()[1]); s.close()'\n"
+    )
+    register.chmod(0o755)
+    env = {**_env(home), "PATH": f"{stub_dir}{os.pathsep}{os.environ['PATH']}", "TASKS_SYNC_INTERVAL": "1"}
+    return subprocess.run([TASKS_BIN, "daemon", action], capture_output=True, text=True, timeout=timeout, env=env, check=False)
 
 
 def parse(result: subprocess.CompletedProcess):
@@ -80,7 +109,7 @@ def shared_env(tmp_path_factory):
     notif_dir.mkdir()
     proc = start_daemon(home, notif_dir)
     yield home, notif_dir, proc
-    stop_daemon(proc)
+    stop_daemon(proc, home)
 
 
 # === Task CRUD ===
@@ -675,7 +704,7 @@ class TestDaemonNotifications:
                     break
             assert found
         finally:
-            stop_daemon(proc)
+            stop_daemon(proc, home)
 
     def test_recurring_stays_active(self, test_home):
         home, notif_dir = test_home
@@ -687,7 +716,7 @@ class TestDaemonNotifications:
             items = parse(tasks_cli(home, "remind", "list", "--json"))
             assert any(i["id"] == rid for i in items)
         finally:
-            stop_daemon(proc)
+            stop_daemon(proc, home)
 
     def test_snoozed_reminder_fires_at_new_time(self, test_home):
         home, notif_dir = test_home
@@ -707,7 +736,7 @@ class TestDaemonNotifications:
                 time.sleep(0.5)
             assert found, "snoozed reminder did not fire at its new time"
         finally:
-            stop_daemon(proc)
+            stop_daemon(proc, home)
 
     def test_digest_fires_for_overdue_task(self, test_home):
         home, notif_dir = test_home
@@ -730,7 +759,7 @@ class TestDaemonNotifications:
             assert task["id"] in payload["message"]
             assert "tasks postpone <id>" in payload["message"]
         finally:
-            stop_daemon(proc)
+            stop_daemon(proc, home)
 
 
 class TestMissedReminders:
@@ -785,7 +814,7 @@ class TestMissedReminders:
             items = parse(tasks_cli(home, "remind", "list", "--json"))
             assert not any(i["id"] == "pastdue01" for i in items)
         finally:
-            stop_daemon(proc)
+            stop_daemon(proc, home)
 
     def test_recurring_survives_restart(self, test_home):
         """Recurring reminders are restored on restart and keep scheduling (missed firings are skipped)."""
@@ -809,7 +838,7 @@ class TestMissedReminders:
             missed = [f for f in notif_files if json.loads(f.read_text()).get("reminder_id") == "recur01"]
             assert len(missed) == 0
         finally:
-            stop_daemon(proc)
+            stop_daemon(proc, home)
 
 
 # === Recurring reminder scheduled_time advancement ===
@@ -1207,24 +1236,49 @@ class TestDaemonLifecycle:
         assert r.returncode != 0
         assert "daemon not running" in r.stderr.lower()
 
-    def test_death_notification(self, test_home):
+    def test_a_deliberate_stop_reports_no_death(self, test_home):
         home, notif_dir = test_home
         proc = start_daemon(home, notif_dir)
-        stop_daemon(proc)
+        stop_daemon(proc, home)
+
+        assert list(notif_dir.glob("*-daemon_died.json")) == []
+
+    def test_any_other_exit_reports_a_death(self, test_home):
+        home, notif_dir = test_home
+        proc = start_daemon(home, notif_dir)
+        stop_daemon(proc, home, sig=signal.SIGINT)
 
         death_files = list(notif_dir.glob("*-daemon_died.json"))
         assert len(death_files) == 1
         data = json.loads(death_files[0].read_text())
         assert data["type"] == "daemon_died"
         assert data["source"] == "tasks"
+        assert data["reason"] == "SIGINT"
 
-    def test_pid_file_lifecycle(self, test_home):
-        home, notif_dir = test_home
-        pid_file = home / ".tasks" / "serve.pid"
-        assert not pid_file.exists()
+    def test_the_verbs_record_and_clear_the_pid(self, test_home):
+        home, _ = test_home
+        assert parse(daemon_cli(home, "status")) == {"running": False, "port": None}
 
-        proc = start_daemon(home, notif_dir)
-        assert pid_file.exists()
+        assert parse(daemon_cli(home, "start")) == {"status": "started"}
+        assert pidfile(home).exists()
+        status = parse(daemon_cli(home, "status"))
+        assert status["running"] is True
+        assert status["port"] == int(portfile(home).read_text())
 
-        stop_daemon(proc)
-        assert not pid_file.exists()
+        assert parse(daemon_cli(home, "stop")) == {"status": "stopped"}
+        assert not pidfile(home).exists()
+        assert parse(daemon_cli(home, "status")) == {"running": False, "port": None}
+
+    def test_a_second_start_never_stacks_a_daemon(self, test_home):
+        home, _ = test_home
+        try:
+            assert parse(daemon_cli(home, "start")) == {"status": "started"}
+            first = pidfile(home).read_text()
+            assert parse(daemon_cli(home, "start")) == {"status": "already_running"}
+            assert pidfile(home).read_text() == first
+        finally:
+            daemon_cli(home, "stop")
+
+    def test_a_stop_with_nothing_running_is_a_no_op(self, test_home):
+        home, _ = test_home
+        assert parse(daemon_cli(home, "stop")) == {"status": "already_stopped"}

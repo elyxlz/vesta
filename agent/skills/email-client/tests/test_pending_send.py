@@ -1,8 +1,42 @@
+"""Delayed send and undo: the queue, the client delay, and SMTP dispatch.
+
+smtp_send imports imap_tools (from the on-box runtime), so a minimal stub is
+registered first, which is what lets this module run on its own.
+"""
+
 import json
+import sys
+import types
 from datetime import UTC, datetime, timedelta
 
-import pending_send
 import pytest
+
+
+def _install_imap_tools_stub():
+    if "imap_tools" not in sys.modules:
+        it = types.ModuleType("imap_tools")
+
+        def _and(*_a, **_k):
+            return None
+
+        class MailBox:
+            def __init__(self, *_a, **_k):
+                pass
+
+        class MailMessageFlags:
+            DRAFT = "\\Draft"
+            SEEN = "\\Seen"
+            ANSWERED = "\\Answered"
+            FLAGGED = "\\Flagged"
+
+        it.AND = _and
+        it.MailBox = MailBox
+        it.MailMessageFlags = MailMessageFlags
+        sys.modules["imap_tools"] = it
+
+
+_install_imap_tools_stub()
+import pending_send
 import smtp_send
 
 
@@ -181,7 +215,7 @@ def _patch_account(monkeypatch):
 
 
 def _patch_daemon(monkeypatch, *, running):
-    monkeypatch.setattr(smtp_send.daemon_lifecycle, "daemon_running", lambda _state_dir: (running, 4242 if running else None))
+    monkeypatch.setattr(smtp_send.daemon_lifecycle, "live_pid", lambda: 4242 if running else None)
 
 
 def _original_message():

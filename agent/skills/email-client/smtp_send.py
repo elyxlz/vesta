@@ -524,8 +524,7 @@ def send(req: SendRequest) -> None:
 
     state_dir = _state_dir()
     if pending_send.delay_seconds(state_dir) > 0:
-        running, _ = daemon_lifecycle.daemon_running(state_dir)
-        if not running:
+        if daemon_lifecycle.live_pid() is None:
             sys.exit(
                 "the poll daemon dispatches delayed sends and is not running, so this message would never leave; "
                 "start it with `email-client daemon start`, or send immediately with `email-client send-delay --seconds 0`"

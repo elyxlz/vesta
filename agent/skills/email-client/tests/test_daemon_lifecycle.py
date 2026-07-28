@@ -1,299 +1,378 @@
+"""The poll daemon's lifecycle, driven in process, plus the account auth listing.
+
+Four verbs over one pid record: a start claims the record before it spawns anything, a start
+that finds a live daemon answers already_running, stop is the SIGTERM that ends it, restart
+does not start onto a daemon the stop could not kill, and status answers from the record
+alone. agent/tests/test_daemon_contract.py drives the same verbs as real subprocesses; this
+suite covers the decisions behind them.
+
+imap_client imports imap_tools (from the on-box runtime), so a minimal stub is registered
+first.
+"""
+
+import dataclasses
+import importlib
+import json
 import os
 import pathlib
+import signal
 import subprocess
+import sys
 import threading
+import time
+import types
 
 import daemon_lifecycle as dl
+import poll_daemon
 import pytest
 
-
-def test_pid_roundtrip(tmp_path: pathlib.Path):
-    assert dl.read_pid(tmp_path) is None
-    dl.write_pid(tmp_path)
-    assert dl.read_pid(tmp_path) == os.getpid()
-    dl.remove_pid(tmp_path)
-    assert dl.read_pid(tmp_path) is None
-
-
-def test_remove_pid_is_idempotent(tmp_path: pathlib.Path):
-    dl.remove_pid(tmp_path)
-    dl.remove_pid(tmp_path)
-
-
-def test_read_pid_ignores_non_numeric_content(tmp_path: pathlib.Path):
-    dl.pid_path(tmp_path).write_text("not-a-pid")
-    assert dl.read_pid(tmp_path) is None
-
-
-def test_process_alive_for_self_and_a_dead_pid():
-    assert dl.process_alive(os.getpid()) is True
-    # A pid far past any plausible live process on a test box.
-    assert dl.process_alive(2**30) is False
-
-
-def test_daemon_running_cleans_up_a_stale_pidfile(tmp_path: pathlib.Path):
-    dl.pid_path(tmp_path).write_text(str(2**30))
-    running, pid = dl.daemon_running(tmp_path)
-    assert running is False
-    assert pid is None
-    assert dl.read_pid(tmp_path) is None
-
-
-def test_daemon_running_true_for_a_live_pid(tmp_path: pathlib.Path):
-    dl.write_pid(tmp_path)
-    running, pid = dl.daemon_running(tmp_path)
-    assert running is True
-    assert pid == os.getpid()
-
-
-def test_daemon_info_roundtrip(tmp_path: pathlib.Path):
-    assert dl.read_daemon_info(tmp_path) is None
-    dl.write_daemon_info(tmp_path, 42)
-    info = dl.read_daemon_info(tmp_path)
-    assert info is not None
-    assert info["interval"] == 42
-    assert "started_at" in info
-
-
-def test_read_daemon_info_returns_none_on_corrupt_json(tmp_path: pathlib.Path):
-    dl.daemon_info_path(tmp_path).write_text("{not json")
-    assert dl.read_daemon_info(tmp_path) is None
-
-
-def test_stop_requested_marker_roundtrip(tmp_path: pathlib.Path):
-    assert dl.consume_stop_requested(tmp_path) is False
-    dl.mark_stop_requested(tmp_path)
-    assert dl.consume_stop_requested(tmp_path) is True
-    # Consuming clears the marker: a second read finds nothing.
-    assert dl.consume_stop_requested(tmp_path) is False
-
-
-@pytest.mark.parametrize(
-    "screen_ls,name,expected",
-    [
-        ("There are screens on:\n\t123.email-client\t(Detached)\n1 Socket in /run/screen.\n", "email-client", True),
-        ("There are screens on:\n\t123.email-client\t(Dead ???)\nRemove dead screens with 'screen -wipe'.\n", "email-client", False),
-        ("No Sockets found in /run/screen/S-root.\n", "email-client", False),
-        ("There are screens on:\n\t123.email-client-other\t(Detached)\n1 Socket in /run/screen.\n", "email-client", False),
-        ("There are screens on:\n\t123.email-client\t(Detached)\n\t456.email-client-watchdog\t(Detached)\n2 Sockets.\n", "email-client", True),
-    ],
+# The default the module falls back to when the environment names no stop budget.
+DEFAULT_STOP_TIMEOUT_SECS = 15
+CHILD_PID = 424242
+# A live child either dies on the first SIGTERM or is a bug, so these bound a test, not a wait.
+CHILD_TIMEOUT_SECS = 10
+READY_TIMEOUT_SECS = 10
+READY_POLL_SECS = 0.01
+STUCK_STOP_BUDGET_SECS = 1
+# Installs the handler, then says so: a SIGTERM sent before that line would kill it.
+DEAF_TO_SIGTERM = (
+    "import pathlib, signal, sys, time; "
+    "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+    "pathlib.Path(sys.argv[1]).write_text('ready'); "
+    "time.sleep(30)"
 )
-def test_screen_output_has_live_session(screen_ls: str, name: str, expected: bool):
-    assert dl.screen_output_has_live_session(screen_ls, name) is expected
+
+
+def _install_imap_tools_stub():
+    if "imap_tools" not in sys.modules:
+        it = types.ModuleType("imap_tools")
+
+        def _and(*_a, **_k):
+            return None
+
+        class MailBox:
+            def __init__(self, *_a, **_k):
+                pass
+
+        class MailMessageFlags:
+            DRAFT = "\\Draft"
+            SEEN = "\\Seen"
+            ANSWERED = "\\Answered"
+            FLAGGED = "\\Flagged"
+
+        it.AND = _and
+        it.MailBox = MailBox
+        it.MailMessageFlags = MailMessageFlags
+        sys.modules["imap_tools"] = it
+
+
+_install_imap_tools_stub()
+import imap_client
+
+
+@dataclasses.dataclass(frozen=True)
+class _Spawned:
+    argv: list[str]
+    detached: bool
+    log_path: str
+    record: str
+
+
+@pytest.fixture
+def records(tmp_path: pathlib.Path, monkeypatch) -> pathlib.Path:
+    """Point the module's records and log at a tmp home, and shrink the two waits that would
+    otherwise only make the suite slower."""
+    daemons = tmp_path / "agent/data/daemons"
+    daemons.mkdir(parents=True)
+    monkeypatch.setattr(dl, "DAEMONS_DIR", daemons)
+    monkeypatch.setattr(dl, "PIDFILE", daemons / f"{dl.NAME}.pid")
+    monkeypatch.setattr(dl, "LOG", tmp_path / "agent/logs" / f"{dl.NAME}.log")
+    monkeypatch.setattr(dl, "SETTLE_SECS", 0)
+    monkeypatch.setattr(dl, "POLL_SECS", READY_POLL_SECS)
+    return tmp_path
+
+
+@pytest.fixture
+def deaf_daemon(records: pathlib.Path, monkeypatch):
+    """A live process that ignores SIGTERM: a daemon that outlives the stop budget."""
+    marker = records / "deaf-ready"
+    child = subprocess.Popen([sys.executable, "-c", DEAF_TO_SIGTERM, str(marker)])
+    _wait_until(marker.exists, "the child never installed its SIGTERM handler")
+    monkeypatch.setattr(dl, "STOP_TIMEOUT_SECS", STUCK_STOP_BUDGET_SECS)
+    dl.PIDFILE.write_text(str(child.pid))
+    yield child
+    child.kill()
+    child.wait(timeout=CHILD_TIMEOUT_SECS)
+
+
+def _wait_until(condition, message: str) -> None:
+    deadline = time.monotonic() + READY_TIMEOUT_SECS
+    while time.monotonic() < deadline:
+        if condition():
+            return
+        time.sleep(READY_POLL_SECS)
+    raise AssertionError(message)
+
+
+def _capture_spawn(monkeypatch, *, exit_code: int | None = None) -> list[_Spawned]:
+    spawns: list[_Spawned] = []
+
+    class _Child:
+        pid = CHILD_PID
+
+        def poll(self) -> int | None:
+            return exit_code
+
+    def fake_popen(argv, *, start_new_session, stdout, stderr):
+        spawns.append(
+            _Spawned(
+                argv=list(argv),
+                detached=start_new_session,
+                log_path=stdout.name,
+                record=dl.PIDFILE.read_text(),
+            )
+        )
+        return _Child()
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    return spawns
+
+
+def _refuse_spawn(monkeypatch) -> None:
+    def fail(*_args, **_kwargs):
+        raise AssertionError("nothing may be spawned beside a daemon that is already up")
+
+    monkeypatch.setattr(subprocess, "Popen", fail)
+
+
+def test_status_reports_stopped_when_no_record_exists(records: pathlib.Path, capsys):
+    assert dl.daemon_cmd("status") == 0
+
+    assert json.loads(capsys.readouterr().out) == {"running": False, "port": None}
+
+
+def test_status_reads_the_record_and_reports_no_port(records: pathlib.Path, capsys):
+    dl.PIDFILE.write_text(str(os.getpid()))
+
+    assert dl.daemon_cmd("status") == 0
+
+    # The poller dials out and writes notification files, so it serves nothing to report.
+    assert json.loads(capsys.readouterr().out) == {"running": True, "port": None}
+
+
+@pytest.mark.parametrize("record", [str(2**30), "not-a-pid", ""])
+def test_status_reports_stopped_when_no_process_stands_behind_the_record(records: pathlib.Path, capsys, record: str):
+    dl.PIDFILE.write_text(record)
+
+    assert dl.daemon_cmd("status") == 0
+
+    assert json.loads(capsys.readouterr().out) == {"running": False, "port": None}
+
+
+def test_start_claims_the_record_before_it_spawns_anything(records: pathlib.Path, monkeypatch, capsys):
+    spawns = _capture_spawn(monkeypatch)
+
+    assert dl.daemon_cmd("start") == 0
+
+    assert json.loads(capsys.readouterr().out) == {"status": "started"}
+    assert [spawn.record for spawn in spawns] == [str(os.getpid())]
+    assert dl.PIDFILE.read_text() == str(CHILD_PID)
+
+
+def test_start_runs_the_poller_detached_and_names_no_cadence(records: pathlib.Path, monkeypatch, capsys):
+    spawns = _capture_spawn(monkeypatch)
+
+    dl.daemon_cmd("start")
+
+    capsys.readouterr()
+    assert dl.POLL_DAEMON.name == "poll_daemon.py"
+    assert dl.POLL_DAEMON.exists()
+    # No cadence flag: the poller reads its interval from the environment.
+    assert [spawn.argv for spawn in spawns] == [[sys.executable, str(dl.POLL_DAEMON)]]
+    assert [spawn.detached for spawn in spawns] == [True]
+    assert [spawn.log_path for spawn in spawns] == [str(dl.LOG)]
+
+
+def test_start_answers_already_running_and_never_stacks(records: pathlib.Path, monkeypatch, capsys):
+    dl.PIDFILE.write_text(str(os.getpid()))
+    _refuse_spawn(monkeypatch)
+
+    assert dl.daemon_cmd("start") == 0
+
+    assert json.loads(capsys.readouterr().out) == {"status": "already_running"}
+    assert dl.PIDFILE.read_text() == str(os.getpid())
+
+
+def test_start_that_loses_the_claim_answers_already_running(records: pathlib.Path, monkeypatch, capsys):
+    """A rival start holds the record and its daemon comes up during the wait, so this start
+    reports the rival's daemon instead of spawning a second one beside it."""
+    rival_pid = 4242
+    dl.PIDFILE.write_text("")
+    _refuse_spawn(monkeypatch)
+    liveness = iter([None])
+    monkeypatch.setattr(dl, "live_pid", lambda: next(liveness, rival_pid))
+
+    assert dl.daemon_cmd("start") == 0
+
+    assert json.loads(capsys.readouterr().out) == {"status": "already_running"}
+    assert dl.PIDFILE.read_text() == ""
+
+
+def test_start_takes_over_a_record_no_process_stands_behind(records: pathlib.Path, monkeypatch, capsys):
+    dl.PIDFILE.write_text(str(2**30))
+    monkeypatch.setattr(dl, "CLAIM_WAIT_SECS", 0)
+    spawns = _capture_spawn(monkeypatch)
+
+    assert dl.daemon_cmd("start") == 0
+
+    assert json.loads(capsys.readouterr().out) == {"status": "started"}
+    assert len(spawns) == 1
+    assert dl.PIDFILE.read_text() == str(CHILD_PID)
+
+
+def test_start_that_gives_up_removes_its_own_record(records: pathlib.Path, monkeypatch, capsys):
+    _capture_spawn(monkeypatch, exit_code=1)
+
+    assert dl.daemon_cmd("start") == 1
+
+    # A record that says a dead daemon is up turns every later start into a no-op.
+    assert dl.PIDFILE.exists() is False
+    error = json.loads(capsys.readouterr().err)["error"]
+    assert dl.NAME in error
+    assert str(dl.LOG) in error
+
+
+def test_stop_answers_already_stopped_when_nothing_is_running(records: pathlib.Path, capsys):
+    assert dl.daemon_cmd("stop") == 0
+
+    assert json.loads(capsys.readouterr().out) == {"status": "already_stopped"}
+
+
+def test_stop_sigterms_the_daemon_and_clears_the_record(records: pathlib.Path, capsys):
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    answers: list[int] = []
+    try:
+        dl.PIDFILE.write_text(str(child.pid))
+        # live_pid asks os.kill(pid, 0), which reports this process's own terminated child as
+        # alive until it is reaped, so the stop runs beside the wait that reaps it.
+        stopper = threading.Thread(target=lambda: answers.append(dl.daemon_cmd("stop")))
+        stopper.start()
+        assert child.wait(timeout=CHILD_TIMEOUT_SECS) == -signal.SIGTERM
+        stopper.join(timeout=CHILD_TIMEOUT_SECS)
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait(timeout=CHILD_TIMEOUT_SECS)
+
+    assert answers == [0]
+    assert json.loads(capsys.readouterr().out) == {"status": "stopped"}
+    assert dl.PIDFILE.exists() is False
+
+
+def test_stop_gives_up_when_the_daemon_outlives_the_budget(records: pathlib.Path, deaf_daemon, capsys):
+    assert dl.daemon_cmd("stop") == 1
+
+    error = json.loads(capsys.readouterr().err)["error"]
+    assert "still running" in error
+    assert str(deaf_daemon.pid) in error
+    # The daemon is still there, so the record still names it.
+    assert dl.PIDFILE.read_text() == str(deaf_daemon.pid)
+
+
+def test_the_stop_budget_comes_from_the_environment(monkeypatch):
+    monkeypatch.setenv("DAEMON_STOP_TIMEOUT_SECS", "42")
+    assert importlib.reload(dl).STOP_TIMEOUT_SECS == 42
+
+    monkeypatch.delenv("DAEMON_STOP_TIMEOUT_SECS")
+    assert importlib.reload(dl).STOP_TIMEOUT_SECS == DEFAULT_STOP_TIMEOUT_SECS
+
+
+def test_restart_starts_a_stopped_daemon_and_answers_once(records: pathlib.Path, monkeypatch, capsys):
+    spawns = _capture_spawn(monkeypatch)
+
+    assert dl.daemon_cmd("restart") == 0
+
+    # One verb, one answer: the stop half is swallowed.
+    assert capsys.readouterr().out == json.dumps({"status": "started"}) + "\n"
+    assert len(spawns) == 1
+
+
+def test_restart_does_not_start_when_the_stop_failed(records: pathlib.Path, deaf_daemon, monkeypatch, capsys):
+    _refuse_spawn(monkeypatch)
+
+    assert dl.daemon_cmd("restart") == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "still running" in json.loads(captured.err)["error"]
+
+
+def test_the_poll_cadence_comes_from_the_environment(monkeypatch):
+    monkeypatch.setenv("EMAIL_CLIENT_POLL_INTERVAL", "7")
+    assert poll_daemon._interval_default() == 7
+
+    monkeypatch.delenv("EMAIL_CLIENT_POLL_INTERVAL")
+    assert poll_daemon._interval_default() == poll_daemon.DEFAULT_POLL_INTERVAL_SECS
+
+
+def test_a_death_notification_names_the_skill_and_the_reason(tmp_path: pathlib.Path, monkeypatch):
+    notifications = tmp_path / "notifications"
+    monkeypatch.setattr(poll_daemon, "NOTIF_DIR", notifications)
+
+    poll_daemon.write_daemon_died_notification("SIGINT")
+
+    written = [json.loads(path.read_text()) for path in notifications.iterdir() if path.suffix == ".json"]
+    assert written == [
+        {
+            "source": dl.NAME,
+            "type": "daemon_died",
+            "reason": "SIGINT",
+            "timestamp": written[0]["timestamp"],
+        }
+    ]
+    # The file lands complete or not at all, so the agent never reads a half-written one.
+    assert [path.name for path in notifications.iterdir() if path.suffix == ".tmp"] == []
 
 
 @pytest.mark.parametrize(
-    "cfg,tok,provider,expected",
+    "cfg,tok,expected",
     [
         (
-            {"user": "a@example.com"},
+            {"user": "a@example.com", "provider": "gmail"},
             None,
-            "gmail",
-            {"account": "personal", "provider": "gmail", "user": "a@example.com", "auth_configured": False},
+            {"account": "personal", "user": "a@example.com", "provider": "gmail", "default": True, "has_token": False},
         ),
         (
-            {"user": "a@example.com"},
+            {"user": "a@example.com", "provider": "generic"},
             {"app_password": "secret"},
-            "generic",
-            {"account": "personal", "provider": "generic", "user": "a@example.com", "auth_configured": True},
+            {"account": "personal", "user": "a@example.com", "provider": "generic", "default": True, "has_token": True},
         ),
         (
-            {"user": "a@example.com"},
+            {"user": "a@example.com", "provider": "gmail"},
             {"refresh_token": "rt"},
-            "gmail",
-            {"account": "personal", "provider": "gmail", "user": "a@example.com", "auth_configured": True},
+            {"account": "personal", "user": "a@example.com", "provider": "gmail", "default": True, "has_token": True},
         ),
         (
             {},
-            {"user": "token-user@example.com"},
-            "microsoft-personal",
-            {"account": "personal", "provider": "microsoft-personal", "user": "token-user@example.com", "auth_configured": False},
-        ),
-        (
-            {"user": "a@example.com"},
-            {"app_password": ""},
-            "generic",
-            {"account": "personal", "provider": "generic", "user": "a@example.com", "auth_configured": False},
+            {"user": "token-user@example.com", "provider": "microsoft-personal"},
+            {
+                "account": "personal",
+                "user": "token-user@example.com",
+                "provider": "microsoft-personal",
+                "default": True,
+                "has_token": True,
+            },
         ),
     ],
 )
-def test_account_auth_summary(cfg: dict, tok: dict | None, provider: str, expected: dict):
-    assert dl.account_auth_summary("personal", cfg, tok, provider) == expected
+def test_auth_list_reports_each_account_and_whether_it_holds_a_token(tmp_path: pathlib.Path, monkeypatch, capsys, cfg, tok, expected):
+    monkeypatch.setenv("EMAIL_CLIENT_DIR", str(tmp_path / "email-client"))
+    imap_client.save_accounts_index({"accounts": ["personal"], "default": "personal"})
+    imap_client.save_config("personal", cfg)
+    if tok is not None:
+        imap_client.save_token("personal", tok)
 
+    imap_client.cmd_auth_list(None)
 
-def test_daemon_status_without_running_daemon_or_info(tmp_path: pathlib.Path):
-    status = dl.daemon_status(state_dir=tmp_path, accounts=[])
-    assert status["running"] is False
-    assert status["pid"] is None
-    assert status["session"] == dl.SESSION_NAME
-    assert status["accounts"] == []
-    assert "interval" not in status
-    assert "started_at" not in status
-
-
-def test_daemon_status_includes_interval_and_started_at_when_present(tmp_path: pathlib.Path):
-    dl.write_pid(tmp_path)
-    dl.write_daemon_info(tmp_path, 30)
-    accounts = [{"account": "personal", "provider": "gmail", "user": "a@example.com", "auth_configured": True}]
-    status = dl.daemon_status(state_dir=tmp_path, accounts=accounts)
-    assert status["running"] is True
-    assert status["pid"] == os.getpid()
-    assert status["interval"] == 30
-    assert status["accounts"] == accounts
-
-
-def test_daemon_start_is_idempotent_and_never_shells_out_when_already_running(tmp_path: pathlib.Path, monkeypatch):
-    dl.write_pid(tmp_path)
-
-    def fail_if_called(*args, **kwargs):
-        raise AssertionError("subprocess.run should not be called when the daemon is already running")
-
-    monkeypatch.setattr(subprocess, "run", fail_if_called)
-    result = dl.daemon_start(
-        state_dir=tmp_path,
-        runtime_dir=tmp_path / "runtime",
-        poll_daemon_path=tmp_path / "poll_daemon.py",
-        log_path=tmp_path / "poll_daemon.log",
-        interval=15,
-    )
-    assert result == {"status": "already_running", "pid": os.getpid(), "session": dl.SESSION_NAME}
-
-
-def test_daemon_start_refuses_to_stack_on_a_live_legacy_screen_session(tmp_path: pathlib.Path, monkeypatch):
-    monkeypatch.setattr(dl, "screen_session_live", lambda: True)
-
-    def fail_if_called(*args, **kwargs):
-        raise AssertionError("subprocess.run should not be called when a legacy screen session is live")
-
-    monkeypatch.setattr(subprocess, "run", fail_if_called)
-    result = dl.daemon_start(
-        state_dir=tmp_path,
-        runtime_dir=tmp_path / "runtime",
-        poll_daemon_path=tmp_path / "poll_daemon.py",
-        log_path=tmp_path / "poll_daemon.log",
-        interval=15,
-    )
-    assert "error" in result
-    assert dl.SESSION_NAME in result["error"]
-
-
-def test_daemon_start_clears_a_leaked_stop_marker_before_launching(tmp_path: pathlib.Path, monkeypatch):
-    dl.mark_stop_requested(tmp_path)
-    monkeypatch.setattr(dl, "screen_session_live", lambda: False)
-
-    def fake_screen(*args, **kwargs):
-        dl.pid_path(tmp_path).write_text(str(os.getpid()))
-
-    monkeypatch.setattr(subprocess, "run", fake_screen)
-    result = dl.daemon_start(
-        state_dir=tmp_path,
-        runtime_dir=tmp_path / "runtime",
-        poll_daemon_path=tmp_path / "poll_daemon.py",
-        log_path=tmp_path / "poll_daemon.log",
-        interval=15,
-    )
-    assert result["status"] == "started"
-    # The fresh daemon never inherits the leaked marker, so an unintentional
-    # death still fires the daemon_died notification.
-    assert dl.consume_stop_requested(tmp_path) is False
-
-
-def test_daemon_stop_is_idempotent_when_already_stopped(tmp_path: pathlib.Path):
-    result = dl.daemon_stop(state_dir=tmp_path)
-    assert result == {"status": "already_stopped", "session": dl.SESSION_NAME}
-
-
-def test_daemon_stop_marks_stop_requested_and_sends_sigterm_to_a_live_pid(tmp_path: pathlib.Path):
-    proc = subprocess.Popen(["sleep", "30"])
-    try:
-        dl.pid_path(tmp_path).write_text(str(proc.pid))
-        result_holder: dict = {}
-
-        def run_stop():
-            result_holder["result"] = dl.daemon_stop(state_dir=tmp_path)
-
-        # daemon_stop polls os.kill(pid, 0) for liveness, which reports a terminated
-        # child as still alive until this process (its parent) reaps it; run the stop
-        # on a thread so the main thread's proc.wait() can reap it as soon as it exits.
-        stopper = threading.Thread(target=run_stop)
-        stopper.start()
-        proc.wait(timeout=5)
-        stopper.join(timeout=5)
-
-        result = result_holder["result"]
-        assert result["status"] == "stopped"
-        assert result["pid"] == proc.pid
-        # `sleep 30` never consumes the marker itself (only poll_daemon.py's own
-        # shutdown does), so it is still there for the real daemon to read.
-        assert dl.consume_stop_requested(tmp_path) is True
-    finally:
-        if proc.poll() is None:
-            proc.kill()
-            proc.wait(timeout=5)
-
-
-def test_daemon_stop_clears_the_marker_when_the_process_died_before_sigterm(tmp_path: pathlib.Path, monkeypatch):
-    # The liveness poll says running but the process is gone by the SIGTERM,
-    # so os.kill raises ProcessLookupError; the stop marker must not leak.
-    dl.pid_path(tmp_path).write_text(str(2**30))
-    monkeypatch.setattr(dl, "process_alive", lambda pid: True)
-    result = dl.daemon_stop(state_dir=tmp_path)
-    assert result == {"status": "already_stopped", "session": dl.SESSION_NAME}
-    assert dl.consume_stop_requested(tmp_path) is False
-    assert dl.read_pid(tmp_path) is None
-
-
-def test_daemon_restart_reuses_the_last_interval_when_not_overridden(tmp_path: pathlib.Path, monkeypatch):
-    dl.write_daemon_info(tmp_path, 45)
-    started_with = {}
-
-    def fake_start(**kwargs):
-        started_with["interval"] = kwargs["interval"]
-        return {"status": "started", "pid": 1, "session": dl.SESSION_NAME}
-
-    monkeypatch.setattr(dl, "daemon_start", fake_start)
-    result = dl.daemon_restart(
-        state_dir=tmp_path,
-        runtime_dir=tmp_path / "runtime",
-        poll_daemon_path=tmp_path / "poll_daemon.py",
-        log_path=tmp_path / "poll_daemon.log",
-        interval=None,
-    )
-    assert result["status"] == "started"
-    assert started_with["interval"] == 45
-
-
-def test_daemon_restart_prefers_an_explicit_interval_override(tmp_path: pathlib.Path, monkeypatch):
-    dl.write_daemon_info(tmp_path, 45)
-    started_with = {}
-
-    def fake_start(**kwargs):
-        started_with["interval"] = kwargs["interval"]
-        return {"status": "started", "pid": 1, "session": dl.SESSION_NAME}
-
-    monkeypatch.setattr(dl, "daemon_start", fake_start)
-    dl.daemon_restart(
-        state_dir=tmp_path,
-        runtime_dir=tmp_path / "runtime",
-        poll_daemon_path=tmp_path / "poll_daemon.py",
-        log_path=tmp_path / "poll_daemon.log",
-        interval=5,
-    )
-    assert started_with["interval"] == 5
-
-
-def test_daemon_restart_propagates_a_stop_failure_without_starting(tmp_path: pathlib.Path, monkeypatch):
-    monkeypatch.setattr(dl, "daemon_stop", lambda *, state_dir: {"error": "still running"})
-
-    def fail_if_called(**kwargs):
-        raise AssertionError("daemon_start should not run when stop failed")
-
-    monkeypatch.setattr(dl, "daemon_start", fail_if_called)
-    result = dl.daemon_restart(
-        state_dir=tmp_path,
-        runtime_dir=tmp_path / "runtime",
-        poll_daemon_path=tmp_path / "poll_daemon.py",
-        log_path=tmp_path / "poll_daemon.log",
-        interval=None,
-    )
-    assert result == {"error": "still running"}
+    # Public metadata only: no secret from the token file reaches the listing.
+    assert json.loads(capsys.readouterr().out) == [expected]
