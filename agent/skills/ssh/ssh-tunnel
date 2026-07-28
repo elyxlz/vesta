@@ -1,0 +1,134 @@
+#!/bin/sh
+set -eu
+
+# `ssh-tunnel` on PATH, never `ssh`: that name belongs to the system client. The daemon is the
+# bore client alone; `setup` owns the sshd it points at, so adding a key later leaves a live
+# tunnel untouched.
+
+DAEMONS="$HOME/agent/data/daemons"
+PIDFILE="$DAEMONS/ssh-tunnel.pid"
+SSHD_PIDFILE="$DAEMONS/ssh-tunnel.sshd-pid"
+SSHD_PORTFILE="$DAEMONS/ssh-tunnel.sshd-port"
+SSHD_CONFIG="/tmp/vesta-sshd.conf"
+AUTHKEYS="$HOME/.ssh/authorized_keys"
+LOG="$HOME/agent/logs/ssh-tunnel.log"
+BORE_VERSION="0.5.1"
+BORE_BIN="$HOME/.local/bin/bore"
+USAGE="Usage: ssh-tunnel setup <public key> | ssh-tunnel daemon <start|stop|restart|status>"
+SETTLE_SECS=2
+STOP_POLLS=$(( ${DAEMON_STOP_TIMEOUT_SECS:-15} * 2 ))
+
+fail() { printf '{"error":"%s"}\n' "$1" >&2; exit 1; }
+
+live_pid() {
+  pid=$(cat "$PIDFILE" 2>/dev/null) || return 1
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 1
+  printf %s "$pid"
+}
+
+sshd_running() {
+  [ -s "$SSHD_PORTFILE" ] || return 1
+  pid=$(cat "$SSHD_PIDFILE" 2>/dev/null) || return 1
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+start_sshd() {
+  command -v sshd >/dev/null 2>&1 || apt-get install -y -q openssh-server >&2
+  ssh-keygen -A -q 2>/dev/null || true
+  port=$(python3 -c "import socket; s=socket.socket(); s.bind(('',0)); print(s.getsockname()[1]); s.close()")
+  cat > "$SSHD_CONFIG" <<EOF
+Port $port
+ListenAddress 0.0.0.0
+PermitRootLogin prohibit-password
+PasswordAuthentication no
+PubkeyAuthentication yes
+AuthorizedKeysFile $AUTHKEYS
+HostKey /etc/ssh/ssh_host_ed25519_key
+HostKey /etc/ssh/ssh_host_rsa_key
+PidFile $SSHD_PIDFILE
+EOF
+  /usr/sbin/sshd -f "$SSHD_CONFIG" || fail "sshd refused to start on port $port"
+  echo "$port" > "$SSHD_PORTFILE"
+}
+
+# The tunnel client is a single downloaded binary, so a box that already has one uses it.
+ensure_bore() {
+  if command -v bore >/dev/null 2>&1; then command -v bore; return 0; fi
+  if [ -x "$BORE_BIN" ]; then printf '%s\n' "$BORE_BIN"; return 0; fi
+  case "$(uname -m)" in
+    x86_64) triple="x86_64-unknown-linux-musl" ;;
+    aarch64) triple="aarch64-unknown-linux-musl" ;;
+    *) return 1 ;;
+  esac
+  mkdir -p "$HOME/.local/bin"
+  url="https://github.com/ekzhang/bore/releases/download/v$BORE_VERSION/bore-v$BORE_VERSION-$triple.tar.gz"
+  curl -fsSL "$url" | tar -xz -C "$HOME/.local/bin" bore || return 1
+  chmod +x "$BORE_BIN"
+  printf '%s\n' "$BORE_BIN"
+}
+
+do_setup() {
+  key="${1:-}"
+  [ -n "$key" ] || fail "a public key is required: ssh-tunnel setup 'ssh-ed25519 AAAA... user@host'"
+  mkdir -p "$HOME/.ssh" "$DAEMONS"
+  chmod 700 "$HOME/.ssh"
+  grep -qF "$key" "$AUTHKEYS" 2>/dev/null || echo "$key" >> "$AUTHKEYS"
+  chmod 600 "$AUTHKEYS"
+  sshd_running || start_sshd
+  printf '{"status":"ready","sshd_port":%s}\n' "$(cat "$SSHD_PORTFILE")"
+}
+
+do_start() {
+  if live_pid >/dev/null; then echo '{"status":"already_running"}'; return 0; fi
+  port=$(cat "$SSHD_PORTFILE" 2>/dev/null) || port=""
+  [ -n "$port" ] || fail "no sshd to tunnel; run ssh-tunnel setup '<public key>' first"
+  bore=$(ensure_bore) || fail "no bore client for $(uname -m), and none could be downloaded"
+  mkdir -p "$DAEMONS" "$HOME/agent/logs"
+  setsid "$bore" local "$port" --to bore.pub >> "$LOG" 2>&1 &
+  pid=$!
+  echo "$pid" > "$PIDFILE"
+  # bore answers no probe of ours, so a client still alive a moment after the spawn is up.
+  sleep "$SETTLE_SECS"
+  if kill -0 "$pid" 2>/dev/null; then echo '{"status":"started"}'; return 0; fi
+  # A start that gives up takes its record with it: a record naming a dead tunnel reads as
+  # running and turns every later start into a no-op.
+  rm -f "$PIDFILE"
+  fail "the tunnel exited during startup; see $LOG"
+}
+
+do_stop() {
+  pid=$(live_pid) || { echo '{"status":"already_stopped"}'; return 0; }
+  kill -TERM "$pid" 2>/dev/null || true
+  i=0
+  while [ "$i" -lt "$STOP_POLLS" ]; do
+    kill -0 "$pid" 2>/dev/null || { rm -f "$PIDFILE"; echo '{"status":"stopped"}'; return 0; }
+    sleep 0.5; i=$((i + 1))
+  done
+  fail "the tunnel is still running after SIGTERM (pid=$pid)"
+}
+
+# The tunnel registers no port with vestad: bore assigns the public one, and the log it writes
+# carries it.
+do_status() {
+  if live_pid >/dev/null; then
+    printf '{"running":true,"port":null}\n'
+  else
+    printf '{"running":false,"port":null}\n'
+  fi
+}
+
+case "${1:-}" in
+  setup) do_setup "${2:-}" ;;
+  daemon)
+    case "${2:-}" in
+      start) do_start ;;
+      stop) do_stop ;;
+      restart) do_stop >/dev/null; do_start ;;
+      status) do_status ;;
+      "" | -h | --help | help) echo "$USAGE" ;;
+      *) echo "$USAGE" >&2; exit 1 ;;
+    esac
+    ;;
+  "" | -h | --help | help) echo "$USAGE" ;;
+  *) echo "$USAGE" >&2; exit 1 ;;
+esac

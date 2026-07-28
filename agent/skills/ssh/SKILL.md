@@ -3,11 +3,13 @@ name: ssh
 description: Expose this machine over SSH via bore (public TCP tunnel).
 ---
 
-# SSH Access
+# SSH Access (CLI: ssh-tunnel)
 
 Exposes this machine over the internet via [bore](https://github.com/ekzhang/bore), a free TCP relay. Runs its own sshd on a dynamically allocated port inside the container (independent of the host SSH server, no port conflicts between containers) so all auth is fully controlled. No account required. The connecting machine only needs a standard SSH client.
 
-## Before running start.sh: get the client's public key
+The command is `ssh-tunnel`. `ssh` itself is the system SSH client, so the skill takes the longer name rather than shadowing it.
+
+## Get the client's public key first
 
 Ask the user to run this on the machine that will be connecting:
 
@@ -25,17 +27,31 @@ cat ~/.ssh/id_ed25519.pub
 
 They should paste the full output (one line starting with `ssh-ed25519` or `ssh-rsa`).
 
+## Authorize the key and bring up sshd
+
+```bash
+ssh-tunnel setup "ssh-ed25519 AAAA... user@laptop"
+```
+
+Authorizes the key and starts the sshd the tunnel points at, printing `{"status":"ready","sshd_port":<port>}`. Idempotent: a second key is added alongside the first, and an sshd already running keeps its port, so authorizing another machine never disturbs a live tunnel.
+
 ## Start the tunnel
 
 ```bash
-~/agent/skills/ssh/scripts/start.sh "ssh-ed25519 AAAA... user@laptop"
+ssh-tunnel daemon start
 ```
 
-Running `start.sh` again with a different key adds it without removing existing ones (idempotent).
+`start`, `stop`, `restart`, and `status` each print one line of JSON. Log: `~/agent/logs/ssh-tunnel.log`.
 
 ## Connect from the other machine
 
-The script prints the exact command. It will look like:
+bore picks the public port and writes it to the log:
+
+```bash
+grep -o 'bore\.pub:[0-9]*' ~/agent/logs/ssh-tunnel.log | tail -1
+```
+
+Give the user that port:
 
 ```bash
 ssh -o StrictHostKeyChecking=accept-new root@bore.pub -p 12345
@@ -48,27 +64,18 @@ If the connecting machine has multiple SSH keys and the wrong one is picked:
 ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=accept-new root@bore.pub -p 12345
 ```
 
-## Check status
-
-```bash
-~/agent/skills/ssh/scripts/status.sh
-```
-
-Shows whether sshd and bore are running, the current connection command, and which keys are authorized.
-
 ## Stop
 
 ```bash
-~/agent/skills/ssh/scripts/stop.sh
+ssh-tunnel daemon stop
 ```
 
-Stops both the bore tunnel and the sshd process. Authorized keys remain in `~/.ssh/authorized_keys` for the next session.
+Ends the tunnel, which is what makes the machine unreachable from outside. Authorized keys stay in `~/.ssh/authorized_keys` for the next session.
 
 ## Notes
 
 - Auth is key-only. Password auth and root password login are disabled.
-- The bore port changes each time `start.sh` is run. Share the new port with the connecting machine.
-- Tunnel runs in a `screen` session named `bore-ssh`. If bore dies unexpectedly: `screen -r bore-ssh` to inspect, then re-run `start.sh`.
+- bore picks a new public port every time the tunnel starts, so share the current one after each start.
 - bore.pub is a public free service. Don't use it for long-term persistent access; it's for temporary sessions.
 - To copy files over the tunnel: `scp -P 12345 -o StrictHostKeyChecking=accept-new file root@bore.pub:~/destination/`
 - To use rsync: `rsync -e "ssh -p 12345 -o StrictHostKeyChecking=accept-new" file root@bore.pub:~/destination/`

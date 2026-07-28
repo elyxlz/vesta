@@ -687,6 +687,31 @@ def test_agent_startup_links_a_launcher_that_arrives_with_the_sync(tmp_path):
     assert _bin(home, "whatsapp").readlink() == _launcher(home, "whatsapp").resolve()
 
 
+def _suffixed_launcher(home, skill, name):
+    launcher = home / "agent/skills" / skill / name
+    launcher.parent.mkdir(parents=True, exist_ok=True)
+    launcher.write_text(f"#!/usr/bin/env bash\necho {name}\n")
+    launcher.chmod(0o755)
+    return launcher
+
+
+def test_agent_startup_links_a_launcher_whose_name_extends_its_skill(tmp_path):
+    """A skill whose own name would shadow a system binary drives its daemon by a longer command,
+    and that command has to resolve on PATH like any other launcher."""
+    home = _bin_box(tmp_path)
+    launcher = _suffixed_launcher(home, "ssh", "ssh-tunnel")
+    assert _run_agent_startup(home).returncode == 0
+    assert _bin(home, "ssh-tunnel").readlink() == launcher.resolve()
+
+
+def test_agent_startup_keeps_a_skill_script_with_an_extension_off_path(tmp_path):
+    """A skill holds executables that are not commands, so only extensionless names are linked."""
+    home = _bin_box(tmp_path)
+    _suffixed_launcher(home, "telegram", "telegram-watchdog.sh")
+    assert _run_agent_startup(home).returncode == 0
+    assert not _bin(home, "telegram-watchdog.sh").exists()
+
+
 def test_agent_startup_links_a_launcher_of_an_inactive_skill(tmp_path):
     """The checkout keeps every skill on disk, so a command resolves whether or not the skill
     is active, exactly as an installed CLI does."""

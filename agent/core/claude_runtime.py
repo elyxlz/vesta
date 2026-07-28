@@ -1,5 +1,6 @@
 """Prepare Claude Code's user-scoped runtime files before the first SDK session."""
 
+import os
 import pathlib as pl
 import shutil
 import subprocess
@@ -76,14 +77,24 @@ def _replace_skill_links(link_dir: pl.Path, optional_dir: pl.Path, core_dir: pl.
 
 
 def _command_sources(skills_dir: pl.Path) -> dict[str, pl.Path]:
-    """Maps command name to the script it runs: the vestad helpers, then each skill's launcher."""
+    """Maps command name to the script it runs: the vestad helpers, then each skill's launchers.
+
+    A skill is driven by its own name, except where that name belongs to something else on PATH
+    already (`ssh`), which the skill answers by extending it (`ssh-tunnel`). An extension marks
+    a command, so the executables a skill keeps for itself carry one.
+    """
     scripts_dir = skills_dir / "vestad/scripts"
     sources = {command: scripts_dir / script for command, script in _VESTAD_COMMANDS.items()}
     if skills_dir.is_dir():
         for skill_dir in sorted(skills_dir.iterdir()):
+            if not skill_dir.is_dir():
+                continue
             launcher = skill_dir / skill_dir.name
-            if skill_dir.is_dir() and launcher.is_file():
+            if launcher.is_file():
                 sources.setdefault(skill_dir.name, launcher)
+            for extended in sorted(skill_dir.glob(f"{skill_dir.name}-*")):
+                if extended.is_file() and "." not in extended.name and os.access(extended, os.X_OK):
+                    sources.setdefault(extended.name, extended)
     return sources
 
 

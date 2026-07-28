@@ -118,6 +118,16 @@ def _rig_telegram(home: pl.Path, bin_dir: pl.Path) -> None:
         (home / cache).symlink_to(real_home / cache)
 
 
+def _rig_ssh(home: pl.Path, bin_dir: pl.Path) -> None:
+    """The tunnel is a bore client pointed at the sshd `setup` brought up, so the row stands in
+    for both: a bore that stays up, and the sshd port record start reads. A bore already on PATH
+    is the one start uses, which is also what keeps this row off the network."""
+    bore = bin_dir / "bore"
+    bore.write_text("#!/bin/sh\nexec sleep 86400\n")
+    bore.chmod(0o755)
+    (home / "agent/data/daemons/ssh-tunnel.sshd-port").write_text(str(_free_port()))
+
+
 SKILLS = [
     Daemon(
         command=[str(SKILLS_DIR / "file-host/file-host")],
@@ -242,6 +252,13 @@ SKILLS = [
         # and not this contract's, so its poll is pushed past the run: one waking up to revive
         # a daemon a test just killed would outlive the test that owns it.
         env=(("DAEMON_READY_TIMEOUT_SECS", "45"), ("TG_WATCHDOG_INTERVAL", "3600")),
+    ),
+    Daemon(
+        command=[str(SKILLS_DIR / "ssh/ssh-tunnel")],
+        name="ssh-tunnel",
+        serves_port=False,
+        emits_daemon_died=False,
+        rig=_rig_ssh,
     ),
 ]
 
