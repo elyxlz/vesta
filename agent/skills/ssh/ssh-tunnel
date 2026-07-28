@@ -16,11 +16,24 @@ BORE_VERSION="0.5.1"
 BORE_BIN="$HOME/.local/bin/bore"
 USAGE="Usage: ssh-tunnel setup <public key> | ssh-tunnel daemon <start|stop|restart|status>"
 SETTLE_SECS=2
-STOP_POLLS=$(( ${DAEMON_STOP_TIMEOUT_SECS:-15} * 2 ))
+STOP_BUDGET=${DAEMON_STOP_TIMEOUT_SECS:-15}
 # How long a start that lost the record claim waits for the rival start to resolve.
 CLAIM_POLLS=6
 
 fail() { printf '{"error":"%s"}\n' "$1" >&2; exit 1; }
+
+# The budget is wall clock, never a count of sleeps: a probe that hangs for its own timeout
+# stretches a counted loop far past the seconds DAEMON_STOP_TIMEOUT_SECS names.
+deadline() { echo $(( $(date +%s) + $1 )); }
+expired() { [ "$(date +%s)" -ge "$1" ]; }
+
+# Waits out a pid until a deadline. Answers whether it is gone.
+await_gone() {
+  while kill -0 "$1" 2>/dev/null; do
+    if expired "$2"; then return 1; fi
+    sleep 0.5
+  done
+}
 
 live_pid() {
   pid=$(cat "$PIDFILE" 2>/dev/null) || return 1
@@ -121,12 +134,9 @@ do_start() {
 do_stop() {
   pid=$(live_pid) || { echo '{"status":"already_stopped"}'; return 0; }
   kill -TERM "$pid" 2>/dev/null || true
-  i=0
-  while [ "$i" -lt "$STOP_POLLS" ]; do
-    kill -0 "$pid" 2>/dev/null || { rm -f "$PIDFILE"; echo '{"status":"stopped"}'; return 0; }
-    sleep 0.5; i=$((i + 1))
-  done
-  fail "the tunnel is still running after SIGTERM (pid=$pid)"
+  await_gone "$pid" "$(deadline "$STOP_BUDGET")" || fail "the tunnel is still running ${STOP_BUDGET}s after SIGTERM (pid=$pid)"
+  rm -f "$PIDFILE"
+  echo '{"status":"stopped"}'
 }
 
 # The tunnel registers no port with vestad: bore assigns the public one, and the log it writes

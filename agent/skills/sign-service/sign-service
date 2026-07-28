@@ -11,8 +11,8 @@ PORTFILE="$HOME/agent/data/daemons/sign-service.port"
 LOG="$HOME/agent/logs/sign-service.log"
 SIGNATURE=/tmp/sign-service/signature.png
 USAGE="Usage: sign-service daemon <start|stop|restart|status>"
-READY_POLLS=$(( ${DAEMON_READY_TIMEOUT_SECS:-30} * 2 ))
-STOP_POLLS=$(( ${DAEMON_STOP_TIMEOUT_SECS:-15} * 2 ))
+READY_BUDGET=${DAEMON_READY_TIMEOUT_SECS:-30}
+STOP_BUDGET=${DAEMON_STOP_TIMEOUT_SECS:-15}
 # How long a start that lost the record claim waits for the rival start to resolve.
 CLAIM_POLLS=6
 
@@ -24,6 +24,19 @@ esac
 
 fail() { printf '{"error":"%s"}\n' "$1" >&2; exit 1; }
 
+# The budgets are wall clock, never a count of sleeps: a probe that hangs for its own timeout
+# stretches a counted loop far past the seconds DAEMON_*_TIMEOUT_SECS names.
+deadline() { echo $(( $(date +%s) + $1 )); }
+expired() { [ "$(date +%s)" -ge "$1" ]; }
+
+# Waits out a pid until a deadline. Answers whether it is gone.
+await_gone() {
+  while kill -0 "$1" 2>/dev/null; do
+    if expired "$2"; then return 1; fi
+    sleep 0.5
+  done
+}
+
 # A start that gives up drops the records it claimed: a daemon nothing can reach, with records
 # that say it is up, reads as running and turns every later start into a no-op.
 give_up() { rm -f "$PIDFILE" "$PORTFILE"; fail "$1"; }
@@ -31,11 +44,9 @@ give_up() { rm -f "$PIDFILE" "$PORTFILE"; fail "$1"; }
 # A start that gives up ends its child first: a daemon nothing can reach outlives the records.
 abandon() {
   kill -TERM "$1" 2>/dev/null || true
-  i=0
-  while kill -0 "$1" 2>/dev/null && [ "$i" -lt "$STOP_POLLS" ]; do
-    sleep 0.5; i=$((i + 1))
-  done
-  if kill -0 "$1" 2>/dev/null; then kill -KILL "$1" 2>/dev/null || true; fi
+  if ! await_gone "$1" "$(deadline "$STOP_BUDGET")"; then
+    kill -KILL "$1" 2>/dev/null || true
+  fi
   give_up "$2"
 }
 
@@ -78,13 +89,13 @@ do_start() {
   setsid "$python" "$HOME/agent/skills/sign-service/sign_server.py" "$PORT" "$SIGNATURE" >> "$LOG" 2>&1 &
   pid=$!
   echo "$pid" > "$PIDFILE"
-  i=0
-  while [ "$i" -lt "$READY_POLLS" ]; do
+  ready_by=$(deadline "$READY_BUDGET")
+  until expired "$ready_by"; do
     kill -0 "$pid" 2>/dev/null || abandon "$pid" "sign-service exited during startup; see $LOG"
     if curl -m 2 -fsS -o /dev/null "http://localhost:$PORT" 2>/dev/null; then
       echo '{"status":"started"}'; return 0
     fi
-    sleep 0.5; i=$((i + 1))
+    sleep 0.5
   done
   abandon "$pid" "sign-service never answered on port $PORT; see $LOG"
 }
@@ -92,12 +103,9 @@ do_start() {
 do_stop() {
   pid=$(live_pid) || { echo '{"status":"already_stopped"}'; return 0; }
   kill -TERM "$pid" 2>/dev/null || true
-  i=0
-  while [ "$i" -lt "$STOP_POLLS" ]; do
-    kill -0 "$pid" 2>/dev/null || { rm -f "$PIDFILE" "$PORTFILE"; echo '{"status":"stopped"}'; return 0; }
-    sleep 0.5; i=$((i + 1))
-  done
-  fail "sign-service still running after SIGTERM (pid=$pid)"
+  await_gone "$pid" "$(deadline "$STOP_BUDGET")" || fail "sign-service still running ${STOP_BUDGET}s after SIGTERM (pid=$pid)"
+  rm -f "$PIDFILE" "$PORTFILE"
+  echo '{"status":"stopped"}'
 }
 
 # Reads the port start recorded, never registration: status stays a local read that
