@@ -30,9 +30,12 @@ DEATH_POLL_SECS = 0.2
 UNREADY_TIMEOUT_SECS = "2"
 PID_CAPTURE_POLL_SECS = 0.02
 
+# Every registration hands out a port that is free right now, as vestad does. A constant one
+# reused across a test's starts races the kernel: the port a stopped daemon just released can be
+# taken by anything before the next start binds it.
 FAKE_REGISTER_SERVICE = """#!/bin/sh
 echo "$*" >> "$HOME/register-args"
-cat "$HOME/fake-port"
+exec python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()'
 """
 
 # Sends every readiness probe, flags and all, to a listener that accepts and then says nothing.
@@ -281,7 +284,6 @@ def daemon(request, tmp_path):
     reg = bin_dir / "register-service"
     reg.write_text(FAKE_REGISTER_SERVICE)
     reg.chmod(0o755)
-    (home / "fake-port").write_text(str(_free_port()))
     if spec.rig:
         spec.rig(home, bin_dir)
     # A skill CLI runs in its own project environment. Whichever venv is running this suite
@@ -304,6 +306,14 @@ def _verb(spec, env, *args):
     return subprocess.run([*spec.command, "daemon", *args], env=env, capture_output=True, text=True, check=False, timeout=60)
 
 
+def _json(result: subprocess.CompletedProcess[str]):
+    """The verb's answer, or the whole run as the evidence when it did not answer in JSON."""
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError:
+        raise AssertionError(f"no JSON answer on stdout: stdout={result.stdout!r} stderr={result.stderr!r}") from None
+
+
 def _pid(spec, home) -> int | None:
     pidfile = home / "agent/data/daemons" / f"{spec.name}.pid"
     try:
@@ -323,11 +333,11 @@ def test_start_is_idempotent_and_never_stacks(daemon):
     spec, home, env = daemon
     first = _verb(spec, env, "start")
     assert first.returncode == 0, first.stdout + first.stderr
-    assert json.loads(first.stdout) == {"status": "started"}
+    assert _json(first) == {"status": "started"}
     pid = _pid(spec, home)
     assert pid is not None
     second = _verb(spec, env, "start")
-    assert json.loads(second.stdout) == {"status": "already_running"}
+    assert _json(second) == {"status": "already_running"}
     assert _pid(spec, home) == pid
 
 
@@ -385,41 +395,41 @@ def test_a_start_that_never_gets_an_answer_leaves_nothing_behind(daemon):
 def test_stop_kills_the_process_and_status_tells_the_truth(daemon):
     spec, home, env = daemon
     _verb(spec, env, "start")
-    running = json.loads(_verb(spec, env, "status").stdout)
+    running = _json(_verb(spec, env, "status"))
     assert running["running"] is True
     pid = _pid(spec, home)
     assert pid is not None
     stopped = _verb(spec, env, "stop")
-    assert json.loads(stopped.stdout) == {"status": "stopped"}
+    assert _json(stopped) == {"status": "stopped"}
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
-    assert json.loads(_verb(spec, env, "status").stdout)["running"] is False
-    assert json.loads(_verb(spec, env, "stop").stdout) == {"status": "already_stopped"}
+    assert _json(_verb(spec, env, "status"))["running"] is False
+    assert _json(_verb(spec, env, "stop")) == {"status": "already_stopped"}
 
 
 def test_restart_replaces_a_running_daemon_and_starts_a_stopped_one(daemon):
     """The verb a restart file calls, so it has to land on a live daemon either way."""
     spec, home, env = daemon
-    assert json.loads(_verb(spec, env, "start").stdout) == {"status": "started"}
+    assert _json(_verb(spec, env, "start")) == {"status": "started"}
     before = _pid(spec, home)
     assert before is not None
     restarted = _verb(spec, env, "restart")
-    assert json.loads(restarted.stdout) == {"status": "started"}, restarted.stdout + restarted.stderr
+    assert _json(restarted) == {"status": "started"}, restarted.stdout + restarted.stderr
     after = _pid(spec, home)
     assert after is not None
     assert after != before
     with pytest.raises(ProcessLookupError):
         os.kill(before, 0)
-    status = json.loads(_verb(spec, env, "status").stdout)
+    status = _json(_verb(spec, env, "status"))
     assert status["running"] is True
     if spec.serves_port:
         assert str(status["port"]) == (home / "agent/data/daemons" / f"{spec.name}.port").read_text().strip()
 
-    assert json.loads(_verb(spec, env, "stop").stdout) == {"status": "stopped"}
+    assert _json(_verb(spec, env, "stop")) == {"status": "stopped"}
     from_stopped = _verb(spec, env, "restart")
-    assert json.loads(from_stopped.stdout) == {"status": "started"}, from_stopped.stdout + from_stopped.stderr
+    assert _json(from_stopped) == {"status": "started"}, from_stopped.stdout + from_stopped.stderr
     assert _pid(spec, home) is not None
-    assert json.loads(_verb(spec, env, "status").stdout)["running"] is True
+    assert _json(_verb(spec, env, "status"))["running"] is True
     _verb(spec, env, "stop")
 
 
@@ -427,8 +437,8 @@ def test_deliberate_stop_is_not_reported_as_a_crash(daemon):
     spec, home, env = daemon
     if not spec.emits_daemon_died:
         pytest.skip("does not self-report death")
-    assert json.loads(_verb(spec, env, "start").stdout) == {"status": "started"}
-    assert json.loads(_verb(spec, env, "stop").stdout) == {"status": "stopped"}
+    assert _json(_verb(spec, env, "start")) == {"status": "started"}
+    assert _json(_verb(spec, env, "stop")) == {"status": "stopped"}
     assert _death_notices(home) == []
 
 
@@ -438,7 +448,7 @@ def test_a_death_nobody_asked_for_is_reported(daemon):
     spec, home, env = daemon
     if not spec.emits_daemon_died:
         pytest.skip("does not self-report death")
-    assert json.loads(_verb(spec, env, "start").stdout) == {"status": "started"}
+    assert _json(_verb(spec, env, "start")) == {"status": "started"}
     pid = _pid(spec, home)
     assert pid is not None
     os.kill(pid, signal.SIGINT)
@@ -453,10 +463,11 @@ def test_status_reads_the_port_record_and_never_re_registers(daemon):
     spec, home, env = daemon
     if not spec.serves_port:
         pytest.skip("portless")
-    assert json.loads(_verb(spec, env, "start").stdout) == {"status": "started"}
+    assert _json(_verb(spec, env, "start")) == {"status": "started"}
     (pl.Path(env["PATH"].split(":")[0]) / "register-service").unlink()
     result = subprocess.run([*spec.command, "daemon", "status"], env=env, capture_output=True, text=True, check=False, timeout=STATUS_TIMEOUT)
-    assert json.loads(result.stdout) == {"running": True, "port": int((home / "fake-port").read_text())}
+    recorded = (home / "agent/data/daemons" / f"{spec.name}.port").read_text().strip()
+    assert _json(result) == {"running": True, "port": int(recorded)}
     _verb(spec, env, "stop")
 
 
@@ -481,9 +492,9 @@ def test_a_legacy_script_path_still_starts_the_daemon(daemon):
         pytest.skip("no legacy launch path")
     result = subprocess.run([*spec.legacy_command, "start"], env=env, capture_output=True, text=True, check=False, timeout=60)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert json.loads(result.stdout) == {"status": "started"}
+    assert _json(result) == {"status": "started"}
     assert _pid(spec, home) is not None
-    assert json.loads(_verb(spec, env, "status").stdout)["running"] is True
+    assert _json(_verb(spec, env, "status"))["running"] is True
     _verb(spec, env, "stop")
 
 

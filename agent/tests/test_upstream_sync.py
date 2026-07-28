@@ -712,6 +712,15 @@ def test_agent_startup_keeps_a_skill_script_with_an_extension_off_path(tmp_path)
     assert not _bin(home, "telegram-watchdog.sh").exists()
 
 
+def test_agent_startup_keeps_a_skill_file_that_cannot_be_run_off_path(tmp_path):
+    """A command is what the skill marked runnable, so a plain file is data whatever its name."""
+    home = _bin_box(tmp_path)
+    data = _suffixed_launcher(home, "ssh", "ssh-hosts")
+    data.chmod(0o644)
+    assert _run_agent_startup(home).returncode == 0
+    assert not _bin(home, "ssh-hosts").exists()
+
+
 def test_agent_startup_links_a_launcher_of_an_inactive_skill(tmp_path):
     """The checkout keeps every skill on disk, so a command resolves whether or not the skill
     is active, exactly as an installed CLI does."""
