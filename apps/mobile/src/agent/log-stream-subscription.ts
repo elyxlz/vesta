@@ -1,7 +1,11 @@
 import type { SseHandle, StreamEvent } from "@vesta/core";
 
 export interface LogStream {
-  open: (reconnect: boolean, onEvent: (event: StreamEvent) => void) => SseHandle;
+  // Async because the URL carries a token the api client refreshes before each open.
+  open: (
+    reconnect: boolean,
+    onEvent: (event: StreamEvent) => void,
+  ) => Promise<SseHandle>;
   onLine: (text: string) => void;
   onError: (message: string) => void;
   retryDelayMs: number;
@@ -17,8 +21,8 @@ export function subscribeLogs(stream: LogStream): () => void {
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let receivedLine = false;
 
-  const open = (): void => {
-    handle = stream.open(receivedLine, (event) => {
+  const open = async (): Promise<void> => {
+    const opened = await stream.open(receivedLine, (event) => {
       if (cancelled) return;
       if (event.kind === "line") {
         receivedLine = true;
@@ -27,12 +31,15 @@ export function subscribeLogs(stream: LogStream): () => void {
         stream.onError(event.message);
         handle?.cancel();
         handle = null;
-        retryTimer = setTimeout(open, stream.retryDelayMs);
+        retryTimer = setTimeout(() => void open(), stream.retryDelayMs);
       }
     });
+    // Teardown can land while the URL is being built; drop the stream we just opened.
+    if (cancelled) opened.cancel();
+    else handle = opened;
   };
 
-  open();
+  void open();
   return () => {
     cancelled = true;
     handle?.cancel();

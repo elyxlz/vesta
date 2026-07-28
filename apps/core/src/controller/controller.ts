@@ -20,7 +20,7 @@ export interface Controller {
   subscribeDeltas: (listener: (delta: Delta) => void) => () => void
   getSyncState: () => SyncState
   subscribeSyncState: (listener: () => void) => () => void
-  reportPresence: (focused: boolean, activeAgent: string | null) => void
+  reportPresence: (focused: boolean) => void
   getAnyFocused: () => boolean
   subscribeAnyFocused: (listener: () => void) => () => void
   close: () => void
@@ -84,8 +84,8 @@ export function createController(deps: ControllerDeps): Controller {
         stateListeners.delete(listener)
       }
     },
-    reportPresence: (focused, activeAgent) => {
-      socket.reportPresence(focused, activeAgent)
+    reportPresence: (focused) => {
+      socket.reportPresence(focused)
     },
     getAnyFocused: () => anyFocused,
     subscribeAnyFocused: (listener) => {

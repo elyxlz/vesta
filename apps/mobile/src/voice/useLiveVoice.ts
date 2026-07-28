@@ -179,11 +179,11 @@ export function useLiveVoice({
       await prepareAudioMode();
       if (!isCurrent()) return;
 
-      const socket = new WebSocket(
-        api.websocketUrl(
-          `/agents/${encodeURIComponent(name)}/voice/stt/listen`,
-        ),
+      const listenUrl = await api.websocketUrl(
+        `/agents/${encodeURIComponent(name)}/voice/stt/listen`,
       );
+      if (!isCurrent()) return;
+      const socket = new WebSocket(listenUrl);
       socket.binaryType = "arraybuffer";
       socketRef.current = socket;
 
@@ -305,13 +305,13 @@ export function useSpeechPlayer(name: string, latestText: string | null) {
   useEffect(() => {
     if (!enabled || !latestText) return;
     let active = true;
-    void prepareSpeech(api, name, latestText).then((identifier) => {
+    void prepareSpeech(api, name, latestText).then(async (identifier) => {
       if (!active) return;
-      player.replace(
-        api.mediaUrl(
-          `/agents/${encodeURIComponent(name)}/voice/tts/stream/${encodeURIComponent(identifier)}`,
-        ),
+      const streamUrl = await api.mediaUrl(
+        `/agents/${encodeURIComponent(name)}/voice/tts/stream/${encodeURIComponent(identifier)}`,
       );
+      if (!active) return;
+      player.replace(streamUrl);
       player.play();
     });
     return () => {
@@ -323,11 +323,10 @@ export function useSpeechPlayer(name: string, latestText: string | null) {
     async (text: string): Promise<void> => {
       if (!enabled || !text.trim()) return;
       const identifier = await prepareSpeech(api, name, text);
-      player.replace(
-        api.mediaUrl(
-          `/agents/${encodeURIComponent(name)}/voice/tts/stream/${encodeURIComponent(identifier)}`,
-        ),
+      const streamUrl = await api.mediaUrl(
+        `/agents/${encodeURIComponent(name)}/voice/tts/stream/${encodeURIComponent(identifier)}`,
       );
+      player.replace(streamUrl);
       player.play();
     },
     [api, enabled, name, player],

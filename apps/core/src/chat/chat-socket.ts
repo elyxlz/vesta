@@ -4,7 +4,10 @@ import type { SocketLike } from "../transport/socket"
 export type ChatSocketState = "connecting" | "open" | "reconnecting" | "closed"
 
 export interface ChatSocketDeps {
-  buildUrl: () => string
+  // Async for the same reason as the sync socket's: the URL carries the access token, so the
+  // builder refreshes an expiring one before each attempt rather than backing off against a
+  // token that expired while the client was away.
+  buildUrl: () => Promise<string>
   createSocket: (url: string) => SocketLike
   setTimer: (fn: () => void, ms: number) => number
   clearTimer: (handle: number) => void
@@ -33,6 +36,9 @@ export function createChatSocket(deps: ChatSocketDeps, callbacks: ChatSocketCall
   let timer: number | null = null
   let delay = base
   let terminal = false
+  // True once close() has retired this socket for good. Read through a call because a connect in
+  // flight has to re-ask after awaiting its URL.
+  const retired = (): boolean => terminal
 
   const detach = (target: SocketLike): void => {
     target.onopen = null
@@ -43,7 +49,7 @@ export function createChatSocket(deps: ChatSocketDeps, callbacks: ChatSocketCall
   const scheduleReconnect = (): void => {
     callbacks.onStateChange("reconnecting")
     timer = deps.setTimer(() => {
-      connect()
+      void connect()
     }, delay)
     delay = Math.min(delay * 2, max)
   }
@@ -58,16 +64,18 @@ export function createChatSocket(deps: ChatSocketDeps, callbacks: ChatSocketCall
     callbacks.onEvent(event)
   }
 
-  function connect(): void {
-    if (terminal) return
+  async function connect(): Promise<void> {
+    if (retired()) return
     callbacks.onStateChange("connecting")
     let url: string
     try {
-      url = deps.buildUrl()
+      url = await deps.buildUrl()
     } catch {
       scheduleReconnect()
       return
     }
+    // close() can land while the builder is refreshing a token.
+    if (retired()) return
     const current = deps.createSocket(url)
     socket = current
     current.onopen = () => {
@@ -85,7 +93,7 @@ export function createChatSocket(deps: ChatSocketDeps, callbacks: ChatSocketCall
     }
   }
 
-  connect()
+  void connect()
 
   return {
     close: () => {

@@ -238,6 +238,37 @@ describe("ControllerProvider", () => {
     }
   });
 
+  it("rotates a restored session's token on mount, without waiting out a poll interval", async () => {
+    mockConn.tokenExpiring = true;
+
+    render(
+      <ControllerProvider>
+        <div>app body</div>
+      </ControllerProvider>,
+    );
+
+    await waitFor(() => {
+      expect(FakeWebSocket.instances).toHaveLength(1);
+    });
+    const socket = FakeWebSocket.instances[0];
+    if (!socket) throw new Error("socket not constructed");
+    // The mount refresh lands while the handshake is still in flight, so the frame rides the open.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    act(() => {
+      socket.onopen?.();
+    });
+
+    await waitFor(() => {
+      expect(
+        socket.sent.some(
+          (frame) => (JSON.parse(frame) as { type: string }).type === "reauth",
+        ),
+      ).toBe(true);
+    });
+  });
+
   it("closes the controller socket on unmount", async () => {
     const { unmount } = render(
       <ControllerProvider>

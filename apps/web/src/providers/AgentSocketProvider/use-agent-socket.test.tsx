@@ -18,6 +18,10 @@ vi.mock("@/api/agents", () => ({ fetchHistory: vi.fn() }));
 vi.mock("@/lib/connection", () => ({
   getConnection: () => ({ url: "https://vestad.test", accessToken: "tok" }),
 }));
+// The chat URL builder refreshes an expiring token before every connect.
+vi.mock("@/lib/token-refresh", () => ({
+  ensureFreshToken: () => Promise.resolve("ok"),
+}));
 
 // A controllable chat socket: createChatSocket sets its handlers, and each test drives them. The
 // factory records every instance so a test can open it, feed a frame, or assert its URL.
@@ -117,6 +121,11 @@ function render(controller: Controller) {
 // Open the newest chat socket (the reseed trigger) and flush the async history seed so the hook
 // settles.
 async function openAndFlush() {
+  // The URL builder is async, so the socket lands a microtask after the hook renders.
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
   await act(async () => {
     chatSockets.at(-1)?.onopen?.();
     await Promise.resolve();
@@ -164,12 +173,11 @@ describe("useAgentSocketState", () => {
     const { controller } = makeController();
 
     const { result } = render(controller);
+    await openAndFlush();
     expect(chatSockets).toHaveLength(1);
     expect(chatSockets[0]?.url).toBe(
       "wss://vestad.test/agents/ada/app-chat/ws?token=tok",
     );
-
-    await openAndFlush();
 
     expect(fetchHistoryMock).toHaveBeenCalledWith(AGENT, "app-chat");
     expect(result.current.historyLoaded).toBe(true);

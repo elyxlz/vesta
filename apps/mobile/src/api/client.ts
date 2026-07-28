@@ -28,8 +28,8 @@ export interface ApiClient {
     init?: RequestInit,
   ) => Promise<ResponseBody>;
   jsonInit: (method: string, body: unknown) => RequestInit;
-  websocketUrl: (path: string, query?: URLSearchParams) => string;
-  mediaUrl: (path: string, query?: URLSearchParams) => string;
+  websocketUrl: (path: string, query?: URLSearchParams) => Promise<string>;
+  mediaUrl: (path: string, query?: URLSearchParams) => Promise<string>;
   getConnection: () => ConnectionConfig | null;
   forceRefresh: () => Promise<boolean>;
 }
@@ -139,11 +139,15 @@ export function createApiClient(options: ClientOptions): ApiClient {
     init?: RequestInit,
   ): Promise<ResponseBody> => http.json<ResponseBody>(path, init);
 
-  const withToken = (
+  // The one place a token is stamped into a URL: socket handshakes and media-element requests
+  // cannot carry an Authorization header. Refreshing here is what makes it impossible for a call
+  // site to dial with a token that expired while the client was away.
+  const withToken = async (
     path: string,
     query: URLSearchParams,
     protocol: "http" | "ws",
-  ): string => {
+  ): Promise<string> => {
+    await refresh(false);
     const connection = options.getConnection();
     if (!connection) throw new Error("Not connected to a Vesta gateway.");
     query.set("token", connection.accessToken);

@@ -42,11 +42,16 @@ interface Harness {
   controller: ReturnType<typeof createController>
 }
 
-function harness(): Harness {
+// The URL builder is async, so the socket is created a microtask after createController returns.
+async function flush(): Promise<void> {
+  for (let i = 0; i < 5; i++) await Promise.resolve()
+}
+
+async function harness(): Promise<Harness> {
   const sockets: FakeSocket[] = []
   const controller = createController({
     sync: {
-      buildUrl: () => "wss://vestad.test/sync",
+      buildUrl: () => Promise.resolve("wss://vestad.test/sync"),
       createSocket: () => {
         const socket = new FakeSocket()
         sockets.push(socket)
@@ -62,6 +67,7 @@ function harness(): Harness {
       refresh: () => Promise.resolve(false),
     },
   })
+  await flush()
   return { sockets, controller }
 }
 
@@ -70,8 +76,8 @@ function hello(version: string, minSupported: string): string {
 }
 
 describe("createController", () => {
-  it("populates the replica from a hello then a snapshot", () => {
-    const h = harness()
+  it("populates the replica from a hello then a snapshot", async () => {
+    const h = await harness()
     const socket = h.sockets[0]
     socket?.onopen?.()
     socket?.onmessage?.(hello("0.2.0", "0.0.0"))
@@ -80,8 +86,8 @@ describe("createController", () => {
     expect(h.controller.replica.getState()?.gateway.port).toBe(4111)
   })
 
-  it("reduces a delta into the replica", () => {
-    const h = harness()
+  it("reduces a delta into the replica", async () => {
+    const h = await harness()
     const socket = h.sockets[0]
     socket?.onopen?.()
     socket?.onmessage?.(JSON.stringify({ type: "snapshot", tree: baseTree() }))
@@ -91,8 +97,8 @@ describe("createController", () => {
     expect(h.controller.replica.getState()?.gateway.updateAvailable).toBe(true)
   })
 
-  it("exposes connection state through getSyncState and subscribeSyncState", () => {
-    const h = harness()
+  it("exposes connection state through getSyncState and subscribeSyncState", async () => {
+    const h = await harness()
     const listener = vi.fn()
     h.controller.subscribeSyncState(listener)
     expect(h.controller.getSyncState()).toBe("connecting")
@@ -101,8 +107,8 @@ describe("createController", () => {
     expect(listener).toHaveBeenCalled()
   })
 
-  it("stops notifying sync-state listeners after unsubscribe", () => {
-    const h = harness()
+  it("stops notifying sync-state listeners after unsubscribe", async () => {
+    const h = await harness()
     const listener = vi.fn()
     const off = h.controller.subscribeSyncState(listener)
     off()
@@ -110,8 +116,8 @@ describe("createController", () => {
     expect(listener).not.toHaveBeenCalled()
   })
 
-  it("fans out every delta to subscribeDeltas, including the user_notification the reducer ignores", () => {
-    const h = harness()
+  it("fans out every delta to subscribeDeltas, including the user_notification the reducer ignores", async () => {
+    const h = await harness()
     const seen: Delta[] = []
     h.controller.subscribeDeltas((delta) => seen.push(delta))
     const socket = h.sockets[0]
@@ -130,8 +136,8 @@ describe("createController", () => {
     expect(h.controller.replica.getState()?.agents.scout).toBeUndefined()
   })
 
-  it("stops fanning out deltas after unsubscribe", () => {
-    const h = harness()
+  it("stops fanning out deltas after unsubscribe", async () => {
+    const h = await harness()
     const seen: Delta[] = []
     const off = h.controller.subscribeDeltas((delta) => seen.push(delta))
     off()
@@ -149,8 +155,8 @@ describe("createController", () => {
     expect(seen).toEqual([])
   })
 
-  it("tracks anyFocused from presence deltas", () => {
-    const h = harness()
+  it("tracks anyFocused from presence deltas", async () => {
+    const h = await harness()
     const listener = vi.fn()
     h.controller.subscribeAnyFocused(listener)
     expect(h.controller.getAnyFocused()).toBe(false)
@@ -161,8 +167,8 @@ describe("createController", () => {
     expect(listener).toHaveBeenCalled()
   })
 
-  it("closes the socket and reports the closed state", () => {
-    const h = harness()
+  it("closes the socket and reports the closed state", async () => {
+    const h = await harness()
     h.sockets[0]?.onopen?.()
     h.controller.close()
     expect(h.sockets[0]?.closed).toBe(true)

@@ -1,4 +1,4 @@
-import { getConnection } from "@/lib/connection";
+import { mediaUrl } from "@/lib/authed-url";
 import type { ReleaseChannel, SseHandle } from "@vesta/core";
 import type { LogEvent } from "@/lib/types";
 import { apiJson } from "./client";
@@ -10,22 +10,23 @@ export function streamGatewayLogs(
   follow: boolean,
   onEvent: (event: LogEvent) => void,
 ): Promise<void> {
+  const params = new URLSearchParams();
+  if (follow) params.set("follow", "true");
   return new Promise((resolve, reject) => {
-    const conn = getConnection();
-    if (!conn) {
-      reject(new Error("not connected"));
-      return;
-    }
-
-    const params = new URLSearchParams({ token: conn.accessToken });
-    if (follow) params.set("follow", "true");
-    const url = `${conn.url}/gateway/logs?${params.toString()}`;
-
-    gatewayLogSource?.cancel();
-    gatewayLogSource = openLogStream(url, "gateway_stopped", onEvent, () => {
-      gatewayLogSource = null;
-      resolve();
-    });
+    mediaUrl("/gateway/logs", params)
+      .then((url) => {
+        gatewayLogSource?.cancel();
+        gatewayLogSource = openLogStream(
+          url,
+          "gateway_stopped",
+          onEvent,
+          () => {
+            gatewayLogSource = null;
+            resolve();
+          },
+        );
+      })
+      .catch(reject);
   });
 }
 
