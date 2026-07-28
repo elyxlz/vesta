@@ -58,7 +58,7 @@ Each run can build a worktree of several hundred megabytes, so the ceiling is di
 
 Those worktrees are cleaned up as their work concludes, at most once every `PR_MONITOR_PRUNE_WORKTREES` seconds. A worktree goes only when losing it cannot lose work: its branch belongs to a closed or merged PR, or its commits are already on master by content, which is how a squash merge is recognised despite the rewritten hashes. Anything holding uncommitted changes is left alone, as is anything whose commits exist nowhere else, and a failed PR listing prunes nothing rather than reading an empty answer as "everything is closed".
 
-A run is also capped at `PR_MONITOR_TIMEOUT` and stopped past it. A run whose connection dies waits on a socket that never speaks again, consuming no CPU and looking alive from outside, and without the cap it holds its slot for as long as the process lives.
+A run is also capped at `PR_MONITOR_TIMEOUT` and stopped past it. The cap is there to end a run that has stopped progressing, not a slow one, so it sits well above how long real work takes: a polish pass dispatches a blocking subagent and can run past half an hour. Cutting a run short after it has already pushed leaves a commit on the branch with nothing explaining it, and the retry repeats the work. A run whose connection dies waits on a socket that never speaks again, consuming no CPU and looking alive from outside, and without the cap it holds its slot for as long as the process lives.
 
 Each repo is polled by its own loop, on its own clock, and the interval counts from the start of a pass rather than its end. A repo with a long backlog therefore delays only itself, and the time a pass takes is never added to the gap before the next one. That matters for more than latency: two events noticed a cycle apart are handled a cycle apart no matter how many runs may go at once, so how fast events are noticed is what decides whether concurrency is ever reached.
 
@@ -157,7 +157,7 @@ Two consequences worth knowing:
 | `PR_MONITOR_INTERVAL` | `45` | Seconds between the starts of one repo's polls |
 | `PR_MONITOR_STATE` | `$XDG_STATE_HOME/pr-monitor` | Review-summary ledger and per-PR session ids |
 | `PR_MONITOR_MODEL` | `claude-opus-5` | Model `dispatch.sh` runs each event on |
-| `PR_MONITOR_TIMEOUT` | `1800` | Seconds a single run may take before it is stopped |
+| `PR_MONITOR_TIMEOUT` | `7200` | Seconds before a run is treated as abandoned and stopped |
 | `PR_MONITOR_PARALLEL` | `3` | Runs allowed at once, across different PRs |
 | `PR_MONITOR_PRUNE_WORKTREES` | `3600` | Seconds between sweeps for finished agent worktrees |
 | `PR_MONITOR_WINDOW` | `7 days ago` | How far back the repo-wide comment listings reach |

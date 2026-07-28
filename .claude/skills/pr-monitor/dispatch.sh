@@ -18,7 +18,7 @@ set -uo pipefail
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MONITOR="$SKILL_DIR/monitor.sh"
 MODEL="${PR_MONITOR_MODEL:-claude-opus-5}"
-RUN_TIMEOUT="${PR_MONITOR_TIMEOUT:-1800}"
+RUN_TIMEOUT="${PR_MONITOR_TIMEOUT:-7200}"
 PARALLEL="${PR_MONITOR_PARALLEL:-3}"
 PRUNE_WORKTREES_EVERY="${PR_MONITOR_PRUNE_WORKTREES:-3600}"
 STATE_ROOT="${PR_MONITOR_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/pr-monitor}"
@@ -200,9 +200,12 @@ handle() {
   before=$(gh api "/repos/$repo/issues/$pr/comments" -q 'length' 2>/dev/null)
   local args=(-p --model "$MODEL" --output-format json --dangerously-skip-permissions)
   [ -s "$sf" ] && args+=(--resume "$(cat "$sf")")
-  # Events are handled one at a time, so a run that hangs holds every later event
-  # behind it for as long as it lives, and a lost connection leaves one waiting on
-  # a socket that never speaks again. The cap turns that into an ordinary failure.
+  # The cap exists to end a run that has stopped making progress, not a slow one:
+  # a lost connection leaves a run waiting on a socket that never speaks again,
+  # consuming no CPU and looking alive. It must sit well above how long real work
+  # takes, because a run killed after it has pushed leaves the commit with nothing
+  # explaining it, and the retry repeats the work. A polish pass dispatches a
+  # blocking subagent and runs past half an hour; an abandoned run sat for twelve.
   out=$(timeout "$RUN_TIMEOUT" claude "${args[@]}" "$prompt" 2>/dev/null)
   rc=$?
   # A stored id that no longer resolves would fail every retry, so forget it.
