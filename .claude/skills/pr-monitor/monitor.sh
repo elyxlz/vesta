@@ -122,10 +122,26 @@ emit_open_prs() {
   done
 }
 
-while true; do
-  for repo in "${repos[@]}"; do
+# One poller per repo, so a slow repo never delays another, and the interval is
+# measured from the start of a pass rather than its end, so the time a pass
+# takes is not added to the gap before the next one. Both matter because how
+# soon an event is noticed is what decides whether two of them can ever be in
+# flight together: discovery a cycle apart is handled a cycle apart, however
+# many runs the consumer is willing to start at once.
+# Each line is written whole and stays under the pipe's atomic write size, so
+# pollers writing at the same time cannot interleave a line.
+poll_repo() {
+  local repo="$1" started elapsed
+  while true; do
+    started=$(date +%s)
     emit_comments "$repo"
     emit_open_prs "$repo"
+    elapsed=$(( $(date +%s) - started ))
+    [ "$elapsed" -lt "$INTERVAL" ] && sleep "$(( INTERVAL - elapsed ))"
   done
-  sleep "$INTERVAL"
+}
+
+for repo in "${repos[@]}"; do
+  poll_repo "$repo" &
 done
+wait
