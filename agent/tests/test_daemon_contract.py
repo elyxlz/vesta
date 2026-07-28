@@ -106,6 +106,18 @@ def _rig_whatsapp(home: pl.Path, bin_dir: pl.Path) -> None:
         (home / cache).symlink_to(real_home / cache)
 
 
+def _rig_telegram(home: pl.Path, bin_dir: pl.Path) -> None:
+    """The launcher compiles the CLI on every invocation, so this row needs the toolchain that
+    builds it, not a warm binary (the Go suite covers the same contract wherever it is missing).
+    The caches are the developer's own: a hermetic HOME would recompile the whole CLI per test."""
+    real_home = pl.Path(os.environ["HOME"])
+    if not (shutil.which("go") or pl.Path("/usr/local/go/bin/go").exists()):
+        pytest.skip("no Go toolchain to build the telegram CLI")
+    for cache in (".cache", "go"):
+        (real_home / cache).mkdir(exist_ok=True)
+        (home / cache).symlink_to(real_home / cache)
+
+
 SKILLS = [
     Daemon(
         command=[str(SKILLS_DIR / "file-host/file-host")],
@@ -218,6 +230,19 @@ SKILLS = [
         # answering with its envelope instead of being killed as a hung command.
         env=(("DAEMON_READY_TIMEOUT_SECS", "30"),),
     ),
+    Daemon(
+        command=[str(SKILLS_DIR / "telegram/telegram")],
+        name="telegram",
+        serves_port=False,
+        emits_daemon_died=True,
+        rig=_rig_telegram,
+        # A telegram start compiles the CLI before the daemon it spawns can answer, so the
+        # budget covers a warm rebuild and still leaves a start that fails answering with its
+        # envelope inside the per-verb timeout. The watchdog's own restarting is its business
+        # and not this contract's, so its poll is pushed past the run: one waking up to revive
+        # a daemon a test just killed would outlive the test that owns it.
+        env=(("DAEMON_READY_TIMEOUT_SECS", "45"), ("TG_WATCHDOG_INTERVAL", "3600")),
+    ),
 ]
 
 
@@ -250,10 +275,11 @@ def daemon(request, tmp_path):
     env["PATH"] = f"{bin_dir}:{env['PATH']}"
     env.update(dict(spec.env))
     yield spec, home, env
-    # Always tear down: a leaked daemon poisons later tests.
-    pidfile = home / "agent/data/daemons" / f"{spec.name}.pid"
-    if pidfile.exists():
-        with contextlib.suppress(ProcessLookupError, ValueError):
+    # Always tear down: a leaked daemon poisons later tests. Every record, not just this
+    # skill's, since one may run a second process (telegram's watchdog) that would outlive the
+    # test and restart what this killed. Sorted order puts a "-watchdog" record first.
+    for pidfile in sorted((home / "agent/data/daemons").glob("*.pid")):
+        with contextlib.suppress(FileNotFoundError, ProcessLookupError, ValueError):
             os.kill(int(pidfile.read_text()), signal.SIGKILL)
 
 

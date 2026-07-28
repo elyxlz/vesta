@@ -26,19 +26,21 @@ download nothing.
    ```
    Idempotent (a running daemon is a no-op) and defaults `--notifications-dir` to `~/agent/notifications`. Check with `telegram daemon status`.
 4. Then have them open the bot and send any message (hitting Start counts). Wait for that first inbound notification and confirm back on the new channel before declaring it live: the channel does not exist until you have replied to them on it.
-5. Add to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
+5. Add to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`, matching the guard form
+   already there:
    ```
    running telegram || { telegram daemon start; sleep 1; }
-   running telegram-watchdog || { screen -dmS telegram-watchdog bash ~/agent/skills/telegram/telegram-watchdog.sh; sleep 1; }
    ```
-   The watchdog (`telegram-watchdog.sh`) runs in its own screen session and restarts the daemon
-   if it dies, independent of the agent loop, so the channel self-heals even while the agent is
-   busy or mid-restart. It is rate-limited (backs off after repeated restarts) and drops a
-   notification when it acts. Especially important when Telegram is the primary/only channel.
+   That one line covers the watchdog too: `telegram daemon start` brings up
+   `telegram-watchdog.sh` alongside the daemon, and `telegram daemon stop` ends both. The
+   watchdog restarts the daemon if it dies, independent of the agent loop, so the channel
+   self-heals even while the agent is busy or mid-restart. It is rate-limited (backs off after
+   repeated restarts) and drops a notification when it acts. Especially important when Telegram
+   is the primary/only channel.
 
    **Deploying source changes:** there is no build step. The launcher recompiles `cli/` from
    source on every invocation (Go's build cache keeps an unchanged rebuild well under a second),
    so an edit is picked up by the next invocation. For the daemon (which holds the running
-   process), `telegram daemon restart` bounces it onto the fresh build; the restart quits the
-   watchdog first and brings it back after, so the watchdog can never race you into two daemons
-   (two pollers, Telegram 409 Conflict).
+   process), `telegram daemon restart` bounces it onto the fresh build; the watchdog goes down
+   with the daemon and comes back with it, so it can never race you into two daemons (two
+   pollers, Telegram 409 Conflict).

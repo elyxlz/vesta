@@ -6,15 +6,21 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
+
+// ConnectRetryInterval paces the wait for a bot token (and for Telegram itself) in a daemon
+// that is up but not connected yet.
+const ConnectRetryInterval = 15 * time.Second
 
 func extractFlag(name string) string {
 	f := "--" + name
@@ -83,6 +89,12 @@ func printJSON(v interface{}) {
 		os.Exit(1)
 	}
 	fmt.Println(string(data))
+}
+
+// failJSON ends the command with the one error envelope every command answers failure with.
+func failJSON(format string, args ...any) {
+	printJSON(map[string]string{"error": fmt.Sprintf(format, args...)})
+	os.Exit(1)
 }
 
 func writeDeathNotification(notifDir string, sig string) {
@@ -156,28 +168,34 @@ func runServe() {
 		notifDir = defaultNotificationsDir()
 	}
 
-	var err error
-	if err = os.MkdirAll(dataDir, 0755); err != nil {
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 	writeDaemonInfo(dataDir, os.Args[1:])
-	if err = os.MkdirAll(notifDir, 0755); err != nil {
+	if err := os.MkdirAll(notifDir, 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	tc, err := NewTelegramClient(dataDir, notifDir, extractInstance(), isReadOnly(), extractSkipSenders())
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to initialize Telegram client: %v\n", err)
-		os.Exit(1)
-	}
+	// The handlers come before the socket and the connect loop, so an exit asked for during
+	// startup is the deliberate one rather than a death the agent has to investigate.
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 
+	var client atomic.Pointer[TelegramClient]
 	sockPath := filepath.Join(dataDir, "telegram.sock")
-	listener, err := startSocketServer(sockPath, tc)
+	listener, err := startSocketServer(sockPath, &client)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to start socket server: %v\n", err)
 	}
+
+	tc, sig := connectClient(dataDir, notifDir, signals)
+	if tc == nil {
+		finishServe(sig, notifDir, listener, sockPath, nil)
+		return
+	}
+	client.Store(tc)
 
 	instance := extractInstance()
 	if instance != "" {
@@ -197,22 +215,39 @@ func runServe() {
 	// Start polling in background
 	go tc.StartPolling()
 
-	// SIGHUP is how `screen -X quit` (daemon stop/restart) kills the daemon,
-	// so it must reach the graceful shutdown path, matching whatsapp's serve.
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
-	sig := <-sigChan
+	finishServe(<-signals, notifDir, listener, sockPath, tc)
+}
 
+// connectClient brings the Telegram client up, retrying until it does: a daemon started before
+// the bot token is saved, or while Telegram is unreachable, idles and says so on its socket
+// instead of exiting and leaving the agent with a channel that is quietly gone. Returns a nil
+// client when a signal ends the wait instead.
+func connectClient(dataDir, notifDir string, signals <-chan os.Signal) (*TelegramClient, os.Signal) {
+	for {
+		tc, err := NewTelegramClient(dataDir, notifDir, extractInstance(), isReadOnly(), extractSkipSenders())
+		if err == nil {
+			return tc, nil
+		}
+		fmt.Fprintf(os.Stderr, "Not serving yet: %v\n", err)
+		select {
+		case sig := <-signals:
+			return nil, sig
+		case <-time.After(ConnectRetryInterval):
+		}
+	}
+}
+
+func finishServe(sig os.Signal, notifDir string, listener net.Listener, sockPath string, tc *TelegramClient) {
 	fmt.Fprintf(os.Stderr, "Shutting down (signal: %v)...\n", sig)
-	if _, statErr := os.Stat(stopRequestedPath(dataDir)); statErr == nil {
-		os.Remove(stopRequestedPath(dataDir))
-	} else {
+	if deathIsNews(sig) {
 		writeDeathNotification(notifDir, sig.String())
 	}
 	if listener != nil {
 		stopSocketServer(listener, sockPath)
 	}
-	tc.Stop()
+	if tc != nil {
+		tc.Stop()
+	}
 }
 
 func stripGlobalFlags(args []string) []string {
