@@ -45,37 +45,57 @@ function capTail(messages: ChatMessage[]): ChatMessage[] {
   return messages.length > PACING.maxMessages ? messages.slice(-PACING.maxMessages) : messages
 }
 
-// Merge the newest history page and MERGE, never replace: a live row that raced the fetch (id absent
-// from the page) and an optimistic bubble still awaiting its echo both survive, so no delivered or
-// in-flight message is dropped. An optimistic bubble whose intent already appears as a persisted user
-// echo ON the page is instead dropped and its intent cleared: that echo IS the confirmation, so it
-// must not survive as a duplicate "sending" twin (mobile background/foreground, web resync-mid-send).
+// Merge the newest history page, never replace: a live row that raced the fetch and an optimistic
+// bubble still awaiting its echo both survive, so no delivered or in-flight message is dropped. A
+// bubble whose intent already appears as a persisted echo ON the page folds into it, since that echo
+// IS the confirmation and must not survive as a duplicate "sending" twin (mobile background, web
+// resync-mid-send). Ids are handed out in order, so every retained row is either older than the whole
+// page or newer than every row on it: older rows, then the page, then live races and bubbles. The
+// loaded older-page cursor is kept, so a resync does not refetch and prepend history already held.
 // shownIds is unioned with the page ids. Serves the initial load and a resync alike.
 export function seedTail(state: ChatState, page: HistoryPage): ChatState {
   const pageIds = new Set<number>()
   const echoedIntents = new Set<string>()
+  let oldestPageId: number | null = null
   for (const event of page.events) {
-    if (event.id != null) pageIds.add(event.id)
+    if (event.id != null) {
+      pageIds.add(event.id)
+      if (oldestPageId == null || event.id < oldestPageId) oldestPageId = event.id
+    }
     if (event.type === "user" && event.intent_id != null) echoedIntents.add(event.intent_id)
   }
-  const survivors = state.messages.filter(
-    (message) =>
-      (message.type === "user" &&
-        message.intent_id != null &&
-        state.pendingIntents.has(message.intent_id) &&
-        !echoedIntents.has(message.intent_id)) ||
-      (message.id != null && !pageIds.has(message.id)),
-  )
+  const older: ChatMessage[] = []
+  const newer: ChatMessage[] = []
+  let overlaps = false
+  for (const message of state.messages) {
+    const intentId = message.type === "user" ? message.intent_id : undefined
+    const pending = intentId != null && state.pendingIntents.has(intentId)
+    if (pending && echoedIntents.has(intentId)) continue
+    if (message.id == null) {
+      if (pending) newer.push(message)
+      continue
+    }
+    if (pageIds.has(message.id)) {
+      overlaps = true
+      continue
+    }
+    if (oldestPageId != null && message.id < oldestPageId) older.push(message)
+    else newer.push(message)
+  }
+
+  // Older rows the page does not reach sit above a hole no cursor can page into (a disconnect longer
+  // than one page), so they are dropped and paging restarts from the page's own cursor.
+  const joined = older.length === 0 || overlaps
   const pendingIntents = new Set(state.pendingIntents)
   for (const intentId of echoedIntents) pendingIntents.delete(intentId)
   const shownIds = new Set(state.shownIds)
   for (const id of pageIds) shownIds.add(id)
   return {
     ...state,
-    messages: capTail([...page.events, ...survivors]),
+    messages: capTail([...(joined ? older : []), ...page.events, ...newer]),
     shownIds,
     pendingIntents,
-    cursor: page.cursor,
+    cursor: joined && state.historyLoaded ? state.cursor : page.cursor,
     historyLoaded: true,
   }
 }
