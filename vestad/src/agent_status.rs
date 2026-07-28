@@ -275,6 +275,16 @@ impl AgentStatusCache {
         self.presence_notifications_rx.borrow().get(agent).copied().unwrap_or(true)
     }
 
+    /// Every managed agent that should receive the next global user-present event.
+    pub fn presence_notification_agents(&self) -> Vec<String> {
+        self.agents_rx
+            .borrow()
+            .iter()
+            .filter(|entry| self.presence_notifications_enabled(&entry.name))
+            .map(|entry| entry.name.clone())
+            .collect()
+    }
+
     pub fn subscribe_services(
         &self,
     ) -> watch::Receiver<HashMap<String, HashMap<String, ServiceEntry>>> {
@@ -792,6 +802,32 @@ mod tests {
             m.insert("scout".into(), false);
         });
         assert!(!cache.presence_notifications_enabled("scout"));
+    }
+
+    #[test]
+    fn presence_notification_agents_fans_out_to_enabled_agents() {
+        let cache = AgentStatusCache::new();
+        cache.agents_tx.send_modify(|agents| {
+            agents.extend([
+                ListEntry {
+                    name: "scout".into(),
+                    status: docker::AgentStatus::Alive,
+                    ws_port: 1,
+                    started_at: None,
+                },
+                ListEntry {
+                    name: "quiet".into(),
+                    status: docker::AgentStatus::Alive,
+                    ws_port: 2,
+                    started_at: None,
+                },
+            ]);
+        });
+        cache.presence_notifications_tx.send_modify(|preferences| {
+            preferences.insert("quiet".into(), false);
+        });
+
+        assert_eq!(cache.presence_notification_agents(), vec!["scout"]);
     }
 
     use crate::sync::SyncHub;

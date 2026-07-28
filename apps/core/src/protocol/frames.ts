@@ -24,7 +24,6 @@ export interface ReauthFrame {
 export interface ClientContextFrame {
   type: "client_context"
   focused: boolean
-  active_agent: string | null
   resync: boolean
 }
 
@@ -36,10 +35,9 @@ export function reauthFrame(token: string): ReauthFrame {
 
 export function clientContextFrame(
   focused: boolean,
-  activeAgent: string | null,
   resync: boolean,
 ): ClientContextFrame {
-  return { type: "client_context", focused, active_agent: activeAgent, resync }
+  return { type: "client_context", focused, resync }
 }
 
 export function encodeFrame(frame: ClientFrame): string {

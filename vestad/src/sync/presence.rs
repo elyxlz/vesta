@@ -8,24 +8,25 @@ use tokio::time::Instant;
 
 use super::protocol::ClientContext;
 
-/// The user must have been away this long before a return-to-focus re-notifies the active agent, so
+/// The user must have been away this long before a return-to-focus notifies the agent fleet, so
 /// glances and alt-tabs never spam it.
 pub(crate) const PRESENCE_NOTIFY_DEBOUNCE: Duration = Duration::from_mins(10);
 
 pub(crate) type ConnId = u64;
 
 /// An aggregate-presence edge worth acting on. `any_focused` fan-out rides the watch channel, so the
-/// only returned event is the debounced return-to-focus that targets an agent notification.
+/// only returned event is the debounced global return-to-focus.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum PresenceEvent {
-    BecamePresent { agent: String },
+    BecamePresent,
 }
 
 #[derive(Debug)]
 struct PresenceState {
     contexts: HashMap<ConnId, ClientContext>,
-    /// The last instant any client was focused; seeds the debounce gap on the next return-to-focus.
-    last_present_at: Option<Instant>,
+    /// The last instant the user was online. A focused update refreshes it, and the final
+    /// focused-to-unfocused edge records the departure time, so the debounce measures time away.
+    last_online_at: Option<Instant>,
 }
 
 /// Per-connection client presence. The socket lifecycle owns an entry (connect/disconnect), so there
@@ -42,7 +43,7 @@ impl Presence {
     pub(crate) fn new() -> Self {
         let (any_focused_tx, _rx) = watch::channel(false);
         Self {
-            state: Mutex::new(PresenceState { contexts: HashMap::new(), last_present_at: None }),
+            state: Mutex::new(PresenceState { contexts: HashMap::new(), last_online_at: None }),
             next_id: AtomicU64::new(0),
             any_focused_tx,
         }
@@ -55,11 +56,10 @@ impl Presence {
     pub(crate) fn record(&self, id: ConnId, ctx: ClientContext, now: Instant) -> Vec<PresenceEvent> {
         let mut state = self.state.lock().expect("presence mutex");
         let was_present = Self::compute_any_focused(&state.contexts);
-        let active_agent = ctx.active_agent.clone();
         let resync = ctx.resync;
         state.contexts.insert(id, ctx);
         let is_present = Self::compute_any_focused(&state.contexts);
-        self.finish(&mut state, was_present, is_present, active_agent, resync, now)
+        self.finish(&mut state, was_present, is_present, resync, now)
     }
 
     pub(crate) fn disconnect(&self, id: ConnId, now: Instant) {
@@ -67,7 +67,7 @@ impl Presence {
         let was_present = Self::compute_any_focused(&state.contexts);
         state.contexts.remove(&id);
         let is_present = Self::compute_any_focused(&state.contexts);
-        let _ = self.finish(&mut state, was_present, is_present, None, false, now);
+        let _ = self.finish(&mut state, was_present, is_present, false, now);
     }
 
     pub(crate) fn any_focused(&self) -> bool {
@@ -83,13 +83,12 @@ impl Presence {
     }
 
     /// Reconcile a presence change: publish `any_focused` if it flipped, and emit a debounced
-    /// `BecamePresent` when the aggregate rose to focused after a long-enough gap with an active agent.
+    /// `BecamePresent` when the aggregate rose to focused after a long-enough gap.
     fn finish(
         &self,
         state: &mut PresenceState,
         was_present: bool,
         is_present: bool,
-        active_agent: Option<String>,
         resync: bool,
         now: Instant,
     ) -> Vec<PresenceEvent> {
@@ -104,16 +103,14 @@ impl Presence {
         // A resync frame (reconnect replay of cached focus) is not a fresh return, so it never notifies.
         if !was_present && is_present && !resync {
             let long_gap = state
-                .last_present_at
+                .last_online_at
                 .is_none_or(|last| now.duration_since(last) >= PRESENCE_NOTIFY_DEBOUNCE);
             if long_gap {
-                if let Some(agent) = active_agent {
-                    events.push(PresenceEvent::BecamePresent { agent });
-                }
+                events.push(PresenceEvent::BecamePresent);
             }
         }
-        if is_present {
-            state.last_present_at = Some(now);
+        if was_present || is_present {
+            state.last_online_at = Some(now);
         }
         events
     }
@@ -125,8 +122,8 @@ mod tests {
     use std::time::Duration;
     use tokio::time::Instant;
 
-    fn ctx(focused: bool, agent: Option<&str>) -> ClientContext {
-        ClientContext { focused, active_agent: agent.map(str::to_string), resync: false }
+    fn ctx(focused: bool) -> ClientContext {
+        ClientContext { focused, resync: false }
     }
 
     #[test]
@@ -137,7 +134,7 @@ mod tests {
         // but presence still becomes true so suppression works.
         let events = presence.record(
             a,
-            ClientContext { focused: true, active_agent: Some("scout".into()), resync: true },
+            ClientContext { focused: true, resync: true },
             Instant::now(),
         );
         assert!(events.is_empty());
@@ -149,9 +146,9 @@ mod tests {
         let presence = Presence::new();
         let a = presence.connect();
         assert!(!presence.any_focused());
-        presence.record(a, ctx(true, Some("scout")), Instant::now());
+        presence.record(a, ctx(true), Instant::now());
         assert!(presence.any_focused());
-        presence.record(a, ctx(false, Some("scout")), Instant::now());
+        presence.record(a, ctx(false), Instant::now());
         assert!(!presence.any_focused());
     }
 
@@ -159,36 +156,32 @@ mod tests {
     fn disconnect_clears_focus() {
         let presence = Presence::new();
         let a = presence.connect();
-        presence.record(a, ctx(true, None), Instant::now());
+        presence.record(a, ctx(true), Instant::now());
         assert!(presence.any_focused());
         presence.disconnect(a, Instant::now());
         assert!(!presence.any_focused());
     }
 
     #[test]
-    fn became_present_fires_after_debounce_with_active_agent() {
+    fn became_present_fires_after_debounce() {
         let presence = Presence::new();
         let a = presence.connect();
         let t0 = Instant::now();
-        // Cold start: first focus emits BecamePresent for the active agent.
-        let events = presence.record(a, ctx(true, Some("scout")), t0);
-        assert_eq!(events, vec![PresenceEvent::BecamePresent { agent: "scout".into() }]);
+        // Cold start: first genuine app focus emits BecamePresent.
+        let events = presence.record(a, ctx(true), t0);
+        assert_eq!(events, vec![PresenceEvent::BecamePresent]);
         // Blur, then refocus within the debounce window: no event.
-        presence.record(a, ctx(false, Some("scout")), t0 + Duration::from_secs(60));
-        let quick = presence.record(a, ctx(true, Some("scout")), t0 + Duration::from_secs(120));
+        presence.record(a, ctx(false), t0 + Duration::from_secs(60));
+        let quick = presence.record(a, ctx(true), t0 + Duration::from_secs(120));
         assert!(quick.is_empty());
         // Blur, then refocus after the debounce window: fires again.
-        presence.record(a, ctx(false, Some("scout")), t0 + Duration::from_secs(180));
-        let slow = presence.record(a, ctx(true, Some("scout")), t0 + PRESENCE_NOTIFY_DEBOUNCE + Duration::from_secs(200));
-        assert_eq!(slow, vec![PresenceEvent::BecamePresent { agent: "scout".into() }]);
-    }
-
-    #[test]
-    fn became_present_needs_an_active_agent() {
-        let presence = Presence::new();
-        let a = presence.connect();
-        let events = presence.record(a, ctx(true, None), Instant::now());
-        assert!(events.is_empty());
+        presence.record(a, ctx(false), t0 + Duration::from_secs(180));
+        let slow = presence.record(
+            a,
+            ctx(true),
+            t0 + Duration::from_secs(180) + PRESENCE_NOTIFY_DEBOUNCE,
+        );
+        assert_eq!(slow, vec![PresenceEvent::BecamePresent]);
     }
 
     #[tokio::test]
@@ -197,7 +190,7 @@ mod tests {
         let mut rx = presence.subscribe_any_focused();
         assert!(!*rx.borrow_and_update());
         let a = presence.connect();
-        presence.record(a, ctx(true, None), Instant::now());
+        presence.record(a, ctx(true), Instant::now());
         rx.changed().await.expect("focus change");
         assert!(*rx.borrow());
     }

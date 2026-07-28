@@ -41,7 +41,7 @@ export interface SyncSocketCallbacks {
 
 export interface SyncSocket {
   reauth: (token: string) => void
-  reportPresence: (focused: boolean, activeAgent: string | null) => void
+  reportPresence: (focused: boolean) => void
   close: () => void
 }
 
@@ -53,7 +53,7 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
   let delay = base
   let terminal = false
   let open = false
-  let lastContext: { focused: boolean; activeAgent: string | null } | null = null
+  let lastFocused: boolean | null = null
 
   const detach = (target: SocketLike): void => {
     target.onopen = null
@@ -135,10 +135,8 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
       delay = base
       // Replay cached presence on reconnect as a resync (not a fresh focus), so vestad doesn't treat
       // the reconnect as the user returning.
-      if (lastContext) {
-        current.send(
-          encodeFrame(clientContextFrame(lastContext.focused, lastContext.activeAgent, true)),
-        )
+      if (lastFocused !== null) {
+        current.send(encodeFrame(clientContextFrame(lastFocused, true)))
       }
       callbacks.onStateChange("open")
     }
@@ -160,18 +158,12 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
     reauth: (token) => {
       emit(reauthFrame(token))
     },
-    reportPresence: (focused, activeAgent) => {
-      // Skip a repeat of the current context (mobile re-reports on every AppState change, which can
-      // map to the same {focused, activeAgent}); the cached value still drives the reconnect re-send.
-      if (
-        lastContext !== null &&
-        lastContext.focused === focused &&
-        lastContext.activeAgent === activeAgent
-      )
-        return
-      lastContext = { focused, activeAgent }
+    reportPresence: (focused) => {
+      // Skip repeated AppState/window-focus reports; the cached value still drives reconnect replay.
+      if (lastFocused === focused) return
+      lastFocused = focused
       // A genuine user-driven report (resync=false): vestad may fire the return-to-focus notification.
-      emit(clientContextFrame(focused, activeAgent, false))
+      emit(clientContextFrame(focused, false))
     },
     close: () => {
       terminal = true

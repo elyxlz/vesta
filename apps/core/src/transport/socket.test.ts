@@ -155,13 +155,12 @@ describe("createSyncSocket", () => {
     const h = harness()
     const socket = start(h)
     h.sockets[0]?.onopen?.()
-    socket.reportPresence(true, "scout")
+    socket.reportPresence(true)
     // A genuine report is not a resync, so vestad may treat it as a return to focus.
     expect(h.sockets[0]?.sent).toContainEqual(
       JSON.stringify({
         type: "client_context",
         focused: true,
-        active_agent: "scout",
         resync: false,
       }),
     )
@@ -171,13 +170,13 @@ describe("createSyncSocket", () => {
     const h = harness()
     const socket = start(h)
     h.sockets[0]?.onopen?.()
-    socket.reportPresence(true, null)
+    socket.reportPresence(true)
     h.sockets[0]?.onclose?.()
     h.advanceTimers()
     h.sockets[1]?.onopen?.()
     // The reconnect replay carries resync:true so it isn't mistaken for a fresh focus.
     expect(h.sockets[1]?.sent).toContainEqual(
-      JSON.stringify({ type: "client_context", focused: true, active_agent: null, resync: true }),
+      JSON.stringify({ type: "client_context", focused: true, resync: true }),
     )
   })
 

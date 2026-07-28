@@ -173,8 +173,8 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
                 match serde_json::from_str::<ClientFrame>(text.as_str()) {
                     Ok(ClientFrame::ClientContext(ctx)) => {
                         let events = state.presence.record(conn, ctx, tokio::time::Instant::now());
-                        for PresenceEvent::BecamePresent { agent } in events {
-                            if state.agent_status_cache.presence_notifications_enabled(&agent) {
+                        for PresenceEvent::BecamePresent in events {
+                            for agent in state.agent_status_cache.presence_notification_agents() {
                                 // Drop the notification off the session loop: the docker upload has no
                                 // timeout, and awaiting it here would stall this client's keepalive and
                                 // deltas. Best-effort, so the detached task logs its own failure.
