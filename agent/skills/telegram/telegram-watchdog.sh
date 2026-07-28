@@ -29,7 +29,9 @@ daemon_alive() {
   [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
 }
 
-start_daemon() { "$LAUNCHER" daemon start >/dev/null 2>&1; }
+# The notifications dir goes with it, so a daemon this brings back writes where the watchdog's
+# own notifications go.
+start_daemon() { "$LAUNCHER" daemon start --notifications-dir "$NOTIF_DIR" >/dev/null 2>&1; }
 
 notify_restart() { # $1 = note
   local f

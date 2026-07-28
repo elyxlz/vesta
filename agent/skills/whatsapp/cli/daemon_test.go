@@ -117,12 +117,24 @@ func runVerbProcess(t *testing.T, args ...string) ([]byte, int) {
 	}
 	verb := exec.Command(binary, args...)
 	verb.Env = append(os.Environ(), testModeEnv+"="+modeVerb)
-	output, err := verb.Output()
+	var answered, failed bytes.Buffer
+	verb.Stdout, verb.Stderr = &answered, &failed
+	err = verb.Run()
 	var exitErr *exec.ExitError
 	if err != nil && !errors.As(err, &exitErr) {
 		t.Fatalf("whatsapp daemon %v could not run: %v", args, err)
 	}
-	return output, verb.ProcessState.ExitCode()
+	return verbEnvelope(answered, failed, verb.ProcessState.ExitCode()), verb.ProcessState.ExitCode()
+}
+
+// verbEnvelope is the one object a verb answered with: the status on stdout, or, when it failed,
+// the error envelope on stderr behind any warning the run printed there.
+func verbEnvelope(answered, failed bytes.Buffer, code int) []byte {
+	if code == 0 {
+		return answered.Bytes()
+	}
+	lines := strings.Split(strings.TrimSpace(failed.String()), "\n")
+	return []byte(lines[len(lines)-1])
 }
 
 func wantEnvelope(t *testing.T, got map[string]any, code int, status string) {
@@ -355,10 +367,11 @@ func startPair(t *testing.T) []map[string]any {
 	}
 	starts := make([]*exec.Cmd, raceStarts)
 	answers := make([]bytes.Buffer, raceStarts)
+	failures := make([]bytes.Buffer, raceStarts)
 	for i := range starts {
 		start := exec.Command(binary, "start")
 		start.Env = append(os.Environ(), testModeEnv+"="+modeVerb)
-		start.Stdout = &answers[i]
+		start.Stdout, start.Stderr = &answers[i], &failures[i]
 		if err := start.Start(); err != nil {
 			t.Fatalf("failed to launch start %d: %v", i, err)
 		}
@@ -368,8 +381,9 @@ func startPair(t *testing.T) []map[string]any {
 	envelopes := make([]map[string]any, raceStarts)
 	for i, start := range starts {
 		start.Wait()
-		if err := json.Unmarshal(answers[i].Bytes(), &envelopes[i]); err != nil {
-			t.Fatalf("start %d printed unparseable output %q: %v", i, answers[i].String(), err)
+		envelope := verbEnvelope(answers[i], failures[i], start.ProcessState.ExitCode())
+		if err := json.Unmarshal(envelope, &envelopes[i]); err != nil {
+			t.Fatalf("start %d printed unparseable output %q: %v", i, envelope, err)
 		}
 	}
 	return envelopes

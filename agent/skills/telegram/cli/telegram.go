@@ -727,17 +727,6 @@ func (tc *TelegramClient) UnpinMessage(chatID, messageID int64) error {
 	return nil
 }
 
-func (tc *TelegramClient) writeAuthStatusFile(data map[string]string) {
-	b, err := json.Marshal(data)
-	if err != nil {
-		log.Printf("Failed to marshal auth status: %v", err)
-		return
-	}
-	if err := os.WriteFile(filepath.Join(tc.dataDir, "auth-status.json"), b, 0644); err != nil {
-		log.Printf("Failed to write auth status file: %v", err)
-	}
-}
-
 func formatSenderName(user *tgbotapi.User) string {
 	if user == nil {
 		return "Unknown"

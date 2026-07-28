@@ -25,14 +25,18 @@ const (
 	modeServe   = "serve"
 	modeMute    = "mute"
 	modeVerb    = "verb"
-	// serveDelayEnv holds the fake daemon before it opens its socket, which is the window a real
-	// daemon spends connecting to Telegram and the one the race below needs: a second start
-	// landing inside it finds no socket and spawns a child that then loses the socket.
+	// serveDelayEnv holds the fake daemon short of its socket, so the second start lands while
+	// the first is still waiting on the daemon it spawned. What the record names then is the
+	// first start itself, and the second standing down on that live claim is what the race test
+	// pins: a claim dropped on the way into the wait would leave it free to spawn a rival.
 	serveDelayEnv = "TELEGRAM_TEST_SERVE_DELAY_MS"
 	raceStarts    = 2
 	raceRounds    = 3
 	RaceServeWait = 1500 * time.Millisecond
 	RaceStagger   = 500 * time.Millisecond
+	// How long the launcher a mid-restart watchdog runs takes to reach the daemon it would
+	// bring back, which is the window the stop below lands in.
+	RestartLaunchDelay = 3 * time.Second
 )
 
 func TestMain(m *testing.M) {
@@ -110,12 +114,24 @@ func runVerbProcess(t *testing.T, args ...string) ([]byte, int) {
 	}
 	verb := exec.Command(binary, args...)
 	verb.Env = append(os.Environ(), testModeEnv+"="+modeVerb)
-	output, err := verb.Output()
+	var answered, failed bytes.Buffer
+	verb.Stdout, verb.Stderr = &answered, &failed
+	err = verb.Run()
 	var exitErr *exec.ExitError
 	if err != nil && !errors.As(err, &exitErr) {
 		t.Fatalf("telegram daemon %v could not run: %v", args, err)
 	}
-	return output, verb.ProcessState.ExitCode()
+	return verbEnvelope(answered, failed, verb.ProcessState.ExitCode()), verb.ProcessState.ExitCode()
+}
+
+// verbEnvelope is the one object a verb answered with: the status on stdout, or, when it failed,
+// the error envelope on stderr behind any warning the run printed there.
+func verbEnvelope(answered, failed bytes.Buffer, code int) []byte {
+	if code == 0 {
+		return answered.Bytes()
+	}
+	lines := strings.Split(strings.TrimSpace(failed.String()), "\n")
+	return []byte(lines[len(lines)-1])
 }
 
 func wantEnvelope(t *testing.T, got map[string]any, code int, status string) {
@@ -396,10 +412,11 @@ func startPair(t *testing.T) []map[string]any {
 	}
 	starts := make([]*exec.Cmd, raceStarts)
 	answers := make([]bytes.Buffer, raceStarts)
+	failures := make([]bytes.Buffer, raceStarts)
 	for i := range starts {
 		start := exec.Command(binary, "start")
 		start.Env = append(os.Environ(), testModeEnv+"="+modeVerb)
-		start.Stdout = &answers[i]
+		start.Stdout, start.Stderr = &answers[i], &failures[i]
 		if err := start.Start(); err != nil {
 			t.Fatalf("failed to launch start %d: %v", i, err)
 		}
@@ -409,8 +426,9 @@ func startPair(t *testing.T) []map[string]any {
 	envelopes := make([]map[string]any, raceStarts)
 	for i, start := range starts {
 		start.Wait()
-		if err := json.Unmarshal(answers[i].Bytes(), &envelopes[i]); err != nil {
-			t.Fatalf("start %d printed unparseable output %q: %v", i, answers[i].String(), err)
+		envelope := verbEnvelope(answers[i], failures[i], start.ProcessState.ExitCode())
+		if err := json.Unmarshal(envelope, &envelopes[i]); err != nil {
+			t.Fatalf("start %d printed unparseable output %q: %v", i, envelope, err)
 		}
 	}
 	return envelopes
@@ -657,6 +675,94 @@ func TestAnInstanceRunsWithoutAWatchdog(t *testing.T) {
 	}
 	envelope, code = daemonVerb(t, "stop", "--instance", "personal")
 	wantEnvelope(t, envelope, code, "stopped")
+}
+
+// A stop that lands while the watchdog is already restarting the daemon has to end the restart
+// too. The start the watchdog launched is a separate process in the watchdog's group, so
+// signalling the watchdog alone would let that start run on and bring back the daemon, the
+// watchdog, and its own record moments after the stop answered that everything was gone.
+func TestStopEndsAWatchdogMidRestart(t *testing.T) {
+	home := hermeticHome(t, modeServe)
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatalf("failed to locate the test binary: %v", err)
+	}
+	slow := "#!/bin/sh\nsleep " + strconv.Itoa(int(RestartLaunchDelay.Seconds())) + "\nexec " + binary + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(home, telegramLauncherInHome), []byte(slow), 0755); err != nil {
+		t.Fatalf("failed to write the slow launcher: %v", err)
+	}
+	restarting := filepath.Join(home, "restarting")
+	watchdog := "#!/bin/sh\ntouch " + restarting + "\n" +
+		testModeEnv + "=" + modeVerb + " " + filepath.Join(home, telegramLauncherInHome) + " start\nsleep 60\n"
+	if err := os.WriteFile(watchdogScript(), []byte(watchdog), 0755); err != nil {
+		t.Fatalf("failed to write the restarting watchdog: %v", err)
+	}
+	ensureWatchdog()
+	pid := recordedPid(t, watchdogRecord)
+	deadline := time.Now().Add(DaemonStopTimeout)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(restarting); err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := os.Stat(restarting); err != nil {
+		t.Fatalf("the watchdog never reached its restart: %v", err)
+	}
+	status, err := stopDaemon()
+	if err != nil || status != "already_stopped" {
+		t.Fatalf("stop = (%q, %v), want already_stopped", status, err)
+	}
+	if syscall.Kill(-pid, 0) == nil {
+		t.Error("the watchdog's process group survived the stop, so its restart is still running")
+	}
+	// The wait is for a non-event: past the launcher's delay is when the abandoned start would
+	// have brought everything back.
+	time.Sleep(RestartLaunchDelay + time.Second)
+	if daemonAlive(getSocketPath()) {
+		t.Error("a start the stop left running brought the daemon back")
+	}
+	if _, err := os.Stat(daemonPidfile()); !os.IsNotExist(err) {
+		t.Errorf("the daemon record came back after the stop, got %v", err)
+	}
+	if _, err := os.Stat(pidfileFor(watchdogRecord)); !os.IsNotExist(err) {
+		t.Errorf("the watchdog record came back after the stop, got %v", err)
+	}
+}
+
+// A token on disk is not a token Telegram accepts, so status reports what the last connect
+// actually learned. Without that a daemon idling on a rejected token reads as authenticated and
+// nothing says why the channel is silent.
+func TestAConnectFailureShowsUpInStatus(t *testing.T) {
+	hermeticHome(t, modeServe)
+	dataDir, _ := parseStateDir()
+	if err := os.MkdirAll(dataDir, daemonDirPerms); err != nil {
+		t.Fatalf("failed to create the data dir: %v", err)
+	}
+	signals := make(chan os.Signal, 1)
+	signals <- syscall.SIGTERM
+	if tc, sig := connectClient(dataDir, defaultNotificationsDir(), signals); tc != nil || sig != syscall.SIGTERM {
+		t.Fatalf("connectClient = (%v, %v), want no client and the signal that ended the wait", tc, sig)
+	}
+	tokenPath := filepath.Join(dataDir, "bot-token")
+	if err := os.WriteFile(tokenPath, []byte("bogus"), 0600); err != nil {
+		t.Fatalf("failed to write the token: %v", err)
+	}
+	rejected := readAuthStatus(dataDir)
+	if rejected["status"] != "rejected" || rejected["error"] == "" {
+		t.Errorf("auth = %v, want a rejection carrying the reason", rejected)
+	}
+	writeAuthStatus(dataDir, map[string]string{"status": "authenticated"})
+	if authenticated := readAuthStatus(dataDir); authenticated["status"] != "authenticated" {
+		t.Errorf("auth after a connect = %v, want authenticated", authenticated)
+	}
+	writeAuthStatus(dataDir, map[string]string{"status": "rejected", "error": "stale"})
+	if err := os.Remove(tokenPath); err != nil {
+		t.Fatalf("failed to remove the token: %v", err)
+	}
+	if gone := readAuthStatus(dataDir); gone["status"] != "not_authenticated" {
+		t.Errorf("auth with no token on disk = %v, want not_authenticated", gone)
+	}
 }
 
 // The watchdog belongs to the default daemon, so an instance stop must leave it alone: taking it

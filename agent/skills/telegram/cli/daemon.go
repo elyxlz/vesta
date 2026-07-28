@@ -144,6 +144,18 @@ func readDaemonInfo(dataDir string) (daemonInfo, error) {
 	return info, nil
 }
 
+// failDaemon ends a verb with its error envelope on stderr, which is where the contract puts a
+// failure: stdout carries the one status object a verb answers with and nothing else.
+func failDaemon(format string, args ...any) {
+	envelope, err := json.Marshal(map[string]string{"error": fmt.Sprintf(format, args...)})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "JSON encoding error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Fprintln(os.Stderr, string(envelope))
+	os.Exit(1)
+}
+
 func runDaemon() {
 	if len(os.Args) < 2 || isHelpArg(os.Args[1]) {
 		fmt.Println(daemonUsage)
@@ -161,7 +173,7 @@ func runDaemon() {
 	case "status":
 		daemonStatus()
 	default:
-		failJSON("unknown daemon subcommand %q (use start|stop|restart|status)", sub)
+		failDaemon("unknown daemon subcommand %q (use start|stop|restart|status)", sub)
 	}
 }
 
@@ -213,15 +225,27 @@ func claimRecord(record string) (claimed bool, err error) {
 	return true, nil
 }
 
+// signalRecorded ends a recorded process and everything it launched. Every process this
+// lifecycle spawns leads its own group, so the signal goes to the group: a watchdog signalled
+// alone leaves the `telegram daemon start` it is running mid-restart, which then brings back
+// what the stop just ended. A pid that leads no group (a start still holding its claim) is
+// signalled by itself.
+func signalRecorded(pid int, sig syscall.Signal) error {
+	if pgid, err := syscall.Getpgid(pid); err == nil && pgid == pid {
+		return syscall.Kill(-pid, sig)
+	}
+	return syscall.Kill(pid, sig)
+}
+
 // abandon ends a start that gave up, taking the child and its pid record with it: a process
 // nothing can reach, with a record that says it is up, reads as running and turns every later
 // start into a no-op.
 func abandon(name string, child *exec.Cmd, exited <-chan struct{}, message string) error {
-	child.Process.Signal(syscall.SIGTERM)
+	signalRecorded(child.Process.Pid, syscall.SIGTERM)
 	select {
 	case <-exited:
 	case <-time.After(daemonBudget(DaemonStopTimeoutEnv, DaemonStopTimeout)):
-		child.Process.Kill()
+		signalRecorded(child.Process.Pid, syscall.SIGKILL)
 		<-exited
 	}
 	os.Remove(pidfileFor(name))
@@ -352,7 +376,7 @@ func endRecorded(name string) (bool, error) {
 		os.Remove(record)
 		return false, nil
 	}
-	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
+	if err := signalRecorded(pid, syscall.SIGTERM); err != nil {
 		return false, fmt.Errorf("could not signal %s (pid %d): %v", name, pid, err)
 	}
 	budget := daemonBudget(DaemonStopTimeoutEnv, DaemonStopTimeout)
@@ -374,7 +398,7 @@ func daemonStart(serveArgs []string) {
 		return
 	}
 	if err := startDaemonProcess(serveArgs); err != nil {
-		failJSON("%s", err.Error())
+		failDaemon("%s", err.Error())
 	}
 	ensureWatchdog()
 	printJSON(map[string]string{"status": "started"})
@@ -403,7 +427,7 @@ func stopDaemon() (string, error) {
 func daemonStop() {
 	status, err := stopDaemon()
 	if err != nil {
-		failJSON("%s", err.Error())
+		failDaemon("%s", err.Error())
 	}
 	printJSON(map[string]string{"status": status})
 }
@@ -412,10 +436,10 @@ func daemonRestart() {
 	dataDir, _ := parseStateDir()
 	serveArgs := restartServeArgs(dataDir)
 	if _, err := stopDaemon(); err != nil {
-		failJSON("%s", err.Error())
+		failDaemon("%s", err.Error())
 	}
 	if err := startDaemonProcess(serveArgs); err != nil {
-		failJSON("%s", err.Error())
+		failDaemon("%s", err.Error())
 	}
 	ensureWatchdog()
 	printJSON(map[string]string{"status": "started"})

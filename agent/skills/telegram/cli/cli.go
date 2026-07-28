@@ -20,7 +20,10 @@ import (
 
 // ConnectRetryInterval paces the wait for a bot token (and for Telegram itself) in a daemon
 // that is up but not connected yet.
-const ConnectRetryInterval = 15 * time.Second
+const (
+	ConnectRetryInterval = 15 * time.Second
+	authStatusFile       = "auth-status.json"
+)
 
 func extractFlag(name string) string {
 	f := "--" + name
@@ -91,12 +94,6 @@ func printJSON(v interface{}) {
 	fmt.Println(string(data))
 }
 
-// failJSON ends the command with the one error envelope every command answers failure with.
-func failJSON(format string, args ...any) {
-	printJSON(map[string]string{"error": fmt.Sprintf(format, args...)})
-	os.Exit(1)
-}
-
 func writeDeathNotification(notifDir string, sig string) {
 	notif := map[string]string{
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
@@ -113,10 +110,31 @@ func writeDeathNotification(notifDir string, sig string) {
 	os.WriteFile(filepath.Join(notifDir, filename), data, 0644)
 }
 
+// writeAuthStatus records what the daemon last learned about the token. One writer, because this
+// is the only place a caller can see that a token on disk is not a token Telegram accepts.
+func writeAuthStatus(dataDir string, status map[string]string) {
+	data, err := json.Marshal(status)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not marshal the auth status: %v\n", err)
+		return
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, authStatusFile), data, 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not write %s: %v\n", authStatusFile, err)
+	}
+}
+
+// readAuthStatus answers with the recorded outcome of the last connect, so a token Telegram
+// rejects reads as rejected instead of authenticated. No token on disk outranks it: whatever an
+// older run recorded is about a token that is gone.
 func readAuthStatus(dataDir string) map[string]string {
 	tokenPath := filepath.Join(dataDir, "bot-token")
 	if _, err := os.Stat(tokenPath); err != nil {
 		return map[string]string{"status": "not_authenticated", "instructions": "Set your bot token with: telegram authenticate --token <BOT_TOKEN>"}
+	}
+	var recorded map[string]string
+	data, err := os.ReadFile(filepath.Join(dataDir, authStatusFile))
+	if err == nil && json.Unmarshal(data, &recorded) == nil && recorded["status"] != "" {
+		return recorded
 	}
 	return map[string]string{"status": "authenticated"}
 }
@@ -148,11 +166,7 @@ func runAuthenticate() {
 			fmt.Fprintf(os.Stderr, "Error saving token: %v\n", err)
 			os.Exit(1)
 		}
-
-		// Write auth status
-		statusData, _ := json.Marshal(map[string]string{"status": "authenticated"})
-		os.WriteFile(filepath.Join(dataDir, "auth-status.json"), statusData, 0644)
-
+		writeAuthStatus(dataDir, map[string]string{"status": "authenticated"})
 		printJSON(map[string]string{"status": "authenticated", "message": "Bot token saved successfully"})
 		return
 	}
@@ -208,7 +222,7 @@ func runServe() {
 		fmt.Fprintln(os.Stderr, "Running in READ-ONLY mode (no sending)")
 	}
 
-	tc.writeAuthStatusFile(map[string]string{"status": "authenticated"})
+	writeAuthStatus(dataDir, map[string]string{"status": "authenticated"})
 
 	printJSON(map[string]string{"status": "serving", "bot": "@" + tc.bot.Self.UserName})
 
@@ -223,12 +237,19 @@ func runServe() {
 // instead of exiting and leaving the agent with a channel that is quietly gone. Returns a nil
 // client when a signal ends the wait instead.
 func connectClient(dataDir, notifDir string, signals <-chan os.Signal) (*TelegramClient, os.Signal) {
+	reported := ""
 	for {
 		tc, err := NewTelegramClient(dataDir, notifDir, extractInstance(), isReadOnly(), extractSkipSenders())
 		if err == nil {
 			return tc, nil
 		}
-		fmt.Fprintf(os.Stderr, "Not serving yet: %v\n", err)
+		writeAuthStatus(dataDir, map[string]string{"status": "rejected", "error": err.Error()})
+		// One line per distinct reason, not one per retry: the same failure every 15 seconds
+		// buries the log it is written to without adding anything.
+		if err.Error() != reported {
+			reported = err.Error()
+			fmt.Fprintf(os.Stderr, "Not serving yet: %v\n", err)
+		}
 		select {
 		case sig := <-signals:
 			return nil, sig

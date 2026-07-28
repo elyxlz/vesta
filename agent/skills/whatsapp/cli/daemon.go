@@ -107,6 +107,18 @@ func stopRefusal(remaining time.Duration, force bool) string {
 		remaining.Round(time.Second))
 }
 
+// failDaemon ends a verb with its error envelope on stderr, which is where the contract puts a
+// failure: stdout carries the one status object a verb answers with and nothing else.
+func failDaemon(format string, args ...any) {
+	envelope, err := json.Marshal(map[string]string{"error": fmt.Sprintf(format, args...)})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "JSON encoding error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Fprintln(os.Stderr, string(envelope))
+	os.Exit(1)
+}
+
 func runDaemon() {
 	if len(os.Args) < 2 || isHelpArg(os.Args[1]) {
 		fmt.Println(daemonUsage)
@@ -124,7 +136,7 @@ func runDaemon() {
 	case "status":
 		daemonStatus()
 	default:
-		failJSON("unknown daemon subcommand %q (use start|stop|restart|status)", sub)
+		failDaemon("unknown daemon subcommand %q (use start|stop|restart|status)", sub)
 	}
 }
 
@@ -276,7 +288,7 @@ func daemonStart(serveArgs []string) {
 		return
 	}
 	if err := startDaemonProcess(serveArgs); err != nil {
-		failJSON("%s", err.Error())
+		failDaemon("%s", err.Error())
 	}
 	printJSON(map[string]string{"status": "started"})
 }
@@ -312,7 +324,7 @@ func stopDaemon() (string, error) {
 func daemonStop() {
 	status, err := stopDaemon()
 	if err != nil {
-		failJSON("%s", err.Error())
+		failDaemon("%s", err.Error())
 	}
 	printJSON(map[string]string{"status": status})
 }
@@ -320,10 +332,10 @@ func daemonStop() {
 func daemonRestart() {
 	serveArgs := restartServeArgs(loadStateFromDisk(stateDataDir()))
 	if _, err := stopDaemon(); err != nil {
-		failJSON("%s", err.Error())
+		failDaemon("%s", err.Error())
 	}
 	if err := startDaemonProcess(serveArgs); err != nil {
-		failJSON("%s", err.Error())
+		failDaemon("%s", err.Error())
 	}
 	printJSON(map[string]string{"status": "started"})
 }
