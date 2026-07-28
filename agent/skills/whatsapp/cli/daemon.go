@@ -17,13 +17,15 @@ import (
 const (
 	DaemonPollInterval = 500 * time.Millisecond
 	// Both budgets are whole seconds in the environment, so a caller in a hurry can shorten
-	// them. Readiness is generous because the socket only opens past the launcher's build
-	// check, the whatsmeow update warning (20s), the store open, and a first connect that
-	// retries for ConnectRetryAttempts seconds.
-	DaemonReadyTimeoutEnv  = "DAEMON_READY_TIMEOUT_SECS"
-	DaemonStopTimeoutEnv   = "DAEMON_STOP_TIMEOUT_SECS"
-	DaemonReadyTimeout     = 120 * time.Second
-	DaemonStopTimeout      = 15 * time.Second
+	// them. Readiness is minutes because a cold cache compiles the CLI on this very path
+	// before the socket can open, and past that come the whatsmeow update warning (20s), the
+	// store open, and a first connect that retries for ConnectRetryAttempts seconds.
+	DaemonReadyTimeoutEnv = "DAEMON_READY_TIMEOUT_SECS"
+	DaemonStopTimeoutEnv  = "DAEMON_STOP_TIMEOUT_SECS"
+	DaemonReadyTimeout    = 5 * time.Minute
+	DaemonStopTimeout     = 15 * time.Second
+	// How long a start that lost the record claim waits for the rival start to resolve.
+	DaemonClaimWait        = 3 * time.Second
 	daemonRecordPerms      = 0644
 	daemonDirPerms         = 0755
 	daemonUsage            = "usage: whatsapp daemon <start|stop|restart|status> [--force] [serve flags]"
@@ -141,12 +143,64 @@ func abandon(child *exec.Cmd, exited <-chan struct{}, message string) error {
 	return errors.New(message)
 }
 
+// claimStart takes the pid record exclusively for this start, so two starts racing on one
+// instance cannot both spawn a daemon and leave the loser's corpse in the record. Losing the
+// claim is not a failure: the rival either brings a daemon up (nothing left to do, claimed
+// false) or leaves a record no process stands behind, which this start takes over once.
+func claimStart() (claimed bool, err error) {
+	switch err := writePidRecord(os.Getpid(), os.O_EXCL); {
+	case err == nil:
+		return true, nil
+	case !errors.Is(err, os.ErrExist):
+		return false, fmt.Errorf("could not claim %s: %v", daemonPidfile(), err)
+	}
+	deadline := time.Now().Add(DaemonClaimWait)
+	for time.Now().Before(deadline) {
+		if _, alive := livePid(); alive {
+			return false, nil
+		}
+		if _, err := os.Stat(daemonPidfile()); errors.Is(err, os.ErrNotExist) {
+			break
+		}
+		time.Sleep(DaemonPollInterval)
+	}
+	os.Remove(daemonPidfile())
+	if err := writePidRecord(os.Getpid(), os.O_EXCL); err != nil {
+		return false, fmt.Errorf("another whatsapp start holds %s: %v", daemonPidfile(), err)
+	}
+	return true, nil
+}
+
+func writePidRecord(pid int, flags int) error {
+	file, err := os.OpenFile(daemonPidfile(), os.O_CREATE|os.O_WRONLY|os.O_TRUNC|flags, daemonRecordPerms)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	_, err = file.WriteString(strconv.Itoa(pid))
+	return err
+}
+
+// ensureDaemon is the self-bootstrap every agent-facing command runs: a socket that answers is
+// all those commands need, whoever brought it up.
+func ensureDaemon(serveArgs []string) error {
+	if daemonAlive(getSocketPath()) {
+		return nil
+	}
+	return startDaemonProcess(serveArgs)
+}
+
 // startDaemonProcess launches `whatsapp serve` detached in its own session, records its pid,
-// and waits for it to answer on the socket. Idempotent: an already-answering daemon is a no-op.
+// and waits for that recorded process to answer on the socket. The record is the mutual
+// exclusion: a start claims it before spawning and drops it on every failure, so what the
+// record names is always a daemon that was serving, never a corpse from a lost race.
 func startDaemonProcess(serveArgs []string) error {
 	sockPath := getSocketPath()
-	if daemonAlive(sockPath) {
+	if _, alive := livePid(); alive {
 		return nil
+	}
+	if daemonAlive(sockPath) {
+		return fmt.Errorf("%s", foreignDaemonMessage(sockPath))
 	}
 	if err := os.MkdirAll(filepath.Dir(daemonPidfile()), daemonDirPerms); err != nil {
 		return fmt.Errorf("could not create the daemon record directory: %v", err)
@@ -159,10 +213,18 @@ func startDaemonProcess(serveArgs []string) error {
 		return fmt.Errorf("could not open %s: %v", daemonLifecycleLog(), err)
 	}
 	defer logFile.Close()
+	claimed, err := claimStart()
+	if err != nil {
+		return err
+	}
+	if !claimed {
+		return nil
+	}
 	child := exec.Command(whatsappLauncher(), append([]string{"serve"}, serveArgs...)...)
 	child.Stdout, child.Stderr = logFile, logFile
 	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := child.Start(); err != nil {
+		os.Remove(daemonPidfile())
 		return fmt.Errorf("could not launch %s: %v", whatsappLauncher(), err)
 	}
 	exited := make(chan struct{})
@@ -170,18 +232,38 @@ func startDaemonProcess(serveArgs []string) error {
 		child.Wait()
 		close(exited)
 	}()
-	if err := os.WriteFile(daemonPidfile(), []byte(strconv.Itoa(child.Process.Pid)), daemonRecordPerms); err != nil {
+	if err := writePidRecord(child.Process.Pid, 0); err != nil {
 		return abandon(child, exited, fmt.Sprintf("could not record the daemon pid: %v", err))
 	}
+	return awaitDaemon(child, exited, sockPath)
+}
+
+// foreignDaemonMessage names the one situation this lifecycle cannot manage: a daemon serving
+// this instance that it did not start, so it holds the device-store lock and no pid it records
+// would stand for the process actually serving.
+func foreignDaemonMessage(sockPath string) string {
+	return fmt.Sprintf(
+		"a whatsapp daemon this lifecycle did not start already answers on %s; end that process before starting this instance (see %s)",
+		sockPath, daemonLifecycleLog())
+}
+
+// awaitDaemon holds the start open until the daemon it spawned answers. A socket that answers
+// while that child is gone belongs to another daemon (only one can hold the device-store lock),
+// so this start reports the conflict instead of leaving a corpse in the record.
+func awaitDaemon(child *exec.Cmd, exited <-chan struct{}, sockPath string) error {
 	deadline := time.Now().Add(daemonBudget(DaemonReadyTimeoutEnv, DaemonReadyTimeout))
 	for time.Now().Before(deadline) {
-		if daemonAlive(sockPath) {
-			return nil
-		}
+		answering := daemonAlive(sockPath)
 		select {
 		case <-exited:
+			if answering || daemonAlive(sockPath) {
+				return abandon(child, exited, foreignDaemonMessage(sockPath))
+			}
 			return abandon(child, exited, fmt.Sprintf("the daemon exited during startup; see %s", daemonLifecycleLog()))
 		default:
+			if answering {
+				return nil
+			}
 		}
 		time.Sleep(DaemonPollInterval)
 	}
@@ -189,7 +271,7 @@ func startDaemonProcess(serveArgs []string) error {
 }
 
 func daemonStart(serveArgs []string) {
-	if daemonAlive(getSocketPath()) {
+	if _, alive := livePid(); alive {
 		printJSON(map[string]string{"status": "already_running"})
 		return
 	}

@@ -194,7 +194,7 @@ func runConnectOwnNumber() {
 		"code":   code,
 		"next":   "Relay to the user: enter this code in WhatsApp to finish registering the number on their phone. Once WhatsApp confirms, scan the link page below to add me as a companion device.",
 	})
-	if err := startDaemonProcess(linkServeArgs()); err != nil {
+	if err := ensureDaemon(linkServeArgs()); err != nil {
 		failJSON("%s", err.Error())
 	}
 	output, exitCode := serveAndRunQRLink("own-number-link")

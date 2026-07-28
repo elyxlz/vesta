@@ -58,6 +58,7 @@ class Daemon:
     service: str | None = None  # vestad service name, when it differs from the command name
     legacy_command: list[str] | None = None  # a script path fleet restart files still launch by
     rig: tp.Callable[[pl.Path, pl.Path], None] | None = None
+    env: tuple[tuple[str, str], ...] = ()  # environment this skill's daemon needs on top of the shared one
 
 
 def _free_port() -> int:
@@ -90,14 +91,16 @@ def _rig_dashboard(home: pl.Path, bin_dir: pl.Path) -> None:
 
 
 def _rig_whatsapp(home: pl.Path, bin_dir: pl.Path) -> None:
-    """The launcher builds the CLI from source against the whisper static libs, so the row runs
-    only where that toolchain is (the Go suite covers the same contract wherever it is not), and
-    it borrows the developer's build caches: a hermetic HOME would recompile the CLI per test."""
-    whisper = pl.Path(os.environ["WHISPER_CPP_DIR"] if "WHISPER_CPP_DIR" in os.environ else "/opt/whisper.cpp")
-    go = shutil.which("go") or pl.Path("/usr/local/go/bin/go").exists()
-    if not go or not (whisper / "build-static/src/libwhisper.a").exists():
-        pytest.skip("no Go toolchain or whisper static libs to build the whatsapp CLI with")
+    """The launcher runs the cached CLI binary and rebuilds it from source when an input changed,
+    so the row needs either that warm binary or the cgo toolchain to make one (the Go suite covers
+    the same contract wherever neither is). The caches are the developer's own: a hermetic HOME
+    would recompile the whole CLI once per test."""
     real_home = pl.Path(os.environ["HOME"])
+    cache_home = pl.Path(os.environ["XDG_CACHE_HOME"]) if "XDG_CACHE_HOME" in os.environ else real_home / ".cache"
+    whisper = pl.Path(os.environ["WHISPER_CPP_DIR"] if "WHISPER_CPP_DIR" in os.environ else "/opt/whisper.cpp")
+    buildable = (shutil.which("go") or pl.Path("/usr/local/go/bin/go").exists()) and (whisper / "build-static/src/libwhisper.a").exists()
+    if not (cache_home / "whatsapp/whatsapp").exists() and not buildable:
+        pytest.skip("no built whatsapp CLI, and no Go toolchain plus whisper static libs to build one")
     for cache in (".cache", "go"):
         (real_home / cache).mkdir(exist_ok=True)
         (home / cache).symlink_to(real_home / cache)
@@ -210,6 +213,10 @@ SKILLS = [
         serves_port=False,
         emits_daemon_died=True,
         rig=_rig_whatsapp,
+        # whatsapp waits minutes for a daemon whose start may compile the CLI first. Here the
+        # binary is warm, so a budget well inside the per-verb timeout keeps a start that fails
+        # answering with its envelope instead of being killed as a hung command.
+        env=(("DAEMON_READY_TIMEOUT_SECS", "30"),),
     ),
 ]
 
@@ -241,6 +248,7 @@ def daemon(request, tmp_path):
     env = {key: value for key, value in os.environ.items() if key not in ("UV_PROJECT_ENVIRONMENT", "VIRTUAL_ENV")}
     env["HOME"] = str(home)
     env["PATH"] = f"{bin_dir}:{env['PATH']}"
+    env.update(dict(spec.env))
     yield spec, home, env
     # Always tear down: a leaked daemon poisons later tests.
     pidfile = home / "agent/data/daemons" / f"{spec.name}.pid"

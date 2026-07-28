@@ -335,7 +335,7 @@ func runOneShot(command string) {
 	// Self-bootstrap the background daemon (idempotent no-op when it is already
 	// answering) so every agent command works cold, without the agent ever starting
 	// anything by hand.
-	if err := startDaemonProcess(linkServeArgs()); err != nil {
+	if err := ensureDaemon(linkServeArgs()); err != nil {
 		failJSON("could not start the whatsapp daemon: %v; run `whatsapp status`", err)
 	}
 	args, err := resolveStdinArgs(stripGlobalFlags(os.Args[1:]), "message", "text")

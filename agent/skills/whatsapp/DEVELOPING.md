@@ -17,6 +17,14 @@ front door to the daemon-lifecycle start: it brings the daemon up and waits unti
 it answers, so notifications are already flowing before the agent sends
 anything); `setup.sh` registers that line.
 
+That pid record is also the mutual exclusion: a start claims it (exclusive create)
+before it spawns anything and drops it again on every failure, so two starts
+landing at once leave one daemon and a record that names it. A daemon serving the
+instance that this lifecycle did not start (so the record is empty and the
+device-store lock is held elsewhere) is the one case it refuses: start and restart
+say so instead of reporting a success no record stands behind. End that process
+first.
+
 `daemon stop` sends SIGTERM to the recorded pid and waits for the process to go.
 SIGTERM is therefore the one exit the agent asked for, and the only one the
 daemon leaves unreported: it writes a `daemon_died` notification on every other
