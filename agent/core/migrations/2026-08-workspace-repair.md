@@ -2,11 +2,10 @@
 migration_phase: before_sync
 ---
 
-This is the final one-time repair of your workspace before the new upstream-sync flow runs.
-Do not start upstream sync yourself during this migration. The next boot owns that, after this
-repair has proved that your workspace is a plain full checkout, recovered any skill activation
-evidence left by the v0.1.180 conversion, and made the read-only `agent/core` mount invisible to
-Git. Every step is safe to repeat.
+This repair proves that your workspace is a plain full checkout, recovers the skill activation
+evidence a sparse workspace carried, and makes the read-only `agent/core` mount invisible to Git.
+Do not start upstream sync yourself during this migration: it runs on the next boot, once this
+repair is marked applied. Every step is safe to repeat.
 
 ### 1. Stop on an unfinished Git operation
 
@@ -43,8 +42,9 @@ except (json.JSONDecodeError, OSError) as error:
     raise SystemExit(f"STOP: cannot safely read {config_path}: {error}") from error
 if not isinstance(data, dict):
     raise SystemExit(f"STOP: {config_path} is not a JSON object")
-existing = data.get("active_skills")
+existing = data["active_skills"] if "active_skills" in data else None
 recovered = {name.strip() for name in existing if isinstance(name, str) and skill_name.fullmatch(name.strip())} if isinstance(existing, list) else set()
+already_active = set(recovered)
 
 current_sparse_file = home / ".git/info/sparse-checkout"
 current_sparse = current_sparse_file.is_file()
@@ -96,28 +96,36 @@ else:
         check=False,
     ).stdout.splitlines()
     if tags:
-        stock = set(
-            subprocess.run(
-                ["git", "-C", str(home), "ls-tree", "-d", "--name-only", f"{tags[0]}:agent/skills"],
-                capture_output=True,
-                text=True,
-                check=False,
-            ).stdout.splitlines()
+        listing = subprocess.run(
+            ["git", "-C", str(home), "ls-tree", "-d", "--name-only", f"{tags[0]}:agent/skills"],
+            capture_output=True,
+            text=True,
+            check=False,
         )
-        recovered.update(on_disk - stock)
+        # An unreadable stock tree would make every on-disk directory look local-only and activate
+        # the whole stock set, so skip the inference rather than guess from an empty list.
+        if listing.returncode == 0:
+            recovered.update(on_disk - set(listing.stdout.splitlines()))
+        else:
+            print("warning: stock skill list unreadable; skipped local-only recovery")
 
 data["active_skills"] = sorted(recovered)
 config_path.parent.mkdir(parents=True, exist_ok=True)
 tmp = config_path.with_name(f"{config_path.name}.tmp")
 tmp.write_text(json.dumps(data, indent=2) + "\n")
 tmp.replace(config_path)
-print("active skills recovered:", ", ".join(data["active_skills"]) or "(defaults only)")
+print("active skills:", ", ".join(data["active_skills"]) or "(defaults only)")
+print("newly activated:", ", ".join(sorted(recovered - already_active)) or "(none)")
 PY
 ```
 
 If the script exits with `STOP`, leave this migration unmarked and tell the user rather than
 overwriting an unreadable config. A backup warning is non-fatal because the retained sparse
 patterns and local-only directories remain independent recovery sources.
+
+Recovery only ever adds names, and it cannot tell a skill the conversion under-read from one the
+user switched off afterwards. So if `newly activated` lists anything, tell the user which skills
+came back and offer `skills-deactivate` for any they turned off on purpose.
 
 ### 3. Repair a remaining sparse workspace without discarding it
 

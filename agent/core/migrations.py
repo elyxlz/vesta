@@ -70,6 +70,8 @@ def _parse_migration(path: pl.Path) -> Migration:
             raise ValueError(f"{path}: migration frontmatter has no closing ---")
         fields: dict[str, str] = {}
         for line in frontmatter.splitlines():
+            if not line.strip():
+                continue
             key, field_separator, value = line.partition(":")
             if not field_separator or not key.strip() or not value.strip():
                 raise ValueError(f"{path}: invalid migration frontmatter line: {line!r}")
@@ -78,11 +80,12 @@ def _parse_migration(path: pl.Path) -> Migration:
         if unknown:
             names = ", ".join(sorted(unknown))
             raise ValueError(f"{path}: unknown migration frontmatter field(s): {names}")
-        try:
-            phase = MigrationPhase(fields.get("migration_phase", MigrationPhase.AFTER_SYNC))
-        except ValueError as error:
-            allowed = ", ".join(item.value for item in MigrationPhase)
-            raise ValueError(f"{path}: migration_phase must be one of: {allowed}") from error
+        if "migration_phase" in fields:
+            try:
+                phase = MigrationPhase(fields["migration_phase"])
+            except ValueError as error:
+                allowed = ", ".join(item.value for item in MigrationPhase)
+                raise ValueError(f"{path}: migration_phase must be one of: {allowed}") from error
         text = content
     return Migration(name=path.stem, content=text, phase=phase)
 
@@ -132,16 +135,19 @@ def _migration_turns(
     return [f"{instructions}\n\n" + "\n\n---\n\n".join(sections)]
 
 
-def before_sync_migration_turns(*, state: vm.State, config: cfg.VestaConfig, first_start: bool = False) -> list[str]:
-    """Return pending before-sync migrations as an exclusive boot barrier.
+def _pending_for(*, state: vm.State, config: cfg.VestaConfig, first_start: bool, phase: MigrationPhase) -> list[Migration]:
+    """Pending migrations of one phase, or the complete shipping set on first start: a fresh agent
+    pre-marks every phase whichever getter runs first, so the two are order-independent."""
+    pending = list_pending(state=state, config=config)
+    if first_start:
+        return pending
+    return [migration for migration in pending if migration.phase is phase]
 
-    A fresh agent pre-marks the complete shipping set here in filename order; it needs neither
-    phase because it is born already converged.
-    """
-    all_pending = list_pending(state=state, config=config)
-    pending = all_pending if first_start else [migration for migration in all_pending if migration.phase is MigrationPhase.BEFORE_SYNC]
+
+def before_sync_migration_turns(*, state: vm.State, config: cfg.VestaConfig, first_start: bool = False) -> list[str]:
+    """Return pending before-sync migrations as an exclusive boot barrier."""
     return _migration_turns(
-        pending=pending,
+        pending=_pending_for(state=state, config=config, first_start=first_start, phase=MigrationPhase.BEFORE_SYNC),
         state=state,
         config=config,
         first_start=first_start,
@@ -155,9 +161,8 @@ def after_sync_migration_turns(*, state: vm.State, config: cfg.VestaConfig, firs
     These can rely on the running version's stock files being present. The agent itself records
     completion on upgrade boots.
     """
-    pending = [migration for migration in list_pending(state=state, config=config) if migration.phase is MigrationPhase.AFTER_SYNC]
     return _migration_turns(
-        pending=pending,
+        pending=_pending_for(state=state, config=config, first_start=first_start, phase=MigrationPhase.AFTER_SYNC),
         state=state,
         config=config,
         first_start=first_start,
