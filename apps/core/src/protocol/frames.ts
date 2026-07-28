@@ -33,10 +33,7 @@ export function reauthFrame(token: string): ReauthFrame {
   return { type: "reauth", token }
 }
 
-export function clientContextFrame(
-  focused: boolean,
-  resync: boolean,
-): ClientContextFrame {
+export function clientContextFrame(focused: boolean, resync: boolean): ClientContextFrame {
   return { type: "client_context", focused, resync }
 }
 

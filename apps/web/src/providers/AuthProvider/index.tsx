@@ -4,10 +4,8 @@ import {
   clearConnection,
   getConnection,
   initConnection,
-  isTokenExpiringSoon,
   parseConnectKey,
 } from "@/lib/connection";
-import { ensureFreshToken } from "@/lib/token-refresh";
 import { AuthContext } from "./context";
 
 export { useAuth } from "./context";
@@ -57,19 +55,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       if (hasStoredConnection()) {
-        const refresh = isTokenExpiringSoon()
-          ? await ensureFreshToken()
-          : "ok";
-        if (refresh === "expired") {
-          clearConnection();
-          setSessionExpired(true);
-        } else {
-          // A transient refresh failure may still leave a valid token inside
-          // the five-minute refresh buffer. Preserve the existing reconnect
-          // behaviour; successful startup refreshes never expose an expired
-          // token to /sync.
-          setConnected(true);
-        }
+        setConnected(true);
       }
 
       setInitialized(true);

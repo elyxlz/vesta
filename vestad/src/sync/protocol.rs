@@ -277,6 +277,15 @@ mod tests {
             parsed,
             ClientFrame::ClientContext(ClientContext { focused: true, resync: false })
         );
+        // A shipped client still sends the retired `active_agent`; unknown fields are ignored by
+        // rule, which is what keeps this removal off `MIN_SUPPORTED_CLIENT_VERSION`.
+        let legacy: ClientFrame =
+            serde_json::from_str(r#"{"type":"client_context","focused":true,"active_agent":"scout"}"#)
+                .expect("parse legacy client_context");
+        assert_eq!(
+            legacy,
+            ClientFrame::ClientContext(ClientContext { focused: true, resync: false })
+        );
         let resync: ClientFrame = serde_json::from_str(
             r#"{"type":"client_context","focused":false,"resync":true}"#,
         )

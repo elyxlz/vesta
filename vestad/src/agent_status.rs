@@ -185,6 +185,22 @@ fn is_agent_ready(host: &str, port: u16) -> bool {
 /// (the daemon persists it into `status.json` for the `vestad status` banner).
 pub type OnAgentsChanged = Arc<dyn Fn(&[ListEntry]) + Send + Sync>;
 
+/// Whether the agent's container is up, so a notification dropped into it is read now rather than
+/// queued for whenever it next starts.
+fn watches_notifications(status: docker::AgentStatus) -> bool {
+    match status {
+        docker::AgentStatus::Alive
+        | docker::AgentStatus::SettingUp
+        | docker::AgentStatus::Starting
+        | docker::AgentStatus::NotAuthenticated
+        | docker::AgentStatus::Unprovisioned => true,
+        docker::AgentStatus::Rebuilding
+        | docker::AgentStatus::Stopped
+        | docker::AgentStatus::Dead
+        | docker::AgentStatus::NotFound => false,
+    }
+}
+
 /// Cached agent list + activity states, updated by a background task.
 /// WS handlers subscribe via the watch receivers.
 pub struct AgentStatusCache {
@@ -275,12 +291,16 @@ impl AgentStatusCache {
         self.presence_notifications_rx.borrow().get(agent).copied().unwrap_or(true)
     }
 
-    /// Every managed agent that should receive the next global user-present event.
+    /// Every running agent that should receive the next global user-present event. An agent whose
+    /// container is down is skipped: the drop would sit unread in its notifications dir and replay
+    /// one stale "user is here" per return-to-focus on its next boot.
     pub fn presence_notification_agents(&self) -> Vec<String> {
         self.agents_rx
             .borrow()
             .iter()
-            .filter(|entry| self.presence_notifications_enabled(&entry.name))
+            .filter(|entry| {
+                watches_notifications(entry.status) && self.presence_notifications_enabled(&entry.name)
+            })
             .map(|entry| entry.name.clone())
             .collect()
     }
@@ -819,6 +839,12 @@ mod tests {
                     name: "quiet".into(),
                     status: docker::AgentStatus::Alive,
                     ws_port: 2,
+                    started_at: None,
+                },
+                ListEntry {
+                    name: "asleep".into(),
+                    status: docker::AgentStatus::Stopped,
+                    ws_port: 3,
                     started_at: None,
                 },
             ]);
