@@ -51,7 +51,7 @@ Four gates before opening a worktree.
 
 ## Shaping the change (REQUIRED)
 
-When you add functionality to a skill that already ships a CLI (`cli/`), fold it in as a **subcommand of that CLI**, reusing its shared auth/client/helpers; do not drop a standalone script beside it. One entry point per skill: a loose script re-implements auth, escapes the skill's tests, and rots. Ship the subcommand with a test under `cli/tests/` and document it in `SKILL.md` alongside the others.
+When you add functionality to a skill that already ships a CLI (`cli/`), fold it in as a **subcommand of that CLI**, reusing its shared auth/client/helpers; do not drop a standalone script beside it. One entry point per skill: a loose script re-implements auth, escapes the skill's tests, and rots. Document the subcommand in `SKILL.md` alongside the others, and ship it with a check the maintainer can actually run: `app-chat`, `whatsapp`, and `telegram` have CLI suites the repo's checks execute, so a test in that skill's `cli/tests/` runs there. Everywhere else `cli/tests/` is not wired into a check, so a test you add there is a test nobody runs: put it there anyway if the skill already has a suite, and either way state in the PR body exactly how you exercised the subcommand and what you saw.
 
 ## Attribution (REQUIRED)
 

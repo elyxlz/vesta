@@ -80,19 +80,19 @@ Put a command line tool in `cli/` as its own standalone project (`cli/pyproject.
 with `uv tool install --editable` as above, and keep setup that runs once (auth, credentials,
 model downloads) in a `SETUP.md` beside `SKILL.md`.
 
-**If the skill runs a background process**, do not write your own `screen` line. Every daemon in
-the fleet is driven the same way, `<skill> daemon start|stop|restart|status`, delegating to
-`~/agent/skills/vestad/scripts/daemon-lifecycle`, which owns the guard against duplicates, the
-port registration, waiting until the daemon is actually up, and stopping it cleanly. A skill with
-a CLI declares the daemon in a `daemon` subcommand; a skill without one is a single executable
-at `~/agent/skills/<skill>/<skill>`, which agent startup puts on PATH. Register the port private
-unless the service is a page that must load with no credential at all. Read the `vestad` skill
-for the flag list and a worked example, including the two things the runner cannot work out for
-itself: a daemon that ignores SIGHUP has to hand over its pid file, and a daemon that reports its
-own death has to recognize a deliberate stop.
+**If the skill runs a background process**, it implements the daemon contract in its own
+language: one command named after the skill, with `daemon start|stop|restart|status` as verbs on
+it, each printing one line of JSON, a pid and port record under `~/agent/data/daemons/`, a log at
+`~/agent/logs/<skill>.log`, an idempotent start that returns only once the daemon is up, and
+SIGTERM as the deliberate stop. A skill with a CLI declares the daemon in a `daemon` subcommand;
+a skill without one is a single executable at `~/agent/skills/<skill>/<skill>`, which agent
+startup puts on PATH. The `vestad` skill holds the full spec plus a worked launcher to copy,
+including the two obligations that are easy to miss: a daemon that serves a port registers it
+itself (private unless the page must load with no credential at all), and a daemon that reports
+its own death stays silent when the death was a SIGTERM.
 
-Then add the guarded startup line yourself to the `## Daemons` section of the `restart` skill, so
-the daemon comes back after a container restart.
+Then add the startup line yourself, the bare `<skill> daemon start`, to the `## Daemons` section
+of the `restart` skill, so the daemon comes back after a container restart.
 
 Skills you build are yours until you file them: the `upstream-pr` skill contributes anything
 general back so every Vesta gets it.

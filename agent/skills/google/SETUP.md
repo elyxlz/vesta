@@ -27,7 +27,7 @@ In https://console.cloud.google.com/ with the user's Google account:
 2. Start background daemon: `google daemon start`
 3. Register it for restart (see [vestad](../vestad/SKILL.md)) with this startup line:
    ```
-   running google || { google daemon start; sleep 1; }
+   google daemon start
    ```
 
 ## 3. Authentication

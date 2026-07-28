@@ -64,73 +64,147 @@ The dashboard is private, and the app reaches it with a minted service key, so p
 only for something that must load with no credential at all, like a QR link a stranger's phone
 opens or a webhook an external service posts to.
 
-## Giving a skill a daemon
+## Giving a skill a daemon: the contract
 
-Every skill that runs a background process exposes the same four verbs,
-`daemon start|stop|restart|status`, and delegates the behavior to one shared runner,
-`~/agent/skills/vestad/scripts/daemon-lifecycle`. The runner owns the screen guard, port
-registration, readiness polling, stopping the process, and the JSON status, so a skill declares
-only what is its own:
+A skill that runs a background process owns its whole lifecycle itself, in its own language,
+behind one command named after the skill: `<skill> daemon start|stop|restart|status`. There is no
+shared runner, and no script path: a skill with a CLI adds a `daemon` subcommand, a skill without
+one is a single executable at `~/agent/skills/<skill>/<skill>`, and agent startup links that
+command onto PATH on every boot. A command you just wrote runs by its path until the next boot.
+(`ssh` is the one skill whose command is not its name. It is `ssh-tunnel`, because `ssh` is the
+system client and a skill never shadows a system command.)
 
-| flag | meaning |
-| --- | --- |
-| `--session NAME` | the screen session; not always the skill name |
-| `--service NAME` | the name registered with vestad; not always the session name (`sign-service` registers as `sign`) |
-| `--port-mode MODE` | `none` (default), `private`, or `public` |
-| `--workdir DIR` | cd here before launching |
-| `--probe MODE` | `none` (default), or `http` for a 200 on the registered port |
-| `--stop-marker PATH` | written before stopping, so the daemon can tell a deliberate stop from a crash |
-| `--pidfile PATH` | the daemon's own pid file, so stop signals the process and a live pid counts as running |
-| `-- COMMAND ...` | what runs inside the session; it sees `$PORT` when a port was registered |
+Each verb prints exactly one line of JSON on stdout:
 
-A skill has one command, named after the skill, and the daemon is a verb on it:
-`<skill> daemon start`, never a script path. A skill with a CLI declares the daemon in a `daemon`
-subcommand. A skill without one is a single executable at `~/agent/skills/<skill>/<skill>`, which
-agent startup puts on PATH. Pass `--port-mode private` unless the service is a page that must load
-with no credential at all; a private service is reached with a minted service key. The whole file:
+| verb | did the work | nothing to do |
+| --- | --- | --- |
+| `start` | `{"status":"started"}` | `{"status":"already_running"}` |
+| `stop` | `{"status":"stopped"}` | `{"status":"already_stopped"}` |
+| `restart` | `{"status":"started"}` | `{"status":"started"}` (a stopped daemon just starts) |
+| `status` | `{"running":true,"port":8123}` | `{"running":false,"port":null}` |
+
+A verb that cannot do its job prints `{"error":"<what went wrong>"}` on **stderr** and exits
+non-zero. `port` is `null` for a daemon that serves no port.
+
+State lives in the same three places for every skill, under one name the daemon picks for itself
+(normally its command, `voice-keys` calling its daemon `voice`):
+
+- pid: `~/agent/data/daemons/<name>.pid`, port: `~/agent/data/daemons/<name>.port`
+- log: `~/agent/logs/<name>.log`, appended, never truncated
+- budgets: `DAEMON_READY_TIMEOUT_SECS` (default 30) bounds a start, `DAEMON_STOP_TIMEOUT_SECS`
+  (default 15) bounds a stop
+
+Boot empties the records directory before any daemon runs, because a pid written by the previous
+container can already belong to something else in the fresh pid space, which would read as live
+and turn the next start into a silent no-op.
+
+Five properties, which are what make a restart file a plain list of starts:
+
+- **start is idempotent**: a recorded pid that is still alive answers `already_running` and
+  spawns nothing, so re-running a start can never stack a second copy.
+- **start returns ready**: it comes back only once the daemon is actually up, a port-serving one
+  answering on its port, so the caller's next line can use it.
+- **start fails closed**: a registration that fails launches nothing, and a launch that never
+  becomes ready is killed and both records removed before the error, because a daemon that is
+  alive and unreachable would read as running and make every later start decline.
+- **stop is SIGTERM** to the recorded pid, waited out. SIGTERM is therefore the one exit the
+  agent asked for.
+- **status is a local read** of those two records, never a call to vestad, so it answers
+  instantly and truthfully while vestad is down.
+
+Two obligations that are easy to miss:
+
+- **A daemon that serves a port registers it itself**, inside start, before launching, and passes
+  the port to the process. Register private (no `--public`) unless the service is a page that
+  must load with no credential at all; a private service is reached with a minted service key.
+- **A daemon that writes a `daemon_died` notification recognizes SIGTERM in-process** and stays
+  silent for it, so a deliberate stop is never reported as a crash. Every other way out is
+  reported, since nothing else notices a daemon that quietly went away.
+
+A whole launcher, `~/agent/skills/file-host/file-host`, condensed:
 
 ```sh
 #!/bin/sh
 set -eu
 
-USAGE="Usage: file-host daemon <start|stop|restart|status>"
-case "${1:-}" in
-  daemon) shift ;;
-  "" | -h | --help | help) echo "$USAGE"; exit 0 ;;
-  *) echo "$USAGE" >&2; exit 1 ;;
-esac
+PIDFILE="$HOME/agent/data/daemons/file-host.pid"
+PORTFILE="$HOME/agent/data/daemons/file-host.port"
+LOG="$HOME/agent/logs/file-host.log"
+READY_POLLS=$(( ${DAEMON_READY_TIMEOUT_SECS:-30} * 2 ))
+STOP_POLLS=$(( ${DAEMON_STOP_TIMEOUT_SECS:-15} * 2 ))
 
-exec "$HOME/agent/skills/vestad/scripts/daemon-lifecycle" "$@" \
-  --session file-host \
-  --service file-host \
-  --port-mode public \
-  -- /bin/sh -c 'exec python3 ~/agent/skills/file-host/serve.py --port "$PORT"'
+fail() { printf '{"error":"%s"}\n' "$1" >&2; exit 1; }
+
+live_pid() {
+  pid=$(cat "$PIDFILE" 2>/dev/null) || return 1
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 1
+  printf %s "$pid"
+}
+
+do_start() {
+  if live_pid >/dev/null; then echo '{"status":"already_running"}'; return 0; fi
+  PORT=$(register-service file-host --public) || fail "could not register file-host with vestad"
+  mkdir -p "$HOME/agent/data/daemons" "$HOME/agent/logs"
+  echo "$PORT" > "$PORTFILE"
+  setsid python3 "$HOME/agent/skills/file-host/serve.py" --port "$PORT" >> "$LOG" 2>&1 &
+  pid=$!
+  echo "$pid" > "$PIDFILE"
+  i=0
+  while [ "$i" -lt "$READY_POLLS" ]; do
+    kill -0 "$pid" 2>/dev/null || { rm -f "$PIDFILE" "$PORTFILE"; fail "file-host exited during startup; see $LOG"; }
+    if curl -m 2 -fsS -o /dev/null "http://localhost:$PORT"; then echo '{"status":"started"}'; return 0; fi
+    sleep 0.5; i=$((i + 1))
+  done
+  kill -TERM "$pid" 2>/dev/null || true
+  rm -f "$PIDFILE" "$PORTFILE"
+  fail "file-host never answered on port $PORT; see $LOG"
+}
+
+do_stop() {
+  pid=$(live_pid) || { echo '{"status":"already_stopped"}'; return 0; }
+  kill -TERM "$pid" 2>/dev/null || true
+  i=0
+  while [ "$i" -lt "$STOP_POLLS" ]; do
+    kill -0 "$pid" 2>/dev/null || { rm -f "$PIDFILE" "$PORTFILE"; echo '{"status":"stopped"}'; return 0; }
+    sleep 0.5; i=$((i + 1))
+  done
+  fail "file-host still running after SIGTERM (pid=$pid)"
+}
+
+do_status() {
+  if live_pid >/dev/null; then
+    port=$(cat "$PORTFILE" 2>/dev/null) || port=""
+    printf '{"running":true,"port":%s}\n' "${port:-null}"
+  else
+    printf '{"running":false,"port":null}\n'
+  fi
+}
+
+case "${1:-}" in daemon) shift ;; esac
+case "${1:-}" in
+  start) do_start ;;
+  stop) do_stop ;;
+  restart) do_stop >/dev/null; do_start ;;
+  status) do_status ;;
+  *) echo "Usage: file-host daemon <start|stop|restart|status>" >&2; exit 1 ;;
+esac
 ```
 
-A command lands on PATH at the next boot, so a skill you just wrote runs by its path until then.
+The same contract in Python is `~/agent/skills/tasks/cli/src/tasks_cli/daemon.py`, and in Go
+`~/agent/skills/whatsapp/cli/daemon.go`. Read whichever language you are writing in and follow it.
 
-Two rules that are easy to miss:
-
-- **A daemon that ignores SIGHUP must pass `--pidfile`.** Quitting a screen session only sends
-  SIGHUP, so such a daemon outlives the quit, runs no shutdown path, and would read as stopped
-  while still alive, letting the next start stack a second copy.
-- **A daemon that writes a `daemon_died` notification must honor the stop marker**: check for it
-  on shutdown, clear it, and stay silent, so a deliberate stop is not reported as a crash.
-
-Then add the guarded startup line yourself, inside the single fenced block in the `## Daemons`
-section of `~/agent/skills/restart/SKILL.md`, so the daemon comes back after a container restart:
+Then add the startup line yourself, inside the fenced block in the `## Daemons` section of
+`~/agent/skills/restart/SKILL.md`, so the daemon comes back after a container restart. It is the
+bare command, nothing around it, because start is idempotent:
 
 ```bash
-running tasks || { tasks daemon start; sleep 1; }
+file-host daemon start
 ```
 
-The runner registers the port for you, so call `register-service` directly only when you need a
-port outside a daemon.
-
-vestad's API may still be coming up when the daemon block runs, so `register-service` polls
-until vestad answers (up to `REGISTER_SERVICE_WAIT` seconds, default 30) and, if it never does,
-exits non-zero with a stderr message and no port. The runner treats that as fatal and does not
-launch, because a daemon on a port vestad does not know about is worse than one that did not start.
+vestad's API may still be coming up when that block runs, so `register-service` polls until
+vestad answers (up to `REGISTER_SERVICE_WAIT` seconds, default 30) and, if it never does, exits
+non-zero with a stderr message and no port. A start treats that as fatal and launches nothing,
+because a daemon on a port vestad does not know about is worse than one that did not start.
 
 List registrations, unregister a service, or tell connected clients to reload after changing
 what a service serves:

@@ -30,9 +30,11 @@ EXPECTED_DIRECT_PUBLIC = {
 DIRECT_PUBLIC = re.compile(r'--public|"public"\s*:\s*true')
 
 
-def _declaring_files():
+def _declaring_files(*, include_prose: bool = False):
     for path in sorted(SKILLS_DIR.rglob("*")):
-        if not path.is_file() or path.suffix == ".md" or path in EXPOSURE_OWNERS:
+        if not path.is_file() or path in EXPOSURE_OWNERS:
+            continue
+        if path.suffix == ".md" and not include_prose:
             continue
         if "/tests/" in str(path) or "/.venv/" in str(path):
             continue
@@ -48,8 +50,13 @@ def _direct_public_files() -> set[str]:
 
 
 def test_no_skill_declares_a_port_mode():
-    """`--port-mode` is not part of any interface here: a skill names its exposure to `register-service`."""
-    assert [str(path.relative_to(SKILLS_DIR)) for path, text in _declaring_files() if "--port-mode" in text] == []
+    """`--port-mode` is not part of any interface here: a skill names its exposure to `register-service`.
+
+    Prose is checked too, because a skill's own docs are where a flag nothing accepts regrows: the
+    agent writes the next daemon from what the skills teach it.
+    """
+    declared = [str(path.relative_to(SKILLS_DIR)) for path, text in _declaring_files(include_prose=True) if "--port-mode" in text]
+    assert declared == []
 
 
 def test_only_named_skills_register_a_public_port_themselves():

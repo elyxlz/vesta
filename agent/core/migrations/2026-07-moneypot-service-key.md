@@ -20,10 +20,10 @@ call `mark_migration_applied` with `name="2026-07-moneypot-service-key"` and STO
 
 `moneypot daemon start` registers the service privately and passes the server no key, so the
 line in the `## Daemons` section of `~/agent/skills/restart/SKILL.md` needs nothing beyond that
-launch, keeping your own guard:
+launch:
 
 ```
-running moneypot || { moneypot daemon start; sleep 1; }
+moneypot daemon start
 ```
 
 If a previous migration in this batch already converted the line, this step is done. If the line

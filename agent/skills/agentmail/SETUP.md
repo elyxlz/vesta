@@ -75,7 +75,7 @@ Add this line yourself, inside the fenced block in the `## Daemons` section of
 `~/agent/skills/restart/SKILL.md`:
 
 ```
-running agentmail || { agentmail daemon start; sleep 1; }
+agentmail daemon start
 ```
 
 **Verify**: `agentmail daemon status` reports the registered port; `curl http://127.0.0.1:<port>/health`

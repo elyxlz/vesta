@@ -13,10 +13,10 @@ the agent image. Setup is two steps: a script, then one edit you make.
 
 2. **Register the restart line yourself**, so the daemon comes back after a container
    restart with notifications flowing before you send anything. Add this line inside the
-   fenced block in the `## Daemons` section of `~/agent/skills/restart/SKILL.md`, matching
-   the guard form already there:
+   fenced block in the `## Daemons` section of `~/agent/skills/restart/SKILL.md`, on its
+   own line:
    ```
-   running whatsapp || { whatsapp daemon start; sleep 1; }
+   whatsapp daemon start
    ```
 
 ## Linking an account

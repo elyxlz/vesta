@@ -172,7 +172,7 @@ connects out to IMAP and writes notification files, so it needs no inbound port:
 daemon, not a vestad service.
 
 ```
-running email-client || { email-client daemon start; sleep 1; }
+email-client daemon start
 ```
 
 ## 6. Wire the rules into MEMORY.md

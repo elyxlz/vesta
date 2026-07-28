@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-# LEGACY(remove-when: the 2026-07-daemon-lifecycle migration is fleet-applied): restart
+# LEGACY(remove-when: the 2026-08-daemon-pidfile migration is fleet-applied): restart
 # skills written before the daemon verb still launch the dashboard by this path, and the
 # path outlives the sync that converts them, so it forwards rather than breaking.
 

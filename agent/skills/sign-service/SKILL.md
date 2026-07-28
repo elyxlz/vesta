@@ -39,7 +39,7 @@ uv run --with PyMuPDF python3 ~/agent/skills/sign-service/stamp.py \
 
 To keep the pad up across a container restart, add this line inside the fenced block in the `## Daemons` section of `~/agent/skills/restart/SKILL.md`, marked TEMP because it comes back out at teardown:
 ```
-running sign-service || { sign-service daemon start; sleep 1; }  # TEMP
+sign-service daemon start  # TEMP
 ```
 
 ## Placing the signature (stamp.py)
@@ -48,4 +48,4 @@ running sign-service || { sign-service daemon start; sleep 1; }  # TEMP
 ## Safety
 - The signed document is legally the user's. Never deliver or email it anywhere until the user has seen the stamped preview and explicitly says go.
 - The signature PNG is personal; keep it under `/tmp` so it gets pruned nightly. Don't persist it or commit it.
-- Tear the service down when done (`sign-service daemon stop`), revoke the key you minted (`service-key list sign`, then `service-key revoke sign <id>`), and drop any TEMP guard line from the restart skill.
+- Tear the service down when done (`sign-service daemon stop`), revoke the key you minted (`service-key list sign`, then `service-key revoke sign <id>`), and drop the TEMP line from the restart skill.

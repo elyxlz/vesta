@@ -10,7 +10,7 @@ authenticate:
 2. Start background daemon: `microsoft daemon start`
 3. Register it for restart (see [vestad](../vestad/SKILL.md)) with this startup line:
    ```
-   running microsoft || { microsoft daemon start; sleep 1; }
+   microsoft daemon start
    ```
 
 ## Optional: your own Azure app registration

@@ -12,10 +12,10 @@ its own session with its pid recorded at
 `~/agent/logs/whatsapp[-<instance>].log`. One-shot commands (`send`, `status`,
 `messages`, ...) connect to it over a Unix socket. Every agent-facing command
 self-bootstraps the daemon, so the agent never starts, stops, or restarts
-anything by hand. At boot the restart skill runs `whatsapp start` (an idempotent
-front door to the daemon-lifecycle start: it brings the daemon up and waits until
-it answers, so notifications are already flowing before the agent sends
-anything); `setup.sh` registers that line.
+anything by hand. At boot the restart skill runs `whatsapp daemon start`, which
+is idempotent and returns only once the daemon answers, so notifications are
+already flowing before the agent sends anything; `setup.sh` prints that line for
+the agent to add.
 
 That pid record is also the mutual exclusion: a start claims it (exclusive create)
 before it spawns anything and drops it again on every failure, so two starts

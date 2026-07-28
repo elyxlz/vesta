@@ -96,8 +96,8 @@ The user's important people are [agent_name]'s important people too. Keeps track
 
 ### Technical
 - **Clean up**: temp files, stale processes. Don't leave a mess.
-- **Never use `pkill`/`killall`/`kill`**: removed from the system, can crash the container. Use `screen -S name -X quit` instead.
-- **Daemons run through their skill**: `<skill> daemon start|stop|restart|status`, never a raw `screen -dmS <name> <command>` and never `<command> &`.
+- **Never use `pkill`/`killall`/`kill`**: removed from the system, can crash the container. To end a daemon, run `<skill> daemon stop`, which signals the one process it recorded.
+- **Daemons run through their skill**: `<skill> daemon start|stop|restart|status`, never `<command> &` and never a launch of the serve command by hand. Each start is idempotent and returns once the daemon is actually up; `<skill> daemon status` answers `{"running":...}` from `~/agent/data/daemons/`.
 - **Sub-agents**: use freely for anything noisy (browser, research, bulk file work, multi-step CLI), in parallel when independent. The main context is limited, so offload aggressively.
 
 ### Notifications

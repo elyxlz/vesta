@@ -20,7 +20,7 @@ uv tool install --editable ~/agent/skills/app-chat/cli
 Manage the daemon through these commands, not by launching `app-chat serve` yourself. Startup output lands in `~/agent/logs/app-chat.log`.
 **Restart**: Add to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
 ```
-running app-chat || { app-chat daemon start; sleep 1; }
+app-chat daemon start
 ```
 `app-chat daemon start` registers the `app-chat` service (getting its port) and starts the HTTP
 server (intake, history, and the live `/ws` chat socket).

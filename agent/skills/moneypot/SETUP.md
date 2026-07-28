@@ -28,7 +28,7 @@ The **HTTP API is optional**. To run it as a vestad-proxied service:
    `~/agent/skills/restart/SKILL.md`:
 
    ```
-   running moneypot || { moneypot daemon start; sleep 1; }
+   moneypot daemon start
    ```
 
 3. Verify, with a key from step 1:

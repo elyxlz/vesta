@@ -26,10 +26,9 @@ download nothing.
    ```
    Idempotent (a running daemon is a no-op) and defaults `--notifications-dir` to `~/agent/notifications`. Check with `telegram daemon status`.
 4. Then have them open the bot and send any message (hitting Start counts). Wait for that first inbound notification and confirm back on the new channel before declaring it live: the channel does not exist until you have replied to them on it.
-5. Add to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`, matching the guard form
-   already there:
+5. Add to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`, on its own line:
    ```
-   running telegram || { telegram daemon start; sleep 1; }
+   telegram daemon start
    ```
    That one line covers the watchdog too: `telegram daemon start` brings up
    `telegram-watchdog.sh` alongside the daemon, and `telegram daemon stop` ends both. The

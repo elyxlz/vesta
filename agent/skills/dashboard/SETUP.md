@@ -8,9 +8,9 @@
    ```
    It fails loudly on a real problem rather than leaving a half-set-up dashboard: check its output, don't assume success.
 
-2. **Register the restart line yourself**, so the dashboard survives a container restart. Add this line inside the fenced block in the `## Daemons` section of `~/agent/skills/restart/SKILL.md`, matching the guard form already there:
+2. **Register the restart line yourself**, so the dashboard survives a container restart. Add this line inside the fenced block in the `## Daemons` section of `~/agent/skills/restart/SKILL.md`, on its own line:
    ```
-   running dashboard || { dashboard daemon start; sleep 1; }
+   dashboard daemon start
    ```
    Skip this and the dashboard is up now but gone after the next restart.
 

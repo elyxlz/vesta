@@ -78,7 +78,7 @@ by launching `tasks serve` yourself.
 
 Add this line yourself, inside the fenced block in the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
 ```
-running tasks || { tasks daemon start; sleep 1; }
+tasks daemon start
 ```
 
 ### Reminder Patterns

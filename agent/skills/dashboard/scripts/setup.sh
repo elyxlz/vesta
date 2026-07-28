@@ -43,5 +43,5 @@ fi
 echo "Dashboard setup complete."
 echo
 echo "Remaining step, yours to do: add this line inside the fenced Daemons block"
-echo "of ~/agent/skills/restart/SKILL.md, matching the guard form already there."
-echo '  running dashboard || { dashboard daemon start; sleep 1; }'
+echo "of ~/agent/skills/restart/SKILL.md, on its own line."
+echo '  dashboard daemon start'

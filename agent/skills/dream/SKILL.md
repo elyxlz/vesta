@@ -161,7 +161,7 @@ Keep the container's filesystem organized and disk usage under control.
 
 - Delete temp files, stale downloads, leftover build artifacts
 - Check `df -h` and `du -sh ~/` periodically. If disk usage is growing unexpectedly, investigate and clean up
-- Kill orphaned screen sessions that are no longer needed
+- Stop daemons nothing needs any more (`<skill> daemon stop`), e.g. a file-host or sign-service you brought up for one errand
 - Remove unused packages or build caches if they're taking significant space (`uv cache clean`, `apt clean`)
 
 ## Sensitive Data Cleanup
