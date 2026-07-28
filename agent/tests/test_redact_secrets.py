@@ -212,17 +212,18 @@ def test_scan_flags_luhn_valid_cards_with_or_without_separators(text):
         "tracking 1234 5678 9012 3456 today",
         "ts 20240101000000 logged",
         "call 15551234567 back",
+        # Visa prefix, tampered check digit: keeps Luhn load-bearing now that the IIN gate would
+        # reject every other case here on its own.
+        "card 4111111111111112 on file",
     ],
 )
 def test_scan_ignores_non_luhn_digit_runs(text):
     assert redact.find_matches(text) == []
 
 
-# IIN gate: Luhn alone flags ~1 in 10 non-card digit runs, so a 13-digit epoch-millis id or a
-# Luhn-passing order number sails through. Real PANs open with an assigned issuer prefix (MII 3/4/5/6
-# or a Mastercard 2-series 2221 to 2720), which the gate requires on top of Luhn. These are well-known
-# test PANs across every live network, never real cards. EPOCH_MILLIS and ORDER_16 both pass Luhn but
-# open with MII 1, so the gate rejects them with no risk to any real card.
+# IIN gate: Luhn alone passes ~1 in 10 non-card digit runs, so a 13-digit epoch-millis id or an order
+# number sails through it. The card PANs below are well-known test numbers across every live network,
+# never real cards.
 EPOCH_MILLIS = "1785121902428"  # 13-digit notification-id timestamp, passes Luhn by chance
 ORDER_16 = "1000000000000008"  # 16-digit order number, passes Luhn but opens with MII 1
 MC_2SERIES = "2223003122003222"  # Mastercard 2-series (2221 to 2720)
