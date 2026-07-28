@@ -3,7 +3,7 @@ name: enable-banking
 description: Personal bank spending, transactions, balances via Enable Banking open banking (EU/EEA only, no UK).
 ---
 
-# Enable Banking - CLI: finance
+# Enable Banking (CLI: finance)
 
 Tracks personal bank spending via Enable Banking open banking API.
 

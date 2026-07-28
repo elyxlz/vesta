@@ -539,7 +539,9 @@ def watch_daemon(config: Config, interval: int = 60) -> None:
             # The snapshot needs an authorized client, which a watcher started before sign-in
             # does not have, so it is retried each cycle until one succeeds.
             state = _load_watch_state()
-            if not state.get("known_liked_ids") and state.get("last_poll") is None:
+            no_known_ids = "known_liked_ids" not in state or not state["known_liked_ids"]
+            never_polled = "last_poll" not in state or state["last_poll"] is None
+            if no_known_ids and never_polled:
                 _log("No state file found — initializing (snapshotting current liked songs, no processing)...")
                 init_watch(config)
                 state = _load_watch_state()

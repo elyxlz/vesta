@@ -152,7 +152,7 @@ SKILLS = [
         command=["uv", "run", "--project", str(SKILLS_DIR / "tricount/cli"), "tricount"],
         name="tricount",
         serves_port=False,
-        emits_daemon_died=False,
+        emits_daemon_died=True,
     ),
     Daemon(
         command=["uv", "run", "--project", str(SKILLS_DIR / "spotify/cli"), "spotify"],
