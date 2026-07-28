@@ -21,6 +21,8 @@ PIDFILE = DAEMONS_DIR / f"{NAME}.pid"
 LOG = pl.Path.home() / "agent/logs" / f"{NAME}.log"
 USAGE = f"Usage: {NAME} daemon <start|stop|restart|status>"
 POLL_SECS = 0.5
+# How long a start that lost the record claim waits for the rival start to resolve.
+CLAIM_WAIT_SECS = 3
 SETTLE_SECS = 2
 
 
@@ -45,12 +47,45 @@ def live_pid() -> int | None:
     return pid
 
 
+def _claim(pid: int) -> bool:
+    try:
+        record = os.open(PIDFILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        return False
+    with os.fdopen(record, "w") as handle:
+        handle.write(str(pid))
+    return True
+
+
+def _claim_start() -> int | None:
+    """Takes the pid record exclusively for this start, so two starts landing at once cannot both
+    spawn a daemon. None means this start owns the record and everything it later removes; anything
+    else is this start's whole answer, the rival having resolved the race."""
+    if _claim(os.getpid()):
+        return None
+    deadline = time.monotonic() + CLAIM_WAIT_SECS
+    while time.monotonic() < deadline:
+        if live_pid() is not None:
+            print(json.dumps({"status": "already_running"}))
+            return 0
+        if not PIDFILE.exists():
+            break
+        time.sleep(POLL_SECS)
+    PIDFILE.unlink(missing_ok=True)
+    if _claim(os.getpid()):
+        return None
+    return _fail(f"another {NAME} start holds {PIDFILE}")
+
+
 def _start() -> int:
     if live_pid() is not None:
         print(json.dumps({"status": "already_running"}))
         return 0
     DAEMONS_DIR.mkdir(parents=True, exist_ok=True)
     LOG.parent.mkdir(parents=True, exist_ok=True)
+    answer = _claim_start()
+    if answer is not None:
+        return answer
     with LOG.open("ab") as log:
         child = subprocess.Popen([sys.argv[0], "organize", "watch"], start_new_session=True, stdout=log, stderr=log)
     PIDFILE.write_text(str(child.pid))

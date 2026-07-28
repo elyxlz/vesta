@@ -308,30 +308,32 @@ func spawnRecorded(name string, argv []string) (*exec.Cmd, <-chan struct{}, erro
 
 // startDaemonProcess launches `telegram serve` detached and waits for that process to answer on
 // the socket. The record is the mutual exclusion: a start claims it before spawning and drops it
-// on every failure, so what the record names is always a daemon that was serving.
-func startDaemonProcess(serveArgs []string) error {
+// on every failure, so what the record names is always a daemon that was serving. The answer is
+// whether this start is the one that brought the daemon up: a start that lost the claim to a rival
+// did not, and says so rather than taking credit for the daemon now running.
+func startDaemonProcess(serveArgs []string) (broughtUp bool, err error) {
 	sockPath := getSocketPath()
 	if _, alive := livePid(); alive {
-		return nil
+		return false, nil
 	}
 	if daemonAlive(sockPath) {
-		return errors.New(foreignDaemonMessage(sockPath))
+		return false, errors.New(foreignDaemonMessage(sockPath))
 	}
 	if err := makeRecordDirs(); err != nil {
-		return err
+		return false, err
 	}
 	claimed, err := claimRecord(daemonPidfile())
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !claimed {
-		return nil
+		return false, nil
 	}
 	child, exited, err := spawnRecorded(daemonName(), append([]string{telegramLauncher(), "serve"}, serveArgs...))
 	if err != nil {
-		return err
+		return false, err
 	}
-	return awaitDaemon(child, exited, sockPath)
+	return true, awaitDaemon(child, exited, sockPath)
 }
 
 // foreignDaemonMessage names the one situation this lifecycle cannot manage: a daemon serving
@@ -425,11 +427,16 @@ func daemonStart(serveArgs []string) {
 		printJSON(map[string]string{"status": "already_running"})
 		return
 	}
-	if err := startDaemonProcess(serveArgs); err != nil {
+	broughtUp, err := startDaemonProcess(serveArgs)
+	if err != nil {
 		failDaemon("%s", err.Error())
 	}
 	ensureWatchdog()
-	printJSON(map[string]string{"status": "started"})
+	status := "started"
+	if !broughtUp {
+		status = "already_running"
+	}
+	printJSON(map[string]string{"status": status})
 }
 
 // stopDaemon does the stop work and returns the resulting status ("already_stopped" or
@@ -466,7 +473,7 @@ func daemonRestart() {
 	if _, err := stopDaemon(); err != nil {
 		failDaemon("%s", err.Error())
 	}
-	if err := startDaemonProcess(serveArgs); err != nil {
+	if _, err := startDaemonProcess(serveArgs); err != nil {
 		failDaemon("%s", err.Error())
 	}
 	ensureWatchdog()

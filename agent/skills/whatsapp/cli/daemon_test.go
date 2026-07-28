@@ -275,14 +275,14 @@ func TestLivePidIsOnlyAProcessThatIsStillThere(t *testing.T) {
 
 func TestStartRecordsTheDaemonAndStopEndsIt(t *testing.T) {
 	hermeticHome(t, modeServe)
-	if err := startDaemonProcess(nil); err != nil {
+	if _, err := startDaemonProcess(nil); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
 	pid := recordedPid(t)
 	if !daemonAlive(getSocketPath()) {
 		t.Fatal("start returned before the daemon answered on its socket")
 	}
-	if err := startDaemonProcess(nil); err != nil {
+	if _, err := startDaemonProcess(nil); err != nil {
 		t.Fatalf("a second start must be a no-op, got %v", err)
 	}
 	if again := recordedPid(t); again != pid {
@@ -310,7 +310,7 @@ func TestStartRecordsTheDaemonAndStopEndsIt(t *testing.T) {
 // signal the other and every start after the first would read as a no-op.
 func TestAnInstanceKeepsItsOwnRecord(t *testing.T) {
 	home := hermeticHome(t, modeServe, "--instance", "personal")
-	if err := startDaemonProcess([]string{"--instance", "personal"}); err != nil {
+	if _, err := startDaemonProcess([]string{"--instance", "personal"}); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
 	if filepath.Base(daemonPidfile()) != "whatsapp-personal.pid" {
@@ -344,7 +344,7 @@ func TestAStartThatNeverGetsAnAnswerLeavesNothingBehind(t *testing.T) {
 		}
 		pids <- 0
 	}()
-	if err := startDaemonProcess(nil); err == nil {
+	if _, err := startDaemonProcess(nil); err == nil {
 		t.Fatal("a start whose daemon never answers must fail")
 	}
 	spawned := <-pids

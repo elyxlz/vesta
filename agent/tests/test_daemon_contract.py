@@ -29,6 +29,9 @@ DEATH_POLL_SECS = 0.2
 # Short enough that a start which gives up is a test rather than a wait.
 UNREADY_TIMEOUT_SECS = "2"
 PID_CAPTURE_POLL_SECS = 0.02
+# Two starts, launched with no stagger: whoever wins the record is the one that spawns.
+RACE_STARTS = 2
+RACE_TIMEOUT = 120
 
 # Every registration hands out a port that is free right now, as vestad does. A constant one
 # reused across a test's starts races the kernel: the port a stopped daemon just released can be
@@ -341,6 +344,37 @@ def test_start_is_idempotent_and_never_stacks(daemon):
     assert _pid(spec, home) == pid
 
 
+def test_two_starts_racing_leave_one_daemon_and_one_live_record(daemon):
+    """Two starts land at once whenever a restart file and the agent reach for the same daemon.
+    The pid record is the mutual exclusion, so exactly one of them brings the daemon up: without
+    it both spawn (two daemons, one record naming one of them) or the loser's failure path clears
+    the winner's records, and from either state status and stop disagree with what is running."""
+    spec, home, env = daemon
+    starts = [
+        subprocess.Popen([*spec.command, "daemon", "start"], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        for _ in range(RACE_STARTS)
+    ]
+    answers = [start.communicate(timeout=RACE_TIMEOUT) for start in starts]
+    brought = 0
+    for (out, err), start in zip(answers, starts, strict=True):
+        answer = json.loads(out) if out.strip().startswith("{") else None
+        if answer == {"status": "started"}:
+            brought += 1
+        elif answer != {"status": "already_running"}:
+            # Anything else has to be loud: a start that neither brought the daemon up nor found
+            # one running must fail, never report a success it cannot stand behind.
+            assert start.returncode != 0, f"a start answered {out!r} with {err!r}"
+            assert err.strip(), f"a start failed silently: {out!r}"
+    assert brought == 1, f"{brought} of {RACE_STARTS} starts claim to have brought the daemon up: {[a[0] for a in answers]}"
+
+    pid = _pid(spec, home)
+    assert pid is not None, "the record names no live process"
+    assert _json(_verb(spec, env, "status"))["running"] is True
+    assert _json(_verb(spec, env, "stop")) == {"status": "stopped"}
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+
+
 def test_start_fails_closed_when_registration_fails(daemon):
     spec, home, env = daemon
     if not spec.serves_port:
@@ -354,14 +388,15 @@ def test_start_fails_closed_when_registration_fails(daemon):
 
 
 def _spawned_pid(spec, home, start) -> int | None:
-    """The pid start records while it waits, read back before the failure path clears it."""
+    """The pid start records while it waits, read back before the failure path clears it. The
+    record holds the claim first and the daemon second, so the last pid it named is the daemon."""
     pidfile = home / "agent/data/daemons" / f"{spec.name}.pid"
+    spawned = None
     while start.poll() is None:
-        try:
-            return int(pidfile.read_text().strip())
-        except (FileNotFoundError, ValueError):
-            time.sleep(PID_CAPTURE_POLL_SECS)
-    return None
+        with contextlib.suppress(FileNotFoundError, ValueError):
+            spawned = int(pidfile.read_text().strip())
+        time.sleep(PID_CAPTURE_POLL_SECS)
+    return spawned
 
 
 def test_a_start_that_never_gets_an_answer_leaves_nothing_behind(daemon):

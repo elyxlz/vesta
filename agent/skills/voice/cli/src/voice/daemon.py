@@ -24,6 +24,8 @@ LOG = pl.Path.home() / "agent/logs" / f"{NAME}.log"
 READY_URL_PATH = "health"
 USAGE = "Usage: voice-keys daemon <start|stop|restart|status>"
 POLL_SECS = 0.5
+# How long a start that lost the record claim waits for the rival start to resolve.
+CLAIM_WAIT_SECS = 3
 # One hung connection must not eat the whole readiness budget.
 PROBE_TIMEOUT_SECS = 2
 
@@ -79,22 +81,9 @@ def _abandon(child: subprocess.Popen[bytes], message: str) -> int:
     return _fail(message)
 
 
-def _start() -> int:
-    if live_pid() is not None:
-        print(json.dumps({"status": "already_running"}))
-        return 0
-    binary = shutil.which("voice-server")
-    if binary is None:
-        return _fail("voice-server is not on PATH; run `uv tool install --editable ~/agent/skills/voice/cli` first")
-    port = _register_port()
-    if port is None:
-        return _fail(f"could not register {NAME} with vestad; not launching")
-    DAEMONS_DIR.mkdir(parents=True, exist_ok=True)
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    PORTFILE.write_text(port)
-    with LOG.open("ab") as log:
-        child = subprocess.Popen([binary], env={**os.environ, "SKILL_PORT": port}, start_new_session=True, stdout=log, stderr=log)
-    PIDFILE.write_text(str(child.pid))
+def _await_ready(child: subprocess.Popen[bytes], port: str) -> int:
+    """Holds the start open until the daemon it spawned answers on its port, which is what lets
+    the caller's next line use the service."""
     deadline = time.monotonic() + READY_TIMEOUT_SECS
     while time.monotonic() < deadline:
         if child.poll() is not None:
@@ -104,6 +93,59 @@ def _start() -> int:
             return 0
         time.sleep(POLL_SECS)
     return _abandon(child, f"{NAME} never answered on port {port}; see {LOG}")
+
+
+def _claim(pid: int) -> bool:
+    try:
+        record = os.open(PIDFILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        return False
+    with os.fdopen(record, "w") as handle:
+        handle.write(str(pid))
+    return True
+
+
+def _claim_start() -> int | None:
+    """Takes the pid record exclusively for this start, so two starts landing at once cannot both
+    spawn a daemon. None means this start owns the record and everything it later removes; anything
+    else is this start's whole answer, the rival having resolved the race."""
+    if _claim(os.getpid()):
+        return None
+    deadline = time.monotonic() + CLAIM_WAIT_SECS
+    while time.monotonic() < deadline:
+        if live_pid() is not None:
+            print(json.dumps({"status": "already_running"}))
+            return 0
+        if not PIDFILE.exists():
+            break
+        time.sleep(POLL_SECS)
+    PIDFILE.unlink(missing_ok=True)
+    if _claim(os.getpid()):
+        return None
+    return _fail(f"another {NAME} start holds {PIDFILE}")
+
+
+def _start() -> int:
+    if live_pid() is not None:
+        print(json.dumps({"status": "already_running"}))
+        return 0
+    binary = shutil.which("voice-server")
+    if binary is None:
+        return _fail("voice-server is not on PATH; run `uv tool install --editable ~/agent/skills/voice/cli` first")
+    DAEMONS_DIR.mkdir(parents=True, exist_ok=True)
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    answer = _claim_start()
+    if answer is not None:
+        return answer
+    port = _register_port()
+    if port is None:
+        PIDFILE.unlink(missing_ok=True)
+        return _fail(f"could not register {NAME} with vestad; not launching")
+    PORTFILE.write_text(port)
+    with LOG.open("ab") as log:
+        child = subprocess.Popen([binary], env={**os.environ, "SKILL_PORT": port}, start_new_session=True, stdout=log, stderr=log)
+    PIDFILE.write_text(str(child.pid))
+    return _await_ready(child, port)
 
 
 def _stop() -> int:

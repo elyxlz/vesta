@@ -11,6 +11,8 @@ LOG="$HOME/agent/logs/dashboard.log"
 USAGE="Usage: dashboard daemon <start|stop|restart|status>"
 READY_POLLS=$(( ${DAEMON_READY_TIMEOUT_SECS:-30} * 2 ))
 STOP_POLLS=$(( ${DAEMON_STOP_TIMEOUT_SECS:-15} * 2 ))
+# How long a start that lost the record claim waits for the rival start to resolve.
+CLAIM_POLLS=6
 
 case "${1:-}" in
   daemon) shift ;;
@@ -20,8 +22,11 @@ esac
 
 fail() { printf '{"error":"%s"}\n' "$1" >&2; exit 1; }
 
-# A start that gives up takes its child and both records with it: a daemon nothing can reach,
-# with records that say it is up, reads as running and turns every later start into a no-op.
+# A start that gives up drops the records it claimed: a daemon nothing can reach, with records
+# that say it is up, reads as running and turns every later start into a no-op.
+give_up() { rm -f "$PIDFILE" "$PORTFILE"; fail "$1"; }
+
+# A start that gives up ends its child first: a daemon nothing can reach outlives the records.
 abandon() {
   kill -TERM "$1" 2>/dev/null || true
   i=0
@@ -29,8 +34,7 @@ abandon() {
     sleep 0.5; i=$((i + 1))
   done
   if kill -0 "$1" 2>/dev/null; then kill -KILL "$1" 2>/dev/null || true; fi
-  rm -f "$PIDFILE" "$PORTFILE"
-  fail "$2"
+  give_up "$2"
 }
 
 live_pid() {
@@ -39,12 +43,31 @@ live_pid() {
   printf %s "$pid"
 }
 
+# The pid record is the mutual exclusion: a start claims it before spawning and drops it on every
+# failure, so what the record names is a daemon that was serving, never a corpse from a lost race.
+# A start that loses the claim owns nothing, so it removes nothing.
+claim_start() {
+  if ( set -C; echo $$ > "$PIDFILE" ) 2>/dev/null; then echo claimed; return 0; fi
+  i=0
+  while [ "$i" -lt "$CLAIM_POLLS" ]; do
+    if live_pid >/dev/null; then echo running; return 0; fi
+    [ -f "$PIDFILE" ] || break
+    sleep 0.5; i=$((i + 1))
+  done
+  rm -f "$PIDFILE"
+  if ( set -C; echo $$ > "$PIDFILE" ) 2>/dev/null; then echo claimed; else echo lost; fi
+}
+
 do_start() {
   if live_pid >/dev/null; then echo '{"status":"already_running"}'; return 0; fi
-  PORT=$(register-service dashboard) || fail "could not register dashboard with vestad"
-  [ -n "$PORT" ] || fail "could not register dashboard with vestad"
-  export PORT
   mkdir -p "$HOME/agent/data/daemons" "$HOME/agent/logs"
+  case "$(claim_start)" in
+    running) echo '{"status":"already_running"}'; return 0 ;;
+    lost) fail "another dashboard start holds $PIDFILE" ;;
+  esac
+  PORT=$(register-service dashboard) || give_up "could not register dashboard with vestad"
+  [ -n "$PORT" ] || give_up "could not register dashboard with vestad"
+  export PORT
   echo "$PORT" > "$PORTFILE"
   setsid "$HOME/agent/skills/dashboard/scripts/serve" >> "$LOG" 2>&1 &
   pid=$!

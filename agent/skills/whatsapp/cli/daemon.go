@@ -199,45 +199,48 @@ func ensureDaemon(serveArgs []string) error {
 	if daemonAlive(getSocketPath()) {
 		return nil
 	}
-	return startDaemonProcess(serveArgs)
+	_, err := startDaemonProcess(serveArgs)
+	return err
 }
 
 // startDaemonProcess launches `whatsapp serve` detached in its own session, records its pid,
 // and waits for that recorded process to answer on the socket. The record is the mutual
 // exclusion: a start claims it before spawning and drops it on every failure, so what the
-// record names is always a daemon that was serving, never a corpse from a lost race.
-func startDaemonProcess(serveArgs []string) error {
+// record names is always a daemon that was serving, never a corpse from a lost race. The answer
+// is whether this start is the one that brought the daemon up: a start that lost the claim to a
+// rival did not, and says so rather than taking credit for the daemon now running.
+func startDaemonProcess(serveArgs []string) (broughtUp bool, err error) {
 	sockPath := getSocketPath()
 	if _, alive := livePid(); alive {
-		return nil
+		return false, nil
 	}
 	if daemonAlive(sockPath) {
-		return fmt.Errorf("%s", foreignDaemonMessage(sockPath))
+		return false, fmt.Errorf("%s", foreignDaemonMessage(sockPath))
 	}
 	if err := os.MkdirAll(filepath.Dir(daemonPidfile()), daemonDirPerms); err != nil {
-		return fmt.Errorf("could not create the daemon record directory: %v", err)
+		return false, fmt.Errorf("could not create the daemon record directory: %v", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(daemonLifecycleLog()), daemonDirPerms); err != nil {
-		return fmt.Errorf("could not create the daemon log directory: %v", err)
+		return false, fmt.Errorf("could not create the daemon log directory: %v", err)
 	}
 	logFile, err := os.OpenFile(daemonLifecycleLog(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, daemonRecordPerms)
 	if err != nil {
-		return fmt.Errorf("could not open %s: %v", daemonLifecycleLog(), err)
+		return false, fmt.Errorf("could not open %s: %v", daemonLifecycleLog(), err)
 	}
 	defer logFile.Close()
 	claimed, err := claimStart()
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !claimed {
-		return nil
+		return false, nil
 	}
 	child := exec.Command(whatsappLauncher(), append([]string{"serve"}, serveArgs...)...)
 	child.Stdout, child.Stderr = logFile, logFile
 	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := child.Start(); err != nil {
 		os.Remove(daemonPidfile())
-		return fmt.Errorf("could not launch %s: %v", whatsappLauncher(), err)
+		return false, fmt.Errorf("could not launch %s: %v", whatsappLauncher(), err)
 	}
 	exited := make(chan struct{})
 	go func() {
@@ -245,9 +248,9 @@ func startDaemonProcess(serveArgs []string) error {
 		close(exited)
 	}()
 	if err := writePidRecord(child.Process.Pid, 0); err != nil {
-		return abandon(child, exited, fmt.Sprintf("could not record the daemon pid: %v", err))
+		return false, abandon(child, exited, fmt.Sprintf("could not record the daemon pid: %v", err))
 	}
-	return awaitDaemon(child, exited, sockPath)
+	return true, awaitDaemon(child, exited, sockPath)
 }
 
 // foreignDaemonMessage names the one situation this lifecycle cannot manage: a daemon serving
@@ -287,10 +290,15 @@ func daemonStart(serveArgs []string) {
 		printJSON(map[string]string{"status": "already_running"})
 		return
 	}
-	if err := startDaemonProcess(serveArgs); err != nil {
+	broughtUp, err := startDaemonProcess(serveArgs)
+	if err != nil {
 		failDaemon("%s", err.Error())
 	}
-	printJSON(map[string]string{"status": "started"})
+	status := "started"
+	if !broughtUp {
+		status = "already_running"
+	}
+	printJSON(map[string]string{"status": status})
 }
 
 // stopDaemon does the stop work and returns the resulting status ("already_stopped"
@@ -334,7 +342,7 @@ func daemonRestart() {
 	if _, err := stopDaemon(); err != nil {
 		failDaemon("%s", err.Error())
 	}
-	if err := startDaemonProcess(serveArgs); err != nil {
+	if _, err := startDaemonProcess(serveArgs); err != nil {
 		failDaemon("%s", err.Error())
 	}
 	printJSON(map[string]string{"status": "started"})

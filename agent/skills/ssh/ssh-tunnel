@@ -17,6 +17,8 @@ BORE_BIN="$HOME/.local/bin/bore"
 USAGE="Usage: ssh-tunnel setup <public key> | ssh-tunnel daemon <start|stop|restart|status>"
 SETTLE_SECS=2
 STOP_POLLS=$(( ${DAEMON_STOP_TIMEOUT_SECS:-15} * 2 ))
+# How long a start that lost the record claim waits for the rival start to resolve.
+CLAIM_POLLS=6
 
 fail() { printf '{"error":"%s"}\n' "$1" >&2; exit 1; }
 
@@ -24,6 +26,21 @@ live_pid() {
   pid=$(cat "$PIDFILE" 2>/dev/null) || return 1
   [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 1
   printf %s "$pid"
+}
+
+# The pid record is the mutual exclusion: a start claims it before spawning and drops it on every
+# failure, so what the record names is a daemon that was serving, never a corpse from a lost race.
+# A start that loses the claim owns nothing, so it removes nothing.
+claim_start() {
+  if ( set -C; echo $$ > "$PIDFILE" ) 2>/dev/null; then echo claimed; return 0; fi
+  i=0
+  while [ "$i" -lt "$CLAIM_POLLS" ]; do
+    if live_pid >/dev/null; then echo running; return 0; fi
+    [ -f "$PIDFILE" ] || break
+    sleep 0.5; i=$((i + 1))
+  done
+  rm -f "$PIDFILE"
+  if ( set -C; echo $$ > "$PIDFILE" ) 2>/dev/null; then echo claimed; else echo lost; fi
 }
 
 sshd_running() {
@@ -84,6 +101,10 @@ do_start() {
   [ -n "$port" ] || fail "no sshd to tunnel; run ssh-tunnel setup '<public key>' first"
   bore=$(ensure_bore) || fail "no bore client for $(uname -m), and none could be downloaded"
   mkdir -p "$DAEMONS" "$HOME/agent/logs"
+  case "$(claim_start)" in
+    running) echo '{"status":"already_running"}'; return 0 ;;
+    lost) fail "another ssh-tunnel start holds $PIDFILE" ;;
+  esac
   setsid "$bore" local "$port" --to bore.pub >> "$LOG" 2>&1 &
   pid=$!
   echo "$pid" > "$PIDFILE"
