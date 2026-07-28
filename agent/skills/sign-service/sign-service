@@ -13,6 +13,9 @@ SIGNATURE=/tmp/sign-service/signature.png
 USAGE="Usage: sign-service daemon <start|stop|restart|status>"
 READY_BUDGET=${DAEMON_READY_TIMEOUT_SECS:-30}
 STOP_BUDGET=${DAEMON_STOP_TIMEOUT_SECS:-15}
+# SIGTERM is the deliberate stop, and this is the point in the one budget at which a daemon that
+# has not honoured it is killed instead, leaving the remainder to reap it.
+KILL_AFTER=$(( STOP_BUDGET * 2 / 3 ))
 # How long a start that lost the record claim waits for the rival start to resolve.
 CLAIM_POLLS=6
 
@@ -43,9 +46,11 @@ give_up() { rm -f "$PIDFILE" "$PORTFILE"; fail "$1"; }
 
 # A start that gives up ends its child first: a daemon nothing can reach outlives the records.
 abandon() {
+  stop_by=$(deadline "$STOP_BUDGET")
   kill -TERM "$1" 2>/dev/null || true
-  if ! await_gone "$1" "$(deadline "$STOP_BUDGET")"; then
+  if ! await_gone "$1" "$(deadline "$KILL_AFTER")"; then
     kill -KILL "$1" 2>/dev/null || true
+    await_gone "$1" "$stop_by" || true
   fi
   give_up "$2"
 }
@@ -102,8 +107,12 @@ do_start() {
 
 do_stop() {
   pid=$(live_pid) || { echo '{"status":"already_stopped"}'; return 0; }
+  stop_by=$(deadline "$STOP_BUDGET")
   kill -TERM "$pid" 2>/dev/null || true
-  await_gone "$pid" "$(deadline "$STOP_BUDGET")" || fail "sign-service still running ${STOP_BUDGET}s after SIGTERM (pid=$pid)"
+  if ! await_gone "$pid" "$(deadline "$KILL_AFTER")"; then
+    kill -KILL "$pid" 2>/dev/null || true
+    await_gone "$pid" "$stop_by" || fail "sign-service still running ${STOP_BUDGET}s after SIGTERM then SIGKILL (pid=$pid)"
+  fi
   rm -f "$PIDFILE" "$PORTFILE"
   echo '{"status":"stopped"}'
 }

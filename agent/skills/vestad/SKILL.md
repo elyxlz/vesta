@@ -123,11 +123,14 @@ Six properties, which are what make a restart file a plain list of starts:
 - **start fails closed**: a registration that fails launches nothing, and a launch that never
   becomes ready is killed and both records removed before the error, because a daemon that is
   alive and unreachable would read as running and make every later start decline.
-- **stop is SIGTERM** to the recorded pid and a bounded wait, so SIGTERM is the one exit the
-  agent asked for, and a stop that fails loudly has left the daemon standing: `restart_vesta` is
-  what recovers it. telegram is the deliberate exception, escalating to a group SIGKILL, because
-  its watchdog would otherwise revive the daemon the stop just ended. whatsapp deliberately fails
-  loudly rather than escalating, since a SIGKILL mid history sync risks having to pair again.
+- **stop is SIGTERM then SIGKILL** to the recorded pid, both inside the one
+  `DAEMON_STOP_TIMEOUT_SECS` budget: SIGTERM is the exit the agent asked for, and a daemon that
+  has not honoured it two thirds of the way through the budget is killed, with the remainder left
+  to reap it. So a stop either ends the daemon or fails loudly having left it standing, and
+  `restart_vesta` is what recovers that. A stop that ends more than one process (telegram, whose
+  watchdog goes first so it cannot revive what the stop just ended) shares that one budget across
+  all of them. whatsapp is the one deliberate exception, reporting a daemon that will not go
+  rather than killing it, since a SIGKILL mid history sync risks having to pair the phone again.
 - **status is a local read** of those two records, never a call to vestad, so it answers
   instantly and truthfully while vestad is down.
 

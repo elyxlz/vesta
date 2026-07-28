@@ -17,6 +17,9 @@ BORE_BIN="$HOME/.local/bin/bore"
 USAGE="Usage: ssh-tunnel setup <public key> | ssh-tunnel daemon <start|stop|restart|status>"
 SETTLE_SECS=2
 STOP_BUDGET=${DAEMON_STOP_TIMEOUT_SECS:-15}
+# SIGTERM is the deliberate stop, and this is the point in the one budget at which a tunnel that
+# has not honoured it is killed instead, leaving the remainder to reap it.
+KILL_AFTER=$(( STOP_BUDGET * 2 / 3 ))
 # How long a start that lost the record claim waits for the rival start to resolve.
 CLAIM_POLLS=6
 
@@ -133,8 +136,12 @@ do_start() {
 
 do_stop() {
   pid=$(live_pid) || { echo '{"status":"already_stopped"}'; return 0; }
+  stop_by=$(deadline "$STOP_BUDGET")
   kill -TERM "$pid" 2>/dev/null || true
-  await_gone "$pid" "$(deadline "$STOP_BUDGET")" || fail "the tunnel is still running ${STOP_BUDGET}s after SIGTERM (pid=$pid)"
+  if ! await_gone "$pid" "$(deadline "$KILL_AFTER")"; then
+    kill -KILL "$pid" 2>/dev/null || true
+    await_gone "$pid" "$stop_by" || fail "the tunnel is still running ${STOP_BUDGET}s after SIGTERM then SIGKILL (pid=$pid)"
+  fi
   rm -f "$PIDFILE"
   echo '{"status":"stopped"}'
 }

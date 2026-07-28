@@ -55,6 +55,9 @@ def _budget(name: str, default: int) -> int:
 
 READY_TIMEOUT_SECS = _budget("DAEMON_READY_TIMEOUT_SECS", 30)
 STOP_TIMEOUT_SECS = _budget("DAEMON_STOP_TIMEOUT_SECS", 15)
+# SIGTERM is the deliberate stop, and this is the point in the one budget at which a daemon that
+# has not honoured it is killed instead, leaving the remainder to reap it.
+KILL_AFTER_SECS = STOP_TIMEOUT_SECS * 2 // 3
 
 
 def _fail(message: str) -> int:
@@ -311,21 +314,36 @@ def _start() -> int:
     return _await_ready(child, port)
 
 
+def _await_gone(deadline: float) -> bool:
+    """Waits out the daemon until a deadline shared with the rest of this stop. Answers whether
+    the process the record names is gone."""
+    while time.monotonic() < deadline:
+        if live_pid() is None:
+            return True
+        time.sleep(POLL_SECS)
+    return live_pid() is None
+
+
 def _stop() -> int:
+    """SIGTERM then, for a daemon that ignored it, SIGKILL, both inside the one stop budget,
+    so the verb ends the daemon rather than handing back a record it cannot honour. A daemon
+    that exits between the check and the signal is the stop it was asked for, not an error."""
     pid = live_pid()
     if pid is None:
         print(json.dumps({"status": "already_stopped"}))
         return 0
-    os.kill(pid, signal.SIGTERM)
-    deadline = time.monotonic() + STOP_TIMEOUT_SECS
-    while time.monotonic() < deadline:
-        if live_pid() is None:
-            PIDFILE.unlink(missing_ok=True)
-            PORTFILE.unlink(missing_ok=True)
-            print(json.dumps({"status": "stopped"}))
-            return 0
-        time.sleep(POLL_SECS)
-    return _fail(f"{NAME} still running {STOP_TIMEOUT_SECS}s after SIGTERM (pid={pid})")
+    started = time.monotonic()
+    with contextlib.suppress(ProcessLookupError):
+        os.kill(pid, signal.SIGTERM)
+    if not _await_gone(started + KILL_AFTER_SECS):
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGKILL)
+        if not _await_gone(started + STOP_TIMEOUT_SECS):
+            return _fail(f"{NAME} still running {STOP_TIMEOUT_SECS}s after SIGTERM then SIGKILL (pid={pid})")
+    PIDFILE.unlink(missing_ok=True)
+    PORTFILE.unlink(missing_ok=True)
+    print(json.dumps({"status": "stopped"}))
+    return 0
 
 
 def _status() -> int:

@@ -249,9 +249,8 @@ func signalProcess(pid int, group bool, sig syscall.Signal) error {
 // awaitGone waits out a stopped process, and a group leader's whole group with it: the leader
 // goes first while what it launched is still being reaped, so answering on the leader alone
 // would report a stop complete while a live member can still undo it.
-func awaitGone(pid int, group bool, budget time.Duration) bool {
-	deadline := time.Now().Add(budget)
-	for time.Now().Before(deadline) {
+func awaitGone(pid int, group bool, deadline time.Time) bool {
+	for {
 		target := pid
 		if group {
 			target = -pid
@@ -259,9 +258,11 @@ func awaitGone(pid int, group bool, budget time.Duration) bool {
 		if syscall.Kill(target, 0) != nil {
 			return true
 		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
 		time.Sleep(DaemonPollInterval)
 	}
-	return false
 }
 
 // abandon ends a start that gave up, taking the child and its pid record with it: a process
@@ -273,7 +274,7 @@ func abandon(name string, child *exec.Cmd, exited <-chan struct{}, message strin
 	signalProcess(pid, group, syscall.SIGTERM)
 	select {
 	case <-exited:
-	case <-time.After(daemonBudget(DaemonStopTimeoutEnv, DaemonStopTimeout)):
+	case <-time.After(daemonBudget(DaemonStopTimeoutEnv, DaemonStopTimeout) * 2 / 3):
 		signalProcess(pid, group, syscall.SIGKILL)
 		<-exited
 	}
@@ -399,29 +400,43 @@ func ensureWatchdog() {
 }
 
 // endRecorded signals the process a record names and waits for it to go, taking the record with
-// it. Reports whether there was one to end.
-func endRecorded(name string) (bool, error) {
+// it. Reports whether there was one to end. The deadline is the whole stop's, shared with every
+// other record it has to end, so a stop of two processes is bounded by one budget rather than
+// four consecutive waits of it.
+func endRecorded(name string, deadline time.Time) (bool, error) {
 	record := pidfileFor(name)
 	pid, alive := livePidIn(record)
 	if !alive {
 		os.Remove(record)
 		return false, nil
 	}
+	started := time.Now()
 	group := leadsGroup(pid)
 	if err := signalProcess(pid, group, syscall.SIGTERM); err != nil {
 		return false, fmt.Errorf("could not signal %s (pid %d): %v", name, pid, err)
 	}
-	budget := daemonBudget(DaemonStopTimeoutEnv, DaemonStopTimeout)
-	if awaitGone(pid, group, budget) {
+	if awaitGone(pid, group, killAfter(started, deadline)) {
 		os.Remove(record)
 		return true, nil
 	}
 	signalProcess(pid, group, syscall.SIGKILL)
-	if awaitGone(pid, group, budget) {
+	if awaitGone(pid, group, deadline) {
 		os.Remove(record)
 		return true, nil
 	}
-	return false, fmt.Errorf("%s is still running %s after SIGKILL (pid %d); see %s", name, budget, pid, logFor(name))
+	waited := time.Since(started).Round(time.Second)
+	return false, fmt.Errorf("%s is still running %s after SIGTERM then SIGKILL (pid %d); see %s", name, waited, pid, logFor(name))
+}
+
+// killAfter is the point in what is left of the budget at which a process that has not honoured
+// SIGTERM is killed instead, leaving the remainder to reap it.
+func killAfter(started time.Time, deadline time.Time) time.Time {
+	return started.Add(deadline.Sub(started) * 2 / 3)
+}
+
+// stopDeadline is the one wall-clock bound on a whole stop, however many processes it ends.
+func stopDeadline() time.Time {
+	return time.Now().Add(daemonBudget(DaemonStopTimeoutEnv, DaemonStopTimeout))
 }
 
 func daemonStart(serveArgs []string) {
@@ -447,12 +462,13 @@ func daemonStart(serveArgs []string) {
 // The watchdog goes first: it exists to restart a daemon that went away, so a stop that left it
 // running would race itself into a second daemon.
 func stopDaemon() (string, error) {
+	deadline := stopDeadline()
 	if extractInstance() == "" {
-		if _, err := endRecorded(watchdogRecord); err != nil {
+		if _, err := endRecorded(watchdogRecord, deadline); err != nil {
 			return "", err
 		}
 	}
-	ended, err := endRecorded(daemonName())
+	ended, err := endRecorded(daemonName(), deadline)
 	if err != nil {
 		return "", err
 	}

@@ -308,6 +308,10 @@ func daemonStart(serveArgs []string) {
 // or "stopped") or an error. It prints NOTHING, so callers compose it without
 // emitting stray JSON: the stop verb prints one object, restart stays silent and
 // prints only its own.
+//
+// SIGTERM is never escalated to SIGKILL here, alone among the skills: killing this daemon
+// mid-history-sync can invalidate the multi-device session and force the user to re-pair the
+// phone, so a daemon that will not go is reported instead of taken by force.
 func stopDaemon() (string, error) {
 	pid, running := livePid()
 	if !running {
