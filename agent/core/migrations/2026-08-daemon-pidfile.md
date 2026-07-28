@@ -60,8 +60,10 @@ guessing:
 
 A daemon inside a screen session is invisible to its command: there is no pid record, so
 `<skill> daemon status` reports `"running":false` while the daemon is very much alive, and a start
-would put a second copy beside it. So end the session first, then start through the command. For
-each daemon:
+would put a second copy beside it. So end the session first, then start through the command.
+whatsapp is the one whose `status` answers `"running":true` regardless, since it dials the daemon's
+socket rather than reading a record; hand it over on those same terms, quitting its session before
+the start. For each daemon:
 
 ```bash
 screen -S <session> -X quit

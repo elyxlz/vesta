@@ -148,7 +148,7 @@ REGEN_EVENT_FIXTURES=1 uv run pytest tests/test_event_union_fixture.py  # agent 
 uv run pytest tests/                       # All agent tests
 uv run pytest tests/ -k "test_batch"       # Single test by name
 uv run pytest tests/test_daemon_contract.py  # Daemon contract harness (one row per skill)
-uv run pytest skills/notifications/cli/tests/  # A skill CLI's own suite (installed editable by check.sh agent)
+./check.sh app-chat                        # A skill CLI's own suite (app-chat is its own uv project; from the repo root)
 
 # Rust (from vestad/; builds trigger the web build via build.rs, VESTAD_SKIP_APP_BUILD=1 skips it)
 cargo build

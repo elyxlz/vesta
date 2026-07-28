@@ -89,7 +89,9 @@ Each verb prints exactly one line of JSON on stdout:
 | `status` | `{"running":true,"port":8123}` | `{"running":false,"port":null}` |
 
 A verb that cannot do its job prints `{"error":"<what went wrong>"}` on **stderr** and exits
-non-zero. `port` is `null` for a daemon that serves no port.
+non-zero. `port` is `null` for a daemon that serves no port. The command with no arguments and
+the help forms (`-h`, `--help`, `help`, and `daemon help`) print usage on stdout and exit 0, so a
+command the agent reaches for blind answers instead of failing.
 
 State lives in the same three places for every skill, under one name the daemon picks for itself
 (normally its command, `voice-keys` calling its daemon `voice`):
@@ -104,17 +106,23 @@ Boot empties the records directory before any daemon runs, because a pid written
 container can already belong to something else in the fresh pid space, which would read as live
 and turn the next start into a silent no-op.
 
-Five properties, which are what make a restart file a plain list of starts:
+Six properties, which are what make a restart file a plain list of starts:
 
 - **start is idempotent**: a recorded pid that is still alive answers `already_running` and
   spawns nothing, so re-running a start can never stack a second copy.
+- **start is exclusive**: the pid record is claimed with an exclusive create (the parent's own
+  pid) before anything is registered or spawned, so two starts landing at once cannot both spawn.
+  The one that loses the claim answers `already_running` and removes nothing, owning nothing.
 - **start returns ready**: it comes back only once the daemon is actually up, a port-serving one
   answering on its port, so the caller's next line can use it.
 - **start fails closed**: a registration that fails launches nothing, and a launch that never
   becomes ready is killed and both records removed before the error, because a daemon that is
   alive and unreachable would read as running and make every later start decline.
-- **stop is SIGTERM** to the recorded pid, waited out. SIGTERM is therefore the one exit the
-  agent asked for.
+- **stop is SIGTERM** to the recorded pid and a bounded wait, so SIGTERM is the one exit the
+  agent asked for, and a stop that fails loudly has left the daemon standing: `restart_vesta` is
+  what recovers it. telegram is the deliberate exception, escalating to a group SIGKILL, because
+  its watchdog would otherwise revive the daemon the stop just ended. whatsapp deliberately fails
+  loudly rather than escalating, since a SIGKILL mid history sync risks having to pair again.
 - **status is a local read** of those two records, never a call to vestad, so it answers
   instantly and truthfully while vestad is down.
 
@@ -136,10 +144,13 @@ set -eu
 PIDFILE="$HOME/agent/data/daemons/file-host.pid"
 PORTFILE="$HOME/agent/data/daemons/file-host.port"
 LOG="$HOME/agent/logs/file-host.log"
+USAGE="Usage: file-host daemon <start|stop|restart|status>"
 READY_POLLS=$(( ${DAEMON_READY_TIMEOUT_SECS:-30} * 2 ))
 STOP_POLLS=$(( ${DAEMON_STOP_TIMEOUT_SECS:-15} * 2 ))
+CLAIM_POLLS=6
 
 fail() { printf '{"error":"%s"}\n' "$1" >&2; exit 1; }
+give_up() { rm -f "$PIDFILE" "$PORTFILE"; fail "$1"; }
 
 live_pid() {
   pid=$(cat "$PIDFILE" 2>/dev/null) || return 1
@@ -147,23 +158,38 @@ live_pid() {
   printf %s "$pid"
 }
 
+claim_start() {
+  if ( set -C; echo $$ > "$PIDFILE" ) 2>/dev/null; then echo claimed; return 0; fi
+  i=0
+  while [ "$i" -lt "$CLAIM_POLLS" ]; do
+    if live_pid >/dev/null; then echo running; return 0; fi
+    [ -f "$PIDFILE" ] || break
+    sleep 0.5; i=$((i + 1))
+  done
+  rm -f "$PIDFILE"
+  if ( set -C; echo $$ > "$PIDFILE" ) 2>/dev/null; then echo claimed; else echo lost; fi
+}
+
 do_start() {
   if live_pid >/dev/null; then echo '{"status":"already_running"}'; return 0; fi
-  PORT=$(register-service file-host --public) || fail "could not register file-host with vestad"
   mkdir -p "$HOME/agent/data/daemons" "$HOME/agent/logs"
+  case "$(claim_start)" in
+    running) echo '{"status":"already_running"}'; return 0 ;;
+    lost) fail "another file-host start holds $PIDFILE" ;;
+  esac
+  PORT=$(register-service file-host --public) || give_up "could not register file-host with vestad"
   echo "$PORT" > "$PORTFILE"
   setsid python3 "$HOME/agent/skills/file-host/serve.py" --port "$PORT" >> "$LOG" 2>&1 &
   pid=$!
   echo "$pid" > "$PIDFILE"
   i=0
   while [ "$i" -lt "$READY_POLLS" ]; do
-    kill -0 "$pid" 2>/dev/null || { rm -f "$PIDFILE" "$PORTFILE"; fail "file-host exited during startup; see $LOG"; }
+    kill -0 "$pid" 2>/dev/null || give_up "file-host exited during startup; see $LOG"
     if curl -m 2 -fsS -o /dev/null "http://localhost:$PORT" 2>/dev/null; then echo '{"status":"started"}'; return 0; fi
     sleep 0.5; i=$((i + 1))
   done
   kill -TERM "$pid" 2>/dev/null || true
-  rm -f "$PIDFILE" "$PORTFILE"
-  fail "file-host never answered on port $PORT; see $LOG"
+  give_up "file-host never answered on port $PORT; see $LOG"
 }
 
 do_stop() {
@@ -192,7 +218,8 @@ case "${1:-}" in
   stop) do_stop ;;
   restart) do_stop >/dev/null; do_start ;;
   status) do_status ;;
-  *) echo "Usage: file-host daemon <start|stop|restart|status>" >&2; exit 1 ;;
+  "" | -h | --help | help) echo "$USAGE" ;;
+  *) echo "$USAGE" >&2; exit 1 ;;
 esac
 ```
 
