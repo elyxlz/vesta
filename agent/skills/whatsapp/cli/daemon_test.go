@@ -334,7 +334,9 @@ func TestAStartThatNeverGetsAnAnswerLeavesNothingBehind(t *testing.T) {
 	go func() {
 		deadline := time.Now().Add(DaemonStopTimeout)
 		for time.Now().Before(deadline) {
-			if pid, alive := livePid(); alive {
+			// Before the spawn the record holds the claim, which is this very process, so a poll
+			// landing in that window would read the suite's own pid as the daemon's.
+			if pid, alive := livePid(); alive && pid != os.Getpid() {
 				pids <- pid
 				return
 			}
