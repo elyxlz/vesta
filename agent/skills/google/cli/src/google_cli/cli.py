@@ -7,9 +7,12 @@ import sys
 import threading
 from pathlib import Path
 
-from . import auth_commands, calendar, gmail, monitor, notifications
+from . import auth_commands, calendar, gmail, monitor, notifications, pending_send
 from .config import Config
 from .context import GoogleContext
+
+_PENDING_POLL_SECONDS = 1
+_PENDING_JOIN_TIMEOUT_SECONDS = 5
 
 
 def _write_pid(config):
@@ -85,6 +88,14 @@ def _add_email_commands(group):
     p_reply.add_argument("--body", required=True)
     p_reply.add_argument("--attachments", nargs="+", default=None)
     p_reply.add_argument("--reply-all", action="store_true")
+
+    p_send_delay = email_sub.add_parser("send-delay")
+    p_send_delay.add_argument("--seconds", type=int, default=None)
+
+    email_sub.add_parser("pending")
+
+    p_undo = email_sub.add_parser("undo")
+    p_undo.add_argument("--id", required=True, dest="pending_id")
 
     p_attachment = email_sub.add_parser("attachment")
     p_attachment.add_argument("--email-id", required=True)
@@ -206,6 +217,17 @@ def _draft_only_enabled():
 def _dispatch_email(args, config):
     if args.command in _TRANSMIT_EMAIL_COMMANDS and _draft_only_enabled():
         raise RuntimeError("draft-only mode (EMAIL_DRAFT_ONLY): sending is disabled. Create a draft instead (email draft ...).")
+    if args.command == "send-delay":
+        seconds = (
+            pending_send.delay_seconds(config.data_dir)
+            if args.seconds is None
+            else pending_send.set_delay_seconds(config.data_dir, args.seconds)
+        )
+        return {"send_delay_seconds": seconds}
+    if args.command == "pending":
+        return [queued.public() for queued in pending_send.list_pending(config.data_dir)]
+    if args.command == "undo":
+        return gmail.undo_pending(config, args.pending_id)
     handlers = {
         "list": lambda: gmail.list_emails(config, label=args.label, limit=args.limit),
         "get": lambda: gmail.get_email(
@@ -323,9 +345,29 @@ def _run_serve(config: Config, notif_dir: Path):
     print(json.dumps({"status": "serving"}))
     sys.stdout.flush()
 
+    pending_thread = threading.Thread(
+        target=_run_pending_dispatcher,
+        args=(config, monitor_stop_event, monitor_logger),
+        name="google-pending-send",
+        daemon=True,
+    )
     _write_pid(config)
     try:
+        pending_thread.start()
         monitor.run(ctx)
     finally:
+        monitor_stop_event.set()
+        pending_thread.join(timeout=_PENDING_JOIN_TIMEOUT_SECONDS)
         notifications.write_notification(notif_dir, "daemon_died", reason=shutdown_reason)
         _remove_pid(config)
+
+
+def _run_pending_dispatcher(config: Config, stop_event: threading.Event, logger: logging.Logger) -> None:
+    pending_send.recover_dispatching(config.data_dir)
+    while not stop_event.is_set():
+        try:
+            if gmail.dispatch_due(config):
+                continue
+        except Exception:
+            logger.exception("Error dispatching pending email")
+        stop_event.wait(_PENDING_POLL_SECONDS)

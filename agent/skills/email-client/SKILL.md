@@ -130,6 +130,20 @@ Repeat `--cc` / `--bcc` / `--attach` for multiple values. `--body-html` sends HT
 
 After a successful send the message is IMAP-APPENDed (with attachments) to the Sent folder so it shows in the user's mail UI. Skip with `--no-sent-sync`. The Sent folder is auto-detected from the server's RFC 6154 SPECIAL-USE attribute (`\Sent`), falling back to the provider profile's `sent_folder` then `Sent` - so it works even when a server names the folder unusually.
 
+### Delayed send and undo
+
+Send, reply, and forward operations wait 30 seconds by default. The delay is one persisted setting for the entire email client, not an option on an individual send:
+
+```bash
+email-client send-delay
+email-client send-delay --seconds 60
+email-client pending
+email-client pending --account work
+email-client undo --id <pending_id>
+```
+
+`email-client-send` returns a `pending` status with the pending id and scheduled send time. Use that id with `undo` before the deadline to cancel delivery. The poll daemon dispatches due messages, then syncs them to Sent and marks replied-to originals as answered. Keep the daemon running whenever the delay is nonzero. Set `--seconds 0` for immediate delivery. Drafts and dry runs are never queued.
+
 ### Reply
 
 ```bash

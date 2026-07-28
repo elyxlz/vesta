@@ -1,7 +1,7 @@
 """Unit tests for forward / move / archive / flag message actions (mocked Graph)."""
 
 import pytest
-from microsoft_cli import email
+from microsoft_cli import email, pending_send
 from microsoft_cli.config import Config
 from microsoft_cli.payloads import MailDraft
 
@@ -34,17 +34,25 @@ def patched(monkeypatch):
     return calls
 
 
-def test_forward_plain_uses_forward_action(patched):
-    result = email.forward_email(Config(), None, account_email="me@example.com", email_id="m1", mail=MailDraft(to=["bob@x.com"], body="fyi"))
+def test_forward_plain_uses_forward_action(patched, tmp_path):
+    pending_send.set_delay_seconds(tmp_path, 0)
+    result = email.forward_email(
+        Config(data_dir=tmp_path), None, account_email="me@example.com", email_id="m1", mail=MailDraft(to=["bob@x.com"], body="fyi")
+    )
     assert result == {"status": "sent"}
     assert len(patched) == 1
     assert patched[0]["path"] == "/me/messages/m1/forward"
     assert patched[0]["json"] == {"comment": "fyi", "toRecipients": [{"emailAddress": {"address": "bob@x.com"}}]}
 
 
-def test_forward_with_cc_uses_draft_path(patched):
+def test_forward_with_cc_uses_draft_path(patched, tmp_path):
+    pending_send.set_delay_seconds(tmp_path, 0)
     result = email.forward_email(
-        Config(), None, account_email="me@example.com", email_id="m1", mail=MailDraft(to=["bob@x.com"], body="fyi", cc=["cc@x.com"])
+        Config(data_dir=tmp_path),
+        None,
+        account_email="me@example.com",
+        email_id="m1",
+        mail=MailDraft(to=["bob@x.com"], body="fyi", cc=["cc@x.com"]),
     )
     assert result == {"status": "sent"}
     paths = [c["path"] for c in patched]
@@ -54,9 +62,9 @@ def test_forward_with_cc_uses_draft_path(patched):
     assert patch["json"]["toRecipients"] == [{"emailAddress": {"address": "bob@x.com"}}]
 
 
-def test_forward_requires_to(patched):
+def test_forward_requires_to(patched, tmp_path):
     with pytest.raises(ValueError, match="--to is required"):
-        email.forward_email(Config(), None, account_email="me@example.com", email_id="m1", mail=MailDraft(to=[]))
+        email.forward_email(Config(data_dir=tmp_path), None, account_email="me@example.com", email_id="m1", mail=MailDraft(to=[]))
 
 
 def test_move_to_wellknown_folder(patched):

@@ -40,6 +40,7 @@ def _install_stubs():
         for name in (
             "_env",
             "_from_full",
+            "_state_dir",
             "_to_full",
             "account_profile",
             "account_user",

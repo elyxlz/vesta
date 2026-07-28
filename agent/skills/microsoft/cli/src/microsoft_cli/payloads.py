@@ -21,6 +21,7 @@ class MailDraft:
     attachments: list[str] | None = None
     html: bool = False
     reply_to_id: str | None = None
+    reply_all: bool = False
     forward_id: str | None = None
 
 
