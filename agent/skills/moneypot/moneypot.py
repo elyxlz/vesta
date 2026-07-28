@@ -10,9 +10,8 @@ has a base currency; entries can be in another currency with an exchange rate.
 Money is stored as integer minor units (pence/cents) so settle-up is exact with
 no float drift. Stdlib only. Data in ~/agent/data/moneypot.json.
 
-This module is both a CLI (`python3 moneypot.py ...`) and an importable service
-layer (`create_pot`, `add_expense`, `add_transfer`, `balance`, ... raise
-MoneypotError on bad input) used by the HTTP API in server.py.
+The command surface is `moneypot ...`, and the functions behind it (`create_pot`,
+`add_expense`, `add_transfer`, `balance`, ...) raise MoneypotError on bad input.
 """
 
 from __future__ import annotations
@@ -36,7 +35,7 @@ DATA_DIR = DATA_FILE.parent
 
 
 class MoneypotError(ValueError):
-    """Bad input. CLI maps it to a clean error+exit; the API maps it to HTTP 400."""
+    """Bad input. The CLI maps it to a clean error plus a non-zero exit."""
 
 
 @dataclass(frozen=True)
@@ -252,7 +251,7 @@ def settle_up(nets: dict[str, int]) -> list[tuple[str, str, int]]:
     return txns
 
 
-# ---------- service layer (raises MoneypotError; used by CLI and API) ----------
+# ---------- service layer (raises MoneypotError) ----------
 
 
 def create_pot(data, pot_id, name=None, currency="GBP", members=None) -> dict:

@@ -1,13 +1,13 @@
 ---
 name: moneypot
-description: Track shared expenses and joint money pots (Splitwise/Tricount style). Use when the user wants to record who paid for what in a group, money put into a shared pot, split costs among people, see who owes whom, or get a compact set of payments to settle up. Also exposes an optional HTTP/JSON API. Keywords: split the bill, who owes, shared expenses, joint account, money pot, settle up, IOU, tricount, splitwise.
+description: Track shared expenses and joint money pots (Splitwise/Tricount style). Use when the user wants to record who paid for what in a group, money put into a shared pot, split costs among people, see who owes whom, or get a compact set of payments to settle up. Keywords: split the bill, who owes, shared expenses, joint account, money pot, settle up, IOU, tricount, splitwise.
 ---
 
 # Moneypot
 
-A shared expense and pot tracker. A **pot** is a group (a trip, a household, a project) with members. You log two kinds of entries against it, and it computes net balances and a compact way to settle up. CLI plus an optional HTTP API. Data lives in `~/agent/data/moneypot.json` (shared by both).
+A shared expense and pot tracker. A **pot** is a group (a trip, a household, a project) with members. You log two kinds of entries against it, and it computes net balances and a compact way to settle up.
 
-Run the CLI with `moneypot <command>`.
+Run it with `moneypot <command>`. It is a local CLI: nothing to start, nothing to register, no network beyond the optional live exchange-rate lookup. Data lives in `~/agent/data/moneypot.json`, created on first write.
 
 ## Model
 
@@ -75,32 +75,9 @@ contributions into 'Joint':
    Bob  £50.00
 ```
 
-## HTTP API (optional)
-
-`server.py` is a stdlib JSON API over the same data, for dashboards or other apps. Mutations are lock-serialized. See `SETUP.md` to run it as a vestad service. Routes:
-
-```
-GET    /health
-GET    /pots                                list pots
-POST   /pots                                {id, name?, currency?, members:[...]}
-GET    /pots/{id}                           full pot
-DELETE /pots/{id}
-GET    /pots/{id}/entries
-POST   /pots/{id}/members                   {name}
-POST   /pots/{id}/expenses                  {payer, amount, desc?, currency?, rate?, fetch?, for?:[...], split?:{Name:amt}}
-POST   /pots/{id}/transfers                 {from, to, amount, desc?, currency?, rate?, fetch?}
-DELETE /pots/{id}/entries/{eid}
-GET    /pots/{id}/balance
-GET    /pots/{id}/contributions?account=X
-```
-
-Errors return `{"error": "..."}` with HTTP 400 (bad input) or 404 (no route).
-
-**Authentication.** The server checks nothing: it is registered as a private vestad service, so vestad authenticates every request before proxying it and nothing outside this container reaches the port any other way. An external caller reaches it with a service key vestad mints for moneypot (see `SETUP.md`).
-
 ## Notes
 
 - `--currency` accepts any label; `GBP/USD/EUR/JPY` print with a symbol, others print the code.
 - "How much each person put in" = the **paid** figure shown next to each balance.
-- No setup needed for CLI use; the data file is created on first write. The API needs the one-time service registration in `SETUP.md`.
+- Every view takes `--json`, which is the form to read when you are acting on the numbers rather than showing them.
 - Self-contained, stdlib only, no personal data baked in.

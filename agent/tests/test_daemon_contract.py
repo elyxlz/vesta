@@ -169,12 +169,6 @@ SKILLS = [
         service="sign",
     ),
     Daemon(
-        command=[str(SKILLS_DIR / "moneypot/moneypot")],
-        name="moneypot",
-        serves_port=True,
-        emits_daemon_died=False,
-    ),
-    Daemon(
         command=[str(SKILLS_DIR / "dashboard/dashboard")],
         name="dashboard",
         serves_port=True,

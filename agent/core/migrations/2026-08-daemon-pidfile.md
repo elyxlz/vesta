@@ -48,7 +48,7 @@ guessing:
 | `voice serve` or `voice-keys serve` | `voice-keys daemon start` |
 | `spotify organize watch` | `spotify daemon start` |
 | `finance_cli.transaction_watcher serve` | `finance daemon start` |
-| `moneypot/server.py` | `moneypot daemon start` |
+| `moneypot/server.py` or `moneypot daemon start` | nothing: delete that line, and tear the service down at the end of step 4 |
 | `file-host/serve.py` | `file-host daemon start` |
 | `sign-service/sign_server.py` | `sign-service daemon start` |
 | `whatsapp serve` or `whatsapp start` | `whatsapp daemon start`, keeping any `--instance` and other serve flags the old line carries |
@@ -83,7 +83,7 @@ the fleet:
 
 | skill | session(s) |
 | --- | --- |
-| tasks, google, microsoft, slack, discord, tricount, agentmail, moneypot, file-host, sign-service, dashboard, app-chat, voice, email-client | the skill's own name |
+| tasks, google, microsoft, slack, discord, tricount, agentmail, file-host, sign-service, dashboard, app-chat, voice, email-client | the skill's own name |
 | spotify | `spotify-watch` |
 | enable-banking | `finance` |
 | whatsapp | `whatsapp`, plus `whatsapp-<instance>` for each extra instance |
@@ -102,6 +102,23 @@ rm -f ~/.tasks/serve.pid ~/.tasks/stop-requested \
       ~/.email-client/daemon.pid ~/.email-client/daemon-info.json \
       ~/.email-client/stop-requested ~/.email-client/poll_daemon.log
 ```
+
+Then tear down moneypot's HTTP surface. `moneypot` is a local CLI over
+`~/agent/data/moneypot.json`: the pot data is untouched and every `moneypot` command keeps
+working, but nothing serves it over a port, so a leftover process holds a port nothing can
+reach it on. Each line here does nothing when there is nothing to remove:
+
+```bash
+[ -f ~/agent/data/daemons/moneypot.pid ] && kill "$(cat ~/agent/data/daemons/moneypot.pid)" 2>/dev/null
+screen -S moneypot -X quit 2>/dev/null
+rm -f ~/agent/data/daemons/moneypot.pid ~/agent/data/daemons/moneypot.port ~/agent/data/moneypot-api-key
+curl -sk -X DELETE https://$BOX_HOST:$VESTAD_PORT/agents/$AGENT_NAME/services/moneypot -H "X-Agent-Token: $AGENT_TOKEN"
+service-key list moneypot
+```
+
+`service-key list moneypot` prints the id of every key minted for that service, and most boxes
+have none. Revoke each one it lists with `service-key revoke moneypot <id>`, and tell the user
+whom you revoked, since a link that caller holds stops opening.
 
 ### 5. Reduce every restart line to its command
 

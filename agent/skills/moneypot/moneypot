@@ -1,118 +1,13 @@
 #!/bin/sh
 set -eu
 
-# `moneypot` on PATH. `moneypot daemon <action>` drives the daemon; anything else is a
-# moneypot.py command, so the skill has one entry point rather than one per surface, and a
-# help request prints both surfaces. The service is private and the server holds no
-# credential, so vestad authenticates every request before proxying it and an external
-# caller reaches it with a minted service key.
+# `moneypot` on PATH is the CLI. The bare and `help` forms print its usage, since the parser
+# takes neither and would answer a missing-command error instead.
 
 SKILL_DIR="$HOME/agent/skills/moneypot"
-PIDFILE="$HOME/agent/data/daemons/moneypot.pid"
-PORTFILE="$HOME/agent/data/daemons/moneypot.port"
-LOG="$HOME/agent/logs/moneypot.log"
-USAGE="Usage: moneypot daemon <start|stop|restart|status>"
-READY_POLLS=$(( ${DAEMON_READY_TIMEOUT_SECS:-30} * 2 ))
-STOP_POLLS=$(( ${DAEMON_STOP_TIMEOUT_SECS:-15} * 2 ))
-# How long a start that lost the record claim waits for the rival start to resolve.
-CLAIM_POLLS=6
 
 case "${1:-}" in
-  daemon) shift ;;
-  "" | -h | --help | help) echo "$USAGE"; exec python3 "$SKILL_DIR/moneypot.py" --help ;;
-  *) exec python3 "$SKILL_DIR/moneypot.py" "$@" ;;
+  "" | help) exec python3 "$SKILL_DIR/moneypot.py" --help ;;
 esac
 
-fail() { printf '{"error":"%s"}\n' "$1" >&2; exit 1; }
-
-# A start that gives up drops the records it claimed: a daemon nothing can reach, with records
-# that say it is up, reads as running and turns every later start into a no-op.
-give_up() { rm -f "$PIDFILE" "$PORTFILE"; fail "$1"; }
-
-# A start that gives up ends its child first: a daemon nothing can reach outlives the records.
-abandon() {
-  kill -TERM "$1" 2>/dev/null || true
-  i=0
-  while kill -0 "$1" 2>/dev/null && [ "$i" -lt "$STOP_POLLS" ]; do
-    sleep 0.5; i=$((i + 1))
-  done
-  if kill -0 "$1" 2>/dev/null; then kill -KILL "$1" 2>/dev/null || true; fi
-  give_up "$2"
-}
-
-live_pid() {
-  pid=$(cat "$PIDFILE" 2>/dev/null) || return 1
-  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 1
-  printf %s "$pid"
-}
-
-# The pid record is the mutual exclusion: a start claims it before spawning and drops it on every
-# failure, so a start that loses the claim answers already_running instead of stacking a daemon
-# beside the winner's. A record no process stands behind is cleared and taken over, which is the
-# one path on which two starts can both spawn, and the duplicate loses on its own resources.
-claim_start() {
-  if ( set -C; echo $$ > "$PIDFILE" ) 2>/dev/null; then echo claimed; return 0; fi
-  i=0
-  while [ "$i" -lt "$CLAIM_POLLS" ]; do
-    if live_pid >/dev/null; then echo running; return 0; fi
-    [ -f "$PIDFILE" ] || break
-    sleep 0.5; i=$((i + 1))
-  done
-  rm -f "$PIDFILE"
-  if ( set -C; echo $$ > "$PIDFILE" ) 2>/dev/null; then echo claimed; else echo lost; fi
-}
-
-do_start() {
-  if live_pid >/dev/null; then echo '{"status":"already_running"}'; return 0; fi
-  mkdir -p "$HOME/agent/data/daemons" "$HOME/agent/logs"
-  case "$(claim_start)" in
-    running) echo '{"status":"already_running"}'; return 0 ;;
-    lost) fail "another moneypot start holds $PIDFILE" ;;
-  esac
-  PORT=$(register-service moneypot) || give_up "could not register moneypot with vestad"
-  [ -n "$PORT" ] || give_up "could not register moneypot with vestad"
-  echo "$PORT" > "$PORTFILE"
-  (cd "$SKILL_DIR" && exec setsid python3 -u server.py --port "$PORT" >> "$LOG" 2>&1) &
-  pid=$!
-  echo "$pid" > "$PIDFILE"
-  i=0
-  while [ "$i" -lt "$READY_POLLS" ]; do
-    kill -0 "$pid" 2>/dev/null || abandon "$pid" "moneypot exited during startup; see $LOG"
-    if curl -m 2 -fsS -o /dev/null "http://localhost:$PORT/health" 2>/dev/null; then
-      echo '{"status":"started"}'; return 0
-    fi
-    sleep 0.5; i=$((i + 1))
-  done
-  abandon "$pid" "moneypot never answered on port $PORT; see $LOG"
-}
-
-do_stop() {
-  pid=$(live_pid) || { echo '{"status":"already_stopped"}'; return 0; }
-  kill -TERM "$pid" 2>/dev/null || true
-  i=0
-  while [ "$i" -lt "$STOP_POLLS" ]; do
-    kill -0 "$pid" 2>/dev/null || { rm -f "$PIDFILE" "$PORTFILE"; echo '{"status":"stopped"}'; return 0; }
-    sleep 0.5; i=$((i + 1))
-  done
-  fail "moneypot still running after SIGTERM (pid=$pid)"
-}
-
-# Reads the port start recorded, never registration: status stays a local read that
-# answers instantly and truthfully while vestad is down.
-do_status() {
-  if live_pid >/dev/null; then
-    port=$(cat "$PORTFILE" 2>/dev/null) || port=""
-    printf '{"running":true,"port":%s}\n' "${port:-null}"
-  else
-    printf '{"running":false,"port":null}\n'
-  fi
-}
-
-case "${1:-}" in
-  start) do_start ;;
-  stop) do_stop ;;
-  restart) do_stop >/dev/null; do_start ;;
-  status) do_status ;;
-  "" | -h | --help | help) echo "$USAGE" ;;
-  *) echo "$USAGE" >&2; exit 1 ;;
-esac
+exec python3 "$SKILL_DIR/moneypot.py" "$@"
