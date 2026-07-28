@@ -222,7 +222,7 @@ def test_scan_ignores_non_luhn_digit_runs(text):
 
 
 # IIN gate: Luhn alone passes ~1 in 10 non-card digit runs, so a 13-digit epoch-millis id or an order
-# number sails through it. The card PANs below are well-known test numbers across every live network,
+# number sails through it. The card PANs below are well-known test numbers across the major networks,
 # never real cards.
 EPOCH_MILLIS = "1785121902428"  # 13-digit notification-id timestamp, passes Luhn by chance
 ORDER_16 = "1000000000000008"  # 16-digit order number, passes Luhn but opens with MII 1

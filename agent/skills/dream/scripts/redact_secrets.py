@@ -93,8 +93,9 @@ def luhn_valid(digits: str) -> bool:
 def _has_card_iin(digits: str) -> bool:
     """True iff the leading digits fall in an assigned card-issuer range (ISO/IEC 7812 MII): 3
     (Amex/Diners/JCB), 4 (Visa), 5 (Mastercard/Maestro), 6 (Discover/UnionPay/Maestro), or a
-    Mastercard 2-series (2221 to 2720). No card network issues outside those, so the runs this
-    rejects (MII 0/1/7/8/9) are ids, not cards."""
+    Mastercard 2-series (2221 to 2720). Every major network issues inside those, so what this
+    rejects (MII 0/1/7/8/9) is ids. The one card type left out is UATP airline travel (MII 1),
+    deliberately: admitting MII 1 would re-flag more timestamp ids than it would catch cards."""
     if digits[0] in "3456":
         return True
     return digits[0] == "2" and 2221 <= int(digits[:4]) <= 2720
@@ -103,7 +104,7 @@ def _has_card_iin(digits: str) -> bool:
 def _is_card(candidate: str) -> bool:
     """A candidate run is a real PAN only when its stripped digits count 13 to 19, pass Luhn, AND open
     with an assigned card issuer prefix. Luhn alone flags ~1 in 10 non-card digit runs (a 13-digit
-    timestamp can pass by chance); the IIN gate removes that class without dropping any real card."""
+    timestamp can pass by chance); the IIN gate removes that class without dropping a major-network card."""
     digits = candidate.replace(" ", "").replace("-", "")
     return 13 <= len(digits) <= 19 and _has_card_iin(digits) and luhn_valid(digits)
 
