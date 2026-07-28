@@ -548,6 +548,14 @@ def test_a_legacy_script_path_still_starts_the_daemon(daemon):
     _verb(spec, env, "stop")
 
 
+def _is_error_envelope(output: str) -> bool:
+    """Whether output is the `{"error":...}` object a verb answers a real failure with."""
+    try:
+        return "error" in json.loads(output)
+    except json.JSONDecodeError:
+        return False
+
+
 def test_usage_and_unknown_verbs(daemon):
     spec, _home, env = daemon
     for args in ([], ["-h"], ["--help"], ["help"], ["daemon"], ["daemon", "help"]):
@@ -555,4 +563,10 @@ def test_usage_and_unknown_verbs(daemon):
         assert result.returncode == 0
         # A skill whose command is a CLI answers with that CLI's own help.
         assert "usage" in result.stdout.lower()
-    assert _verb(spec, env, "bogus").returncode != 0
+    # A verb that does not exist is the caller's typo: usage, non-zero, and never the error
+    # envelope, which a caller reads as a daemon that failed and may be worth retrying.
+    unknown = _verb(spec, env, "bogus")
+    assert unknown.returncode != 0
+    output = unknown.stdout + unknown.stderr
+    assert "usage" in output.lower(), f"an unknown verb answered without usage: {output!r}"
+    assert not _is_error_envelope(output), f"an unknown verb answered with the error envelope: {output!r}"

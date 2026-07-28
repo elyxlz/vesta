@@ -136,7 +136,10 @@ func runDaemon() {
 	case "status":
 		daemonStatus()
 	default:
-		failDaemon("unknown daemon subcommand %q (use start|stop|restart|status)", sub)
+		// A verb that does not exist is the caller's typo, not a daemon failure, so it answers
+		// with usage rather than the error envelope a caller retries on.
+		fmt.Fprintln(os.Stderr, daemonUsage)
+		os.Exit(1)
 	}
 }
 
