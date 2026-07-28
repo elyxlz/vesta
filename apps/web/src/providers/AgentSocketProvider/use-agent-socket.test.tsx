@@ -177,6 +177,47 @@ describe("useAgentSocketState", () => {
     expect(result.current.connected).toBe(true);
   });
 
+  it("keeps loaded older rows before the newest tail after a reconnect", async () => {
+    vi.useFakeTimers();
+    fetchHistoryMock
+      .mockResolvedValueOnce({
+        events: [chat(3, "c"), chat(4, "d")],
+        cursor: 3,
+      })
+      .mockResolvedValueOnce({
+        events: [chat(1, "a"), chat(2, "b")],
+        cursor: null,
+      })
+      .mockResolvedValueOnce({
+        events: [chat(3, "c"), chat(4, "d"), chat(5, "e")],
+        cursor: 3,
+      });
+    const { controller } = makeController();
+    const { result } = render(controller);
+    await openAndFlush();
+
+    await act(async () => {
+      await result.current.loadMore();
+    });
+    expect(result.current.messages.map((message) => message.id)).toEqual([
+      1, 2, 3, 4,
+    ]);
+
+    act(() => {
+      chatSockets[0]?.onclose?.();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    await openAndFlush();
+
+    expect(result.current.messages.map((message) => message.id)).toEqual([
+      1, 2, 3, 4, 5,
+    ]);
+    expect(result.current.messages.at(-1)?.id).toBe(5);
+    expect(result.current.hasMore).toBe(false);
+  });
+
   it("sends an optimistic bubble and confirms it on the chat-socket echo", async () => {
     fetchHistoryMock.mockResolvedValue({ events: [], cursor: null });
     const { controller, json } = makeController();

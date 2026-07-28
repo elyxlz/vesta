@@ -50,32 +50,63 @@ function capTail(messages: ChatMessage[]): ChatMessage[] {
 // in-flight message is dropped. An optimistic bubble whose intent already appears as a persisted user
 // echo ON the page is instead dropped and its intent cleared: that echo IS the confirmation, so it
 // must not survive as a duplicate "sending" twin (mobile background/foreground, web resync-mid-send).
-// shownIds is unioned with the page ids. Serves the initial load and a resync alike.
+// Persisted rows are merged by their skill-assigned, monotonically increasing ids: retained rows may
+// be older pages OR newer live races, so simply putting either side first corrupts one of those
+// seams. Existing id-less optimistic rows keep their position relative to live rows. A resync also
+// retains the existing older-page cursor so already-loaded history is not fetched and prepended
+// again. shownIds is unioned with the page ids. Serves the initial load and a resync alike.
 export function seedTail(state: ChatState, page: HistoryPage): ChatState {
   const pageIds = new Set<number>()
+  const pageById = new Map<number, ChatMessage>()
   const echoedIntents = new Set<string>()
   for (const event of page.events) {
-    if (event.id != null) pageIds.add(event.id)
+    if (event.id != null) {
+      pageIds.add(event.id)
+      pageById.set(event.id, event)
+    }
     if (event.type === "user" && event.intent_id != null) echoedIntents.add(event.intent_id)
   }
-  const survivors = state.messages.filter(
-    (message) =>
-      (message.type === "user" &&
-        message.intent_id != null &&
-        state.pendingIntents.has(message.intent_id) &&
-        !echoedIntents.has(message.intent_id)) ||
-      (message.id != null && !pageIds.has(message.id)),
-  )
+  const mergedIds = new Set<number>()
+  const messages = state.messages.flatMap((message): ChatMessage[] => {
+    const pending =
+      message.type === "user" &&
+      message.intent_id != null &&
+      state.pendingIntents.has(message.intent_id)
+    if (pending && message.intent_id != null && echoedIntents.has(message.intent_id)) return []
+    if (message.id == null) return pending ? [message] : []
+    mergedIds.add(message.id)
+    return [pageById.get(message.id) ?? message]
+  })
+  for (const event of page.events) {
+    if (event.id == null) {
+      messages.push(event)
+      continue
+    }
+    if (mergedIds.has(event.id)) continue
+    mergedIds.add(event.id)
+
+    // Insert before the first newer persisted row. Any optimistic rows immediately before that row
+    // also happened after this history event, so insert before that run rather than splitting it.
+    let insertAt = messages.findIndex(
+      (message) => message.id != null && event.id != null && message.id > event.id,
+    )
+    if (insertAt === -1) {
+      messages.push(event)
+      continue
+    }
+    while (insertAt > 0 && messages[insertAt - 1]?.id == null) insertAt--
+    messages.splice(insertAt, 0, event)
+  }
   const pendingIntents = new Set(state.pendingIntents)
   for (const intentId of echoedIntents) pendingIntents.delete(intentId)
   const shownIds = new Set(state.shownIds)
   for (const id of pageIds) shownIds.add(id)
   return {
     ...state,
-    messages: capTail([...page.events, ...survivors]),
+    messages: capTail(messages),
     shownIds,
     pendingIntents,
-    cursor: page.cursor,
+    cursor: state.historyLoaded ? state.cursor : page.cursor,
     historyLoaded: true,
   }
 }
