@@ -22,7 +22,10 @@ export interface SocketLike {
 }
 
 export interface SyncSocketDeps {
-  buildUrl: () => string
+  // Async so the builder can refresh an expiring token before each attempt: the URL carries the
+  // access token, so a client waking from sleep would otherwise burn its whole backoff presenting
+  // one that expired while it was away. Throwing means "no connectable URL", which backs off.
+  buildUrl: () => Promise<string>
   createSocket: (url: string) => SocketLike
   setTimer: (fn: () => void, ms: number) => number
   clearTimer: (handle: number) => void
@@ -61,6 +64,9 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
   // the session deadline from the connect token and only a reauth extends it, so dropping the frame
   // would strand a live socket on a token that is about to expire.
   let pendingToken: string | null = null
+  // True once close() or the app_behind gate has retired this socket for good. Read through a
+  // call because a connect in flight has to re-ask after awaiting its URL.
+  const retired = (): boolean => terminal
 
   const detach = (target: SocketLike): void => {
     target.onopen = null
@@ -80,7 +86,7 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
   const scheduleReconnect = (): void => {
     callbacks.onStateChange("reconnecting")
     timer = deps.setTimer(() => {
-      connect()
+      void connect()
     }, delay)
     delay = Math.min(delay * 2, max)
   }
@@ -126,17 +132,19 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
     }
   }
 
-  function connect(): void {
-    if (terminal) return
+  async function connect(): Promise<void> {
+    if (retired()) return
     open = false
     callbacks.onStateChange("connecting")
     let url: string
     try {
-      url = deps.buildUrl()
+      url = await deps.buildUrl()
     } catch {
       scheduleReconnect()
       return
     }
+    // close() can land while the builder is refreshing a token.
+    if (retired()) return
     const current = deps.createSocket(url)
     socket = current
     current.onopen = () => {
@@ -168,7 +176,7 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
     }
   }
 
-  connect()
+  void connect()
 
   return {
     reauth: (token) => {

@@ -30,13 +30,13 @@ function deps(): ControllerDeps {
 }
 
 describe("buildController", () => {
-  it("builds the /sync URL over ws with an encoded token", () => {
+  it("builds the /sync URL over ws with an encoded token", async () => {
     buildController({
       getConnection: () => fakeConnection(),
       refreshAccessToken: vi.fn(),
     });
 
-    expect(deps().sync.buildUrl()).toBe(
+    await expect(deps().sync.buildUrl()).resolves.toBe(
       "wss://gateway.test/sync?token=tok%20en",
     );
   });
@@ -51,7 +51,7 @@ describe("buildController", () => {
     expect(deps().http.token()).toBe("tok en");
   });
 
-  it("reads the connection live so a rotated token flows to the sync URL", () => {
+  it("reads the connection live so a rotated token flows to the sync URL", async () => {
     let current = fakeConnection({ accessToken: "old" });
     buildController({
       getConnection: () => current,
@@ -61,7 +61,9 @@ describe("buildController", () => {
     expect(deps().http.token()).toBe("old");
     current = fakeConnection({ accessToken: "new" });
     expect(deps().http.token()).toBe("new");
-    expect(deps().sync.buildUrl()).toBe("wss://gateway.test/sync?token=new");
+    await expect(deps().sync.buildUrl()).resolves.toBe(
+      "wss://gateway.test/sync?token=new",
+    );
   });
 
   it("delegates http refresh to the session's refreshAccessToken", async () => {
@@ -83,12 +85,39 @@ describe("buildController", () => {
     expect(deps().sync.clientVersion).toBe("0.1.179");
   });
 
-  it("throws when building the sync URL without a connection", () => {
+  it("rejects when building the sync URL without a connection", async () => {
     buildController({ getConnection: () => null, refreshAccessToken: vi.fn() });
 
-    expect(() => deps().sync.buildUrl()).toThrow(
+    await expect(deps().sync.buildUrl()).rejects.toThrow(
       "not connected to a Vesta gateway",
     );
     expect(deps().http.token()).toBeNull();
+  });
+
+  it("rotates an expiring token before handing out the sync URL", async () => {
+    // Every connect goes through the builder, so a client returning after a long background
+    // never presents the token that expired while it was away.
+    let current = fakeConnection({ accessToken: "stale", expiresAt: 0 });
+    const refreshAccessToken = vi.fn(() => {
+      current = fakeConnection({ accessToken: "rotated", expiresAt: Date.now() + 3_600_000 });
+      return Promise.resolve(true);
+    });
+    buildController({ getConnection: () => current, refreshAccessToken });
+
+    await expect(deps().sync.buildUrl()).resolves.toBe(
+      "wss://gateway.test/sync?token=rotated",
+    );
+    expect(refreshAccessToken).toHaveBeenCalledOnce();
+  });
+
+  it("leaves a fresh token alone", async () => {
+    const refreshAccessToken = vi.fn(() => Promise.resolve(true));
+    buildController({
+      getConnection: () => fakeConnection({ expiresAt: Date.now() + 3_600_000 }),
+      refreshAccessToken,
+    });
+
+    await deps().sync.buildUrl();
+    expect(refreshAccessToken).not.toHaveBeenCalled();
   });
 });

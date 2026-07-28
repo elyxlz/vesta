@@ -1,6 +1,21 @@
 import { isTokenExpiringSoon } from "@/api/client";
 import type { ConnectionConfig } from "@/api/types";
 
+export interface RefreshDeps {
+  getConnection: () => ConnectionConfig | null;
+  refreshAccessToken: () => Promise<boolean>;
+}
+
+// Pre-flight for a socket connect: rotate the stored token when it is close to expiring, so a
+// client returning after a long background does not spend its backoff presenting a dead one.
+// Best effort, since a failed refresh must still attempt the connect.
+export async function refreshIfExpiring(deps: RefreshDeps): Promise<void> {
+  const connection = deps.getConnection();
+  if (connection && isTokenExpiringSoon(connection)) {
+    await deps.refreshAccessToken();
+  }
+}
+
 export interface ReauthDeps {
   getConnection: () => ConnectionConfig | null;
   refreshAccessToken: () => Promise<boolean>;

@@ -20,7 +20,10 @@ export { useSyncState };
 const DISCONNECT_GRACE_MS = 750;
 const REAUTH_POLL_MS = 60000;
 
-function syncUrl(): string {
+async function syncUrl(): Promise<string> {
+  // Refresh before every attempt: a tab waking from sleep would otherwise spend its backoff
+  // presenting a token that expired while it was away. A no-op while the token is still fresh.
+  await ensureFreshToken();
   const conn = getConnection();
   if (!conn) throw new Error("not connected to vesta gateway");
   const base = conn.url.replace(/^http/, "ws");

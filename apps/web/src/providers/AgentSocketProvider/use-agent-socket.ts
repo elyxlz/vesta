@@ -23,6 +23,7 @@ import { useController } from "@/providers/ControllerProvider";
 import { useReplica, useSyncState } from "@vesta/core/react";
 import { createBrowserSocket } from "@/providers/ControllerProvider/browser-socket";
 import { getConnection } from "@/lib/connection";
+import { ensureFreshToken } from "@/lib/token-refresh";
 import { fetchHistory } from "@/api/agents";
 import { useChatPacing } from "@/stores/use-chat-pacing";
 
@@ -31,8 +32,9 @@ function idsEqual(a: string[], b: string[]): boolean {
 }
 
 // The app-chat live socket URL through vestad's authenticated proxy, mirroring the /sync URL builder:
-// swap http->ws and carry the access token as a query param.
-function chatSocketUrl(agent: string): string {
+// refresh an expiring token, then swap http->ws and carry the access token as a query param.
+async function chatSocketUrl(agent: string): Promise<string> {
+  await ensureFreshToken();
   const conn = getConnection();
   if (!conn) throw new Error("not connected to vesta gateway");
   const base = conn.url.replace(/^http/, "ws");
