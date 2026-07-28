@@ -29,8 +29,9 @@ live_pid() {
 }
 
 # The pid record is the mutual exclusion: a start claims it before spawning and drops it on every
-# failure, so what the record names is a daemon that was serving, never a corpse from a lost race.
-# A start that loses the claim owns nothing, so it removes nothing.
+# failure, so a start that loses the claim answers already_running instead of stacking a daemon
+# beside the winner's. A record no process stands behind is cleared and taken over, which is the
+# one path on which two starts can both spawn, and the duplicate loses on its own resources.
 claim_start() {
   if ( set -C; echo $$ > "$PIDFILE" ) 2>/dev/null; then echo claimed; return 0; fi
   i=0

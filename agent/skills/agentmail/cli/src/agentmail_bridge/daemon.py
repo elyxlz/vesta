@@ -110,9 +110,11 @@ def _claim(pid: int) -> bool:
 
 
 def _claim_start() -> int | None:
-    """Takes the pid record exclusively for this start, so two starts landing at once cannot both
-    spawn a daemon. None means this start owns the record and everything it later removes; anything
-    else is this start's whole answer, the rival having resolved the race."""
+    """Takes the pid record exclusively for this start, so a start that loses the claim answers
+    already_running instead of stacking a daemon beside the winner's. A record no process stands
+    behind is cleared and taken over, which is the one path on which two starts can both spawn, and
+    the duplicate loses on its own resources. None means this start owns the record and everything
+    it later removes; anything else is this start's whole answer."""
     if _claim(os.getpid()):
         return None
     deadline = time.monotonic() + CLAIM_WAIT_SECS

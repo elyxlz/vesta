@@ -155,9 +155,9 @@ func abandon(child *exec.Cmd, exited <-chan struct{}, message string) error {
 	return errors.New(message)
 }
 
-// claimStart takes the pid record exclusively for this start, so two starts racing on one
-// instance cannot both spawn a daemon and leave the loser's corpse in the record. Losing the
-// claim is not a failure: the rival either brings a daemon up (nothing left to do, claimed
+// claimStart takes the pid record exclusively for this start, so a start that loses the claim
+// answers already_running instead of stacking a daemon beside the winner's. Losing the claim is
+// not a failure: the rival either brings a daemon up (nothing left to do, claimed
 // false) or leaves a record no process stands behind, which this start takes over once.
 func claimStart() (claimed bool, err error) {
 	switch err := writePidRecord(os.Getpid(), os.O_EXCL); {
@@ -206,7 +206,7 @@ func ensureDaemon(serveArgs []string) error {
 // startDaemonProcess launches `whatsapp serve` detached in its own session, records its pid,
 // and waits for that recorded process to answer on the socket. The record is the mutual
 // exclusion: a start claims it before spawning and drops it on every failure, so what the
-// record names is always a daemon that was serving, never a corpse from a lost race. The answer
+// record names is a daemon that was serving. The answer
 // is whether this start is the one that brought the daemon up: a start that lost the claim to a
 // rival did not, and says so rather than taking credit for the daemon now running.
 func startDaemonProcess(serveArgs []string) (broughtUp bool, err error) {

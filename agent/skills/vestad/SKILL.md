@@ -111,10 +111,15 @@ Six properties, which are what make a restart file a plain list of starts:
 - **start is idempotent**: a recorded pid that is still alive answers `already_running` and
   spawns nothing, so re-running a start can never stack a second copy.
 - **start is exclusive**: the pid record is claimed with an exclusive create (the parent's own
-  pid) before anything is registered or spawned, so two starts landing at once cannot both spawn.
-  The one that loses the claim answers `already_running` and removes nothing, owning nothing.
-- **start returns ready**: it comes back only once the daemon is actually up, a port-serving one
-  answering on its port, so the caller's next line can use it.
+  pid) before anything is registered or spawned, so a start that loses that race answers
+  `already_running` instead of stacking a second daemon beside the winner's. A loser has three
+  ways out: a record naming a live process is `already_running`, touching nothing; a record no
+  process stands behind is cleared and taken over, which is the one path on which two starts can
+  both spawn, and the duplicate loses on its own port or socket; a record it cannot take over is
+  the failure envelope `another <skill> start holds ...`.
+- **start returns ready**: `started` means the daemon is up, a port-serving one answering on its
+  port, so the caller's next line can use it. `already_running` means a start owns the daemon,
+  which may still be inside its own ready wait.
 - **start fails closed**: a registration that fails launches nothing, and a launch that never
   becomes ready is killed and both records removed before the error, because a daemon that is
   alive and unreachable would read as running and make every later start decline.

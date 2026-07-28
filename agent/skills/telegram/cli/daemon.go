@@ -197,8 +197,8 @@ func writePidRecord(record string, pid int, flags int) error {
 	return err
 }
 
-// claimRecord takes a pid record exclusively for this start, so two starts racing on one name
-// cannot both spawn a process and leave the loser's corpse in the record. Losing the claim is
+// claimRecord takes a pid record exclusively for this start, so a start that loses the claim
+// answers already_running instead of stacking a process beside the winner's. Losing the claim is
 // not a failure: the rival either brings its process up (nothing left to do, claimed false) or
 // leaves a record no process stands behind, which this start takes over once.
 func claimRecord(record string) (claimed bool, err error) {
