@@ -1,6 +1,7 @@
 """Email commands for Microsoft CLI."""
 
 import base64
+import dataclasses
 import html
 import pathlib as pl
 from datetime import UTC, datetime
@@ -652,16 +653,7 @@ def forward_email(config: Config, client: httpx.Client, *, account_email: str, e
         raise ValueError("--to is required to forward")
 
     if pending_send.delay_seconds(config.data_dir) > 0:
-        pending_mail = MailDraft(
-            body=mail.body,
-            subject=mail.subject,
-            to=mail.to,
-            cc=mail.cc,
-            bcc=mail.bcc,
-            attachments=mail.attachments,
-            html=mail.html,
-            forward_id=email_id,
-        )
+        pending_mail = dataclasses.replace(mail, forward_id=email_id)
         return _queue_draft(config, client, account_email=account_email, mail=pending_mail, action="forward")
 
     to, body, cc, attachments, html = mail.to, mail.body, mail.cc, mail.attachments, mail.html

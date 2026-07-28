@@ -27,7 +27,7 @@ def test_pending_send_uses_the_client_delay_and_can_be_claimed_once(tmp_path):
     )
 
     assert queued.send_at == now + timedelta(seconds=30)
-    assert [item.id for item in pending_send.list_pending(tmp_path, now=now)] == [queued.id]
+    assert [item.id for item in pending_send.list_pending(tmp_path)] == [queued.id]
     assert pending_send.claim_due(tmp_path, now=queued.send_at - timedelta(microseconds=1)) is None
     assert pending_send.claim_due(tmp_path, now=queued.send_at).id == queued.id
     assert pending_send.claim_due(tmp_path, now=queued.send_at) is None
@@ -46,14 +46,19 @@ def test_undo_removes_a_pending_send_before_delivery(tmp_path):
         now=now,
     )
 
-    cancelled = pending_send.cancel(tmp_path, queued.id, now=queued.send_at - timedelta(microseconds=1))
+    cancelled = pending_send.cancel(tmp_path, queued.id)
 
     assert cancelled.id == queued.id
     assert pending_send.list_pending(tmp_path) == []
     assert pending_send.claim_due(tmp_path, now=queued.send_at) is None
 
 
-def test_undo_rejects_a_send_after_its_recovery_window(tmp_path):
+def test_undo_rejects_an_unknown_send(tmp_path):
+    with pytest.raises(ValueError, match="was not found"):
+        pending_send.cancel(tmp_path, "nope")
+
+
+def test_an_overdue_send_stays_listed_and_undoable_until_it_is_dispatched(tmp_path):
     now = datetime(2026, 7, 28, 12, 0, tzinfo=UTC)
     queued = pending_send.enqueue(
         tmp_path,
@@ -66,9 +71,27 @@ def test_undo_rejects_a_send_after_its_recovery_window(tmp_path):
         now=now,
     )
 
-    with pytest.raises(ValueError, match="expired"):
-        pending_send.cancel(tmp_path, queued.id, now=queued.send_at)
-    assert pending_send.list_pending(tmp_path, now=queued.send_at) == []
+    assert [item.id for item in pending_send.list_pending(tmp_path)] == [queued.id]
+
+    pending_send.cancel(tmp_path, queued.id)
+
+    assert pending_send.claim_due(tmp_path, now=queued.send_at) is None
+
+
+def test_a_send_being_dispatched_can_no_longer_be_undone(tmp_path):
+    queued = pending_send.enqueue(
+        tmp_path,
+        account="google",
+        action="send",
+        subject="Hello",
+        recipients="bob@example.com",
+        backend="gmail",
+        payload=b"draft-1",
+    )
+    pending_send.claim_due(tmp_path, now=queued.send_at)
+
+    with pytest.raises(ValueError, match="being delivered"):
+        pending_send.cancel(tmp_path, queued.id)
 
 
 def test_changing_delay_only_affects_new_sends(tmp_path):
@@ -99,7 +122,7 @@ def test_changing_delay_only_affects_new_sends(tmp_path):
     assert second.send_at == now + timedelta(seconds=90)
 
 
-def test_dispatching_send_recovers_after_daemon_restart(tmp_path):
+def test_a_send_interrupted_mid_dispatch_is_held_instead_of_resent(tmp_path):
     queued = pending_send.enqueue(
         tmp_path,
         account="google",
@@ -113,7 +136,31 @@ def test_dispatching_send_recovers_after_daemon_restart(tmp_path):
 
     pending_send.recover_dispatching(tmp_path)
 
-    assert pending_send.claim_due(tmp_path, now=queued.send_at).id == queued.id
+    assert pending_send.claim_due(tmp_path, now=queued.send_at) is None
+    held = pending_send.list_pending(tmp_path)[0]
+    assert held.public()["status"] == "failed"
+    assert held.public()["last_error"] == pending_send.INTERRUPTED_ERROR
+
+
+def test_delivery_stops_retrying_once_it_has_burned_its_attempts(tmp_path):
+    queued = pending_send.enqueue(
+        tmp_path,
+        account="google",
+        action="send",
+        subject="Hello",
+        recipients="bob@example.com",
+        backend="gmail",
+        payload=b"draft-1",
+    )
+    at = queued.send_at
+
+    for _ in range(pending_send.MAX_DELIVERY_ATTEMPTS):
+        at = at + timedelta(seconds=pending_send.RETRY_DELAY_SECONDS)
+        assert pending_send.claim_due(tmp_path, now=at).id == queued.id
+        pending_send.retry(tmp_path, queued.id, "provider refused", now=at)
+
+    assert pending_send.claim_due(tmp_path, now=at + timedelta(hours=1)) is None
+    assert pending_send.list_pending(tmp_path)[0].public()["last_error"] == "provider refused"
 
 
 class _Request:

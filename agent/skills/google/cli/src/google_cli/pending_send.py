@@ -12,7 +12,11 @@ from pathlib import Path
 
 DEFAULT_DELAY_SECONDS = 30
 RETRY_DELAY_SECONDS = 30
+MAX_DELIVERY_ATTEMPTS = 3
+INTERRUPTED_ERROR = "dispatch was interrupted; check the Sent folder before undoing or resending"
 _DATABASE_NAME = "pending-sends.db"
+_UNDOABLE_STATES = "('pending', 'failed')"
+_COLUMNS = "id, created_at, send_at, account, action, subject, recipients, backend, payload, state, last_error"
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
@@ -29,7 +33,8 @@ CREATE TABLE IF NOT EXISTS sends (
     backend TEXT NOT NULL,
     payload BLOB NOT NULL,
     state TEXT NOT NULL,
-    last_error TEXT
+    last_error TEXT NOT NULL DEFAULT '',
+    attempts INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS sends_due ON sends(state, send_at);
 """
@@ -46,17 +51,22 @@ class PendingSend:
     recipients: str
     backend: str
     payload: bytes
+    state: str = "pending"
+    last_error: str = ""
 
     def public(self) -> dict[str, str]:
-        return {
+        described = {
             "id": self.id,
-            "status": "pending",
+            "status": self.state,
             "account": self.account,
             "action": self.action,
             "subject": self.subject,
             "recipients": self.recipients,
             "send_at": self.send_at.isoformat(),
         }
+        if self.last_error:
+            described["last_error"] = self.last_error
+        return described
 
 
 @contextlib.contextmanager
@@ -82,6 +92,8 @@ def _from_row(row: sqlite3.Row | tuple) -> PendingSend:
         recipients=str(row[6]),
         backend=str(row[7]),
         payload=bytes(row[8]),
+        state=str(row[9]),
+        last_error=str(row[10]),
     )
 
 
@@ -144,35 +156,21 @@ def enqueue(
     return queued
 
 
-def list_pending(data_dir: Path, *, account: str | None = None, now: datetime | None = None) -> list[PendingSend]:
-    undoable_at = now or datetime.now(UTC)
+def list_pending(data_dir: Path, *, account: str | None = None) -> list[PendingSend]:
     with _connection(data_dir) as connection:
-        if account is None:
-            rows = connection.execute(
-                "SELECT id, created_at, send_at, account, action, subject, recipients, backend, payload "
-                "FROM sends WHERE state = 'pending' AND send_at > ? ORDER BY send_at, id",
-                (undoable_at.isoformat(),),
-            ).fetchall()
-        else:
-            rows = connection.execute(
-                "SELECT id, created_at, send_at, account, action, subject, recipients, backend, payload "
-                "FROM sends WHERE state = 'pending' AND account = ? AND send_at > ? ORDER BY send_at, id",
-                (account, undoable_at.isoformat()),
-            ).fetchall()
+        rows = connection.execute(
+            f"SELECT {_COLUMNS} FROM sends WHERE state IN {_UNDOABLE_STATES} AND (? IS NULL OR account = ?) ORDER BY send_at, id",
+            (account, account),
+        ).fetchall()
     return [_from_row(row) for row in rows]
 
 
-def cancel(data_dir: Path, pending_id: str, *, now: datetime | None = None) -> PendingSend:
-    cancel_at = now or datetime.now(UTC)
+def cancel(data_dir: Path, pending_id: str) -> PendingSend:
     with _connection(data_dir) as connection:
         connection.execute("BEGIN IMMEDIATE")
-        row = connection.execute(
-            "SELECT id, created_at, send_at, account, action, subject, recipients, backend, payload "
-            "FROM sends WHERE id = ? AND state = 'pending' AND send_at > ?",
-            (pending_id, cancel_at.isoformat()),
-        ).fetchone()
+        row = connection.execute(f"SELECT {_COLUMNS} FROM sends WHERE id = ? AND state IN {_UNDOABLE_STATES}", (pending_id,)).fetchone()
         if row is None:
-            raise ValueError(f"pending send {pending_id!r} was not found, has expired, or has already been delivered")
+            raise ValueError(f"pending send {pending_id!r} was not found, is being delivered right now, or has already been delivered")
         connection.execute("UPDATE sends SET state = 'cancelled' WHERE id = ?", (pending_id,))
     return _from_row(row)
 
@@ -187,13 +185,12 @@ def claim_due(data_dir: Path, *, now: datetime | None = None) -> PendingSend | N
     with _connection(data_dir) as connection:
         connection.execute("BEGIN IMMEDIATE")
         row = connection.execute(
-            "SELECT id, created_at, send_at, account, action, subject, recipients, backend, payload "
-            "FROM sends WHERE state = 'pending' AND send_at <= ? ORDER BY send_at, id LIMIT 1",
+            f"SELECT {_COLUMNS} FROM sends WHERE state = 'pending' AND send_at <= ? ORDER BY send_at, id LIMIT 1",
             (due_at.isoformat(),),
         ).fetchone()
         if row is None:
             return None
-        connection.execute("UPDATE sends SET state = 'dispatching' WHERE id = ?", (str(row[0]),))
+        connection.execute("UPDATE sends SET state = 'dispatching', attempts = attempts + 1 WHERE id = ?", (str(row[0]),))
     return _from_row(row)
 
 
@@ -206,11 +203,14 @@ def retry(data_dir: Path, pending_id: str, error: str, *, now: datetime | None =
     retry_at = (now or datetime.now(UTC)) + timedelta(seconds=RETRY_DELAY_SECONDS)
     with _connection(data_dir) as connection:
         connection.execute(
-            "UPDATE sends SET state = 'pending', send_at = ?, last_error = ? WHERE id = ? AND state = 'dispatching'",
-            (retry_at.isoformat(), error, pending_id),
+            "UPDATE sends SET state = CASE WHEN attempts >= ? THEN 'failed' ELSE 'pending' END, send_at = ?, last_error = ? "
+            "WHERE id = ? AND state = 'dispatching'",
+            (MAX_DELIVERY_ATTEMPTS, retry_at.isoformat(), error, pending_id),
         )
 
 
 def recover_dispatching(data_dir: Path) -> None:
+    # A claimed row may have reached the server before the process died, so re-sending it
+    # would duplicate the mail. Hold it for the agent to resolve instead.
     with _connection(data_dir) as connection:
-        connection.execute("UPDATE sends SET state = 'pending' WHERE state = 'dispatching'")
+        connection.execute("UPDATE sends SET state = 'failed', last_error = ? WHERE state = 'dispatching'", (INTERRUPTED_ERROR,))

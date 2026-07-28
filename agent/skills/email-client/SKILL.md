@@ -142,7 +142,9 @@ email-client pending --account work
 email-client undo --id <pending_id>
 ```
 
-`email-client-send` returns a `pending` status with the pending id and scheduled send time. Use that id with `undo` before the deadline to cancel delivery. The poll daemon dispatches due messages, then syncs them to Sent and marks replied-to originals as answered. Keep the daemon running whenever the delay is nonzero. Set `--seconds 0` for immediate delivery. Drafts and dry runs are never queued.
+`email-client-send` returns a `pending` status with the pending id and scheduled send time. Use that id with `undo` to cancel delivery: it works right up until the poll daemon starts dispatching that message, which is what delivers it, syncs it to Sent, and marks a replied-to original as answered. Only that daemon dispatches, so `email-client-send` refuses to queue while it is stopped; `email-client daemon start` or `email-client send-delay --seconds 0` unblocks it. Drafts and dry runs are never queued.
+
+`pending` also lists messages whose status is `failed`, with `last_error` saying why: delivery kept erroring, or it was cut off mid-dispatch. A message cut off mid-dispatch may already have reached the server, so read the Sent folder before you `undo` it or send it again.
 
 ### Reply
 

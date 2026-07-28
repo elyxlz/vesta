@@ -79,6 +79,7 @@ MAX_ATTACH_TOTAL_BYTES = 25 * 1024 * 1024
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import contextlib
 
+import daemon_lifecycle
 import pending_send
 from imap_client import (
     _env,
@@ -463,17 +464,17 @@ def _mark_answered(acc: str | None, folder: str, uid: str) -> None:
 
 
 def _sync_sent(acc: str | None, profile: dict, out: Outbound) -> None:
-    _sync_sent_message(acc, profile, _build_message(dataclasses.replace(out, bcc=[])))
+    _sync_sent_message(acc, profile, _build_message(out))
 
 
 def _sync_sent_message(acc: str | None, profile: dict, message: EmailMessage) -> None:
-    copy = cast(EmailMessage, BytesParser(policy=policy.default).parsebytes(message.as_bytes()))
-    if "Bcc" in copy:
-        del copy["Bcc"]
+    # Strip Bcc before APPEND (those addresses must not appear in
+    # the stored copy that the user can later read in their mail UI).
+    del message["Bcc"]
     sent_fallback = profile["sent_folder"] if "sent_folder" in profile else None
     ok, info = _append_message(
         acc,
-        copy.as_bytes(),
+        message.as_bytes(),
         role="sent",
         profile_fallback=sent_fallback,
         flags=[MailMessageFlags.SEEN],
@@ -523,6 +524,12 @@ def send(req: SendRequest) -> None:
 
     state_dir = _state_dir()
     if pending_send.delay_seconds(state_dir) > 0:
+        running, _ = daemon_lifecycle.daemon_running(state_dir)
+        if not running:
+            sys.exit(
+                "the poll daemon dispatches delayed sends and is not running, so this message would never leave; "
+                "start it with `email-client daemon start`, or send immediately with `email-client send-delay --seconds 0`"
+            )
         action = "reply" if req.reply_to_uid else "forward" if req.forward_uid else "send"
         queued = pending_send.enqueue(
             state_dir,

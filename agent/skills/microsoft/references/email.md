@@ -30,7 +30,9 @@ microsoft email pending --account user@example.com
 microsoft email undo --id <pending_id>
 ```
 
-Each send, reply, or forward command creates a provider draft and returns a `pending` status with its id and scheduled send time. The background daemon sends due drafts through the backend that created them. Use `undo` before the deadline to cancel the pending send and delete its provider draft. Keep `microsoft serve` running whenever the delay is nonzero. Set `--seconds 0` for immediate delivery. Explicit drafts are never queued.
+Each send, reply, or forward command creates a provider draft and returns a `pending` status with its id and scheduled send time. `microsoft serve` sends due drafts through the backend that created them, and every email command already requires it to be running. Use `undo` to cancel a pending send and delete its provider draft: it works right up until the daemon starts dispatching that message. Set `--seconds 0` for immediate delivery. Explicit drafts are never queued.
+
+`pending` also lists messages whose status is `failed`, with `last_error` saying why: delivery kept erroring, or it was cut off mid-dispatch. A message cut off mid-dispatch may already have been sent, so read the Sent folder before you `undo` it or send it again.
 
 ## Organize messages
 

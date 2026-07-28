@@ -28,7 +28,7 @@ def test_pending_send_uses_the_client_delay_and_can_be_claimed_once(tmp_path):
     )
 
     assert queued.send_at == now + timedelta(seconds=30)
-    assert [item.id for item in pending_send.list_pending(tmp_path, now=now)] == [queued.id]
+    assert [item.id for item in pending_send.list_pending(tmp_path)] == [queued.id]
     assert pending_send.claim_due(tmp_path, now=queued.send_at - timedelta(microseconds=1)) is None
     assert pending_send.claim_due(tmp_path, now=queued.send_at).id == queued.id
     assert pending_send.claim_due(tmp_path, now=queued.send_at) is None
@@ -47,14 +47,19 @@ def test_undo_removes_a_pending_send_before_delivery(tmp_path):
         now=now,
     )
 
-    cancelled = pending_send.cancel(tmp_path, queued.id, now=queued.send_at - timedelta(microseconds=1))
+    cancelled = pending_send.cancel(tmp_path, queued.id)
 
     assert cancelled.id == queued.id
     assert pending_send.list_pending(tmp_path) == []
     assert pending_send.claim_due(tmp_path, now=queued.send_at) is None
 
 
-def test_undo_rejects_a_send_after_its_recovery_window(tmp_path):
+def test_undo_rejects_an_unknown_send(tmp_path):
+    with pytest.raises(ValueError, match="was not found"):
+        pending_send.cancel(tmp_path, "nope")
+
+
+def test_an_overdue_send_stays_listed_and_undoable_until_it_is_dispatched(tmp_path):
     now = datetime(2026, 7, 28, 12, 0, tzinfo=UTC)
     queued = pending_send.enqueue(
         tmp_path,
@@ -67,9 +72,27 @@ def test_undo_rejects_a_send_after_its_recovery_window(tmp_path):
         now=now,
     )
 
-    with pytest.raises(ValueError, match="expired"):
-        pending_send.cancel(tmp_path, queued.id, now=queued.send_at)
-    assert pending_send.list_pending(tmp_path, now=queued.send_at) == []
+    assert [item.id for item in pending_send.list_pending(tmp_path)] == [queued.id]
+
+    pending_send.cancel(tmp_path, queued.id)
+
+    assert pending_send.claim_due(tmp_path, now=queued.send_at) is None
+
+
+def test_a_send_being_dispatched_can_no_longer_be_undone(tmp_path):
+    queued = pending_send.enqueue(
+        tmp_path,
+        account="personal",
+        action="send",
+        subject="Hello",
+        recipients="bob@example.com",
+        backend="smtp",
+        payload=b"mime",
+    )
+    pending_send.claim_due(tmp_path, now=queued.send_at)
+
+    with pytest.raises(ValueError, match="being delivered"):
+        pending_send.cancel(tmp_path, queued.id)
 
 
 def test_changing_delay_only_affects_new_sends(tmp_path):
@@ -100,7 +123,7 @@ def test_changing_delay_only_affects_new_sends(tmp_path):
     assert second.send_at == now + timedelta(seconds=75)
 
 
-def test_dispatching_send_recovers_after_daemon_restart(tmp_path):
+def test_a_send_interrupted_mid_dispatch_is_held_instead_of_resent(tmp_path):
     queued = pending_send.enqueue(
         tmp_path,
         account="personal",
@@ -114,7 +137,31 @@ def test_dispatching_send_recovers_after_daemon_restart(tmp_path):
 
     pending_send.recover_dispatching(tmp_path)
 
-    assert pending_send.claim_due(tmp_path, now=queued.send_at).id == queued.id
+    assert pending_send.claim_due(tmp_path, now=queued.send_at) is None
+    held = pending_send.list_pending(tmp_path)[0]
+    assert held.public()["status"] == "failed"
+    assert held.public()["last_error"] == pending_send.INTERRUPTED_ERROR
+
+
+def test_delivery_stops_retrying_once_it_has_burned_its_attempts(tmp_path):
+    queued = pending_send.enqueue(
+        tmp_path,
+        account="personal",
+        action="send",
+        subject="Hello",
+        recipients="bob@example.com",
+        backend="smtp",
+        payload=b"mime",
+    )
+    at = queued.send_at
+
+    for _ in range(pending_send.MAX_DELIVERY_ATTEMPTS):
+        at = at + timedelta(seconds=pending_send.RETRY_DELAY_SECONDS)
+        assert pending_send.claim_due(tmp_path, now=at).id == queued.id
+        pending_send.retry(tmp_path, queued.id, "smtp refused", now=at)
+
+    assert pending_send.claim_due(tmp_path, now=at + timedelta(hours=1)) is None
+    assert pending_send.list_pending(tmp_path)[0].public()["last_error"] == "smtp refused"
 
 
 def _smtp_profile():
@@ -133,6 +180,10 @@ def _patch_account(monkeypatch):
     monkeypatch.setattr(smtp_send, "account_profile", lambda _account: _smtp_profile())
 
 
+def _patch_daemon(monkeypatch, *, running):
+    monkeypatch.setattr(smtp_send.daemon_lifecycle, "daemon_running", lambda _state_dir: (running, 4242 if running else None))
+
+
 def _original_message():
     return {
         "message_id": "<original@example.com>",
@@ -149,6 +200,7 @@ def _original_message():
 def test_smtp_send_queues_the_composed_message_and_attachments(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("EMAIL_CLIENT_DIR", str(tmp_path))
     _patch_account(monkeypatch)
+    _patch_daemon(monkeypatch, running=True)
     attachment = tmp_path / "report.pdf"
     attachment.write_bytes(b"pdf")
     delivered = []
@@ -177,6 +229,7 @@ def test_smtp_send_queues_the_composed_message_and_attachments(tmp_path, monkeyp
 def test_smtp_all_outbound_actions_inherit_the_client_delay(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("EMAIL_CLIENT_DIR", str(tmp_path))
     _patch_account(monkeypatch)
+    _patch_daemon(monkeypatch, running=True)
     monkeypatch.setattr(smtp_send, "fetch_original", lambda *_args: _original_message())
     pending_send.set_delay_seconds(tmp_path, 45)
     attachment = tmp_path / "report.pdf"
@@ -216,6 +269,7 @@ def test_smtp_all_outbound_actions_inherit_the_client_delay(tmp_path, monkeypatc
 def test_smtp_zero_client_delay_sends_immediately(tmp_path, monkeypatch):
     monkeypatch.setenv("EMAIL_CLIENT_DIR", str(tmp_path))
     _patch_account(monkeypatch)
+    _patch_daemon(monkeypatch, running=True)
     pending_send.set_delay_seconds(tmp_path, 0)
     delivered = []
     monkeypatch.setattr(smtp_send, "_smtp_deliver", lambda *_args: delivered.append(True))
@@ -230,6 +284,7 @@ def test_smtp_zero_client_delay_sends_immediately(tmp_path, monkeypatch):
 def test_smtp_dispatch_delivers_once_then_runs_sent_side_effects(tmp_path, monkeypatch):
     monkeypatch.setenv("EMAIL_CLIENT_DIR", str(tmp_path))
     _patch_account(monkeypatch)
+    _patch_daemon(monkeypatch, running=True)
     smtp_send.send(smtp_send.SendRequest(to="bob@example.com", subject="Hello", body="Body", account="personal"))
     queued = pending_send.list_pending(tmp_path)[0]
     delivered = []
@@ -246,6 +301,7 @@ def test_smtp_dispatch_delivers_once_then_runs_sent_side_effects(tmp_path, monke
 def test_smtp_reply_side_effects_wait_for_delivery(tmp_path, monkeypatch):
     monkeypatch.setenv("EMAIL_CLIENT_DIR", str(tmp_path))
     _patch_account(monkeypatch)
+    _patch_daemon(monkeypatch, running=True)
     monkeypatch.setattr(smtp_send, "fetch_original", lambda *_args: _original_message())
     answered = []
     monkeypatch.setattr(smtp_send, "_mark_answered", lambda *_args: answered.append(True))
@@ -272,6 +328,7 @@ def test_smtp_reply_side_effects_wait_for_delivery(tmp_path, monkeypatch):
 def test_smtp_dispatch_retries_cli_style_delivery_failures(tmp_path, monkeypatch):
     monkeypatch.setenv("EMAIL_CLIENT_DIR", str(tmp_path))
     _patch_account(monkeypatch)
+    _patch_daemon(monkeypatch, running=True)
     smtp_send.send(smtp_send.SendRequest(to="bob@example.com", subject="Hello", body="Body", account="personal"))
     queued = pending_send.list_pending(tmp_path)[0]
 
@@ -291,3 +348,15 @@ def test_delay_is_client_configuration_not_a_send_option(tmp_path):
     args = parser.parse_args(["--to", "bob@example.com", "--subject", "Hello", "--body", "Body"])
 
     assert "seconds" not in vars(args)
+
+
+def test_a_delayed_send_is_refused_when_no_daemon_can_dispatch_it(tmp_path, monkeypatch):
+    monkeypatch.setenv("EMAIL_CLIENT_DIR", str(tmp_path))
+    _patch_account(monkeypatch)
+    _patch_daemon(monkeypatch, running=False)
+    monkeypatch.setattr(smtp_send, "_smtp_deliver", lambda *_args: pytest.fail("must not deliver"))
+
+    with pytest.raises(SystemExit, match="daemon start"):
+        smtp_send.send(smtp_send.SendRequest(to="bob@example.com", subject="Hello", body="Body", account="personal"))
+
+    assert pending_send.list_pending(tmp_path) == []
