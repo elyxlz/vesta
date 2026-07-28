@@ -22,7 +22,7 @@ from .loops import (
     message_processor,
     monitor_loop,
 )
-from .migrations import pending_migration_turns
+from .migrations import after_sync_migration_turns, before_sync_migration_turns
 from .provider import derive_status, enforce_active_credentials
 from .upstream_sync import upstream_sync_turn, vesta_version
 
@@ -163,10 +163,10 @@ def config_issues_turn(issues: list[str]) -> str | None:
     )
 
 
-# A migration/upgrade boot is a restart: the daemons are down, but the converge turns (migrations,
-# upstream sync) run before the greeting's restart turn, so nothing has restored them yet. Prepend
-# this to the first converge turn so the agent runs the restart skill first, exactly as it would on
-# a plain restart, before tunnelling into the migration or upgrade.
+# A migration/upgrade boot is a restart: the daemons are down, but the converge turns
+# (before-sync migrations, upstream sync, after-sync migrations) run before the greeting's restart turn, so nothing
+# has restored them yet. Prepend this to the first converge turn so the agent runs the restart skill
+# first, exactly as it would on a plain restart, before tunnelling into the migration or upgrade.
 BOOT_RESTORE_ORIENTATION = (
     "Your daemons are down after this boot, just like any restart. Before the task below, read the "
     "`restart` skill and run its daemon guard block to bring your daemons back (it is idempotent, so "
@@ -177,16 +177,27 @@ BOOT_RESTORE_ORIENTATION = (
 def collect_boot_turns(
     *, state: vm.State, config: cfg.VestaConfig, config_issues: list[str], agent_message: str, first_start: bool
 ) -> list[str]:
-    """Boot-time control-flow as ordered prompt bodies: migrations, then upstream sync, then
-    config issues, then the greeting last — converge first, orient and reach out last. Each is
-    delivered as a boot turn (immediate, non-interruptible), not a notification.
-    The greeting's restart turn restores daemons; converge turns run before it, so the first one carries
-    BOOT_RESTORE_ORIENTATION to restore daemons first."""
+    """Boot-time control-flow as ordered prompt bodies: before-sync migrations as a boot barrier;
+    otherwise upstream sync, after-sync migrations, config issues, and the greeting last —
+    converge first, orient and reach out last. Each is delivered as a boot turn (immediate,
+    non-interruptible), not a notification.
+
+    Any pending before-sync migration excludes sync and after-sync migrations from this boot. The
+    before-sync batch restarts after marking progress, so the next boot retries that phase or
+    proceeds to sync. When sync merges changes, its own restart naturally leaves the still-unmarked
+    after-sync migrations for the next boot.
+
+    The greeting's restart turn restores daemons; converge turns run before it, so the first one
+    carries BOOT_RESTORE_ORIENTATION to restore daemons first."""
     turns: list[str] = []
-    turns.extend(pending_migration_turns(state=state, config=config, first_start=first_start))
-    sync_turn = upstream_sync_turn(config=config, first_start=first_start)
-    if sync_turn is not None:
-        turns.append(sync_turn)
+    before_sync_turns = before_sync_migration_turns(state=state, config=config, first_start=first_start)
+    if before_sync_turns:
+        turns.extend(before_sync_turns)
+    else:
+        sync_turn = upstream_sync_turn(config=config, first_start=first_start)
+        if sync_turn is not None:
+            turns.append(sync_turn)
+        turns.extend(after_sync_migration_turns(state=state, config=config, first_start=first_start))
     config_turn = config_issues_turn(config_issues)
     if config_turn is not None:
         turns.append(config_turn)
