@@ -514,8 +514,18 @@ func TestUsageAnswersZeroAndAnUnknownVerbDoesNot(t *testing.T) {
 			t.Errorf("whatsapp daemon %v printed %q, want its usage", args, output)
 		}
 	}
-	if _, code := runVerbProcess(t, "bogus"); code == 0 {
+	output, code := runVerbProcess(t, "bogus")
+	if code == 0 {
 		t.Error("an unknown daemon verb exited 0, want nonzero")
+	}
+	// A verb that does not exist is the caller's typo, so it answers with usage: the error
+	// envelope would read as a daemon that failed and may be worth retrying.
+	if !strings.Contains(strings.ToLower(string(output)), "usage") {
+		t.Errorf("an unknown daemon verb printed %q, want its usage", output)
+	}
+	var envelope map[string]any
+	if json.Unmarshal(output, &envelope) == nil {
+		t.Errorf("an unknown daemon verb answered with the envelope %v, want plain usage", envelope)
 	}
 }
 
