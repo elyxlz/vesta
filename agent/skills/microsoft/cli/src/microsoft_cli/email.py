@@ -1,6 +1,7 @@
 """Email commands for Microsoft CLI."""
 
 import base64
+import dataclasses
 import html
 import pathlib as pl
 from datetime import UTC, datetime
@@ -8,7 +9,7 @@ from typing import Any
 
 import httpx
 
-from . import auth, folders, graph
+from . import auth, folders, graph, pending_send
 from .config import Config
 from .payloads import MailDraft
 
@@ -348,13 +349,13 @@ def _split_attachments(attachments: list[str] | None) -> tuple[list[dict[str, An
 
 def _draft_reply_or_forward(config: Config, client: httpx.Client, account_id: str, mail: MailDraft) -> dict[str, Any]:
     source_id = mail.reply_to_id or mail.forward_id
-    create_endpoint = "createReply" if mail.reply_to_id else "createForward"
+    create_endpoint = "createReplyAll" if mail.reply_to_id and mail.reply_all else "createReply" if mail.reply_to_id else "createForward"
     draft = graph.request_cfg(config, client, "POST", f"/me/messages/{source_id}/{create_endpoint}", account_id)
     if not draft or "id" not in draft:
         raise ValueError("Failed to create reply/forward draft")
     draft_id = draft["id"]
 
-    updates: dict[str, Any] = {"body": {"contentType": "Text", "content": mail.body}}
+    updates: dict[str, Any] = {"body": {"contentType": "HTML" if mail.html else "Text", "content": mail.body}}
     if mail.subject:
         updates["subject"] = mail.subject
     if mail.to:
@@ -386,7 +387,7 @@ def create_email_draft(config: Config, client: httpx.Client, *, account_email: s
 
     message = {
         "subject": subject,
-        "body": {"contentType": "Text", "content": mail.body},
+        "body": {"contentType": "HTML" if mail.html else "Text", "content": mail.body},
         "toRecipients": [{"emailAddress": {"address": addr}} for addr in to] if to else [],
     }
 
@@ -421,6 +422,12 @@ def create_email_draft(config: Config, client: httpx.Client, *, account_email: s
 
 
 def send_email(config: Config, client: httpx.Client, *, account_email: str, mail: MailDraft) -> dict[str, str]:
+    if pending_send.delay_seconds(config.data_dir) > 0:
+        return _queue_draft(config, client, account_email=account_email, mail=mail, action="send")
+    return _send_email_now(config, client, account_email=account_email, mail=mail)
+
+
+def _send_email_now(config: Config, client: httpx.Client, *, account_email: str, mail: MailDraft) -> dict[str, str]:
     to, cc, bcc, attachments = mail.to, mail.cc, mail.bcc, mail.attachments
     if not to and not cc and not bcc:
         raise ValueError("At least one recipient is required (--to, --cc, or --bcc)")
@@ -500,6 +507,21 @@ def reply_to_email(
     reply_all: bool = False,
     html: bool = False,
 ) -> dict[str, str]:
+    if pending_send.delay_seconds(config.data_dir) > 0:
+        return _queue_draft(
+            config,
+            client,
+            account_email=account_email,
+            mail=MailDraft(
+                body=body,
+                attachments=attachments,
+                html=html,
+                reply_to_id=email_id,
+                reply_all=reply_all,
+            ),
+            action="reply-all" if reply_all else "reply",
+        )
+
     account_id = auth.get_account_id_by_email(account_email, config.cache_file)
     create_endpoint = "createReplyAll" if reply_all else "createReply"
     reply_endpoint = "replyAll" if reply_all else "reply"
@@ -627,10 +649,14 @@ def reply_draft(
 
 
 def forward_email(config: Config, client: httpx.Client, *, account_email: str, email_id: str, mail: MailDraft) -> dict[str, str]:
-    to, body, cc, attachments, html = mail.to, mail.body, mail.cc, mail.attachments, mail.html
-    if not to:
+    if not mail.to:
         raise ValueError("--to is required to forward")
 
+    if pending_send.delay_seconds(config.data_dir) > 0:
+        pending_mail = dataclasses.replace(mail, forward_id=email_id)
+        return _queue_draft(config, client, account_email=account_email, mail=pending_mail, action="forward")
+
+    to, body, cc, attachments, html = mail.to, mail.body, mail.cc, mail.attachments, mail.html
     account_id = auth.get_account_id_by_email(account_email, config.cache_file)
     to_recipients = [{"emailAddress": {"address": addr}} for addr in to]
 
@@ -658,6 +684,32 @@ def forward_email(config: Config, client: httpx.Client, *, account_email: str, e
         config, client, "POST", f"/me/messages/{email_id}/forward", account_id, json={"comment": body, "toRecipients": to_recipients}
     )
     return {"status": "sent"}
+
+
+def _queue_draft(
+    config: Config,
+    client: httpx.Client,
+    *,
+    account_email: str,
+    mail: MailDraft,
+    action: str,
+) -> dict[str, str]:
+    draft = create_email_draft(config, client, account_email=account_email, mail=mail)
+    draft_id = str(draft["id"]) if "id" in draft else ""
+    if not draft_id:
+        raise ValueError("Microsoft Graph did not return an id for the pending draft")
+    recipients = ", ".join([*(mail.to or []), *(mail.cc or []), *(mail.bcc or [])]) or "thread recipients"
+    subject = mail.subject or f"{action} to {mail.reply_to_id or mail.forward_id}"
+    queued = pending_send.enqueue(
+        config.data_dir,
+        account=account_email,
+        action=action,
+        subject=subject,
+        recipients=recipients,
+        backend=pending_send.GRAPH_BACKEND,
+        payload=draft_id.encode(),
+    )
+    return queued.public()
 
 
 def move_email(

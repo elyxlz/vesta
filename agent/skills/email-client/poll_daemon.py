@@ -41,6 +41,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import contextlib
 
 import daemon_lifecycle
+import pending_send
+import smtp_send
 from imap_client import (
     _env,
     _from_full,
@@ -71,6 +73,7 @@ INDEX_CHECK_SECS = 10
 # IMAP transaction trying to pull thousands of headers. Caller re-enters
 # on the next IDLE/poll cycle to pick up the remaining backlog.
 FETCH_BATCH_LIMIT = 500
+PENDING_POLL_SECONDS = 1
 
 
 def _sanitize_folder(folder: str) -> str:
@@ -276,6 +279,17 @@ def _reconcile_workers(
             log(f"[{key[0]}:{key[1]}] worker stopping")
 
 
+def pending_send_worker(state_dir: pathlib.Path, log, stop_event: threading.Event) -> None:
+    pending_send.recover_dispatching(state_dir)
+    while not stop_event.is_set():
+        try:
+            if smtp_send.dispatch_due(state_dir):
+                continue
+        except Exception as error:
+            log(f"[pending-send] dispatch failed: {error}")
+        stop_event.wait(PENDING_POLL_SECONDS)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument(
@@ -310,11 +324,18 @@ def main():
 
     workers: dict[tuple[str, str], tuple[threading.Thread, threading.Event]] = {}
     last_desired: set[tuple[str, str]] | None = None
+    pending_thread = threading.Thread(
+        target=pending_send_worker,
+        args=(state_dir, log, shutdown_event),
+        name="pending-send",
+        daemon=True,
+    )
 
     daemon_lifecycle.write_pid(state_dir)
     daemon_lifecycle.write_daemon_info(state_dir, args.interval)
 
     try:
+        pending_thread.start()
         while not shutdown_event.is_set():
             try:
                 wanted = desired_workers()
@@ -329,8 +350,10 @@ def main():
             _reconcile_workers(workers, wanted, args.interval, log)
             shutdown_event.wait(INDEX_CHECK_SECS)
     finally:
+        shutdown_event.set()
         for _, stop_event in workers.values():
             stop_event.set()
+        pending_thread.join(timeout=WORKER_JOIN_TIMEOUT_SECS)
         for thread, _ in workers.values():
             thread.join(timeout=WORKER_JOIN_TIMEOUT_SECS)
         if daemon_lifecycle.consume_stop_requested(state_dir):

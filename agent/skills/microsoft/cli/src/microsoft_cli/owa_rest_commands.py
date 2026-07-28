@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 
 from . import calendar as calendar_mod
 from . import email as email_mod
-from . import owa_rest
+from . import owa_rest, pending_send
 from .config import Config
 from .payloads import EventFields, EventPatch, MailDraft
 
@@ -96,6 +96,8 @@ def get_email(
 def send_email(config: Config, client, *, account_email: str, mail: MailDraft) -> dict:
     if not mail.to and not mail.cc and not mail.bcc:
         raise ValueError("at least one recipient is required (--to, --cc, or --bcc)")
+    if pending_send.delay_seconds(config.data_dir) > 0:
+        return _queue_draft(config, client, account_email=account_email, mail=mail, action="send")
     return owa_rest.send_message(client, account_email, config, mail=mail)
 
 
@@ -121,6 +123,20 @@ def reply_to_email(
     reply_all: bool = False,
     html: bool = False,
 ) -> dict:
+    if pending_send.delay_seconds(config.data_dir) > 0:
+        return _queue_draft(
+            config,
+            client,
+            account_email=account_email,
+            mail=MailDraft(
+                body=body,
+                attachments=attachments,
+                html=html,
+                reply_to_id=email_id,
+                reply_all=reply_all,
+            ),
+            action="reply-all" if reply_all else "reply",
+        )
     return owa_rest.reply_message(
         client, account_email, config, item_id=email_id, body=body, attachments=attachments, reply_all=reply_all, html=html
     )
@@ -129,7 +145,29 @@ def reply_to_email(
 def forward_email(config: Config, client, *, account_email: str, email_id: str, mail: MailDraft) -> dict:
     if not mail.to:
         raise ValueError("--to is required to forward")
+    if pending_send.delay_seconds(config.data_dir) > 0:
+        pending_mail = dataclasses.replace(mail, forward_id=email_id)
+        return _queue_draft(config, client, account_email=account_email, mail=pending_mail, action="forward")
     return owa_rest.forward_message(client, account_email, config, item_id=email_id, mail=mail)
+
+
+def _queue_draft(config: Config, client, *, account_email: str, mail: MailDraft, action: str) -> dict[str, str]:
+    draft = create_email_draft(config, client, account_email=account_email, mail=mail)
+    draft_id = str(draft["id"]) if "id" in draft else ""
+    if not draft_id:
+        raise ValueError("OWA REST did not return an id for the pending draft")
+    recipients = ", ".join([*(mail.to or []), *(mail.cc or []), *(mail.bcc or [])]) or "thread recipients"
+    subject = mail.subject or f"{action} to {mail.reply_to_id or mail.forward_id}"
+    queued = pending_send.enqueue(
+        config.data_dir,
+        account=account_email,
+        action=action,
+        subject=subject,
+        recipients=recipients,
+        backend=pending_send.OWA_REST_BACKEND,
+        payload=draft_id.encode(),
+    )
+    return queued.public()
 
 
 def move_email(config: Config, client, *, account_email: str, email_id: str, to_folder: str) -> dict:

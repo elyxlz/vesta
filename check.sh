@@ -65,6 +65,9 @@ check_agent() {
     done
     uv run --project core ty check
     uv run --project core pytest tests/ -v
+    # email-client ships plain scripts rather than a cli/ project, so the loop below
+    # cannot find its suite: name it here or it never runs.
+    uv run --project core pytest skills/email-client/tests -q
     # Each skill CLI is its own standalone uv project (own venv, own lockfile).
     # uv honors UV_PROJECT_ENVIRONMENT (exported above for core) over --project,
     # so unset it here or every suite would run in the shared core venv.

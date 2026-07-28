@@ -45,6 +45,7 @@ from imap_tools import AND, MailBox, MailMessageFlags
 # importable without adding a new symlink for each one.
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import daemon_lifecycle
+import pending_send
 from providers import (
     apply_env_overrides,
     detect_provider,
@@ -751,6 +752,25 @@ def cmd_notify_remove(args):
     _save_notify_folders(acc, [f for f in notify_folders(acc) if f != args.folder])
 
 
+def cmd_send_delay(args):
+    seconds = pending_send.delay_seconds(_state_dir()) if args.seconds is None else pending_send.set_delay_seconds(_state_dir(), args.seconds)
+    print(json.dumps({"send_delay_seconds": seconds}, indent=2))
+
+
+def cmd_pending(args):
+    account = resolve_account(args.account) if args.account else None
+    print(json.dumps([queued.public() for queued in pending_send.list_pending(_state_dir(), account=account)], indent=2))
+
+
+def cmd_undo(args):
+    try:
+        queued = pending_send.cancel(_state_dir(), args.pending_id)
+    except ValueError as error:
+        sys.exit(str(error))
+    pending_send.finish_cancel(_state_dir(), queued.id)
+    print(json.dumps({"id": queued.id, "status": "cancelled"}, indent=2))
+
+
 # -- daemon lifecycle (start/stop/restart/status of poll_daemon.py) -
 
 
@@ -1001,7 +1021,19 @@ def _add_mutate_parsers(sub):
     _add_account_arg(p)
 
 
+def _add_pending_parsers(sub):
+    p_delay = sub.add_parser("send-delay", help="show or set the client-wide outbound email delay")
+    p_delay.add_argument("--seconds", type=int, default=None)
+
+    p_pending = sub.add_parser("pending", help="list outbound email that can still be undone")
+    _add_account_arg(p_pending)
+
+    p_undo = sub.add_parser("undo", help="cancel a pending outbound email")
+    p_undo.add_argument("--id", required=True, dest="pending_id")
+
+
 def _add_admin_parsers(sub):
+    _add_pending_parsers(sub)
     pf = sub.add_parser("folder", help="create / rename / delete / subscribe mailboxes")
     fsub = pf.add_subparsers(dest="folder_cmd", required=True)
     pf_c = fsub.add_parser("create", help="create a new mailbox")
@@ -1144,6 +1176,12 @@ def _dispatch(args):
             "restart": cmd_daemon_restart,
             "status": cmd_daemon_status,
         }[args.daemon_cmd](args)
+    elif args.cmd == "send-delay":
+        cmd_send_delay(args)
+    elif args.cmd == "pending":
+        cmd_pending(args)
+    elif args.cmd == "undo":
+        cmd_undo(args)
     elif args.cmd == "calendar":
         _cmd_calendar(args)
     else:

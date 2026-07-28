@@ -25,6 +25,19 @@ google email reply --id <message_id> --body "Thanks!"
 google email search --query "project update"
 ```
 
+Email sends and replies wait 30 seconds by default. The delay is one persisted setting for the Google client and cannot be overridden on an individual send:
+
+```bash
+google email send-delay
+google email send-delay --seconds 60
+google email pending
+google email undo --id <pending_id>
+```
+
+The send or reply command creates a Gmail draft and returns a `pending` status with its id and scheduled send time. `google serve` sends due drafts, and every email command already requires it to be running. Use `undo` to cancel a pending send and delete its Gmail draft: it works right up until the daemon starts dispatching that message. Set `--seconds 0` for immediate delivery. Explicit drafts are never queued.
+
+`pending` also lists messages whose status is `failed`, with `last_error` saying why: delivery kept erroring, or it was cut off mid-dispatch. A message cut off mid-dispatch may already have been sent, so read the Sent folder before you `undo` it or send it again.
+
 ## Calendar (Google Calendar REST API v3)
 
 ```bash
