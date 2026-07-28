@@ -16,16 +16,16 @@ SKILLS_DIR = REPO_ROOT / "agent/skills"
 # The helper and the runner carry the flag as their own interface, not as a request for it.
 EXPOSURE_OWNERS = {SKILLS_DIR / "vestad/scripts/register-service", SKILLS_DIR / "vestad/scripts/daemon-lifecycle"}
 
-# Public means a page that must load with no credential at all: an inbound webhook from a sender
-# that can hold no key, and a shareable file link. Everything else is private, and a consumer
-# holding no app credential reaches it with a minted service key.
-EXPECTED_PORT_MODE = {
-    "agentmail": "public",
-}
+# A daemon that hands its exposure to the shared runner is named here with the mode it declares.
+EXPECTED_PORT_MODE: dict[str, str] = {}
 
 # A skill that registers its own port rather than declaring one to the runner. Keyed by file
-# because a service name is often built at runtime, from an instance or a constant.
+# because a service name is often built at runtime, from an instance or a constant. Public means
+# a page that must load with no credential at all: an inbound webhook from a sender that can hold
+# no key, and a shareable file link. Everything else is private, and a consumer holding no app
+# credential reaches it with a minted service key.
 EXPECTED_DIRECT_PUBLIC = {
+    "agentmail/cli/src/agentmail_bridge/daemon.py",  # the webhook an external mail sender posts to
     "browser/cli/src/vesta_browser/handover.py",  # the handover page opens with no credential
     "file-host/file-host",  # the share link is fetched from outside the tunnel
     "whatsapp/cli/link.go",  # the QR link page a stranger's phone opens

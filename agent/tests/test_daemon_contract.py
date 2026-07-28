@@ -125,6 +125,24 @@ SKILLS = [
         emits_daemon_died=True,
     ),
     Daemon(
+        command=["uv", "run", "--project", str(SKILLS_DIR / "agentmail/cli"), "agentmail"],
+        name="agentmail",
+        serves_port=True,
+        emits_daemon_died=True,
+    ),
+    Daemon(
+        command=["uv", "run", "--project", str(SKILLS_DIR / "voice/cli"), "voice-keys"],
+        name="voice",
+        serves_port=True,
+        emits_daemon_died=True,
+    ),
+    Daemon(
+        command=["uv", "run", "--project", str(SKILLS_DIR / "app-chat/cli"), "app-chat"],
+        name="app-chat",
+        serves_port=True,
+        emits_daemon_died=True,
+    ),
+    Daemon(
         command=["uv", "run", "--project", str(SKILLS_DIR / "google/cli"), "google"],
         name="google",
         serves_port=False,

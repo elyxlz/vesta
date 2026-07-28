@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import secrets as secrets_mod
+import signal
 import time
 from datetime import UTC, datetime
 
@@ -18,11 +19,7 @@ import click
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Request
 
-from agentmail_bridge.config import (
-    NOTIFICATIONS_DIR,
-    email_address,
-    webhook_secret,
-)
+from agentmail_bridge.config import NOTIFICATIONS_DIR, webhook_secret
 
 app = FastAPI(title="agentmail")
 
@@ -35,7 +32,8 @@ def _field(payload: dict, key: str, default):
 
 @app.get("/health")
 def health() -> dict:
-    return {"ok": True, "address": email_address()}
+    """Liveness only, so it answers before the inbox is configured. `agentmail status` has the address."""
+    return {"ok": True}
 
 
 @app.post("/webhook")
@@ -88,9 +86,9 @@ async def webhook(request: Request, secret: str = Query(default="")) -> dict:
 
 
 def _write_daemon_died() -> None:
-    """Record the mail service's exit so the agent restarts it: uvicorn.run returns on
-    SIGTERM/SIGINT and raises on a bind/fatal error, so a dead inbound-mail listener is
-    reported either way. interrupt defaults on (silent mail loss is urgent)."""
+    """Record the mail service's exit so the agent restarts it: uvicorn returns on a signal and
+    raises on a bind/fatal error, so a dead inbound-mail listener is reported either way.
+    interrupt defaults on (silent mail loss is urgent)."""
     NOTIFICATIONS_DIR.mkdir(parents=True, exist_ok=True)
     notif = {
         "source": "agentmail",
@@ -108,7 +106,20 @@ def _write_daemon_died() -> None:
 @click.option("--host", default="0.0.0.0", help="Bind address")
 def serve_cmd(port: int, host: str) -> None:
     """Run the local HTTP service that receives inbound mail from AgentMail."""
+    asked_to_stop = False
+
+    def handle_signal(signum: int, _frame: object) -> None:
+        # SIGTERM is what `agentmail daemon stop` sends, so it is the one exit the agent asked
+        # for; every other way out of uvicorn is news the agent needs. uvicorn takes both signals
+        # over for its graceful shutdown and re-raises them once it has restored these handlers.
+        nonlocal asked_to_stop
+        asked_to_stop = signum == signal.SIGTERM
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGINT, handle_signal)
+    signal.signal(signal.SIGTERM, handle_signal)
     try:
         uvicorn.run(app, host=host, port=port, log_level="info")
     finally:
-        _write_daemon_died()
+        if not asked_to_stop:
+            _write_daemon_died()

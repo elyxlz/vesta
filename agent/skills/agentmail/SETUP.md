@@ -67,8 +67,9 @@ tunnel; that's why the service must be registered with `"public": true`.
 agentmail daemon start
 ```
 
-Start owns the public registration and waits until the service answers. Manage it with
-`daemon start|stop|restart|status`, never raw `screen`.
+Start owns the public registration and waits until the service answers; stop is the deliberate
+shutdown, so it does not fire the `daemon_died` notification every other exit fires. Manage it with
+`daemon start|stop|restart|status`, never by launching `agentmail serve` yourself.
 
 Add this line yourself, inside the fenced block in the `## Daemons` section of
 `~/agent/skills/restart/SKILL.md`:
@@ -78,7 +79,7 @@ running agentmail || { agentmail daemon start; sleep 1; }
 ```
 
 **Verify**: `agentmail daemon status` reports the registered port; `curl http://127.0.0.1:<port>/health`
-returns `{"ok": true, "address": "<your-address>"}`.
+returns `{"ok": true}`. Startup output lands in `~/agent/logs/agentmail.log`.
 
 ## 3. Send a test email
 

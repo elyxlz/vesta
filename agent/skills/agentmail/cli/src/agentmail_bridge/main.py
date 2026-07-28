@@ -56,7 +56,11 @@ def _passthrough(args: list[str]) -> None:
 def main() -> None:
     args = sys.argv[1:]
     first = args[0] if args else ""
-    if not first or first in VESTA_VERBS:
+    # No verb and `help` both mean --help here; the official CLI has no such verb to pass them to.
+    if not first or first == "help":
+        cli(["--help"])
+        return
+    if first in VESTA_VERBS:
         cli(args)
         return
     _passthrough(args)

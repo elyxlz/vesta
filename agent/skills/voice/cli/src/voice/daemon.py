@@ -1,149 +1,152 @@
-"""Lifecycle for the voice-server screen daemon.
+"""Daemon lifecycle for the voice server: the whole contract, owned here.
 
-`start` owns the register-service call (idempotent: vestad returns the same port for a
-given name on every call), so the agent runs one command instead of stitching together
-register-service + screen by hand. Liveness is a TCP connect to the registered port;
-voice-server has no admin socket of its own.
+start registers the port with vestad and records it beside the pid, stop is a SIGTERM the
+server reads as deliberate, and status answers from those two records alone.
 """
 
+import contextlib
+import io
+import json
 import os
 import pathlib as pl
-import re
 import shutil
-import socket
+import signal
 import subprocess
+import sys
 import time
-import typing as tp
 
-from . import config as vc
-
-SESSION_NAME = "voice"
-START_TIMEOUT_S = 30
-STOP_TIMEOUT_S = 15
-POLL_INTERVAL_S = 1.0
-PORT_CONNECT_TIMEOUT_S = 2.0
-
-REGISTER_SERVICE = pl.Path.home() / "agent" / "skills" / "vestad" / "scripts" / "register-service"
-
-
-class DaemonError(RuntimeError):
-    pass
+NAME = "voice"
+DAEMONS_DIR = pl.Path.home() / "agent/data/daemons"
+PIDFILE = DAEMONS_DIR / f"{NAME}.pid"
+PORTFILE = DAEMONS_DIR / f"{NAME}.port"
+LOG = pl.Path.home() / "agent/logs" / f"{NAME}.log"
+# /health needs no provider key, so it answers before any STT or TTS credential exists.
+READY_URL_PATH = "health"
+USAGE = "Usage: voice-keys daemon <start|stop|restart|status>"
+POLL_SECS = 0.5
+# One hung connection must not eat the whole readiness budget.
+PROBE_TIMEOUT_SECS = 2
 
 
-class AuthEntry(tp.TypedDict):
-    provider: str
-    enabled: bool
+def _budget(name: str, default: int) -> int:
+    return int(os.environ[name]) if name in os.environ else default
 
 
-class LifecycleResult(tp.TypedDict):
-    status: str
-    session: str
-    port: int
+READY_TIMEOUT_SECS = _budget("DAEMON_READY_TIMEOUT_SECS", 30)
+STOP_TIMEOUT_SECS = _budget("DAEMON_STOP_TIMEOUT_SECS", 15)
 
 
-class StatusResult(tp.TypedDict):
-    running: bool
-    session: str
-    port: int
-    auth: dict[str, AuthEntry | None]
+def _fail(message: str) -> int:
+    print(json.dumps({"error": message}), file=sys.stderr)
+    return 1
 
 
-def data_dir() -> pl.Path:
-    return pl.Path.home() / ".voice"
-
-
-def screen_output_has_live_session(screen_ls: str, name: str) -> bool:
-    """A LIVE screen session with exactly this name (a "(Dead ???)" corpse does not count)."""
-    pattern = re.compile(r"\d+\." + re.escape(name) + r"\s")
-    return any(pattern.search(line) and "Dead" not in line for line in screen_ls.splitlines())
-
-
-def _screen_session_live(name: str) -> bool:
-    # `screen -ls` exits nonzero when no sessions exist; only the output matters.
-    result = subprocess.run(["screen", "-ls"], capture_output=True, text=True, check=False)
-    return screen_output_has_live_session(result.stdout, name)
-
-
-def resolve_port() -> int:
-    result = subprocess.run([str(REGISTER_SERVICE), "voice"], capture_output=True, text=True, timeout=35, check=False)
-    if result.returncode != 0 or not result.stdout.strip():
-        raise DaemonError(f"register-service failed: {result.stderr.strip()}")
-    return int(result.stdout.strip())
-
-
-def port_alive(port: int) -> bool:
+def live_pid() -> int | None:
     try:
-        with socket.create_connection(("127.0.0.1", port), timeout=PORT_CONNECT_TIMEOUT_S):
-            return True
-    except OSError:
-        return False
+        pid = int(PIDFILE.read_text().strip())
+        os.kill(pid, 0)
+    except (FileNotFoundError, ValueError, ProcessLookupError, PermissionError):
+        return None
+    return pid
 
 
-def _auth_status() -> dict[str, AuthEntry | None]:
-    cfg = vc.load(data_dir())
-    auth: dict[str, AuthEntry | None] = {}
-    for domain in ("stt", "tts"):
-        entry = cfg[domain]
-        provider = entry["provider"] if entry is not None and "provider" in entry else None
-        if not isinstance(provider, str):
-            auth[domain] = None
-            continue
-        enabled = entry["enabled"] if entry is not None and "enabled" in entry else False
-        auth[domain] = {"provider": provider, "enabled": bool(enabled)}
-    return auth
+def _register_port() -> str | None:
+    result = subprocess.run(["register-service", NAME], capture_output=True, text=True, check=False)
+    port = result.stdout.strip()
+    return port if result.returncode == 0 and port else None
 
 
-def start() -> LifecycleResult:
-    port = resolve_port()
-    if port_alive(port):
-        return {"status": "already_running", "session": SESSION_NAME, "port": port}
+def _ready(port: str) -> bool:
+    probe = subprocess.run(
+        ["curl", "-m", str(PROBE_TIMEOUT_SECS), "-fsS", "-o", "/dev/null", f"http://localhost:{port}/{READY_URL_PATH}"],
+        capture_output=True,
+        check=False,
+    )
+    return probe.returncode == 0
 
+
+def _abandon(child: subprocess.Popen[bytes], message: str) -> int:
+    """A start that gives up takes its child and both records with it: a daemon nothing can reach,
+    with records that say it is up, reads as running and turns every later start into a no-op."""
+    child.terminate()
+    try:
+        child.wait(timeout=STOP_TIMEOUT_SECS)
+    except subprocess.TimeoutExpired:
+        child.kill()
+        child.wait()
+    PIDFILE.unlink(missing_ok=True)
+    PORTFILE.unlink(missing_ok=True)
+    return _fail(message)
+
+
+def _start() -> int:
+    if live_pid() is not None:
+        print(json.dumps({"status": "already_running"}))
+        return 0
     binary = shutil.which("voice-server")
     if binary is None:
-        raise DaemonError("voice-server binary not on PATH; run `uv tool install --editable ~/agent/skills/voice/cli` first")
-
-    env = dict(os.environ)
-    env["SKILL_PORT"] = str(port)
-    launch = subprocess.run(["screen", "-dmS", SESSION_NAME, binary], env=env, capture_output=True, text=True, check=False)
-    if launch.returncode != 0:
-        raise DaemonError(f"failed to launch screen session: {launch.stderr.strip()}")
-
-    deadline = time.monotonic() + START_TIMEOUT_S
+        return _fail("voice-server is not on PATH; run `uv tool install --editable ~/agent/skills/voice/cli` first")
+    port = _register_port()
+    if port is None:
+        return _fail(f"could not register {NAME} with vestad; not launching")
+    DAEMONS_DIR.mkdir(parents=True, exist_ok=True)
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    PORTFILE.write_text(port)
+    with LOG.open("ab") as log:
+        child = subprocess.Popen([binary], env={**os.environ, "SKILL_PORT": port}, start_new_session=True, stdout=log, stderr=log)
+    PIDFILE.write_text(str(child.pid))
+    deadline = time.monotonic() + READY_TIMEOUT_SECS
     while time.monotonic() < deadline:
-        if port_alive(port):
-            return {"status": "started", "session": SESSION_NAME, "port": port}
-        if not _screen_session_live(SESSION_NAME):
-            raise DaemonError("voice-server exited during startup; run 'voice-server' in the foreground to see the error")
-        time.sleep(POLL_INTERVAL_S)
-    raise DaemonError(f"voice-server did not answer on port {port} within {START_TIMEOUT_S}s")
+        if child.poll() is not None:
+            return _abandon(child, f"{NAME} exited during startup; see {LOG}")
+        if _ready(port):
+            print(json.dumps({"status": "started"}))
+            return 0
+        time.sleep(POLL_SECS)
+    return _abandon(child, f"{NAME} never answered on port {port}; see {LOG}")
 
 
-def stop() -> LifecycleResult:
-    port = resolve_port()
-    if not port_alive(port):
-        return {"status": "already_stopped", "session": SESSION_NAME, "port": port}
-
-    subprocess.run(["screen", "-S", SESSION_NAME, "-X", "quit"], check=False)
-    deadline = time.monotonic() + STOP_TIMEOUT_S
+def _stop() -> int:
+    pid = live_pid()
+    if pid is None:
+        print(json.dumps({"status": "already_stopped"}))
+        return 0
+    os.kill(pid, signal.SIGTERM)
+    deadline = time.monotonic() + STOP_TIMEOUT_SECS
     while time.monotonic() < deadline:
-        if not port_alive(port):
-            return {"status": "stopped", "session": SESSION_NAME, "port": port}
-        time.sleep(POLL_INTERVAL_S)
-    raise DaemonError(f"voice-server still answering on port {port} after screen quit; inspect with 'screen -r {SESSION_NAME}'")
+        if live_pid() is None:
+            PIDFILE.unlink(missing_ok=True)
+            PORTFILE.unlink(missing_ok=True)
+            print(json.dumps({"status": "stopped"}))
+            return 0
+        time.sleep(POLL_SECS)
+    return _fail(f"{NAME} still running {STOP_TIMEOUT_SECS}s after SIGTERM (pid={pid})")
 
 
-def restart() -> LifecycleResult:
-    stop()
-    result = start()
-    result["status"] = "restarted"
-    return result
+def _status() -> int:
+    """Reads the port start recorded, never registration, so status answers instantly and
+    truthfully while vestad is down."""
+    running = live_pid() is not None
+    port = PORTFILE.read_text().strip() if running and PORTFILE.exists() else ""
+    print(json.dumps({"running": running, "port": int(port) if port else None}))
+    return 0
 
 
-def status() -> StatusResult:
-    port = resolve_port()
-    return {
-        "running": port_alive(port),
-        "session": SESSION_NAME,
-        "port": port,
-        "auth": _auth_status(),
-    }
+def daemon_cmd(action: str) -> int:
+    if action in ("", "-h", "--help", "help"):
+        print(USAGE)
+        return 0
+    if action == "start":
+        return _start()
+    if action == "stop":
+        return _stop()
+    if action == "restart":
+        # One verb, one line of output: the stop half is swallowed, and a stop that failed
+        # must not be followed by a start onto a daemon that is still there.
+        with contextlib.redirect_stdout(io.StringIO()):
+            stopped = _stop()
+        return _start() if stopped == 0 else stopped
+    if action == "status":
+        return _status()
+    print(USAGE, file=sys.stderr)
+    return 1

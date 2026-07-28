@@ -1,41 +1,160 @@
-"""agentmail daemon: lifecycle for the bridge service, delegated to the shared runner.
+"""Daemon lifecycle for the agentmail bridge: the whole contract, owned here.
 
-The bridge is a public service because AgentMail's webhooks reach it from outside the tunnel,
-so it registers public and the runner hands the resolved port to `agentmail serve`.
+start registers the port with vestad and records it beside the pid, stop is a SIGTERM the
+serve path reads as deliberate, and status answers from those two records alone. The bridge
+registers public because AgentMail's webhook reaches it from outside the tunnel.
 """
 
 from __future__ import annotations
 
+import contextlib
+import io
+import json
+import os
 import pathlib as pl
+import signal
 import subprocess
 import sys
+import time
 
 import click
 
-DAEMON_LIFECYCLE = pl.Path.home() / "agent" / "skills" / "vestad" / "scripts" / "daemon-lifecycle"
+NAME = "agentmail"
+DAEMONS_DIR = pl.Path.home() / "agent/data/daemons"
+PIDFILE = DAEMONS_DIR / f"{NAME}.pid"
+PORTFILE = DAEMONS_DIR / f"{NAME}.port"
+LOG = pl.Path.home() / "agent/logs" / f"{NAME}.log"
+# /health answers with no credential and no inbox call, so it doubles as the readiness probe.
+READY_URL_PATH = "health"
+USAGE = f"Usage: {NAME} daemon <start|stop|restart|status>"
+POLL_SECS = 0.5
+# One hung connection must not eat the whole readiness budget.
+PROBE_TIMEOUT_SECS = 2
 
 
-def daemon_lifecycle_args(action: str) -> list[str]:
-    """Argv for the shared runner. `$PORT` stays a literal: the runner exports the port it
-    registered into the session, and the shell inside the session expands it."""
-    return [
-        str(DAEMON_LIFECYCLE),
-        action,
-        "--session",
-        "agentmail",
-        "--service",
-        "agentmail",
-        "--port-mode",
-        "public",
-        "--",
-        "agentmail",
-        "serve",
-        "--port",
-        "$PORT",
-    ]
+def _budget(name: str, default: int) -> int:
+    return int(os.environ[name]) if name in os.environ else default
+
+
+READY_TIMEOUT_SECS = _budget("DAEMON_READY_TIMEOUT_SECS", 30)
+STOP_TIMEOUT_SECS = _budget("DAEMON_STOP_TIMEOUT_SECS", 15)
+
+
+def _fail(message: str) -> int:
+    print(json.dumps({"error": message}), file=sys.stderr)
+    return 1
+
+
+def live_pid() -> int | None:
+    try:
+        pid = int(PIDFILE.read_text().strip())
+        os.kill(pid, 0)
+    except (FileNotFoundError, ValueError, ProcessLookupError, PermissionError):
+        return None
+    return pid
+
+
+def _register_port() -> str | None:
+    result = subprocess.run(["register-service", NAME, "--public"], capture_output=True, text=True, check=False)
+    port = result.stdout.strip()
+    return port if result.returncode == 0 and port else None
+
+
+def _ready(port: str) -> bool:
+    probe = subprocess.run(
+        ["curl", "-m", str(PROBE_TIMEOUT_SECS), "-fsS", "-o", "/dev/null", f"http://localhost:{port}/{READY_URL_PATH}"],
+        capture_output=True,
+        check=False,
+    )
+    return probe.returncode == 0
+
+
+def _abandon(child: subprocess.Popen[bytes], message: str) -> int:
+    """A start that gives up takes its child and both records with it: a daemon nothing can reach,
+    with records that say it is up, reads as running and turns every later start into a no-op."""
+    child.terminate()
+    try:
+        child.wait(timeout=STOP_TIMEOUT_SECS)
+    except subprocess.TimeoutExpired:
+        child.kill()
+        child.wait()
+    PIDFILE.unlink(missing_ok=True)
+    PORTFILE.unlink(missing_ok=True)
+    return _fail(message)
+
+
+def _start() -> int:
+    if live_pid() is not None:
+        print(json.dumps({"status": "already_running"}))
+        return 0
+    port = _register_port()
+    if port is None:
+        return _fail(f"could not register {NAME} with vestad; not launching")
+    DAEMONS_DIR.mkdir(parents=True, exist_ok=True)
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    PORTFILE.write_text(port)
+    with LOG.open("ab") as log:
+        child = subprocess.Popen([sys.argv[0], "serve", "--port", port], start_new_session=True, stdout=log, stderr=log)
+    PIDFILE.write_text(str(child.pid))
+    deadline = time.monotonic() + READY_TIMEOUT_SECS
+    while time.monotonic() < deadline:
+        if child.poll() is not None:
+            return _abandon(child, f"{NAME} exited during startup; see {LOG}")
+        if _ready(port):
+            print(json.dumps({"status": "started"}))
+            return 0
+        time.sleep(POLL_SECS)
+    return _abandon(child, f"{NAME} never answered on port {port}; see {LOG}")
+
+
+def _stop() -> int:
+    pid = live_pid()
+    if pid is None:
+        print(json.dumps({"status": "already_stopped"}))
+        return 0
+    os.kill(pid, signal.SIGTERM)
+    deadline = time.monotonic() + STOP_TIMEOUT_SECS
+    while time.monotonic() < deadline:
+        if live_pid() is None:
+            PIDFILE.unlink(missing_ok=True)
+            PORTFILE.unlink(missing_ok=True)
+            print(json.dumps({"status": "stopped"}))
+            return 0
+        time.sleep(POLL_SECS)
+    return _fail(f"{NAME} still running {STOP_TIMEOUT_SECS}s after SIGTERM (pid={pid})")
+
+
+def _status() -> int:
+    """Reads the port start recorded, never registration, so status answers instantly and
+    truthfully while vestad is down."""
+    running = live_pid() is not None
+    port = PORTFILE.read_text().strip() if running and PORTFILE.exists() else ""
+    print(json.dumps({"running": running, "port": int(port) if port else None}))
+    return 0
+
+
+def daemon_action(action: str) -> int:
+    if action in ("", "-h", "--help", "help"):
+        print(USAGE)
+        return 0
+    if action == "start":
+        return _start()
+    if action == "stop":
+        return _stop()
+    if action == "restart":
+        # One verb, one line of output: the stop half is swallowed, and a stop that failed
+        # must not be followed by a start onto a daemon that is still there.
+        with contextlib.redirect_stdout(io.StringIO()):
+            stopped = _stop()
+        return _start() if stopped == 0 else stopped
+    if action == "status":
+        return _status()
+    print(USAGE, file=sys.stderr)
+    return 1
 
 
 @click.command("daemon")
-@click.argument("action", type=click.Choice(["start", "stop", "restart", "status"]))
+@click.argument("action", required=False, default="")
 def daemon_cmd(action: str) -> None:
-    sys.exit(subprocess.run(daemon_lifecycle_args(action), check=False).returncode)
+    """Manage the bridge daemon: start|stop|restart|status."""
+    sys.exit(daemon_action(action))

@@ -42,7 +42,7 @@ This skill is also your one voice backend: it owns the STT/TTS providers, keys, 
 
 ## Commands
 
-**Daemon**: `voice-keys daemon start|stop|restart|status`. Start is idempotent (never stacks a duplicate) and owns the register-service call; status reports the port plus each domain's provider and enabled state. Manage the daemon only through these commands, never raw `screen`.
+**Daemon**: `voice-keys daemon start|stop|restart|status`. Start is idempotent (never stacks a duplicate) and owns the register-service call; stop is the deliberate shutdown, so it does not fire the `daemon_died` notification every other exit fires; status reports whether the server is up and on which port. Provider and enabled state come from `voice-keys status`. Manage the daemon only through these commands, never by launching `voice-server` yourself.
 
 ```bash
 # See current state
