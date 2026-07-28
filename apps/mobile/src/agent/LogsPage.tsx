@@ -52,11 +52,11 @@ function LiveLogs({
   useEffect(
     () =>
       subscribeLogs({
-        open: (reconnect, onEvent) =>
+        open: async (reconnect, onEvent) =>
           readSse(
             {
               fetch: (url, init) => fetch(url, init),
-              url: api.mediaUrl(
+              url: await api.mediaUrl(
                 `/agents/${encodeURIComponent(name)}/logs`,
                 reconnect ? new URLSearchParams({ tail: "0" }) : undefined,
               ),

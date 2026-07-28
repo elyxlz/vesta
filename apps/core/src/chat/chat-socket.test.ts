@@ -32,7 +32,7 @@ function harness(): Harness {
   const states: ChatSocketState[] = []
   const events: ChatMessage[] = []
   const deps = {
-    buildUrl: () => "wss://vestad.test/agents/ada/app-chat/ws",
+    buildUrl: () => Promise.resolve("wss://vestad.test/agents/ada/app-chat/ws"),
     createSocket: () => {
       const socket = new FakeSocket()
       sockets.push(socket)
@@ -47,53 +47,61 @@ function harness(): Harness {
   return { sockets, timers, states, events, deps }
 }
 
-function start(h: Harness): ReturnType<typeof createChatSocket> {
-  return createChatSocket(h.deps, {
+// The URL builder is async, so the socket is created a microtask after createChatSocket returns.
+async function flush(): Promise<void> {
+  for (let i = 0; i < 5; i++) await Promise.resolve()
+}
+
+async function start(h: Harness): Promise<ReturnType<typeof createChatSocket>> {
+  const socket = createChatSocket(h.deps, {
     onEvent: (event) => h.events.push(event),
     onStateChange: (state) => h.states.push(state),
   })
+  await flush()
+  return socket
 }
 
 describe("createChatSocket", () => {
-  it("reports connecting then open", () => {
+  it("reports connecting then open", async () => {
     const h = harness()
-    start(h)
+    await start(h)
     expect(h.states).toEqual(["connecting"])
     h.sockets[0]?.onopen?.()
     expect(h.states).toEqual(["connecting", "open"])
   })
 
-  it("delivers each inbound JSON frame as a ChatMessage", () => {
+  it("delivers each inbound JSON frame as a ChatMessage", async () => {
     const h = harness()
-    start(h)
+    await start(h)
     h.sockets[0]?.onopen?.()
     h.sockets[0]?.onmessage?.(JSON.stringify({ type: "chat", text: "hi", id: 7 }))
     expect(h.events).toEqual([{ type: "chat", text: "hi", id: 7 }])
   })
 
-  it("ignores malformed JSON", () => {
+  it("ignores malformed JSON", async () => {
     const h = harness()
-    start(h)
+    await start(h)
     h.sockets[0]?.onopen?.()
     h.sockets[0]?.onmessage?.("not json")
     expect(h.events).toEqual([])
   })
 
-  it("reconnects after a close and re-signals open (the reseed trigger)", () => {
+  it("reconnects after a close and re-signals open (the reseed trigger)", async () => {
     const h = harness()
-    start(h)
+    await start(h)
     h.sockets[0]?.onopen?.()
     h.sockets[0]?.onclose?.()
     expect(h.states).toEqual(["connecting", "open", "reconnecting"])
     expect(h.timers).toHaveLength(1)
     h.timers[0]?.fn()
+    await flush()
     h.sockets[1]?.onopen?.()
     expect(h.states).toEqual(["connecting", "open", "reconnecting", "connecting", "open"])
   })
 
-  it("does not reconnect after close() is terminal", () => {
+  it("does not reconnect after close() is terminal", async () => {
     const h = harness()
-    const socket = start(h)
+    const socket = await start(h)
     h.sockets[0]?.onopen?.()
     socket.close()
     expect(h.states.at(-1)).toBe("closed")
@@ -102,12 +110,10 @@ describe("createChatSocket", () => {
     expect(h.timers).toHaveLength(0)
   })
 
-  it("schedules a reconnect when buildUrl throws", () => {
+  it("schedules a reconnect when the url builder rejects", async () => {
     const h = harness()
-    h.deps.buildUrl = () => {
-      throw new Error("not connected")
-    }
-    start(h)
+    h.deps.buildUrl = () => Promise.reject(new Error("not connected"))
+    await start(h)
     expect(h.states).toEqual(["connecting", "reconnecting"])
     expect(h.sockets).toHaveLength(0)
     expect(h.timers).toHaveLength(1)

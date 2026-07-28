@@ -2,7 +2,7 @@ use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, 
 use ring::hkdf;
 use serde::{Deserialize, Serialize};
 
-pub const ACCESS_TOKEN_TTL: u64 = 3600; // 1 hour
+pub const ACCESS_TOKEN_TTL: u64 = 6 * 3600; // 6 hours
 /// Idle window, not an absolute lifetime: every successful rotation slides the
 /// family expiry forward by this much, so only a client idle this long re-auths.
 pub const REFRESH_TOKEN_TTL: u64 = 30 * 86400; // 30 days

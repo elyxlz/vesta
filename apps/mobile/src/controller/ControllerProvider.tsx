@@ -49,6 +49,7 @@ function ConnectedController({ children }: { children: ReactNode }) {
           {
             getConnection: api.getConnection,
             refreshAccessToken,
+            websocketUrl: api.websocketUrl,
           },
           CLIENT_VERSION,
         );
@@ -70,7 +71,10 @@ function ConnectedController({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!controller) return;
-    const timer = setInterval(() => {
+    // Also on mount, not just every poll: a session restored (or returned to the foreground)
+    // with an already-expired token would otherwise keep retrying /sync with it for a whole
+    // interval.
+    const tick = () => {
       void runReauthCheck({
         getConnection: api.getConnection,
         refreshAccessToken,
@@ -80,7 +84,9 @@ function ConnectedController({ children }: { children: ReactNode }) {
       }).catch((err: unknown) =>
         console.warn("[controller] reauth failed:", err),
       );
-    }, REAUTH_POLL_MS);
+    };
+    tick();
+    const timer = setInterval(tick, REAUTH_POLL_MS);
     return () => {
       clearInterval(timer);
     };

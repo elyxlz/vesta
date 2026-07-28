@@ -137,6 +137,39 @@ describe("chat-stream-model", () => {
     expect(replay.state.messages).toHaveLength(2)
   })
 
+  it("keeps retained older pages before the newest tail when a reconnect reseeds", () => {
+    let state = seedTail(initialChatState(), {
+      events: [chat(3, "c"), chat(4, "d")],
+      cursor: 3,
+    })
+    state = prependPage(state, [chat(1, "a"), chat(2, "b")], 1)
+
+    // The reconnect page overlaps the old tail and includes one message that arrived since it.
+    // Retained ids 1-2 are older, so they must not be appended after the newest page.
+    state = seedTail(state, {
+      events: [chat(3, "c"), chat(4, "d"), chat(5, "e")],
+      cursor: 3,
+    })
+
+    expect(state.messages.map((message) => message.id)).toEqual([1, 2, 3, 4, 5])
+    expect(state.messages.at(-1)?.id).toBe(5)
+    expect(state.cursor).toBe(1)
+  })
+
+  it("restarts paging from the reseed page when the disconnect outran a whole page", () => {
+    let state = seedTail(initialChatState(), {
+      events: [chat(1, "a"), chat(2, "b")],
+      cursor: null,
+    })
+
+    // Nothing on the reconnect page overlaps what is held, so ids 3-9 are a hole between them that
+    // no cursor reaches. Keeping 1-2 would show them under that hole; drop them and page from 10.
+    state = seedTail(state, { events: [chat(10, "j"), chat(11, "k")], cursor: 10 })
+
+    expect(state.messages.map((message) => message.id)).toEqual([10, 11])
+    expect(state.cursor).toBe(10)
+  })
+
   it("preserves a pending optimistic bubble across a resync reseed and confirms its later echo", () => {
     let state = beginSend(initialChatState(), "hi", "typed", "i-1")
 

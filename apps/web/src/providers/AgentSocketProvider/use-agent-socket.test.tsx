@@ -18,6 +18,10 @@ vi.mock("@/api/agents", () => ({ fetchHistory: vi.fn() }));
 vi.mock("@/lib/connection", () => ({
   getConnection: () => ({ url: "https://vestad.test", accessToken: "tok" }),
 }));
+// The chat URL builder refreshes an expiring token before every connect.
+vi.mock("@/lib/token-refresh", () => ({
+  ensureFreshToken: () => Promise.resolve("ok"),
+}));
 
 // A controllable chat socket: createChatSocket sets its handlers, and each test drives them. The
 // factory records every instance so a test can open it, feed a frame, or assert its URL.
@@ -117,6 +121,11 @@ function render(controller: Controller) {
 // Open the newest chat socket (the reseed trigger) and flush the async history seed so the hook
 // settles.
 async function openAndFlush() {
+  // The URL builder is async, so the socket lands a microtask after the hook renders.
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
   await act(async () => {
     chatSockets.at(-1)?.onopen?.();
     await Promise.resolve();
@@ -164,17 +173,57 @@ describe("useAgentSocketState", () => {
     const { controller } = makeController();
 
     const { result } = render(controller);
+    await openAndFlush();
     expect(chatSockets).toHaveLength(1);
     expect(chatSockets[0]?.url).toBe(
       "wss://vestad.test/agents/ada/app-chat/ws?token=tok",
     );
 
-    await openAndFlush();
-
     expect(fetchHistoryMock).toHaveBeenCalledWith(AGENT, "app-chat");
     expect(result.current.historyLoaded).toBe(true);
     expect(result.current.messages.map((m) => m.type)).toEqual(["chat"]);
     expect(result.current.connected).toBe(true);
+  });
+
+  it("keeps loaded older rows before the newest tail after a reconnect", async () => {
+    vi.useFakeTimers();
+    fetchHistoryMock
+      .mockResolvedValueOnce({
+        events: [chat(3, "c"), chat(4, "d")],
+        cursor: 3,
+      })
+      .mockResolvedValueOnce({
+        events: [chat(1, "a"), chat(2, "b")],
+        cursor: null,
+      })
+      .mockResolvedValueOnce({
+        events: [chat(3, "c"), chat(4, "d"), chat(5, "e")],
+        cursor: 3,
+      });
+    const { controller } = makeController();
+    const { result } = render(controller);
+    await openAndFlush();
+
+    await act(async () => {
+      await result.current.loadMore();
+    });
+    expect(result.current.messages.map((message) => message.id)).toEqual([
+      1, 2, 3, 4,
+    ]);
+
+    act(() => {
+      chatSockets[0]?.onclose?.();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    await openAndFlush();
+
+    expect(result.current.messages.map((message) => message.id)).toEqual([
+      1, 2, 3, 4, 5,
+    ]);
+    expect(result.current.messages.at(-1)?.id).toBe(5);
+    expect(result.current.hasMore).toBe(false);
   });
 
   it("sends an optimistic bubble and confirms it on the chat-socket echo", async () => {

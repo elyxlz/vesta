@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { createController, type Controller } from "@vesta/core";
 import { useSyncState } from "@vesta/core/react";
-import { getConnection, isTokenExpiringSoon } from "@/lib/connection";
+import { getConnection } from "@/lib/connection";
+import { websocketUrl } from "@/lib/authed-url";
 import { ensureFreshToken } from "@/lib/token-refresh";
 import { useAuth } from "@/providers/AuthProvider";
 import { DisconnectedOverlay } from "@/components/DisconnectedOverlay";
 import { createBrowserSocket } from "./browser-socket";
+import { runReauthCheck } from "./reauth-poll";
 import { ControllerContext, ControllerReconnectContext } from "./context";
 
 export {
@@ -19,17 +21,10 @@ export { useSyncState };
 const DISCONNECT_GRACE_MS = 750;
 const REAUTH_POLL_MS = 60000;
 
-function syncUrl(): string {
-  const conn = getConnection();
-  if (!conn) throw new Error("not connected to vesta gateway");
-  const base = conn.url.replace(/^http/, "ws");
-  return `${base}/sync?token=${encodeURIComponent(conn.accessToken)}`;
-}
-
 function buildController(): Controller {
   return createController({
     sync: {
-      buildUrl: syncUrl,
+      buildUrl: () => websocketUrl("/sync"),
       createSocket: createBrowserSocket,
       setTimer: (fn, ms) => window.setTimeout(fn, ms),
       clearTimer: (handle) => window.clearTimeout(handle),
@@ -79,18 +74,17 @@ function ControllerSession({ children }: { children: ReactNode }) {
   }, [controller]);
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      void (async () => {
-        try {
-          if (isTokenExpiringSoon() && (await ensureFreshToken()) === "ok") {
-            const conn = getConnection();
-            if (conn) controller.reauth(conn.accessToken);
-          }
-        } catch (err) {
-          console.warn("[controller] reauth failed:", err);
-        }
-      })();
-    }, REAUTH_POLL_MS);
+    // Also on mount, not just every poll: a session restored with an already-expired token
+    // would otherwise keep retrying /sync with it for a whole interval.
+    const tick = () => {
+      void runReauthCheck((token) => {
+        controller.reauth(token);
+      }).catch((err: unknown) =>
+        console.warn("[controller] reauth failed:", err),
+      );
+    };
+    tick();
+    const timer = window.setInterval(tick, REAUTH_POLL_MS);
     return () => {
       window.clearInterval(timer);
     };

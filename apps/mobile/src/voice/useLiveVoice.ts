@@ -184,17 +184,16 @@ export function useLiveVoice({
       const connection = api.getConnection();
       if (!connection) throw new Error("Not connected to a Vesta gateway.");
       const key = await api.serviceKeys.get(name, "voice");
+      const listenUrl = serviceKeySocketUrl(
+        connection.url,
+        name,
+        "voice",
+        key,
+        "/stt/listen",
+      );
       if (!isCurrent()) return;
 
-      const socket = new WebSocket(
-        serviceKeySocketUrl(
-          connection.url,
-          name,
-          "voice",
-          key,
-          "/stt/listen",
-        ),
-      );
+      const socket = new WebSocket(listenUrl);
       socket.binaryType = "arraybuffer";
       socketRef.current = socket;
 

@@ -107,15 +107,12 @@ pub(crate) enum ClientFrame {
     ClientContext(ClientContext),
 }
 
-/// A client's reported context, sent up the `/sync` socket. Extensible: `focused` drives presence
-/// today; future fields (location, etc.) ride the same frame. `active_agent` is the agent whose chat
-/// the user has open (None on roster/settings), used to target the presence notification. `resync` is
-/// true when the socket replays its cached context on reconnect (not a fresh user focus), so the
-/// return-to-focus notification never fires on a mere reconnect or a vestad restart.
+/// A client's reported context, sent up the `/sync` socket. `focused` is global Vesta-app presence:
+/// web visibility/window focus or mobile foreground state. `resync` is true when the socket replays
+/// its cached context on reconnect, so a reconnect never looks like the user returning.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub(crate) struct ClientContext {
     pub focused: bool,
-    pub active_agent: Option<String>,
     #[serde(default)]
     pub resync: bool,
 }
@@ -274,19 +271,28 @@ mod tests {
     #[test]
     fn client_context_frame_round_trips() {
         // resync defaults to false when the field is absent (older clients, additive-safe).
-        let parsed: ClientFrame =
-            serde_json::from_str(r#"{"type":"client_context","focused":true,"active_agent":"scout"}"#)
-                .expect("parse client_context");
+        let parsed: ClientFrame = serde_json::from_str(r#"{"type":"client_context","focused":true}"#)
+            .expect("parse client_context");
         assert_eq!(
             parsed,
-            ClientFrame::ClientContext(ClientContext { focused: true, active_agent: Some("scout".into()), resync: false })
+            ClientFrame::ClientContext(ClientContext { focused: true, resync: false })
         );
-        let resync: ClientFrame =
-            serde_json::from_str(r#"{"type":"client_context","focused":false,"active_agent":null,"resync":true}"#)
-                .expect("parse client_context resync");
+        // A shipped client still sends the retired `active_agent`; unknown fields are ignored by
+        // rule, which is what keeps this removal off `MIN_SUPPORTED_CLIENT_VERSION`.
+        let legacy: ClientFrame =
+            serde_json::from_str(r#"{"type":"client_context","focused":true,"active_agent":"scout"}"#)
+                .expect("parse legacy client_context");
+        assert_eq!(
+            legacy,
+            ClientFrame::ClientContext(ClientContext { focused: true, resync: false })
+        );
+        let resync: ClientFrame = serde_json::from_str(
+            r#"{"type":"client_context","focused":false,"resync":true}"#,
+        )
+        .expect("parse client_context resync");
         assert_eq!(
             resync,
-            ClientFrame::ClientContext(ClientContext { focused: false, active_agent: None, resync: true })
+            ClientFrame::ClientContext(ClientContext { focused: false, resync: true })
         );
     }
 
