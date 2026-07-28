@@ -52,7 +52,11 @@ The loop keeps running until the session stops. Nothing survives the session: re
 
 Do not reach for `claude --from-pr` here. It resumes a session already linked to a PR, but a print-mode run does not create that link, so in a service it quietly starts a fresh session every time.
 
-Events are handled one at a time, so a burst of comments cannot start overlapping runs against the same session. That also means one run holds every later event behind it, so a run is capped at `PR_MONITOR_TIMEOUT` and stopped past it. A run whose connection dies waits on a socket that never speaks again, consuming no CPU and looking alive from outside, and without the cap it holds the queue for as long as the process lives.
+Events on different PRs run at the same time, up to `PR_MONITOR_PARALLEL`. Events on one PR do not: they resume that PR's session, and two runs resuming one conversation would interleave their writes, so a per-PR lock keeps them in single file. An event arriving while its PR is busy is left unclaimed rather than queued behind the run, so it comes back on a later cycle instead of resuming a session out from under whoever holds it.
+
+Each run can build a worktree of several hundred megabytes, so the ceiling is disk as much as cost.
+
+A run is also capped at `PR_MONITOR_TIMEOUT` and stopped past it. A run whose connection dies waits on a socket that never speaks again, consuming no CPU and looking alive from outside, and without the cap it holds its slot for as long as the process lives.
 
 **Every new PR is checked automatically.** A non-draft PR that has never been seen surfaces as `NEWPR` without anyone asking, and dispatch runs the `check-pr` skill on it: does it fix the issue it claims to fix, does it match this repository's conventions, does it actually work. That pass is read only. It never pushes, merges, or closes, so a PR opening cannot cause a write. Where the change would benefit from the simplify and tidy pass, the reply names `polish-pr` and stops there, leaving the maintainer to ask for it.
 
@@ -150,6 +154,7 @@ Two consequences worth knowing:
 | `PR_MONITOR_STATE` | `$XDG_STATE_HOME/pr-monitor` | Review-summary ledger and per-PR session ids |
 | `PR_MONITOR_MODEL` | `claude-opus-5` | Model `dispatch.sh` runs each event on |
 | `PR_MONITOR_TIMEOUT` | `1800` | Seconds a single run may take before it is stopped |
+| `PR_MONITOR_PARALLEL` | `3` | Runs allowed at once, across different PRs |
 | `PR_MONITOR_PRUNE_TRANSCRIPTS` | `0` | Delete a closed PR session transcript, not just its pointer |
 
 ## Cost
