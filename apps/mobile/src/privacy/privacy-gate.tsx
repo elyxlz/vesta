@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
 import { StyleSheet, View } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
 import { Button } from "@/components/ui/Button";
 import { Text } from "@/components/ui/Typography";
+import { VestaBrand } from "@/components/VestaBrand";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { blocksProtectedContent } from "./model";
 import { usePrivacy } from "./privacy-provider";
@@ -36,18 +36,7 @@ export function PrivacyGate({ children }: { children: ReactNode }) {
           importantForAccessibility="yes"
           style={[styles.overlay, { backgroundColor: colors.background }]}
         >
-          <View
-            style={[
-              styles.icon,
-              { backgroundColor: colors.card, borderColor: colors.border },
-            ]}
-          >
-            <Ionicons
-              name="lock-closed-outline"
-              size={30}
-              color={colors.text}
-            />
-          </View>
+          <VestaBrand />
           <View style={styles.copy}>
             <Text
               accessibilityRole="header"
@@ -80,9 +69,13 @@ export function PrivacyGate({ children }: { children: ReactNode }) {
             ) : null}
           </View>
           {initializationFailed ? (
-            <Button onPress={privacy.retryInitialization}>Try again</Button>
+            <Button pill size="large" onPress={privacy.retryInitialization}>
+              Try again
+            </Button>
           ) : privacy.hydrated ? (
             <Button
+              pill
+              size="large"
               loading={privacy.authenticating}
               disabled={privacy.authenticating}
               onPress={() => void privacy.unlock()}
@@ -106,17 +99,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 28,
     alignItems: "stretch",
     justifyContent: "center",
-    gap: 24,
-  },
-  icon: {
-    alignSelf: "center",
-    width: 68,
-    height: 68,
-    borderRadius: 24,
-    borderCurve: "continuous",
-    borderWidth: StyleSheet.hairlineWidth,
-    alignItems: "center",
-    justifyContent: "center",
+    gap: 28,
   },
   copy: { alignItems: "center", gap: 7 },
   title: {
