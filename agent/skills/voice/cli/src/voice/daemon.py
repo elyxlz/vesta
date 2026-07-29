@@ -36,9 +36,6 @@ def _budget(name: str, default: int) -> int:
 
 READY_TIMEOUT_SECS = _budget("DAEMON_READY_TIMEOUT_SECS", 30)
 STOP_TIMEOUT_SECS = _budget("DAEMON_STOP_TIMEOUT_SECS", 15)
-# SIGTERM is the deliberate stop, and this is the point in the one budget at which a daemon that
-# has not honoured it is killed instead, leaving the remainder to reap it.
-KILL_AFTER_SECS = STOP_TIMEOUT_SECS * 2 // 3
 
 
 def _fail(message: str) -> int:
@@ -174,7 +171,10 @@ def _stop() -> int:
     started = time.monotonic()
     with contextlib.suppress(ProcessLookupError):
         os.kill(pid, signal.SIGTERM)
-    if not _await_gone(started + KILL_AFTER_SECS):
+    # Two thirds of the budget in, a daemon that has not honoured SIGTERM is killed instead, and
+    # the remainder is what reaps it. Read here, not at import, so the budget in force is the one
+    # the caller set.
+    if not _await_gone(started + STOP_TIMEOUT_SECS * 2 // 3):
         with contextlib.suppress(ProcessLookupError):
             os.kill(pid, signal.SIGKILL)
         if not _await_gone(started + STOP_TIMEOUT_SECS):

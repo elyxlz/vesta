@@ -94,7 +94,7 @@ def records(tmp_path: pathlib.Path, monkeypatch) -> pathlib.Path:
 
 @pytest.fixture
 def deaf_daemon(records: pathlib.Path, monkeypatch):
-    """A live process that ignores SIGTERM: a daemon that outlives the stop budget."""
+    """A live process that ignores SIGTERM: the daemon a stop has to escalate on."""
     marker = records / "deaf-ready"
     child = subprocess.Popen([sys.executable, "-c", DEAF_TO_SIGTERM, str(marker)])
     _wait_until(marker.exists, "the child never installed its SIGTERM handler")
@@ -103,6 +103,17 @@ def deaf_daemon(records: pathlib.Path, monkeypatch):
     yield child
     child.kill()
     child.wait(timeout=CHILD_TIMEOUT_SECS)
+
+
+@pytest.fixture
+def unstoppable_daemon(records: pathlib.Path, monkeypatch):
+    """A daemon no signal reaches, which is the only state a stop has to give up on now that it
+    escalates: SIGKILL ends any process the box can signal at all. Swallowing the signals is what
+    models it, and it also leaves live_pid reporting the recorded pid alive throughout."""
+    monkeypatch.setattr(dl.os, "kill", lambda pid, sig: None)
+    monkeypatch.setattr(dl, "STOP_TIMEOUT_SECS", STUCK_STOP_BUDGET_SECS)
+    dl.PIDFILE.write_text(str(os.getpid()))
+    return os.getpid()
 
 
 def _wait_until(condition, message: str) -> None:
@@ -269,14 +280,30 @@ def test_stop_sigterms_the_daemon_and_clears_the_record(records: pathlib.Path, c
     assert dl.PIDFILE.exists() is False
 
 
-def test_stop_gives_up_when_the_daemon_outlives_the_budget(records: pathlib.Path, deaf_daemon, capsys):
+def test_stop_kills_a_daemon_that_ignores_sigterm(records: pathlib.Path, deaf_daemon, capsys):
+    """SIGTERM is the exit the agent asked for, but a daemon that ignores it is killed rather than
+    left standing behind records that say it is up."""
+    answers: list[int] = []
+    stopper = threading.Thread(target=lambda: answers.append(dl.daemon_cmd("stop")))
+    stopper.start()
+    # live_pid asks os.kill(pid, 0), which reports this process's own killed child as alive until
+    # it is reaped, so the stop runs beside the wait that reaps it.
+    assert deaf_daemon.wait(timeout=CHILD_TIMEOUT_SECS) == -signal.SIGKILL
+    stopper.join(timeout=CHILD_TIMEOUT_SECS)
+
+    assert answers == [0]
+    assert json.loads(capsys.readouterr().out) == {"status": "stopped"}
+    assert dl.PIDFILE.exists() is False
+
+
+def test_stop_gives_up_when_the_daemon_outlives_the_budget(records: pathlib.Path, unstoppable_daemon, capsys):
     assert dl.daemon_cmd("stop") == 1
 
     error = json.loads(capsys.readouterr().err)["error"]
     assert "still running" in error
-    assert str(deaf_daemon.pid) in error
-    # The daemon is still there, so the record still names it.
-    assert dl.PIDFILE.read_text() == str(deaf_daemon.pid)
+    assert str(unstoppable_daemon) in error
+    # Neither signal reached it, so the daemon is still there and the record still names it.
+    assert dl.PIDFILE.read_text() == str(unstoppable_daemon)
 
 
 def test_the_stop_budget_comes_from_the_environment(monkeypatch):
@@ -297,7 +324,7 @@ def test_restart_starts_a_stopped_daemon_and_answers_once(records: pathlib.Path,
     assert len(spawns) == 1
 
 
-def test_restart_does_not_start_when_the_stop_failed(records: pathlib.Path, deaf_daemon, monkeypatch, capsys):
+def test_restart_does_not_start_when_the_stop_failed(records: pathlib.Path, unstoppable_daemon, monkeypatch, capsys):
     _refuse_spawn(monkeypatch)
 
     assert dl.daemon_cmd("restart") == 1
