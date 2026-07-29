@@ -4,15 +4,25 @@ description: >
   Use when the user asks to check a PR, review a PR, sanity-check a pull request,
   ask whether a PR is correct or ready, or run "check-pr <number>". Also runs
   automatically on newly opened PRs. Use it whenever the question is whether a
-  change should be merged. Read only: it never pushes, merges, or closes, so
-  reach for polish-pr instead when the PR needs changing.
+  change is noise, is bugged, or is worth merging. Read only: it never pushes,
+  merges, or closes, so reach for polish-pr instead when the PR needs changing.
 ---
 
 # Check a PR
 
-Critique a pull request's diff and the solution behind it, and answer one question: should this be merged? Read only. Never push a commit, never merge, never close, never edit the PR. Changing the PR is `polish-pr`'s job, and it runs only when a human asks for it.
+Answer one question for a maintainer who has not opened the diff: **is this pull request noise, is it bugged, or is it worth merging?** Everything in the comment exists to support that answer and nothing else.
 
-You are not here to confirm the change works. Assume the description is optimistic and that the author stopped looking once it passed. Your value is the objection nobody else raised.
+The stance is adversarial. The burden is on the pull request, not on you: assume the description is optimistic and that the author stopped looking once it passed. Your value is the objection nobody else raised, and a change nobody argued against is a change nobody checked.
+
+Read only. Never push a commit, never merge, never close, never edit the PR. Changing the PR is `polish-pr`'s job, and it runs only when a human asks for it.
+
+## The three answers
+
+**NOISE.** The change should not be carried at all, whatever its code quality. It solves a problem nobody has, fixes a symptom whose cause is elsewhere, churns code for taste, rebuilds something the repo already has, or adds a knob nobody asked for. Say which of those it is. This is the answer maintainers most often have to reach on their own, so reach it for them when it is true, and do not soften it because the code is tidy.
+
+**BUGGED.** The change is worth having but is wrong as written: it does not do what it claims, breaks something else, or misses a case it must handle. Name the case.
+
+**MERGE.** You attacked it and it held. Say so plainly. A verdict that never says MERGE is worth as little as one that always does.
 
 ## Critique the solution, not only the code
 
@@ -45,7 +55,7 @@ Work through the diff yourself. Delegate to a subagent only when the diff is gen
 
 ## Reporting
 
-You get one run, and it ends when you stop. Post the comment before you finish, even with things unresolved: you cannot wait for CI or come back later. Something still pending goes in the comment as `NOT YET`, naming what to watch.
+You get one run, and it ends when you stop. Post the comment before you finish, even with things unresolved: you cannot wait for CI or come back later. Anything still pending goes on the CI line, naming what to watch, and the verdict still answers what you can see now.
 
 
 Post one comment, in the labelled form below. No opening line, no lead-in, no scene setting: the first characters of the comment are the first label. A reader should be able to find any one thing without reading the rest.
@@ -60,7 +70,7 @@ Write every label every time, in this order. When a label has nothing under it, 
 
 **CI:** `green`, or the failing check by name and whether you reproduced it.
 
-**Verdict:** `MERGE`, `DO NOT MERGE`, or `NOT YET`, then a dash and the one thing that decided it. `NOT YET` means right in substance, blocked on something mechanical.
+**Verdict:** `NOISE`, `BUGGED`, or `MERGE`, then a dash and the one thing that decided it. A mechanical blocker like red CI or a conflict belongs on the CI line, not in the verdict: a sound change with red CI is still `MERGE`, once green.
 
 Findings state what breaks, not what you did. Never narrate the review, never list what you checked that turned out fine, never restate the PR description. **150 words is the ceiling for everything above the rule.** Past that you are explaining rather than reporting.
 
@@ -75,7 +85,7 @@ Findings state what breaks, not what you did. Never narrate the review, never li
 
 **CI:** green.
 
-**Verdict:** NOT YET, the delete ordering loses messages on send failure, two-line fix.
+**Verdict:** BUGGED, the delete ordering loses messages on send failure, two-line fix.
 </example>
 
 <example>
@@ -88,10 +98,10 @@ Findings state what breaks, not what you did. Never narrate the review, never li
 
 **CI:** red on `Apps · web`, prettier on both AuthProvider files (reproduced).
 
-**Verdict:** NOT YET, fix the formatting and the boot hang, both small.
+**Verdict:** BUGGED, the boot hang strands the splash on an unreachable gateway.
 </example>
 
-Judge the change on its merits even when you wrote the code yourself, and say `DO NOT MERGE` when you believe it. A verdict that always says MERGE is worth less than no verdict.
+Judge the change on its merits even when you wrote the code yourself, and say `NOISE` or `BUGGED` when you believe it, including when the person who asked clearly wants it in. A verdict that always says MERGE is worth less than no verdict.
 
 When the PR would benefit from the simplify and tidy pass that `polish-pr` does, say so in one line and name the skill, so a maintainer can ask for it. Do not run it yourself: it pushes commits, and that is the maintainer's call.
 
