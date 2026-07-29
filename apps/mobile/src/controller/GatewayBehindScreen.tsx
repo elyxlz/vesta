@@ -21,7 +21,6 @@ export function GatewayBehindScreen() {
   const [disconnecting, setDisconnecting] = useState(false);
 
   const handleUpdate = () => {
-    if (updating || disconnecting) return;
     setUpdating(true);
     void triggerGatewayUpdate(api).then((ok) => {
       if (!ok) setUpdating(false);
@@ -29,7 +28,6 @@ export function GatewayBehindScreen() {
   };
 
   const confirmDisconnect = () => {
-    if (disconnecting) return;
     Alert.alert(
       "Disconnect from gateway?",
       "You can reconnect using your account or tunnel link.",
@@ -76,6 +74,8 @@ export function GatewayBehindScreen() {
         >
           Update gateway
         </Button>
+        {/* Never gated on `updating`: vestad answers 200 for an update it had nothing to apply
+            (already newest for its channel), so leaving stays reachable after a spent update. */}
         <Button
           pill
           size="large"
@@ -83,7 +83,6 @@ export function GatewayBehindScreen() {
           icon="log-out-outline"
           iconColor={colors.danger}
           loading={disconnecting}
-          disabled={updating}
           onPress={confirmDisconnect}
         >
           Disconnect gateway
