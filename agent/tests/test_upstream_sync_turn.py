@@ -88,6 +88,28 @@ def test_no_turn_when_version_unknown_and_nothing_marked(tmp_path):
     assert upstream_sync_turn(config=_config(tmp_path, version=None), first_start=False) is None
 
 
+def test_turn_fires_when_the_same_version_tag_moved_to_a_newer_snapshot(tmp_path, monkeypatch):
+    """Same-version dev iteration re-tags agent-v<version> onto a fresh snapshot. The box is born on
+    the first, its local tag still points there; the check must refresh the tag from the source and
+    see the move, or a stale tag reads as merged and the sync turn never fires."""
+    env = os.environ | BASE_ENV
+    config = _config(tmp_path, "0.1.170")
+    _record_snapshot(config, "0.1.170")  # box HEAD + local tag at the first snapshot ("stock")
+
+    source = tmp_path / "upstream"  # a snapshot repo whose agent-v0.1.170 has since moved forward
+    for args in (
+        ["init", "-q", "-b", "agent-upstream", str(source)],
+        ["-C", str(source), "commit", "-q", "--allow-empty", "-m", "stock"],  # BASE_ENV: same SHA as the box's HEAD
+        ["-C", str(source), "commit", "-q", "--allow-empty", "-m", "snap2"],
+        ["-C", str(source), "tag", "-f", "agent-v0.1.170"],  # tag moved onto snap2
+    ):
+        subprocess.run(["git", *args], check=True, env=env)
+    monkeypatch.setenv("VESTA_UPSTREAM_SOURCE", str(source))
+
+    assert not workspace_synced(config, "0.1.170")  # the moved tag is not yet in the box's history
+    assert upstream_sync_turn(config=config, first_start=False) is not None
+
+
 def test_first_start_leaves_initial_attach_to_birth(tmp_path):
     config = _config(tmp_path, "0.1.170")
     assert upstream_sync_turn(config=config, first_start=True) is None
