@@ -59,8 +59,7 @@ export function AgentIslandExpanded({
           >
             <ProviderLogo className="size-3 shrink-0" />
             <span className="truncate">
-              {providerIdentity.providerName}
-              {providerIdentity.modelName && ` · ${providerIdentity.modelName}`}
+              {providerIdentity.modelName ?? providerIdentity.providerName}
             </span>
           </span>
         )}

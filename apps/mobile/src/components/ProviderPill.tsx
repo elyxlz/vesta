@@ -18,8 +18,7 @@ export function ProviderPill({ identity }: { identity: ProviderIdentity }) {
         numberOfLines={1}
         style={[styles.label, { color: colors.secondaryText }]}
       >
-        {identity.providerName}
-        {identity.modelName ? ` · ${identity.modelName}` : ""}
+        {identity.modelName ?? identity.providerName}
       </Text>
     </View>
   );
