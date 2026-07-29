@@ -11,6 +11,7 @@ import {
   prependPage,
   seedTail,
   sendMessage,
+  serviceKeySocketUrl,
   typingDelay,
   type ChatMessage,
   type ChatState,
@@ -71,13 +72,20 @@ export function useAgentSocket(
 
   const connected = useOptionalControllerSyncState(controller) === "open";
 
-  const chatSocketUrl = useCallback(
-    (): Promise<string> =>
-      apiRef.current.websocketUrl(
-        `/agents/${encodeURIComponent(name)}/app-chat/ws`,
-      ),
-    [name],
-  );
+  // app-chat is a private service, so the socket authenticates with a key scoped to it alone rather
+  // than the gateway access token. Minted per connect through the cache, so a reconnect after the
+  // key aged out dials with a fresh one.
+  const chatSocketUrl = useCallback(async (): Promise<string> => {
+    const api = apiRef.current;
+    const connection = api.getConnection();
+    if (!connection) throw new Error("Not connected to a Vesta gateway.");
+    const key = await api.serviceKeys.get(name, "app-chat");
+    return serviceKeySocketUrl(connection.url, name, "app-chat", key, "/ws");
+  }, [name]);
+
+  const dropChatKey = useCallback(() => {
+    apiRef.current.serviceKeys.drop(name, "app-chat");
+  }, [name]);
 
   const activitySelector = useCallback(
     (tree: Tree | null) => selectAgentActivitySnapshot(tree, active, name),
@@ -247,6 +255,7 @@ export function useAgentSocket(
       },
       {
         onEvent: addLiveEvent,
+        onClosedBeforeOpen: dropChatKey,
         onStateChange: (socketState) => {
           if (socketState === "open") {
             resetTyping();
@@ -274,6 +283,7 @@ export function useAgentSocket(
     enqueueChat,
     fetchPage,
     chatSocketUrl,
+    dropChatKey,
   ]);
 
   // Reflect the POST's settled disposition into the bubble. A null outcome means queued-on-tap:

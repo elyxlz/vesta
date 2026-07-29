@@ -13,10 +13,10 @@ import sys
 
 import click
 
-from agentmail_bridge import serve, setup, status, teardown
+from agentmail_bridge import daemon, serve, setup, status, teardown
 from agentmail_bridge.config import NPM_CLI_BIN
 
-VESTA_VERBS = {"setup", "serve", "status", "teardown", "--help", "-h"}
+VESTA_VERBS = {"setup", "serve", "daemon", "status", "teardown", "--help", "-h"}
 
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
@@ -37,6 +37,7 @@ def cli() -> None:
 
 cli.add_command(setup.setup_cmd)
 cli.add_command(serve.serve_cmd)
+cli.add_command(daemon.daemon_cmd)
 cli.add_command(status.status_cmd)
 cli.add_command(teardown.teardown_cmd)
 
@@ -55,7 +56,11 @@ def _passthrough(args: list[str]) -> None:
 def main() -> None:
     args = sys.argv[1:]
     first = args[0] if args else ""
-    if not first or first in VESTA_VERBS:
+    # No verb and `help` both mean --help here; the official CLI has no such verb to pass them to.
+    if not first or first == "help":
+        cli(["--help"])
+        return
+    if first in VESTA_VERBS:
         cli(args)
         return
     _passthrough(args)

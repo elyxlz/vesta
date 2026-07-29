@@ -1,13 +1,19 @@
 ---
 name: moneypot
-description: Track shared expenses and joint money pots (Splitwise/Tricount style). Use when the user wants to record who paid for what in a group, money put into a shared pot, split costs among people, see who owes whom, or get a compact set of payments to settle up. Also exposes an optional HTTP/JSON API. Keywords: split the bill, who owes, shared expenses, joint account, money pot, settle up, IOU, tricount, splitwise.
+description: Track shared expenses and joint money pots (Splitwise/Tricount style). Use when the user wants to record who paid for what in a group, money put into a shared pot, split costs among people, see who owes whom, or get a compact set of payments to settle up. Keywords: split the bill, who owes, shared expenses, joint account, money pot, settle up, IOU, tricount, splitwise.
 ---
 
 # Moneypot
 
-A shared expense and pot tracker. A **pot** is a group (a trip, a household, a project) with members. You log two kinds of entries against it, and it computes net balances and a compact way to settle up. CLI plus an optional HTTP API. Data lives in `~/agent/data/moneypot.json` (shared by both).
+A shared expense and pot tracker. A **pot** is a group (a trip, a household, a project) with members. You log two kinds of entries against it, and it computes net balances and a compact way to settle up.
 
-Run the CLI with `python3 ~/agent/skills/moneypot/moneypot.py <command>`.
+Run it with `moneypot <command>`. Put the command on PATH once:
+
+```bash
+mkdir -p ~/.local/bin && ln -sf ~/agent/skills/moneypot/moneypot ~/.local/bin/moneypot
+```
+
+It is a local CLI: nothing to start, nothing to register, no network beyond the optional live exchange-rate lookup. Data lives in `~/agent/data/moneypot.json`, created on first write.
 
 ## Model
 
@@ -21,7 +27,7 @@ Amounts are stored as integer minor units (pence/cents), so there's no float dri
 ## CLI
 
 ```bash
-PY="python3 ~/agent/skills/moneypot/moneypot.py"
+PY="moneypot"
 
 # create a pot
 $PY pot create trip --name "Ski Trip" --currency GBP --members "Alice,Bob,Cara"
@@ -75,32 +81,9 @@ contributions into 'Joint':
    Bob  £50.00
 ```
 
-## HTTP API (optional)
-
-`server.py` is a stdlib JSON API over the same data, for dashboards or other apps. Mutations are lock-serialized. See `SETUP.md` to run it as a vestad service. Routes:
-
-```
-GET    /health
-GET    /pots                                list pots
-POST   /pots                                {id, name?, currency?, members:[...]}
-GET    /pots/{id}                           full pot
-DELETE /pots/{id}
-GET    /pots/{id}/entries
-POST   /pots/{id}/members                   {name}
-POST   /pots/{id}/expenses                  {payer, amount, desc?, currency?, rate?, fetch?, for?:[...], split?:{Name:amt}}
-POST   /pots/{id}/transfers                 {from, to, amount, desc?, currency?, rate?, fetch?}
-DELETE /pots/{id}/entries/{eid}
-GET    /pots/{id}/balance
-GET    /pots/{id}/contributions?account=X
-```
-
-Errors return `{"error": "..."}` with HTTP 400 (bad input), 404 (no route), or 401 (bad key).
-
-**Authentication.** Inside vesta, the API automatically requires the vestad agent token (`AGENT_TOKEN`) on every route except `/health`. A separate app key can be added with `--api-key KEY` (or `MONEYPOT_API_KEY`) and sent as `Authorization: Bearer KEY` or `X-API-Key: KEY`. Outside vesta, with neither credential configured, the API is open.
-
 ## Notes
 
 - `--currency` accepts any label; `GBP/USD/EUR/JPY` print with a symbol, others print the code.
 - "How much each person put in" = the **paid** figure shown next to each balance.
-- No setup needed for CLI use; the data file is created on first write. The API needs the one-time service registration in `SETUP.md`.
+- Every view takes `--json`, which is the form to read when you are acting on the numbers rather than showing them.
 - Self-contained, stdlib only, no personal data baked in.

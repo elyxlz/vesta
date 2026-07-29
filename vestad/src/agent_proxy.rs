@@ -47,7 +47,7 @@ fn build_target_url(scheme: &str, host: &str, port: u16, path: &str) -> String {
     format!("{scheme}://{host}:{port}{path}")
 }
 
-async fn resolve_service(
+pub(crate) async fn resolve_service(
     state: &crate::state::AppState,
     agent_name: &str,
     service_name: &str,
@@ -77,6 +77,45 @@ fn split_service_subpath(path: &str) -> (&str, &str) {
         (first, "/")
     } else {
         (first, rest)
+    }
+}
+
+/// Split a `/k/{key}/...` service subpath into its key and the path forwarded upstream.
+/// A path prefix is the only carrier a relative sub-resource inherits, which is how an
+/// iframe's assets authenticate without headers or a query string.
+fn split_key_subpath(subpath: &str) -> Option<(&str, String)> {
+    let rest = subpath.strip_prefix("/k/")?;
+    let (key, tail) = match rest.split_once('/') {
+        Some((key, tail)) => (key, format!("/{tail}")),
+        None => (rest, "/".to_string()),
+    };
+    if key.is_empty() {
+        return None;
+    }
+    Some((key, tail))
+}
+
+/// The path forwarded upstream for a keyed request, or `None` when the subpath carries no
+/// key prefix or one that does not open this service. A wrong key never reshapes the
+/// forwarded path: the caller keeps the original subpath and falls through to normal auth.
+fn keyed_forward_path(
+    subpath: &str,
+    keys: &crate::service_keys::ServiceKeyStore,
+    agent: &str,
+    service: &str,
+    now: u64,
+) -> Option<String> {
+    let (key, forwarded) = split_key_subpath(subpath)?;
+    keys.accepts(agent, service, key, now).then_some(forwarded)
+}
+
+/// The agent token vestad injects upstream. Only the raw agent port consumes it, so a
+/// registered service is never handed one.
+fn injected_agent_token(agent_token: Option<&str>, is_registered_service: bool) -> Option<&str> {
+    if is_registered_service {
+        None
+    } else {
+        agent_token
     }
 }
 
@@ -122,17 +161,43 @@ pub async fn agent_proxy_handler(
     } else {
         resolve_service(&state, &name, first_segment).await
     };
+
+    // A `/k/{key}/` prefix is stripped only when the key actually opens this service, so a
+    // wrong key can never reshape the forwarded path: it falls through to normal auth. The
+    // key store is only consulted when a prefix is present, keeping the common prefix-less
+    // request off its lock.
+    let keyed_subpath = if resolved.is_some() && split_key_subpath(service_subpath).is_some() {
+        let now = crate::time_utils::now_epoch_secs();
+        let keys = state.service_keys.read().await;
+        keyed_forward_path(service_subpath, &keys, &name, first_segment, now)
+    } else {
+        None
+    };
+    let via_key = keyed_subpath.is_some();
+
     let (target_port, stripped_path, service) = match resolved {
-        Some(entry) => (entry.port, service_subpath.to_string(), Some(entry)),
+        Some(entry) => (
+            entry.port,
+            keyed_subpath.unwrap_or_else(|| service_subpath.to_string()),
+            Some(entry),
+        ),
         None => (agent_port, format!("/{path}"), None),
     };
 
-    // Public services are fully open; everything else requires auth.
-    let is_public = service.as_ref().is_some_and(|s| s.public);
-    if !is_public && !auth::has_valid_api_auth(request.headers(), request.uri(), &state.api_key) {
+    if !via_key
+        && !auth::proxy_authorized(
+            &state,
+            request.headers(),
+            request.uri(),
+            &name,
+            first_segment,
+            service.as_ref(),
+        )
+        .await
+    {
         return Err(err_response(
             StatusCode::UNAUTHORIZED,
-            "unauthorized — pass a valid Bearer token or ?token= query parameter",
+            "unauthorized — pass a valid Bearer token, ?token= query parameter, or /k/{key}/ path prefix",
         ));
     }
 
@@ -170,21 +235,16 @@ pub async fn agent_proxy_handler(
                 ));
             }
         };
-        let ws_token = if is_public { None } else { agent_token.clone() };
         Ok(ws.on_upgrade(move |socket| async move {
             drop(guard);
             if is_registered_service {
                 wait_for_upstream(&target_host, target_port, UPSTREAM_READY_TIMEOUT).await;
             }
-            ws_proxy(socket, &target_host, target_port, &target_path, ws_token.as_deref()).await;
+            ws_proxy(socket, &target_host, target_port, &target_path).await;
         }))
     } else {
         drop(guard);
-        let token = if is_public {
-            None
-        } else {
-            agent_token.as_deref()
-        };
+        let token = injected_agent_token(agent_token.as_deref(), is_registered_service);
         if is_registered_service {
             wait_for_upstream(&target_host, target_port, UPSTREAM_READY_TIMEOUT).await;
         }
@@ -200,23 +260,19 @@ pub async fn agent_proxy_handler(
     }
 }
 
+/// Bridge a client socket to a registered service's upstream. Only registered services reach
+/// here (the raw agent port 404s on upgrade), so the socket carries no injected credential.
 async fn ws_proxy(
     client_ws: axum::extract::ws::WebSocket,
     host: &str,
     agent_port: u16,
     path: &str,
-    agent_token: Option<&str>,
 ) {
     use axum::extract::ws::Message as AxumMsg;
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message as TungMsg;
 
-    let url = if let Some(token) = agent_token {
-        let sep = if path.contains('?') { "&" } else { "?" };
-        build_target_url("ws", host, agent_port, &format!("{path}{sep}agent_token={token}"))
-    } else {
-        build_target_url("ws", host, agent_port, path)
-    };
+    let url = build_target_url("ws", host, agent_port, path);
     let agent_ws = match tokio_tungstenite::connect_async(&url).await {
         Ok((ws, _)) => ws,
         Err(e) => {
@@ -376,9 +432,91 @@ async fn forward_http_to_container(
     })
 }
 
+/// The join between the path carrier and the key check. The rule each row pins is that a
+/// prefix is stripped only when the key opens this exact service, so a wrong key leaves the
+/// forwarded path untouched instead of reshaping it.
+#[cfg(test)]
+mod keyed_forward_path_tests {
+    use super::keyed_forward_path;
+    use crate::service_keys::ServiceKeyStore;
+
+    const NOW: u64 = 1_800_000_000;
+    const AGENT: &str = "alpha";
+    const SERVICE: &str = "dashboard";
+
+    /// A store holding one live key for `(alpha, dashboard)`, plus that key's secret.
+    fn store_with_live_key() -> (ServiceKeyStore, String) {
+        let mut keys = ServiceKeyStore::default();
+        let (_, secret) = keys.mint(AGENT, SERVICE, None, Some(NOW + 600), NOW);
+        (keys, secret)
+    }
+
+    /// The forwarded path for a request to `(alpha, dashboard)`.
+    fn forwarded(subpath: &str, keys: &ServiceKeyStore) -> Option<String> {
+        keyed_forward_path(subpath, keys, AGENT, SERVICE, NOW)
+    }
+
+    #[test]
+    fn a_valid_key_strips_the_prefix_from_the_forwarded_path() {
+        let (keys, secret) = store_with_live_key();
+        assert_eq!(
+            forwarded(&format!("/k/{secret}/assets/index.js"), &keys),
+            Some("/assets/index.js".to_string())
+        );
+    }
+
+    #[test]
+    fn a_valid_key_on_the_bare_form_forwards_the_root() {
+        let (keys, secret) = store_with_live_key();
+        assert_eq!(forwarded(&format!("/k/{secret}/"), &keys), Some("/".to_string()));
+    }
+
+    /// The rule this whole seam exists for: the caller must keep the original subpath
+    /// verbatim and fall through to normal auth, never forward a reshaped path.
+    #[test]
+    fn a_wrong_key_yields_nothing_so_the_original_subpath_survives() {
+        let (keys, _) = store_with_live_key();
+        assert_eq!(forwarded("/k/not-the-secret/assets/index.js", &keys), None);
+    }
+
+    #[test]
+    fn an_expired_key_yields_nothing() {
+        let mut keys = ServiceKeyStore::default();
+        let (_, secret) = keys.mint(AGENT, SERVICE, None, Some(NOW - 1), NOW);
+        assert_eq!(forwarded(&format!("/k/{secret}/assets/index.js"), &keys), None);
+    }
+
+    #[test]
+    fn a_key_for_another_service_yields_nothing() {
+        let mut keys = ServiceKeyStore::default();
+        let (_, secret) = keys.mint(AGENT, "voice", None, Some(NOW + 600), NOW);
+        assert_eq!(forwarded(&format!("/k/{secret}/assets/index.js"), &keys), None);
+    }
+
+    #[test]
+    fn a_key_for_another_agent_yields_nothing() {
+        let mut keys = ServiceKeyStore::default();
+        let (_, secret) = keys.mint("beta", SERVICE, None, Some(NOW + 600), NOW);
+        assert_eq!(forwarded(&format!("/k/{secret}/assets/index.js"), &keys), None);
+    }
+
+    /// No `/k/` prefix means the store is never consulted, so even a live secret sitting
+    /// elsewhere in the path buys nothing.
+    #[test]
+    fn a_subpath_without_the_key_prefix_yields_nothing() {
+        let (keys, secret) = store_with_live_key();
+        assert_eq!(forwarded("/assets/index.js", &keys), None);
+        assert_eq!(forwarded(&format!("/assets/{secret}.js"), &keys), None);
+        assert_eq!(forwarded(&format!("/k2/{secret}/assets/index.js"), &keys), None);
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{build_target_url, pump_agent_to_client, split_service_subpath, wait_for_upstream};
+    use super::{
+        build_target_url, injected_agent_token, pump_agent_to_client, split_key_subpath,
+        split_service_subpath, wait_for_upstream,
+    };
     use axum::extract::ws::Message as AxumMsg;
     use futures_util::stream;
     use std::convert::Infallible;
@@ -389,14 +527,26 @@ mod tests {
     use tokio_tungstenite::tungstenite::Message as TungMsg;
 
     #[test]
+    fn only_the_raw_agent_port_receives_the_injected_agent_token() {
+        // The agent's own API is the one consumer of X-Agent-Token
+        // (agent/core/api.py), and it lives on the raw agent port. A registered
+        // service is reached only through this proxy, so it needs no credential of
+        // its own and must not be handed a gateway-tier one.
+        assert_eq!(injected_agent_token(Some("tok"), true), None);
+        assert_eq!(injected_agent_token(Some("tok"), false), Some("tok"));
+        assert_eq!(injected_agent_token(None, false), None);
+        assert_eq!(injected_agent_token(None, true), None);
+    }
+
+    #[test]
     fn build_target_url_uses_the_given_host_not_localhost() {
         assert_eq!(
             build_target_url("http", "172.20.0.5", 8080, "/health"),
             "http://172.20.0.5:8080/health"
         );
         assert_eq!(
-            build_target_url("ws", "172.20.0.5", 8080, "/ws?agent_token=tok"),
-            "ws://172.20.0.5:8080/ws?agent_token=tok"
+            build_target_url("ws", "172.20.0.5", 8080, "/voice/stt?lang=en"),
+            "ws://172.20.0.5:8080/voice/stt?lang=en"
         );
     }
 
@@ -494,6 +644,24 @@ mod tests {
                 "split_service_subpath({path:?})"
             );
         }
+    }
+
+    #[test]
+    fn splits_the_key_prefix_from_the_forwarded_subpath() {
+        assert_eq!(
+            split_key_subpath("/k/abc123/assets/index.js"),
+            Some(("abc123", "/assets/index.js".to_string()))
+        );
+        assert_eq!(split_key_subpath("/k/abc123/"), Some(("abc123", "/".to_string())));
+        assert_eq!(split_key_subpath("/k/abc123"), Some(("abc123", "/".to_string())));
+    }
+
+    #[test]
+    fn rejects_a_missing_or_empty_key_prefix() {
+        assert_eq!(split_key_subpath("/assets/index.js"), None);
+        assert_eq!(split_key_subpath("/"), None);
+        assert_eq!(split_key_subpath("/k/"), None);
+        assert_eq!(split_key_subpath("/k//assets/index.js"), None);
     }
 
     #[tokio::test]

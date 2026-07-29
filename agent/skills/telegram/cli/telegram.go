@@ -36,6 +36,13 @@ type TelegramClient struct {
 	mu               sync.RWMutex
 }
 
+// connectError is the one place a failure to reach Telegram is wrapped. It wraps rather than
+// formats, which is load-bearing: authOutcome reads the API error's status code out from under it
+// to tell a refused token from Telegram being unreachable, and a formatted string hides it.
+func connectError(err error) error {
+	return fmt.Errorf("failed to authenticate with Telegram: %w", err)
+}
+
 func NewTelegramClient(dataDir, notificationsDir, instance string, readOnly bool, skipSenders map[string]bool) (*TelegramClient, error) {
 	store, err := NewMessageStore(dataDir)
 	if err != nil {
@@ -57,7 +64,7 @@ func NewTelegramClient(dataDir, notificationsDir, instance string, readOnly bool
 	bot, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
 		store.Close()
-		return nil, fmt.Errorf("failed to authenticate with Telegram: %v", err)
+		return nil, connectError(err)
 	}
 
 	tc := &TelegramClient{
@@ -725,17 +732,6 @@ func (tc *TelegramClient) UnpinMessage(chatID, messageID int64) error {
 		return fmt.Errorf("failed to unpin message: %v", err)
 	}
 	return nil
-}
-
-func (tc *TelegramClient) writeAuthStatusFile(data map[string]string) {
-	b, err := json.Marshal(data)
-	if err != nil {
-		log.Printf("Failed to marshal auth status: %v", err)
-		return
-	}
-	if err := os.WriteFile(filepath.Join(tc.dataDir, "auth-status.json"), b, 0644); err != nil {
-		log.Printf("Failed to write auth status file: %v", err)
-	}
 }
 
 func formatSenderName(user *tgbotapi.User) string {

@@ -16,11 +16,28 @@ import { useAgentSocketState } from "./use-agent-socket";
 
 vi.mock("@/api/agents", () => ({ fetchHistory: vi.fn() }));
 vi.mock("@/lib/connection", () => ({
-  getConnection: () => ({ url: "https://vestad.test", accessToken: "tok" }),
+  getConnection: () => ({
+    url: "https://vestad.test",
+    accessToken: ACCESS_TOKEN,
+  }),
 }));
-// The chat URL builder refreshes an expiring token before every connect.
-vi.mock("@/lib/token-refresh", () => ({
-  ensureFreshToken: () => Promise.resolve("ok"),
+// Distinct from the minted key and from the "token=" param name, so the assertion that the URL
+// carries no access token fails on a real regression rather than on a substring.
+const ACCESS_TOKEN = "full-privilege-access-token";
+// app-chat is a private service, so the socket's only credential is a key minted for it. The cache
+// is the true edge; a fresh secret per mint makes it observable which one the URL carried.
+let minted = 0;
+const dropped: string[] = [];
+vi.mock("@/lib/service-key-cache", () => ({
+  serviceKeys: {
+    get: (_agent: string, service: string) => {
+      minted += 1;
+      return Promise.resolve(`${service}-key-${String(minted)}`);
+    },
+    drop: (agent: string, service: string) => {
+      dropped.push(`${agent}/${service}`);
+    },
+  },
 }));
 
 // A controllable chat socket: createChatSocket sets its handlers, and each test drives them. The
@@ -155,6 +172,8 @@ function userEcho(id: number, text: string, intentId: string): VestaEvent {
 
 beforeEach(() => {
   chatSockets.length = 0;
+  minted = 0;
+  dropped.length = 0;
   fetchHistoryMock.mockReset();
   useChatPacing.setState({ natural: true });
 });
@@ -175,8 +194,9 @@ describe("useAgentSocketState", () => {
     const { result } = render(controller);
     await openAndFlush();
     expect(chatSockets).toHaveLength(1);
+    expect(chatSockets[0]?.url).not.toContain(ACCESS_TOKEN);
     expect(chatSockets[0]?.url).toBe(
-      "wss://vestad.test/agents/ada/app-chat/ws?token=tok",
+      "wss://vestad.test/agents/ada/app-chat/ws?token=app-chat-key-1",
     );
 
     expect(fetchHistoryMock).toHaveBeenCalledWith(AGENT, "app-chat");
@@ -224,6 +244,61 @@ describe("useAgentSocketState", () => {
     ]);
     expect(result.current.messages.at(-1)?.id).toBe(5);
     expect(result.current.hasMore).toBe(false);
+  });
+
+  // Asked through the cache on every connect, never captured at mount: a key that aged out while
+  // the app was away is re-minted here (the cache's own expiry rule is pinned in service-keys.test).
+  it("asks the cache for the key again on a reconnect", async () => {
+    vi.useFakeTimers();
+    fetchHistoryMock.mockResolvedValue({ events: [], cursor: null });
+    const { controller } = makeController();
+    render(controller);
+    await openAndFlush();
+
+    act(() => {
+      chatSockets[0]?.onclose?.();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    await openAndFlush();
+
+    expect(chatSockets.map((socket) => socket.url)).toEqual([
+      "wss://vestad.test/agents/ada/app-chat/ws?token=app-chat-key-1",
+      "wss://vestad.test/agents/ada/app-chat/ws?token=app-chat-key-2",
+    ]);
+  });
+
+  // A key revoked or expired between mint and connect makes the gateway refuse the upgrade, which
+  // arrives as a close with no open. Without dropping it the socket would present the same refused
+  // key on every backoff forever.
+  it("drops the cached key when the socket closes before opening", async () => {
+    fetchHistoryMock.mockResolvedValue({ events: [], cursor: null });
+    const { controller } = makeController();
+    render(controller);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    act(() => {
+      chatSockets[0]?.onclose?.();
+    });
+
+    expect(dropped).toEqual(["ada/app-chat"]);
+  });
+
+  it("keeps the cached key when a live socket closes", async () => {
+    fetchHistoryMock.mockResolvedValue({ events: [], cursor: null });
+    const { controller } = makeController();
+    render(controller);
+    await openAndFlush();
+
+    act(() => {
+      chatSockets[0]?.onclose?.();
+    });
+
+    expect(dropped).toEqual([]);
   });
 
   it("sends an optimistic bubble and confirms it on the chat-socket echo", async () => {

@@ -3,17 +3,30 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
+
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+)
+
+// ConnectRetryInterval paces the wait for a bot token (and for Telegram itself) in a daemon
+// that is up but not connected yet.
+const (
+	ConnectRetryInterval = 15 * time.Second
+	authStatusFile       = "auth-status.json"
 )
 
 func extractFlag(name string) string {
@@ -101,10 +114,44 @@ func writeDeathNotification(notifDir string, sig string) {
 	os.WriteFile(filepath.Join(notifDir, filename), data, 0644)
 }
 
+// writeAuthStatus records what the daemon last learned about the token. One writer, because this
+// is the only place a caller can see that a token on disk is not a token Telegram accepts.
+func writeAuthStatus(dataDir string, status map[string]string) {
+	data, err := json.Marshal(status)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not marshal the auth status: %v\n", err)
+		return
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, authStatusFile), data, 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not write %s: %v\n", authStatusFile, err)
+	}
+}
+
+// authOutcome classifies a connect that failed. Telegram answering 401 is a verdict on the token
+// itself, so it reads as rejected; anything else (the store, the network, Telegram being down) is
+// the service out of reach, and calling that a rejection sends the user off to mint a new token
+// for a token that is fine.
+func authOutcome(err error) map[string]string {
+	var apiErr *tgbotapi.Error
+	if errors.As(err, &apiErr) && apiErr.Code == http.StatusUnauthorized {
+		return map[string]string{"status": "rejected", "error": err.Error()}
+	}
+	return map[string]string{"status": "unreachable", "error": err.Error()}
+}
+
+// readAuthStatus answers with the recorded outcome of the last connect, so a token Telegram
+// rejects reads as rejected and one it never got to try reads as unreachable, rather than either
+// reading as authenticated. No token on disk outranks it: whatever an older run recorded is about
+// a token that is gone.
 func readAuthStatus(dataDir string) map[string]string {
 	tokenPath := filepath.Join(dataDir, "bot-token")
 	if _, err := os.Stat(tokenPath); err != nil {
 		return map[string]string{"status": "not_authenticated", "instructions": "Set your bot token with: telegram authenticate --token <BOT_TOKEN>"}
+	}
+	var recorded map[string]string
+	data, err := os.ReadFile(filepath.Join(dataDir, authStatusFile))
+	if err == nil && json.Unmarshal(data, &recorded) == nil && recorded["status"] != "" {
+		return recorded
 	}
 	return map[string]string{"status": "authenticated"}
 }
@@ -136,11 +183,7 @@ func runAuthenticate() {
 			fmt.Fprintf(os.Stderr, "Error saving token: %v\n", err)
 			os.Exit(1)
 		}
-
-		// Write auth status
-		statusData, _ := json.Marshal(map[string]string{"status": "authenticated"})
-		os.WriteFile(filepath.Join(dataDir, "auth-status.json"), statusData, 0644)
-
+		writeAuthStatus(dataDir, map[string]string{"status": "authenticated"})
 		printJSON(map[string]string{"status": "authenticated", "message": "Bot token saved successfully"})
 		return
 	}
@@ -156,28 +199,34 @@ func runServe() {
 		notifDir = defaultNotificationsDir()
 	}
 
-	var err error
-	if err = os.MkdirAll(dataDir, 0755); err != nil {
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 	writeDaemonInfo(dataDir, os.Args[1:])
-	if err = os.MkdirAll(notifDir, 0755); err != nil {
+	if err := os.MkdirAll(notifDir, 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	tc, err := NewTelegramClient(dataDir, notifDir, extractInstance(), isReadOnly(), extractSkipSenders())
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to initialize Telegram client: %v\n", err)
-		os.Exit(1)
-	}
+	// The handlers come before the socket and the connect loop, so an exit asked for during
+	// startup is the deliberate one rather than a death the agent has to investigate.
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 
+	var client atomic.Pointer[TelegramClient]
 	sockPath := filepath.Join(dataDir, "telegram.sock")
-	listener, err := startSocketServer(sockPath, tc)
+	listener, err := startSocketServer(sockPath, &client)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to start socket server: %v\n", err)
 	}
+
+	tc, sig := connectClient(dataDir, notifDir, signals)
+	if tc == nil {
+		finishServe(sig, notifDir, listener, sockPath, nil)
+		return
+	}
+	client.Store(tc)
 
 	instance := extractInstance()
 	if instance != "" {
@@ -190,29 +239,54 @@ func runServe() {
 		fmt.Fprintln(os.Stderr, "Running in READ-ONLY mode (no sending)")
 	}
 
-	tc.writeAuthStatusFile(map[string]string{"status": "authenticated"})
+	writeAuthStatus(dataDir, map[string]string{"status": "authenticated"})
 
 	printJSON(map[string]string{"status": "serving", "bot": "@" + tc.bot.Self.UserName})
 
 	// Start polling in background
 	go tc.StartPolling()
 
-	// SIGHUP is how `screen -X quit` (daemon stop/restart) kills the daemon,
-	// so it must reach the graceful shutdown path, matching whatsapp's serve.
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
-	sig := <-sigChan
+	finishServe(<-signals, notifDir, listener, sockPath, tc)
+}
 
+// connectClient brings the Telegram client up, retrying until it does: a daemon started before
+// the bot token is saved, or while Telegram is unreachable, idles and says so on its socket
+// instead of exiting and leaving the agent with a channel that is quietly gone. Returns a nil
+// client when a signal ends the wait instead.
+func connectClient(dataDir, notifDir string, signals <-chan os.Signal) (*TelegramClient, os.Signal) {
+	reported := ""
+	for {
+		tc, err := NewTelegramClient(dataDir, notifDir, extractInstance(), isReadOnly(), extractSkipSenders())
+		if err == nil {
+			return tc, nil
+		}
+		// One write and one log line per distinct reason, not one per retry: the same failure
+		// every 15 seconds buries the log it is written to and rewrites a status nothing learned
+		// from.
+		if err.Error() != reported {
+			reported = err.Error()
+			writeAuthStatus(dataDir, authOutcome(err))
+			fmt.Fprintf(os.Stderr, "Not serving yet: %v\n", err)
+		}
+		select {
+		case sig := <-signals:
+			return nil, sig
+		case <-time.After(ConnectRetryInterval):
+		}
+	}
+}
+
+func finishServe(sig os.Signal, notifDir string, listener net.Listener, sockPath string, tc *TelegramClient) {
 	fmt.Fprintf(os.Stderr, "Shutting down (signal: %v)...\n", sig)
-	if _, statErr := os.Stat(stopRequestedPath(dataDir)); statErr == nil {
-		os.Remove(stopRequestedPath(dataDir))
-	} else {
+	if deathIsNews(sig) {
 		writeDeathNotification(notifDir, sig.String())
 	}
 	if listener != nil {
 		stopSocketServer(listener, sockPath)
 	}
-	tc.Stop()
+	if tc != nil {
+		tc.Stop()
+	}
 }
 
 func stripGlobalFlags(args []string) []string {

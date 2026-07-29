@@ -126,7 +126,7 @@ func main() {
 		// Bring the daemon up and wait until it answers, so inbound notifications
 		// are already flowing before the caller (the restart skill at boot, or the
 		// agent) does anything else. Idempotent: an already-running daemon is a
-		// no-op. Reuses the daemon-lifecycle start; any trailing serve flags
+		// no-op. Runs this skill's own start; any trailing serve flags
 		// (e.g. --instance) pass through.
 		daemonStart(os.Args[1:])
 	case "status":

@@ -17,12 +17,14 @@ import {
   prependPage,
   seedTail,
   sendMessage,
+  serviceKeySocketUrl,
   typingDelay,
 } from "@vesta/core";
 import { useController } from "@/providers/ControllerProvider";
 import { useReplica, useSyncState } from "@vesta/core/react";
 import { createBrowserSocket } from "@/providers/ControllerProvider/browser-socket";
-import { websocketUrl } from "@/lib/authed-url";
+import { getConnection } from "@/lib/connection";
+import { serviceKeys } from "@/lib/service-key-cache";
 import { fetchHistory } from "@/api/agents";
 import { useChatPacing } from "@/stores/use-chat-pacing";
 
@@ -188,16 +190,28 @@ export function useAgentSocketState({
       if (paced) enqueueChatMessage(event);
     };
 
+    // app-chat is a private service, so the socket authenticates with a key scoped to it alone
+    // rather than the gateway access token. Minted per connect through the cache, so a reconnect
+    // after the key aged out dials with a fresh one.
+    const buildUrl = async (): Promise<string> => {
+      const conn = getConnection();
+      if (!conn) throw new Error("not connected to vestad");
+      const key = await serviceKeys.get(agent, "app-chat");
+      return serviceKeySocketUrl(conn.url, agent, "app-chat", key, "/ws");
+    };
+
     const socket = createChatSocket(
       {
-        buildUrl: () =>
-          websocketUrl(`/agents/${encodeURIComponent(agent)}/app-chat/ws`),
+        buildUrl,
         createSocket: createBrowserSocket,
         setTimer: (fn, ms) => window.setTimeout(fn, ms),
         clearTimer: (handle) => window.clearTimeout(handle),
       },
       {
         onEvent: addLiveEvent,
+        onClosedBeforeOpen: () => {
+          serviceKeys.drop(agent, "app-chat");
+        },
         onStateChange: (socketState) => {
           if (socketState === "open") {
             resetTyping();

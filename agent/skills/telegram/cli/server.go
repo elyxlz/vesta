@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"sync/atomic"
 	"time"
 )
 
@@ -18,7 +19,10 @@ type SocketResponse struct {
 	Error  string      `json:"error,omitempty"`
 }
 
-func startSocketServer(sockPath string, tc *TelegramClient) (net.Listener, error) {
+// startSocketServer opens the command socket before the daemon has a client, which is what lets
+// a daemon that is up but not connected yet answer every caller with that state. The client
+// arrives later, so connections read it through the pointer rather than a captured value.
+func startSocketServer(sockPath string, client *atomic.Pointer[TelegramClient]) (net.Listener, error) {
 	os.Remove(sockPath)
 
 	listener, err := net.Listen("unix", sockPath)
@@ -32,7 +36,7 @@ func startSocketServer(sockPath string, tc *TelegramClient) (net.Listener, error
 			if err != nil {
 				return
 			}
-			go handleSocketConn(conn, tc)
+			go handleSocketConn(conn, client)
 		}
 	}()
 
@@ -44,7 +48,7 @@ func stopSocketServer(listener net.Listener, sockPath string) {
 	os.Remove(sockPath)
 }
 
-func handleSocketConn(conn net.Conn, tc *TelegramClient) {
+func handleSocketConn(conn net.Conn, client *atomic.Pointer[TelegramClient]) {
 	defer conn.Close()
 	defer func() {
 		if r := recover(); r != nil {
@@ -57,6 +61,12 @@ func handleSocketConn(conn net.Conn, tc *TelegramClient) {
 	var req SocketRequest
 	if err := json.NewDecoder(conn).Decode(&req); err != nil {
 		json.NewEncoder(conn).Encode(SocketResponse{Error: fmt.Sprintf("invalid request: %v", err)})
+		return
+	}
+
+	tc := client.Load()
+	if tc == nil {
+		json.NewEncoder(conn).Encode(SocketResponse{Error: "the daemon is up but not connected to Telegram yet; save a bot token with 'telegram authenticate --token <BOT_TOKEN>' and it connects on its own"})
 		return
 	}
 

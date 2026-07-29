@@ -1,9 +1,9 @@
-import { readSse } from "@vesta/core";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FlatList, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { ApiClient } from "@/api/client";
 import { useAgent } from "@/agent/AgentProvider";
+import { openAgentLogStream } from "@/agent/agent-log-stream";
 import { addLatestLogLine, type LogLine } from "@/agent/log-list-model";
 import { subscribeLogs } from "@/agent/log-stream-subscription";
 import { useBottomAnchoredFeed } from "@/agent/use-bottom-anchored-feed";
@@ -52,18 +52,8 @@ function LiveLogs({
   useEffect(
     () =>
       subscribeLogs({
-        open: async (reconnect, onEvent) =>
-          readSse(
-            {
-              fetch: (url, init) => fetch(url, init),
-              url: await api.mediaUrl(
-                `/agents/${encodeURIComponent(name)}/logs`,
-                reconnect ? new URLSearchParams({ tail: "0" }) : undefined,
-              ),
-              stoppedEvent: "agent_stopped",
-            },
-            onEvent,
-          ),
+        open: (reconnect, onEvent) =>
+          openAgentLogStream(api, name, reconnect, onEvent),
         onLine: (text) => {
           setLogError("");
           const id = nextLogId.current;

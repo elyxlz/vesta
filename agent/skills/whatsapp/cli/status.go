@@ -16,7 +16,7 @@ func runStatus() {
 	if err != nil {
 		failJSON("%s", err.Error())
 	}
-	if err := startDaemonProcess(linkServeArgs()); err != nil {
+	if err := ensureDaemon(linkServeArgs()); err != nil {
 		printJSON(notLinkedStatus(resolved, err.Error()))
 		return
 	}

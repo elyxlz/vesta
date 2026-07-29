@@ -9,7 +9,17 @@ This is your scheduled moment to think unprompted. No one asked; you're checking
 
 ## Preflight: daemon liveness (do this first, every tick)
 
-Before anything else, confirm your core daemons are alive: `screen -ls`, and check your messaging and mail daemons are present, not `(Dead ...)`. They can die silently (container up, daemon down), and a dead messaging daemon means you can't reach the user at all, so this is load-bearing. If any is missing or dead, re-run the `restart` skill's guarded `running <name> ||` block (idempotent, a safe no-op when everything's already up).
+Before anything else, confirm your core daemons are alive. Ask each daemon the `restart` skill starts how it is doing, by turning each of its start lines into the matching status call:
+
+```bash
+sed -n 's/^\([a-z0-9-]* daemon \)start/\1status/p' ~/agent/skills/restart/SKILL.md | while read -r cmd; do
+  echo "$cmd -> $(sh -c "$cmd")"
+done
+```
+
+The rest of each line is kept, so a per-instance line (`whatsapp daemon start --instance personal`) asks that instance rather than the default one, which is the only way a second account's daemon shows up here at all.
+
+A daemon can die silently (container up, daemon down), and a dead messaging daemon means you can't reach the user at all, so this is load-bearing. Bring back anything reporting `"running":false` with its own start line from that block, or re-run the whole `restart` skill Daemons block, which is idempotent and a no-op when everything is already up.
 
 ## Two questions, every time
 

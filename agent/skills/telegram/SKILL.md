@@ -6,7 +6,9 @@ description: Telegram: send/receive messages; reply to source=telegram notificat
 # Telegram - CLI: telegram
 
 **Setup**: See [SETUP.md](SETUP.md)
-**Daemon**: `telegram daemon start|stop|restart|status`. Start is idempotent; stop/restart quit the watchdog first so it cannot race a manual restart into two daemons. Manage the daemon only through these commands, never raw `screen`.
+**Daemon**: `telegram daemon start|stop|restart|status`. Start is idempotent and brings the watchdog up with the daemon; stop ends the watchdog first, so it cannot race a stop or a restart into two daemons. Manage the daemon only through these commands.
+
+`status` carries an `auth` block holding what the last connect learned: `authenticated`, `not_authenticated` (no bot token saved yet), `rejected` (Telegram refused the token, so mint a new one with `telegram authenticate`), or `unreachable` (the token was never judged, Telegram or the network is the problem, so wait rather than replacing it).
 
 ## Quick Reference
 ```bash

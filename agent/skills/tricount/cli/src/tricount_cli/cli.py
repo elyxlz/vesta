@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from typing import NoReturn
 
+from . import daemon
 from .client import SplitSpec, TricountClient
 
 
@@ -596,6 +597,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     del_p.set_defaults(func=cmd_delete_expense)
 
+    # --- daemon (watcher lifecycle) ---
+    daemon_p = subparsers.add_parser("daemon", help="Manage the watcher daemon: start|stop|restart|status")
+    daemon_p.add_argument("action", nargs="?", default="", metavar="start|stop|restart|status")
+    daemon_p.set_defaults(func=cmd_daemon)
+
     # --- serve (watcher daemon) ---
     serve_p = subparsers.add_parser(
         "serve",
@@ -617,8 +623,17 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def cmd_daemon(args, _client):
+    sys.exit(daemon.daemon_cmd(args.action))
+
+
 def main() -> None:
-    args = _build_parser().parse_args()
+    parser = _build_parser()
+    if len(sys.argv) == 1 or sys.argv[1] == "help":
+        parser.print_help()
+        return
+
+    args = parser.parse_args()
 
     client = TricountClient()
 

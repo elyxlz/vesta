@@ -45,5 +45,5 @@ scrollbar.
 ### 4. Verify it serves
 
 Confirm the dashboard is actually serving before you finish:
-`~/agent/skills/dashboard/scripts/daemon status` reports `http_ok`, or reload the
+`~/agent/skills/dashboard/scripts/daemon status` reports `"running":true`, or reload the
 app. Fix any page that still overflows before finishing.

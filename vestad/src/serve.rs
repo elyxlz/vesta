@@ -1760,6 +1760,114 @@ async fn list_services_handler(
     Json(serde_json::json!({"services": services}))
 }
 
+// --- Service keys ---
+
+#[derive(Deserialize)]
+struct MintServiceKeyBody {
+    #[serde(default)]
+    label: Option<String>,
+    /// Seconds until expiry. Omitted uses `DEFAULT_KEY_TTL_SECS`.
+    #[serde(default)]
+    ttl_secs: Option<u64>,
+    /// Deliberate opt-out of expiry, for a key handed to a long-lived consumer.
+    #[serde(default)]
+    never_expires: bool,
+}
+
+#[derive(Serialize)]
+struct MintServiceKeyResponse {
+    id: String,
+    /// The secret, returned exactly once: the store keeps only its hash.
+    key: String,
+    expires_at: Option<u64>,
+}
+
+/// When the key stops working. `never_expires` overrides any requested ttl.
+fn mint_expiry(body: &MintServiceKeyBody, now: u64) -> Option<u64> {
+    if body.never_expires {
+        return None;
+    }
+    // Saturating: an absurd caller-supplied ttl must not panic in debug or wrap in release.
+    Some(now.saturating_add(body.ttl_secs.unwrap_or(crate::service_keys::DEFAULT_KEY_TTL_SECS)))
+}
+
+/// A minted key must outlive `now`: the store counts `expires_at == now` as already expired, so
+/// minting one hands the caller a secret its own prune drops on the spot.
+fn expiry_is_already_dead(expires_at: Option<u64>, now: u64) -> bool {
+    expires_at.is_some_and(|expires_at| expires_at <= now)
+}
+
+/// Refuse to mint for a service that was never registered, so a typo does not silently
+/// produce a key that opens nothing. Registration truth is the proxy's own lookup.
+async fn require_registered_service(
+    state: &SharedState,
+    name: &str,
+    service: &str,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    if agent_proxy::resolve_service(state, name, service).await.is_some() {
+        return Ok(());
+    }
+    Err(err_response(
+        StatusCode::NOT_FOUND,
+        &format!("service '{service}' is not registered for agent '{name}'"),
+    ))
+}
+
+async fn mint_service_key_handler(
+    State(state): State<SharedState>,
+    Path((name, service)): Path<(String, String)>,
+    Json(body): Json<MintServiceKeyBody>,
+) -> Result<Json<MintServiceKeyResponse>, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(&name).map_err(map_docker_err)?;
+    let now = crate::time_utils::now_epoch_secs();
+    let expires_at = mint_expiry(&body, now);
+    if expiry_is_already_dead(expires_at, now) {
+        return Err(err_response(
+            StatusCode::BAD_REQUEST,
+            "ttl_secs must be greater than 0; omit it for the default, or pass never_expires",
+        ));
+    }
+    require_registered_service(&state, &name, &service).await?;
+
+    let mut store = state.service_keys.write().await;
+    let (info, secret) = store.mint(&name, &service, body.label, expires_at, now);
+    store.prune_expired(now);
+    crate::service_keys::save_store(&store);
+    tracing::info!(agent = %name, service = %service, id = %info.id, expires_at = ?info.expires_at, "service key minted");
+    Ok(Json(MintServiceKeyResponse {
+        id: info.id,
+        key: secret,
+        expires_at: info.expires_at,
+    }))
+}
+
+async fn list_service_keys_handler(
+    State(state): State<SharedState>,
+    Path((name, service)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(&name).map_err(map_docker_err)?;
+    let store = state.service_keys.read().await;
+    let keys = store.list(&name, &service, crate::time_utils::now_epoch_secs());
+    Ok(Json(serde_json::json!({"keys": keys})))
+}
+
+async fn revoke_service_key_handler(
+    State(state): State<SharedState>,
+    Path((name, service, id)): Path<(String, String, String)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    docker::validate_name(&name).map_err(map_docker_err)?;
+    let mut store = state.service_keys.write().await;
+    if !store.revoke(&name, &service, &id) {
+        return Err(err_response(
+            StatusCode::NOT_FOUND,
+            &format!("no service key '{id}' for '{service}'"),
+        ));
+    }
+    crate::service_keys::save_store(&store);
+    tracing::info!(agent = %name, service = %service, id = %id, "service key revoked");
+    Ok(ok_json())
+}
+
 // --- Backup/Restore ---
 
 /// Build the SSE `error` event a backup/restore stream emits when its pipeline fails,
@@ -2556,6 +2664,24 @@ pub fn build_router(state: SharedState) -> Router {
         ))
         .with_state(state.clone());
 
+    // Service keys: the api key (app) or the agent's own token (self-scoped), so an agent
+    // can mint a key for a service it runs and revoke it later, and never for another agent.
+    let agents_service_keys = Router::new()
+        .route(
+            "/agents/{name}/services/{service}/keys",
+            post(mint_service_key_handler).get(list_service_keys_handler),
+        )
+        .route(
+            "/agents/{name}/services/{service}/keys/{id}",
+            axum::routing::delete(revoke_service_key_handler),
+        )
+        .layer(control_timeout_layer())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_middleware_api_or_agent_token,
+        ))
+        .with_state(state.clone());
+
     // Service listing: read-only, accepts either API key or the agent's token
     let agents_services_read = Router::new()
         .route("/agents/{name}/services", get(list_services_handler))
@@ -2600,6 +2726,7 @@ pub fn build_router(state: SharedState) -> Router {
         .merge(agents_self_stop)
         .merge(agents_self_restart)
         .merge(agents_services)
+        .merge(agents_service_keys)
         .merge(agents_services_read)
         .merge(gateway_logs)
         .merge(agents_proxy)
@@ -2881,6 +3008,7 @@ pub struct ServerConfig {
     pub expose_lan: bool,
     pub lan_url: Option<String>,
     pub on_agents_changed: agent_status::OnAgentsChanged,
+    pub force_update: bool,
 }
 
 pub async fn run_server(cfg: ServerConfig) {
@@ -2897,6 +3025,7 @@ pub async fn run_server(cfg: ServerConfig) {
         expose_lan,
         lan_url,
         on_agents_changed,
+        force_update,
     } = cfg;
     let agents_dir = config_dir.join("agents");
     let env_config = docker::AgentEnvConfig {
@@ -2920,8 +3049,11 @@ pub async fn run_server(cfg: ServerConfig) {
     );
     // Capture whether this boot will deliver new agent code BEFORE extracting it: a re-extract
     // replaces the code dir, so reconcile must restart running agents to reload the new core (and
-    // re-bind their now-detached core mount).
-    let agent_code_changed = crate::agent_code::agent_code_is_stale(&env_config.config_dir);
+    // re-bind their now-detached core mount). `--force-update` forces the same restart when the
+    // fingerprint is unchanged, so a dev iterating on one version bounces every running agent into
+    // an upstream-sync + pending-migration pass without a version bump.
+    let agent_code_changed =
+        force_update || crate::agent_code::agent_code_is_stale(&env_config.config_dir);
     let code_dir = match crate::agent_code::ensure_agent_code(&env_config.config_dir) {
         Ok(dir) => dir,
         Err(e) => {
@@ -3698,6 +3830,76 @@ mod tests {
         let tokens_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../apps/core/fixtures/restart-reason-tokens.json");
         sync_fixture_file(&tokens_path, &format!("{tokens_json}\n"), regen);
+    }
+
+    #[test]
+    fn mint_response_carries_the_secret_and_never_a_hash() {
+        let response = super::MintServiceKeyResponse {
+            id: "abcd1234".into(),
+            key: "f".repeat(64),
+            expires_at: Some(1_800_000_600),
+        };
+        let json = serde_json::to_value(&response).expect("serialize mint response");
+        assert_eq!(json["key"], "f".repeat(64));
+        assert_eq!(json["id"], "abcd1234");
+        assert_eq!(json["expires_at"], 1_800_000_600);
+        assert!(json.get("hash").is_none(), "the hash is never returned");
+    }
+
+    const MINT_NOW: u64 = 1_800_000_000;
+
+    fn mint_body(ttl_secs: Option<u64>, never_expires: bool) -> super::MintServiceKeyBody {
+        super::MintServiceKeyBody {
+            label: None,
+            ttl_secs,
+            never_expires,
+        }
+    }
+
+    #[test]
+    fn omitting_ttl_uses_the_default_and_never_expires_wins() {
+        // An absurd ttl saturates instead of panicking in debug or wrapping into the past.
+        let cases: [(Option<u64>, bool, Option<u64>); 4] = [
+            (
+                None,
+                false,
+                Some(MINT_NOW + crate::service_keys::DEFAULT_KEY_TTL_SECS),
+            ),
+            (Some(600), false, Some(MINT_NOW + 600)),
+            (Some(600), true, None),
+            (Some(u64::MAX), false, Some(u64::MAX)),
+        ];
+        for (ttl_secs, never_expires, expected) in cases {
+            assert_eq!(
+                super::mint_expiry(&mint_body(ttl_secs, never_expires), MINT_NOW),
+                expected,
+                "ttl_secs {ttl_secs:?}, never_expires {never_expires}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_zero_ttl_is_refused_rather_than_minting_a_dead_key() {
+        // Why the guard exists: the store counts a key expiring at `now` as already expired, so
+        // minting one hands the caller a secret that never authenticates.
+        let mut store = crate::service_keys::ServiceKeyStore::default();
+        let (_, born_dead) = store.mint("alpha", "dashboard", None, Some(MINT_NOW), MINT_NOW);
+        assert!(!store.accepts("alpha", "dashboard", &born_dead, MINT_NOW));
+
+        // never_expires overrides the ttl, so that combination still mints.
+        let cases: [(Option<u64>, bool, bool); 3] = [
+            (Some(0), false, true),
+            (Some(0), true, false),
+            (Some(600), false, false),
+        ];
+        for (ttl_secs, never_expires, expected) in cases {
+            let expiry = super::mint_expiry(&mint_body(ttl_secs, never_expires), MINT_NOW);
+            assert_eq!(
+                super::expiry_is_already_dead(expiry, MINT_NOW),
+                expected,
+                "ttl_secs {ttl_secs:?}, never_expires {never_expires}"
+            );
+        }
     }
 }
 

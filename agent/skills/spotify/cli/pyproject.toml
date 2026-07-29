@@ -12,3 +12,12 @@ spotify = "spotify_cli.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/spotify_cli"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

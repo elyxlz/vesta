@@ -4,6 +4,9 @@ Commands:
   finance config set --app-id <uuid> --key-path <path-to-pem>
   finance config show
 
+  finance daemon start        # run the transaction watcher in the background
+  finance serve               # run the transaction watcher in the foreground
+
   finance auth login          # print URL, start local server, exchange code
   finance auth status         # check if session is active
   finance auth revoke         # delete session
@@ -22,6 +25,7 @@ import sys
 from datetime import UTC, datetime, timedelta
 
 from . import config as cfg
+from . import daemon, transaction_watcher
 from . import enablebanking as eb
 
 # ---------------------------------------------------------------------------
@@ -311,9 +315,25 @@ def cmd_summary(args) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _cmd_daemon(args):
+    sys.exit(daemon.daemon_cmd(args.action))
+
+
+def _cmd_serve(_args):
+    transaction_watcher.serve()
+
+
 def main():
     parser = argparse.ArgumentParser(prog="finance", description="Enable Banking finance CLI")
     sub = parser.add_subparsers(dest="command", required=True)
+
+    # --- daemon ---
+    p_daemon = sub.add_parser("daemon", help="Manage the transaction watcher daemon: start|stop|restart|status")
+    p_daemon.add_argument("action", nargs="?", default="", metavar="start|stop|restart|status")
+    p_daemon.set_defaults(func=_cmd_daemon)
+
+    # --- serve ---
+    sub.add_parser("serve", help="Run the transaction watcher in the foreground").set_defaults(func=_cmd_serve)
 
     # --- config ---
     p_config = sub.add_parser("config", help="Manage configuration")
@@ -368,6 +388,10 @@ def main():
     p_summary.add_argument("--from", dest="from_date", default=None, metavar="YYYY-MM-DD")
     p_summary.add_argument("--to", dest="to_date", default=None, metavar="YYYY-MM-DD")
     p_summary.set_defaults(func=cmd_summary)
+
+    if len(sys.argv) == 1 or sys.argv[1] == "help":
+        parser.print_help()
+        return
 
     args = parser.parse_args()
 

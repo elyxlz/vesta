@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+# `moneypot` on PATH is the CLI. The bare and `help` forms print its usage, since the parser
+# takes neither and would answer a missing-command error instead.
+
+SKILL_DIR="$HOME/agent/skills/moneypot"
+
+case "${1:-}" in
+  "" | help) exec python3 "$SKILL_DIR/moneypot.py" --help ;;
+esac
+
+exec python3 "$SKILL_DIR/moneypot.py" "$@"

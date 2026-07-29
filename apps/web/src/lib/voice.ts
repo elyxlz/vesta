@@ -1,5 +1,7 @@
+import { serviceKeyQueryUrl, serviceKeySocketUrl } from "@vesta/core";
 import { apiJson } from "@/api/client";
-import { mediaUrl, websocketUrl } from "@/lib/authed-url";
+import { getConnection } from "@/lib/connection";
+import { serviceKeys } from "@/lib/service-key-cache";
 
 const SAMPLE_RATE = 16000;
 
@@ -138,9 +140,16 @@ export function prepareSpeech(
   ).then((res) => res.id);
 }
 
-function ttsStreamUrl(agentName: string, id: string): Promise<string> {
-  return mediaUrl(
-    `/agents/${encodeURIComponent(agentName)}/voice/tts/stream/${encodeURIComponent(id)}`,
+async function ttsStreamUrl(agentName: string, id: string): Promise<string> {
+  const conn = getConnection();
+  if (!conn) throw new Error("not connected to vestad");
+  const key = await serviceKeys.get(agentName, "voice");
+  return serviceKeyQueryUrl(
+    conn.url,
+    agentName,
+    "voice",
+    key,
+    `/tts/stream/${encodeURIComponent(id)}`,
   );
 }
 
@@ -153,7 +162,10 @@ export async function streamSpeech(
   const id = preparedId ?? (await prepareSpeech(text, agentName, signal));
   if (signal?.aborted) return;
 
-  const audio = new Audio(await ttsStreamUrl(agentName, id));
+  const src = await ttsStreamUrl(agentName, id);
+  if (signal?.aborted) return;
+
+  const audio = new Audio(src);
   audio.preload = "auto";
 
   await new Promise<void>((resolve, reject) => {
@@ -404,9 +416,16 @@ export class Transcriber {
     return this.active;
   }
 
-  private buildWsUrl(): Promise<string> {
-    return websocketUrl(
-      `/agents/${encodeURIComponent(this.opts.agentName)}/voice/stt/listen`,
+  private async buildWsUrl(): Promise<string> {
+    const conn = getConnection();
+    if (!conn) throw new Error("not connected to vestad");
+    const key = await serviceKeys.get(this.opts.agentName, "voice");
+    return serviceKeySocketUrl(
+      conn.url,
+      this.opts.agentName,
+      "voice",
+      key,
+      "/stt/listen",
     );
   }
 

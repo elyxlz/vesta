@@ -67,9 +67,8 @@ Subagent (general-purpose):
 
     ```bash
     cd ~/agent/skills/dashboard/app && { [ -d node_modules ] || npm install; } && npx vite build
-    ~/agent/skills/dashboard/scripts/daemon stop
-    ~/agent/skills/dashboard/scripts/daemon start
-    STATUS=$(~/agent/skills/dashboard/scripts/daemon status); echo "$STATUS"
+    dashboard daemon restart
+    STATUS=$(dashboard daemon status); echo "$STATUS"
     PORT=$(echo "$STATUS" | python3 -c 'import sys, json; print(json.load(sys.stdin)["port"])')
     curl -s "http://localhost:$PORT/" | head -50 | grep -q '<div id="root"' || echo "ERROR: dashboard failed to load, check the build output"
     curl -sk -X POST https://$BOX_HOST:$VESTAD_PORT/agents/$AGENT_NAME/services/dashboard/invalidate -H "X-Agent-Token: $AGENT_TOKEN"
@@ -90,7 +89,7 @@ Subagent (general-purpose):
     - Completeness: did you build everything in the spec? Any content or interaction missed?
     - Quality: is it your best work, dense, and consistent with the app's theme?
     - Discipline: did you stay inside the spec (YAGNI) and touch no synced files?
-    - Verified: did the build succeed and the daemon report `http_ok`?
+    - Verified: did the build succeed, the daemon report `running`, and the page load?
 
     Fix anything you find before reporting.
 
@@ -100,7 +99,7 @@ Subagent (general-purpose):
 
     - Status: DONE | DONE_WITH_CONCERNS | BLOCKED
     - What you built, and which files you changed
-    - The daemon status line (`running`, `port`, `http_ok`) as evidence it serves
+    - The daemon status line (`running`, `port`) as evidence it serves
     - Which live-data pages you exercised in a browser, so the requester knows what to re-verify
     - Any concern, or if BLOCKED, exactly what was underspecified or what failed
 

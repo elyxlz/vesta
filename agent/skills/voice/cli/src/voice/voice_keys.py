@@ -177,44 +177,8 @@ def cmd_set_eot(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_daemon_start(_args: argparse.Namespace) -> int:
-    try:
-        result = daemon.start()
-    except daemon.DaemonError as e:
-        print(json.dumps({"error": str(e)}), file=sys.stderr)
-        return 1
-    print(json.dumps(result, indent=2))
-    return 0
-
-
-def cmd_daemon_stop(_args: argparse.Namespace) -> int:
-    try:
-        result = daemon.stop()
-    except daemon.DaemonError as e:
-        print(json.dumps({"error": str(e)}), file=sys.stderr)
-        return 1
-    print(json.dumps(result, indent=2))
-    return 0
-
-
-def cmd_daemon_restart(_args: argparse.Namespace) -> int:
-    try:
-        result = daemon.restart()
-    except daemon.DaemonError as e:
-        print(json.dumps({"error": str(e)}), file=sys.stderr)
-        return 1
-    print(json.dumps(result, indent=2))
-    return 0
-
-
-def cmd_daemon_status(_args: argparse.Namespace) -> int:
-    try:
-        result = daemon.status()
-    except daemon.DaemonError as e:
-        print(json.dumps({"error": str(e)}), file=sys.stderr)
-        return 1
-    print(json.dumps(result, indent=2))
-    return 0
+def cmd_daemon(args: argparse.Namespace) -> int:
+    return daemon.daemon_cmd(args.action)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -273,22 +237,20 @@ def _build_parser() -> argparse.ArgumentParser:
     p_set_eot.add_argument("--timeout-ms", type=int, default=None)
     p_set_eot.set_defaults(func=cmd_set_eot)
 
-    p_daemon = sub.add_parser("daemon", help="Manage the voice-server background daemon")
-    daemon_sub = p_daemon.add_subparsers(dest="daemon_cmd", required=True)
-    daemon_sub.add_parser("start", help="Register a port and start voice-server (idempotent)").set_defaults(func=cmd_daemon_start)
-    daemon_sub.add_parser("stop", help="Stop voice-server").set_defaults(func=cmd_daemon_stop)
-    daemon_sub.add_parser("restart", help="Stop then start voice-server").set_defaults(func=cmd_daemon_restart)
-    daemon_sub.add_parser("status", help="Report daemon + provider auth state").set_defaults(func=cmd_daemon_status)
+    p_daemon = sub.add_parser("daemon", help="Manage the voice-server background daemon: start|stop|restart|status")
+    p_daemon.add_argument("action", nargs="?", default="", metavar="start|stop|restart|status")
+    p_daemon.set_defaults(func=cmd_daemon)
 
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
+    args_in = sys.argv[1:] if argv is None else argv
     parser = _build_parser()
-    args = parser.parse_args(argv)
-    if args.cmd is None:
+    if not args_in or args_in[0] == "help":
         parser.print_help()
         return 0
+    args = parser.parse_args(args_in)
     return args.func(args)
 
 

@@ -35,9 +35,10 @@ func insecureVestadClient(timeout time.Duration) *http.Client {
 	}
 }
 
-// resolveVoiceBaseURL asks vestad for the voice service's port (idempotent: the same POST
-// register-service uses, so it never disturbs voice's own registration) and health-checks it, so a
-// call only proceeds when the voice backend is actually up. Returns a friendly error otherwise.
+// resolveVoiceBaseURL asks vestad for the voice service's port (idempotent: registering a name
+// again returns its existing port, so it never disturbs voice's own registration) and
+// health-checks it, so a call only proceeds when the voice backend is actually up. Returns a
+// friendly error otherwise.
 // The body omits "public" so vestad keeps the flag voice registered itself with; sending a value
 // here would make resolving a port silently rewrite the service's exposure.
 func resolveVoiceBaseURL(ctx context.Context) (string, error) {

@@ -19,10 +19,10 @@ describe("log stream subscription", () => {
     const open = (
       reconnect: boolean,
       onEvent: (event: StreamEvent) => void,
-    ): Promise<SseHandle> => {
+    ): SseHandle => {
       const cancel = vi.fn();
       streams.push({ reconnect, emit: onEvent, cancel });
-      return Promise.resolve({ cancel });
+      return { cancel };
     };
     const onLine = vi.fn();
     const onError = vi.fn();
@@ -62,26 +62,16 @@ describe("log stream subscription", () => {
     expect(second.cancel).toHaveBeenCalledTimes(1);
   });
 
-  it("cancels a stream that opens after teardown", async () => {
-    // The URL is built asynchronously (it refreshes the token), so teardown can land while the
-    // first open is still in flight; without the post-await check that stream would leak.
+  it("cancels the live stream on teardown", () => {
     const cancel = vi.fn();
-    let release = (): void => undefined;
-    const open = (): Promise<SseHandle> =>
-      new Promise<SseHandle>((resolve) => {
-        release = () => resolve({ cancel });
-      });
-
     const stop = subscribeLogs({
-      open,
+      open: () => ({ cancel }),
       onLine: vi.fn(),
       onError: vi.fn(),
       retryDelayMs: 1_000,
     });
+
     stop();
-    release();
-    await Promise.resolve();
-    await Promise.resolve();
 
     expect(cancel).toHaveBeenCalledTimes(1);
   });

@@ -66,18 +66,18 @@ describe("authenticated URLs", () => {
 
   it("keeps caller query params alongside the token", async () => {
     await expect(
-      createTestClient().mediaUrl(
-        "/agents/ada/logs",
-        new URLSearchParams({ tail: "0" }),
+      createTestClient().websocketUrl(
+        "/sync",
+        new URLSearchParams({ resync: "true" }),
       ),
     ).resolves.toBe(
-      "https://gateway.example/agents/ada/logs?tail=0&token=access-token",
+      "wss://gateway.example/sync?resync=true&token=access-token",
     );
   });
 
   it("rotates an expiring token before handing out a URL", async () => {
-    // Every socket connect and media request goes through here, so a client returning after a
-    // long background never presents the token that expired while it was away.
+    // Every socket connect goes through here, so a client returning after a long background
+    // never presents the token that expired while it was away.
     let current: ConnectionConfig = { ...connection, accessToken: "stale", expiresAt: 0 };
     vi.stubGlobal(
       "fetch",

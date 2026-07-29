@@ -590,6 +590,134 @@ def test_agent_startup_bridges_the_cone_on_first_flat_boot(tmp_path):
     assert "whatsapp" in _links(home)  # and linked (on disk in the cone)
 
 
+# --- agent startup: the vestad helpers as bare commands on PATH ---
+
+VESTAD_SCRIPTS = ("register-service", "service-key", "user-notification", "vestad-health")
+
+
+def _bin_box(tmp_path, scripts=VESTAD_SCRIPTS):
+    home = _skill_link_box(tmp_path)
+    scripts_dir = home / "agent/skills/vestad/scripts"
+    scripts_dir.mkdir(parents=True)
+    for script in scripts:
+        path = scripts_dir / script
+        path.write_text(f"#!/usr/bin/env bash\necho {script}\n")
+        path.chmod(0o755)
+    (home / ".local/bin").mkdir(parents=True)
+    return home
+
+
+def _bin(home, name):
+    return home / ".local/bin" / name
+
+
+def _target(home, script):
+    return (home / "agent/skills/vestad/scripts" / script).resolve()
+
+
+def _bin_state(home):
+    return sorted((p.name, p.readlink() if p.is_symlink() else p.read_text()) for p in (home / ".local/bin").iterdir())
+
+
+def test_agent_startup_puts_the_vestad_helpers_on_path(tmp_path):
+    home = _bin_box(tmp_path)
+    assert _run_agent_startup(home).returncode == 0
+    for command in VESTAD_SCRIPTS:
+        assert _bin(home, command).readlink() == _target(home, command)
+
+
+def test_agent_startup_leaves_a_foreign_bin_entry_alone(tmp_path):
+    """The bin dir is shared with uv tool installs, so it is never wiped and never clobbered."""
+    home = _bin_box(tmp_path)
+    occupied = _bin(home, "user-notification")
+    occupied.write_text("#!/bin/sh\necho not ours\n")
+    unrelated = _bin(home, "some-tool")
+    unrelated.write_text("#!/bin/sh\necho a uv tool\n")
+    assert _run_agent_startup(home).returncode == 0
+    assert not occupied.is_symlink() and occupied.read_text() == "#!/bin/sh\necho not ours\n"
+    assert unrelated.read_text() == "#!/bin/sh\necho a uv tool\n"
+    assert _bin(home, "register-service").readlink() == _target(home, "register-service")  # the rest still land
+
+
+def test_agent_startup_replaces_a_stale_helper_link(tmp_path):
+    home = _bin_box(tmp_path)
+    stale = _bin(home, "register-service")
+    stale.symlink_to(home / "agent/skills/vestad/scripts/register-service-under-its-old-name")
+    assert _run_agent_startup(home).returncode == 0
+    assert stale.readlink() == _target(home, "register-service")  # no dangling link survives
+
+
+def test_agent_startup_links_are_idempotent(tmp_path):
+    home = _bin_box(tmp_path)
+    assert _run_agent_startup(home).returncode == 0
+    before = _bin_state(home)
+    assert _run_agent_startup(home).returncode == 0
+    assert _bin_state(home) == before
+
+
+def test_agent_startup_links_a_helper_that_arrives_later(tmp_path):
+    home = _bin_box(tmp_path, scripts=("register-service", "user-notification", "vestad-health"))
+    assert _run_agent_startup(home).returncode == 0
+    assert not _bin(home, "service-key").is_symlink()  # not on disk yet, so nothing to point at
+    late = home / "agent/skills/vestad/scripts/service-key"
+    late.write_text("#!/usr/bin/env bash\necho service-key\n")
+    late.chmod(0o755)
+    assert _run_agent_startup(home).returncode == 0
+    assert _bin(home, "service-key").readlink() == _target(home, "service-key")
+
+
+def test_agent_startup_removes_a_dangling_link_of_ours(tmp_path):
+    """A helper that leaves the checkout takes its command with it, instead of leaving a
+    link that resolves to nothing."""
+    home = _bin_box(tmp_path)
+    assert _run_agent_startup(home).returncode == 0
+    (home / "agent/skills/vestad/scripts/service-key").unlink()
+    assert _run_agent_startup(home).returncode == 0
+    assert not _bin(home, "service-key").is_symlink()
+
+
+def test_agent_startup_links_only_the_vestad_helpers_not_skill_launchers(tmp_path):
+    """A skill's own command reaches PATH from that skill's setup, not from startup, so a
+    `<skill>/<skill>` launcher on disk is left unlinked here."""
+    home = _bin_box(tmp_path)
+    launcher = home / "agent/skills/whatsapp/whatsapp"
+    launcher.parent.mkdir(parents=True, exist_ok=True)
+    launcher.write_text("#!/usr/bin/env bash\necho whatsapp\n")
+    assert _run_agent_startup(home).returncode == 0
+    assert not _bin(home, "whatsapp").exists()  # skills link their own commands in setup
+    for command in VESTAD_SCRIPTS:  # the helpers still land
+        assert _bin(home, command).readlink() == _target(home, command)
+
+
+def test_agent_startup_clears_the_daemon_records(tmp_path):
+    """A record names a pid in the pid space of a container that is gone. Boot runs before any
+    daemon does, so leaving one behind lets a foreign pid read as live and a start do nothing."""
+    home = _bin_box(tmp_path)
+    daemons = home / "agent/data/daemons"
+    daemons.mkdir(parents=True)
+    (daemons / "file-host.pid").write_text("1\n")
+    (daemons / "file-host.port").write_text("8770\n")
+    assert _run_agent_startup(home).returncode == 0
+    assert list(daemons.iterdir()) == []
+
+
+def test_agent_startup_clears_records_around_a_directory(tmp_path):
+    """A record is a file. A directory beside the records is not one, and boot has to step over
+    it: an unlink that raises there takes the whole startup down and the container never boots."""
+    home = _bin_box(tmp_path)
+    daemons = home / "agent/data/daemons"
+    (daemons / "browser-sessions").mkdir(parents=True)
+    (daemons / "file-host.pid").write_text("1\n")
+    assert _run_agent_startup(home).returncode == 0
+    assert [entry.name for entry in daemons.iterdir()] == ["browser-sessions"]
+
+
+def test_agent_startup_needs_no_daemon_records_dir(tmp_path):
+    home = _bin_box(tmp_path)
+    assert _run_agent_startup(home).returncode == 0
+    assert not (home / "agent/data/daemons").exists()
+
+
 # --- the cone->flat boot migration spine (2026-08-flat-checkout.md) ----------------------
 
 

@@ -6,11 +6,15 @@ import {
   type ReactNode,
 } from "react";
 import { LayoutDashboard, AlertCircle } from "lucide-react";
+import { serviceKeyPathUrl } from "@vesta/core";
+import { useServiceKey } from "@vesta/core/react";
 import { Card } from "@/components/ui/card";
 import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useTheme } from "@/providers/ThemeProvider";
 import { useRuntime } from "@/providers/RuntimeProvider";
 import { getConnection } from "@/lib/connection";
+import { parseGatewayUrl } from "@/lib/gateway-url";
+import { serviceKeys } from "@/lib/service-key-cache";
 import { openExternalUrl } from "@/lib/open-external-url";
 import {
   Empty,
@@ -33,6 +37,18 @@ function DashboardShell({ children }: { children?: ReactNode }) {
   );
 }
 
+// The frame's identity: which document, under which credential. A change means the mounted
+// document is stale (the service appeared, was invalidated, or its key rotated, since the
+// document loaded under the old credential), so the keyed iframe remounts and the load and
+// handshake state reset with it.
+function frameIdentityOf(
+  hasDashboard: boolean,
+  rev: number,
+  key: string | null,
+): string {
+  return `${hasDashboard ? "up" : "down"}:${String(rev)}:${key ?? ""}`;
+}
+
 export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
   const { name, agent } = useSelectedAgent();
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -41,48 +57,52 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
     useRuntime();
   const [error, setError] = useState(false);
   const [loaded, setLoaded] = useState(false);
-  const [iframeKey, setIframeKey] = useState(0);
   const handshakeRef = useRef(false);
   const handshakeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const dashboardService = agent.services.dashboard;
   const hasDashboard = !!dashboardService;
-
-  // Reset iframe when the dashboard service appears
-  const prevHadDashboard = useRef(hasDashboard);
-  useEffect(() => {
-    if (hasDashboard && !prevHadDashboard.current) {
-      setError(false);
-      setLoaded(false);
-      setIframeKey((k) => k + 1);
-    }
-    prevHadDashboard.current = hasDashboard;
-  }, [hasDashboard]);
-
-  // Reload iframe when the dashboard service is invalidated
   const dashboardRev = dashboardService?.rev ?? 0;
-  const prevDashboardRev = useRef(dashboardRev);
+
+  const conn = getConnection();
+  // The dashboard is a private service, so the frame authenticates with a minted service key
+  // carried in the path: an iframe document sends no header, and its relative asset requests
+  // inherit neither a header nor a query string.
+  const { key: dashboardKey, error: keyError } = useServiceKey(
+    serviceKeys,
+    name,
+    "dashboard",
+    hasDashboard,
+  );
+  // Reduce the stored gateway url to its http(s) origin before it becomes the iframe src: a
+  // stored `javascript:` url would otherwise run as script in the frame.
+  const gatewayUrl = conn ? parseGatewayUrl(conn.url) : null;
+  const dashboardUrl =
+    hasDashboard && gatewayUrl && dashboardKey
+      ? serviceKeyPathUrl(gatewayUrl, name, "dashboard", dashboardKey)
+      : null;
+
+  const frameIdentity = frameIdentityOf(
+    hasDashboard,
+    dashboardRev,
+    dashboardKey,
+  );
+  const prevFrameIdentity = useRef(frameIdentity);
   useEffect(() => {
-    if (dashboardRev !== prevDashboardRev.current && hasDashboard) {
-      setError(false);
-      setLoaded(false);
-      setIframeKey((k) => k + 1);
-    }
-    prevDashboardRev.current = dashboardRev;
-  }, [dashboardRev, hasDashboard]);
+    if (prevFrameIdentity.current === frameIdentity) return;
+    prevFrameIdentity.current = frameIdentity;
+    if (handshakeTimerRef.current) clearTimeout(handshakeTimerRef.current);
+    handshakeTimerRef.current = null;
+    handshakeRef.current = false;
+    setError(false);
+    setLoaded(false);
+  }, [frameIdentity]);
 
   useEffect(() => {
-    handshakeRef.current = false;
     return () => {
       if (handshakeTimerRef.current) clearTimeout(handshakeTimerRef.current);
     };
-  }, [iframeKey]);
-
-  const conn = getConnection();
-  const dashboardUrl =
-    hasDashboard && conn
-      ? `${conn.url}/agents/${encodeURIComponent(name)}/dashboard/`
-      : null;
+  }, []);
 
   const sendContext = useCallback(() => {
     const frame = iframeRef.current?.contentWindow;
@@ -186,7 +206,7 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
     );
   }
 
-  if (error) {
+  if (error || keyError != null) {
     return (
       <DashboardShell>
         <Empty className="flex-1 h-full w-full border-0">
@@ -210,36 +230,38 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
 
   return (
     <div className="relative h-full w-full">
-      {!loaded && (
+      {(!loaded || !dashboardUrl) && (
         <div className="absolute inset-0">
           <DashboardShell />
         </div>
       )}
-      <iframe
-        key={iframeKey}
-        ref={iframeRef}
-        src={dashboardUrl ?? undefined}
-        allow="microphone; camera; display-capture; autoplay; fullscreen; picture-in-picture; clipboard-read; clipboard-write; geolocation; screen-wake-lock; web-share; payment; publickey-credentials-get; publickey-credentials-create; encrypted-media; midi; gamepad; xr-spatial-tracking; hid; serial; usb; bluetooth; idle-detection; local-fonts; storage-access; compute-pressure; window-management"
-        className={`w-full h-full bg-transparent transition-opacity duration-200 ${loaded ? "opacity-100" : "opacity-0"}`}
-        onLoad={() => {
-          sendContext();
-          if (handshakeRef.current) {
-            setLoaded(true);
-          } else {
-            if (handshakeTimerRef.current)
-              clearTimeout(handshakeTimerRef.current);
-            handshakeTimerRef.current = setTimeout(() => {
-              handshakeTimerRef.current = null;
-              if (handshakeRef.current) {
-                setLoaded(true);
-              } else {
-                setError(true);
-              }
-            }, 500);
-          }
-        }}
-        onError={() => setError(true)}
-      />
+      {dashboardUrl && (
+        <iframe
+          key={frameIdentity}
+          ref={iframeRef}
+          src={dashboardUrl}
+          allow="microphone; camera; display-capture; autoplay; fullscreen; picture-in-picture; clipboard-read; clipboard-write; geolocation; screen-wake-lock; web-share; payment; publickey-credentials-get; publickey-credentials-create; encrypted-media; midi; gamepad; xr-spatial-tracking; hid; serial; usb; bluetooth; idle-detection; local-fonts; storage-access; compute-pressure; window-management"
+          className={`w-full h-full bg-transparent transition-opacity duration-200 ${loaded ? "opacity-100" : "opacity-0"}`}
+          onLoad={() => {
+            sendContext();
+            if (handshakeRef.current) {
+              setLoaded(true);
+            } else {
+              if (handshakeTimerRef.current)
+                clearTimeout(handshakeTimerRef.current);
+              handshakeTimerRef.current = setTimeout(() => {
+                handshakeTimerRef.current = null;
+                if (handshakeRef.current) {
+                  setLoaded(true);
+                } else {
+                  setError(true);
+                }
+              }, 500);
+            }
+          }}
+          onError={() => setError(true)}
+        />
+      )}
     </div>
   );
 }

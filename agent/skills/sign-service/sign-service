@@ -1,0 +1,138 @@
+#!/bin/sh
+set -eu
+
+# `sign-service` on PATH; the skill's whole surface is its daemon. The vestad service is
+# named `sign` while the command is `sign-service`, so both names are spelled out below.
+# The pad accepts a signature the agent then stamps onto a document and the server verifies
+# nothing, so it is private and the signer opens a keyed link.
+
+PIDFILE="$HOME/agent/data/daemons/sign-service.pid"
+PORTFILE="$HOME/agent/data/daemons/sign-service.port"
+LOG="$HOME/agent/logs/sign-service.log"
+SIGNATURE=/tmp/sign-service/signature.png
+USAGE="Usage: sign-service daemon <start|stop|restart|status>"
+READY_BUDGET=${DAEMON_READY_TIMEOUT_SECS:-30}
+STOP_BUDGET=${DAEMON_STOP_TIMEOUT_SECS:-15}
+# SIGTERM is the deliberate stop, and this is the point in the one budget at which a daemon that
+# has not honoured it is killed instead, leaving the remainder to reap it.
+KILL_AFTER=$(( STOP_BUDGET * 2 / 3 ))
+# How long a start that lost the record claim waits for the rival start to resolve.
+CLAIM_POLLS=6
+
+case "${1:-}" in
+  daemon) shift ;;
+  "" | -h | --help | help) echo "$USAGE"; exit 0 ;;
+  *) echo "$USAGE" >&2; exit 1 ;;
+esac
+
+fail() { printf '{"error":"%s"}\n' "$1" >&2; exit 1; }
+
+# The budgets are wall clock, never a count of sleeps: a probe that hangs for its own timeout
+# stretches a counted loop far past the seconds DAEMON_*_TIMEOUT_SECS names.
+deadline() { echo $(( $(date +%s) + $1 )); }
+expired() { [ "$(date +%s)" -ge "$1" ]; }
+
+# Waits out a pid until a deadline. Answers whether it is gone.
+await_gone() {
+  while kill -0 "$1" 2>/dev/null; do
+    if expired "$2"; then return 1; fi
+    sleep 0.5
+  done
+}
+
+# A start that gives up drops the records it claimed: a daemon nothing can reach, with records
+# that say it is up, reads as running and turns every later start into a no-op.
+give_up() { rm -f "$PIDFILE" "$PORTFILE"; fail "$1"; }
+
+# A start that gives up ends its child first: a daemon nothing can reach outlives the records.
+abandon() {
+  stop_by=$(deadline "$STOP_BUDGET")
+  kill -TERM "$1" 2>/dev/null || true
+  if ! await_gone "$1" "$(deadline "$KILL_AFTER")"; then
+    kill -KILL "$1" 2>/dev/null || true
+    await_gone "$1" "$stop_by" || true
+  fi
+  give_up "$2"
+}
+
+live_pid() {
+  pid=$(cat "$PIDFILE" 2>/dev/null) || return 1
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 1
+  printf %s "$pid"
+}
+
+# The pid record is the mutual exclusion: a start claims it before spawning and drops it on every
+# failure, so a start that loses the claim answers already_running instead of stacking a daemon
+# beside the winner's. A record no process stands behind is cleared and taken over, which is the
+# one path on which two starts can both spawn, and the duplicate loses on its own resources.
+claim_start() {
+  if ( set -C; echo $$ > "$PIDFILE" ) 2>/dev/null; then echo claimed; return 0; fi
+  i=0
+  while [ "$i" -lt "$CLAIM_POLLS" ]; do
+    if live_pid >/dev/null; then echo running; return 0; fi
+    [ -f "$PIDFILE" ] || break
+    sleep 0.5; i=$((i + 1))
+  done
+  rm -f "$PIDFILE"
+  if ( set -C; echo $$ > "$PIDFILE" ) 2>/dev/null; then echo claimed; else echo lost; fi
+}
+
+do_start() {
+  if live_pid >/dev/null; then echo '{"status":"already_running"}'; return 0; fi
+  mkdir -p "$HOME/agent/data/daemons" "$HOME/agent/logs"
+  case "$(claim_start)" in
+    running) echo '{"status":"already_running"}'; return 0 ;;
+    lost) fail "another sign-service start holds $PIDFILE" ;;
+  esac
+  PORT=$(register-service sign) || give_up "could not register sign with vestad"
+  [ -n "$PORT" ] || give_up "could not register sign with vestad"
+  echo "$PORT" > "$PORTFILE"
+  # sign_server.py imports nothing outside the standard library, so the box's venv
+  # interpreter and a plain python3 both run it.
+  python="$HOME/agent/.venv/bin/python3"
+  [ -x "$python" ] || python=python3
+  setsid "$python" "$HOME/agent/skills/sign-service/sign_server.py" "$PORT" "$SIGNATURE" >> "$LOG" 2>&1 &
+  pid=$!
+  echo "$pid" > "$PIDFILE"
+  ready_by=$(deadline "$READY_BUDGET")
+  until expired "$ready_by"; do
+    kill -0 "$pid" 2>/dev/null || abandon "$pid" "sign-service exited during startup; see $LOG"
+    if curl -m 2 -fsS -o /dev/null "http://localhost:$PORT" 2>/dev/null; then
+      echo '{"status":"started"}'; return 0
+    fi
+    sleep 0.5
+  done
+  abandon "$pid" "sign-service never answered on port $PORT; see $LOG"
+}
+
+do_stop() {
+  pid=$(live_pid) || { echo '{"status":"already_stopped"}'; return 0; }
+  stop_by=$(deadline "$STOP_BUDGET")
+  kill -TERM "$pid" 2>/dev/null || true
+  if ! await_gone "$pid" "$(deadline "$KILL_AFTER")"; then
+    kill -KILL "$pid" 2>/dev/null || true
+    await_gone "$pid" "$stop_by" || fail "sign-service still running ${STOP_BUDGET}s after SIGTERM then SIGKILL (pid=$pid)"
+  fi
+  rm -f "$PIDFILE" "$PORTFILE"
+  echo '{"status":"stopped"}'
+}
+
+# Reads the port start recorded, never registration: status stays a local read that
+# answers instantly and truthfully while vestad is down.
+do_status() {
+  if live_pid >/dev/null; then
+    port=$(cat "$PORTFILE" 2>/dev/null) || port=""
+    printf '{"running":true,"port":%s}\n' "${port:-null}"
+  else
+    printf '{"running":false,"port":null}\n'
+  fi
+}
+
+case "${1:-}" in
+  start) do_start ;;
+  stop) do_stop ;;
+  restart) do_stop >/dev/null; do_start ;;
+  status) do_status ;;
+  "" | -h | --help | help) echo "$USAGE" ;;
+  *) echo "$USAGE" >&2; exit 1 ;;
+esac

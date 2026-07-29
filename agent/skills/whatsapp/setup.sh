@@ -26,12 +26,12 @@ if [ ! -f "$MODEL" ]; then
 fi
 
 # 4. Start the daemon (idempotent; defaults --notifications-dir to ~/agent/notifications).
-whatsapp start
+whatsapp daemon start
 
 echo "setup complete, link an account with: whatsapp link"
 echo
 echo "Remaining step, yours to do: add this line inside the fenced Daemons block"
-echo "of ~/agent/skills/restart/SKILL.md, matching the guard form already there."
-echo "\`whatsapp start\` brings the daemon up and waits until it answers, so inbound"
-echo "notifications flow before you send anything."
-echo '  running whatsapp || { whatsapp start; sleep 1; }'
+echo "of ~/agent/skills/restart/SKILL.md, on its own line."
+echo "\`whatsapp daemon start\` brings the daemon up and waits until it answers, so"
+echo "inbound notifications flow before you send anything."
+echo '  whatsapp daemon start'

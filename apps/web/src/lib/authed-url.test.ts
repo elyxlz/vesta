@@ -15,7 +15,7 @@ vi.mock("@/lib/token-refresh", () => ({
   },
 }));
 
-const { mediaUrl, websocketUrl } = await import("@/lib/authed-url");
+const { websocketUrl } = await import("@/lib/authed-url");
 
 beforeEach(() => {
   mocks.connection = { url: "https://h", accessToken: "tok" };
@@ -23,26 +23,19 @@ beforeEach(() => {
 });
 
 describe("authed urls", () => {
-  it("stamps the token into a media URL over http", async () => {
-    await expect(mediaUrl("/agents/agent/voice/tts/stream/id")).resolves.toBe(
-      "https://h/agents/agent/voice/tts/stream/id?token=tok",
-    );
-  });
-
   it("swaps the scheme for a socket URL", async () => {
-    mocks.connection = { url: "https://h", accessToken: "tok" };
     await expect(websocketUrl("/sync")).resolves.toBe("wss://h/sync?token=tok");
   });
 
   it("percent-encodes a token with url-unsafe characters", async () => {
     mocks.connection = { url: "https://h", accessToken: "a b+c" };
-    await expect(mediaUrl("/x")).resolves.toBe("https://h/x?token=a+b%2Bc");
+    await expect(websocketUrl("/x")).resolves.toBe("wss://h/x?token=a+b%2Bc");
   });
 
   it("keeps caller query params alongside the token", async () => {
     await expect(
-      mediaUrl("/agents/agent/logs", new URLSearchParams({ tail: "0" })),
-    ).resolves.toBe("https://h/agents/agent/logs?tail=0&token=tok");
+      websocketUrl("/sync", new URLSearchParams({ resync: "true" })),
+    ).resolves.toBe("wss://h/sync?resync=true&token=tok");
   });
 
   it("refreshes an expiring token before handing out any URL", async () => {

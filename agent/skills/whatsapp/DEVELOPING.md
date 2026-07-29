@@ -6,13 +6,29 @@ its whole surface is `provision`, `status`, `send`, `messages`, `profile`, calls
 
 ## How it runs
 
-The CLI runs as a background **daemon** (`whatsapp serve`) under `screen`.
-One-shot commands (`send`, `status`, `messages`, ...) connect to it over a Unix
-socket. Every agent-facing command self-bootstraps the daemon, so the agent never
-starts, stops, or restarts anything by hand. At boot the restart skill runs
-`whatsapp start` (an idempotent front door to the daemon-lifecycle start: it
-brings the daemon up and waits until it answers, so notifications are already
-flowing before the agent sends anything); `setup.sh` registers that line.
+The CLI runs as a background **daemon** (`whatsapp serve`), launched detached in
+its own session with its pid recorded at
+`~/agent/data/daemons/whatsapp[-<instance>].pid` and its output appended to
+`~/agent/logs/whatsapp[-<instance>].log`. One-shot commands (`send`, `status`,
+`messages`, ...) connect to it over a Unix socket. Every agent-facing command
+self-bootstraps the daemon, so the agent never starts, stops, or restarts
+anything by hand. At boot the restart skill runs `whatsapp daemon start`, which
+is idempotent and returns only once the daemon answers, so notifications are
+already flowing before the agent sends anything; `setup.sh` prints that line for
+the agent to add.
+
+That pid record is also the mutual exclusion: a start claims it (exclusive create)
+before it spawns anything and drops it again on every failure, so two starts
+landing at once leave one daemon and a record that names it. A daemon serving the
+instance that this lifecycle did not start (so the record is empty and the
+device-store lock is held elsewhere) is the one case it refuses: start and restart
+say so instead of reporting a success no record stands behind. End that process
+first.
+
+`daemon stop` sends SIGTERM to the recorded pid and waits for the process to go.
+SIGTERM is therefore the one exit the agent asked for, and the only one the
+daemon leaves unreported: it writes a `daemon_died` notification on every other
+way out (`deathIsNews` in `daemon.go`).
 
 The daemon holds an exclusive OS lock on `<dataDir>/daemon.lock` for its whole
 lifetime (`acquireDaemonLock`, taken in `runServe` before the whatsmeow store is
@@ -38,8 +54,8 @@ linked-at. The serve process is the **sole writer**; transient CLI commands only
 it (and only when no daemon answers the socket, so there is no cross-process write
 clobber). On first start the daemon imports any legacy per-key files it finds into
 `state.json` and deletes them (lossless, idempotent). `daemon.log`
-(the ~5 MB self-capping debug log), `qr-code.png`, `daemon.lock`, `whatsapp.sock`,
-and the `stop-requested` IPC marker are NOT state and stay separate.
+(the ~5 MB self-capping debug log), `qr-code.png`, `daemon.lock`, and
+`whatsapp.sock` are NOT state and stay separate.
 
 ### One pairing primitive
 
@@ -75,7 +91,7 @@ Not part of the agent's vocabulary, kept for development:
 
 - `--notifications-dir <dir>` (default `~/agent/notifications`): where inbound notification JSON is written.
 - `--no-notifications`: write no notification files (messages are still stored and queryable).
-- `--instance <name>`: a second, isolated account/session under `~/.whatsapp/<name>/` (its own lock, socket, and daemon.log).
+- `--instance <name>`: a second, isolated account/session under `~/.whatsapp/<name>/` (its own lock, socket, daemon.log, and `whatsapp-<name>` pid record).
 - `--read-only`: passive mode. Blocks every write command, sends no read receipts, never broadcasts presence.
 - `--skip-senders <phone,phone,...>`: E.164 numbers whose inbound messages never notify (still stored).
 

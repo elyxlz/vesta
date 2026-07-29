@@ -186,27 +186,40 @@ pub(crate) fn load_settings() -> Settings {
 }
 
 pub(crate) fn save_settings(settings: &Settings) {
-    let path = settings_file();
+    save_json_atomic(&settings_file(), settings, None);
+}
+
+/// Atomic pretty-JSON persistence shared by vestad's stores: write `<path>.tmp`, apply
+/// `unix_mode` when given (before the rename, so the final file never exists with looser
+/// permissions), then rename over `path`. Failures are logged, never fatal.
+pub(crate) fn save_json_atomic<T: serde::Serialize>(path: &std::path::Path, value: &T, unix_mode: Option<u32>) {
     if let Some(parent) = path.parent() {
         if let Err(err) = std::fs::create_dir_all(parent) {
-            tracing::warn!(error = %err, "failed to create settings dir");
+            tracing::warn!(path = %path.display(), error = %err, "failed to create dir");
             return;
         }
     }
-    let data = match serde_json::to_string_pretty(settings) {
+    let data = match serde_json::to_string_pretty(value) {
         Ok(data) => data,
         Err(err) => {
-            tracing::warn!(error = %err, "failed to serialize settings");
+            tracing::warn!(path = %path.display(), error = %err, "failed to serialize");
             return;
         }
     };
     let tmp = path.with_extension("json.tmp");
     if let Err(err) = std::fs::write(&tmp, &data) {
-        tracing::warn!(error = %err, "failed to write settings.json.tmp");
+        tracing::warn!(path = %tmp.display(), error = %err, "failed to write tmp file");
         return;
     }
-    if let Err(err) = std::fs::rename(&tmp, &path) {
-        tracing::warn!(error = %err, "failed to rename settings.json.tmp");
+    #[cfg(unix)]
+    if let Some(mode) = unix_mode {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(mode)).ok();
+    }
+    #[cfg(not(unix))]
+    let _ = unix_mode;
+    if let Err(err) = std::fs::rename(&tmp, path) {
+        tracing::warn!(path = %path.display(), error = %err, "failed to replace file");
     }
 }
 

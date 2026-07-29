@@ -58,7 +58,8 @@ tasks remind delete <id>
 
 ## Data
 
-DB `~/.tasks/tasks.db`; metadata `~/.tasks/metadata/<id>.md`; logs `~/.tasks/logs/daemon.log`; PID `~/.tasks/serve.pid`.
+DB `~/.tasks/tasks.db`; metadata `~/.tasks/metadata/<id>.md`; logs `~/.tasks/logs/daemon.log`; startup log
+`~/agent/logs/tasks.log`; pid and port records `~/agent/data/daemons/tasks.pid` and `tasks.port`.
 
 ## Setup
 
@@ -68,9 +69,16 @@ uv tool install --editable ~/agent/skills/tasks/cli
 
 ## Background Daemon
 
-One daemon handles everything: task due-date monitoring, reminder scheduling, and the daily digest. `--notifications-dir` defaults to `~/agent/notifications`; pass it only to override. Register with vestad to get a port (see [vestad](../vestad/SKILL.md)) and add this startup command to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
+One daemon handles everything: task due-date monitoring, reminder scheduling, and the daily digest.
+
+`tasks daemon start|stop|restart|status`. Start is idempotent (a live daemon is a no-op) and owns
+the port registration with vestad; stop is the deliberate shutdown, so it does not fire the
+`daemon_died` notification every other exit fires. Manage the daemon through these commands, never
+by launching `tasks serve` yourself.
+
+Add this line yourself, inside the fenced block in the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
 ```
-running tasks || { PORT=$(~/agent/skills/vestad/scripts/register-service tasks) && screen -dmS tasks tasks serve --port $PORT; sleep 1; }
+tasks daemon start
 ```
 
 ### Reminder Patterns

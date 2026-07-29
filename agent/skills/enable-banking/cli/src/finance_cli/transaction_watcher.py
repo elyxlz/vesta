@@ -149,18 +149,18 @@ def serve() -> None:
     """Run the polling loop."""
     print(f"Transaction watcher started, polling every {POLL_INTERVAL}s")
 
-    # Seed on first run if no seen file
-    if not SEEN_FILE.exists():
-        print("First run — seeding existing transactions...")
-        seed_seen()
-
     while True:
         try:
-            new_txs = poll_once()
-            for tx in new_txs:
-                formatted = format_tx(tx)
-                print(f"New: {formatted}")
-                write_notification(tx)
+            # The seed is what keeps the first poll quiet, and it needs the config a watcher
+            # started before sign-in does not have yet, so a failure just waits a cycle.
+            if SEEN_FILE.exists():
+                for tx in poll_once():
+                    formatted = format_tx(tx)
+                    print(f"New: {formatted}")
+                    write_notification(tx)
+            else:
+                print("First run — seeding existing transactions...")
+                seed_seen()
         except Exception as e:
             print(f"Poll error: {e}", file=sys.stderr)
 

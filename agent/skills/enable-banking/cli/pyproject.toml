@@ -12,7 +12,6 @@ dependencies = [
 
 [project.scripts]
 finance = "finance_cli.cli:main"
-finance-watcher = "finance_cli.transaction_watcher:serve"
 
 [dependency-groups]
 dev = [

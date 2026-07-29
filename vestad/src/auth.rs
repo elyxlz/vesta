@@ -176,21 +176,79 @@ fn token_fingerprint(token: &str) -> String {
     hex::encode(&digest.as_ref()[..3])
 }
 
+/// Every credential the request presents: the Bearer header and the `?token=` query param.
+/// One place enumerates them so each carrier is checked identically.
+pub(crate) fn presented_tokens<'req>(
+    headers: &'req HeaderMap,
+    uri: &'req axum::http::Uri,
+) -> impl Iterator<Item = &'req str> {
+    let bearer = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "));
+    let query = uri
+        .query()
+        .and_then(|query| query.split('&').find_map(|pair| pair.strip_prefix("token=")));
+    bearer.into_iter().chain(query)
+}
+
 pub(crate) fn has_valid_api_auth(
     headers: &HeaderMap,
     uri: &axum::http::Uri,
     api_key: &str,
 ) -> bool {
-    let bearer_ok = headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .is_some_and(|token| verify_token(token, api_key));
-    let query_ok = uri
-        .query()
-        .and_then(|q| q.split('&').find_map(|p| p.strip_prefix("token=")))
-        .is_some_and(|token| verify_token(token, api_key));
-    bearer_ok || query_ok
+    presented_tokens(headers, uri).any(|token| verify_token(token, api_key))
+}
+
+/// The agent proxy's authorization decision, in one place. A public service is open; the
+/// api key or an access token opens anything; otherwise the request needs a live service
+/// key for exactly this agent and service. A key is never accepted on the raw-agent-port
+/// fallback (`service` is `None`), which is the only path carrying the injected agent
+/// token to the agent's own API. Pure and total, so the whole table is unit-testable.
+fn authorizes(
+    presented: &[&str],
+    api_key: &str,
+    agent: &str,
+    service_name: &str,
+    service: Option<&crate::settings::ServiceEntry>,
+    keys: &crate::service_keys::ServiceKeyStore,
+    now: u64,
+) -> bool {
+    if service.is_some_and(|entry| entry.public) {
+        return true;
+    }
+    if presented.iter().any(|&token| verify_token(token, api_key)) {
+        return true;
+    }
+    if service.is_none() {
+        return false;
+    }
+    presented
+        .iter()
+        .any(|&token| keys.accepts(agent, service_name, token, now))
+}
+
+/// Read the key store and the clock, then apply `authorizes`.
+pub(crate) async fn proxy_authorized(
+    state: &SharedState,
+    headers: &HeaderMap,
+    uri: &axum::http::Uri,
+    agent: &str,
+    service_name: &str,
+    service: Option<&crate::settings::ServiceEntry>,
+) -> bool {
+    let presented: Vec<&str> = presented_tokens(headers, uri).collect();
+    let now = crate::time_utils::now_epoch_secs();
+    let keys = state.service_keys.read().await;
+    authorizes(
+        &presented,
+        &state.api_key,
+        agent,
+        service_name,
+        service,
+        &keys,
+        now,
+    )
 }
 
 fn extract_agent_name(path: &str) -> Option<String> {
@@ -548,5 +606,247 @@ mod any_agent_token_tests {
     fn rejects_when_no_agents_exist() {
         let tmp = tempfile::tempdir().expect("tempdir");
         assert!(!any_agent_token_matches("tok-alpha", tmp.path()));
+    }
+}
+
+#[cfg(test)]
+mod presented_tokens_tests {
+    use super::presented_tokens;
+    use axum::http::{HeaderMap, HeaderValue, Uri};
+
+    fn bearer(token: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        let value = HeaderValue::from_str(&format!("Bearer {token}")).expect("ascii header");
+        headers.insert("authorization", value);
+        headers
+    }
+
+    #[test]
+    fn enumerates_the_bearer_header_and_the_token_query_param() {
+        let uri = Uri::from_static("/agents/alpha/tasks/tasks?token=from-query");
+        let headers = bearer("from-header");
+        let found: Vec<&str> = presented_tokens(&headers, &uri).collect();
+        assert_eq!(found, vec!["from-header", "from-query"]);
+    }
+
+    #[test]
+    fn yields_nothing_when_no_credential_is_presented() {
+        let uri = Uri::from_static("/agents/alpha/tasks/tasks");
+        assert_eq!(presented_tokens(&HeaderMap::new(), &uri).count(), 0);
+    }
+}
+
+/// One row per security claim `authorizes` makes. Each `assert` is a claim that would be an
+/// escalation if it flipped, so the rows are deliberately not collapsed into a loop.
+#[cfg(test)]
+mod authorization_table {
+    use super::{authorizes, presented_tokens};
+    use crate::jwt;
+    use crate::service_keys::ServiceKeyStore;
+    use crate::settings::ServiceEntry;
+    use axum::http::{HeaderMap, HeaderValue, Uri};
+
+    const API_KEY: &str = "the-api-key";
+    const NOW: u64 = 1_800_000_000;
+    const AGENT: &str = "alpha";
+    const SERVICE: &str = "dashboard";
+    const PRIVATE: ServiceEntry = ServiceEntry {
+        port: 9000,
+        public: false,
+    };
+    const PUBLIC: ServiceEntry = ServiceEntry {
+        port: 9001,
+        public: true,
+    };
+
+    /// A store holding one live key for `(alpha, dashboard)`, plus that key's secret.
+    fn store_with_live_key() -> (ServiceKeyStore, String) {
+        let mut store = ServiceKeyStore::default();
+        let (_, secret) = store.mint(AGENT, SERVICE, None, Some(NOW + 600), NOW);
+        (store, secret)
+    }
+
+    /// The decision for a request to the private `(alpha, dashboard)` service.
+    fn opens_private(presented: &[&str], keys: &ServiceKeyStore) -> bool {
+        authorizes(presented, API_KEY, AGENT, SERVICE, Some(&PRIVATE), keys, NOW)
+    }
+
+    #[test]
+    fn a_public_service_opens_with_no_credential_at_all() {
+        let keys = ServiceKeyStore::default();
+        assert!(authorizes(
+            &[],
+            API_KEY,
+            AGENT,
+            SERVICE,
+            Some(&PUBLIC),
+            &keys,
+            NOW
+        ));
+    }
+
+    #[test]
+    fn the_raw_api_key_opens_a_private_registered_service() {
+        let keys = ServiceKeyStore::default();
+        assert!(opens_private(&[API_KEY], &keys));
+    }
+
+    #[test]
+    fn an_access_jwt_opens_a_private_registered_service() {
+        let keys = ServiceKeyStore::default();
+        let access = jwt::create_token(API_KEY, "access", jwt::ACCESS_TOKEN_TTL);
+        assert!(opens_private(&[access.as_str()], &keys));
+    }
+
+    #[test]
+    fn a_live_key_opens_its_own_service_through_the_bearer_header() {
+        let (keys, secret) = store_with_live_key();
+        let mut headers = HeaderMap::new();
+        let value = HeaderValue::from_str(&format!("Bearer {secret}")).expect("ascii header");
+        headers.insert("authorization", value);
+        let uri = Uri::from_static("/agents/alpha/dashboard/");
+        let presented: Vec<&str> = presented_tokens(&headers, &uri).collect();
+        assert!(opens_private(&presented, &keys));
+    }
+
+    #[test]
+    fn a_live_key_opens_its_own_service_through_the_token_query_param() {
+        let (keys, secret) = store_with_live_key();
+        let uri: Uri = format!("/agents/alpha/dashboard/?token={secret}")
+            .parse()
+            .expect("valid uri");
+        let headers = HeaderMap::new();
+        let presented: Vec<&str> = presented_tokens(&headers, &uri).collect();
+        assert!(opens_private(&presented, &keys));
+    }
+
+    #[test]
+    fn a_key_for_another_agent_is_refused() {
+        let (keys, secret) = store_with_live_key();
+        assert!(!authorizes(
+            &[secret.as_str()],
+            API_KEY,
+            "beta",
+            SERVICE,
+            Some(&PRIVATE),
+            &keys,
+            NOW
+        ));
+    }
+
+    #[test]
+    fn a_key_for_another_service_on_the_same_agent_is_refused() {
+        let (keys, secret) = store_with_live_key();
+        assert!(!authorizes(
+            &[secret.as_str()],
+            API_KEY,
+            AGENT,
+            "voice",
+            Some(&PRIVATE),
+            &keys,
+            NOW
+        ));
+    }
+
+    /// No registered service matched, so this is the raw-agent-port fallback, the one path
+    /// that injects `X-Agent-Token` for the agent's own privileged API. A key must not reach
+    /// it, while the api key still must.
+    #[test]
+    fn a_key_is_refused_when_no_registered_service_matched() {
+        let (keys, secret) = store_with_live_key();
+        assert!(!authorizes(
+            &[secret.as_str()],
+            API_KEY,
+            AGENT,
+            SERVICE,
+            None,
+            &keys,
+            NOW
+        ));
+        assert!(authorizes(&[API_KEY], API_KEY, AGENT, SERVICE, None, &keys, NOW));
+    }
+
+    #[test]
+    fn an_expired_key_is_refused() {
+        let mut keys = ServiceKeyStore::default();
+        let (_, secret) = keys.mint(AGENT, SERVICE, None, Some(NOW - 1), NOW);
+        assert!(!opens_private(&[secret.as_str()], &keys));
+    }
+
+    #[test]
+    fn a_bare_request_is_refused_on_a_private_registered_service() {
+        let (keys, _) = store_with_live_key();
+        assert!(!opens_private(&[], &keys));
+        assert!(!opens_private(&["not-a-credential"], &keys));
+    }
+}
+
+#[cfg(test)]
+mod api_auth_tests {
+    use super::has_valid_api_auth;
+    use crate::service_keys::ServiceKeyStore;
+    use axum::http::{HeaderMap, HeaderValue, Uri};
+
+    const API_KEY: &str = "the-api-key";
+    const NOW: u64 = 1_800_000_000;
+    const NO_QUERY: &str = "/agents/alpha/dashboard/";
+
+    fn bearer(token: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        let value = HeaderValue::from_str(&format!("Bearer {token}")).expect("ascii header");
+        headers.insert("authorization", value);
+        headers
+    }
+
+    fn query_uri(token: &str) -> Uri {
+        format!("{NO_QUERY}?token={token}")
+            .parse()
+            .expect("valid uri")
+    }
+
+    #[test]
+    fn the_api_key_opens_a_route_through_either_carrier() {
+        assert!(has_valid_api_auth(
+            &bearer(API_KEY),
+            &Uri::from_static(NO_QUERY),
+            API_KEY
+        ));
+        assert!(has_valid_api_auth(
+            &HeaderMap::new(),
+            &query_uri(API_KEY),
+            API_KEY
+        ));
+    }
+
+    #[test]
+    fn a_wrong_or_absent_token_is_refused_in_either_carrier() {
+        let plain = Uri::from_static(NO_QUERY);
+        assert!(!has_valid_api_auth(&bearer("not-the-key"), &plain, API_KEY));
+        assert!(!has_valid_api_auth(
+            &HeaderMap::new(),
+            &query_uri("not-the-key"),
+            API_KEY
+        ));
+        assert!(!has_valid_api_auth(&HeaderMap::new(), &plain, API_KEY));
+    }
+
+    /// Every api-key middleware (gateway admin, agent admin, `/sync`, the mint route
+    /// itself) runs on `has_valid_api_auth`. A service key opening none of them is what
+    /// keeps a key scoped to its one service instead of becoming a gateway credential,
+    /// so it must be refused in both carriers the proxy also reads it from.
+    #[test]
+    fn a_service_key_is_not_an_api_credential() {
+        let mut store = ServiceKeyStore::default();
+        let (_, secret) = store.mint("alpha", "dashboard", None, Some(NOW + 600), NOW);
+        assert!(!has_valid_api_auth(
+            &bearer(&secret),
+            &Uri::from_static(NO_QUERY),
+            API_KEY
+        ));
+        assert!(!has_valid_api_auth(
+            &HeaderMap::new(),
+            &query_uri(&secret),
+            API_KEY
+        ));
     }
 }

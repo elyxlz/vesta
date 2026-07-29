@@ -170,8 +170,8 @@ func decideRemoval(preserve preserveDecision, onConnectConflict, conflictEpisode
 	return removalClear
 }
 
-// reExecDaemon restarts the serve process in place (same PID, so the surrounding
-// `screen` session survives) after a preserve-reconnect flag has been set. The
+// reExecDaemon restarts the serve process in place (same PID, so the recorded pid
+// keeps pointing at it) after a preserve-reconnect flag has been set. The
 // re-exec'd process runs runServe again, which restores the last-good device
 // before opening the store, then reconnects. Does not return on success.
 func (wac *WhatsAppClient) reExecDaemon() {

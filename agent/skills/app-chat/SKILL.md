@@ -13,14 +13,14 @@ uv tool install --editable ~/agent/skills/app-chat/cli
 ```
 
 **Daemon**: `app-chat daemon start|stop|restart|status`:
-- Start is idempotent (a running daemon is a no-op)
-- Stop marks the shutdown as intentional so it doesn't fire a `daemon_died` notification
-- Status reports the daemon process state plus its service port and connected client count as JSON
+- Start is idempotent (a running daemon is a no-op) and owns the port registration with vestad
+- Stop is the deliberate shutdown, so it doesn't fire the `daemon_died` notification every other exit fires
+- Status reports whether the daemon is up and on which port, read from `~/agent/data/daemons/app-chat.pid` and `app-chat.port`
 
-Manage the daemon through these commands, not raw `screen`.
+Manage the daemon through these commands, not by launching `app-chat serve` yourself. Startup output lands in `~/agent/logs/app-chat.log`.
 **Restart**: Add to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
 ```
-running app-chat || { app-chat daemon start; sleep 1; }
+app-chat daemon start
 ```
 `app-chat daemon start` registers the `app-chat` service (getting its port) and starts the HTTP
 server (intake, history, and the live `/ws` chat socket).

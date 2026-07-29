@@ -1,5 +1,6 @@
 """Upgrade-driven upstream sync trigger, with Git history as the source of truth."""
 
+import os
 import subprocess
 import tomllib
 
@@ -7,6 +8,9 @@ from . import config as cfg
 from . import logger
 
 UNKNOWN_VERSION = "unknown"
+# vestad bind-mounts the snapshot repo here read-only; fetch-upstream.sh reads the same path and
+# honors the same VESTA_UPSTREAM_SOURCE override, so both agree on where the snapshot lives.
+MOUNTED_UPSTREAM_REPO = "/run/vesta-upstream/upstream.git"
 
 
 def vesta_version(config: cfg.VestaConfig) -> str:
@@ -24,9 +28,24 @@ def vesta_version(config: cfg.VestaConfig) -> str:
 
 def workspace_synced(config: cfg.VestaConfig, version: str) -> bool:
     """Whether this version's stock snapshot is already part of the workspace history."""
+    workspace = str(config.agent_dir.parent)
+    tag = f"agent-v{version}"
+    source = os.environ["VESTA_UPSTREAM_SOURCE"] if "VESTA_UPSTREAM_SOURCE" in os.environ else MOUNTED_UPSTREAM_REPO
     try:
+        # build-upstream re-tags agent-v<version> onto each fresh snapshot, so one version can move
+        # to a newer commit than the local tag records. `git fetch` won't advance an existing tag
+        # without --force, so refresh it from the snapshot repo before asking whether it is in
+        # history: a stale tag reads as merged and the sync turn never fires. Best-effort, a missing
+        # source leaves the local tag and the ancestry check falls back to it.
+        subprocess.run(
+            ["git", "-C", workspace, "fetch", "--force", source, f"+refs/tags/{tag}:refs/tags/{tag}"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
         result = subprocess.run(
-            ["git", "-C", str(config.agent_dir.parent), "merge-base", "--is-ancestor", f"agent-v{version}", "HEAD"],
+            ["git", "-C", workspace, "merge-base", "--is-ancestor", tag, "HEAD"],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,

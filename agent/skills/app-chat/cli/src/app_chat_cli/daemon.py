@@ -6,24 +6,23 @@ GET /ws, the replay-free live chat stream), and accepts CLI commands via a Unix 
 vestad so a backgrounded client gets one). Durability is the skill's own store, so a reply succeeds even
 with no client connected; the live echo fans out in-process to whoever is on /ws.
 
-`app-chat daemon start|stop|restart|status` owns the process lifecycle: start is idempotent
-(a live daemon is a no-op), stop marks the shutdown as intentional so it does not fire the
-`daemon_died` notification a crash would, and status reports the service port + connected chat-socket
-client count to the agent in one JSON blob.
+`app-chat daemon start|stop|restart|status` owns the process lifecycle: start registers the port with
+vestad and records it beside the pid, stop is a SIGTERM the serve path reads as deliberate, and status
+answers from those two records alone.
 """
 
 import argparse
 import asyncio
+import contextlib
 import functools
+import io
 import json
 import os
 import pathlib as pl
-import shutil
 import signal
 import subprocess
 import sys
 import time
-import typing as tp
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -32,23 +31,35 @@ from aiohttp import web
 from .service import ServiceState, create_app
 from .store import Store, StoredEvent, store_path
 
-SOCKET_TIMEOUT = 10.0
-SESSION_NAME = "app-chat"
-STOP_MARKER_NAME = "stop-requested"
-DAEMON_START_TIMEOUT = 15.0
-DAEMON_STOP_TIMEOUT = 15.0
-DAEMON_POLL_INTERVAL = 0.5
+NAME = "app-chat"
+DAEMONS_DIR = pl.Path.home() / "agent/data/daemons"
+PIDFILE = DAEMONS_DIR / f"{NAME}.pid"
+PORTFILE = DAEMONS_DIR / f"{NAME}.port"
+LOG = pl.Path.home() / "agent/logs" / f"{NAME}.log"
+# The service answers /health with nothing connected to it, so it doubles as the readiness probe.
+READY_URL_PATH = "health"
+USAGE = f"Usage: {NAME} daemon <start|stop|restart|status>"
+POLL_SECS = 0.5
+# How long a start that lost the record claim waits for the rival start to resolve.
+CLAIM_WAIT_SECS = 3
+# One hung connection must not eat the whole readiness budget.
+PROBE_TIMEOUT_SECS = 2
 USER_NOTIFICATION_TIMEOUT = 10.0
 
-REGISTER_SERVICE = pl.Path.home() / "agent" / "skills" / "vestad" / "scripts" / "register-service"
 USER_NOTIFICATION = pl.Path.home() / "agent" / "skills" / "vestad" / "scripts" / "user-notification"
 
 
-def resolve_port() -> int:
-    result = subprocess.run([str(REGISTER_SERVICE), "app-chat"], capture_output=True, text=True, timeout=35, check=False)
-    if result.returncode != 0 or not result.stdout.strip():
-        raise RuntimeError(f"register-service failed: {result.stderr.strip()}")
-    return int(result.stdout.strip())
+def _budget(name: str, default: int) -> int:
+    return int(os.environ[name]) if name in os.environ else default
+
+
+READY_TIMEOUT_SECS = _budget("DAEMON_READY_TIMEOUT_SECS", 30)
+STOP_TIMEOUT_SECS = _budget("DAEMON_STOP_TIMEOUT_SECS", 15)
+
+
+def _fail(message: str) -> int:
+    print(json.dumps({"error": message}), file=sys.stderr)
+    return 1
 
 
 def default_data_dir() -> pl.Path:
@@ -63,10 +74,6 @@ def _sock_path(data_dir: pl.Path) -> pl.Path:
     return data_dir / "app-chat.sock"
 
 
-def _stop_marker_path(data_dir: pl.Path) -> pl.Path:
-    return data_dir / STOP_MARKER_NAME
-
-
 @dataclass
 class DaemonState:
     sock_path: pl.Path
@@ -75,13 +82,13 @@ class DaemonState:
     port: int
     service: ServiceState
     shutdown: asyncio.Event = field(default_factory=asyncio.Event)
+    asked_to_stop: bool = False
 
 
 def _send_user_notification(text: str) -> None:
     """Best-effort: tell vestad an app reply went out so it toasts + pushes. A failure here never fails
     the reply (durability + the live echo already happened); it only skips the toast/push, so swallow a
-    spawn error and cap a hung script. The user-notification script lands with the user-notification
-    primitive, so the USER_NOTIFICATION.exists() guard no-ops until then."""
+    spawn error and cap a hung script."""
     agent = os.environ.get("AGENT_NAME")
     if agent is None or not USER_NOTIFICATION.exists():
         return
@@ -100,23 +107,32 @@ def _send_user_notification(text: str) -> None:
 def cmd_serve(args: argparse.Namespace) -> None:
     data_dir = pl.Path(args.data_dir or default_data_dir())
     data_dir.mkdir(parents=True, exist_ok=True)
-    port = args.port if args.port is not None else resolve_port()
+    port = str(args.port) if args.port is not None else _register_port()
+    if port is None:
+        sys.exit(_fail(f"could not register {NAME} with vestad"))
 
     service = ServiceState(Store(store_path(data_dir)), default_notifications_dir())
     state = DaemonState(
         sock_path=_sock_path(data_dir),
         data_dir=data_dir,
         notifications_dir=default_notifications_dir(),
-        port=port,
+        port=int(port),
         service=service,
     )
     asyncio.run(_run(state))
 
 
+def _begin_shutdown(state: DaemonState, sig: signal.Signals) -> None:
+    """SIGTERM is what `app-chat daemon stop` sends, so it is the one exit the agent asked for;
+    every other way out is news the agent needs."""
+    state.asked_to_stop = sig == signal.SIGTERM
+    state.shutdown.set()
+
+
 async def _run(state: DaemonState) -> None:
     loop = asyncio.get_event_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, state.shutdown.set)
+        loop.add_signal_handler(sig, functools.partial(_begin_shutdown, state, sig))
 
     runner = web.AppRunner(create_app(state.service))
     await runner.setup()
@@ -132,18 +148,8 @@ async def _run(state: DaemonState) -> None:
         await runner.cleanup()
         state.service.store.close()
         state.sock_path.unlink(missing_ok=True)
-        _consume_stop_marker_or_report_death(state.data_dir, state.notifications_dir)
-
-
-def _consume_stop_marker_or_report_death(data_dir: pl.Path, notifications_dir: pl.Path) -> None:
-    """A deliberate `daemon stop` drops a marker before signaling the process; consume it silently
-    here. Any other exit (crash, `screen -X quit` without the marker, OOM) is unexpected, so report
-    it as a `daemon_died` notification the agent can investigate."""
-    marker = _stop_marker_path(data_dir)
-    if marker.exists():
-        marker.unlink(missing_ok=True)
-        return
-    write_death_notification(notifications_dir)
+        if not state.asked_to_stop:
+            write_death_notification(state.notifications_dir)
 
 
 def write_death_notification(notifications_dir: pl.Path) -> None:
@@ -201,110 +207,172 @@ async def _handle_socket_conn(state: DaemonState, reader: asyncio.StreamReader, 
         await writer.wait_closed()
 
 
-async def socket_request(sock_path: pl.Path, request: dict[str, str], timeout: float = SOCKET_TIMEOUT) -> dict[str, object]:
+def live_pid() -> int | None:
     try:
-        reader, writer = await asyncio.open_unix_connection(str(sock_path))
-        writer.write(json.dumps(request).encode())
-        writer.write_eof()
-        data = await asyncio.wait_for(reader.read(65536), timeout=timeout)
-        writer.close()
-        await writer.wait_closed()
-        return tp.cast(dict[str, object], json.loads(data.decode()))
-    except (OSError, TimeoutError, json.JSONDecodeError) as exc:
-        return {"error": str(exc)}
+        pid = int(PIDFILE.read_text().strip())
+        os.kill(pid, 0)
+    except (FileNotFoundError, ValueError, ProcessLookupError, PermissionError):
+        return None
+    return pid
 
 
-def daemon_alive(sock_path: pl.Path) -> bool:
-    if not sock_path.exists():
+def _register_port() -> str | None:
+    result = subprocess.run(["register-service", NAME], capture_output=True, text=True, check=False)
+    port = result.stdout.strip()
+    return port if result.returncode == 0 and port else None
+
+
+def _ready(port: str) -> bool:
+    probe = subprocess.run(
+        ["curl", "-m", str(PROBE_TIMEOUT_SECS), "-fsS", "-o", "/dev/null", f"http://localhost:{port}/{READY_URL_PATH}"],
+        capture_output=True,
+        check=False,
+    )
+    return probe.returncode == 0
+
+
+def _abandon(child: subprocess.Popen[bytes], message: str) -> int:
+    """A start that gives up takes its child and both records with it: a daemon nothing can reach,
+    with records that say it is up, reads as running and turns every later start into a no-op."""
+    child.terminate()
+    try:
+        child.wait(timeout=STOP_TIMEOUT_SECS)
+    except subprocess.TimeoutExpired:
+        child.kill()
+        child.wait()
+    PIDFILE.unlink(missing_ok=True)
+    PORTFILE.unlink(missing_ok=True)
+    return _fail(message)
+
+
+def _await_ready(child: subprocess.Popen[bytes], port: str) -> int:
+    """Holds the start open until the daemon it spawned answers on its port, which is what lets
+    the caller's next line use the service."""
+    deadline = time.monotonic() + READY_TIMEOUT_SECS
+    while time.monotonic() < deadline:
+        if child.poll() is not None:
+            return _abandon(child, f"{NAME} exited during startup; see {LOG}")
+        if _ready(port):
+            print(json.dumps({"status": "started"}))
+            return 0
+        time.sleep(POLL_SECS)
+    return _abandon(child, f"{NAME} never answered on port {port}; see {LOG}")
+
+
+def _claim(pid: int) -> bool:
+    try:
+        record = os.open(PIDFILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
         return False
-    result = asyncio.run(socket_request(sock_path, {"command": "status"}))
-    return "error" not in result
+    with os.fdopen(record, "w") as handle:
+        handle.write(str(pid))
+    return True
 
 
-def _print(payload: dict[str, object]) -> None:
-    print(json.dumps(payload))
-
-
-def cmd_daemon_start(args: argparse.Namespace) -> None:
-    data_dir = pl.Path(args.data_dir or default_data_dir())
-    sock_path = _sock_path(data_dir)
-
-    if daemon_alive(sock_path):
-        _print({"status": "already_running", "session": SESSION_NAME})
-        return
-
-    screen_bin = shutil.which("screen")
-    if screen_bin is None:
-        _print({"error": "screen is not on PATH"})
-        sys.exit(1)
-    app_chat_bin = shutil.which("app-chat")
-    if app_chat_bin is None:
-        _print({"error": "app-chat is not on PATH; install it per SKILL.md first"})
-        sys.exit(1)
-
-    # A stop marker can outlive its daemon (a stop that raced the process's death, or a failed
-    # quit), so clear it before launching; this fresh daemon's own unexpected death then still
-    # fires daemon_died instead of silently consuming the stale marker.
-    data_dir.mkdir(parents=True, exist_ok=True)
-    _stop_marker_path(data_dir).unlink(missing_ok=True)
-    subprocess.run([screen_bin, "-dmS", SESSION_NAME, app_chat_bin, "serve"], check=False)
-
-    deadline = time.monotonic() + DAEMON_START_TIMEOUT
+def _claim_start() -> int | None:
+    """Takes the pid record exclusively for this start, so a start that loses the claim answers
+    already_running instead of stacking a daemon beside the winner's. A record no process stands
+    behind is cleared and taken over, which is the one path on which two starts can both spawn, and
+    the duplicate loses on its own resources. None means this start owns the record and everything
+    it later removes; anything else is this start's whole answer."""
+    if _claim(os.getpid()):
+        return None
+    deadline = time.monotonic() + CLAIM_WAIT_SECS
     while time.monotonic() < deadline:
-        if daemon_alive(sock_path):
-            _print({"status": "started", "session": SESSION_NAME})
-            return
-        time.sleep(DAEMON_POLL_INTERVAL)
-    _print({"error": f"daemon did not answer on {sock_path} within {DAEMON_START_TIMEOUT}s"})
-    sys.exit(1)
+        if live_pid() is not None:
+            print(json.dumps({"status": "already_running"}))
+            return 0
+        if not PIDFILE.exists():
+            break
+        time.sleep(POLL_SECS)
+    PIDFILE.unlink(missing_ok=True)
+    if _claim(os.getpid()):
+        return None
+    return _fail(f"another {NAME} start holds {PIDFILE}")
 
 
-def cmd_daemon_stop(args: argparse.Namespace) -> None:
-    data_dir = pl.Path(args.data_dir or default_data_dir())
-    sock_path = _sock_path(data_dir)
+def _start() -> int:
+    if live_pid() is not None:
+        print(json.dumps({"status": "already_running"}))
+        return 0
+    DAEMONS_DIR.mkdir(parents=True, exist_ok=True)
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    answer = _claim_start()
+    if answer is not None:
+        return answer
+    port = _register_port()
+    if port is None:
+        PIDFILE.unlink(missing_ok=True)
+        return _fail(f"could not register {NAME} with vestad; not launching")
+    PORTFILE.write_text(port)
+    with LOG.open("ab") as log:
+        child = subprocess.Popen([sys.argv[0], "serve", "--port", port], start_new_session=True, stdout=log, stderr=log)
+    PIDFILE.write_text(str(child.pid))
+    return _await_ready(child, port)
 
-    if not daemon_alive(sock_path):
-        _print({"status": "already_stopped", "session": SESSION_NAME})
-        return
 
-    # Drop the marker before signaling so the serve process's shutdown finds it and skips the
-    # daemon_died notification; a crash never writes this marker, so it still gets reported.
-    data_dir.mkdir(parents=True, exist_ok=True)
-    _stop_marker_path(data_dir).write_text("")
-
-    screen_bin = shutil.which("screen")
-    if screen_bin is None:
-        _print({"error": "screen is not on PATH"})
-        sys.exit(1)
-    subprocess.run([screen_bin, "-S", SESSION_NAME, "-X", "quit"], check=False)
-
-    deadline = time.monotonic() + DAEMON_STOP_TIMEOUT
+def _await_gone(deadline: float) -> bool:
+    """Waits out the daemon until a deadline shared with the rest of this stop. Answers whether
+    the process the record names is gone."""
     while time.monotonic() < deadline:
-        if not daemon_alive(sock_path):
-            _print({"status": "stopped", "session": SESSION_NAME})
-            return
-        time.sleep(DAEMON_POLL_INTERVAL)
-    _print({"error": f"daemon still answering after screen quit; inspect with 'screen -r {SESSION_NAME}'"})
-    sys.exit(1)
+        if live_pid() is None:
+            return True
+        time.sleep(POLL_SECS)
+    return live_pid() is None
 
 
-def cmd_daemon_restart(args: argparse.Namespace) -> None:
-    cmd_daemon_stop(args)
-    cmd_daemon_start(args)
+def _stop() -> int:
+    """SIGTERM then, for a daemon that ignored it, SIGKILL, both inside the one stop budget,
+    so the verb ends the daemon rather than handing back a record it cannot honour. A daemon
+    that exits between the check and the signal is the stop it was asked for, not an error."""
+    pid = live_pid()
+    if pid is None:
+        print(json.dumps({"status": "already_stopped"}))
+        return 0
+    started = time.monotonic()
+    with contextlib.suppress(ProcessLookupError):
+        os.kill(pid, signal.SIGTERM)
+    # Two thirds of the budget in, a daemon that has not honoured SIGTERM is killed instead, and
+    # the remainder is what reaps it. Read here, not at import, so the budget in force is the one
+    # the caller set.
+    if not _await_gone(started + STOP_TIMEOUT_SECS * 2 // 3):
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGKILL)
+        if not _await_gone(started + STOP_TIMEOUT_SECS):
+            return _fail(f"{NAME} still running {STOP_TIMEOUT_SECS}s after SIGTERM then SIGKILL (pid={pid})")
+    PIDFILE.unlink(missing_ok=True)
+    PORTFILE.unlink(missing_ok=True)
+    print(json.dumps({"status": "stopped"}))
+    return 0
 
 
-def cmd_daemon_status(args: argparse.Namespace) -> None:
-    data_dir = pl.Path(args.data_dir or default_data_dir())
-    sock_path = _sock_path(data_dir)
+def _status() -> int:
+    """Reads the port start recorded, never registration, so status answers instantly and
+    truthfully while vestad is down."""
+    running = live_pid() is not None
+    port = PORTFILE.read_text().strip() if running and PORTFILE.exists() else ""
+    print(json.dumps({"running": running, "port": int(port) if port else None}))
+    return 0
 
-    status = asyncio.run(socket_request(sock_path, {"command": "status"})) if sock_path.exists() else {"error": "not running"}
-    running = "error" not in status
 
-    result: dict[str, object] = {"running": running, "session": SESSION_NAME}
-    if running:
-        result["port"] = status["port"]
-        result["clients"] = status["clients"]
-    _print(result)
+def daemon_cmd(action: str) -> int:
+    if action in ("", "-h", "--help", "help"):
+        print(USAGE)
+        return 0
+    if action == "start":
+        return _start()
+    if action == "stop":
+        return _stop()
+    if action == "restart":
+        # One verb, one line of output: the stop half is swallowed, and a stop that failed
+        # must not be followed by a start onto a daemon that is still there.
+        with contextlib.redirect_stdout(io.StringIO()):
+            stopped = _stop()
+        return _start() if stopped == 0 else stopped
+    if action == "status":
+        return _status()
+    print(USAGE, file=sys.stderr)
+    return 1
 
 
 def _log(message: str) -> None:

@@ -56,13 +56,13 @@ shipped yet, see issue #464 for the followup.
 /root/.local/share/uv/tools/finance/bin/python -m finance_cli.transaction_watcher seed
 
 # Start daemon
-screen -dmS finance /root/.local/share/uv/tools/finance/bin/python -m finance_cli.transaction_watcher serve
+finance daemon start
 ```
 
 ## 6. Register the service
 
-So the watcher comes back after a container restart, register it for restart (see [vestad](../vestad/SKILL.md)) with this startup command:
+So the watcher comes back after a container restart, register it for restart (see [vestad](../vestad/SKILL.md)) with this startup line:
 
 ```
-screen -dmS finance /root/.local/share/uv/tools/finance/bin/python -m finance_cli.transaction_watcher serve
+finance daemon start
 ```

@@ -15,6 +15,12 @@ A default config is created on first run with a placeholder `default` provider. 
 
 ## CLI
 
+Put the command on PATH once, then call it by name:
+
+```bash
+mkdir -p ~/.local/bin && ln -sf ~/agent/skills/vpn/vpn ~/.local/bin/vpn
+```
+
 ```bash
 ~/agent/skills/vpn/vpn status                # Active provider + connectivity check
 ~/agent/skills/vpn/vpn test                  # Connectivity test through the proxy

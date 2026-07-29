@@ -14,7 +14,7 @@ Provides the `voice-server` and `voice-keys` commands.
    ```bash
    voice-keys daemon start
    ```
-   Idempotent (a running daemon is a no-op) and owns the register-service call (see [vestad](../vestad/SKILL.md)). Check with `voice-keys daemon status`.
+   Idempotent (a running daemon is a no-op) and owns the register-service call (see [vestad](../vestad/SKILL.md)). Check with `voice-keys daemon status`, which reads the pid and port records at `~/agent/data/daemons/voice.pid` and `voice.port`; startup output lands in `~/agent/logs/voice.log`.
 2. Add this startup command to the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
    ```
    voice-keys daemon start

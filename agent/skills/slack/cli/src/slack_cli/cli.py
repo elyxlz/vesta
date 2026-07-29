@@ -4,7 +4,9 @@ import argparse
 import datetime as dt
 import logging
 import pathlib
+import sys
 import threading
+import time
 import typing as tp
 
 import pydantic as pyd
@@ -15,9 +17,13 @@ from slack_sdk.socket_mode.request import SocketModeRequest
 from slack_sdk.socket_mode.response import SocketModeResponse
 from slack_sdk.web import SlackResponse
 
+from slack_cli import daemon
 from slack_cli.notif import ResolveName, SlackMessageEvent, build_notification, humanize_mentions, write_notification
 
 CREDENTIALS_PATH = pathlib.Path.home() / ".slack" / "credentials.json"
+NOTIFICATIONS_DIR = pathlib.Path.home() / "agent" / "notifications"
+CREDENTIALS_POLL_SECS = 60
+
 PAGE_LIMIT = 200
 
 logger = logging.getLogger("slack")
@@ -150,8 +156,17 @@ def cmd_authenticate(bot_token: str, app_token: str) -> None:
     print(f"authenticated to {auth['team']} as {auth['user']} ({auth['user_id']})")
 
 
+def wait_for_credentials() -> Credentials:
+    """The watcher outlives setup, so one started before the tokens are stored waits for them
+    instead of exiting and leaving the agent with a daemon that is down."""
+    while not CREDENTIALS_PATH.exists():
+        logger.info("no credentials at %s yet; waiting", CREDENTIALS_PATH)
+        time.sleep(CREDENTIALS_POLL_SECS)
+    return Credentials.model_validate_json(CREDENTIALS_PATH.read_text())
+
+
 def cmd_serve(notifications_dir: pathlib.Path) -> None:
-    credentials = load_credentials()
+    credentials = wait_for_credentials()
     web = WebClient(token=credentials.bot_token)
     bot_user_id: str = web.auth_test()["user_id"]
     resolve_user = make_user_resolver(web)
@@ -220,7 +235,10 @@ def main() -> None:
     authenticate.add_argument("--app-token", required=True, help="app-level token with connections:write (xapp...)")
 
     serve = sub.add_parser("serve", help="run the Socket Mode daemon that writes notifications")
-    serve.add_argument("--notifications-dir", required=True, type=pathlib.Path)
+    serve.add_argument("--notifications-dir", default=NOTIFICATIONS_DIR, type=pathlib.Path)
+
+    daemon_parser = sub.add_parser("daemon", help="manage the background daemon: start|stop|restart|status")
+    daemon_parser.add_argument("action", nargs="?", default="", metavar="start|stop|restart|status")
 
     send = sub.add_parser("send", help="post a message")
     send.add_argument("target", help="#channel, @user, or a raw id (C.../D.../U...)")
@@ -235,11 +253,17 @@ def main() -> None:
     history.add_argument("--limit", type=int, default=20)
     history.add_argument("--thread", help="parent message ts to read that thread")
 
+    if len(sys.argv) == 1 or sys.argv[1] == "help":
+        parser.print_help()
+        return
+
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
         if args.command == "authenticate":
             cmd_authenticate(args.bot_token, args.app_token)
+        elif args.command == "daemon":
+            sys.exit(daemon.daemon_cmd(args.action))
         elif args.command == "serve":
             cmd_serve(args.notifications_dir)
         else:
