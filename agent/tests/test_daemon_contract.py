@@ -276,7 +276,7 @@ SKILLS = [
         env=(("DAEMON_READY_TIMEOUT_SECS", "45"), ("TG_WATCHDOG_INTERVAL", "3600")),
     ),
     Daemon(
-        command=[str(SKILLS_DIR / "ssh/ssh-tunnel")],
+        command=[str(SKILLS_DIR / "ssh-tunnel/ssh-tunnel")],
         name="ssh-tunnel",
         serves_port=False,
         emits_daemon_died=False,

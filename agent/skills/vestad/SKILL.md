@@ -21,9 +21,9 @@ This skill's helpers are commands: `register-service`, `service-key`, `user-noti
 `vestad-health`. Agent startup links every executable in this skill's `scripts/` directory onto
 `PATH` under its filename, so a full path like
 `~/agent/skills/vestad/scripts/register-service` runs exactly the same script. The same startup
-step links each skill's launchers sitting at the root of its directory (`<skill>/<skill>` plus any
-`<skill>/<skill>-*`), so those resolve with no setup of their own; a skill keeping its executables
-anywhere else installs them itself and says so in its own docs (`email-client`, from `bin/`).
+step links each skill's launcher sitting at the root of its directory (`<skill>/<skill>`), so it
+resolves with no setup of its own; a skill keeping its executables anywhere else installs them
+itself and says so in its own docs (`email-client`, from `bin/`).
 
 Restarting or stopping this agent is not a curl: use the `restart_vesta` / `stop_vesta`
 tools, which call vestad's self-scoped lifecycle endpoints.
@@ -75,11 +75,12 @@ skill without one is a single executable at `~/agent/skills/<skill>/<skill>`, an
 links that command onto PATH on every boot. A command you just wrote runs by its path until the
 next boot.
 
-A skill's command is normally its directory name, and each skill's own docs name the command it
-installs, so read those rather than assuming. `ssh-tunnel` is the one suffixed name, taken because
-`ssh` is the system client and a skill never shadows a system command; `voice-keys` (the `voice`
-skill) and `finance` (the `enable-banking` skill) are commands that simply differ from their
-skill's directory.
+A skill's command is its directory name, always. A skill whose name would shadow a system command
+names its directory to dodge the collision instead: the ssh tunnel lives in `ssh-tunnel/`, so its
+command is `ssh-tunnel` and never `ssh`. A CLI installed as a uv console script is a separate
+mechanism and can carry any name its project declares, which is why `voice-keys` (the `voice`
+skill) and `finance` (the `enable-banking` skill) differ from their directory; each skill's own
+docs name the command it installs, so read those rather than assuming.
 
 Each verb prints exactly one line of JSON on stdout:
 

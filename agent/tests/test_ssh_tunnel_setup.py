@@ -13,7 +13,7 @@ import subprocess
 import pytest
 
 REPO_ROOT = pl.Path(__file__).resolve().parents[2]
-SSH_TUNNEL = REPO_ROOT / "agent/skills/ssh/ssh-tunnel"
+SSH_TUNNEL = REPO_ROOT / "agent/skills/ssh-tunnel/ssh-tunnel"
 KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFirst first@laptop"
 OTHER_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAISecond second@desktop"
 SSHD_PORT = 2201

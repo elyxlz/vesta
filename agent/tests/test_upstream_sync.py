@@ -699,38 +699,14 @@ def test_agent_startup_links_a_launcher_that_arrives_with_the_sync(tmp_path):
     assert _bin(home, "whatsapp").readlink() == _launcher(home, "whatsapp").resolve()
 
 
-def _suffixed_launcher(home, skill, name):
-    launcher = home / "agent/skills" / skill / name
-    launcher.parent.mkdir(parents=True, exist_ok=True)
-    launcher.write_text(f"#!/usr/bin/env bash\necho {name}\n")
-    launcher.chmod(0o755)
-    return launcher
-
-
-def test_agent_startup_links_a_launcher_whose_name_extends_its_skill(tmp_path):
-    """A skill whose own name would shadow a system binary drives its daemon by a longer command,
-    and that command has to resolve on PATH like any other launcher."""
+def test_agent_startup_links_a_launcher_named_for_its_directory(tmp_path):
+    """A skill named to dodge a system-binary collision (`ssh-tunnel`, not `ssh`) resolves by the
+    plain `<skill>/<skill>` convention like any other launcher, with no special case."""
     home = _bin_box(tmp_path)
-    launcher = _suffixed_launcher(home, "ssh", "ssh-tunnel")
+    _launcher(home, "ssh-tunnel").parent.mkdir(parents=True, exist_ok=True)
+    _launcher(home, "ssh-tunnel").write_text("#!/usr/bin/env bash\necho ssh-tunnel\n")
     assert _run_agent_startup(home).returncode == 0
-    assert _bin(home, "ssh-tunnel").readlink() == launcher.resolve()
-
-
-def test_agent_startup_keeps_a_skill_script_with_an_extension_off_path(tmp_path):
-    """A skill holds executables that are not commands, so only extensionless names are linked."""
-    home = _bin_box(tmp_path)
-    _suffixed_launcher(home, "telegram", "telegram-watchdog.sh")
-    assert _run_agent_startup(home).returncode == 0
-    assert not _bin(home, "telegram-watchdog.sh").exists()
-
-
-def test_agent_startup_keeps_a_skill_file_that_cannot_be_run_off_path(tmp_path):
-    """A command is what the skill marked runnable, so a plain file is data whatever its name."""
-    home = _bin_box(tmp_path)
-    data = _suffixed_launcher(home, "ssh", "ssh-hosts")
-    data.chmod(0o644)
-    assert _run_agent_startup(home).returncode == 0
-    assert not _bin(home, "ssh-hosts").exists()
+    assert _bin(home, "ssh-tunnel").readlink() == _launcher(home, "ssh-tunnel").resolve()
 
 
 def test_agent_startup_links_a_launcher_of_an_inactive_skill(tmp_path):
