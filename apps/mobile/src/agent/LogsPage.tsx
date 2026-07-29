@@ -1,9 +1,9 @@
-import { readSse } from "@vesta/core";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FlatList, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { ApiClient } from "@/api/client";
 import { useAgent } from "@/agent/AgentProvider";
+import { openAgentLogStream } from "@/agent/agent-log-stream";
 import { addLatestLogLine, type LogLine } from "@/agent/log-list-model";
 import { subscribeLogs } from "@/agent/log-stream-subscription";
 import { useBottomAnchoredFeed } from "@/agent/use-bottom-anchored-feed";
@@ -52,17 +52,8 @@ function LiveLogs({
   useEffect(
     () =>
       subscribeLogs({
-        // The api client's request carries the Bearer header and refreshes the token, so a
-        // reopened stream authenticates the same way every other gateway read does.
         open: (reconnect, onEvent) =>
-          readSse(
-            {
-              fetch: api.request,
-              url: `/agents/${encodeURIComponent(name)}/logs${reconnect ? "?tail=0" : ""}`,
-              stoppedEvent: "agent_stopped",
-            },
-            onEvent,
-          ),
+          openAgentLogStream(api, name, reconnect, onEvent),
         onLine: (text) => {
           setLogError("");
           const id = nextLogId.current;
