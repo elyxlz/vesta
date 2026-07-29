@@ -6,7 +6,8 @@ from test_upstream_sync_turn import _record_snapshot
 
 import core.config as cfg
 import core.models as vm
-from core.main import BOOT_RESTORE_ORIENTATION, collect_boot_turns
+from core.main import collect_boot_turns
+from core.migrations import MIGRATION_BATCH_INSTRUCTIONS
 from core.provider import ProviderAuthState, ProviderStatus
 
 BEFORE_SYNC_FRONTMATTER = "---\nmigration_phase: before_sync\n---\n\n"
@@ -42,18 +43,15 @@ def test_boot_turns_ordered_sync_then_migrations_then_config_then_greeting(tmp_p
     )
 
     assert len(turns) == 4
-    # The first converge turn carries the daemon-restore orientation so a migration/upgrade boot
-    # restores daemons via the restart skill first, exactly as a plain restart would.
-    assert turns[0].startswith(BOOT_RESTORE_ORIENTATION)
-    assert "[Upstream sync]" in turns[0]
+    # No converge turn carries a daemon-restore preamble: the sync turn opens with its own marker and
+    # the migration turn with the batch instructions. Daemons come up at the greeting (last), after
+    # the sync and migrations have landed, so a migration reshaping the Daemons block runs first.
+    assert turns[0].startswith("[Upstream sync]")
+    assert turns[1].startswith(MIGRATION_BATCH_INSTRUCTIONS)
     assert "[Migration: 001-x]" in turns[1]
     assert "[Migration: 002-y]" in turns[1]
     assert "BAD=1" in turns[2]
-    assert "[System Restart]\nReason: You restarted after a routine shutdown." in turns[3]
-    # The orientation rides only the first converge turn, never the restart greeting (it already
-    # runs the restart skill) or the later converge turns.
-    assert BOOT_RESTORE_ORIENTATION not in turns[1]
-    assert BOOT_RESTORE_ORIENTATION not in turns[3]
+    assert turns[3].startswith("[System Restart]\nReason: You restarted after a routine shutdown.")
 
 
 def test_before_sync_migrations_are_a_boot_barrier(tmp_path):
@@ -70,8 +68,9 @@ def test_before_sync_migrations_are_a_boot_barrier(tmp_path):
         first_start=False,
     )
 
+    # The before-sync barrier turn opens with the batch instructions, no daemon-restore preamble.
+    assert turns[0].startswith(MIGRATION_BATCH_INSTRUCTIONS)
     assert "[Migration: 001-before]" in turns[0]
-    assert BOOT_RESTORE_ORIENTATION in turns[0]
     assert "call `restart_vesta` once" in turns[0]
     assert all("[Upstream sync]" not in turn for turn in turns)
     assert all("[Migration: 999-later]" not in turn for turn in turns)
@@ -93,13 +92,37 @@ def test_applied_before_sync_migration_allows_sync_then_after_sync_migrations(tm
         first_start=False,
     )
 
-    assert "[Upstream sync]" in turns[0]
+    assert turns[0].startswith("[Upstream sync]")
     assert "[Migration: 999-later]" in turns[1]
 
 
-def test_restart_only_boot_carries_no_daemon_orientation(tmp_path):
-    """A plain restart has no converge turns: the greeting is the restart turn itself, so it must not
-    be prefixed with the converge-turn daemon-restore orientation."""
+def test_after_sync_migration_boot_defers_daemons_to_the_greeting(tmp_path):
+    """After the merge the running version's snapshot is in Git, so no sync turn fires, but the
+    after-sync migrations were left for this boot. The migration turn opens with the batch
+    instructions, no daemon-restore preamble: daemons come up at the greeting, after the migrations."""
+    config = _boot_config(tmp_path)
+    (config.agent_dir / "core" / "migrations" / "001-x.md").write_text("do migration x")
+    (config.agent_dir / "core" / "pyproject.toml").write_text('[project]\nname = "vesta"\nversion = "9.9.9"\n')
+    _record_snapshot(config, "9.9.9")
+
+    turns = collect_boot_turns(
+        state=_authed_state(),
+        config=config,
+        config_issues=[],
+        agent_message="You restarted after an upgrade.",
+        first_start=False,
+    )
+
+    assert len(turns) == 2
+    assert turns[0].startswith(MIGRATION_BATCH_INSTRUCTIONS)
+    assert "[Migration: 001-x]" in turns[0]
+    assert turns[1].startswith("[System Restart]")  # greeting is last, the daemon-restore point
+    assert all("[Upstream sync]" not in turn for turn in turns)
+
+
+def test_restart_only_boot_is_just_the_greeting(tmp_path):
+    """A plain restart has no converge turns: the greeting is the only turn, and it is the daemon
+    restore point (it runs the restart skill), exactly as it is on every restart."""
     config = _boot_config(tmp_path)
     (config.agent_dir / "core" / "pyproject.toml").write_text('[project]\nname = "vesta"\nversion = "9.9.9"\n')
     _record_snapshot(config, "9.9.9")
@@ -115,7 +138,7 @@ def test_restart_only_boot_carries_no_daemon_orientation(tmp_path):
         )
 
     assert len(turns) == 1
-    assert BOOT_RESTORE_ORIENTATION not in turns[0]
+    assert turns[0].startswith("[System Restart]")
     startup_log.assert_called_once_with("Boot turn: restart greeting")
 
 
