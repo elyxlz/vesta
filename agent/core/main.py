@@ -163,17 +163,6 @@ def config_issues_turn(issues: list[str]) -> str | None:
     )
 
 
-# A migration/upgrade boot is a restart: the daemons are down, but the converge turns
-# (before-sync migrations, upstream sync, after-sync migrations) run before the greeting's restart turn, so nothing
-# has restored them yet. Prepend this to the first converge turn so the agent runs the restart skill
-# first, exactly as it would on a plain restart, before tunnelling into the migration or upgrade.
-BOOT_RESTORE_ORIENTATION = (
-    "Your daemons are down after this boot, just like any restart. Before the task below, read the "
-    "`restart` skill and run its Daemons block to bring your daemons back (it is idempotent, so "
-    "running it when everything is already up is a safe no-op). Then continue with the task."
-)
-
-
 def collect_boot_turns(
     *, state: vm.State, config: cfg.VestaConfig, config_issues: list[str], agent_message: str, first_start: bool
 ) -> list[str]:
@@ -187,8 +176,13 @@ def collect_boot_turns(
     proceeds to sync. When sync merges changes, its own restart naturally leaves the still-unmarked
     after-sync migrations for the next boot.
 
-    The greeting's restart turn restores daemons; converge turns run before it, so the first one
-    carries BOOT_RESTORE_ORIENTATION to restore daemons first."""
+    Daemons come up last, at the greeting's restart turn (it runs the restart skill's Daemons block),
+    so they never start against a Daemons block the sync or a migration is about to rewrite. The
+    greeting is appended every boot, before it is known whether this boot restarts: a boot that
+    settles (no-op sync, a migration batch that does not restart, a plain restart) ends on it and
+    brings daemons up, while a boot that restarts mid-converge (sync merge, before-sync barrier)
+    abandons the still-queued greeting and the next boot re-queues it. Daemons therefore stay down
+    for the whole converge, by design, and come up once on the boot that finally settles."""
     turns: list[str] = []
     before_sync_turns = before_sync_migration_turns(state=state, config=config, first_start=first_start)
     if before_sync_turns:
@@ -201,8 +195,6 @@ def collect_boot_turns(
     config_turn = config_issues_turn(config_issues)
     if config_turn is not None:
         turns.append(config_turn)
-    if turns:
-        turns[0] = f"{BOOT_RESTORE_ORIENTATION}\n\n{turns[0]}"
     greeting = greeting_turn(config=config, state=state, agent_message=agent_message, first_start=first_start)
     if greeting is not None:
         turns.append(greeting)
