@@ -29,7 +29,10 @@ They should paste the full output (one line starting with `ssh-ed25519` or `ssh-
 
 ## Authorize the key and bring up sshd
 
+Put the command on PATH first (the daemon verbs call it by name), then authorize:
+
 ```bash
+mkdir -p ~/.local/bin && ln -sf ~/agent/skills/ssh-tunnel/ssh-tunnel ~/.local/bin/ssh-tunnel
 ssh-tunnel setup "ssh-ed25519 AAAA... user@laptop"
 ```
 

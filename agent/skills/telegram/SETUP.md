@@ -3,12 +3,13 @@
 Everything the build needs (Go, gcc) ships in the agent image; install nothing,
 download nothing.
 
-1. Warm the launcher's build cache. Agent startup puts `telegram` on PATH, and the launcher
-   compiles `cli/` from source on every invocation, so no stale binary can ever drift (the
-   send-message handler and its bubble lint run inside the daemon; a static binary left the
-   daemon executing weeks-old code after the source changed). CGO/FTS5 build flags live in
-   `cli/cgo-env.sh`, sourced by the launcher.
+1. Put `telegram` on PATH and warm the launcher's build cache. The launcher compiles `cli/`
+   from source on every invocation, so no stale binary can ever drift (the send-message handler
+   and its bubble lint run inside the daemon; a static binary left the daemon executing
+   weeks-old code after the source changed). CGO/FTS5 build flags live in `cli/cgo-env.sh`,
+   sourced by the launcher.
    ```bash
+   mkdir -p ~/.local/bin && ln -sf ~/agent/skills/telegram/telegram ~/.local/bin/telegram
    telegram --help >/dev/null   # a compile error surfaces HERE, loudly
    ```
    Never `go build` a static binary onto PATH; the launcher is the only entry point.

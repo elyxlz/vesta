@@ -7,7 +7,13 @@ description: Track shared expenses and joint money pots (Splitwise/Tricount styl
 
 A shared expense and pot tracker. A **pot** is a group (a trip, a household, a project) with members. You log two kinds of entries against it, and it computes net balances and a compact way to settle up.
 
-Run it with `moneypot <command>`. It is a local CLI: nothing to start, nothing to register, no network beyond the optional live exchange-rate lookup. Data lives in `~/agent/data/moneypot.json`, created on first write.
+Run it with `moneypot <command>`. Put the command on PATH once:
+
+```bash
+mkdir -p ~/.local/bin && ln -sf ~/agent/skills/moneypot/moneypot ~/.local/bin/moneypot
+```
+
+It is a local CLI: nothing to start, nothing to register, no network beyond the optional live exchange-rate lookup. Data lives in `~/agent/data/moneypot.json`, created on first write.
 
 ## Model
 

@@ -12,10 +12,13 @@ Serve a directory of files over HTTP and hand someone a link. Use when the user 
 The server has no auth of its own, so it is reached through a public vestad route rather than directly.
 
 ```bash
-# 1. drop the file(s) into the served directory
+# 1. put the command on PATH (the daemon and its restart line call it by name)
+mkdir -p ~/.local/bin && ln -sf ~/agent/skills/file-host/file-host ~/.local/bin/file-host
+
+# 2. drop the file(s) into the served directory
 mkdir -p ~/.file-host && cp /path/to/report.pdf ~/.file-host/
 
-# 2. serve it
+# 3. serve it
 file-host daemon start
 ```
 

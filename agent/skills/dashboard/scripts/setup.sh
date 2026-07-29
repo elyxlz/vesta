@@ -9,6 +9,10 @@ set -eu
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# Put the dashboard command on PATH; the daemon verbs and the restart line call it by name.
+mkdir -p "$HOME/.local/bin"
+ln -sf "$DIR/../dashboard" "$HOME/.local/bin/dashboard"
+
 cd "$DIR/../app"
 
 if [ ! -d node_modules ]; then

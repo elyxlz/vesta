@@ -21,7 +21,8 @@ A tiny "DocuSign-style" flow you host yourself, no third-party account:
 
 ## Run it
 ```bash
-# 1. Start the pad; it registers the `sign` service with vestad and serves on the assigned port
+# 1. Put the command on PATH, then start the pad; it registers the `sign` service with vestad and serves on the assigned port
+mkdir -p ~/.local/bin && ln -sf ~/agent/skills/sign-service/sign-service ~/.local/bin/sign-service
 sign-service daemon start
 # 2. Mint a key and send the user the link it opens. The path form is what a browser needs:
 #    the page's own assets inherit the prefix, where a header or a query param would not.
