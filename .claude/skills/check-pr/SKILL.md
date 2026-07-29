@@ -64,13 +64,24 @@ Write every label every time, in this order. When a label has nothing under it, 
 
 **Fixes:** the linked issue and whether this actually closes it: fully, partly (say which part is left), something adjacent (say what), or nothing. With no issue linked, write `nothing linked` and one clause naming the problem it solves.
 
-**Blocking:** findings that should stop the merge. One bullet each, in this shape: `` `file:line` `` then what the code does, then what goes wrong, then how you know. End with `(reproduced)` when you ran it and `(read only)` when you did not, so nobody has to guess which.
+**Blocking:** findings that should stop the merge. Two lines each, no more:
 
-**Non-blocking:** everything else worth saying. Same shape. Do not argue for them; a maintainer decides.
+- line one: `` `file:line` ``, what the code does, and what goes wrong because of it
+- line two, indented and starting `Proof:`, the thing that settles it
 
-**CI:** `green`, or the failing check by name and whether you reproduced it.
+**Non-blocking:** everything else worth saying, same two lines. Do not argue for them; a maintainer decides.
 
-**Verdict:** `NOISE`, `BUGGED`, or `MERGE`, then a dash and the one thing that decided it. A mechanical blocker like red CI or a conflict belongs on the CI line, not in the verdict: a sound change with red CI is still `MERGE`, once green.
+**Verdict:** `NOISE`, `BUGGED`, or `MERGE`, then a dash and the one thing that decided it. Judge the diff and nothing else. CI is not your business: a red check is on the PR page already, it says nothing about whether the change is right, and a sound change with a formatting failure is still `MERGE`.
+
+## Proof
+
+A finding a maintainer has to re-derive costs more than it saves. Every finding carries the one thing that lets them start from your work instead of from scratch, in a single line:
+
+- **the command and what it printed**, trimmed to the line that matters: `` uv run pytest -k send_fails → 1 failed, AssertionError: notification file missing ``
+- **the input or state that triggers it**, concretely: `` card "4111 1111 1111 1111" → returns [], the space-separated form never matches ``
+- **the two places that contradict each other**, when it is a mismatch rather than a crash: `` writes `success:false` at `messaging.go:88`, read as exit 0 at `cli.go:149` ``
+
+Never write proof that cannot be checked: `verified locally`, `I audited this`, `tests pass`, `looks correct`. Those are claims about you, and a reader can do nothing with them. If you could not settle a finding, say `Proof: none, read only` and let its weight fall accordingly.
 
 Findings state what breaks, not what you did. Never narrate the review, never list what you checked that turned out fine, never restate the PR description. **150 words is the ceiling for everything above the rule.** Past that you are explaining rather than reporting.
 
@@ -78,12 +89,12 @@ Findings state what breaks, not what you did. Never narrate the review, never li
 **Fixes:** #412 fully.
 
 **Blocking**
-- `core/loops.py:88` deletes the notification file before the send is confirmed, so a failed send loses the message with nothing to retry from (reproduced against a closed socket).
+- `core/loops.py:88` deletes the notification file before the send is confirmed, so a failed send loses the message with nothing to retry from.
+  Proof: point it at a closed socket, `uv run pytest -k send_fails` → 1 failed, notification file already unlinked.
 
 **Non-blocking**
-- `core/loops.py:120` catches bare `Exception` around the whole batch, so one bad notification drops the rest of it (read only).
-
-**CI:** green.
+- `core/loops.py:120` catches bare `Exception` around the whole batch, so one bad notification drops the rest of it.
+  Proof: none, read only.
 
 **Verdict:** BUGGED, the delete ordering loses messages on send failure, two-line fix.
 </example>
@@ -91,14 +102,13 @@ Findings state what breaks, not what you did. Never narrate the review, never li
 <example>
 **Fixes:** nothing linked, tightens the reauth path on the sync socket.
 
-**Blocking:** none.
+**Blocking**
+- `AuthProvider/index.tsx:60` awaits an untimed fetch during boot, so an unreachable gateway hangs the splash until the OS gives up instead of falling through to the disconnected overlay.
+  Proof: gateway down, splash held 127s before `App.tsx:29` rendered; no upper bound on that path.
 
-**Non-blocking**
-- `AuthProvider/index.tsx:60` awaits an untimed fetch during boot, so an unreachable gateway hangs the splash for the OS timeout instead of falling through to the disconnected overlay (reproduced with the gateway down).
+**Non-blocking:** none.
 
-**CI:** red on `Apps · web`, prettier on both AuthProvider files (reproduced).
-
-**Verdict:** BUGGED, the boot hang strands the splash on an unreachable gateway.
+**Verdict:** BUGGED, boot blocks on a network call that has no timeout.
 </example>
 
 Judge the change on its merits even when you wrote the code yourself, and say `NOISE` or `BUGGED` when you believe it, including when the person who asked clearly wants it in. A verdict that always says MERGE is worth less than no verdict.
