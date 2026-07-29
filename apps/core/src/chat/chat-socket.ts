@@ -4,9 +4,9 @@ import type { SocketLike } from "../transport/socket"
 export type ChatSocketState = "connecting" | "open" | "reconnecting" | "closed"
 
 export interface ChatSocketDeps {
-  // Async for the same reason as the sync socket's: the URL carries the access token, so the
-  // builder refreshes an expiring one before each attempt rather than backing off against a
-  // token that expired while the client was away.
+  // Async and re-asked on every attempt, so the credential in the URL is the one live at connect
+  // rather than one captured at mount: the builder mints or refreshes as needed, and a socket that
+  // reconnects hours later never dials with something that expired while the client was away.
   buildUrl: () => Promise<string>
   createSocket: (url: string) => SocketLike
   setTimer: (fn: () => void, ms: number) => number
@@ -20,6 +20,11 @@ export interface ChatSocketCallbacks {
   // Fires on every transition; the hook reseeds the tail by id whenever it sees "open" (initial
   // connect and every reconnect), which reconciles any gap the replay-free socket skipped.
   onStateChange: (state: ChatSocketState) => void
+  // A socket that closed without ever opening: the gateway refused the handshake, which is what a
+  // revoked or expired credential looks like from here (a WebSocket exposes no status). The call
+  // site drops the credential the URL carried, so the next attempt's buildUrl replaces it instead
+  // of backing off forever against one the gateway will keep refusing.
+  onClosedBeforeOpen: () => void
 }
 
 export interface ChatSocket {
@@ -78,8 +83,10 @@ export function createChatSocket(deps: ChatSocketDeps, callbacks: ChatSocketCall
     if (retired()) return
     const current = deps.createSocket(url)
     socket = current
+    let opened = false
     current.onopen = () => {
       if (socket !== current) return
+      opened = true
       delay = base
       callbacks.onStateChange("open")
     }
@@ -89,6 +96,7 @@ export function createChatSocket(deps: ChatSocketDeps, callbacks: ChatSocketCall
     current.onclose = () => {
       if (socket !== current) return
       socket = null
+      if (!opened) callbacks.onClosedBeforeOpen()
       if (!terminal) scheduleReconnect()
     }
   }

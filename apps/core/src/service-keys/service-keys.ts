@@ -17,6 +17,10 @@ export interface CachedServiceKey {
 
 export interface ServiceKeyCache {
   get: (agent: string, service: string) => Promise<string>
+  // Forget the cached key for a pair. A key can be revoked or expire while a consumer holds it,
+  // and vestad keeps only a hash, so nothing local can tell a live key from a refused one: the
+  // consumer the gateway refused drops it and its next `get` mints.
+  drop: (agent: string, service: string) => void
 }
 
 // The margin `get` demands of a cached key: anything handed out has more than an hour of life
@@ -67,9 +71,11 @@ export function createServiceKeyCache(deps: {
   // double effect in dev) share one mint instead of racing to overwrite each other's key. The
   // entry goes as soon as the mint settles, so a failure is retried rather than kept.
   const minting = new Map<string, Promise<string>>()
+  const identity = (agent: string, service: string): string =>
+    `${deps.gateway() ?? ""}/${agent}/${service}`
   return {
     get: async (agent, service) => {
-      const cacheKey = `${deps.gateway() ?? ""}/${agent}/${service}`
+      const cacheKey = identity(agent, service)
       const nowSecs = Math.floor(Date.now() / 1000)
       const existing = cached.get(cacheKey) ?? null
       if (existing && isKeyFresh(existing, nowSecs)) return existing.key
@@ -85,6 +91,11 @@ export function createServiceKeyCache(deps: {
         })
       minting.set(cacheKey, pending)
       return pending
+    },
+    // A mint in flight is left alone: its key is newer than the one being dropped, and it lands in
+    // the cache after this returns.
+    drop: (agent, service) => {
+      cached.delete(identity(agent, service))
     },
   }
 }

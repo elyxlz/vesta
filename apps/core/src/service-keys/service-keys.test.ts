@@ -173,6 +173,49 @@ describe("createServiceKeyCache", () => {
     expect(calls).toHaveLength(2)
   })
 
+  // The gateway can revoke a key or let it expire while a consumer holds one that still looks
+  // fresh locally. A refused consumer drops it, and without this the socket would back off forever
+  // presenting the same refused key.
+  it("mints a fresh key for a pair that was dropped", async () => {
+    const calls: string[] = []
+    const http: HttpClient = {
+      request: () => Promise.reject(new Error("unused")),
+      json: <T>(path: string) => {
+        calls.push(path)
+        return Promise.resolve({
+          id: `id-${String(calls.length)}`,
+          key: `key-${String(calls.length)}`,
+          expires_at: null,
+        } as T)
+      },
+    }
+    const cache = createServiceKeyCache({ http, gateway: () => "https://gw-a" })
+
+    expect(await cache.get("alpha", "app-chat")).toBe("key-1")
+    cache.drop("alpha", "app-chat")
+    expect(await cache.get("alpha", "app-chat")).toBe("key-2")
+    expect(calls).toHaveLength(2)
+  })
+
+  it("drops only the pair asked for", async () => {
+    const { http, calls } = fakeHttp({ key: "k", expires_at: null })
+    const cache = createServiceKeyCache({ http, gateway: () => "https://gw-a" })
+    await cache.get("alpha", "app-chat")
+    await cache.get("alpha", "voice")
+
+    cache.drop("alpha", "app-chat")
+    await cache.get("alpha", "app-chat")
+    await cache.get("alpha", "voice")
+    expect(calls).toHaveLength(3)
+  })
+
+  it("drops an unknown pair without minting or throwing", () => {
+    const { http, calls } = fakeHttp({ key: "k", expires_at: null })
+    const cache = createServiceKeyCache({ http, gateway: () => "https://gw-a" })
+    cache.drop("nobody", "app-chat")
+    expect(calls).toEqual([])
+  })
+
   it("percent-encodes the agent and service in the mint path", async () => {
     const { http, calls } = fakeHttp({ key: "k", expires_at: null })
     const cache = createServiceKeyCache({ http, gateway: () => "https://gw-a" })

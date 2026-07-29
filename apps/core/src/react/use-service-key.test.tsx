@@ -58,6 +58,8 @@ function deferredCache(): {
           pending.set(`${agent}/${service}`, { resolve, reject })
         })
       },
+      // The hook only ever asks for a key; dropping one is the socket consumers' path.
+      drop: () => undefined,
     },
     requests,
     settle: (agent, service, key) => {
