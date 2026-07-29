@@ -20,10 +20,13 @@ export interface ChatSocketCallbacks {
   // Fires on every transition; the hook reseeds the tail by id whenever it sees "open" (initial
   // connect and every reconnect), which reconciles any gap the replay-free socket skipped.
   onStateChange: (state: ChatSocketState) => void
-  // A socket that closed without ever opening: the gateway refused the handshake, which is what a
+  // The FIRST close-without-open of a streak: the gateway refused the handshake, which is what a
   // revoked or expired credential looks like from here (a WebSocket exposes no status). The call
   // site drops the credential the URL carried, so the next attempt's buildUrl replaces it instead
-  // of backing off forever against one the gateway will keep refusing.
+  // of backing off forever against one the gateway will keep refusing. Fires at most once until
+  // the next successful open, because a second consecutive failure cannot be the fresh
+  // credential's fault: it is a refusal of the socket's own (an agent that is simply down), and
+  // re-reporting it would mint a key per backoff tick for as long as that lasted.
   onClosedBeforeOpen: () => void
 }
 
@@ -41,6 +44,10 @@ export function createChatSocket(deps: ChatSocketDeps, callbacks: ChatSocketCall
   let timer: number | null = null
   let delay = base
   let terminal = false
+  // Whether the next close-without-open still counts as a refusal worth reporting. Spent on the
+  // first one of a streak and re-armed by every successful open, which is what bounds the reports
+  // to one per streak.
+  let refusalArmed = true
   // True once close() has retired this socket for good. Read through a call because a connect in
   // flight has to re-ask after awaiting its URL.
   const retired = (): boolean => terminal
@@ -87,6 +94,7 @@ export function createChatSocket(deps: ChatSocketDeps, callbacks: ChatSocketCall
     current.onopen = () => {
       if (socket !== current) return
       opened = true
+      refusalArmed = true
       delay = base
       callbacks.onStateChange("open")
     }
@@ -96,7 +104,10 @@ export function createChatSocket(deps: ChatSocketDeps, callbacks: ChatSocketCall
     current.onclose = () => {
       if (socket !== current) return
       socket = null
-      if (!opened) callbacks.onClosedBeforeOpen()
+      if (!opened && refusalArmed) {
+        refusalArmed = false
+        callbacks.onClosedBeforeOpen()
+      }
       if (!terminal) scheduleReconnect()
     }
   }

@@ -1,8 +1,9 @@
 //! End-to-end proof of the service-key gate against the real vestad proxy and a real agent
 //! container: a private service is reachable only with the api key or a live service key, the
-//! key works in the path prefix an iframe's sub-resources inherit, revoking it takes effect
-//! immediately, the mint and revoke endpoints are authenticated and self-scoped to one agent,
-//! and vestad hands its inner-proxy agent token to the raw agent port alone.
+//! key works in the path prefix an iframe's sub-resources inherit and in the query string a
+//! WebSocket upgrade is limited to, revoking it takes effect immediately on both, the mint and
+//! revoke endpoints are authenticated and self-scoped to one agent, and vestad hands its
+//! inner-proxy agent token to the raw agent port alone.
 
 use vesta_tests::{
     agent_container_name, exec_in_container, unique_agent, ProxyAuth, TestAgent, SERVER,
@@ -132,6 +133,63 @@ fn a_private_service_needs_the_api_key_or_a_live_service_key() {
         401,
         "revocation takes effect immediately"
     );
+}
+
+/// A WebSocket upgrade is gated by the very same decision as a plain GET: `proxy_authorized` runs
+/// and can 401 before the handler looks at `Upgrade` at all, so a live key in `?token=` completes
+/// the handshake and a revoked one is refused with a 401 in place of the 101. That is what lets a
+/// browser socket (the app-chat live chat socket) authenticate with a key it can only put in the
+/// query string. The upstream here speaks plain HTTP, so the socket closes right after the
+/// handshake: the handshake IS the gate's verdict, and the data path behind it is driven for real
+/// against the app-chat daemon in `sync.rs`.
+#[tokio::test]
+async fn a_service_key_opens_a_websocket_upgrade_until_it_is_revoked() {
+    let client = SERVER.client();
+    let (agent, _) = agent_serving(&client, "svc-key-ws", "dashboard");
+
+    let minted = client
+        .mint_service_key(&agent.name, "dashboard")
+        .expect("mint service key");
+    let key = minted["key"]
+        .as_str()
+        .expect("secret in mint response")
+        .to_string();
+    let id = minted["id"]
+        .as_str()
+        .expect("id in mint response")
+        .to_string();
+
+    let keyed_ws = format!("/agents/{}/dashboard/live?token={}", agent.name, key);
+    let bare_ws = format!("/agents/{}/dashboard/live", agent.name);
+
+    client
+        .connect_ws(&keyed_ws)
+        .await
+        .expect("a live key completes the ws handshake");
+
+    assert_ws_upgrade_refused(&client, &bare_ws, "no credential at all").await;
+
+    client
+        .revoke_service_key(&agent.name, "dashboard", &id)
+        .expect("revoke service key");
+    assert_ws_upgrade_refused(&client, &keyed_ws, "a revoked key").await;
+}
+
+/// Assert a ws upgrade is refused with a 401 before anything upgrades: tungstenite reports a
+/// non-101 response as `HTTP error: {status}`. A match rather than `expect_err` because the success
+/// type is a live socket, which is not `Debug`.
+async fn assert_ws_upgrade_refused(
+    client: &vesta_tests::client::Client,
+    path_and_query: &str,
+    context: &str,
+) {
+    match client.connect_ws(path_and_query).await {
+        Ok(_) => panic!("{context}: the ws upgrade completed instead of being refused"),
+        Err(error) => assert!(
+            error.contains("401"),
+            "{context}: expected a 401 ws upgrade, got: {error}"
+        ),
+    }
 }
 
 /// Minting is a real privilege, so the endpoints behind it are authenticated and self-scoped:

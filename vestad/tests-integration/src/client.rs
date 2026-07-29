@@ -519,7 +519,10 @@ impl Client {
 
     /// Open a WebSocket to `path_and_query` (already `?token=`-authed) over the fingerprint-pinned
     /// TLS the harness uses everywhere. Shared by the `/sync` state plane and the app-chat chat socket.
-    async fn connect_ws(&self, path_and_query: &str) -> Result<SyncSocket, String> {
+    /// Public for the proxy's own gate: a service route decides authorization before it upgrades, so
+    /// the handshake completing is that verdict, and a refusal arrives as `HTTP error: {status}` in
+    /// the error string rather than as a socket.
+    pub async fn connect_ws(&self, path_and_query: &str) -> Result<SyncSocket, String> {
         let url = format!("{}{}", ws_base_url(&self.base_url), path_and_query);
         let tls = make_ws_rustls_config(self.cert_fingerprint.clone());
         let connector = tokio_tungstenite::Connector::Rustls(tls);
