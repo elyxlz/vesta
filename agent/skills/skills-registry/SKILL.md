@@ -76,13 +76,13 @@ The `description` is discovery text: it decides whether you open the skill at al
 to reach for it and what triggers it, never a summary of its steps. An agent that can read the
 workflow from the description follows that instead of opening the body.
 
-A skill puts a command on PATH one of two ways, and which one is decided by dependencies. A command
-that needs third-party packages lives in `cli/` as its own standalone uv project (`cli/pyproject.toml`
-+ `cli/uv.lock`), which gives it an isolated venv; its `[project.scripts]` names every command it
-installs, one line each, so a skill that needs several commands declares several there, and
-`uv tool install --editable` (as above) puts them all on PATH. A command that needs no third-party
-packages, a stdlib-only script or a shell script, is a single executable at
-`~/agent/skills/<skill>/<skill>` that agent startup links, with no venv and no install step. Nothing
+A skill puts a command on PATH one of two ways. Use `cli/`, a standalone uv project
+(`cli/pyproject.toml` + `cli/uv.lock`), when the command needs third-party packages (it gets an
+isolated venv) or when the skill has more than one command: its `[project.scripts]` names every
+command, one line each, and `uv tool install --editable` (as above) puts them all on PATH. Use the
+single executable at `~/agent/skills/<skill>/<skill>`, which agent startup links with no venv and no
+install step, when the skill has exactly one command and it needs no third-party packages, a
+stdlib-only script or a shell script. Nothing
 else belongs on PATH: a wrapper copied into a system `bin`, or a runtime environment built by hand,
 sits outside both mechanisms and no boot step maintains it. Copy a `cli/` project's shape from an
 existing skill such as `tasks`, and keep setup that runs once (auth, credentials, model downloads) in
