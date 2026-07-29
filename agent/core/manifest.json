@@ -8,8 +8,8 @@
       "auth_kind": "claude_oauth",
       "models": ["opus", "sonnet"],
       "model_names": {
-        "opus": "Claude Opus",
-        "sonnet": "Claude Sonnet"
+        "opus": "Opus",
+        "sonnet": "Sonnet"
       },
       "default_model": "opus",
       "context": {

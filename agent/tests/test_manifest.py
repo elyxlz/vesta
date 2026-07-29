@@ -34,7 +34,7 @@ def test_manifest_has_both_providers_and_defaults():
     ordered = sorted(manifest["providers"], key=lambda kind: manifest["providers"][kind]["order"])
     assert ordered == ["claude", "openai", "zai", "kimi", "openrouter"]
     assert manifest["providers"]["claude"]["models"] == ["opus", "sonnet"]
-    assert manifest["providers"]["claude"]["model_names"]["opus"] == "Claude Opus"
+    assert manifest["providers"]["claude"]["model_names"]["opus"] == "Opus"
     assert manifest["providers"]["claude"]["context"]["presets"]  # the picker's curated suggestions
     assert manifest["providers"]["openrouter"]["models"] == "live"  # free-form, fetched separately
     assert manifest["providers"]["zai"]["default_model"] == "glm-5.2"

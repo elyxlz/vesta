@@ -21,10 +21,7 @@ function claudeOption(slug: string, label?: string): OpenRouterModelOption {
 // without a code change. claude-code resolves the aliases.
 const CLAUDE_FALLBACK: OpenRouterModelOption[] = ["opus", "sonnet"].map(
   (slug) =>
-    claudeOption(
-      slug,
-      `Claude ${slug[0]?.toUpperCase() ?? ""}${slug.slice(1)}`,
-    ),
+    claudeOption(slug, `${slug[0]?.toUpperCase() ?? ""}${slug.slice(1)}`),
 );
 
 /// The Claude model list as model-card options for the provider card's model switcher, derived from
