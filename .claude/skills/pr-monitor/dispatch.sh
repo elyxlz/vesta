@@ -204,6 +204,11 @@ handle() {
   if ! claim "$repo" "$kind" "$id"; then
     return 0
   fi
+  # Every path out of a claimed run has to give the claim back, and being killed
+  # is one of them: systemd signals the whole service, so a deploy lands here
+  # mid-run. Without this the claim survives with nothing running behind it, the
+  # monitor reads it as handled, and the event is never emitted again.
+  trap 'release "$repo" "$kind" "$id"; exit 143' TERM INT
   sf="$(session_file "$repo" "$pr")"
   local before
   before=$(gh api "/repos/$repo/issues/$pr/comments" -q 'length' 2>/dev/null)
@@ -223,6 +228,7 @@ handle() {
     echo "dispatch: claude failed rc=$rc on $repo#$pr, releasing claim" >&2
     [ -s "$sf" ] && rm -f "$sf"
     release "$repo" "$kind" "$id"
+    trap - TERM INT
     return 1
   fi
   sid=$(printf '%s' "$out" | jq -r '.session_id // empty' 2>/dev/null)
@@ -230,6 +236,7 @@ handle() {
   if [ "$(printf '%s' "$out" | jq -r '.is_error // false' 2>/dev/null)" = "true" ]; then
     echo "dispatch: claude reported an error on $repo#$pr, releasing claim" >&2
     release "$repo" "$kind" "$id"
+    trap - TERM INT
     return 1
   fi
   # A run that posts nothing looks identical to a healthy one from out here, and
@@ -238,6 +245,7 @@ handle() {
   if [ "$(gh api "/repos/$repo/issues/$pr/comments" -q 'length' 2>/dev/null)" = "$before" ]; then
     echo "dispatch: WARN $repo#$pr run finished without commenting" >&2
   fi
+  trap - TERM INT
   echo "dispatch: handled $repo#$pr ($kind $id)" >&2
   prune_sessions "$repo"
   prune_worktrees "$repo"

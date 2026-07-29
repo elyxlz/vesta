@@ -139,6 +139,8 @@ A surfaced item gets a 👀 reaction on the comment (or on the PR itself, for de
 
 The reaction is posted at emit time, not by whatever handles the event. Without that, an item would re-fire every cycle for as long as it sat unhandled. The ack is also posted *before* the line is printed: if it fails, nothing is emitted and the item is retried next cycle, so a failure can never produce an event that gets handled twice.
 
+A claim is given back on every way out of a run, being killed included: the service is signalled as a whole, so a deploy lands mid-run, and a claim left behind with nothing running reads as handled and is never emitted again. The release happens once the run itself has been signalled, since a shell defers a trapped signal while it waits on a child.
+
 The reaction is therefore a **claim, not a completion**. Under `dispatch.sh` a failed run releases the claim, removing only this account's reaction, and the event surfaces again on the next cycle. That is what makes a usage limit recoverable: the runs fail, the claims are released, and the events come back once the limit resets. A consumer that emits events some other way should release claims the same way, or a failure will drop the event silently.
 
 Two consequences worth knowing:
