@@ -676,53 +676,17 @@ def test_agent_startup_removes_a_dangling_link_of_ours(tmp_path):
     assert not _bin(home, "service-key").is_symlink()
 
 
-def _launcher(home, skill):
-    return home / "agent/skills" / skill / skill
-
-
-def test_agent_startup_puts_a_skill_launcher_on_path(tmp_path):
-    """A skill driven by name needs its own launcher on PATH, not just the vestad helpers."""
+def test_agent_startup_links_only_the_vestad_helpers_not_skill_launchers(tmp_path):
+    """A skill's own command reaches PATH from that skill's setup, not from startup, so a
+    `<skill>/<skill>` launcher on disk is left unlinked here."""
     home = _bin_box(tmp_path)
-    _launcher(home, "whatsapp").write_text("#!/usr/bin/env bash\necho whatsapp\n")
+    launcher = home / "agent/skills/whatsapp/whatsapp"
+    launcher.parent.mkdir(parents=True, exist_ok=True)
+    launcher.write_text("#!/usr/bin/env bash\necho whatsapp\n")
     assert _run_agent_startup(home).returncode == 0
-    assert _bin(home, "whatsapp").readlink() == _launcher(home, "whatsapp").resolve()
-
-
-def test_agent_startup_links_a_launcher_that_arrives_with_the_sync(tmp_path):
-    """Launchers live in the checkout, so one lands a boot later than the migration that
-    writes `<skill> daemon start` into the restart skill. The next boot links it."""
-    home = _bin_box(tmp_path)
-    assert _run_agent_startup(home).returncode == 0
-    assert not _bin(home, "whatsapp").is_symlink()
-    _launcher(home, "whatsapp").write_text("#!/usr/bin/env bash\necho whatsapp\n")
-    assert _run_agent_startup(home).returncode == 0
-    assert _bin(home, "whatsapp").readlink() == _launcher(home, "whatsapp").resolve()
-
-
-def test_agent_startup_links_a_launcher_named_for_its_directory(tmp_path):
-    """A skill named to dodge a system-binary collision (`ssh-tunnel`, not `ssh`) resolves by the
-    plain `<skill>/<skill>` convention like any other launcher, with no special case."""
-    home = _bin_box(tmp_path)
-    _launcher(home, "ssh-tunnel").parent.mkdir(parents=True, exist_ok=True)
-    _launcher(home, "ssh-tunnel").write_text("#!/usr/bin/env bash\necho ssh-tunnel\n")
-    assert _run_agent_startup(home).returncode == 0
-    assert _bin(home, "ssh-tunnel").readlink() == _launcher(home, "ssh-tunnel").resolve()
-
-
-def test_agent_startup_links_a_launcher_of_an_inactive_skill(tmp_path):
-    """The checkout keeps every skill on disk, so a command resolves whether or not the skill
-    is active, exactly as an installed CLI does."""
-    home = _bin_box(tmp_path)
-    _launcher(home, "microsoft").write_text("#!/usr/bin/env bash\necho microsoft\n")
-    assert _run_agent_startup(home).returncode == 0
-    assert "microsoft" not in _active(home)
-    assert _bin(home, "microsoft").readlink() == _launcher(home, "microsoft").resolve()
-
-
-def test_agent_startup_ignores_a_skill_with_no_launcher(tmp_path):
-    home = _bin_box(tmp_path)
-    assert _run_agent_startup(home).returncode == 0
-    assert not _bin(home, "tasks").exists()  # tasks ships a CLI, installed as its own console script
+    assert not _bin(home, "whatsapp").exists()  # skills link their own commands in setup
+    for command in VESTAD_SCRIPTS:  # the helpers still land
+        assert _bin(home, command).readlink() == _target(home, command)
 
 
 def test_agent_startup_clears_the_daemon_records(tmp_path):
