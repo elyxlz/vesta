@@ -89,9 +89,9 @@
       "auth_kind": "subscription_key",
       "models": ["kimi-for-coding", "kimi-for-coding-highspeed", "k3"],
       "model_names": {
-        "kimi-for-coding": "Kimi for Coding",
-        "kimi-for-coding-highspeed": "Kimi for Coding Highspeed",
-        "k3": "Kimi K3"
+        "kimi-for-coding": "Coding",
+        "kimi-for-coding-highspeed": "Coding Highspeed",
+        "k3": "K3"
       },
       "default_model": "kimi-for-coding",
       "context": {
