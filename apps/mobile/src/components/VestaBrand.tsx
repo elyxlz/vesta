@@ -1,20 +1,17 @@
 import type { ReactNode } from "react";
 import { StyleSheet, View } from "react-native";
+import { AgentOrb } from "@/components/AgentOrb";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 
-export function VestaBrand({
-  orb,
-  tagline = "with you through life’s journey",
-}: {
-  orb: ReactNode;
-  tagline?: string;
-}) {
+// The brand lockup: an alive orb over the wordmark and tagline. Pass `orb` to substitute a
+// customized one, as the connect screen does for its boot transition and its own pulse.
+export function VestaBrand({ orb }: { orb?: ReactNode }) {
   const { colors } = usePreferences();
 
   return (
     <View style={styles.brand}>
-      {orb}
+      {orb ?? <AgentOrb status="alive" />}
       <View style={styles.copy}>
         <Text family="wordmark" style={[styles.wordmark, { color: colors.text }]}>
           vesta
@@ -26,7 +23,7 @@ export function VestaBrand({
           numberOfLines={1}
           style={[styles.tagline, { color: colors.secondaryText }]}
         >
-          {tagline}
+          with you through life’s journey
         </Text>
       </View>
     </View>

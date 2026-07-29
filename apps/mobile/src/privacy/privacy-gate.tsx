@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
 import { StyleSheet, View } from "react-native";
-import { AgentOrb } from "@/components/AgentOrb";
 import { Button } from "@/components/ui/Button";
 import { Text } from "@/components/ui/Typography";
 import { VestaBrand } from "@/components/VestaBrand";
@@ -37,7 +36,7 @@ export function PrivacyGate({ children }: { children: ReactNode }) {
           importantForAccessibility="yes"
           style={[styles.overlay, { backgroundColor: colors.background }]}
         >
-          <VestaBrand orb={<AgentOrb status="alive" size={88} />} />
+          <VestaBrand />
           <View style={styles.copy}>
             <Text
               accessibilityRole="header"

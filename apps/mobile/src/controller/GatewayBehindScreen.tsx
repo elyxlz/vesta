@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { Alert, StyleSheet, View } from "react-native";
-import { AgentOrb } from "@/components/AgentOrb";
 import { Button } from "@/components/ui/Button";
 import { Text } from "@/components/ui/Typography";
 import { VestaBrand } from "@/components/VestaBrand";
@@ -50,7 +49,7 @@ export function GatewayBehindScreen() {
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
-      <VestaBrand orb={<AgentOrb status="alive" size={88} />} />
+      <VestaBrand />
       <View style={styles.message}>
         <Text
           accessibilityRole="header"
