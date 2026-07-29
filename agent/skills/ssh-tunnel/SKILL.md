@@ -1,5 +1,5 @@
 ---
-name: ssh
+name: ssh-tunnel
 description: Expose this machine over SSH via bore (public TCP tunnel).
 ---
 
