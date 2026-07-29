@@ -22,8 +22,8 @@ This skill's helpers are commands: `register-service`, `service-key`, `user-noti
 `PATH` under its filename, so a full path like
 `~/agent/skills/vestad/scripts/register-service` runs exactly the same script. The same startup
 step links each skill's launcher sitting at the root of its directory (`<skill>/<skill>`), so it
-resolves with no setup of its own; a skill keeping its executables anywhere else installs them
-itself and says so in its own docs (`email-client`, from `bin/`).
+resolves with no setup of its own; a skill whose commands are uv console scripts installs them
+itself from its own SETUP step (`uv tool install --editable <skill>/cli`) and says so in its docs.
 
 Restarting or stopping this agent is not a curl: use the `restart_vesta` / `stop_vesta`
 tools, which call vestad's self-scoped lifecycle endpoints.
