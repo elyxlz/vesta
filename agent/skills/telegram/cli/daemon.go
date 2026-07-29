@@ -432,14 +432,26 @@ func endRecorded(name string, deadline time.Time) (bool, error) {
 		os.Remove(record)
 		return true, nil
 	}
-	waited := time.Since(started).Round(time.Second)
-	return false, fmt.Errorf("%s is still running %s after SIGTERM then SIGKILL (pid %d); see %s", name, waited, pid, logFor(name))
+	// What survived is a group member, not the leader the record names, whenever the leader itself
+	// is already gone: the record goes with it either way, so it is never a corpse a later start
+	// has to take over.
+	if _, alive := livePidIn(record); !alive {
+		os.Remove(record)
+	}
+	waited := time.Since(started).Round(time.Millisecond)
+	return false, fmt.Errorf("%s did not go in %s, through SIGTERM then SIGKILL (pid %d); see %s", name, waited, pid, logFor(name))
 }
 
 // killAfter is the point in what is left of the budget at which a process that has not honoured
-// SIGTERM is killed instead, leaving the remainder to reap it.
+// SIGTERM is killed instead, leaving the remainder to reap it. Never earlier than now: a budget an
+// earlier stop in the same run already spent buys no grace, but it must not buy negative grace and
+// call the result a wait that happened.
 func killAfter(started time.Time, deadline time.Time) time.Time {
-	return started.Add(deadline.Sub(started) * 2 / 3)
+	remaining := deadline.Sub(started)
+	if remaining <= 0 {
+		return started
+	}
+	return started.Add(remaining * 2 / 3)
 }
 
 // stopDeadline is the one wall-clock bound on a whole stop, however many processes it ends.
