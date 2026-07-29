@@ -4,10 +4,12 @@ export type StreamEvent =
   { kind: "line"; text: string } | { kind: "end" } | { kind: "error"; message: string }
 
 export interface SseDeps {
+  // The caller's authenticated fetch (each app's http client), so credentials, token
+  // refresh, and the gateway base are its business and never this reader's: `url` is
+  // whatever that fetch resolves, a gateway-relative path for the log routes.
   fetch: FetchLike
   url: string
   stoppedEvent: string
-  token?: () => string | null
 }
 
 export interface SseHandle {
@@ -18,10 +20,6 @@ export function readSse(deps: SseDeps, onEvent: (event: StreamEvent) => void): S
   let cancelled = false
   let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
   const isCancelled = (): boolean => cancelled
-
-  const requestHeaders = new Headers()
-  const token = deps.token?.()
-  if (typeof token === "string") requestHeaders.set("Authorization", `Bearer ${token}`)
 
   const fail = (message: string): void => {
     if (cancelled) return
@@ -51,7 +49,7 @@ export function readSse(deps: SseDeps, onEvent: (event: StreamEvent) => void): S
   const pump = async (): Promise<void> => {
     let response: Response
     try {
-      response = await deps.fetch(deps.url, { headers: requestHeaders })
+      response = await deps.fetch(deps.url)
     } catch {
       fail("log stream disconnected")
       return

@@ -52,14 +52,13 @@ function LiveLogs({
   useEffect(
     () =>
       subscribeLogs({
-        open: async (reconnect, onEvent) =>
+        // The api client's request carries the Bearer header and refreshes the token, so a
+        // reopened stream authenticates the same way every other gateway read does.
+        open: (reconnect, onEvent) =>
           readSse(
             {
-              fetch: (url, init) => fetch(url, init),
-              url: await api.mediaUrl(
-                `/agents/${encodeURIComponent(name)}/logs`,
-                reconnect ? new URLSearchParams({ tail: "0" }) : undefined,
-              ),
+              fetch: api.request,
+              url: `/agents/${encodeURIComponent(name)}/logs${reconnect ? "?tail=0" : ""}`,
               stoppedEvent: "agent_stopped",
             },
             onEvent,

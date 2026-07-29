@@ -76,9 +76,8 @@ export function GatewayLogsViewer({
       }
     };
 
-    streamGatewayLogs(follow, handleEvent).catch(() => {
-      /* noop: rejects only when disconnected; stream errors arrive as Error events */
-    });
+    // Resolves when the stream ends; every failure arrives as an Error event instead.
+    void streamGatewayLogs(follow, handleEvent);
 
     return () => {
       active = false;

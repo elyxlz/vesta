@@ -30,7 +30,6 @@ export interface ApiClient {
   ) => Promise<ResponseBody>;
   jsonInit: (method: string, body: unknown) => RequestInit;
   websocketUrl: (path: string, query?: URLSearchParams) => Promise<string>;
-  mediaUrl: (path: string, query?: URLSearchParams) => Promise<string>;
   getConnection: () => ConnectionConfig | null;
   forceRefresh: () => Promise<boolean>;
   // The client's own service keys, so a client built by a test never shares them and
@@ -143,23 +142,18 @@ export function createApiClient(options: ClientOptions): ApiClient {
     init?: RequestInit,
   ): Promise<ResponseBody> => http.json<ResponseBody>(path, init);
 
-  // The one place a token is stamped into a URL: socket handshakes and media-element requests
-  // cannot carry an Authorization header. Refreshing here is what makes it impossible for a call
-  // site to dial with a token that expired while the client was away.
-  const withToken = async (
+  // The one place the access token is stamped into a URL: a socket handshake sends no headers.
+  // Refreshing here is what makes it impossible for a call site to dial with a token that
+  // expired while the client was away.
+  const socketUrl = async (
     path: string,
     query: URLSearchParams,
-    protocol: "http" | "ws",
   ): Promise<string> => {
     await refresh(false);
     const connection = options.getConnection();
     if (!connection) throw new Error("Not connected to a Vesta gateway.");
     query.set("token", connection.accessToken);
-    const base =
-      protocol === "ws"
-        ? connection.url.replace(/^http/, "ws")
-        : connection.url;
-    return `${base}${path}?${query.toString()}`;
+    return `${connection.url.replace(/^http/, "ws")}${path}?${query.toString()}`;
   };
 
   return {
@@ -171,9 +165,7 @@ export function createApiClient(options: ClientOptions): ApiClient {
       body: JSON.stringify(body),
     }),
     websocketUrl: (path, query = new URLSearchParams()) =>
-      withToken(path, query, "ws"),
-    mediaUrl: (path, query = new URLSearchParams()) =>
-      withToken(path, query, "http"),
+      socketUrl(path, query),
     getConnection: options.getConnection,
     forceRefresh: async () => (await refresh(true)) !== null,
     serviceKeys: createServiceKeyCache({

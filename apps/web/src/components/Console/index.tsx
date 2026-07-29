@@ -121,7 +121,8 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
       quiesceTimerRef.current = null;
       capTimerRef.current = null;
 
-      streamLogs(
+      // Resolves when the stream ends; every failure arrives as a stream event instead.
+      void streamLogs(
         name,
         (event) => {
           const action = logStreamAction(event);
@@ -182,9 +183,7 @@ export function Console({ name, status, fullscreen }: ConsoleProps) {
           }
         },
         { replay },
-      ).catch((err: unknown) => {
-        console.warn("[console] log stream failed:", err);
-      });
+      );
     };
   });
 
