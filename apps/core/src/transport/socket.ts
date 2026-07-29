@@ -1,7 +1,7 @@
 import { clientContextFrame, encodeFrame, reauthFrame } from "../protocol/frames"
 import { parseServerFrame } from "../protocol/parse"
 import { clientAheadOfGateway, clientBelowMinimum } from "../protocol/release-version"
-import type { ClientFrame, HelloFrame } from "../protocol/frames"
+import type { ClientFrame, ClientKind, HelloFrame } from "../protocol/frames"
 import type { Delta } from "../protocol/deltas"
 import type { Tree } from "../protocol/tree"
 
@@ -32,6 +32,7 @@ export interface SyncSocketDeps {
   // This client's own release version, used to block running ahead of the gateway. Omitted (or
   // unparseable) fails open, so a dev build with a non-semver version never blocks.
   clientVersion?: string
+  clientKind: ClientKind
   baseDelayMs?: number
   maxDelayMs?: number
 }
@@ -159,7 +160,9 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
       // resync and vestad doesn't read it as the user returning; never delivered (the report was
       // issued while the socket was still connecting) means this is that first genuine focus.
       if (lastFocused !== null) {
-        current.send(encodeFrame(clientContextFrame(lastFocused, focusSynced)))
+        current.send(
+          encodeFrame(clientContextFrame(lastFocused, deps.clientKind, focusSynced)),
+        )
         focusSynced = true
       }
       callbacks.onStateChange("open")
@@ -187,7 +190,7 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
       if (lastFocused === focused) return
       lastFocused = focused
       // A genuine user-driven report (resync=false): vestad may fire the return-to-focus notification.
-      focusSynced = emit(clientContextFrame(focused, false))
+      focusSynced = emit(clientContextFrame(focused, deps.clientKind, false))
     },
     close: () => {
       terminal = true

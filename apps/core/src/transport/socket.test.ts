@@ -49,6 +49,7 @@ function harness(): Harness {
     },
     clearTimer: () => undefined,
     clientVersion: "0.1.179",
+    clientKind: "web",
   }
   const advanceTimers = async (): Promise<void> => {
     while (fired < timers.length) {
@@ -198,6 +199,7 @@ describe("createSyncSocket", () => {
       JSON.stringify({
         type: "client_context",
         focused: true,
+        client: "web",
         resync: false,
       }),
     )
@@ -212,7 +214,7 @@ describe("createSyncSocket", () => {
     expect(h.sockets[0]?.sent).toEqual([])
     h.sockets[0]?.onopen?.()
     expect(h.sockets[0]?.sent).toEqual([
-      JSON.stringify({ type: "client_context", focused: true, resync: false }),
+      JSON.stringify({ type: "client_context", focused: true, client: "web", resync: false }),
     ])
   })
 
@@ -246,7 +248,7 @@ describe("createSyncSocket", () => {
     h.sockets[1]?.onopen?.()
     // The reconnect replay carries resync:true so it isn't mistaken for a fresh focus.
     expect(h.sockets[1]?.sent).toContainEqual(
-      JSON.stringify({ type: "client_context", focused: true, resync: true }),
+      JSON.stringify({ type: "client_context", focused: true, client: "web", resync: true }),
     )
   })
 

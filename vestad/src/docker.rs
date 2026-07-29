@@ -5211,7 +5211,13 @@ mod tests {
         // mkdir runs asynchronously after start; retry the drop until the dir exists.
         let mut file_name = None;
         for _ in 0..RENAME_NOTIF_DROP_TRIES {
-            match crate::serve::drop_presence_notification(&docker, &agent_name).await {
+            match crate::serve::drop_presence_notification(
+                &docker,
+                &agent_name,
+                crate::sync::protocol::ClientKind::Mobile,
+            )
+            .await
+            {
                 Ok(name) => {
                     file_name = Some(name);
                     break;
@@ -5233,6 +5239,10 @@ mod tests {
         assert_eq!(payload["source"], "vestad");
         assert_eq!(payload["type"], "user-present");
         assert_eq!(payload["interrupt"], false);
+        assert_eq!(
+            payload["message"],
+            "the user just opened Vesta Mobile App and is here now."
+        );
     }
 
     /// Result of a `docker exec` invocation against a running test container.

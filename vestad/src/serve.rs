@@ -863,14 +863,18 @@ pub(crate) async fn drop_rename_notification(
 /// Build the presence notification payload. Pure (no IO) so its shape can be
 /// asserted without spinning up a container. `interrupt: false` snoozes it
 /// (ambient presence), overridable by the user's `notification_rules`.
-fn presence_notification_payload(epoch_secs: u64) -> Result<serde_json::Value, String> {
+fn presence_notification_payload(
+    epoch_secs: u64,
+    client: crate::sync::protocol::ClientKind,
+) -> Result<serde_json::Value, String> {
     let timestamp = crate::time_utils::epoch_to_rfc3339(epoch_secs)?;
+    let client = client.display_name();
     Ok(serde_json::json!({
         "timestamp": timestamp,
         "source": "vestad",
         "type": "user-present",
         "interrupt": false,
-        "message": "the user just opened Vesta and is here now.",
+        "message": format!("the user just opened {client} and is here now."),
     }))
 }
 
@@ -880,9 +884,10 @@ fn presence_notification_payload(epoch_secs: u64) -> Result<serde_json::Value, S
 pub(crate) async fn drop_presence_notification(
     docker: &bollard::Docker,
     agent: &str,
+    client: crate::sync::protocol::ClientKind,
 ) -> Result<String, String> {
     let epoch = crate::time_utils::now_epoch_secs();
-    let payload = presence_notification_payload(epoch)?;
+    let payload = presence_notification_payload(epoch, client)?;
     drop_notification(docker, agent, &format!("user-present-{epoch}.json"), &payload).await
 }
 
@@ -3217,10 +3222,18 @@ mod tests {
 
     #[test]
     fn presence_payload_is_snoozed_vestad_notification() {
-        let payload = super::presence_notification_payload(1_700_000_000).expect("payload");
+        let payload = super::presence_notification_payload(
+            1_700_000_000,
+            crate::sync::protocol::ClientKind::Web,
+        )
+        .expect("payload");
         assert_eq!(payload["source"], "vestad");
         assert_eq!(payload["type"], "user-present");
         assert_eq!(payload["interrupt"], false);
+        assert_eq!(
+            payload["message"],
+            "the user just opened Vesta Web App and is here now."
+        );
     }
 
     // --- Legacy workspace.bundle endpoint: 404 before first build, bytes after ---

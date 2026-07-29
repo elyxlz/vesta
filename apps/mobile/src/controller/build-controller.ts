@@ -25,6 +25,7 @@ export function buildController(
       setTimer: (fn, ms) => setTimeout(fn, ms) as unknown as number,
       clearTimer: (handle) => clearTimeout(handle),
       clientVersion,
+      clientKind: "mobile",
     },
     http: {
       baseUrl: () => conn()?.url ?? "",

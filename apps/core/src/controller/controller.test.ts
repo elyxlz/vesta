@@ -59,6 +59,7 @@ async function harness(): Promise<Harness> {
       },
       setTimer: () => 0,
       clearTimer: () => undefined,
+      clientKind: "web",
     },
     http: {
       baseUrl: () => "https://vestad.test",
