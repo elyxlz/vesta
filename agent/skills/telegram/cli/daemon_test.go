@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -746,11 +747,55 @@ func TestStopEndsAWatchdogMidRestart(t *testing.T) {
 	}
 }
 
+// stubTelegram answers every Bot API call with one canned status and body, which is what lets a
+// test hold a real *tgbotapi.Error, decoded by tgbotapi from a real HTTP exchange.
+func stubTelegram(t *testing.T, status int, body string) string {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		fmt.Fprint(w, body)
+	}))
+	t.Cleanup(server.Close)
+	return server.URL + "/bot%s/%s"
+}
+
+// TestARefusedTokenSurvivesTheWrapAsARejection drives the classification through the error
+// NewTelegramClient actually hands back: connectError wraps, and it has to wrap rather than format,
+// or the status code authOutcome reads is gone and every refused token reads as an outage instead.
+func TestARefusedTokenSurvivesTheWrapAsARejection(t *testing.T) {
+	endpoint := stubTelegram(t, http.StatusUnauthorized, `{"ok":false,"error_code":401,"description":"Unauthorized"}`)
+	_, err := tgbotapi.NewBotAPIWithAPIEndpoint("123:bogus", endpoint)
+	if err == nil {
+		t.Fatal("the stub Telegram accepted the token, so there is no error to classify")
+	}
+	outcome := authOutcome(connectError(err))
+	if outcome["status"] != "rejected" {
+		t.Errorf("authOutcome(connectError(401)) = %v, want rejected: the wrap must keep the status code readable", outcome)
+	}
+	if !strings.Contains(outcome["error"], "failed to authenticate with Telegram") {
+		t.Errorf("error = %q, want the connect message around it", outcome["error"])
+	}
+}
+
+// TestAnOutageSurvivesTheWrapAsUnreachable is the other half, through the same real exchange: a
+// Telegram that is answering badly is not a verdict on the token.
+func TestAnOutageSurvivesTheWrapAsUnreachable(t *testing.T) {
+	endpoint := stubTelegram(t, http.StatusInternalServerError, `{"ok":false,"error_code":500,"description":"Internal Server Error"}`)
+	_, err := tgbotapi.NewBotAPIWithAPIEndpoint("123:bogus", endpoint)
+	if err == nil {
+		t.Fatal("the stub Telegram accepted the token, so there is no error to classify")
+	}
+	if outcome := authOutcome(connectError(err)); outcome["status"] != "unreachable" {
+		t.Errorf("authOutcome(connectError(500)) = %v, want unreachable", outcome)
+	}
+}
+
 // authOutcome is what keeps "your token is bad" apart from "Telegram is not answering". Calling
 // an outage a rejection sends the user off to mint a replacement for a token that is fine, and
 // the reverse leaves a genuinely dead token looking like weather that will pass.
 func TestAuthOutcomeTellsARejectionFromAnOutage(t *testing.T) {
-	refused := fmt.Errorf("failed to authenticate with Telegram: %w", &tgbotapi.Error{Code: http.StatusUnauthorized, Message: "Unauthorized"})
+	refused := connectError(&tgbotapi.Error{Code: http.StatusUnauthorized, Message: "Unauthorized"})
 	rejected := authOutcome(refused)
 	if rejected["status"] != "rejected" || !strings.Contains(rejected["error"], "Unauthorized") {
 		t.Errorf("authOutcome(401) = %v, want a rejection carrying the reason", rejected)

@@ -36,6 +36,13 @@ type TelegramClient struct {
 	mu               sync.RWMutex
 }
 
+// connectError is the one place a failure to reach Telegram is wrapped. It wraps rather than
+// formats, which is load-bearing: authOutcome reads the API error's status code out from under it
+// to tell a refused token from Telegram being unreachable, and a formatted string hides it.
+func connectError(err error) error {
+	return fmt.Errorf("failed to authenticate with Telegram: %w", err)
+}
+
 func NewTelegramClient(dataDir, notificationsDir, instance string, readOnly bool, skipSenders map[string]bool) (*TelegramClient, error) {
 	store, err := NewMessageStore(dataDir)
 	if err != nil {
@@ -57,7 +64,7 @@ func NewTelegramClient(dataDir, notificationsDir, instance string, readOnly bool
 	bot, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
 		store.Close()
-		return nil, fmt.Errorf("failed to authenticate with Telegram: %w", err)
+		return nil, connectError(err)
 	}
 
 	tc := &TelegramClient{
