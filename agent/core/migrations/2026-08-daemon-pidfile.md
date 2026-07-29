@@ -8,17 +8,23 @@ This migration points each daemon line at its command, hands each running daemon
 reduces your restart lines to that form. Convert only the daemons you actually run. Every step
 checks before acting and no-ops when already converged, so it is safe to run more than once.
 
-### 1. Confirm the commands resolve before touching anything
+### 1. Put each launcher command on PATH, then confirm it resolves
 
-Agent startup links every skill's command onto PATH on each boot, so one check covers them all:
+A launcher skill's command is a symlink from `~/agent/skills/<skill>/<skill>` into `~/.local/bin`.
+Link every launcher the box carries, then check one:
 
 ```bash
+for s in dashboard file-host sign-service ssh-tunnel moneypot vpn; do
+  [ -f ~/agent/skills/$s/$s ] && mkdir -p ~/.local/bin && ln -sf ~/agent/skills/$s/$s ~/.local/bin/$s
+done
 command -v ssh-tunnel
 ```
 
-If that prints nothing, STOP here, leave this migration unmarked, and tell the user: converting
-daemon lines while the commands do not resolve would stop your daemons with nothing able to start
-them again.
+whatsapp and telegram link their own command from their setup, so they are already on PATH, and a
+CLI skill (tasks, google, ...) installs its console scripts the same way. If `command -v` still
+prints nothing for a daemon you run, STOP here, leave this migration unmarked, and tell the user:
+converting daemon lines while the commands do not resolve would stop your daemons with nothing able
+to start them again.
 
 ### 2. Find your daemon lines
 
