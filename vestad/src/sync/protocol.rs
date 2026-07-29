@@ -108,13 +108,37 @@ pub(crate) enum ClientFrame {
 }
 
 /// A client's reported context, sent up the `/sync` socket. `focused` is global Vesta-app presence:
-/// web visibility/window focus or mobile foreground state. `resync` is true when the socket replays
-/// its cached context on reconnect, so a reconnect never looks like the user returning.
+/// web visibility/window focus or mobile foreground state. `client` identifies the surface that
+/// caused a return. `resync` is true when the socket replays its cached context on reconnect, so a
+/// reconnect never looks like the user returning.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub(crate) struct ClientContext {
     pub focused: bool,
     #[serde(default)]
+    pub client: ClientKind,
+    #[serde(default)]
     pub resync: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ClientKind {
+    Web,
+    Mobile,
+    Desktop,
+    #[default]
+    Unknown,
+}
+
+impl ClientKind {
+    pub(crate) fn display_name(self) -> &'static str {
+        match self {
+            Self::Web => "Vesta Web App",
+            Self::Mobile => "Vesta Mobile App",
+            Self::Desktop => "Vesta Desktop App",
+            Self::Unknown => "Vesta App",
+        }
+    }
 }
 
 /// Build one representative of every `/sync` frame through the real serde path, for the contract
@@ -271,11 +295,17 @@ mod tests {
     #[test]
     fn client_context_frame_round_trips() {
         // resync defaults to false when the field is absent (older clients, additive-safe).
-        let parsed: ClientFrame = serde_json::from_str(r#"{"type":"client_context","focused":true}"#)
-            .expect("parse client_context");
+        let parsed: ClientFrame = serde_json::from_str(
+            r#"{"type":"client_context","focused":true,"client":"desktop"}"#,
+        )
+        .expect("parse client_context");
         assert_eq!(
             parsed,
-            ClientFrame::ClientContext(ClientContext { focused: true, resync: false })
+            ClientFrame::ClientContext(ClientContext {
+                focused: true,
+                client: ClientKind::Desktop,
+                resync: false,
+            })
         );
         // A shipped client still sends the retired `active_agent`; unknown fields are ignored by
         // rule, which is what keeps this removal off `MIN_SUPPORTED_CLIENT_VERSION`.
@@ -284,7 +314,11 @@ mod tests {
                 .expect("parse legacy client_context");
         assert_eq!(
             legacy,
-            ClientFrame::ClientContext(ClientContext { focused: true, resync: false })
+            ClientFrame::ClientContext(ClientContext {
+                focused: true,
+                client: ClientKind::Unknown,
+                resync: false,
+            })
         );
         let resync: ClientFrame = serde_json::from_str(
             r#"{"type":"client_context","focused":false,"resync":true}"#,
@@ -292,8 +326,20 @@ mod tests {
         .expect("parse client_context resync");
         assert_eq!(
             resync,
-            ClientFrame::ClientContext(ClientContext { focused: false, resync: true })
+            ClientFrame::ClientContext(ClientContext {
+                focused: false,
+                client: ClientKind::Unknown,
+                resync: true,
+            })
         );
+    }
+
+    #[test]
+    fn client_kinds_have_user_facing_app_names() {
+        assert_eq!(ClientKind::Web.display_name(), "Vesta Web App");
+        assert_eq!(ClientKind::Mobile.display_name(), "Vesta Mobile App");
+        assert_eq!(ClientKind::Desktop.display_name(), "Vesta Desktop App");
+        assert_eq!(ClientKind::Unknown.display_name(), "Vesta App");
     }
 
     #[test]

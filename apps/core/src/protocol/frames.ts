@@ -24,8 +24,11 @@ export interface ReauthFrame {
 export interface ClientContextFrame {
   type: "client_context"
   focused: boolean
+  client: ClientKind
   resync: boolean
 }
+
+export type ClientKind = "web" | "mobile" | "desktop"
 
 export type ClientFrame = ReauthFrame | ClientContextFrame
 
@@ -33,8 +36,12 @@ export function reauthFrame(token: string): ReauthFrame {
   return { type: "reauth", token }
 }
 
-export function clientContextFrame(focused: boolean, resync: boolean): ClientContextFrame {
-  return { type: "client_context", focused, resync }
+export function clientContextFrame(
+  focused: boolean,
+  client: ClientKind,
+  resync: boolean,
+): ClientContextFrame {
+  return { type: "client_context", focused, client, resync }
 }
 
 export function encodeFrame(frame: ClientFrame): string {
