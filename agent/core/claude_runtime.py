@@ -98,8 +98,6 @@ def _link_vestad_commands(bin_dir: pl.Path, skills_dir: pl.Path) -> None:
             link.unlink()
     for command, source in _vestad_commands(skills_dir).items():
         link = bin_dir / command
-        if not source.is_file():
-            continue
         if link.is_symlink() and skills_dir in link.readlink().parents:
             link.unlink()
         elif link.is_symlink() or link.exists():
