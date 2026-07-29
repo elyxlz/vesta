@@ -352,12 +352,12 @@ def test_core_notification_is_never_trashed():
 
 
 def test_presence_notification_snoozes_by_default():
-    notif = _notif(source="vestad", type="user-present", interrupt=False)
+    notif = _notif(source="vestad", type="user-presence", interrupt=False)
     assert loops._notif_disposition(notif, []) == "snooze"
 
 
 def test_presence_notification_respects_user_rule():
-    notif = _notif(source="vestad", type="user-present", interrupt=False)
+    notif = _notif(source="vestad", type="user-presence", interrupt=False)
     assert loops._notif_disposition(notif, [_rule(source="vestad", action="trash")]) == "trash"
 
 

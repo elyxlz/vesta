@@ -22,6 +22,7 @@ export interface ProviderManifestEntry {
   order: number
   auth_kind: ProviderAuthKind
   models: string[] | "live"
+  model_names?: Record<string, string>
   default_model: string | null
   auxiliary_model?: string | null
   context: ProviderContextPolicy
@@ -127,5 +128,26 @@ export function normalizeProviderInfo(provider: ProviderInfoWire): ProviderInfo 
     max_context_tokens: provider.max_context_tokens ?? null,
     authed: provider.authed ?? false,
     plan: provider.plan ?? null,
+  }
+}
+
+export interface ProviderIdentity {
+  kind: ProviderKind
+  providerName: string
+  modelName: string | null
+}
+
+/// Who is running this agent, as the user reads it: the manifest owns both names, and the wire
+/// identifiers stand in on a gateway whose manifest predates them. Null while disconnected.
+export function resolveProviderIdentity(
+  provider: ProviderInfo | null,
+  manifest: ProviderManifest | undefined,
+): ProviderIdentity | null {
+  if (!provider || provider.kind === "none" || !provider.authed) return null
+  const entry = manifest?.providers[provider.kind]
+  return {
+    kind: provider.kind,
+    providerName: entry?.display ?? provider.kind,
+    modelName: provider.model ? (entry?.model_names?.[provider.model] ?? provider.model) : null,
   }
 }

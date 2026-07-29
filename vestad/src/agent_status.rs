@@ -275,7 +275,7 @@ impl AgentStatusCache {
         self.presence_notifications_rx.borrow().get(agent).copied().unwrap_or(true)
     }
 
-    /// Every agent that should receive the next global user-present event: the tapped set, which is
+    /// Every agent that should receive the next global user-presence event: the tapped set, which is
     /// both up to read the drop now and the set whose `presence_notifications` preference vestad
     /// still holds (the tap supplies that preference and the poll loop drops the entry when the tap
     /// closes, so an agent outside it would read as enabled and ignore an opt-out).

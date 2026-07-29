@@ -172,14 +172,21 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
             Wake::Client(Some(Ok(Message::Text(text)))) => {
                 match serde_json::from_str::<ClientFrame>(text.as_str()) {
                     Ok(ClientFrame::ClientContext(ctx)) => {
-                        if state.presence.record(conn, ctx, tokio::time::Instant::now()) {
+                        if let Some(client) =
+                            state.presence.record(conn, ctx, tokio::time::Instant::now())
+                        {
                             for agent in state.agent_status_cache.presence_notification_agents() {
                                 // Drop the notification off the session loop: the docker upload has no
                                 // timeout, and awaiting it here would stall this client's keepalive and
                                 // deltas. Best-effort, so the detached task logs its own failure.
                                 let docker = state.docker.clone();
                                 tokio::spawn(async move {
-                                    if let Err(error) = crate::serve::drop_presence_notification(&docker, &agent).await {
+                                    if let Err(error) =
+                                        crate::serve::drop_presence_notification(
+                                            &docker, &agent, client,
+                                        )
+                                        .await
+                                    {
                                         tracing::warn!(%agent, %error, "could not drop presence notification");
                                     }
                                 });

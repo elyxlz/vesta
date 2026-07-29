@@ -3,6 +3,7 @@ import { createController, type Controller } from "@vesta/core";
 import { useSyncState } from "@vesta/core/react";
 import { getConnection } from "@/lib/connection";
 import { websocketUrl } from "@/lib/authed-url";
+import { native } from "@/lib/native";
 import { ensureFreshToken } from "@/lib/token-refresh";
 import { useAuth } from "@/providers/AuthProvider";
 import { DisconnectedOverlay } from "@/components/DisconnectedOverlay";
@@ -29,6 +30,7 @@ function buildController(): Controller {
       setTimer: (fn, ms) => window.setTimeout(fn, ms),
       clearTimer: (handle) => window.clearTimeout(handle),
       clientVersion: __CLIENT_VERSION__,
+      clientKind: native.runtime === "electron" ? "desktop" : "web",
     },
     http: {
       baseUrl: () => getConnection()?.url ?? "",

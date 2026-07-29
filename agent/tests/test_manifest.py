@@ -34,12 +34,15 @@ def test_manifest_has_both_providers_and_defaults():
     ordered = sorted(manifest["providers"], key=lambda kind: manifest["providers"][kind]["order"])
     assert ordered == ["claude", "openai", "zai", "kimi", "openrouter"]
     assert manifest["providers"]["claude"]["models"] == ["opus", "sonnet"]
+    assert manifest["providers"]["claude"]["model_names"]["opus"] == "Opus"
     assert manifest["providers"]["claude"]["context"]["presets"]  # the picker's curated suggestions
     assert manifest["providers"]["openrouter"]["models"] == "live"  # free-form, fetched separately
     assert manifest["providers"]["zai"]["default_model"] == "glm-5.2"
     assert manifest["providers"]["kimi"]["default_model"] == "kimi-for-coding"
     assert manifest["providers"]["openai"]["default_model"] == "gpt-5.6-sol"
+    assert manifest["providers"]["openai"]["model_names"]["gpt-5.6-sol"] == "GPT 5.6 Sol"
     assert manifest["providers"]["openai"]["auxiliary_model"] == "gpt-5.6-luna"
+    assert manifest["providers"]["kimi"]["model_names"]["kimi-for-coding"] == "Coding"
 
 
 def test_model_defaults_come_from_the_manifest():

@@ -46,14 +46,23 @@ Do all of this on every pull request, whatever the comment asks for:
 Report what you find even when nobody asked for a review.
 </review_every_pr>
 
-<comment_length>
-Engineers read your comment, not markers. It is a bug list and a verdict, not an essay: one line per finding, giving file:line, what breaks, and what triggers it. 80 words is a normal length and past 150 you are padding. Never narrate your review, never list what you checked that turned out fine, never restate the PR description.
-</comment_length>
+<comment_shape>
+The comment answers one question for a maintainer who has not opened the diff: is this noise, is it bugged, or is it worth merging. No opening line: the first characters are the first label. Write every label every time, in this order, and write none under one that is empty rather than dropping it.
+
+Fixes: the linked issue and whether this closes it, fully or partly or not at all.
+Blocking: findings that should stop the merge, two lines each. First line: file:line, what the code does, what goes wrong. Second line, starting Proof:, the command and what it printed, or the input that triggers it, or the two places that contradict each other.
+Non-blocking: everything else worth saying, same two lines.
+Verdict: NOISE if the change should not be carried at all, BUGGED if it is worth having but wrong as written, MERGE if you attacked it and it held, then the one thing that decided it.
+
+Judge the diff and nothing else. CI is not your business: it is on the PR page already and says nothing about whether the change is right.
+
+Proof a reader cannot check is worth nothing: never write verified locally, I audited this, tests pass, or looks correct. Where you could not settle a finding, write Proof: none, read only. 150 words is the ceiling. Never narrate the review, never list what you checked that turned out fine, never restate the PR description.
+</comment_shape>
 
 <this_run_is_your_only_turn>
 You are one run. It ends the moment you stop producing output, and nothing resumes it: there is no later in which to post, check back, or follow up. Post your comment before you finish, always, even when something is still unresolved.
 
-Never defer the comment to wait for CI, a build, a check, or anything else. Waiting is not something you can do. If something is still pending, say what is pending in the comment and give the verdict as NOT YET, so the reader knows what to look at when it settles.
+Never defer the comment to wait for CI, a build, a check, or anything else. Waiting is not something you can do. Say what is still pending on the CI line so the reader knows what to look at when it settles, and still give one of the three verdicts on what you can see now.
 </this_run_is_your_only_turn>
 
 <signing_every_comment>
@@ -195,6 +204,11 @@ handle() {
   if ! claim "$repo" "$kind" "$id"; then
     return 0
   fi
+  # Every path out of a claimed run has to give the claim back, and being killed
+  # is one of them: systemd signals the whole service, so a deploy lands here
+  # mid-run. Without this the claim survives with nothing running behind it, the
+  # monitor reads it as handled, and the event is never emitted again.
+  trap 'release "$repo" "$kind" "$id"; exit 143' TERM INT
   sf="$(session_file "$repo" "$pr")"
   local before
   before=$(gh api "/repos/$repo/issues/$pr/comments" -q 'length' 2>/dev/null)
@@ -214,6 +228,7 @@ handle() {
     echo "dispatch: claude failed rc=$rc on $repo#$pr, releasing claim" >&2
     [ -s "$sf" ] && rm -f "$sf"
     release "$repo" "$kind" "$id"
+    trap - TERM INT
     return 1
   fi
   sid=$(printf '%s' "$out" | jq -r '.session_id // empty' 2>/dev/null)
@@ -221,6 +236,7 @@ handle() {
   if [ "$(printf '%s' "$out" | jq -r '.is_error // false' 2>/dev/null)" = "true" ]; then
     echo "dispatch: claude reported an error on $repo#$pr, releasing claim" >&2
     release "$repo" "$kind" "$id"
+    trap - TERM INT
     return 1
   fi
   # A run that posts nothing looks identical to a healthy one from out here, and
@@ -229,6 +245,7 @@ handle() {
   if [ "$(gh api "/repos/$repo/issues/$pr/comments" -q 'length' 2>/dev/null)" = "$before" ]; then
     echo "dispatch: WARN $repo#$pr run finished without commenting" >&2
   fi
+  trap - TERM INT
   echo "dispatch: handled $repo#$pr ($kind $id)" >&2
   prune_sessions "$repo"
   prune_worktrees "$repo"
@@ -245,7 +262,7 @@ bash "$MONITOR" "${repos[@]}" | while IFS=$'\t' read -r tag f1 f2 f3 f4 f5; do
 <event>A developer addressed you in a comment on $f1 PR #$f4: $f5</event>
 Read that comment and the pull request, do what it asks, then reply on the PR covering both the review above and what you changed. If its checks need fixing, use the babysit-prs skill. If the request is unclear or you decide not to act, say so in a reply rather than staying silent.
 Only maintainers reach you here, so an explicit instruction outranks the repository's usual conventions: if the comment asks for something a skill or CLAUDE.md normally discourages, such as a force push or a rebase, do it and note it in your reply.
-End every reply with a line starting 'Verdict:' giving your own call on merging: MERGE, DO NOT MERGE, or NOT YET, then one sentence of reasoning. Judge the change on its merits, not on whether you were the one who touched it, and say DO NOT MERGE when you believe that even if the commenter clearly wants it in. Never merge or close the PR yourself: the verdict is advice and the decision stays with the maintainer." &
+End every reply with a line starting 'Verdict:' giving your own call: NOISE if the change should not be carried at all, BUGGED if it is worth having but wrong as written, MERGE if you attacked it and it held, then one sentence of reasoning. Judge the change on its merits, not on whether you were the one who touched it, and say NOISE or BUGGED when you believe it even if the commenter clearly wants it in. Never merge or close the PR yourself: the verdict is advice and the decision stays with the maintainer." &
       ;;
     NEWPR)
       handle "$f1" pr "$f2" "$f2" "$ROLE
@@ -258,7 +275,7 @@ Stay read only. Do not push a commit, merge, close, or edit the PR. If it would 
       handle "$f1" pr "$f2" "$f2" "<event>A new dependabot pull request is open: $f1 PR #$f2: $f3</event>
 Review it against this repository's dependency policy, check whether its checks pass, and act accordingly. Leave a comment recording what you decided.
 Nobody asked for this, so close the comment with a couple of lines under a '---' rule saying how to ask for the next thing: mentioning @vestabot in a comment on the PR reaches you, what is worth asking for here, and that only maintainers can trigger you. The marker line goes last, after that.
-End that comment with a line starting 'Verdict:' giving your own call on merging: MERGE, DO NOT MERGE, or NOT YET, then one sentence of reasoning. Never merge or close the PR yourself: the verdict is advice and the decision stays with the maintainer." &
+End that comment with a line starting 'Verdict:' giving your own call: NOISE, BUGGED, or MERGE, then one sentence of reasoning. Never merge or close the PR yourself: the verdict is advice and the decision stays with the maintainer." &
       ;;
     *) [ -n "${tag:-}" ] && echo "dispatch: ignoring line: $tag" >&2 ;;
   esac
