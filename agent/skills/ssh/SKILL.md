@@ -72,7 +72,7 @@ ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=accept-new root@bore.pub -p 12
 ssh-tunnel daemon stop
 ```
 
-Ends the tunnel, which is what makes the machine unreachable from outside. The sshd stays up (`ssh-tunnel status` shows it as `"sshd":true`) and the authorized keys stay in `~/.ssh/authorized_keys`, so the next `daemon start` needs no setup.
+Ends the tunnel, which is what makes the machine unreachable from outside. The sshd stays up (`ssh-tunnel daemon status` shows it as `"sshd":true`) and the authorized keys stay in `~/.ssh/authorized_keys`, so the next `daemon start` needs no setup.
 
 ## Notes
 

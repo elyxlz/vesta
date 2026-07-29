@@ -129,9 +129,10 @@ Six properties, which are what make a restart file a plain list of starts:
   `DAEMON_STOP_TIMEOUT_SECS` budget: SIGTERM is the exit the agent asked for, and a daemon that
   has not honoured it two thirds of the way through the budget is killed, with the remainder left
   to reap it. So a stop either ends the daemon or fails loudly having left it standing, and
-  `restart_vesta` is what recovers that. A stop that ends more than one process (telegram, whose
-  watchdog goes first so it cannot revive what the stop just ended) shares that one budget across
-  all of them. whatsapp is the one deliberate exception, reporting a daemon that will not go
+  `restart_vesta` is what recovers that. telegram signals the process group rather than the pid,
+  because a watchdog signalled alone leaves the `telegram daemon start` it is running mid-restart
+  to bring back what the stop just ended, and its stop ends two processes (watchdog first) sharing
+  that one budget. whatsapp is the one deliberate exception, reporting a daemon that will not go
   rather than killing it, since a SIGKILL mid history sync risks having to pair the phone again.
 - **status is a local read** of those two records, never a call to vestad, so it answers
   instantly and truthfully while vestad is down.
