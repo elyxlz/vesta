@@ -86,8 +86,10 @@ and it needs no third-party packages, a stdlib-only script or a shell script (`~
 PATH and persists across restarts). What does not belong on PATH is a wrapper copied into a system
 directory like `/usr/local/bin`, or a runtime environment built by hand: those sit outside both
 mechanisms and nothing maintains them. Copy a `cli/` project's shape from an existing skill such as
-`tasks`, and keep setup that runs once (auth, credentials, model downloads) in a `SETUP.md` beside
-`SKILL.md`.
+`tasks`. The install step itself, the `ln -sf` or the `uv tool install`, and any one-time auth,
+credential, or model download, live in a `SETUP.md` beside `SKILL.md`: the file read once when the
+skill is activated, never the `SKILL.md` body that loads on every boot. Write each step to be
+idempotent, so re-running setup is always safe.
 
 **If the skill runs a background process**, it implements the daemon contract in its own
 language: one command named after the skill, with `daemon start|stop|restart|status` as verbs on
@@ -99,6 +101,10 @@ onto PATH from your setup. The `vestad` skill holds the full spec plus a worked 
 including the two obligations that are easy to miss: a daemon that serves a port registers it
 itself (private unless the page must load with no credential at all), and a daemon that reports
 its own death stays silent when the death was a SIGTERM.
+
+To hand that private service to someone who holds no app credential, mint it a service key:
+`service-key mint <service>` prints a one-time secret, and you share the keyed link. The `vestad`
+skill covers minting, revoking, and the link forms.
 
 Then add the startup line yourself, the bare `<skill> daemon start`, to the `## Daemons` section
 of the `restart` skill, so the daemon comes back after a container restart.
