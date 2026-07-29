@@ -79,22 +79,23 @@ workflow from the description follows that instead of opening the body.
 A skill puts a command on PATH one of two ways. Use `cli/`, a standalone uv project
 (`cli/pyproject.toml` + `cli/uv.lock`), when the command needs third-party packages (it gets an
 isolated venv) or when the skill has more than one command: its `[project.scripts]` names every
-command, one line each, and `uv tool install --editable` (as above) puts them all on PATH. Use the
-single executable at `~/agent/skills/<skill>/<skill>`, which agent startup links with no venv and no
-install step, when the skill has exactly one command and it needs no third-party packages, a
-stdlib-only script or a shell script. Nothing
-else belongs on PATH: a wrapper copied into a system `bin`, or a runtime environment built by hand,
-sits outside both mechanisms and no boot step maintains it. Copy a `cli/` project's shape from an
-existing skill such as `tasks`, and keep setup that runs once (auth, credentials, model downloads) in
-a `SETUP.md` beside `SKILL.md`.
+command, one line each, and `uv tool install --editable` (as above) puts them all on PATH. Use a
+single executable at `~/agent/skills/<skill>/<skill>`, linked from your setup with
+`ln -sf ~/agent/skills/<skill>/<skill> ~/.local/bin/<skill>`, when the skill has exactly one command
+and it needs no third-party packages, a stdlib-only script or a shell script (`~/.local/bin` is on
+PATH and persists across restarts). What does not belong on PATH is a wrapper copied into a system
+directory like `/usr/local/bin`, or a runtime environment built by hand: those sit outside both
+mechanisms and nothing maintains them. Copy a `cli/` project's shape from an existing skill such as
+`tasks`, and keep setup that runs once (auth, credentials, model downloads) in a `SETUP.md` beside
+`SKILL.md`.
 
 **If the skill runs a background process**, it implements the daemon contract in its own
 language: one command named after the skill, with `daemon start|stop|restart|status` as verbs on
 it, each printing one line of JSON, a pid and port record under `~/agent/data/daemons/`, a log at
 `~/agent/logs/<skill>.log`, an idempotent start that returns only once the daemon is up, and
 SIGTERM as the deliberate stop. A skill with a CLI declares the daemon in a `daemon` subcommand;
-a skill without one is a single executable at `~/agent/skills/<skill>/<skill>`, which agent
-startup puts on PATH. The `vestad` skill holds the full spec plus a worked launcher to copy,
+a skill without one is a single executable at `~/agent/skills/<skill>/<skill>`, which you link
+onto PATH from your setup. The `vestad` skill holds the full spec plus a worked launcher to copy,
 including the two obligations that are easy to miss: a daemon that serves a port registers it
 itself (private unless the page must load with no credential at all), and a daemon that reports
 its own death stays silent when the death was a SIGTERM.

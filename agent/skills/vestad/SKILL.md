@@ -20,10 +20,10 @@ from `/run/vestad-env`, already exported into the environment. The API is
 This skill's helpers are commands: `register-service`, `service-key`, `user-notification`, and
 `vestad-health`. Agent startup links every executable in this skill's `scripts/` directory onto
 `PATH` under its filename, so a full path like
-`~/agent/skills/vestad/scripts/register-service` runs exactly the same script. The same startup
-step links each skill's launcher sitting at the root of its directory (`<skill>/<skill>`), so it
-resolves with no setup of its own; a skill whose commands are uv console scripts installs them
-itself from its own SETUP step (`uv tool install --editable <skill>/cli`) and says so in its docs.
+`~/agent/skills/vestad/scripts/register-service` runs exactly the same script. These four helpers
+are the only commands startup links; every other skill puts its own command on PATH from its own
+setup: `uv tool install --editable <skill>/cli` for a `cli/` project, or
+`ln -sf ~/agent/skills/<skill>/<skill> ~/.local/bin/<skill>` for a single launcher.
 
 Restarting or stopping this agent is not a curl: use the `restart_vesta` / `stop_vesta`
 tools, which call vestad's self-scoped lifecycle endpoints.
@@ -71,9 +71,9 @@ opens or a webhook an external service posts to.
 A skill that runs a background process owns its whole lifecycle itself, in its own language,
 behind one command, with the daemon as verbs on it: `<skill> daemon start|stop|restart|status`.
 There is no shared runner, and no script path: a skill with a CLI adds a `daemon` subcommand, a
-skill without one is a single executable at `~/agent/skills/<skill>/<skill>`, and agent startup
-links that command onto PATH on every boot. A command you just wrote runs by its path until the
-next boot.
+skill without one is a single executable at `~/agent/skills/<skill>/<skill>`, which you link onto
+PATH from your setup (`ln -sf ~/agent/skills/<skill>/<skill> ~/.local/bin/<skill>`). A command you
+just wrote runs by its path until you link it.
 
 A skill's command is its directory name, always. A skill whose name would shadow a system command
 names its directory to dodge the collision instead: the ssh tunnel lives in `ssh-tunnel/`, so its
