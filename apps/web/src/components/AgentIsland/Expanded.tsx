@@ -1,25 +1,30 @@
 import { Orb } from "@/components/Orb";
+import { providerMeta } from "@/components/ProviderPicker/providers";
 import { CardDescription, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import type { OrbVisualState } from "@vesta/core";
+import type { OrbVisualState, ProviderIdentity } from "@vesta/core";
 
 interface AgentIslandExpandedProps {
   name: string;
   orbState: OrbVisualState;
   statusLabel: string;
   error: string;
-  model: string | null;
+  providerIdentity: ProviderIdentity | null;
 }
 
 // Self-sized content view (no motion / no layoutId). The shell crossfades whole
-// views, so the model just lives here and fades in/out with the rest.
+// views, so the provider identity fades in/out with the rest.
 export function AgentIslandExpanded({
   name,
   orbState,
   statusLabel,
   error,
-  model,
+  providerIdentity,
 }: AgentIslandExpandedProps) {
+  const ProviderLogo = providerIdentity
+    ? providerMeta(providerIdentity.kind).Logo
+    : null;
+
   return (
     <div className="relative -top-2 flex h-[168px] w-[168px] flex-col items-center justify-center gap-2">
       <div className="flex shrink-0 items-center justify-center">
@@ -43,9 +48,20 @@ export function AgentIslandExpanded({
         >
           {statusLabel}
         </CardDescription>
-        {model && (
-          <span className="line-clamp-1 max-w-[150px] px-0.5 text-[10px] text-muted-foreground">
-            {model}
+        {ProviderLogo && providerIdentity && (
+          <span
+            className="flex max-w-[150px] items-center gap-1 px-0.5 text-[10px] text-muted-foreground"
+            title={
+              providerIdentity.model
+                ? `${providerIdentity.providerName} · ${providerIdentity.model}`
+                : providerIdentity.providerName
+            }
+          >
+            <ProviderLogo className="size-3 shrink-0" />
+            <span className="truncate">
+              {providerIdentity.providerName}
+              {providerIdentity.modelName && ` · ${providerIdentity.modelName}`}
+            </span>
           </span>
         )}
       </div>

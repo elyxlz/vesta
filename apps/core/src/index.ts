@@ -107,12 +107,17 @@ export {
 } from "./agent-status/agent-status"
 export type { AgentStatusKind, OrbVisualState } from "./agent-status/agent-status"
 
-export { normalizeProviderInfo, providerPutBody } from "./provider/provider"
+export {
+  normalizeProviderInfo,
+  providerPutBody,
+  resolveProviderIdentity,
+} from "./provider/provider"
 export type {
   ProviderAuthKind,
   ProviderContextPolicy,
   ProviderContextPreset,
   ProviderInfo,
+  ProviderIdentity,
   ProviderInfoWire,
   ProviderKind,
   ProviderManifest,

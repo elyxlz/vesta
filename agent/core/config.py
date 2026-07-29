@@ -92,6 +92,7 @@ class _ProviderManifestEntry(pyd.BaseModel):
     order: int = pyd.Field(ge=0)
     auth_kind: ProviderAuthKind
     models: list[_ProviderModel] | tp.Literal["live"]
+    model_names: dict[str, str] = pyd.Field(default_factory=dict)
     default_model: _ProviderModel | None
     auxiliary_model: _ProviderModel | None = None
     context: _ContextPolicy
@@ -109,6 +110,9 @@ class _ProviderManifestEntry(pyd.BaseModel):
         unknown_contexts = set(self.context_by_model) - set(self.models if isinstance(self.models, list) else [])
         if unknown_contexts:
             raise ValueError(f"context_by_model contains unknown models: {sorted(unknown_contexts)}")
+        unknown_names = set(self.model_names) - set(self.models if isinstance(self.models, list) else [])
+        if unknown_names:
+            raise ValueError(f"model_names contains unknown models: {sorted(unknown_names)}")
         return self
 
 
