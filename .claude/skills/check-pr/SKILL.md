@@ -48,37 +48,47 @@ Work through the diff yourself. Delegate to a subagent only when the diff is gen
 You get one run, and it ends when you stop. Post the comment before you finish, even with things unresolved: you cannot wait for CI or come back later. Something still pending goes in the comment as `NOT YET`, naming what to watch.
 
 
-Post one comment. Engineers read it, not markers: it is a bug list and a verdict, not an essay.
+Post one comment, in the labelled form below. No opening line, no lead-in, no scene setting: the first characters of the comment are the first label. A reader should be able to find any one thing without reading the rest.
 
-The whole comment is a one-line verdict plus one bullet per finding. Nothing else. **80 words is a normal length. Past 150 you are padding.**
+Write every label every time, in this order. When a label has nothing under it, write `none` rather than dropping it, so a missing section never has to be interpreted.
 
-Each finding is **one sentence**: `file:line`, what breaks, what triggers it. Two only when the trigger genuinely needs it.
+**Fixes:** the linked issue and whether this actually closes it: fully, partly (say which part is left), something adjacent (say what), or nothing. With no issue linked, write `nothing linked` and one clause naming the problem it solves.
 
-Never write any of these:
+**Blocking:** findings that should stop the merge. One bullet each, in this shape: `` `file:line` `` then what the code does, then what goes wrong, then how you know. End with `(reproduced)` when you ran it and `(read only)` when you did not, so nobody has to guess which.
 
-- a paragraph narrating your review ("I audited the claim that...", "Both mutation claims reproduce...")
-- a list of what you checked that turned out fine, in any form
-- a restatement of the PR description or the issue
-- hedging on a finding you already decided to report
+**Non-blocking:** everything else worth saying. Same shape. Do not argue for them; a maintainer decides.
 
-`NOT YET` means right in substance, blocked on something mechanical like CI or a conflict.
+**CI:** `green`, or the failing check by name and whether you reproduced it.
+
+**Verdict:** `MERGE`, `DO NOT MERGE`, or `NOT YET`, then a dash and the one thing that decided it. `NOT YET` means right in substance, blocked on something mechanical.
+
+Findings state what breaks, not what you did. Never narrate the review, never list what you checked that turned out fine, never restate the PR description. **150 words is the ceiling for everything above the rule.** Past that you are explaining rather than reporting.
 
 <example>
-Fixes #412.
+**Fixes:** #412 fully.
 
-- `core/loops.py:88` deletes the notification file before the send is confirmed, so a failed send loses the message.
-- `core/loops.py:120` catches bare `Exception` around the whole batch, so one bad notification drops the rest.
+**Blocking**
+- `core/loops.py:88` deletes the notification file before the send is confirmed, so a failed send loses the message with nothing to retry from (reproduced against a closed socket).
 
-Verdict: NOT YET, the delete ordering drops messages on send failure, two-line fix.
+**Non-blocking**
+- `core/loops.py:120` catches bare `Exception` around the whole batch, so one bad notification drops the rest of it (read only).
+
+**CI:** green.
+
+**Verdict:** NOT YET, the delete ordering loses messages on send failure, two-line fix.
 </example>
 
 <example>
-Fixes #1529, in one place rather than twelve edits.
+**Fixes:** nothing linked, tightens the reauth path on the sync socket.
 
-- `groups.go:84`, `chat_ops.go:124` return false after the remote write landed, so both now exit 1 when the WhatsApp side succeeded.
-- `link.go:245` decodes `SocketResponse` separately and did not get the new rule, so a `success`-carrying command routed through it would lose the body.
+**Blocking:** none.
 
-Verdict: MERGE once the vestad jobs land.
+**Non-blocking**
+- `AuthProvider/index.tsx:60` awaits an untimed fetch during boot, so an unreachable gateway hangs the splash for the OS timeout instead of falling through to the disconnected overlay (reproduced with the gateway down).
+
+**CI:** red on `Apps · web`, prettier on both AuthProvider files (reproduced).
+
+**Verdict:** NOT YET, fix the formatting and the boot hang, both small.
 </example>
 
 Judge the change on its merits even when you wrote the code yourself, and say `DO NOT MERGE` when you believe it. A verdict that always says MERGE is worth less than no verdict.
