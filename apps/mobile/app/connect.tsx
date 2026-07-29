@@ -12,7 +12,7 @@ import {
   BootTransitionTarget,
   useBootTransitionPhase,
 } from "@/components/BootTransition";
-import { Text } from "@/components/ui/Typography";
+import { VestaBrand } from "@/components/VestaBrand";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
 
@@ -77,31 +77,21 @@ function ConnectContent() {
           { paddingBottom: estimatedActionSheetHeight },
         ]}
       >
-        <BootTransitionTarget destination="connect" status="alive">
-          <AgentOrb
-            status="alive"
-            size={88}
-            pulseScale={1.12}
-            pulseDuration={1400}
-            pulseHaptics={
-              activeRoute === "connect" || activeRoute === "connect-actions"
-            }
-          />
-        </BootTransitionTarget>
-        <View style={styles.heroCopy}>
-          <Text family="wordmark" style={[styles.title, { color: colors.text }]}>
-            vesta
-          </Text>
-          <Text
-            adjustsFontSizeToFit
-            family="heading"
-            minimumFontScale={0.8}
-            numberOfLines={1}
-            style={[styles.tagline, { color: colors.secondaryText }]}
-          >
-            with you through life’s journey
-          </Text>
-        </View>
+        <VestaBrand
+          orb={
+            <BootTransitionTarget destination="connect" status="alive">
+              <AgentOrb
+                status="alive"
+                size={88}
+                pulseScale={1.12}
+                pulseDuration={1400}
+                pulseHaptics={
+                  activeRoute === "connect" || activeRoute === "connect-actions"
+                }
+              />
+            </BootTransitionTarget>
+          }
+        />
       </View>
     </View>
   );
@@ -113,15 +103,6 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    gap: 9,
     paddingHorizontal: 24,
-  },
-  heroCopy: { width: "100%", alignItems: "center", gap: 3.6 },
-  title: { fontSize: 43.56, fontWeight: "500", letterSpacing: -1 },
-  tagline: {
-    width: "100%",
-    textAlign: "center",
-    fontSize: 18,
-    lineHeight: 24,
   },
 });
