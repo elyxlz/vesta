@@ -3008,6 +3008,7 @@ pub struct ServerConfig {
     pub expose_lan: bool,
     pub lan_url: Option<String>,
     pub on_agents_changed: agent_status::OnAgentsChanged,
+    pub force_update: bool,
 }
 
 pub async fn run_server(cfg: ServerConfig) {
@@ -3024,6 +3025,7 @@ pub async fn run_server(cfg: ServerConfig) {
         expose_lan,
         lan_url,
         on_agents_changed,
+        force_update,
     } = cfg;
     let agents_dir = config_dir.join("agents");
     let env_config = docker::AgentEnvConfig {
@@ -3047,8 +3049,11 @@ pub async fn run_server(cfg: ServerConfig) {
     );
     // Capture whether this boot will deliver new agent code BEFORE extracting it: a re-extract
     // replaces the code dir, so reconcile must restart running agents to reload the new core (and
-    // re-bind their now-detached core mount).
-    let agent_code_changed = crate::agent_code::agent_code_is_stale(&env_config.config_dir);
+    // re-bind their now-detached core mount). `--force-update` forces the same restart when the
+    // fingerprint is unchanged, so a dev iterating on one version bounces every running agent into
+    // an upstream-sync + pending-migration pass without a version bump.
+    let agent_code_changed =
+        force_update || crate::agent_code::agent_code_is_stale(&env_config.config_dir);
     let code_dir = match crate::agent_code::ensure_agent_code(&env_config.config_dir) {
         Ok(dir) => dir,
         Err(e) => {

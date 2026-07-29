@@ -63,6 +63,11 @@ enum Command {
         /// Expose the HTTPS API to other devices on your LAN (default: loopback only)
         #[arg(long)]
         expose_lan: bool,
+        /// Restart every running agent as if new code shipped (upstream-sync + pending
+        /// migrations), even when the embedded agent code is unchanged. For same-version
+        /// dev iteration; only applies with --standalone.
+        #[arg(long)]
+        force_update: bool,
     },
     /// Show vestad service status
     Status,
@@ -394,7 +399,7 @@ async fn bind_http_atomically(
     unreachable!()
 }
 
-fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
+fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool, force_update: bool) {
     let config = config_dir();
 
     // The systemd unit launches `serve --standalone` with no flag, so the
@@ -567,6 +572,7 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
                 expose_lan,
                 lan_url,
                 on_agents_changed,
+                force_update,
             })
             .await;
 
@@ -576,9 +582,9 @@ fn run_server_foreground(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
         });
 }
 
-fn run_server_systemd(port: Option<u16>, no_tunnel: bool, expose_lan: bool) {
-    if port.is_some() || no_tunnel {
-        eprintln!("note: --port and --no-tunnel only apply with --standalone");
+fn run_server_systemd(port: Option<u16>, no_tunnel: bool, expose_lan: bool, force_update: bool) {
+    if port.is_some() || no_tunnel || force_update {
+        eprintln!("note: --port, --no-tunnel, and --force-update only apply with --standalone");
     }
 
     let docker = docker::connect().unwrap_or_else(|e| die(&e));
@@ -688,17 +694,19 @@ fn main() {
         no_tunnel: false,
         standalone: false,
         expose_lan: false,
+        force_update: false,
     }) {
         Command::Serve {
             port,
             no_tunnel,
             standalone,
             expose_lan,
+            force_update,
         } => {
             if standalone {
-                run_server_foreground(port, no_tunnel, expose_lan);
+                run_server_foreground(port, no_tunnel, expose_lan, force_update);
             } else {
-                run_server_systemd(port, no_tunnel, expose_lan);
+                run_server_systemd(port, no_tunnel, expose_lan, force_update);
             }
         }
 
@@ -1038,6 +1046,31 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn serve_force_update_flag_parses() {
+        let cli = Cli::parse_from(["vestad", "serve", "--standalone", "--force-update"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Serve {
+                force_update: true,
+                standalone: true,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn serve_defaults_force_update_off() {
+        let cli = Cli::parse_from(["vestad", "serve"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Serve {
+                force_update: false,
+                ..
+            })
+        ));
+    }
 
     #[test]
     fn local_health_url_targets_http_port_plus_one() {
