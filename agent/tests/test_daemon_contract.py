@@ -216,7 +216,7 @@ SKILLS = [
         emits_daemon_died=True,
     ),
     Daemon(
-        command=["python3", str(SKILLS_DIR / "email-client/daemon_lifecycle.py")],
+        command=["uv", "run", "--project", str(SKILLS_DIR / "email-client/cli"), "email-client"],
         name="email-client",
         serves_port=False,
         emits_daemon_died=True,

@@ -37,8 +37,8 @@ import urllib.request
 from xml.etree import ElementTree as ET
 from xml.sax.saxutils import escape as xml_escape
 
-import ics
-import imap_client
+from . import ics
+from . import imap as imap_client
 
 CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar"
 REQUEST_TIMEOUT = 30

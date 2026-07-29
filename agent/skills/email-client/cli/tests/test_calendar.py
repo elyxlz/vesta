@@ -1,10 +1,10 @@
 """Calendar over CalDAV: command routing, provider auth selection, iCalendar handling.
 
-calendar_client/caldav_client import imap_client (which needs imap_tools from
-the on-box runtime), so a minimal imap_tools stub is registered first. All
-network traffic funnels through ``caldav_client.request``, so most tests
-monkeypatch that single choke point and feed real multistatus/iCalendar
-bodies; the redirect and 412 tests fake ``urllib`` one level lower.
+calendar_client/caldav_client import the imap module (which needs imap_tools), so a
+minimal imap_tools stub is registered first. All network traffic funnels through
+``caldav_client.request``, so most tests monkeypatch that single choke point and feed
+real multistatus/iCalendar bodies; the redirect and 412 tests fake ``urllib`` one
+level lower.
 """
 
 import argparse
@@ -12,7 +12,6 @@ import base64
 import datetime as dt
 import io
 import json
-import pathlib
 import sys
 import types
 import urllib.error
@@ -20,12 +19,9 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-_ROOT = pathlib.Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_ROOT))
-
 
 def _install_stubs():
-    """Register a minimal fake imap_tools so imap_client imports."""
+    """Register a minimal fake imap_tools so the imap module imports."""
     if "imap_tools" not in sys.modules:
         it = types.ModuleType("imap_tools")
 
@@ -49,11 +45,8 @@ def _install_stubs():
 
 
 _install_stubs()
-import caldav_client
-import calendar_client
-import ics
-import imap_client
-import providers
+from email_client import caldav_client, calendar_client, ics, providers
+from email_client import imap as imap_client
 
 GOOGLE_BASE = "https://apidata.googleusercontent.com/caldav/v2"
 

@@ -3,27 +3,27 @@
 The guard sits in main() before send() runs, so send / reply / forward invocations
 are refused before any SMTP contact. Drafting (--draft) stays allowed.
 
-smtp_send imports imap_client (which needs imap_tools/msal from the on-box runtime).
-We stub those modules so the guard can be exercised without the runtime venv.
+The smtp module imports imap_tools (via the imap module), so a minimal stub is
+registered first, which lets the guard be exercised without that dependency.
 """
 
-import pathlib
 import sys
 import types
 
 import pytest
 
-_ROOT = pathlib.Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_ROOT))
-
 
 def _install_stubs():
-    """Register minimal fake imap_tools / imap_client so smtp_send imports."""
+    """Register a minimal fake imap_tools so the smtp/imap modules import."""
     if "imap_tools" not in sys.modules:
         it = types.ModuleType("imap_tools")
 
         def _and(*_a, **_k):
             return None
+
+        class MailBox:
+            def __init__(self, *_a, **_k):
+                pass
 
         class MailMessageFlags:
             DRAFT = "\\Draft"
@@ -32,30 +32,13 @@ def _install_stubs():
 
         # The attribute mirrors the imap_tools API name.
         it.AND = _and
+        it.MailBox = MailBox
         it.MailMessageFlags = MailMessageFlags
         sys.modules["imap_tools"] = it
 
-    if "imap_client" not in sys.modules:
-        ic = types.ModuleType("imap_client")
-        for name in (
-            "_env",
-            "_from_full",
-            "_state_dir",
-            "_to_full",
-            "account_profile",
-            "account_user",
-            "connect",
-            "get_access_token",
-            "get_app_password",
-            "resolve_account",
-            "resolve_special_folder",
-        ):
-            setattr(ic, name, lambda *a, **k: None)
-        sys.modules["imap_client"] = ic
-
 
 _install_stubs()
-import smtp_send
+from email_client import smtp as smtp_send
 
 
 def _run(monkeypatch, argv, env):

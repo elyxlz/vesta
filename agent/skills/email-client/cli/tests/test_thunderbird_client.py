@@ -1,19 +1,12 @@
 """Tests for the dynamic Thunderbird Google client resolver (providers Part 1).
 
 Covers the OAuth2Providers parser and the cache/fetch/fallback resolution logic.
-No network: the fetcher is always injected. thunderbird_client has no runtime-venv
-dependency, so these run without imap_tools/msal.
+No network: the fetcher is always injected. thunderbird_client imports no third-party
+package, so these run without imap_tools/msal.
 """
 
-import pathlib
-import sys
-
 import pytest
-
-_ROOT = pathlib.Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_ROOT))
-
-import thunderbird_client as tc
+from email_client import thunderbird_client as tc
 
 # A representative slice of comm-central's OAuth2Providers.sys.mjs, including the
 # prettier line-wrap on the long clientId value.

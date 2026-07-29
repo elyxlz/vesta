@@ -40,13 +40,8 @@ import urllib.request
 
 from imap_tools import AND, MailBox, MailMessageFlags
 
-# resolve() follows the ~/.email-client/*.py symlinks SETUP.md creates back to the
-# skill's real directory: new sibling modules (e.g. daemon_lifecycle) become
-# importable without adding a new symlink for each one.
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import daemon_lifecycle
-import pending_send
-from providers import (
+from . import daemon, pending_send
+from .providers import (
     apply_env_overrides,
     detect_provider,
     get_profile,
@@ -817,7 +812,7 @@ def cmd_auth_probe(args):
     Exits non-zero if any account's client is found dead and could not be
     self-healed, so it is scriptable as a monitor.
     """
-    import google_health
+    from . import google_health
 
     notify = not args.no_notify
     if args.account:
@@ -1040,6 +1035,10 @@ def _add_admin_parsers(sub):
     pd = sub.add_parser("daemon", help="manage the poll daemon: start|stop|restart|status")
     pd.add_argument("action", nargs="?", default="", metavar="start|stop|restart|status")
 
+    # Internal: `daemon start` re-invokes `email-client poll` to run the IMAP push/poll loop
+    # in the foreground. `daemon` is the supervised entry a caller uses.
+    sub.add_parser("poll", help=argparse.SUPPRESS)
+
 
 def _build_parser():
     ap = argparse.ArgumentParser(prog="email-client")
@@ -1050,7 +1049,7 @@ def _build_parser():
 
     # Calendar over CalDAV (see calendar_client.py). Imported lazily because
     # calendar_client imports this module; a top-level import would be circular.
-    import calendar_client
+    from . import calendar_client
 
     calendar_client.build_parser(sub)
     return ap
@@ -1058,7 +1057,7 @@ def _build_parser():
 
 def _cmd_auth(args):
     if args.auth_cmd == "add":
-        import auth as _auth_mod
+        from . import auth as _auth_mod
 
         _auth_mod.run_add(
             account=args.account,
@@ -1075,7 +1074,7 @@ def _cmd_auth(args):
 
 
 def _cmd_calendar(args):
-    import calendar_client
+    from . import calendar_client
 
     calendar_client.dispatch(args)
 
@@ -1097,7 +1096,11 @@ def _dispatch(args):
             "remove": cmd_notify_remove,
         }[args.notify_cmd](args)
     elif args.cmd == "daemon":
-        sys.exit(daemon_lifecycle.daemon_cmd(args.action))
+        sys.exit(daemon.daemon_cmd(args.action))
+    elif args.cmd == "poll":
+        from . import poll_daemon
+
+        poll_daemon.run()
     elif args.cmd == "send-delay":
         cmd_send_delay(args)
     elif args.cmd == "pending":
@@ -1123,7 +1126,7 @@ def _dispatch(args):
 
 def main():
     ap = _build_parser()
-    if len(sys.argv) == 1:
+    if len(sys.argv) == 1 or sys.argv[1] == "help":
         ap.print_help()
         sys.exit(0)
     _dispatch(ap.parse_args())

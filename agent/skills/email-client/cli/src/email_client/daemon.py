@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Daemon lifecycle for the poll daemon: the whole contract, owned here.
 
-start spawns ``poll_daemon.py`` detached and records its pid, stop is the SIGTERM that ends
-it, and status answers from that record alone. The poller answers no probe and serves no
+start re-invokes ``email-client poll`` detached and records its pid, stop is the SIGTERM that
+ends it, and status answers from that record alone. The poller answers no probe and serves no
 port, so a child still alive a moment after the spawn is what start reads as up.
 
-Imports nothing from the account layer, so the four verbs run under any interpreter while
-the poller itself runs under the environment that started it.
+Imports nothing from the account layer, so the four verbs run without pulling in imap_tools/msal
+while the poller itself loads the account layer under the same interpreter.
 """
 
 from __future__ import annotations
@@ -25,7 +25,6 @@ NAME = "email-client"
 DAEMONS_DIR = pathlib.Path.home() / "agent/data/daemons"
 PIDFILE = DAEMONS_DIR / f"{NAME}.pid"
 LOG = pathlib.Path.home() / "agent/logs" / f"{NAME}.log"
-POLL_DAEMON = pathlib.Path(__file__).resolve().parent / "poll_daemon.py"
 USAGE = f"Usage: {NAME} daemon <start|stop|restart|status>"
 POLL_SECS = 0.5
 # How long a start that lost the record claim waits for the rival start to resolve.
@@ -96,7 +95,7 @@ def _start() -> int:
     if answer is not None:
         return answer
     with LOG.open("ab") as log:
-        child = subprocess.Popen([sys.executable, str(POLL_DAEMON)], start_new_session=True, stdout=log, stderr=log)
+        child = subprocess.Popen([sys.argv[0], "poll"], start_new_session=True, stdout=log, stderr=log)
     PIDFILE.write_text(str(child.pid))
     time.sleep(SETTLE_SECS)
     if child.poll() is None:

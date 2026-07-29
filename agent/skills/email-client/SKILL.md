@@ -47,7 +47,7 @@ Two binaries plus a daemon:
 
 - `email-client` - read (`list-folders`, `list`, `get`, `search`, `attachments`, `status`), manage messages (`mark`, `move`, `archive`, `delete`), manage folders (`folder create/rename/delete/subscribe`), and choose notify folders (`notify list/add/remove`)
 - `email-client-send` - outbound mail (send, reply, forward, save draft)
-- `poll_daemon.py` - watches each account's chosen folders (INBOX by default) and writes a notification per new message
+- `email-client daemon start` - runs the poll daemon that watches each account's chosen folders (INBOX by default) and writes a notification per new message
 
 Omit `--account` on any command to use the default account from `accounts.json`. All commands accept `--account` and (where relevant) `--folder` (default `INBOX`).
 

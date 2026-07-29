@@ -7,16 +7,12 @@ app-password account on e.g. Gmail works without hand-editing ``imap_host``.
 The auth strategy and stored credentials must be left untouched, unknown
 domains must not be inferred, and an explicit per-account host must still win.
 
-imap_client imports imap_tools (from the on-box runtime); we stub it so the
-module imports without the venv.
+The imap module imports imap_tools; we stub it so the module imports without that
+dependency.
 """
 
-import pathlib
 import sys
 import types
-
-_ROOT = pathlib.Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_ROOT))
 
 
 def _install_imap_tools_stub():
@@ -42,7 +38,7 @@ def _install_imap_tools_stub():
 
 
 _install_imap_tools_stub()
-import imap_client
+from email_client import imap as imap_client
 
 
 def _patch(monkeypatch, cfg, tok=None):

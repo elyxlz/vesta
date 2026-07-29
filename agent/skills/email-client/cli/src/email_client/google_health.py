@@ -144,7 +144,7 @@ def probe_account(account: str, *, post=None) -> dict:
     stored refresh token yet (brand-new user). Does no self-heal; see
     :func:`run_probe`.
     """
-    import imap_client as ic  # lazy: pulls imap_tools/msal from the runtime venv
+    from . import imap as ic  # lazy: imap pulls imap_tools/msal, kept off this module's import path
 
     provider, profile = ic.account_profile(account)
     if not _is_google(provider, profile):
@@ -180,8 +180,8 @@ def attempt_self_heal(account: str, dead_result: dict, *, post=None, allow_fetch
     client is now cached, so every subsequent profile build picks it up
     automatically — the swap is durable, not just for this call.
     """
-    import providers
-    from thunderbird_client import resolve_google_client
+    from . import providers
+    from .thunderbird_client import resolve_google_client
 
     creds = resolve_google_client(
         providers.THUNDERBIRD_GOOGLE_CLIENT_ID,
@@ -200,7 +200,7 @@ def attempt_self_heal(account: str, dead_result: dict, *, post=None, allow_fetch
             "client_id": new_id,
         }
 
-    import imap_client as ic
+    from . import imap as ic
 
     tok = ic.load_token(account)
     _, profile = ic.account_profile(account)
@@ -276,7 +276,7 @@ def run_probe(account: str, *, post=None, notify: bool = True, allow_fetch: bool
 
 
 def _gmail_accounts() -> list[str]:
-    import imap_client as ic
+    from . import imap as ic
 
     out = []
     for acc in ic.list_accounts():

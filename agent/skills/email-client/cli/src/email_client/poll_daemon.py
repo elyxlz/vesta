@@ -6,7 +6,7 @@ per account with ``email-client notify``) and writes a notification JSON
 into ~/agent/notifications/ for each new message. Uses IMAP IDLE for
 real-time push where the server advertises the capability, falling back
 to interval polling otherwise. Auto-refreshes the OAuth token via the
-imap_client helper on every reconnect.
+imap module's connect helper on every reconnect.
 
 One worker thread per (account, folder), each holding its own persistent
 IMAP connection. The supervisor reads each account's watch list and
@@ -30,15 +30,12 @@ import os
 import pathlib
 import re
 import signal
-import sys
 import threading
 import time
 import uuid
 
-# resolve() follows the ~/.email-client/poll_daemon.py symlink back to the skill's real
-# directory, which is what makes the account layer importable. Each import of it happens
-# where it is used, so the daemon comes up and stays up before any account exists.
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+# The account layer (imap) is imported where it is used, not at module load, so the daemon
+# comes up and stays up before any account exists.
 
 NOTIF_DIR = pathlib.Path.home() / "agent" / "notifications"
 DEFAULT_POLL_INTERVAL_SECS = 15
@@ -74,7 +71,7 @@ def watermark_path(account: str, folder: str) -> pathlib.Path:
     INBOX keeps the plain ``high_uid.txt`` name; every other folder carries its own
     sanitized suffix.
     """
-    from imap_client import account_dir
+    from .imap import account_dir
 
     base = account_dir(account)
     if folder == "INBOX":
@@ -119,8 +116,9 @@ def set_high_uid(path: pathlib.Path, n: int) -> None:
 
 def emit_new(account: str, folder: str, mb, log, high_uid_path: pathlib.Path) -> None:
     """Notify on every message in ``folder`` with UID above the watermark."""
-    from imap_client import _from_full, _to_full
     from imap_tools import AND
+
+    from .imap import _from_full, _to_full
 
     mb.folder.set(folder)
     high = get_high_uid(high_uid_path)
@@ -168,7 +166,7 @@ def folder_worker(account: str, folder: str, interval: int, log, stop_event: thr
     otherwise sleeps ``interval`` between checks. Reconnects on error
     (with backoff) and on the periodic refresh interval.
     """
-    from imap_client import connect
+    from .imap import connect
 
     high_uid_path = watermark_path(account, folder)
     while not stop_event.is_set():
@@ -220,7 +218,7 @@ def write_daemon_died_notification(reason: str) -> None:
 
 def desired_workers() -> set[tuple[str, str]]:
     """The set of ``(account, folder)`` pairs that should be watched now."""
-    from imap_client import list_accounts, notify_folders
+    from .imap import list_accounts, notify_folders
 
     wanted: set[tuple[str, str]] = set()
     for account in list_accounts():
@@ -236,8 +234,8 @@ def _maybe_probe(log) -> None:
     self-healed without any user interaction. Never allowed to crash the daemon.
     """
     try:
-        import google_health
-        from imap_client import _state_dir
+        from . import google_health
+        from .imap import _state_dir
 
         google_health.maybe_run_daily_probe(_state_dir(), log)
     except Exception as e:
@@ -285,9 +283,8 @@ def _interval_default() -> int:
 def pending_send_worker(log, stop_event: threading.Event) -> None:
     """Send queued mail whose undo window has expired."""
     try:
-        import pending_send
-        import smtp_send
-        from imap_client import _state_dir
+        from . import pending_send, smtp
+        from .imap import _state_dir
 
         state_dir = _state_dir()
         pending_send.recover_dispatching(state_dir)
@@ -296,22 +293,20 @@ def pending_send_worker(log, stop_event: threading.Event) -> None:
         return
     while not stop_event.is_set():
         try:
-            if smtp_send.dispatch_due(state_dir):
+            if smtp.dispatch_due(state_dir):
                 continue
         except Exception as error:
             log(f"[pending-send] dispatch failed: {error}")
         stop_event.wait(PENDING_POLL_SECONDS)
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument(
-        "--interval",
-        type=int,
-        default=_interval_default(),
-        help="poll seconds (fallback only; servers with IDLE push in real time)",
-    )
-    args = ap.parse_args()
+def run(interval: int | None = None) -> None:
+    """Run the supervisor loop in the foreground until a signal stops it.
+
+    ``interval`` is the fallback poll cadence for servers without IMAP IDLE; ``None`` reads
+    it from ``EMAIL_CLIENT_POLL_INTERVAL`` (default ``DEFAULT_POLL_INTERVAL_SECS``).
+    """
+    interval = _interval_default() if interval is None else interval
 
     log_lock = threading.Lock()
 
@@ -356,7 +351,7 @@ def main():
                 last_desired = wanted
                 log(f"watching: {sorted(wanted)}")
             _maybe_probe(log)
-            _reconcile_workers(workers, wanted, args.interval, log)
+            _reconcile_workers(workers, wanted, interval, log)
             shutdown_event.wait(INDEX_CHECK_SECS)
     finally:
         shutdown_event.set()
@@ -370,6 +365,17 @@ def main():
         else:
             log(f"shutting down ({shutdown_reason}); writing daemon_died notification")
             write_daemon_died_notification(shutdown_reason)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument(
+        "--interval",
+        type=int,
+        default=_interval_default(),
+        help="poll seconds (fallback only; servers with IDLE push in real time)",
+    )
+    run(ap.parse_args().interval)
 
 
 if __name__ == "__main__":

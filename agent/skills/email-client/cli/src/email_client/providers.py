@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import os
 
-from thunderbird_client import resolve_google_client
+from .thunderbird_client import resolve_google_client
 
 # Mozilla Thunderbird's published public OAuth client IDs. These are
 # baked into Thunderbird's source and are the canonical "open-source

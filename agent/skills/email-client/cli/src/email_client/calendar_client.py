@@ -48,8 +48,7 @@ import urllib.parse
 import uuid
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-import caldav_client
-import ics
+from . import caldav_client, ics
 
 RESPONSE_TO_PARTSTAT = {
     "accept": "ACCEPTED",

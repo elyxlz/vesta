@@ -15,10 +15,10 @@ Multi-account: every credential lives at
 ``$EMAIL_CLIENT_DIR/accounts/<name>/token.json`` so the user can have
 N accounts side by side. The active account is named via ``--account``.
 
-Run as:
-    uv run python3 auth.py --account <name>
-    uv run python3 auth.py --account <name> --provider gmail
-    uv run python3 auth.py --account <name> --reauth    # force a fresh login
+Reached through the ``email-client auth add`` subcommand:
+    email-client auth add --account <name>
+    email-client auth add --account <name> --provider gmail
+    email-client auth add --account <name> --reauth    # force a fresh login
 """
 
 from __future__ import annotations
@@ -28,7 +28,6 @@ import getpass
 import http.server
 import json
 import os
-import pathlib
 import secrets
 import socket
 import sys
@@ -37,8 +36,7 @@ import time
 import urllib.parse
 import urllib.request
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from imap_client import (
+from .imap import (
     _env,
     _token_path,
     account_dir,
@@ -48,7 +46,7 @@ from imap_client import (
     save_config,
     save_token,
 )
-from providers import (
+from .providers import (
     apply_env_overrides,
     detect_provider,
     get_profile,

@@ -3,20 +3,13 @@
 The core requirement: the classifier must distinguish a DEAD CLIENT
 (deleted_client / invalid_client-not-found) from a BAD USER TOKEN (invalid_grant)
 from a HEALTHY refresh. We mock the token-endpoint responses for each class; no
-network and no runtime venv (imap_client is stubbed in sys.modules).
+network, and the imap account layer is monkeypatched per test.
 """
 
 import json
-import pathlib
-import sys
-import types
 
 import pytest
-
-_ROOT = pathlib.Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_ROOT))
-
-import google_health as gh
+from email_client import google_health as gh
 
 DEAD_ID = "dead-000.apps.googleusercontent.com"
 NEW_ID = "fresh-999.apps.googleusercontent.com"
@@ -83,11 +76,12 @@ def test_probe_refresh_sends_refresh_grant_and_classifies():
     assert seen["params"]["client_id"] == "cid"
 
 
-# -- account-level probe + self-heal (imap_client stubbed) ----------
+# -- account-level probe + self-heal (imap account layer monkeypatched) ----------
 
 
-def _install_fake_imap_client(token, provider="gmail", client_id=DEAD_ID, accounts=("personal",)):
-    ic = types.ModuleType("imap_client")
+def _install_fake_imap_client(monkeypatch, token, provider="gmail", client_id=DEAD_ID, accounts=("personal",)):
+    from email_client import imap
+
     strategy = "loopback-oauth" if provider == "gmail" else "app-password"
     profile = {
         "auth_strategy": strategy,
@@ -95,11 +89,9 @@ def _install_fake_imap_client(token, provider="gmail", client_id=DEAD_ID, accoun
         "oauth_client_secret": "sek",
         "oauth_token_url": "https://oauth2.googleapis.com/token",
     }
-    ic.load_token = lambda acc: token
-    ic.account_profile = lambda acc: (provider, dict(profile))
-    ic.list_accounts = lambda: list(accounts)
-    sys.modules["imap_client"] = ic
-    return ic
+    monkeypatch.setattr(imap, "load_token", lambda acc: token)
+    monkeypatch.setattr(imap, "account_profile", lambda acc: (provider, dict(profile)))
+    monkeypatch.setattr(imap, "list_accounts", lambda: list(accounts))
 
 
 def _post_by_client(mapping):
@@ -112,32 +104,30 @@ def _post_by_client(mapping):
 @pytest.fixture(autouse=True)
 def _isolate_notifs(tmp_path, monkeypatch):
     monkeypatch.setattr(gh, "NOTIF_DIR", tmp_path / "notifications")
-    yield
-    sys.modules.pop("imap_client", None)
 
 
-def test_probe_account_skips_non_google():
-    _install_fake_imap_client({"refresh_token": "RT"}, provider="yahoo-app-password")
+def test_probe_account_skips_non_google(monkeypatch):
+    _install_fake_imap_client(monkeypatch, {"refresh_token": "RT"}, provider="yahoo-app-password")
     res = gh.probe_account("personal")
     assert res["status"] == gh.SKIPPED
     assert "not a Google" in res["reason"]
 
 
-def test_probe_account_skips_when_no_stored_token():
-    _install_fake_imap_client(None)
+def test_probe_account_skips_when_no_stored_token(monkeypatch):
+    _install_fake_imap_client(monkeypatch, None)
     res = gh.probe_account("personal")
     assert res["status"] == gh.SKIPPED
     assert "no stored refresh token" in res["reason"]
 
 
-def test_probe_account_healthy():
-    _install_fake_imap_client({"refresh_token": "RT"})
+def test_probe_account_healthy(monkeypatch):
+    _install_fake_imap_client(monkeypatch, {"refresh_token": "RT"})
     res = gh.probe_account("personal", post=_post_by_client({DEAD_ID: RESP_SUCCESS}))
     assert res["status"] == gh.HEALTHY
 
 
 def test_probe_account_bad_token_does_not_notify_or_heal(monkeypatch, tmp_path):
-    _install_fake_imap_client({"refresh_token": "RT"})
+    _install_fake_imap_client(monkeypatch, {"refresh_token": "RT"})
     # invalid_grant -> bad token; run_probe must NOT self-heal or notify.
     called = {"heal": False}
     monkeypatch.setattr(gh, "attempt_self_heal", lambda *a, **k: called.__setitem__("heal", True))
@@ -148,11 +138,11 @@ def test_probe_account_bad_token_does_not_notify_or_heal(monkeypatch, tmp_path):
 
 
 def test_run_probe_self_heals_with_fresh_client(monkeypatch):
-    _install_fake_imap_client({"refresh_token": "RT"}, client_id=DEAD_ID)
+    _install_fake_imap_client(monkeypatch, {"refresh_token": "RT"}, client_id=DEAD_ID)
     # Dead client on DEAD_ID, but the freshly-resolved client NEW_ID works.
     post = _post_by_client({DEAD_ID: RESP_DELETED_CLIENT, NEW_ID: RESP_SUCCESS})
     monkeypatch.setattr(
-        "thunderbird_client.resolve_google_client",
+        "email_client.thunderbird_client.resolve_google_client",
         lambda *a, **k: {"client_id": NEW_ID, "client_secret": "s2", "source": "fetched"},
     )
     res = gh.run_probe("personal", post=post)
@@ -164,11 +154,11 @@ def test_run_probe_self_heals_with_fresh_client(monkeypatch):
 
 
 def test_run_probe_notifies_when_fresh_client_identical(monkeypatch):
-    _install_fake_imap_client({"refresh_token": "RT"}, client_id=DEAD_ID)
+    _install_fake_imap_client(monkeypatch, {"refresh_token": "RT"}, client_id=DEAD_ID)
     post = _post_by_client({DEAD_ID: RESP_DELETED_CLIENT})
     # Upstream has not fixed it: the fresh client is the same dead id.
     monkeypatch.setattr(
-        "thunderbird_client.resolve_google_client",
+        "email_client.thunderbird_client.resolve_google_client",
         lambda *a, **k: {"client_id": DEAD_ID, "client_secret": "sek", "source": "fetched"},
     )
     res = gh.run_probe("personal", post=post)
@@ -183,10 +173,10 @@ def test_run_probe_notifies_when_fresh_client_identical(monkeypatch):
 
 
 def test_run_probe_notifies_when_fresh_client_also_dead(monkeypatch):
-    _install_fake_imap_client({"refresh_token": "RT"}, client_id=DEAD_ID)
+    _install_fake_imap_client(monkeypatch, {"refresh_token": "RT"}, client_id=DEAD_ID)
     post = _post_by_client({DEAD_ID: RESP_DELETED_CLIENT, NEW_ID: RESP_INVALID_CLIENT})
     monkeypatch.setattr(
-        "thunderbird_client.resolve_google_client",
+        "email_client.thunderbird_client.resolve_google_client",
         lambda *a, **k: {"client_id": NEW_ID, "client_secret": "s2", "source": "fetched"},
     )
     res = gh.run_probe("personal", post=post)
@@ -196,10 +186,10 @@ def test_run_probe_notifies_when_fresh_client_also_dead(monkeypatch):
 
 
 def test_run_probe_no_notify_flag(monkeypatch):
-    _install_fake_imap_client({"refresh_token": "RT"}, client_id=DEAD_ID)
+    _install_fake_imap_client(monkeypatch, {"refresh_token": "RT"}, client_id=DEAD_ID)
     post = _post_by_client({DEAD_ID: RESP_DELETED_CLIENT})
     monkeypatch.setattr(
-        "thunderbird_client.resolve_google_client",
+        "email_client.thunderbird_client.resolve_google_client",
         lambda *a, **k: {"client_id": DEAD_ID, "client_secret": "sek", "source": "fetched"},
     )
     res = gh.run_probe("personal", post=post, notify=False)

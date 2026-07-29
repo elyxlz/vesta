@@ -6,8 +6,7 @@ does not start onto a daemon the stop could not kill, and status answers from th
 alone. agent/tests/test_daemon_contract.py drives the same verbs as real subprocesses; this
 suite covers the decisions behind them.
 
-imap_client imports imap_tools (from the on-box runtime), so a minimal stub is registered
-first.
+The imap module imports imap_tools, so a minimal stub is registered first.
 """
 
 import dataclasses
@@ -22,9 +21,9 @@ import threading
 import time
 import types
 
-import daemon_lifecycle as dl
-import poll_daemon
 import pytest
+from email_client import daemon as dl
+from email_client import poll_daemon
 
 # The default the module falls back to when the environment names no stop budget.
 DEFAULT_STOP_TIMEOUT_SECS = 15
@@ -67,7 +66,7 @@ def _install_imap_tools_stub():
 
 
 _install_imap_tools_stub()
-import imap_client
+from email_client import imap as imap_client
 
 
 @dataclasses.dataclass(frozen=True)
@@ -196,10 +195,9 @@ def test_start_runs_the_poller_detached_and_names_no_cadence(records: pathlib.Pa
     dl.daemon_cmd("start")
 
     capsys.readouterr()
-    assert dl.POLL_DAEMON.name == "poll_daemon.py"
-    assert dl.POLL_DAEMON.exists()
-    # No cadence flag: the poller reads its interval from the environment.
-    assert [spawn.argv for spawn in spawns] == [[sys.executable, str(dl.POLL_DAEMON)]]
+    # start re-invokes the same console entry with the internal `poll` subcommand; no cadence
+    # flag, so the poller reads its interval from the environment.
+    assert [spawn.argv for spawn in spawns] == [[sys.argv[0], "poll"]]
     assert [spawn.detached for spawn in spawns] == [True]
     assert [spawn.log_path for spawn in spawns] == [str(dl.LOG)]
 

@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import dataclasses
 import datetime as _dt
 import json
@@ -76,12 +77,8 @@ from imap_tools import AND, MailMessageFlags
 # clearly before SMTP rejects us mid-conversation.
 MAX_ATTACH_TOTAL_BYTES = 25 * 1024 * 1024
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import contextlib
-
-import daemon_lifecycle
-import pending_send
-from imap_client import (
+from . import daemon, pending_send
+from .imap import (
     _env,
     _from_full,
     _state_dir,
@@ -524,7 +521,7 @@ def send(req: SendRequest) -> None:
 
     state_dir = _state_dir()
     if pending_send.delay_seconds(state_dir) > 0:
-        if daemon_lifecycle.live_pid() is None:
+        if daemon.live_pid() is None:
             sys.exit(
                 "the poll daemon dispatches delayed sends and is not running, so this message would never leave; "
                 "start it with `email-client daemon start`, or send immediately with `email-client send-delay --seconds 0`"

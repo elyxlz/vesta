@@ -22,24 +22,10 @@ This is why both OAuth consent screens say "Mozilla Thunderbird". That is expect
 ## 1. Install
 
 ```bash
-mkdir -p ~/.email-client/runtime
-cd ~/.email-client/runtime
-uv init --bare --python 3.11
-uv add imap_tools msal aiohttp
-ln -sf ~/agent/skills/email-client/imap_client.py ~/.email-client/imap_client.py
-ln -sf ~/agent/skills/email-client/smtp_send.py ~/.email-client/smtp_send.py
-ln -sf ~/agent/skills/email-client/poll_daemon.py ~/.email-client/poll_daemon.py
-ln -sf ~/agent/skills/email-client/providers.py ~/.email-client/providers.py
-ln -sf ~/agent/skills/email-client/auth.py ~/.email-client/auth.py
-ln -sf ~/agent/skills/email-client/thunderbird_client.py ~/.email-client/thunderbird_client.py
-ln -sf ~/agent/skills/email-client/calendar_client.py ~/.email-client/calendar_client.py
-ln -sf ~/agent/skills/email-client/google_health.py ~/.email-client/google_health.py
-sudo cp ~/agent/skills/email-client/bin/email-client /usr/local/bin/email-client 2>/dev/null || cp ~/agent/skills/email-client/bin/email-client /usr/local/bin/email-client
-sudo cp ~/agent/skills/email-client/bin/email-client-send /usr/local/bin/email-client-send 2>/dev/null || cp ~/agent/skills/email-client/bin/email-client-send /usr/local/bin/email-client-send
-chmod +x /usr/local/bin/email-client /usr/local/bin/email-client-send
+uv tool install --editable ~/agent/skills/email-client/cli
 ```
 
-`imap_tools` wraps the IMAP read/manage layer. `msal` is only for Microsoft OAuth refresh; the Gmail loopback flow uses stdlib `urllib`.
+This puts both console scripts, `email-client` and `email-client-send`, on `~/.local/bin`. `imap_tools` wraps the IMAP read/manage layer. `msal` is only for Microsoft OAuth refresh; the Gmail loopback flow uses stdlib `urllib`.
 
 ## 2. Add the first account
 
