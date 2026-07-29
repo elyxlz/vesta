@@ -87,7 +87,6 @@ describe("resolveProviderIdentity", () => {
     ).toEqual({
       kind: "openai",
       providerName: "OpenAI",
-      model: "gpt-5.6-sol",
       modelName: "GPT 5.6 Sol",
     })
   })

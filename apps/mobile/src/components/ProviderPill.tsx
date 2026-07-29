@@ -3,6 +3,8 @@ import { StyleSheet, View } from "react-native";
 import { ProviderLogo } from "@/components/ProviderLogo";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
+import { radii } from "@/theme/layout";
+import { typeScale } from "@/theme/typography";
 
 export function ProviderPill({ identity }: { identity: ProviderIdentity }) {
   const { colors } = usePreferences();
@@ -29,7 +31,7 @@ const styles = StyleSheet.create({
   pill: {
     alignItems: "center",
     alignSelf: "flex-start",
-    borderRadius: 999,
+    borderRadius: radii.pill,
     borderWidth: StyleSheet.hairlineWidth,
     flexDirection: "row",
     gap: 6,
@@ -37,5 +39,5 @@ const styles = StyleSheet.create({
     paddingHorizontal: 9,
     paddingVertical: 5,
   },
-  label: { flexShrink: 1, fontSize: 12 },
+  label: { flexShrink: 1, fontSize: typeScale.xs },
 });

@@ -138,7 +138,7 @@ _MANIFEST_FALLBACK: dict[str, pyd.JsonValue] = {
     "default_personality": "dry",
     "providers": {
         "claude": {
-            "display": "Claude account",
+            "display": "Claude",
             "order": 0,
             "auth_kind": "claude_oauth",
             "models": ["opus"],

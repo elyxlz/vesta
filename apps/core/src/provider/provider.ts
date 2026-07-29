@@ -134,10 +134,11 @@ export function normalizeProviderInfo(provider: ProviderInfoWire): ProviderInfo 
 export interface ProviderIdentity {
   kind: ProviderKind
   providerName: string
-  model: string | null
   modelName: string | null
 }
 
+/// Who is running this agent, as the user reads it: the manifest owns both names, and the wire
+/// identifiers stand in on a gateway whose manifest predates them. Null while disconnected.
 export function resolveProviderIdentity(
   provider: ProviderInfo | null,
   manifest: ProviderManifest | undefined,
@@ -147,7 +148,6 @@ export function resolveProviderIdentity(
   return {
     kind: provider.kind,
     providerName: entry?.display ?? provider.kind,
-    model: provider.model,
     modelName: provider.model ? (entry?.model_names?.[provider.model] ?? provider.model) : null,
   }
 }

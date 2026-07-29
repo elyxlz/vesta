@@ -1,6 +1,9 @@
 import type { ProviderKind } from "@vesta/core";
 import Svg, { Circle, Path } from "react-native-svg";
+import { usePreferences } from "@/preferences/PreferencesProvider";
 
+// The brand marks the web picker draws, as react-native-svg. Brand-colored marks carry their fixed
+// hex; the neutral ones take the theme foreground so they stay legible in light and dark.
 export function ProviderLogo({
   kind,
   size,
@@ -8,6 +11,7 @@ export function ProviderLogo({
   kind: ProviderKind;
   size: number;
 }) {
+  const { colors } = usePreferences();
   if (kind === "claude") {
     return (
       <Svg width={size} height={size} viewBox="0 0 16 16">
@@ -22,7 +26,7 @@ export function ProviderLogo({
     return (
       <Svg width={size} height={size} viewBox="0 0 24 24">
         <Path
-          fill="#737373"
+          fill={colors.text}
           d="M16.778 1.844v1.919q-.569-.026-1.138-.032-.708-.008-1.415.037c-1.93.126-4.023.728-6.149 2.237-2.911 2.066-2.731 1.95-4.14 2.75-.396.223-1.342.574-2.185.798-.841.225-1.753.333-1.751.333v4.229s.768.108 1.61.333c.842.224 1.789.575 2.185.799 1.41.798 1.228.683 4.14 2.75 2.126 1.509 4.22 2.11 6.148 2.236.88.058 1.716.041 2.555.005v1.918l7.222-4.168-7.222-4.17v2.176c-.86.038-1.611.065-2.278.021-1.364-.09-2.417-.357-3.979-1.465-2.244-1.593-2.866-2.027-3.68-2.508.889-.518 1.449-.906 3.822-2.59 1.56-1.109 2.614-1.377 3.978-1.466.667-.044 1.418-.017 2.278.02v2.176L24 6.014Z"
         />
       </Svg>
@@ -59,7 +63,7 @@ export function ProviderLogo({
     <Svg width={size} height={size} viewBox="0 0 24 24">
       <Path
         d="M12 3.5a4.25 4.25 0 0 1 4.1 3.13 4.25 4.25 0 0 1 1.34 7.93A4.25 4.25 0 0 1 10.9 20.5a4.25 4.25 0 0 1-4.1-3.13 4.25 4.25 0 0 1-1.34-7.93A4.25 4.25 0 0 1 12 3.5Zm-3.78 7.13 3.78-2.2 3.78 2.2v4.74L12 17.57l-3.78-2.2v-4.74Z"
-        stroke="#737373"
+        stroke={colors.text}
         strokeWidth={1.8}
         strokeLinejoin="round"
       />

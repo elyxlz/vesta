@@ -17,23 +17,9 @@
         "max": 1000000,
         "defaults_by_plan": { "max": 1000000, "pro": 200000, "free": 200000 },
         "presets": [
-          {
-            "tokens": 1000000,
-            "label": "1M",
-            "note": "most context",
-            "plans": ["max"]
-          },
-          {
-            "tokens": 500000,
-            "label": "500K",
-            "note": "balanced",
-            "plans": ["max"]
-          },
-          {
-            "tokens": 200000,
-            "label": "200K",
-            "note": "cheapest prompt-cache reads, compacts soonest"
-          }
+          { "tokens": 1000000, "label": "1M", "note": "most context", "plans": ["max"] },
+          { "tokens": 500000, "label": "500K", "note": "balanced", "plans": ["max"] },
+          { "tokens": 200000, "label": "200K", "note": "cheapest prompt-cache reads, compacts soonest" }
         ]
       }
     },
@@ -109,11 +95,7 @@
           "max": 1048576,
           "harness_suffix_above": 262144,
           "presets": [
-            {
-              "tokens": 1048576,
-              "label": "1M",
-              "note": "Allegretto and above"
-            },
+            { "tokens": 1048576, "label": "1M", "note": "Allegretto and above" },
             { "tokens": 262144, "label": "256K", "note": "Moderato and above" },
             { "tokens": 128000, "label": "128K", "note": "compacts sooner" },
             { "tokens": 64000, "label": "64K", "note": "lowest cache use" }
@@ -138,11 +120,7 @@
         "max": 272000,
         "harness_suffix_above": 0,
         "presets": [
-          {
-            "tokens": 272000,
-            "label": "272K",
-            "note": "current pinned Claude-bridge window"
-          },
+          { "tokens": 272000, "label": "272K", "note": "current pinned Claude-bridge window" },
           { "tokens": 128000, "label": "128K", "note": "compacts sooner" },
           { "tokens": 64000, "label": "64K", "note": "lowest cache use" }
         ]

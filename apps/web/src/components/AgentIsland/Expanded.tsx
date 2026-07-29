@@ -21,10 +21,6 @@ export function AgentIslandExpanded({
   error,
   providerIdentity,
 }: AgentIslandExpandedProps) {
-  const ProviderLogo = providerIdentity
-    ? providerMeta(providerIdentity.kind).Logo
-    : null;
-
   return (
     <div className="relative -top-2 flex h-[168px] w-[168px] flex-col items-center justify-center gap-2">
       <div className="flex shrink-0 items-center justify-center">
@@ -48,23 +44,25 @@ export function AgentIslandExpanded({
         >
           {statusLabel}
         </CardDescription>
-        {ProviderLogo && providerIdentity && (
-          <span
-            className="flex max-w-[150px] items-center gap-1 px-0.5 text-[10px] text-muted-foreground"
-            title={
-              providerIdentity.model
-                ? `${providerIdentity.providerName} · ${providerIdentity.model}`
-                : providerIdentity.providerName
-            }
-          >
-            <ProviderLogo className="size-3 shrink-0" />
-            <span className="truncate">
-              {providerIdentity.providerName}
-              {providerIdentity.modelName && ` · ${providerIdentity.modelName}`}
-            </span>
-          </span>
-        )}
+        {providerIdentity && <ProviderLine identity={providerIdentity} />}
       </div>
     </div>
+  );
+}
+
+function ProviderLine({ identity }: { identity: ProviderIdentity }) {
+  const { Logo } = providerMeta(identity.kind);
+  const label = identity.modelName
+    ? `${identity.providerName} · ${identity.modelName}`
+    : identity.providerName;
+
+  return (
+    <span
+      className="flex max-w-[150px] items-center gap-1 px-0.5 text-[10px] text-muted-foreground"
+      title={label}
+    >
+      <Logo className="size-3 shrink-0" />
+      <span className="truncate">{label}</span>
+    </span>
   );
 }

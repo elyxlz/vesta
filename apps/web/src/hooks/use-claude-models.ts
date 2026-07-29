@@ -1,27 +1,28 @@
 import { useManifest } from "@/hooks/use-manifest";
 import type { OpenRouterModelOption } from "@/api/providers/openrouter";
 
-// One-word strength note per Claude slug; display labels come from the provider
-// manifest, with the fallback below keeping older gateways readable.
-const CLAUDE_MODEL_NOTES: Record<string, string> = {
-  opus: "strongest",
-  sonnet: "faster, lighter",
+// Display label + one-word strength note per Claude slug, so the picker can say what each is for
+// (opus is the strongest, sonnet is faster) instead of showing a bare lowercase slug. The manifest's
+// model_names win when present; these labels keep a gateway that predates them readable.
+const CLAUDE_MODEL_META: Record<string, { label: string; note: string }> = {
+  opus: { label: "Opus", note: "strongest" },
+  sonnet: { label: "Sonnet", note: "faster, lighter" },
 };
 
 function claudeOption(slug: string, label?: string): OpenRouterModelOption {
+  const meta = CLAUDE_MODEL_META[slug];
   return {
     slug,
-    label: label ?? slug,
+    label: label ?? meta?.label ?? slug,
     author: "Anthropic",
-    note: CLAUDE_MODEL_NOTES[slug],
+    note: meta?.note,
   };
 }
 
 // Shown immediately; refined from the manifest (GET /manifest) so a newly added model appears
 // without a code change. claude-code resolves the aliases.
 const CLAUDE_FALLBACK: OpenRouterModelOption[] = ["opus", "sonnet"].map(
-  (slug) =>
-    claudeOption(slug, `${slug[0]?.toUpperCase() ?? ""}${slug.slice(1)}`),
+  (slug) => claudeOption(slug),
 );
 
 /// The Claude model list as model-card options for the provider card's model switcher, derived from
