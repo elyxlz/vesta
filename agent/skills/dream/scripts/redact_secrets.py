@@ -24,7 +24,10 @@ PATTERNS = [
     # are deliberately excluded.
     r"[sr]k_(?:live|test)_[0-9a-zA-Z]{20,}",
     r"xox[bp]-[0-9A-Za-z-]+",
-    r"gh[posr]_[A-Za-z0-9]{36,}",
+    # Every GitHub token family is a live credential, so the class must carry all five prefixes:
+    # p personal-access, o OAuth, u user-to-server (an App acting for a user), s server-to-server
+    # (App installation), r refresh. A prefix left out means that whole token type passes the sweep.
+    r"gh[posru]_[A-Za-z0-9]{36,}",
     r"github_pat_[A-Za-z0-9_]{20,}",
     r"glpat-[A-Za-z0-9_-]{20,}",
     r"(?-i:AKIA[0-9A-Z]{16})",  # case-sensitive: real AWS keys are uppercase. Under the outer
