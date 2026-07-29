@@ -124,7 +124,7 @@ def _clear_daemon_records(daemons_dir: pl.Path) -> None:
 
 
 def reconcile_claude_runtime(config: cfg.VestaConfig) -> None:
-    """Seed active skills, rebuild their symlinks, put the vestad helpers on PATH, clear stale daemon records, and ensure Claude's default settings.
+    """Seed active skills, rebuild their symlinks, link the vestad helpers, clear stale daemon records, and ensure Claude's default settings.
 
     Startup links only the vestad helpers, which are core infrastructure; a skill links its own
     command from that skill's setup (a `cli/` project, or an `ln -sf` for a single launcher).
