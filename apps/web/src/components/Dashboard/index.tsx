@@ -13,6 +13,7 @@ import { useSelectedAgent } from "@/providers/SelectedAgentProvider";
 import { useTheme } from "@/providers/ThemeProvider";
 import { useRuntime } from "@/providers/RuntimeProvider";
 import { getConnection } from "@/lib/connection";
+import { parseGatewayUrl } from "@/lib/gateway-url";
 import { serviceKeys } from "@/lib/service-key-cache";
 import { openExternalUrl } from "@/lib/open-external-url";
 import {
@@ -73,9 +74,12 @@ export function Dashboard({ fullscreen }: { fullscreen?: boolean } = {}) {
     "dashboard",
     hasDashboard,
   );
+  // Reduce the stored gateway url to its http(s) origin before it becomes the iframe src: a
+  // stored `javascript:` url would otherwise run as script in the frame.
+  const gatewayUrl = conn ? parseGatewayUrl(conn.url) : null;
   const dashboardUrl =
-    hasDashboard && conn && dashboardKey
-      ? serviceKeyPathUrl(conn.url, name, "dashboard", dashboardKey)
+    hasDashboard && gatewayUrl && dashboardKey
+      ? serviceKeyPathUrl(gatewayUrl, name, "dashboard", dashboardKey)
       : null;
 
   const frameIdentity = frameIdentityOf(
