@@ -76,9 +76,15 @@ The `description` is discovery text: it decides whether you open the skill at al
 to reach for it and what triggers it, never a summary of its steps. An agent that can read the
 workflow from the description follows that instead of opening the body.
 
-Put a command line tool in `cli/` as its own standalone project (`cli/pyproject.toml`), install it
-with `uv tool install --editable` as above, and keep setup that runs once (auth, credentials,
-model downloads) in a `SETUP.md` beside `SKILL.md`.
+A skill puts a command on PATH one of two ways, and only these two. A command line tool lives in
+`cli/` as its own standalone uv project (`cli/pyproject.toml` + `cli/uv.lock`); its
+`[project.scripts]` names every command it installs, one line each, so a skill that needs several
+commands declares several there, and `uv tool install --editable` (as above) puts them all on PATH.
+A skill that is a single executable with no project puts that file at `~/agent/skills/<skill>/<skill>`,
+which agent startup links. Nothing else belongs on PATH: a wrapper copied into a system `bin`, or a
+runtime environment built by hand, sits outside both mechanisms and no boot step maintains it. Copy a
+`cli/` project's shape from an existing skill such as `tasks`, and keep setup that runs once (auth,
+credentials, model downloads) in a `SETUP.md` beside `SKILL.md`.
 
 **If the skill runs a background process**, it implements the daemon contract in its own
 language: one command named after the skill, with `daemon start|stop|restart|status` as verbs on
