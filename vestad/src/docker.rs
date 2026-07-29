@@ -5237,7 +5237,7 @@ mod tests {
         let payload: serde_json::Value =
             serde_json::from_str(&body).expect("notification is valid json");
         assert_eq!(payload["source"], "vestad");
-        assert_eq!(payload["type"], "user-present");
+        assert_eq!(payload["type"], "user-presence");
         assert_eq!(payload["interrupt"], false);
         assert_eq!(
             payload["message"],

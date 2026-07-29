@@ -872,7 +872,7 @@ fn presence_notification_payload(
     Ok(serde_json::json!({
         "timestamp": timestamp,
         "source": "vestad",
-        "type": "user-present",
+        "type": "user-presence",
         "interrupt": false,
         "message": format!("the user just opened {client} and is here now."),
     }))
@@ -888,7 +888,7 @@ pub(crate) async fn drop_presence_notification(
 ) -> Result<String, String> {
     let epoch = crate::time_utils::now_epoch_secs();
     let payload = presence_notification_payload(epoch, client)?;
-    drop_notification(docker, agent, &format!("user-present-{epoch}.json"), &payload).await
+    drop_notification(docker, agent, &format!("user-presence-{epoch}.json"), &payload).await
 }
 
 /// Which write to forward to the agent's own HTTP API. Dispatched inside `write_to_agent` so the
@@ -3228,7 +3228,7 @@ mod tests {
         )
         .expect("payload");
         assert_eq!(payload["source"], "vestad");
-        assert_eq!(payload["type"], "user-present");
+        assert_eq!(payload["type"], "user-presence");
         assert_eq!(payload["interrupt"], false);
         assert_eq!(
             payload["message"],
