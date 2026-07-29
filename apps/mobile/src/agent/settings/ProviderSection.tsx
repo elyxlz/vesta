@@ -125,7 +125,7 @@ export function ProviderSection() {
       : entry?.models === "live"
         ? []
         : (entry?.models ?? []).map((model) => ({
-            label: model.split("/").at(-1) ?? model,
+            label: entry?.model_names?.[model] ?? model,
             value: model,
           }));
 

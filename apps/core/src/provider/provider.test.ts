@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest"
-import { normalizeProviderInfo, providerPutBody, type ProviderSelection } from "./provider"
+import {
+  normalizeProviderInfo,
+  providerPutBody,
+  resolveProviderIdentity,
+  type ProviderSelection,
+} from "./provider"
 
 describe("providerPutBody", () => {
   it.each<[ProviderSelection, object]>([
@@ -49,5 +54,55 @@ describe("normalizeProviderInfo", () => {
       authed: false,
       plan: null,
     })
+  })
+})
+
+describe("resolveProviderIdentity", () => {
+  it("resolves provider and model display names from the manifest", () => {
+    expect(
+      resolveProviderIdentity(
+        {
+          kind: "openai",
+          model: "gpt-5.6-sol",
+          max_context_tokens: null,
+          authed: true,
+          plan: null,
+        },
+        {
+          default_provider: "openai",
+          default_personality: "dry",
+          providers: {
+            openai: {
+              display: "OpenAI",
+              order: 0,
+              auth_kind: "device_oauth",
+              models: ["gpt-5.6-sol"],
+              model_names: { "gpt-5.6-sol": "GPT 5.6 Sol" },
+              default_model: "gpt-5.6-sol",
+              context: { default: 0, max: null, presets: [] },
+            },
+          },
+        },
+      ),
+    ).toEqual({
+      kind: "openai",
+      providerName: "OpenAI",
+      modelName: "GPT 5.6 Sol",
+    })
+  })
+
+  it("falls back to wire identifiers and hides disconnected providers", () => {
+    const provider = {
+      kind: "openrouter" as const,
+      model: "author/model",
+      max_context_tokens: null,
+      authed: true,
+      plan: null,
+    }
+    expect(resolveProviderIdentity(provider, undefined)).toMatchObject({
+      providerName: "openrouter",
+      modelName: "author/model",
+    })
+    expect(resolveProviderIdentity({ ...provider, authed: false }, undefined)).toBeNull()
   })
 })
