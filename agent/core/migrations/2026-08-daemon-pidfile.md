@@ -165,6 +165,15 @@ Expect no matches at all.
 
 ### 6. If you use the ssh tunnel
 
+The tunnel skill lives in `ssh-tunnel/`, so its active-skills entry is `ssh-tunnel`. If your active
+skills still name `ssh`, switch the entry so skill discovery keeps finding it (each line is a no-op
+when there is nothing to change, so this is safe whether or not you ever activated it):
+
+```bash
+~/agent/skills/skills-registry/scripts/skills-deactivate ssh
+~/agent/skills/skills-registry/scripts/skills-activate ssh-tunnel
+```
+
 The tunnel is `ssh-tunnel`, with authorizing a key split out from running the tunnel, and it has no
 line in the Daemons block: bore hands out a new public port on every start, so a tunnel restored by
 itself after a restart would be listening at an address nobody has. Bring it up when the user asks
