@@ -73,7 +73,7 @@ describe("resolveProviderIdentity", () => {
           default_personality: "dry",
           providers: {
             openai: {
-              display: "OpenAI (ChatGPT)",
+              display: "OpenAI",
               order: 0,
               auth_kind: "device_oauth",
               models: ["gpt-5.6-sol"],
@@ -86,7 +86,7 @@ describe("resolveProviderIdentity", () => {
       ),
     ).toEqual({
       kind: "openai",
-      providerName: "OpenAI (ChatGPT)",
+      providerName: "OpenAI",
       model: "gpt-5.6-sol",
       modelName: "GPT 5.6 Sol",
     })
