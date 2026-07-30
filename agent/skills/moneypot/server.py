@@ -98,9 +98,13 @@ _GET_POT_ROUTES = (
 class Handler(BaseHTTPRequestHandler):
     server_version = "moneypot/1.0"
 
-    # Signature matches BaseHTTPRequestHandler.log_message, so the override stays substitutable.
-    def log_message(self, format, *args):  # noqa: A002
-        """Quiet: per-request lines say nothing the daemon log does not already carry."""
+    def log_message(self, fmt: str, *args: object) -> None:
+        """Quiet: per-request lines say nothing the daemon log does not already carry.
+
+        The base declares its first parameter as `format`, but every caller in http.server passes it
+        positionally, so renaming it here keeps the override substitutable without shadowing the
+        builtin.
+        """
 
     def _send(self, code, payload):
         body = json.dumps(payload, ensure_ascii=False).encode()
