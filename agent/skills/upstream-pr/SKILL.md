@@ -69,13 +69,16 @@ Submitted by **$AGENT_NAME** on vesta v<version>
 
 ## Creating a PR
 
-The home `~` workspace ignores everything outside `agent/`, and local commits diverge from upstream; never branch from local HEAD. Always use a clean worktree off `origin/master`.
+The home `~` workspace ignores everything outside `agent/`, and local commits diverge from upstream; never branch from local HEAD. Always use a clean worktree off `upstream/master`.
 
-1. **Create the worktree:**
+1. **Create the worktree:** there is no `origin` in a workspace. The only remote is `upstream`, and `upstream-pr` adds it lazily when it creates a PR, so on a workspace that has never submitted one `git remote -v` is empty and anything naming `origin` fails. Add it if missing (same guarded form the CLI uses, a no-op when it is already there), then fetch and branch off the fetched `upstream/master`, never off local HEAD:
    ```bash
-   git -C ~ fetch origin
-   git -C ~ worktree add /tmp/vesta-pr -b feature/<name> origin/master
+   git -C ~ remote get-url upstream >/dev/null 2>&1 || \
+     git -C ~ remote add upstream https://github.com/elyxlz/vesta.git
+   git -C ~ fetch upstream master
+   git -C ~ worktree add /tmp/vesta-pr -b feature/<name> upstream/master
    ```
+   Read access needs no credentials, so that fetch works with no token. The installation token is only for the push, which `upstream-pr` does for you: it injects `http.https://github.com/.extraheader` through the git process env rather than writing auth into `.git/config`. If you ever need one by hand (issues, check-runs), `upstream-pr --token-only`.
 
 2. **File the linked issue first** (if doing PR + issue), so the PR can reference it. See "Filing an issue" below.
 
