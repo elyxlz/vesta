@@ -156,11 +156,11 @@ fn destroy_nonexistent_error_message() {
     );
 }
 
-/// vestad owns the lifecycle via Docker's `on-failure:5` restart policy. Assert a freshly created
-/// agent's container carries it (recovers crashes, but never auto-starts on daemon boot, so vestad
-/// owns boot-start).
+/// vestad owns the lifecycle via Docker's tiny init plus `on-failure:5` restart policy. Assert a
+/// freshly created agent carries both: init reaps orphaned skill daemons, while on-failure recovers
+/// crashes but never auto-starts on daemon boot, so vestad owns boot-start.
 #[test]
-fn agent_container_uses_on_failure_policy() {
+fn agent_container_uses_lifecycle_host_config() {
     let client = SERVER.client();
     let agent = TestAgent::create(&client, &unique_agent("policy")).unwrap();
     let container = agent_container_name(&agent.name);
@@ -184,6 +184,13 @@ fn agent_container_uses_on_failure_policy() {
     ])
     .expect("inspect retry count");
     assert_eq!(retries, "5", "on-failure must be capped at 5 retries");
+
+    let init = docker_cmd(&["inspect", "--format", "{{.HostConfig.Init}}", &container])
+        .expect("inspect Docker init");
+    assert_eq!(
+        init, "true",
+        "agent container must run Docker's tiny init as PID 1"
+    );
 }
 
 /// The headline of vestad-owned lifecycle: desired-run state survives a daemon restart, and boot
