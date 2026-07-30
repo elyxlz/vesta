@@ -3,35 +3,12 @@ locally created skills explicit enough. Audit every skill created on this box no
 skills that owns a background process must own the same `<skill> daemon
 start|stop|restart|status` lifecycle as a shipping skill.
 
-### 1. Find every locally created skill
+### 1. Review every skill you created
 
-Find the newest shipping tag merged into this checkout, list the skill directories it contains,
-then compare that list with the directories on disk:
-
-```bash
-UPSTREAM_TAG=$(git -C ~ tag --merged HEAD --list 'agent-v*' --sort=-v:refname | head -1)
-if [ -z "$UPSTREAM_TAG" ]; then
-  echo "STOP: no merged agent-v tag"
-else
-  comm -23 \
-    <(find ~/agent/skills -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort) \
-    <(git -C ~ ls-tree -d --name-only "$UPSTREAM_TAG":agent/skills | sort)
-fi
-```
-
-If there is no merged `agent-v` tag or its `agent/skills` tree cannot be read, STOP, leave this
-migration unmarked, and tell the user. An incomplete shipping list could misclassify every stock
-skill as local.
-
-The output is the audit list. Do not narrow it using the restart skill: a locally created daemon
-may have been omitted from that file by mistake. For every directory in the audit list, read its
-`SKILL.md`, `SETUP.md`, executable or CLI entry point, and any serve/watch/worker scripts. Decide
-from the skill itself whether it starts a persistent background process. Keep a checklist of every
-local skill and that decision; inspect all of them before marking this migration applied.
-
-Also read the full `## Daemons` block in `~/agent/skills/restart/SKILL.md` and run `screen -ls`.
-Use those as additional evidence for local daemons and their old launch commands, including a
-daemon whose skill docs are incomplete.
+Review every locally created skill and identify any that run a persistent background process.
+Include skills that are not currently present in the restart block; an omission there does not put
+a daemon outside this migration. Keep a checklist so every locally created skill is accounted for
+before marking the migration applied.
 
 ### 2. Give each local daemon the contract
 
