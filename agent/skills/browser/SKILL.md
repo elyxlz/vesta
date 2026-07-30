@@ -35,10 +35,16 @@ right is worse than a crash. So whenever more than one browser session may run a
 each its own profile:
 
 ```bash
-browser launch --user-data-dir ~/.browser/agent-$$        # or any per-agent unique dir
+BROWSER_SESSION=<unique-name> browser launch --user-data-dir ~/.browser/<unique-name>
 ```
 
-and if a page's content does not match the URL you requested, do NOT rationalise it: assume a
+Both halves are needed, and they fix two DIFFERENT failures seen in the same parallel run:
+- shared **profile** = silent cross-contamination (the tab-hijack above);
+- shared **session** = eviction, because `browser stop-all` from any sibling kills every
+  session in the container. A second agent in that run was killed twice mid-read this way.
+  Never run `stop-all` when siblings may be browsing; stop your own named session instead.
+
+If a page's content does not match the URL you requested, do NOT rationalise it: assume a
 profile collision, relaunch isolated, and re-read. Anything scraped from a shared profile
 during a parallel run is unverified until re-read in isolation.
 
