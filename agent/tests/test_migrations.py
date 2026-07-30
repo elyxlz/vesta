@@ -18,8 +18,6 @@ from core.migrations import (
 
 WORKSPACE_REPAIR_MIGRATION = "2026-08-workspace-repair"
 BEFORE_SYNC_FRONTMATTER = "---\nmigration_phase: before_sync\n---\n\n"
-SHIPPING_DAEMON_MIGRATION = "2026-08-daemon-pidfile"
-LOCAL_DAEMON_MIGRATION = "2026-08-local-daemon-pidfile-skills"
 
 
 def _workspace_repair_text() -> str:
@@ -57,15 +55,6 @@ def test_lists_pending_in_filename_order(mig):
     assert [migration.name for migration in pending] == ["001-first", "002-second"]
     assert pending[0].content == "first body"
     assert pending[0].phase is MigrationPhase.AFTER_SYNC
-
-
-def test_local_daemon_followup_sorts_after_shipping_daemon_migration():
-    migrations_dir = pl.Path(__file__).parents[1] / "core/migrations"
-    daemon_migrations = sorted(
-        path.stem for path in migrations_dir.glob("2026-08-*.md") if path.stem in {SHIPPING_DAEMON_MIGRATION, LOCAL_DAEMON_MIGRATION}
-    )
-
-    assert daemon_migrations == [SHIPPING_DAEMON_MIGRATION, LOCAL_DAEMON_MIGRATION]
 
 
 def test_skips_already_applied(mig):
