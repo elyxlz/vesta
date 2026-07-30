@@ -54,10 +54,10 @@ class ServiceState:
 _STATE_KEY: web.AppKey[ServiceState] = web.AppKey("state", ServiceState)
 
 
-def _write_notification(state: ServiceState, text: str, intent_id: str | None) -> None:
+def _write_notification(state: ServiceState, text: str) -> None:
     """Persist an inbound app message as the source=app-chat notification the monitor loop turns into a
-    model turn. The structured reply command, behavioral hint, and intent ID ride along
-    unchanged so the model receives the producer-owned response guidance."""
+    model turn. The structured reply command and behavioral hint ride along so the model receives the
+    producer-owned response guidance. The client-only intent ID stays on the chat event."""
     directory = state.notifications_dir
     directory.mkdir(parents=True, exist_ok=True)
     fields: dict[str, object] = {
@@ -69,8 +69,6 @@ def _write_notification(state: ServiceState, text: str, intent_id: str | None) -
         "reply_command": "app-chat send --message -",
         "reply_hint": "think about how you can best show your personality",
     }
-    if intent_id is not None:
-        fields["intent_id"] = intent_id
     path = directory / f"{time.time_ns()}-app-chat-message.json"
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(fields))
@@ -110,7 +108,7 @@ async def message_handler(request: web.Request) -> web.Response:
     # client's retry (same intent_id) re-runs the whole intake exactly once. Only a successful write
     # persists + echoes + records the intent, keeping intake at-most-once.
     try:
-        _write_notification(state, text, intent_id)
+        _write_notification(state, text)
     except OSError as exc:
         logger.error("failed to write app-chat notification: %s", exc)
         return web.json_response({"error": "intake write failed"}, status=500)
