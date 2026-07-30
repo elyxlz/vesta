@@ -34,7 +34,15 @@ Two gotchas learned the hard way:
 
 Four gates before opening a worktree.
 
-**0. Does it already exist? (grep FIRST, in the natural layer.)** Before building or upstreaming any mechanism, `grep -rn` the codebase for an existing implementation, and look in the layer where it would naturally live, not just one spot. It's easy to check only one directory (e.g. a `hooks/` dir), conclude "not upstream yet", and file a redundant PR that duplicates a check already wired into a channel CLI or core. Duplicated logic is a smell that the solution isn't the right one. So: search by the FEATURE name across all skills + core, not by where you assume it lives; if it exists, improve that one, don't add a second. Then search upstream too: many instances file against this repo at once, and a PR that is open but unmerged exists nowhere in your checkout, so the grep says "clean" while someone else's fix is already in review. Before opening a worktree, list the open pull requests and open issues by feature keyword (`upstream-pr --token-only`, then `GET /repos/elyxlz/vesta/pulls?state=open`, `.../issues?state=open`, and `/search/issues`); if one matches, comment on it or improve it instead of filing a duplicate.
+**0. Does it already exist? (grep the codebase FIRST, then search upstream.)** Before building or upstreaming any mechanism, `grep -rn` the codebase for an existing implementation, and look in the layer where it would naturally live, not just one spot. It's easy to check only one directory (e.g. a `hooks/` dir), conclude "not upstream yet", and file a redundant PR that duplicates a check already wired into a channel CLI or core. Duplicated logic is a smell that the solution isn't the right one. So: search by the FEATURE name across all skills + core, not by where you assume it lives; if it exists, improve that one, don't add a second. Then search upstream too: many instances file against this repo at once, and a PR that is open but unmerged exists nowhere in your checkout, so the grep says "clean" while someone else's fix is already in review. Before opening a worktree, search open issues and PRs (one call covers both) with the feature name in place of `<keyword>`:
+
+```bash
+curl -s -H "Authorization: Bearer $(upstream-pr --token-only)" \
+  "https://api.github.com/search/issues?q=repo:elyxlz/vesta+is:open+<keyword>" \
+  | python3 -c 'import json,sys;[print(i["html_url"],i["title"]) for i in json.load(sys.stdin)["items"]]'
+```
+
+Try a few keywords, not one. If something matches, comment on it or improve it instead of filing a duplicate.
 
 **1. Is it worth filing?** The rule for everything below: **generalizable goes upstream, user-specific stays local.** Everything is upstreamable unless it's personal information or super niche to one user; if a change would help any vesta instance, it belongs upstream. Concretely:
 - Bug fixes in agent code, skills, or prompts
