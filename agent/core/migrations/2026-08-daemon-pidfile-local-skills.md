@@ -3,9 +3,6 @@ locally created skills explicit enough. Audit every skill created on this box no
 skills that owns a background process must own the same `<skill> daemon
 start|stop|restart|status` lifecycle as a shipping skill.
 
-Do not rework shipping skills in this migration. Do not assume the earlier migration handled a
-local skill merely because it was marked applied.
-
 ### 1. Find every locally created skill
 
 Find the newest shipping tag merged into this checkout, list the skill directories it contains,
