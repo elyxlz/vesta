@@ -196,23 +196,17 @@ def attempt_self_heal(account: str, failed_result: dict, *, post=None, allow_fet
     """Re-resolve Thunderbird's current client and retry the refresh once.
 
     Force-refreshes the dynamic client from comm-central, then retries the token
-    refresh with the fresh client id/secret. If both the fresh id AND the fresh
-    secret match the ones that just failed there is nothing to swap to; upstream
-    can rotate the secret alone, so an unchanged id is not on its own a reason to
-    give up. A successful retry means the freshly-fetched client is now cached, so
-    every subsequent profile build picks it up automatically: the swap is durable,
-    not just for this call.
+    refresh with the fresh client id/secret. The retry is worth making whenever the
+    resolved client id differs from the failing one OR the force-refresh actually
+    pulled fresh credentials from upstream: upstream can rotate the shipped secret
+    while keeping the client id, so an unchanged id is not on its own a reason to
+    give up. Only when neither holds is there nothing new to try. A successful
+    retry means the freshly-fetched client is now cached, so every subsequent
+    profile build picks it up automatically: the swap is durable, not just for this
+    call.
     """
-    from . import imap as ic
     from . import providers
     from .thunderbird_client import resolve_google_client
-
-    # Read the failing profile BEFORE the force-refresh: building a profile
-    # resolves the client from the very cache that refresh overwrites, so after it
-    # the "old" secret would read back as the new one.
-    tok = ic.load_token(account)
-    _, profile = ic.account_profile(account)
-    failed_secret = profile.get("oauth_client_secret")
 
     creds = resolve_google_client(
         providers.THUNDERBIRD_GOOGLE_CLIENT_ID,
@@ -222,15 +216,19 @@ def attempt_self_heal(account: str, failed_result: dict, *, post=None, allow_fet
     )
     new_id = creds["client_id"]
     new_secret = creds["client_secret"]
-    if new_id == failed_result.get("client_id") and new_secret == failed_secret:
+    if new_id == failed_result.get("client_id") and creds.get("source") != "fetched":
         return {
             "status": UNKNOWN,
             "healed": False,
-            "reason": "freshly-resolved client credentials are identical to the failing ones",
+            "reason": "no fresh client to try: same client id, and nothing was fetched from upstream",
             "source": creds["source"],
             "client_id": new_id,
         }
 
+    from . import imap as ic
+
+    tok = ic.load_token(account)
+    _, profile = ic.account_profile(account)
     token_url = profile.get("oauth_token_url") or DEFAULT_TOKEN_URL
     classification, status, body = probe_refresh(new_id, new_secret, tok["refresh_token"], token_url, post=post)
     healed = classification == HEALTHY

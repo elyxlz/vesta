@@ -208,8 +208,8 @@ def test_run_probe_heals_rotated_client_secret_on_same_client_id(monkeypatch):
 
 
 def test_run_probe_stale_secret_unhealed_still_does_not_notify(monkeypatch):
-    # Re-resolve came back with the same credentials, so nothing was fixed. Still
-    # no notification: the client id is alive, it was never removed upstream.
+    # Upstream had nothing better to give, so the retry fails too. Still no
+    # notification: the client id is alive, it was never removed upstream.
     _install_fake_imap_client(monkeypatch, {"refresh_token": "RT"}, client_id=DEAD_ID)
     monkeypatch.setattr(
         "email_client.thunderbird_client.resolve_google_client",
@@ -219,6 +219,25 @@ def test_run_probe_stale_secret_unhealed_still_does_not_notify(monkeypatch):
     assert res["status"] == gh.STALE_CLIENT_SECRET
     assert res["self_heal"]["healed"] is False
     assert not gh.NOTIF_DIR.exists() or list(gh.NOTIF_DIR.glob("*.json")) == []
+
+
+def test_self_heal_gives_up_when_nothing_fresh_was_fetched(monkeypatch):
+    # Same client id AND no upstream fetch (cache/fallback): there is nothing new
+    # to try, so do not spend a second token call on credentials known to fail.
+    _install_fake_imap_client(monkeypatch, {"refresh_token": "RT"}, client_id=DEAD_ID)
+    calls = {"n": 0}
+
+    def _post(_url, _params):
+        calls["n"] += 1
+        return RESP_DELETED_CLIENT
+
+    monkeypatch.setattr(
+        "email_client.thunderbird_client.resolve_google_client",
+        lambda *a, **k: {"client_id": DEAD_ID, "client_secret": "sek", "source": "cache-stale"},
+    )
+    heal = gh.attempt_self_heal("personal", {"client_id": DEAD_ID}, post=_post)
+    assert heal["healed"] is False
+    assert calls["n"] == 0
 
 
 def test_run_probe_deleted_client_reresolves_and_notifies(monkeypatch):
