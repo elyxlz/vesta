@@ -1903,6 +1903,10 @@ pub async fn create_container(
         binds: Some(binds),
         network_mode: Some(network_name),
         extra_hosts: Some(vec![host_docker_internal_mapping()]),
+        // core.main launches detached skill daemons and is not an init system. Without Docker's
+        // tiny init as PID 1, an exited daemon is reparented to core.main and remains a zombie
+        // indefinitely because nothing reaps it.
+        init: Some(true),
         restart_policy: Some(bollard::models::RestartPolicy {
             name: Some(bollard::models::RestartPolicyNameEnum::ON_FAILURE),
             maximum_retry_count: Some(RESTART_MAX_RETRIES),
@@ -2602,6 +2606,10 @@ fn user_mounts_drifted(
     a != d
 }
 
+fn container_init_enabled(info: &bollard::models::ContainerInspectResponse) -> bool {
+    info.host_config.as_ref().and_then(|h| h.init) == Some(true)
+}
+
 fn needs_rebuild(
     cname: &str,
     agent_name: &str,
@@ -2647,6 +2655,13 @@ fn needs_rebuild(
     if !cmd_ok {
         tracing::info!(container = %cname, "rebuild needed: command mismatch");
         tracing::debug!(container = %cname, actual = ?cmd, expected = ?expected_cmd, "command mismatch details");
+        return true;
+    }
+
+    // HostConfig.Init is immutable after creation. Rebuild legacy containers so Docker inserts
+    // its tiny PID 1, which reaps detached skill daemons after they exit.
+    if !container_init_enabled(info) {
+        tracing::info!(container = %cname, "rebuild needed: Docker init is not enabled");
         return true;
     }
 
@@ -3256,6 +3271,31 @@ mod tests {
         assert!(
             script.contains("python -m core.main"),
             "command must launch core.main: {script}"
+        );
+    }
+
+    #[test]
+    fn container_init_must_be_explicitly_enabled() {
+        let mut info = bollard::models::ContainerInspectResponse::default();
+        assert!(
+            !container_init_enabled(&info),
+            "a legacy container with no Init setting must rebuild"
+        );
+        info.host_config = Some(bollard::models::HostConfig {
+            init: Some(false),
+            ..Default::default()
+        });
+        assert!(
+            !container_init_enabled(&info),
+            "a container with Init=false must rebuild"
+        );
+        info.host_config = Some(bollard::models::HostConfig {
+            init: Some(true),
+            ..Default::default()
+        });
+        assert!(
+            container_init_enabled(&info),
+            "only Init=true is converged"
         );
     }
 
@@ -4464,6 +4504,21 @@ mod tests {
         network: &str,
         restart: &str,
     ) {
+        create_test_container_with_binds_and_init_async(
+            docker, tc, binds, cmd, network, restart, true,
+        )
+        .await;
+    }
+
+    async fn create_test_container_with_binds_and_init_async(
+        docker: &Docker,
+        tc: &TestContainer,
+        binds: Vec<String>,
+        cmd: Vec<String>,
+        network: &str,
+        restart: &str,
+        init: bool,
+    ) {
         let restart_policy = match restart {
             "on-failure" => bollard::models::RestartPolicyNameEnum::ON_FAILURE,
             "unless-stopped" => bollard::models::RestartPolicyNameEnum::UNLESS_STOPPED,
@@ -4478,6 +4533,7 @@ mod tests {
         let host_config = bollard::models::HostConfig {
             binds: Some(binds),
             network_mode: Some(network.to_string()),
+            init: Some(init),
             restart_policy: Some(bollard::models::RestartPolicy {
                 name: Some(restart_policy),
                 ..Default::default()
@@ -4794,6 +4850,53 @@ mod tests {
         assert!(
             !inspect_then_needs_rebuild(&docker, &tc.name, &[]).await,
             "fresh container should NOT need rebuild"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_needs_rebuild_true_when_docker_init_is_disabled() {
+        let docker = test_docker();
+        let tc = TestContainer::new("rebuild-init");
+        let env_file = tempfile::NamedTempFile::new().expect("tempfile");
+        std::fs::write(env_file.path(), "export WS_PORT=12345\n").unwrap();
+        let core_dir = temp_core_mount();
+        let upstream_dir = tempfile::TempDir::new().expect("tempdir");
+        let binds = vec![
+            format!(
+                "{}:{}:ro,z",
+                env_file.path().to_str().unwrap(),
+                MOUNT_DESTS[0]
+            ),
+            format!(
+                "{}:{}:ro,z",
+                core_dir.path().to_str().unwrap(),
+                CORE_MOUNT_DEST
+            ),
+            format!(
+                "{}:{}:ro,z",
+                upstream_dir.path().to_str().unwrap(),
+                UPSTREAM_MOUNT_DEST
+            ),
+        ];
+        let _net_cleanup = TestNetwork {
+            name: agent_network_name(&tc.name),
+        };
+
+        create_test_container_with_binds_and_init_async(
+            &docker,
+            &tc,
+            binds,
+            agent_container_cmd(),
+            &agent_network_name(&tc.name),
+            RESTART_POLICY,
+            false,
+        )
+        .await;
+
+        assert!(
+            inspect_then_needs_rebuild(&docker, &tc.name, &[]).await,
+            "a legacy container without Docker init SHOULD need rebuild"
         );
     }
 
