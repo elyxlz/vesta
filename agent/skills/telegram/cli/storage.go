@@ -678,6 +678,24 @@ func (ms *MessageStore) ResolveRecipient(identifier string) (int64, error) {
 	return 0, fmt.Errorf("recipient not found: %s. Add them as a contact first with: telegram add-contact <name> <chat-id>", identifier)
 }
 
+// ContactNameUniquelyIdentifies reports whether name belongs to chatID and no other saved
+// contact has the same name. Notification reply commands use this to prefer readable names
+// without ever routing a reply to an arbitrary duplicate.
+func (ms *MessageStore) ContactNameUniquelyIdentifies(name string, chatID int64) bool {
+	if strings.TrimSpace(name) == "" {
+		return false
+	}
+	var matchingChatCount, otherChatCount int
+	err := ms.db.QueryRow(`
+		SELECT
+			COUNT(CASE WHEN chat_id = ? THEN 1 END),
+			COUNT(CASE WHEN chat_id <> ? THEN 1 END)
+		FROM contacts
+		WHERE LOWER(name) = LOWER(?)
+	`, chatID, chatID, name).Scan(&matchingChatCount, &otherChatCount)
+	return err == nil && matchingChatCount == 1 && otherChatCount == 0
+}
+
 func parseInt64(s string) (int64, error) {
 	var n int64
 	for _, c := range s {

@@ -288,10 +288,18 @@ func (wac *WhatsAppClient) dropDeadDevice() {
 // buildNotifContext assembles the NotifContext shared by message and reaction
 // notifications.
 func (wac *WhatsAppClient) buildNotifContext(chatJID, chatName, senderDisplay, contactName, contactPhone string, contactSaved, isDirectChat bool) NotifContext {
+	contactNameUnique := false
+	if contactSaved && isDirectChat && contactName != "" {
+		// ResolveRecipient reports duplicate exact-name matches as ambiguous. Record that
+		// result now so the generated reply command can use a readable name when it is
+		// safe, while retaining the originating JID as the deterministic fallback.
+		jid, err := wac.ResolveRecipient(contactName)
+		contactNameUnique = err == nil && jid.User != ""
+	}
 	return NotifContext{
 		NotifDir: wac.notificationsDir, ChatJID: chatJID, ChatName: chatName,
 		ContactName: contactName, ContactPhone: contactPhone,
-		Instance: wac.instance, ContactSaved: contactSaved,
+		Instance: wac.instance, ContactSaved: contactSaved, ContactNameUnique: contactNameUnique,
 		IsDirectChat: isDirectChat, Sender: senderDisplay,
 	}
 }

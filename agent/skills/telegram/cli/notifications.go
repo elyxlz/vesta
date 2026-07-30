@@ -92,18 +92,19 @@ func quoteReplyArg(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
-// Every notification carries a complete reply command. The target is always the numeric chat ID, which
-// ResolveRecipient matches first and which needs no saved contact, so there is no case where the
-// agent has to work the recipient out for itself. It stops at `--message -`: the notification is
-// rendered as an XML attribute, so a heredoc here would reach the agent as &lt;&lt; and &#10;
-// entities. `-` says the body comes from stdin and SKILL.md carries the one heredoc shape, which
-// keeps the reply body out of the shell's reach.
-func notificationReplyCommand(chatID int64, instance string) string {
+// Every notification carries a complete reply command. Prefer a saved contact's readable name
+// when it resolves uniquely; duplicate names and all other chats retain the numeric chat ID as
+// the deterministic fallback.
+func notificationReplyCommand(chatID int64, contactName, instance string, contactSaved, contactNameUnique bool) string {
 	command := "telegram send"
 	if instance != "" {
 		command += " --instance " + quoteReplyArg(instance)
 	}
-	return command + " --to " + quoteReplyArg(strconv.FormatInt(chatID, 10)) + " --message -"
+	target := strconv.FormatInt(chatID, 10)
+	if contactSaved && contactNameUnique && contactName != "" {
+		target = contactName
+	}
+	return command + " --to " + quoteReplyArg(target) + " --message -"
 }
 
 func WriteCallbackNotification(
@@ -140,7 +141,7 @@ func WriteCallbackNotification(
 
 func WriteEditNotification(
 	notifDir string, targetMessageID, chatID int64, chatName, contactName, username, instance string,
-	contactSaved, isDirectChat bool,
+	contactSaved, contactNameUnique, isDirectChat bool,
 	sender, oldText, newText string,
 ) error {
 	if notifDir == "" {
@@ -163,7 +164,7 @@ func WriteEditNotification(
 		TargetMessageID: targetMessageID,
 		ChatID:          chatID,
 		ContactUnknown:  !contactSaved,
-		ReplyCommand:    notificationReplyCommand(chatID, instance),
+		ReplyCommand:    notificationReplyCommand(chatID, contactName, instance, contactSaved, contactNameUnique),
 		ReplyHint:       "they changed a message you may have already answered; reply only if the change asks something new",
 	}
 	if !isDirectChat {
@@ -183,7 +184,7 @@ func WriteEditNotification(
 
 func WriteNotification(
 	notifDir string, messageID, chatID int64, chatName, contactName, username, instance string,
-	contactSaved, isDirectChat bool,
+	contactSaved, contactNameUnique, isDirectChat bool,
 	sender, content, mediaType string,
 	replyToID int64,
 ) error {
@@ -208,7 +209,7 @@ func WriteNotification(
 		MessageID:      messageID,
 		ChatID:         chatID,
 		ContactUnknown: !contactSaved,
-		ReplyCommand:   notificationReplyCommand(chatID, instance),
+		ReplyCommand:   notificationReplyCommand(chatID, contactName, instance, contactSaved, contactNameUnique),
 		ReplyHint:      "think about how you can best show your personality",
 	}
 	if !isDirectChat {

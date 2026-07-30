@@ -5,19 +5,30 @@ import (
 	"testing"
 )
 
-func TestNotificationReplyCommandIsCompleteAndUnambiguous(t *testing.T) {
-	// The chat JID is what ResolveRecipient matches first and needs no saved contact, so the same
-	// command shape works for a saved contact, a stranger, and a group alike.
-	ctx := NotifContext{Instance: "personal", ChatJID: "4477000111@s.whatsapp.net"}
+func TestNotificationReplyCommandUsesUniqueSavedContactName(t *testing.T) {
+	ctx := NotifContext{
+		Instance: "personal", ChatJID: "4477000111@s.whatsapp.net",
+		ContactName: "Ana", ContactSaved: true, ContactNameUnique: true,
+	}
 	got := notificationReplyCommand(ctx)
-	want := "whatsapp send --instance 'personal' --to '4477000111@s.whatsapp.net' --message -"
+	want := "whatsapp send --instance 'personal' --to 'Ana' --message -"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
+}
 
-	single := notificationReplyCommand(NotifContext{ChatJID: "123@g.us"})
-	if strings.Contains(single, "--instance") {
-		t.Fatalf("a single account should omit --instance: %q", single)
+func TestNotificationReplyCommandFallsBackToJIDForAmbiguousContactName(t *testing.T) {
+	ctx := NotifContext{
+		ChatJID:     "4477000111@s.whatsapp.net",
+		ContactName: "Ana", ContactSaved: true, ContactNameUnique: false,
+	}
+	got := notificationReplyCommand(ctx)
+	want := "whatsapp send --to '4477000111@s.whatsapp.net' --message -"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	if strings.Contains(got, "--instance") {
+		t.Fatalf("a single account should omit --instance: %q", got)
 	}
 }
 

@@ -11,7 +11,7 @@ func savedCtx(dir string) NotifContext {
 	return NotifContext{
 		NotifDir: dir, Instance: "personal", ChatJID: "4477000111@s.whatsapp.net", ChatName: "Ana",
 		ContactName: "Ana", ContactPhone: "+15551234567",
-		ContactSaved: true, IsDirectChat: true, Sender: "Ana",
+		ContactSaved: true, ContactNameUnique: true, IsDirectChat: true, Sender: "Ana",
 	}
 }
 

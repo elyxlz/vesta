@@ -143,12 +143,13 @@ func (tc *TelegramClient) Stop() {
 // notifContext is who an inbound message is from, resolved identically for a new message and
 // for an edit of one.
 type notifContext struct {
-	chatName     string
-	contactName  string
-	username     string
-	sender       string
-	contactSaved bool
-	isDirectChat bool
+	chatName          string
+	contactName       string
+	username          string
+	sender            string
+	contactSaved      bool
+	contactNameUnique bool
+	isDirectChat      bool
 }
 
 func chatNameOf(msg *tgbotapi.Message) string {
@@ -190,14 +191,18 @@ func (tc *TelegramClient) notifContextFor(msg *tgbotapi.Message) (notifContext, 
 	if contactName == "" {
 		contactName = senderName
 	}
+	isDirectChat := msg.Chat.Type == "private"
+	contactNameUnique := contactSaved && isDirectChat &&
+		tc.store.ContactNameUniquelyIdentifies(contactName, msg.Chat.ID)
 
 	return notifContext{
-		chatName:     chatNameOf(msg),
-		contactName:  contactName,
-		username:     username,
-		sender:       senderName,
-		contactSaved: contactSaved,
-		isDirectChat: msg.Chat.Type == "private",
+		chatName:          chatNameOf(msg),
+		contactName:       contactName,
+		username:          username,
+		sender:            senderName,
+		contactSaved:      contactSaved,
+		contactNameUnique: contactNameUnique,
+		isDirectChat:      isDirectChat,
 	}, true
 }
 
@@ -230,7 +235,7 @@ func (tc *TelegramClient) handleEditedMessage(msg *tgbotapi.Message) {
 	if ctx, ok := tc.notifContextFor(msg); ok {
 		if err := WriteEditNotification(
 			tc.notificationsDir, int64(msg.MessageID), msg.Chat.ID, ctx.chatName, ctx.contactName,
-			ctx.username, tc.instance, ctx.contactSaved, ctx.isDirectChat,
+			ctx.username, tc.instance, ctx.contactSaved, ctx.contactNameUnique, ctx.isDirectChat,
 			ctx.sender, oldText, newText,
 		); err != nil {
 			log.Printf("Failed to write edit notification for %d: %v", msg.MessageID, err)
@@ -325,6 +330,7 @@ func (tc *TelegramClient) handleMessage(msg *tgbotapi.Message) {
 			ctx.username,
 			tc.instance,
 			ctx.contactSaved,
+			ctx.contactNameUnique,
 			ctx.isDirectChat,
 			ctx.sender,
 			content,
