@@ -1,6 +1,6 @@
 Docker's tiny init now runs as PID 1 in this container and reaps orphaned skill daemons. Review
-every skill you created that implements the daemon contract and remove any zombie-specific
-liveness workaround you added to compensate for an unreaped daemon.
+every skill that implements the daemon contract and remove any zombie-specific liveness workaround
+added to compensate for an unreaped daemon.
 
 Read `~/agent/skills/vestad/SKILL.md` and `~/agent/skills/skills-registry/SKILL.md` completely
 before changing a skill. Keep the daemon contract intact.
@@ -24,5 +24,5 @@ flag and setting. If one skill cannot be cleaned up safely, leave it unchanged, 
 and continue with the others. Tell the user about anything left over and leave this migration
 unmarked so it can retry later.
 
-Commit any local skill changes so the next upstream merge preserves them. If none of the skills you
-created contains a zombie-specific workaround, there is nothing to change.
+Commit any skill changes so the next upstream merge preserves them. If no skill contains a
+zombie-specific workaround, there is nothing to change.
