@@ -81,6 +81,29 @@ contributions into 'Joint':
    Bob  £50.00
 ```
 
+## HTTP API (optional)
+
+`server.py` is a stdlib JSON API over the same data, for dashboards or other apps. Mutations are lock-serialized. Run it with `moneypot daemon start|stop|restart|status` (idempotent; registers its own private port, records pid and port under `~/agent/data/daemons/`, logs to `~/agent/logs/moneypot.log`). See `SETUP.md` for keys and the restart line. Routes:
+
+```
+GET    /health
+GET    /pots                                list pots
+POST   /pots                                {id, name?, currency?, members:[...]}
+GET    /pots/{id}                           full pot
+DELETE /pots/{id}
+GET    /pots/{id}/entries
+POST   /pots/{id}/members                   {name}
+POST   /pots/{id}/expenses                  {payer, amount, desc?, currency?, rate?, fetch?, for?:[...], split?:{Name:amt}}
+POST   /pots/{id}/transfers                 {from, to, amount, desc?, currency?, rate?, fetch?}
+DELETE /pots/{id}/entries/{eid}
+GET    /pots/{id}/balance
+GET    /pots/{id}/contributions?account=X
+```
+
+Errors return `{"error": "..."}` with HTTP 400 (bad input), 404 (no route), or 401 (bad key).
+
+**Public vs private.** By default the API is open. Set an app-level key with `--api-key KEY` (or `MONEYPOT_API_KEY`) to require it on every route except `/health`; callers pass `Authorization: Bearer KEY`, `X-API-Key: KEY`, otherwise 401. When a key is set, the vestad agent token (`AGENT_TOKEN` env) is also accepted via `X-Agent-Token` (or Bearer), so the service stays reachable through vestad (e.g. from the dashboard) without sharing the app key.
+
 ## Notes
 
 - `--currency` accepts any label; `GBP/USD/EUR/JPY` print with a symbol, others print the code.

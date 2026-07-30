@@ -667,6 +667,20 @@ def _add_view_parsers(sub) -> None:
     de.set_defaults(func=cmd_delete_entry)
 
 
+def cmd_daemon(args) -> None:
+    """Lifecycle for the optional HTTP API in server.py. Imported lazily so the CLI, which is the
+    primary surface and needs none of it, does not pay for the import on every command."""
+    from daemon import daemon_cmd
+
+    raise SystemExit(daemon_cmd(args.action or ""))
+
+
+def _add_daemon_parser(sub) -> None:
+    d = sub.add_parser("daemon", help="run the optional HTTP API as a background daemon")
+    d.add_argument("action", nargs="?", choices=["start", "stop", "restart", "status"])
+    d.set_defaults(func=cmd_daemon)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="moneypot", description="Shared expense & pot tracker (Splitwise/Tricount style).")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -674,6 +688,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_member_parser(sub)
     _add_entry_parsers(sub)
     _add_view_parsers(sub)
+    _add_daemon_parser(sub)
     return p
 
 
