@@ -79,7 +79,12 @@ if legacy_archive.is_file():
         with tarfile.open(legacy_archive) as archive:
             for member in archive.getmembers():
                 parts = pathlib.PurePosixPath(member.name).parts
-                if len(parts) >= 3 and parts[:2] == ("agent", "skills") and skill_name.fullmatch(parts[2]):
+                if len(parts) < 3 or parts[:2] != ("agent", "skills"):
+                    continue
+                # agent/skills also holds plain files such as index.json, and only a directory is a
+                # skill. Accept an explicit directory member or any nested path, because an archive
+                # written without directory entries would otherwise recover nothing at all.
+                if (member.isdir() or len(parts) > 3) and skill_name.fullmatch(parts[2]):
                     recovered.add(parts[2])
     except (OSError, tarfile.TarError) as error:
         print(f"warning: could not read legacy skill backup: {error}")
