@@ -52,12 +52,9 @@ class _Auth:
 AUTH = _Auth()
 
 
-def _read(fn):
-    """Reads under the lock. The callable takes the freshly loaded data, so no caller passes it in."""
-    with LOCK:
-        return fn(mp.load())
-
-
+# Reads take no lock and need none: mp.save writes a temp file and renames it over the target, so a
+# reader sees either the whole previous file or the whole new one, never a torn write. Only mutations
+# serialize, because a read-modify-write pair would otherwise lose one of two concurrent updates.
 def _write(fn):
     with LOCK:
         data = mp.load()
