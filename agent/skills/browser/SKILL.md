@@ -26,6 +26,22 @@ consider a block, and even then suspect a cookie/consent wall or a redirect befo
 
 **Same rule for a stuck FORM: a submit/next button that won't advance is a validation error, not a block.** On a multi-step wizard or checkout, when "Continue"/"Submit" appears to do nothing, do NOT conclude the site is fighting automation. Read the actual state first: screenshot it, grep the DOM for a required-but-empty field (`[required]` with no value), a `.text-danger`/`[class*=error]` message, an unticked terms checkbox, or a second hidden copy of the form you filled the wrong instance of. A false wall abandoned is worse than a real wall pushed through: the overwhelmingly common blocker on a stuck submit is one missing required field.
 
+**PARALLEL AGENTS MUST NOT SHARE A PROFILE.** Concurrent sessions on the default profile can
+navigate each other's tabs, and the failure is SILENT and evil: you read a page whose URL is
+the one you asked for while the CONTENT is another agent's site. Caught 2026-07-30 when one of
+four parallel price-checkers found Airbnb content under a Booking.com URL; had it not noticed,
+a wrong price would have gone to a person about to spend real money. A wrong number that looks
+right is worse than a crash. So whenever more than one browser session may run at once, give
+each its own profile:
+
+```bash
+browser launch --user-data-dir ~/.browser/agent-$$        # or any per-agent unique dir
+```
+
+and if a page's content does not match the URL you requested, do NOT rationalise it: assume a
+profile collision, relaunch isolated, and re-read. Anything scraped from a shared profile
+during a parallel run is unverified until re-read in isolation.
+
 **Setup**: [SETUP.md](SETUP.md)
 
 ## Search first
