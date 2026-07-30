@@ -30,9 +30,22 @@ fail() { printf '{"error":"%s"}\n' "$1" >&2; exit 1; }
 deadline() { echo $(( $(date +%s) + $1 )); }
 expired() { [ "$(date +%s)" -ge "$1" ]; }
 
-# Waits out a pid until a deadline. Answers whether it is gone.
+# True only for a process that is actually running. A signal-0 probe cannot answer this: start
+# exits once it has spawned the daemon, so the daemon reparents to init and a dead one's pid lingers
+# unreaped, answering the probe like a live process. /proc's state code distinguishes the corpse;
+# the comm field can hold spaces and parens, so the state is read relative to its closing paren
+# rather than by splitting on whitespace. Same reasoning as `_alive` in the browser skill.
+alive() {
+  kill -0 "$1" 2>/dev/null || return 1
+  state=$(sed -e 's/.*) //' -e 's/ .*//' "/proc/$1/stat" 2>/dev/null) || return 0
+  [ "$state" != "Z" ]
+}
+
+# Waits out a pid until a deadline. Answers whether it is gone, counting an unreaped corpse as gone:
+# waiting on a signal-0 probe alone burns the whole stop budget and then reports a dead daemon as
+# still running.
 await_gone() {
-  while kill -0 "$1" 2>/dev/null; do
+  while alive "$1"; do
     if expired "$2"; then return 1; fi
     sleep 0.5
   done
@@ -55,7 +68,7 @@ abandon() {
 
 live_pid() {
   pid=$(cat "$PIDFILE" 2>/dev/null) || return 1
-  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 1
+  [ -n "$pid" ] && alive "$pid" || return 1
   printf %s "$pid"
 }
 
@@ -90,7 +103,7 @@ do_start() {
   echo "$pid" > "$PIDFILE"
   ready_by=$(deadline "$READY_BUDGET")
   until expired "$ready_by"; do
-    kill -0 "$pid" 2>/dev/null || abandon "$pid" "file-host exited during startup; see $LOG"
+    alive "$pid" || abandon "$pid" "file-host exited during startup; see $LOG"
     if curl -m 2 -fsS -o /dev/null "http://localhost:$PORT" 2>/dev/null; then
       echo '{"status":"started"}'; return 0
     fi

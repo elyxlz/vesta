@@ -42,13 +42,32 @@ def _fail(message: str) -> int:
     return 1
 
 
+def _alive(pid: int) -> bool:
+    """True only for a process that is actually running.
+
+    A signal-0 probe cannot answer this: start exits once it has spawned the daemon, so the daemon
+    reparents to init and a dead one's pid lingers unreaped, answering the probe like a live
+    process. /proc's state code distinguishes the corpse; the comm field can hold spaces and
+    parens, so the state is read relative to its closing paren rather than by splitting on
+    whitespace. Same reasoning as `_alive` in the browser skill's handover.
+    """
+    try:
+        stat = (pl.Path("/proc") / str(pid) / "stat").read_text()
+    except (FileNotFoundError, ProcessLookupError, PermissionError, OSError):
+        return False
+    comm_end = stat.rfind(") ")
+    if comm_end == -1:
+        return False
+    return stat[comm_end + 2] != "Z"
+
+
 def live_pid() -> int | None:
     try:
         pid = int(PIDFILE.read_text().strip())
         os.kill(pid, 0)
     except (FileNotFoundError, ValueError, ProcessLookupError, PermissionError):
         return None
-    return pid
+    return pid if _alive(pid) else None
 
 
 def _register_port() -> str | None:
