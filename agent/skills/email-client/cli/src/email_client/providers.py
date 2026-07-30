@@ -120,6 +120,20 @@ PROVIDERS: dict[str, dict] = {
         # REST API disabled, while CalDAV needs only the scope above.
         "caldav_url": "https://apidata.googleusercontent.com/caldav/v2",
     },
+    # Gmail / Google Workspace over an app password (requires 2FA on the account),
+    # the fallback when OAuth is unavailable or blocked. Mail only on purpose, no
+    # caldav_url: Google's CalDAV root is not verified against Basic auth here, so
+    # calendar stays off this profile and errors cleanly rather than guessing.
+    "gmail-app-password": {
+        "label": "Gmail / Google Workspace (app password)",
+        "auth_strategy": "app-password",
+        "imap_host": "imap.gmail.com",
+        "imap_port": 993,
+        "smtp_host": "smtp.gmail.com",
+        "smtp_port": 587,
+        "smtp_starttls": True,
+        "sent_folder": "[Gmail]/Sent Mail",
+    },
     "yahoo-app-password": {
         "label": "Yahoo Mail (app password)",
         "auth_strategy": "app-password",
