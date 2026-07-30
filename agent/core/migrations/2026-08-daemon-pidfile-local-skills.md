@@ -50,9 +50,10 @@ All three must succeed and status must print one JSON line. A legacy daemon that
 without a new pid record can correctly produce `"running":false` at this point.
 
 If you cannot make a local daemon meet the contract, leave its old process and restart line intact,
-STOP HERE, leave this migration unmarked, and tell the user exactly what remains. Never
-delete a local daemon or its startup line just because it was absent from the shipping migration's
-table.
+record what remains, and continue with every other local skill. Never delete a local daemon or its
+startup line just because it was absent from the shipping migration's table. After doing everything
+you can, tell the user about any skills that could not be migrated and leave this migration
+unmarked so it can retry later.
 
 ### 3. Hand over a running legacy process safely
 
