@@ -13,14 +13,19 @@ already-STORED refresh token and classifies the error. The key distinction is:
     deleted_client / invalid_client / "not found"  ->  the CLIENT is dead
                                                         (swap the client id;
                                                          do NOT bother the user)
+    invalid_client + "client secret is invalid"     ->  the CLIENT SECRET we hold
+                                                        is stale (re-resolve the
+                                                         client; the client id
+                                                         itself is still alive)
     invalid_grant                                   ->  the USER TOKEN is bad
                                                         (re-auth the user; the
                                                          client is fine)
 
-Only a dead client triggers self-heal. On a dead-client detection we re-resolve
-Thunderbird's current client from comm-central (via thunderbird_client) and retry
-the refresh once with the fresh client. If that still fails we write a clear,
-plain-English notification instead of a cryptic OAuth error.
+Both client-side faults trigger self-heal: we re-resolve Thunderbird's current
+client from comm-central (via thunderbird_client) and retry the refresh once with
+the fresh credentials. Only a genuinely dead client also writes a clear,
+plain-English notification if that retry fails, because only then has the client
+actually been removed upstream.
 
 This is strictly Google-specific and gated to Gmail accounts. It never sends mail
 and never touches the user's mailbox. EMAIL_DRAFT_ONLY is irrelevant here.
@@ -39,10 +44,15 @@ import uuid
 # Probe outcome classifications.
 HEALTHY = "healthy"
 DEAD_CLIENT = "dead_client"
+STALE_CLIENT_SECRET = "stale_client_secret"
 BAD_TOKEN = "bad_token"
 UNKNOWN = "unknown"
 SKIPPED = "skipped"
 HEALED = "healed"
+
+# Outcomes that blame the SHIPPED CLIENT rather than the user's token: both are
+# recoverable by re-resolving Thunderbird's current client, so both self-heal.
+CLIENT_FAULT_STATUSES = (DEAD_CLIENT, STALE_CLIENT_SECRET)
 
 DEFAULT_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
@@ -69,8 +79,10 @@ def classify_refresh_response(_status_code: int | None, body: dict | None) -> st
     One wrinkle: Google returns ``invalid_client`` for two different conditions.
     A deleted/nonexistent client is genuinely dead, but a LIVE client presented
     with the wrong secret answers HTTP 401 ``invalid_client`` with
-    "The provided client secret is invalid." That is a credential problem, not a
-    dead client, so it classifies as UNKNOWN and never triggers a swap.
+    "The provided client secret is invalid." That is a stale secret, not a dead
+    client, so it gets its own STALE_CLIENT_SECRET classification: it still needs
+    the client re-resolved (an upstream secret rotation is exactly how it
+    happens), but the user must not be told their OAuth client was removed.
     """
     body = body or {}
     if body.get("access_token"):
@@ -82,7 +94,7 @@ def classify_refresh_response(_status_code: int | None, body: dict | None) -> st
     if err in ("deleted_client", "invalid_client"):
         looks_gone = "not found" in desc or "deleted" in desc
         if err == "invalid_client" and "secret" in desc and not looks_gone:
-            return UNKNOWN
+            return STALE_CLIENT_SECRET
         return DEAD_CLIENT
     # Some responses carry a generic error but say "not found" for the client in
     # the description; that is the exact ...t1glqf failure signature.
@@ -180,17 +192,27 @@ def probe_account(account: str, *, post=None) -> dict:
 # -- self-heal ------------------------------------------------------
 
 
-def attempt_self_heal(account: str, dead_result: dict, *, post=None, allow_fetch: bool = True) -> dict:
+def attempt_self_heal(account: str, failed_result: dict, *, post=None, allow_fetch: bool = True) -> dict:
     """Re-resolve Thunderbird's current client and retry the refresh once.
 
     Force-refreshes the dynamic client from comm-central, then retries the token
-    refresh with the fresh client id/secret. If the fresh id matches the dead one
-    there is nothing to swap to. A successful retry means the freshly-fetched
-    client is now cached, so every subsequent profile build picks it up
-    automatically — the swap is durable, not just for this call.
+    refresh with the fresh client id/secret. If both the fresh id AND the fresh
+    secret match the ones that just failed there is nothing to swap to; upstream
+    can rotate the secret alone, so an unchanged id is not on its own a reason to
+    give up. A successful retry means the freshly-fetched client is now cached, so
+    every subsequent profile build picks it up automatically: the swap is durable,
+    not just for this call.
     """
+    from . import imap as ic
     from . import providers
     from .thunderbird_client import resolve_google_client
+
+    # Read the failing profile BEFORE the force-refresh: building a profile
+    # resolves the client from the very cache that refresh overwrites, so after it
+    # the "old" secret would read back as the new one.
+    tok = ic.load_token(account)
+    _, profile = ic.account_profile(account)
+    failed_secret = profile.get("oauth_client_secret")
 
     creds = resolve_google_client(
         providers.THUNDERBIRD_GOOGLE_CLIENT_ID,
@@ -200,19 +222,15 @@ def attempt_self_heal(account: str, dead_result: dict, *, post=None, allow_fetch
     )
     new_id = creds["client_id"]
     new_secret = creds["client_secret"]
-    if new_id == dead_result.get("client_id"):
+    if new_id == failed_result.get("client_id") and new_secret == failed_secret:
         return {
             "status": UNKNOWN,
             "healed": False,
-            "reason": "freshly-resolved client id is identical to the dead one",
+            "reason": "freshly-resolved client credentials are identical to the failing ones",
             "source": creds["source"],
             "client_id": new_id,
         }
 
-    from . import imap as ic
-
-    tok = ic.load_token(account)
-    _, profile = ic.account_profile(account)
     token_url = profile.get("oauth_token_url") or DEFAULT_TOKEN_URL
     classification, status, body = probe_refresh(new_id, new_secret, tok["refresh_token"], token_url, post=post)
     healed = classification == HEALTHY
@@ -230,7 +248,11 @@ def attempt_self_heal(account: str, dead_result: dict, *, post=None, allow_fetch
 
 
 def write_dead_client_notification(account: str, result: dict) -> pathlib.Path:
-    """Write a clear, human-readable dead-client alert (interrupt=true)."""
+    """Write a clear, human-readable dead-client alert (interrupt=true).
+
+    Reserved for DEAD_CLIENT: it states the client was removed upstream, which is
+    false (and alarming) for a client that is alive but holding a stale secret.
+    """
     NOTIF_DIR.mkdir(parents=True, exist_ok=True)
     notif = {
         "source": "email-client",
@@ -267,9 +289,15 @@ def write_dead_client_notification(account: str, result: dict) -> pathlib.Path:
 
 
 def run_probe(account: str, *, post=None, notify: bool = True, allow_fetch: bool = True) -> dict:
-    """Probe one account; on a dead client, self-heal, then notify if unhealed."""
+    """Probe one account; on a client fault, self-heal, then notify if unhealed.
+
+    A stale client secret self-heals exactly like a dead client (both are fixed by
+    re-resolving the shipped client), but only a dead client gets the notification:
+    telling the user their OAuth client was removed upstream would be wrong when
+    the client id is still live.
+    """
     result = probe_account(account, post=post)
-    if result["status"] != DEAD_CLIENT:
+    if result["status"] not in CLIENT_FAULT_STATUSES:
         return result
 
     heal = attempt_self_heal(account, result, post=post, allow_fetch=allow_fetch)
@@ -278,7 +306,7 @@ def run_probe(account: str, *, post=None, notify: bool = True, allow_fetch: bool
         result["status"] = HEALED
         return result
 
-    if notify:
+    if notify and result["status"] == DEAD_CLIENT:
         path = write_dead_client_notification(account, result)
         result["notification"] = str(path)
     return result
@@ -334,7 +362,7 @@ def maybe_run_daily_probe(state_dir: pathlib.Path, log=None, *, now: float | Non
     results = run_probe_all()
     if log:
         for r in results:
-            if r["status"] in (DEAD_CLIENT, HEALED):
+            if r["status"] in (*CLIENT_FAULT_STATUSES, HEALED):
                 log(f"[google-health] {r['account']}: {r['status']} (self-heal={r.get('self_heal', {}).get('healed')})")
             else:
                 log(f"[google-health] {r['account']}: {r['status']}")

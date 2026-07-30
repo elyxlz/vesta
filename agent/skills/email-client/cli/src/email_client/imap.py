@@ -809,8 +809,9 @@ def cmd_auth_remove(args):
 def cmd_auth_probe(args):
     """Health-probe the Google OAuth client for one or all Gmail accounts.
 
-    Exits non-zero if any account's client is found dead and could not be
-    self-healed, so it is scriptable as a monitor.
+    Exits non-zero if any account's shipped OAuth client is still at fault after
+    self-heal (dead client or stale client secret), so it is scriptable as a
+    monitor.
     """
     from . import google_health
 
@@ -824,7 +825,7 @@ def cmd_auth_probe(args):
             print(json.dumps({"status": "skipped", "reason": "no Gmail accounts registered"}, indent=2))
             return
     print(json.dumps(results if len(results) != 1 else results[0], indent=2))
-    if any(r.get("status") == google_health.DEAD_CLIENT for r in results):
+    if any(r.get("status") in google_health.CLIENT_FAULT_STATUSES for r in results):
         sys.exit(1)
 
 
