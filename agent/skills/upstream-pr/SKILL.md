@@ -69,13 +69,18 @@ Submitted by **$AGENT_NAME** on vesta v<version>
 
 ## Creating a PR
 
-The home `~` workspace ignores everything outside `agent/`, and local commits diverge from upstream; never branch from local HEAD. Always use a clean worktree off `origin/master`.
+The home `~` workspace ignores everything outside `agent/`, and local commits diverge from upstream; never branch from local HEAD. Always use a clean worktree off real upstream master.
 
-1. **Create the worktree:**
+1. **Create the worktree.** There is **no `origin` remote**, and no remote at all on a freshly attached workspace: `upstream-sync` populates `refs/remotes/upstream/agent-upstream` by fetching straight from a bind-mounted repo at `/run/vesta-upstream/upstream.git`, so `git fetch origin` fails with "invalid reference" and `upstream/agent-upstream` is a standalone stock snapshot with no ancestry to real master. Fetch master over the network with an App token, then branch off `FETCH_HEAD`:
    ```bash
-   git -C ~ fetch origin
-   git -C ~ worktree add /tmp/vesta-pr -b feature/<name> origin/master
+   TOKEN=$(upstream-pr --token-only)
+   git -C ~ remote add upstream https://github.com/elyxlz/vesta.git 2>/dev/null \
+     || git -C ~ remote set-url upstream https://github.com/elyxlz/vesta.git
+   git -C ~ -c "http.https://github.com/.extraheader=Authorization: Basic $(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)" \
+     fetch --quiet upstream master
+   git -C ~ worktree add /tmp/vesta-pr -b feature/<name> FETCH_HEAD
    ```
+   Branching off the snapshot ref instead is the failure `ensure_shared_history` catches: the PR create returns 422 "no history in common with master".
 
 2. **File the linked issue first** (if doing PR + issue), so the PR can reference it. See "Filing an issue" below.
 
