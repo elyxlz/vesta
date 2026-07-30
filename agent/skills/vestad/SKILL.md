@@ -213,6 +213,12 @@ vestad exposes registered services under the tunnel. The stable patterns:
 
 Reach for these instead of reverse-engineering the route when you need to hand the user a link.
 
+### Building a public interactive web app served this way
+A service reached at `$VESTAD_TUNNEL/agents/$AGENT_NAME/<svc>/` is reverse-proxied under that PATH PREFIX, which breaks two things unless you design for it:
+- **Path-agnostic routing.** The browser loads the page at the prefixed path, so absolute client fetches like `fetch('/api/x')` hit the tunnel root, not your service. Compute the fetch base from `location.pathname` (page-relative), and on the server match routes by path SUFFIX (`endswith`), not exact `==`. Serve the page for any GET that isn't an api call. Test by driving the API through a fake prefix (`/agents/$AGENT_NAME/<svc>/api/...`) locally before shipping.
+- **No WebSockets.** WS upgrades don't reliably traverse the tunnel. For "real-time" (a live game, a signature pad, a shared board), use HTTP POLLING (client GETs state every ~800ms, POSTs actions). A turn-based flow feels instant at that rate and it's rock-solid through the proxy.
+- Register `public:true` (no token for the user), run a single stdlib `http.server` on the assigned port serving BOTH the HTML and the JSON API, keep state in-memory, and give it a launcher exposing `daemon start|stop|restart|status` (copy an existing one, e.g. `skills/file-host/file-host`) plus a line in the restart skill's Daemons block, so the link survives reboots.
+
 ## Update vestad
 
 Check the running version and whether a newer release exists, then apply it:
