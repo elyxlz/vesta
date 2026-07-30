@@ -18,6 +18,8 @@ NEW_ID = "fresh-999.apps.googleusercontent.com"
 RESP_DELETED_CLIENT = (401, {"error": "deleted_client", "error_description": "The OAuth client was deleted."})
 RESP_INVALID_CLIENT = (401, {"error": "invalid_client", "error_description": "The OAuth client was not found."})
 RESP_INVALID_GRANT = (400, {"error": "invalid_grant", "error_description": "Token has been expired or revoked."})
+# A LIVE client presented with the wrong secret: same error code, different meaning.
+RESP_BAD_CLIENT_SECRET = (401, {"error": "invalid_client", "error_description": "The provided client secret is invalid."})
 RESP_SUCCESS = (200, {"access_token": "ya29.new", "expires_in": 3599})
 
 
@@ -30,6 +32,30 @@ def test_classify_deleted_client_is_dead():
 
 def test_classify_invalid_client_not_found_is_dead():
     assert gh.classify_refresh_response(*RESP_INVALID_CLIENT) == gh.DEAD_CLIENT
+
+
+def test_classify_invalid_client_bad_secret_is_not_dead():
+    # Google answers 401 invalid_client when a LIVE client is sent a wrong secret.
+    # Swapping the client would be wrong (and would notify the user for nothing).
+    result = gh.classify_refresh_response(*RESP_BAD_CLIENT_SECRET)
+    assert result == gh.UNKNOWN
+    assert result != gh.DEAD_CLIENT
+
+
+def test_classify_invalid_client_bad_secret_matching_is_case_insensitive():
+    resp = (401, {"error": "INVALID_CLIENT", "error_description": "The Provided Client Secret Is Invalid."})
+    assert gh.classify_refresh_response(*resp) == gh.UNKNOWN
+
+
+def test_classify_invalid_client_deleted_wins_over_secret_wording():
+    # If the description says the client is gone, it is dead even if it also
+    # mentions the secret.
+    resp = (401, {"error": "invalid_client", "error_description": "The OAuth client secret was not found."})
+    assert gh.classify_refresh_response(*resp) == gh.DEAD_CLIENT
+
+
+def test_classify_invalid_client_without_description_stays_dead():
+    assert gh.classify_refresh_response(401, {"error": "invalid_client"}) == gh.DEAD_CLIENT
 
 
 def test_classify_invalid_grant_is_bad_token_not_dead():
@@ -135,6 +161,16 @@ def test_probe_account_bad_token_does_not_notify_or_heal(monkeypatch, tmp_path):
     assert res["status"] == gh.BAD_TOKEN
     assert called["heal"] is False
     assert not (gh.NOTIF_DIR).exists() or list(gh.NOTIF_DIR.glob("*.json")) == []
+
+
+def test_run_probe_bad_client_secret_does_not_swap_or_notify(monkeypatch):
+    _install_fake_imap_client(monkeypatch, {"refresh_token": "RT"}, client_id=DEAD_ID)
+    called = {"heal": False}
+    monkeypatch.setattr(gh, "attempt_self_heal", lambda *a, **k: called.__setitem__("heal", True))
+    res = gh.run_probe("personal", post=_post_by_client({DEAD_ID: RESP_BAD_CLIENT_SECRET}))
+    assert res["status"] == gh.UNKNOWN
+    assert called["heal"] is False
+    assert not gh.NOTIF_DIR.exists() or list(gh.NOTIF_DIR.glob("*.json")) == []
 
 
 def test_run_probe_self_heals_with_fresh_client(monkeypatch):

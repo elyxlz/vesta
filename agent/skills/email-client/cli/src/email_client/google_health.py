@@ -65,6 +65,12 @@ def classify_refresh_response(_status_code: int | None, body: dict | None) -> st
     client was "not found") is a dead client (swap it). Anything else is unknown
     and deliberately NOT treated as a dead client, so a transient upstream blip
     never triggers a spurious client swap or notification.
+
+    One wrinkle: Google returns ``invalid_client`` for two different conditions.
+    A deleted/nonexistent client is genuinely dead, but a LIVE client presented
+    with the wrong secret answers HTTP 401 ``invalid_client`` with
+    "The provided client secret is invalid." That is a credential problem, not a
+    dead client, so it classifies as UNKNOWN and never triggers a swap.
     """
     body = body or {}
     if body.get("access_token"):
@@ -74,6 +80,9 @@ def classify_refresh_response(_status_code: int | None, body: dict | None) -> st
     if err == "invalid_grant":
         return BAD_TOKEN
     if err in ("deleted_client", "invalid_client"):
+        looks_gone = "not found" in desc or "deleted" in desc
+        if err == "invalid_client" and "secret" in desc and not looks_gone:
+            return UNKNOWN
         return DEAD_CLIENT
     # Some responses carry a generic error but say "not found" for the client in
     # the description; that is the exact ...t1glqf failure signature.
