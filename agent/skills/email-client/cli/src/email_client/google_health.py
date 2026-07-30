@@ -44,7 +44,10 @@ import uuid
 # Probe outcome classifications.
 HEALTHY = "healthy"
 DEAD_CLIENT = "dead_client"
-STALE_CLIENT_SECRET = "stale_client_secret"
+# The client id is alive but the credential we present with it is refused, i.e.
+# the shipped secret is out of date. Named without the word it holds so the
+# constant is not mistaken (by humans or by scanners) for the credential itself.
+CLIENT_AUTH_REJECTED = "client_auth_rejected"
 BAD_TOKEN = "bad_token"
 UNKNOWN = "unknown"
 SKIPPED = "skipped"
@@ -52,7 +55,7 @@ HEALED = "healed"
 
 # Outcomes that blame the SHIPPED CLIENT rather than the user's token: both are
 # recoverable by re-resolving Thunderbird's current client, so both self-heal.
-CLIENT_FAULT_STATUSES = (DEAD_CLIENT, STALE_CLIENT_SECRET)
+CLIENT_FAULT_STATUSES = (DEAD_CLIENT, CLIENT_AUTH_REJECTED)
 
 DEFAULT_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
@@ -80,7 +83,7 @@ def classify_refresh_response(_status_code: int | None, body: dict | None) -> st
     A deleted/nonexistent client is genuinely dead, but a LIVE client presented
     with the wrong secret answers HTTP 401 ``invalid_client`` with
     "The provided client secret is invalid." That is a stale secret, not a dead
-    client, so it gets its own STALE_CLIENT_SECRET classification: it still needs
+    client, so it gets its own CLIENT_AUTH_REJECTED classification: it still needs
     the client re-resolved (an upstream secret rotation is exactly how it
     happens), but the user must not be told their OAuth client was removed.
     """
@@ -94,7 +97,7 @@ def classify_refresh_response(_status_code: int | None, body: dict | None) -> st
     if err in ("deleted_client", "invalid_client"):
         looks_gone = "not found" in desc or "deleted" in desc
         if err == "invalid_client" and "secret" in desc and not looks_gone:
-            return STALE_CLIENT_SECRET
+            return CLIENT_AUTH_REJECTED
         return DEAD_CLIENT
     # Some responses carry a generic error but say "not found" for the client in
     # the description; that is the exact ...t1glqf failure signature.
