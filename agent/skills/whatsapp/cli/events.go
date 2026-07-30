@@ -400,11 +400,33 @@ func (wac *WhatsAppClient) handleMessage(evt *events.Message) {
 			wac.transcribeSem <- struct{}{} // acquire
 			defer func() { <-wac.transcribeSem }()
 
+			// Defensive timeout: transcribeAudioMessage should return in
+			// seconds, but if it ever hangs (a wedged C context, a stuck
+			// subprocess), degrade to a failure notification instead of
+			// silently dropping the message forever. WriteNotification only
+			// runs after this call returns, so a hang here previously meant
+			// no notification ever arrived, with no error either.
+			type result struct {
+				text string
+				err  error
+			}
+			resCh := make(chan result, 1)
+			go func() {
+				text, err := wac.transcribeAudioMessage(msgID, chatJIDStr)
+				resCh <- result{text, err}
+			}()
+
 			notifContent := content
-			if transcription, err := wac.transcribeAudioMessage(msgID, chatJIDStr); err != nil {
-				notifContent = fmt.Sprintf("⚠️ Audio message received but transcription failed: %s", err)
-			} else if transcription != "" {
-				notifContent = transcription
+			select {
+			case r := <-resCh:
+				if r.err != nil {
+					notifContent = fmt.Sprintf("⚠️ Audio message received but transcription failed: %s", r.err)
+				} else if r.text != "" {
+					notifContent = r.text
+				}
+			case <-time.After(2 * time.Minute):
+				notifContent = "⚠️ Audio message received but transcription timed out (over 2 min); download it manually if you need the content"
+				wac.logger.Warnf("transcribeAudioMessage timed out after 2m for message %s", msgID)
 			}
 			if shouldNotify {
 				WriteNotification(notifCtx, msgID, notifContent, mediaType, isForwarded, quotedMessageID, quotedText)

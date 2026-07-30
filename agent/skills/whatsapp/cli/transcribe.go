@@ -17,6 +17,23 @@ var (
 	whisperModel     whisper.Model
 	whisperModelOnce sync.Once
 	whisperModelErr  error
+
+	// whisperProcessMu serializes calls into the whisper.cpp C context. The
+	// bindings hand out a fresh whisper.Context per call (model.NewContext),
+	// but that context wraps the SAME underlying model.ctx C pointer, and
+	// ctx.Process ultimately calls whisper_full on it, which mutates shared
+	// decode/KV-cache state and is not safe for concurrent invocation on one
+	// context (upstream whisper.cpp requires whisper_full_parallel or one
+	// context per worker for real concurrency, neither of which this uses).
+	// MaxConcurrentTranscriptions (constants.go) allows up to 3 goroutines to
+	// call transcribeAudioBuiltIn at once; without this lock they raced the
+	// same C context. A raced call can hang forever inside Process, and since
+	// WriteNotification only fires after transcribeAudioMessage returns, a
+	// hung goroutine silently drops its voice-note notification forever (and
+	// starves the semaphore slot, delaying whatever queues behind it). Cheap
+	// fix: serialize Process, let the semaphore still bound queue depth and
+	// concurrent downloads/ffmpeg conversions.
+	whisperProcessMu sync.Mutex
 )
 
 func getModelPath() string {
@@ -85,6 +102,12 @@ func transcribeAudioBuiltIn(audioPath string) (string, error) {
 	if err := ctx.SetLanguage("auto"); err != nil {
 		return "", fmt.Errorf("failed to set language to auto: %w", err)
 	}
+
+	// Serialize: Process + segment collection both touch the shared whisper
+	// C context (see whisperProcessMu doc comment above). Concurrent callers
+	// queue here instead of racing whisper_full.
+	whisperProcessMu.Lock()
+	defer whisperProcessMu.Unlock()
 
 	if err := ctx.Process(samples, nil, nil, nil); err != nil {
 		return "", fmt.Errorf("whisper processing failed: %w", err)
