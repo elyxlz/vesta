@@ -1,7 +1,5 @@
-The daemon-contract migration covered Vesta's shipping skills, but it did not make the scope of
-locally created skills explicit enough. Audit every skill created on this box now. Any of those
-skills that owns a background process must own the same `<skill> daemon
-start|stop|restart|status` lifecycle as a shipping skill.
+Audit every skill created on this box. Any skill that owns a background process must own the same
+`<skill> daemon start|stop|restart|status` lifecycle as a shipping skill.
 
 ### 1. Review every skill you created
 
@@ -81,9 +79,11 @@ serve, registration, sleep, and redirection line with its command alone:
 <skill> daemon start <preserved non-lifecycle flags>
 ```
 
-Remove only lifecycle flags the command now owns: the port, `--notifications-dir`, and a poll
-interval moved to the environment according to the contract. Preserve every other flag because it
-is local configuration. If the skill is meant to survive restarts but had no line, add one.
+Preserve the behavior of every flag from the old launch. A setting may leave the restart line only
+when the converted skill explicitly owns it and reads it from a documented persistent location;
+move the value there before removing the flag. Otherwise keep the flag on the new command,
+including a custom poll interval or notification path. If the skill is meant to survive restarts
+but had no line, add one.
 
 Re-read the block and compare it with the checklist from step 1. Every locally created daemon meant
 to survive a restart must appear exactly once, and no local daemon may have silently disappeared.
