@@ -1,9 +1,8 @@
 """Every email subcommand that takes a message id accepts both --id and --email-id.
 
-`attachment` used to be the lone subcommand spelling it `--email-id` while the other eight
-spelled it `--id`, so reaching for the wrong one exited 2 with a usage error. Worse, under
-`2>/dev/null` that looks exactly like a command that ran and found nothing, which is how a
-flag mismatch turns into a false negative. Both spellings now work everywhere.
+Either spelling parses on all nine, so a wrong guess cannot exit 2 with a usage error. That
+matters because these commands run with stderr suppressed, where a usage error looks exactly
+like a command that ran and found nothing, turning a flag mismatch into a silent false negative.
 """
 
 import pytest

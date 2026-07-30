@@ -88,7 +88,7 @@ def _add_email_commands(group):
     p_undo.add_argument("--id", required=True, dest="pending_id")
 
     p_attachment = email_sub.add_parser("attachment")
-    p_attachment.add_argument("--email-id", required=True)
+    p_attachment.add_argument("--email-id", "--id", required=True, dest="email_id")
     p_attachment.add_argument("--attachment-id", required=True)
     p_attachment.add_argument("--save-path", required=True)
 

@@ -196,8 +196,6 @@ def _add_email_read_parsers(email_sub) -> None:
 
     p_attachment = email_sub.add_parser("attachment")
     p_attachment.add_argument("--account", required=True)
-    # Every other email subcommand spells this `--id`, so accept both here. `--email-id` stays
-    # the documented form for back-compat; `--id` is what muscle memory reaches for.
     p_attachment.add_argument("--email-id", "--id", required=True, dest="email_id")
     p_attachment.add_argument("--attachment-id", default=None)
     p_attachment.add_argument("--save-path", default=None)
