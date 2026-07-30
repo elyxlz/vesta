@@ -165,6 +165,11 @@ def test_scan_ignores_benign_prose_with_bare_space(event_bus, db_conn, text):
         # A quote separator with the value hard against it: the CLI-flag shape.
         '--password "hunter2xyz"',
         "email-client --password 'appspecificpw'",
+        # A value padded inside its quotes, closing quote present, so the leading space is part of
+        # the value rather than the gap after a closing quote.
+        'password="  hunter2xyz"',
+        '--password "  hunter2xyz"',
+        "api_key: '  abcd1234efgh'",
     ],
 )
 def test_scan_catches_space_padded_credential_assignments(event_bus, db_conn, text):
@@ -188,8 +193,8 @@ def test_scan_catches_space_padded_credential_assignments(event_bus, db_conn, te
 )
 def test_scan_ignores_quoted_identifier_followed_by_prose(event_bus, db_conn, text):
     """A quote that CLOSES a quoted identifier is not an assignment separator, so the English word
-    after it is prose, not a value. Treating it as one flagged `the "gmail-app-password" provider`
-    with "provider" as the secret, the dominant false positive in real nightly scans."""
+    after it is prose, not a value. These shapes carry no credential at all: the word inside the
+    quotes is the identifier and the word after them is ordinary text."""
     event_bus.emit(AssistantEvent(type="assistant", text=text))
 
     assert redact.scan(db_conn) == []
