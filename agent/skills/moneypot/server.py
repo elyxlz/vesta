@@ -5,7 +5,8 @@ Stdlib only. Shares the same ~/agent/data/moneypot.json as the CLI. Mutations ar
 serialized with a lock so concurrent requests don't clobber the file.
 
 Run:  python3 server.py --port 8080
-Then register the port with vestad to expose it (see SETUP.md).
+`moneypot daemon start` is what launches it, on the private port it registers with vestad.
+vestad gates that port, so every route here answers an already-authorized request.
 
 Endpoints
   GET    /health
@@ -26,7 +27,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -35,21 +35,6 @@ from urllib.parse import parse_qs, urlparse
 import moneypot as mp
 
 LOCK = threading.Lock()
-
-
-# When set (via --api-key or MONEYPOT_API_KEY), every request except /health must
-# present a valid credential. Two credentials are accepted: the app key, and the
-# vestad agent token (AGENT_TOKEN) so the request is reachable through vestad
-# (e.g. the dashboard) without sharing the app key. When no app key is set, the
-# API is open. Headers checked: Authorization: Bearer, X-API-Key, X-Agent-Token.
-# One mutable holder rather than two module globals reassigned from main(), so the auth config has
-# a single owner and needs no `global` statement.
-class _Auth:
-    api_key: str | None = None
-    agent_token: str | None = None
-
-
-AUTH = _Auth()
 
 
 # Reads take no lock and need none: mp.save writes a temp file and renames it over the target, so a
@@ -111,24 +96,6 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _authed(self) -> bool:
-        """True if allowed: no key configured, or a credential matching the app
-        key or the vestad agent token."""
-        if not AUTH.api_key:
-            return True
-        if urlparse(self.path).path.rstrip("/") in ("/health", ""):
-            return True
-        valid = {k for k in (AUTH.api_key, AUTH.agent_token) if k}
-        presented = set()
-        auth = self.headers.get("Authorization", "")
-        if auth.startswith("Bearer "):
-            presented.add(auth[7:].strip())
-        for h in ("X-API-Key", "X-Agent-Token"):
-            v = self.headers.get(h, "").strip()
-            if v:
-                presented.add(v)
-        return bool(presented & valid)
-
     def _body(self) -> dict:
         n = int(self.headers.get("Content-Length", 0) or 0)
         if not n:
@@ -145,8 +112,6 @@ class Handler(BaseHTTPRequestHandler):
     # -------- routing --------
 
     def do_GET(self):
-        if not self._authed():
-            return self._send(401, {"error": "missing or invalid API key"})
         try:
             self._route_get()
         except mp.MoneypotError as e:
@@ -155,8 +120,6 @@ class Handler(BaseHTTPRequestHandler):
             self._send(500, {"error": str(e)})
 
     def do_POST(self):
-        if not self._authed():
-            return self._send(401, {"error": "missing or invalid API key"})
         try:
             self._route_post()
         except mp.MoneypotError as e:
@@ -165,8 +128,6 @@ class Handler(BaseHTTPRequestHandler):
             self._send(500, {"error": str(e)})
 
     def do_DELETE(self):
-        if not self._authed():
-            return self._send(401, {"error": "missing or invalid API key"})
         try:
             self._route_delete()
         except mp.MoneypotError as e:
@@ -272,17 +233,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--host", default="0.0.0.0")
-    ap.add_argument(
-        "--api-key",
-        default=os.environ.get("MONEYPOT_API_KEY"),
-        help="require this key on all routes except /health (also via MONEYPOT_API_KEY). Omit for an open API.",
-    )
     args = ap.parse_args()
-    AUTH.api_key = args.api_key or None
-    AUTH.agent_token = os.environ.get("AGENT_TOKEN") or None  # also accepted when an app key is set
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
-    mode = "private (api key required)" if AUTH.api_key else "open (no auth)"
-    print(f"moneypot API on {args.host}:{args.port} - {mode}", flush=True)
+    print(f"moneypot API on {args.host}:{args.port}", flush=True)
     srv.serve_forever()
 
 

@@ -6,7 +6,7 @@ The **CLI needs no setup**: `moneypot ...` works immediately and creates `~/agen
 ln -sf ~/agent/skills/moneypot/moneypot ~/.local/bin/moneypot
 ```
 
-The **HTTP API is optional**. It is a stdlib JSON server over the same pot data, for a dashboard or another app, and its lifecycle is a daemon owned by the CLI:
+The **HTTP API is optional**. It is a stdlib JSON server over the same pot data, for another app that needs to read or write pots over HTTP, and its lifecycle is a daemon owned by the CLI:
 
 ```bash
 moneypot daemon start     # registers a private port with vestad, launches, returns once it answers
@@ -15,21 +15,13 @@ moneypot daemon stop
 moneypot daemon restart
 ```
 
-`start` is idempotent, so re-running it never stacks a second copy, and it returns only once the API actually answers on its port. The port is registered **private**, which is what you want: the API is read with the app credential (the dashboard sends `Authorization: Bearer $AGENT_TOKEN` for you), and anyone else is handed a minted service key rather than an open URL.
+`start` is idempotent, so re-running it never stacks a second copy, and it returns only once the API actually answers on its port.
 
-To hand the API to a caller that holds no app credential:
-
-```bash
-service-key mint moneypot     # prints a one-time secret; share the keyed link
-```
-
-**Optional extra app key.** Set `MONEYPOT_API_KEY` in `~/.bashrc` to require your own key on every route except `/health`. The agent token keeps working alongside it, so a dashboard is unaffected:
+The port is registered **private**, so vestad is the gate in front of it and the API itself checks no credential. Reach it at `$VESTAD_TUNNEL/agents/$AGENT_NAME/moneypot/...` with the app api key, or mint a service key for a caller that holds no app credential:
 
 ```bash
-echo "export MONEYPOT_API_KEY=$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')" >> ~/.bashrc
+service-key mint moneypot --label "what it is for"     # prints the secret once; share the keyed link
 ```
-
-Callers then send `X-API-Key: <key>` (or `Authorization: Bearer <key>`).
 
 Add the startup line to the `## Daemons` section of `~/agent/skills/restart/SKILL.md` so the API comes back after a restart. It is the bare command, nothing around it, because start is idempotent:
 

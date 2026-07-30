@@ -4,7 +4,7 @@ start registers the port with vestad and records it beside the pid, stop is a SI
 serve path reads as deliberate, and status answers from those two records alone.
 
 The CLI stays the primary surface; this only governs the optional HTTP API in server.py, which
-exists so a dashboard or another app can read the same pot data over a port.
+exists so another app can read the same pot data over a port.
 """
 
 import contextlib

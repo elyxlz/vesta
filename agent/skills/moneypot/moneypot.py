@@ -677,7 +677,10 @@ def cmd_daemon(args) -> None:
 
 def _add_daemon_parser(sub) -> None:
     d = sub.add_parser("daemon", help="run the optional HTTP API as a background daemon")
-    d.add_argument("action", nargs="?", choices=["start", "stop", "restart", "status"])
+    # No `choices`: daemon_cmd owns the verb set, so it is what answers `help` with usage and exit 0,
+    # and an unknown verb with usage and exit 1. Listing them here too would make argparse reject
+    # `help` as invalid before either answer could be given.
+    d.add_argument("action", nargs="?", metavar="start|stop|restart|status")
     d.set_defaults(func=cmd_daemon)
 
 

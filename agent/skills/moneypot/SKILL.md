@@ -13,7 +13,7 @@ Run it with `moneypot <command>`. Put the command on PATH once:
 mkdir -p ~/.local/bin && ln -sf ~/agent/skills/moneypot/moneypot ~/.local/bin/moneypot
 ```
 
-It is a local CLI: nothing to start, nothing to register, no network beyond the optional live exchange-rate lookup. Data lives in `~/agent/data/moneypot.json`, created on first write.
+The CLI needs nothing running: it reads and writes `~/agent/data/moneypot.json` directly, created on first write, and touches the network only for the optional live exchange-rate lookup. The HTTP API below is separate and optional, and is the only part that starts a daemon or registers a port.
 
 ## Model
 
@@ -83,7 +83,22 @@ contributions into 'Joint':
 
 ## HTTP API (optional)
 
-`server.py` is a stdlib JSON API over the same data, for dashboards or other apps. Mutations are lock-serialized. Run it with `moneypot daemon start|stop|restart|status` (idempotent; registers its own private port, records pid and port under `~/agent/data/daemons/`, logs to `~/agent/logs/moneypot.log`). See `SETUP.md` for keys and the restart line. Routes:
+`moneypot daemon start|stop|restart|status` serves the same pot data as JSON over HTTP, for another app that needs to read or write pots without shelling out to the CLI. Nothing in the CLI needs it.
+
+Start is idempotent (a live daemon is a no-op) and owns the port registration with vestad; stop is the deliberate shutdown; status reads the pid and port records under `~/agent/data/daemons/`, so it answers while vestad is down. Logs go to `~/agent/logs/moneypot.log`. Manage the daemon only through these commands, never by launching `server.py` yourself.
+
+The port is registered private, so vestad is the gate in front of it and the API itself checks no credential. Reach it at `$VESTAD_TUNNEL/agents/$AGENT_NAME/moneypot/...` with the app api key, or mint a service key for a caller that holds no app credential:
+
+```bash
+service-key mint moneypot --label "what it is for"
+```
+
+Add this line yourself, inside the fenced block in the `## Daemons` section of `~/agent/skills/restart/SKILL.md`:
+```
+moneypot daemon start
+```
+
+Routes:
 
 ```
 GET    /health
@@ -100,9 +115,7 @@ GET    /pots/{id}/balance
 GET    /pots/{id}/contributions?account=X
 ```
 
-Errors return `{"error": "..."}` with HTTP 400 (bad input), 404 (no route), or 401 (bad key).
-
-**Public vs private.** By default the API is open. Set an app-level key with `--api-key KEY` (or `MONEYPOT_API_KEY`) to require it on every route except `/health`; callers pass `Authorization: Bearer KEY`, `X-API-Key: KEY`, otherwise 401. When a key is set, the vestad agent token (`AGENT_TOKEN` env) is also accepted via `X-Agent-Token` (or Bearer), so the service stays reachable through vestad (e.g. from the dashboard) without sharing the app key.
+Errors return `{"error": "..."}` with HTTP 400 (bad input) or 404 (no route). Mutations are serialized with a lock, so concurrent writes cannot clobber the file.
 
 ## Notes
 
