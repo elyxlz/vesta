@@ -62,9 +62,7 @@ def test_lists_pending_in_filename_order(mig):
 def test_local_daemon_followup_sorts_after_shipping_daemon_migration():
     migrations_dir = pl.Path(__file__).parents[1] / "core/migrations"
     daemon_migrations = sorted(
-        path.stem
-        for path in migrations_dir.glob("2026-08-*.md")
-        if path.stem in {SHIPPING_DAEMON_MIGRATION, LOCAL_DAEMON_MIGRATION}
+        path.stem for path in migrations_dir.glob("2026-08-*.md") if path.stem in {SHIPPING_DAEMON_MIGRATION, LOCAL_DAEMON_MIGRATION}
     )
 
     assert daemon_migrations == [SHIPPING_DAEMON_MIGRATION, LOCAL_DAEMON_MIGRATION]
