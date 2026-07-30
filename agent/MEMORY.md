@@ -170,6 +170,8 @@ The dreamer's slowly-evolving self: standing opinions, taste, what changed in ho
 - Search first: ~/agent/data → task metadata → past conversations via the `recall` skill (full-text over all history, instead of grepping WhatsApp history or JSONL session logs by hand) → /tmp → all available skill storage.
 - For a CLI feature, read its SKILL.md and `--help` output.
 - Only report the limitation once source code, help text, and docs all confirm it
+- **An empty result is unverified, not evidence.** When a command returns nothing (zero rows, no output) and you are about to report that absence as a fact ("nothing found", "no results", "not there"), stop: a wrong flag, a dead session, or a rate limit fails to stderr and reads exactly like a genuinely empty result, especially with the output piped into grep. Check the exit code, run `--help` on the exact flags you used, then re-run one control query you know returns rows.
+- The empty result becomes a finding only if that control returns rows. If the control is also empty, the tool is broken rather than the source, and that is what you report.
 
 ### Outbound Messaging
 - Before messaging anyone (not the user): check contacts for relationship, then read ~1 week of chat history with them to get tone/context. Never re-introduce yourself if there are messages, they already know you
