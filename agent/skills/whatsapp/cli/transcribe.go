@@ -18,21 +18,13 @@ var (
 	whisperModelOnce sync.Once
 	whisperModelErr  error
 
-	// whisperProcessMu serializes calls into the whisper.cpp C context. The
-	// bindings hand out a fresh whisper.Context per call (model.NewContext),
-	// but that context wraps the SAME underlying model.ctx C pointer, and
-	// ctx.Process ultimately calls whisper_full on it, which mutates shared
-	// decode/KV-cache state and is not safe for concurrent invocation on one
-	// context (upstream whisper.cpp requires whisper_full_parallel or one
-	// context per worker for real concurrency, neither of which this uses).
-	// MaxConcurrentTranscriptions (constants.go) allows up to 3 goroutines to
-	// call transcribeAudioBuiltIn at once; without this lock they raced the
-	// same C context. A raced call can hang forever inside Process, and since
-	// WriteNotification only fires after transcribeAudioMessage returns, a
-	// hung goroutine silently drops its voice-note notification forever (and
-	// starves the semaphore slot, delaying whatever queues behind it). Cheap
-	// fix: serialize Process, let the semaphore still bound queue depth and
-	// concurrent downloads/ffmpeg conversions.
+	// whisperProcessMu serializes whisper_full calls: model.NewContext hands
+	// out a fresh wrapper per call but they share the SAME underlying C
+	// model context, which whisper.cpp does not support calling
+	// concurrently. Unserialized, MaxConcurrentTranscriptions (up to 3) let
+	// calls race that context; a raced call could hang forever, and since
+	// WriteNotification only fires on return, a hung call silently dropped
+	// its notification forever. See #1609.
 	whisperProcessMu sync.Mutex
 )
 
