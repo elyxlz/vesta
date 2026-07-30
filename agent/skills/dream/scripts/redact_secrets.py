@@ -34,10 +34,19 @@ PATTERNS = [
     r"eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}",
     r"BEGIN [A-Z ]+ PRIVATE KEY",
     # A real separator char (: = or a quote) is mandatory, so benign prose like "password reuse"
-    # (bare space between word and value) never matches; spaces around it are tolerated so
-    # space-padded assignments still hit (password = "x", YAML password: "x"). The \\? bits absorb
-    # the backslash JSON puts before an escaped quote, since the scan runs over the JSON `data` blob.
-    r"(?:password|secret|api[_-]?key)[ ]*\\?[\"':=]+[ ]*\\?[\"']?[^ \"'\\]{4,}",
+    # (bare space between word and value) never matches. Two assignment shapes, kept apart because
+    # a quote alone means different things on either side of a space. The \\? bits absorb the
+    # backslash JSON puts before an escaped quote, since the scan runs over the JSON `data` blob.
+    #
+    # 1. A : or = carries the assignment, so spaces and quotes around it are free:
+    #    password = "x", YAML password: x, JSON "password": "x".
+    r"(?:password|secret|api[_-]?key)[ ]*\\?[\"']?[ ]*[:=]+[ ]*\\?[\"']?[^ \"'\\]{4,}",
+    # 2. A quote alone separates ONLY when the value follows it immediately (--password "x").
+    #    A quote followed by a space is a CLOSING quote, so the next word is prose, not a value:
+    #    `the "gmail-app-password" provider` used to match with "provider" as the secret, which is
+    #    the recurring false positive this split removes. Every real leak shape survives, because a
+    #    credential is never written as `password" secret-value`.
+    r"(?:password|secret|api[_-]?key)[ ]*\\?[\"'][^ \"'\\]{4,}",
     r"(?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql|redis)://[^ \"']+",
 ]
 REGEX = re.compile("|".join(PATTERNS), re.IGNORECASE)

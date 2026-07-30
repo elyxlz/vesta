@@ -161,6 +161,10 @@ def test_scan_ignores_benign_prose_with_bare_space(event_bus, db_conn, text):
         "secret = topsecretvalue",
         '{"password":"supersecretvalue"}',
         'api_key="abcd1234"',
+        "PASSWORD:  Tr0ub4dorvalue",
+        # A quote separator with the value hard against it: the CLI-flag shape.
+        '--password "hunter2xyz"',
+        "email-client --password 'appspecificpw'",
     ],
 )
 def test_scan_catches_space_padded_credential_assignments(event_bus, db_conn, text):
@@ -170,6 +174,25 @@ def test_scan_catches_space_padded_credential_assignments(event_bus, db_conn, te
 
     assert len(matches) == 1
     assert "[REDACTED]" in matches[0][1]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        'the "gmail-app-password" provider',
+        'the "app-password" setting stores it',
+        'send the "api-key" header always',
+        'rotate the "client-secret" quarterly',
+        'the "smtp-password" documentation entry',
+    ],
+)
+def test_scan_ignores_quoted_identifier_followed_by_prose(event_bus, db_conn, text):
+    """A quote that CLOSES a quoted identifier is not an assignment separator, so the English word
+    after it is prose, not a value. Treating it as one flagged `the "gmail-app-password" provider`
+    with "provider" as the secret, the dominant false positive in real nightly scans."""
+    event_bus.emit(AssistantEvent(type="assistant", text=text))
+
+    assert redact.scan(db_conn) == []
 
 
 # Payment-card (PAN) detection: a Luhn-checked pass layered on top of the regex patterns. Well-known
