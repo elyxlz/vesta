@@ -213,11 +213,14 @@ vestad exposes registered services under the tunnel. The stable patterns:
 
 Reach for these instead of reverse-engineering the route when you need to hand the user a link.
 
-### Building a public interactive web app served this way
-A service reached at `$VESTAD_TUNNEL/agents/$AGENT_NAME/<svc>/` is reverse-proxied under that PATH PREFIX, which breaks two things unless you design for it:
-- **Path-agnostic routing.** The browser loads the page at the prefixed path, so absolute client fetches like `fetch('/api/x')` hit the tunnel root, not your service. Compute the fetch base from `location.pathname` (page-relative), and on the server match routes by path SUFFIX (`endswith`), not exact `==`. Serve the page for any GET that isn't an api call. Test by driving the API through a fake prefix (`/agents/$AGENT_NAME/<svc>/api/...`) locally before shipping.
-- **No WebSockets.** WS upgrades don't reliably traverse the tunnel. For "real-time" (a live game, a signature pad, a shared board), use HTTP POLLING (client GETs state every ~800ms, POSTs actions). A turn-based flow feels instant at that rate and it's rock-solid through the proxy.
-- Register `public:true` (no token for the user), run a single stdlib `http.server` on the assigned port serving BOTH the HTML and the JSON API, keep state in-memory, and give it a launcher exposing `daemon start|stop|restart|status` (copy an existing one, e.g. `skills/file-host/file-host`) plus a line in the restart skill's Daemons block, so the link survives reboots.
+### Building an interactive web app served this way
+The browser sits at `$VESTAD_TUNNEL/agents/$AGENT_NAME/<svc>/...`, so the prefix is a **client-side** concern only:
+- **Keep client URLs relative.** An absolute `fetch('/api/x')` resolves against the tunnel root rather than the service, and the same goes for asset and link hrefs. Use relative URLs, or derive a base from `location.pathname`.
+- **The server needs no prefix handling.** vestad splits the service name off and forwards the exact subpath, so a request to `<svc>/api/x` reaches the handler as `/api/x`. Match routes with `==`.
+- **WebSockets work for a registered service.** vestad upgrades the connection and bridges it, pinging the client on a keepalive interval so an idle socket survives the tunnel. Only the raw agent port refuses to upgrade, because that carries the internal event bus; use `/sync` for that. A browser `WebSocket` cannot set headers, so carry a private service's key as `?token=<key>`.
+- **Bind `0.0.0.0`, not `127.0.0.1`.** The container has its own network and vestad proxies in from outside, so a loopback-only bind answers 502.
+- **Default to private** and hand the user a minted `/k/<key>/` link, the shape the signature pad uses; choose `public: true` only when the page genuinely should need no credential.
+- A single stdlib `http.server` on the assigned port can serve both the HTML and the JSON API with state in memory. Give it a launcher exposing `daemon start|stop|restart|status` (copy an existing one, e.g. `skills/file-host/file-host`) plus a line in the restart skill's Daemons block, so the link survives reboots.
 
 ## Update vestad
 
