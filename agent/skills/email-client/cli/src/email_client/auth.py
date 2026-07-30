@@ -200,8 +200,9 @@ def auth_app_password(provider: str, profile: dict, user: str) -> dict:
     print(f"Account:  {user}")
     print(
         "\nGenerate an app password in your provider's account settings "
-        "(Yahoo, iCloud, Fastmail all have this under 'app-specific "
-        "passwords' or 'security'), then paste it below.\n"
+        "(Gmail, Yahoo, iCloud, Fastmail all have this under 'app-specific "
+        "passwords' or 'security'; Gmail only offers it once 2-Step "
+        "Verification is on), then paste it below.\n"
     )
     pw = os.environ.get("EMAIL_CLIENT_APP_PASSWORD") or getpass.getpass("App password: ")
     pw = pw.strip()
