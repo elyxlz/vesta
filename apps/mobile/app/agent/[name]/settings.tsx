@@ -1,6 +1,6 @@
 import { Alert, StyleSheet } from "react-native";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Stack, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import {
   createBackup,
   deleteAgent,
@@ -12,13 +12,11 @@ import { useAgent } from "@/agent/AgentProvider";
 import { AgentPagesSettingsSection } from "@/components/AgentPagesSettingsSection";
 import { AgentIdentityCard } from "@/components/agent-identity-card";
 import { Screen } from "@/components/layout/Screen";
+import { useToast } from "@/components/native-toast";
 import { Button, ButtonGroup } from "@/components/ui/Button";
 import { FormSection, SwitchRow } from "@/components/ui/Form";
-import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
-
-const IS_IOS = process.env.EXPO_OS === "ios";
 
 function AgentSettingsContent() {
   const router = useRouter();
@@ -26,7 +24,7 @@ function AgentSettingsContent() {
   const { api } = useSession();
   const { name, agent, activityState } = useAgent();
   const preferences = usePreferences();
-  const { colors } = preferences;
+  const { showError } = useToast();
   const action = useMutation({
     mutationFn: async (
       operation: "start" | "stop" | "restart" | "backup" | "delete",
@@ -42,6 +40,7 @@ function AgentSettingsContent() {
       void queryClient.invalidateQueries({ queryKey: ["backups", name] });
       if (operation === "delete") router.replace("/");
     },
+    onError: (error) => showError(error, "The action failed"),
   });
   const open = (section: string) =>
     router.push({
@@ -58,161 +57,141 @@ function AgentSettingsContent() {
     });
 
   return (
-    <>
-      <Screen contentStyle={styles.content}>
-        <AgentIdentityCard
-          name={name}
-          status={agent?.status ?? "not_found"}
-          activityState={activityState}
-          operation={agent?.operation ?? null}
-          style={styles.identityCard}
-        />
-        {action.error ? (
-          <Text accessibilityRole="alert" style={{ color: colors.danger }}>
-            {action.error instanceof Error
-              ? action.error.message
-              : "The action failed."}
-          </Text>
-        ) : null}
-        <FormSection
-          title="Agent"
-          actions={
-            <>
-              <Button pill variant="card" onPress={() => open("provider")}>
-                Provider and model
-              </Button>
-              <Button pill variant="card" onPress={() => open("voice")}>
-                Voice
-              </Button>
-            </>
-          }
-        >
-          <SwitchRow
-            label="Natural chat pacing"
-            detail="Let this agent's replies arrive with a more human rhythm."
-            value={preferences.naturalChatPacingForAgent(name)}
-            onValueChange={(value) =>
-              void preferences.setNaturalChatPacingForAgent(name, value)
-            }
-          />
-        </FormSection>
-        <AgentPagesSettingsSection />
-        <FormSection
-          title="Attention"
-          actions={
-            <>
-              <ButtonGroup>
-                <Button
-                  variant="cardGrouped"
-                  onPress={() => openPage("notifications")}
-                >
-                  Notifications
-                </Button>
-                <Button
-                  variant="cardGrouped"
-                  onPress={() => open("notifications")}
-                >
-                  Notification rules
-                </Button>
-              </ButtonGroup>
-              <Button pill variant="card" onPress={() => openPage("logs")}>
-                Logs
-              </Button>
-              <Button pill variant="card" onPress={() => open("files")}>
-                Files
-              </Button>
-              <Button pill variant="card" onPress={() => open("host-access")}>
-                Host access
-              </Button>
-            </>
-          }
-        />
-        <FormSection
-          title="Backups"
-          actions={
-            <ButtonGroup>
-              <Button variant="cardGrouped" onPress={() => open("backups")}>
-                Manage backups
-              </Button>
-              <Button
-                variant="cardGrouped"
-                disabled={action.isPending}
-                loading={action.isPending && action.variables === "backup"}
-                onPress={() => action.mutate("backup")}
-              >
-                Back up now
-              </Button>
-            </ButtonGroup>
-          }
-        />
-        <FormSection
-          title="Actions"
-          actions={
-            <ButtonGroup>
-              <Button
-                variant="cardGrouped"
-                disabled={action.isPending}
-                loading={
-                  action.isPending &&
-                  (action.variables === "start" || action.variables === "stop")
-                }
-                onPress={() =>
-                  action.mutate(agent?.status === "stopped" ? "start" : "stop")
-                }
-              >
-                {agent?.status === "stopped" ? "Start agent" : "Stop agent"}
-              </Button>
-              <Button
-                variant="cardGrouped"
-                disabled={action.isPending}
-                loading={action.isPending && action.variables === "restart"}
-                onPress={() => action.mutate("restart")}
-              >
-                Restart agent
-              </Button>
-            </ButtonGroup>
-          }
-        />
-        <FormSection
-          title="Danger zone"
-          actions={
-            <Button
-              pill
-              variant="cardDanger"
-              disabled={action.isPending}
-              loading={action.isPending && action.variables === "delete"}
-              onPress={() => {
-                Alert.alert(
-                  `Delete ${name}?`,
-                  "This permanently deletes the agent and their local state.",
-                  [
-                    { text: "Cancel", style: "cancel" },
-                    {
-                      text: "Delete",
-                      style: "destructive",
-                      onPress: () => action.mutate("delete"),
-                    },
-                  ],
-                );
-              }}
-            >
-              Delete agent
+    <Screen contentStyle={styles.content}>
+      <AgentIdentityCard
+        name={name}
+        status={agent?.status ?? "not_found"}
+        activityState={activityState}
+        operation={agent?.operation ?? null}
+        style={styles.identityCard}
+      />
+      <FormSection
+        title="Agent"
+        actions={
+          <>
+            <Button pill variant="card" onPress={() => open("provider")}>
+              Provider and model
             </Button>
+            <Button pill variant="card" onPress={() => open("voice")}>
+              Voice
+            </Button>
+          </>
+        }
+      >
+        <SwitchRow
+          label="Natural chat pacing"
+          detail="Let this agent's replies arrive with a more human rhythm."
+          value={preferences.naturalChatPacingForAgent(name)}
+          onValueChange={(value) =>
+            void preferences.setNaturalChatPacingForAgent(name, value)
           }
         />
-      </Screen>
-      <Stack.Toolbar placement="left">
-        <Stack.Toolbar.Button
-          accessibilityLabel="Close agent settings"
-          icon={IS_IOS ? "xmark" : undefined}
-          separateBackground
-          tintColor={colors.text}
-          onPress={() => router.back()}
-        >
-          {IS_IOS ? undefined : "Close"}
-        </Stack.Toolbar.Button>
-      </Stack.Toolbar>
-    </>
+      </FormSection>
+      <AgentPagesSettingsSection />
+      <FormSection
+        title="Attention"
+        actions={
+          <>
+            <ButtonGroup>
+              <Button
+                variant="cardGrouped"
+                onPress={() => openPage("notifications")}
+              >
+                Notifications
+              </Button>
+              <Button
+                variant="cardGrouped"
+                onPress={() => open("notifications")}
+              >
+                Notification rules
+              </Button>
+            </ButtonGroup>
+            <Button pill variant="card" onPress={() => openPage("logs")}>
+              Logs
+            </Button>
+            <Button pill variant="card" onPress={() => open("files")}>
+              Files
+            </Button>
+            <Button pill variant="card" onPress={() => open("host-access")}>
+              Host access
+            </Button>
+          </>
+        }
+      />
+      <FormSection
+        title="Backups"
+        actions={
+          <ButtonGroup>
+            <Button variant="cardGrouped" onPress={() => open("backups")}>
+              Manage backups
+            </Button>
+            <Button
+              variant="cardGrouped"
+              disabled={action.isPending}
+              loading={action.isPending && action.variables === "backup"}
+              onPress={() => action.mutate("backup")}
+            >
+              Back up now
+            </Button>
+          </ButtonGroup>
+        }
+      />
+      <FormSection
+        title="Actions"
+        actions={
+          <ButtonGroup>
+            <Button
+              variant="cardGrouped"
+              disabled={action.isPending}
+              loading={
+                action.isPending &&
+                (action.variables === "start" || action.variables === "stop")
+              }
+              onPress={() =>
+                action.mutate(agent?.status === "stopped" ? "start" : "stop")
+              }
+            >
+              {agent?.status === "stopped" ? "Start agent" : "Stop agent"}
+            </Button>
+            <Button
+              variant="cardGrouped"
+              disabled={action.isPending}
+              loading={action.isPending && action.variables === "restart"}
+              onPress={() => action.mutate("restart")}
+            >
+              Restart agent
+            </Button>
+          </ButtonGroup>
+        }
+      />
+      <FormSection
+        title="Danger zone"
+        actions={
+          <Button
+            pill
+            variant="cardDanger"
+            disabled={action.isPending}
+            loading={action.isPending && action.variables === "delete"}
+            onPress={() => {
+              Alert.alert(
+                `Delete ${name}?`,
+                "This permanently deletes the agent and their local state.",
+                [
+                  { text: "Cancel", style: "cancel" },
+                  {
+                    text: "Delete",
+                    style: "destructive",
+                    onPress: () => action.mutate("delete"),
+                  },
+                ],
+              );
+            }}
+          >
+            Delete agent
+          </Button>
+        }
+      />
+    </Screen>
   );
 }
 

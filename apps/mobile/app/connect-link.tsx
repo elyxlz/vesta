@@ -1,14 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  StyleSheet,
-  View,
-} from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { AuthPrimaryButton } from "@/components/auth-primary-button";
 import { AuthSheet } from "@/components/auth-sheet";
-import { Button } from "@/components/ui/Button";
+import { useToast } from "@/components/native-toast";
 import { Field } from "@/components/ui/Form";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
@@ -54,20 +50,19 @@ function ConnectLinkContent({
 }) {
   const router = useRouter();
   const { connectLink } = useSession();
+  const { showError } = useToast();
   const { colors, dark } = usePreferences();
   const handledScan = useRef("");
   const [link, setLink] = useState(initialLink);
   const [busy, setBusy] = useState(false);
   const [autoConnecting, setAutoConnecting] = useState(false);
   const [linkVisible, setLinkVisible] = useState(false);
-  const [error, setError] = useState("");
 
   const connect = useCallback(
     async (connectionLink: string, automatic = false) => {
       if (busy) return;
       setBusy(true);
       setAutoConnecting(automatic);
-      setError("");
       try {
         if (automatic) {
           await new Promise((resolve) =>
@@ -76,12 +71,12 @@ function ConnectLinkContent({
         }
         await connectLink(connectionLink);
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : "Connection failed.");
+        showError(cause, "Connection failed");
         setBusy(false);
         setAutoConnecting(false);
       }
     },
-    [busy, connectLink],
+    [busy, connectLink, showError],
   );
 
   useEffect(() => {
@@ -96,12 +91,7 @@ function ConnectLinkContent({
   }, [autoConnect, connect, initialLink, scanId]);
 
   return (
-    <AuthSheet
-      mode="keyboard"
-      title="Connect your gateway"
-      onClose={() => router.back()}
-      hasGrabber
-    >
+    <AuthSheet mode="keyboard" title="Connect your gateway" hasGrabber>
       {autoConnecting ? (
         <View
           accessibilityRole="progressbar"
@@ -117,10 +107,7 @@ function ConnectLinkContent({
               Connecting to gateway
             </Text>
             <Text
-              style={[
-                styles.connectingDetail,
-                { color: colors.secondaryText },
-              ]}
+              style={[styles.connectingDetail, { color: colors.secondaryText }]}
             >
               Verifying the scanned connection link…
             </Text>
@@ -134,7 +121,6 @@ function ConnectLinkContent({
             value={link}
             onChangeText={(value) => {
               setLink(value);
-              setError("");
             }}
             autoCapitalize="none"
             autoComplete="off"
@@ -150,64 +136,63 @@ function ConnectLinkContent({
             secureTextEntry={!linkVisible}
             textContentType="none"
             accessoryWidth={80}
-            accessory={link ? (
-              <View style={styles.fieldAccessories}>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Clear connection link"
-                  hitSlop={4}
-                  onPress={() => {
-                    setLink("");
-                    setLinkVisible(false);
-                    setError("");
-                  }}
-                  style={({ pressed }) => [
-                    styles.fieldAccessoryButton,
-                    { opacity: pressed ? 0.55 : 1 },
-                  ]}
-                >
-                  <Ionicons
-                    name="close-circle"
-                    size={19}
-                    color={colors.secondaryText}
-                  />
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={
-                    linkVisible
-                      ? "Hide connection link"
-                      : "Show connection link"
-                  }
-                  hitSlop={4}
-                  onPress={() => setLinkVisible((visible) => !visible)}
-                  style={({ pressed }) => [
-                    styles.fieldAccessoryButton,
-                    { opacity: pressed ? 0.55 : 1 },
-                  ]}
-                >
-                  <Ionicons
-                    name={linkVisible ? "eye-off-outline" : "eye-outline"}
-                    size={20}
-                    color={colors.secondaryText}
-                  />
-                </Pressable>
-              </View>
-            ) : undefined}
-            error={error || undefined}
+            accessory={
+              link ? (
+                <View style={styles.fieldAccessories}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Clear connection link"
+                    hitSlop={4}
+                    onPress={() => {
+                      setLink("");
+                      setLinkVisible(false);
+                    }}
+                    style={({ pressed }) => [
+                      styles.fieldAccessoryButton,
+                      { opacity: pressed ? 0.55 : 1 },
+                    ]}
+                  >
+                    <Ionicons
+                      name="close-circle"
+                      size={19}
+                      color={colors.secondaryText}
+                    />
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={
+                      linkVisible
+                        ? "Hide connection link"
+                        : "Show connection link"
+                    }
+                    hitSlop={4}
+                    onPress={() => setLinkVisible((visible) => !visible)}
+                    style={({ pressed }) => [
+                      styles.fieldAccessoryButton,
+                      { opacity: pressed ? 0.55 : 1 },
+                    ]}
+                  >
+                    <Ionicons
+                      name={linkVisible ? "eye-off-outline" : "eye-outline"}
+                      size={20}
+                      color={colors.secondaryText}
+                    />
+                  </Pressable>
+                </View>
+              ) : undefined
+            }
           />
 
           <View style={styles.actions}>
             <View style={styles.connectAction}>
-              <Button
-                pill
+              <AuthPrimaryButton
                 loading={busy}
                 loadingLabel="Connecting…"
                 disabled={!link.trim()}
                 onPress={() => void connect(link.trim())}
               >
                 Connect
-              </Button>
+              </AuthPrimaryButton>
             </View>
             <Pressable
               accessibilityRole="button"
@@ -221,11 +206,7 @@ function ConnectLinkContent({
                 },
               ]}
             >
-              <Ionicons
-                name="qr-code-outline"
-                size={21}
-                color={colors.text}
-              />
+              <Ionicons name="qr-code-outline" size={21} color={colors.text} />
             </Pressable>
           </View>
         </View>

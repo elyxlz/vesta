@@ -28,6 +28,7 @@ export default function AgentLayout() {
           name="settings"
           options={{
             title: "Settings",
+            headerTitleAlign: "center",
             presentation: "formSheet",
             sheetAllowedDetents: [1],
             sheetGrabberVisible: false,

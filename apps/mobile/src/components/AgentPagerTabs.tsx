@@ -92,9 +92,7 @@ function TabSurface({
         isInteractive
         style={[styles.surface, { width }]}
       >
-        <Animated.View
-          style={[styles.surfaceContent, contentVisibilityStyle]}
-        >
+        <Animated.View style={[styles.surfaceContent, contentVisibilityStyle]}>
           {layers}
         </Animated.View>
       </GlassView>
@@ -220,20 +218,10 @@ function Tab({
   const filledStyle = useAnimatedStyle(() => {
     const distance = Math.abs(progress.value - index);
     return {
-      opacity: interpolate(
-        distance,
-        [0, 1],
-        [1, 0],
-        Extrapolation.CLAMP,
-      ),
+      opacity: interpolate(distance, [0, 1], [1, 0], Extrapolation.CLAMP),
       transform: [
         {
-          scale: interpolate(
-            distance,
-            [0, 1],
-            [1, 0.84],
-            Extrapolation.CLAMP,
-          ),
+          scale: interpolate(distance, [0, 1], [1, 0.84], Extrapolation.CLAMP),
         },
       ],
     };
@@ -270,6 +258,7 @@ const styles = StyleSheet.create({
   surface: {
     height: SURFACE_HEIGHT,
     borderRadius: radii.pill,
+    borderCurve: "continuous",
   },
   surfaceContent: {
     position: "absolute",
@@ -286,6 +275,7 @@ const styles = StyleSheet.create({
     width: TAB_WIDTH,
     height: TAB_HEIGHT,
     borderRadius: radii.pill,
+    borderCurve: "continuous",
   },
   tabs: {
     position: "absolute",

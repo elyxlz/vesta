@@ -7,9 +7,10 @@ import {
   View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
+import { AuthPrimaryButton } from "@/components/auth-primary-button";
 import { AuthSheet } from "@/components/auth-sheet";
+import { useToast } from "@/components/native-toast";
 import { NativeDeleteRow } from "@/components/NativeDeleteRow";
 import { Button } from "@/components/ui/Button";
 import { Text } from "@/components/ui/Typography";
@@ -50,13 +51,13 @@ function lastConnectedLabel(timestamp: number): string {
 }
 
 function RecentGatewaysContent() {
-  const router = useRouter();
   const {
     recentGateways,
     connectRecentGateway,
     forgetRecentGateway,
     clearRecentGateways,
   } = useSession();
+  const { showError } = useToast();
   const { colors } = usePreferences();
   const connectionProgressTimer = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -64,8 +65,9 @@ function RecentGatewaysContent() {
   const [connectionAttempt, setConnectionAttempt] =
     useState<ConnectionAttempt | null>(null);
   const [showConnectionState, setShowConnectionState] = useState(false);
-  const [error, setError] = useState("");
   const isConnecting = connectionAttempt?.status === "connecting";
+  const showsConnectionState =
+    showConnectionState && connectionAttempt !== null;
 
   useEffect(
     () => () => {
@@ -76,10 +78,7 @@ function RecentGatewaysContent() {
     [],
   );
 
-  const connect = async (
-    gateway: RecentGateway,
-    showImmediately = false,
-  ) => {
+  const connect = async (gateway: RecentGateway, showImmediately = false) => {
     if (isConnecting) return;
     if (connectionProgressTimer.current) {
       clearTimeout(connectionProgressTimer.current);
@@ -87,7 +86,6 @@ function RecentGatewaysContent() {
     }
 
     setConnectionAttempt({ gateway, status: "connecting" });
-    setError("");
     if (showImmediately) {
       setShowConnectionState(true);
     } else {
@@ -129,13 +127,8 @@ function RecentGatewaysContent() {
           text: "Forget",
           style: "destructive",
           onPress: () => {
-            setError("");
             void forgetRecentGateway(gateway.id).catch((cause: unknown) =>
-              setError(
-                cause instanceof Error
-                  ? cause.message
-                  : "Could not forget this gateway.",
-              ),
+              showError(cause, "Could not forget this gateway"),
             );
           },
         },
@@ -153,13 +146,8 @@ function RecentGatewaysContent() {
           text: "Clear all",
           style: "destructive",
           onPress: () => {
-            setError("");
             void clearRecentGateways().catch((cause: unknown) =>
-              setError(
-                cause instanceof Error
-                  ? cause.message
-                  : "Could not clear recent gateways.",
-              ),
+              showError(cause, "Could not clear recent gateways"),
             );
           },
         },
@@ -169,21 +157,18 @@ function RecentGatewaysContent() {
 
   return (
     <AuthSheet
-      mode="scroll"
-      title="Recent gateways"
-      onClose={() => router.back()}
+      mode={showsConnectionState ? "plain" : "scroll"}
+      title={showsConnectionState ? undefined : "Recent gateways"}
       hasGrabber
     >
-      {showConnectionState && connectionAttempt ? (
+      {showsConnectionState ? (
         <Animated.View
           key={`connection-${connectionAttempt.status}`}
           entering={FadeIn.duration(CONTENT_TRANSITION_MS)}
           exiting={FadeOut.duration(CONTENT_TRANSITION_MS)}
           accessibilityLiveRegion="polite"
           accessibilityRole={
-            connectionAttempt.status === "connecting"
-              ? "progressbar"
-              : "alert"
+            connectionAttempt.status === "connecting" ? "progressbar" : "alert"
           }
           accessibilityLabel={
             connectionAttempt.status === "connecting"
@@ -218,14 +203,10 @@ function RecentGatewaysContent() {
                 : `Couldn’t connect to ${gatewayName(connectionAttempt.gateway)}`}
             </Text>
             <Text
+              selectable={connectionAttempt.status === "error"}
               style={[
                 styles.connectionStateDetail,
-                {
-                  color:
-                    connectionAttempt.status === "error"
-                      ? colors.danger
-                      : colors.secondaryText,
-                },
+                { color: colors.secondaryText },
               ]}
             >
               {connectionAttempt.status === "connecting"
@@ -235,17 +216,12 @@ function RecentGatewaysContent() {
           </View>
           {connectionAttempt.status === "error" ? (
             <View style={styles.connectionStateActions}>
-              <Button
-                pill
+              <AuthPrimaryButton
                 onPress={() => void connect(connectionAttempt.gateway, true)}
               >
                 Retry
-              </Button>
-              <Button
-                pill
-                variant="secondary"
-                onPress={showRecentGateways}
-              >
+              </AuthPrimaryButton>
+              <Button pill variant="secondary" onPress={showRecentGateways}>
                 Back to recent gateways
               </Button>
             </View>
@@ -336,15 +312,6 @@ function RecentGatewaysContent() {
             </View>
           )}
 
-          {error ? (
-            <Text
-              accessibilityRole="alert"
-              style={[styles.error, { color: colors.danger }]}
-            >
-              {error}
-            </Text>
-          ) : null}
-
           {(recentGateways?.length ?? 0) > 1 ? (
             <View style={styles.clearAction}>
               <Button
@@ -371,10 +338,7 @@ const styles = StyleSheet.create({
   loading: { paddingVertical: 30 },
   empty: { textAlign: "center", paddingVertical: 30, fontSize: 14 },
   connectionState: {
-    minHeight: 240,
-    paddingVertical: 36,
     alignItems: "center",
-    justifyContent: "center",
     gap: 18,
   },
   connectionStateIcon: {
@@ -433,12 +397,6 @@ const styles = StyleSheet.create({
   gatewayCopy: { flex: 1, gap: 2 },
   gatewayName: { fontSize: 16, lineHeight: 20, fontWeight: "500" },
   gatewayDetail: { fontSize: 13, lineHeight: 18 },
-  error: {
-    marginTop: 16,
-    fontSize: 13,
-    lineHeight: 18,
-    textAlign: "center",
-  },
   clearAction: { marginTop: 16 },
   clearActionLabel: { fontSize: 13, lineHeight: 18, fontWeight: "500" },
 });

@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "appId": "com.vesta.mobile.visual",
+  "flows": [
+    "maestro/visual/connect.yml",
+    "maestro/visual/recent-gateways.yml"
+  ],
+  "scenarios": [
+    {
+      "id": "privacy-initialization-error",
+      "title": "Privacy settings unavailable",
+      "description": "Secure privacy settings failed to initialize, with a safe retry action.",
+      "group": "Privacy",
+      "screenshot": "privacy-initialization-error.png"
+    },
+    {
+      "id": "privacy-locked",
+      "title": "Vesta is locked",
+      "description": "Protected app content remains hidden until Face ID authentication.",
+      "group": "Privacy",
+      "screenshot": "privacy-locked.png"
+    },
+    {
+      "id": "privacy-unlock-error",
+      "title": "Unlock failed",
+      "description": "Device authentication lockout with recovery guidance.",
+      "group": "Privacy",
+      "screenshot": "privacy-unlock-error.png"
+    },
+    {
+      "id": "connect-actions",
+      "title": "Choose a connection",
+      "description": "Initial disconnected landing screen and connection action sheet.",
+      "group": "Onboarding",
+      "screenshot": "connect-actions.png"
+    },
+    {
+      "id": "cloud-sign-in-error",
+      "title": "Cloud sign-in failed",
+      "description": "Recoverable account authentication failure on the connection sheet.",
+      "group": "Onboarding errors",
+      "screenshot": "cloud-sign-in-error.png"
+    },
+    {
+      "id": "connect-link",
+      "title": "Connect your gateway",
+      "description": "Self-hosted gateway connection form in its native form sheet.",
+      "group": "Onboarding",
+      "screenshot": "connect-link.png"
+    },
+    {
+      "id": "connect-link-invalid",
+      "title": "Invalid connection link",
+      "description": "Inline validation for an incomplete self-hosted connection link.",
+      "group": "Onboarding errors",
+      "screenshot": "connect-link-invalid.png"
+    },
+    {
+      "id": "scan-permission",
+      "title": "Camera permission rejected",
+      "description": "QR scanner recovery state after camera access is denied, with a shortcut to Settings.",
+      "group": "Onboarding errors",
+      "screenshot": "scan-permission.png"
+    },
+    {
+      "id": "recent-gateways",
+      "title": "Recent gateways",
+      "description": "Saved hosted and self-hosted gateways available for reconnection.",
+      "group": "Onboarding",
+      "screenshot": "recent-gateways.png"
+    },
+    {
+      "id": "recent-gateway-connecting",
+      "title": "Reconnecting",
+      "description": "Progress state while Vesta resumes a saved gateway session.",
+      "group": "Onboarding",
+      "screenshot": "recent-gateway-connecting.png"
+    },
+    {
+      "id": "recent-gateway-error",
+      "title": "Reconnection failed",
+      "description": "Expired saved session with retry and return actions.",
+      "group": "Onboarding",
+      "screenshot": "recent-gateway-error.png"
+    }
+  ]
+}

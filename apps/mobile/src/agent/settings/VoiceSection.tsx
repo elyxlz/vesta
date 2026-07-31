@@ -8,6 +8,7 @@ import {
 } from "@/api/endpoints";
 import type { SettingDef, VoiceStatus } from "@/api/types";
 import { useAgent } from "@/agent/AgentProvider";
+import { useToast } from "@/components/native-toast";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { Field, FormRow, FormSection, SwitchRow } from "@/components/ui/Form";
@@ -109,7 +110,9 @@ function DomainCard({
     <Card>
       <View style={styles.domainHeader}>
         <View style={styles.domainTitle}>
-          <Text family="heading" style={[styles.title, { color: colors.text }]}>{title}</Text>
+          <Text family="heading" style={[styles.title, { color: colors.text }]}>
+            {title}
+          </Text>
           <Text style={[styles.provider, { color: colors.secondaryText }]}>
             {status.provider ?? "not configured"}
           </Text>
@@ -147,7 +150,7 @@ export function VoiceSection() {
   const queryClient = useQueryClient();
   const { api } = useSession();
   const { name } = useAgent();
-  const { colors } = usePreferences();
+  const { showError } = useToast();
   const status = useQuery({
     queryKey: ["voice", name],
     queryFn: async () => {
@@ -179,13 +182,18 @@ export function VoiceSection() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["voice", name] });
     },
+    onError: (error) => showError(error, "Could not save the voice setting"),
   });
 
   if (status.isLoading) return <LoadingState label="Loading voice services…" />;
   if (!status.data) {
     return (
       <ErrorState
-        message={status.error instanceof Error ? status.error.message : "Voice settings are unavailable."}
+        message={
+          status.error instanceof Error
+            ? status.error.message
+            : "Voice settings are unavailable."
+        }
         retry={() => void status.refetch()}
       />
     );
@@ -207,21 +215,24 @@ export function VoiceSection() {
         domain="stt"
         status={status.data.stt}
         busy={change.isPending}
-        onToggle={(domain, value) => change.mutate({ type: "enabled", domain, value })}
-        onSetting={(domain, key, value) => change.mutate({ type: "setting", domain, key, value })}
+        onToggle={(domain, value) =>
+          change.mutate({ type: "enabled", domain, value })
+        }
+        onSetting={(domain, key, value) =>
+          change.mutate({ type: "setting", domain, key, value })
+        }
       />
       <DomainCard
         domain="tts"
         status={status.data.tts}
         busy={change.isPending}
-        onToggle={(domain, value) => change.mutate({ type: "enabled", domain, value })}
-        onSetting={(domain, key, value) => change.mutate({ type: "setting", domain, key, value })}
+        onToggle={(domain, value) =>
+          change.mutate({ type: "enabled", domain, value })
+        }
+        onSetting={(domain, key, value) =>
+          change.mutate({ type: "setting", domain, key, value })
+        }
       />
-      {change.error ? (
-        <Text accessibilityRole="alert" style={{ color: colors.danger }}>
-          {change.error instanceof Error ? change.error.message : "Could not save the voice setting."}
-        </Text>
-      ) : null}
     </>
   );
 }

@@ -14,6 +14,10 @@
     "lint": "expo lint",
     "check": "tsc --noEmit",
     "test": "vitest run",
+    "visual:ios": "node ./scripts/visual-catalog.mjs capture",
+    "visual:ios:capture": "node ./scripts/visual-catalog.mjs capture --no-serve",
+    "visual:watch": "node ./scripts/visual-catalog.mjs watch",
+    "visual:serve": "node ./scripts/visual-catalog.mjs serve",
     "postinstall": "patch-package"
   },
   "dependencies": {

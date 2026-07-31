@@ -56,6 +56,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 9,
     paddingVertical: 5,
     borderRadius: 999,
+    borderCurve: "continuous",
   },
   centered: { alignSelf: "center" },
   dot: { width: 6, height: 6, borderRadius: 3 },

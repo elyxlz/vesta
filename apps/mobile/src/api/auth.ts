@@ -46,7 +46,7 @@ export async function signInWithVestaAccount(): Promise<ConnectionConfig | null>
     { preferEphemeralSession: true },
   );
   if (result.type === "cancel" || result.type === "dismiss") return null;
-  if (result.type !== "success") throw new Error("Could not complete sign-in.");
+  if (result.type !== "success") throw new Error("Sign-in failed");
 
   const callback = new URL(result.url);
   const code = callback.searchParams.get("code");

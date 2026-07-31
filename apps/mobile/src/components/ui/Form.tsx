@@ -11,6 +11,7 @@ interface FieldProps extends ComponentProps<typeof TextInput> {
   label?: string;
   description?: string;
   error?: string;
+  errorTone?: "danger" | "secondary";
   accessory?: ReactNode;
   accessoryWidth?: number;
 }
@@ -19,6 +20,7 @@ export function Field({
   label,
   description,
   error,
+  errorTone = "danger",
   accessory,
   accessoryWidth,
   ...inputProps
@@ -46,9 +48,7 @@ export function Field({
               borderColor: error ? colors.danger : colors.border,
               color: colors.text,
             },
-            accessory
-              ? { paddingRight: (accessoryWidth ?? 40) + 12 }
-              : null,
+            accessory ? { paddingRight: (accessoryWidth ?? 40) + 12 } : null,
             inputProps.multiline ? styles.multiline : null,
             inputProps.style,
           ]}
@@ -60,7 +60,17 @@ export function Field({
       {error ? (
         <Text
           accessibilityRole="alert"
-          style={[styles.error, { color: colors.danger }]}
+          selectable
+          style={[
+            styles.error,
+            errorTone === "secondary" ? styles.secondaryError : null,
+            {
+              color:
+                errorTone === "secondary"
+                  ? colors.secondaryText
+                  : colors.danger,
+            },
+          ]}
         >
           {error}
         </Text>
@@ -266,7 +276,8 @@ const styles = StyleSheet.create({
     paddingTop: 13,
     textAlignVertical: "top",
   },
-  error: { fontSize: 13, fontWeight: "600" },
+  error: { fontSize: 13, lineHeight: 18, fontWeight: "600" },
+  secondaryError: { fontWeight: "400" },
   section: { gap: 8 },
   sectionTitle: {
     fontSize: 15,

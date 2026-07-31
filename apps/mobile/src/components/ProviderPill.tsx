@@ -32,6 +32,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     alignSelf: "flex-start",
     borderRadius: radii.pill,
+    borderCurve: "continuous",
     borderWidth: StyleSheet.hairlineWidth,
     flexDirection: "row",
     gap: 6,

@@ -4,11 +4,9 @@ import { Ionicons } from "@expo/vector-icons";
 import * as Crypto from "expo-crypto";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getNotificationRules, setNotificationRules } from "@/api/endpoints";
-import type {
-  FieldPredicate,
-  NotificationInterruptRule,
-} from "@/api/types";
+import type { FieldPredicate, NotificationInterruptRule } from "@/api/types";
 import { useAgent } from "@/agent/AgentProvider";
+import { useToast } from "@/components/native-toast";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { Field, FormRow, FormSection } from "@/components/ui/Form";
@@ -59,7 +57,10 @@ function RuleCard({
       <View style={styles.ruleTop}>
         <View style={styles.conditions}>
           {conditions.map((condition) => (
-            <Text key={condition} style={[styles.condition, { color: colors.secondaryText }]}>
+            <Text
+              key={condition}
+              style={[styles.condition, { color: colors.secondaryText }]}
+            >
               {condition}
             </Text>
           ))}
@@ -72,7 +73,11 @@ function RuleCard({
             hitSlop={8}
             style={{ opacity: first ? 0.25 : 1 }}
           >
-            <Ionicons name="chevron-up" size={20} color={colors.secondaryText} />
+            <Ionicons
+              name="chevron-up"
+              size={20}
+              color={colors.secondaryText}
+            />
           </Pressable>
           <Pressable
             accessibilityLabel="Move rule later"
@@ -81,7 +86,11 @@ function RuleCard({
             hitSlop={8}
             style={{ opacity: last ? 0.25 : 1 }}
           >
-            <Ionicons name="chevron-down" size={20} color={colors.secondaryText} />
+            <Ionicons
+              name="chevron-down"
+              size={20}
+              color={colors.secondaryText}
+            />
           </Pressable>
         </View>
       </View>
@@ -92,9 +101,15 @@ function RuleCard({
           onPress={onCycle}
           style={[styles.badge, { backgroundColor: `${actionColor}20` }]}
         >
-          <Text style={[styles.badgeText, { color: actionColor }]}>{rule.action}</Text>
+          <Text style={[styles.badgeText, { color: actionColor }]}>
+            {rule.action}
+          </Text>
         </Pressable>
-        <Pressable accessibilityLabel="Delete rule" onPress={onDelete} hitSlop={8}>
+        <Pressable
+          accessibilityLabel="Delete rule"
+          onPress={onDelete}
+          hitSlop={8}
+        >
           <Ionicons name="trash-outline" size={19} color={colors.danger} />
         </Pressable>
       </View>
@@ -102,7 +117,13 @@ function RuleCard({
   );
 }
 
-function RuleComposer({ onAdd, busy }: { onAdd: (rule: NotificationInterruptRule) => void; busy: boolean }) {
+function RuleComposer({
+  onAdd,
+  busy,
+}: {
+  onAdd: (rule: NotificationInterruptRule) => void;
+  busy: boolean;
+}) {
   const [source, setSource] = useState("");
   const [type, setType] = useState("");
   const [sender, setSender] = useState("");
@@ -121,7 +142,11 @@ function RuleComposer({ onAdd, busy }: { onAdd: (rule: NotificationInterruptRule
   const add = () => {
     const predicates: FieldPredicate[] = [];
     if (sender.trim()) {
-      predicates.push({ field: "sender", op: "contains", value: sender.trim() });
+      predicates.push({
+        field: "sender",
+        op: "contains",
+        value: sender.trim(),
+      });
     }
     if (keyword.trim()) {
       predicates.push({ field: "text", op: "regex", value: keyword.trim() });
@@ -142,12 +167,37 @@ function RuleComposer({ onAdd, busy }: { onAdd: (rule: NotificationInterruptRule
 
   return (
     <Card>
-      <Field label="Source" description="Optional, for example gmail or slack." value={source} onChangeText={setSource} autoCapitalize="none" />
-      <Field label="Notification type" description="Optional provider event type." value={type} onChangeText={setType} autoCapitalize="none" />
-      <Field label="Sender contains" value={sender} onChangeText={setSender} autoCapitalize="none" />
-      <Field label="Text matches" description="Optional regular expression." value={keyword} onChangeText={setKeyword} autoCapitalize="none" />
+      <Field
+        label="Source"
+        description="Optional, for example gmail or slack."
+        value={source}
+        onChangeText={setSource}
+        autoCapitalize="none"
+      />
+      <Field
+        label="Notification type"
+        description="Optional provider event type."
+        value={type}
+        onChangeText={setType}
+        autoCapitalize="none"
+      />
+      <Field
+        label="Sender contains"
+        value={sender}
+        onChangeText={setSender}
+        autoCapitalize="none"
+      />
+      <Field
+        label="Text matches"
+        description="Optional regular expression."
+        value={keyword}
+        onChangeText={setKeyword}
+        autoCapitalize="none"
+      />
       <FormRow label="Action" value={action} onPress={chooseAction} />
-      <Button disabled={busy} icon="add" onPress={add}>Add rule</Button>
+      <Button disabled={busy} icon="add" onPress={add}>
+        Add rule
+      </Button>
     </Card>
   );
 }
@@ -156,32 +206,51 @@ export function NotificationsSection() {
   const queryClient = useQueryClient();
   const { api } = useSession();
   const { name } = useAgent();
+  const { showError } = useToast();
   const { colors } = usePreferences();
   const query = useQuery({
     queryKey: ["notification-rules", name],
     queryFn: () => getNotificationRules(api, name),
   });
   const save = useMutation({
-    mutationFn: (rules: NotificationInterruptRule[]) => setNotificationRules(api, name, rules),
+    mutationFn: (rules: NotificationInterruptRule[]) =>
+      setNotificationRules(api, name, rules),
     onMutate: async (rules) => {
-      await queryClient.cancelQueries({ queryKey: ["notification-rules", name] });
-      const previous = queryClient.getQueryData<NotificationInterruptRule[]>(["notification-rules", name]);
+      await queryClient.cancelQueries({
+        queryKey: ["notification-rules", name],
+      });
+      const previous = queryClient.getQueryData<NotificationInterruptRule[]>([
+        "notification-rules",
+        name,
+      ]);
       queryClient.setQueryData(["notification-rules", name], rules);
       return { previous };
     },
-    onError: (_error, _rules, context) => {
+    onError: (error, _rules, context) => {
       if (context?.previous) {
-        queryClient.setQueryData(["notification-rules", name], context.previous);
+        queryClient.setQueryData(
+          ["notification-rules", name],
+          context.previous,
+        );
       }
+      showError(error, "Could not save notification rules");
     },
     onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: ["notification-rules", name] });
+      void queryClient.invalidateQueries({
+        queryKey: ["notification-rules", name],
+      });
     },
   });
 
-  if (query.isLoading) return <LoadingState label="Loading notification rules…" />;
+  if (query.isLoading)
+    return <LoadingState label="Loading notification rules…" />;
   if (!query.data) {
-    return <ErrorState message="Notification rules are unavailable." retry={() => void query.refetch()} />;
+    return (
+      <ErrorState
+        message="Notification rules are unavailable."
+        retry={() => void query.refetch()}
+      />
+    );
   }
 
   const rules = query.data;
@@ -192,7 +261,11 @@ export function NotificationsSection() {
         title="Priority rules"
         footer="Rules are checked from top to bottom. Interrupt delivers now, snooze waits for a natural break, and trash discards the notification."
       >
-        <FormRow label="Active rules" value={String(rules.length)} icon="filter-outline" />
+        <FormRow
+          label="Active rules"
+          value={String(rules.length)}
+          icon="filter-outline"
+        />
       </FormSection>
       {rules.map((rule, index) => (
         <RuleCard
@@ -212,24 +285,42 @@ export function NotificationsSection() {
           }}
           onCycle={() => {
             const current = actionOrder.indexOf(rule.action);
-            const action = actionOrder[(current + 1) % actionOrder.length] ?? "interrupt";
-            update(rules.map((candidate) => candidate.id === rule.id ? { ...candidate, action } : candidate));
+            const action =
+              actionOrder[(current + 1) % actionOrder.length] ?? "interrupt";
+            update(
+              rules.map((candidate) =>
+                candidate.id === rule.id ? { ...candidate, action } : candidate,
+              ),
+            );
           }}
-          onDelete={() => Alert.alert("Delete rule?", "Notifications that matched this rule will fall through to the next rule.", [
-            { text: "Cancel", style: "cancel" },
-            { text: "Delete", style: "destructive", onPress: () => update(rules.filter((candidate) => candidate.id !== rule.id)) },
-          ])}
+          onDelete={() =>
+            Alert.alert(
+              "Delete rule?",
+              "Notifications that matched this rule will fall through to the next rule.",
+              [
+                { text: "Cancel", style: "cancel" },
+                {
+                  text: "Delete",
+                  style: "destructive",
+                  onPress: () =>
+                    update(
+                      rules.filter((candidate) => candidate.id !== rule.id),
+                    ),
+                },
+              ],
+            )
+          }
         />
       ))}
       {rules.length === 0 ? (
-        <Text style={[styles.empty, { color: colors.secondaryText }]}>No rules yet. All notifications use the agent default.</Text>
-      ) : null}
-      <RuleComposer busy={save.isPending} onAdd={(rule) => update([...rules, rule])} />
-      {save.error ? (
-        <Text accessibilityRole="alert" style={{ color: colors.danger }}>
-          {save.error instanceof Error ? save.error.message : "Could not save notification rules."}
+        <Text style={[styles.empty, { color: colors.secondaryText }]}>
+          No rules yet. All notifications use the agent default.
         </Text>
       ) : null}
+      <RuleComposer
+        busy={save.isPending}
+        onAdd={(rule) => update([...rules, rule])}
+      />
     </>
   );
 }
@@ -240,8 +331,17 @@ const styles = StyleSheet.create({
   conditions: { flex: 1, gap: 4 },
   condition: { fontSize: 14, lineHeight: 19 },
   orderButtons: { justifyContent: "space-between", paddingVertical: 1 },
-  ruleActions: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  badge: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6 },
+  ruleActions: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  badge: {
+    borderRadius: 999,
+    borderCurve: "continuous",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
   badgeText: { fontSize: 13, fontWeight: "800", textTransform: "capitalize" },
   empty: { textAlign: "center", paddingVertical: 16, fontSize: 14 },
 });

@@ -14,6 +14,8 @@ import {
 } from "@/components/BootTransition";
 import { VestaBrand } from "@/components/VestaBrand";
 import { usePreferences } from "@/preferences/PreferencesProvider";
+import { blocksProtectedContent } from "@/privacy/model";
+import { usePrivacy } from "@/privacy/privacy-provider";
 import { useSession } from "@/session/SessionProvider";
 
 export default function ConnectScreen() {
@@ -37,11 +39,18 @@ function ConnectContent() {
   const bootTransition = useBootTransitionPhase();
   const { recentGateways } = useSession();
   const { colors } = usePreferences();
+  const privacy = usePrivacy();
   const initialDrawerOpened = useRef(false);
   const nextScreenOpened = useRef(false);
   const estimatedActionSheetHeight = recentGateways?.length ? 186 : 156;
+  const privacyBlocked = blocksProtectedContent(
+    privacy.hydrated,
+    privacy.locked,
+    privacy.initializationError !== null,
+  );
   const canPresentSheet =
-    !bootTransition.active || bootTransition.pageRevealed;
+    !privacyBlocked &&
+    (!bootTransition.active || bootTransition.pageRevealed);
 
   useEffect(() => {
     if (!isFocused) {
