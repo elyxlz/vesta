@@ -329,40 +329,6 @@ func (m *managedAuth) leaseProxy() (string, error) {
 	return out.ProxyURL, nil
 }
 
-// provisionSelf claims (idempotently) a pool number the USER will own on their own
-// phone: the control plane reserves it, the user registers it themselves and keeps
-// their phone online, then the agent links only as a companion. Distinct from
-// provision, where the agent drives a headless primary for its own number.
-func (m *managedAuth) provisionSelf() (string, error) {
-	var out struct {
-		MSISDN string `json:"msisdn"`
-		State  string `json:"state"`
-	}
-	if err := m.call(http.MethodPost, "/byo", map[string]string{}, &out); err != nil {
-		return "", fmt.Errorf("reserve a user-owned number: %w", err)
-	}
-	if out.MSISDN == "" {
-		return "", fmt.Errorf("control plane returned no number for the user-owned account")
-	}
-	return out.MSISDN, nil
-}
-
-// selfNumberOTP blocks server-side (up to the pool API deadline) until the SMS
-// verification code for the user-owned number arrives, then returns it for the user
-// to enter while registering the number in WhatsApp on their own phone.
-func (m *managedAuth) selfNumberOTP() (string, error) {
-	var out struct {
-		Code string `json:"code"`
-	}
-	if err := m.call(http.MethodGet, "/byo/otp", nil, &out); err != nil {
-		return "", fmt.Errorf("fetch the user-owned number verification code: %w", err)
-	}
-	if out.Code == "" {
-		return "", fmt.Errorf("control plane returned an empty verification code")
-	}
-	return out.Code, nil
-}
-
 // call sends one authenticated request to the pool API, resolving the base +
 // credential per call. Direct mode hits the home box with the per-account key;
 // cloud mode hits vesta.run's /api/integrations/whatsapp with a freshly minted
