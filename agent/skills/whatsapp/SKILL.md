@@ -27,7 +27,7 @@ then read exactly that guide before the first link:
 | Account source | How the agent reaches it | Command | Detailed guide |
 | --- | --- | --- | --- |
 | Vesta Cloud WhatsApp account | Vesta Cloud provisions a hosted WhatsApp account (auth: server-identity token to vesta.run) | `whatsapp connect --opener '<text>'` | [SETUP_VESTA_CLOUD.md](SETUP_VESTA_CLOUD.md) |
-| Self-hosted Double Tick WhatsApp account | Agent calls a Double Tick service directly (`DOUBLETICK_API_URL` + `DOUBLETICK_API_KEY`) | `whatsapp connect --opener '<text>'` | [SETUP_DOUBLETICK_DIRECT.md](SETUP_DOUBLETICK_DIRECT.md) |
+| Self-hosted Double Tick WhatsApp account | Agent calls a Double Tick service directly (`DOUBLETICK_API_URL` + `DOUBLETICK_API_KEY`) | `whatsapp connect --opener '<text>'` | [SETUP_DOUBLETICK_SELFHOSTED.md](SETUP_DOUBLETICK_SELFHOSTED.md) |
 | Your own phone | Link the user's existing WhatsApp via QR or `--phone` pairing code | `whatsapp connect` or `--phone` | [SETUP_SELF_MANAGED.md](SETUP_SELF_MANAGED.md) |
 
 Do not infer the source from where the agent runs. A self-hosted agent with

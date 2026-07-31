@@ -50,7 +50,7 @@ goroutine can race an explicit command.
 All daemon state lives in a single `<dataDir>/state.json` owned by `state.go`
 (`stateStore`: a pure load + atomic temp+rename save). It holds the independent
 primary mode, number source, API transport, opaque number-lease reference,
-Double Tick direct credentials when applicable, auth-status cache, last-exit
+self-hosted Double Tick credentials when applicable, auth-status cache, last-exit
 reason, daemon-info, pairing-attempts, and linked-at. It never stores Vesta Cloud
 or Double Tick service credentials. The serve process is the **sole writer**; transient CLI commands only read
 it (and only when no daemon answers the socket, so there is no cross-process write
