@@ -92,8 +92,8 @@ same account/device store.
 - A managed-number method reports `provisioning`: wait for the stated delay, then repeat
   the same idempotent `whatsapp connect` command once.
 - A managed-number method reports `blocked`: Double Tick reports the WhatsApp
-  failure; follow `next` so the orchestrator can request a replacement from the
-  number service. Double Tick must not silently consume another number.
+  failure; follow `next` (Vesta Cloud releases the lease and reserves a fresh
+  number). Double Tick must not silently consume another number.
 - A managed-number method reports `rate_limited`: wait out the cooldown in `reason`.
 - A Double Tick companion cannot obtain or validate its residential proxy lease:
   stop. Do not pair or reconnect over unrelated direct egress.

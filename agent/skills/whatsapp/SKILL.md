@@ -5,11 +5,10 @@ description: Set up and operate WhatsApp accounts, messages, contacts, groups, a
 
 # WhatsApp (CLI: `whatsapp`)
 
-You never stop or restart anything, and you don't manage the daemon by hand. The
-`whatsapp` CLI runs its own background daemon: the restart skill runs `whatsapp
-start` at boot to bring it up (so inbound WhatsApp notifications flow before you
-send anything), and every command below also brings it up on demand. Your whole
-world is four verbs: **connect, status, send, messages** (plus profile and calls).
+Every `whatsapp` command starts the daemon on demand, and the restart skill runs
+`whatsapp daemon start` at boot to bring it up (so inbound WhatsApp notifications
+flow before you send anything), so let it manage itself: your whole world is four
+verbs: **connect, status, send, messages** (plus profile and calls).
 
 ## The linking rule
 
@@ -61,11 +60,11 @@ Shared installation, restart wiring, statuses, and diagnostics live in
 
 Common managed-number outcomes:
 
-- `{status:"linked", number, next}`: follow `next`.
-- `{status:"provisioning", next}`: re-run `whatsapp connect` after the stated delay.
-- `{status:"blocked", next}`: Double Tick found the WhatsApp account unusable;
-  follow the explicit replacement step owned by the orchestrator/number service.
-- `{status:"rate_limited", reason, next}`: wait out the named cooldown. Never retry-loop.
+- `{"status":"linked","number":"+44...","next":"..."}`: follow `next`.
+- `{"status":"provisioning","next":"..."}`: re-run `whatsapp connect` after the stated delay.
+- `{"status":"blocked","next":"..."}`: Double Tick found the WhatsApp account
+  unusable; follow `next` (Vesta Cloud releases and reserves a fresh number).
+- `{"status":"rate_limited","reason":"...","next":"..."}`: wait out the named cooldown. Never retry-loop.
 
 ## Check state
 
@@ -94,12 +93,6 @@ whatsapp send --to 'Alice' --message - --reply-to '<message_id>' <<'MSG'   # quo
 same here
 MSG
 ```
-- `--to` accepts a contact name, phone (`+E.164`), group name, or JID; the CLI resolves it.
-- `--message -` reads the body from stdin; pair it with a quoted heredoc so the shell cannot
-  mangle or evaluate anything in the text.
-- Short bubbles only: a wall (over ~220 chars, or 3+ sentences in one bubble) is rejected.
-  Re-send as several short calls, one thought each. Pass `--longform` only for genuine
-  reference material the user asked for (a brief, a code block, a list).
 - Before texting an unknown raw number, save it first with `add-contact` (name + phone).
 
 ## Read

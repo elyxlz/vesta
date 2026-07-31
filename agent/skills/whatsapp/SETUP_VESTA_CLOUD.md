@@ -4,8 +4,8 @@ Use this method for a Vesta Cloud tenant that needs a dedicated WhatsApp number
 without keeping a user phone as the primary. Vesta Cloud coordinates two separate
 services:
 
-- **Vesta Switchboard** owns the number/SIM lease, SMS delivery, retention, and
-  replacement lifecycle.
+- **Vesta Switchboard** reserves the number, relays its verification SMS, and
+  releases it; a replacement is a release plus a fresh reserve.
 - **Double Tick** registers and operates the headless WhatsApp primary, accepts
   companion pairing, reports WhatsApp health, and supplies its bound proxy.
 
@@ -54,11 +54,11 @@ reply. Keep the first days light and human-paced.
 
 - `provisioning`: wait for the stated delay and repeat the command once.
 - `blocked`: Double Tick found the WhatsApp account unusable. Follow `next` so
-  Vesta Cloud can quarantine or release its Switchboard lease and explicitly
-  request a replacement; Double Tick must not allocate one itself.
+  Vesta Cloud releases the lease and reserves a fresh number; Double Tick must not
+  allocate one itself.
 - `rate_limited`: wait out the named cooldown; do not retry-loop.
 - Logged out after a prior link: obtain approval, then run the same command once.
 
-Reauthentication normally keeps both the Switchboard number lease and Double Tick
-session binding. Replacement is an explicit Vesta Cloud lifecycle operation.
+Reauthentication keeps the Double Tick session binding. A fresh number is a new
+Vesta Cloud reserve, never a Double Tick action.
 Service and token details are in [MANAGED_AUTH.md](MANAGED_AUTH.md).

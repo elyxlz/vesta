@@ -24,7 +24,7 @@ Never use “pool,” “managed,” or the presence of credentials to infer all
 
 | Component | Owns | Does not own |
 | --- | --- | --- |
-| Vesta Switchboard | Number/SIM inventory, tenant number leases, SMS/OTP delivery, retention, quarantine, replacement, and release | WhatsApp registration, sessions, pairing, or proxies |
+| Vesta Switchboard | Number/SIM inventory, tenant number leases, SMS/OTP delivery, and the lease lifecycle (reserve a number, relay its OTP, release it; a replacement is a release plus a fresh reserve) | WhatsApp registration, sessions, pairing, or proxies |
 | Double Tick | Headless WhatsApp primary sessions, registration state, companion pairing, WhatsApp health, and the primary-bound residential proxy | Number inventory, tenant billing, or number replacement policy |
 | Vesta Cloud | Tenant authentication, entitlement, orchestration, and the mapping between a Switchboard lease and a Double Tick WhatsApp account | Number/SIM inventory or WhatsApp sessions |
 | Agent | Companion session and local WhatsApp state | The headless primary or carrier-number lifecycle |
@@ -109,9 +109,9 @@ Keep failures with the service that owns the state:
 - Companion disconnected with a healthy primary: agent/CLI.
 
 When Double Tick reports a banned or unusable WhatsApp account, it returns the
-failure and `number_lease_id`. The orchestrator decides whether the number service
-retains, quarantines, releases, or replaces the lease. Double Tick must never
-silently consume another number.
+failure and `number_lease_id`. The orchestrator decides what the number service
+does with the lease: in v1 it releases it, and a replacement is a release followed
+by a fresh reserve. Double Tick must never silently consume another number.
 
 ## Persisted selection
 

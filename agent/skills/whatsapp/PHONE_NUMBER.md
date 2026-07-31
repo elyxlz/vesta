@@ -113,7 +113,7 @@ Once WhatsApp is registered with the new number, follow
 
 ## Important Warnings
 
-**Keep a user-provided number active.** Prepaid numbers expire if unused. Set a reminder to top up or make a call before expiry (typically every 60-180 days depending on carrier). If the number expires and gets recycled, you lose the WhatsApp account permanently. Switchboard-provided numbers follow Switchboard's retention policy instead.
+**Keep a user-provided number active.** Prepaid numbers expire if unused. Set a reminder to top up or make a call before expiry (typically every 60-180 days depending on carrier). If the number expires and gets recycled, you lose the WhatsApp account permanently. A Switchboard number is a single-use verification lease, not a number you keep alive, so these top-up and expiry warnings do not apply to it.
 
 **WhatsApp may re-verify.** Occasionally WhatsApp asks you to re-verify via SMS. For a user-provided number, keep access to its SIM. For a Switchboard number, request the SMS through Switchboard.
 
