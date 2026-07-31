@@ -4,6 +4,28 @@ Vesta needs its own WhatsApp account with a dedicated phone number. **Do not use
 
 You need a real mobile number from an actual carrier. Most VoIP/virtual numbers (Google Voice, TextNow, Skype) are blocked by WhatsApp.
 
+## Contents
+
+- [Vesta Switchboard](#vesta-cloud-acquire-one-from-switchboard)
+- [Bring your own carrier number](#bring-your-own-carrier-number)
+- [Get a number](#step-1-get-a-number)
+- [Register WhatsApp](#step-2-register-whatsapp-with-the-new-number)
+- [Link to Vesta](#step-3-link-to-vesta)
+- [Warnings](#important-warnings)
+
+## Vesta Cloud: acquire one from Switchboard
+
+For a self-managed account on Vesta Cloud, `whatsapp connect --own-number` asks
+Vesta Switchboard for a number lease and relays its verification SMS. The user
+still registers WhatsApp on their own phone; Double Tick is not involved. Follow
+[SETUP_SELF_MANAGED.md](SETUP_SELF_MANAGED.md) for the complete flow.
+
+Switchboard retains the carrier-number/SIM lease and handles later SMS recovery.
+Do not promise that the user can port, independently re-verify, or retain that
+number outside the Switchboard agreement.
+
+## Bring your own carrier number
+
 ## Step 1: Get a Number
 
 ### Cheapest Options by Region
@@ -86,13 +108,14 @@ Buy any cheap Android phone (even used, even without its own SIM after initial s
 
 ## Step 3: Link to Vesta
 
-Once WhatsApp is registered with the new number, follow the main SETUP.md to authenticate Vesta by scanning the QR code from the new account. The QR code links Vesta as a companion device.
+Once WhatsApp is registered with the new number, follow
+[SETUP_SELF_MANAGED.md](SETUP_SELF_MANAGED.md) to link Vesta as a companion.
 
 ## Important Warnings
 
-**Keep the number active.** Prepaid numbers expire if unused. Set a reminder to top up or make a call before expiry (typically every 60-180 days depending on carrier). If the number expires and gets recycled, you lose the WhatsApp account permanently.
+**Keep a user-provided number active.** Prepaid numbers expire if unused. Set a reminder to top up or make a call before expiry (typically every 60-180 days depending on carrier). If the number expires and gets recycled, you lose the WhatsApp account permanently. Switchboard-provided numbers follow Switchboard's retention policy instead.
 
-**WhatsApp may re-verify.** Occasionally WhatsApp asks you to re-verify via SMS. You must be able to receive a text at the registered number when this happens. Don't discard the SIM after setup.
+**WhatsApp may re-verify.** Occasionally WhatsApp asks you to re-verify via SMS. For a user-provided number, keep access to its SIM. For a Switchboard number, request the SMS through Switchboard.
 
 **Make the first message an incoming one.** Before Vesta sends anything from the new account, message the new number from your own personal phone first, so its first interaction is receiving a message rather than sending one.
 

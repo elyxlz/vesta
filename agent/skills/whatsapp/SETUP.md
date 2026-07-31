@@ -1,79 +1,104 @@
-# WhatsApp Setup
+# WhatsApp shared setup
 
-Everything the build needs (Go, whisper.cpp static libs, gcc, ffmpeg) ships in
-the agent image. Setup is two steps: a script, then one edit you make.
+Use this file for installation, method selection, recovery, and diagnostics. For
+the actual account-linking procedure, read the one method guide selected below.
 
-1. Run the setup script:
-   ```bash
-   ~/agent/skills/whatsapp/setup.sh
-   ```
-   It links the launcher onto PATH, warms the build cache (compile errors surface
-   here), downloads the whisper voice-transcription model, and starts the daemon
-   now. Re-run it any time; it only does what's missing.
+## Contents
 
-2. **Register the restart line yourself**, so the daemon comes back after a container
-   restart with notifications flowing before you send anything. Add this line inside the
-   fenced block in the `## Daemons` section of `~/agent/skills/restart/SKILL.md`, on its
-   own line:
-   ```
-   whatsapp daemon start
-   ```
+- [Install once](#install-once)
+- [Select one account method](#select-one-account-method)
+- [Universal safety rules](#universal-safety-rules)
+- [Status and recovery](#status-and-recovery)
+- [Named instances](#named-instances)
+- [Troubleshooting](#troubleshooting)
+- [Transcription](#how-transcription-works)
+- [Contact cards](#contact-card-support)
 
-## Linking an account
+## Install once
 
-**Before linking**, confirm the user is linking a DEDICATED WhatsApp account
-for the assistant, not their personal one (a linked personal account means the
-assistant reads and sends from their personal chats). No separate number yet?
-Read [PHONE_NUMBER.md](PHONE_NUMBER.md) and guide them through getting one.
+Everything the build needs (Go, whisper.cpp static libraries, gcc, and ffmpeg)
+ships in the agent image.
+
+1. Run `~/agent/skills/whatsapp/setup.sh`. It links the launcher onto `PATH`,
+   warms the build cache, downloads the transcription model, and starts the daemon.
+   It is safe to re-run.
+2. Add `whatsapp daemon start` on its own line inside the fenced block under
+   `## Daemons` in `~/agent/skills/restart/SKILL.md`. This restores inbound
+   notifications after a container restart.
+
+## Select one account method
+
+| Situation | Guide |
+| --- | --- |
+| Give a Vesta Cloud tenant a managed number using Switchboard and Double Tick | [SETUP_VESTA_CLOUD.md](SETUP_VESTA_CLOUD.md) |
+| Give a non-cloud agent a headless WhatsApp primary through direct Double Tick | [SETUP_DOUBLETICK_DIRECT.md](SETUP_DOUBLETICK_DIRECT.md) |
+| Keep the user's phone as primary, with an existing or Switchboard-provided number | [SETUP_SELF_MANAGED.md](SETUP_SELF_MANAGED.md) |
+
+The terms describe management, not deployment location. “Direct Double Tick” is
+self-hosted API access and never traverses Vesta Cloud. “Self-managed” means the
+user's phone remains the primary. “Headless managed” means Double Tick operates
+the WhatsApp primary, but a separate number service owns the number/SIM lifecycle.
+On Vesta Cloud that service is Switchboard. `--own-number` only asks Switchboard
+for a self-managed number; it does not invoke Double Tick or create another method.
+
+## Universal safety rules
+
+- Run `whatsapp status` before linking. If `linked:true`, do not pair again.
+- If `connecting:true`, an existing QR or phone-code attempt is active. Wait for
+  the user; never start another.
+- Pairing is limited to two attempts per hour. A failure is not permission to
+  retry-loop; report it and wait for explicit approval.
+- For five minutes after a successful link, history sync locks daemon stop/restart.
+  A brief websocket EOF or `can't send presence without PushName set` can be normal
+  during this window. Do not bounce the daemon.
+- Use a dedicated account for an assistant. Linking a personal account grants the
+  assistant access to that account's chats.
+
+## Status and recovery
+
+`whatsapp status` is the primary diagnostic:
+
+- `{"linked":true,"connected":true,"number":"+44..."}`: healthy.
+- `{"linked":true,"connected":false,...}`: let the daemon reconnect; use the
+  returned `next` only if it cannot.
+- `{"linked":false,"connecting":true,...}`: wait for the active link attempt.
+- `{"linked":false,"connected":false,"next":"run: whatsapp connect",...}`:
+  for initial setup, run the selected method once; if a previous link was lost,
+  request approval first.
+
+`whatsapp daemon status` adds pairing-attempt and sync-lock details. Read
+`~/agent/logs/whatsapp.log` for daemon output. Use `whatsapp daemon start` to
+idempotently bring up a stopped daemon; do not run `whatsapp serve` in the
+background or manage its process by hand.
+
+## Named instances
+
+Use `--instance <name>` when the box intentionally links more than one account.
+Each instance has its own daemon, socket, device store, state, and notifications.
+Keep the flag on setup and subsequent commands, for example:
 
 ```bash
-whatsapp connect
+whatsapp connect --instance personal
+whatsapp status --instance personal
+whatsapp messages --instance personal --limit 10
 ```
 
-Prints one shareable URL (public tunnel route, no token). The user opens it,
-goes to WhatsApp > Settings > Linked Devices > Link a Device, and scans. The
-page keeps the code current automatically, so there is no 20-second race. The
-command returns when the live page is ready. Wait for the user to scan, then run
-`whatsapp status` once. Do not run connect again while the page is active.
-If a cached public port belongs to another service, connect asks vestad for a
-bindable replacement automatically. Never choose or register a manual QR port.
-
-Fallback, pairing code (when the user can't scan): `whatsapp connect --phone '+E.164'`.
-Confirm the echoed number is EXACTLY the one being linked, then send the user
-the code: WhatsApp > Linked Devices > Link a Device > Link with phone number.
-
-**Pairing is rate-limited (2 attempts/hour).** Repeated pairing attempts get
-numbers flagged and banned by WhatsApp. If the limit trips, wait it out and
-retry only with the user's explicit go-ahead.
-
-**Right after linking**, history sync runs and the daemon locks stop/restart
-for 5 minutes. Log lines like `can't send presence without PushName set` or a
-brief websocket EOF in this window are NORMAL; touch nothing.
-
-**Once linked, message the user first.** Send a short hello from the new line
-so the thread lands on the user's phone and they can save the number. If their
-number is already known (memory, contacts), do it without asking; otherwise ask
-for it, then send:
-
-```bash
-whatsapp add-contact 'User Name' '+12025551234'
-whatsapp send 'User Name' 'hey, Vesta here. this is my WhatsApp line, save me!'
-```
-
-Sending is fine during the sync window; only stop/restart is locked.
+Start read-only or silent instances with the corresponding daemon flags; the
+daemon persists them across its own restarts. Never point two instances at the
+same account/device store.
 
 ## Troubleshooting
 
-- `whatsapp status` is the one health check (linked, number, connected).
-  `whatsapp daemon status` adds the internals: sync-window lock, pairing attempts,
-  whatsmeow version.
-- Bring the daemon up (or confirm it is up) with `whatsapp daemon start`; it is
-  idempotent and the restart skill runs it at boot.
-- Daemon won't start: read `~/agent/logs/whatsapp.log`, where the detached
-  daemon's own output goes, or run `whatsapp serve` in the foreground to see the
-  compile or serve error directly.
-- Auth state not linked after a restore/restart: the device session was lost;
-  re-link (with the user's go-ahead) via `whatsapp connect`.
+- A managed-number method reports `provisioning`: wait for the stated delay, then repeat
+  the same idempotent `whatsapp connect` command once.
+- A managed-number method reports `blocked`: Double Tick reports the WhatsApp
+  failure; follow `next` so the orchestrator can request a replacement from the
+  number service. Double Tick must not silently consume another number.
+- A managed-number method reports `rate_limited`: wait out the cooldown in `reason`.
+- A Double Tick companion cannot obtain or validate its residential proxy lease:
+  stop. Do not pair or reconnect over unrelated direct egress.
+- Auth state is gone after restore/restart: request approval before running the
+  selected method's connect command again.
 
 ## How transcription works
 
