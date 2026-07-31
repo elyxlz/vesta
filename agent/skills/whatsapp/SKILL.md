@@ -1,6 +1,6 @@
 ---
 name: whatsapp
-description: Set up and operate WhatsApp accounts, messages, contacts, groups, and live voice calls (not generic text/SMS). Use when linking WhatsApp, acquiring a Vesta Switchboard number, choosing Vesta Cloud, direct Double Tick, or self-managed setup, or messaging or calling someone on WhatsApp.
+description: Set up and operate WhatsApp accounts, messages, contacts, groups, and live voice calls (not generic text/SMS). Use when linking WhatsApp, choosing a Vesta Cloud WhatsApp account, a self-hosted Double Tick WhatsApp account, or the user's own phone, or messaging or calling someone on WhatsApp.
 ---
 
 # WhatsApp (CLI: `whatsapp`)
@@ -20,46 +20,47 @@ before running it. Never recover by manually re-pairing or restarting the daemon
 
 ## Choose the setup method
 
-`whatsapp connect` is the single setup verb, but there are three ownership and
-transport arrangements. Determine the method from the environment and the user's
-ownership choice, then read exactly that guide before the first link:
+`whatsapp connect` is the single setup verb, but a WhatsApp account can come from
+three sources. Determine the source from the environment and the user's choice,
+then read exactly that guide before the first link:
 
-| Method | Primary device | API route | Command | Detailed guide |
-| --- | --- | --- | --- | --- |
-| Vesta Cloud-managed number | Headless Double Tick primary | Vesta Cloud coordinates Switchboard for the number/SMS and Double Tick for WhatsApp | `whatsapp connect --opener '<text>'` | [SETUP_VESTA_CLOUD.md](SETUP_VESTA_CLOUD.md) |
-| Direct Double Tick-managed number | Headless Double Tick primary | Agent calls Double Tick directly; the operator configures a separate number provider | `whatsapp connect --opener '<text>'` | [SETUP_DOUBLETICK_DIRECT.md](SETUP_DOUBLETICK_DIRECT.md) |
-| Self-managed WhatsApp account | User's phone | None (the user brings their own WhatsApp number) | `whatsapp connect` or `--phone` | [SETUP_SELF_MANAGED.md](SETUP_SELF_MANAGED.md) |
+| Account source | How the agent reaches it | Command | Detailed guide |
+| --- | --- | --- | --- |
+| Vesta Cloud WhatsApp account | Vesta Cloud provisions a hosted WhatsApp account (auth: server-identity token to vesta.run) | `whatsapp connect --opener '<text>'` | [SETUP_VESTA_CLOUD.md](SETUP_VESTA_CLOUD.md) |
+| Self-hosted Double Tick WhatsApp account | Agent calls a Double Tick service directly (`DOUBLETICK_API_URL` + `DOUBLETICK_API_KEY`) | `whatsapp connect --opener '<text>'` | [SETUP_DOUBLETICK_DIRECT.md](SETUP_DOUBLETICK_DIRECT.md) |
+| Your own phone | Link the user's existing WhatsApp via QR or `--phone` pairing code | `whatsapp connect` or `--phone` | [SETUP_SELF_MANAGED.md](SETUP_SELF_MANAGED.md) |
 
-Do not infer ownership from where the agent runs. A self-hosted agent with
-`DOUBLETICK_API_URL` and `DOUBLETICK_API_KEY` uses Direct Double Tick; it does not
-use Vesta Cloud.
+Do not infer the source from where the agent runs. A self-hosted agent with
+`DOUBLETICK_API_URL` and `DOUBLETICK_API_KEY` set uses the self-hosted Double Tick
+account, not Vesta Cloud.
 
 Selection order is deterministic: an existing linked device resumes; otherwise
-complete direct Double Tick credentials select the direct headless path, a Vesta
-Cloud tenant selects the cloud-managed path, and everything else uses self-managed
-QR or phone pairing. Do not manually choose an internal subcommand.
+complete Double Tick credentials select the self-hosted Double Tick account, a
+Vesta Cloud tenant selects the Vesta Cloud account, and everything else links the
+user's own phone by QR or phone pairing. Do not manually choose an internal subcommand.
 
-For either headless Double Tick method, the companion's WhatsApp socket must use
-the residential proxy lease for the bound primary on initial pairing and every
-reconnect. API requests still use the direct or cloud route shown above; the proxy
-only carries WhatsApp traffic. If the lease cannot be obtained or verified, stop
-and report the error rather than falling back to unrelated direct egress.
+Either Double Tick account (Vesta Cloud or self-hosted) hands the agent a ready
+headless WhatsApp account. The companion's WhatsApp socket must use the residential
+proxy lease for that account on initial pairing and every reconnect. API requests
+still use the Vesta Cloud or direct route shown above; the proxy only carries
+WhatsApp traffic. If the lease cannot be obtained or verified, stop and report the
+error rather than falling back to unrelated direct egress.
 
-All agent-dedicated numbers backed by headless Double Tick primaries are
-reply-first. Compose a warm opener in your own voice from the user's perspective,
-pass it with `--opener`, share the returned `wa.me` link, and wait for the user to
-message first. User-owned phone-primary methods use normal messaging rules.
+A Double Tick WhatsApp account (Vesta Cloud or self-hosted) is reply-first. Compose
+a warm opener in your own voice from the user's perspective, pass it with
+`--opener`, share the returned `wa.me` link, and wait for the user to message
+first. Your own phone uses normal messaging rules.
 
 Shared installation, restart wiring, statuses, and diagnostics live in
-[SETUP.md](SETUP.md). Switchboard, Double Tick, and authentication boundaries live in
+[SETUP.md](SETUP.md). Double Tick and authentication boundaries live in
 [MANAGED_AUTH.md](MANAGED_AUTH.md).
 
-Common managed-number outcomes:
+Common Double Tick account outcomes:
 
 - `{"status":"linked","number":"+44...","next":"..."}`: follow `next`.
 - `{"status":"provisioning","next":"..."}`: re-run `whatsapp connect` after the stated delay.
 - `{"status":"blocked","next":"..."}`: Double Tick found the WhatsApp account
-  unusable; follow `next` (Vesta Cloud releases and reserves a fresh number).
+  unusable; follow `next` for a fresh account.
 - `{"status":"rate_limited","reason":"...","next":"..."}`: wait out the named cooldown. Never retry-loop.
 
 ## Check state

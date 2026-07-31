@@ -30,15 +30,15 @@ ships in the agent image.
 
 | Situation | Guide |
 | --- | --- |
-| Give a Vesta Cloud tenant a managed number using Switchboard and Double Tick | [SETUP_VESTA_CLOUD.md](SETUP_VESTA_CLOUD.md) |
-| Give a non-cloud agent a headless WhatsApp primary through direct Double Tick | [SETUP_DOUBLETICK_DIRECT.md](SETUP_DOUBLETICK_DIRECT.md) |
-| Keep the user's phone as primary, with an existing or separately acquired number | [SETUP_SELF_MANAGED.md](SETUP_SELF_MANAGED.md) |
+| Give a Vesta Cloud tenant a hosted WhatsApp account | [SETUP_VESTA_CLOUD.md](SETUP_VESTA_CLOUD.md) |
+| Give a non-cloud agent a WhatsApp account from a self-hosted Double Tick service | [SETUP_DOUBLETICK_DIRECT.md](SETUP_DOUBLETICK_DIRECT.md) |
+| Keep the user's own phone as the WhatsApp account, with their own carrier number | [SETUP_SELF_MANAGED.md](SETUP_SELF_MANAGED.md) |
 
-The terms describe management, not deployment location. “Direct Double Tick” is
-self-hosted API access and never traverses Vesta Cloud. “Self-managed” means the
-user's phone remains the primary. “Headless managed” means Double Tick operates
-the WhatsApp primary, but a separate number service owns the number/SIM lifecycle.
-On Vesta Cloud that service is Switchboard.
+These describe where the WhatsApp account comes from, not deployment location. A
+self-hosted Double Tick account is self-hosted API access and never traverses Vesta
+Cloud. Your own phone means the user's phone stays the WhatsApp account. Both Vesta
+Cloud and a self-hosted Double Tick service hand the agent a ready headless WhatsApp
+account to link a companion to.
 
 ## Universal safety rules
 
@@ -88,12 +88,11 @@ same account/device store.
 
 ## Troubleshooting
 
-- A managed-number method reports `provisioning`: wait for the stated delay, then repeat
+- A Double Tick account reports `provisioning`: wait for the stated delay, then repeat
   the same idempotent `whatsapp connect` command once.
-- A managed-number method reports `blocked`: Double Tick reports the WhatsApp
-  failure; follow `next` (Vesta Cloud releases the lease and reserves a fresh
-  number). Double Tick must not silently consume another number.
-- A managed-number method reports `rate_limited`: wait out the cooldown in `reason`.
+- A Double Tick account reports `blocked`: Double Tick reports the WhatsApp
+  failure; follow `next` for a fresh account.
+- A Double Tick account reports `rate_limited`: wait out the cooldown in `reason`.
 - A Double Tick companion cannot obtain or validate its residential proxy lease:
   stop. Do not pair or reconnect over unrelated direct egress.
 - Auth state is gone after restore/restart: request approval before running the

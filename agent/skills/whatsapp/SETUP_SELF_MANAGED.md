@@ -46,8 +46,8 @@ the code is active; do not generate another.
 ## After linking
 
 The user's phone remains responsible for the WhatsApp primary and normal account
-maintenance. Normal messaging rules apply; the headless-number reply-first gate
-and Double Tick proxy lease do not.
+maintenance. Normal messaging rules apply; the Double Tick account
+reply-first gate and proxy lease do not.
 
 History sync may run for five minutes. Sending is allowed, but daemon stop/restart
 is locked. If the phone later removes the companion, ask the user before running
