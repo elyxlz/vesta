@@ -31,13 +31,13 @@ ships in the agent image.
 | Situation | Guide |
 | --- | --- |
 | Give a Vesta Cloud tenant a hosted WhatsApp account | [SETUP_VESTA_CLOUD.md](SETUP_VESTA_CLOUD.md) |
-| Give a non-cloud agent a WhatsApp account from a self-hosted Double Tick service | [SETUP_DOUBLETICK_SELFHOSTED.md](SETUP_DOUBLETICK_SELFHOSTED.md) |
+| Give a non-cloud agent a WhatsApp account from a standalone Double Tick service | [SETUP_DOUBLETICK.md](SETUP_DOUBLETICK.md) |
 | Keep the user's own phone as the WhatsApp account, with their own carrier number | [SETUP_SELF_MANAGED.md](SETUP_SELF_MANAGED.md) |
 
 These describe where the WhatsApp account comes from, not deployment location. A
-self-hosted Double Tick account is self-hosted API access and never traverses Vesta
+Double Tick account calls the Double Tick service directly and never traverses Vesta
 Cloud. Your own phone means the user's phone stays the WhatsApp account. Both Vesta
-Cloud and a self-hosted Double Tick service hand the agent a ready headless WhatsApp
+Cloud and a standalone Double Tick service hand the agent a ready headless WhatsApp
 account to link a companion to.
 
 ## Universal safety rules

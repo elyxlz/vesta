@@ -1,6 +1,6 @@
-# Self-hosted Double Tick WhatsApp account
+# Double Tick WhatsApp account
 
-Use this method when a non-cloud or self-hosted agent points at a standalone
+Use this method when a non-cloud agent points at a standalone
 Double Tick service for a dedicated headless WhatsApp account. The Double Tick
 service provides the account end to end. Requests go straight to Double Tick and
 never traverse Vesta Cloud.

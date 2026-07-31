@@ -1,6 +1,6 @@
 ---
 name: whatsapp
-description: Set up and operate WhatsApp accounts, messages, contacts, groups, and live voice calls (not generic text/SMS). Use when linking WhatsApp, choosing a Vesta Cloud WhatsApp account, a self-hosted Double Tick WhatsApp account, or the user's own phone, or messaging or calling someone on WhatsApp.
+description: Set up and operate WhatsApp accounts, messages, contacts, groups, and live voice calls (not generic text/SMS). Use when linking WhatsApp, choosing a Vesta Cloud WhatsApp account, a Double Tick WhatsApp account, or the user's own phone, or messaging or calling someone on WhatsApp.
 ---
 
 # WhatsApp (CLI: `whatsapp`)
@@ -27,26 +27,26 @@ then read exactly that guide before the first link:
 | Account source | How the agent reaches it | Command | Detailed guide |
 | --- | --- | --- | --- |
 | Vesta Cloud WhatsApp account | Vesta Cloud provisions a hosted WhatsApp account (auth: server-identity token to vesta.run) | `whatsapp connect --opener '<text>'` | [SETUP_VESTA_CLOUD.md](SETUP_VESTA_CLOUD.md) |
-| Self-hosted Double Tick WhatsApp account | Agent calls a Double Tick service directly (`DOUBLETICK_API_URL` + `DOUBLETICK_API_KEY`) | `whatsapp connect --opener '<text>'` | [SETUP_DOUBLETICK_SELFHOSTED.md](SETUP_DOUBLETICK_SELFHOSTED.md) |
+| Double Tick WhatsApp account | Agent calls a Double Tick service directly (`DOUBLETICK_API_URL` + `DOUBLETICK_API_KEY`) | `whatsapp connect --opener '<text>'` | [SETUP_DOUBLETICK.md](SETUP_DOUBLETICK.md) |
 | Your own phone | Link the user's existing WhatsApp via QR or `--phone` pairing code | `whatsapp connect` or `--phone` | [SETUP_SELF_MANAGED.md](SETUP_SELF_MANAGED.md) |
 
-Do not infer the source from where the agent runs. A self-hosted agent with
-`DOUBLETICK_API_URL` and `DOUBLETICK_API_KEY` set uses the self-hosted Double Tick
+Do not infer the source from where the agent runs. An agent with
+`DOUBLETICK_API_URL` and `DOUBLETICK_API_KEY` set uses the Double Tick
 account, not Vesta Cloud.
 
 Selection order is deterministic: an existing linked device resumes; otherwise
-complete Double Tick credentials select the self-hosted Double Tick account, a
+complete Double Tick credentials select the Double Tick account, a
 Vesta Cloud tenant selects the Vesta Cloud account, and everything else links the
 user's own phone by QR or phone pairing. Do not manually choose an internal subcommand.
 
-Either Double Tick account (Vesta Cloud or self-hosted) hands the agent a ready
+Either Double Tick account (Vesta Cloud or standalone) hands the agent a ready
 headless WhatsApp account. The companion's WhatsApp socket must use the residential
 proxy lease for that account on initial pairing and every reconnect. API requests
 still use the Vesta Cloud or direct route shown above; the proxy only carries
 WhatsApp traffic. If the lease cannot be obtained or verified, stop and report the
 error rather than falling back to unrelated direct egress.
 
-A Double Tick WhatsApp account (Vesta Cloud or self-hosted) is reply-first. Compose
+A Double Tick WhatsApp account (Vesta Cloud or standalone) is reply-first. Compose
 a warm opener in your own voice from the user's perspective, pass it with
 `--opener`, share the returned `wa.me` link, and wait for the user to message
 first. Your own phone uses normal messaging rules.

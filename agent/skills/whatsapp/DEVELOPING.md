@@ -50,7 +50,7 @@ goroutine can race an explicit command.
 All daemon state lives in a single `<dataDir>/state.json` owned by `state.go`
 (`stateStore`: a pure load + atomic temp+rename save). It holds the independent
 primary mode, number source, API transport, opaque number-lease reference,
-self-hosted Double Tick credentials when applicable, auth-status cache, last-exit
+Double Tick credentials when applicable, auth-status cache, last-exit
 reason, daemon-info, pairing-attempts, and linked-at. It never stores Vesta Cloud
 or Double Tick service credentials. The serve process is the **sole writer**; transient CLI commands only read
 it (and only when no daemon answers the socket, so there is no cross-process write
@@ -61,7 +61,7 @@ clobber). On first start the daemon imports any legacy per-key files it finds in
 
 ### One pairing primitive
 
-`provision` (managed) and `link` (self-hosted QR) are the only pairing drivers, each
+`provision` (managed) and `link` (self-managed QR) are the only pairing drivers, each
 run synchronously in the socket-command handler and **single-flighted** through
 `beginPairing` (one pairing at a time). Each is self-contained: set up channel ->
 connect -> pair -> wait -> return a terminal result, leaving the client CLEAN

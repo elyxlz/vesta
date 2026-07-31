@@ -3,7 +3,7 @@
 Use this technical reference after selecting an operational setup guide:
 
 - [SETUP_VESTA_CLOUD.md](SETUP_VESTA_CLOUD.md) for Vesta Cloud orchestration.
-- [SETUP_DOUBLETICK_SELFHOSTED.md](SETUP_DOUBLETICK_SELFHOSTED.md) for the self-hosted Double Tick service.
+- [SETUP_DOUBLETICK.md](SETUP_DOUBLETICK.md) for the standalone Double Tick service.
 - [SETUP_SELF_MANAGED.md](SETUP_SELF_MANAGED.md) when the user's phone stays the
   WhatsApp account.
 
@@ -16,7 +16,7 @@ credentials to infer both.
 
 - [Service boundaries](#service-boundaries)
 - [Vesta Cloud route](#vesta-cloud-route)
-- [Self-hosted Double Tick route](#self-hosted-double-tick-route)
+- [Double Tick route](#double-tick-route)
 - [Headless Double Tick account flow](#headless-double-tick-account-flow)
 - [Failure ownership](#failure-ownership)
 - [Persisted selection](#persisted-selection)
@@ -40,7 +40,7 @@ credentials to infer both.
 The agent holds no standing Double Tick secret. Vesta Cloud owns orchestration and
 service credentials; it does not proxy the WhatsApp socket.
 
-## Self-hosted Double Tick route
+## Double Tick route
 
 The agent calls `DOUBLETICK_API_URL` with:
 
@@ -58,7 +58,7 @@ precedence over cloud identity and must be set together:
 
 ## Headless Double Tick account flow
 
-Both Vesta Cloud and a self-hosted Double Tick service provide a ready headless
+Both Vesta Cloud and a standalone Double Tick service provide a ready headless
 WhatsApp account:
 
 1. The Double Tick service provisions or recovers the WhatsApp account.
@@ -91,7 +91,7 @@ Persist these independent facts per WhatsApp instance:
 
 ```text
 primary_mode  = user | doubletick
-api_transport = none | vesta_cloud | doubletick_self_hosted
+api_transport = none | vesta_cloud | doubletick
 ```
 
 Use `primary_mode` for proxy and reply-first policy, and `api_transport` for API
