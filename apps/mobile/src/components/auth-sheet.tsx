@@ -1,12 +1,6 @@
 import { useState, type ReactNode } from "react";
-import {
-  Animated,
-  KeyboardAvoidingView,
-  StyleSheet,
-  View,
-} from "react-native";
+import { Animated, KeyboardAvoidingView, StyleSheet, View } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
-import { GatewayCloseButton } from "@/components/GatewayCloseButton";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 
@@ -16,7 +10,6 @@ interface AuthSheetProps {
   children: ReactNode;
   mode?: AuthSheetMode;
   title?: string;
-  onClose?: () => void;
   hasGrabber?: boolean;
   gap?: number;
 }
@@ -25,7 +18,6 @@ export function AuthSheet({
   children,
   mode = "plain",
   title,
-  onClose,
   hasGrabber = false,
   gap,
 }: AuthSheetProps) {
@@ -40,7 +32,6 @@ export function AuthSheet({
   const header = title ? (
     <AuthSheetHeader
       title={title}
-      onClose={onClose}
       topPadding={topPadding}
       scrollY={mode === "scroll" ? scrollY : undefined}
     />
@@ -96,25 +87,16 @@ export function AuthSheet({
 
 function AuthSheetHeader({
   title,
-  onClose,
   topPadding,
   scrollY,
 }: {
   title: string;
-  onClose?: () => void;
   topPadding: number;
   scrollY?: Animated.Value;
 }) {
   const { colors } = usePreferences();
   const headerContent = (
     <View style={styles.titleRow}>
-      {onClose ? (
-        <GatewayCloseButton
-          color={colors.text}
-          fallbackColor={colors.input}
-          onPress={onClose}
-        />
-      ) : null}
       <Text family="heading" style={[styles.title, { color: colors.text }]}>
         {title}
       </Text>
@@ -122,9 +104,7 @@ function AuthSheetHeader({
   );
 
   if (!scrollY) {
-    return (
-      <View style={{ paddingTop: topPadding }}>{headerContent}</View>
-    );
+    return <View style={{ paddingTop: topPadding }}>{headerContent}</View>;
   }
 
   return (
@@ -176,7 +156,7 @@ const styles = StyleSheet.create({
     minHeight: 38,
     flexDirection: "row",
     alignItems: "center",
-    gap: 16,
+    justifyContent: "center",
   },
   title: {
     flex: 1,
@@ -184,5 +164,6 @@ const styles = StyleSheet.create({
     lineHeight: 34,
     fontWeight: "500",
     letterSpacing: -0.7,
+    textAlign: "center",
   },
 });

@@ -618,8 +618,18 @@ const styles = StyleSheet.create({
     height: AGENT_IDENTITY_ORB_SIZE,
     borderRadius: AGENT_IDENTITY_ORB_SIZE / 2,
   },
-  skeletonStatus: { width: 76, height: 24, borderRadius: 12 },
+  skeletonStatus: {
+    width: 76,
+    height: 24,
+    borderRadius: 12,
+    borderCurve: "continuous",
+  },
   skeletonName: { width: 148, height: 38, borderRadius: 12 },
-  skeletonActiveIndicator: { width: 22, height: 7, borderRadius: 999 },
+  skeletonActiveIndicator: {
+    width: 22,
+    height: 7,
+    borderRadius: 999,
+    borderCurve: "continuous",
+  },
   skeletonIndicator: { width: 7, height: 7, borderRadius: 999 },
 });

@@ -128,11 +128,7 @@ export default function NotificationsPage({
   });
   const lastReseedRevision = useRef(0);
   const items = useMemo(
-    () =>
-      mergeLiveNotifications(
-        data?.notifications ?? [],
-        socket.events,
-      ),
+    () => mergeLiveNotifications(data?.notifications ?? [], socket.events),
     [data?.notifications, socket.events],
   );
   const standalone = presentation === "standalone";
@@ -144,8 +140,7 @@ export default function NotificationsPage({
     displayItems.length,
   );
   const pendingIds = useMemo(
-    () =>
-      getPendingNotificationIds(socket.pendingNotifications, socket.events),
+    () => getPendingNotificationIds(socket.pendingNotifications, socket.events),
     [socket.events, socket.pendingNotifications],
   );
 
@@ -234,6 +229,7 @@ const styles = StyleSheet.create({
   decision: {
     width: 68,
     borderRadius: radii.pill,
+    borderCurve: "continuous",
     paddingHorizontal: 7,
     paddingVertical: 3,
     fontSize: 10,

@@ -114,6 +114,7 @@ const styles = StyleSheet.create({
     maxWidth: 420,
     minHeight: 54,
     borderRadius: radii.pill,
+    borderCurve: "continuous",
     paddingHorizontal: 12,
     paddingVertical: 8,
     flexDirection: "row",

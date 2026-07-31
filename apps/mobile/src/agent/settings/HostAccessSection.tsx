@@ -8,12 +8,11 @@ import {
 } from "@/api/endpoints";
 import type { HostMount } from "@/api/types";
 import { useAgent } from "@/agent/AgentProvider";
+import { useToast } from "@/components/native-toast";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { Field, FormRow, FormSection, SwitchRow } from "@/components/ui/Form";
 import { ErrorState, LoadingState } from "@/components/ui/States";
-import { Text } from "@/components/ui/Typography";
-import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
 
 function folderName(path: string): string {
@@ -24,7 +23,7 @@ export function HostAccessSection() {
   const queryClient = useQueryClient();
   const { api } = useSession();
   const { name } = useAgent();
-  const { colors } = usePreferences();
+  const { showError } = useToast();
   const [adding, setAdding] = useState(false);
   const [hostPath, setHostPath] = useState("");
   const [containerPath, setContainerPath] = useState("");
@@ -43,14 +42,23 @@ export function HostAccessSection() {
     onSuccess: (result) => {
       queryClient.setQueryData(["mounts", name], result.mounts);
       if (result.restartRequired) {
-        Alert.alert("Restart needed", `${name} must restart before the new folder access takes effect.`);
+        Alert.alert(
+          "Restart needed",
+          `${name} must restart before the new folder access takes effect.`,
+        );
       }
     },
+    onError: (error) => showError(error, "Could not update host access"),
   });
 
   if (mounts.isLoading) return <LoadingState label="Loading shared folders…" />;
   if (!mounts.data) {
-    return <ErrorState message="Host access is unavailable." retry={() => void mounts.refetch()} />;
+    return (
+      <ErrorState
+        message="Host access is unavailable."
+        retry={() => void mounts.refetch()}
+      />
+    );
   }
 
   const update = (next: HostMount[]) => save.mutate(next);
@@ -64,41 +72,93 @@ export function HostAccessSection() {
           <View key={mount.container_path} style={styles.mount}>
             <FormRow
               label={folderName(mount.host_path)}
-              detail={mount.container_path === mount.host_path ? mount.host_path : `${mount.host_path} · seen at ${mount.container_path}`}
+              detail={
+                mount.container_path === mount.host_path
+                  ? mount.host_path
+                  : `${mount.host_path} · seen at ${mount.container_path}`
+              }
               icon="folder-open-outline"
             />
             <SwitchRow
               label="Allow editing"
               value={mount.writable}
               disabled={save.isPending}
-              onValueChange={(value) => update(mounts.data.map((candidate) => candidate.container_path === mount.container_path ? { ...candidate, writable: value } : candidate))}
+              onValueChange={(value) =>
+                update(
+                  mounts.data.map((candidate) =>
+                    candidate.container_path === mount.container_path
+                      ? { ...candidate, writable: value }
+                      : candidate,
+                  ),
+                )
+              }
             />
             <Button
               variant="plain"
               disabled={save.isPending}
-              onPress={() => Alert.alert("Remove folder access?", mount.host_path, [
-                { text: "Cancel", style: "cancel" },
-                { text: "Remove", style: "destructive", onPress: () => update(mounts.data.filter((candidate) => candidate.container_path !== mount.container_path)) },
-              ])}
+              onPress={() =>
+                Alert.alert("Remove folder access?", mount.host_path, [
+                  { text: "Cancel", style: "cancel" },
+                  {
+                    text: "Remove",
+                    style: "destructive",
+                    onPress: () =>
+                      update(
+                        mounts.data.filter(
+                          (candidate) =>
+                            candidate.container_path !== mount.container_path,
+                        ),
+                      ),
+                  },
+                ])
+              }
             >
               Remove access
             </Button>
           </View>
         ))}
-        {mounts.data.length === 0 ? <FormRow label="No folders shared" icon="folder-outline" /> : null}
+        {mounts.data.length === 0 ? (
+          <FormRow label="No folders shared" icon="folder-outline" />
+        ) : null}
       </FormSection>
 
       {adding ? (
         <Card>
           {(suggestions.data ?? [])
-            .filter((path) => !mounts.data.some((mount) => mount.host_path === path))
+            .filter(
+              (path) => !mounts.data.some((mount) => mount.host_path === path),
+            )
             .slice(0, 8)
             .map((path) => (
-              <FormRow key={path} label={folderName(path)} detail={path} icon="folder-outline" onPress={() => setHostPath(path)} />
+              <FormRow
+                key={path}
+                label={folderName(path)}
+                detail={path}
+                icon="folder-outline"
+                onPress={() => setHostPath(path)}
+              />
             ))}
-          <Field label="Host path" description="Absolute path on the gateway computer." value={hostPath} onChangeText={setHostPath} autoCapitalize="none" autoCorrect={false} />
-          <Field label="Path visible to the agent" description="Leave blank to use the same path." value={containerPath} onChangeText={setContainerPath} autoCapitalize="none" autoCorrect={false} />
-          <SwitchRow label="Allow editing" value={writable} onValueChange={setWritable} />
+          <Field
+            label="Host path"
+            description="Absolute path on the gateway computer."
+            value={hostPath}
+            onChangeText={setHostPath}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          <Field
+            label="Path visible to the agent"
+            description="Leave blank to use the same path."
+            value={containerPath}
+            onChangeText={setContainerPath}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          <SwitchRow
+            label="Allow editing"
+            value={writable}
+            onValueChange={setWritable}
+          />
           <Button
             loading={save.isPending}
             disabled={!hostPath.trim()}
@@ -121,16 +181,15 @@ export function HostAccessSection() {
           >
             Share folder
           </Button>
-          <Button variant="secondary" onPress={() => setAdding(false)}>Cancel</Button>
+          <Button variant="secondary" onPress={() => setAdding(false)}>
+            Cancel
+          </Button>
         </Card>
       ) : (
-        <Button icon="add" onPress={() => setAdding(true)}>Add a folder</Button>
+        <Button icon="add" onPress={() => setAdding(true)}>
+          Add a folder
+        </Button>
       )}
-      {save.error ? (
-        <Text accessibilityRole="alert" style={{ color: colors.danger }}>
-          {save.error instanceof Error ? save.error.message : "Could not update host access."}
-        </Text>
-      ) : null}
     </>
   );
 }

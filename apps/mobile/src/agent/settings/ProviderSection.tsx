@@ -22,6 +22,7 @@ import {
   type ProviderSelection,
 } from "@/api/endpoints";
 import { useAgent } from "@/agent/AgentProvider";
+import { useToast } from "@/components/native-toast";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { Field, FormRow, FormSection } from "@/components/ui/Form";
@@ -39,6 +40,7 @@ export function ProviderSection() {
   const queryClient = useQueryClient();
   const { api } = useSession();
   const { name } = useAgent();
+  const { showError } = useToast();
   const { colors } = usePreferences();
   const [authKind, setAuthKind] = useState<ProviderKind>("claude");
   const provider = useQuery({
@@ -64,7 +66,6 @@ export function ProviderSection() {
   const [oauthCode, setOauthCode] = useState("");
   const [openAIUserCode, setOpenAIUserCode] = useState("");
   const [providerKey, setProviderKey] = useState("");
-  const [authError, setAuthError] = useState("");
   const [busy, setBusy] = useState(false);
 
   const selectAuthKind = (kind: ProviderKind) => {
@@ -73,7 +74,6 @@ export function ProviderSection() {
     setOauthCode("");
     setOpenAIUserCode("");
     setProviderKey("");
-    setAuthError("");
   };
 
   const change = useMutation({
@@ -88,6 +88,7 @@ export function ProviderSection() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["provider", name] });
     },
+    onError: (error) => showError(error, "Could not update provider"),
   });
 
   if (provider.isLoading || manifest.isLoading)
@@ -155,7 +156,6 @@ export function ProviderSection() {
 
   const connectClaude = async () => {
     setBusy(true);
-    setAuthError("");
     try {
       if (!oauthSession) {
         const started = await startClaudeOAuth(api);
@@ -180,9 +180,7 @@ export function ProviderSection() {
         await queryClient.invalidateQueries({ queryKey: ["provider", name] });
       }
     } catch (cause) {
-      setAuthError(
-        cause instanceof Error ? cause.message : "Claude sign-in failed.",
-      );
+      showError(cause, "Claude sign-in failed");
     } finally {
       setBusy(false);
     }
@@ -190,7 +188,6 @@ export function ProviderSection() {
 
   const connectOpenAI = async () => {
     setBusy(true);
-    setAuthError("");
     try {
       if (!oauthSession) {
         const started = await startOpenAIOAuth(api);
@@ -212,9 +209,7 @@ export function ProviderSection() {
         await queryClient.invalidateQueries({ queryKey: ["provider", name] });
       }
     } catch (cause) {
-      setAuthError(
-        cause instanceof Error ? cause.message : "OpenAI sign-in failed.",
-      );
+      showError(cause, "OpenAI sign-in failed");
     } finally {
       setBusy(false);
     }
@@ -228,7 +223,6 @@ export function ProviderSection() {
       return;
     if (!isKeyProviderKind(providerKind)) return;
     setBusy(true);
-    setAuthError("");
     try {
       const key = providerKey.trim();
       if (providerKind === "openrouter") await validateOpenRouterKey(api, key);
@@ -243,9 +237,7 @@ export function ProviderSection() {
       await provisionAgent(api, name, selection);
       await queryClient.invalidateQueries({ queryKey: ["provider", name] });
     } catch (cause) {
-      setAuthError(
-        cause instanceof Error ? cause.message : "Provider sign-in failed.",
-      );
+      showError(cause, "Provider sign-in failed");
     } finally {
       setBusy(false);
     }
@@ -348,7 +340,6 @@ export function ProviderSection() {
                     onChangeText={setOauthCode}
                     autoCapitalize="none"
                     autoCorrect={false}
-                    error={authError || undefined}
                   />
                   <Button
                     variant="secondary"
@@ -390,9 +381,6 @@ export function ProviderSection() {
                   ? "Finish OpenAI sign-in"
                   : "Open ChatGPT sign-in"}
               </Button>
-              {authError ? (
-                <Text style={{ color: colors.danger }}>{authError}</Text>
-              ) : null}
             </>
           ) : (
             <>
@@ -403,7 +391,6 @@ export function ProviderSection() {
                 secureTextEntry
                 autoCapitalize="none"
                 autoCorrect={false}
-                error={authError || undefined}
               />
               <Button
                 loading={busy}
@@ -431,11 +418,15 @@ export function ProviderSection() {
                     text: "Sign out",
                     style: "destructive",
                     onPress: () =>
-                      void signOutProvider(api, name).then(() =>
-                        queryClient.invalidateQueries({
-                          queryKey: ["provider", name],
-                        }),
-                      ),
+                      void signOutProvider(api, name)
+                        .then(() =>
+                          queryClient.invalidateQueries({
+                            queryKey: ["provider", name],
+                          }),
+                        )
+                        .catch((error: unknown) =>
+                          showError(error, "Could not sign out provider"),
+                        ),
                   },
                 ],
               );
@@ -443,13 +434,6 @@ export function ProviderSection() {
           />
         </FormSection>
       )}
-      {change.error ? (
-        <Text style={{ color: colors.danger }}>
-          {change.error instanceof Error
-            ? change.error.message
-            : "Could not update provider."}
-        </Text>
-      ) : null}
     </>
   );
 }

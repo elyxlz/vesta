@@ -47,6 +47,7 @@ import { ChatHoldProvider } from "@/chat/ChatHoldProvider";
 import { ControllerProvider } from "@/controller/ControllerProvider";
 import { BootSplash } from "@/components/BootSplash";
 import { GatewayConnectionBanner } from "@/components/GatewayConnectionBanner";
+import { ToastProvider } from "@/components/native-toast";
 import { Text } from "@/components/ui/Typography";
 import {
   BootTransitionProvider,
@@ -163,6 +164,17 @@ function SessionNavigation() {
               headerBackButtonDisplayMode: "minimal",
             }}
           >
+            <Stack.Screen
+              name="privacy"
+              options={{
+                headerShown: false,
+                presentation: "formSheet",
+                sheetAllowedDetents: "fitToContents",
+                sheetGrabberVisible: false,
+                gestureEnabled: false,
+                contentStyle: { backgroundColor: colors.card },
+              }}
+            />
             <Stack.Protected guard={status !== "connected"}>
               <Stack.Screen
                 name="connect"
@@ -209,6 +221,7 @@ function SessionNavigation() {
                 options={{
                   title: "",
                   headerShown: true,
+                  headerTitleAlign: "center",
                   presentation: "formSheet",
                   sheetAllowedDetents: [1],
                   sheetGrabberVisible: false,
@@ -237,6 +250,7 @@ function SessionNavigation() {
                 name="settings"
                 options={{
                   title: "Settings",
+                  headerTitleAlign: "center",
                   presentation: "formSheet",
                   sheetAllowedDetents: [1],
                   sheetGrabberVisible: false,
@@ -256,6 +270,7 @@ function SessionNavigation() {
                 name="whats-new"
                 options={{
                   title: "What’s new",
+                  headerTitleAlign: "center",
                   presentation: "formSheet",
                   sheetAllowedDetents: [1],
                   sheetInitialDetentIndex: 0,
@@ -339,24 +354,26 @@ export default function RootLayout() {
       <KeyboardProvider>
         <QueryClientProvider client={queryClient}>
           <PreferencesProvider>
-            <PrivacyProvider>
-              <PrivacyGate>
-                <SessionProvider>
-                  <RosterHoldProvider>
-                    <ChatHoldProvider>
-                      <ControllerProvider>
-                        <RosterProvider>
-                          <UserNotifications />
-                          <PresenceReporter />
-                          <PushCoordinator />
-                          <SessionNavigation />
-                        </RosterProvider>
-                      </ControllerProvider>
-                    </ChatHoldProvider>
-                  </RosterHoldProvider>
-                </SessionProvider>
-              </PrivacyGate>
-            </PrivacyProvider>
+            <ToastProvider>
+              <PrivacyProvider>
+                <PrivacyGate>
+                  <SessionProvider>
+                    <RosterHoldProvider>
+                      <ChatHoldProvider>
+                        <ControllerProvider>
+                          <RosterProvider>
+                            <UserNotifications />
+                            <PresenceReporter />
+                            <PushCoordinator />
+                            <SessionNavigation />
+                          </RosterProvider>
+                        </ControllerProvider>
+                      </ChatHoldProvider>
+                    </RosterHoldProvider>
+                  </SessionProvider>
+                </PrivacyGate>
+              </PrivacyProvider>
+            </ToastProvider>
           </PreferencesProvider>
         </QueryClientProvider>
       </KeyboardProvider>

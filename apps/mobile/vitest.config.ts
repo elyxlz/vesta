@@ -8,6 +8,10 @@ export default defineConfig({
     },
   },
   test: {
-    include: ["src/**/*.test.ts", "monorepo.test.mjs"],
+    include: [
+      "src/**/*.test.ts",
+      "scripts/**/*.test.mjs",
+      "monorepo.test.mjs",
+    ],
   },
 });

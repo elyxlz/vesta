@@ -178,9 +178,7 @@ export function Button({
                 { color: contentColor },
               ]}
             >
-              {loading && loadingLabel !== undefined
-                ? loadingLabel
-                : children}
+              {loading && loadingLabel !== undefined ? loadingLabel : children}
             </Text>
             {trailingIcon && !loading ? (
               <Ionicons
@@ -275,7 +273,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   groupedCardButton: { borderRadius: 0 },
-  pill: { borderRadius: radii.pill },
+  pill: { borderRadius: radii.pill, borderCurve: "continuous" },
   buttonGroup: {
     borderRadius: radii.card,
     borderCurve: "continuous",

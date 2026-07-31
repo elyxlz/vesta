@@ -172,6 +172,7 @@ const styles = StyleSheet.create({
   titlePill: {
     maxWidth: 220,
     borderRadius: radii.pill,
+    borderCurve: "continuous",
     overflow: "hidden",
   },
   titleFallback: {

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { AppState, Linking, StyleSheet, View } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { Stack, useRouter } from "expo-router";
-import { Button } from "@/components/ui/Button";
+import { AuthPrimaryButton } from "@/components/auth-primary-button";
 import { LoadingState } from "@/components/ui/States";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
@@ -76,17 +76,16 @@ function ScanContent() {
             Vesta uses the camera only to scan your connection QR code.
           </Text>
           {permission.canAskAgain ? (
-            <Button pill onPress={() => void requestPermission()}>
+            <AuthPrimaryButton onPress={() => void requestPermission()}>
               Allow camera
-            </Button>
+            </AuthPrimaryButton>
           ) : (
-            <Button
-              pill
+            <AuthPrimaryButton
               icon="settings-outline"
               onPress={() => void Linking.openSettings()}
             >
               Open Settings
-            </Button>
+            </AuthPrimaryButton>
           )}
         </View>
         {header}

@@ -12,6 +12,8 @@
     "app/**/*.tsx",
     "src/**/*.ts",
     "src/**/*.tsx",
+    "visual/harness/**/*.ts",
+    "visual/harness/**/*.tsx",
     ".expo/types/**/*.ts",
     "expo-env.d.ts"
   ]
