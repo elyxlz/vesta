@@ -207,6 +207,26 @@ def scrub(conn: sqlite3.Connection, ids: list[int]) -> int:
     return len(changed)
 
 
+def unscrubbed(conn: sqlite3.Connection, ids: list[int]) -> list[int]:
+    """Ids that STILL match after a scrub, re-read from the committed rows.
+
+    `scrub` counts an event as done when redaction changed the object at all, which is not the same
+    as the event being clean: one event can hold several hits and only some of them be shapes the
+    patterns know. That gap reported "Scrubbed secrets in 1 event(s) in place" on an event whose
+    live API key was left untouched, and only a manual re-query afterwards caught it. A tool whose
+    job is removing credentials must not take its own word for the outcome.
+
+    This re-runs the same detection over the stored rows, so it cannot see a shape the patterns miss
+    entirely; what it does catch is the partial scrub, which is the failure that actually occurred.
+    """
+    still: list[int] = []
+    for row_id in ids:
+        row = conn.execute("SELECT data FROM events WHERE id = ?", (row_id,)).fetchone()
+        if row and row[0] and find_matches(row[0]):
+            still.append(row_id)
+    return still
+
+
 def main() -> int:
     if not DB.is_file():
         print(f"No database at {DB}")
@@ -216,8 +236,17 @@ def main() -> int:
     conn = sqlite3.connect(DB)
     try:
         if args[:1] == ["--scrub"]:
-            scrubbed = scrub(conn, [int(arg) for arg in args[1:]])
+            ids = [int(arg) for arg in args[1:]]
+            scrubbed = scrub(conn, ids)
             print(f"Scrubbed secrets in {scrubbed} event(s) in place.")
+            if remaining := unscrubbed(conn, ids):
+                print(
+                    f"WARNING: {len(remaining)} event(s) STILL match after scrubbing: "
+                    f"{', '.join(str(i) for i in remaining)}. The patterns did not cover every hit "
+                    "in these rows, so a secret is still in the database. Inspect them by hand, and "
+                    "resync events_fts after any manual UPDATE."
+                )
+                return 2
             return 0
 
         matches = scan(conn)

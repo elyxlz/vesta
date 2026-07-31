@@ -298,3 +298,35 @@ def test_main_scan_then_scrub_end_to_end(tmp_path, event_bus, db_conn, monkeypat
     rows = [row[0] for row in db_conn.execute("SELECT data FROM events")]
     assert len(rows) == 2
     assert all(SECRET not in data for data in rows)
+
+
+def test_unscrubbed_reports_an_event_the_patterns_only_partly_cleaned(event_bus, db_conn, monkeypatch):
+    """A scrub that changed something is not the same as an event that is clean.
+
+    This is the real failure: an event held two secrets, only one matched a known pattern, `scrub`
+    counted the event as done because redaction changed the object, and the report said so while a
+    live key stayed in the row.
+    """
+    known = SECRET
+    unknown = "QQQQ-not-a-shape-any-pattern-knows-QQQQ"
+    event_bus.emit(AssistantEvent(type="assistant", text=f"aws {known} and also {unknown}"))
+    (row_id,) = next(iter(db_conn.execute("SELECT id FROM events")))
+
+    # Teach the detector the second shape only AFTER the scrub, standing in for a pattern set that
+    # covered one hit and not the other at scrub time.
+    assert redact.scrub(db_conn, [row_id]) == 1
+    assert redact.unscrubbed(db_conn, [row_id]) == []
+
+    monkeypatch.setattr(redact, "REGEX", __import__("re").compile(unknown))
+    assert redact.unscrubbed(db_conn, [row_id]) == [row_id]
+
+
+def test_unscrubbed_is_empty_when_the_scrub_was_complete(event_bus, db_conn):
+    event_bus.emit(AssistantEvent(type="assistant", text=f"the aws key is {SECRET} for backups"))
+    (row_id,) = next(iter(db_conn.execute("SELECT id FROM events")))
+
+    redact.scrub(db_conn, [row_id])
+
+    assert redact.unscrubbed(db_conn, [row_id]) == []
+    stored = db_conn.execute("SELECT data FROM events WHERE id = ?", (row_id,)).fetchone()[0]
+    assert SECRET not in stored
