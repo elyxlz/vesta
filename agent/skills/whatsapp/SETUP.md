@@ -1,80 +1,74 @@
 # WhatsApp shared setup
 
-Use this file for installation, method selection, recovery, and diagnostics. For
-the actual account-linking procedure, read the one method guide selected below.
-
-## Contents
-
-- [Install once](#install-once)
-- [Select one account method](#select-one-account-method)
-- [Universal safety rules](#universal-safety-rules)
-- [Status and recovery](#status-and-recovery)
-- [Named instances](#named-instances)
-- [Troubleshooting](#troubleshooting)
-- [Transcription](#how-transcription-works)
-- [Contact cards](#contact-card-support)
+Installation, method selection, recovery, and diagnostics. For the actual linking
+procedure, read the one method guide selected below.
 
 ## Install once
 
-Everything the build needs (Go, whisper.cpp static libraries, gcc, and ffmpeg)
-ships in the agent image.
+The build's dependencies (Go, whisper.cpp static libraries, gcc, ffmpeg) ship in
+the agent image.
 
 1. Run `~/agent/skills/whatsapp/setup.sh`. It links the launcher onto `PATH`,
-   warms the build cache, downloads the transcription model, and starts the daemon.
-   It is safe to re-run.
+   warms the build cache, downloads the transcription model, and starts the
+   daemon. Safe to re-run.
 2. Add `whatsapp daemon start` on its own line inside the fenced block under
-   `## Daemons` in `~/agent/skills/restart/SKILL.md`. This restores inbound
-   notifications after a container restart.
+   `## Daemons` in `~/agent/skills/restart/SKILL.md`, so inbound notifications
+   survive a container restart.
 
 ## Select one account method
 
-| Situation | Guide |
-| --- | --- |
-| Give a Vesta Cloud tenant a hosted WhatsApp account | [SETUP_VESTA_CLOUD.md](SETUP_VESTA_CLOUD.md) |
-| Give a non-cloud agent a WhatsApp account from a standalone Double Tick service | [SETUP_DOUBLETICK.md](SETUP_DOUBLETICK.md) |
-| Keep the user's own phone as the WhatsApp account, with their own carrier number | [SETUP_SELF_MANAGED.md](SETUP_SELF_MANAGED.md) |
+Work through this in order; do not ask the user anything you can determine
+yourself. It is about where the account comes from, not where the agent runs.
 
-These describe where the WhatsApp account comes from, not deployment location. A
-Double Tick account calls the Double Tick service directly and never traverses Vesta
-Cloud. Your own phone means the user's phone stays the WhatsApp account. Both Vesta
-Cloud and a standalone Double Tick service hand the agent a ready headless WhatsApp
-account to link a companion to.
-
-## Universal safety rules
-
-- Run `whatsapp status` before linking. If `linked:true`, do not pair again.
-- If `connecting:true`, an existing QR or phone-code attempt is active. Wait for
-  the user; never start another.
-- Pairing is limited to two attempts per hour. A failure is not permission to
-  retry-loop; report it and wait for explicit approval.
-- For five minutes after a successful link, history sync locks daemon stop/restart.
-  A brief websocket EOF or `can't send presence without PushName set` can be normal
-  during this window. Do not bounce the daemon.
-- Use a dedicated account for an assistant. Linking a personal account grants the
-  assistant access to that account's chats.
+1. **Already linked?** `whatsapp status` returns `linked:true`. Use it and stop.
+2. **Vesta Cloud managed box?** Set up the
+   [Vesta Cloud WhatsApp account](SETUP_VESTA_CLOUD.md) straight away, silently,
+   without asking or telling the user. It is automatic.
+3. **`DOUBLETICK_API_URL` and `DOUBLETICK_API_KEY` both set?** Set up the
+   [Double Tick WhatsApp account](SETUP_DOUBLETICK.md) with them.
+4. **Otherwise, ask the user** which they want, then follow that one guide:
+   - [Double Tick WhatsApp account](SETUP_DOUBLETICK.md): a provisioning service
+     that hands the agent a ready headless account. Ask whether they have Double
+     Tick credentials.
+   - [self-managed account](SETUP_SELF_MANAGED.md): the user supplies a dedicated
+     WhatsApp account on their own SIM (a second account on their phone, or a
+     spare phone) and the agent links to it as a companion.
 
 ## Status and recovery
 
 `whatsapp status` is the primary diagnostic:
 
-- `{"linked":true,"connected":true,"number":"+44..."}`: healthy.
+- `{"linked":true,"connected":true,...}`: healthy.
 - `{"linked":true,"connected":false,...}`: let the daemon reconnect; use the
   returned `next` only if it cannot.
 - `{"linked":false,"connecting":true,...}`: wait for the active link attempt.
-- `{"linked":false,"connected":false,"next":"run: whatsapp connect",...}`:
-  for initial setup, run the selected method once; if a previous link was lost,
-  request approval first.
+- `{"linked":false,"connected":false,"next":"run: whatsapp connect",...}`: for
+  first setup, run the selected method once; if a prior link was lost, get
+  approval first (see the [linking rule](SKILL.md#the-linking-rule)).
 
-`whatsapp daemon status` adds pairing-attempt and sync-lock details. Read
-`~/agent/logs/whatsapp.log` for daemon output. Use `whatsapp daemon start` to
-idempotently bring up a stopped daemon; do not run `whatsapp serve` in the
-background or manage its process by hand.
+`whatsapp daemon status` adds pairing-attempt and sync-lock detail;
+`~/agent/logs/whatsapp.log` has daemon output. Use `whatsapp daemon start` to
+idempotently bring up a stopped daemon; never run `whatsapp serve` by hand.
+
+A headless (Vesta Cloud or Double Tick) `whatsapp connect` returns a terminal
+status. Handle each:
+
+- `provisioning`: wait the stated delay, then repeat the same `whatsapp connect` once.
+- `blocked`: Double Tick found the WhatsApp account unusable; follow `next` for a
+  fresh account.
+- `rate_limited`: wait out the cooldown in `reason`; never retry-loop or generate
+  extra pair codes.
+- logged out after a prior link, or auth state gone after a restore/restart: get
+  approval, then repeat the same connect once.
+- companion cannot obtain or validate its
+  [residential proxy lease](MANAGED_AUTH.md#residential-proxy-lease): stop; do not
+  pair or reconnect over direct egress.
 
 ## Named instances
 
 Use `--instance <name>` when the box intentionally links more than one account.
 Each instance has its own daemon, socket, device store, state, and notifications.
-Keep the flag on setup and subsequent commands, for example:
+Keep the flag on every command:
 
 ```bash
 whatsapp connect --instance personal
@@ -82,43 +76,34 @@ whatsapp status --instance personal
 whatsapp messages --instance personal --limit 10
 ```
 
-Start read-only or silent instances with the corresponding daemon flags; the
-daemon persists them across its own restarts. Never point two instances at the
-same account/device store.
+For a read-only or silent instance, pass `--read-only` (blocks sending, receipts,
+and presence) or `--no-notifications` when you first bring it up (on `whatsapp
+connect` or `whatsapp daemon start`); the daemon records them in `state.json` and
+reapplies them across its own restarts. Never point two instances at the same
+account/device store.
 
-## Troubleshooting
+## Operational notes
 
-- A Double Tick account reports `provisioning`: wait for the stated delay, then repeat
-  the same idempotent `whatsapp connect` command once.
-- A Double Tick account reports `blocked`: Double Tick reports the WhatsApp
-  failure; follow `next` for a fresh account.
-- A Double Tick account reports `rate_limited`: wait out the cooldown in `reason`.
-- A Double Tick companion cannot obtain or validate its residential proxy lease:
-  stop. Do not pair or reconnect over unrelated direct egress.
-- Auth state is gone after restore/restart: request approval before running the
-  selected method's connect command again.
+- For five minutes after a successful link, history sync locks daemon
+  stop/restart. A brief websocket EOF or `can't send presence without PushName
+  set` is normal in this window; do not bounce the daemon.
+- Use a dedicated account for the assistant. Linking a personal account grants it
+  access to that account's chats.
 
-## How transcription works
+## Transcription
 
-1. When a voice note arrives, the CLI downloads the audio via the WhatsApp media API
-2. `ffmpeg` converts the OGG/Opus audio to 16kHz mono WAV
-3. The built-in whisper.cpp bindings transcribe the audio to text
-4. The transcription replaces the `[audio]` placeholder in the notification
+Voice notes transcribe in-process: the CLI downloads the audio, `ffmpeg` converts
+it to 16kHz mono WAV, and the built-in whisper.cpp bindings replace the `[audio]`
+placeholder with the text. Override the model path with the `WHISPER_MODEL` env
+var (default `/usr/local/share/ggml-small.bin`, downloaded by `setup.sh`).
 
-All transcription runs in-process. Model path override: `WHISPER_MODEL` env var
-(default `/usr/local/share/ggml-small.bin`, downloaded by setup.sh).
+## Contact cards
 
-## Contact card support
-
-When someone sends a WhatsApp contact card (vCard), it is parsed and stored as:
+A received WhatsApp contact card (vCard) is parsed and stored, taking the number
+from the vCard `TEL` field, as:
 
 ```
 [Contact: Name - +phonenumber]
 ```
 
-The phone number is extracted from the `TEL` field of the vCard. Use `list-received-contacts` to list all received contact cards:
-
-```bash
-whatsapp list-received-contacts
-whatsapp list-received-contacts --to Alex --limit 10
-```
+List received cards with `whatsapp list-received-contacts [--to <name>] [--limit N]`.

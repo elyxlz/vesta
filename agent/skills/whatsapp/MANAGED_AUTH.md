@@ -1,99 +1,45 @@
-# WhatsApp service boundaries and authentication
+# WhatsApp authentication and proxy
 
-Use this technical reference after selecting an operational setup guide:
+Auth boundaries and the proxy rule for the two headless methods
+([Vesta Cloud](SETUP_VESTA_CLOUD.md), [Double Tick](SETUP_DOUBLETICK.md)). The
+[SETUP.md](SETUP.md) flow selects the method and owns recovery.
 
-- [SETUP_VESTA_CLOUD.md](SETUP_VESTA_CLOUD.md) for Vesta Cloud orchestration.
-- [SETUP_DOUBLETICK.md](SETUP_DOUBLETICK.md) for the standalone Double Tick service.
-- [SETUP_SELF_MANAGED.md](SETUP_SELF_MANAGED.md) when the user's phone stays the
-  WhatsApp account.
+Account source and API transport are independent decisions: never infer both from
+the word "managed" or from the presence of credentials.
 
-A Double Tick service provides the WhatsApp account end to end. Vesta Cloud brokers
-entitlement and authentication; the agent runs the companion. Account source and
-API transport are independent decisions: never use “managed” or the presence of
-credentials to infer both.
+## Auth
 
-## Contents
+**Vesta Cloud route.** The agent holds no standing Double Tick secret. It asks
+local vestad for a short-lived server-identity token and calls Vesta Cloud's
+WhatsApp route with it; Vesta Cloud verifies tenant entitlement and provisions a
+hosted Double Tick account. Vesta Cloud carries API traffic only, never the
+WhatsApp socket.
 
-- [Service boundaries](#service-boundaries)
-- [Vesta Cloud route](#vesta-cloud-route)
-- [Double Tick route](#double-tick-route)
-- [Headless Double Tick account flow](#headless-double-tick-account-flow)
-- [Failure ownership](#failure-ownership)
-- [Persisted selection](#persisted-selection)
+**Double Tick route.** The agent calls `DOUBLETICK_API_URL` directly with
+`Authorization: Bearer $DOUBLETICK_API_KEY` (a `wak_` account-scoped key that
+never traverses Vesta Cloud). Set `DOUBLETICK_API_URL` and `DOUBLETICK_API_KEY`
+together or not at all; complete direct credentials take precedence over cloud
+identity. A `vesta.run` hostname may front a standalone Double Tick service over a
+Cloudflare tunnel without making it a Vesta Cloud request path.
 
-## Service boundaries
+## Residential proxy lease
 
-| Component | Owns | Does not own |
-| --- | --- | --- |
-| Double Tick | The headless WhatsApp account end to end (registration, sessions, companion pairing, WhatsApp health, and the account-bound residential proxy) | Tenant billing or entitlement |
-| Vesta Cloud | Tenant authentication, entitlement, and brokering a hosted Double Tick WhatsApp account | WhatsApp sessions or the account-bound proxy |
-| Agent | Companion session and local WhatsApp state | The headless WhatsApp account |
+Both headless methods bind a residential proxy to the WhatsApp account. The
+companion must install that bound lease and use it on initial pairing and on every
+reconnect. The proxy carries WhatsApp traffic only; API requests use the Vesta
+Cloud or direct route above.
 
-## Vesta Cloud route
-
-1. The agent asks local vestad for a short-lived server-identity token.
-2. It calls Vesta Cloud's WhatsApp route with that token.
-3. Vesta Cloud verifies tenant entitlement and provisions a hosted Double Tick
-   WhatsApp account.
-4. Double Tick supplies the account's proxy lease and accepts companion pairing.
-
-The agent holds no standing Double Tick secret. Vesta Cloud owns orchestration and
-service credentials; it does not proxy the WhatsApp socket.
-
-## Double Tick route
-
-The agent calls `DOUBLETICK_API_URL` with:
-
-```text
-Authorization: Bearer wak_account-scoped-key
-```
-
-The `wak_` key authenticates only to the Double Tick service and never traverses
-Vesta Cloud.
-
-A `vesta.run` Cloudflare hostname can front a standalone Double Tick service
-without making it a Vesta Cloud request path. Complete direct credentials take
-precedence over cloud identity and must be set together:
-`DOUBLETICK_API_URL` plus `DOUBLETICK_API_KEY`.
-
-## Headless Double Tick account flow
-
-Both Vesta Cloud and a standalone Double Tick service provide a ready headless
-WhatsApp account:
-
-1. The Double Tick service provisions or recovers the WhatsApp account.
-2. Double Tick returns the residential proxy bound to that account.
-3. The companion installs that proxy before generating its pairing code.
-4. Double Tick accepts the pairing code and keeps the account session available.
-
-The companion must use the bound Double Tick proxy on initial pairing and every
-reconnect. This policy follows `primary_mode=doubletick`, not whether the API route
-is cloud or direct. Fail closed when the lease is missing or invalid.
-
-Do not allow an arbitrary `WHATSAPP_PROXY_URL` to replace the bound lease for a
-Double Tick account. A user-supplied proxy is only meaningful for the user's own
-phone, where no Double Tick account exists.
+Fail closed: if the lease is missing or invalid, stop and report rather than
+connecting over the datacenter IP or any other direct egress. Do not let a
+user-supplied `WHATSAPP_PROXY_URL` replace the bound lease for a headless account;
+a user-supplied proxy is meaningful only for a self-managed account, where no
+Double Tick account exists.
 
 ## Failure ownership
 
 Keep failures with the service that owns the state:
 
-- WhatsApp restricted, banned, logged out, or pairing failed: Double Tick.
+- WhatsApp restricted, banned, logged out, or pairing failed: Double Tick. Follow
+  its `next` for a fresh account.
 - Tenant unauthorized: Vesta Cloud.
 - Companion disconnected with a healthy account: agent/CLI.
-
-When Double Tick reports a banned or unusable WhatsApp account, follow its `next`
-for a fresh account; recovering the account is Double Tick's to handle.
-
-## Persisted selection
-
-Persist these independent facts per WhatsApp instance:
-
-```text
-primary_mode  = user | doubletick
-api_transport = none | vesta_cloud | doubletick
-```
-
-Use `primary_mode` for proxy and reply-first policy, and `api_transport` for API
-authentication and routing. Internal aliases remain implementation details; agents
-invoke `whatsapp connect`.

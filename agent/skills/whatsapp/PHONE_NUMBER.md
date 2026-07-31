@@ -1,22 +1,17 @@
-# Getting a Separate Phone Number for WhatsApp
+# Getting a phone number for a self-managed account
 
-Vesta needs its own WhatsApp account with a dedicated phone number. **Do not use your personal WhatsApp.** Vesta will read and send messages from whatever account it's linked to.
+A self-managed account is a dedicated WhatsApp account for the agent, registered
+on a SIM the user procures themselves. **Do not use a personal WhatsApp:** the
+agent reads and sends from whatever account it links to. This guide helps the user
+acquire a suitable number; then link the agent as a companion with
+[SETUP_SELF_MANAGED.md](SETUP_SELF_MANAGED.md).
 
-You need a real mobile number from an actual carrier. Most VoIP/virtual numbers (Google Voice, TextNow, Skype) are blocked by WhatsApp.
+Use a real mobile number from an actual carrier. Most VoIP / virtual numbers
+(Google Voice, TextNow, Skype) are blocked by WhatsApp.
 
-## Contents
+## Step 1: Get a number
 
-- [Bring your own carrier number](#bring-your-own-carrier-number)
-- [Get a number](#step-1-get-a-number)
-- [Register WhatsApp](#step-2-register-whatsapp-with-the-new-number)
-- [Link to Vesta](#step-3-link-to-vesta)
-- [Warnings](#important-warnings)
-
-## Bring your own carrier number
-
-## Step 1: Get a Number
-
-### Cheapest Options by Region
+Cheapest prepaid PAYG options by region:
 
 **UK**
 | Provider | Type | Cost | Keep-alive |
@@ -44,67 +39,34 @@ You need a real mobile number from an actual carrier. Most VoIP/virtual numbers 
 | Lebara | SIM / eSIM | From 5 EUR/month PAYG | Varies by country |
 | Lycamobile | SIM / eSIM | From 5 EUR/month PAYG | Use within 90 days |
 
-**Other Regions**: look for the cheapest prepaid PAYG SIM from a local carrier. Avoid data-only eSIMs (Airalo, Holafly, etc.) as they don't provide a phone number and can't receive the WhatsApp verification SMS.
+**Other regions**: pick the cheapest prepaid PAYG SIM from a local carrier. Avoid
+data-only eSIMs (Airalo, Holafly, etc.): they give no phone number and cannot
+receive the WhatsApp verification code.
 
-### eSIM vs Physical SIM
+eSIM activates instantly by QR and works on most phones from 2018+; a physical SIM
+works on any unlocked phone, better for a cheap dedicated handset.
 
-**eSIM** (recommended): Instant activation via QR code, no waiting for delivery. Works on most phones from 2018+. Ideal if you're setting up WhatsApp on your primary phone via a second account or work profile.
+## Step 2: Register WhatsApp on the new number
 
-**Physical SIM**: Works on any unlocked phone. Better if you're using a cheap dedicated phone for the agent. May require visiting a store or waiting for delivery.
+WhatsApp must be installed somewhere to register the number. Pick one:
 
-## Step 2: Register WhatsApp with the New Number
+- **Built-in multi-account (recommended)**: WhatsApp natively supports two
+  accounts on one device. Android: Settings > arrow next to your name > **Add
+  Account**. iPhone: open `https://wa.me/settings?showAddAccountTooltip=true` to
+  surface **Add Account**, then add it. Verify the new number when prompted.
+- **WhatsApp Business app**: install alongside personal WhatsApp and register it to
+  the new number. Works on Android and iPhone.
+- **Android work profile**: Shelter or Island (or Samsung Dual Messenger / Xiaomi
+  Dual Apps) clones WhatsApp into an isolated profile; register the clone.
+- **Spare phone**: register WhatsApp on any cheap Android handset. It need not stay
+  online permanently, though WhatsApp may ask for periodic re-verification.
 
-You need WhatsApp installed somewhere to register the number. There are several approaches depending on your device.
+## Warnings
 
-### Option A: Use WhatsApp's Built-in Multi-Account (Recommended)
-
-WhatsApp now natively supports two accounts on a single device (Android and iPhone). This is the simplest method.
-
-**Android (WhatsApp 2.24.3+):**
-1. Open WhatsApp > Settings > tap the arrow next to your name > **Add Account**
-2. Enter your new number and verify via SMS
-3. Each account has separate chats, notifications, and settings
-
-**iPhone (WhatsApp 25.11.3+):**
-1. WhatsApp gates this feature by rollout and it's currently never visible in Settings by default, so first open this deeplink on the iPhone to activate it: `https://wa.me/settings?showAddAccountTooltip=true`. It opens WhatsApp Settings with the **Add Account** option surfaced.
-2. Tap the arrow next to your name > **Add Account**
-3. Enter your new number and verify via SMS
-4. Tap your profile icon to switch between accounts
-
-If the deeplink doesn't surface **Add Account** and you still can't find the multi-account option, use the WhatsApp Business app instead (Option C below): it's a separate app you can register to the new number without touching your personal WhatsApp.
-
-### Option B: Work Profile (Android)
-
-Creates a fully isolated second copy of WhatsApp. Good if you want complete separation.
-
-1. Install **Shelter** (F-Droid, open source) or **Island** (Play Store)
-2. These apps create an Android Work Profile (a sandboxed environment)
-3. Clone WhatsApp into the work profile
-4. Open the cloned WhatsApp and register with your new number
-
-**Samsung** has this built in: Settings > Advanced Features > Dual Messenger > toggle WhatsApp > Install.
-
-**Xiaomi/MIUI**: Settings > Apps > Dual Apps > toggle WhatsApp.
-
-### Option C: WhatsApp Business App
-
-Install both "WhatsApp" (personal) and "WhatsApp Business" (for the agent) from your app store. They're separate apps that can each be registered to a different number. Works on both Android and iPhone.
-
-### Option D: Cheap Spare Phone
-
-Buy any cheap Android phone (even used, even without its own SIM after initial setup). Register WhatsApp on it with the new number. WhatsApp's multi-device feature means the agent can operate independently once linked. The spare phone doesn't need to stay online permanently, but WhatsApp may require periodic re-verification.
-
-## Step 3: Link to Vesta
-
-Once WhatsApp is registered with the new number, follow
-[SETUP_SELF_MANAGED.md](SETUP_SELF_MANAGED.md) to link Vesta as a companion.
-
-## Important Warnings
-
-**Keep a user-provided number active.** Prepaid numbers expire if unused. Set a reminder to top up or make a call before expiry (typically every 60-180 days depending on carrier). If the number expires and gets recycled, you lose the WhatsApp account permanently.
-
-**WhatsApp may re-verify.** Occasionally WhatsApp asks you to re-verify via SMS. For a user-provided number, keep access to its SIM.
-
-**Make the first message an incoming one.** Before Vesta sends anything from the new account, message the new number from your own personal phone first, so its first interaction is receiving a message rather than sending one.
-
-**Number recycling.** If your prepaid number expires, the carrier will eventually reassign it. The new owner could register WhatsApp with that number, permanently disconnecting your agent.
+- **Keep the number active.** Prepaid numbers expire if unused (typically 60-180
+  days). Set a reminder to top up or call before expiry; a recycled number
+  permanently loses the WhatsApp account to whoever registers it next.
+- **WhatsApp may re-verify.** Keep access to the SIM so you can re-verify by code.
+- **Make the first message incoming.** Before the agent sends from the new account,
+  message the number from your personal phone first, so its first interaction is
+  receiving rather than sending.
