@@ -6,23 +6,11 @@ You need a real mobile number from an actual carrier. Most VoIP/virtual numbers 
 
 ## Contents
 
-- [Vesta Switchboard](#vesta-cloud-acquire-one-from-switchboard)
 - [Bring your own carrier number](#bring-your-own-carrier-number)
 - [Get a number](#step-1-get-a-number)
 - [Register WhatsApp](#step-2-register-whatsapp-with-the-new-number)
 - [Link to Vesta](#step-3-link-to-vesta)
 - [Warnings](#important-warnings)
-
-## Vesta Cloud: acquire one from Switchboard
-
-For a self-managed account on Vesta Cloud, `whatsapp connect --own-number` asks
-Vesta Switchboard for a number lease and relays its verification SMS. The user
-still registers WhatsApp on their own phone; Double Tick is not involved. Follow
-[SETUP_SELF_MANAGED.md](SETUP_SELF_MANAGED.md) for the complete flow.
-
-Switchboard retains the carrier-number/SIM lease and handles later SMS recovery.
-Do not promise that the user can port, independently re-verify, or retain that
-number outside the Switchboard agreement.
 
 ## Bring your own carrier number
 
@@ -113,9 +101,9 @@ Once WhatsApp is registered with the new number, follow
 
 ## Important Warnings
 
-**Keep a user-provided number active.** Prepaid numbers expire if unused. Set a reminder to top up or make a call before expiry (typically every 60-180 days depending on carrier). If the number expires and gets recycled, you lose the WhatsApp account permanently. A Switchboard number is a single-use verification lease, not a number you keep alive, so these top-up and expiry warnings do not apply to it.
+**Keep a user-provided number active.** Prepaid numbers expire if unused. Set a reminder to top up or make a call before expiry (typically every 60-180 days depending on carrier). If the number expires and gets recycled, you lose the WhatsApp account permanently.
 
-**WhatsApp may re-verify.** Occasionally WhatsApp asks you to re-verify via SMS. For a user-provided number, keep access to its SIM. For a Switchboard number, request the SMS through Switchboard.
+**WhatsApp may re-verify.** Occasionally WhatsApp asks you to re-verify via SMS. For a user-provided number, keep access to its SIM.
 
 **Make the first message an incoming one.** Before Vesta sends anything from the new account, message the new number from your own personal phone first, so its first interaction is receiving a message rather than sending one.
 

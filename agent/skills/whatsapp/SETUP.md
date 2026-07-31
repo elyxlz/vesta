@@ -32,14 +32,13 @@ ships in the agent image.
 | --- | --- |
 | Give a Vesta Cloud tenant a managed number using Switchboard and Double Tick | [SETUP_VESTA_CLOUD.md](SETUP_VESTA_CLOUD.md) |
 | Give a non-cloud agent a headless WhatsApp primary through direct Double Tick | [SETUP_DOUBLETICK_DIRECT.md](SETUP_DOUBLETICK_DIRECT.md) |
-| Keep the user's phone as primary, with an existing or Switchboard-provided number | [SETUP_SELF_MANAGED.md](SETUP_SELF_MANAGED.md) |
+| Keep the user's phone as primary, with an existing or separately acquired number | [SETUP_SELF_MANAGED.md](SETUP_SELF_MANAGED.md) |
 
 The terms describe management, not deployment location. “Direct Double Tick” is
 self-hosted API access and never traverses Vesta Cloud. “Self-managed” means the
 user's phone remains the primary. “Headless managed” means Double Tick operates
 the WhatsApp primary, but a separate number service owns the number/SIM lifecycle.
-On Vesta Cloud that service is Switchboard. `--own-number` only asks Switchboard
-for a self-managed number; it does not invoke Double Tick or create another method.
+On Vesta Cloud that service is Switchboard.
 
 ## Universal safety rules
 

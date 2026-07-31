@@ -28,20 +28,16 @@ ownership choice, then read exactly that guide before the first link:
 | --- | --- | --- | --- | --- |
 | Vesta Cloud-managed number | Headless Double Tick primary | Vesta Cloud coordinates Switchboard for the number/SMS and Double Tick for WhatsApp | `whatsapp connect --opener '<text>'` | [SETUP_VESTA_CLOUD.md](SETUP_VESTA_CLOUD.md) |
 | Direct Double Tick-managed number | Headless Double Tick primary | Agent calls Double Tick directly; the operator configures a separate number provider | `whatsapp connect --opener '<text>'` | [SETUP_DOUBLETICK_DIRECT.md](SETUP_DOUBLETICK_DIRECT.md) |
-| Self-managed WhatsApp account | User's phone | None for normal operation; Vesta Cloud can optionally acquire the number from Switchboard | `whatsapp connect`, `--phone`, or `--own-number` | [SETUP_SELF_MANAGED.md](SETUP_SELF_MANAGED.md) |
+| Self-managed WhatsApp account | User's phone | None (the user brings their own WhatsApp number) | `whatsapp connect` or `--phone` | [SETUP_SELF_MANAGED.md](SETUP_SELF_MANAGED.md) |
 
 Do not infer ownership from where the agent runs. A self-hosted agent with
 `DOUBLETICK_API_URL` and `DOUBLETICK_API_KEY` uses Direct Double Tick; it does not
-use Vesta Cloud. Within the self-managed method, `--own-number` can acquire a
-number from Vesta Switchboard before the user registers it on their phone. Double
-Tick is not involved in that flow. It is not a fourth method: the user's phone
-remains the primary.
+use Vesta Cloud.
 
 Selection order is deterministic: an existing linked device resumes; otherwise
-explicit `--own-number` selects the self-managed acquisition flow, complete direct
-Double Tick credentials select the direct headless path, a Vesta Cloud tenant
-selects the cloud-managed path, and everything else uses self-managed QR or phone
-pairing. Do not manually choose an internal subcommand.
+complete direct Double Tick credentials select the direct headless path, a Vesta
+Cloud tenant selects the cloud-managed path, and everything else uses self-managed
+QR or phone pairing. Do not manually choose an internal subcommand.
 
 For either headless Double Tick method, the companion's WhatsApp socket must use
 the residential proxy lease for the bound primary on initial pairing and every

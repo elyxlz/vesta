@@ -449,14 +449,12 @@ var commands = []command{
 	{name: "call-status", run: cmdCallStatus},
 	{name: "daemon-status", hidden: true, run: cmdDaemonStatus},
 	{name: "link", hidden: true, timeout: LinkSocketTimeout, run: cmdLink},
-	{name: "own-number-link", hidden: true, timeout: LinkSocketTimeout, run: cmdOwnNumberLink},
 }
 
 // linkViaQR runs a QR companion-link socket command end to end: parse the shared
 // port + ban-override flags, gate on the linked fact, single-flight, record the
-// rate-limit attempt, then invoke link (the QR mechanism). Both self-hosted `link`
-// (through the linker) and user-owned `own-number-link` (direct, bypassing the
-// managed linker's own-number paradigm) share this body.
+// rate-limit attempt, then invoke link (the QR mechanism). Self-hosted `link`
+// (through the linker) uses this body.
 func linkViaQR(name string, args []string, wac *WhatsAppClient, link func(port int) (linkResult, error), result map[string]any) (any, error) {
 	var port int
 	var acknowledged bool
@@ -521,16 +519,6 @@ func cmdLink(args []string, wac *WhatsAppClient) (any, error) {
 	return linkViaQR("link", args, wac, func(port int) (linkResult, error) {
 		return wac.linker.linkQR(wac, port)
 	}, map[string]any{"status": string(AuthStatusAuthenticated)})
-}
-
-// cmdOwnNumberLink links the agent as a COMPANION to a user-owned pool number the
-// user already registered on their own phone (see runConnectOwnNumber). It runs the
-// QR link DIRECTLY rather than through the linker: on a cloud box the linker owns the
-// agent's OWN number and rejects a QR link, but here the primary is the user's phone.
-func cmdOwnNumberLink(args []string, wac *WhatsAppClient) (any, error) {
-	return linkViaQR("own-number-link", args, wac, func(port int) (linkResult, error) {
-		return wac.runQRLink(port)
-	}, map[string]any{"status": string(AuthStatusAuthenticated), "owner": "user"})
 }
 
 func cmdDaemonStatus(args []string, wac *WhatsAppClient) (any, error) {

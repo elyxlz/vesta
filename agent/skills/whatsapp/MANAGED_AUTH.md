@@ -86,19 +86,6 @@ Do not allow an arbitrary `WHATSAPP_PROXY_URL` to replace the bound lease for a
 Double Tick primary. A user-supplied proxy is only meaningful for self-managed
 accounts, where no Double Tick primary exists.
 
-## Switchboard-assisted self-managed flow
-
-`whatsapp connect --own-number` uses Switchboard without Double Tick:
-
-1. Vesta Cloud asks Switchboard for a tenant number lease.
-2. The user registers that number on their own phone.
-3. Switchboard relays the verification SMS.
-4. The user scans the ordinary QR page to link the agent as a companion.
-
-The user's phone remains the primary. Switchboard continues to own the number/SIM
-lease and future SMS delivery but never gains a WhatsApp session. This flow has no
-Double Tick proxy or reply-first restriction.
-
 ## Failure ownership
 
 Keep failures with the service that owns the state:

@@ -37,7 +37,6 @@ func TestConnectRejectsUnknownFlagsInsteadOfStartingQR(t *testing.T) {
 
 func TestConnectRejectsConflictingPairingMethods(t *testing.T) {
 	for _, args := range [][]string{
-		{"--phone", "+393481234567", "--own-number"},
 		{"--phone", "+393481234567", "--port", "61012"},
 	} {
 		if _, err := parseConnectOptions("connect", args); err == nil {
@@ -87,7 +86,6 @@ func TestConnectRejectsFlagsThatDoNotApplyToTheSelectedMode(t *testing.T) {
 		{[]string{"--port", "61012"}, true},
 		{[]string{"--acknowledge-ban-risk"}, true},
 		{[]string{"--opener", "hello"}, false},
-		{[]string{"--own-number", "--opener", "hello"}, true},
 	}
 	for _, tc := range cases {
 		opts, err := parseConnectOptions("connect", tc.args)
