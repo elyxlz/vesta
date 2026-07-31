@@ -34,7 +34,7 @@ const harnessModules = new Map([
   ],
   [
     "react-native-reanimated",
-    path.resolve(__dirname, "harness/reanimated.ts"),
+    path.resolve(__dirname, "harness/reanimated.js"),
   ],
 ]);
 const defaultResolveRequest = config.resolver.resolveRequest;
