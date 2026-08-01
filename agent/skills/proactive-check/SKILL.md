@@ -45,6 +45,8 @@ Check `resets_at` before you throttle: if the tight window resets shortly, defer
 
 **Overnight ticks default one band stricter.** Nobody is awake, so nothing discretionary is urgent, and the cost of being wrong is asymmetric: burn the week's budget at 3am on unprompted research and you are rationed during the hours the user is actually awake and asking. A deep dig that genuinely matters keeps until morning; if it does not keep, it was due work, not a proactive pass.
 
+**Count the agents you will actually get, not the ones you spawn.** Subagents spawn their own, so "I'll run three" can quietly become five or more, and the total is what lands on the budget. If a fan-out matters enough to size, say the size in each agent's prompt, or check the count afterwards and note the gap. A dig that returns excellent results is the case where nobody, including you, will think to look.
+
 **The tell you are over-spending is not the number, it is the justification.** "While it's quiet I might as well go deep" is the exact thought that produces a six-figure-token research run for a task with a deadline five days out that the user never mentioned. Quiet is not a reason to spend, it is a reason the spending is invisible.
 
 ## Two questions, every time
