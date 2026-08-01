@@ -22,7 +22,6 @@ DAEMONS_DIR = pl.Path.home() / "agent/data/daemons"
 PIDFILE = DAEMONS_DIR / f"{NAME}.pid"
 PORTFILE = DAEMONS_DIR / f"{NAME}.port"
 LOG = pl.Path.home() / "agent/logs" / f"{NAME}.log"
-# /health is the one route that answers without the api key, so it is the readiness probe.
 READY_URL_PATH = "health"
 USAGE = f"Usage: {NAME} daemon <start|stop|restart|status>"
 POLL_SECS = 0.5
