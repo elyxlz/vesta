@@ -18,7 +18,7 @@ Run `whatsapp status`; stop if already linked or an attempt is active.
 ## Preferred: QR
 
 ```bash
-whatsapp connect
+whatsapp connect --source self-managed
 ```
 
 Returns one public QR-page URL. Send it to the user; they scan the live code from
@@ -32,7 +32,7 @@ is active.
 Only when the user cannot scan a QR and explicitly approves a pairing attempt:
 
 ```bash
-whatsapp connect --phone '+12025551234'
+whatsapp connect --source self-managed --phone '+12025551234'
 ```
 
 Confirm the echoed E.164 number exactly. Send the returned code for

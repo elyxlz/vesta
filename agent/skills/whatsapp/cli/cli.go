@@ -1140,14 +1140,14 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 		if errors.Is(err, errPoolFilling) {
 			return map[string]any{
 				"status": "provisioning",
-				"next":   "Your number is still being set up. Re-run `whatsapp connect` in about 30 seconds; it is idempotent, so repeating it is safe until it returns linked.",
+				"next":   "Your number is still being set up. Re-run the same connect command in about 30 seconds; it is idempotent, so repeating it is safe until it returns linked.",
 			}, nil
 		}
 		if errors.Is(err, errBlocked) {
 			return map[string]any{
 				"status": "blocked",
 				"reason": err.Error(),
-				"next":   "This number was blocked and cannot be used. Re-run `whatsapp connect` to get a fresh number.",
+				"next":   "This number was blocked and cannot be used. Re-run the same connect command to get a fresh number.",
 			}, nil
 		}
 		if errors.Is(err, errRateLimited) {
@@ -1155,7 +1155,7 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 			return map[string]any{
 				"status": "rate_limited",
 				"reason": err.Error(),
-				"next":   "Too many link attempts on this number recently. Wait out the cooldown noted above before running `whatsapp connect` again; repeated pairing is exactly what gets a fresh number banned.",
+				"next":   "Too many link attempts on this number recently. Wait out the cooldown noted above before re-running the same connect command; repeated pairing is exactly what gets a fresh number banned.",
 			}, nil
 		}
 		if errors.Is(err, errRestricted) {

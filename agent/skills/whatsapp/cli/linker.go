@@ -64,7 +64,7 @@ func chooseLinker(cfg managedConfig, state *stateStore) linker {
 // qrLinker links the user's own WhatsApp account (self-hosted paradigm).
 type qrLinker struct{}
 
-func (qrLinker) name() string { return "self-hosted" }
+func (qrLinker) name() string { return "self-managed" }
 
 func (qrLinker) provision(*WhatsAppClient) (linkResult, error) {
 	return linkResult{}, fmt.Errorf("managed WhatsApp is only available on a hosted (vesta.run) box; this box links the user's own WhatsApp: run `whatsapp connect`")
@@ -86,7 +86,7 @@ type managedLinker struct {
 	state *stateStore
 }
 
-func (*managedLinker) name() string { return "managed" }
+func (*managedLinker) name() string { return "headless" }
 
 func (*managedLinker) linkQR(*WhatsAppClient, int) (linkResult, error) {
 	return linkResult{}, fmt.Errorf("this managed (vesta.run) box links its own pooled number; run `whatsapp connect`")

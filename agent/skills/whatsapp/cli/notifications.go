@@ -285,7 +285,7 @@ func managedParadigm() bool {
 func WriteUnpairedNotification(notifDir, instance string) error {
 	message := "WhatsApp daemon started without a paired device session. Run `whatsapp connect` to link (when the user is ready)."
 	if managedParadigm() {
-		message = "WhatsApp daemon started without a paired device session. Run `whatsapp connect` now to re-link your managed number; it reclaims the number autonomously and needs no user step."
+		message = "WhatsApp daemon started without a paired device session. Run `whatsapp connect` now to re-link your headless account; it reclaims the number autonomously and needs no user step."
 	}
 	n := authNotif{
 		Source:    "whatsapp",
@@ -306,7 +306,7 @@ func WriteLoggedOutNotification(notifDir, instance, reason string) error {
 		message += " (" + reason + ")"
 	}
 	if managedParadigm() {
-		message += ". This is NOT re-linked automatically, but a managed number reauthorizes autonomously: run `whatsapp connect` now to re-link the SAME number, no user step needed. Do not retry-loop pairing."
+		message += ". This is NOT re-linked automatically, but a headless account reauthorizes autonomously: run `whatsapp connect` now to re-link the SAME number, no user step needed. Do not retry-loop pairing."
 	} else {
 		message += ". This is NOT re-linked automatically. When the user is ready, run `whatsapp connect` to re-link. Do not retry-loop pairing."
 	}

@@ -31,7 +31,7 @@ func TestSimpleStatusNotLinkedSurfacesReason(t *testing.T) {
 	if got["linked"] != false {
 		t.Errorf("linked = %v, want false", got["linked"])
 	}
-	if got["next"] != "run: whatsapp connect" {
+	if got["next"] != "run: whatsapp connect --source <cloud|doubletick|self-managed>" {
 		t.Errorf("next = %v, want the connect hint", got["next"])
 	}
 	if got["reason"] != "unlinked from the phone (stream:error logout)" {

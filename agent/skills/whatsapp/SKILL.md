@@ -23,15 +23,16 @@ Never recover by manually re-pairing or restarting the daemon.
 
 ## Choose the setup method
 
-`whatsapp connect` is the one setup verb; the account comes from one of three
-sources. [SETUP.md](SETUP.md) has the decision flow that picks the source from the
-environment and the user's choice; read the matching guide before the first link.
+`whatsapp connect` is the one setup verb, and `--source` is required: you state the
+account source, the CLI never guesses. [SETUP.md](SETUP.md) has the decision flow
+that picks the source from the environment and the user's choice; read the matching
+guide before the first link.
 
 | Account source | Command | Guide |
 | --- | --- | --- |
-| Vesta Cloud WhatsApp account | `whatsapp connect --opener '<text>'` | [SETUP_VESTA_CLOUD.md](SETUP_VESTA_CLOUD.md) |
-| Double Tick WhatsApp account | `whatsapp connect --opener '<text>'` | [SETUP_DOUBLETICK.md](SETUP_DOUBLETICK.md) |
-| Self-managed account | `whatsapp connect` or `--phone` | [SETUP_SELF_MANAGED.md](SETUP_SELF_MANAGED.md) |
+| Vesta Cloud WhatsApp account | `whatsapp connect --source cloud --opener '<text>'` | [SETUP_VESTA_CLOUD.md](SETUP_VESTA_CLOUD.md) |
+| Double Tick WhatsApp account | `whatsapp connect --source doubletick --opener '<text>'` | [SETUP_DOUBLETICK.md](SETUP_DOUBLETICK.md) |
+| Self-managed account | `whatsapp connect --source self-managed` (or `--phone`) | [SETUP_SELF_MANAGED.md](SETUP_SELF_MANAGED.md) |
 
 A Vesta Cloud or Double Tick account is headless and **reply-first**: compose a
 warm opener in your own voice from the user's perspective, pass it with

@@ -18,21 +18,26 @@ the agent image.
 ## Select one account method
 
 Work through this in order; do not ask the user anything you can determine
-yourself. It is about where the account comes from, not where the agent runs.
+yourself. It is about where the account comes from, not where the agent runs. You
+pick the source and pass it explicitly as `--source`; the CLI never guesses.
 
 1. **Already linked?** `whatsapp status` returns `linked:true`. Use it and stop.
-2. **Vesta Cloud managed box?** Set up the
-   [Vesta Cloud WhatsApp account](SETUP_VESTA_CLOUD.md) straight away, silently,
-   without asking or telling the user. It is automatic.
-3. **`DOUBLETICK_API_URL` and `DOUBLETICK_API_KEY` both set?** Set up the
-   [Double Tick WhatsApp account](SETUP_DOUBLETICK.md) with them.
-4. **Otherwise, ask the user** which they want, then follow that one guide:
-   - [Double Tick WhatsApp account](SETUP_DOUBLETICK.md): a provisioning service
-     that hands the agent a ready headless account. Ask whether they have Double
-     Tick credentials.
-   - [self-managed account](SETUP_SELF_MANAGED.md): the user supplies a dedicated
-     WhatsApp account on their own SIM (a second account on their phone, or a
-     spare phone) and the agent links to it as a companion.
+2. **Vesta Cloud managed box?** Run
+   `whatsapp connect --source cloud --opener '<text>'` straight away, silently,
+   without asking or telling the user. It is automatic. See the
+   [Vesta Cloud WhatsApp account](SETUP_VESTA_CLOUD.md) guide.
+3. **`DOUBLETICK_API_URL` and `DOUBLETICK_API_KEY` both set?** Run
+   `whatsapp connect --source doubletick --opener '<text>'`. See the
+   [Double Tick WhatsApp account](SETUP_DOUBLETICK.md) guide.
+4. **Otherwise, ask the user** which they want, then run that one command:
+   - Double Tick credentials in hand:
+     `whatsapp connect --source doubletick --opener '<text>'`. A provisioning
+     service that hands the agent a ready headless account. See the
+     [Double Tick WhatsApp account](SETUP_DOUBLETICK.md) guide.
+   - Their own account: `whatsapp connect --source self-managed`. The user
+     supplies a dedicated WhatsApp account on their own SIM (a second account on
+     their phone, or a spare phone) and the agent links to it as a companion. See
+     the [self-managed account](SETUP_SELF_MANAGED.md) guide.
 
 ## Status and recovery
 
@@ -71,7 +76,7 @@ Each instance has its own daemon, socket, device store, state, and notifications
 Keep the flag on every command:
 
 ```bash
-whatsapp connect --instance personal
+whatsapp connect --source self-managed --instance personal
 whatsapp status --instance personal
 whatsapp messages --instance personal --limit 10
 ```

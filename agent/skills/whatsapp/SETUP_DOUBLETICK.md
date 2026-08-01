@@ -26,7 +26,7 @@ Run `whatsapp status` first; stop if linked or connecting.
 Compose a short, natural opener from the user's perspective, then run:
 
 ```bash
-whatsapp connect --opener 'Hi, it is me, nice to meet you here'
+whatsapp connect --source doubletick --opener 'Hi, it is me, nice to meet you here'
 ```
 
 The CLI authenticates to Double Tick with the `wak_` key, provisions or recovers
