@@ -162,7 +162,7 @@ func TestResolveConnectRoutesEachSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("self-managed resolve: %v", err)
 	}
-	if !qrRoute.link || qrRoute.provision {
+	if qrRoute.provision || qrRoute.linkPhone != "" {
 		t.Errorf("self-managed route = %+v, want link", qrRoute)
 	}
 

@@ -21,7 +21,6 @@ type connectOptions struct {
 	instance           string
 	port               int
 	acknowledgeBanRisk bool
-	sourceSet          bool
 	openerSet          bool
 	phoneSet           bool
 	portSet            bool
@@ -48,8 +47,6 @@ func parseConnectOptions(name string, args []string) (connectOptions, error) {
 	}
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
-		case "source":
-			opts.sourceSet = true
 		case "opener":
 			opts.openerSet = true
 		case "phone":
@@ -105,7 +102,6 @@ type connectRoute struct {
 	provision  bool
 	opener     string
 	linkPhone  string
-	link       bool
 	forceCloud bool
 }
 
@@ -119,12 +115,12 @@ func resolveConnect(opts connectOptions, cfg managedConfig) (connectRoute, error
 	}
 	switch opts.source {
 	case sourceCloud:
-		if !cfg.cloudManaged || cfg.vestadBase == "" || cfg.agentName == "" || cfg.agentToken == "" {
+		if !cfg.isCloudTenant() {
 			return connectRoute{}, fmt.Errorf("--source cloud needs a Vesta Cloud box: this box is not cloud-managed or is missing its vestad credentials")
 		}
 		return connectRoute{provision: true, opener: opts.opener, forceCloud: true}, nil
 	case sourceDoubletick:
-		if cfg.directURL == "" || cfg.directKey == "" {
+		if !cfg.isDirect() {
 			return connectRoute{}, fmt.Errorf("--source doubletick needs DOUBLETICK_API_URL and DOUBLETICK_API_KEY set together")
 		}
 		return connectRoute{provision: true, opener: opts.opener}, nil
@@ -132,7 +128,7 @@ func resolveConnect(opts connectOptions, cfg managedConfig) (connectRoute, error
 		if opts.phone != "" {
 			return connectRoute{linkPhone: opts.phone}, nil
 		}
-		return connectRoute{link: true}, nil
+		return connectRoute{}, nil
 	}
 }
 
@@ -216,15 +212,7 @@ func runConnectAlias(name string, provision bool) {
 		failJSON("%s", err.Error())
 	}
 	os.Args = canonicalConnectArgs(os.Args[0], opts)
-	if provision {
-		connectProvision(opts.opener)
-		return
-	}
-	if opts.phone != "" {
-		connectLinkPhone(opts.phone)
-		return
-	}
-	connectLink()
+	dispatchConnectRoute(connectRoute{provision: provision, opener: opts.opener, linkPhone: opts.phone})
 }
 
 // managedConfigFromEnvAndState builds the managed config, filling direct-mode pool

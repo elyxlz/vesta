@@ -169,6 +169,19 @@ func envOrDefault(name, def string) string {
 	return def
 }
 
+// isDirect reports whether a direct home-box key is configured: the box talks
+// straight to the pool API with its own per-account key, no vesta.run, no vestad.
+func (c managedConfig) isDirect() bool {
+	return c.directURL != "" && c.directKey != ""
+}
+
+// isCloudTenant reports whether this box is a genuine vesta.run cloud tenant with a
+// complete vestad identity: cloudManaged (VESTA_CLOUD_CONTROL_URL) plus the loopback
+// vestad base, agent name, and agent token needed to mint a server-identity token.
+func (c managedConfig) isCloudTenant() bool {
+	return c.cloudManaged && c.vestadBase != "" && c.agentName != "" && c.agentToken != ""
+}
+
 type managedAuth struct {
 	cfg     managedConfig
 	control *http.Client
@@ -218,7 +231,7 @@ func waMeLink(msisdn, text string) string {
 // isDirect reports whether a direct home-box key is configured: the box talks
 // straight to the pool API with its own per-account key, no vesta.run, no vestad.
 func (m *managedAuth) isDirect() bool {
-	return m.cfg.directURL != "" && m.cfg.directKey != ""
+	return m.cfg.isDirect()
 }
 
 // isHosted reports whether this box can use managed WhatsApp at all: either a direct
@@ -230,7 +243,7 @@ func (m *managedAuth) isDirect() bool {
 // it, a plain box falls back to the QR strategy instead of dead-ending on a managed
 // path whose account-token mint would 404.
 func (m *managedAuth) isHosted() bool {
-	return m.cfg.configError != "" || m.isDirect() || (m.cfg.cloudManaged && m.cfg.vestadBase != "" && m.cfg.agentName != "" && m.cfg.agentToken != "")
+	return m.cfg.configError != "" || m.cfg.isDirect() || m.cfg.isCloudTenant()
 }
 
 // newManagedAuth builds the pool-API HTTP client. Direct-mode cred reconciliation
