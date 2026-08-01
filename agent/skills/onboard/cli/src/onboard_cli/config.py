@@ -9,7 +9,7 @@ Most of it is read from the environment:
   token, so a self-hosted box can onboard too.
 
 The non-secret referral code that attributes a completed signup to this account
-is the one exception: it comes from the shared on-disk file the `vesta-cloud-account` skill
+is the one exception: it comes from the shared on-disk file the `vesta-cloud` skill
 writes (see `referral_store.py`), not the environment, so a changed/reissued
 code takes effect without redeploying the box.
 
@@ -56,7 +56,7 @@ class Config:
     @classmethod
     def load(cls) -> Config:
         base = os.environ.get("VESTA_CLOUD_CONTROL_URL", DEFAULT_CONTROL_URL).rstrip("/")
-        # Non-secret per-account attribution id, set by `vesta-cloud-account
+        # Non-secret per-account attribution id, set by `vesta-cloud
         # set-referral`; absent (or admin-set) on self-hosted boxes.
         ref = referral_store.get_referral_code()
         # vestad runs natively on the host, never in a container (see the account /

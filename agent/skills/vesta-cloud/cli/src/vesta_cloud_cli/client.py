@@ -39,25 +39,35 @@ class Client:
 
     # --- vestad: mint the server-identity token ------------------------------
 
-    def mint_token(self) -> str:
-        """POST <vestad>/agents/<name>/account-token -> a server-identity token.
+    def account_token(self) -> dict[str, Any]:
+        """POST <vestad>/agents/<name>/account-token -> {token, expires_in} OR {error}.
 
-        Agent-token authenticated. Fails clearly when not running inside an agent
-        container (no VESTAD_PORT / BOX_HOST / AGENT_NAME / AGENT_TOKEN) so the
-        skill can tell the owner this isn't a hosted box rather than emit a transport error.
+        Agent-token authenticated. Returns the response body either way: a box with no
+        Vesta Cloud account answers 404 `{error}` (a REACHED vestad refusing to mint),
+        which `whoami` reads as "no account" rather than an outage. Raises AccountError
+        only on a genuine transport / 5xx failure (vestad unreachable). A missing agent
+        identity is reported as an `{error}` body, not raised, for the same reason.
+
+        The minted token is a general server-identity credential the control plane honors
+        on any server-scoped route, so one token serves /account, integrations, etc.
         """
         cfg = self._cfg
-        if not cfg.vestad_base or not cfg.agent_name:
-            raise AccountError("not running inside an agent container (no VESTAD_PORT/BOX_HOST/AGENT_NAME)")
-        if not cfg.agent_token:
-            raise AccountError("missing AGENT_TOKEN — cannot authenticate to vestad")
+        if not cfg.vestad_base or not cfg.agent_name or not cfg.agent_token:
+            return {"error": "not running inside an agent container (no VESTAD_PORT/BOX_HOST/AGENT_NAME/AGENT_TOKEN)"}
         url = f"{cfg.vestad_base}/agents/{cfg.agent_name}/account-token"
-        data = self._json(self._send("POST", url, headers={"X-Agent-Token": cfg.agent_token}, json={}, verify=False))
-        token = data.get("token")
-        if not token:
-            # A non-cloud-managed box answers 404 {error}; surface it verbatim.
+        return self._json(self._send("POST", url, headers={"X-Agent-Token": cfg.agent_token}, json={}, verify=False))
+
+    def mint_token_detail(self) -> dict[str, Any]:
+        """{@link account_token} but raises AccountError when no token was minted, for the
+        commands (`token`, `plan`, `manage`, `referral`) that need a hard failure."""
+        data = self.account_token()
+        if not data.get("token"):
             raise AccountError(data.get("error") or "vestad did not return a server-identity token")
-        return token
+        return data
+
+    def mint_token(self) -> str:
+        """A server-identity token; see {@link mint_token_detail}."""
+        return self.mint_token_detail()["token"]
 
     # --- control plane: read plan / open portal ------------------------------
 

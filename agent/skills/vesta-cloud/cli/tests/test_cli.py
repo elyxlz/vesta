@@ -1,13 +1,13 @@
-"""Tests for the account CLI — mocked client, no network."""
+"""Tests for the vesta-cloud CLI — mocked client, no network."""
 
 from __future__ import annotations
 
 import json
 
 import pytest
-from vc_account_cli import cli as cli_mod
-from vc_account_cli import referral_store
-from vc_account_cli.client import AccountError
+from vesta_cloud_cli import cli as cli_mod
+from vesta_cloud_cli import referral_store
+from vesta_cloud_cli.client import AccountError
 
 
 @pytest.fixture(autouse=True)
@@ -20,6 +20,80 @@ def _run(argv, capsys):
     rc = cli_mod.main(argv)
     out = capsys.readouterr().out
     return rc, (json.loads(out) if out.strip() else None)
+
+
+# --- whoami -----------------------------------------------------------------
+
+
+def test_whoami_account_true_when_minted_and_active(capsys, monkeypatch):
+    monkeypatch.setattr(cli_mod.Client, "account_token", lambda self: {"token": "SITOK", "expires_in": 600})
+    monkeypatch.setattr(
+        cli_mod.Client,
+        "plan",
+        lambda self, token: {"plan": "membership", "status": "active", "price_cents": 4800, "renews_at": "2026-07-01T00:00:00.000Z"},
+    )
+    rc, data = _run(["whoami"], capsys)
+    assert rc == 0
+    assert data["account"] is True
+    assert data["plan"] == "membership" and data["status"] == "active"
+    assert data["price_usd"] == 48.0
+
+
+def test_whoami_account_false_when_mint_refused(capsys, monkeypatch):
+    # A reached vestad refusing to mint (no account) is a valid answer, exit 0.
+    monkeypatch.setattr(cli_mod.Client, "account_token", lambda self: {"error": "not a cloud-managed server"})
+    rc, data = _run(["whoami"], capsys)
+    assert rc == 0
+    assert data["account"] is False
+    assert data["reason"] == "not a cloud-managed server"
+
+
+def test_whoami_suspended_is_account_true_with_status(capsys, monkeypatch):
+    # A recognized but suspended box answers /account 200 with status "suspended"
+    # (not an error), so it is paired (account:true); status carries the nuance.
+    monkeypatch.setattr(cli_mod.Client, "account_token", lambda self: {"token": "SITOK"})
+    monkeypatch.setattr(cli_mod.Client, "plan", lambda self, token: {"plan": "membership", "status": "suspended"})
+    rc, data = _run(["whoami"], capsys)
+    assert rc == 0
+    assert data["account"] is True and data["status"] == "suspended"
+
+
+def test_whoami_account_false_when_recognized_but_inactive(capsys, monkeypatch):
+    monkeypatch.setattr(cli_mod.Client, "account_token", lambda self: {"token": "SITOK"})
+    monkeypatch.setattr(cli_mod.Client, "plan", lambda self, token: {"error": "membership_inactive"})
+    rc, data = _run(["whoami"], capsys)
+    assert rc == 0
+    assert data["account"] is False and data["reason"] == "membership_inactive"
+
+
+def test_whoami_outage_exits_3(capsys, monkeypatch):
+    # A genuine transport failure is NOT "no account" — it must surface as exit 3.
+    def boom(self):
+        raise AccountError("could not reach vestad: timeout")
+
+    monkeypatch.setattr(cli_mod.Client, "account_token", boom)
+    rc, data = _run(["whoami"], capsys)
+    assert rc == 3 and "could not reach" in data["error"]
+
+
+# --- token ------------------------------------------------------------------
+
+
+def test_token_returns_credential_and_control_url(capsys, monkeypatch):
+    monkeypatch.setattr(cli_mod.Client, "mint_token_detail", lambda self: {"token": "SITOK", "expires_in": 600})
+    rc, data = _run(["token"], capsys)
+    assert rc == 0
+    assert data["token"] == "SITOK" and data["expires_in"] == 600
+    assert data["control_url"].startswith("https://")
+
+
+def test_token_no_account_exits_3(capsys, monkeypatch):
+    def boom(self):
+        raise AccountError("not a cloud-managed server")
+
+    monkeypatch.setattr(cli_mod.Client, "mint_token_detail", boom)
+    rc, data = _run(["token"], capsys)
+    assert rc == 3 and "not a cloud-managed" in data["error"]
 
 
 # --- plan -------------------------------------------------------------------

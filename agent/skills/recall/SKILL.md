@@ -5,13 +5,7 @@ description: Recall past conversations from long-term memory. Use to look up spe
 
 # Recall
 
-Search every past conversation with full-text search (SQLite FTS5) over the whole event history, across all sessions and days, not just what is in context now.
-
-## Setup
-
-```bash
-uv tool install --editable ~/agent/skills/recall/cli
-```
+Search every past conversation with full-text search (SQLite FTS5) over the whole event history, across all sessions and days, not just what is in context now. Install the `recall` command once from [SETUP.md](SETUP.md).
 
 ## Usage
 

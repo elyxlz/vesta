@@ -5,6 +5,8 @@ description: Interrupt rules that guard YOUR focus (you, the agent, are the one 
 
 # Notifications
 
+Install the `notifications` command once from [SETUP.md](SETUP.md).
+
 ## What these rules do
 
 These interrupts land on **you, the agent**, not the user. An **interrupt** notification preempts your current turn the moment it arrives; a **snooze** one does not touch your current work, it waits and is handed to you in a batch once you have been idle a little while. Snoozing changes *when* you see a notification, never *whether*: nothing is dropped, the rule is reversible anytime, and you decide what to act on or drop when you work through the batch (below). Being yanked out of hard work by something trivial is a real cost, so these rules keep low-value notifications from breaking your focus while letting what genuinely matters reach you immediately.
