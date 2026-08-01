@@ -11,6 +11,7 @@ const privacyProviderConsumers = new Set([
   path.join(mobileRoot, "src/privacy/privacy-gate.tsx"),
   path.join(mobileRoot, "src/privacy/privacy-sheet.tsx"),
 ]);
+const settingsRoute = path.join(mobileRoot, "app/settings.tsx");
 const harnessModules = new Map([
   [
     "@/storage/recent-gateways",
@@ -33,6 +34,22 @@ const harnessModules = new Map([
     path.resolve(__dirname, "harness/agent-orb.tsx"),
   ],
   [
+    "@/session/SessionProvider",
+    path.resolve(__dirname, "harness/session-provider.tsx"),
+  ],
+  [
+    "@/session/RosterProvider",
+    path.resolve(__dirname, "harness/roster-provider.tsx"),
+  ],
+  [
+    "@/controller/ControllerProvider",
+    path.resolve(__dirname, "harness/controller-provider.tsx"),
+  ],
+  [
+    "@/releases/release-notes-query",
+    path.resolve(__dirname, "harness/release-notes-query.ts"),
+  ],
+  [
     "react-native-reanimated",
     path.resolve(__dirname, "harness/reanimated.js"),
   ],
@@ -45,6 +62,12 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     privacyProviderConsumers.has(context.originModulePath)
   ) {
     return { type: "sourceFile", filePath: privacyProviderFixture };
+  }
+  if (moduleName === "@/api/endpoints" && context.originModulePath === settingsRoute) {
+    return {
+      type: "sourceFile",
+      filePath: path.resolve(__dirname, "harness/settings-endpoints.ts"),
+    };
   }
   const fixture = harnessModules.get(moduleName);
   if (fixture) return { type: "sourceFile", filePath: fixture };

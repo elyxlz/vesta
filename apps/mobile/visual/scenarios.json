@@ -3,7 +3,11 @@
   "appId": "com.vesta.mobile.visual",
   "flows": [
     "maestro/visual/connect.yml",
-    "maestro/visual/recent-gateways.yml"
+    "maestro/visual/recent-gateways.yml",
+    "maestro/visual/connected.yml",
+    "maestro/visual/connected-whats-new-empty.yml",
+    "maestro/visual/connected-whats-new-error.yml",
+    "maestro/visual/connected-home-empty.yml"
   ],
   "scenarios": [
     {
@@ -82,6 +86,76 @@
       "description": "Expired saved session with retry and return actions.",
       "group": "Onboarding",
       "screenshot": "recent-gateway-error.png"
+    },
+    {
+      "id": "home-agents",
+      "title": "Agent home",
+      "description": "Connected home carousel with a deterministic roster of available agents.",
+      "group": "Home",
+      "screenshot": "home-agents.png"
+    },
+    {
+      "id": "home-empty",
+      "title": "Empty agent home",
+      "description": "Connected gateway with no agents and the primary creation action.",
+      "group": "Home",
+      "screenshot": "home-empty.png"
+    },
+    {
+      "id": "new-agent",
+      "title": "Create an agent",
+      "description": "Native creation sheet explaining the current Vesta Web handoff.",
+      "group": "Home",
+      "screenshot": "new-agent.png"
+    },
+    {
+      "id": "settings-overview",
+      "title": "Settings overview",
+      "description": "Experience, privacy, and notification preferences in the connected app.",
+      "group": "Settings",
+      "screenshot": "settings-overview.png"
+    },
+    {
+      "id": "settings-appearance",
+      "title": "Choose appearance",
+      "description": "Native appearance selection alert over the Settings sheet.",
+      "group": "Settings",
+      "screenshot": "settings-appearance.png"
+    },
+    {
+      "id": "settings-dark",
+      "title": "Dark appearance",
+      "description": "Settings rendered immediately after selecting the dark theme.",
+      "group": "Settings",
+      "screenshot": "settings-dark.png"
+    },
+    {
+      "id": "settings-gateway",
+      "title": "Gateway settings",
+      "description": "Connected gateway health, version, release channel, and update controls.",
+      "group": "Settings",
+      "screenshot": "settings-gateway.png"
+    },
+    {
+      "id": "whats-new",
+      "title": "What’s new",
+      "description": "Deterministic release notes available to the connected gateway version.",
+      "group": "What’s new",
+      "screenshot": "whats-new.png"
+    },
+    {
+      "id": "whats-new-empty",
+      "title": "No release notes",
+      "description": "Empty release-note state when nothing new applies to this gateway.",
+      "group": "What’s new",
+      "screenshot": "whats-new-empty.png"
+    },
+    {
+      "id": "whats-new-error",
+      "title": "Release notes unavailable",
+      "description": "Recoverable error state when release notes cannot be loaded.",
+      "group": "What’s new",
+      "screenshot": "whats-new-error.png"
     }
   ]
 }

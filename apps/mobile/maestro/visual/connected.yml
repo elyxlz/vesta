@@ -1,0 +1,113 @@
+appId: ${APP_ID}
+name: Connected app screens
+tags:
+  - visual
+  - connected
+---
+- clearState
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- waitForAnimationToEnd:
+    timeout: 3000
+- tapOn:
+    text: "^Open$"
+    optional: true
+    waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: "Open aria"
+    timeout: 30000
+- takeScreenshot: home-agents
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: home-agents.png
+
+- tapOn: "Create agent"
+- extendedWaitUntil:
+    visible: "Coming soon"
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: new-agent
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: new-agent.png
+- swipe:
+    start: "50%,45%"
+    end: "50%,95%"
+    duration: 500
+- extendedWaitUntil:
+    visible: "Open aria"
+    timeout: 10000
+
+- tapOn:
+    text: "App settings.*"
+- extendedWaitUntil:
+    visible: "App Lock"
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: settings-overview
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: settings-overview.png
+
+- tapOn:
+    text: "Appearance.*"
+- extendedWaitUntil:
+    visible: "System"
+    timeout: 10000
+- takeScreenshot: settings-appearance
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: settings-appearance.png
+- tapOn: "Dark"
+- waitForAnimationToEnd:
+    timeout: 1000
+- takeScreenshot: settings-dark
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: settings-dark.png
+- tapOn:
+    text: "Appearance.*"
+- tapOn: "Light"
+- waitForAnimationToEnd:
+    timeout: 1000
+
+- scrollUntilVisible:
+    element:
+      text: "Gateway"
+    direction: DOWN
+    timeout: 10000
+    speed: 40
+    visibilityPercentage: 100
+    centerElement: true
+- takeScreenshot: settings-gateway
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: settings-gateway.png
+
+- scrollUntilVisible:
+    element:
+      text: "What’s new.*"
+    direction: DOWN
+    timeout: 10000
+    speed: 40
+    visibilityPercentage: 100
+- tapOn:
+    text: "What’s new.*"
+- extendedWaitUntil:
+    visible: "v0.2.0"
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: whats-new
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: whats-new.png

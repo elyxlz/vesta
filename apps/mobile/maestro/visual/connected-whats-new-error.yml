@@ -1,0 +1,45 @@
+appId: ${APP_ID}
+name: Connected release notes error state
+tags:
+  - visual
+  - connected
+---
+- clearState
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualReleaseNotes=error"
+- waitForAnimationToEnd:
+    timeout: 3000
+- tapOn:
+    text: "^Open$"
+    optional: true
+    waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: "Open aria"
+    timeout: 30000
+- tapOn:
+    text: "App settings.*"
+- extendedWaitUntil:
+    visible: "App Lock"
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      text: "What’s new.*"
+    direction: DOWN
+    timeout: 10000
+    speed: 40
+    visibilityPercentage: 100
+- tapOn:
+    text: "What’s new.*"
+- extendedWaitUntil:
+    visible: "Couldn’t load release notes."
+    timeout: 10000
+- extendedWaitUntil:
+    visible: "What’s new"
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: whats-new-error
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: whats-new-error.png

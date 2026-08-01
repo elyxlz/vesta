@@ -156,18 +156,22 @@ This avoids an Xcode rebuild during the normal polish loop.
 Fixtures match the production module's public contract. Production views render
 exactly as they normally would; only their inputs and side effects change.
 
-### 4. Run two Maestro flows
+### 4. Run Maestro flows across two simulators
 
 The manifest currently registers:
 
 ```text
 maestro/visual/connect.yml
 maestro/visual/recent-gateways.yml
+maestro/visual/connected.yml
+maestro/visual/connected-whats-new-empty.yml
+maestro/visual/connected-whats-new-error.yml
+maestro/visual/connected-home-empty.yml
 ```
 
-Each flow is assigned to one simulator. Maestro interacts through visible text
-and accessibility labels, waits for a specific state, then takes a full-device
-screenshot.
+The flows are split across two simulators. Maestro interacts through visible
+text and accessibility labels, waits for a specific state, then takes a
+full-device screenshot.
 
 ### 5. Validate and publish
 
@@ -190,11 +194,11 @@ content under `mobile/.visual/` is ignored by Git.
 While the server is running, `/status.json` is a dynamic endpoint used by the
 portal; it is not a generated file.
 
-## Why privacy and onboarding use separate launches
+## Why scenario groups use separate launches
 
-Native form sheets retain presentation context. Moving directly from a mocked
-locked privacy sheet into another onboarding sheet can accidentally carry a
-stale modal stack into the screenshot.
+Native form sheets retain presentation context. Moving directly from one
+mocked state into another sheet can accidentally carry a stale modal stack
+into the screenshot.
 
 The current flows isolate those concerns:
 
@@ -209,6 +213,10 @@ Fresh onboarding launch
   -> mocked privacy provider starts unlocked
   -> production /connect route renders normally
   -> production onboarding sheets are presented
+
+Fresh connected launch
+  -> mocked session and roster providers start connected
+  -> production home, settings, and release routes render normally
 ```
 
 The fresh visual launch uses the existing development scheme:
@@ -217,8 +225,8 @@ The fresh visual launch uses the existing development scheme:
 vesta-dev://connect?visualPrivacy=unlocked
 ```
 
-Only `visual/harness/privacy-provider.tsx` interprets `visualPrivacy`. The
-production privacy controller and routes are unchanged. The flows also handle
+Only modules under `visual/harness/` interpret the visual query parameters.
+The production controllers and routes are unchanged. The flows also handle
 iOS's one-time confirmation for opening a custom scheme.
 
 For future modal groups, prefer a fresh launch with deterministic initial data

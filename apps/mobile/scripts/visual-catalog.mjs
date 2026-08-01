@@ -281,9 +281,9 @@ async function loadManifest() {
   if (typeof manifest.appId !== "string" || !manifest.appId) {
     throw new Error("The visual manifest must define appId.");
   }
-  if (!Array.isArray(manifest.flows) || manifest.flows.length !== shardCount) {
+  if (!Array.isArray(manifest.flows) || manifest.flows.length < shardCount) {
     throw new Error(
-      `The visual manifest must define exactly ${shardCount} flows, one per shard.`,
+      `The visual manifest must define at least ${shardCount} flows so every shard has work.`,
     );
   }
   if (!Array.isArray(manifest.scenarios) || manifest.scenarios.length === 0) {
@@ -1690,7 +1690,7 @@ async function runCaptureIteration(options, session) {
       reportAvailable: await exists(path.join(maestroDirectory, "report.html")),
     },
   );
-  console.log(`\nCaptured ${catalog.scenarios.length} onboarding screenshots.`);
+  console.log(`\nCaptured ${catalog.scenarios.length} mobile screenshots.`);
   return catalog;
 }
 
@@ -2035,7 +2035,7 @@ async function publishWatchScreenshots(manifest, simulators, validate) {
     watchScreenshotsDirectory,
     { mode: "watch", reportAvailable: false, validate },
   );
-  console.log(`\nCaptured ${catalog.scenarios.length} onboarding screenshots.`);
+  console.log(`\nCaptured ${catalog.scenarios.length} mobile screenshots.`);
   return catalog;
 }
 
