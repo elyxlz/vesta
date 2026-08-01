@@ -33,6 +33,25 @@ func cloudClientFor(t *testing.T, control http.HandlerFunc) *client {
 	return newClient(config{vestadBase: "https://vestad.test", agentName: "alice", agentToken: "atok"})
 }
 
+// TestParseServerToken pins how a `vesta-cloud token` run maps to a credential or a
+// clear error: success, a structured {error} surfaced verbatim, the command missing, a
+// timeout, and empty output.
+func TestParseServerToken(t *testing.T) {
+	if st, err := parseServerToken([]byte(`{"token":"sit","control_url":"https://ctrl/"}`), nil, false); err != nil || st.token != "sit" || st.controlURL != "https://ctrl" {
+		t.Fatalf("success = %+v err=%v", st, err)
+	}
+	if _, err := parseServerToken([]byte(`{"error":"no account linked"}`), errors.New("exit status 3"), false); err == nil || !strings.Contains(err.Error(), "no account linked") {
+		t.Fatalf("structured error = %v, want it surfaced verbatim", err)
+	}
+	notFound := errors.New(`exec: "vesta-cloud": executable file not found in $PATH`)
+	if _, err := parseServerToken(nil, notFound, false); err == nil || !strings.Contains(err.Error(), "vesta-cloud skill installed") {
+		t.Fatalf("not-installed error = %v, want the install hint", err)
+	}
+	if _, err := parseServerToken(nil, errors.New("signal: killed"), true); err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("timeout error = %v, want a timeout message", err)
+	}
+}
+
 func TestReserve_cloudMintsTokenAndReturnsNumber(t *testing.T) {
 	var gotAuth, gotPath string
 	var gotBody map[string]string

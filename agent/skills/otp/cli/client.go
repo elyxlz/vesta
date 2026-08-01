@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -175,30 +176,45 @@ type serverToken struct {
 // a subprocess.
 var mintServerToken = vestaCloudToken
 
+// vestaCloudTokenTimeout bounds the subprocess so a wedged `vesta-cloud token` can never
+// hang the CLI's auth path (the native mint it replaced had a 30s HTTP timeout).
+const vestaCloudTokenTimeout = 30 * time.Second
+
 // vestaCloudToken shells out to `vesta-cloud token`, the single source of truth for
 // minting this box's server-identity token and resolving the control-plane URL. Every
 // skill that calls the control plane as the server routes through this one command, so
-// the vestad endpoint, the agent-token header, and the control URL live in one place
-// and cannot silently diverge across skills. On failure `vesta-cloud token` prints a
-// structured {error} on stdout and exits non-zero, which surfaces here verbatim.
+// the vestad endpoint, the agent-token header, and the control URL live in one place and
+// cannot silently diverge across skills.
 func vestaCloudToken() (serverToken, error) {
-	out, runErr := exec.Command("vesta-cloud", "token").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), vestaCloudTokenTimeout)
+	defer cancel()
+	out, runErr := exec.CommandContext(ctx, "vesta-cloud", "token").Output()
+	return parseServerToken(out, runErr, ctx.Err() == context.DeadlineExceeded)
+}
+
+// parseServerToken turns a `vesta-cloud token` run into a credential or a clear error,
+// split from the exec so the failure branches are unit tested. On failure the CLI prints
+// a structured {error} on stdout (surfaced verbatim); a missing command, a timeout, and
+// empty output each get their own message.
+func parseServerToken(out []byte, runErr error, timedOut bool) (serverToken, error) {
 	var resp struct {
 		Token      string `json:"token"`
 		ControlURL string `json:"control_url"`
 		Error      string `json:"error"`
 	}
 	_ = json.Unmarshal(out, &resp)
-	if resp.Token != "" && resp.ControlURL != "" {
+	switch {
+	case resp.Token != "" && resp.ControlURL != "":
 		return serverToken{token: resp.Token, controlURL: strings.TrimRight(resp.ControlURL, "/")}, nil
-	}
-	if resp.Error != "" {
+	case resp.Error != "":
 		return serverToken{}, fmt.Errorf("mint server-identity token: %s", resp.Error)
-	}
-	if runErr != nil {
+	case timedOut:
+		return serverToken{}, fmt.Errorf("`vesta-cloud token` timed out after %s", vestaCloudTokenTimeout)
+	case runErr != nil:
 		return serverToken{}, fmt.Errorf("run `vesta-cloud token` (is the vesta-cloud skill installed?): %w", runErr)
+	default:
+		return serverToken{}, fmt.Errorf("`vesta-cloud token` returned no token")
 	}
-	return serverToken{}, fmt.Errorf("`vesta-cloud token` returned no token")
 }
 
 // authorize resolves the Switchboard base URL and Authorization header once, plus
