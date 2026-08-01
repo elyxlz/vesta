@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from tasks_cli import commands, db
+from tasks_cli import format as fmt
 from tasks_cli.config import Config
 from tasks_cli.scheduler import create_scheduler
 
@@ -136,6 +137,28 @@ def test_snooze_reactivates_a_fired_reminder(tmp_config: Config):
     with closing(db.get_db(tmp_config.data_dir)) as conn:
         row = conn.execute("SELECT completed FROM reminders WHERE id = ?", (reminder["id"],)).fetchone()
     assert row["completed"] == 0
+
+
+def test_snooze_relabels_the_schedule_shown_by_remind_list(tmp_config: Config):
+    """A snoozed reminder must not keep advertising its original fire time.
+
+    The schedule label is what `remind list` prints beside each row, so a stale one makes a
+    still-pending reminder look like it already fired, i.e. a past date next to a future fire.
+    """
+    reminder = commands.remind_set(tmp_config, commands.ReminderSpec(message="chase it", scheduled_datetime="2026-07-19T09:00:00", tz="UTC"))
+    assert reminder["schedule"] == "once at 2026-07-19T09:00:00+00:00"
+
+    result = commands.remind_snooze(tmp_config, reminder_id=reminder["id"], in_days=8)
+    new_run = db.parse_datetime(result["next_run"])
+
+    listed = next(r for r in commands.remind_list(tmp_config) if r["id"] == reminder["id"])
+    assert db.parse_datetime(listed["next_run"]) == new_run
+    assert listed["schedule"] == f"once at {result['next_run']}"
+    assert db.parse_datetime(listed["schedule"].removeprefix("once at ")) > datetime.now(UTC)
+
+    rendered = fmt.format_reminder_list([listed])
+    assert "2026-07-19" not in rendered
+    assert rendered.startswith("in 8d\t")
 
 
 def test_snooze_rejects_recurring(tmp_config: Config):
