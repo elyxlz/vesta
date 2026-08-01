@@ -14,10 +14,7 @@ export DOUBLETICK_API_KEY='wak_account-scoped-key'
 ```
 
 Set both or neither, and keep the key out of chat, logs, commits, and command
-output. The CLI persists valid credentials in the instance state so a later
-environment scrub does not silently switch account methods. Auth detail (including
-that a `vesta.run` hostname may front a standalone service) is in
-[HEADLESS.md](HEADLESS.md).
+output.
 
 Run `whatsapp status` first; stop if linked or connecting.
 
