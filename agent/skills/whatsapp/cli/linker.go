@@ -61,10 +61,25 @@ func chooseLinker(cfg managedConfig, state *stateStore) linker {
 	return qrLinker{}
 }
 
+// cloudSourceAuth returns a managed auth pinned to the server-identity (cloud) path
+// for an explicit `--source cloud`, dropping any direct pool creds this daemon booted
+// with so a box that carries both pairs off the minted token, not a static wak_ key,
+// even when the daemon is already warm (and so never inherited a scrubbed env). It
+// re-reads the environment rather than reusing the boot-time auth, which may still
+// prefer the direct creds. Returns nil for any other source, leaving boot-time auth.
+func cloudSourceAuth(source string) *managedAuth {
+	if source != sourceCloud {
+		return nil
+	}
+	cfg := loadManagedConfig()
+	cfg.directURL, cfg.directKey = "", ""
+	return newManagedAuth(cfg)
+}
+
 // qrLinker links the user's own WhatsApp account (self-hosted paradigm).
 type qrLinker struct{}
 
-func (qrLinker) name() string { return "self-hosted" }
+func (qrLinker) name() string { return "self-managed" }
 
 func (qrLinker) provision(*WhatsAppClient) (linkResult, error) {
 	return linkResult{}, fmt.Errorf("managed WhatsApp is only available on a hosted (vesta.run) box; this box links the user's own WhatsApp: run `whatsapp connect`")
@@ -86,7 +101,7 @@ type managedLinker struct {
 	state *stateStore
 }
 
-func (*managedLinker) name() string { return "managed" }
+func (*managedLinker) name() string { return "headless" }
 
 func (*managedLinker) linkQR(*WhatsAppClient, int) (linkResult, error) {
 	return linkResult{}, fmt.Errorf("this managed (vesta.run) box links its own pooled number; run `whatsapp connect`")

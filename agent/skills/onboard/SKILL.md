@@ -129,7 +129,10 @@ At **create-agent** (step 6), put three things in `--context`:
 1. **The user's WhatsApp number**, so the new vesta knows who to expect: "your owner
    will message you from +1..., greet them by name when they arrive."
 2. **Set up WhatsApp first**: "Before anything else, set up and authenticate your own
-   WhatsApp number using the `whatsapp` skill."
+   Vesta Cloud-managed WhatsApp number using the `whatsapp` skill." Vesta Cloud
+   coordinates Switchboard for the number/SMS lifecycle and Double Tick for the
+   headless WhatsApp primary; the new agent should not configure either service
+   directly.
 3. **Leave the link where you'll fetch it**: "Then write your wa.me connect link to
    `~/.file-host/connect.txt` and serve it with the `file-host` skill." That publishes
    it at a fixed public URL you can construct yourself, no channel from them to you

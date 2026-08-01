@@ -165,11 +165,9 @@ func linkServeArgs() []string {
 	return nil
 }
 
-// serveAndRunQRLink resolves the scan-page port (an explicit --port, else a
-// vestad-registered public service), surfaces the scan URL to the user, then makes
-// the one blocking socket call that serves the page and waits for the scan.
-// socketCommand is the daemon verb that runs the link (self-hosted `link` or the
-// user-owned `own-number-link`). Returns the daemon's terminal output + exit code.
+// resolveQRLinkPage resolves the scan-page port: an explicit --port, else a
+// vestad-registered public service. Returns the port, the scan-page URL, and
+// whether a service was registered (so the caller unregisters it afterward).
 func resolveQRLinkPage(requireBindable bool) (int, string, bool) {
 	port := 0
 	registered := false
@@ -190,29 +188,6 @@ func resolveQRLinkPage(requireBindable bool) (int, string, bool) {
 	}
 	pageURL := linkPageURL(os.Getenv("VESTAD_TUNNEL"), os.Getenv("AGENT_NAME"), linkServiceName(), port)
 	return port, pageURL, registered
-}
-
-// serveAndRunQRLink keeps the synchronous QR flow used by own-number setup,
-// which has more setup stages in the same invocation.
-func serveAndRunQRLink(socketCommand string) ([]byte, int) {
-	port, pageURL, registered := resolveQRLinkPage(true)
-	printJSON(map[string]any{
-		"status": "linking",
-		"url":    pageURL,
-		"next":   linkNextStep,
-	})
-	linkArgs := []string{"--port", fmt.Sprintf("%d", port)}
-	if registered {
-		linkArgs = append(linkArgs, "--unregister-service", linkServiceName())
-	}
-	if hasBareFlag("acknowledge-ban-risk") {
-		linkArgs = append(linkArgs, "--acknowledge-ban-risk")
-	}
-	output, exitCode, connected := trySocketCommand(getSocketPath(), socketCommand, linkArgs)
-	if !connected {
-		failJSON("daemon stopped answering during linking; check 'whatsapp daemon status'")
-	}
-	return output, exitCode
 }
 
 type socketCommandResult struct {

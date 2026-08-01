@@ -169,6 +169,19 @@ func envOrDefault(name, def string) string {
 	return def
 }
 
+// isDirect reports whether a direct home-box key is configured: the box talks
+// straight to the pool API with its own per-account key, no vesta.run, no vestad.
+func (c managedConfig) isDirect() bool {
+	return c.directURL != "" && c.directKey != ""
+}
+
+// isCloudTenant reports whether this box is a genuine vesta.run cloud tenant with a
+// complete vestad identity: cloudManaged (VESTA_CLOUD_CONTROL_URL) plus the loopback
+// vestad base, agent name, and agent token needed to mint a server-identity token.
+func (c managedConfig) isCloudTenant() bool {
+	return c.cloudManaged && c.vestadBase != "" && c.agentName != "" && c.agentToken != ""
+}
+
 type managedAuth struct {
 	cfg     managedConfig
 	control *http.Client
@@ -218,7 +231,7 @@ func waMeLink(msisdn, text string) string {
 // isDirect reports whether a direct home-box key is configured: the box talks
 // straight to the pool API with its own per-account key, no vesta.run, no vestad.
 func (m *managedAuth) isDirect() bool {
-	return m.cfg.directURL != "" && m.cfg.directKey != ""
+	return m.cfg.isDirect()
 }
 
 // isHosted reports whether this box can use managed WhatsApp at all: either a direct
@@ -230,7 +243,7 @@ func (m *managedAuth) isDirect() bool {
 // it, a plain box falls back to the QR strategy instead of dead-ending on a managed
 // path whose account-token mint would 404.
 func (m *managedAuth) isHosted() bool {
-	return m.cfg.configError != "" || m.isDirect() || (m.cfg.cloudManaged && m.cfg.vestadBase != "" && m.cfg.agentName != "" && m.cfg.agentToken != "")
+	return m.cfg.configError != "" || m.cfg.isDirect() || m.cfg.isCloudTenant()
 }
 
 // newManagedAuth builds the pool-API HTTP client. Direct-mode cred reconciliation
@@ -327,40 +340,6 @@ func (m *managedAuth) leaseProxy() (string, error) {
 		return "", fmt.Errorf("doubletick returned a non-residential proxy lease (%s)", out.Kind)
 	}
 	return out.ProxyURL, nil
-}
-
-// provisionSelf claims (idempotently) a pool number the USER will own on their own
-// phone: the control plane reserves it, the user registers it themselves and keeps
-// their phone online, then the agent links only as a companion. Distinct from
-// provision, where the agent drives a headless primary for its own number.
-func (m *managedAuth) provisionSelf() (string, error) {
-	var out struct {
-		MSISDN string `json:"msisdn"`
-		State  string `json:"state"`
-	}
-	if err := m.call(http.MethodPost, "/byo", map[string]string{}, &out); err != nil {
-		return "", fmt.Errorf("reserve a user-owned number: %w", err)
-	}
-	if out.MSISDN == "" {
-		return "", fmt.Errorf("control plane returned no number for the user-owned account")
-	}
-	return out.MSISDN, nil
-}
-
-// selfNumberOTP blocks server-side (up to the pool API deadline) until the SMS
-// verification code for the user-owned number arrives, then returns it for the user
-// to enter while registering the number in WhatsApp on their own phone.
-func (m *managedAuth) selfNumberOTP() (string, error) {
-	var out struct {
-		Code string `json:"code"`
-	}
-	if err := m.call(http.MethodGet, "/byo/otp", nil, &out); err != nil {
-		return "", fmt.Errorf("fetch the user-owned number verification code: %w", err)
-	}
-	if out.Code == "" {
-		return "", fmt.Errorf("control plane returned an empty verification code")
-	}
-	return out.Code, nil
 }
 
 // call sends one authenticated request to the pool API, resolving the base +

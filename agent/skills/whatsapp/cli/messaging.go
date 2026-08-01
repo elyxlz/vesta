@@ -110,7 +110,7 @@ func (wac *WhatsAppClient) requireReplyFirst(jid types.JID) error {
 		return nil
 	}
 	return fmt.Errorf(
-		"cannot message %s first: this is a managed WhatsApp number and must never start a conversation (reply-first). Share your wa.me click-to-chat link, wait for them to message you, then reply",
+		"cannot message %s first: this is a headless account and must never start a conversation (reply-first). Share your wa.me click-to-chat link, wait for them to message you, then reply",
 		wac.getChatName(jid),
 	)
 }
