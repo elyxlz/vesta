@@ -159,6 +159,29 @@ Hold a live call in your own voice (the `voice` skill's TTS) and hear the other 
   attempts get numbers flagged and banned. If linking fails, report it and wait; don't retry-loop.
 - Phone numbers are E.164 with a leading `+` (e.g. `+12025551234`). Auth state lives in `~/.whatsapp/`.
 
+## Reading `messages.db` directly
+
+If you query `~/.whatsapp/messages.db` yourself (counting your own sends, building a check, any
+analytics), know this first: **one conversation is stored under two different `chat_jid` values.**
+Your sends land on a `<id>@lid` row, the other person's on an unrelated-looking
+`<other>@s.whatsapp.net` row, and the two jid strings are not derivable from each other.
+
+So `GROUP BY chat_jid` splits every thread in half and reports **zero inbound for every chat**.
+That result is silent and plausible-looking, it reads as "nobody ever replies to you" rather than
+as an error, which is exactly what makes it worth documenting.
+
+`chats.name` carries the same value for both halves, so join on it:
+
+```sql
+SELECT COALESCE(c.name, m.chat_jid) AS who,
+       SUM(CASE WHEN m.is_from_me=1 THEN 1 ELSE 0 END) AS mine,
+       SUM(CASE WHEN m.is_from_me=0 THEN 1 ELSE 0 END) AS theirs
+FROM messages m LEFT JOIN chats c ON c.jid = m.chat_jid
+GROUP BY who;
+```
+
+Sanity-check any surprising zero against a control query you know returns rows before reporting it.
+
 Advanced setup (second/personal account, read-only, silent instances) and how to develop the CLI:
 see [SETUP.md](SETUP.md) and [DEVELOPING.md](DEVELOPING.md).
 
