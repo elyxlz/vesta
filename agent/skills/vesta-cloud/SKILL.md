@@ -1,6 +1,6 @@
 ---
 name: vesta-cloud
-description: THIS box's Vesta Cloud account. Use to check whether it has one and read its environment (`whoami` — the account/plan/setup signal other skills key off), get a server-identity token to call the control plane (`token`), or answer the owner about their hosting plan, billing, renewal, upgrade/cancel/card, and referral code. Not `onboard` (buying for someone else); not `stripe-pay` (third-party invoices).
+description: THIS box's Vesta Cloud account. Use to check whether it has one and read its environment (`whoami`, the account/plan/setup signal other skills key off), get a server-identity token to call the control plane (`token`), or answer the owner about their hosting plan, billing, renewal, upgrade/cancel/card, and referral code. Not `onboard` (buying for someone else); not `stripe-pay` (third-party invoices).
 ---
 
 # vesta-cloud, CLI: `vesta-cloud`
@@ -10,7 +10,7 @@ credential to act as it against the control plane, its plan, and its referral co
 Output is always JSON on stdout. Exit codes: 0 success, 2 surfaced `{error}` (no
 account / no billing yet), 3 control-plane or vestad unreachable, 1 unexpected.
 
-## `whoami` — does this box have an account?
+## `whoami`: does this box have an account?
 
 ```bash
 vesta-cloud whoami
@@ -27,7 +27,7 @@ signal other skills read to choose a cloud path over a self-managed one, so cons
 a box can hold an account without it. `account:false` exits 0 (a valid answer); a real
 vestad/control-plane outage exits 3.
 
-## `token` — a credential for calling the control plane
+## `token`: a credential for calling the control plane
 
 ```bash
 vesta-cloud token
