@@ -53,6 +53,10 @@ const harnessModules = new Map([
     "react-native-reanimated",
     path.resolve(__dirname, "harness/reanimated.js"),
   ],
+  [
+    "expo-router/stack",
+    path.resolve(__dirname, "harness/stack.js"),
+  ],
 ]);
 const defaultResolveRequest = config.resolver.resolveRequest;
 

@@ -11,6 +11,8 @@ tags:
 - extendedWaitUntil:
     visible: "Try again"
     timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
 - takeScreenshot: privacy-initialization-error
 - runScript:
     file: capture-screenshot.js
@@ -22,6 +24,8 @@ tags:
 - extendedWaitUntil:
     visible: "Unlock with Face ID"
     timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
 - takeScreenshot: privacy-locked
 - runScript:
     file: capture-screenshot.js
@@ -30,8 +34,11 @@ tags:
 - tapOn:
     text: "Unlock with Face ID"
     waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: "Device authentication is temporarily locked.*"
+    timeout: 10000
 - waitForAnimationToEnd:
-    timeout: 1000
+    timeout: 3000
 - takeScreenshot: privacy-unlock-error
 - runScript:
     file: capture-screenshot.js
@@ -77,6 +84,8 @@ tags:
 - extendedWaitUntil:
     visible: "Retry"
     timeout: 20000
+- waitForAnimationToEnd:
+    timeout: 3000
 - takeScreenshot: recent-gateway-error
 - runScript:
     file: capture-screenshot.js

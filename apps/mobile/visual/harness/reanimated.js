@@ -6,5 +6,29 @@ const noTransition = {
 };
 
 export const FadeIn = noTransition;
+export const FadeInDown = noTransition;
 export const FadeOut = noTransition;
+export const FadeOutUp = noTransition;
 export const SlideInDown = noTransition;
+
+export function withTiming(value, _config, callback) {
+  "worklet";
+  if (callback) callback(true, value);
+  return value;
+}
+
+export function withSpring(value, _config, callback) {
+  "worklet";
+  if (callback) callback(true, value);
+  return value;
+}
+
+export function withDelay(_delay, animation) {
+  "worklet";
+  return animation;
+}
+
+export function withRepeat(animation) {
+  "worklet";
+  return animation;
+}

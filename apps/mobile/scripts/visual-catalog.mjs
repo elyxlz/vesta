@@ -49,6 +49,10 @@ const watchFlowsDirectory = path.join(watchDirectory, "flows");
 const watchScreenshotsDirectory = path.join(watchDirectory, "screenshots");
 const manifestPath = path.join(mobileRoot, "visual/scenarios.json");
 const metroConfigPath = path.join(mobileRoot, "visual/metro.config.js");
+const nativeAnimationHookPath = path.join(
+  mobileRoot,
+  "visual/harness/disable-ios-animations.swift",
+);
 const expoRouterEntryPath = path.resolve(
   mobileRoot,
   "../node_modules/expo-router/entry.js",
@@ -266,6 +270,7 @@ function nativeInputTargets() {
     path.join(mobileRoot, "src/theme/native-config.generated.json"),
     path.join(mobileRoot, "assets/app-icon-dev.png"),
     path.join(mobileRoot, "assets/blank-splash.xml"),
+    nativeAnimationHookPath,
   ];
 }
 
@@ -402,7 +407,17 @@ function chooseSimulator(devices, requested) {
     if (partial.length === 1) return partial[0];
     throw new Error(`No unique available iPhone simulator matches "${requested}".`);
   }
+
+  const preferred = phones
+    .filter((device) => device.name === "iPhone 17")
+    .sort((left, right) =>
+      right.runtimeName.localeCompare(left.runtimeName, undefined, {
+        numeric: true,
+      }),
+    )[0];
+
   return (
+    preferred ??
     phones.find((device) => device.state === "Booted") ??
     phones.find((device) => device.name === "iPhone 16 Pro") ??
     phones.find((device) => device.name.endsWith("Pro")) ??
@@ -787,6 +802,30 @@ async function rebundleApp(app, environment) {
   await run("codesign", ["--force", "--sign", "-", app]);
 }
 
+async function installVisualNativeHooks(iosDirectory) {
+  const appDelegates = (await filesBelow(iosDirectory)).filter(
+    (file) => path.basename(file) === "AppDelegate.swift",
+  );
+  if (appDelegates.length !== 1) {
+    throw new Error(
+      `Expected one generated AppDelegate.swift, found ${appDelegates.length}.`,
+    );
+  }
+
+  const appDelegate = appDelegates[0];
+  const hook = (await readFile(nativeAnimationHookPath, "utf8")).trimEnd();
+  const source = await readFile(appDelegate, "utf8");
+  if (source.includes(hook)) return;
+
+  const anchor =
+    "    didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil\n" +
+    "  ) -> Bool {\n";
+  if (!source.includes(anchor)) {
+    throw new Error("Could not install the visual AppDelegate animation hook.");
+  }
+  await writeFile(appDelegate, source.replace(anchor, `${anchor}${hook}\n`));
+}
+
 async function buildAndInstall(simulators, appId) {
   const buildSimulator = simulators[0];
   await mkdir(derivedDataDirectory, { recursive: true });
@@ -828,6 +867,7 @@ async function buildAndInstall(simulators, appId) {
           { env: visualEnvironment },
         );
       }
+      await installVisualNativeHooks(iosDirectory);
       const workspace = await onlyEntryWithExtension(
         iosDirectory,
         ".xcworkspace",
@@ -903,25 +943,47 @@ async function runMaestro(manifest, simulators, tools) {
   const flowPaths = manifest.flows.map((flow) =>
     path.resolve(mobileRoot, flow),
   );
-  await run(
-    tools.maestro,
-    [
-      `--device=${simulators.map((simulator) => simulator.udid).join(",")}`,
-      "test",
-      `--shard-split=${simulators.length}`,
-      ...flowPaths,
-      "-e",
-      `APP_ID=${manifest.appId}`,
-      "-e",
-      "WATCH_CAPTURE_URL=",
-      `--test-output-dir=${maestroDirectory}`,
-      "--format=HTML",
-      `--output=${path.join(maestroDirectory, "report.html")}`,
-      "--test-suite-name=Vesta visual catalog",
-    ],
-    { cwd: mobileRoot, env: tools.environment },
+  const bridge = await startScreenshotBridge(simulators);
+  const cycle = await bridge.beginCycle(manifest);
+  try {
+    await run(
+      tools.maestro,
+      [
+        `--device=${simulators.map((simulator) => simulator.udid).join(",")}`,
+        "test",
+        `--shard-split=${simulators.length}`,
+        ...flowPaths,
+        "-e",
+        `APP_ID=${manifest.appId}`,
+        "-e",
+        "WATCH_CAPTURE_URL=",
+        "-e",
+        `WATCH_CAPTURE_URL_1=${bridge.urls[0]}`,
+        "-e",
+        `WATCH_CAPTURE_URL_2=${bridge.urls[1]}`,
+        `--test-output-dir=${maestroDirectory}`,
+        "--format=HTML",
+        `--output=${path.join(maestroDirectory, "report.html")}`,
+        "--test-suite-name=Vesta visual catalog",
+      ],
+      { cwd: mobileRoot, env: tools.environment },
+    );
+    await cycle.completion;
+  } catch (error) {
+    bridge.fail(error);
+    await cycle.completion.catch(() => {});
+    throw error;
+  } finally {
+    await bridge.close();
+  }
+  await Promise.all(
+    manifest.scenarios.map((scenario) =>
+      copyFile(
+        path.join(watchScreenshotsDirectory, scenario.screenshot),
+        path.join(captureScreenshotsDirectory, scenario.screenshot),
+      ),
+    ),
   );
-  await collectMaestroScreenshots(manifest, captureScreenshotsDirectory);
 }
 
 async function filesBelow(directory) {
@@ -933,23 +995,6 @@ async function filesBelow(directory) {
     if (entry.isFile()) files.push(target);
   }
   return files;
-}
-
-async function collectMaestroScreenshots(manifest, destinationDirectory) {
-  const artifacts = await filesBelow(maestroDirectory);
-  for (const scenario of manifest.scenarios) {
-    const suffix = path.join("takeScreenshot", scenario.screenshot);
-    const matches = artifacts.filter((artifact) => artifact.endsWith(suffix));
-    if (matches.length !== 1) {
-      throw new Error(
-        `Expected one Maestro artifact for ${scenario.screenshot}, found ${matches.length}.`,
-      );
-    }
-    await copyFile(
-      matches[0],
-      path.join(destinationDirectory, scenario.screenshot),
-    );
-  }
 }
 
 async function assertHarnessBoundary() {
@@ -1741,8 +1786,79 @@ async function readRequestJson(request) {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
+const simulatorApplication =
+  "/Applications/Xcode.app/Contents/Developer/Applications/Simulator.app/Contents/MacOS/Simulator";
+
+async function findSimulatorApplication(udid) {
+  const result = await run(
+    "pgrep",
+    ["-f", `${simulatorApplication} -CurrentDeviceUDID ${udid}`],
+    { capture: true, allowFailure: true, quiet: true },
+  );
+  const pid = Number(result.stdout.trim().split("\n")[0]);
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
+}
+
+async function ensureHiddenSimulatorApplication(udid) {
+  let pid = await findSimulatorApplication(udid);
+  let created = false;
+  if (pid === null) {
+    await run(
+      "open",
+      [
+        "-gj",
+        "-n",
+        "-a",
+        "Simulator",
+        "--args",
+        "-CurrentDeviceUDID",
+        udid,
+        "-ConnectHardwareKeyboard",
+        "0",
+      ],
+      { capture: true, quiet: true },
+    );
+    created = true;
+    for (let attempt = 0; attempt < 30 && pid === null; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      pid = await findSimulatorApplication(udid);
+    }
+  }
+  if (pid === null) {
+    throw new Error("Could not start the hidden Simulator keyboard host.");
+  }
+  return { created, pid };
+}
+
+async function showSimulatorSoftwareKeyboard(udid) {
+  const host = await ensureHiddenSimulatorApplication(udid);
+  const script = [
+    'tell application "System Events"',
+    `set simulatorProcess to first process whose unix id is ${host.pid}`,
+    "tell simulatorProcess",
+    'click menu item "Toggle Software Keyboard" of menu 1 of menu item "Keyboard" of menu 1 of menu bar item "I/O" of menu bar 1',
+    "end tell",
+    "end tell",
+  ].join("\n");
+  let failure = "";
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const result = await run("osascript", ["-e", script], {
+      capture: true,
+      allowFailure: true,
+      quiet: true,
+    });
+    if (result.code === 0) return host;
+    failure = result.stderr.trim();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  throw new Error(
+    `Could not show the iOS software keyboard.${failure ? ` ${failure}` : ""}`,
+  );
+}
+
 async function startScreenshotBridge(simulators) {
   let cycle;
+  const createdKeyboardHostPids = new Set();
   const routes = new Map(
     simulators.map((simulator, index) => [
       `/__visual_capture/${index + 1}`,
@@ -1760,10 +1876,18 @@ async function startScreenshotBridge(simulators) {
       return;
     }
     try {
-      if (!cycle || cycle.completed) {
-        throw new Error("No screenshot cycle is active.");
-      }
       const payload = await readRequestJson(request);
+      if (payload.action === "show-software-keyboard") {
+        const host = await showSimulatorSoftwareKeyboard(simulator.udid);
+        if (host.created) createdKeyboardHostPids.add(host.pid);
+        response.writeHead(204).end();
+        return;
+      }
+      if (!cycle) {
+        response.writeHead(204).end();
+        return;
+      }
+      if (cycle.completed) throw new Error("No screenshot cycle is active.");
       const screenshot = payload.screenshot;
       if (
         typeof screenshot !== "string" ||
@@ -1870,6 +1994,11 @@ async function startScreenshotBridge(simulators) {
         cycle.reject(new Error("Screenshot bridge stopped."));
       }
       await new Promise((resolve) => server.close(resolve));
+      for (const pid of createdKeyboardHostPids) {
+        try {
+          process.kill(pid, "SIGTERM");
+        } catch {}
+      }
     },
   };
 }

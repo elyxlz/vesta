@@ -48,7 +48,7 @@
     {
       "id": "connect-link",
       "title": "Connect your gateway",
-      "description": "Self-hosted gateway connection form in its native form sheet.",
+      "description": "Focused self-hosted gateway form with the software keyboard visible.",
       "group": "Onboarding",
       "screenshot": "connect-link.png"
     },

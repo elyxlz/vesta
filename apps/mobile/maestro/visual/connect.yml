@@ -28,8 +28,9 @@ tags:
 - tapOn:
     text: "Connect with Vesta Cloud"
     waitToSettleTimeoutMs: 1
-- waitForAnimationToEnd:
-    timeout: 1000
+- extendedWaitUntil:
+    visible: "Sign-in failed"
+    timeout: 10000
 - takeScreenshot: cloud-sign-in-error
 - runScript:
     file: capture-screenshot.js
@@ -42,6 +43,17 @@ tags:
 - extendedWaitUntil:
     visible: "Connect your gateway"
     timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- tapOn: "Connection link"
+- waitForAnimationToEnd:
+    timeout: 3000
+- runScript:
+    file: capture-screenshot.js
+    env:
+      ACTION: show-software-keyboard
+- waitForAnimationToEnd:
+    timeout: 3000
 - takeScreenshot: connect-link
 - runScript:
     file: capture-screenshot.js

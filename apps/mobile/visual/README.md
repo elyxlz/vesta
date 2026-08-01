@@ -107,8 +107,10 @@ unchanged.
 
 The runner resolves the requested device and runtime, then creates or reuses
 two dedicated devices named `Vesta Visual 1` and `Vesta Visual 2`. Simulator.app
-stays closed unless `--show-simulator` is passed; CoreSimulator still runs both
-devices and exposes their framebuffers to Maestro.
+does not show a window unless `--show-simulator` is passed; CoreSimulator still
+runs both devices and exposes their framebuffers to Maestro. The focused input
+scenario briefly uses a hidden, non-frontmost Simulator host to request the
+real software keyboard, then closes that host when capture ends.
 
 The runner normalizes appearance, Dynamic Type size, and status bar data so
 captures remain comparable. Maestro flows establish the scenario-specific
@@ -172,6 +174,14 @@ maestro/visual/connected-home-empty.yml
 The flows are split across two simulators. Maestro interacts through visible
 text and accessibility labels, waits for a specific state, then takes a
 full-device screenshot.
+
+Visual builds replace app-level Reanimated transitions with instant values,
+force Expo Router stack transitions to `animation: "none"`, and inject
+`UIView.setAnimationsEnabled(false)` into the generated visual-only iOS
+AppDelegate. This disables both navigation and UIKit transitions without
+changing the production native project or application source. Native sheets
+still assert their settled content before capture because iOS can resize a
+detent after its content first becomes accessible.
 
 ### 5. Validate and publish
 
