@@ -17,7 +17,7 @@ Set both or neither, and keep the key out of chat, logs, commits, and command
 output. The CLI persists valid credentials in the instance state so a later
 environment scrub does not silently switch account methods. Auth detail (including
 that a `vesta.run` hostname may front a standalone service) is in
-[MANAGED_AUTH.md](MANAGED_AUTH.md).
+[HEADLESS.md](HEADLESS.md).
 
 Run `whatsapp status` first; stop if linked or connecting.
 
@@ -31,7 +31,7 @@ whatsapp connect --opener 'Hi, it is me, nice to meet you here'
 
 The CLI authenticates to Double Tick with the `wak_` key, provisions or recovers
 the account, and pairs the companion over the account's
-[residential proxy lease](MANAGED_AUTH.md#residential-proxy-lease).
+[residential proxy lease](HEADLESS.md#residential-proxy-lease).
 
 Follow the returned `next`. Reply-first behavior is in [SKILL.md](SKILL.md);
 recovery outcomes are in [SETUP.md](SETUP.md#status-and-recovery). Use the Double

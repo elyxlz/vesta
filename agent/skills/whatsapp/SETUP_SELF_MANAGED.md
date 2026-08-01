@@ -11,7 +11,7 @@ lease, and the reply-first gate do not apply; normal messaging rules do.
 
 Confirm the user intends to give the assistant access to this dedicated account.
 The user must supply their own SIM / phone number; if they need to acquire one,
-read [PHONE_NUMBER.md](PHONE_NUMBER.md).
+read [GET_A_NUMBER.md](GET_A_NUMBER.md).
 
 Run `whatsapp status`; stop if already linked or an attempt is active.
 

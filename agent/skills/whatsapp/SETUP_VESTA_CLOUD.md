@@ -9,7 +9,7 @@ rather than a self-managed one.
 Cloud provisioning supplies `VESTA_CLOUD_CONTROL_URL`, the agent identity, and
 vestad connectivity. Do not add Double Tick credentials: the agent mints
 short-lived Vesta server-identity tokens and the control plane holds the service
-credentials (see [MANAGED_AUTH.md](MANAGED_AUTH.md)).
+credentials (see [HEADLESS.md](HEADLESS.md)).
 
 Run `whatsapp status` first; stop if linked or connecting.
 
@@ -23,7 +23,7 @@ whatsapp connect --opener 'Hi, it is me, nice to meet you here'
 
 Vesta Cloud authenticates the tenant, provisions the hosted account, and pairs the
 companion over the account's
-[residential proxy lease](MANAGED_AUTH.md#residential-proxy-lease).
+[residential proxy lease](HEADLESS.md#residential-proxy-lease).
 Reauthentication keeps the session binding; a fresh account is a new Vesta Cloud
 provision.
 

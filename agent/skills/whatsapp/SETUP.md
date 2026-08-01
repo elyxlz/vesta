@@ -61,7 +61,7 @@ status. Handle each:
 - logged out after a prior link, or auth state gone after a restore/restart: get
   approval, then repeat the same connect once.
 - companion cannot obtain or validate its
-  [residential proxy lease](MANAGED_AUTH.md#residential-proxy-lease): stop; do not
+  [residential proxy lease](HEADLESS.md#residential-proxy-lease): stop; do not
   pair or reconnect over direct egress.
 
 ## Named instances
