@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mobile Visual QA"
+  short_description: "Capture and extend deterministic mobile UI galleries"
+  default_prompt: "Use $mobile-visual-qa to add or debug deterministic iOS screenshots in the mobile visual QA harness."
