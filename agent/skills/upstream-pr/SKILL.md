@@ -73,9 +73,16 @@ The home `~` workspace ignores everything outside `agent/`, and local commits di
 
 1. **Create the worktree:**
    ```bash
-   git -C ~ fetch origin
-   git -C ~ worktree add /tmp/vesta-pr -b feature/<name> origin/master
+   git -C ~ remote get-url upstream >/dev/null 2>&1 || git -C ~ remote add upstream https://github.com/elyxlz/vesta.git
+   git -C ~ fetch upstream
+   git -C ~ worktree add /tmp/vesta-pr -b feature/<name> upstream/master
    ```
+
+   **The remote is `upstream`, not `origin`, and it may not exist yet.** A fresh workspace can have
+   no remotes at all, in which case `git fetch origin` fails with `'origin' does not appear to be a
+   git repository` and step 1 dead-ends before you have written a line. The `upstream-pr` CLI adds
+   and re-points `upstream` itself at push time, so that is the name to fetch from. The first line
+   above is idempotent and safe to re-run.
 
 2. **File the linked issue first** (if doing PR + issue), so the PR can reference it. See "Filing an issue" below.
 
