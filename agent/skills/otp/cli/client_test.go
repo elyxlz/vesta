@@ -11,38 +11,26 @@ import (
 	"time"
 )
 
-// fakeVestad stands in for this box's vestad: it mints a server-identity token for
-// the agent-token tier, exactly like POST /agents/{name}/account-token.
-func fakeVestad(t *testing.T, wantAgentToken string) *httptest.Server {
+// stubServerToken makes authorize()'s cloud path resolve to a fixed credential pointed
+// at ctrlURL, standing in for the `vesta-cloud token` subprocess so tests drive the
+// control plane directly (no subprocess, no fake vestad).
+func stubServerToken(t *testing.T, ctrlURL string) {
 	t.Helper()
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/agents/alice/account-token" {
-			http.Error(w, "no", http.StatusNotFound)
-			return
-		}
-		if r.Header.Get("X-Agent-Token") != wantAgentToken {
-			http.Error(w, `{"error":"bad agent token"}`, http.StatusUnauthorized)
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]string{"token": "sit_minted"})
-	}))
-	t.Cleanup(srv.Close)
-	return srv
+	prev := mintServerToken
+	mintServerToken = func() (serverToken, error) {
+		return serverToken{token: "sit_minted", controlURL: ctrlURL}, nil
+	}
+	t.Cleanup(func() { mintServerToken = prev })
 }
 
-// cloudClientFor wires a client against a fake vestad + a control-plane handler
-// (cloud managed mode: server-identity token, forwarded /integrations/switchboard).
+// cloudClientFor wires a client against a control-plane handler, with the cloud
+// credential stubbed to point at it (forwarded /integrations/switchboard).
 func cloudClientFor(t *testing.T, control http.HandlerFunc) *client {
 	t.Helper()
-	vestad := fakeVestad(t, "atok")
 	ctrl := httptest.NewServer(control)
 	t.Cleanup(ctrl.Close)
-	return newClient(config{
-		controlURL: ctrl.URL,
-		vestadBase: vestad.URL,
-		agentName:  "alice",
-		agentToken: "atok",
-	})
+	stubServerToken(t, ctrl.URL)
+	return newClient(config{vestadBase: "https://vestad.test", agentName: "alice", agentToken: "atok"})
 }
 
 func TestReserve_cloudMintsTokenAndReturnsNumber(t *testing.T) {
@@ -234,7 +222,6 @@ func TestDirect_sbkKeyHitsNativeLeasePaths(t *testing.T) {
 // the cloud: authorize mints it from the /token endpoint (server-identity authed),
 // then talks to that Switchboard natively. The key never appears in output.
 func TestAuthorize_directCredsFromTokenEndpoint(t *testing.T) {
-	vestad := fakeVestad(t, "atok")
 	var sawTokenAuth string
 	ctrl := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/integrations/switchboard/token" {
@@ -245,12 +232,9 @@ func TestAuthorize_directCredsFromTokenEndpoint(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"url": "https://sb.example", "key": "sbk_minted"})
 	}))
 	t.Cleanup(ctrl.Close)
+	stubServerToken(t, ctrl.URL)
 	c := newClient(config{
-		controlURL: ctrl.URL,
-		directURL:  "https://sb.example", // base set, key absent
-		vestadBase: vestad.URL,
-		agentName:  "alice",
-		agentToken: "atok",
+		directURL: "https://sb.example", // base set, key absent
 	})
 	base, auth, direct, err := c.authorize()
 	if err != nil {
@@ -299,18 +283,5 @@ func TestLoadConfig_directPairFromEnv(t *testing.T) {
 	cfg := loadConfig()
 	if cfg.directURL != "https://sb.example" || cfg.directKey != "sbk_env" {
 		t.Fatalf("loadConfig = url %q key %q", cfg.directURL, cfg.directKey)
-	}
-}
-
-func TestMintToken_missingCredentials(t *testing.T) {
-	// Not in an agent container at all.
-	c := newClient(config{controlURL: "https://x"})
-	if _, err := c.mintToken(); err == nil {
-		t.Fatal("expected error without VESTAD_PORT/AGENT_NAME")
-	}
-	// In a container but missing the agent token.
-	c2 := newClient(config{controlURL: "https://x", vestadBase: "https://localhost:1", agentName: "alice"})
-	if _, err := c2.mintToken(); err == nil {
-		t.Fatal("expected error without AGENT_TOKEN")
 	}
 }
