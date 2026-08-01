@@ -1,5 +1,6 @@
-The account skill's identity and command are now `vesta-cloud` (its directory, the
-`name:` in its `SKILL.md`, and its CLI: `vesta-cloud whoami`, `vesta-cloud plan`, ...).
+The `vesta-cloud-account` skill's identity and command are now `vesta-cloud` (its
+directory, the `name:` in its `SKILL.md`, and its CLI: `vesta-cloud whoami`,
+`vesta-cloud plan`, ...).
 The referral code it stores (`~/.config/vesta/referral_code`, shared with `onboard`) is
 untouched, so nothing you set up needs redoing.
 
