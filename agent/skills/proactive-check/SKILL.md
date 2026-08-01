@@ -7,7 +7,7 @@ description: Periodic self-directed check-in; fires on interval to reach out or 
 
 This is your scheduled moment to think unprompted. No one asked; you're checking in with yourself and the user's world. Be thoughtful, not noisy.
 
-## Preflight: daemon liveness (do this first, every tick)
+## Preflight 1: daemon liveness (do this first, every tick)
 
 Before anything else, confirm your core daemons are alive. Ask each daemon the `restart` skill starts how it is doing, by turning each of its start lines into the matching status call:
 
@@ -20,6 +20,32 @@ done
 The rest of each line is kept, so a per-instance line (`whatsapp daemon start --instance personal`) asks that instance rather than the default one, which is the only way a second account's daemon shows up here at all.
 
 A daemon can die silently (container up, daemon down), and a dead messaging daemon means you can't reach the user at all, so this is load-bearing. Bring back anything reporting `"running":false` with its own start line from that block, or re-run the whole `restart` skill Daemons block, which is idempotent and a no-op when everything is already up.
+
+## Preflight 2: budget, before any expensive pass
+
+A proactive check fires every hour forever. That cadence is only sustainable if most ticks are cheap, so **check what you have left before deciding how big to go**:
+
+```bash
+source /run/vestad-env; curl -s "http://127.0.0.1:$WS_PORT/usage" -H "X-Agent-Token: $AGENT_TOKEN"
+```
+
+That returns a `meters` array, one entry per window, each with a `label`, a live `used_pct` (0 to 100), and `resets_at`. Read every meter, not just one: a session window that resets in an hour and a weekly window that resets in six days carry very different consequences at the same percentage.
+
+**Do not read the budget out of `vesta.log`.** The log only records rate-limit lines while a limit is actually being warned about, so the moment a window resets the lines simply stop and the last high number sits there looking current. Grepping it will keep handing you a high-water mark from a window that already expired, and you will ration yourself for hours against a number that is no longer true. `resets_at` is the whole point: it tells you when the number stops applying, which a log line never can.
+
+`used_pct` is a percentage, so 80 means 80 percent. Note that this is **not** the same scale as the `utilization` value in `vesta.log`, which is a fraction between 0 and 1 for the same window. Mixing them up reads 0.91 as "under a percent" or 4.0 as "four times over".
+
+Band on the **highest** `used_pct` across the meters:
+
+- **Below ~60**: normal. Spend the tick however the work deserves.
+- **~60 to 80**: no multi-agent research fan-outs on anything the user has not asked for. One focused agent if the work is genuinely urgent, otherwise do it in-thread or defer.
+- **Above ~80**: cheap ticks only. Daemon preflight, read state, act on anything actually due, stop. **Do not spawn research subagents at all.** Write down what you would have done so a later tick with headroom can pick it up.
+
+Check `resets_at` before you throttle: if the tight window resets shortly, deferring the expensive pass by one tick costs nothing, whereas rationing every tick for the next six days is a real loss.
+
+**Overnight ticks default one band stricter.** Nobody is awake, so nothing discretionary is urgent, and the cost of being wrong is asymmetric: burn the week's budget at 3am on unprompted research and you are rationed during the hours the user is actually awake and asking. A deep dig that genuinely matters keeps until morning; if it does not keep, it was due work, not a proactive pass.
+
+**The tell you are over-spending is not the number, it is the justification.** "While it's quiet I might as well go deep" is the exact thought that produces a six-figure-token research run for a task with a deadline five days out that the user never mentioned. Quiet is not a reason to spend, it is a reason the spending is invisible.
 
 ## Two questions, every time
 
