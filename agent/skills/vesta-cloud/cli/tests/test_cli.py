@@ -48,6 +48,16 @@ def test_whoami_account_false_when_mint_refused(capsys, monkeypatch):
     assert data["reason"] == "not a cloud-managed server"
 
 
+def test_whoami_suspended_is_account_true_with_status(capsys, monkeypatch):
+    # A recognized but suspended box answers /account 200 with status "suspended"
+    # (not an error), so it is paired (account:true); status carries the nuance.
+    monkeypatch.setattr(cli_mod.Client, "account_token", lambda self: {"token": "SITOK"})
+    monkeypatch.setattr(cli_mod.Client, "plan", lambda self, token: {"plan": "membership", "status": "suspended"})
+    rc, data = _run(["whoami"], capsys)
+    assert rc == 0
+    assert data["account"] is True and data["status"] == "suspended"
+
+
 def test_whoami_account_false_when_recognized_but_inactive(capsys, monkeypatch):
     monkeypatch.setattr(cli_mod.Client, "account_token", lambda self: {"token": "SITOK"})
     monkeypatch.setattr(cli_mod.Client, "plan", lambda self, token: {"error": "membership_inactive"})

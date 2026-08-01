@@ -19,11 +19,11 @@ vesta-cloud whoami
 #   "managed_infra": true, "control_url": "https://vesta.run/api", "agent_name": "ada" }
 ```
 
-`account` is the fact to branch on: `true` means this box holds a Vesta Cloud account
-the control plane recognizes and can use paid cloud features; `false` means it does
-not (yet), and `reason` says why. It is the signal other skills read to choose a cloud
-path over a self-managed one, so consult `whoami` rather than reading any environment
-variable. `managed_infra` is the narrower, separate fact that this VM is Vesta-operated;
+`account` is the fact to branch on: `true` means this box is paired to a Vesta Cloud
+account the control plane recognizes (read `status` for whether it is `active` versus,
+say, `suspended`); `false` means it has none yet, and `reason` says why. It is the
+signal other skills read to choose a cloud path over a self-managed one, so consult
+`whoami` rather than reading any environment variable. `managed_infra` is the narrower, separate fact that this VM is Vesta-operated;
 a box can hold an account without it. `account:false` exits 0 (a valid answer); a real
 vestad/control-plane outage exits 3.
 
