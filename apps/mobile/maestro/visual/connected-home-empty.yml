@@ -14,7 +14,7 @@ tags:
     optional: true
     waitToSettleTimeoutMs: 1
 - extendedWaitUntil:
-    visible: "Create your first agent"
+    visible: "Create your agent"
     timeout: 30000
 - takeScreenshot: home-empty
 - runScript:
