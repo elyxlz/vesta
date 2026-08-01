@@ -1,18 +1,20 @@
-"""``vesta-cloud-account`` CLI entry point — read this box's plan, facilitate
-billing changes, and manage the referral code the `onboard` skill uses.
+"""``vesta-cloud`` CLI entry point — the single authority for this box's Vesta Cloud
+account: whether it has one, a credential to act as it, its plan, and its referral code.
 
-The owner's own vesta runs this to answer account questions and hand over a
-secure management link. `plan`, `manage`, and `referral` all mint a fresh
-server-identity token from vestad first (see `client.Client.mint_token`):
+The owner's own vesta runs this. `whoami` answers "do I have a Vesta Cloud account?"
+(the discriminator every other skill keys off, NOT an env var); `token` hands out a
+server-identity credential; `plan` / `manage` / `referral` mint that token from vestad
+first (see `client.Client.mint_token`):
 
-- ``vesta-cloud-account plan``          — this box's plan, price, status, renewal (a read).
-- ``vesta-cloud-account manage``        — a Stripe-hosted link to upgrade / cancel / change card.
-- ``vesta-cloud-account referral``      — this box's referral code, credit earned, invites completed.
-- ``vesta-cloud-account set-referral``  — set/clear the code `onboard` sends on a completed invite.
+- ``vesta-cloud whoami``        — account? + plan/status + managed_infra + control_url (the env probe).
+- ``vesta-cloud token``         — a short-lived server-identity token + control_url, for skills to call the control plane.
+- ``vesta-cloud plan``          — this box's plan, price, status, renewal (a read).
+- ``vesta-cloud manage``        — a Stripe-hosted link to upgrade / cancel / change card.
+- ``vesta-cloud referral``      — this box's referral code, credit earned, invites completed.
+- ``vesta-cloud set-referral``  — set/clear the code `onboard` sends on a completed invite.
 
 Output is always JSON on stdout. Exit codes: 0 success, 2 surfaced {error}
-(self-hosted box, no billing account yet), 3 control-plane/vestad unreachable,
-1 unexpected.
+(no account / no billing yet), 3 control-plane/vestad unreachable, 1 unexpected.
 """
 
 from __future__ import annotations
@@ -28,6 +30,56 @@ from .config import Config
 
 def _print(payload: dict[str, Any]) -> None:
     print(json.dumps(payload, indent=2, ensure_ascii=False))
+
+
+def _cmd_whoami(_args: argparse.Namespace, client: Client, cfg: Config) -> int:
+    """The environment probe every other skill keys off. `account` (does this box hold a
+    Vesta Cloud account the control plane honors?) is the discriminator, NOT the
+    `managed_infra` env signal, so a self-hosted box that holds an account answers
+    `account: true` exactly like a managed VM. Always exit 0: "no account" is a valid
+    answer, not an error (a genuine vestad/control-plane outage still raises -> exit 3)."""
+    out: dict[str, Any] = {
+        "account": False,
+        "managed_infra": cfg.managed_infra,
+        "control_url": cfg.control_url,
+        "agent_name": cfg.agent_name or None,
+    }
+    minted = client.account_token()  # transport/5xx -> AccountError -> exit 3
+    if not minted.get("token"):
+        # A reached vestad refusing to mint = this box has no account (yet).
+        out["reason"] = minted.get("error") or "no server-identity token"
+        _print(out)
+        return 0
+    summary = client.plan(minted["token"])  # transport -> exit 3
+    if "error" in summary:
+        # Recognized box, but no active membership (e.g. suspended / no billing).
+        out["reason"] = summary["error"]
+        _print(out)
+        return 0
+    out["account"] = True
+    out["plan"] = summary.get("plan")
+    out["status"] = summary.get("status")
+    out["renews_at"] = summary.get("renews_at")
+    cents = summary.get("price_cents")
+    if isinstance(cents, int):
+        out["price_usd"] = round(cents / 100, 2)
+    _print(out)
+    return 0
+
+
+def _cmd_token(_args: argparse.Namespace, client: Client, cfg: Config) -> int:
+    """Hand another skill a short-lived server-identity credential + the control-plane
+    URL, so it calls the control plane as this server without re-implementing the mint.
+    One general token works for any server-scoped route (/account, integrations, ...)."""
+    detail = client.mint_token_detail()
+    _print(
+        {
+            "token": detail["token"],
+            "control_url": cfg.control_url,
+            "expires_in": detail.get("expires_in"),
+        }
+    )
+    return 0
 
 
 def _cmd_plan(_args: argparse.Namespace, client: Client, _cfg: Config) -> int:
@@ -72,9 +124,9 @@ def _cmd_referral(_args: argparse.Namespace, client: Client, _cfg: Config) -> in
             {
                 "error": "not_hosted",
                 "message": (
-                    "This box is not cloud-managed, so it has no vesta-issued referral code. "
+                    "This box has no Vesta Cloud account, so it has no vesta-issued referral code. "
                     "Ask the owner if they have one and set it with "
-                    "`vesta-cloud-account set-referral --code <code>`."
+                    "`vesta-cloud set-referral --code <code>`."
                 ),
             }
         )
@@ -106,10 +158,12 @@ def _cmd_set_referral(args: argparse.Namespace, _client: Client, _cfg: Config) -
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="vesta-cloud-account",
-        description="Read this box's Vesta hosting plan, facilitate billing changes, and manage its referral code.",
+        prog="vesta-cloud",
+        description="This box's Vesta Cloud account: whoami + server-identity token, plan, billing, and referral code.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("whoami", help="Does this box have a Vesta Cloud account? + plan/status + managed_infra.")
+    sub.add_parser("token", help="A short-lived server-identity token + control_url, for skills to call the control plane.")
     sub.add_parser("plan", help="This box's plan, price, status, and renewal date.")
     sub.add_parser("manage", help="A secure Stripe link to upgrade / cancel / change payment.")
     sub.add_parser("referral", help="This box's referral code, credit earned, and invites completed.")
@@ -127,6 +181,8 @@ def main(argv: list[str] | None = None) -> int:
     client = Client(cfg)
 
     handlers = {
+        "whoami": _cmd_whoami,
+        "token": _cmd_token,
         "plan": _cmd_plan,
         "manage": _cmd_manage,
         "referral": _cmd_referral,

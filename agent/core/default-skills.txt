@@ -19,6 +19,6 @@ skills-registry
 tasks
 timezone
 upstream-pr
-vesta-cloud-account
+vesta-cloud
 voice
 what-day

@@ -1,4 +1,4 @@
-"""Configuration for the account CLI.
+"""Configuration for the vesta-cloud CLI.
 
 Everything is read from the environment the agent container already has:
 
@@ -10,6 +10,12 @@ Everything is read from the environment the agent container already has:
   holds the box's `api_key`.
 
 There is NO on-disk state: every command mints a fresh short-lived token.
+
+`VESTA_CLOUD_CONTROL_URL` is only a control-plane URL knob here, NOT the "do I have
+an account" signal: cloud-init sets it on managed VMs, but a self-hosted box may hold
+a Vesta Cloud account too. Whether an account exists is answered by whether vestad can
+mint a server-identity token the control plane honors (`whoami`), never by this var.
+`managed_infra` records the var only as the narrower "this VM is Vesta-operated" fact.
 """
 
 from __future__ import annotations
@@ -29,10 +35,12 @@ class Config:
     vestad_base: str
     agent_name: str
     agent_token: str | None
+    managed_infra: bool
 
     @classmethod
     def load(cls) -> Config:
-        control = os.environ.get("VESTA_CLOUD_CONTROL_URL", DEFAULT_CONTROL_URL).rstrip("/")
+        cloud_url = os.environ.get("VESTA_CLOUD_CONTROL_URL", "").strip()
+        control = (cloud_url or DEFAULT_CONTROL_URL).rstrip("/")
         # vestad runs natively on the host, never in a container, so BOX_HOST
         # (from /run/vestad-env) is how the agent reaches it, not localhost. Missing
         # either half leaves vestad_base empty, tripping the same "not running inside
@@ -45,4 +53,5 @@ class Config:
             vestad_base=vestad_base,
             agent_name=os.environ.get("AGENT_NAME", "").strip(),
             agent_token=os.environ.get("AGENT_TOKEN", "").strip() or None,
+            managed_infra=bool(cloud_url),
         )
