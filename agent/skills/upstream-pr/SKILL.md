@@ -98,6 +98,13 @@ Only report a PR as done once every CI check is green.
 
 Get a token with `upstream-pr --token-only`, then POST to the GitHub Issues API. The title should name the pattern, not the specific instance. The body must include the attribution footer (see "Attribution").
 
+**The token can create, but not comment on or edit, an issue.** Observed on v0.1.183 with a freshly minted token: `POST /repos/elyxlz/vesta/issues` succeeds and `POST /repos/.../pulls` succeeds, while `POST /issues/:n/comments` and `PATCH /issues/:n` both return `403 Resource not accessible by integration`. Reading issues is fine.
+
+Two consequences worth knowing before you start typing:
+
+- **Get the body right before you POST**, because you cannot edit it afterwards. If you spot a mistake in a filed issue, the only correction channel is a new issue.
+- **A follow-up finding on an existing issue becomes its own issue** that cross-references the original (`Related to #N`). GitHub renders the backreference on the original, so the thread still reads in order. Do not burn a pass trying to append.
+
 ## upstream-pr reference
 
 ```bash
