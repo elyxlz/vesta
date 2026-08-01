@@ -3,19 +3,24 @@ The account skill's identity and command are now `vesta-cloud` (its directory, t
 The referral code it stores (`~/.config/vesta/referral_code`, shared with `onboard`) is
 untouched, so nothing you set up needs redoing.
 
-`vesta-cloud` is a default skill, so if it is missing your box installs it automatically
-on boot (the default-skill sync turn). This migration only clears the old
-`vesta-cloud-account` entry from your installed set so its stale `vesta-cloud-account`
-launcher does not linger on `PATH`. Safe to run more than once: it no-ops if you never
-had `vesta-cloud-account` installed.
+### 1. Put the `vesta-cloud` command on PATH, drop the old one
 
-### Drop the old `vesta-cloud-account` skill
+```bash
+uv tool install --editable ~/agent/skills/vesta-cloud/cli
+uv tool uninstall vesta-cloud-account 2>/dev/null || true
+```
+
+The install is transactional and editable (the command runs from live source under
+`~/agent`); the uninstall clears the old `vesta-cloud-account` launcher if you had it and
+no-ops otherwise.
+
+### 2. Drop the old `vesta-cloud-account` skill entry
 
 ```bash
 ~/agent/skills/skills-registry/scripts/skills-remove vesta-cloud-account
 ```
 
 If it prints that `vesta-cloud-account` is not installed, you never had it and there is
-nothing to do. If it errors because the old directory holds uncommitted local changes,
-commit them (`git -C ~ add agent/skills && git -C ~ commit -m "checkpoint skill edits"`)
-and run it again.
+nothing more to do here. If it errors because the old directory holds uncommitted local
+changes, commit them (`git -C ~ add agent/skills && git -C ~ commit -m "checkpoint skill
+edits"`) and run it again.

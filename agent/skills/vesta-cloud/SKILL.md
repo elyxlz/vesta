@@ -10,6 +10,14 @@ credential to act as it against the control plane, its plan, and its referral co
 Output is always JSON on stdout. Exit codes: 0 success, 2 surfaced `{error}` (no
 account / no billing yet), 3 control-plane or vestad unreachable, 1 unexpected.
 
+## Setup
+
+Put the `vesta-cloud` command on `PATH` (editable, so it runs from live source):
+
+```bash
+uv tool install --editable ~/agent/skills/vesta-cloud/cli
+```
+
 ## `whoami`: does this box have an account?
 
 ```bash
