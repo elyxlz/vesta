@@ -113,8 +113,7 @@ Hold a live call in your own voice (the `voice` skill's TTS) and hear the other 
   fails, report it and wait, never retry-loop.
 - Phone numbers are E.164 with a leading `+` (e.g. `+12025551234`). Auth state lives in `~/.whatsapp/`.
 
-Shared setup and named-instance details: [SETUP.md](SETUP.md). CLI development:
-[DEVELOPING.md](DEVELOPING.md).
+Shared setup and named-instance details: [SETUP.md](SETUP.md).
 
 ## Contact Preferences
 [How the user prefers to communicate with different contacts]

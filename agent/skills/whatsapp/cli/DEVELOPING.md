@@ -2,7 +2,7 @@
 
 Internal notes for changing the `whatsapp` skill. The agent does not need this;
 its whole surface is `connect`, `status`, `send`, `messages`, `profile`, calls
-(see [SKILL.md](SKILL.md)).
+(see [SKILL.md](../SKILL.md)).
 
 ## How it runs
 
