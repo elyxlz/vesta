@@ -14,15 +14,13 @@ import (
 	"time"
 )
 
-// A one-time SMS code on a temporary number, for verifying any service (a signup,
-// a 2FA step). The agent reserves a number, uses it as the phone number on the
-// service, polls for the code the service texts, then releases the number.
-//
-// Two ways reach the same Switchboard pool. Cloud (managed) mints a short-lived
-// server-identity token from this box's vestad (loopback, agent-token authed; no
-// standing credential) and calls vesta.run /api/integrations/switchboard/* with it
-// as a Bearer. Direct (self-hosted) sends an sbk_ key straight to a Switchboard
-// base URL. Only the base URL, the credential, and the paths differ.
+// A one-time SMS code on a temporary number, for verifying any service (a signup or a
+// 2FA step): the agent reserves a number, uses it on the service, polls for the texted
+// code, then releases the number. Two paths reach the same Switchboard pool. Cloud
+// (managed) mints a short-lived server-identity token from this box's vestad (loopback,
+// agent-token authed; no standing credential) and Bearers it to vesta.run's
+// /api/integrations/switchboard/*. Direct (self-hosted) sends an sbk_ key straight to a
+// Switchboard base URL; only the base URL, credential, and paths differ.
 
 const (
 	httpTimeout    = 30 * time.Second
