@@ -1079,7 +1079,7 @@ export function galleryHtml(catalog) {
                 scenario.captured
                   ? `<img src="${escapeHtml(scenario.image)}" alt="${escapeHtml(
                       scenario.title,
-                    )}" loading="lazy"><span class="dynamic-island" aria-hidden="true"></span>`
+                    )}" loading="lazy">`
                   : `<span class="missing">Screenshot missing</span>`
               }
             </span>
@@ -1286,18 +1286,6 @@ export function galleryHtml(catalog) {
       transition: opacity 160ms ease;
     }
     .preview:hover img { opacity: .88; }
-    .dynamic-island {
-      position: absolute;
-      top: 1.05%;
-      left: 50%;
-      width: 27%;
-      aspect-ratio: 3.25;
-      border-radius: 999px;
-      background: #050505;
-      box-shadow: inset 0 0 0 1px #222;
-      transform: translateX(-50%);
-      pointer-events: none;
-    }
     .missing { color: var(--muted); }
     .card-copy {
       margin-top: 9px;

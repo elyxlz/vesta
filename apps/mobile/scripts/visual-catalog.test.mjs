@@ -60,6 +60,25 @@ describe("galleryHtml", () => {
       "Maestro report",
     );
   });
+
+  it("relies on the device chrome already present in captured screenshots", () => {
+    const html = galleryHtml({
+      ...catalog,
+      scenarios: [
+        {
+          captured: true,
+          description: "Connection actions",
+          group: "Onboarding",
+          image: "screenshots/connect-actions.png",
+          size: { width: 603, height: 1311 },
+          title: "Connect",
+        },
+      ],
+    });
+
+    expect(html).toContain('src="screenshots/connect-actions.png"');
+    expect(html).not.toContain("dynamic-island");
+  });
 });
 
 describe("visual Metro privacy override", () => {
