@@ -95,14 +95,15 @@ func validateConnectSource(opts connectOptions) error {
 }
 
 // connectRoute is the validated internal path a `connect --source` resolves to: one
-// of runProvision (headless) / runLinkPhone / runLink. forceCloud marks the cloud
-// source, which must mint a server-identity token even when direct (DOUBLETICK_*)
-// creds are also present, so the environment's direct creds are dropped first.
+// of runProvision (headless) / runLinkPhone / runLink. source is the resolved account
+// source, threaded to the daemon's provision command so the agent's explicit choice
+// (not the daemon's boot-time env) pins the pairing auth path: `cloud` makes a warm
+// daemon mint a server-identity token even when it also booted with direct creds.
 type connectRoute struct {
-	provision  bool
-	opener     string
-	linkPhone  string
-	forceCloud bool
+	provision bool
+	opener    string
+	linkPhone string
+	source    string
 }
 
 // resolveConnect validates --source against the box environment and returns the path
@@ -118,31 +119,35 @@ func resolveConnect(opts connectOptions, cfg managedConfig) (connectRoute, error
 		if !cfg.isCloudTenant() {
 			return connectRoute{}, fmt.Errorf("--source cloud needs a Vesta Cloud box: this box is not cloud-managed or is missing its vestad credentials")
 		}
-		return connectRoute{provision: true, opener: opts.opener, forceCloud: true}, nil
+		return connectRoute{provision: true, opener: opts.opener, source: sourceCloud}, nil
 	case sourceDoubletick:
 		if !cfg.isDirect() {
 			return connectRoute{}, fmt.Errorf("--source doubletick needs DOUBLETICK_API_URL and DOUBLETICK_API_KEY set together")
 		}
-		return connectRoute{provision: true, opener: opts.opener}, nil
+		return connectRoute{provision: true, opener: opts.opener, source: sourceDoubletick}, nil
 	default: // sourceSelfManaged, already validated above
-		if opts.phone != "" {
-			return connectRoute{linkPhone: opts.phone}, nil
+		// A box holding managed account credentials cannot link the user's own
+		// account: its daemon builds a managed linker that rejects a QR/phone link.
+		// Fail here with the fix, instead of dispatching to a link the daemon refuses.
+		if cfg.isCloudTenant() {
+			return connectRoute{}, fmt.Errorf("--source self-managed cannot run on a Vesta Cloud box: it is provisioned for a managed WhatsApp account; use --source cloud")
 		}
-		return connectRoute{}, nil
+		if cfg.isDirect() {
+			return connectRoute{}, fmt.Errorf("--source self-managed conflicts with the DOUBLETICK_API_URL/KEY set on this box; use --source doubletick, or unset them to link the user's own account")
+		}
+		if opts.phone != "" {
+			return connectRoute{linkPhone: opts.phone, source: sourceSelfManaged}, nil
+		}
+		return connectRoute{source: sourceSelfManaged}, nil
 	}
 }
 
 // connect dispatch seams, overridable in tests so routing is verified without a
 // daemon, socket, or network.
 var (
-	connectProvision  = runProvision
-	connectLink       = runLink
-	connectLinkPhone  = runLinkPhone
-	dropDirectPoolEnv = func() {
-		for _, k := range []string{"DOUBLETICK_API_URL", "DOUBLETICK_API_KEY", "WHATSAPP_API_URL", "WHATSAPP_API_KEY"} {
-			_ = os.Unsetenv(k)
-		}
-	}
+	connectProvision = runProvision
+	connectLink      = runLink
+	connectLinkPhone = runLinkPhone
 )
 
 // canonicalConnectArgs makes the parsed options authoritative for every legacy
@@ -182,19 +187,13 @@ func runConnect() {
 		failJSON("%s", err.Error())
 	}
 	os.Args = canonicalConnectArgs(os.Args[0], opts)
-	// cloud must mint a server-identity token even if direct creds also happen to be
-	// set: drop them from the environment the daemon inherits so authorize() mints a
-	// cloud token instead of reusing a static key.
-	if route.forceCloud {
-		dropDirectPoolEnv()
-	}
 	dispatchConnectRoute(route)
 }
 
 func dispatchConnectRoute(route connectRoute) {
 	switch {
 	case route.provision:
-		connectProvision(route.opener)
+		connectProvision(route.source, route.opener)
 	case route.linkPhone != "":
 		connectLinkPhone(route.linkPhone)
 	default:

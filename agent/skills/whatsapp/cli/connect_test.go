@@ -139,23 +139,23 @@ func TestResolveConnectRoutesEachSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cloud resolve: %v", err)
 	}
-	if !cloudRoute.provision || !cloudRoute.forceCloud || cloudRoute.opener != "hi" {
-		t.Errorf("cloud route = %+v, want provision+forceCloud with opener", cloudRoute)
+	if !cloudRoute.provision || cloudRoute.source != sourceCloud || cloudRoute.opener != "hi" {
+		t.Errorf("cloud route = %+v, want provision with cloud source and opener", cloudRoute)
 	}
 
-	// cloud even when direct creds are also set still forces the cloud auth path.
+	// cloud even when direct creds are also set still pins the cloud auth path.
 	cloudWithDirect := cloudCfg
 	cloudWithDirect.directURL, cloudWithDirect.directKey = "https://doubletick.example", "wak_x"
-	if r, err := resolveConnect(connectOptions{source: sourceCloud}, cloudWithDirect); err != nil || !r.forceCloud {
-		t.Errorf("cloud+direct route = %+v err=%v, want forceCloud", r, err)
+	if r, err := resolveConnect(connectOptions{source: sourceCloud}, cloudWithDirect); err != nil || r.source != sourceCloud {
+		t.Errorf("cloud+direct route = %+v err=%v, want cloud source", r, err)
 	}
 
 	dtRoute, err := resolveConnect(connectOptions{source: sourceDoubletick, opener: "yo"}, directCfg)
 	if err != nil {
 		t.Fatalf("doubletick resolve: %v", err)
 	}
-	if !dtRoute.provision || dtRoute.forceCloud || dtRoute.opener != "yo" {
-		t.Errorf("doubletick route = %+v, want provision without forceCloud", dtRoute)
+	if !dtRoute.provision || dtRoute.source != sourceDoubletick || dtRoute.opener != "yo" {
+		t.Errorf("doubletick route = %+v, want provision with doubletick source", dtRoute)
 	}
 
 	qrRoute, err := resolveConnect(connectOptions{source: sourceSelfManaged}, managedConfig{})
@@ -184,11 +184,22 @@ func TestResolveConnectRejectsUnsatisfiableEnvironment(t *testing.T) {
 	if _, err := resolveConnect(connectOptions{source: sourceDoubletick}, managedConfig{}); err == nil {
 		t.Error("--source doubletick without direct creds was accepted")
 	}
+	// A box holding managed account credentials cannot self-manage: the daemon's
+	// managed linker would reject the QR/phone link, so resolveConnect errors up front.
+	cloudCfg := managedConfig{cloudManaged: true, vestadBase: "https://box:8443", agentName: "a", agentToken: "t"}
+	if _, err := resolveConnect(connectOptions{source: sourceSelfManaged}, cloudCfg); err == nil {
+		t.Error("--source self-managed on a Vesta Cloud box was accepted")
+	}
+	directCfg := managedConfig{directURL: "https://doubletick.example", directKey: "wak_x"}
+	if _, err := resolveConnect(connectOptions{source: sourceSelfManaged}, directCfg); err == nil {
+		t.Error("--source self-managed on a box with direct pool creds was accepted")
+	}
 }
 
 // TestRunConnectDispatchesToProvisionForCloud verifies the top-level verb routes a
-// resolved cloud source to runProvision and drops the direct pool creds first, with
-// the network seams mocked so nothing leaves the process.
+// resolved cloud source to runProvision and threads the cloud source through, with
+// the network seams mocked so nothing leaves the process. Direct creds also set: the
+// daemon (not the client) pins the token path off the threaded source.
 func TestRunConnectDispatchesToProvisionForCloud(t *testing.T) {
 	t.Setenv("DOUBLETICK_API_URL", "https://doubletick.example")
 	t.Setenv("DOUBLETICK_API_KEY", "wak_x")
@@ -198,10 +209,10 @@ func TestRunConnectDispatchesToProvisionForCloud(t *testing.T) {
 	t.Setenv("VESTAD_PORT", "8443")
 	t.Setenv("VESTA_CLOUD_CONTROL_URL", "https://vesta.run/api")
 
-	var gotOpener string
+	var gotSource, gotOpener string
 	provisioned := false
 	restore := connectProvision
-	connectProvision = func(opener string) { provisioned = true; gotOpener = opener }
+	connectProvision = func(source, opener string) { provisioned = true; gotSource = source; gotOpener = opener }
 	t.Cleanup(func() { connectProvision = restore })
 
 	oldArgs := os.Args
@@ -213,11 +224,11 @@ func TestRunConnectDispatchesToProvisionForCloud(t *testing.T) {
 	if !provisioned {
 		t.Fatal("cloud connect did not route to runProvision")
 	}
+	if gotSource != sourceCloud {
+		t.Errorf("provision source = %q, want cloud", gotSource)
+	}
 	if gotOpener != "hello" {
 		t.Errorf("provision opener = %q, want hello", gotOpener)
-	}
-	if os.Getenv("DOUBLETICK_API_URL") != "" || os.Getenv("DOUBLETICK_API_KEY") != "" {
-		t.Error("cloud connect did not drop the direct pool creds before provisioning")
 	}
 }
 
@@ -226,7 +237,7 @@ func TestRunConnectDispatchesToProvisionForCloud(t *testing.T) {
 func TestRunConnectAliasSkipsSourceRequirement(t *testing.T) {
 	provisioned, linked, phoneLinked := false, false, ""
 	rp, rl, rlp := connectProvision, connectLink, connectLinkPhone
-	connectProvision = func(string) { provisioned = true }
+	connectProvision = func(string, string) { provisioned = true }
 	connectLink = func() { linked = true }
 	connectLinkPhone = func(phone string) { phoneLinked = phone }
 	t.Cleanup(func() { connectProvision, connectLink, connectLinkPhone = rp, rl, rlp })

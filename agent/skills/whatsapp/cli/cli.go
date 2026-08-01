@@ -1083,9 +1083,10 @@ func cmdCheckDelivery(args []string, wac *WhatsAppClient) (any, error) {
 // cold-starts the daemon before dispatching this, so the agent runs one command
 // and never orchestrates the steps itself.
 func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
-	var opener string
+	var opener, source string
 	fs := flag.NewFlagSet("provision", flag.ContinueOnError)
 	fs.StringVar(&opener, "opener", "", "Agent-authored first-contact greeting prefilled in the wa.me link")
+	fs.StringVar(&source, "source", "", "Resolved account source; `cloud` pins the pairing auth to the server-identity token")
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
@@ -1133,7 +1134,19 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 	// number that needs onboarding; re-linking the same established number is a
 	// resume that must not tell Vesta to stop initiating mid-relationship.
 	priorOnboardedMSISDN := wac.state.snapshot().OnboardedMSISDN
-	res, err := wac.linker.provision(wac)
+	// Honor the agent's explicit --source over the daemon's boot-time linker: a warm
+	// daemon that booted with direct pool creds still pairs off the server-identity
+	// token when the agent says `--source cloud`. wac.managed is only read on this
+	// single-flighted pairing path, so overriding it for the call (and restoring it
+	// after) races nothing; wac.linker is left untouched (the data path reads it).
+	pairLinker := wac.linker
+	if effAuth := cloudSourceAuth(source); effAuth != nil {
+		saved := wac.managed
+		wac.managed = effAuth
+		defer func() { wac.managed = saved }()
+		pairLinker = &managedLinker{auth: effAuth, state: wac.state}
+	}
+	res, err := pairLinker.provision(wac)
 	if err != nil {
 		// A still-filling pool and a banned number are normal outcomes, not
 		// failures: return a clean status carrying the next step, never a raw error.
