@@ -21,6 +21,24 @@ The rest of each line is kept, so a per-instance line (`whatsapp daemon start --
 
 A daemon can die silently (container up, daemon down), and a dead messaging daemon means you can't reach the user at all, so this is load-bearing. Bring back anything reporting `"running":false` with its own start line from that block, or re-run the whole `restart` skill Daemons block, which is idempotent and a no-op when everything is already up.
 
+## Preflight 2: budget, before any expensive pass
+
+A proactive check fires every hour forever. That cadence is only sustainable if most ticks are cheap, so **check what you have left before deciding how big to go**:
+
+```bash
+grep -oE 'Rate limit [a-z_]+ \(utilization=[0-9.]+, type=[a-z_]+' ~/agent/logs/vesta.log | tail -3
+```
+
+Read the trend, not one number, and note the `type` (a `seven_day` window recovers far more slowly than a short one, so the same utilization is much more serious).
+
+- **Below ~0.6**: normal. Spend the tick however the work deserves.
+- **~0.6 to 0.8**: no multi-agent research fan-outs on anything the user has not asked for. One focused agent if the work is genuinely urgent, otherwise do it in-thread or defer.
+- **Above ~0.8**: cheap ticks only. Daemon preflight, read state, act on anything actually due, stop. **Do not spawn research subagents at all.** Write down what you would have done so a later tick with headroom can pick it up.
+
+**Overnight ticks default one band stricter.** Nobody is awake, so nothing discretionary is urgent, and the cost of being wrong is asymmetric: burn the week's budget overnight on unprompted research and you are rationed during the hours the user is actually awake and asking. A deep dig that genuinely matters keeps until morning; if it does not keep, it was due work, not a proactive pass.
+
+**The tell you are over-spending is not the number, it is the justification.** "While it's quiet I might as well go deep" is the exact thought that produces a six-figure-token research run for a task with a deadline days out that the user never mentioned. Quiet is not a reason to spend, it is a reason the spending is invisible.
+
 ## Two questions, every time
 
 Your running narration is visible to the user in the app: think out loud like yourself, not like a service log.
