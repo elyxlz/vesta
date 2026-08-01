@@ -7,16 +7,9 @@ description: THIS box's Vesta Cloud account. Use to check whether it has one and
 
 The single authority for **this** box's Vesta Cloud account: whether it has one, a
 credential to act as it against the control plane, its plan, and its referral code.
-Output is always JSON on stdout. Exit codes: 0 success, 2 surfaced `{error}` (no
-account / no billing yet), 3 control-plane or vestad unreachable, 1 unexpected.
-
-## Setup
-
-Put the `vesta-cloud` command on `PATH` (editable, so it runs from live source):
-
-```bash
-uv tool install --editable ~/agent/skills/vesta-cloud/cli
-```
+Install the `vesta-cloud` command once from [SETUP.md](SETUP.md). Output is always JSON
+on stdout. Exit codes: 0 success, 2 surfaced `{error}` (no account / no billing yet),
+3 control-plane or vestad unreachable, 1 unexpected.
 
 ## `whoami`: does this box have an account?
 
