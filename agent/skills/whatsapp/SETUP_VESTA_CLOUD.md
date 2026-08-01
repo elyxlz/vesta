@@ -7,9 +7,8 @@ rather than a self-managed one.
 ## Prerequisites
 
 Cloud provisioning supplies `VESTA_CLOUD_CONTROL_URL`, the agent identity, and
-vestad connectivity. Do not add Double Tick credentials: the agent mints
-short-lived Vesta server-identity tokens and the control plane holds the service
-credentials (see [HEADLESS.md](HEADLESS.md)).
+vestad connectivity, so no key or manual setup is needed; the CLI authenticates
+automatically.
 
 Run `whatsapp status` first; stop if linked or connecting.
 

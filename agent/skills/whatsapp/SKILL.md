@@ -40,7 +40,7 @@ warm opener in your own voice from the user's perspective, pass it with
 first. A self-managed account uses normal messaging rules.
 
 Recovery outcomes and diagnostics live in [SETUP.md](SETUP.md#status-and-recovery);
-auth and the proxy-lease rule live in [HEADLESS.md](HEADLESS.md).
+the residential proxy-lease rule lives in [HEADLESS.md](HEADLESS.md).
 
 ## Send
 - Form: `whatsapp <subcommand> [positionals] [--flag value ...]`. **Subcommand goes first**, before any flags.
