@@ -473,11 +473,16 @@ func (wac *WhatsAppClient) recordOutgoingMessage(jid types.JID, p StoreMessagePa
 		p.ID = fmt.Sprintf("local-%d", time.Now().UnixNano())
 	}
 
-	p.ChatJID = jid.String()
+	// Store under the canonical key, not the raw JID. Sending to a peer's LID while their replies
+	// arrive under their phone JID files one conversation as two chats, so the outgoing thread
+	// contains only our own messages and looks like the peer never answered.
+	chatKey := wac.canonicalChatKey(jid)
+
+	p.ChatJID = chatKey
 	p.Timestamp = time.Now()
 	p.IsFromMe = true
 
-	if err := wac.store.StoreChat(jid.String(), wac.getChatName(jid), p.Timestamp); err != nil {
+	if err := wac.store.StoreChat(chatKey, wac.getChatName(jid), p.Timestamp); err != nil {
 		wac.logger.Warnf("Failed to store outgoing chat metadata: %v", err)
 	}
 
