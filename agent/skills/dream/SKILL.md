@@ -77,10 +77,6 @@ Re-read the failing exchange and simulate: would the updated version have change
 
 Simulating it yourself tends to approve your own fixes, so for a failure that has already recurred, hand a fresh subagent (no knowledge of the fix) the original failing exchange plus the updated skill or prompt and see if it independently produces the right behavior. If it doesn't, flag the fix unresolved.
 
-**If the fix is a check, a detector, a threshold or a monitor, you must also simulate the HEALTHY case, not just the failure you built it for.** Replaying it against the bad day only proves it fires; it cannot show you what it reports once the condition clears. Ask literally: what does this print when everything is fine? If the answer is "the last bad value", "nothing, so the previous reading stands", or "I cannot tell the difference", the check is a high-water mark and it will pin you to a stale state indefinitely. That failure is invisible in the ordinary way, because the command still returns a plausible number and nothing looks broken.
-
-Worked example, 1 to 2 Aug 2026: a budget preflight was added that grepped rate-limit warnings out of `vesta.log`. It was validated by replaying it against the previous night's high-utilization ticks, where it correctly said "throttle", so it shipped. But warnings are only written while a limit is being warned about, so when the weekly window reset the lines stopped and `tail` kept returning the old peak. The agent throttled itself for six hours against an expired window while real usage sat at 4 percent. One question, "what does this print when the budget is fine", would have caught it before it ever went upstream.
-
 ### 5. Upstream
 
 Read `upstream-pr` and follow it. It can be a no-op; don't invent work to fill it.
@@ -97,7 +93,7 @@ One lens, three targets: a thing that recurs ~3+ times is a pattern worth acting
 
 ## Personality
 
-Drift the active preset under `~/agent/skills/personality/presets/` directly (the active one is named by `agent_personality` in `~/agent/data/config.json`; there is no `$AGENT_PERSONALITY` env var) (or the shared voice section in `~/agent/skills/personality/SKILL.md` for something true across all presets). Edit in place, surgical tweaks only, not rewrites. Swaps between presets are the user's call. You may edit anything, MEMORY.md and the Charter included, but the Charter is the slowly-changing invariant spine: touch it rarely and surgically, not on one bad afternoon.
+Drift the active preset under `~/agent/skills/personality/presets/` directly (the active one is named by `agent_personality` in `~/agent/data/config.json`, which outranks the `AGENT_PERSONALITY` env var) (or the shared voice section in `~/agent/skills/personality/SKILL.md` for something true across all presets). Edit in place, surgical tweaks only, not rewrites. Swaps between presets are the user's call. You may edit anything, MEMORY.md and the Charter included, but the Charter is the slowly-changing invariant spine: touch it rarely and surgically, not on one bad afternoon.
 
 **Mirror their style.** Watch how they actually text: slang, emoji, laugh shape ("lol" / "ahahah" / "LMAOOO" / "😂"), length, caps, punctuation, opens and closes. Adjust the Voice / Rules / How it sounds sections of the active preset file so it bends toward them. If they laugh with "haha" and your preset laughs with "💀", close the gap. If they never use emoji and the preset does, pull back. Accommodation, not mimicry, gradual not abrupt.
 

@@ -5,13 +5,7 @@ description: Interrupt rules that guard YOUR focus (you, the agent, are the one 
 
 # Notifications
 
-## Setup
-
-```bash
-uv tool install --editable ~/agent/skills/notifications/cli
-```
-
-Without this every command below is `command not found`, and the failure is easy to misread as "no rules configured" rather than "the CLI is not installed".
+Install the `notifications` command once from [SETUP.md](SETUP.md).
 
 ## What these rules do
 

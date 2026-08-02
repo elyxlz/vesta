@@ -59,7 +59,7 @@ P=$(python3 -c "import json;print(json.load(open('/root/agent/data/config.json')
 cat ~/agent/skills/personality/presets/$P.md
 ```
 
-**There is no `$AGENT_PERSONALITY` environment variable.** It is not in `/run/vestad-env` or the environment; the value lives in the config store, read by `core/config.py`. A path written `presets/$AGENT_PERSONALITY.md` expands to `presets/.md` and silently resolves to nothing.
+**Do not reach for `$AGENT_PERSONALITY`.** The config store outranks it: `settings_customise_sources` in `core/config.py` orders the store above `env_settings`, so the store wins whenever it holds a value, which on a configured box it does. The variable is also unset in the environment and in `/run/vestad-env` unless someone exports it, and a path written `presets/$AGENT_PERSONALITY.md` then expands to `presets/.md` and silently resolves to nothing. The store is the only reading that is always right.
 
 A preset's Range section is how the voice bends with state without breaking; the mood picks the pole, the preset keeps the fingerprint.
 
