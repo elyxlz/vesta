@@ -19,6 +19,21 @@ var (
 	whisperModelErr  error
 )
 
+// getLanguage returns the whisper language hint to use for transcription.
+// Defaults to "auto" (whisper.cpp's own language detection), which is prone
+// to hallucinating an entirely wrong-script transcript on short or noisy
+// clips (e.g. a 1-2s voice note misdetected as Russian, producing Cyrillic
+// gibberish instead of an error, in an otherwise-Italian conversation). An
+// instance whose user speaks a known, effectively-fixed language should set
+// WHISPER_LANGUAGE (ISO 639-1, e.g. "it") to skip detection entirely and
+// avoid that failure mode.
+func getLanguage() string {
+	if l := os.Getenv("WHISPER_LANGUAGE"); l != "" {
+		return l
+	}
+	return "auto"
+}
+
 func getModelPath() string {
 	if p := os.Getenv("WHISPER_MODEL"); p != "" {
 		return p
@@ -81,9 +96,12 @@ func transcribeAudioBuiltIn(audioPath string) (string, error) {
 		return "", fmt.Errorf("failed to create whisper context: %w", err)
 	}
 
-	// Auto-detect language (supports Italian, English, etc.)
-	if err := ctx.SetLanguage("auto"); err != nil {
-		return "", fmt.Errorf("failed to set language to auto: %w", err)
+	// Language hint: "auto" by default (supports Italian, English, etc.),
+	// or a fixed ISO 639-1 code via WHISPER_LANGUAGE for instances whose
+	// user's language is effectively fixed (see getLanguage doc comment).
+	lang := getLanguage()
+	if err := ctx.SetLanguage(lang); err != nil {
+		return "", fmt.Errorf("failed to set language to %q: %w", lang, err)
 	}
 
 	if err := ctx.Process(samples, nil, nil, nil); err != nil {
