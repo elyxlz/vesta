@@ -36,6 +36,16 @@ Four gates before opening a worktree.
 
 **0. Does it already exist? (grep FIRST, in the natural layer.)** Before building or upstreaming any mechanism, `grep -rn` the codebase for an existing implementation, and look in the layer where it would naturally live, not just one spot. It's easy to check only one directory (e.g. a `hooks/` dir), conclude "not upstream yet", and file a redundant PR that duplicates a check already wired into a channel CLI or core. Duplicated logic is a smell that the solution isn't the right one. So: search by the FEATURE name across all skills + core, not by where you assume it lives; if it exists, improve that one, don't add a second.
 
+**Then check the OPEN PRs, because grepping the tree cannot see them.** Many instances file against this repo, they hit the same bugs in the same shared skills, and an unmerged fix is absent from `master` by definition. So a clean grep means "not merged yet", never "not already fixed", and the more obvious the bug, the more likely someone already filed it:
+
+```bash
+TOKEN=$(upstream-pr --token-only)
+curl -s -H "Authorization: Bearer $TOKEN" "https://api.github.com/repos/elyxlz/vesta/pulls?state=open&per_page=100" \
+  | python3 -c 'import json,sys; [print(p["number"], p["title"]) for p in json.load(sys.stdin)]'
+```
+
+Scan that list for the file and the symptom before opening a worktree. If a PR already covers it, do not file a second: read theirs, and if yours is genuinely better in some respect, say so in a comment on their PR (PR comments work; issue comments do not) instead of competing. If theirs is better, close yours and defer.
+
 **1. Is it worth filing?** The rule for everything below: **generalizable goes upstream, user-specific stays local.** Everything is upstreamable unless it's personal information or super niche to one user; if a change would help any vesta instance, it belongs upstream. Concretely:
 - Bug fixes in agent code, skills, or prompts
 - New skills (strip personal config first) (can be specific skills, they are opt in for new vestas)
@@ -93,6 +103,24 @@ The home `~` workspace ignores everything outside `agent/`, and local commits di
 6. **Wait for CI to pass.** Get a token with `upstream-pr --token-only`, then poll the check-runs endpoint. If a check fails: diagnose, fix, commit to the same branch, push, the PR updates automatically. The `lockfile` check requires `uv lock` in `~/agent` if Python deps changed.
 
 Only report a PR as done once every CI check is green.
+
+## Also apply the fix locally, and apply ALL of it
+
+A PR fixes the bug for the next release. It does nothing for the box you are running on right now, where the user keeps hitting it every day until a maintainer merges. So any fix to a skill you actually run gets applied to your local tree in the same pass, not queued behind the merge.
+
+Two ways this goes wrong, both observed:
+
+- **Filed upstream, never applied locally.** The bug stays live for your user while the queue records it as fixed.
+- **Applied locally, but only the functional half.** Hand-copying just the code hunk and skipping the test and the lint-driven refactor leaves the local tree quietly broken: lint red, and the fix unguarded, so a later edit can silently revert it with nothing to catch that.
+
+Both are the same failure, the local tree and the PR diverging without anyone noticing. So finish the pass by proving they match, rather than remembering that they should:
+
+```bash
+# for each file the PR touched, local and branch must be identical
+git -C ~ diff --no-index ~/agent/skills/<skill>/<path> /tmp/vesta-pr/agent/skills/<skill>/<path>
+```
+
+Empty output is the proof. Then run that skill's own gates locally (`cd ~/agent/skills/<name>/cli && uv run pytest`, plus the ruff pass from `~/agent`), because CI green in the worktree says nothing about the tree you actually run. If the skill's CLI is an editable install, restart its daemon too: a long-running process keeps serving the old code until it does.
 
 ## Filing an issue
 
