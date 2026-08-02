@@ -935,13 +935,27 @@ def remind_snooze(
             run_time = _now_utc() + offset
 
         new_data = {"type": "date", "run_date": run_time.isoformat()}
+        # schedule_type is the human-readable string every listing prints as the reminder's time, so
+        # it MUST be rewritten here alongside scheduled_time. Updating only the machine fields left
+        # the row self-contradictory: it fired correctly at the new time while `remind list` kept
+        # displaying the ORIGINAL one forever, so one listing showed two different times for one
+        # reminder (the relative column is computed from scheduled_time and was right). A readout
+        # that looks authoritative and disagrees with what the system will actually do is worse
+        # than no readout, because it gets trusted.
+        schedule_info = f"once at {run_time.isoformat()}"
         conn.execute(
-            "UPDATE reminders SET completed = 0, trigger_data = ?, scheduled_time = ? WHERE id = ?",
-            (json.dumps(new_data), run_time.isoformat(), reminder_id),
+            "UPDATE reminders SET completed = 0, trigger_data = ?, scheduled_time = ?, schedule_type = ? WHERE id = ?",
+            (json.dumps(new_data), run_time.isoformat(), schedule_info, reminder_id),
         )
         conn.commit()
 
-    return {"id": reminder_id, "message": row["message"], "next_run": run_time.isoformat(), "status": "snoozed"}
+    return {
+        "id": reminder_id,
+        "message": row["message"],
+        "schedule": schedule_info,
+        "next_run": run_time.isoformat(),
+        "status": "snoozed",
+    }
 
 
 def remind_update(config: Config, *, reminder_id: str, message: str) -> dict:

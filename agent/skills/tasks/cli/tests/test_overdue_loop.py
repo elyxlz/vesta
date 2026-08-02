@@ -125,6 +125,20 @@ def test_snooze_moves_a_pending_one_shot(tmp_config: Config):
     assert db.parse_datetime(json.loads(row["trigger_data"])["run_date"]) == new_run
 
 
+def test_snooze_rewrites_the_displayed_schedule(tmp_config: Config):
+    """The displayed time must follow the real one; a listing that shows the pre-snooze time lies."""
+    reminder = commands.remind_set(tmp_config, commands.ReminderSpec(message="displaced", scheduled_datetime="2026-08-01T11:00:00", tz="UTC"))
+    assert reminder["schedule"] == "once at 2026-08-01T11:00:00+00:00"
+
+    result = commands.remind_snooze(tmp_config, reminder_id=reminder["id"], at="2026-08-02T15:00:00", tz="UTC")
+
+    # What the row stores, what the call returns, and what a listing prints must all agree.
+    assert result["schedule"] == "once at 2026-08-02T15:00:00+00:00"
+    listed = next(r for r in commands.remind_list(tmp_config) if r["id"] == reminder["id"])
+    assert listed["schedule"] == "once at 2026-08-02T15:00:00+00:00"
+    assert db.parse_datetime(listed["next_run"]) == db.parse_datetime(result["next_run"])
+
+
 def test_snooze_reactivates_a_fired_reminder(tmp_config: Config):
     reminder = commands.remind_set(tmp_config, commands.ReminderSpec(message="already fired", in_hours=1))
     with closing(db.get_db(tmp_config.data_dir)) as conn:
