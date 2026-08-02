@@ -91,3 +91,37 @@ tags:
     file: capture-screenshot.js
     env:
       SCREENSHOT: connect-link-invalid.png
+
+- stopApp
+- clearState
+- setPermissions:
+    permissions:
+      camera: allow
+- openLink:
+    link: "vesta-dev://connect?visualPrivacy=unlocked"
+- tapOn:
+    text: "^Open$"
+    optional: true
+    waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: "Connect with Vesta Cloud"
+    timeout: 30000
+- tapOn:
+    text: "Connect to self-hosted Vesta"
+    waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: "Connect your gateway"
+    timeout: 10000
+- tapOn:
+    text: "Scan connection QR code"
+    waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: "Close scanner"
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: scan-ready
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: scan-ready.png

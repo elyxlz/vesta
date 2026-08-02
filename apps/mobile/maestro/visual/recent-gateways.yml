@@ -91,3 +91,32 @@ tags:
     file: capture-screenshot.js
     env:
       SCREENSHOT: recent-gateway-error.png
+
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: "Natural chat pacing"
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      text: "^Manage backups,.*"
+    direction: DOWN
+    timeout: 10000
+    speed: 40
+    visibilityPercentage: 100
+- tapOn:
+    text: "^Manage backups,.*"
+- extendedWaitUntil:
+    visible: "Available backups"
+    timeout: 10000
+- extendedWaitUntil:
+    visible: "2"
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-backups
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-backups.png

@@ -67,6 +67,13 @@
       "screenshot": "scan-permission.png"
     },
     {
+      "id": "scan-ready",
+      "title": "Scan a connection code",
+      "description": "Camera-ready QR scanner with its full-screen finder and native close control.",
+      "group": "Onboarding",
+      "screenshot": "scan-ready.png"
+    },
+    {
       "id": "recent-gateways",
       "title": "Recent gateways",
       "description": "Saved hosted and self-hosted gateways available for reconnection.",
@@ -95,6 +102,13 @@
       "screenshot": "home-agents.png"
     },
     {
+      "id": "home-gateway-disconnected",
+      "title": "Gateway reconnecting",
+      "description": "Connected home while the gateway is temporarily unreachable and retrying in the background.",
+      "group": "Home",
+      "screenshot": "home-gateway-disconnected.png"
+    },
+    {
       "id": "agent-chat",
       "title": "Agent conversation",
       "description": "Held conversation remains available while the agent connection is recovering.",
@@ -109,11 +123,53 @@
       "screenshot": "agent-dashboard-empty.png"
     },
     {
+      "id": "agent-dashboard",
+      "title": "Configured agent dashboard",
+      "description": "Agent dashboard with deterministic goals, completion metrics, health, and upcoming work.",
+      "group": "Agent",
+      "screenshot": "agent-dashboard.png"
+    },
+    {
       "id": "agent-settings",
       "title": "Agent settings",
       "description": "Identity, model, page, attention, backup, and lifecycle controls for an agent.",
       "group": "Agent settings",
       "screenshot": "agent-settings.png"
+    },
+    {
+      "id": "agent-provider",
+      "title": "Provider and model",
+      "description": "Connected provider identity, model, context window, plan, and usage meters.",
+      "group": "Agent settings",
+      "screenshot": "agent-provider.png"
+    },
+    {
+      "id": "agent-voice",
+      "title": "Voice settings",
+      "description": "Configured speech-to-text and text-to-speech services with deterministic options.",
+      "group": "Agent settings",
+      "screenshot": "agent-voice.png"
+    },
+    {
+      "id": "agent-notification-rules",
+      "title": "Notification rules",
+      "description": "Prioritized calendar and email rules with the composer for new interruption policies.",
+      "group": "Agent settings",
+      "screenshot": "agent-notification-rules.png"
+    },
+    {
+      "id": "agent-host-access",
+      "title": "Host access",
+      "description": "Deterministic shared gateway folders with read and write permissions.",
+      "group": "Agent settings",
+      "screenshot": "agent-host-access.png"
+    },
+    {
+      "id": "agent-backups",
+      "title": "Agent backups",
+      "description": "Available manual and automatic snapshots with restore and deletion actions.",
+      "group": "Agent settings",
+      "screenshot": "agent-backups.png"
     },
     {
       "id": "agent-notifications",
@@ -135,6 +191,13 @@
       "description": "Memory, constitution, dreams, and installed abilities from a fixed file tree.",
       "group": "Agent settings",
       "screenshot": "agent-files.png"
+    },
+    {
+      "id": "agent-file-editor",
+      "title": "Agent file editor",
+      "description": "Writable working-memory document opened in the production mobile editor.",
+      "group": "Agent settings",
+      "screenshot": "agent-file-editor.png"
     },
     {
       "id": "home-empty",
@@ -177,6 +240,13 @@
       "description": "Connected gateway health, version, release channel, and update controls.",
       "group": "Settings",
       "screenshot": "settings-gateway.png"
+    },
+    {
+      "id": "diagnostics",
+      "title": "Diagnostics",
+      "description": "Application, simulator, gateway, and roster details with the native sharing action.",
+      "group": "Settings",
+      "screenshot": "diagnostics.png"
     },
     {
       "id": "whats-new",

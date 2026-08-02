@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  assignFlowsToShards,
+  continuousShardFlow,
   createInactivityWatchdog,
   createMaestroFailureParser,
   galleryHtml,
@@ -31,6 +33,54 @@ describe("createInactivityWatchdog", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("assignFlowsToShards", () => {
+  it("balances manifest-ordered flows across persistent simulators", () => {
+    expect(
+      assignFlowsToShards(
+        ["connected", "connect", "home-empty", "recent", "error", "empty"],
+        2,
+      ),
+    ).toEqual([
+      ["connected", "home-empty", "error"],
+      ["connect", "recent", "empty"],
+    ]);
+  });
+
+  it("rejects an invalid shard count", () => {
+    expect(() => assignFlowsToShards(["connected"], 0)).toThrow(
+      "At least one Maestro shard is required.",
+    );
+  });
+});
+
+describe("continuousShardFlow", () => {
+  it("combines independent flow commands into one continuous shard", () => {
+    const flow = continuousShardFlow("com.vesta.visual", 1, [
+      {
+        label: "first.yml",
+        source: "appId: ${APP_ID}\nname: First\n---\n- clearState\n",
+      },
+      {
+        label: "second.yml",
+        source: "appId: ${APP_ID}\nname: Second\n---\n- stopApp\n",
+      },
+    ]);
+
+    expect(flow).toContain("appId: com.vesta.visual");
+    expect(flow).toContain("name: Vesta visual catalog shard 1");
+    expect(flow).toContain("- clearState\n\n- stopApp");
+    expect(flow.match(/^---$/gm)).toHaveLength(1);
+  });
+
+  it("rejects a malformed source flow", () => {
+    expect(() =>
+      continuousShardFlow("com.vesta.visual", 1, [
+        { label: "broken.yml", source: "appId: broken" },
+      ]),
+    ).toThrow("Maestro flow is missing ---: broken.yml");
   });
 });
 
@@ -63,6 +113,10 @@ describe("shouldIgnoreWatchPath", () => {
     expect(shouldIgnoreWatchPath("/repo/mobile/src/.cache/view.tsx")).toBe(
       true,
     );
+    expect(
+      shouldIgnoreWatchPath("/repo/mobile/src/view.tsx.tmp.5218.abc123"),
+    ).toBe(true);
+    expect(shouldIgnoreWatchPath("/repo/mobile/src/view.tsx.tmp")).toBe(true);
     expect(shouldIgnoreWatchPath("/repo/mobile/src/view.tsx")).toBe(false);
   });
 });
@@ -206,6 +260,31 @@ describe("visual Metro agent fixtures", () => {
         "ios",
       ),
     ).toEqual({ type: "sourceFile", filePath: fixture });
+    expect(fallback).not.toHaveBeenCalled();
+  });
+
+  it("substitutes deterministic dashboard content outside production code", () => {
+    const config = require("../visual/metro.config.js");
+    const fallback = vi.fn(() => ({ type: "empty" }));
+    const resolution = config.resolver.resolveRequest(
+      {
+        originModulePath: path.resolve(
+          scriptDirectory,
+          "../src/agent/DashboardPage.tsx",
+        ),
+        resolveRequest: fallback,
+      },
+      "@/components/DashboardWebView",
+      "ios",
+    );
+
+    expect(resolution).toEqual({
+      type: "sourceFile",
+      filePath: path.resolve(
+        scriptDirectory,
+        "../visual/harness/dashboard-web-view.tsx",
+      ),
+    });
     expect(fallback).not.toHaveBeenCalled();
   });
 });

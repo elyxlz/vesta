@@ -9,6 +9,7 @@ import { NotificationsSection } from "@/agent/settings/NotificationsSection";
 import { ProviderSection } from "@/agent/settings/ProviderSection";
 import { VoiceSection } from "@/agent/settings/VoiceSection";
 import { Screen } from "@/components/layout/Screen";
+import { NativeSheetCloseButton } from "@/components/native-sheet-close-button";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 
@@ -45,6 +46,7 @@ function AgentDetailContent() {
   return (
     <>
       <Stack.Title>{title}</Stack.Title>
+      <NativeSheetCloseButton accessibilityLabel={`Close ${title}`} />
       <Screen contentStyle={styles.content}>{content}</Screen>
     </>
   );

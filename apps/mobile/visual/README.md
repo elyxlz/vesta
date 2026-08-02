@@ -38,7 +38,7 @@ create or reuse its dedicated two-simulator pair.
 - Every scenario registered in the manifest must produce exactly one PNG.
 - Watch mode publishes a new gallery only after the complete capture succeeds.
 - A newer edit cancels an obsolete capture and discards its partial output.
-- The two Maestro flows run in parallel on independent app processes.
+- Maestro flows are split across two independent simulator app processes.
 
 ## Architecture
 
@@ -54,7 +54,7 @@ Cached iOS application bundle
 Two dedicated iOS Simulators
           |
           v
-Two parallel Maestro flows
+Two parallel Maestro flow shards
           |
           v
 Staged screenshots + completion bridge
@@ -331,7 +331,9 @@ Application, core, asset, harness, and Metro changes trigger a fast JavaScript
 rebundle followed by installation on both simulators. Maestro-flow and manifest
 changes restart the persistent Maestro sessions without an application build.
 Native-input changes regenerate the iOS project and perform an Xcode build.
-Test and snapshot files are ignored because they cannot change the installed UI.
+Test files, snapshots, and editor temporary files are ignored because they
+cannot change the installed UI. The final saved source file still triggers a
+capture normally.
 
 The runner fingerprints watched sources before simulator preparation and again
 after installing its watchers. If a file changes during the initial build or
@@ -358,7 +360,7 @@ and save another file to retry.
 
 Open `http://127.0.0.1:4173` while the visual server is running.
 
-- Use search and the state filters to narrow the catalog.
+- Browse screenshots in labeled sections that follow the manifest group order.
 - Each card keeps the full screenshot visible inside its simulator frame, with
   scenario information in a separate nearby panel.
 - Click a screenshot for a larger inspection view. Click outside it or press
@@ -497,15 +499,12 @@ Do not add a capture-only controller.
 
 ## Add another top-level flow
 
-The current persistent design intentionally pairs two manifest flows with two
-simulators. Add new screenshots to one of the existing flows whenever possible.
-
-Do not add a third entry to the `flows` array in `visual/scenarios.json` without
-first extending `startContinuousMaestro` in `scripts/visual-catalog.mjs` to
-assign multiple flows to a simulator or provision another shard. Standard
-Maestro sharding can distribute more flows, but the persistent local watcher
-currently starts one continuous process per flow and pairs it with a simulator
-by index.
+The persistent watcher distributes manifest flows by index across its two
+simulator processes, matching the even/odd assignment used by the one-shot
+Maestro run. It generates one composite flow per shard because Maestro's
+continuous mode accepts only one top-level flow. Add screenshots to an existing
+flow whenever the launch context is compatible. When a new flow is necessary,
+keep the two shards balanced so one long flow does not dominate refresh time.
 
 Good reasons for a new top-level flow include:
 

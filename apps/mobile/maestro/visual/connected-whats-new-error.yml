@@ -16,30 +16,74 @@ tags:
 - extendedWaitUntil:
     visible: "Open aria"
     timeout: 30000
-- tapOn:
-    text: "App settings.*"
+- openLink:
+    link: "vesta-dev://whats-new?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualReleaseNotes=error"
 - extendedWaitUntil:
-    visible: "App Lock"
-    timeout: 10000
-- scrollUntilVisible:
-    element:
-      text: "What’s new.*"
-    direction: DOWN
-    timeout: 10000
-    speed: 40
-    visibilityPercentage: 100
-- tapOn:
-    text: "What’s new.*"
+    visible: "Close release notes"
+    timeout: 30000
 - extendedWaitUntil:
     visible: "Couldn’t load release notes."
-    timeout: 10000
-- extendedWaitUntil:
-    visible: "What’s new"
-    timeout: 10000
-- waitForAnimationToEnd:
-    timeout: 3000
+    timeout: 30000
 - takeScreenshot: whats-new-error
 - runScript:
     file: capture-screenshot.js
     env:
       SCREENSHOT: whats-new-error.png
+
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: "Natural chat pacing"
+    timeout: 30000
+- tapOn:
+    text: "^Provider and model,.*"
+- extendedWaitUntil:
+    visible: ".*claude-sonnet-4-5.*"
+    timeout: 10000
+- extendedWaitUntil:
+    visible: "Five-hour session"
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-provider
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-provider.png
+
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: "Natural chat pacing"
+    timeout: 30000
+- tapOn:
+    text: "^Voice,.*"
+- extendedWaitUntil:
+    visible: "Deepgram Nova-3"
+    timeout: 10000
+- extendedWaitUntil:
+    visible: "ElevenLabs"
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-voice
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-voice.png
+
+- stopApp
+- openLink:
+    link: "vesta-dev://debug?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: ".*Share diagnostics.*"
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: diagnostics
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: diagnostics.png

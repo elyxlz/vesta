@@ -39,6 +39,10 @@ const harnessModules = new Map([
     path.resolve(__dirname, "harness/agent-orb.tsx"),
   ],
   [
+    "@/components/DashboardWebView",
+    path.resolve(__dirname, "harness/dashboard-web-view.tsx"),
+  ],
+  [
     "@/session/SessionProvider",
     path.resolve(__dirname, "harness/session-provider.tsx"),
   ],

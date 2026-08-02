@@ -189,6 +189,13 @@ tags:
 - waitForAnimationToEnd:
     timeout: 1000
 
+- swipe:
+    start: "50%,58%"
+    end: "50%,10%"
+    duration: 500
+- waitForAnimationToEnd:
+    timeout: 3000
+
 - scrollUntilVisible:
     element:
       text: "Gateway"
@@ -203,23 +210,26 @@ tags:
     env:
       SCREENSHOT: settings-gateway.png
 
-- scrollUntilVisible:
-    element:
-      text: "What’s new.*"
-    direction: DOWN
-    timeout: 10000
-    speed: 40
-    visibilityPercentage: 100
-- tapOn:
-    text: "What’s new.*"
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
 - extendedWaitUntil:
-    visible: "v0.2.0"
+    visible: "Open aria"
+    timeout: 30000
+- openLink:
+    link: "vesta-dev://whats-new?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- waitForAnimationToEnd:
     timeout: 10000
+- tapOn:
+    text: "^Open$"
+    optional: true
+    waitToSettleTimeoutMs: 1
 - extendedWaitUntil:
     visible: "Close release notes"
-    timeout: 10000
-- waitForAnimationToEnd:
-    timeout: 3000
+    timeout: 30000
+- extendedWaitUntil:
+    visible: "View release v0.2.0 on GitHub"
+    timeout: 30000
 - takeScreenshot: whats-new
 - runScript:
     file: capture-screenshot.js

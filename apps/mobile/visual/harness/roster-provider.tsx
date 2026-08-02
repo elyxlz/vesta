@@ -13,6 +13,8 @@ const launchUrl = Linking.getLinkingURL();
 const query = launchUrl === null ? {} : Linking.parse(launchUrl).queryParams;
 const startsConnected = query?.visualSession === "connected";
 const startsEmpty = query?.visualRoster === "empty";
+const showsDashboard = query?.visualDashboard === "loaded";
+const startsOffline = query?.visualReachable === "offline";
 const agents: AgentRow[] = startsEmpty
   ? []
   : [
@@ -23,7 +25,9 @@ const agents: AgentRow[] = startsEmpty
         buildPhase: null,
         operation: null,
         startedAt: "2026-07-31T08:41:00.000Z",
-        services: {},
+        services: showsDashboard
+          ? { dashboard: { port: 4310, rev: 7 } }
+          : {},
       },
       {
         name: "nova",
@@ -47,7 +51,7 @@ const agents: AgentRow[] = startsEmpty
 const fixture: RosterValue = {
   agents,
   agentsReady: true,
-  reachable: true,
+  reachable: !startsOffline,
   gatewayVersion: "0.2.0",
   gatewayChannel: "stable",
   managed: false,

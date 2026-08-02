@@ -251,9 +251,10 @@ function SessionNavigation() {
                   title: "Settings",
                   headerTitleAlign: "center",
                   presentation: "formSheet",
-                  sheetAllowedDetents: [1],
-                  sheetGrabberVisible: false,
-                  sheetExpandsWhenScrolledToEdge: false,
+                  sheetAllowedDetents: [0.5, 1],
+                  sheetInitialDetentIndex: 0,
+                  sheetGrabberVisible: true,
+                  sheetExpandsWhenScrolledToEdge: true,
                   contentStyle: { backgroundColor: colors.background },
                 }}
               />
@@ -263,10 +264,10 @@ function SessionNavigation() {
                   title: "What’s new",
                   headerTitleAlign: "center",
                   presentation: "formSheet",
-                  sheetAllowedDetents: [1],
+                  sheetAllowedDetents: [0.5, 1],
                   sheetInitialDetentIndex: 0,
-                  sheetGrabberVisible: false,
-                  sheetExpandsWhenScrolledToEdge: false,
+                  sheetGrabberVisible: true,
+                  sheetExpandsWhenScrolledToEdge: true,
                   contentStyle: { backgroundColor: colors.background },
                 }}
               />

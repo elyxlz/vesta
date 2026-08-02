@@ -2039,10 +2039,19 @@ async function syncWatchFlows(manifest) {
   await rm(watchFlowsDirectory, { recursive: true, force: true });
   await mkdir(watchFlowsDirectory, { recursive: true });
   const flowPaths = [];
-  for (const flow of manifest.flows) {
-    const source = path.resolve(mobileRoot, flow);
-    const target = path.join(watchFlowsDirectory, path.basename(flow));
-    await copyFile(source, target);
+  const flowShards = assignFlowsToShards(manifest.flows, shardCount);
+  for (const [index, flows] of flowShards.entries()) {
+    const sources = await Promise.all(
+      flows.map(async (flow) => ({
+        label: flow,
+        source: await readFile(path.resolve(mobileRoot, flow), "utf8"),
+      })),
+    );
+    const target = path.join(watchFlowsDirectory, `shard-${index + 1}.yml`);
+    await writeFile(
+      target,
+      continuousShardFlow(manifest.appId, index + 1, sources),
+    );
     flowPaths.push(target);
   }
   await copyFile(
@@ -2086,6 +2095,11 @@ function startContinuousMaestro(session, manifest, flowPaths, bridge) {
   let stopping = false;
   let failure;
   let stopPromise;
+  if (flowPaths.length !== session.simulators.length) {
+    throw new Error(
+      `Expected ${session.simulators.length} continuous Maestro shard flows, received ${flowPaths.length}.`,
+    );
+  }
   const children = flowPaths.map((flow, index) => {
     const child = spawn(
       session.tools.maestro,
@@ -2189,6 +2203,30 @@ function startContinuousMaestro(session, manifest, flowPaths, bridge) {
   };
 }
 
+export function assignFlowsToShards(flowPaths, count) {
+  if (!Number.isInteger(count) || count < 1) {
+    throw new Error("At least one Maestro shard is required.");
+  }
+  const shards = Array.from({ length: count }, () => []);
+  flowPaths.forEach((flow, index) => shards[index % count].push(flow));
+  return shards;
+}
+
+export function continuousShardFlow(appId, index, flowSources) {
+  const commands = flowSources.map(({ label, source }) => {
+    const divider = /^---\s*$/m.exec(source);
+    if (!divider) throw new Error(`Maestro flow is missing ---: ${label}`);
+    return source.slice(divider.index + divider[0].length).trim();
+  });
+  return `appId: ${appId}
+name: Vesta visual catalog shard ${index}
+tags:
+  - visual
+  - watch
+---
+${commands.join("\n\n")}\n`;
+}
+
 async function publishWatchScreenshots(manifest, simulators, validate) {
   const catalog = await publishGallery(
     manifest,
@@ -2207,6 +2245,8 @@ export function shouldIgnoreWatchPath(changedPath) {
     changedPath.includes(`${path.sep}.`) ||
     changedPath.endsWith("~") ||
     changedPath.endsWith(".swp") ||
+    basename.endsWith(".tmp") ||
+    basename.includes(".tmp.") ||
     basename.endsWith(".snap") ||
     /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(basename) ||
     changedPath.split(path.sep).includes("__tests__")
@@ -2499,24 +2539,60 @@ async function watchCatalog(options) {
       scheduleAfterQuietPeriod();
     };
 
-    watchers = targets.map(
-      ({ target, rebuild, recursive, restart, native }) =>
-        watchPath(target, { recursive }, (_event, filename) => {
-          const changedPath = filename
-            ? path.resolve(
-                recursive ? target : path.dirname(target),
-                filename.toString(),
-              )
-            : target;
-          scheduleCapture(rebuild, restart, native, changedPath);
-        }),
-    );
+    const observedFingerprints = new Map(startupFingerprints);
+    const fingerprintChecks = new Map();
+    const scheduleChangedTarget = (watchTarget, changedPath) => {
+      const previousCheck = fingerprintChecks.get(watchTarget.target);
+      const check = (previousCheck ?? Promise.resolve())
+        .catch(() => undefined)
+        .then(async () => {
+          const fingerprint = (
+            await watchTargetFingerprints([watchTarget])
+          ).get(watchTarget.target);
+          if (fingerprint === observedFingerprints.get(watchTarget.target)) {
+            return;
+          }
+          observedFingerprints.set(watchTarget.target, fingerprint);
+          scheduleCapture(
+            watchTarget.rebuild,
+            watchTarget.restart,
+            watchTarget.native,
+            changedPath,
+          );
+        })
+        .catch((error) => {
+          console.error(
+            `Could not inspect visual watch change for ${watchTarget.target}: ${error.message}`,
+          );
+        })
+        .finally(() => {
+          if (fingerprintChecks.get(watchTarget.target) === check) {
+            fingerprintChecks.delete(watchTarget.target);
+          }
+        });
+      fingerprintChecks.set(watchTarget.target, check);
+    };
+
+    watchers = targets.map((watchTarget) => {
+      const { target, recursive } = watchTarget;
+      return watchPath(target, { recursive }, (_event, filename) => {
+        const changedPath = filename
+          ? path.resolve(
+              recursive ? target : path.dirname(target),
+              filename.toString(),
+            )
+          : target;
+        scheduleChangedTarget(watchTarget, changedPath);
+      });
+    });
 
     const currentFingerprints = await watchTargetFingerprints(targets);
     for (const { target, rebuild, restart, native } of targets) {
-      if (currentFingerprints.get(target) === startupFingerprints.get(target)) {
+      const fingerprint = currentFingerprints.get(target);
+      if (fingerprint === observedFingerprints.get(target)) {
         continue;
       }
+      observedFingerprints.set(target, fingerprint);
       scheduleCapture(rebuild, restart, native, target);
     }
 

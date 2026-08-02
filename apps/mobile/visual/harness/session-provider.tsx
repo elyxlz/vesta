@@ -3,7 +3,17 @@ import * as Linking from "expo-linking";
 import type { NotificationEvent } from "@vesta/core";
 import { createApiClient } from "../../src/api/client";
 import type { ApiClient } from "../../src/api/client";
-import type { ConnectionConfig, FileTreeEntry } from "../../src/api/types";
+import type {
+  BackupInfo,
+  ConnectionConfig,
+  FileReadResponse,
+  FileTreeEntry,
+  HostMount,
+  Manifest,
+  NotificationInterruptRule,
+  Usage,
+  VoiceStatus,
+} from "../../src/api/types";
 import {
   SessionProvider as ProductionSessionProvider,
   useSession as useProductionSession,
@@ -94,6 +104,163 @@ const fileTree: FileTreeEntry[] = [
     mode: 0o644,
   },
 ];
+const manifest: Manifest = {
+  default_provider: "claude",
+  default_personality: "thoughtful",
+  personalities: [],
+  providers: {
+    claude: {
+      display: "Claude",
+      order: 1,
+      auth_kind: "claude_oauth",
+      models: ["claude-sonnet-4-5", "claude-opus-4-1"],
+      model_names: {
+        "claude-sonnet-4-5": "Claude Sonnet 4.5",
+        "claude-opus-4-1": "Claude Opus 4.1",
+      },
+      default_model: "claude-sonnet-4-5",
+      context: {
+        default: 200_000,
+        max: 200_000,
+        presets: [
+          { tokens: 100_000, label: "Standard", note: "Faster compaction" },
+          { tokens: 200_000, label: "Extended", note: "More history" },
+        ],
+      },
+    },
+    openai: {
+      display: "OpenAI",
+      order: 2,
+      auth_kind: "device_oauth",
+      models: ["gpt-5.2"],
+      model_names: { "gpt-5.2": "GPT-5.2" },
+      default_model: "gpt-5.2",
+      context: { default: 128_000, max: 128_000, presets: [] },
+    },
+  },
+};
+const usage: Usage = {
+  meters: [
+    { label: "Five-hour session", used_pct: 34, resets_at: null },
+    { label: "Weekly allowance", used_pct: 61, resets_at: null },
+  ],
+  credits: null,
+};
+const notificationRules: NotificationInterruptRule[] = [
+  {
+    id: "visual-calendar",
+    source: "calendar",
+    type: "calendar",
+    match: [{ field: "minutes_until", op: "contains", value: "15" }],
+    action: "interrupt",
+  },
+  {
+    id: "visual-email",
+    source: "email",
+    match: [{ field: "sender", op: "contains", value: "Maya" }],
+    action: "snooze",
+  },
+];
+const mounts: HostMount[] = [
+  {
+    host_path: "/Users/ada/Projects/vesta",
+    container_path: "/workspace/vesta",
+    writable: true,
+  },
+  {
+    host_path: "/Users/ada/Documents/Briefs",
+    container_path: "/references/briefs",
+    writable: false,
+  },
+];
+const backups: BackupInfo[] = [
+  {
+    id: "visual-backup-1",
+    agent_name: "aria",
+    backup_type: "manual",
+    created_at: "2026-08-01T08:45:00.000Z",
+    size: 18_874_368,
+  },
+  {
+    id: "visual-backup-2",
+    agent_name: "aria",
+    backup_type: "automatic",
+    created_at: "2026-07-31T03:00:00.000Z",
+    size: 17_825_792,
+  },
+];
+const voiceStatuses: Record<"stt" | "tts", VoiceStatus> = {
+  stt: {
+    configured: true,
+    provider: "Deepgram Nova-3",
+    enabled: true,
+    settings: [
+      {
+        key: "language",
+        type: "select",
+        label: "Language",
+        description: "Language used for live transcription.",
+        value: "English",
+        options: [
+          { value: "English", label: "English" },
+          { value: "Spanish", label: "Spanish" },
+        ],
+      },
+      {
+        key: "smart_format",
+        type: "bool",
+        label: "Smart formatting",
+        description: "Format dates, numbers, and punctuation automatically.",
+        value: true,
+      },
+    ],
+  },
+  tts: {
+    configured: true,
+    provider: "ElevenLabs",
+    enabled: true,
+    settings: [
+      {
+        key: "voice",
+        type: "select",
+        label: "Voice",
+        description: "Voice used when replies are read aloud.",
+        value: "Warm",
+        options: [
+          { value: "Warm", label: "Warm" },
+          { value: "Clear", label: "Clear" },
+        ],
+      },
+      {
+        key: "stability",
+        type: "number",
+        label: "Stability",
+        description: "Balance consistency and expression.",
+        value: 0.65,
+      },
+    ],
+  },
+};
+const memoryFile: FileReadResponse = {
+  path: "/root/agent/MEMORY.md",
+  content: `# Working memory
+
+## Current priorities
+
+- Polish the mobile onboarding experience.
+- Keep visual QA deterministic and fast.
+- Prepare the product review notes for Monday.
+
+## Preferences
+
+Ada prefers concise updates with decisions and blockers called out clearly.
+`,
+  encoding: "utf-8",
+  readonly: false,
+  mode: 0o644,
+  size: 264,
+  is_dir: false,
+};
 const FixtureContext = createContext<SessionValue | null>(null);
 
 function createVisualApi(): ApiClient {
@@ -106,13 +273,51 @@ function createVisualApi(): ApiClient {
     ...base,
     request: async () => new Response(null, { status: 204 }),
     json: async <ResponseBody,>(path: string): Promise<ResponseBody> => {
+      if (path === "/manifest") return manifest as ResponseBody;
+      if (path.endsWith("/provider")) {
+        return {
+          kind: "claude",
+          model: "claude-sonnet-4-5",
+          max_context_tokens: 200_000,
+          authed: true,
+          plan: "Max",
+        } as ResponseBody;
+      }
+      if (path.endsWith("/usage")) return usage as ResponseBody;
+      if (path.endsWith("/config")) {
+        return { notification_rules: notificationRules } as ResponseBody;
+      }
+      if (path.endsWith("/mounts")) {
+        return { mounts, restart_required: false } as ResponseBody;
+      }
+      if (path === "/host/folders") {
+        return {
+          folders: [
+            "/Users/ada/Desktop",
+            "/Users/ada/Downloads",
+            "/Users/ada/Projects",
+          ],
+        } as ResponseBody;
+      }
+      if (path.endsWith("/backups")) return backups as ResponseBody;
+      if (path.includes("/voice/stt/status")) {
+        return voiceStatuses.stt as ResponseBody;
+      }
+      if (path.includes("/voice/tts/status")) {
+        return voiceStatuses.tts as ResponseBody;
+      }
       if (path.includes("/history?channel=notifications")) {
         return { events: notifications, cursor: null } as ResponseBody;
       }
       if (path.endsWith("/tree")) {
         return { tree: fileTree.map((entry) => entry.path), entries: fileTree } as ResponseBody;
       }
+      if (path.includes("/file?")) return memoryFile as ResponseBody;
       throw new Error(`No visual API fixture is registered for ${path}`);
+    },
+    serviceKeys: {
+      get: async () => "visual-dashboard-key",
+      drop: () => undefined,
     },
   };
 }
