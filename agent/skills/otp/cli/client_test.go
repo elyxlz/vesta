@@ -11,38 +11,50 @@ import (
 	"time"
 )
 
-// fakeVestad stands in for this box's vestad: it mints a server-identity token for
-// the agent-token tier, exactly like POST /agents/{name}/account-token.
-func fakeVestad(t *testing.T, wantAgentToken string) *httptest.Server {
+// stubServerToken makes authorize()'s cloud path resolve to a fixed credential pointed
+// at ctrlURL, standing in for the `vesta-cloud token` subprocess so tests drive the
+// control plane directly (no subprocess, no fake vestad).
+func stubServerToken(t *testing.T, ctrlURL string) {
 	t.Helper()
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/agents/alice/account-token" {
-			http.Error(w, "no", http.StatusNotFound)
-			return
-		}
-		if r.Header.Get("X-Agent-Token") != wantAgentToken {
-			http.Error(w, `{"error":"bad agent token"}`, http.StatusUnauthorized)
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]string{"token": "sit_minted"})
-	}))
-	t.Cleanup(srv.Close)
-	return srv
+	prev := mintServerToken
+	mintServerToken = func() (serverToken, error) {
+		return serverToken{token: "sit_minted", controlURL: ctrlURL}, nil
+	}
+	t.Cleanup(func() { mintServerToken = prev })
 }
 
-// cloudClientFor wires a client against a fake vestad + a control-plane handler
-// (cloud managed mode: server-identity token, forwarded /integrations/switchboard).
+// cloudClientFor wires a client against a control-plane handler, with the cloud
+// credential stubbed to point at it (forwarded /integrations/switchboard).
 func cloudClientFor(t *testing.T, control http.HandlerFunc) *client {
 	t.Helper()
-	vestad := fakeVestad(t, "atok")
 	ctrl := httptest.NewServer(control)
 	t.Cleanup(ctrl.Close)
-	return newClient(config{
-		controlURL: ctrl.URL,
-		vestadBase: vestad.URL,
-		agentName:  "alice",
-		agentToken: "atok",
-	})
+	stubServerToken(t, ctrl.URL)
+	return newClient(config{vestadBase: "https://vestad.test", agentName: "alice", agentToken: "atok"})
+}
+
+// TestParseServerToken pins how a `vesta-cloud token` run maps to a credential or a
+// clear error: success, a structured {error} surfaced verbatim, the command missing, a
+// timeout, and empty output.
+func TestParseServerToken(t *testing.T) {
+	if st, err := parseServerToken([]byte(`{"token":"sit","control_url":"https://ctrl/"}`), nil, false); err != nil || st.token != "sit" || st.controlURL != "https://ctrl" {
+		t.Fatalf("success = %+v err=%v", st, err)
+	}
+	if _, err := parseServerToken([]byte(`{"error":"no account linked"}`), errors.New("exit status 3"), false); err == nil || !strings.Contains(err.Error(), "no account linked") {
+		t.Fatalf("structured error = %v, want it surfaced verbatim", err)
+	}
+	notFound := errors.New(`exec: "vesta-cloud": executable file not found in $PATH`)
+	if _, err := parseServerToken(nil, notFound, false); err == nil || !strings.Contains(err.Error(), "vesta-cloud skill installed") {
+		t.Fatalf("not-installed error = %v, want the install hint", err)
+	}
+	if _, err := parseServerToken(nil, errors.New("signal: killed"), true); err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("timeout error = %v, want a timeout message", err)
+	}
+	// Empty output with no runErr and no timeout: the command exited 0 but printed nothing,
+	// so there is no token to use and no structured error to surface.
+	if _, err := parseServerToken(nil, nil, false); err == nil || !strings.Contains(err.Error(), "no token") {
+		t.Fatalf("empty output = %v, want a no-token message", err)
+	}
 }
 
 func TestReserve_cloudMintsTokenAndReturnsNumber(t *testing.T) {
@@ -57,7 +69,7 @@ func TestReserve_cloudMintsTokenAndReturnsNumber(t *testing.T) {
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
 		_ = json.NewEncoder(w).Encode(map[string]string{"id": "lease_1", "number": "+15550001111", "service": "github"})
 	})
-	l, err := c.reserve("github", "US")
+	l, err := c.reserve("github", "US", "flow-42")
 	if err != nil {
 		t.Fatalf("reserve: %v", err)
 	}
@@ -73,6 +85,11 @@ func TestReserve_cloudMintsTokenAndReturnsNumber(t *testing.T) {
 	if gotBody["service"] != "github" || gotBody["country"] != "US" {
 		t.Fatalf("reserve body = %+v", gotBody)
 	}
+	// A stable idempotency_key must reach the control plane so a retried reserve for the
+	// same flow returns the same number rather than drawing (and paying for) a second.
+	if gotBody["idempotency_key"] != "flow-42" {
+		t.Fatalf("reserve body idempotency_key = %q, want flow-42", gotBody["idempotency_key"])
+	}
 }
 
 func TestReserve_quota429SurfacesErrQuotaExceeded(t *testing.T) {
@@ -80,7 +97,7 @@ func TestReserve_quota429SurfacesErrQuotaExceeded(t *testing.T) {
 		w.WriteHeader(http.StatusTooManyRequests)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "otp_quota_exceeded"})
 	})
-	if _, err := c.reserve("github", ""); !errors.Is(err, errQuotaExceeded) {
+	if _, err := c.reserve("github", "", ""); !errors.Is(err, errQuotaExceeded) {
 		t.Fatalf("reserve on 429 = %v, want errQuotaExceeded", err)
 	}
 }
@@ -90,7 +107,7 @@ func TestReserve_outOfStock503SurfacesErrOutOfStock(t *testing.T) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "out_of_stock"})
 	})
-	if _, err := c.reserve("github", ""); !errors.Is(err, errOutOfStock) {
+	if _, err := c.reserve("github", "", ""); !errors.Is(err, errOutOfStock) {
 		t.Fatalf("reserve on 503 = %v, want errOutOfStock", err)
 	}
 }
@@ -208,7 +225,7 @@ func TestDirect_sbkKeyHitsNativeLeasePaths(t *testing.T) {
 	if !c.isDirect() || !c.isHosted() {
 		t.Fatal("a box with an sbk_ key is direct + hosted")
 	}
-	l, err := c.reserve("discord", "")
+	l, err := c.reserve("discord", "", "")
 	if err != nil {
 		t.Fatalf("direct reserve: %v", err)
 	}
@@ -230,40 +247,18 @@ func TestDirect_sbkKeyHitsNativeLeasePaths(t *testing.T) {
 	}
 }
 
-// A self-hosted box with a Switchboard base URL but no key delegates the sbk_ key to
-// the cloud: authorize mints it from the /token endpoint (server-identity authed),
-// then talks to that Switchboard natively. The key never appears in output.
-func TestAuthorize_directCredsFromTokenEndpoint(t *testing.T) {
-	vestad := fakeVestad(t, "atok")
-	var sawTokenAuth string
-	ctrl := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/integrations/switchboard/token" {
-			http.Error(w, "no", http.StatusNotFound)
-			return
-		}
-		sawTokenAuth = r.Header.Get("Authorization")
-		_ = json.NewEncoder(w).Encode(map[string]string{"url": "https://sb.example", "key": "sbk_minted"})
-	}))
-	t.Cleanup(ctrl.Close)
-	c := newClient(config{
-		controlURL: ctrl.URL,
-		directURL:  "https://sb.example", // base set, key absent
-		vestadBase: vestad.URL,
-		agentName:  "alice",
-		agentToken: "atok",
-	})
-	base, auth, direct, err := c.authorize()
-	if err != nil {
-		t.Fatalf("authorize: %v", err)
+// A Switchboard base URL with no key is a misconfiguration, not a delegated mode: the
+// cloud never mints a key to the box. loadConfig rejects it and reserve refuses rather
+// than reaching for a control-plane endpoint that no longer exists.
+func TestLoadConfig_urlWithoutKeyIsRejected(t *testing.T) {
+	t.Setenv("SWITCHBOARD_API_URL", "https://sb.example")
+	t.Setenv("SWITCHBOARD_API_KEY", "")
+	cfg := loadConfig()
+	if cfg.configError == "" || cfg.directURL != "" {
+		t.Fatalf("a base with no key must be rejected: %+v", cfg)
 	}
-	if !direct {
-		t.Fatal("a /token-minted credential must resolve to direct mode (native paths)")
-	}
-	if base != "https://sb.example" || auth != "Bearer sbk_minted" {
-		t.Fatalf("authorize base=%q auth=%q, want the /token-minted creds", base, auth)
-	}
-	if sawTokenAuth != "Bearer sit_minted" {
-		t.Fatalf("/token Authorization = %q, want the server-identity token", sawTokenAuth)
+	if _, err := newClient(cfg).reserve("x", "", ""); err == nil || !strings.Contains(err.Error(), "without SWITCHBOARD_API_KEY") {
+		t.Fatalf("reserve with base-only config error = %v", err)
 	}
 }
 
@@ -288,7 +283,7 @@ func TestLoadConfig_keyWithoutURLIsRejected(t *testing.T) {
 	if cfg.configError == "" || cfg.directKey != "" {
 		t.Fatalf("a key with no base must be rejected: %+v", cfg)
 	}
-	if _, err := newClient(cfg).reserve("x", ""); err == nil || !strings.Contains(err.Error(), "without SWITCHBOARD_API_URL") {
+	if _, err := newClient(cfg).reserve("x", "", ""); err == nil || !strings.Contains(err.Error(), "without SWITCHBOARD_API_URL") {
 		t.Fatalf("reserve with orphan key error = %v", err)
 	}
 }
@@ -299,18 +294,5 @@ func TestLoadConfig_directPairFromEnv(t *testing.T) {
 	cfg := loadConfig()
 	if cfg.directURL != "https://sb.example" || cfg.directKey != "sbk_env" {
 		t.Fatalf("loadConfig = url %q key %q", cfg.directURL, cfg.directKey)
-	}
-}
-
-func TestMintToken_missingCredentials(t *testing.T) {
-	// Not in an agent container at all.
-	c := newClient(config{controlURL: "https://x"})
-	if _, err := c.mintToken(); err == nil {
-		t.Fatal("expected error without VESTAD_PORT/AGENT_NAME")
-	}
-	// In a container but missing the agent token.
-	c2 := newClient(config{controlURL: "https://x", vestadBase: "https://localhost:1", agentName: "alice"})
-	if _, err := c2.mintToken(); err == nil {
-		t.Fatal("expected error without AGENT_TOKEN")
 	}
 }

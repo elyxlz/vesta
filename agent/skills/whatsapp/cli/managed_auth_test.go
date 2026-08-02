@@ -13,38 +13,45 @@ import (
 	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
-// fakeVestad is a stand-in for this box's vestad: it mints a server-identity
-// token for the agent-token tier, exactly like POST /agents/{name}/account-token.
-func fakeVestad(t *testing.T, wantAgentToken string) *httptest.Server {
+// stubServerToken makes authorize()'s cloud path resolve to a fixed credential pointed
+// at ctrlURL, standing in for the `vesta-cloud token` subprocess so tests drive the
+// control plane directly (no subprocess, no fake vestad).
+func stubServerToken(t *testing.T, ctrlURL string) {
 	t.Helper()
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/agents/alice/account-token" {
-			http.Error(w, "no", http.StatusNotFound)
-			return
-		}
-		if r.Header.Get("X-Agent-Token") != wantAgentToken {
-			http.Error(w, `{"error":"bad agent token"}`, http.StatusUnauthorized)
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]string{"token": "sit_minted"})
-	}))
-	t.Cleanup(srv.Close)
-	return srv
+	prev := mintServerToken
+	mintServerToken = func() (serverToken, error) {
+		return serverToken{token: "sit_minted", controlURL: ctrlURL}, nil
+	}
+	t.Cleanup(func() { mintServerToken = prev })
 }
 
-// managedFor wires a managedAuth against a fake vestad + a control-plane handler.
+// managedFor wires a managedAuth against a control-plane handler, with the cloud
+// credential stubbed to point at it.
 func managedFor(t *testing.T, control http.HandlerFunc) *managedAuth {
 	t.Helper()
-	vestad := fakeVestad(t, "atok")
 	ctrl := httptest.NewServer(control)
 	t.Cleanup(ctrl.Close)
-	m := newManagedAuth(managedConfig{
-		controlURL: ctrl.URL,
-		vestadBase: vestad.URL,
-		agentName:  "alice",
-		agentToken: "atok",
-	})
-	return m
+	stubServerToken(t, ctrl.URL)
+	return newManagedAuth(managedConfig{vestadBase: "https://vestad.test", agentName: "alice", agentToken: "atok"})
+}
+
+// TestParseServerToken pins how a `vesta-cloud token` run maps to a credential or a
+// clear error: success, a structured {error} surfaced verbatim, the command missing, a
+// timeout, and empty output.
+func TestParseServerToken(t *testing.T) {
+	if st, err := parseServerToken([]byte(`{"token":"sit","control_url":"https://ctrl/"}`), nil, false); err != nil || st.token != "sit" || st.controlURL != "https://ctrl" {
+		t.Fatalf("success = %+v err=%v", st, err)
+	}
+	if _, err := parseServerToken([]byte(`{"error":"no account linked"}`), errors.New("exit status 3"), false); err == nil || !strings.Contains(err.Error(), "no account linked") {
+		t.Fatalf("structured error = %v, want it surfaced verbatim", err)
+	}
+	notFound := errors.New(`exec: "vesta-cloud": executable file not found in $PATH`)
+	if _, err := parseServerToken(nil, notFound, false); err == nil || !strings.Contains(err.Error(), "vesta-cloud skill installed") {
+		t.Fatalf("not-installed error = %v, want the install hint", err)
+	}
+	if _, err := parseServerToken(nil, errors.New("signal: killed"), true); err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("timeout error = %v, want a timeout message", err)
+	}
 }
 
 func TestProvision_claimsPairsAndSaves(t *testing.T) {
@@ -383,20 +390,6 @@ func TestControlError_surfaces(t *testing.T) {
 	}
 }
 
-func TestMintToken_missingCredentials(t *testing.T) {
-	// No AGENT_TOKEN: the agent cannot authenticate to vestad, so provision fails
-	// clearly rather than emitting a transport error.
-	m := newManagedAuth(managedConfig{controlURL: "https://x", vestadBase: "https://localhost:1", agentName: "alice"})
-	if _, err := m.mintToken(); err == nil {
-		t.Fatal("expected error without AGENT_TOKEN")
-	}
-	// Not in an agent container at all.
-	m2 := newManagedAuth(managedConfig{controlURL: "https://x"})
-	if _, err := m2.mintToken(); err == nil {
-		t.Fatal("expected error without VESTAD_PORT/AGENT_NAME")
-	}
-}
-
 // leaseProxy POSTs the control-plane lease endpoint with the same server-identity
 // token the rest of managed auth mints, and returns the url from the JSON body.
 func TestLeaseProxy_returnsURL(t *testing.T) {
@@ -467,7 +460,6 @@ func TestLeaseProxy_unconfigured503(t *testing.T) {
 // it returns an error, caches nothing, and never reaches SetProxyAddress (so the
 // companion never connects to WhatsApp on the datacenter IP).
 func TestEnsureManagedProxy_failsClosedWithoutLease(t *testing.T) {
-	vestad := fakeVestad(t, "atok")
 	ctrl := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/integrations/whatsapp/proxy/lease" {
 			http.Error(w, "no", http.StatusNotFound)
@@ -477,7 +469,8 @@ func TestEnsureManagedProxy_failsClosedWithoutLease(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "proxy_unconfigured"})
 	}))
 	t.Cleanup(ctrl.Close)
-	m := newManagedAuth(managedConfig{controlURL: ctrl.URL, vestadBase: vestad.URL, agentName: "alice", agentToken: "atok", cloudManaged: true})
+	stubServerToken(t, ctrl.URL)
+	m := newManagedAuth(managedConfig{vestadBase: "https://vestad.test", agentName: "alice", agentToken: "atok", cloudManaged: true})
 	wac := &WhatsAppClient{managed: m}
 	if err := wac.ensureManagedProxy(); err == nil || !strings.Contains(err.Error(), "not configured") {
 		t.Fatalf("cloud-managed ensureManagedProxy without a lease = %v, want a fail-closed not-configured error", err)
@@ -550,7 +543,6 @@ func TestEnsureManagedProxy_cachesGoodVerdictPerProxy(t *testing.T) {
 }
 
 func TestEnsureManagedProxy_hostedLeaseFlowCachesLeaseAndVerdict(t *testing.T) {
-	vestad := fakeVestad(t, "atok")
 	var leases atomic.Int32
 	ctrl := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/integrations/whatsapp/proxy/lease" {
@@ -568,8 +560,9 @@ func TestEnsureManagedProxy_hostedLeaseFlowCachesLeaseAndVerdict(t *testing.T) {
 		return egressInfo{Status: "success", Query: "198.51.100.8"}, nil
 	}
 	t.Cleanup(func() { lookupEgress = oldLookup })
+	stubServerToken(t, ctrl.URL)
 	wac := newLinkedTestClient(t)
-	wac.managed = newManagedAuth(managedConfig{controlURL: ctrl.URL, vestadBase: vestad.URL, agentName: "alice", agentToken: "atok", cloudManaged: true})
+	wac.managed = newManagedAuth(managedConfig{vestadBase: "https://vestad.test", agentName: "alice", agentToken: "atok", cloudManaged: true})
 	if err := wac.ensureManagedProxy(); err != nil {
 		t.Fatalf("first hosted proxy setup: %v", err)
 	}

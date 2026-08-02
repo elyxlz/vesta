@@ -2,7 +2,7 @@ package main
 
 import (
 	"bytes"
-	"crypto/tls"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 )
@@ -22,10 +23,7 @@ import (
 // /api/integrations/switchboard/*. Direct (self-hosted) sends an sbk_ key straight to a
 // Switchboard base URL; only the base URL, credential, and paths differ.
 
-const (
-	httpTimeout    = 30 * time.Second
-	controlTimeout = 60 * time.Second
-)
+const controlTimeout = 60 * time.Second
 
 // Non-error terminal outcomes of reserve, surfaced to the agent as a clean status
 // rather than a raw error: the per-account OTP quota is spent (wait, do not retry),
@@ -90,7 +88,6 @@ func classifyReserve(err error) error {
 type config struct {
 	directURL  string // Switchboard base, e.g. https://<box> (direct mode)
 	directKey  string // sbk_ key for direct mode
-	controlURL string // vesta.run control-plane base, e.g. https://vesta.run/api (cloud mode)
 	vestadBase string // this box's vestad, https://$BOX_HOST:$VESTAD_PORT
 	agentName  string
 	agentToken string
@@ -113,16 +110,20 @@ func loadConfig() config {
 	directURL := strings.TrimSpace(os.Getenv("SWITCHBOARD_API_URL"))
 	directKey := strings.TrimSpace(os.Getenv("SWITCHBOARD_API_KEY"))
 	configError := ""
-	// A key with no base is meaningless. A base alone is allowed: it means "talk to
-	// this Switchboard directly, mint me the sbk_ key from the cloud /token endpoint".
-	if directKey != "" && directURL == "" {
+	// Direct mode needs both halves: a self-hosted operator hands the box a one-time
+	// sbk_ key out of band. Either half alone is a misconfiguration. (The cloud never
+	// mints a key to the box; a paid tenant reserves through the forwarded API instead.)
+	switch {
+	case directKey != "" && directURL == "":
 		configError = "SWITCHBOARD_API_KEY is set without SWITCHBOARD_API_URL"
 		directKey = ""
+	case directURL != "" && directKey == "":
+		configError = "SWITCHBOARD_API_URL is set without SWITCHBOARD_API_KEY"
+		directURL = ""
 	}
 	return config{
 		directURL:    strings.TrimRight(directURL, "/"),
 		directKey:    directKey,
-		controlURL:   strings.TrimRight(envOrDefault("VESTA_CONTROL_URL", "https://vesta.run/api"), "/"),
 		vestadBase:   base,
 		agentName:    strings.TrimSpace(os.Getenv("AGENT_NAME")),
 		agentToken:   strings.TrimSpace(os.Getenv("AGENT_TOKEN")),
@@ -131,29 +132,15 @@ func loadConfig() config {
 	}
 }
 
-func envOrDefault(name, def string) string {
-	if v := strings.TrimSpace(os.Getenv(name)); v != "" {
-		return v
-	}
-	return def
-}
-
 type client struct {
 	cfg     config
 	control *http.Client
-	vestad  *http.Client
 }
 
 func newClient(cfg config) *client {
 	return &client{
 		cfg:     cfg,
 		control: &http.Client{Timeout: controlTimeout},
-		// vestad serves a self-signed cert on the loopback; the agent is on the same
-		// box, so TLS verification adds nothing and would just fail.
-		vestad: &http.Client{
-			Timeout:   httpTimeout,
-			Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
-		},
 	}
 }
 
@@ -169,31 +156,60 @@ func (c *client) isDirect() bool {
 // cannot tell a paid tenant from a plain self-hosted box; cloudManaged
 // (VESTA_CLOUD_CONTROL_URL) is the distinguishing signal.
 func (c *client) isHosted() bool {
-	return c.cfg.configError != "" || c.isDirect() || c.cfg.directURL != "" ||
+	return c.cfg.configError != "" || c.isDirect() ||
 		(c.cfg.cloudManaged && c.cfg.vestadBase != "" && c.cfg.agentName != "" && c.cfg.agentToken != "")
 }
 
-// mintToken asks this box's vestad for a short-lived server-identity token
-// (agent-token authed). vestad signs it locally from the box api_key, a pure crypto
-// operation with no network call, and hands it back.
-func (c *client) mintToken() (string, error) {
-	if c.cfg.vestadBase == "" || c.cfg.agentName == "" {
-		return "", fmt.Errorf("not running inside an agent container (no VESTAD_PORT/AGENT_NAME)")
+// serverToken is the cloud-path credential: a short-lived server-identity token plus
+// the control-plane base URL it authenticates against.
+type serverToken struct {
+	token      string
+	controlURL string
+}
+
+// mintServerToken is a package var so tests stub the cloud credential without spawning
+// a subprocess.
+var mintServerToken = vestaCloudToken
+
+// vestaCloudTokenTimeout bounds the subprocess so a wedged `vesta-cloud token` can never
+// hang the CLI's auth path (the native mint it replaced had a 30s HTTP timeout).
+const vestaCloudTokenTimeout = 30 * time.Second
+
+// vestaCloudToken shells out to `vesta-cloud token`, the single source of truth for
+// minting this box's server-identity token and resolving the control-plane URL. Every
+// skill that calls the control plane as the server routes through this one command, so
+// the vestad endpoint, the agent-token header, and the control URL live in one place and
+// cannot silently diverge across skills.
+func vestaCloudToken() (serverToken, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), vestaCloudTokenTimeout)
+	defer cancel()
+	out, runErr := exec.CommandContext(ctx, "vesta-cloud", "token").Output()
+	return parseServerToken(out, runErr, ctx.Err() == context.DeadlineExceeded)
+}
+
+// parseServerToken turns a `vesta-cloud token` run into a credential or a clear error,
+// split from the exec so the failure branches are unit tested. On failure the CLI prints
+// a structured {error} on stdout (surfaced verbatim); a missing command, a timeout, and
+// empty output each get their own message.
+func parseServerToken(out []byte, runErr error, timedOut bool) (serverToken, error) {
+	var resp struct {
+		Token      string `json:"token"`
+		ControlURL string `json:"control_url"`
+		Error      string `json:"error"`
 	}
-	if c.cfg.agentToken == "" {
-		return "", fmt.Errorf("missing AGENT_TOKEN, cannot authenticate to vestad")
+	_ = json.Unmarshal(out, &resp)
+	switch {
+	case resp.Token != "" && resp.ControlURL != "":
+		return serverToken{token: resp.Token, controlURL: strings.TrimRight(resp.ControlURL, "/")}, nil
+	case resp.Error != "":
+		return serverToken{}, fmt.Errorf("mint server-identity token: %s", resp.Error)
+	case timedOut:
+		return serverToken{}, fmt.Errorf("`vesta-cloud token` timed out after %s", vestaCloudTokenTimeout)
+	case runErr != nil:
+		return serverToken{}, fmt.Errorf("run `vesta-cloud token` (is the vesta-cloud skill installed?): %w", runErr)
+	default:
+		return serverToken{}, fmt.Errorf("`vesta-cloud token` returned no token")
 	}
-	var out struct {
-		Token string `json:"token"`
-	}
-	u := fmt.Sprintf("%s/agents/%s/account-token", c.cfg.vestadBase, c.cfg.agentName)
-	if _, err := c.do(c.vestad, http.MethodPost, u, map[string]string{"X-Agent-Token": c.cfg.agentToken}, map[string]string{}, &out); err != nil {
-		return "", fmt.Errorf("mint server-identity token: %w", err)
-	}
-	if out.Token == "" {
-		return "", fmt.Errorf("vestad did not return a server-identity token")
-	}
-	return out.Token, nil
 }
 
 // authorize resolves the Switchboard base URL and Authorization header once, plus
@@ -208,46 +224,11 @@ func (c *client) authorize() (base, auth string, direct bool, err error) {
 	if c.isDirect() {
 		return c.cfg.directURL, "Bearer " + c.cfg.directKey, true, nil
 	}
-	// A base with no key (self-hosted, delegating the key to the cloud): ask the
-	// control plane's /token endpoint for a direct Switchboard URL + sbk_ key, then
-	// talk to that Switchboard natively.
-	if c.cfg.directURL != "" {
-		creds, err := c.fetchDirectToken()
-		if err != nil {
-			return "", "", false, err
-		}
-		return strings.TrimRight(creds.URL, "/"), "Bearer " + creds.Key, true, nil
-	}
-	token, err := c.mintToken()
+	st, err := mintServerToken()
 	if err != nil {
 		return "", "", false, err
 	}
-	return c.cfg.controlURL + "/integrations/switchboard", "Bearer " + token, false, nil
-}
-
-type directToken struct {
-	URL string `json:"url"`
-	Key string `json:"key"`
-}
-
-// fetchDirectToken asks the control plane for a direct Switchboard URL + a freshly
-// minted sbk_ key (cloud-authed with a server-identity token), for a self-hosted box
-// that talks to Switchboard directly rather than through the forwarded API. The key
-// is a secret: it stays inside this process and is never printed.
-func (c *client) fetchDirectToken() (directToken, error) {
-	token, err := c.mintToken()
-	if err != nil {
-		return directToken{}, err
-	}
-	var out directToken
-	u := c.cfg.controlURL + "/integrations/switchboard/token"
-	if _, err := c.do(c.control, http.MethodGet, u, map[string]string{"Authorization": "Bearer " + token}, nil, &out); err != nil {
-		return directToken{}, fmt.Errorf("mint direct switchboard credentials: %w", err)
-	}
-	if out.URL == "" || out.Key == "" {
-		return directToken{}, fmt.Errorf("/token returned no url/key")
-	}
-	return out, nil
+	return st.controlURL + "/integrations/switchboard", "Bearer " + st.token, false, nil
 }
 
 type lease struct {
@@ -258,8 +239,10 @@ type lease struct {
 
 // reserve claims a temporary number for one service. Cloud mode POSTs the forwarded
 // /reserve; direct mode POSTs native /leases. A spent quota comes back errQuotaExceeded
-// and an empty pool errOutOfStock, both surfaced as a clean status.
-func (c *client) reserve(service, country string) (lease, error) {
+// and an empty pool errOutOfStock, both surfaced as a clean status. A non-empty
+// idempotencyKey is passed through so a retried reserve for the same flow returns the
+// same number instead of drawing (and paying for) a second one.
+func (c *client) reserve(service, country, idempotencyKey string) (lease, error) {
 	base, auth, direct, err := c.authorize()
 	if err != nil {
 		return lease{}, err
@@ -271,6 +254,9 @@ func (c *client) reserve(service, country string) (lease, error) {
 	body := map[string]string{"service": service}
 	if country != "" {
 		body["country"] = country
+	}
+	if idempotencyKey != "" {
+		body["idempotency_key"] = idempotencyKey
 	}
 	var out lease
 	if _, err := c.do(c.control, http.MethodPost, base+path, map[string]string{"Authorization": auth}, body, &out); err != nil {

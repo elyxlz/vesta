@@ -2,7 +2,7 @@ package main
 
 import (
 	"bytes"
-	"crypto/tls"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 )
@@ -86,7 +87,6 @@ func classifyBlock(err error) error {
 // This file is the HTTP client + on-disk state; daemon wiring lives in MANAGED_AUTH.md.
 
 const (
-	managedHTTPTimeout = 30 * time.Second
 	// controlHTTPTimeout bounds a call to the pool API. It is generous because
 	// /pair blocks server-side while the home box holds the primary online through
 	// the just-linked companion's initial sync (a cold primary there leaves the
@@ -113,7 +113,6 @@ var provisionPollInterval = 3 * time.Second
 type managedConfig struct {
 	directURL  string // home box base, e.g. https://<tunnel> (direct mode)
 	directKey  string // per-account key (wak_...) for direct mode
-	controlURL string // vesta.run control-plane base, e.g. https://vesta.run/api (cloud mode)
 	vestadBase string // this box's vestad, https://$BOX_HOST:$VESTAD_PORT
 	agentName  string
 	agentToken string
@@ -152,7 +151,6 @@ func loadManagedConfig() managedConfig {
 	return managedConfig{
 		directURL:    strings.TrimRight(directURL, "/"),
 		directKey:    directKey,
-		controlURL:   strings.TrimRight(envOrDefault("VESTA_CONTROL_URL", "https://vesta.run/api"), "/"),
 		vestadBase:   base,
 		agentName:    strings.TrimSpace(os.Getenv("AGENT_NAME")),
 		agentToken:   strings.TrimSpace(os.Getenv("AGENT_TOKEN")),
@@ -160,13 +158,6 @@ func loadManagedConfig() managedConfig {
 		proxyURL:     strings.TrimSpace(os.Getenv("WHATSAPP_PROXY_URL")),
 		configError:  configError,
 	}
-}
-
-func envOrDefault(name, def string) string {
-	if v := strings.TrimSpace(os.Getenv(name)); v != "" {
-		return v
-	}
-	return def
 }
 
 // isDirect reports whether a direct home-box key is configured: the box talks
@@ -185,7 +176,6 @@ func (c managedConfig) isCloudTenant() bool {
 type managedAuth struct {
 	cfg     managedConfig
 	control *http.Client
-	vestad  *http.Client
 }
 
 // managedState is the in-memory result of a claim/provision: the assigned number
@@ -241,7 +231,7 @@ func (m *managedAuth) isDirect() bool {
 // is cloudManaged (VESTA_CLOUD_CONTROL_URL), which the control plane's cloud-init
 // drop-in sets only on managed VMs and vestad forwards into the container. Without
 // it, a plain box falls back to the QR strategy instead of dead-ending on a managed
-// path whose account-token mint would 404.
+// path whose `vesta-cloud token` mint would fail (it has no cloud account).
 func (m *managedAuth) isHosted() bool {
 	return m.cfg.configError != "" || m.cfg.isDirect() || m.cfg.isCloudTenant()
 }
@@ -253,54 +243,74 @@ func newManagedAuth(cfg managedConfig) *managedAuth {
 	return &managedAuth{
 		cfg:     cfg,
 		control: &http.Client{Timeout: controlHTTPTimeout},
-		// vestad serves a self-signed cert on the loopback; the agent is on the
-		// same box, so TLS verification adds nothing and would just fail.
-		vestad: &http.Client{
-			Timeout:   managedHTTPTimeout,
-			Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
-		},
 	}
 }
 
-// mintToken asks this box's vestad for a short-lived server-identity token
-// (agent-token authed). vestad signs it locally from the box api_key, a pure
-// crypto operation with no network call, and hands it back.
-func (m *managedAuth) mintToken() (string, error) {
-	if m.cfg.vestadBase == "" || m.cfg.agentName == "" {
-		return "", fmt.Errorf("not running inside an agent container (no VESTAD_PORT/AGENT_NAME)")
-	}
-	if m.cfg.agentToken == "" {
-		return "", fmt.Errorf("missing AGENT_TOKEN, cannot authenticate to vestad")
-	}
-	var out struct {
-		Token string `json:"token"`
-	}
-	u := fmt.Sprintf("%s/agents/%s/account-token", m.cfg.vestadBase, m.cfg.agentName)
-	// A non-cloud-managed box answers 404; do() carries that status + body in the
-	// returned error, so the 404 detail surfaces without a separate decode branch.
-	if err := m.do(m.vestad, http.MethodPost, u, map[string]string{"X-Agent-Token": m.cfg.agentToken}, map[string]string{}, &out); err != nil {
-		return "", fmt.Errorf("mint server-identity token: %w", err)
-	}
-	if out.Token == "" {
-		return "", fmt.Errorf("vestad did not return a server-identity token")
-	}
-	return out.Token, nil
+// serverToken is the cloud-path credential: a short-lived server-identity token plus
+// the control-plane base URL it authenticates against.
+type serverToken struct {
+	token      string
+	controlURL string
 }
 
-// authorize resolves the pool-API base URL and Authorization header once. Direct
-// mode uses the static per-account key; cloud mode mints ONE short-lived
-// server-identity token (SERVER_IDENTITY_TTL 10m, comfortably longer than any
-// single command's work), so a caller making several requests in a row (claim's
-// poll loop) resolves once here and reuses the result rather than minting per call.
+// mintServerToken is a package var so tests stub the cloud credential without spawning
+// a subprocess.
+var mintServerToken = vestaCloudToken
+
+// vestaCloudTokenTimeout bounds the subprocess so a wedged `vesta-cloud token` can never
+// hang the daemon's auth path (the native mint it replaced had a 30s HTTP timeout).
+const vestaCloudTokenTimeout = 30 * time.Second
+
+// vestaCloudToken shells out to `vesta-cloud token`, the single source of truth for
+// minting this box's server-identity token and resolving the control-plane URL. Every
+// skill that calls the control plane as the server routes through this one command, so
+// the vestad endpoint, the agent-token header, and the control URL live in one place and
+// cannot silently diverge across skills.
+func vestaCloudToken() (serverToken, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), vestaCloudTokenTimeout)
+	defer cancel()
+	out, runErr := exec.CommandContext(ctx, "vesta-cloud", "token").Output()
+	return parseServerToken(out, runErr, ctx.Err() == context.DeadlineExceeded)
+}
+
+// parseServerToken turns a `vesta-cloud token` run into a credential or a clear error,
+// split from the exec so the failure branches are unit tested. On failure the CLI prints
+// a structured {error} on stdout (surfaced verbatim); a missing command, a timeout, and
+// empty output each get their own message.
+func parseServerToken(out []byte, runErr error, timedOut bool) (serverToken, error) {
+	var resp struct {
+		Token      string `json:"token"`
+		ControlURL string `json:"control_url"`
+		Error      string `json:"error"`
+	}
+	_ = json.Unmarshal(out, &resp)
+	switch {
+	case resp.Token != "" && resp.ControlURL != "":
+		return serverToken{token: resp.Token, controlURL: strings.TrimRight(resp.ControlURL, "/")}, nil
+	case resp.Error != "":
+		return serverToken{}, fmt.Errorf("mint server-identity token: %s", resp.Error)
+	case timedOut:
+		return serverToken{}, fmt.Errorf("`vesta-cloud token` timed out after %s", vestaCloudTokenTimeout)
+	case runErr != nil:
+		return serverToken{}, fmt.Errorf("run `vesta-cloud token` (is the vesta-cloud skill installed?): %w", runErr)
+	default:
+		return serverToken{}, fmt.Errorf("`vesta-cloud token` returned no token")
+	}
+}
+
+// authorize resolves the pool-API base URL and Authorization header once. Direct mode
+// uses the static per-account key; cloud mode gets ONE short-lived server-identity token
+// (10m TTL, longer than any single command's work) from the vesta-cloud skill, so a
+// caller making several requests in a row (claim's poll loop) resolves once here.
 func (m *managedAuth) authorize() (base, auth string, err error) {
 	if m.isDirect() {
 		return m.cfg.directURL, "Bearer " + m.cfg.directKey, nil
 	}
-	token, err := m.mintToken()
+	st, err := mintServerToken()
 	if err != nil {
 		return "", "", err
 	}
-	return m.cfg.controlURL + "/integrations/whatsapp", "Bearer " + token, nil
+	return st.controlURL + "/integrations/whatsapp", "Bearer " + st.token, nil
 }
 
 // usesResidentialProxy reports whether this box must egress through a leased
