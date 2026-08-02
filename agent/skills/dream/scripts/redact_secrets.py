@@ -24,7 +24,11 @@ PATTERNS = [
     # are deliberately excluded.
     r"[sr]k_(?:live|test)_[0-9a-zA-Z]{20,}",
     r"xox[bp]-[0-9A-Za-z-]+",
-    r"gh[posr]_[A-Za-z0-9]{36,}",
+    # GitHub App installation tokens are ghs_<installation-id>_<jwt>, so the class must allow
+    # underscores and dots or the match dies at the first underscore. vesta hands agents
+    # exactly this format (upstream-pr --token-only), and while a COMPLETE one is caught
+    # incidentally by the JWT pattern below, a truncated copy is not caught at all.
+    r"gh[posr]_[A-Za-z0-9_.\-]{36,}",
     r"github_pat_[A-Za-z0-9_]{20,}",
     r"glpat-[A-Za-z0-9_-]{20,}",
     r"(?-i:AKIA[0-9A-Z]{16})",  # case-sensitive: real AWS keys are uppercase. Under the outer
