@@ -1,6 +1,7 @@
 """Poll Enable Banking for new transactions and write notifications."""
 
 import json
+import signal
 import sys
 import time
 from datetime import UTC, datetime, timedelta
@@ -145,10 +146,61 @@ def seed_seen() -> None:
     print(f"Seeded {len(seen)} existing transactions")
 
 
+def write_died_notification(reason: str) -> None:
+    """Announce that this watcher is going away without having been asked to.
+
+    A poller's silence is indistinguishable from a quiet period, so a watcher that dies simply
+    stops producing spending notifications and nobody learns until a human checks by hand. The
+    daemon contract in `skills/vestad/SKILL.md` defines a `daemon_died` notification for exactly
+    this, but it is per-daemon opt-in and this skill had never opted in.
+
+    interrupt=True, unlike the transaction notification above: a transaction is a record to review
+    when idle, whereas a dead watcher means every FUTURE record is silently lost.
+    """
+    notification = {
+        "type": "daemon_died",
+        "source": "finance",
+        "interrupt": True,
+        "timestamp": datetime.now(UTC).replace(microsecond=0).isoformat(),
+        "message": f"finance watcher exited unexpectedly ({reason}). Spending notifications are "
+        "stopped until it is restarted with `finance daemon start`.",
+    }
+    filename = f"{time.time_ns()}-finance-daemon_died.json"
+    atomic_write_text(NOTIFICATIONS_DIR / filename, json.dumps(notification, indent=2))
+
+
 def serve() -> None:
-    """Run the polling loop."""
+    """Run the polling loop, reporting any death nobody asked for."""
     print(f"Transaction watcher started, polling every {POLL_INTERVAL}s")
 
+    # A deliberate stop must never be reported as a crash, which is the half of the contract that
+    # is easy to miss. `finance daemon stop` sends SIGTERM, so SIGTERM alone is the quiet exit.
+    asked_to_stop = False
+
+    def _on_sigterm(_signum, _frame):
+        nonlocal asked_to_stop
+        asked_to_stop = True
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, _on_sigterm)
+
+    try:
+        _poll_forever()
+    except BaseException as exc:
+        # Deliberately BaseException: the poll loop already swallows every `Exception`, so anything
+        # reaching here is a SystemExit, a KeyboardInterrupt, a MemoryError or similar, which is
+        # precisely the class of death that used to happen in total silence. Re-raised after the
+        # notification is written, so the process still exits and a supervisor still sees it.
+        if not asked_to_stop:
+            write_died_notification(f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__)
+        raise
+    else:
+        # The loop never returns on its own, so an ordinary return is itself an anomaly.
+        if not asked_to_stop:
+            write_died_notification("poll loop returned unexpectedly")
+
+
+def _poll_forever() -> None:
     while True:
         try:
             # The seed is what keeps the first poll quiet, and it needs the config a watcher
