@@ -15,6 +15,7 @@ import {
 } from "@/api/endpoints";
 import type { GatewayInfo, GatewaySettings } from "@/api/types";
 import { Screen } from "@/components/layout/Screen";
+import { NativeSheetCloseButton } from "@/components/native-sheet-close-button";
 import { useToast } from "@/components/native-toast";
 import { Button, ButtonGroup } from "@/components/ui/Button";
 import { FormRow, FormSection, SwitchRow } from "@/components/ui/Form";
@@ -205,6 +206,7 @@ export default function SettingsScreen() {
 
   return (
     <Screen contentStyle={styles.content}>
+      <NativeSheetCloseButton accessibilityLabel="Close settings" />
       <FormSection
         title="Experience"
         actions={

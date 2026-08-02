@@ -48,7 +48,6 @@ import { ControllerProvider } from "@/controller/ControllerProvider";
 import { BootSplash } from "@/components/BootSplash";
 import { GatewayConnectionBanner } from "@/components/GatewayConnectionBanner";
 import { ToastProvider } from "@/components/native-toast";
-import { Text } from "@/components/ui/Typography";
 import {
   BootTransitionProvider,
   type BootDestination,
@@ -256,14 +255,6 @@ function SessionNavigation() {
                   sheetGrabberVisible: false,
                   sheetExpandsWhenScrolledToEdge: false,
                   contentStyle: { backgroundColor: colors.background },
-                  headerTitle: () => (
-                    <Text
-                      family="heading"
-                      style={[styles.settingsTitle, { color: colors.text }]}
-                    >
-                      Settings
-                    </Text>
-                  ),
                 }}
               />
               <Stack.Screen
@@ -315,12 +306,6 @@ function SessionNavigation() {
 
 const styles = StyleSheet.create({
   appSurface: { flex: 1 },
-  settingsTitle: {
-    fontSize: 24,
-    lineHeight: 30,
-    fontWeight: "500",
-    letterSpacing: -0.7,
-  },
 });
 
 export default function RootLayout() {

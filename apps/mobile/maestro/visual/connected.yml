@@ -49,6 +49,9 @@ tags:
 - extendedWaitUntil:
     visible: "Natural chat pacing"
     timeout: 10000
+- extendedWaitUntil:
+    visible: "Close agent settings"
+    timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: agent-settings
@@ -151,6 +154,9 @@ tags:
 - extendedWaitUntil:
     visible: "App Lock"
     timeout: 10000
+- extendedWaitUntil:
+    visible: "Close settings"
+    timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: settings-overview
@@ -208,6 +214,9 @@ tags:
     text: "What’s new.*"
 - extendedWaitUntil:
     visible: "v0.2.0"
+    timeout: 10000
+- extendedWaitUntil:
+    visible: "Close release notes"
     timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000

@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { filterReleaseNotes } from "@vesta/core";
 import * as WebBrowser from "expo-web-browser";
 import { Screen } from "@/components/layout/Screen";
+import { NativeSheetCloseButton } from "@/components/native-sheet-close-button";
 import { EmptyState, ErrorState, LoadingState } from "@/components/ui/States";
 import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
@@ -36,6 +37,7 @@ export default function WhatsNewScreen() {
 
   return (
     <Screen contentStyle={styles.content}>
+      <NativeSheetCloseButton accessibilityLabel="Close release notes" />
       {notes.isPending || !roster.gatewayVersion || !roster.gatewayChannel ? (
         <LoadingState label="Loading release notes…" />
       ) : notes.isError ? (
