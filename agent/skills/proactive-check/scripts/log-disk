@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Append one timestamped disk reading to ~/agent/data/disk-trend.tsv and print
+# two views of it: the recent hourly trail, and the per-day peak.
+#
+# The proactive check already reads disk free every tick and then discards it,
+# so every tick can only judge a single snapshot. That is the wrong instrument
+# for the failure that actually happens on a long-lived container: a slow
+# monotonic slide, where each hourly step is individually unremarkable and only
+# the slope gives it away. Recording the reading turns the same check into a
+# trend, which is what you need to tell a real drain apart from a burst that
+# releases an hour later.
+#
+# Usage: log-disk          # append a reading, print the trail and the peaks
+#        log-disk --show   # print only, no append
+set -euo pipefail
+
+LOG=~/agent/data/disk-trend.tsv
+mkdir -p "$(dirname "$LOG")"
+[ -f "$LOG" ] || printf 'timestamp\tavail_g\tused_pct\tavail_mb\n' > "$LOG"
+
+if [ "${1:-}" != "--show" ]; then
+    # Whole-G resolution cannot distinguish "flat" from a ~0.6G/hour slide over
+    # a single hour, so record MB too and let the delta column do the work.
+    AVAIL_MB=$(df -BM --output=avail / | tail -1 | tr -dc '0-9')
+    AVAIL_G=$(( AVAIL_MB / 1024 ))
+    PCT=$(df --output=pcent / | tail -1 | tr -dc '0-9')
+    printf '%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%MZ)" "$AVAIL_G" "$PCT" "$AVAIL_MB" >> "$LOG"
+fi
+
+echo "recent disk trail (avail, and MB change vs previous reading):"
+tail -12 "$LOG" | awk -F'\t' '
+    NR==1 && $1=="timestamp" { next }
+    {
+        d = (prev == "" || $4 == "") ? "" : sprintf("%+d", $4 - prev)
+        printf "%-18s %4sG %4s%%  %8s MB  %8s\n", $1, $2, $3, ($4==""?"-":$4), d
+        if ($4 != "") prev = $4
+    }'
+
+# The hourly trail answers "is it draining right now" and actively HIDES "has
+# the ceiling been dropping for a week", which is the question that predicts
+# trouble. A burst that releases looks identical, hour to hour, to the early
+# part of a slide; what separates them is whether each day recovers to roughly
+# the previous day's peak. A slope you have to remember to go and compute is a
+# slope you will not compute, so print it every time.
+echo
+echo "daily PEAK free (each day's ceiling; a falling peak = a real multi-day slide):"
+awk -F'\t' '
+    NR==1 && $1=="timestamp" { next }
+    $4 == "" { next }
+    {
+        split($1, t, "T"); day = t[1]
+        if (!(day in mx) || $4+0 > mx[day]) mx[day] = $4+0
+        if (!(day in mn) || $4+0 < mn[day]) mn[day] = $4+0
+        if (!(day in seen)) { order[++n] = day; seen[day] = 1 }
+    }
+    END {
+        start = (n > 7) ? n - 6 : 1
+        for (i = start; i <= n; i++) {
+            day = order[i]
+            chg = (i > start) ? sprintf("%+7d", mx[day] - mx[order[i-1]]) : "      -"
+            printf "  %s  peak %7d MB %s   intraday low %7d MB\n", day, mx[day], chg, mn[day]
+        }
+    }' "$LOG"

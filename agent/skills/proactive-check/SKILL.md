@@ -21,6 +21,10 @@ The rest of each line is kept, so a per-instance line (`whatsapp daemon start --
 
 A daemon can die silently (container up, daemon down), and a dead messaging daemon means you can't reach the user at all, so this is load-bearing. Bring back anything reporting `"running":false` with its own start line from that block, or re-run the whole `restart` skill Daemons block, which is idempotent and a no-op when everything is already up.
 
+Then record the disk reading: `~/agent/skills/proactive-check/scripts/log-disk`. It appends one timestamped line to `~/agent/data/disk-trend.tsv` and prints two views: the recent hourly trail, and the per-day peak with its day-over-day change. This check already read disk free every tick and threw the number away, which is why a slow monotonic slide is invisible: every individual step looks like ordinary noise, and only the slope gives it away.
+
+Read both views, because they answer different questions. The hourly trail answers "is it draining right now", which a burst-then-plateau answers reassuringly and correctly. The daily peak answers "is each day recovering less than the last", which is the one that predicts trouble, and which a comfortable flat hour will hide. **Judge the printed trend, not today against yesterday.** A burst that releases or plateaus within about an hour is noise even at an alarming size; a falling daily peak is real even when every hour looks calm. Escalate to a human on a trend projecting to failure, not merely on a crossed threshold, and check your own footprint (`du -sh ~/`) before concluding the host is at fault.
+
 ## Two questions, every time
 
 Your running narration is visible to the user in the app: think out loud like yourself, not like a service log.
