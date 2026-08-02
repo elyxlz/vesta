@@ -1,15 +1,17 @@
 """HTTP client for the account flow.
 
-Two hops, both authenticated WITHOUT any standing secret reaching the agent:
+Every hop is authenticated WITHOUT any standing secret reaching the agent:
 
 * **vestad** (`https://<BOX_HOST>:<VESTAD_PORT>`, agent-token authed): mint a
-  short-lived server-identity token. vestad signs it locally with the box's
-  `api_key` — a pure crypto operation, no network call — and hands it back.
+  short-lived server-identity token (vestad signs it locally with the box's
+  `api_key`, a pure crypto operation), and relay the Vesta Cloud pairing verbs
+  (`/vesta-cloud/pair`, `/vesta-cloud/pair/poll`, `/vesta-cloud/unpair`), whose
+  flow vestad owns end to end.
 
-* **Control plane** (`https://vesta.run/api`, Bearer = that token): read the
-  plan (`GET /account`) or open a billing portal (`POST /account/portal`). The
-  token proves "I am this server"; it expires in minutes and is scoped to this
-  box's account.
+* **Control plane** (`https://vesta.run/api`, Bearer = the minted token): read
+  the plan (`GET /account`) or open a billing portal (`POST /account/portal`).
+  The token proves "I am this server"; it expires in minutes and is scoped to
+  this box's account.
 """
 
 from __future__ import annotations
@@ -24,8 +26,9 @@ from .config import Config
 
 _TIMEOUT = 20
 
-# vestad serves a self-signed cert on the loopback; the agent reaches it from
-# inside the same box, so TLS verification adds nothing and would just fail.
+# vestad serves a self-signed cert on its agent-facing gateway address
+# (https://$BOX_HOST:$VESTAD_PORT, same box); TLS verification adds nothing
+# there and would just fail.
 warnings.simplefilter("ignore", InsecureRequestWarning)
 
 
@@ -40,11 +43,12 @@ class Client:
     # --- vestad: mint the server-identity token ------------------------------
 
     def account_token(self) -> dict[str, Any]:
-        """POST <vestad>/agents/<name>/account-token -> {token, expires_in} OR {error}.
+        """POST <vestad>/agents/<name>/account-token -> {token, expires_in, control_url} OR {error}.
 
         Agent-token authenticated. Returns the response body either way: a box with no
-        Vesta Cloud account answers 404 `{error}` (a REACHED vestad refusing to mint),
-        which `whoami` reads as "no account" rather than an outage. Raises AccountError
+        Vesta Cloud account answers 404 `{"error": "no server identity available"}` (a
+        REACHED vestad refusing to mint), which `whoami` reads as "no account" rather
+        than an outage. Raises AccountError
         only on a genuine transport / 5xx failure (vestad unreachable). A missing agent
         identity is reported as an `{error}` body, not raised, for the same reason.
 
@@ -138,8 +142,8 @@ class Client:
         except ValueError:
             raise AccountError(f"non-JSON response ({resp.status_code}): {resp.text[:200]}") from None
         # 4xx bodies carry a structured {error} the skill surfaces verbatim
-        # (e.g. "no_billing_account", "not a cloud-managed server"); only a 5xx is
-        # an opaque failure worth raising.
+        # (e.g. vestad's "no server identity available", the control plane's
+        # "no_billing_account"); only a 5xx is an opaque failure worth raising.
         if resp.status_code >= 500:
             raise AccountError(f"server error {resp.status_code}: {data}")
         if not isinstance(data, dict):

@@ -18,8 +18,10 @@ func TestChooseLinkerParadigm(t *testing.T) {
 		want string
 	}{
 		{"direct key", managedConfig{directURL: "https://box", directKey: "wak_x"}, "headless"},
-		{"cloud tenant", managedConfig{vestadBase: "https://localhost:1", agentName: "a", agentToken: "t", cloudManaged: true}, "headless"},
-		{"self-hosted container (identity but not a tenant)", managedConfig{vestadBase: "https://localhost:1", agentName: "a", agentToken: "t"}, "self-managed"},
+		{"managed VM", managedConfig{managedInfra: true}, "headless"},
+		// A box with neither links the user's own WhatsApp, including a
+		// self-hosted box holding a Vesta Cloud account (managed WhatsApp
+		// opens for it only with an active paid membership).
 		{"plain box", managedConfig{}, "self-managed"},
 	}
 	for _, tc := range cases {

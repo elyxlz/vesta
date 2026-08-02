@@ -1,6 +1,6 @@
 ---
 name: vesta-cloud
-description: THIS box's Vesta Cloud account. Use to check whether it has one and read its environment (`whoami`, the account/plan/setup signal other skills key off), get a server-identity token to call the control plane (`token`), pair a self-hosted box to an account (`login`) or detach it (`logout`), or answer the owner about their hosting plan, billing, renewal, upgrade/cancel/card, and referral code. Not `onboard` (buying for someone else); not `stripe-pay` (third-party invoices).
+description: THIS box's Vesta Cloud account. Use whenever you need to know if this box has one (the account/plan/setup signal other skills key off), when another skill needs a credential for the control plane, when the owner wants to connect or disconnect this box from their Vesta Cloud account, or when the owner asks about their hosting plan, billing, renewal, upgrade/cancel/card, or referral code. Not `onboard` (buying for someone else); not `stripe-pay` (third-party invoices).
 ---
 
 # vesta-cloud, CLI: `vesta-cloud`
@@ -8,16 +8,18 @@ description: THIS box's Vesta Cloud account. Use to check whether it has one and
 The single authority for **this** box's Vesta Cloud account: whether it has one, a
 credential to act as it against the control plane, its plan, and its referral code.
 Install the `vesta-cloud` command once from [SETUP.md](SETUP.md). Output is always JSON
-on stdout. Exit codes: 0 success, 2 surfaced `{error}` (no account / no billing yet),
-3 control-plane or vestad unreachable, 1 unexpected.
+on stdout. Exit codes: 0 success (`whoami` exits 0 even with `account: false`), 2 the
+control plane refused with a structured `{error}` (no billing yet, pairing refused),
+3 no credential mintable or vestad/control plane unreachable (this includes running
+`token`/`plan`/`manage`/`referral` on a box with no account), 1 unexpected.
 
 ## `whoami`: does this box have an account?
 
 ```bash
 vesta-cloud whoami
-# { "account": true, "plan": "membership", "status": "active",
-#   "renews_at": "2026-09-01T00:00:00.000Z", "price_usd": 48.0,
-#   "managed_infra": true, "control_url": "https://vesta.run/api", "agent_name": "ada" }
+# { "account": true, "managed_infra": true, "control_url": "https://vesta.run/api",
+#   "agent_name": "ada", "plan": "membership", "status": "active",
+#   "renews_at": "2026-09-01T00:00:00.000Z", "price_usd": 48.0 }
 ```
 
 `account` is the fact to branch on: `true` means this box is paired to a Vesta Cloud
@@ -37,9 +39,9 @@ vesta-cloud token
 
 Hands another skill a short-lived server-identity token plus the control-plane URL, so
 it calls the control plane as this server without minting its own. One token is general:
-it authenticates any server-scoped route (`/account`, integrations, ...). Errors when the
-box has no account. This is how every skill that needs to reach the control plane as the
-server gets its credential.
+it authenticates any server-scoped route (`/account`, integrations, ...). On a box with
+no account it exits 3 with `{"error": "no server identity available"}`. This is how
+every skill that needs to reach the control plane as the server gets its credential.
 
 ## `login`: pair a self-hosted box to a Vesta Cloud account
 

@@ -46,11 +46,12 @@ def test_whoami_account_true_when_minted_and_active(capsys, monkeypatch):
 
 def test_whoami_account_false_when_mint_refused(capsys, monkeypatch):
     # A reached vestad refusing to mint (no account) is a valid answer, exit 0.
-    monkeypatch.setattr(cli_mod.Client, "account_token", lambda self: {"error": "not a cloud-managed server"})
+    # "no server identity available" is vestad's actual 404 body for the miss.
+    monkeypatch.setattr(cli_mod.Client, "account_token", lambda self: {"error": "no server identity available"})
     rc, data = _run(["whoami"], capsys)
     assert rc == 0
     assert data["account"] is False
-    assert data["reason"] == "not a cloud-managed server"
+    assert data["reason"] == "no server identity available"
 
 
 def test_whoami_suspended_is_account_true_with_status(capsys, monkeypatch):
@@ -63,12 +64,15 @@ def test_whoami_suspended_is_account_true_with_status(capsys, monkeypatch):
     assert data["account"] is True and data["status"] == "suspended"
 
 
-def test_whoami_account_false_when_recognized_but_inactive(capsys, monkeypatch):
+def test_whoami_account_false_when_control_plane_refuses_the_read(capsys, monkeypatch):
+    # Minted locally but /account refused (e.g. a stale link whose row was
+    # removed on the dashboard -> 401 unauthenticated). Suspended/unpaid boxes
+    # are NOT this case: /account answers 200 for them (see the test above).
     monkeypatch.setattr(cli_mod.Client, "account_token", lambda self: {"token": "SITOK"})
-    monkeypatch.setattr(cli_mod.Client, "plan", lambda self, token, control_url=None: {"error": "membership_inactive"})
+    monkeypatch.setattr(cli_mod.Client, "plan", lambda self, token, control_url=None: {"error": "unauthenticated"})
     rc, data = _run(["whoami"], capsys)
     assert rc == 0
-    assert data["account"] is False and data["reason"] == "membership_inactive"
+    assert data["account"] is False and data["reason"] == "unauthenticated"
 
 
 def test_whoami_outage_exits_3(capsys, monkeypatch):
@@ -94,11 +98,11 @@ def test_token_returns_credential_and_control_url(capsys, monkeypatch):
 
 def test_token_no_account_exits_3(capsys, monkeypatch):
     def boom(self):
-        raise AccountError("not a cloud-managed server")
+        raise AccountError("no server identity available")
 
     monkeypatch.setattr(cli_mod.Client, "mint_token_detail", boom)
     rc, data = _run(["token"], capsys)
-    assert rc == 3 and "not a cloud-managed" in data["error"]
+    assert rc == 3 and "no server identity" in data["error"]
 
 
 # --- plan -------------------------------------------------------------------
@@ -130,9 +134,9 @@ def test_plan_summarizes_and_adds_usd(capsys, monkeypatch):
 
 def test_plan_surfaces_structured_error(capsys, monkeypatch):
     monkeypatch.setattr(cli_mod.Client, "mint_token_detail", lambda self: {"token": "SITOK"})
-    monkeypatch.setattr(cli_mod.Client, "plan", lambda self, token, control_url=None: {"error": "not a cloud-managed server"})
+    monkeypatch.setattr(cli_mod.Client, "plan", lambda self, token, control_url=None: {"error": "unauthenticated"})
     rc, data = _run(["plan"], capsys)
-    assert rc == 2 and data["error"] == "not a cloud-managed server"
+    assert rc == 2 and data["error"] == "unauthenticated"
 
 
 # --- manage -----------------------------------------------------------------
@@ -164,7 +168,7 @@ def test_manage_surfaces_no_billing_account(capsys, monkeypatch):
 
 def test_mint_failure_exits_3(capsys, monkeypatch):
     def boom(self):
-        raise AccountError("not running inside an agent container (no VESTAD_PORT/AGENT_NAME)")
+        raise AccountError("not running inside an agent container (no VESTAD_PORT/BOX_HOST/AGENT_NAME/AGENT_TOKEN)")
 
     monkeypatch.setattr(cli_mod.Client, "mint_token_detail", boom)
     rc, data = _run(["plan"], capsys)
@@ -197,14 +201,14 @@ def test_referral_reports_code_and_earnings(capsys, monkeypatch):
 
 def test_referral_surfaces_structured_error(capsys, monkeypatch):
     monkeypatch.setattr(cli_mod.Client, "mint_token_detail", lambda self: {"token": "SITOK"})
-    monkeypatch.setattr(cli_mod.Client, "plan", lambda self, token, control_url=None: {"error": "not a cloud-managed server"})
+    monkeypatch.setattr(cli_mod.Client, "plan", lambda self, token, control_url=None: {"error": "unauthenticated"})
     rc, data = _run(["referral"], capsys)
-    assert rc == 2 and data["error"] == "not a cloud-managed server"
+    assert rc == 2 and data["error"] == "unauthenticated"
 
 
 def test_referral_not_hosted_surfaces_friendly_error(capsys, monkeypatch):
     def boom(self):
-        raise AccountError("not a cloud-managed server")
+        raise AccountError("no server identity available")
 
     monkeypatch.setattr(cli_mod.Client, "mint_token_detail", boom)
     rc, data = _run(["referral"], capsys)
@@ -236,8 +240,8 @@ def test_login_relays_code_then_links(capsys, monkeypatch):
         "pair_start",
         lambda self: {"user_code": "BCDF-2345", "verification_url": "https://vesta.run/pair?code=BCDF-2345", "interval": 5, "expires_in": 600},
     )
-    # Structured pending (current vestad), legacy 409-prose pending (older
-    # vestad across the skew), then linked — both pending shapes must loop.
+    # Both pending shapes that exist on the wire (200 {"status": "pending"}
+    # and a 409 whose message contains "pending"), then linked; both must loop.
     polls = iter(
         [
             {"status": "pending"},

@@ -35,14 +35,32 @@ func main() {
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: otp <command> [flags]")
-	fmt.Fprintln(w, "  new --service <name> [--country US] [--idempotency-key <k>]   reserve a temporary number for a service; prints {number, id}")
-	fmt.Fprintln(w, "  code --id <id> [--since <RFC3339>]    wait for the SMS code on that number; prints {code}")
-	fmt.Fprintln(w, "  release --id <id>                     give the number back when done; prints {}")
+	fmt.Fprintln(w, "Usage: otp <command> --source <cloud|switchboard> [flags]")
+	fmt.Fprintln(w, "  new --source <s> --service <name> [--country US] [--idempotency-key <k>]   reserve a temporary number for a service; prints {number, id}")
+	fmt.Fprintln(w, "  code --source <s> --id <id> [--since <RFC3339>]    wait for the SMS code on that number; prints {code}")
+	fmt.Fprintln(w, "  release --source <s> --id <id>                     give the number back when done; prints {}")
+	fmt.Fprintln(w, "  --source states where the number comes from; you decide, the CLI never guesses:")
+	fmt.Fprintln(w, "    cloud        Vesta Cloud (needs this box's Vesta Cloud account)")
+	fmt.Fprintln(w, "    switchboard  a Switchboard the owner runs (needs SWITCHBOARD_API_URL + SWITCHBOARD_API_KEY)")
+}
+
+// parseSource validates the required --source value. The agent states the
+// source explicitly; there is no detection and no fallback.
+func parseSource(raw string) string {
+	switch raw {
+	case sourceCloud, sourceSwitchboard:
+		return raw
+	case "":
+		failJSON("--source is required: cloud (Vesta Cloud) or switchboard (a Switchboard the owner runs)")
+	default:
+		failJSON("unknown --source %q (use: cloud | switchboard)", raw)
+	}
+	return "" // unreachable
 }
 
 func runNew(args []string) {
 	fs := flag.NewFlagSet("new", flag.ContinueOnError)
+	source := fs.String("source", "", "where the number comes from: cloud | switchboard (required)")
 	service := fs.String("service", "", "the service the code is for (required)")
 	country := fs.String("country", "", "optional ISO country code, e.g. US")
 	idempotencyKey := fs.String("idempotency-key", "", "optional stable key: reuse it when retrying a reserve for the same flow so it returns the same number instead of drawing another")
@@ -52,7 +70,7 @@ func runNew(args []string) {
 	if *service == "" {
 		failJSON("--service is required")
 	}
-	l, err := newClient(loadConfig()).reserve(*service, *country, *idempotencyKey)
+	l, err := newClient(loadConfig(), parseSource(*source)).reserve(*service, *country, *idempotencyKey)
 	if err != nil {
 		failReserve(err)
 	}
@@ -61,6 +79,7 @@ func runNew(args []string) {
 
 func runCode(args []string) {
 	fs := flag.NewFlagSet("code", flag.ContinueOnError)
+	source := fs.String("source", "", "the same --source the number was reserved with (required)")
 	id := fs.String("id", "", "the reservation id from `otp new` (required)")
 	since := fs.String("since", "", "optional RFC3339 timestamp: only codes texted after it")
 	if err := fs.Parse(args); err != nil {
@@ -69,12 +88,13 @@ func runCode(args []string) {
 	if *id == "" {
 		failJSON("--id is required")
 	}
-	code, err := newClient(loadConfig()).pollCode(*id, *since)
+	src := parseSource(*source)
+	code, err := newClient(loadConfig(), src).pollCode(*id, *since)
 	if errors.Is(err, errStillPending) {
 		// Not a failure: the SMS has not arrived yet. Re-run to keep waiting.
 		printJSON(map[string]string{
 			"status": "pending",
-			"next":   fmt.Sprintf("no code yet; re-run: otp code --id %s", *id),
+			"next":   fmt.Sprintf("no code yet; re-run: otp code --source %s --id %s", src, *id),
 		})
 		return
 	}
@@ -86,6 +106,7 @@ func runCode(args []string) {
 
 func runRelease(args []string) {
 	fs := flag.NewFlagSet("release", flag.ContinueOnError)
+	source := fs.String("source", "", "the same --source the number was reserved with (required)")
 	id := fs.String("id", "", "the reservation id to release (required)")
 	if err := fs.Parse(args); err != nil {
 		failJSON("%v", err)
@@ -93,7 +114,7 @@ func runRelease(args []string) {
 	if *id == "" {
 		failJSON("--id is required")
 	}
-	if err := newClient(loadConfig()).release(*id); err != nil {
+	if err := newClient(loadConfig(), parseSource(*source)).release(*id); err != nil {
 		failJSON("%v", err)
 	}
 	printJSON(map[string]string{})

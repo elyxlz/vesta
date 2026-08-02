@@ -15,8 +15,11 @@ first (see `client.Client.mint_token`):
 - ``vesta-cloud referral``      — this box's referral code, credit earned, invites completed.
 - ``vesta-cloud set-referral``  — set/clear the code `onboard` sends on a completed invite.
 
-Output is always JSON on stdout. Exit codes: 0 success, 2 surfaced {error}
-(no account / no billing yet), 3 control-plane/vestad unreachable, 1 unexpected.
+Output is always JSON on stdout. Exit codes: 0 success (`whoami` exits 0 even
+with `account: false`), 2 the control plane refused with a structured {error}
+(e.g. no billing yet, pairing refused), 3 no credential mintable or
+vestad/control plane unreachable (AccountError; includes running `token`/`plan`/
+`manage`/`referral` on a box with no account), 1 unexpected.
 """
 
 from __future__ import annotations
@@ -59,7 +62,10 @@ def _cmd_whoami(_args: argparse.Namespace, client: Client, cfg: Config) -> int:
         out["control_url"] = minted["control_url"]
     summary = client.plan(minted["token"], minted.get("control_url"))  # transport -> exit 3
     if "error" in summary:
-        # Recognized box, but no active membership (e.g. suspended / no billing).
+        # Minted locally but the control plane refused the read, e.g. 401
+        # "unauthenticated" from a stale link (the account row was removed on
+        # the dashboard). A suspended or unpaid box is NOT this branch: those
+        # read /account fine and report account:true with their status/plan.
         out["reason"] = summary["error"]
         _print(out)
         return 0
@@ -124,8 +130,8 @@ def _cmd_login(args: argparse.Namespace, client: Client, cfg: Config) -> int:
             continue
         if result.get("status") == "linked":
             return _login_confirmation(args, client, cfg, result)
-        # Structured pending from current vestad; the substring check keeps an
-        # older vestad (409 prose) working across the version skew.
+        # Two pending shapes exist on the wire: 200 {"status": "pending"}, and
+        # a 409 whose error message contains "pending". Treat both as pending.
         if result.get("status") == "pending" or "pending" in str(result.get("error") or ""):
             time.sleep(interval)
             continue

@@ -132,7 +132,7 @@ func TestConnectRejectsFlagsThatDoNotApplyToTheSelectedSource(t *testing.T) {
 // TestResolveConnectRoutesEachSource pins the environment gate and the internal path
 // each source resolves to, without a daemon, socket, or network.
 func TestResolveConnectRoutesEachSource(t *testing.T) {
-	cloudCfg := managedConfig{cloudManaged: true, vestadBase: "https://box:8443", agentName: "alice", agentToken: "atok"}
+	cloudCfg := managedConfig{managedInfra: true}
 	directCfg := managedConfig{directURL: "https://doubletick.example", directKey: "wak_x"}
 
 	cloudRoute, err := resolveConnect(connectOptions{source: sourceCloud, opener: "hi"}, cloudCfg)
@@ -186,7 +186,7 @@ func TestResolveConnectRejectsUnsatisfiableEnvironment(t *testing.T) {
 	}
 	// A box holding managed account credentials cannot self-manage: the daemon's
 	// managed linker would reject the QR/phone link, so resolveConnect errors up front.
-	cloudCfg := managedConfig{cloudManaged: true, vestadBase: "https://box:8443", agentName: "a", agentToken: "t"}
+	cloudCfg := managedConfig{managedInfra: true}
 	if _, err := resolveConnect(connectOptions{source: sourceSelfManaged}, cloudCfg); err == nil {
 		t.Error("--source self-managed on a Vesta Cloud box was accepted")
 	}

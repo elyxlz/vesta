@@ -32,7 +32,7 @@ func managedFor(t *testing.T, control http.HandlerFunc) *managedAuth {
 	ctrl := httptest.NewServer(control)
 	t.Cleanup(ctrl.Close)
 	stubServerToken(t, ctrl.URL)
-	return newManagedAuth(managedConfig{vestadBase: "https://vestad.test", agentName: "alice", agentToken: "atok"})
+	return newManagedAuth(managedConfig{agentName: "alice"})
 }
 
 // TestParseServerToken pins how a `vesta-cloud token` run maps to a credential or a
@@ -470,7 +470,7 @@ func TestEnsureManagedProxy_failsClosedWithoutLease(t *testing.T) {
 	}))
 	t.Cleanup(ctrl.Close)
 	stubServerToken(t, ctrl.URL)
-	m := newManagedAuth(managedConfig{vestadBase: "https://vestad.test", agentName: "alice", agentToken: "atok", cloudManaged: true})
+	m := newManagedAuth(managedConfig{managedInfra: true})
 	wac := &WhatsAppClient{managed: m}
 	if err := wac.ensureManagedProxy(); err == nil || !strings.Contains(err.Error(), "not configured") {
 		t.Fatalf("cloud-managed ensureManagedProxy without a lease = %v, want a fail-closed not-configured error", err)
@@ -562,7 +562,7 @@ func TestEnsureManagedProxy_hostedLeaseFlowCachesLeaseAndVerdict(t *testing.T) {
 	t.Cleanup(func() { lookupEgress = oldLookup })
 	stubServerToken(t, ctrl.URL)
 	wac := newLinkedTestClient(t)
-	wac.managed = newManagedAuth(managedConfig{vestadBase: "https://vestad.test", agentName: "alice", agentToken: "atok", cloudManaged: true})
+	wac.managed = newManagedAuth(managedConfig{managedInfra: true})
 	if err := wac.ensureManagedProxy(); err != nil {
 		t.Fatalf("first hosted proxy setup: %v", err)
 	}

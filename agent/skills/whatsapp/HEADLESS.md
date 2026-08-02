@@ -21,5 +21,8 @@ Keep failures with the service that owns the state:
 
 - WhatsApp restricted, banned, logged out, or pairing failed: Double Tick. Follow
   its `next` for a fresh account.
-- Tenant unauthorized: Vesta Cloud.
+- 403 `membership_inactive`: Vesta Cloud, and specifically the billing side; the
+  box's account holds no active paid membership. The fix is the membership
+  (`vesta-cloud plan` / `manage`), never a re-link or a fresh account.
+- Any other tenant-unauthorized response: Vesta Cloud.
 - Companion disconnected with a healthy account: agent/CLI.

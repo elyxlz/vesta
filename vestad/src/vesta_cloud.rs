@@ -3,8 +3,9 @@
 //! A box holds a Vesta Cloud account when the control plane recognizes its
 //! `(server_id, api_key)`. A managed VM gets that identity from cloud-init env
 //! (`VESTA_CLOUD_SERVER_ID`); a self-hosted box acquires it through the pairing
-//! flow (`/agents/{name}/vesta-cloud/pair`, RFC 8628 device-authorization
-//! shape) and persists it here as `<config_dir>/vesta-cloud-account.json`.
+//! flow (RFC 8628 device-authorization shape, daemon routes `/vesta-cloud/*`
+//! or the `vestad vesta-cloud login` CLI) and persists it here as
+//! `<config_dir>/vesta-cloud-account.json`.
 //! `resolve_vesta_cloud_identity` is the single answer to "what is this box's
 //! Vesta Cloud identity": cloud-init env first, else the persisted pairing.
 
