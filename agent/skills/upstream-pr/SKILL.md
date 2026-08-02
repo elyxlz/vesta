@@ -92,11 +92,22 @@ The home `~` workspace ignores everything outside `agent/`, and local commits di
 
 6. **Wait for CI to pass.** Get a token with `upstream-pr --token-only`, then poll the check-runs endpoint. If a check fails: diagnose, fix, commit to the same branch, push, the PR updates automatically. The `lockfile` check requires `uv lock` in `~/agent` if Python deps changed.
 
+   **Pushing to an existing branch needs the token in the URL.** `upstream-pr` authenticates for you when it creates the PR, but a later `git push` is a plain git operation with no credentials configured, and it fails with `fatal: could not read Username for 'https://github.com'`, which reads like a broken setup rather than a missing flag. Push like this instead:
+
+   ```bash
+   TOKEN=$(upstream-pr --token-only)
+   git push "https://x-access-token:${TOKEN}@github.com/elyxlz/vesta.git" <branch>
+   ```
+
+   This is also how you add a commit to a PR you already opened (worktree removed, then recreated with `git -C ~ worktree add /tmp/vesta-pr <existing-branch>`), which is worth doing rather than opening a second PR for the same section.
+
 Only report a PR as done once every CI check is green.
 
 ## Filing an issue
 
 Get a token with `upstream-pr --token-only`, then POST to the GitHub Issues API. The title should name the pattern, not the specific instance. The body must include the attribution footer (see "Attribution").
+
+**The token can create an issue and read, but cannot comment on or edit one.** Verified 31 Jul 2026 on v0.1.183: `POST /repos/elyxlz/vesta/issues` succeeds, while `POST /issues/:n/comments` and `PATCH /issues/:n` both return `403 Resource not accessible by integration`. So get the body right before you POST, and when you have a follow-up finding on an existing issue, **file a new one that cross-references it** (`Related to #N`) rather than trying to append. GitHub renders the backreference on the original either way.
 
 ## upstream-pr reference
 
