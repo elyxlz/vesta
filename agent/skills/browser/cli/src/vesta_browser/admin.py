@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import shutil
 import signal
 import socket
 import subprocess
@@ -13,7 +14,7 @@ import time
 from pathlib import Path
 
 from .daemon import log_path, pid_path, socket_path
-from .launcher import RunningCamoufox, launch
+from .launcher import PROFILE_ROOT, RunningCamoufox, _profile_has_live_owner, launch
 
 SESSION_FILE_PREFIX = "/tmp/vesta-browser-"
 GRACEFUL_EXIT_POLLS = 25
@@ -298,6 +299,59 @@ def stop_all() -> None:
     """Stop every session this user has running."""
     for s in list_sessions():
         shutdown(s["name"])
+
+
+def _dir_size(path: Path) -> int:
+    total = 0
+    for p in path.rglob("*"):
+        try:
+            if p.is_file() and not p.is_symlink():
+                total += p.stat().st_size
+        except OSError:
+            continue  # vanished mid-walk
+    return total
+
+
+def prune_profiles(*, apply: bool = False) -> dict:
+    """Report (and optionally delete) isolated profile dirs with no live owner.
+
+    `browser launch --user-data-dir` creates a durable profile directory that nothing
+    ever removes, so throwaway isolated sessions accumulate silently: each is tens of
+    megabytes and a crashed session leaves no /tmp pid file to find it by. This walks
+    the filesystem instead of the session registry, which is the only thing that still
+    works after the parent process died.
+
+    Never touches the shared PROFILE_ROOT, and never touches a directory a live
+    Camoufox process has open, so it cannot disrupt a running session.
+    """
+    root = PROFILE_ROOT.parent
+    candidates, kept = [], []
+    if root.is_dir():
+        for d in sorted(root.iterdir()):
+            if not d.is_dir() or d == PROFILE_ROOT:
+                continue
+            entry = {"name": d.name, "path": str(d), "bytes": _dir_size(d)}
+            if _profile_has_live_owner(d):
+                entry["reason"] = "live owner"
+                kept.append(entry)
+            else:
+                candidates.append(entry)
+    removed = []
+    if apply:
+        for entry in candidates:
+            try:
+                shutil.rmtree(entry["path"])
+                removed.append(entry)
+            except OSError as e:
+                entry["error"] = str(e)
+    return {
+        "applied": apply,
+        "reclaimable_bytes": sum(e["bytes"] for e in candidates),
+        "removable": candidates,
+        "removed": removed,
+        "kept": kept,
+        "shared_profile": str(PROFILE_ROOT),
+    }
 
 
 def shutdown(name: str | None = None) -> None:

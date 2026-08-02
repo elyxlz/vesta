@@ -90,6 +90,7 @@ browser mode screenshot                           # switch perception: a11y | sc
 browser stop                                      # stop this session
 browser stop-all                                  # stop everything
 browser sessions                                  # list active sessions
+browser prune                                     # report unowned --user-data-dir profiles (--yes deletes)
 browser doctor                                    # report Camoufox install + session health
 
 # Navigation
@@ -180,6 +181,21 @@ order, most-preferred first:
 3. **Remote-control the user's own browser (last resort).** Only when you specifically need *their*
    logged-in Chrome, drive it over a tunnel with `browser connect`. See
    [interaction-skills/remote-control.md](interaction-skills/remote-control.md).
+
+## Isolated profiles are durable, so prune them
+
+`browser launch --user-data-dir <path>` creates a real profile directory that **nothing ever
+removes**, not `browser stop` and not `stop-all`, which only tear down the process and its `/tmp`
+state. Each one is tens of megabytes, and a session whose parent crashed leaves no pid file to find
+it by, so isolated profiles accumulate invisibly (a box that ran a few days of research subagents
+had 72 of them holding 3.8G, found only by looking at disk usage directly).
+
+So: **only pass `--user-data-dir` when you actually want the profile to outlive the session** (a
+signed-in account you will come back to). For a throwaway isolated run, reuse the shared profile, or
+clean up after yourself. `browser prune` reports what is reclaimable and `browser prune --yes`
+deletes it; both walk the filesystem rather than the session registry, which is the only thing that
+still works once the owning process is gone, and neither touches the shared profile or a directory
+a live Camoufox has open.
 
 ## More
 

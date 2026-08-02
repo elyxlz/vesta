@@ -168,3 +168,42 @@ def test_send_times_out_when_the_daemon_never_replies(tmp_path, monkeypatch):
         assert "did not respond to 'browsingContext.create' within 0.3s" in str(raised[0])
     finally:
         listener.close()
+
+
+def _profile_tree(root, name, *, size=32):
+    d = root / name
+    d.mkdir(parents=True)
+    (d / "prefs.js").write_bytes(b"x" * size)
+    return d
+
+
+def test_prune_reports_without_deleting(tmp_path, monkeypatch):
+    """Default is a dry run: it reports reclaimable dirs and leaves them on disk."""
+    monkeypatch.setattr(admin, "PROFILE_ROOT", tmp_path / "profile")
+    (tmp_path / "profile").mkdir()
+    stale = _profile_tree(tmp_path, "throwaway")
+    monkeypatch.setattr(admin, "_profile_has_live_owner", lambda d: False)
+
+    out = admin.prune_profiles()
+
+    assert out["applied"] is False
+    assert [e["name"] for e in out["removable"]] == ["throwaway"]
+    assert out["reclaimable_bytes"] == 32
+    assert out["removed"] == []
+    assert stale.exists()
+
+
+def test_prune_apply_deletes_only_unowned(tmp_path, monkeypatch):
+    """--yes removes unowned dirs but never the shared profile or a live-owned one."""
+    monkeypatch.setattr(admin, "PROFILE_ROOT", tmp_path / "profile")
+    shared = _profile_tree(tmp_path, "profile")
+    live = _profile_tree(tmp_path, "in-use")
+    stale = _profile_tree(tmp_path, "throwaway")
+    monkeypatch.setattr(admin, "_profile_has_live_owner", lambda d: d.name == "in-use")
+
+    out = admin.prune_profiles(apply=True)
+
+    assert not stale.exists()
+    assert live.exists() and shared.exists()
+    assert [e["name"] for e in out["removed"]] == ["throwaway"]
+    assert [e["name"] for e in out["kept"]] == ["in-use"]

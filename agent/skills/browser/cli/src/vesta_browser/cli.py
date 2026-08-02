@@ -165,6 +165,11 @@ def cmd_sessions(_args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_prune(args: argparse.Namespace) -> int:
+    print(json.dumps(admin.prune_profiles(apply=args.yes), indent=2))
+    return 0
+
+
 def cmd_handover(args: argparse.Namespace) -> int:
     """Hand the live browser to the user over a branded page so they sign in by hand."""
     if args.action == "start":
@@ -444,6 +449,9 @@ def _add_lifecycle_parsers(sub: argparse._SubParsersAction[argparse.ArgumentPars
     sub.add_parser("stop", help="Stop this session.").set_defaults(func=cmd_stop)
     sub.add_parser("stop-all", help="Stop all sessions.").set_defaults(func=cmd_stop_all)
     sub.add_parser("sessions", help="List active sessions.").set_defaults(func=cmd_sessions)
+    p_prune = sub.add_parser("prune", help="Report unowned --user-data-dir profile dirs; --yes to delete them.")
+    p_prune.add_argument("--yes", action="store_true", help="Actually delete (default is a dry-run report).")
+    p_prune.set_defaults(func=cmd_prune)
 
     hv = sub.add_parser("handover", help="Hand the live browser to the user over a clean page so they sign in by hand.")
     hv.add_argument("action", choices=["start", "stop", "status"])
