@@ -274,7 +274,7 @@ def cmd_facets(_: argparse.Namespace) -> int:
         for label, field in FACET_FIELDS:
             rows = conn.execute(
                 f"SELECT json_extract(data, '$.{field}') AS v FROM events "
-                "WHERE json_extract(data, '$.type') = 'notification' AND v IS NOT NULL AND v != '' "
+                "WHERE json_valid(data) AND json_extract(data, '$.type') = 'notification' AND v IS NOT NULL AND v != '' "
                 "GROUP BY v ORDER BY MAX(id) DESC LIMIT ?",
                 (FACET_LIMIT,),
             ).fetchall()
@@ -283,7 +283,7 @@ def cmd_facets(_: argparse.Namespace) -> int:
         # field name. json_each walks the map's keys so a new source's new field needs no code change.
         field_rows = conn.execute(
             "SELECT je.key AS field, je.value AS value FROM events, json_each(json_extract(data, '$.fields')) AS je "
-            "WHERE json_extract(data, '$.type') = 'notification' AND je.value IS NOT NULL AND je.value != '' "
+            "WHERE json_valid(data) AND json_extract(data, '$.type') = 'notification' AND je.value IS NOT NULL AND je.value != '' "
             "GROUP BY je.key, je.value ORDER BY MAX(events.id) DESC"
         ).fetchall()
         fields: dict[str, list[str]] = {}
