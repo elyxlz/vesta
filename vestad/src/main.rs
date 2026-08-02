@@ -37,6 +37,7 @@ mod update_check;
 mod update_window;
 mod upstream;
 mod vendored_bin;
+mod vesta_cloud;
 
 use status::{paint, AgentEntry, Status, TunnelStatus};
 

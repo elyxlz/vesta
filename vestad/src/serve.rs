@@ -224,25 +224,275 @@ async fn info() -> Json<serde_json::Value> {
 
 /// `POST /agents/{name}/account-token`: mint a short-lived server-identity token for
 /// the on-box agent (issue #20). Agent-token authenticated (the agent proves itself
-/// with its `X-Agent-Token`); vestad signs `{ sub: VESTA_CLOUD_SERVER_ID, typ:
-/// "server-identity" }` with its `api_key` and hands it back. The agent carries this
-/// to the control plane's `/api/account/*` to read its plan or open a billing portal.
+/// with its `X-Agent-Token`); vestad signs `{ sub: <server_id>, typ: "server-identity" }`
+/// with its `api_key` and hands it back. The server identity comes from cloud-init env
+/// on a managed VM or from `vesta-cloud-account.json` on a paired self-hosted box
+/// (`vesta_cloud::vesta_cloud_identity`); an unpaired box still 404s. The nullable
+/// `control_url` tells the skill which control plane the identity belongs to.
 /// vestad makes NO network call, it only signs locally; the `api_key` never enters
 /// the agent container, only this 10-minute token does.
 async fn account_token_handler(State(state): State<SharedState>) -> axum::response::Response {
-    if !crate::is_cloud_managed() {
-        return err_response(StatusCode::NOT_FOUND, "not a cloud-managed server").into_response();
-    }
-    let Ok(server_id) = std::env::var("VESTA_CLOUD_SERVER_ID") else {
-        // Managed but VESTA_CLOUD_SERVER_ID not seeded — nothing to mint.
+    let Some((server_id, control_url)) =
+        crate::vesta_cloud::vesta_cloud_identity(&state.env_config.config_dir)
+    else {
         return err_response(StatusCode::NOT_FOUND, "no server identity available").into_response();
     };
     let token = crate::jwt::create_server_identity_token(&state.api_key, &server_id);
     Json(serde_json::json!({
         "token": token,
         "expires_in": crate::jwt::SERVER_IDENTITY_TTL,
+        "control_url": control_url,
     }))
     .into_response()
+}
+
+const VESTA_CLOUD_HTTP_TIMEOUT_SECS: u64 = 30;
+
+#[derive(serde::Deserialize)]
+struct VestaCloudPairBody {
+    #[serde(default)]
+    box_name: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct VestaCloudPairStartResponse {
+    user_code: String,
+    verification_url: String,
+    device_code: String,
+    interval: u64,
+    expires_in: u64,
+}
+
+/// `POST /agents/{name}/vesta-cloud/pair`: open (or resume) the device-authorization
+/// pairing that links this self-hosted box to a Vesta Cloud account. vestad presents
+/// the host `api_key` to the control plane and holds the returned `device_code` in
+/// memory; the agent only ever sees the `user_code` + `verification_url` it must
+/// relay to the owner. Managed VMs (cloud-init identity) and already-paired boxes
+/// refuse with 409.
+async fn vesta_cloud_pair_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<VestaCloudPairBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if crate::is_cloud_managed() {
+        return Err(err_response(
+            StatusCode::CONFLICT,
+            "this box is already managed by Vesta Cloud",
+        ));
+    }
+    if crate::vesta_cloud::load_vesta_cloud_account(&state.env_config.config_dir).is_some() {
+        return Err(err_response(
+            StatusCode::CONFLICT,
+            "already paired to a Vesta Cloud account (unpair first)",
+        ));
+    }
+
+    // An unexpired in-flight pairing is returned as-is (an agent retry must not
+    // burn a fresh code while the owner is already typing the shown one).
+    let mut slot = state.vesta_cloud_pairing.lock().await;
+    if let Some(session) = slot.as_ref() {
+        if session.is_expired() {
+            *slot = None;
+        } else {
+            return Ok(Json(serde_json::json!({
+                "user_code": session.user_code,
+                "verification_url": session.verification_url,
+                "interval": session.interval,
+                "expires_in": session.expires_in,
+            })));
+        }
+    }
+
+    let base = crate::vesta_cloud::control_base();
+    let box_name = body.box_name.filter(|n| !n.trim().is_empty());
+    let response = state
+        .http_client
+        .post(format!("{base}/pair/start"))
+        .timeout(std::time::Duration::from_secs(VESTA_CLOUD_HTTP_TIMEOUT_SECS))
+        .json(&serde_json::json!({
+            "api_key": state.api_key,
+            "box_name": box_name.unwrap_or_else(|| "vesta".to_string()),
+        }))
+        .send()
+        .await
+        .map_err(|e| {
+            err_response(StatusCode::BAD_GATEWAY, &format!("pairing start failed: {e}"))
+        })?;
+    let status = response.status();
+    if !status.is_success() {
+        let text = response.text().await.unwrap_or_default();
+        let mapped = if status == reqwest::StatusCode::CONFLICT {
+            StatusCode::CONFLICT
+        } else {
+            StatusCode::BAD_GATEWAY
+        };
+        return Err(err_response(
+            mapped,
+            &format!("control plane returned {status}: {text}"),
+        ));
+    }
+
+    let start: VestaCloudPairStartResponse = response.json().await.map_err(|e| {
+        err_response(
+            StatusCode::BAD_GATEWAY,
+            &format!("invalid pairing start response: {e}"),
+        )
+    })?;
+    *slot = Some(crate::state::VestaCloudPairingSession {
+        device_code: start.device_code,
+        user_code: start.user_code.clone(),
+        verification_url: start.verification_url.clone(),
+        interval: start.interval,
+        expires_in: start.expires_in,
+        created: std::time::Instant::now(),
+    });
+    Ok(Json(serde_json::json!({
+        "user_code": start.user_code,
+        "verification_url": start.verification_url,
+        "interval": start.interval,
+        "expires_in": start.expires_in,
+    })))
+}
+
+/// `POST /agents/{name}/vesta-cloud/pair/poll`: forward ONE control-plane poll for
+/// the in-flight pairing. 409 while the owner hasn't approved yet (the skill sleeps
+/// and retries on this, mirroring the `ChatGPT` device flow); on `linked` the
+/// identity is persisted to `vesta-cloud-account.json` and the session cleared.
+/// A terminal control-plane refusal clears the session; a network failure keeps it.
+async fn vesta_cloud_pair_poll_handler(
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let mut slot = state.vesta_cloud_pairing.lock().await;
+    let Some(session) = slot.as_ref().cloned() else {
+        return Err(err_response(StatusCode::NOT_FOUND, "no pairing in progress"));
+    };
+    if session.is_expired() {
+        *slot = None;
+        return Err(err_response(StatusCode::GONE, "pairing expired"));
+    }
+
+    let base = crate::vesta_cloud::control_base();
+    let response = state
+        .http_client
+        .post(format!("{base}/pair/poll"))
+        .timeout(std::time::Duration::from_secs(VESTA_CLOUD_HTTP_TIMEOUT_SECS))
+        .json(&serde_json::json!({ "device_code": session.device_code }))
+        .send()
+        .await
+        .map_err(|e| {
+            err_response(StatusCode::BAD_GATEWAY, &format!("pairing poll failed: {e}"))
+        })?;
+
+    let status = response.status();
+    let body: serde_json::Value = response.json().await.map_err(|e| {
+        err_response(
+            StatusCode::BAD_GATEWAY,
+            &format!("invalid pairing poll response: {e}"),
+        )
+    })?;
+
+    if status.is_success() {
+        match body.get("status").and_then(|s| s.as_str()) {
+            Some("pending") => {
+                return Err(err_response(
+                    StatusCode::CONFLICT,
+                    "authorization is still pending",
+                ));
+            }
+            Some("linked") => {
+                let (Some(server_id), Some(control_url)) = (
+                    body.get("server_id").and_then(|v| v.as_str()),
+                    body.get("control_url").and_then(|v| v.as_str()),
+                ) else {
+                    return Err(err_response(
+                        StatusCode::BAD_GATEWAY,
+                        "linked response missing server_id/control_url",
+                    ));
+                };
+                crate::vesta_cloud::save_vesta_cloud_account(
+                    &state.env_config.config_dir,
+                    &crate::vesta_cloud::VestaCloudAccount {
+                        server_id: server_id.to_string(),
+                        control_url: control_url.to_string(),
+                    },
+                );
+                *slot = None;
+                return Ok(Json(serde_json::json!({
+                    "status": "linked",
+                    "server_id": server_id,
+                    "control_url": control_url,
+                })));
+            }
+            _ => {
+                return Err(err_response(
+                    StatusCode::BAD_GATEWAY,
+                    "unrecognized pairing poll response",
+                ));
+            }
+        }
+    }
+
+    // Terminal control-plane refusal (expired / unknown / account already has a
+    // server): the pairing is dead, clear it so a fresh /pair can start over.
+    *slot = None;
+    let error = body
+        .get("error")
+        .and_then(|v| v.as_str())
+        .unwrap_or("pairing refused");
+    let mapped = if status == reqwest::StatusCode::GONE {
+        StatusCode::GONE
+    } else {
+        StatusCode::CONFLICT
+    };
+    Err(err_response(mapped, &format!("pairing failed: {error}")))
+}
+
+/// `POST /agents/{name}/vesta-cloud/unpair`: detach this box from its Vesta Cloud
+/// account. vestad proves it IS the paired server (a locally-minted server-identity
+/// token) and asks the control plane to retire the registration; 401/404 from the
+/// control plane means the link is already gone server-side (e.g. removed from the
+/// dashboard), so the local file is cleared either way. Only a network failure
+/// keeps the file (retry later).
+async fn vesta_cloud_unpair_handler(
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if crate::is_cloud_managed() {
+        return Err(err_response(
+            StatusCode::CONFLICT,
+            "a managed Vesta Cloud box cannot unpair",
+        ));
+    }
+    let Some(account) =
+        crate::vesta_cloud::load_vesta_cloud_account(&state.env_config.config_dir)
+    else {
+        return Err(err_response(
+            StatusCode::NOT_FOUND,
+            "not paired to a Vesta Cloud account",
+        ));
+    };
+
+    let token = crate::jwt::create_server_identity_token(&state.api_key, &account.server_id);
+    let response = state
+        .http_client
+        .post(format!("{}/pair/unpair", account.control_url))
+        .timeout(std::time::Duration::from_secs(VESTA_CLOUD_HTTP_TIMEOUT_SECS))
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| err_response(StatusCode::BAD_GATEWAY, &format!("unpair failed: {e}")))?;
+
+    let status = response.status();
+    let already_gone = status == reqwest::StatusCode::UNAUTHORIZED
+        || status == reqwest::StatusCode::NOT_FOUND;
+    if !status.is_success() && !already_gone {
+        let text = response.text().await.unwrap_or_default();
+        return Err(err_response(
+            StatusCode::BAD_GATEWAY,
+            &format!("control plane returned {status}: {text}"),
+        ));
+    }
+
+    crate::vesta_cloud::clear_vesta_cloud_account(&state.env_config.config_dir);
+    Ok(Json(serde_json::json!({ "status": "unpaired" })))
 }
 
 /// `GET /agents/{name}/workspace.bundle` — the host's upstream snapshot as a bundle
@@ -2629,6 +2879,15 @@ pub fn build_router(state: SharedState) -> Router {
             post(agent_status::invalidate_service_handler),
         )
         .route("/agents/{name}/account-token", post(account_token_handler))
+        .route("/agents/{name}/vesta-cloud/pair", post(vesta_cloud_pair_handler))
+        .route(
+            "/agents/{name}/vesta-cloud/pair/poll",
+            post(vesta_cloud_pair_poll_handler),
+        )
+        .route(
+            "/agents/{name}/vesta-cloud/unpair",
+            post(vesta_cloud_unpair_handler),
+        )
         .route("/agents/{name}/user-notification", post(user_notification_handler))
         .route(
             "/agents/{name}/workspace.bundle",

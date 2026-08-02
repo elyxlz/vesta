@@ -49,13 +49,10 @@ class Client:
         identity is reported as an `{error}` body, not raised, for the same reason.
 
         The minted token is a general server-identity credential the control plane honors
-        on any server-scoped route, so one token serves /account, integrations, etc.
+        on any server-scoped route, so one token serves /account, integrations, etc. The
+        response's nullable `control_url` names the control plane the identity belongs to.
         """
-        cfg = self._cfg
-        if not cfg.vestad_base or not cfg.agent_name or not cfg.agent_token:
-            return {"error": "not running inside an agent container (no VESTAD_PORT/BOX_HOST/AGENT_NAME/AGENT_TOKEN)"}
-        url = f"{cfg.vestad_base}/agents/{cfg.agent_name}/account-token"
-        return self._json(self._send("POST", url, headers={"X-Agent-Token": cfg.agent_token}, json={}, verify=False))
+        return self._vestad_post("account-token", {})
 
     def mint_token_detail(self) -> dict[str, Any]:
         """{@link account_token} but raises AccountError when no token was minted, for the
@@ -69,15 +66,46 @@ class Client:
         """A server-identity token; see {@link mint_token_detail}."""
         return self.mint_token_detail()["token"]
 
+    # --- vestad: pair / unpair a self-hosted box -----------------------------
+
+    def pair_start(self) -> dict[str, Any]:
+        """POST <vestad>/agents/<name>/vesta-cloud/pair -> {user_code, verification_url,
+        interval, expires_in} OR {error} (already managed / already paired). vestad holds
+        the poll secret; the agent only relays the code the owner must approve."""
+        return self._vestad_post("vesta-cloud/pair", {"box_name": self._cfg.agent_name})
+
+    def pair_poll(self) -> dict[str, Any]:
+        """POST <vestad>/agents/<name>/vesta-cloud/pair/poll -> {status: "linked", ...} once
+        approved, {error: "...still pending"} while the owner hasn't approved, or a terminal
+        {error} (expired / refused)."""
+        return self._vestad_post("vesta-cloud/pair/poll", {})
+
+    def unpair(self) -> dict[str, Any]:
+        """POST <vestad>/agents/<name>/vesta-cloud/unpair -> {status: "unpaired"} OR {error}."""
+        return self._vestad_post("vesta-cloud/unpair", {})
+
+    def _vestad_post(self, tail: str, body: dict[str, Any]) -> dict[str, Any]:
+        """An agent-token-authed POST to this agent's vestad surface; see `account_token`
+        for the error contract (4xx bodies returned, transport/5xx raised)."""
+        cfg = self._cfg
+        if not cfg.vestad_base or not cfg.agent_name or not cfg.agent_token:
+            return {"error": "not running inside an agent container (no VESTAD_PORT/BOX_HOST/AGENT_NAME/AGENT_TOKEN)"}
+        url = f"{cfg.vestad_base}/agents/{cfg.agent_name}/{tail}"
+        return self._json(self._send("POST", url, headers={"X-Agent-Token": cfg.agent_token}, json=body, verify=False))
+
     # --- control plane: read plan / open portal ------------------------------
 
-    def plan(self, token: str) -> dict[str, Any]:
-        """GET /account -> {plan, status, price_cents, subscription_status, renews_at, ...}."""
-        return self._json(self._send("GET", f"{self._cfg.control_url}/account", headers=self._auth(token)))
+    def plan(self, token: str, control_url: str | None = None) -> dict[str, Any]:
+        """GET /account -> {plan, status, price_cents, subscription_status, renews_at, ...}.
+        `control_url` (from the mint response) routes a staging-paired box correctly;
+        falls back to the configured default."""
+        base = control_url or self._cfg.control_url
+        return self._json(self._send("GET", f"{base}/account", headers=self._auth(token)))
 
-    def portal(self, token: str) -> dict[str, Any]:
+    def portal(self, token: str, control_url: str | None = None) -> dict[str, Any]:
         """POST /account/portal -> {url} — a Stripe-hosted manage/upgrade/cancel link."""
-        return self._json(self._send("POST", f"{self._cfg.control_url}/account/portal", headers=self._auth(token), json={}))
+        base = control_url or self._cfg.control_url
+        return self._json(self._send("POST", f"{base}/account/portal", headers=self._auth(token), json={}))
 
     # --- low-level helpers ---------------------------------------------------
 

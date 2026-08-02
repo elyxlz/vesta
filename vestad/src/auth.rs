@@ -427,6 +427,29 @@ pub async fn refresh_session_handler(
 }
 
 #[cfg(test)]
+mod agent_name_extraction {
+    use super::extract_agent_name;
+
+    #[test]
+    fn nested_vesta_cloud_paths_still_self_scope_to_the_agent() {
+        for path in [
+            "/agents/alpha/vesta-cloud/pair",
+            "/agents/alpha/vesta-cloud/pair/poll",
+            "/agents/alpha/vesta-cloud/unpair",
+            "/agents/alpha/account-token",
+        ] {
+            assert_eq!(extract_agent_name(path).as_deref(), Some("alpha"));
+        }
+    }
+
+    #[test]
+    fn non_agent_paths_yield_no_name() {
+        assert_eq!(extract_agent_name("/health"), None);
+        assert_eq!(extract_agent_name("/agents"), None);
+    }
+}
+
+#[cfg(test)]
 mod refresh_rotation_tests {
     use super::*;
 
