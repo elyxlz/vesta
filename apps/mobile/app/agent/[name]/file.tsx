@@ -6,6 +6,7 @@ import Stack from "expo-router/stack";
 import { readFile, writeFile } from "@/api/endpoints";
 import { useAgent } from "@/agent/AgentProvider";
 import { Screen } from "@/components/layout/Screen";
+import { NativeSheetCloseButton } from "@/components/native-sheet-close-button";
 import { useToast } from "@/components/native-toast";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -67,6 +68,7 @@ function AgentFileContent() {
   return (
     <>
       <Stack.Title>{fileName(path)}</Stack.Title>
+      <NativeSheetCloseButton accessibilityLabel="Close file" />
       <Screen contentStyle={styles.content}>
         <Card>
           <Text

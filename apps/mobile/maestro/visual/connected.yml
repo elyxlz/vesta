@@ -1,0 +1,235 @@
+appId: ${APP_ID}
+name: Connected app screens
+tags:
+  - visual
+  - connected
+---
+- clearState
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- waitForAnimationToEnd:
+    timeout: 3000
+- tapOn:
+    text: "^Open$"
+    optional: true
+    waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: "Open aria"
+    timeout: 30000
+- takeScreenshot: home-agents
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: home-agents.png
+
+- tapOn: "Open aria"
+- extendedWaitUntil:
+    visible: "Done. I prioritized the visual regressions first.*"
+    timeout: 10000
+- takeScreenshot: agent-chat
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-chat.png
+
+- swipe:
+    start: "85%,50%"
+    end: "15%,50%"
+    duration: 450
+- extendedWaitUntil:
+    visible: "Your dashboard"
+    timeout: 10000
+- takeScreenshot: agent-dashboard-empty
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-dashboard-empty.png
+
+- tapOn: "Agent settings"
+- extendedWaitUntil:
+    visible: "Natural chat pacing"
+    timeout: 10000
+- extendedWaitUntil:
+    visible: "Close agent settings"
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-settings
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-settings.png
+
+- scrollUntilVisible:
+    element:
+      text: "^Notifications,.*"
+    direction: DOWN
+    timeout: 10000
+    speed: 40
+    visibilityPercentage: 100
+- tapOn:
+    text: "^Notifications,.*"
+- extendedWaitUntil:
+    visible: "Design review"
+    timeout: 10000
+- takeScreenshot: agent-notifications
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-notifications.png
+- openLink:
+    link: "vesta-dev://agent/aria/settings"
+- extendedWaitUntil:
+    visible: "Natural chat pacing"
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      text: "^Logs,.*"
+    direction: DOWN
+    timeout: 10000
+    speed: 40
+    visibilityPercentage: 100
+
+- tapOn:
+    text: "^Logs,.*"
+- extendedWaitUntil:
+    visible: ".*gateway sync ready"
+    timeout: 10000
+- takeScreenshot: agent-logs
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-logs.png
+- openLink:
+    link: "vesta-dev://agent/aria/settings"
+- extendedWaitUntil:
+    visible: "Natural chat pacing"
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      text: "^Files,.*"
+    direction: DOWN
+    timeout: 10000
+    speed: 40
+    visibilityPercentage: 100
+
+- tapOn:
+    text: "^Files,.*"
+- extendedWaitUntil:
+    visible: "Who aria is"
+    timeout: 10000
+- takeScreenshot: agent-files
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-files.png
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: "Open aria"
+    timeout: 10000
+
+- tapOn: "Create agent"
+- extendedWaitUntil:
+    visible: "Coming soon"
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: new-agent
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: new-agent.png
+- swipe:
+    start: "50%,45%"
+    end: "50%,95%"
+    duration: 500
+- extendedWaitUntil:
+    visible: "Open aria"
+    timeout: 10000
+
+- tapOn:
+    text: "App settings.*"
+- extendedWaitUntil:
+    visible: "App Lock"
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: settings-overview
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: settings-overview.png
+
+- tapOn:
+    text: "Appearance.*"
+- extendedWaitUntil:
+    visible: "System"
+    timeout: 10000
+- takeScreenshot: settings-appearance
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: settings-appearance.png
+- tapOn: "Dark"
+- waitForAnimationToEnd:
+    timeout: 1000
+- takeScreenshot: settings-dark
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: settings-dark.png
+- tapOn:
+    text: "Appearance.*"
+- tapOn: "Light"
+- waitForAnimationToEnd:
+    timeout: 1000
+
+# Expand before capturing gateway controls and its full-detent close button.
+- swipe:
+    start: "50%,58%"
+    end: "50%,10%"
+    duration: 500
+- waitForAnimationToEnd:
+    timeout: 3000
+- extendedWaitUntil:
+    visible: "Close settings"
+    timeout: 10000
+
+- scrollUntilVisible:
+    element:
+      text: "Gateway"
+    direction: DOWN
+    timeout: 10000
+    speed: 40
+    visibilityPercentage: 100
+    centerElement: true
+- takeScreenshot: settings-gateway
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: settings-gateway.png
+
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: "Open aria"
+    timeout: 30000
+- openLink:
+    link: "vesta-dev://whats-new?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- waitForAnimationToEnd:
+    timeout: 10000
+- tapOn:
+    text: "^Open$"
+    optional: true
+    waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: "View release v0.2.0 on GitHub"
+    timeout: 30000
+- takeScreenshot: whats-new
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: whats-new.png

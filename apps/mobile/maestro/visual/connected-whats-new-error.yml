@@ -1,0 +1,86 @@
+appId: ${APP_ID}
+name: Connected release notes error state
+tags:
+  - visual
+  - connected
+---
+- clearState
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualReleaseNotes=error"
+- waitForAnimationToEnd:
+    timeout: 3000
+- tapOn:
+    text: "^Open$"
+    optional: true
+    waitToSettleTimeoutMs: 1
+- extendedWaitUntil:
+    visible: "Open aria"
+    timeout: 30000
+- openLink:
+    link: "vesta-dev://whats-new?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualReleaseNotes=error"
+- extendedWaitUntil:
+    visible: "Couldn’t load release notes."
+    timeout: 30000
+- takeScreenshot: whats-new-error
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: whats-new-error.png
+
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: "Natural chat pacing"
+    timeout: 30000
+- tapOn:
+    text: "^Provider and model,.*"
+- extendedWaitUntil:
+    visible: ".*claude-sonnet-4-5.*"
+    timeout: 10000
+- extendedWaitUntil:
+    visible: "Five-hour session"
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-provider
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-provider.png
+
+- stopApp
+- openLink:
+    link: "vesta-dev://agent/aria/settings?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: "Natural chat pacing"
+    timeout: 30000
+- tapOn:
+    text: "^Voice,.*"
+- extendedWaitUntil:
+    visible: "Deepgram Nova-3"
+    timeout: 10000
+- extendedWaitUntil:
+    visible: "ElevenLabs"
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-voice
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-voice.png
+
+- stopApp
+- openLink:
+    link: "vesta-dev://debug?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: ".*Share diagnostics.*"
+    timeout: 30000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: diagnostics
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: diagnostics.png

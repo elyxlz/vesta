@@ -12,6 +12,7 @@ import { Text } from "@/components/ui/Typography";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useRoster } from "@/session/RosterProvider";
 import { useSession } from "@/session/SessionProvider";
+import { navHeaderHeight } from "@/theme/layout";
 
 const LOG_RETRY_DELAY_MS = 1_000;
 
@@ -109,11 +110,18 @@ function LogList({
         renderItem={({ item }) => (
           <AnsiText value={item.text} selectable style={styles.logLine} />
         )}
-        automaticallyAdjustContentInsets={standalone}
-        contentInsetAdjustmentBehavior={standalone ? "automatic" : "never"}
+        automaticallyAdjustContentInsets={false}
+        contentInsetAdjustmentBehavior="never"
         contentContainerStyle={
           standalone
-            ? styles.listContent
+            ? [
+                styles.listContent,
+                {
+                  paddingTop: insets.top + navHeaderHeight,
+                  paddingBottom: insets.bottom,
+                },
+                displayLogs.length > 0 ? styles.bottomAligned : null,
+              ]
             : [
                 styles.listContent,
                 {
@@ -149,6 +157,7 @@ const styles = StyleSheet.create({
   list: { flex: 1 },
   positioningList: { opacity: 0 },
   listContent: { paddingHorizontal: 12 },
+  bottomAligned: { flexGrow: 1, justifyContent: "flex-end" },
   logLine: { fontSize: 13, lineHeight: 18 },
   logError: { paddingBottom: 8, paddingHorizontal: 2, fontSize: 12 },
   empty: { textAlign: "center", padding: 40, fontSize: 14 },

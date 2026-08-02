@@ -38,7 +38,7 @@ create or reuse its dedicated two-simulator pair.
 - Every scenario registered in the manifest must produce exactly one PNG.
 - Watch mode publishes a new gallery only after the complete capture succeeds.
 - A newer edit cancels an obsolete capture and discards its partial output.
-- The two Maestro flows run in parallel on independent app processes.
+- Maestro flows are split across two independent simulator app processes.
 
 ## Architecture
 
@@ -54,7 +54,7 @@ Cached iOS application bundle
 Two dedicated iOS Simulators
           |
           v
-Two parallel Maestro flows
+Two parallel Maestro flow shards
           |
           v
 Staged screenshots + completion bridge
@@ -107,8 +107,10 @@ unchanged.
 
 The runner resolves the requested device and runtime, then creates or reuses
 two dedicated devices named `Vesta Visual 1` and `Vesta Visual 2`. Simulator.app
-stays closed unless `--show-simulator` is passed; CoreSimulator still runs both
-devices and exposes their framebuffers to Maestro.
+does not show a window unless `--show-simulator` is passed; CoreSimulator still
+runs both devices and exposes their framebuffers to Maestro. The focused input
+scenario briefly uses a hidden, non-frontmost Simulator host to request the
+real software keyboard, then closes that host when capture ends.
 
 The runner normalizes appearance, Dynamic Type size, and status bar data so
 captures remain comparable. Maestro flows establish the scenario-specific
@@ -156,18 +158,30 @@ This avoids an Xcode rebuild during the normal polish loop.
 Fixtures match the production module's public contract. Production views render
 exactly as they normally would; only their inputs and side effects change.
 
-### 4. Run two Maestro flows
+### 4. Run Maestro flows across two simulators
 
 The manifest currently registers:
 
 ```text
 maestro/visual/connect.yml
 maestro/visual/recent-gateways.yml
+maestro/visual/connected.yml
+maestro/visual/connected-whats-new-empty.yml
+maestro/visual/connected-whats-new-error.yml
+maestro/visual/connected-home-empty.yml
 ```
 
-Each flow is assigned to one simulator. Maestro interacts through visible text
-and accessibility labels, waits for a specific state, then takes a full-device
-screenshot.
+The flows are split across two simulators. Maestro interacts through visible
+text and accessibility labels, waits for a specific state, then takes a
+full-device screenshot.
+
+Visual builds replace app-level Reanimated transitions with instant values,
+force Expo Router stack transitions to `animation: "none"`, and inject
+`UIView.setAnimationsEnabled(false)` into the generated visual-only iOS
+AppDelegate. This disables both navigation and UIKit transitions without
+changing the production native project or application source. Native sheets
+still assert their settled content before capture because iOS can resize a
+detent after its content first becomes accessible.
 
 ### 5. Validate and publish
 
@@ -190,11 +204,11 @@ content under `mobile/.visual/` is ignored by Git.
 While the server is running, `/status.json` is a dynamic endpoint used by the
 portal; it is not a generated file.
 
-## Why privacy and onboarding use separate launches
+## Why scenario groups use separate launches
 
-Native form sheets retain presentation context. Moving directly from a mocked
-locked privacy sheet into another onboarding sheet can accidentally carry a
-stale modal stack into the screenshot.
+Native form sheets retain presentation context. Moving directly from one
+mocked state into another sheet can accidentally carry a stale modal stack
+into the screenshot.
 
 The current flows isolate those concerns:
 
@@ -209,6 +223,10 @@ Fresh onboarding launch
   -> mocked privacy provider starts unlocked
   -> production /connect route renders normally
   -> production onboarding sheets are presented
+
+Fresh connected launch
+  -> mocked session and roster providers start connected
+  -> production home, settings, and release routes render normally
 ```
 
 The fresh visual launch uses the existing development scheme:
@@ -217,8 +235,8 @@ The fresh visual launch uses the existing development scheme:
 vesta-dev://connect?visualPrivacy=unlocked
 ```
 
-Only `visual/harness/privacy-provider.tsx` interprets `visualPrivacy`. The
-production privacy controller and routes are unchanged. The flows also handle
+Only modules under `visual/harness/` interpret the visual query parameters.
+The production controllers and routes are unchanged. The flows also handle
 iOS's one-time confirmation for opening a custom scheme.
 
 For future modal groups, prefer a fresh launch with deterministic initial data
@@ -310,10 +328,14 @@ Watch mode observes the UI and flow sources above, plus native build inputs:
 - native theme tokens and launch/icon assets
 
 Application, core, asset, harness, and Metro changes trigger a fast JavaScript
-rebundle followed by installation on both simulators. Maestro-flow and manifest
-changes restart the persistent Maestro sessions without an application build.
-Native-input changes regenerate the iOS project and perform an Xcode build.
-Test and snapshot files are ignored because they cannot change the installed UI.
+rebundle followed by installation on both simulators. Maestro-flow changes
+update the affected generated shard in place and trigger the other shard, while
+manifest topology changes restart the persistent sessions. Neither requires an
+application build. Native-input changes regenerate the iOS project and perform
+an Xcode build.
+Test files, snapshots, and editor temporary files are ignored because they
+cannot change the installed UI. The final saved source file still triggers a
+capture normally.
 
 The runner fingerprints watched sources before simulator preparation and again
 after installing its watchers. If a file changes during the initial build or
@@ -340,7 +362,7 @@ and save another file to retry.
 
 Open `http://127.0.0.1:4173` while the visual server is running.
 
-- Use search and the state filters to narrow the catalog.
+- Browse screenshots in labeled sections that follow the manifest group order.
 - Each card keeps the full screenshot visible inside its simulator frame, with
   scenario information in a separate nearby panel.
 - Click a screenshot for a larger inspection view. Click outside it or press
@@ -479,15 +501,12 @@ Do not add a capture-only controller.
 
 ## Add another top-level flow
 
-The current persistent design intentionally pairs two manifest flows with two
-simulators. Add new screenshots to one of the existing flows whenever possible.
-
-Do not add a third entry to the `flows` array in `visual/scenarios.json` without
-first extending `startContinuousMaestro` in `scripts/visual-catalog.mjs` to
-assign multiple flows to a simulator or provision another shard. Standard
-Maestro sharding can distribute more flows, but the persistent local watcher
-currently starts one continuous process per flow and pairs it with a simulator
-by index.
+The persistent watcher distributes manifest flows by index across its two
+simulator processes, matching the even/odd assignment used by the one-shot
+Maestro run. It generates one composite flow per shard because Maestro's
+continuous mode accepts only one top-level flow. Add screenshots to an existing
+flow whenever the launch context is compatible. When a new flow is necessary,
+keep the two shards balanced so one long flow does not dominate refresh time.
 
 Good reasons for a new top-level flow include:
 

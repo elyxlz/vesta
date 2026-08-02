@@ -18,6 +18,7 @@ export function AgentIdentityCard({
   activityState,
   operation = null,
   orb,
+  showStatus = true,
   style,
 }: {
   name: string;
@@ -25,6 +26,7 @@ export function AgentIdentityCard({
   activityState: AgentActivityState;
   operation?: AgentOperation | null;
   orb?: ReactNode;
+  showStatus?: boolean;
   style?: StyleProp<ViewStyle>;
 }) {
   const { colors } = usePreferences();
@@ -40,12 +42,14 @@ export function AgentIdentityCard({
         />
       )}
       <View style={styles.details}>
-        <AgentStatusBadge
-          status={status}
-          activityState={activityState}
-          operation={operation}
-          centered
-        />
+        {showStatus ? (
+          <AgentStatusBadge
+            status={status}
+            activityState={activityState}
+            operation={operation}
+            centered
+          />
+        ) : null}
         <Text family="heading" style={[styles.name, { color: colors.text }]}>
           {name}
         </Text>
