@@ -12,14 +12,25 @@ This is your scheduled moment to think unprompted. No one asked; you're checking
 Before anything else, confirm your core daemons are alive. Ask each daemon the `restart` skill starts how it is doing, by turning each of its start lines into the matching status call:
 
 ```bash
-sed -n 's/^\([a-z0-9-]* daemon \)start/\1status/p' ~/agent/skills/restart/SKILL.md | while read -r cmd; do
-  echo "$cmd -> $(sh -c "$cmd")"
+grep -nE '^[a-z0-9-]+ daemon start' ~/agent/skills/restart/SKILL.md | while IFS=: read -r ln cmd; do
+  q=$(printf '%s' "$cmd" | sed -E 's/^([a-z0-9-]+ daemon )start/\1status/')
+  out=$(sh -c "$q" 2>&1); rc=$?
+  case "$out" in *'"running": true'*|*'"running":true'*) st="ok  " ;; *) st="CHECK" ;; esac
+  [ "$rc" -ne 0 ] && st="CHECK"
+  printf '%s %-38s %s\n' "$st" "$q" "$(echo "$out" | tr -d '\n' | cut -c1-60)"
 done
+# Start lines that are not the daemon form have no status verb to ask, so list them as unchecked:
+grep -nE '^[a-z0-9-]+ (start|serve)' ~/agent/skills/restart/SKILL.md | grep -v ' daemon start' || true
 ```
 
 The rest of each line is kept, so a per-instance line (`whatsapp daemon start --instance personal`) asks that instance rather than the default one, which is the only way a second account's daemon shows up here at all.
 
-A daemon can die silently (container up, daemon down), and a dead messaging daemon means you can't reach the user at all, so this is load-bearing. Bring back anything reporting `"running":false` with its own start line from that block, or re-run the whole `restart` skill Daemons block, which is idempotent and a no-op when everything is already up.
+A daemon can die silently (container up, daemon down), and a dead messaging daemon means you can't reach the user at all, so this is load-bearing. Bring back anything marked `CHECK` with its own start line from that block, or re-run the whole `restart` skill Daemons block, which is idempotent and a no-op when everything is already up.
+
+**Treat anything that is not `"running": true` as a failure, not only a literal `"running":false`,** because a load-bearing check must have no healthy-looking blank:
+- **Errors go to stderr.** A daemon verb that cannot do its job prints `{"error":...}` on stderr and exits non-zero, so a stdout-only capture shows an empty string with no `false` anywhere in it. Capture with `2>&1` and check `$?`.
+- **`<skill> start` is a different command, not a second spelling of `<skill> daemon start`.** It routes elsewhere: `whatsapp status` reports link state (`{"linked":...,"connected":...}`) and never emits a `"running"` key, so rewriting a bare `start` line into it marks a healthy daemon `CHECK` on every tick, and can start things as a side effect. Match only the daemon form and print the rest as unchecked, so they are visibly out of scope rather than silently passing.
+- **Only listed daemons are checked.** The list comes from `restart/SKILL.md`, so an active skill never added there is invisible and reads as fine. Occasionally cross-check the daemon-bearing entries in `active_skills` (`~/agent/data/config.json`) against that block.
 
 ## Two questions, every time
 
