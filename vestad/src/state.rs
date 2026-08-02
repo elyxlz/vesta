@@ -39,6 +39,7 @@ pub(crate) struct OpenAiAuthSession {
     pub created: std::time::Instant,
 }
 
+
 impl OpenAiAuthSession {
     pub fn is_expired(&self) -> bool {
         self.created.elapsed().as_secs() > AUTH_SESSION_TIMEOUT_SECS
@@ -106,6 +107,11 @@ pub struct AppState {
     pub(crate) docker: bollard::Docker,
     pub(crate) auth_sessions: Mutex<HashMap<String, AuthSession>>,
     pub(crate) openai_auth_sessions: Mutex<HashMap<String, OpenAiAuthSession>>,
+    /// Serializes the daemon's Vesta Cloud pairing handlers. The pairing state
+    /// itself lives ONLY in `<config_dir>/vesta-cloud-pairing.json` (single
+    /// source of truth shared with `vestad vesta-cloud login` and a restarted
+    /// vestad); this lock just keeps concurrent handlers from double-starting.
+    pub(crate) vesta_cloud_pairing_lock: Mutex<()>,
     /// Refresh-token registry: family id → {live/prev jti, exp} (rotation + reuse
     /// detection, see `auth.rs`). Loaded from / persisted to the config dir so a
     /// vestad restart/self-update does NOT invalidate outstanding refresh tokens.
@@ -178,6 +184,7 @@ impl AppState {
                 docker,
                 auth_sessions: Mutex::new(HashMap::new()),
                 openai_auth_sessions: Mutex::new(HashMap::new()),
+                vesta_cloud_pairing_lock: Mutex::new(()),
                 refresh_live: Mutex::new(refresh_live),
                 agent_locks: Mutex::new(HashMap::new()),
                 tunnel_url: Mutex::new(tunnel_url),

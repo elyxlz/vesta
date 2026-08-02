@@ -474,7 +474,7 @@ fn generate_subdomain(offset: usize) -> String {
     format!("{}-{}", animal, short.trim_end_matches('-'))
 }
 
-fn gethostname() -> String {
+pub(crate) fn gethostname() -> String {
     let output = std::process::Command::new("hostname")
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())

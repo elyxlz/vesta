@@ -6,10 +6,11 @@ import (
 	"os"
 )
 
-// The three account sources the agent chooses between with `--source`. cloud and
-// doubletick both link a headless (pooled) account; self-managed links the user's own.
+// The three account sources the agent chooses between with `--source`.
+// vesta-cloud and doubletick both link a headless (pooled) account;
+// self-managed links the user's own.
 const (
-	sourceCloud       = "cloud"
+	sourceVestaCloud  = "vesta-cloud"
 	sourceDoubletick  = "doubletick"
 	sourceSelfManaged = "self-managed"
 )
@@ -33,7 +34,7 @@ type connectOptions struct {
 func parseConnectOptions(name string, args []string) (connectOptions, error) {
 	var opts connectOptions
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	fs.StringVar(&opts.source, "source", "", "Account source: cloud, doubletick, or self-managed (required)")
+	fs.StringVar(&opts.source, "source", "", "Account source: vesta-cloud, doubletick, or self-managed (required)")
 	fs.StringVar(&opts.opener, "opener", "", "Opener for a headless account, prefilled in the user's wa.me link")
 	fs.StringVar(&opts.phone, "phone", "", "Self-managed pairing-code fallback for this E.164 account number")
 	fs.StringVar(&opts.instance, "instance", "", "Named WhatsApp instance")
@@ -67,16 +68,16 @@ func parseConnectOptions(name string, args []string) (connectOptions, error) {
 }
 
 // validateConnectSource enforces the required --source and the flag/mode pairings.
-// --opener belongs to the headless sources (cloud, doubletick); --phone/--port/
+// --opener belongs to the headless sources (vesta-cloud, doubletick); --phone/--port/
 // --acknowledge-ban-risk belong to self-managed pairing. An absent or unknown source
 // errors before any environment probing or daemon startup.
 func validateConnectSource(opts connectOptions) error {
 	switch opts.source {
 	case "":
-		return fmt.Errorf("connect requires --source: cloud (a Vesta Cloud box), doubletick (DOUBLETICK_API_URL/KEY set), or self-managed (the user's own account)")
-	case sourceCloud, sourceDoubletick:
+		return fmt.Errorf("connect requires --source: vesta-cloud (a vesta.run managed VM), doubletick (DOUBLETICK_API_URL/KEY set), or self-managed (the user's own account)")
+	case sourceVestaCloud, sourceDoubletick:
 		if opts.phoneSet {
-			return fmt.Errorf("--phone is for a self-managed account; a headless account is set up with `whatsapp connect --source cloud` or `--source doubletick`")
+			return fmt.Errorf("--phone is for a self-managed account; a headless account is set up with `whatsapp connect --source vesta-cloud` or `--source doubletick`")
 		}
 		if opts.portSet {
 			return fmt.Errorf("--port applies only to a self-managed QR page")
@@ -86,10 +87,10 @@ func validateConnectSource(opts connectOptions) error {
 		}
 	case sourceSelfManaged:
 		if opts.openerSet {
-			return fmt.Errorf("--opener applies only to a headless account (--source cloud or doubletick)")
+			return fmt.Errorf("--opener applies only to a headless account (--source vesta-cloud or doubletick)")
 		}
 	default:
-		return fmt.Errorf("invalid --source %q: use cloud, doubletick, or self-managed", opts.source)
+		return fmt.Errorf("invalid --source %q: use vesta-cloud, doubletick, or self-managed", opts.source)
 	}
 	return nil
 }
@@ -97,7 +98,7 @@ func validateConnectSource(opts connectOptions) error {
 // connectRoute is the validated internal path a `connect --source` resolves to: one
 // of runProvision (headless) / runLinkPhone / runLink. source is the resolved account
 // source, threaded to the daemon's provision command so the agent's explicit choice
-// (not the daemon's boot-time env) pins the pairing auth path: `cloud` makes a warm
+// (not the daemon's boot-time env) pins the pairing auth path: `vesta-cloud` makes a warm
 // daemon mint a server-identity token even when it also booted with direct creds.
 type connectRoute struct {
 	provision bool
@@ -107,30 +108,30 @@ type connectRoute struct {
 }
 
 // resolveConnect validates --source against the box environment and returns the path
-// to run. cloud demands a genuine Vesta Cloud box (cloudManaged plus vestad identity);
-// doubletick demands the direct pool creds. self-managed always links the user's own
-// account, by phone code when --phone is given, else by QR.
+// to run. vesta-cloud runs the managed pool a Vesta-provisioned VM ships with; doubletick
+// demands the direct pool creds. self-managed always links the user's own account,
+// by phone code when --phone is given, else by QR.
 func resolveConnect(opts connectOptions, cfg managedConfig) (connectRoute, error) {
 	if err := validateConnectSource(opts); err != nil {
 		return connectRoute{}, err
 	}
 	switch opts.source {
-	case sourceCloud:
-		if !cfg.isCloudTenant() {
-			return connectRoute{}, fmt.Errorf("--source cloud needs a Vesta Cloud box: this box is not cloud-managed or is missing its vestad credentials")
+	case sourceVestaCloud:
+		if !cfg.isManagedVM() {
+			return connectRoute{}, fmt.Errorf("--source vesta-cloud runs the managed WhatsApp of a vesta.run managed VM (`vesta-cloud whoami` reports managed_infra true there). This box is not one; a Vesta Cloud account alone opens managed WhatsApp only with an active paid membership. Use --source self-managed for the user's own WhatsApp")
 		}
-		return connectRoute{provision: true, opener: opts.opener, source: sourceCloud}, nil
+		return connectRoute{provision: true, opener: opts.opener, source: sourceVestaCloud}, nil
 	case sourceDoubletick:
 		if !cfg.isDirect() {
 			return connectRoute{}, fmt.Errorf("--source doubletick needs DOUBLETICK_API_URL and DOUBLETICK_API_KEY set together")
 		}
 		return connectRoute{provision: true, opener: opts.opener, source: sourceDoubletick}, nil
 	default: // sourceSelfManaged, already validated above
-		// A box holding managed account credentials cannot link the user's own
-		// account: its daemon builds a managed linker that rejects a QR/phone link.
+		// A box on the managed-pool paradigm cannot link the user's own account:
+		// its daemon builds a managed linker that rejects a QR/phone link.
 		// Fail here with the fix, instead of dispatching to a link the daemon refuses.
-		if cfg.isCloudTenant() {
-			return connectRoute{}, fmt.Errorf("--source self-managed cannot run on a Vesta Cloud box: it is provisioned for a managed WhatsApp account; use --source cloud")
+		if cfg.isManagedVM() {
+			return connectRoute{}, fmt.Errorf("--source self-managed cannot run on a vesta.run managed VM: its daemon links the managed pooled number; use --source vesta-cloud")
 		}
 		if cfg.isDirect() {
 			return connectRoute{}, fmt.Errorf("--source self-managed conflicts with the DOUBLETICK_API_URL/KEY set on this box; use --source doubletick, or unset them to link the user's own account")

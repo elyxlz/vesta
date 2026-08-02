@@ -30,7 +30,7 @@ func cloudClientFor(t *testing.T, control http.HandlerFunc) *client {
 	ctrl := httptest.NewServer(control)
 	t.Cleanup(ctrl.Close)
 	stubServerToken(t, ctrl.URL)
-	return newClient(config{vestadBase: "https://vestad.test", agentName: "alice", agentToken: "atok"})
+	return newClient(config{}, sourceVestaCloud)
 }
 
 // TestParseServerToken pins how a `vesta-cloud token` run maps to a credential or a
@@ -198,9 +198,9 @@ func TestRelease_cloudPostsID(t *testing.T) {
 	}
 }
 
-// A direct (self-hosted) box uses its own sbk_ key straight to the Switchboard base
+// A box configured with its own sbk_ key goes straight to the Switchboard base
 // URL's native paths (/leases, /leases/{id}/otp, /leases/{id}/release), with no
-// vestad token and no vesta.run in the loop.
+// server-identity token and no vesta.run in the loop.
 func TestDirect_sbkKeyHitsNativeLeasePaths(t *testing.T) {
 	var reservePath, otpPath, releasePath, gotAuth string
 	box := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -220,10 +220,10 @@ func TestDirect_sbkKeyHitsNativeLeasePaths(t *testing.T) {
 		}
 	}))
 	t.Cleanup(box.Close)
-	c := newClient(config{directURL: box.URL, directKey: "sbk_test"})
+	c := newClient(config{directURL: box.URL, directKey: "sbk_test"}, sourceSwitchboard)
 
-	if !c.isDirect() || !c.isHosted() {
-		t.Fatal("a box with an sbk_ key is direct + hosted")
+	if !c.isDirect() {
+		t.Fatal("a box with an sbk_ key is direct")
 	}
 	l, err := c.reserve("discord", "", "")
 	if err != nil {
@@ -247,9 +247,9 @@ func TestDirect_sbkKeyHitsNativeLeasePaths(t *testing.T) {
 	}
 }
 
-// A Switchboard base URL with no key is a misconfiguration, not a delegated mode: the
-// cloud never mints a key to the box. loadConfig rejects it and reserve refuses rather
-// than reaching for a control-plane endpoint that no longer exists.
+// A Switchboard base URL with no key is a misconfiguration: direct mode always
+// needs both halves. loadConfig rejects it and reserve refuses with the exact
+// missing-var message instead of silently taking the cloud path.
 func TestLoadConfig_urlWithoutKeyIsRejected(t *testing.T) {
 	t.Setenv("SWITCHBOARD_API_URL", "https://sb.example")
 	t.Setenv("SWITCHBOARD_API_KEY", "")
@@ -257,19 +257,19 @@ func TestLoadConfig_urlWithoutKeyIsRejected(t *testing.T) {
 	if cfg.configError == "" || cfg.directURL != "" {
 		t.Fatalf("a base with no key must be rejected: %+v", cfg)
 	}
-	if _, err := newClient(cfg).reserve("x", "", ""); err == nil || !strings.Contains(err.Error(), "without SWITCHBOARD_API_KEY") {
+	if _, err := newClient(cfg, sourceSwitchboard).reserve("x", "", ""); err == nil || !strings.Contains(err.Error(), "without SWITCHBOARD_API_KEY") {
 		t.Fatalf("reserve with base-only config error = %v", err)
 	}
 }
 
-func TestAuthorize_cloudManagedUsesForwardedPath(t *testing.T) {
+func TestAuthorize_noDirectKeyUsesForwardedCloudPath(t *testing.T) {
 	c := cloudClientFor(t, func(_ http.ResponseWriter, _ *http.Request) {})
 	base, auth, direct, err := c.authorize()
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
 	}
 	if direct {
-		t.Fatal("a pure cloud tenant must use the forwarded path, not direct")
+		t.Fatal("with no sbk_ key the CLI must use the forwarded cloud path, not direct")
 	}
 	if !strings.HasSuffix(base, "/integrations/switchboard") || auth != "Bearer sit_minted" {
 		t.Fatalf("cloud authorize base=%q auth=%q", base, auth)
@@ -283,7 +283,7 @@ func TestLoadConfig_keyWithoutURLIsRejected(t *testing.T) {
 	if cfg.configError == "" || cfg.directKey != "" {
 		t.Fatalf("a key with no base must be rejected: %+v", cfg)
 	}
-	if _, err := newClient(cfg).reserve("x", "", ""); err == nil || !strings.Contains(err.Error(), "without SWITCHBOARD_API_URL") {
+	if _, err := newClient(cfg, sourceSwitchboard).reserve("x", "", ""); err == nil || !strings.Contains(err.Error(), "without SWITCHBOARD_API_URL") {
 		t.Fatalf("reserve with orphan key error = %v", err)
 	}
 }

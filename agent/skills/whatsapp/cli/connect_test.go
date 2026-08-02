@@ -88,7 +88,7 @@ func TestConnectRequiresSource(t *testing.T) {
 	if err == nil {
 		t.Fatal("a bare connect (no --source) was accepted")
 	}
-	for _, want := range []string{"--source", "cloud", "doubletick", "self-managed"} {
+	for _, want := range []string{"--source", "vesta-cloud", "doubletick", "self-managed"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("missing-source error = %q, want it to mention %q", err, want)
 		}
@@ -104,7 +104,7 @@ func TestConnectRejectsUnknownSource(t *testing.T) {
 	if err == nil {
 		t.Fatal("an unknown --source value was accepted")
 	}
-	for _, want := range []string{"cloud", "doubletick", "self-managed"} {
+	for _, want := range []string{"vesta-cloud", "doubletick", "self-managed"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("invalid-source error = %q, want it to list %q", err, want)
 		}
@@ -113,8 +113,8 @@ func TestConnectRejectsUnknownSource(t *testing.T) {
 
 func TestConnectRejectsFlagsThatDoNotApplyToTheSelectedSource(t *testing.T) {
 	cases := [][]string{
-		{"--source", "cloud", "--port", "61012"},
-		{"--source", "cloud", "--acknowledge-ban-risk"},
+		{"--source", "vesta-cloud", "--port", "61012"},
+		{"--source", "vesta-cloud", "--acknowledge-ban-risk"},
 		{"--source", "doubletick", "--phone", "+393481234567"},
 		{"--source", "self-managed", "--opener", "hello"},
 	}
@@ -132,21 +132,21 @@ func TestConnectRejectsFlagsThatDoNotApplyToTheSelectedSource(t *testing.T) {
 // TestResolveConnectRoutesEachSource pins the environment gate and the internal path
 // each source resolves to, without a daemon, socket, or network.
 func TestResolveConnectRoutesEachSource(t *testing.T) {
-	cloudCfg := managedConfig{cloudManaged: true, vestadBase: "https://box:8443", agentName: "alice", agentToken: "atok"}
+	cloudCfg := managedConfig{managedInfra: true}
 	directCfg := managedConfig{directURL: "https://doubletick.example", directKey: "wak_x"}
 
-	cloudRoute, err := resolveConnect(connectOptions{source: sourceCloud, opener: "hi"}, cloudCfg)
+	cloudRoute, err := resolveConnect(connectOptions{source: sourceVestaCloud, opener: "hi"}, cloudCfg)
 	if err != nil {
 		t.Fatalf("cloud resolve: %v", err)
 	}
-	if !cloudRoute.provision || cloudRoute.source != sourceCloud || cloudRoute.opener != "hi" {
+	if !cloudRoute.provision || cloudRoute.source != sourceVestaCloud || cloudRoute.opener != "hi" {
 		t.Errorf("cloud route = %+v, want provision with cloud source and opener", cloudRoute)
 	}
 
 	// cloud even when direct creds are also set still pins the cloud auth path.
 	cloudWithDirect := cloudCfg
 	cloudWithDirect.directURL, cloudWithDirect.directKey = "https://doubletick.example", "wak_x"
-	if r, err := resolveConnect(connectOptions{source: sourceCloud}, cloudWithDirect); err != nil || r.source != sourceCloud {
+	if r, err := resolveConnect(connectOptions{source: sourceVestaCloud}, cloudWithDirect); err != nil || r.source != sourceVestaCloud {
 		t.Errorf("cloud+direct route = %+v err=%v, want cloud source", r, err)
 	}
 
@@ -178,15 +178,15 @@ func TestResolveConnectRoutesEachSource(t *testing.T) {
 // TestResolveConnectRejectsUnsatisfiableEnvironment pins the environment gates: cloud
 // without a cloud box and doubletick without direct creds must error, not fall back.
 func TestResolveConnectRejectsUnsatisfiableEnvironment(t *testing.T) {
-	if _, err := resolveConnect(connectOptions{source: sourceCloud}, managedConfig{}); err == nil {
-		t.Error("--source cloud on a non-cloud box was accepted")
+	if _, err := resolveConnect(connectOptions{source: sourceVestaCloud}, managedConfig{}); err == nil {
+		t.Error("--source vesta-cloud on a non-managed-VM box was accepted")
 	}
 	if _, err := resolveConnect(connectOptions{source: sourceDoubletick}, managedConfig{}); err == nil {
 		t.Error("--source doubletick without direct creds was accepted")
 	}
 	// A box holding managed account credentials cannot self-manage: the daemon's
 	// managed linker would reject the QR/phone link, so resolveConnect errors up front.
-	cloudCfg := managedConfig{cloudManaged: true, vestadBase: "https://box:8443", agentName: "a", agentToken: "t"}
+	cloudCfg := managedConfig{managedInfra: true}
 	if _, err := resolveConnect(connectOptions{source: sourceSelfManaged}, cloudCfg); err == nil {
 		t.Error("--source self-managed on a Vesta Cloud box was accepted")
 	}
@@ -216,16 +216,16 @@ func TestRunConnectDispatchesToProvisionForCloud(t *testing.T) {
 	t.Cleanup(func() { connectProvision = restore })
 
 	oldArgs := os.Args
-	os.Args = []string{"whatsapp", "--source", "cloud", "--opener", "hello"}
+	os.Args = []string{"whatsapp", "--source", "vesta-cloud", "--opener", "hello"}
 	t.Cleanup(func() { os.Args = oldArgs })
 
 	runConnect()
 
 	if !provisioned {
-		t.Fatal("cloud connect did not route to runProvision")
+		t.Fatal("vesta-cloud connect did not route to runProvision")
 	}
-	if gotSource != sourceCloud {
-		t.Errorf("provision source = %q, want cloud", gotSource)
+	if gotSource != sourceVestaCloud {
+		t.Errorf("provision source = %q, want %q", gotSource, sourceVestaCloud)
 	}
 	if gotOpener != "hello" {
 		t.Errorf("provision opener = %q, want hello", gotOpener)

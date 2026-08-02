@@ -101,7 +101,7 @@ Recipe, a fully silent passive personal account:
 ```bash
 whatsapp serve --instance personal --read-only --no-notifications
 ```
-Link it with `whatsapp link --instance personal`; read it on demand
+Link it with `whatsapp connect --source self-managed --instance personal`; read it on demand
 (`whatsapp chats --instance personal`, `messages`, ...) with zero notifications.
 
 ## Never ship a static binary

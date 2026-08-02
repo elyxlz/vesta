@@ -30,7 +30,7 @@ guide before the first link.
 
 | Account source | Command | Guide |
 | --- | --- | --- |
-| Vesta Cloud WhatsApp account | `whatsapp connect --source cloud --opener '<text>'` | [SETUP_VESTA_CLOUD.md](SETUP_VESTA_CLOUD.md) |
+| Vesta Cloud WhatsApp account | `whatsapp connect --source vesta-cloud --opener '<text>'` | [SETUP_VESTA_CLOUD.md](SETUP_VESTA_CLOUD.md) |
 | Double Tick WhatsApp account | `whatsapp connect --source doubletick --opener '<text>'` | [SETUP_DOUBLETICK.md](SETUP_DOUBLETICK.md) |
 | Self-managed account | `whatsapp connect --source self-managed` (or `--phone`) | [SETUP_SELF_MANAGED.md](SETUP_SELF_MANAGED.md) |
 

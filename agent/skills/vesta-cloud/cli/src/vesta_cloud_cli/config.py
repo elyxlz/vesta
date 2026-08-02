@@ -9,7 +9,8 @@ Everything is read from the environment the agent container already has:
   skills use). The CLI calls vestad to mint a server-identity token; it never
   holds the box's `api_key`.
 
-There is NO on-disk state: every command mints a fresh short-lived token.
+There is NO on-disk credential: every command mints a fresh short-lived token.
+(The only file this CLI writes is the referral code, see `referral_store`.)
 
 `VESTA_CLOUD_CONTROL_URL` is only a control-plane URL knob here, NOT the "do I have
 an account" signal: cloud-init sets it on managed VMs, but a self-hosted box may hold
@@ -42,9 +43,10 @@ class Config:
         cloud_url = os.environ.get("VESTA_CLOUD_CONTROL_URL", "").strip()
         control = (cloud_url or DEFAULT_CONTROL_URL).rstrip("/")
         # vestad runs natively on the host, never in a container, so BOX_HOST
-        # (from /run/vestad-env) is how the agent reaches it, not localhost. Missing
-        # either half leaves vestad_base empty, tripping the same "not running inside
-        # an agent container" check mint_token() already does for a missing port.
+        # (from /run/vestad-env) is how the agent reaches it, not localhost.
+        # Missing either half leaves vestad_base empty, tripping Client's
+        # "not running inside an agent container" guard (which names all four
+        # required vars: VESTAD_PORT/BOX_HOST/AGENT_NAME/AGENT_TOKEN).
         port = os.environ.get("VESTAD_PORT", "").strip()
         host = os.environ.get("BOX_HOST", "").strip()
         vestad_base = f"https://{host}:{port}" if port and host else ""

@@ -62,13 +62,13 @@ func chooseLinker(cfg managedConfig, state *stateStore) linker {
 }
 
 // cloudSourceAuth returns a managed auth pinned to the server-identity (cloud) path
-// for an explicit `--source cloud`, dropping any direct pool creds this daemon booted
+// for an explicit `--source vesta-cloud`, dropping any direct pool creds this daemon booted
 // with so a box that carries both pairs off the minted token, not a static wak_ key,
 // even when the daemon is already warm (and so never inherited a scrubbed env). It
 // re-reads the environment rather than reusing the boot-time auth, which may still
 // prefer the direct creds. Returns nil for any other source, leaving boot-time auth.
 func cloudSourceAuth(source string) *managedAuth {
-	if source != sourceCloud {
+	if source != sourceVestaCloud {
 		return nil
 	}
 	cfg := loadManagedConfig()
@@ -82,7 +82,7 @@ type qrLinker struct{}
 func (qrLinker) name() string { return "self-managed" }
 
 func (qrLinker) provision(*WhatsAppClient) (linkResult, error) {
-	return linkResult{}, fmt.Errorf("managed WhatsApp is only available on a hosted (vesta.run) box; this box links the user's own WhatsApp: run `whatsapp connect`")
+	return linkResult{}, fmt.Errorf("this box has no managed WhatsApp pool; it links the user's own WhatsApp: run `whatsapp connect --source self-managed`")
 }
 
 func (qrLinker) linkQR(wac *WhatsAppClient, port int) (linkResult, error) {
@@ -104,11 +104,11 @@ type managedLinker struct {
 func (*managedLinker) name() string { return "headless" }
 
 func (*managedLinker) linkQR(*WhatsAppClient, int) (linkResult, error) {
-	return linkResult{}, fmt.Errorf("this managed (vesta.run) box links its own pooled number; run `whatsapp connect`")
+	return linkResult{}, fmt.Errorf("this box links its own managed pooled number; run `whatsapp connect --source vesta-cloud` (or --source doubletick with direct creds), not a QR link")
 }
 
 func (*managedLinker) pairCode(*WhatsAppClient, string) (string, error) {
-	return "", fmt.Errorf("this managed (vesta.run) box links its own pooled number; run `whatsapp connect`, not a phone pairing code")
+	return "", fmt.Errorf("this box links its own managed pooled number; run `whatsapp connect --source vesta-cloud` (or --source doubletick with direct creds), not a phone pairing code")
 }
 
 // provision claims (or re-links) this box's managed number and links the companion,

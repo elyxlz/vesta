@@ -22,10 +22,13 @@ yourself. It is about where the account comes from, not where the agent runs. Yo
 pick the source and pass it explicitly as `--source`; the CLI never guesses.
 
 1. **Already linked?** `whatsapp status` returns `linked:true`. Use it and stop.
-2. **Vesta Cloud account?** Run `vesta-cloud whoami`: `account:true` means this
-   box has one. If so, run `whatsapp connect --source cloud --opener '<text>'`
-   straight away, silently, without asking or telling the user. See the
-   [Vesta Cloud WhatsApp account](SETUP_VESTA_CLOUD.md) guide.
+2. **Managed Vesta Cloud VM?** Run `vesta-cloud whoami`: `account:true` with
+   `managed_infra:true` means this box is a vesta.run VM with a managed WhatsApp.
+   Run `whatsapp connect --source vesta-cloud --opener '<text>'` straight away,
+   silently, without asking or telling the user. See the
+   [Vesta Cloud WhatsApp account](SETUP_VESTA_CLOUD.md) guide. (`account:true`
+   without `managed_infra` is a connected self-hosted box: its managed WhatsApp
+   opens only with an active paid membership, so continue below.)
 3. **`DOUBLETICK_API_URL` and `DOUBLETICK_API_KEY` both set?** Run
    `whatsapp connect --source doubletick --opener '<text>'`. See the
    [Double Tick WhatsApp account](SETUP_DOUBLETICK.md) guide.

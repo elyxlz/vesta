@@ -8,19 +8,26 @@ first (see `client.Client.mint_token`):
 
 - ``vesta-cloud whoami``        — account? + plan/status + managed_infra + control_url (the env probe).
 - ``vesta-cloud token``         — a short-lived server-identity token + control_url, for skills to call the control plane.
+- ``vesta-cloud login``         — pair this self-hosted box to a Vesta Cloud account (owner approves a code).
+- ``vesta-cloud logout``        — unpair this box from its Vesta Cloud account.
 - ``vesta-cloud plan``          — this box's plan, price, status, renewal (a read).
 - ``vesta-cloud manage``        — a Stripe-hosted link to upgrade / cancel / change card.
 - ``vesta-cloud referral``      — this box's referral code, credit earned, invites completed.
 - ``vesta-cloud set-referral``  — set/clear the code `onboard` sends on a completed invite.
 
-Output is always JSON on stdout. Exit codes: 0 success, 2 surfaced {error}
-(no account / no billing yet), 3 control-plane/vestad unreachable, 1 unexpected.
+Output is always JSON on stdout. Exit codes: 0 success (`whoami` exits 0 even
+with `account: false`), 2 the control plane refused with a structured {error}
+(e.g. no billing yet, pairing refused), 3 no credential mintable or
+vestad/control plane unreachable (AccountError; includes running `token`/`plan`/
+`manage`/`referral` on a box with no account), 1 unexpected.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import sys
+import time
 from typing import Any
 
 from . import referral_store
@@ -50,9 +57,15 @@ def _cmd_whoami(_args: argparse.Namespace, client: Client, cfg: Config) -> int:
         out["reason"] = minted.get("error") or "no server-identity token"
         _print(out)
         return 0
-    summary = client.plan(minted["token"])  # transport -> exit 3
+    if minted.get("control_url"):
+        # The identity names its control plane (e.g. a staging-paired box).
+        out["control_url"] = minted["control_url"]
+    summary = client.plan(minted["token"], minted.get("control_url"))  # transport -> exit 3
     if "error" in summary:
-        # Recognized box, but no active membership (e.g. suspended / no billing).
+        # Minted locally but the control plane refused the read, e.g. 401
+        # "unauthenticated" from a stale link (the account row was removed on
+        # the dashboard). A suspended or unpaid box is NOT this branch: those
+        # read /account fine and report account:true with their status/plan.
         out["reason"] = summary["error"]
         _print(out)
         return 0
@@ -75,16 +88,97 @@ def _cmd_token(_args: argparse.Namespace, client: Client, cfg: Config) -> int:
     _print(
         {
             "token": detail["token"],
-            "control_url": cfg.control_url,
+            "control_url": detail.get("control_url") or cfg.control_url,
             "expires_in": detail.get("expires_in"),
         }
     )
     return 0
 
 
+def _cmd_login(args: argparse.Namespace, client: Client, cfg: Config) -> int:
+    """Pair this self-hosted box to a Vesta Cloud account (device authorization).
+    Two-step output: first the code + link the agent must relay to the owner NOW,
+    then (after the owner approves in their signed-in browser) a whoami-style
+    confirmation. Blocks up to the code's ~10 minute lifetime."""
+    started = client.pair_start()
+    if "error" in started:
+        _print(started)
+        return 2
+    _print(
+        {
+            "user_code": started.get("user_code"),
+            "verification_url": started.get("verification_url"),
+            "next": (
+                "give the owner this code and link right away; they approve it in their "
+                "signed-in browser. keep this command running, it returns once approved."
+            ),
+        }
+    )
+    sys.stdout.flush()
+
+    interval = started.get("interval") if isinstance(started.get("interval"), int) else 5
+    budget = started.get("expires_in") if isinstance(started.get("expires_in"), int) else 600
+    deadline = time.monotonic() + budget
+    while time.monotonic() < deadline:
+        try:
+            result = client.pair_poll()
+        except AccountError:
+            # A transient vestad/control-plane blip mid-wait. The pairing is
+            # still in flight, so keep polling until the code's own deadline;
+            # aborting here would orphan an approval the owner is completing.
+            time.sleep(interval)
+            continue
+        if result.get("status") == "linked":
+            return _login_confirmation(args, client, cfg, result)
+        # Two pending shapes exist on the wire: 200 {"status": "pending"}, and
+        # a 409 whose error message contains "pending". Treat both as pending.
+        if result.get("status") == "pending" or "pending" in str(result.get("error") or ""):
+            time.sleep(interval)
+            continue
+        # Terminal refusal (expired / account already has a server / unknown).
+        _print(result)
+        return 2
+    _print(
+        {
+            "error": "pairing timed out",
+            "message": "the code expired before the owner approved. run `vesta-cloud login` again for a fresh code.",
+        }
+    )
+    return 2
+
+
+def _login_confirmation(args: argparse.Namespace, client: Client, cfg: Config, linked: dict[str, Any]) -> int:
+    """The pairing already SUCCEEDED; a flaky confirmation read must not turn that
+    into a nonzero exit (which reads as a failed login and invites a destructive
+    logout + retry). Fall back to reporting the link itself."""
+    try:
+        return _cmd_whoami(args, client, cfg)
+    except AccountError:
+        _print(
+            {
+                "status": "linked",
+                "server_id": linked.get("server_id"),
+                "control_url": linked.get("control_url"),
+                "note": "paired successfully. the confirmation read failed transiently; run `vesta-cloud whoami` to see the account.",
+            }
+        )
+        return 0
+
+
+def _cmd_logout(_args: argparse.Namespace, client: Client, _cfg: Config) -> int:
+    """Unpair this box from its Vesta Cloud account. Also the local cleanup step when
+    the owner already removed the box from the vesta.run dashboard."""
+    result = client.unpair()
+    if result.get("status") == "unpaired":
+        _print(result)
+        return 0
+    _print(result)
+    return 2
+
+
 def _cmd_plan(_args: argparse.Namespace, client: Client, _cfg: Config) -> int:
-    token = client.mint_token()
-    summary = client.plan(token)
+    detail = client.mint_token_detail()
+    summary = client.plan(detail["token"], detail.get("control_url"))
     if "error" in summary:
         _print(summary)
         return 2
@@ -99,8 +193,8 @@ def _cmd_plan(_args: argparse.Namespace, client: Client, _cfg: Config) -> int:
 
 
 def _cmd_manage(_args: argparse.Namespace, client: Client, _cfg: Config) -> int:
-    token = client.mint_token()
-    result = client.portal(token)
+    detail = client.mint_token_detail()
+    result = client.portal(detail["token"], detail.get("control_url"))
     if "url" not in result:
         # e.g. {"error": "no_billing_account"} — never completed checkout.
         _print(result)
@@ -116,7 +210,7 @@ def _cmd_manage(_args: argparse.Namespace, client: Client, _cfg: Config) -> int:
 
 def _cmd_referral(_args: argparse.Namespace, client: Client, _cfg: Config) -> int:
     try:
-        token = client.mint_token()
+        detail = client.mint_token_detail()
     except AccountError:
         # A self-hosted box has no vesta-issued code; tell the agent what to do
         # instead of surfacing the raw mint-token error.
@@ -131,7 +225,7 @@ def _cmd_referral(_args: argparse.Namespace, client: Client, _cfg: Config) -> in
             }
         )
         return 3
-    summary = client.plan(token)
+    summary = client.plan(detail["token"], detail.get("control_url"))
     if "error" in summary:
         _print(summary)
         return 2
@@ -164,6 +258,8 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("whoami", help="Does this box have a Vesta Cloud account? + plan/status + managed_infra.")
     sub.add_parser("token", help="A short-lived server-identity token + control_url, for skills to call the control plane.")
+    sub.add_parser("login", help="Pair this self-hosted box to a Vesta Cloud account (the owner approves a code).")
+    sub.add_parser("logout", help="Unpair this box from its Vesta Cloud account.")
     sub.add_parser("plan", help="This box's plan, price, status, and renewal date.")
     sub.add_parser("manage", help="A secure Stripe link to upgrade / cancel / change payment.")
     sub.add_parser("referral", help="This box's referral code, credit earned, and invites completed.")
@@ -183,6 +279,8 @@ def main(argv: list[str] | None = None) -> int:
     handlers = {
         "whoami": _cmd_whoami,
         "token": _cmd_token,
+        "login": _cmd_login,
+        "logout": _cmd_logout,
         "plan": _cmd_plan,
         "manage": _cmd_manage,
         "referral": _cmd_referral,

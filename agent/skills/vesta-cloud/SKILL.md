@@ -1,6 +1,6 @@
 ---
 name: vesta-cloud
-description: THIS box's Vesta Cloud account. Use to check whether it has one and read its environment (`whoami`, the account/plan/setup signal other skills key off), get a server-identity token to call the control plane (`token`), or answer the owner about their hosting plan, billing, renewal, upgrade/cancel/card, and referral code. Not `onboard` (buying for someone else); not `stripe-pay` (third-party invoices).
+description: THIS box's Vesta Cloud account. Use whenever you need to know if this box has one (the account/plan/setup signal other skills key off), when another skill needs a credential for the control plane, when the owner wants to connect or disconnect this box from their Vesta Cloud account, or when the owner asks about their hosting plan, billing, renewal, upgrade/cancel/card, or referral code. Not `onboard` (buying for someone else); not `stripe-pay` (third-party invoices).
 ---
 
 # vesta-cloud, CLI: `vesta-cloud`
@@ -8,16 +8,18 @@ description: THIS box's Vesta Cloud account. Use to check whether it has one and
 The single authority for **this** box's Vesta Cloud account: whether it has one, a
 credential to act as it against the control plane, its plan, and its referral code.
 Install the `vesta-cloud` command once from [SETUP.md](SETUP.md). Output is always JSON
-on stdout. Exit codes: 0 success, 2 surfaced `{error}` (no account / no billing yet),
-3 control-plane or vestad unreachable, 1 unexpected.
+on stdout. Exit codes: 0 success (`whoami` exits 0 even with `account: false`), 2 the
+control plane refused with a structured `{error}` (no billing yet, pairing refused),
+3 no credential mintable or vestad/control plane unreachable (this includes running
+`token`/`plan`/`manage`/`referral` on a box with no account), 1 unexpected.
 
 ## `whoami`: does this box have an account?
 
 ```bash
 vesta-cloud whoami
-# { "account": true, "plan": "membership", "status": "active",
-#   "renews_at": "2026-09-01T00:00:00.000Z", "price_usd": 48.0,
-#   "managed_infra": true, "control_url": "https://vesta.run/api", "agent_name": "ada" }
+# { "account": true, "managed_infra": true, "control_url": "https://vesta.run/api",
+#   "agent_name": "ada", "plan": "membership", "status": "active",
+#   "renews_at": "2026-09-01T00:00:00.000Z", "price_usd": 48.0 }
 ```
 
 `account` is the fact to branch on: `true` means this box is paired to a Vesta Cloud
@@ -37,9 +39,48 @@ vesta-cloud token
 
 Hands another skill a short-lived server-identity token plus the control-plane URL, so
 it calls the control plane as this server without minting its own. One token is general:
-it authenticates any server-scoped route (`/account`, integrations, ...). Errors when the
-box has no account. This is how every skill that needs to reach the control plane as the
-server gets its credential.
+it authenticates any server-scoped route (`/account`, integrations, ...). On a box with
+no account it exits 3 with `{"error": "no server identity available"}`. This is how
+every skill that needs to reach the control plane as the server gets its credential.
+
+## `login`: pair a self-hosted box to a Vesta Cloud account
+
+```bash
+vesta-cloud login
+# first, immediately:
+# { "user_code": "WXYZ-2345", "verification_url": "https://vesta.run/pair?code=WXYZ-2345",
+#   "next": "give the owner this code and link right away; ..." }
+# then, once the owner approves (the command keeps running):
+# { "account": true, "plan": "services", "status": "active", ... }
+```
+
+Use when `whoami` says `account: false` on a self-hosted box and the owner wants to
+connect it to their Vesta Cloud account. The command prints the code and link FIRST;
+relay them to the owner immediately (they open the link signed in and approve), then
+keep waiting: the same command prints a whoami-style confirmation once linked. The code
+lives about 10 minutes; on timeout, run `login` again for a fresh one. Pairing links the
+box to the account; whether that account pays for anything is separate (`plan`). A
+managed Vesta Cloud VM refuses to pair (it already has its identity).
+
+The pairing flow itself lives on vestad (this command only triggers and relays it), so
+the owner can equally start it themselves by running `vestad vesta-cloud login` on the
+box host, or from the vesta app. Either path ends the same way; `whoami` reports the
+result regardless of who initiated.
+
+## `logout`: unpair this box
+
+```bash
+vesta-cloud logout
+# { "status": "unpaired" }
+```
+
+Detaches the box from its Vesta Cloud account (after asking the owner, this is theirs to
+decide; `vestad vesta-cloud logout` on the box host does the same). Also the local
+cleanup step when the owner already removed the box from the vesta.run dashboard: run it
+so the box forgets its stale link, then `login` can pair fresh. After logout, `whoami`
+answers `account: false` again. If logout reports that the control plane rejected this
+box's identity, the link was kept on purpose: have the owner remove the box from the
+vesta.run dashboard, then run `logout` again.
 
 ## The trust model (read this)
 

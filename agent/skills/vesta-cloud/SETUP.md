@@ -7,5 +7,7 @@ uv tool install --editable ~/agent/skills/vesta-cloud/cli
 ```
 
 That puts the `vesta-cloud` command on `PATH`. If it is ever missing or stale, re-run
-with `--force --reinstall`. There is nothing else to configure: no key and no account to
-link, the CLI authenticates to the control plane on its own.
+with `--force --reinstall`. There is no key to configure: for every call the CLI asks
+this box's vestad to mint a short-lived server-identity token. A managed VM has its
+account from provisioning; a self-hosted box links one with `vesta-cloud login` (see
+SKILL.md).

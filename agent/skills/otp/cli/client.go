@@ -17,11 +17,18 @@ import (
 
 // A one-time SMS code on a temporary number, for verifying any service (a signup or a
 // 2FA step): the agent reserves a number, uses it on the service, polls for the texted
-// code, then releases the number. Two paths reach the same Switchboard pool. Cloud
-// (managed) mints a short-lived server-identity token from this box's vestad (loopback,
-// agent-token authed; no standing credential) and Bearers it to vesta.run's
-// /api/integrations/switchboard/*. Direct (self-hosted) sends an sbk_ key straight to a
-// Switchboard base URL; only the base URL, credential, and paths differ.
+// code, then releases the number. Two independent services can supply the number, and
+// the agent CHOOSES with --source (the CLI never detects or falls back). `vesta-cloud` is
+// Vesta Cloud's OTP service: a short-lived server-identity token from
+// `vesta-cloud token` (available on any box whose Vesta Cloud account
+// `vesta-cloud whoami` reports), sent Bearer to vesta.run. `switchboard` is a
+// Switchboard the owner runs: a static sbk_ key straight at its base URL.
+
+// The two number sources the agent chooses between with --source.
+const (
+	sourceVestaCloud  = "vesta-cloud"
+	sourceSwitchboard = "switchboard"
+)
 
 const controlTimeout = 60 * time.Second
 
@@ -80,39 +87,26 @@ func classifyReserve(err error) error {
 	return nil
 }
 
-// config selects between the two ways to reach the same Switchboard pool:
-//   - direct (self-hosted): SWITCHBOARD_API_URL + SWITCHBOARD_API_KEY, an sbk_ key
-//     straight to a Switchboard base URL, no vesta.run and no vestad;
-//   - cloud (vesta.run tenant): a server-identity token minted from vestad, sent to
-//     vesta.run's /api/integrations/switchboard, which authenticates and forwards.
+// config carries the credentials each --source needs:
+//   - switchboard: SWITCHBOARD_API_URL + SWITCHBOARD_API_KEY (a static sbk_ key),
+//     no vesta.run involved;
+//   - vesta-cloud: nothing from here; the credential is a server-identity token minted
+//     per call via `vesta-cloud token`. Whether this box holds a Vesta Cloud
+//     account is `vesta-cloud whoami`'s answer, never an environment variable;
+//     the mint fails with a clear error on a box with no account.
 type config struct {
-	directURL  string // Switchboard base, e.g. https://<box> (direct mode)
-	directKey  string // sbk_ key for direct mode
-	vestadBase string // this box's vestad, https://$BOX_HOST:$VESTAD_PORT
-	agentName  string
-	agentToken string
-	// cloudManaged is the paid-tenant signal: cloud-init sets VESTA_CLOUD_CONTROL_URL
-	// only on managed VMs and vestad forwards it into the container, so its presence
-	// tells a cloud tenant from a plain self-hosted box (whose identity env is
-	// otherwise identical).
-	cloudManaged bool
-	configError  string
+	directURL   string // Switchboard base, e.g. https://<box> (direct mode)
+	directKey   string // sbk_ key for direct mode
+	configError string
 }
 
-// loadConfig reads the environment (mirrors the whatsapp skill's managed auth).
+// loadConfig reads the environment.
 func loadConfig() config {
-	base := ""
-	port := strings.TrimSpace(os.Getenv("VESTAD_PORT"))
-	host := strings.TrimSpace(os.Getenv("BOX_HOST"))
-	if port != "" && host != "" {
-		base = "https://" + host + ":" + port
-	}
 	directURL := strings.TrimSpace(os.Getenv("SWITCHBOARD_API_URL"))
 	directKey := strings.TrimSpace(os.Getenv("SWITCHBOARD_API_KEY"))
 	configError := ""
-	// Direct mode needs both halves: a self-hosted operator hands the box a one-time
-	// sbk_ key out of band. Either half alone is a misconfiguration. (The cloud never
-	// mints a key to the box; a paid tenant reserves through the forwarded API instead.)
+	// Direct mode needs both halves: an operator hands the box an sbk_ key out of
+	// band together with the base URL it opens. Either half alone is a misconfiguration.
 	switch {
 	case directKey != "" && directURL == "":
 		configError = "SWITCHBOARD_API_KEY is set without SWITCHBOARD_API_URL"
@@ -122,57 +116,45 @@ func loadConfig() config {
 		directURL = ""
 	}
 	return config{
-		directURL:    strings.TrimRight(directURL, "/"),
-		directKey:    directKey,
-		vestadBase:   base,
-		agentName:    strings.TrimSpace(os.Getenv("AGENT_NAME")),
-		agentToken:   strings.TrimSpace(os.Getenv("AGENT_TOKEN")),
-		cloudManaged: strings.TrimSpace(os.Getenv("VESTA_CLOUD_CONTROL_URL")) != "",
-		configError:  configError,
+		directURL:   strings.TrimRight(directURL, "/"),
+		directKey:   directKey,
+		configError: configError,
 	}
 }
 
 type client struct {
 	cfg     config
+	source  string // sourceVestaCloud | sourceSwitchboard, the agent's --source choice
 	control *http.Client
 }
 
-func newClient(cfg config) *client {
+func newClient(cfg config, source string) *client {
 	return &client{
 		cfg:     cfg,
+		source:  source,
 		control: &http.Client{Timeout: controlTimeout},
 	}
 }
 
-// isDirect reports whether a self-hosted sbk_ key is configured: the box talks
-// straight to a Switchboard base URL with its own key, no vesta.run, no vestad.
+// isDirect reports whether a static sbk_ key is configured: the box talks
+// straight to a Switchboard base URL with its own key, no vesta.run involved.
 func (c *client) isDirect() bool {
 	return c.cfg.directURL != "" && c.cfg.directKey != ""
 }
 
-// isHosted reports whether this box can get OTP numbers at all: either a direct
-// sbk_ key (self-hosted), or a genuine vesta.run cloud tenant. Every agent
-// container carries VESTAD_PORT/AGENT_NAME/AGENT_TOKEN, so their presence alone
-// cannot tell a paid tenant from a plain self-hosted box; cloudManaged
-// (VESTA_CLOUD_CONTROL_URL) is the distinguishing signal.
-func (c *client) isHosted() bool {
-	return c.cfg.configError != "" || c.isDirect() ||
-		(c.cfg.cloudManaged && c.cfg.vestadBase != "" && c.cfg.agentName != "" && c.cfg.agentToken != "")
-}
-
-// serverToken is the cloud-path credential: a short-lived server-identity token plus
+// serverToken is the Vesta Cloud credential: a short-lived server-identity token plus
 // the control-plane base URL it authenticates against.
 type serverToken struct {
 	token      string
 	controlURL string
 }
 
-// mintServerToken is a package var so tests stub the cloud credential without spawning
+// mintServerToken is a package var so tests stub the Vesta Cloud credential without spawning
 // a subprocess.
 var mintServerToken = vestaCloudToken
 
 // vestaCloudTokenTimeout bounds the subprocess so a wedged `vesta-cloud token` can never
-// hang the CLI's auth path (the native mint it replaced had a 30s HTTP timeout).
+// hang the CLI's auth path.
 const vestaCloudTokenTimeout = 30 * time.Second
 
 // vestaCloudToken shells out to `vesta-cloud token`, the single source of truth for
@@ -212,16 +194,20 @@ func parseServerToken(out []byte, runErr error, timedOut bool) (serverToken, err
 	}
 }
 
-// authorize resolves the Switchboard base URL and Authorization header once, plus
-// which path family to use. Direct mode uses the static sbk_ key against native
-// /leases paths; cloud mode mints one short-lived server-identity token and hits
-// vesta.run's forwarded /reserve, /code, /release. A caller making several requests
-// (the code poll) resolves once here and reuses the result.
+// authorize resolves the base URL and Authorization header for the agent's chosen
+// --source, plus which path family to use. `switchboard` uses the static sbk_ key
+// against native /leases paths; `vesta-cloud` mints one short-lived server-identity
+// token and hits vesta.run's /reserve, /code, /release. There is no fallback
+// between sources: a source whose prerequisites are missing errors precisely.
+// A caller making several requests (the code poll) resolves once and reuses it.
 func (c *client) authorize() (base, auth string, direct bool, err error) {
-	if c.cfg.configError != "" {
-		return "", "", false, errors.New(c.cfg.configError)
-	}
-	if c.isDirect() {
+	if c.source == sourceSwitchboard {
+		if c.cfg.configError != "" {
+			return "", "", false, errors.New(c.cfg.configError)
+		}
+		if !c.isDirect() {
+			return "", "", false, errors.New("--source switchboard needs SWITCHBOARD_API_URL and SWITCHBOARD_API_KEY set together (an sbk_ key from whoever runs that Switchboard)")
+		}
 		return c.cfg.directURL, "Bearer " + c.cfg.directKey, true, nil
 	}
 	st, err := mintServerToken()
