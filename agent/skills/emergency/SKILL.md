@@ -78,8 +78,13 @@ them again is not help.
 - **Fear of authorities.** In many places the emergency number dispatches police alongside the
   ambulance. For an overdose, a self-harm crisis, a domestic-violence injury, or someone
   undocumented, that can mean arrest, an immigration referral, or a forced admission. **Many
-  jurisdictions have Good Samaritan laws protecting people who call about an overdose**, which is
-  worth saying once, accurately, if it applies.
+  jurisdictions have Good Samaritan laws protecting people who call about an overdose, and saying so
+  is one of the highest-value things you can do**, because knowing the law is what changes behaviour:
+  witnesses who understand the protection are substantially more likely to call, and jurisdictions
+  whose laws bar ARREST (rather than merely prosecution) show measurably lower overdose mortality.
+  **But check what the local law actually covers before you say it.** Protections vary in who is
+  covered and in what they bar. Telling someone they are protected where they are not converts your
+  credibility into their arrest.
 - **Cost.** An ambulance is unaffordable for many people. This is routing information, not an
   obstacle to argue past.
 - **No ambulance service, or a two-hour one.** In much of the world being driven is the normal route
