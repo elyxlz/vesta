@@ -2,12 +2,12 @@
   "version": 1,
   "appId": "com.vesta.mobile.visual",
   "flows": [
-    "maestro/visual/connect.yml",
-    "maestro/visual/recent-gateways.yml",
     "maestro/visual/connected.yml",
-    "maestro/visual/connected-whats-new-empty.yml",
+    "maestro/visual/connect.yml",
+    "maestro/visual/connected-home-empty.yml",
+    "maestro/visual/recent-gateways.yml",
     "maestro/visual/connected-whats-new-error.yml",
-    "maestro/visual/connected-home-empty.yml"
+    "maestro/visual/connected-whats-new-empty.yml"
   ],
   "scenarios": [
     {

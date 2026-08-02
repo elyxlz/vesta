@@ -1844,6 +1844,23 @@ async function showSimulatorSoftwareKeyboard(udid) {
   );
 }
 
+export function createInactivityWatchdog(onTimeout, timeoutMs) {
+  let timer;
+  const cancel = () => {
+    if (timer !== undefined) clearTimeout(timer);
+    timer = undefined;
+  };
+  const reset = () => {
+    cancel();
+    timer = setTimeout(() => {
+      timer = undefined;
+      onTimeout();
+    }, timeoutMs);
+  };
+  reset();
+  return { cancel, reset };
+}
+
 async function startScreenshotBridge(simulators) {
   let cycle;
   const createdKeyboardHostPids = new Set();
@@ -1900,14 +1917,16 @@ async function startScreenshotBridge(simulators) {
       response.writeHead(204).end();
       if (cycle.seen.size === cycle.expected.size) {
         cycle.completed = true;
-        clearTimeout(cycle.timer);
+        cycle.watchdog.cancel();
         cycle.resolve();
+      } else {
+        cycle.watchdog.reset();
       }
     } catch (error) {
       response.writeHead(500).end(error.message);
       if (cycle && !cycle.completed) {
         cycle.completed = true;
-        clearTimeout(cycle.timer);
+        cycle.watchdog.cancel();
         cycle.reject(error);
       }
     }
@@ -1949,36 +1968,37 @@ async function startScreenshotBridge(simulators) {
         seen: new Set(),
         resolve: resolveCycle,
         reject: rejectCycle,
-        timer: setTimeout(() => {
-          if (cycle.completed) return;
-          cycle.completed = true;
-          cycle.reject(
-            new Error(
-              `Timed out waiting for screenshots: ${[...expected]
-                .filter((screenshot) => !cycle.seen.has(screenshot))
-                .join(", ")}`,
-            ),
-          );
-        }, timeoutMs),
+        watchdog: null,
       };
+      cycle.watchdog = createInactivityWatchdog(() => {
+        if (cycle.completed) return;
+        cycle.completed = true;
+        cycle.reject(
+          new Error(
+            `Timed out waiting for screenshots: ${[...expected]
+              .filter((screenshot) => !cycle.seen.has(screenshot))
+              .join(", ")}`,
+          ),
+        );
+      }, timeoutMs);
       return { completion };
     },
     fail(error) {
       if (!cycle || cycle.completed) return;
       cycle.completed = true;
-      clearTimeout(cycle.timer);
+      cycle.watchdog.cancel();
       cycle.reject(error);
     },
     cancel(detail) {
       if (!cycle || cycle.completed) return;
       cycle.completed = true;
-      clearTimeout(cycle.timer);
+      cycle.watchdog.cancel();
       cycle.reject(new CaptureSupersededError(detail));
     },
     async close() {
       if (cycle && !cycle.completed) {
         cycle.completed = true;
-        clearTimeout(cycle.timer);
+        cycle.watchdog.cancel();
         cycle.reject(new Error("Screenshot bridge stopped."));
       }
       await new Promise((resolve) => server.close(resolve));

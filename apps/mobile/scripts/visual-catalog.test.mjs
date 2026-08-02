@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  createInactivityWatchdog,
   createMaestroFailureParser,
   galleryHtml,
   shouldIgnoreWatchPath,
@@ -11,6 +12,27 @@ import {
 
 const require = createRequire(import.meta.url);
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
+
+describe("createInactivityWatchdog", () => {
+  it("measures inactivity from the latest progress event", () => {
+    vi.useFakeTimers();
+    try {
+      const onTimeout = vi.fn();
+      const watchdog = createInactivityWatchdog(onTimeout, 1000);
+
+      vi.advanceTimersByTime(750);
+      watchdog.reset();
+      vi.advanceTimersByTime(750);
+      expect(onTimeout).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(250);
+      expect(onTimeout).toHaveBeenCalledOnce();
+      watchdog.cancel();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
 
 describe("createMaestroFailureParser", () => {
   it("reports only new failures and resets between continuous runs", () => {
