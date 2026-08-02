@@ -10,6 +10,7 @@ import {
   createMaestroFailureParser,
   galleryHtml,
   shouldIgnoreWatchPath,
+  watchChangePath,
 } from "./visual-catalog.mjs";
 
 const require = createRequire(import.meta.url);
@@ -118,6 +119,20 @@ describe("shouldIgnoreWatchPath", () => {
     ).toBe(true);
     expect(shouldIgnoreWatchPath("/repo/mobile/src/view.tsx.tmp")).toBe(true);
     expect(shouldIgnoreWatchPath("/repo/mobile/src/view.tsx")).toBe(false);
+  });
+});
+
+describe("watchChangePath", () => {
+  it("attributes an atomic-save temporary event to its watched target", () => {
+    expect(
+      watchChangePath(
+        "/repo/mobile/src",
+        "/repo/mobile/src/view.tsx.tmp.5218.abc123",
+      ),
+    ).toBe("/repo/mobile/src");
+    expect(
+      watchChangePath("/repo/mobile/src", "/repo/mobile/src/view.tsx"),
+    ).toBe("/repo/mobile/src/view.tsx");
   });
 });
 

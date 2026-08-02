@@ -37,7 +37,10 @@ export default function WhatsNewScreen() {
 
   return (
     <Screen contentStyle={styles.content}>
-      <NativeSheetCloseButton accessibilityLabel="Close release notes" />
+      <NativeSheetCloseButton
+        accessibilityLabel="Close release notes"
+        visibleFromDetentIndex={1}
+      />
       {notes.isPending || !roster.gatewayVersion || !roster.gatewayChannel ? (
         <LoadingState label="Loading release notes…" />
       ) : notes.isError ? (

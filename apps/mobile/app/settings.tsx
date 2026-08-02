@@ -206,7 +206,10 @@ export default function SettingsScreen() {
 
   return (
     <Screen contentStyle={styles.content}>
-      <NativeSheetCloseButton accessibilityLabel="Close settings" />
+      <NativeSheetCloseButton
+        accessibilityLabel="Close settings"
+        visibleFromDetentIndex={1}
+      />
       <FormSection
         title="Experience"
         actions={

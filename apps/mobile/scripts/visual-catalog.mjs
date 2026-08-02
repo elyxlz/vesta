@@ -238,6 +238,14 @@ async function atomicWriteFile(target, contents) {
   await rename(temporary, target);
 }
 
+async function writeFileIfChanged(target, contents) {
+  if ((await exists(target)) && (await readFile(target, "utf8")) === contents) {
+    return false;
+  }
+  await atomicWriteFile(target, contents);
+  return true;
+}
+
 async function fingerprintPaths(targets, shouldInclude = () => true) {
   const files = [];
   for (const target of targets) {
@@ -2036,9 +2044,9 @@ async function startScreenshotBridge(simulators) {
 }
 
 async function syncWatchFlows(manifest) {
-  await rm(watchFlowsDirectory, { recursive: true, force: true });
   await mkdir(watchFlowsDirectory, { recursive: true });
   const flowPaths = [];
+  const changedShards = [];
   const flowShards = assignFlowsToShards(manifest.flows, shardCount);
   for (const [index, flows] of flowShards.entries()) {
     const sources = await Promise.all(
@@ -2048,17 +2056,22 @@ async function syncWatchFlows(manifest) {
       })),
     );
     const target = path.join(watchFlowsDirectory, `shard-${index + 1}.yml`);
-    await writeFile(
+    const changed = await writeFileIfChanged(
       target,
       continuousShardFlow(manifest.appId, index + 1, sources),
     );
+    if (changed) changedShards.push(index);
     flowPaths.push(target);
   }
-  await copyFile(
+  const callbackSource = await readFile(
     path.join(mobileRoot, "maestro/visual/capture-screenshot.js"),
-    path.join(watchFlowsDirectory, "capture-screenshot.js"),
+    "utf8",
   );
-  return flowPaths;
+  await writeFileIfChanged(
+    path.join(watchFlowsDirectory, "capture-screenshot.js"),
+    callbackSource,
+  );
+  return { changedShards, flowPaths };
 }
 
 const ansiEscapePattern = /\u001B\[[0-?]*[ -/]*[@-~]/g;
@@ -2167,9 +2180,11 @@ function startContinuousMaestro(session, manifest, flowPaths, bridge) {
         )
       );
     },
-    trigger() {
+    trigger(indices = children.map((_entry, index) => index)) {
       if (failure) throw failure;
-      for (const entry of children) {
+      for (const index of indices) {
+        const entry = children[index];
+        if (!entry) throw new Error(`Unknown Maestro shard index: ${index}`);
         entry.stdoutParser.beginRun();
         entry.stderrParser.beginRun();
         entry.child.stdin.write("\n");
@@ -2253,6 +2268,10 @@ export function shouldIgnoreWatchPath(changedPath) {
   );
 }
 
+export function watchChangePath(target, changedPath) {
+  return shouldIgnoreWatchPath(changedPath) ? target : changedPath;
+}
+
 function visualWatchTargets() {
   const targets = [
     {
@@ -2294,7 +2313,7 @@ function visualWatchTargets() {
       target: path.join(mobileRoot, "maestro/visual"),
       rebuild: false,
       recursive: true,
-      restart: true,
+      restart: false,
       native: false,
     },
     {
@@ -2358,7 +2377,7 @@ async function watchCatalog(options) {
     bridge = await startScreenshotBridge(session.simulators);
 
     const initialCycle = await bridge.beginCycle(manifest);
-    const initialFlows = await syncWatchFlows(manifest);
+    const { flowPaths: initialFlows } = await syncWatchFlows(manifest);
     processes = startContinuousMaestro(
       session,
       manifest,
@@ -2465,17 +2484,20 @@ async function watchCatalog(options) {
         }
         const cycle = await bridge.beginCycle(manifest);
         requireLatestRevision();
+        const syncedFlows = await syncWatchFlows(manifest);
+        requireLatestRevision();
         if (restart) {
-          const flowPaths = await syncWatchFlows(manifest);
-          requireLatestRevision();
           processes = startContinuousMaestro(
             session,
             manifest,
-            flowPaths,
+            syncedFlows.flowPaths,
             bridge,
           );
         } else {
-          processes.trigger();
+          const unchangedShards = session.simulators
+            .map((_simulator, index) => index)
+            .filter((index) => !syncedFlows.changedShards.includes(index));
+          processes.trigger(unchangedShards);
         }
         await cycle.completion;
         requireLatestRevision();
@@ -2582,7 +2604,10 @@ async function watchCatalog(options) {
               filename.toString(),
             )
           : target;
-        scheduleChangedTarget(watchTarget, changedPath);
+        scheduleChangedTarget(
+          watchTarget,
+          watchChangePath(target, changedPath),
+        );
       });
     });
 

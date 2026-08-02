@@ -154,9 +154,6 @@ tags:
 - extendedWaitUntil:
     visible: "App Lock"
     timeout: 10000
-- extendedWaitUntil:
-    visible: "Close settings"
-    timeout: 10000
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: settings-overview
@@ -189,12 +186,16 @@ tags:
 - waitForAnimationToEnd:
     timeout: 1000
 
+# Expand before capturing gateway controls and its full-detent close button.
 - swipe:
     start: "50%,58%"
     end: "50%,10%"
     duration: 500
 - waitForAnimationToEnd:
     timeout: 3000
+- extendedWaitUntil:
+    visible: "Close settings"
+    timeout: 10000
 
 - scrollUntilVisible:
     element:
@@ -224,9 +225,6 @@ tags:
     text: "^Open$"
     optional: true
     waitToSettleTimeoutMs: 1
-- extendedWaitUntil:
-    visible: "Close release notes"
-    timeout: 30000
 - extendedWaitUntil:
     visible: "View release v0.2.0 on GitHub"
     timeout: 30000

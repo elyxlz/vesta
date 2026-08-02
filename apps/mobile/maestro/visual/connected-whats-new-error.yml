@@ -19,9 +19,6 @@ tags:
 - openLink:
     link: "vesta-dev://whats-new?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents&visualReleaseNotes=error"
 - extendedWaitUntil:
-    visible: "Close release notes"
-    timeout: 30000
-- extendedWaitUntil:
     visible: "Couldn’t load release notes."
     timeout: 30000
 - takeScreenshot: whats-new-error

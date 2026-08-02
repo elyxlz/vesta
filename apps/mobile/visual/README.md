@@ -328,9 +328,11 @@ Watch mode observes the UI and flow sources above, plus native build inputs:
 - native theme tokens and launch/icon assets
 
 Application, core, asset, harness, and Metro changes trigger a fast JavaScript
-rebundle followed by installation on both simulators. Maestro-flow and manifest
-changes restart the persistent Maestro sessions without an application build.
-Native-input changes regenerate the iOS project and perform an Xcode build.
+rebundle followed by installation on both simulators. Maestro-flow changes
+update the affected generated shard in place and trigger the other shard, while
+manifest topology changes restart the persistent sessions. Neither requires an
+application build. Native-input changes regenerate the iOS project and perform
+an Xcode build.
 Test files, snapshots, and editor temporary files are ignored because they
 cannot change the installed UI. The final saved source file still triggers a
 capture normally.
