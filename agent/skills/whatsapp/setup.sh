@@ -28,7 +28,7 @@ fi
 # 4. Start the daemon (idempotent; defaults --notifications-dir to ~/agent/notifications).
 whatsapp daemon start
 
-echo "setup complete, link an account with: whatsapp connect --source <cloud|doubletick|self-managed> (see SETUP.md)"
+echo "setup complete, link an account with: whatsapp connect --source <vesta-cloud|doubletick|self-managed> (see SETUP.md)"
 echo
 echo "Remaining step, yours to do: add this line inside the fenced Daemons block"
 echo "of ~/agent/skills/restart/SKILL.md, on its own line."

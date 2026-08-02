@@ -35,12 +35,12 @@ func main() {
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: otp <command> --source <cloud|switchboard> [flags]")
+	fmt.Fprintln(w, "Usage: otp <command> --source <vesta-cloud|switchboard> [flags]")
 	fmt.Fprintln(w, "  new --source <s> --service <name> [--country US] [--idempotency-key <k>]   reserve a temporary number for a service; prints {number, id}")
 	fmt.Fprintln(w, "  code --source <s> --id <id> [--since <RFC3339>]    wait for the SMS code on that number; prints {code}")
 	fmt.Fprintln(w, "  release --source <s> --id <id>                     give the number back when done; prints {}")
 	fmt.Fprintln(w, "  --source states where the number comes from; you decide, the CLI never guesses:")
-	fmt.Fprintln(w, "    cloud        Vesta Cloud (needs this box's Vesta Cloud account)")
+	fmt.Fprintln(w, "    vesta-cloud  Vesta Cloud (needs this box's Vesta Cloud account)")
 	fmt.Fprintln(w, "    switchboard  a Switchboard the owner runs (needs SWITCHBOARD_API_URL + SWITCHBOARD_API_KEY)")
 }
 
@@ -48,19 +48,19 @@ func printUsage(w io.Writer) {
 // source explicitly; there is no detection and no fallback.
 func parseSource(raw string) string {
 	switch raw {
-	case sourceCloud, sourceSwitchboard:
+	case sourceVestaCloud, sourceSwitchboard:
 		return raw
 	case "":
-		failJSON("--source is required: cloud (Vesta Cloud) or switchboard (a Switchboard the owner runs)")
+		failJSON("--source is required: vesta-cloud (Vesta Cloud) or switchboard (a Switchboard the owner runs)")
 	default:
-		failJSON("unknown --source %q (use: cloud | switchboard)", raw)
+		failJSON("unknown --source %q (use: vesta-cloud | switchboard)", raw)
 	}
 	return "" // unreachable
 }
 
 func runNew(args []string) {
 	fs := flag.NewFlagSet("new", flag.ContinueOnError)
-	source := fs.String("source", "", "where the number comes from: cloud | switchboard (required)")
+	source := fs.String("source", "", "where the number comes from: vesta-cloud | switchboard (required)")
 	service := fs.String("service", "", "the service the code is for (required)")
 	country := fs.String("country", "", "optional ISO country code, e.g. US")
 	idempotencyKey := fs.String("idempotency-key", "", "optional stable key: reuse it when retrying a reserve for the same flow so it returns the same number instead of drawing another")

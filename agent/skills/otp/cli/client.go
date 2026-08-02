@@ -18,7 +18,7 @@ import (
 // A one-time SMS code on a temporary number, for verifying any service (a signup or a
 // 2FA step): the agent reserves a number, uses it on the service, polls for the texted
 // code, then releases the number. Two independent services can supply the number, and
-// the agent CHOOSES with --source (the CLI never detects or falls back). `cloud` is
+// the agent CHOOSES with --source (the CLI never detects or falls back). `vesta-cloud` is
 // Vesta Cloud's OTP service: a short-lived server-identity token from
 // `vesta-cloud token` (available on any box whose Vesta Cloud account
 // `vesta-cloud whoami` reports), sent Bearer to vesta.run. `switchboard` is a
@@ -26,7 +26,7 @@ import (
 
 // The two number sources the agent chooses between with --source.
 const (
-	sourceCloud       = "cloud"
+	sourceVestaCloud  = "vesta-cloud"
 	sourceSwitchboard = "switchboard"
 )
 
@@ -90,7 +90,7 @@ func classifyReserve(err error) error {
 // config carries the credentials each --source needs:
 //   - switchboard: SWITCHBOARD_API_URL + SWITCHBOARD_API_KEY (a static sbk_ key),
 //     no vesta.run involved;
-//   - cloud: nothing from here; the credential is a server-identity token minted
+//   - vesta-cloud: nothing from here; the credential is a server-identity token minted
 //     per call via `vesta-cloud token`. Whether this box holds a Vesta Cloud
 //     account is `vesta-cloud whoami`'s answer, never an environment variable;
 //     the mint fails with a clear error on a box with no account.
@@ -124,7 +124,7 @@ func loadConfig() config {
 
 type client struct {
 	cfg     config
-	source  string // sourceCloud | sourceSwitchboard, the agent's --source choice
+	source  string // sourceVestaCloud | sourceSwitchboard, the agent's --source choice
 	control *http.Client
 }
 
@@ -142,14 +142,14 @@ func (c *client) isDirect() bool {
 	return c.cfg.directURL != "" && c.cfg.directKey != ""
 }
 
-// serverToken is the cloud-path credential: a short-lived server-identity token plus
+// serverToken is the Vesta Cloud credential: a short-lived server-identity token plus
 // the control-plane base URL it authenticates against.
 type serverToken struct {
 	token      string
 	controlURL string
 }
 
-// mintServerToken is a package var so tests stub the cloud credential without spawning
+// mintServerToken is a package var so tests stub the Vesta Cloud credential without spawning
 // a subprocess.
 var mintServerToken = vestaCloudToken
 
@@ -196,7 +196,7 @@ func parseServerToken(out []byte, runErr error, timedOut bool) (serverToken, err
 
 // authorize resolves the base URL and Authorization header for the agent's chosen
 // --source, plus which path family to use. `switchboard` uses the static sbk_ key
-// against native /leases paths; `cloud` mints one short-lived server-identity
+// against native /leases paths; `vesta-cloud` mints one short-lived server-identity
 // token and hits vesta.run's /reserve, /code, /release. There is no fallback
 // between sources: a source whose prerequisites are missing errors precisely.
 // A caller making several requests (the code poll) resolves once and reuses it.

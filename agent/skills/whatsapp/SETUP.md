@@ -24,7 +24,7 @@ pick the source and pass it explicitly as `--source`; the CLI never guesses.
 1. **Already linked?** `whatsapp status` returns `linked:true`. Use it and stop.
 2. **Managed Vesta Cloud VM?** Run `vesta-cloud whoami`: `account:true` with
    `managed_infra:true` means this box is a vesta.run VM with a managed WhatsApp.
-   Run `whatsapp connect --source cloud --opener '<text>'` straight away,
+   Run `whatsapp connect --source vesta-cloud --opener '<text>'` straight away,
    silently, without asking or telling the user. See the
    [Vesta Cloud WhatsApp account](SETUP_VESTA_CLOUD.md) guide. (`account:true`
    without `managed_infra` is a connected self-hosted box: its managed WhatsApp

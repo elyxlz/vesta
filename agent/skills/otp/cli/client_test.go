@@ -30,7 +30,7 @@ func cloudClientFor(t *testing.T, control http.HandlerFunc) *client {
 	ctrl := httptest.NewServer(control)
 	t.Cleanup(ctrl.Close)
 	stubServerToken(t, ctrl.URL)
-	return newClient(config{}, sourceCloud)
+	return newClient(config{}, sourceVestaCloud)
 }
 
 // TestParseServerToken pins how a `vesta-cloud token` run maps to a credential or a

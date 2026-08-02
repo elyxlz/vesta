@@ -1136,7 +1136,7 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 	priorOnboardedMSISDN := wac.state.snapshot().OnboardedMSISDN
 	// Honor the agent's explicit --source over the daemon's boot-time linker: a warm
 	// daemon that booted with direct pool creds still pairs off the server-identity
-	// token when the agent says `--source cloud`. wac.managed is only read on this
+	// token when the agent says `--source vesta-cloud`. wac.managed is only read on this
 	// single-flighted pairing path, so overriding it for the call (and restoring it
 	// after) races nothing; wac.linker is left untouched (the data path reads it).
 	pairLinker := wac.linker

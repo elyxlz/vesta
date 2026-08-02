@@ -6,7 +6,8 @@ description: Use when you need a one-time SMS verification code on a temporary p
 # otp (CLI: `otp`)
 
 Get a one-time SMS code on a temporary number, use it to clear a service's phone
-verification, then give the number back. Three verbs run in order:
+verification, then give the number back. Install the `otp` command once from
+[SETUP.md](SETUP.md). Three verbs run in order:
 
 1. `otp new --source <s> --service <name>` reserves a number and returns its `id`.
 2. Enter that number as the phone number on the service you are verifying.
@@ -22,7 +23,7 @@ release it as soon as the code is used. Do not reuse an `id` for a second servic
 
 Two independent services can supply numbers; you decide which to use:
 
-- `--source cloud`: Vesta Cloud. Works on any box with a Vesta Cloud account
+- `--source vesta-cloud`: Vesta Cloud. Works on any box with a Vesta Cloud account
   (run `vesta-cloud whoami` when unsure; `account: true` means it works), with
   no setup and no key. With no account the reserve fails with a clear error;
   the box can be connected to a Vesta Cloud account, and the `vesta-cloud`
@@ -35,7 +36,7 @@ Two independent services can supply numbers; you decide which to use:
 ## new: reserve a number
 
 ```bash
-otp new --source cloud --service github
+otp new --source vesta-cloud --service github
 otp new --source switchboard --service coinbase --country US
 ```
 
@@ -68,8 +69,8 @@ Four outcomes are not errors to retry blindly:
 ## code: wait for the SMS
 
 ```bash
-otp code --source cloud --id lease_abc123
-otp code --source cloud --id lease_abc123 --since 2026-07-31T18:00:00Z
+otp code --source vesta-cloud --id lease_abc123
+otp code --source vesta-cloud --id lease_abc123 --since 2026-07-31T18:00:00Z
 ```
 
 `otp code` polls until the code lands or a bounded timeout, then prints:
@@ -83,7 +84,7 @@ of failing. Trigger the service to send (or re-send) the code, then run `otp cod
 again to keep waiting:
 
 ```json
-{ "status": "pending", "next": "no code yet; re-run: otp code --source cloud --id lease_abc123" }
+{ "status": "pending", "next": "no code yet; re-run: otp code --source vesta-cloud --id lease_abc123" }
 ```
 
 Pass `--since <RFC3339>` (the time you asked the service to send) to ignore any
@@ -92,7 +93,7 @@ older code on the same number and wait only for the fresh one.
 ## release: return the number
 
 ```bash
-otp release --source cloud --id lease_abc123
+otp release --source vesta-cloud --id lease_abc123
 ```
 
 Prints `{}`. Release every number once its code is used or you abandon the signup,

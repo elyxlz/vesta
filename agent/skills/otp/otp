@@ -1,0 +1,21 @@
+#!/bin/bash
+# Launcher for the otp CLI. Compiles cli/ from source on every invocation so no
+# stale binary can drift (Go's build cache keeps an unchanged rebuild well under
+# a second). Installed as a symlink at ~/.local/bin/otp; never `go build` a
+# static binary onto PATH.
+set -euo pipefail
+
+CLI_DIR="$(dirname "$(readlink -f "$0")")/cli"
+
+# Go lives at /usr/local/go; not every environment links it onto PATH.
+if ! command -v go >/dev/null; then export PATH="/usr/local/go/bin:$PATH"; fi
+
+# Build to a temp path then rename, so concurrent invocations never execute a
+# half-written binary.
+BIN_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/otp"
+mkdir -p "$BIN_DIR"
+BIN="$BIN_DIR/otp"
+TMP="$BIN.$$"
+(cd "$CLI_DIR" && go build -o "$TMP" .)
+mv -f "$TMP" "$BIN"
+exec "$BIN" "$@"
