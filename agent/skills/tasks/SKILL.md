@@ -18,11 +18,13 @@ tasks postpone <id> --in-days 2   # new due date, measured from now
 tasks search "report"
 tasks get <id>
 tasks update <id> --title "..." --priority low --status pending
+tasks update <id> --clear-due     # remove the due date (and its auto reminders)
 tasks delete <id>                 # cascades to linked reminders
 ```
 
 - Due date: `--due-in-minutes/--due-in-hours/--due-in-days` (relative) or `--due-datetime` + `--timezone` (absolute, both required). `--priority` low/normal/high. `--initial-metadata "..."` attaches notes.
 - `postpone` also takes `--in-minutes/--in-hours` or `--at` + `--tz`, and works on a task with no due date (gives it one).
+- `update --clear-due` removes a due date. Every other due flag can only move a date, so without this a due date is a one-way door: auto reminders are regenerated from `due_date`, so deleting them by hand does not stick. Reach for it when a date was set by mistake or by a bulk `postpone` over a backlog, since a backburner item with a due date fires a whole reminder cascade it never earned.
 - `tasks get <id> --field status` prints just that field (repeat `--field` for several, tab-separated). Valid fields: id, title, status, priority, due_date, created_at, completed_at, metadata_path, metadata. Prefer this over reading the metadata file when you need one value.
 - `list`/`search` print compact tables (`--show-completed` to include done); add `--json` or `--json-pretty` for JSON.
 
