@@ -39,24 +39,6 @@ pub(crate) struct OpenAiAuthSession {
     pub created: std::time::Instant,
 }
 
-/// The in-flight Vesta Cloud pairing, if any (see serve.rs `vesta_cloud_pair_*`).
-/// Single slot: a box pairs to at most one account. The `device_code` is the
-/// control-plane poll secret; it lives ONLY here, never in the agent container.
-#[derive(Clone)]
-pub(crate) struct VestaCloudPairingSession {
-    pub device_code: String,
-    pub user_code: String,
-    pub verification_url: String,
-    pub interval: u64,
-    pub expires_in: u64,
-    pub created: std::time::Instant,
-}
-
-impl VestaCloudPairingSession {
-    pub fn is_expired(&self) -> bool {
-        self.created.elapsed().as_secs() > self.expires_in
-    }
-}
 
 impl OpenAiAuthSession {
     pub fn is_expired(&self) -> bool {
@@ -125,7 +107,10 @@ pub struct AppState {
     pub(crate) docker: bollard::Docker,
     pub(crate) auth_sessions: Mutex<HashMap<String, AuthSession>>,
     pub(crate) openai_auth_sessions: Mutex<HashMap<String, OpenAiAuthSession>>,
-    pub(crate) vesta_cloud_pairing: Mutex<Option<VestaCloudPairingSession>>,
+    /// In-memory cache of the in-flight Vesta Cloud pairing; the durable copy
+    /// (with the poll secret) lives in `<config_dir>/vesta-cloud-pairing.json`
+    /// so a restart mid-flow can keep polling. Single slot: one box, one link.
+    pub(crate) vesta_cloud_pairing: Mutex<Option<crate::vesta_cloud::VestaCloudPairing>>,
     /// Refresh-token registry: family id → {live/prev jti, exp} (rotation + reuse
     /// detection, see `auth.rs`). Loaded from / persisted to the config dir so a
     /// vestad restart/self-update does NOT invalidate outstanding refresh tokens.

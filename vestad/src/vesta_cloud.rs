@@ -55,9 +55,12 @@ pub(crate) fn clear_vesta_cloud_account(config_dir: &Path) {
 }
 
 /// The box's Vesta Cloud identity, if any: `(server_id, control_url)`.
-/// Cloud-init env wins (a managed VM with a stray pairing file stays managed);
-/// a paired self-hosted box answers from `vesta-cloud-account.json`.
-/// Pure over its inputs so tests never mutate process env.
+/// A MANAGED box answers only from cloud-init env: when the env server id is
+/// missing there it has no identity, and a stray `vesta-cloud-account.json`
+/// left over from a self-hosted past must never supply one (it would mint
+/// tokens for, and open billing of, the old account's row). Only an unmanaged
+/// box answers from the pairing file. Pure over its inputs so tests never
+/// mutate process env.
 pub(crate) fn resolve_vesta_cloud_identity(
     config_dir: &Path,
     cloud_managed: bool,
@@ -65,9 +68,7 @@ pub(crate) fn resolve_vesta_cloud_identity(
     env_control_url: Option<String>,
 ) -> Option<(String, Option<String>)> {
     if cloud_managed {
-        if let Some(server_id) = env_server_id {
-            return Some((server_id, env_control_url));
-        }
+        return env_server_id.map(|server_id| (server_id, env_control_url));
     }
     load_vesta_cloud_account(config_dir).map(|a| (a.server_id, Some(a.control_url)))
 }
@@ -80,6 +81,62 @@ pub(crate) fn vesta_cloud_identity(config_dir: &Path) -> Option<(String, Option<
         std::env::var("VESTA_CLOUD_SERVER_ID").ok(),
         std::env::var("VESTA_CLOUD_CONTROL_URL").ok(),
     )
+}
+
+/// One in-flight pairing attempt, persisted to `<config_dir>/vesta-cloud-pairing.json`
+/// so a vestad restart mid-flow can keep polling: the control plane replays a
+/// consumed pairing's result to the same `device_code`, and that secret exists
+/// nowhere else (it never enters the agent container).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct VestaCloudPairing {
+    pub(crate) device_code: String,
+    pub(crate) user_code: String,
+    pub(crate) verification_url: String,
+    pub(crate) interval: u64,
+    pub(crate) expires_at_epoch_secs: u64,
+}
+
+impl VestaCloudPairing {
+    pub(crate) fn is_expired(&self, now_epoch_secs: u64) -> bool {
+        now_epoch_secs >= self.expires_at_epoch_secs
+    }
+
+    /// Seconds of code lifetime left; what a resumed `pair` reports as
+    /// `expires_in` so the skill's poll deadline matches reality.
+    pub(crate) fn remaining_secs(&self, now_epoch_secs: u64) -> u64 {
+        self.expires_at_epoch_secs.saturating_sub(now_epoch_secs)
+    }
+}
+
+pub(crate) fn vesta_cloud_pairing_path(config_dir: &Path) -> PathBuf {
+    config_dir.join("vesta-cloud-pairing.json")
+}
+
+/// Load the persisted in-flight pairing; missing = none, corrupt = warn + none.
+pub(crate) fn load_vesta_cloud_pairing(config_dir: &Path) -> Option<VestaCloudPairing> {
+    let path = vesta_cloud_pairing_path(config_dir);
+    let data = std::fs::read_to_string(&path).ok()?;
+    match serde_json::from_str(&data) {
+        Ok(pairing) => Some(pairing),
+        Err(err) => {
+            tracing::warn!(path = %path.display(), error = %err, "corrupt vesta-cloud-pairing.json, discarding");
+            None
+        }
+    }
+}
+
+/// Persist the in-flight pairing (owner-only: it holds the poll secret).
+pub(crate) fn save_vesta_cloud_pairing(config_dir: &Path, pairing: &VestaCloudPairing) {
+    crate::settings::save_json_atomic(
+        &vesta_cloud_pairing_path(config_dir),
+        pairing,
+        Some(0o600),
+    );
+}
+
+/// Remove the in-flight pairing (finished or dead). No-op when absent.
+pub(crate) fn clear_vesta_cloud_pairing(config_dir: &Path) {
+    let _ = std::fs::remove_file(vesta_cloud_pairing_path(config_dir));
 }
 
 /// The control-plane API base to PAIR against: `VESTA_CLOUD_CONTROL_URL` (so a
@@ -190,7 +247,46 @@ mod tests {
     fn identity_none_when_neither_source_exists() {
         let dir = tempfile::tempdir().expect("tempdir");
         assert_eq!(resolve_vesta_cloud_identity(dir.path(), false, None, None), None);
-        // Managed but no server id seeded: the file (absent) is still the fallback.
         assert_eq!(resolve_vesta_cloud_identity(dir.path(), true, None, None), None);
+    }
+
+    #[test]
+    fn managed_box_without_env_id_never_reads_a_stale_pairing_file() {
+        // A managed VM whose cloud-init seeding failed must answer "no
+        // identity", not adopt the identity of a self-hosted past.
+        let dir = tempfile::tempdir().expect("tempdir");
+        save_vesta_cloud_account(
+            dir.path(),
+            &VestaCloudAccount {
+                server_id: "srv_stale".to_string(),
+                control_url: "https://vesta.run/api".to_string(),
+            },
+        );
+        assert_eq!(resolve_vesta_cloud_identity(dir.path(), true, None, None), None);
+    }
+
+    #[test]
+    fn pairing_roundtrips_expires_and_clears() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert_eq!(load_vesta_cloud_pairing(dir.path()), None);
+
+        let pairing = VestaCloudPairing {
+            device_code: "d".repeat(64),
+            user_code: "BCDF-2345".to_string(),
+            verification_url: "https://vesta.run/pair?code=BCDF-2345".to_string(),
+            interval: 5,
+            expires_at_epoch_secs: 1_000,
+        };
+        save_vesta_cloud_pairing(dir.path(), &pairing);
+        assert_eq!(load_vesta_cloud_pairing(dir.path()), Some(pairing.clone()));
+
+        assert!(!pairing.is_expired(999));
+        assert!(pairing.is_expired(1_000));
+        assert_eq!(pairing.remaining_secs(400), 600);
+        assert_eq!(pairing.remaining_secs(2_000), 0);
+
+        clear_vesta_cloud_pairing(dir.path());
+        assert_eq!(load_vesta_cloud_pairing(dir.path()), None);
+        clear_vesta_cloud_pairing(dir.path()); // absent: no-op
     }
 }

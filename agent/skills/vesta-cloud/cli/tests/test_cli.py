@@ -30,7 +30,12 @@ def test_whoami_account_true_when_minted_and_active(capsys, monkeypatch):
     monkeypatch.setattr(
         cli_mod.Client,
         "plan",
-        lambda self, token, control_url=None: {"plan": "membership", "status": "active", "price_cents": 4800, "renews_at": "2026-07-01T00:00:00.000Z"},
+        lambda self, token, control_url=None: {
+            "plan": "membership",
+            "status": "active",
+            "price_cents": 4800,
+            "renews_at": "2026-07-01T00:00:00.000Z",
+        },
     )
     rc, data = _run(["whoami"], capsys)
     assert rc == 0
@@ -231,9 +236,11 @@ def test_login_relays_code_then_links(capsys, monkeypatch):
         "pair_start",
         lambda self: {"user_code": "BCDF-2345", "verification_url": "https://vesta.run/pair?code=BCDF-2345", "interval": 5, "expires_in": 600},
     )
+    # Structured pending (current vestad), legacy 409-prose pending (older
+    # vestad across the skew), then linked — both pending shapes must loop.
     polls = iter(
         [
-            {"error": "authorization is still pending"},
+            {"status": "pending"},
             {"error": "authorization is still pending"},
             {"status": "linked", "server_id": "srv_1", "control_url": "https://vesta.run/api"},
         ]
@@ -286,7 +293,7 @@ def test_login_times_out(capsys, monkeypatch):
         "pair_start",
         lambda self: {"user_code": "BCDF-2345", "verification_url": "https://vesta.run/pair?code=BCDF-2345", "interval": 5, "expires_in": 600},
     )
-    monkeypatch.setattr(cli_mod.Client, "pair_poll", lambda self: {"error": "authorization is still pending"})
+    monkeypatch.setattr(cli_mod.Client, "pair_poll", lambda self: {"status": "pending"})
     monkeypatch.setattr(cli_mod.time, "sleep", lambda _s: None)
     # A monotonic clock that jumps past the deadline after the first poll.
     ticks = iter([0.0, 1.0, 10_000.0])
@@ -295,6 +302,60 @@ def test_login_times_out(capsys, monkeypatch):
     docs = _read_json_docs(capsys.readouterr().out)
     assert rc == 2
     assert docs[-1]["error"] == "pairing timed out"
+
+
+def test_login_survives_transient_poll_failures(capsys, monkeypatch):
+    monkeypatch.setattr(
+        cli_mod.Client,
+        "pair_start",
+        lambda self: {"user_code": "BCDF-2345", "verification_url": "https://vesta.run/pair?code=BCDF-2345", "interval": 5, "expires_in": 600},
+    )
+    calls = {"n": 0}
+
+    def poll(self):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise AccountError("server error 502: control plane blip")
+        if calls["n"] == 2:
+            return {"status": "pending"}
+        return {"status": "linked", "server_id": "srv_1", "control_url": "https://vesta.run/api"}
+
+    monkeypatch.setattr(cli_mod.Client, "pair_poll", poll)
+    monkeypatch.setattr(cli_mod.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(cli_mod.Client, "account_token", lambda self: {"token": "SITOK"})
+    monkeypatch.setattr(cli_mod.Client, "plan", lambda self, token, control_url=None: {"plan": "services", "status": "active"})
+
+    rc = cli_mod.main(["login"])
+    docs = _read_json_docs(capsys.readouterr().out)
+    assert rc == 0
+    assert calls["n"] == 3  # the 502 was retried, not fatal
+    assert docs[-1]["account"] is True
+
+
+def test_login_reports_linked_when_confirmation_read_fails(capsys, monkeypatch):
+    monkeypatch.setattr(
+        cli_mod.Client,
+        "pair_start",
+        lambda self: {"user_code": "BCDF-2345", "verification_url": "https://vesta.run/pair?code=BCDF-2345", "interval": 5, "expires_in": 600},
+    )
+    monkeypatch.setattr(
+        cli_mod.Client,
+        "pair_poll",
+        lambda self: {"status": "linked", "server_id": "srv_1", "control_url": "https://vesta.run/api"},
+    )
+
+    def boom(self):
+        raise AccountError("could not reach vestad: timeout")
+
+    monkeypatch.setattr(cli_mod.Client, "account_token", boom)
+
+    rc = cli_mod.main(["login"])
+    docs = _read_json_docs(capsys.readouterr().out)
+    # The pairing succeeded; a flaky confirmation must NOT fail the command
+    # (a nonzero exit invites a destructive logout + retry).
+    assert rc == 0
+    assert docs[-1]["status"] == "linked" and docs[-1]["server_id"] == "srv_1"
+    assert "whoami" in docs[-1]["note"]
 
 
 def test_logout_success(capsys, monkeypatch):

@@ -114,10 +114,19 @@ def _cmd_login(args: argparse.Namespace, client: Client, cfg: Config) -> int:
     budget = started.get("expires_in") if isinstance(started.get("expires_in"), int) else 600
     deadline = time.monotonic() + budget
     while time.monotonic() < deadline:
-        result = client.pair_poll()
+        try:
+            result = client.pair_poll()
+        except AccountError:
+            # A transient vestad/control-plane blip mid-wait. The pairing is
+            # still in flight, so keep polling until the code's own deadline;
+            # aborting here would orphan an approval the owner is completing.
+            time.sleep(interval)
+            continue
         if result.get("status") == "linked":
-            return _cmd_whoami(args, client, cfg)
-        if "pending" in str(result.get("error") or ""):
+            return _login_confirmation(args, client, cfg, result)
+        # Structured pending from current vestad; the substring check keeps an
+        # older vestad (409 prose) working across the version skew.
+        if result.get("status") == "pending" or "pending" in str(result.get("error") or ""):
             time.sleep(interval)
             continue
         # Terminal refusal (expired / account already has a server / unknown).
@@ -130,6 +139,24 @@ def _cmd_login(args: argparse.Namespace, client: Client, cfg: Config) -> int:
         }
     )
     return 2
+
+
+def _login_confirmation(args: argparse.Namespace, client: Client, cfg: Config, linked: dict[str, Any]) -> int:
+    """The pairing already SUCCEEDED; a flaky confirmation read must not turn that
+    into a nonzero exit (which reads as a failed login and invites a destructive
+    logout + retry). Fall back to reporting the link itself."""
+    try:
+        return _cmd_whoami(args, client, cfg)
+    except AccountError:
+        _print(
+            {
+                "status": "linked",
+                "server_id": linked.get("server_id"),
+                "control_url": linked.get("control_url"),
+                "note": "paired successfully. the confirmation read failed transiently; run `vesta-cloud whoami` to see the account.",
+            }
+        )
+        return 0
 
 
 def _cmd_logout(_args: argparse.Namespace, client: Client, _cfg: Config) -> int:

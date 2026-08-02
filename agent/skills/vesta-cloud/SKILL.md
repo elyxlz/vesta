@@ -70,7 +70,9 @@ vesta-cloud logout
 Detaches the box from its Vesta Cloud account (after asking the owner, this is theirs to
 decide). Also the local cleanup step when the owner already removed the box from the
 vesta.run dashboard: run it so the box forgets its stale link, then `login` can pair
-fresh. After logout, `whoami` answers `account: false` again.
+fresh. After logout, `whoami` answers `account: false` again. If logout reports that
+the control plane rejected this box's identity, the link was kept on purpose: have the
+owner remove the box from the vesta.run dashboard, then run `logout` again.
 
 ## The trust model (read this)
 
