@@ -60,6 +60,11 @@ lives about 10 minutes; on timeout, run `login` again for a fresh one. Pairing l
 box to the account; whether that account pays for anything is separate (`plan`). A
 managed Vesta Cloud VM refuses to pair (it already has its identity).
 
+The pairing flow itself lives on vestad (this command only triggers and relays it), so
+the owner can equally start it themselves by running `vestad vesta-cloud login` on the
+box host, or from the vesta app. Either path ends the same way; `whoami` reports the
+result regardless of who initiated.
+
 ## `logout`: unpair this box
 
 ```bash
@@ -68,11 +73,12 @@ vesta-cloud logout
 ```
 
 Detaches the box from its Vesta Cloud account (after asking the owner, this is theirs to
-decide). Also the local cleanup step when the owner already removed the box from the
-vesta.run dashboard: run it so the box forgets its stale link, then `login` can pair
-fresh. After logout, `whoami` answers `account: false` again. If logout reports that
-the control plane rejected this box's identity, the link was kept on purpose: have the
-owner remove the box from the vesta.run dashboard, then run `logout` again.
+decide; `vestad vesta-cloud logout` on the box host does the same). Also the local
+cleanup step when the owner already removed the box from the vesta.run dashboard: run it
+so the box forgets its stale link, then `login` can pair fresh. After logout, `whoami`
+answers `account: false` again. If logout reports that the control plane rejected this
+box's identity, the link was kept on purpose: have the owner remove the box from the
+vesta.run dashboard, then run `logout` again.
 
 ## The trust model (read this)
 

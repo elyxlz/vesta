@@ -67,30 +67,34 @@ class Client:
         return self.mint_token_detail()["token"]
 
     # --- vestad: pair / unpair a self-hosted box -----------------------------
+    # The pairing flow LIVES in vestad (one core shared with the apps and the
+    # host CLI `vestad vesta-cloud login`); these daemon-level routes carry no
+    # agent name, and vestad accepts any of the host's agent tokens on them.
 
     def pair_start(self) -> dict[str, Any]:
-        """POST <vestad>/agents/<name>/vesta-cloud/pair -> {user_code, verification_url,
-        interval, expires_in} OR {error} (already managed / already paired). vestad holds
-        the poll secret; the agent only relays the code the owner must approve."""
-        return self._vestad_post("vesta-cloud/pair", {"box_name": self._cfg.agent_name})
+        """POST <vestad>/vesta-cloud/pair -> {user_code, verification_url, interval,
+        expires_in} OR {error} (already managed / already paired). vestad holds the poll
+        secret and names the box; the agent only relays the code the owner approves."""
+        return self._vestad_post("vesta-cloud/pair", {}, agent_scoped=False)
 
     def pair_poll(self) -> dict[str, Any]:
-        """POST <vestad>/agents/<name>/vesta-cloud/pair/poll -> {status: "linked", ...} once
-        approved, {error: "...still pending"} while the owner hasn't approved, or a terminal
-        {error} (expired / refused)."""
-        return self._vestad_post("vesta-cloud/pair/poll", {})
+        """POST <vestad>/vesta-cloud/pair/poll -> {status: "pending"} until approved,
+        {status: "linked", ...} once approved, or a terminal {error} (expired / refused)."""
+        return self._vestad_post("vesta-cloud/pair/poll", {}, agent_scoped=False)
 
     def unpair(self) -> dict[str, Any]:
-        """POST <vestad>/agents/<name>/vesta-cloud/unpair -> {status: "unpaired"} OR {error}."""
-        return self._vestad_post("vesta-cloud/unpair", {})
+        """POST <vestad>/vesta-cloud/unpair -> {status: "unpaired"} OR {error}."""
+        return self._vestad_post("vesta-cloud/unpair", {}, agent_scoped=False)
 
-    def _vestad_post(self, tail: str, body: dict[str, Any]) -> dict[str, Any]:
-        """An agent-token-authed POST to this agent's vestad surface; see `account_token`
-        for the error contract (4xx bodies returned, transport/5xx raised)."""
+    def _vestad_post(self, tail: str, body: dict[str, Any], *, agent_scoped: bool = True) -> dict[str, Any]:
+        """An agent-token-authed POST to vestad, either on this agent's own surface or a
+        daemon-level path; see `account_token` for the error contract (4xx bodies
+        returned, transport/5xx raised)."""
         cfg = self._cfg
         if not cfg.vestad_base or not cfg.agent_name or not cfg.agent_token:
             return {"error": "not running inside an agent container (no VESTAD_PORT/BOX_HOST/AGENT_NAME/AGENT_TOKEN)"}
-        url = f"{cfg.vestad_base}/agents/{cfg.agent_name}/{tail}"
+        path = f"agents/{cfg.agent_name}/{tail}" if agent_scoped else tail
+        url = f"{cfg.vestad_base}/{path}"
         return self._json(self._send("POST", url, headers={"X-Agent-Token": cfg.agent_token}, json=body, verify=False))
 
     # --- control plane: read plan / open portal ------------------------------

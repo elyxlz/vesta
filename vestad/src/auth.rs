@@ -431,19 +431,14 @@ mod agent_name_extraction {
     use super::extract_agent_name;
 
     #[test]
-    fn nested_vesta_cloud_paths_still_self_scope_to_the_agent() {
-        for path in [
-            "/agents/alpha/vesta-cloud/pair",
-            "/agents/alpha/vesta-cloud/pair/poll",
-            "/agents/alpha/vesta-cloud/unpair",
-            "/agents/alpha/account-token",
-        ] {
-            assert_eq!(extract_agent_name(path).as_deref(), Some("alpha"));
-        }
-    }
-
-    #[test]
-    fn non_agent_paths_yield_no_name() {
+    fn agent_paths_self_scope_and_daemon_paths_do_not() {
+        assert_eq!(
+            extract_agent_name("/agents/alpha/account-token").as_deref(),
+            Some("alpha")
+        );
+        // Daemon-level Vesta Cloud pairing paths carry no agent name; they ride
+        // the any-agent-token tier instead of the self-scoped one.
+        assert_eq!(extract_agent_name("/vesta-cloud/pair"), None);
         assert_eq!(extract_agent_name("/health"), None);
         assert_eq!(extract_agent_name("/agents"), None);
     }
