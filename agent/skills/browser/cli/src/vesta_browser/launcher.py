@@ -39,6 +39,11 @@ CAMOUFOX_ASSETS = {
 RELEASE_DOWNLOAD_URL = "https://github.com/daijro/camoufox/releases/download"
 CACHE_ROOT = Path.home() / ".cache" / "camoufox"
 PROFILE_ROOT = Path.home() / ".browser" / "profile"
+# Throwaway per-session profiles live under their own root so cleanup has an unambiguous
+# target set. Nothing outside this directory is ever auto-deleted: a profile the agent
+# named itself with --user-data-dir is durable by intent, and an idle signed-in profile is
+# indistinguishable from an orphan by any liveness test.
+EPHEMERAL_ROOT = Path.home() / ".browser" / "ephemeral"
 
 DOWNLOAD_TIMEOUT_S = 600.0
 DOWNLOAD_CHUNK = 1 << 20

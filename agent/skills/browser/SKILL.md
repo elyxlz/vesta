@@ -83,14 +83,15 @@ All `helpers.py` primitives are pre-imported: `goto`, `new_tab`, `switch_tab`, `
 # Session
 browser launch                                    # fetch (first time) + launch Camoufox, headless
 browser launch --mode screenshot                  # ... and report back with screenshots, not the a11y tree
-browser launch --user-data-dir ~/.browser/work    # reuse / isolate a profile (own fingerprint)
+browser launch --ephemeral-profile                # isolated throwaway profile, deleted on stop
+browser launch --user-data-dir ~/.browser/work    # isolated DURABLE profile, kept forever
 browser connect http://192.168.1.10:9222          # attach to the user's own Chrome (CDP), even over a tunnel
 browser connect ws://192.168.1.10:9222/session    # attach to a remote Camoufox BiDi endpoint
 browser mode screenshot                           # switch perception: a11y | screenshot | both
 browser stop                                      # stop this session
 browser stop-all                                  # stop everything
 browser sessions                                  # list active sessions
-browser prune                                     # report unowned --user-data-dir profiles (--yes deletes)
+browser prune                                     # report ephemeral profiles left by crashes (--yes deletes)
 browser doctor                                    # report Camoufox install + session health
 
 # Navigation
@@ -182,20 +183,17 @@ order, most-preferred first:
    logged-in Chrome, drive it over a tunnel with `browser connect`. See
    [interaction-skills/remote-control.md](interaction-skills/remote-control.md).
 
-## Isolated profiles are durable, so prune them
+## Picking a profile
 
-`browser launch --user-data-dir <path>` creates a real profile directory that **nothing ever
-removes**, not `browser stop` and not `stop-all`, which only tear down the process and its `/tmp`
-state. Each one is tens of megabytes, and a session whose parent crashed leaves no pid file to find
-it by, so isolated profiles accumulate invisibly (a box that ran a few days of research subagents
-had 72 of them holding 3.8G, found only by looking at disk usage directly).
+- **Nothing** (default): the shared profile. Handover sign-ins persist here.
+- **`--ephemeral-profile`**: isolated, own fingerprint, **deleted on stop**. Use for one-off runs.
+- **`--user-data-dir <path>`**: isolated and **durable**, kept forever. Only for a profile you mean
+  to reuse, like an account you signed into once.
 
-So: **only pass `--user-data-dir` when you actually want the profile to outlive the session** (a
-signed-in account you will come back to). For a throwaway isolated run, reuse the shared profile, or
-clean up after yourself. `browser prune` reports what is reclaimable and `browser prune --yes`
-deletes it; both walk the filesystem rather than the session registry, which is the only thing that
-still works once the owning process is gone, and neither touches the shared profile or a directory
-a live Camoufox has open.
+`browser prune` exists for ephemeral profiles whose session was killed before it could clean up; it
+walks the filesystem rather than the session registry, since the registry dies with the session.
+It only ever touches the ephemeral root, never a `--user-data-dir` profile: an idle signed-in
+profile and an orphan look identical to any liveness check, so intent is recorded at creation.
 
 ## More
 
