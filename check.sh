@@ -28,6 +28,7 @@ Suites:
   whatsapp       gofmt + go vet + go build + go test for the whatsapp skill CLI
                  (builds whisper.cpp static libs to ~/.cache/vesta-whisper on first run)
   telegram       gofmt + go vet + go build + go test for the telegram skill CLI
+  otp            gofmt + go vet + go build + go test for the otp skill CLI
   app-chat       pytest for the app-chat skill CLI (its own standalone uv project)
   integration    vestad integration tests (needs Docker)
   live           live agent e2e tests, incl. the upgrade gate (needs Docker + ~/.claude/.credentials.json; real Claude)
@@ -254,6 +255,21 @@ check_telegram() {
   )
 }
 
+check_otp() {
+  (
+    cd agent/skills/otp/cli
+    UNFORMATTED=$(gofmt -l .)
+    if [ -n "$UNFORMATTED" ]; then
+      echo "error: unformatted Go files:" >&2
+      echo "$UNFORMATTED" >&2
+      exit 1
+    fi
+    go vet ./...
+    go build -o /tmp/otp-check-build .
+    go test ./...
+  )
+}
+
 check_app_chat() {
   (
     cd agent/skills/app-chat/cli
@@ -333,6 +349,7 @@ for suite in "$@"; do
     guards) check_guards ;;
     whatsapp) check_whatsapp ;;
     telegram) check_telegram ;;
+    otp) check_otp ;;
     app-chat) check_app_chat ;;
     integration) check_integration ;;
     live) check_live ;;

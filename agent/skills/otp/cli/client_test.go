@@ -50,6 +50,11 @@ func TestParseServerToken(t *testing.T) {
 	if _, err := parseServerToken(nil, errors.New("signal: killed"), true); err == nil || !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("timeout error = %v, want a timeout message", err)
 	}
+	// Empty output with no runErr and no timeout: the command exited 0 but printed nothing,
+	// so there is no token to use and no structured error to surface.
+	if _, err := parseServerToken(nil, nil, false); err == nil || !strings.Contains(err.Error(), "no token") {
+		t.Fatalf("empty output = %v, want a no-token message", err)
+	}
 }
 
 func TestReserve_cloudMintsTokenAndReturnsNumber(t *testing.T) {

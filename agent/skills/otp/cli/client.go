@@ -23,10 +23,7 @@ import (
 // /api/integrations/switchboard/*. Direct (self-hosted) sends an sbk_ key straight to a
 // Switchboard base URL; only the base URL, credential, and paths differ.
 
-const (
-	httpTimeout    = 30 * time.Second
-	controlTimeout = 60 * time.Second
-)
+const controlTimeout = 60 * time.Second
 
 // Non-error terminal outcomes of reserve, surfaced to the agent as a clean status
 // rather than a raw error: the per-account OTP quota is spent (wait, do not retry),
@@ -133,13 +130,6 @@ func loadConfig() config {
 		cloudManaged: strings.TrimSpace(os.Getenv("VESTA_CLOUD_CONTROL_URL")) != "",
 		configError:  configError,
 	}
-}
-
-func envOrDefault(name, def string) string {
-	if v := strings.TrimSpace(os.Getenv(name)); v != "" {
-		return v
-	}
-	return def
 }
 
 type client struct {

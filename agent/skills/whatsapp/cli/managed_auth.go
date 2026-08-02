@@ -87,7 +87,6 @@ func classifyBlock(err error) error {
 // This file is the HTTP client + on-disk state; daemon wiring lives in MANAGED_AUTH.md.
 
 const (
-	managedHTTPTimeout = 30 * time.Second
 	// controlHTTPTimeout bounds a call to the pool API. It is generous because
 	// /pair blocks server-side while the home box holds the primary online through
 	// the just-linked companion's initial sync (a cold primary there leaves the
@@ -161,13 +160,6 @@ func loadManagedConfig() managedConfig {
 	}
 }
 
-func envOrDefault(name, def string) string {
-	if v := strings.TrimSpace(os.Getenv(name)); v != "" {
-		return v
-	}
-	return def
-}
-
 // isDirect reports whether a direct home-box key is configured: the box talks
 // straight to the pool API with its own per-account key, no vesta.run, no vestad.
 func (c managedConfig) isDirect() bool {
@@ -239,7 +231,7 @@ func (m *managedAuth) isDirect() bool {
 // is cloudManaged (VESTA_CLOUD_CONTROL_URL), which the control plane's cloud-init
 // drop-in sets only on managed VMs and vestad forwards into the container. Without
 // it, a plain box falls back to the QR strategy instead of dead-ending on a managed
-// path whose account-token mint would 404.
+// path whose `vesta-cloud token` mint would fail (it has no cloud account).
 func (m *managedAuth) isHosted() bool {
 	return m.cfg.configError != "" || m.cfg.isDirect() || m.cfg.isCloudTenant()
 }
