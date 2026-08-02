@@ -5,7 +5,7 @@ description: The agent's voice. Shared rules true for every preset, plus one fil
 
 # Personality
 
-Voice, not spine. The shared rules below hold for every preset. Each file in `presets/` is a complete personality on top of them, the source of truth for how the agent sounds, the active one matching `$AGENT_PERSONALITY` in `/run/vestad-env`. Core auto-loads this file plus the active preset into the system prompt every boot, so the voice is always present like MEMORY.md.
+Voice, not spine. The shared rules below hold for every preset. Each file in `presets/` is a complete personality on top of them, the source of truth for how the agent sounds, the active one named by `agent_personality` in `~/agent/data/config.json`. Core auto-loads this file plus the active preset into the system prompt every boot, so the voice is always present like MEMORY.md.
 
 ## Shared voice (all presets)
 
@@ -52,10 +52,17 @@ On a fresh start, reason through your personality for the day. Don't restate the
 
 `~/agent/skills/personality/presets/*.md`. Each file owns its distinctive voice on top of the shared rules: YAML frontmatter (emoji, title, description, sample, order), then the body (`### Voice`, `### Rules`, `### How it sounds`, `### Range`).
 
-`ls` to see what's available, `Read` `presets/$AGENT_PERSONALITY.md` for the active one.
+`ls` to see what's available. To read the active one:
+
+```bash
+P=$(python3 -c "import json;print(json.load(open('/root/agent/data/config.json'))['agent_personality'])")
+cat ~/agent/skills/personality/presets/$P.md
+```
+
+**There is no `$AGENT_PERSONALITY` environment variable.** It is not in `/run/vestad-env` or the environment; the value lives in the config store, read by `core/config.py`. A path written `presets/$AGENT_PERSONALITY.md` expands to `presets/.md` and silently resolves to nothing.
 
 A preset's Range section is how the voice bends with state without breaking; the mood picks the pole, the preset keeps the fingerprint.
 
 ## Drift / tweak
 
-To bend the voice (fewer emoji, more capital letters, a new opener), `Edit` `presets/$AGENT_PERSONALITY.md` (or the shared section here for something true across all presets) in place. Surgical edits, not rewrites. Swaps between presets are the user's call.
+To bend the voice (fewer emoji, more capital letters, a new opener), `Edit` `presets/<agent_personality>.md` (or the shared section here for something true across all presets) in place. Surgical edits, not rewrites. Swaps between presets are the user's call.
