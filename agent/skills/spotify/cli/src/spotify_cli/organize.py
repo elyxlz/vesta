@@ -1,6 +1,7 @@
 """Spotify library organization — sync likes & genre-sort orphans."""
 
 import json
+import os
 import sys
 import time
 from datetime import UTC, datetime
@@ -11,7 +12,18 @@ from .config import Config
 
 ORGANIZE_CONFIG = Path.home() / ".spotify" / "organize.json"
 WATCH_STATE_FILE = Path.home() / ".spotify" / "watch_state.json"
-NOTIFICATIONS_DIR = Path.home() / "notifications"
+
+
+def _notifications_dir() -> Path:
+    """The directory the engine watches, mirroring config.notifications_dir (agent_dir / notifications,
+    with agent_dir following AGENT_DIR when set). Resolved rather than hardcoded because writing a
+    notification into any other directory still succeeds: nothing is delivered and nothing errors."""
+    env = os.environ.get("AGENT_DIR")
+    base = Path(env).expanduser().resolve() if env else Path.home() / "agent"
+    return base / "notifications"
+
+
+NOTIFICATIONS_DIR = _notifications_dir()
 
 # Default skip list — playlists too ambiguous or personal for auto-sorting.
 # Customize this in ~/.spotify/organize.json after running: spotify organize config --init
