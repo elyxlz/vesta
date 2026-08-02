@@ -22,6 +22,111 @@ tags:
     env:
       SCREENSHOT: home-agents.png
 
+- tapOn: "Open aria"
+- extendedWaitUntil:
+    visible: "Done. I prioritized the visual regressions first.*"
+    timeout: 10000
+- takeScreenshot: agent-chat
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-chat.png
+
+- swipe:
+    start: "85%,50%"
+    end: "15%,50%"
+    duration: 450
+- extendedWaitUntil:
+    visible: "Your dashboard"
+    timeout: 10000
+- takeScreenshot: agent-dashboard-empty
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-dashboard-empty.png
+
+- tapOn: "Agent settings"
+- extendedWaitUntil:
+    visible: "Natural chat pacing"
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: agent-settings
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-settings.png
+
+- scrollUntilVisible:
+    element:
+      text: "^Notifications,.*"
+    direction: DOWN
+    timeout: 10000
+    speed: 40
+    visibilityPercentage: 100
+- tapOn:
+    text: "^Notifications,.*"
+- extendedWaitUntil:
+    visible: "Design review"
+    timeout: 10000
+- takeScreenshot: agent-notifications
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-notifications.png
+- openLink:
+    link: "vesta-dev://agent/aria/settings"
+- extendedWaitUntil:
+    visible: "Natural chat pacing"
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      text: "^Logs,.*"
+    direction: DOWN
+    timeout: 10000
+    speed: 40
+    visibilityPercentage: 100
+
+- tapOn:
+    text: "^Logs,.*"
+- extendedWaitUntil:
+    visible: ".*gateway sync ready"
+    timeout: 10000
+- takeScreenshot: agent-logs
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-logs.png
+- openLink:
+    link: "vesta-dev://agent/aria/settings"
+- extendedWaitUntil:
+    visible: "Natural chat pacing"
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      text: "^Files,.*"
+    direction: DOWN
+    timeout: 10000
+    speed: 40
+    visibilityPercentage: 100
+
+- tapOn:
+    text: "^Files,.*"
+- extendedWaitUntil:
+    visible: "Who aria is"
+    timeout: 10000
+- takeScreenshot: agent-files
+- runScript:
+    file: capture-screenshot.js
+    env:
+      SCREENSHOT: agent-files.png
+- stopApp
+- openLink:
+    link: "vesta-dev://?visualPrivacy=unlocked&visualSession=connected&visualRoster=agents"
+- extendedWaitUntil:
+    visible: "Open aria"
+    timeout: 10000
+
 - tapOn: "Create agent"
 - extendedWaitUntil:
     visible: "Coming soon"

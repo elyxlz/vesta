@@ -95,6 +95,48 @@
       "screenshot": "home-agents.png"
     },
     {
+      "id": "agent-chat",
+      "title": "Agent conversation",
+      "description": "Held conversation remains available while the agent connection is recovering.",
+      "group": "Agent",
+      "screenshot": "agent-chat.png"
+    },
+    {
+      "id": "agent-dashboard-empty",
+      "title": "Agent dashboard",
+      "description": "Agent dashboard page before any custom widgets have been configured.",
+      "group": "Agent",
+      "screenshot": "agent-dashboard-empty.png"
+    },
+    {
+      "id": "agent-settings",
+      "title": "Agent settings",
+      "description": "Identity, model, page, attention, backup, and lifecycle controls for an agent.",
+      "group": "Agent settings",
+      "screenshot": "agent-settings.png"
+    },
+    {
+      "id": "agent-notifications",
+      "title": "Notification history",
+      "description": "Deterministic calendar, email, and message decisions for the selected agent.",
+      "group": "Agent",
+      "screenshot": "agent-notifications.png"
+    },
+    {
+      "id": "agent-logs",
+      "title": "Live agent logs",
+      "description": "Colorized deterministic runtime output in the standalone log viewer.",
+      "group": "Agent",
+      "screenshot": "agent-logs.png"
+    },
+    {
+      "id": "agent-files",
+      "title": "Agent files",
+      "description": "Memory, constitution, dreams, and installed abilities from a fixed file tree.",
+      "group": "Agent settings",
+      "screenshot": "agent-files.png"
+    },
+    {
       "id": "home-empty",
       "title": "Empty agent home",
       "description": "Connected gateway with no agents and the primary creation action.",
