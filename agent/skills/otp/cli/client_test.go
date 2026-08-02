@@ -64,7 +64,7 @@ func TestReserve_cloudMintsTokenAndReturnsNumber(t *testing.T) {
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
 		_ = json.NewEncoder(w).Encode(map[string]string{"id": "lease_1", "number": "+15550001111", "service": "github"})
 	})
-	l, err := c.reserve("github", "US")
+	l, err := c.reserve("github", "US", "flow-42")
 	if err != nil {
 		t.Fatalf("reserve: %v", err)
 	}
@@ -80,6 +80,11 @@ func TestReserve_cloudMintsTokenAndReturnsNumber(t *testing.T) {
 	if gotBody["service"] != "github" || gotBody["country"] != "US" {
 		t.Fatalf("reserve body = %+v", gotBody)
 	}
+	// A stable idempotency_key must reach the control plane so a retried reserve for the
+	// same flow returns the same number rather than drawing (and paying for) a second.
+	if gotBody["idempotency_key"] != "flow-42" {
+		t.Fatalf("reserve body idempotency_key = %q, want flow-42", gotBody["idempotency_key"])
+	}
 }
 
 func TestReserve_quota429SurfacesErrQuotaExceeded(t *testing.T) {
@@ -87,7 +92,7 @@ func TestReserve_quota429SurfacesErrQuotaExceeded(t *testing.T) {
 		w.WriteHeader(http.StatusTooManyRequests)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "otp_quota_exceeded"})
 	})
-	if _, err := c.reserve("github", ""); !errors.Is(err, errQuotaExceeded) {
+	if _, err := c.reserve("github", "", ""); !errors.Is(err, errQuotaExceeded) {
 		t.Fatalf("reserve on 429 = %v, want errQuotaExceeded", err)
 	}
 }
@@ -97,7 +102,7 @@ func TestReserve_outOfStock503SurfacesErrOutOfStock(t *testing.T) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "out_of_stock"})
 	})
-	if _, err := c.reserve("github", ""); !errors.Is(err, errOutOfStock) {
+	if _, err := c.reserve("github", "", ""); !errors.Is(err, errOutOfStock) {
 		t.Fatalf("reserve on 503 = %v, want errOutOfStock", err)
 	}
 }
@@ -215,7 +220,7 @@ func TestDirect_sbkKeyHitsNativeLeasePaths(t *testing.T) {
 	if !c.isDirect() || !c.isHosted() {
 		t.Fatal("a box with an sbk_ key is direct + hosted")
 	}
-	l, err := c.reserve("discord", "")
+	l, err := c.reserve("discord", "", "")
 	if err != nil {
 		t.Fatalf("direct reserve: %v", err)
 	}
@@ -237,36 +242,18 @@ func TestDirect_sbkKeyHitsNativeLeasePaths(t *testing.T) {
 	}
 }
 
-// A self-hosted box with a Switchboard base URL but no key delegates the sbk_ key to
-// the cloud: authorize mints it from the /token endpoint (server-identity authed),
-// then talks to that Switchboard natively. The key never appears in output.
-func TestAuthorize_directCredsFromTokenEndpoint(t *testing.T) {
-	var sawTokenAuth string
-	ctrl := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/integrations/switchboard/token" {
-			http.Error(w, "no", http.StatusNotFound)
-			return
-		}
-		sawTokenAuth = r.Header.Get("Authorization")
-		_ = json.NewEncoder(w).Encode(map[string]string{"url": "https://sb.example", "key": "sbk_minted"})
-	}))
-	t.Cleanup(ctrl.Close)
-	stubServerToken(t, ctrl.URL)
-	c := newClient(config{
-		directURL: "https://sb.example", // base set, key absent
-	})
-	base, auth, direct, err := c.authorize()
-	if err != nil {
-		t.Fatalf("authorize: %v", err)
+// A Switchboard base URL with no key is a misconfiguration, not a delegated mode: the
+// cloud never mints a key to the box. loadConfig rejects it and reserve refuses rather
+// than reaching for a control-plane endpoint that no longer exists.
+func TestLoadConfig_urlWithoutKeyIsRejected(t *testing.T) {
+	t.Setenv("SWITCHBOARD_API_URL", "https://sb.example")
+	t.Setenv("SWITCHBOARD_API_KEY", "")
+	cfg := loadConfig()
+	if cfg.configError == "" || cfg.directURL != "" {
+		t.Fatalf("a base with no key must be rejected: %+v", cfg)
 	}
-	if !direct {
-		t.Fatal("a /token-minted credential must resolve to direct mode (native paths)")
-	}
-	if base != "https://sb.example" || auth != "Bearer sbk_minted" {
-		t.Fatalf("authorize base=%q auth=%q, want the /token-minted creds", base, auth)
-	}
-	if sawTokenAuth != "Bearer sit_minted" {
-		t.Fatalf("/token Authorization = %q, want the server-identity token", sawTokenAuth)
+	if _, err := newClient(cfg).reserve("x", "", ""); err == nil || !strings.Contains(err.Error(), "without SWITCHBOARD_API_KEY") {
+		t.Fatalf("reserve with base-only config error = %v", err)
 	}
 }
 
@@ -291,7 +278,7 @@ func TestLoadConfig_keyWithoutURLIsRejected(t *testing.T) {
 	if cfg.configError == "" || cfg.directKey != "" {
 		t.Fatalf("a key with no base must be rejected: %+v", cfg)
 	}
-	if _, err := newClient(cfg).reserve("x", ""); err == nil || !strings.Contains(err.Error(), "without SWITCHBOARD_API_URL") {
+	if _, err := newClient(cfg).reserve("x", "", ""); err == nil || !strings.Contains(err.Error(), "without SWITCHBOARD_API_URL") {
 		t.Fatalf("reserve with orphan key error = %v", err)
 	}
 }

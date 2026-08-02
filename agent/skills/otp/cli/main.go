@@ -36,7 +36,7 @@ func main() {
 
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage: otp <command> [flags]")
-	fmt.Fprintln(w, "  new --service <name> [--country US]   reserve a temporary number for a service; prints {number, id}")
+	fmt.Fprintln(w, "  new --service <name> [--country US] [--idempotency-key <k>]   reserve a temporary number for a service; prints {number, id}")
 	fmt.Fprintln(w, "  code --id <id> [--since <RFC3339>]    wait for the SMS code on that number; prints {code}")
 	fmt.Fprintln(w, "  release --id <id>                     give the number back when done; prints {}")
 }
@@ -45,13 +45,14 @@ func runNew(args []string) {
 	fs := flag.NewFlagSet("new", flag.ContinueOnError)
 	service := fs.String("service", "", "the service the code is for (required)")
 	country := fs.String("country", "", "optional ISO country code, e.g. US")
+	idempotencyKey := fs.String("idempotency-key", "", "optional stable key: reuse it when retrying a reserve for the same flow so it returns the same number instead of drawing another")
 	if err := fs.Parse(args); err != nil {
 		failJSON("%v", err)
 	}
 	if *service == "" {
 		failJSON("--service is required")
 	}
-	l, err := newClient(loadConfig()).reserve(*service, *country)
+	l, err := newClient(loadConfig()).reserve(*service, *country, *idempotencyKey)
 	if err != nil {
 		failReserve(err)
 	}

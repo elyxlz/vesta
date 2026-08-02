@@ -113,11 +113,16 @@ func loadConfig() config {
 	directURL := strings.TrimSpace(os.Getenv("SWITCHBOARD_API_URL"))
 	directKey := strings.TrimSpace(os.Getenv("SWITCHBOARD_API_KEY"))
 	configError := ""
-	// A key with no base is meaningless. A base alone is allowed: it means "talk to
-	// this Switchboard directly, mint me the sbk_ key from the cloud /token endpoint".
-	if directKey != "" && directURL == "" {
+	// Direct mode needs both halves: a self-hosted operator hands the box a one-time
+	// sbk_ key out of band. Either half alone is a misconfiguration. (The cloud never
+	// mints a key to the box; a paid tenant reserves through the forwarded API instead.)
+	switch {
+	case directKey != "" && directURL == "":
 		configError = "SWITCHBOARD_API_KEY is set without SWITCHBOARD_API_URL"
 		directKey = ""
+	case directURL != "" && directKey == "":
+		configError = "SWITCHBOARD_API_URL is set without SWITCHBOARD_API_KEY"
+		directURL = ""
 	}
 	return config{
 		directURL:    strings.TrimRight(directURL, "/"),
@@ -161,7 +166,7 @@ func (c *client) isDirect() bool {
 // cannot tell a paid tenant from a plain self-hosted box; cloudManaged
 // (VESTA_CLOUD_CONTROL_URL) is the distinguishing signal.
 func (c *client) isHosted() bool {
-	return c.cfg.configError != "" || c.isDirect() || c.cfg.directURL != "" ||
+	return c.cfg.configError != "" || c.isDirect() ||
 		(c.cfg.cloudManaged && c.cfg.vestadBase != "" && c.cfg.agentName != "" && c.cfg.agentToken != "")
 }
 
@@ -229,46 +234,11 @@ func (c *client) authorize() (base, auth string, direct bool, err error) {
 	if c.isDirect() {
 		return c.cfg.directURL, "Bearer " + c.cfg.directKey, true, nil
 	}
-	// A base with no key (self-hosted, delegating the key to the cloud): ask the
-	// control plane's /token endpoint for a direct Switchboard URL + sbk_ key, then
-	// talk to that Switchboard natively.
-	if c.cfg.directURL != "" {
-		creds, err := c.fetchDirectToken()
-		if err != nil {
-			return "", "", false, err
-		}
-		return strings.TrimRight(creds.URL, "/"), "Bearer " + creds.Key, true, nil
-	}
 	st, err := mintServerToken()
 	if err != nil {
 		return "", "", false, err
 	}
 	return st.controlURL + "/integrations/switchboard", "Bearer " + st.token, false, nil
-}
-
-type directToken struct {
-	URL string `json:"url"`
-	Key string `json:"key"`
-}
-
-// fetchDirectToken asks the control plane for a direct Switchboard URL + a freshly
-// minted sbk_ key (cloud-authed with a server-identity token), for a self-hosted box
-// that talks to Switchboard directly rather than through the forwarded API. The key
-// is a secret: it stays inside this process and is never printed.
-func (c *client) fetchDirectToken() (directToken, error) {
-	st, err := mintServerToken()
-	if err != nil {
-		return directToken{}, err
-	}
-	var out directToken
-	u := st.controlURL + "/integrations/switchboard/token"
-	if _, err := c.do(c.control, http.MethodGet, u, map[string]string{"Authorization": "Bearer " + st.token}, nil, &out); err != nil {
-		return directToken{}, fmt.Errorf("mint direct switchboard credentials: %w", err)
-	}
-	if out.URL == "" || out.Key == "" {
-		return directToken{}, fmt.Errorf("/token returned no url/key")
-	}
-	return out, nil
 }
 
 type lease struct {
@@ -279,8 +249,10 @@ type lease struct {
 
 // reserve claims a temporary number for one service. Cloud mode POSTs the forwarded
 // /reserve; direct mode POSTs native /leases. A spent quota comes back errQuotaExceeded
-// and an empty pool errOutOfStock, both surfaced as a clean status.
-func (c *client) reserve(service, country string) (lease, error) {
+// and an empty pool errOutOfStock, both surfaced as a clean status. A non-empty
+// idempotencyKey is passed through so a retried reserve for the same flow returns the
+// same number instead of drawing (and paying for) a second one.
+func (c *client) reserve(service, country, idempotencyKey string) (lease, error) {
 	base, auth, direct, err := c.authorize()
 	if err != nil {
 		return lease{}, err
@@ -292,6 +264,9 @@ func (c *client) reserve(service, country string) (lease, error) {
 	body := map[string]string{"service": service}
 	if country != "" {
 		body["country"] = country
+	}
+	if idempotencyKey != "" {
+		body["idempotency_key"] = idempotencyKey
 	}
 	var out lease
 	if _, err := c.do(c.control, http.MethodPost, base+path, map[string]string{"Authorization": auth}, body, &out); err != nil {

@@ -25,6 +25,9 @@ otp new --service coinbase --country US
 
 `--service` is required (the service you are verifying, for pool accounting).
 `--country` is an optional ISO code when the service needs a specific region.
+`--idempotency-key` is optional: if a `new` call fails transiently and you retry it,
+pass the same key both times so the retry returns the same number instead of drawing
+(and charging for) a second. Use a fresh key for each genuinely new signup.
 
 Success prints the number to type into the service and the `id` to poll with:
 
@@ -77,5 +80,5 @@ so the pool stays available. Releasing an already-released `id` is safe.
 On a Vesta Cloud box the CLI mints a short-lived server-identity token from vestad
 and calls vesta.run, so no setup and no key are needed. A self-hosted box points at
 its own Switchboard directly with `SWITCHBOARD_API_URL` plus an `SWITCHBOARD_API_KEY`
-(an `sbk_` key); set the base URL alone to have the cloud mint the key. Never print
-or log the key.
+(an `sbk_` key handed over by whoever runs that Switchboard); both are required
+together. Never print or log the key.
