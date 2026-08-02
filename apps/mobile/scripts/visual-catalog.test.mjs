@@ -101,6 +101,43 @@ describe("galleryHtml", () => {
     expect(html).toContain('src="screenshots/connect-actions.png"');
     expect(html).not.toContain("dynamic-island");
   });
+
+  it("groups screenshots into manifest-ordered sections without search", () => {
+    const html = galleryHtml({
+      ...catalog,
+      scenarios: [
+        {
+          captured: true,
+          description: "First onboarding state",
+          group: "Onboarding",
+          image: "screenshots/connect.png",
+          title: "Connect",
+        },
+        {
+          captured: true,
+          description: "Privacy state",
+          group: "Privacy",
+          image: "screenshots/privacy.png",
+          title: "Privacy",
+        },
+        {
+          captured: true,
+          description: "Second onboarding state",
+          group: "Onboarding",
+          image: "screenshots/recent.png",
+          title: "Recent gateways",
+        },
+      ],
+    });
+
+    expect(html.match(/class="scenario-section"/g)).toHaveLength(2);
+    expect(html).toContain(">2 screens</span>");
+    expect(html.indexOf(">Onboarding<")).toBeLessThan(
+      html.indexOf(">Privacy<"),
+    );
+    expect(html).not.toContain('type="search"');
+    expect(html).not.toContain('querySelector("#filter")');
+  });
 });
 
 describe("visual Metro privacy override", () => {

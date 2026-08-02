@@ -1061,12 +1061,19 @@ function escapeHtml(value) {
 
 export function galleryHtml(catalog) {
   const catalogJson = JSON.stringify(catalog).replaceAll("<", "\\u003c");
-  const cards = catalog.scenarios
-    .map(
-      (scenario) => `
-        <article class="card" data-title="${escapeHtml(
-          `${scenario.title} ${scenario.description} ${scenario.group}`,
-        ).toLowerCase()}">
+  const scenarioGroups = new Map();
+  for (const scenario of catalog.scenarios) {
+    const group = scenario.group || "Other";
+    const scenarios = scenarioGroups.get(group) ?? [];
+    scenarios.push(scenario);
+    scenarioGroups.set(group, scenarios);
+  }
+  const sections = [...scenarioGroups.entries()]
+    .map(([group, scenarios], sectionIndex) => {
+      const cards = scenarios
+        .map(
+          (scenario) => `
+        <article class="card">
           <button class="preview" data-image="${escapeHtml(
             scenario.image,
           )}" aria-label="Open ${escapeHtml(scenario.title)}">
@@ -1085,12 +1092,24 @@ export function galleryHtml(catalog) {
             </span>
           </button>
           <div class="card-copy">
-            <span class="eyebrow">${escapeHtml(scenario.group)}</span>
-            <h2>${escapeHtml(scenario.title)}</h2>
+            <h3>${escapeHtml(scenario.title)}</h3>
             <p>${escapeHtml(scenario.description)}</p>
           </div>
         </article>`,
-    )
+        )
+        .join("");
+      const sectionId = `scenario-section-${sectionIndex}`;
+      return `
+    <section class="scenario-section" aria-labelledby="${sectionId}">
+      <div class="section-header">
+        <h2 class="section-title" id="${sectionId}">${escapeHtml(group)}</h2>
+        <span class="section-count">${scenarios.length} ${
+          scenarios.length === 1 ? "screen" : "screens"
+        }</span>
+      </div>
+      <div class="grid">${cards}</div>
+    </section>`;
+    })
     .join("");
 
   return `<!doctype html>
@@ -1121,8 +1140,8 @@ export function galleryHtml(catalog) {
     }
     header {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(240px, 360px);
-      align-items: end;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
       gap: 20px 32px;
       max-width: 1680px;
       margin: 0 auto;
@@ -1142,8 +1161,13 @@ export function galleryHtml(catalog) {
       letter-spacing: -.045em;
     }
     .intro { margin: 0; color: var(--muted); font-size: 14px; }
-    .controls { display: grid; gap: 10px; }
-    .meta { display: flex; flex-wrap: wrap; gap: 6px; }
+    .meta {
+      display: flex;
+      max-width: 540px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 6px;
+    }
     .meta span, .report {
       border: 1px solid var(--border);
       border-radius: 999px;
@@ -1154,25 +1178,37 @@ export function galleryHtml(catalog) {
       font-size: 10px;
     }
     .report:hover { color: var(--text); border-color: #555563; }
-    input {
-      width: 100%;
-      border: 1px solid var(--border);
-      border-radius: 11px;
-      padding: 10px 12px;
-      background: #111116;
-      color: var(--text);
-      font: inherit;
-      outline: none;
-    }
-    input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px #b8a7ff22; }
     main {
+      max-width: 1680px;
+      margin: 0 auto;
+      padding: 8px 24px 64px;
+    }
+    .scenario-section + .scenario-section { margin-top: 48px; }
+    .section-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 10px;
+    }
+    .section-title {
+      margin: 0;
+      font-size: 20px;
+      line-height: 1.2;
+      letter-spacing: -.025em;
+    }
+    .section-count {
+      flex: 0 0 auto;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(min(100%, 210px), 1fr));
       align-items: start;
       gap: 16px;
-      max-width: 1680px;
-      margin: 0 auto;
-      padding: 8px 24px 64px;
     }
     .card {
       min-width: 0;
@@ -1295,14 +1331,7 @@ export function galleryHtml(catalog) {
       background: linear-gradient(150deg, #1b1b21, var(--card));
       box-shadow: 0 8px 24px #0003;
     }
-    .eyebrow {
-      color: var(--accent);
-      font-size: 9px;
-      font-weight: 700;
-      letter-spacing: .06em;
-      text-transform: uppercase;
-    }
-    h2 { margin: 3px 0 4px; font-size: 16px; line-height: 1.2; letter-spacing: -.015em; }
+    h3 { margin: 0 0 4px; font-size: 16px; line-height: 1.2; letter-spacing: -.015em; }
     .card p {
       display: -webkit-box;
       overflow: hidden;
@@ -1340,10 +1369,14 @@ export function galleryHtml(catalog) {
     [hidden] { display: none !important; }
     @media (max-width: 720px) {
       header { grid-template-columns: 1fr; padding: 24px 16px 18px; }
+      .meta { justify-content: flex-start; }
       main {
+        padding: 4px 16px 48px;
+      }
+      .scenario-section + .scenario-section { margin-top: 36px; }
+      .grid {
         grid-template-columns: repeat(auto-fill, minmax(min(100%, 160px), 1fr));
         gap: 10px;
-        padding: 4px 16px 48px;
       }
     }
   </style>
@@ -1362,34 +1395,25 @@ export function galleryHtml(catalog) {
       <h1>Visual catalog</h1>
       <p class="intro">Complete device captures at a glance. Click any image to expand it.</p>
     </div>
-    <div class="controls">
-      <input id="filter" type="search" placeholder="Filter screenshots…" aria-label="Filter screenshots">
-      <div class="meta">
-        <span>${escapeHtml(catalog.device.name)}</span>
-        <span>${escapeHtml(catalog.device.runtime)}</span>
-        <span>${escapeHtml(catalog.generatedAt)}</span>
-        <span>${escapeHtml(catalog.git.revision)}${catalog.git.dirty ? " · dirty" : ""}</span>
-        ${
-          catalog.reportAvailable
-            ? '<a class="report" href="maestro/report.html">Maestro report</a>'
-            : ""
-        }
-      </div>
+    <div class="meta">
+      <span>${escapeHtml(catalog.device.name)}</span>
+      <span>${escapeHtml(catalog.device.runtime)}</span>
+      <span>${escapeHtml(catalog.generatedAt)}</span>
+      <span>${escapeHtml(catalog.git.revision)}${catalog.git.dirty ? " · dirty" : ""}</span>
+      ${
+        catalog.reportAvailable
+          ? '<a class="report" href="maestro/report.html">Maestro report</a>'
+          : ""
+      }
     </div>
   </header>
-  <main>${cards}</main>
+  <main>${sections}</main>
   <dialog id="lightbox">
     <button aria-label="Close">×</button>
     <img alt="">
   </dialog>
   <script>
     window.__VISUAL_CATALOG__ = ${catalogJson};
-    const filter = document.querySelector("#filter");
-    const cards = [...document.querySelectorAll(".card")];
-    filter.addEventListener("input", () => {
-      const query = filter.value.trim().toLowerCase();
-      for (const card of cards) card.hidden = !card.dataset.title.includes(query);
-    });
     const dialog = document.querySelector("#lightbox");
     const dialogImage = dialog.querySelector("img");
     document.querySelectorAll(".preview[data-image]").forEach((button) => {
