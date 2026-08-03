@@ -655,11 +655,35 @@ func (ms *MessageStore) ListMessages(
 	if query != "" {
 		messages, err := ms.listMessagesQuery(true, after, before, senderPhone, chatJIDs, query, limit, offset)
 		if err == nil {
-			return messages, nil
+			return dedupeByID(messages, len(chatJIDs) > 1), nil
 		}
 	}
 
-	return ms.listMessagesQuery(false, after, before, senderPhone, chatJIDs, query, limit, offset)
+	messages, err := ms.listMessagesQuery(false, after, before, senderPhone, chatJIDs, query, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return dedupeByID(messages, len(chatJIDs) > 1), nil
+}
+
+// dedupeByID drops repeats of the same message id, keeping the first (most recent) copy. The
+// messages primary key is (id, chat_jid), so one message re-stored under a chat's other storage
+// key is two rows, and a union across both keys would show it twice. Only runs when more than one
+// key was queried, since a single key cannot repeat an id.
+func dedupeByID(messages []Message, active bool) []Message {
+	if !active || len(messages) < 2 {
+		return messages
+	}
+	seen := make(map[string]struct{}, len(messages))
+	out := messages[:0]
+	for _, m := range messages {
+		if _, dup := seen[m.ID]; dup {
+			continue
+		}
+		seen[m.ID] = struct{}{}
+		out = append(out, m)
+	}
+	return out
 }
 
 func (ms *MessageStore) listMessagesQuery(

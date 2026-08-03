@@ -70,11 +70,9 @@ MSG
 - `whatsapp backfill --to <name>` asks the phone for older history when the local DB is thin.
 - `whatsapp check-delivery --message-id <id>` (or `--recent`) checks whether a send landed.
 - Message IDs come from inbound notification payloads (`message_id`) or `messages` output.
-- **One direct chat is stored under two keys**, the peer's phone JID and their LID (a privacy
-  address), because messages received before the LID to phone mapping was known are keyed by the
-  LID. `messages --to` reads both, so the transcript it returns is the whole conversation. Query
-  `messages.db` by hand and you get one side only, which reads as "they never replied" rather than
-  as missing data, so prefer the command over your own SQL.
+- **One direct chat is stored under two keys** (the peer's phone JID and their LID). `messages --to`
+  reads both; hand-written SQL against `messages.db` gets one side, which reads as "they never
+  replied" rather than as missing data. Prefer the command.
 
 ## Profile
 

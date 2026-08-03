@@ -117,11 +117,18 @@ func (wac *WhatsAppClient) chatStorageKeys(to string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	keys := []string{jid.String()}
-	if alt := wac.mappedJID(jid); !alt.IsEmpty() {
+	return storageKeys(jid, wac.mappedJID(jid)), nil
+}
+
+// storageKeys unions a resolved chat JID with its LID<->PN counterpart, skipping an empty
+// counterpart (a group, or a peer with no mapping yet). Kept free of the client so the union
+// itself is directly testable.
+func storageKeys(primary, alt types.JID) []string {
+	keys := []string{primary.String()}
+	if !alt.IsEmpty() && alt.String() != primary.String() {
 		keys = append(keys, alt.String())
 	}
-	return keys, nil
+	return keys
 }
 
 // requireReplyFirst enforces reply-first onboarding on a managed (pooled) number: it
