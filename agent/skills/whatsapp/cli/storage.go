@@ -640,27 +640,34 @@ func normalizePhoneInput(input string) (string, string, error) {
 	return digits, "+" + digits, nil
 }
 
+// ListMessages reads stored messages. chatJIDs filters by chat; pass every storage key one
+// conversation can live under (a direct chat splits across the peer's phone JID and their LID),
+// or nil for no chat filter.
 func (ms *MessageStore) ListMessages(
 	after, before *time.Time,
-	senderPhone, chatJID, query string,
+	senderPhone string,
+	chatJIDs []string,
+	query string,
 	limit, offset int,
 ) ([]Message, error) {
 	// Try the FTS index first when searching; fall back to a LIKE scan if the
 	// FTS query errors (e.g. a syntactically invalid MATCH expression).
 	if query != "" {
-		messages, err := ms.listMessagesQuery(true, after, before, senderPhone, chatJID, query, limit, offset)
+		messages, err := ms.listMessagesQuery(true, after, before, senderPhone, chatJIDs, query, limit, offset)
 		if err == nil {
 			return messages, nil
 		}
 	}
 
-	return ms.listMessagesQuery(false, after, before, senderPhone, chatJID, query, limit, offset)
+	return ms.listMessagesQuery(false, after, before, senderPhone, chatJIDs, query, limit, offset)
 }
 
 func (ms *MessageStore) listMessagesQuery(
 	useFTS bool,
 	after, before *time.Time,
-	senderPhone, chatJID, query string,
+	senderPhone string,
+	chatJIDs []string,
+	query string,
 	limit, offset int,
 ) ([]Message, error) {
 	qb := strings.Builder{}
@@ -690,9 +697,13 @@ func (ms *MessageStore) listMessagesQuery(
 		qb.WriteString(" AND m.sender LIKE ?")
 		args = append(args, "%"+senderPhone+"%")
 	}
-	if chatJID != "" {
-		qb.WriteString(" AND m.chat_jid = ?")
-		args = append(args, chatJID)
+	if len(chatJIDs) > 0 {
+		placeholders := strings.Repeat("?,", len(chatJIDs))
+		placeholders = placeholders[:len(placeholders)-1]
+		qb.WriteString(" AND m.chat_jid IN (" + placeholders + ")")
+		for _, jid := range chatJIDs {
+			args = append(args, jid)
+		}
 	}
 	if !useFTS && query != "" {
 		qb.WriteString(" AND m.content LIKE ?")
