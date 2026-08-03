@@ -111,3 +111,68 @@ Recommended settings on the box (see Troubleshooting for `WebUI\LocalHostAuth=fa
 - `WebUI\AuthSubnetWhitelist=192.168.0.0/24` (or your LAN subnet)
 - SOCKS5 proxy configured for all torrent traffic (use a VPN)
 - Torrent export dir: `$MEDIA_LIBRARY_PATH/Torrents`
+
+## Two CLIs, one service each
+
+`qb` **is** the qBittorrent CLI, improved rather than replaced. It briefly became a separate `qbt`
+and that was wrong: the skill already shipped an entry point, and the right move was to fix it, not
+to park a rival next to it. (The upstream-pr skill says this in as many words: fold new functionality
+into the CLI a skill already ships.)
+
+| tool | owns | never touches |
+|---|---|---|
+| `qb` | the qBittorrent API | trackers, media library |
+| `tl` | TorrentLeech: search + fetch `.torrent` | qBittorrent, media library |
+| `plex.py` | the Plex library | torrents |
+
+Pipeline is composition: `tl search` -> `tl get <fid>` -> `qb add <file>`.
+
+**`qb` picks its transport automatically.** With `MEDIA_SERVER_HOST` set it SSHes to the media server
+exactly as before; without it, it talks HTTP to `$BOX_HOST:8888`. Every original subcommand name is
+kept, so old habits still work. `ls-library` and `find` are inherently filesystem operations and say
+so plainly when there is no SSH host, instead of returning empty.
+
+```bash
+qb status [name] [--all]      qb ls [filter]        qb info <name>
+qb add <magnet|hash|file>...  qb pause/resume <name>
+qb delete <name> [--files] --yes
+qb limits [name] --ratio 1 --hours 192      # --yes required when no name
+qb rule --ratio 1 --hours 192 --yes         # GLOBAL, every torrent
+qb health     qb disk     qb search <query> [--1080] [--min-gb N]
+qb ls-library [SUBPATH]     qb find <keyword>       # need MEDIA_SERVER_HOST
+
+tl search <query> [--1080|--uhd] [--min-gb N] [--max-gb N]
+tl get <fid>... [--out DIR]
+```
+
+Env: `BOX_HOST`/`QB_HOST`/`QB_PORT`, `QB_MOVIES`, `QB_TV`, `MEDIA_LIBRARY_PATH`.
+TorrentLeech: `~/.torrentleech_cred` (600) + `~/.torrentleech_cookies`, login re-runs only when stale.
+
+**Prefer `tl` for searching.** Same titles: 11 seeders public vs 300+ on TorrentLeech, and throughput
+went 3 MB/s -> 83 MB/s on the same film. TL's *website* needs the VPN (direct returns 000, via SOCKS
+200); the torrent traffic does not, because the media box reaches the tracker itself.
+
+### Safety properties, each one a bug that actually bit
+
+- **Anything able to act on every torrent at once demands `--yes`.** `qb limits` with no name matched
+  every torrent on the box and would have rewritten every share limit silently.
+- **Refusals exit 1, never 0**, so a script cannot read a refusal as success.
+- **`rule` prints its blast radius first.** It once looked like "65 of 72 would pause" when the true
+  answer was 2, because 61 were already paused.
+- **The global rule pauses, never deletes** (`max_ratio_act=0`), so a private-tracker torrent can be
+  re-seeded rather than re-downloaded.
+- **Name matching folds `.`, `_`, `-` and spaces, and accepts multiple words**, so `qb info quiet
+  place 2018` works. A plain substring match on "quiet place" matched one of three torrents named
+  `A.Quiet.Place...`; a delete that hits a surprising subset is worse than one that errors.
+
+### Two findings worth keeping
+
+- **Listed seeders are a claim, connected peers are the fact.** A release advertising 28 seeders found
+  one live peer and crawled at 0.01 MB/s. **Never quote an ETA from a fresh add**: readings of
+  33h/108h/300h settled to 40min/115min/150min once peer discovery and cache warmup finished.
+- **`qb health` separates disk from network.** Peers connected, zero throughput and
+  `write_cache_overload` near 100% is a saturated disk that clears itself; calling it a network fault
+  sends you hunting a VPN that was never involved.
+- **The filename in TorrentLeech's download URL is arbitrary** (`/download/<fid>/x.torrent` works), and
+  searching the tracker for a bare fid does *not* reliably return it, so the lookup was both pointless
+  and a source of failures.

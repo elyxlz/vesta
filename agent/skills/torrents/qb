@@ -1,234 +1,323 @@
-#!/usr/bin/env bash
-# qb — qBittorrent wrapper for media server
-# Usage: qb <command> [args]
-#
-# Required environment variables:
-#   MEDIA_SERVER_HOST      — hostname or IP of the media server
-#   MEDIA_SERVER_SSH_PORT  — SSH port (default: 22)
-#   MEDIA_SERVER_USER      — SSH username
-#   QB_PORT                — qBittorrent WebUI port (default: 8888)
-#   MEDIA_LIBRARY_PATH     - base path for the media library (default: /media/library)
-#
-# Commands:
-#   status                          Show active/downloading torrents
-#   ls [filter]                     List all torrents (optionally filter by name/path)
-#   add <url> [--path PATH]         Add torrent by magnet/URL
-#   search <query> [--cat movies|tv|all]   Search via qBittorrent plugin
-#   pause <hash>                    Pause a torrent
-#   resume <hash>                   Resume a torrent
-#   delete <hash> [--files]         Delete torrent (--files also removes data)
-#   info <hash>                     Show torrent details
-#   disk                            Show disk space on MEDIA_LIBRARY_PATH
-#   ls-library [SUBPATH]            List MEDIA_LIBRARY_PATH (or a subpath of it)
-#   find <keyword>                  Find files in MEDIA_LIBRARY_PATH by name
+#!/usr/bin/env python3
+"""qb - qBittorrent CLI.
 
-SSH_PORT="${MEDIA_SERVER_SSH_PORT:-22}"
-SSH_HOST="${MEDIA_SERVER_USER:-media}@${MEDIA_SERVER_HOST:?MEDIA_SERVER_HOST is required}"
-SSH="ssh -p $SSH_PORT $SSH_HOST"
-QB_API_PORT="${QB_PORT:-8888}"
-QB="http://localhost:$QB_API_PORT/api/v2"
-MEDIA_PATH="${MEDIA_LIBRARY_PATH:-/media/library}"
+Two transports, chosen automatically:
 
-run() {
-    $SSH "$@"
-}
+  HTTP (default)  the WebUI API at $BOX_HOST:8888 (override $QB_HOST / $QB_PORT).
+  SSH             used when $MEDIA_SERVER_HOST is set, preserving the original
+                  behaviour for boxes that really do reach qBittorrent that way.
 
-qb_api() {
-    local endpoint="$1"
-    shift
-    run "curl -s '$QB/$endpoint' $*"
-}
+Every original subcommand name is kept (status, ls, add, search, pause, resume,
+delete, info, disk, ls-library, find) so existing habits and scripts keep working.
 
-cmd="$1"
-shift
+TorrentLeech is a different service and lives in its own CLI, `tl`. The media
+library is `plex.py`. This file only ever talks to qBittorrent.
+"""
+import argparse
+import json
+import os
+import shlex
+import subprocess
+import sys
+import urllib.parse
+import urllib.request
 
-case "$cmd" in
-    status)
-        run "curl -s '$QB/torrents/info' | python3 -c \"
-import json, sys
-data = json.load(sys.stdin)
-active = [t for t in data if t['state'] not in ['stoppedUP']]
-stopped_dl = [t for t in data if t['state'] == 'stoppedDL']
-print(f'Active: {len(active)} | Paused-incomplete: {len(stopped_dl)} | Total: {len(data)}')
-print()
-if not active and not stopped_dl:
-    print('Nothing downloading.')
-for t in active + stopped_dl:
-    pct = t['progress'] * 100
-    dl = t['dlspeed'] // 1024
-    eta = t['eta']
-    eta_str = f'{eta//3600}h{(eta%3600)//60}m' if 0 < eta < 8640000 else ''
-    size_gb = t['size'] / 1073741824
-    print(f'[{t[\\\"state\\\"]:<16}] {pct:5.1f}%  {dl:5d}KB/s  {size_gb:.1f}GB  {eta_str:8}  {t[\\\"name\\\"][:60]}')
-    print(f'  hash: {t[\\\"hash\\\"][:12]}...  path: {t[\\\"save_path\\\"]}')
-\""
-        ;;
+SSH_HOST = os.environ.get("MEDIA_SERVER_HOST")
+SSH_USER = os.environ.get("MEDIA_SERVER_USER", "media")
+SSH_PORT = os.environ.get("MEDIA_SERVER_SSH_PORT", "22")
+QB_HOST = os.environ.get("QB_HOST", os.environ.get("BOX_HOST", "host.docker.internal"))
+QB_PORT = os.environ.get("QB_PORT", "8888")
+LIBRARY = os.environ.get("MEDIA_LIBRARY_PATH", "/media/library")
+MOVIES = os.environ.get("QB_MOVIES", os.path.join(LIBRARY, "Movies"))
+TVSHOWS = os.environ.get("QB_TV", os.path.join(LIBRARY, "TV"))
+UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/126 Safari/537.36"
 
-    ls)
-        filter="${1:-}"
-        run "curl -s '$QB/torrents/info' | python3 -c \"
-import json, sys
-data = json.load(sys.stdin)
-filter_str = '$filter'.lower()
-for t in sorted(data, key=lambda x: x['added_on'], reverse=True):
-    name = t['name']
-    path = t['save_path']
-    if filter_str and filter_str not in name.lower() and filter_str not in path.lower():
-        continue
-    import datetime
-    added = datetime.datetime.fromtimestamp(t['added_on']).strftime('%Y-%m-%d')
-    pct = t['progress'] * 100
-    size_gb = t['size'] / 1073741824
-    state = t['state']
-    print(f'{added}  {pct:5.1f}%  {size_gb:6.1f}GB  [{state:<16}]  {name[:65]}')
-\" | head -60"
-        ;;
 
-    add)
-        url="$1"
-        shift
-        savepath="$MEDIA_PATH"
-        while [[ $# -gt 0 ]]; do
-            case "$1" in
-                --path|-p) savepath="$2"; shift 2 ;;
-                *) shift ;;
-            esac
-        done
-        echo "Adding torrent to $savepath ..."
-        result=$(run "curl -s -X POST '$QB/torrents/add' \
-            -F 'urls=$url' \
-            -F 'savepath=$savepath'")
-        echo "Result: $result"
-        ;;
+def ssh(cmd):
+    if not SSH_HOST:
+        sys.exit("this command needs a media server: set MEDIA_SERVER_HOST")
+    return subprocess.run(["ssh", "-p", SSH_PORT, f"{SSH_USER}@{SSH_HOST}", cmd],
+                          capture_output=True, text=True).stdout
 
-    search)
-        query="$1"
-        shift
-        cat_arg="all"
-        plugin_arg="${TRACKER_PLUGIN:-all}"
-        while [[ $# -gt 0 ]]; do
-            case "$1" in
-                --cat|-c) cat_arg="$2"; shift 2 ;;
-                --plugin) plugin_arg="$2"; shift 2 ;;
-                movies) cat_arg="movies"; shift ;;
-                tv) cat_arg="tv"; shift ;;
-                *) shift ;;
-            esac
-        done
-        echo "Searching for: '$query' (category: $cat_arg, plugin: $plugin_arg)"
-        # Start search
-        search_id=$(run "curl -s -X POST '$QB/search/start' \
-            -d 'pattern=$(echo "$query" | sed 's/ /+/g')&plugins=$plugin_arg&category=$cat_arg'" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))")
-        if [[ -z "$search_id" ]]; then
-            echo "Failed to start search (check if qbittorrent is running)"
-            exit 1
-        fi
-        echo "Search ID: $search_id — waiting for results..."
-        sleep 3
-        # Get results
-        run "curl -s '$QB/search/results?id=$search_id&limit=20&offset=0' | python3 -c \"
-import json, sys
-data = json.load(sys.stdin)
-results = data.get('results', [])
-total = data.get('total', 0)
-print(f'Found {total} results (showing up to 20):')
-print()
-for i, t in enumerate(results):
-    size_gb = t.get('fileSize', 0) / 1073741824
-    seeds = t.get('nbSeeders', 0)
-    leech = t.get('nbLeechers', 0)
-    name = t.get('fileName', 'N/A')[:70]
-    link = t.get('fileUrl', 'N/A')
-    print(f'{i+1:2d}. [{seeds:4d}S/{leech:3d}L] {size_gb:6.2f}GB  {name}')
-    print(f'    {link}')
-    print()
-\""
-        # Clean up search
-        run "curl -s -X POST '$QB/search/delete' -d 'id=$search_id'" > /dev/null
-        ;;
 
-    pause)
-        hash="$1"
-        result=$(run "curl -s -X POST '$QB/torrents/stop' -d 'hashes=$hash'")
-        echo "Paused $hash: $result"
-        ;;
+def api(path, data=None, files=None):
+    """qBittorrent WebUI API. Over SSH we curl from the server; otherwise direct HTTP."""
+    base = f"http://{'localhost' if SSH_HOST else QB_HOST}:{QB_PORT}/api/v2"
+    if SSH_HOST and not files:
+        args = "".join(f" --data-urlencode {shlex.quote(f'{k}={v}')}" for k, v in (data or {}).items())
+        raw = ssh(f"curl -s {shlex.quote(base + '/' + path)}{args}")
+    elif files:
+        boundary = "----qb7f3a9"
+        body = b""
+        for k, v in (data or {}).items():
+            body += f"--{boundary}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n".encode()
+        for name, fp in files:
+            body += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"; "
+                     f"filename=\"{os.path.basename(fp)}\"\r\n"
+                     f"Content-Type: application/x-bittorrent\r\n\r\n").encode()
+            body += open(fp, "rb").read() + b"\r\n"
+        body += f"--{boundary}--\r\n".encode()
+        req = urllib.request.Request(f"{base}/{path}", data=body,
+                                     headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+        raw = urllib.request.urlopen(req, timeout=60).read().decode(errors="replace")
+    else:
+        d = urllib.parse.urlencode(data).encode() if data is not None else None
+        raw = urllib.request.urlopen(urllib.request.Request(f"{base}/{path}", data=d),
+                                     timeout=60).read().decode(errors="replace")
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return (raw or "").strip()
 
-    resume)
-        hash="$1"
-        result=$(run "curl -s -X POST '$QB/torrents/start' -d 'hashes=$hash'")
-        echo "Resumed $hash: $result"
-        ;;
 
-    delete)
-        hash="$1"
-        shift
-        delete_files="false"
-        [[ "$1" == "--files" ]] && delete_files="true"
-        result=$(run "curl -s -X POST '$QB/torrents/delete' -d 'hashes=$hash&deleteFiles=$delete_files'")
-        echo "Deleted $hash (files=$delete_files): $result"
-        ;;
+def norm(s):
+    """Fold ., _, - and whitespace so 'quiet place' matches 'A.Quiet.Place'."""
+    return " ".join("".join(c if c.isalnum() else " " for c in s.lower()).split())
 
-    info)
-        hash="$1"
-        run "curl -s '$QB/torrents/properties?hash=$hash' | python3 -c \"
-import json, sys
-t = json.load(sys.stdin)
-import datetime
-print('Name:', t.get('name', 'N/A'))
-print('State:', t.get('state', 'N/A'))
-print('Size:', round(t.get('total_size', 0)/1073741824, 2), 'GB')
-print('Progress:', round(t.get('completion_date', 0), 1), '%')
-print('Save path:', t.get('save_path', 'N/A'))
-print('Seeds:', t.get('seeds', 0), '/', t.get('seeds_total', 0))
-print('DL speed:', t.get('dl_speed', 0) // 1024, 'KB/s')
-print('Ratio:', round(t.get('share_ratio', 0), 3))
-added = t.get('addition_date', 0)
-if added: print('Added:', datetime.datetime.fromtimestamp(added).strftime('%Y-%m-%d %H:%M'))
-\""
-        ;;
 
-    disk)
-        run "df -h '$MEDIA_PATH/' && echo '' && du -sh '$MEDIA_PATH/'*/ 2>/dev/null"
-        ;;
+def matches(needle, name):
+    return norm(needle) in norm(name)
 
-    ls-library)
-        sub="${1:-}"
-        run "ls '$MEDIA_PATH/$sub'"
-        ;;
 
-    find)
-        query="$*"
-        run "find '$MEDIA_PATH/' -iname '*$query*' 2>/dev/null"
-        ;;
+def pick(name):
+    ts = api("torrents/info")
+    hits = [t for t in ts if matches(name, t["name"]) or t["hash"].startswith(name.lower())]
+    if not hits:
+        sys.exit(f"no torrent matching {name!r}")
+    return hits
 
-    *)
-        cat <<EOF
-qb — qBittorrent wrapper for media server
 
-Usage: qb <command> [args]
+def human(n):
+    return f"{n / 1e9:.1f}GB" if n else "0GB"
 
-Required env vars:
-  MEDIA_SERVER_HOST      hostname or IP of media server
-  MEDIA_SERVER_SSH_PORT  SSH port (default: 22)
-  MEDIA_SERVER_USER      SSH username
-  QB_PORT                qBittorrent WebUI port (default: 8888)
-  MEDIA_LIBRARY_PATH     media library base path (default: /media/library)
 
-Commands:
-  status                      Show active/in-progress torrents
-  ls [filter]                 List all torrents (filter by name or path keyword)
-  add <url> [--path PATH]     Add torrent by magnet/URL (default save: MEDIA_LIBRARY_PATH)
-  search <query> [movies|tv|all]  Search via qBittorrent plugin
-    --plugin <name>           Specify plugin name (default: all)
-  pause <hash>                Pause a torrent
-  resume <hash>               Resume a torrent
-  delete <hash> [--files]     Delete torrent (--files also deletes data)
-  info <hash>                 Show torrent properties
-  disk                        Show disk usage on MEDIA_LIBRARY_PATH
-  ls-library [SUBPATH]        List MEDIA_LIBRARY_PATH (or a subpath of it)
-  find <keyword>              Find files in MEDIA_LIBRARY_PATH by name
+def show(ts):
+    for t in sorted(ts, key=lambda x: -x["progress"]):
+        eta = t["eta"]
+        eta = "?" if eta > 8640000 else f"{eta // 60}min"
+        print(f"  {t['name'][:44]:44} {t['progress'] * 100:5.1f}% {t['dlspeed'] / 1e6:5.2f}MB/s "
+              f"peers {t['num_seeds']:>3} ratio {t['ratio']:5.2f} {t['state']:<12} eta {eta}")
+    print(f"  ({len(ts)} shown)")
 
-API: http://localhost:\$QB_PORT/api/v2 (configure no-auth for localhost in qBittorrent settings)
-EOF
-        ;;
-esac
+
+def cmd_status(a):
+    ts = api("torrents/info")
+    if a.name:
+        ts = [t for t in ts if matches(a.name, t["name"])]
+    show(ts if a.all else [t for t in ts if t["state"] not in ("pausedUP", "stoppedUP")])
+
+
+def cmd_ls(a):
+    ts = api("torrents/info")
+    if a.filter:
+        ts = [t for t in ts if matches(a.filter, t["name"])]
+    print(json.dumps(ts, indent=1)) if a.json else show(ts)
+
+
+def cmd_add(a):
+    save = a.path or (TVSHOWS if a.tv else MOVIES)
+    for src in a.source:
+        if os.path.isfile(src):
+            r = api("torrents/add", {"savepath": save}, files=[("torrents", src)])
+        else:
+            url = src if src.startswith("magnet:") else f"magnet:?xt=urn:btih:{src}"
+            r = api("torrents/add", {"urls": url, "savepath": save})
+        print(f"  {r or 'Ok.'}  -> {save}  {os.path.basename(src)[:50]}")
+
+
+def cmd_pause(a):
+    hits = pick(a.name)
+    api("torrents/pause", {"hashes": "|".join(t["hash"] for t in hits)})
+    print(f"  paused {len(hits)}")
+
+
+def cmd_resume(a):
+    hits = pick(a.name)
+    api("torrents/resume", {"hashes": "|".join(t["hash"] for t in hits)})
+    print(f"  resumed {len(hits)}")
+
+
+def cmd_delete(a):
+    hits = pick(a.name)
+    print(f"  matched {len(hits)}:")
+    for t in hits:
+        print(f"    {t['name'][:60]}")
+    if not a.yes:
+        sys.exit("  refusing without --yes")
+    api("torrents/delete", {"hashes": "|".join(t["hash"] for t in hits),
+                            "deleteFiles": str(bool(a.files)).lower()})
+    print(f"  deleted {len(hits)} (files={'yes' if a.files else 'no'})")
+
+
+def cmd_info(a):
+    for t in pick(a.name):
+        print(f"  {t['name']}")
+        for k in ("hash", "state", "progress", "size", "ratio", "num_seeds", "num_leechs",
+                  "save_path", "content_path", "ratio_limit", "seeding_time_limit"):
+            print(f"    {k:<20} {t.get(k)}")
+
+
+def cmd_limits(a):
+    ts = api("torrents/info")
+    hits = [t for t in ts if matches(a.name, t["name"])] if a.name else ts
+    if not hits:
+        sys.exit(f"no torrent matching {a.name!r}")
+    if not a.name and not a.yes:
+        sys.exit(f"  no name given, that would set limits on ALL {len(hits)} torrents; pass --yes")
+    api("torrents/setShareLimits", {"hashes": "|".join(t["hash"] for t in hits),
+                                    "ratioLimit": a.ratio, "seedingTimeLimit": a.hours * 60,
+                                    "inactiveSeedingTimeLimit": -2})
+    print(f"  set ratio {a.ratio} / {a.hours}h on {len(hits)}, verifying:")
+    for t in api("torrents/info"):
+        if any(t["hash"] == h["hash"] for h in hits):
+            print(f"    {t['name'][:40]:40} ratio_limit={t['ratio_limit']} "
+                  f"seed_limit={t['seeding_time_limit']}min")
+
+
+def cmd_rule(a):
+    ts = api("torrents/info")
+    live = [t for t in ts if t["state"] not in ("pausedUP", "pausedDL", "stoppedUP", "stoppedDL")]
+    hit = [t for t in live if t["ratio"] >= a.ratio or t.get("seeding_time", 0) >= a.hours * 3600]
+    print(f"  blast radius: {len(ts)} torrents, {len(live)} live, {len(hit)} would pause now")
+    for t in hit[:8]:
+        print(f"    {t['state']:<12} ratio {t['ratio']:5.2f}  {t['name'][:44]}")
+    if not a.yes:
+        sys.exit("  refusing without --yes")
+    api("app/setPreferences", {"json": json.dumps({
+        "max_ratio_enabled": True, "max_ratio": a.ratio, "max_ratio_act": 0,
+        "max_seeding_time_enabled": True, "max_seeding_time": a.hours * 60})})
+    p = api("app/preferences")
+    print(f"  VERIFIED ratio={p['max_ratio']} time={p['max_seeding_time']}min "
+          f"act={p['max_ratio_act']} (0=pause, files kept)")
+
+
+def cmd_health(a):
+    s = api("sync/maindata").get("server_state", {})
+    print(f"  free space  : {human(s.get('free_space_on_disk', 0))}")
+    print(f"  dl / ul     : {s.get('dl_info_speed', 0) / 1e6:.2f} / "
+          f"{s.get('up_info_speed', 0) / 1e6:.2f} MB/s")
+    print(f"  write cache : {s.get('write_cache_overload')}%  queued io: {s.get('queued_io_jobs')}")
+    print(f"  avg queue   : {s.get('average_time_queue')} ms")
+    print("  NOTE: peers connected + zero throughput + overload near 100% = DISK, not network.")
+
+
+def cmd_disk(a):
+    if SSH_HOST:
+        print(ssh(f"df -h {shlex.quote(LIBRARY)}").rstrip())
+    else:
+        free = api("sync/maindata").get("server_state", {}).get("free_space_on_disk", 0)
+        print(f"  free on qBittorrent's disk: {human(free)}")
+
+
+def cmd_search(a):
+    q = " ".join(a.query)
+    raw = subprocess.run(["curl", "-s", "--max-time", "60", "-A", UA,
+                          "https://apibay.org/q.php?q=" + urllib.parse.quote(q)],
+                         capture_output=True, text=True).stdout
+    rows = [(int(r["seeders"]), int(r["size"]), r["name"], r["info_hash"])
+            for r in json.loads(raw or "[]") if r.get("id") != "0"]
+    if a.min_gb:
+        rows = [r for r in rows if r[1] >= a.min_gb * 1e9]
+    if a.max_gb:
+        rows = [r for r in rows if r[1] <= a.max_gb * 1e9]
+    if a.p1080:
+        rows = [r for r in rows if "2160" not in r[2]]
+    rows.sort(key=lambda r: -r[0])
+    for s, z, n, i in rows[: a.limit]:
+        print(f"  {s:>4}s {human(z):>7}  {i}  {n[:58]}")
+    print(f"  ({len(rows)} matches; public trackers. For a private tracker see `tl search`.)")
+
+
+def cmd_ls_library(a):
+    print(ssh(f"ls -la {shlex.quote(os.path.join(LIBRARY, a.subpath or ''))}").rstrip())
+
+
+def cmd_find(a):
+    print(ssh(f"find {shlex.quote(LIBRARY)} -iname {shlex.quote('*' + a.keyword + '*')}").rstrip())
+
+
+def main():
+    p = argparse.ArgumentParser(prog="qb", description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--json", action="store_true")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    s = sub.add_parser("status", help="active torrents")
+    s.add_argument("name", nargs="*")
+    s.add_argument("--all", action="store_true")
+    s.set_defaults(func=cmd_status)
+
+    s = sub.add_parser("ls", help="list all torrents, optionally filtered")
+    s.add_argument("filter", nargs="*")
+    s.set_defaults(func=cmd_ls)
+
+    s = sub.add_parser("add", help="add magnet, info-hash or .torrent file")
+    s.add_argument("source", nargs="+")
+    s.add_argument("--path")
+    s.add_argument("--tv", action="store_true")
+    s.set_defaults(func=cmd_add)
+
+    s = sub.add_parser("pause")
+    s.add_argument("name", nargs="+")
+    s.set_defaults(func=cmd_pause)
+
+    s = sub.add_parser("resume")
+    s.add_argument("name", nargs="+")
+    s.set_defaults(func=cmd_resume)
+
+    s = sub.add_parser("delete", help="delete by name or hash prefix")
+    s.add_argument("name", nargs="+")
+    s.add_argument("--files", action="store_true")
+    s.add_argument("--yes", action="store_true")
+    s.set_defaults(func=cmd_delete)
+
+    s = sub.add_parser("info")
+    s.add_argument("name", nargs="+")
+    s.set_defaults(func=cmd_info)
+
+    s = sub.add_parser("limits", help="per-torrent share limits")
+    s.add_argument("name", nargs="*")
+    s.add_argument("--ratio", type=float, default=1.0)
+    s.add_argument("--hours", type=int, default=192)
+    s.add_argument("--yes", action="store_true", help="required when no name given")
+    s.set_defaults(func=cmd_limits)
+
+    s = sub.add_parser("rule", help="GLOBAL share rule for every torrent")
+    s.add_argument("--ratio", type=float, default=1.0)
+    s.add_argument("--hours", type=int, default=192)
+    s.add_argument("--yes", action="store_true")
+    s.set_defaults(func=cmd_rule)
+
+    s = sub.add_parser("health", help="disk space + write-cache/io stats")
+    s.set_defaults(func=cmd_health)
+
+    s = sub.add_parser("disk", help="free space")
+    s.set_defaults(func=cmd_disk)
+
+    s = sub.add_parser("search", help="search public trackers")
+    s.add_argument("query", nargs="+")
+    s.add_argument("--min-gb", type=float)
+    s.add_argument("--max-gb", type=float)
+    s.add_argument("--1080", dest="p1080", action="store_true")
+    s.add_argument("--limit", type=int, default=10)
+    s.set_defaults(func=cmd_search)
+
+    s = sub.add_parser("ls-library", help="list the media library (needs MEDIA_SERVER_HOST)")
+    s.add_argument("subpath", nargs="?")
+    s.set_defaults(func=cmd_ls_library)
+
+    s = sub.add_parser("find", help="find files in the library (needs MEDIA_SERVER_HOST)")
+    s.add_argument("keyword")
+    s.set_defaults(func=cmd_find)
+
+    a = p.parse_args()
+    # name/filter accept multiple words so `qb info quiet place 2018` works
+    for attr in ("name", "filter"):
+        v = getattr(a, attr, None)
+        if isinstance(v, list):
+            setattr(a, attr, " ".join(v) if v else None)
+    a.func(a)
+
+
+if __name__ == "__main__":
+    main()
