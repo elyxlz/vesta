@@ -105,7 +105,7 @@ func TestLifecycleCommandsAnswerHelpRatherThanRunning(t *testing.T) {
 func TestSetupAliasesReportConnectFlagsWithoutPairing(t *testing.T) {
 	for _, name := range []string{"connect", "link", "provision"} {
 		usage := helpFor(t, name)
-		for _, flag := range []string{"-phone", "-own-number", "-opener"} {
+		for _, flag := range []string{"-source", "-phone", "-opener"} {
 			if !strings.Contains(usage, flag) {
 				t.Errorf("%s --help does not mention %s:\n%s", name, flag, usage)
 			}

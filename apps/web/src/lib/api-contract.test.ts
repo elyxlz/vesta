@@ -28,9 +28,8 @@ describe("vestad API contract", () => {
     const backups = vestadApiFixtures.backups satisfies readonly BackupInfo[];
     expect(backups.map((backup) => backup.backup_type)).toEqual([
       "manual",
-      "daily",
-      "weekly",
-      "monthly",
+      "periodic",
+      "pre_update",
       "pre_restore",
     ]);
   });

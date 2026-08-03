@@ -39,6 +39,7 @@ pub(crate) struct OpenAiAuthSession {
     pub created: std::time::Instant,
 }
 
+
 impl OpenAiAuthSession {
     pub fn is_expired(&self) -> bool {
         self.created.elapsed().as_secs() > AUTH_SESSION_TIMEOUT_SECS
@@ -106,6 +107,11 @@ pub struct AppState {
     pub(crate) docker: bollard::Docker,
     pub(crate) auth_sessions: Mutex<HashMap<String, AuthSession>>,
     pub(crate) openai_auth_sessions: Mutex<HashMap<String, OpenAiAuthSession>>,
+    /// Serializes the daemon's Vesta Cloud pairing handlers. The pairing state
+    /// itself lives ONLY in `<config_dir>/vesta-cloud-pairing.json` (single
+    /// source of truth shared with `vestad vesta-cloud login` and a restarted
+    /// vestad); this lock just keeps concurrent handlers from double-starting.
+    pub(crate) vesta_cloud_pairing_lock: Mutex<()>,
     /// Refresh-token registry: family id → {live/prev jti, exp} (rotation + reuse
     /// detection, see `auth.rs`). Loaded from / persisted to the config dir so a
     /// vestad restart/self-update does NOT invalidate outstanding refresh tokens.
@@ -119,6 +125,9 @@ pub struct AppState {
     /// Revocable, per-service credentials the agent proxy accepts for a private service.
     pub(crate) service_keys: RwLock<crate::service_keys::ServiceKeyStore>,
     pub(crate) mobile_app: mobile_app::MobileApp,
+    /// The single owner of the device registry (`devices.json`): identity + presence fed by `/sync`,
+    /// the mobile push facet fed by `mobile_app`, projected to `/sync` clients as the `devices` tree.
+    pub(crate) device_registry: Arc<crate::device_registry::DeviceRegistry>,
     /// Per-connection client presence fed by the `/sync` socket. Read by the mobile push path to
     /// suppress a push while any client is focused, and fanned to sessions for return-to-focus.
     pub(crate) presence: Arc<crate::sync::Presence>,
@@ -169,8 +178,9 @@ impl AppState {
         let refresh_live = load_refresh_live(&env_config.config_dir);
         let http_client = reqwest::Client::new();
         let presence = Arc::new(crate::sync::Presence::new());
+        let device_registry = Arc::new(crate::device_registry::DeviceRegistry::load(&env_config.config_dir));
         let (mobile_app, mobile_app_worker) =
-            mobile_app::MobileApp::new(env_config.config_dir.clone(), http_client.clone(), presence.clone());
+            mobile_app::MobileApp::new(device_registry.clone(), http_client.clone(), presence.clone());
         (
             Self {
                 api_key,
@@ -178,6 +188,7 @@ impl AppState {
                 docker,
                 auth_sessions: Mutex::new(HashMap::new()),
                 openai_auth_sessions: Mutex::new(HashMap::new()),
+                vesta_cloud_pairing_lock: Mutex::new(()),
                 refresh_live: Mutex::new(refresh_live),
                 agent_locks: Mutex::new(HashMap::new()),
                 tunnel_url: Mutex::new(tunnel_url),
@@ -187,6 +198,7 @@ impl AppState {
                 settings: RwLock::new(settings),
                 service_keys: RwLock::new(crate::service_keys::load_store()),
                 mobile_app,
+                device_registry,
                 presence,
                 dev_mode,
                 agent_status_cache: Arc::new(agent_status::AgentStatusCache::new()),

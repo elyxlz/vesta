@@ -41,7 +41,7 @@ const SNAPSHOT_POLL_TIMEOUT: Duration = Duration::from_secs(30);
 // `sync::MIN_SUPPORTED_CLIENT_VERSION` (not importable from an integration crate, so pinned to the
 // contract literal here). Provider kinds expanded after 0.1.180, so older mobile clients must not
 // enter settings with a kind they can misinterpret (see release.sh for the in-gap bump convention).
-const EXPECT_MIN_SUPPORTED: &str = "0.1.181";
+const EXPECT_MIN_SUPPORTED: &str = "0.1.185";
 
 /// Create a fake-token agent and bring it up to a live tap. Fake-token agents settle at
 /// `unprovisioned`/`not_authenticated`, enough to exercise frame plumbing (no real model needed). The

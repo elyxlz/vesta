@@ -449,14 +449,12 @@ var commands = []command{
 	{name: "call-status", run: cmdCallStatus},
 	{name: "daemon-status", hidden: true, run: cmdDaemonStatus},
 	{name: "link", hidden: true, timeout: LinkSocketTimeout, run: cmdLink},
-	{name: "own-number-link", hidden: true, timeout: LinkSocketTimeout, run: cmdOwnNumberLink},
 }
 
 // linkViaQR runs a QR companion-link socket command end to end: parse the shared
 // port + ban-override flags, gate on the linked fact, single-flight, record the
-// rate-limit attempt, then invoke link (the QR mechanism). Both self-hosted `link`
-// (through the linker) and user-owned `own-number-link` (direct, bypassing the
-// managed linker's own-number paradigm) share this body.
+// rate-limit attempt, then invoke link (the QR mechanism). Self-hosted `link`
+// (through the linker) uses this body.
 func linkViaQR(name string, args []string, wac *WhatsAppClient, link func(port int) (linkResult, error), result map[string]any) (any, error) {
 	var port int
 	var acknowledged bool
@@ -521,16 +519,6 @@ func cmdLink(args []string, wac *WhatsAppClient) (any, error) {
 	return linkViaQR("link", args, wac, func(port int) (linkResult, error) {
 		return wac.linker.linkQR(wac, port)
 	}, map[string]any{"status": string(AuthStatusAuthenticated)})
-}
-
-// cmdOwnNumberLink links the agent as a COMPANION to a user-owned pool number the
-// user already registered on their own phone (see runConnectOwnNumber). It runs the
-// QR link DIRECTLY rather than through the linker: on a cloud box the linker owns the
-// agent's OWN number and rejects a QR link, but here the primary is the user's phone.
-func cmdOwnNumberLink(args []string, wac *WhatsAppClient) (any, error) {
-	return linkViaQR("own-number-link", args, wac, func(port int) (linkResult, error) {
-		return wac.runQRLink(port)
-	}, map[string]any{"status": string(AuthStatusAuthenticated), "owner": "user"})
 }
 
 func cmdDaemonStatus(args []string, wac *WhatsAppClient) (any, error) {
@@ -681,16 +669,12 @@ func cmdListMessages(args []string, wac *WhatsAppClient) (any, error) {
 		beforeTime = &t
 	}
 
-	var chatJID string
-	if to != "" {
-		jid, err := wac.ResolveRecipient(to)
-		if err != nil {
-			return nil, fmt.Errorf("failed to resolve chat: %v", err)
-		}
-		chatJID = jid.String()
+	chatJIDs, err := wac.chatStorageKeys(to)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve chat: %v", err)
 	}
 
-	messages, err := wac.store.ListMessages(afterTime, beforeTime, senderPhone, chatJID, query, limit, page*limit)
+	messages, err := wac.store.ListMessages(afterTime, beforeTime, senderPhone, chatJIDs, query, limit, page*limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1095,9 +1079,10 @@ func cmdCheckDelivery(args []string, wac *WhatsAppClient) (any, error) {
 // cold-starts the daemon before dispatching this, so the agent runs one command
 // and never orchestrates the steps itself.
 func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
-	var opener string
+	var opener, source string
 	fs := flag.NewFlagSet("provision", flag.ContinueOnError)
 	fs.StringVar(&opener, "opener", "", "Agent-authored first-contact greeting prefilled in the wa.me link")
+	fs.StringVar(&source, "source", "", "Resolved account source; `cloud` pins the pairing auth to the server-identity token")
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
@@ -1145,21 +1130,33 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 	// number that needs onboarding; re-linking the same established number is a
 	// resume that must not tell Vesta to stop initiating mid-relationship.
 	priorOnboardedMSISDN := wac.state.snapshot().OnboardedMSISDN
-	res, err := wac.linker.provision(wac)
+	// Honor the agent's explicit --source over the daemon's boot-time linker: a warm
+	// daemon that booted with direct pool creds still pairs off the server-identity
+	// token when the agent says `--source vesta-cloud`. wac.managed is only read on this
+	// single-flighted pairing path, so overriding it for the call (and restoring it
+	// after) races nothing; wac.linker is left untouched (the data path reads it).
+	pairLinker := wac.linker
+	if effAuth := cloudSourceAuth(source); effAuth != nil {
+		saved := wac.managed
+		wac.managed = effAuth
+		defer func() { wac.managed = saved }()
+		pairLinker = &managedLinker{auth: effAuth, state: wac.state}
+	}
+	res, err := pairLinker.provision(wac)
 	if err != nil {
 		// A still-filling pool and a banned number are normal outcomes, not
 		// failures: return a clean status carrying the next step, never a raw error.
 		if errors.Is(err, errPoolFilling) {
 			return map[string]any{
 				"status": "provisioning",
-				"next":   "Your number is still being set up. Re-run `whatsapp connect` in about 30 seconds; it is idempotent, so repeating it is safe until it returns linked.",
+				"next":   "Your number is still being set up. Re-run the same connect command in about 30 seconds; it is idempotent, so repeating it is safe until it returns linked.",
 			}, nil
 		}
 		if errors.Is(err, errBlocked) {
 			return map[string]any{
 				"status": "blocked",
 				"reason": err.Error(),
-				"next":   "This number was blocked and cannot be used. Re-run `whatsapp connect` to get a fresh number.",
+				"next":   "This number was blocked and cannot be used. Re-run the same connect command to get a fresh number.",
 			}, nil
 		}
 		if errors.Is(err, errRateLimited) {
@@ -1167,7 +1164,7 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 			return map[string]any{
 				"status": "rate_limited",
 				"reason": err.Error(),
-				"next":   "Too many link attempts on this number recently. Wait out the cooldown noted above before running `whatsapp connect` again; repeated pairing is exactly what gets a fresh number banned.",
+				"next":   "Too many link attempts on this number recently. Wait out the cooldown noted above before re-running the same connect command; repeated pairing is exactly what gets a fresh number banned.",
 			}, nil
 		}
 		if errors.Is(err, errRestricted) {
@@ -1326,15 +1323,11 @@ func cmdListReceivedContacts(args []string, wac *WhatsAppClient) (any, error) {
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
-	var chatJID string
-	if to != "" {
-		jid, err := wac.ResolveRecipient(to)
-		if err != nil {
-			return nil, fmt.Errorf("failed to resolve chat: %v", err)
-		}
-		chatJID = jid.String()
+	chatJIDs, err := wac.chatStorageKeys(to)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve chat: %v", err)
 	}
-	messages, err := wac.store.ListMessages(nil, nil, "", chatJID, "[Contact:", limit, 0)
+	messages, err := wac.store.ListMessages(nil, nil, "", chatJIDs, "[Contact:", limit, 0)
 	if err != nil {
 		return nil, err
 	}

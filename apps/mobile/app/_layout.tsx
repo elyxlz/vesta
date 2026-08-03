@@ -48,7 +48,6 @@ import { ControllerProvider } from "@/controller/ControllerProvider";
 import { BootSplash } from "@/components/BootSplash";
 import { GatewayConnectionBanner } from "@/components/GatewayConnectionBanner";
 import { ToastProvider } from "@/components/native-toast";
-import { Text } from "@/components/ui/Typography";
 import {
   BootTransitionProvider,
   type BootDestination,
@@ -252,18 +251,11 @@ function SessionNavigation() {
                   title: "Settings",
                   headerTitleAlign: "center",
                   presentation: "formSheet",
-                  sheetAllowedDetents: [1],
-                  sheetGrabberVisible: false,
-                  sheetExpandsWhenScrolledToEdge: false,
+                  sheetAllowedDetents: [0.5, 1],
+                  sheetInitialDetentIndex: 0,
+                  sheetGrabberVisible: true,
+                  sheetExpandsWhenScrolledToEdge: true,
                   contentStyle: { backgroundColor: colors.background },
-                  headerTitle: () => (
-                    <Text
-                      family="heading"
-                      style={[styles.settingsTitle, { color: colors.text }]}
-                    >
-                      Settings
-                    </Text>
-                  ),
                 }}
               />
               <Stack.Screen
@@ -272,10 +264,10 @@ function SessionNavigation() {
                   title: "What’s new",
                   headerTitleAlign: "center",
                   presentation: "formSheet",
-                  sheetAllowedDetents: [1],
+                  sheetAllowedDetents: [0.5, 1],
                   sheetInitialDetentIndex: 0,
-                  sheetGrabberVisible: false,
-                  sheetExpandsWhenScrolledToEdge: false,
+                  sheetGrabberVisible: true,
+                  sheetExpandsWhenScrolledToEdge: true,
                   contentStyle: { backgroundColor: colors.background },
                 }}
               />
@@ -315,12 +307,6 @@ function SessionNavigation() {
 
 const styles = StyleSheet.create({
   appSurface: { flex: 1 },
-  settingsTitle: {
-    fontSize: 24,
-    lineHeight: 30,
-    fontWeight: "500",
-    letterSpacing: -0.7,
-  },
 });
 
 export default function RootLayout() {

@@ -26,6 +26,10 @@ export interface ClientContextFrame {
   focused: boolean
   client: ClientKind
   resync: boolean
+  // The device's stable installation id and the label it composes for itself. Both optional so a
+  // build that does not report them is simply untracked in the device registry.
+  deviceId?: string
+  descriptor?: string
 }
 
 export type ClientKind = "web" | "mobile" | "desktop"
@@ -40,8 +44,14 @@ export function clientContextFrame(
   focused: boolean,
   client: ClientKind,
   resync: boolean,
+  device?: { id: string; descriptor: string },
 ): ClientContextFrame {
-  return { type: "client_context", focused, client, resync }
+  const frame: ClientContextFrame = { type: "client_context", focused, client, resync }
+  if (device !== undefined) {
+    frame.deviceId = device.id
+    frame.descriptor = device.descriptor
+  }
+  return frame
 }
 
 export function encodeFrame(frame: ClientFrame): string {

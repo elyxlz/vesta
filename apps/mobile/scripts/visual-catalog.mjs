@@ -49,6 +49,10 @@ const watchFlowsDirectory = path.join(watchDirectory, "flows");
 const watchScreenshotsDirectory = path.join(watchDirectory, "screenshots");
 const manifestPath = path.join(mobileRoot, "visual/scenarios.json");
 const metroConfigPath = path.join(mobileRoot, "visual/metro.config.js");
+const nativeAnimationHookPath = path.join(
+  mobileRoot,
+  "visual/harness/disable-ios-animations.swift",
+);
 const expoRouterEntryPath = path.resolve(
   mobileRoot,
   "../node_modules/expo-router/entry.js",
@@ -234,6 +238,14 @@ async function atomicWriteFile(target, contents) {
   await rename(temporary, target);
 }
 
+async function writeFileIfChanged(target, contents) {
+  if ((await exists(target)) && (await readFile(target, "utf8")) === contents) {
+    return false;
+  }
+  await atomicWriteFile(target, contents);
+  return true;
+}
+
 async function fingerprintPaths(targets, shouldInclude = () => true) {
   const files = [];
   for (const target of targets) {
@@ -266,6 +278,7 @@ function nativeInputTargets() {
     path.join(mobileRoot, "src/theme/native-config.generated.json"),
     path.join(mobileRoot, "assets/app-icon-dev.png"),
     path.join(mobileRoot, "assets/blank-splash.xml"),
+    nativeAnimationHookPath,
   ];
 }
 
@@ -281,9 +294,9 @@ async function loadManifest() {
   if (typeof manifest.appId !== "string" || !manifest.appId) {
     throw new Error("The visual manifest must define appId.");
   }
-  if (!Array.isArray(manifest.flows) || manifest.flows.length !== shardCount) {
+  if (!Array.isArray(manifest.flows) || manifest.flows.length < shardCount) {
     throw new Error(
-      `The visual manifest must define exactly ${shardCount} flows, one per shard.`,
+      `The visual manifest must define at least ${shardCount} flows so every shard has work.`,
     );
   }
   if (!Array.isArray(manifest.scenarios) || manifest.scenarios.length === 0) {
@@ -402,7 +415,17 @@ function chooseSimulator(devices, requested) {
     if (partial.length === 1) return partial[0];
     throw new Error(`No unique available iPhone simulator matches "${requested}".`);
   }
+
+  const preferred = phones
+    .filter((device) => device.name === "iPhone 17")
+    .sort((left, right) =>
+      right.runtimeName.localeCompare(left.runtimeName, undefined, {
+        numeric: true,
+      }),
+    )[0];
+
   return (
+    preferred ??
     phones.find((device) => device.state === "Booted") ??
     phones.find((device) => device.name === "iPhone 16 Pro") ??
     phones.find((device) => device.name.endsWith("Pro")) ??
@@ -787,6 +810,30 @@ async function rebundleApp(app, environment) {
   await run("codesign", ["--force", "--sign", "-", app]);
 }
 
+async function installVisualNativeHooks(iosDirectory) {
+  const appDelegates = (await filesBelow(iosDirectory)).filter(
+    (file) => path.basename(file) === "AppDelegate.swift",
+  );
+  if (appDelegates.length !== 1) {
+    throw new Error(
+      `Expected one generated AppDelegate.swift, found ${appDelegates.length}.`,
+    );
+  }
+
+  const appDelegate = appDelegates[0];
+  const hook = (await readFile(nativeAnimationHookPath, "utf8")).trimEnd();
+  const source = await readFile(appDelegate, "utf8");
+  if (source.includes(hook)) return;
+
+  const anchor =
+    "    didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil\n" +
+    "  ) -> Bool {\n";
+  if (!source.includes(anchor)) {
+    throw new Error("Could not install the visual AppDelegate animation hook.");
+  }
+  await writeFile(appDelegate, source.replace(anchor, `${anchor}${hook}\n`));
+}
+
 async function buildAndInstall(simulators, appId) {
   const buildSimulator = simulators[0];
   await mkdir(derivedDataDirectory, { recursive: true });
@@ -828,6 +875,7 @@ async function buildAndInstall(simulators, appId) {
           { env: visualEnvironment },
         );
       }
+      await installVisualNativeHooks(iosDirectory);
       const workspace = await onlyEntryWithExtension(
         iosDirectory,
         ".xcworkspace",
@@ -903,25 +951,47 @@ async function runMaestro(manifest, simulators, tools) {
   const flowPaths = manifest.flows.map((flow) =>
     path.resolve(mobileRoot, flow),
   );
-  await run(
-    tools.maestro,
-    [
-      `--device=${simulators.map((simulator) => simulator.udid).join(",")}`,
-      "test",
-      `--shard-split=${simulators.length}`,
-      ...flowPaths,
-      "-e",
-      `APP_ID=${manifest.appId}`,
-      "-e",
-      "WATCH_CAPTURE_URL=",
-      `--test-output-dir=${maestroDirectory}`,
-      "--format=HTML",
-      `--output=${path.join(maestroDirectory, "report.html")}`,
-      "--test-suite-name=Vesta visual catalog",
-    ],
-    { cwd: mobileRoot, env: tools.environment },
+  const bridge = await startScreenshotBridge(simulators);
+  const cycle = await bridge.beginCycle(manifest);
+  try {
+    await run(
+      tools.maestro,
+      [
+        `--device=${simulators.map((simulator) => simulator.udid).join(",")}`,
+        "test",
+        `--shard-split=${simulators.length}`,
+        ...flowPaths,
+        "-e",
+        `APP_ID=${manifest.appId}`,
+        "-e",
+        "WATCH_CAPTURE_URL=",
+        "-e",
+        `WATCH_CAPTURE_URL_1=${bridge.urls[0]}`,
+        "-e",
+        `WATCH_CAPTURE_URL_2=${bridge.urls[1]}`,
+        `--test-output-dir=${maestroDirectory}`,
+        "--format=HTML",
+        `--output=${path.join(maestroDirectory, "report.html")}`,
+        "--test-suite-name=Vesta visual catalog",
+      ],
+      { cwd: mobileRoot, env: tools.environment },
+    );
+    await cycle.completion;
+  } catch (error) {
+    bridge.fail(error);
+    await cycle.completion.catch(() => {});
+    throw error;
+  } finally {
+    await bridge.close();
+  }
+  await Promise.all(
+    manifest.scenarios.map((scenario) =>
+      copyFile(
+        path.join(watchScreenshotsDirectory, scenario.screenshot),
+        path.join(captureScreenshotsDirectory, scenario.screenshot),
+      ),
+    ),
   );
-  await collectMaestroScreenshots(manifest, captureScreenshotsDirectory);
 }
 
 async function filesBelow(directory) {
@@ -933,23 +1003,6 @@ async function filesBelow(directory) {
     if (entry.isFile()) files.push(target);
   }
   return files;
-}
-
-async function collectMaestroScreenshots(manifest, destinationDirectory) {
-  const artifacts = await filesBelow(maestroDirectory);
-  for (const scenario of manifest.scenarios) {
-    const suffix = path.join("takeScreenshot", scenario.screenshot);
-    const matches = artifacts.filter((artifact) => artifact.endsWith(suffix));
-    if (matches.length !== 1) {
-      throw new Error(
-        `Expected one Maestro artifact for ${scenario.screenshot}, found ${matches.length}.`,
-      );
-    }
-    await copyFile(
-      matches[0],
-      path.join(destinationDirectory, scenario.screenshot),
-    );
-  }
 }
 
 async function assertHarnessBoundary() {
@@ -1016,12 +1069,19 @@ function escapeHtml(value) {
 
 export function galleryHtml(catalog) {
   const catalogJson = JSON.stringify(catalog).replaceAll("<", "\\u003c");
-  const cards = catalog.scenarios
-    .map(
-      (scenario) => `
-        <article class="card" data-title="${escapeHtml(
-          `${scenario.title} ${scenario.description} ${scenario.group}`,
-        ).toLowerCase()}">
+  const scenarioGroups = new Map();
+  for (const scenario of catalog.scenarios) {
+    const group = scenario.group || "Other";
+    const scenarios = scenarioGroups.get(group) ?? [];
+    scenarios.push(scenario);
+    scenarioGroups.set(group, scenarios);
+  }
+  const sections = [...scenarioGroups.entries()]
+    .map(([group, scenarios], sectionIndex) => {
+      const cards = scenarios
+        .map(
+          (scenario) => `
+        <article class="card">
           <button class="preview" data-image="${escapeHtml(
             scenario.image,
           )}" aria-label="Open ${escapeHtml(scenario.title)}">
@@ -1034,18 +1094,30 @@ export function galleryHtml(catalog) {
                 scenario.captured
                   ? `<img src="${escapeHtml(scenario.image)}" alt="${escapeHtml(
                       scenario.title,
-                    )}" loading="lazy"><span class="dynamic-island" aria-hidden="true"></span>`
+                    )}" loading="lazy">`
                   : `<span class="missing">Screenshot missing</span>`
               }
             </span>
           </button>
           <div class="card-copy">
-            <span class="eyebrow">${escapeHtml(scenario.group)}</span>
-            <h2>${escapeHtml(scenario.title)}</h2>
+            <h3>${escapeHtml(scenario.title)}</h3>
             <p>${escapeHtml(scenario.description)}</p>
           </div>
         </article>`,
-    )
+        )
+        .join("");
+      const sectionId = `scenario-section-${sectionIndex}`;
+      return `
+    <section class="scenario-section" aria-labelledby="${sectionId}">
+      <div class="section-header">
+        <h2 class="section-title" id="${sectionId}">${escapeHtml(group)}</h2>
+        <span class="section-count">${scenarios.length} ${
+          scenarios.length === 1 ? "screen" : "screens"
+        }</span>
+      </div>
+      <div class="grid">${cards}</div>
+    </section>`;
+    })
     .join("");
 
   return `<!doctype html>
@@ -1076,8 +1148,8 @@ export function galleryHtml(catalog) {
     }
     header {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(240px, 360px);
-      align-items: end;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
       gap: 20px 32px;
       max-width: 1680px;
       margin: 0 auto;
@@ -1097,8 +1169,13 @@ export function galleryHtml(catalog) {
       letter-spacing: -.045em;
     }
     .intro { margin: 0; color: var(--muted); font-size: 14px; }
-    .controls { display: grid; gap: 10px; }
-    .meta { display: flex; flex-wrap: wrap; gap: 6px; }
+    .meta {
+      display: flex;
+      max-width: 540px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 6px;
+    }
     .meta span, .report {
       border: 1px solid var(--border);
       border-radius: 999px;
@@ -1109,25 +1186,37 @@ export function galleryHtml(catalog) {
       font-size: 10px;
     }
     .report:hover { color: var(--text); border-color: #555563; }
-    input {
-      width: 100%;
-      border: 1px solid var(--border);
-      border-radius: 11px;
-      padding: 10px 12px;
-      background: #111116;
-      color: var(--text);
-      font: inherit;
-      outline: none;
-    }
-    input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px #b8a7ff22; }
     main {
+      max-width: 1680px;
+      margin: 0 auto;
+      padding: 8px 24px 64px;
+    }
+    .scenario-section + .scenario-section { margin-top: 48px; }
+    .section-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 10px;
+    }
+    .section-title {
+      margin: 0;
+      font-size: 20px;
+      line-height: 1.2;
+      letter-spacing: -.025em;
+    }
+    .section-count {
+      flex: 0 0 auto;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(min(100%, 210px), 1fr));
       align-items: start;
       gap: 16px;
-      max-width: 1680px;
-      margin: 0 auto;
-      padding: 8px 24px 64px;
     }
     .card {
       min-width: 0;
@@ -1241,18 +1330,6 @@ export function galleryHtml(catalog) {
       transition: opacity 160ms ease;
     }
     .preview:hover img { opacity: .88; }
-    .dynamic-island {
-      position: absolute;
-      top: 1.05%;
-      left: 50%;
-      width: 27%;
-      aspect-ratio: 3.25;
-      border-radius: 999px;
-      background: #050505;
-      box-shadow: inset 0 0 0 1px #222;
-      transform: translateX(-50%);
-      pointer-events: none;
-    }
     .missing { color: var(--muted); }
     .card-copy {
       margin-top: 9px;
@@ -1262,14 +1339,7 @@ export function galleryHtml(catalog) {
       background: linear-gradient(150deg, #1b1b21, var(--card));
       box-shadow: 0 8px 24px #0003;
     }
-    .eyebrow {
-      color: var(--accent);
-      font-size: 9px;
-      font-weight: 700;
-      letter-spacing: .06em;
-      text-transform: uppercase;
-    }
-    h2 { margin: 3px 0 4px; font-size: 16px; line-height: 1.2; letter-spacing: -.015em; }
+    h3 { margin: 0 0 4px; font-size: 16px; line-height: 1.2; letter-spacing: -.015em; }
     .card p {
       display: -webkit-box;
       overflow: hidden;
@@ -1307,10 +1377,14 @@ export function galleryHtml(catalog) {
     [hidden] { display: none !important; }
     @media (max-width: 720px) {
       header { grid-template-columns: 1fr; padding: 24px 16px 18px; }
+      .meta { justify-content: flex-start; }
       main {
+        padding: 4px 16px 48px;
+      }
+      .scenario-section + .scenario-section { margin-top: 36px; }
+      .grid {
         grid-template-columns: repeat(auto-fill, minmax(min(100%, 160px), 1fr));
         gap: 10px;
-        padding: 4px 16px 48px;
       }
     }
   </style>
@@ -1329,34 +1403,25 @@ export function galleryHtml(catalog) {
       <h1>Visual catalog</h1>
       <p class="intro">Complete device captures at a glance. Click any image to expand it.</p>
     </div>
-    <div class="controls">
-      <input id="filter" type="search" placeholder="Filter screenshots…" aria-label="Filter screenshots">
-      <div class="meta">
-        <span>${escapeHtml(catalog.device.name)}</span>
-        <span>${escapeHtml(catalog.device.runtime)}</span>
-        <span>${escapeHtml(catalog.generatedAt)}</span>
-        <span>${escapeHtml(catalog.git.revision)}${catalog.git.dirty ? " · dirty" : ""}</span>
-        ${
-          catalog.reportAvailable
-            ? '<a class="report" href="maestro/report.html">Maestro report</a>'
-            : ""
-        }
-      </div>
+    <div class="meta">
+      <span>${escapeHtml(catalog.device.name)}</span>
+      <span>${escapeHtml(catalog.device.runtime)}</span>
+      <span>${escapeHtml(catalog.generatedAt)}</span>
+      <span>${escapeHtml(catalog.git.revision)}${catalog.git.dirty ? " · dirty" : ""}</span>
+      ${
+        catalog.reportAvailable
+          ? '<a class="report" href="maestro/report.html">Maestro report</a>'
+          : ""
+      }
     </div>
   </header>
-  <main>${cards}</main>
+  <main>${sections}</main>
   <dialog id="lightbox">
     <button aria-label="Close">×</button>
     <img alt="">
   </dialog>
   <script>
     window.__VISUAL_CATALOG__ = ${catalogJson};
-    const filter = document.querySelector("#filter");
-    const cards = [...document.querySelectorAll(".card")];
-    filter.addEventListener("input", () => {
-      const query = filter.value.trim().toLowerCase();
-      for (const card of cards) card.hidden = !card.dataset.title.includes(query);
-    });
     const dialog = document.querySelector("#lightbox");
     const dialogImage = dialog.querySelector("img");
     document.querySelectorAll(".preview[data-image]").forEach((button) => {
@@ -1690,7 +1755,7 @@ async function runCaptureIteration(options, session) {
       reportAvailable: await exists(path.join(maestroDirectory, "report.html")),
     },
   );
-  console.log(`\nCaptured ${catalog.scenarios.length} onboarding screenshots.`);
+  console.log(`\nCaptured ${catalog.scenarios.length} mobile screenshots.`);
   return catalog;
 }
 
@@ -1741,8 +1806,96 @@ async function readRequestJson(request) {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
+const simulatorApplication =
+  "/Applications/Xcode.app/Contents/Developer/Applications/Simulator.app/Contents/MacOS/Simulator";
+
+async function findSimulatorApplication(udid) {
+  const result = await run(
+    "pgrep",
+    ["-f", `${simulatorApplication} -CurrentDeviceUDID ${udid}`],
+    { capture: true, allowFailure: true, quiet: true },
+  );
+  const pid = Number(result.stdout.trim().split("\n")[0]);
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
+}
+
+async function ensureHiddenSimulatorApplication(udid) {
+  let pid = await findSimulatorApplication(udid);
+  let created = false;
+  if (pid === null) {
+    await run(
+      "open",
+      [
+        "-gj",
+        "-n",
+        "-a",
+        "Simulator",
+        "--args",
+        "-CurrentDeviceUDID",
+        udid,
+        "-ConnectHardwareKeyboard",
+        "0",
+      ],
+      { capture: true, quiet: true },
+    );
+    created = true;
+    for (let attempt = 0; attempt < 30 && pid === null; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      pid = await findSimulatorApplication(udid);
+    }
+  }
+  if (pid === null) {
+    throw new Error("Could not start the hidden Simulator keyboard host.");
+  }
+  return { created, pid };
+}
+
+async function showSimulatorSoftwareKeyboard(udid) {
+  const host = await ensureHiddenSimulatorApplication(udid);
+  const script = [
+    'tell application "System Events"',
+    `set simulatorProcess to first process whose unix id is ${host.pid}`,
+    "tell simulatorProcess",
+    'click menu item "Toggle Software Keyboard" of menu 1 of menu item "Keyboard" of menu 1 of menu bar item "I/O" of menu bar 1',
+    "end tell",
+    "end tell",
+  ].join("\n");
+  let failure = "";
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const result = await run("osascript", ["-e", script], {
+      capture: true,
+      allowFailure: true,
+      quiet: true,
+    });
+    if (result.code === 0) return host;
+    failure = result.stderr.trim();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  throw new Error(
+    `Could not show the iOS software keyboard.${failure ? ` ${failure}` : ""}`,
+  );
+}
+
+export function createInactivityWatchdog(onTimeout, timeoutMs) {
+  let timer;
+  const cancel = () => {
+    if (timer !== undefined) clearTimeout(timer);
+    timer = undefined;
+  };
+  const reset = () => {
+    cancel();
+    timer = setTimeout(() => {
+      timer = undefined;
+      onTimeout();
+    }, timeoutMs);
+  };
+  reset();
+  return { cancel, reset };
+}
+
 async function startScreenshotBridge(simulators) {
   let cycle;
+  const createdKeyboardHostPids = new Set();
   const routes = new Map(
     simulators.map((simulator, index) => [
       `/__visual_capture/${index + 1}`,
@@ -1760,10 +1913,18 @@ async function startScreenshotBridge(simulators) {
       return;
     }
     try {
-      if (!cycle || cycle.completed) {
-        throw new Error("No screenshot cycle is active.");
-      }
       const payload = await readRequestJson(request);
+      if (payload.action === "show-software-keyboard") {
+        const host = await showSimulatorSoftwareKeyboard(simulator.udid);
+        if (host.created) createdKeyboardHostPids.add(host.pid);
+        response.writeHead(204).end();
+        return;
+      }
+      if (!cycle) {
+        response.writeHead(204).end();
+        return;
+      }
+      if (cycle.completed) throw new Error("No screenshot cycle is active.");
       const screenshot = payload.screenshot;
       if (
         typeof screenshot !== "string" ||
@@ -1788,14 +1949,16 @@ async function startScreenshotBridge(simulators) {
       response.writeHead(204).end();
       if (cycle.seen.size === cycle.expected.size) {
         cycle.completed = true;
-        clearTimeout(cycle.timer);
+        cycle.watchdog.cancel();
         cycle.resolve();
+      } else {
+        cycle.watchdog.reset();
       }
     } catch (error) {
       response.writeHead(500).end(error.message);
       if (cycle && !cycle.completed) {
         cycle.completed = true;
-        clearTimeout(cycle.timer);
+        cycle.watchdog.cancel();
         cycle.reject(error);
       }
     }
@@ -1837,58 +2000,78 @@ async function startScreenshotBridge(simulators) {
         seen: new Set(),
         resolve: resolveCycle,
         reject: rejectCycle,
-        timer: setTimeout(() => {
-          if (cycle.completed) return;
-          cycle.completed = true;
-          cycle.reject(
-            new Error(
-              `Timed out waiting for screenshots: ${[...expected]
-                .filter((screenshot) => !cycle.seen.has(screenshot))
-                .join(", ")}`,
-            ),
-          );
-        }, timeoutMs),
+        watchdog: null,
       };
+      cycle.watchdog = createInactivityWatchdog(() => {
+        if (cycle.completed) return;
+        cycle.completed = true;
+        cycle.reject(
+          new Error(
+            `Timed out waiting for screenshots: ${[...expected]
+              .filter((screenshot) => !cycle.seen.has(screenshot))
+              .join(", ")}`,
+          ),
+        );
+      }, timeoutMs);
       return { completion };
     },
     fail(error) {
       if (!cycle || cycle.completed) return;
       cycle.completed = true;
-      clearTimeout(cycle.timer);
+      cycle.watchdog.cancel();
       cycle.reject(error);
     },
     cancel(detail) {
       if (!cycle || cycle.completed) return;
       cycle.completed = true;
-      clearTimeout(cycle.timer);
+      cycle.watchdog.cancel();
       cycle.reject(new CaptureSupersededError(detail));
     },
     async close() {
       if (cycle && !cycle.completed) {
         cycle.completed = true;
-        clearTimeout(cycle.timer);
+        cycle.watchdog.cancel();
         cycle.reject(new Error("Screenshot bridge stopped."));
       }
       await new Promise((resolve) => server.close(resolve));
+      for (const pid of createdKeyboardHostPids) {
+        try {
+          process.kill(pid, "SIGTERM");
+        } catch {}
+      }
     },
   };
 }
 
 async function syncWatchFlows(manifest) {
-  await rm(watchFlowsDirectory, { recursive: true, force: true });
   await mkdir(watchFlowsDirectory, { recursive: true });
   const flowPaths = [];
-  for (const flow of manifest.flows) {
-    const source = path.resolve(mobileRoot, flow);
-    const target = path.join(watchFlowsDirectory, path.basename(flow));
-    await copyFile(source, target);
+  const changedShards = [];
+  const flowShards = assignFlowsToShards(manifest.flows, shardCount);
+  for (const [index, flows] of flowShards.entries()) {
+    const sources = await Promise.all(
+      flows.map(async (flow) => ({
+        label: flow,
+        source: await readFile(path.resolve(mobileRoot, flow), "utf8"),
+      })),
+    );
+    const target = path.join(watchFlowsDirectory, `shard-${index + 1}.yml`);
+    const changed = await writeFileIfChanged(
+      target,
+      continuousShardFlow(manifest.appId, index + 1, sources),
+    );
+    if (changed) changedShards.push(index);
     flowPaths.push(target);
   }
-  await copyFile(
+  const callbackSource = await readFile(
     path.join(mobileRoot, "maestro/visual/capture-screenshot.js"),
-    path.join(watchFlowsDirectory, "capture-screenshot.js"),
+    "utf8",
   );
-  return flowPaths;
+  await writeFileIfChanged(
+    path.join(watchFlowsDirectory, "capture-screenshot.js"),
+    callbackSource,
+  );
+  return { changedShards, flowPaths };
 }
 
 const ansiEscapePattern = /\u001B\[[0-?]*[ -/]*[@-~]/g;
@@ -1925,6 +2108,11 @@ function startContinuousMaestro(session, manifest, flowPaths, bridge) {
   let stopping = false;
   let failure;
   let stopPromise;
+  if (flowPaths.length !== session.simulators.length) {
+    throw new Error(
+      `Expected ${session.simulators.length} continuous Maestro shard flows, received ${flowPaths.length}.`,
+    );
+  }
   const children = flowPaths.map((flow, index) => {
     const child = spawn(
       session.tools.maestro,
@@ -1992,9 +2180,11 @@ function startContinuousMaestro(session, manifest, flowPaths, bridge) {
         )
       );
     },
-    trigger() {
+    trigger(indices = children.map((_entry, index) => index)) {
       if (failure) throw failure;
-      for (const entry of children) {
+      for (const index of indices) {
+        const entry = children[index];
+        if (!entry) throw new Error(`Unknown Maestro shard index: ${index}`);
         entry.stdoutParser.beginRun();
         entry.stderrParser.beginRun();
         entry.child.stdin.write("\n");
@@ -2028,6 +2218,30 @@ function startContinuousMaestro(session, manifest, flowPaths, bridge) {
   };
 }
 
+export function assignFlowsToShards(flowPaths, count) {
+  if (!Number.isInteger(count) || count < 1) {
+    throw new Error("At least one Maestro shard is required.");
+  }
+  const shards = Array.from({ length: count }, () => []);
+  flowPaths.forEach((flow, index) => shards[index % count].push(flow));
+  return shards;
+}
+
+export function continuousShardFlow(appId, index, flowSources) {
+  const commands = flowSources.map(({ label, source }) => {
+    const divider = /^---\s*$/m.exec(source);
+    if (!divider) throw new Error(`Maestro flow is missing ---: ${label}`);
+    return source.slice(divider.index + divider[0].length).trim();
+  });
+  return `appId: ${appId}
+name: Vesta visual catalog shard ${index}
+tags:
+  - visual
+  - watch
+---
+${commands.join("\n\n")}\n`;
+}
+
 async function publishWatchScreenshots(manifest, simulators, validate) {
   const catalog = await publishGallery(
     manifest,
@@ -2035,7 +2249,7 @@ async function publishWatchScreenshots(manifest, simulators, validate) {
     watchScreenshotsDirectory,
     { mode: "watch", reportAvailable: false, validate },
   );
-  console.log(`\nCaptured ${catalog.scenarios.length} onboarding screenshots.`);
+  console.log(`\nCaptured ${catalog.scenarios.length} mobile screenshots.`);
   return catalog;
 }
 
@@ -2046,10 +2260,16 @@ export function shouldIgnoreWatchPath(changedPath) {
     changedPath.includes(`${path.sep}.`) ||
     changedPath.endsWith("~") ||
     changedPath.endsWith(".swp") ||
+    basename.endsWith(".tmp") ||
+    basename.includes(".tmp.") ||
     basename.endsWith(".snap") ||
     /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(basename) ||
     changedPath.split(path.sep).includes("__tests__")
   );
+}
+
+export function watchChangePath(target, changedPath) {
+  return shouldIgnoreWatchPath(changedPath) ? target : changedPath;
 }
 
 function visualWatchTargets() {
@@ -2093,7 +2313,7 @@ function visualWatchTargets() {
       target: path.join(mobileRoot, "maestro/visual"),
       rebuild: false,
       recursive: true,
-      restart: true,
+      restart: false,
       native: false,
     },
     {
@@ -2157,7 +2377,7 @@ async function watchCatalog(options) {
     bridge = await startScreenshotBridge(session.simulators);
 
     const initialCycle = await bridge.beginCycle(manifest);
-    const initialFlows = await syncWatchFlows(manifest);
+    const { flowPaths: initialFlows } = await syncWatchFlows(manifest);
     processes = startContinuousMaestro(
       session,
       manifest,
@@ -2264,17 +2484,20 @@ async function watchCatalog(options) {
         }
         const cycle = await bridge.beginCycle(manifest);
         requireLatestRevision();
+        const syncedFlows = await syncWatchFlows(manifest);
+        requireLatestRevision();
         if (restart) {
-          const flowPaths = await syncWatchFlows(manifest);
-          requireLatestRevision();
           processes = startContinuousMaestro(
             session,
             manifest,
-            flowPaths,
+            syncedFlows.flowPaths,
             bridge,
           );
         } else {
-          processes.trigger();
+          const unchangedShards = session.simulators
+            .map((_simulator, index) => index)
+            .filter((index) => !syncedFlows.changedShards.includes(index));
+          processes.trigger(unchangedShards);
         }
         await cycle.completion;
         requireLatestRevision();
@@ -2338,24 +2561,63 @@ async function watchCatalog(options) {
       scheduleAfterQuietPeriod();
     };
 
-    watchers = targets.map(
-      ({ target, rebuild, recursive, restart, native }) =>
-        watchPath(target, { recursive }, (_event, filename) => {
-          const changedPath = filename
-            ? path.resolve(
-                recursive ? target : path.dirname(target),
-                filename.toString(),
-              )
-            : target;
-          scheduleCapture(rebuild, restart, native, changedPath);
-        }),
-    );
+    const observedFingerprints = new Map(startupFingerprints);
+    const fingerprintChecks = new Map();
+    const scheduleChangedTarget = (watchTarget, changedPath) => {
+      const previousCheck = fingerprintChecks.get(watchTarget.target);
+      const check = (previousCheck ?? Promise.resolve())
+        .catch(() => undefined)
+        .then(async () => {
+          const fingerprint = (
+            await watchTargetFingerprints([watchTarget])
+          ).get(watchTarget.target);
+          if (fingerprint === observedFingerprints.get(watchTarget.target)) {
+            return;
+          }
+          observedFingerprints.set(watchTarget.target, fingerprint);
+          scheduleCapture(
+            watchTarget.rebuild,
+            watchTarget.restart,
+            watchTarget.native,
+            changedPath,
+          );
+        })
+        .catch((error) => {
+          console.error(
+            `Could not inspect visual watch change for ${watchTarget.target}: ${error.message}`,
+          );
+        })
+        .finally(() => {
+          if (fingerprintChecks.get(watchTarget.target) === check) {
+            fingerprintChecks.delete(watchTarget.target);
+          }
+        });
+      fingerprintChecks.set(watchTarget.target, check);
+    };
+
+    watchers = targets.map((watchTarget) => {
+      const { target, recursive } = watchTarget;
+      return watchPath(target, { recursive }, (_event, filename) => {
+        const changedPath = filename
+          ? path.resolve(
+              recursive ? target : path.dirname(target),
+              filename.toString(),
+            )
+          : target;
+        scheduleChangedTarget(
+          watchTarget,
+          watchChangePath(target, changedPath),
+        );
+      });
+    });
 
     const currentFingerprints = await watchTargetFingerprints(targets);
     for (const { target, rebuild, restart, native } of targets) {
-      if (currentFingerprints.get(target) === startupFingerprints.get(target)) {
+      const fingerprint = currentFingerprints.get(target);
+      if (fingerprint === observedFingerprints.get(target)) {
         continue;
       }
+      observedFingerprints.set(target, fingerprint);
       scheduleCapture(rebuild, restart, native, target);
     }
 

@@ -19,8 +19,8 @@ use crate::settings::{
 };
 use crate::state::{err_response, map_docker_err, ok_json, AppState, SharedState};
 use crate::{
-    agent_provider, agent_proxy, agent_status, auth, backup, docker, mobile_app,
-    self_update, systemd, update_check, update_window,
+    agent_provider, agent_proxy, agent_status, auth, backup, docker, maintenance,
+    maintenance_window, mobile_app, self_update, systemd, update_check,
 };
 
 const GATEWAY_RESTART_DELAY_MS: u64 = 200;
@@ -42,7 +42,6 @@ const RESERVED_SERVICE_NAMES: &[&str] = &[
     "services",
 ];
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
-const AUTO_BACKUP_CHECK_INTERVAL_SECS: u64 = 3600;
 
 // --- TLS cert generation ---
 
@@ -222,27 +221,173 @@ async fn info() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "managed": crate::is_cloud_managed() }))
 }
 
-/// `POST /agents/{name}/account-token`: mint a short-lived server-identity token for
-/// the on-box agent (issue #20). Agent-token authenticated (the agent proves itself
-/// with its `X-Agent-Token`); vestad signs `{ sub: VESTA_CLOUD_SERVER_ID, typ:
-/// "server-identity" }` with its `api_key` and hands it back. The agent carries this
-/// to the control plane's `/api/account/*` to read its plan or open a billing portal.
-/// vestad makes NO network call, it only signs locally; the `api_key` never enters
-/// the agent container, only this 10-minute token does.
+/// `POST /agents/{name}/account-token`: mint a short-lived server-identity token
+/// for the on-box agent (issue #20). Agent-token authenticated. The identity
+/// comes from cloud-init env on a managed VM or `vesta-cloud-account.json` on a
+/// paired self-hosted box (`vesta_cloud::vesta_cloud_identity`); an unpaired box
+/// 404s, and the nullable `control_url` names the identity's control plane.
+/// vestad makes NO network call, it only signs locally; the `api_key` never
+/// enters the agent container, only this 10-minute token does.
 async fn account_token_handler(State(state): State<SharedState>) -> axum::response::Response {
-    if !crate::is_cloud_managed() {
-        return err_response(StatusCode::NOT_FOUND, "not a cloud-managed server").into_response();
-    }
-    let Ok(server_id) = std::env::var("VESTA_CLOUD_SERVER_ID") else {
-        // Managed but VESTA_CLOUD_SERVER_ID not seeded — nothing to mint.
+    let Some((server_id, control_url)) =
+        crate::vesta_cloud::vesta_cloud_identity(&state.env_config.config_dir)
+    else {
         return err_response(StatusCode::NOT_FOUND, "no server identity available").into_response();
     };
     let token = crate::jwt::create_server_identity_token(&state.api_key, &server_id);
     Json(serde_json::json!({
         "token": token,
         "expires_in": crate::jwt::SERVER_IDENTITY_TTL,
+        "control_url": control_url,
     }))
     .into_response()
+}
+
+/// `POST /vesta-cloud/pair` (daemon-level: the apps authenticate with the api
+/// key / access token, an agent with its own token): open or resume the pairing
+/// that links this self-hosted box to a Vesta Cloud account. The flow itself
+/// lives in `vesta_cloud::start_or_resume_pairing`; the caller only ever sees
+/// the `user_code` + `verification_url` to relay to the owner (never the
+/// `device_code`), with the code's REMAINING lifetime as `expires_in`.
+/// Managed VMs and already-paired boxes refuse with 409.
+async fn vesta_cloud_pair_handler(
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if crate::is_cloud_managed() {
+        return Err(err_response(
+            StatusCode::CONFLICT,
+            "this box is already managed by Vesta Cloud",
+        ));
+    }
+    if crate::vesta_cloud::load_vesta_cloud_account(&state.env_config.config_dir).is_some() {
+        return Err(err_response(
+            StatusCode::CONFLICT,
+            "already paired to a Vesta Cloud account (unpair first)",
+        ));
+    }
+
+    let _guard = state.vesta_cloud_pairing_lock.lock().await;
+    let pairing = crate::vesta_cloud::start_or_resume_pairing(
+        &state.http_client,
+        &state.env_config.config_dir,
+        &state.api_key,
+    )
+    .await
+    .map_err(|e| match e {
+        crate::vesta_cloud::PairStartError::AlreadyPaired => err_response(
+            StatusCode::CONFLICT,
+            "the control plane already recognizes this box's key as a live server",
+        ),
+        crate::vesta_cloud::PairStartError::Control(msg)
+        | crate::vesta_cloud::PairStartError::Transport(msg) => {
+            err_response(StatusCode::BAD_GATEWAY, &msg)
+        }
+    })?;
+
+    let now = crate::time_utils::now_epoch_secs();
+    Ok(Json(serde_json::json!({
+        "user_code": pairing.user_code,
+        "verification_url": pairing.verification_url,
+        "interval": pairing.interval,
+        "expires_in": pairing.remaining_secs(now),
+    })))
+}
+
+/// `POST /vesta-cloud/pair/poll` (daemon-level, same tiers as pair): forward
+/// ONE control-plane poll for the in-flight pairing. Answers 200
+/// `{status:"pending"}` while the owner hasn't approved (a STRUCTURED signal,
+/// callers never parse error prose); on `linked` the flow core has already
+/// persisted `vesta-cloud-account.json` and cleared the pairing. A terminal
+/// refusal clears the pairing; a network failure keeps it (poll again).
+async fn vesta_cloud_pair_poll_handler(
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let now = crate::time_utils::now_epoch_secs();
+    let _guard = state.vesta_cloud_pairing_lock.lock().await;
+    let had_pairing =
+        crate::vesta_cloud::load_vesta_cloud_pairing(&state.env_config.config_dir).is_some();
+    let Some(pairing) =
+        crate::vesta_cloud::current_vesta_cloud_pairing(&state.env_config.config_dir, now)
+    else {
+        if had_pairing {
+            return Err(err_response(StatusCode::GONE, "pairing expired"));
+        }
+        return Err(err_response(StatusCode::NOT_FOUND, "no pairing in progress"));
+    };
+
+    match crate::vesta_cloud::poll_pairing(
+        &state.http_client,
+        &state.env_config.config_dir,
+        &pairing.device_code,
+    )
+    .await
+    {
+        Err(e) => Err(err_response(
+            StatusCode::BAD_GATEWAY,
+            &format!("pairing poll failed: {e}"),
+        )),
+        Ok(crate::vesta_cloud::PollOutcome::Pending) => {
+            Ok(Json(serde_json::json!({ "status": "pending" })))
+        }
+        Ok(crate::vesta_cloud::PollOutcome::Linked {
+            server_id,
+            control_url,
+        }) => Ok(Json(serde_json::json!({
+            "status": "linked",
+            "server_id": server_id,
+            "control_url": control_url,
+        }))),
+        Ok(crate::vesta_cloud::PollOutcome::Refused { gone, reason }) => {
+            let mapped = if gone {
+                StatusCode::GONE
+            } else {
+                StatusCode::CONFLICT
+            };
+            Err(err_response(mapped, &format!("pairing failed: {reason}")))
+        }
+    }
+}
+
+/// `POST /vesta-cloud/unpair` (daemon-level, same tiers as pair): detach this
+/// box from its Vesta Cloud account via `vesta_cloud::request_unpair`. A 404
+/// from the control plane means the link was already gone server-side
+/// (dashboard unpair) and the local file is cleared; an identity rejection
+/// keeps the file on purpose (409, the owner unpairs from the dashboard).
+async fn vesta_cloud_unpair_handler(
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if crate::is_cloud_managed() {
+        return Err(err_response(
+            StatusCode::CONFLICT,
+            "a managed Vesta Cloud box cannot unpair",
+        ));
+    }
+    let Some(account) =
+        crate::vesta_cloud::load_vesta_cloud_account(&state.env_config.config_dir)
+    else {
+        return Err(err_response(
+            StatusCode::NOT_FOUND,
+            "not paired to a Vesta Cloud account",
+        ));
+    };
+
+    match crate::vesta_cloud::request_unpair(
+        &state.http_client,
+        &state.env_config.config_dir,
+        &state.api_key,
+        &account,
+    )
+    .await
+    {
+        Err(e) => Err(err_response(StatusCode::BAD_GATEWAY, &e)),
+        Ok(crate::vesta_cloud::UnpairOutcome::IdentityRejected) => Err(err_response(
+            StatusCode::CONFLICT,
+            "the control plane rejected this box's identity (has the api key changed since pairing?); the link was NOT cleared. remove the box from the vesta.run dashboard, then unpair again",
+        )),
+        Ok(crate::vesta_cloud::UnpairOutcome::Unpaired { .. }) => {
+            Ok(Json(serde_json::json!({ "status": "unpaired" })))
+        }
+    }
 }
 
 /// `GET /agents/{name}/workspace.bundle` — the host's upstream snapshot as a bundle
@@ -405,6 +550,9 @@ async fn gateway_update_handler(
         channel = channel.as_str(),
         "gateway update requested via API"
     );
+    // The same pre-update snapshot pass the maintenance cycle runs, immediately: the user
+    // asked now, so no window or idle wait. Restart-free, so it only delays the apply.
+    run_snapshot_pass(&state, maintenance::PassKind::pre_update_from_current()).await;
     let join = tokio::task::spawn_blocking(move || self_update::perform_update(channel)).await;
     state
         .updating
@@ -865,7 +1013,7 @@ pub(crate) async fn drop_rename_notification(
 /// (ambient presence), overridable by the user's `notification_rules`.
 fn presence_notification_payload(
     epoch_secs: u64,
-    client: crate::sync::protocol::ClientKind,
+    client: crate::types::ClientKind,
 ) -> Result<serde_json::Value, String> {
     let timestamp = crate::time_utils::epoch_to_rfc3339(epoch_secs)?;
     let client = client.display_name();
@@ -884,7 +1032,7 @@ fn presence_notification_payload(
 pub(crate) async fn drop_presence_notification(
     docker: &bollard::Docker,
     agent: &str,
-    client: crate::sync::protocol::ClientKind,
+    client: crate::types::ClientKind,
 ) -> Result<String, String> {
     let epoch = crate::time_utils::now_epoch_secs();
     let payload = presence_notification_payload(epoch, client)?;
@@ -1932,15 +2080,15 @@ async fn create_backup_handler(
     Path(name): Path<String>,
 ) -> Sse<impl futures_core::Stream<Item = Result<Event, std::convert::Infallible>>> {
     tracing::info!(agent = %name, "creating manual backup");
-    // Inline, a disconnect could drop the future at restic::snapshot, leaving the container
-    // stopped indefinitely (with_container_paused only restarts it after the snapshot returns).
+    // Inline, a disconnect could drop the future mid-pipeline, stranding the temp commit
+    // container/image that create_backup only removes after the snapshot returns.
     spawn_pipeline_sse(async move {
         let _guard = agent_write_guard(&state, &name).await;
         let _file_lock = backup::agent_file_lock(&name)?;
         let _operation =
             PublishedOperation::new(&state, &name, crate::docker::AgentOperation::BackingUp);
         let info =
-            backup::create_backup(&state.docker, &name, crate::types::BackupType::Manual).await?;
+            backup::create_backup(&state.docker, &name, crate::types::BackupType::Manual, None).await?;
         tracing::info!(backup_id = %info.id, size = info.size, "backup created");
         Ok(serde_json::to_string(&info).unwrap_or_default())
     })
@@ -2034,30 +2182,27 @@ fn gateway_settings_json(settings: &Settings, channel: &str) -> serde_json::Valu
         "channel": channel,
         "auto_backup": {
             "enabled": settings.backup.enabled,
-            "hour": settings.backup.hour,
+            "every_n_days": settings.backup.every_n_days,
             "retention": settings.backup.retention,
         },
     })
 }
 
-/// Apply a sparse backup update in place. Validation (retention floor, hour range)
+/// Apply a sparse backup update in place. Validation (retention floor, cadence range)
 /// runs in the handler before this is called.
 fn apply_backup_update(backup: &mut BackupGlobalSettings, body: &SetBackupSettingsBody) {
     if let Some(enabled) = body.enabled {
         backup.enabled = enabled;
     }
-    if let Some(hour) = body.hour {
-        backup.hour = hour;
+    if let Some(days) = body.every_n_days {
+        backup.every_n_days = days;
     }
     if let Some(ref ret) = body.retention {
-        if let Some(d) = ret.daily {
-            backup.retention.daily = d;
+        if let Some(p) = ret.periodic {
+            backup.retention.periodic = p;
         }
-        if let Some(w) = ret.weekly {
-            backup.retention.weekly = w;
-        }
-        if let Some(m) = ret.monthly {
-            backup.retention.monthly = m;
+        if let Some(v) = ret.pre_update_versions {
+            backup.retention.pre_update_versions = v;
         }
     }
 }
@@ -2076,15 +2221,14 @@ fn agent_backup_json(
 #[derive(Deserialize)]
 struct SetBackupSettingsBody {
     enabled: Option<bool>,
-    hour: Option<u8>,
+    every_n_days: Option<u8>,
     retention: Option<RetentionUpdate>,
 }
 
 #[derive(Deserialize)]
 struct RetentionUpdate {
-    daily: Option<usize>,
-    weekly: Option<usize>,
-    monthly: Option<usize>,
+    periodic: Option<usize>,
+    pre_update_versions: Option<usize>,
 }
 
 const MIN_RETENTION: usize = 1;
@@ -2093,9 +2237,8 @@ fn validate_retention(
     update: &RetentionUpdate,
 ) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
     for (name, val) in [
-        ("daily", update.daily),
-        ("weekly", update.weekly),
-        ("monthly", update.monthly),
+        ("periodic", update.periodic),
+        ("pre_update_versions", update.pre_update_versions),
     ] {
         if let Some(v) = val {
             if v < MIN_RETENTION {
@@ -2132,9 +2275,9 @@ async fn put_gateway_settings_handler(
         if let Some(ref ret) = backup.retention {
             validate_retention(ret)?;
         }
-        if let Some(hour) = backup.hour {
-            if hour > 23 {
-                return Err(err_response(StatusCode::BAD_REQUEST, "hour must be 0-23"));
+        if let Some(days) = backup.every_n_days {
+            if !(1..=30).contains(&days) {
+                return Err(err_response(StatusCode::BAD_REQUEST, "every_n_days must be 1-30"));
             }
         }
     }
@@ -2246,14 +2389,11 @@ async fn set_agent_backup_settings_handler(
     }
     if let Some(ret) = body.retention {
         let mut r = entry.retention.unwrap_or(global_retention);
-        if let Some(d) = ret.daily {
-            r.daily = d;
+        if let Some(p) = ret.periodic {
+            r.periodic = p;
         }
-        if let Some(w) = ret.weekly {
-            r.weekly = w;
-        }
-        if let Some(m) = ret.monthly {
-            r.monthly = m;
+        if let Some(v) = ret.pre_update_versions {
+            r.pre_update_versions = v;
         }
         entry.retention = Some(r);
     }
@@ -2700,8 +2840,24 @@ pub fn build_router(state: SharedState) -> Router {
     let gateway_agent_shared = Router::new()
         .route("/version", get(version))
         .route("/version/check", post(version_check))
-        .route("/gateway/update", post(gateway_update_handler))
+        // Vesta Cloud pairing is host-global like the update surface: the apps
+        // drive it with the api key / access token, an agent with its own
+        // token, and `vestad vesta-cloud login` runs the same core directly.
+        .route("/vesta-cloud/pair", post(vesta_cloud_pair_handler))
+        .route("/vesta-cloud/pair/poll", post(vesta_cloud_pair_poll_handler))
+        .route("/vesta-cloud/unpair", post(vesta_cloud_unpair_handler))
         .layer(control_timeout_layer())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_middleware_api_or_any_agent_token,
+        ));
+
+    // Update shares gateway_agent_shared's auth but rides the longrun deadline: it runs the
+    // pre-update snapshot pass inline before applying, and a first full snapshot of a
+    // multi-GB agent exceeds the control deadline, which would cancel the pass mid-stream.
+    let gateway_update = Router::new()
+        .route("/gateway/update", post(gateway_update_handler))
+        .layer(longrun_timeout_layer())
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware_api_or_any_agent_token,
@@ -2720,6 +2876,7 @@ pub fn build_router(state: SharedState) -> Router {
     Router::new()
         .merge(vestad_public)
         .merge(gateway_agent_shared)
+        .merge(gateway_update)
         .merge(vestad_protected_timed)
         .merge(vestad_protected_longrun)
         .merge(vestad_protected_streaming)
@@ -2755,159 +2912,35 @@ pub fn build_router(state: SharedState) -> Router {
 
 // --- Server start ---
 
-// --- Auto-backup background task ---
+// --- Update-check background task (detection only; the maintenance task applies) ---
 
-fn spawn_auto_backup_task(state: SharedState) {
+fn spawn_update_check_task(state: SharedState) {
     tokio::spawn(async move {
         loop {
-            tokio::time::sleep(tokio::time::Duration::from_secs(
-                AUTO_BACKUP_CHECK_INTERVAL_SECS,
-            ))
-            .await;
-
-            let backup_settings = {
-                let settings = state.settings.read().await;
-                settings.backup.clone()
-            };
-
-            if !backup_settings.enabled {
-                tracing::debug!("auto-backup: disabled, skipping cycle");
-                continue;
+            let channel = effective_channel(&state).await;
+            match tokio::task::spawn_blocking(move || update_check::check_once(channel)).await {
+                Ok(Ok(info)) => *state.update_info.lock().await = Some(info),
+                Ok(Err(e)) => tracing::warn!("update check failed: {}", e),
+                Err(e) => tracing::error!("update check task failed: {}", e),
             }
-
-            // Fire on or after the configured local hour rather than only during that exact hour,
-            // then let the per-type dedup below make the work idempotent (one daily per local day,
-            // etc.). This way a spring-forward DST jump that skips the target hour still triggers a
-            // backup on the next cycle, and a daemon that was down through the hour catches up.
-            let target_hour = backup_settings.hour;
-            let current_hour = crate::time_utils::local_hour();
-            if current_hour < target_hour {
-                tracing::debug!(
-                    current_hour,
-                    target_hour,
-                    "auto-backup: before daily window, skipping"
-                );
-                continue;
-            }
-
-            let agents = backup::list_agent_names(&state.docker).await;
-
-            if agents.is_empty() {
-                tracing::debug!("auto-backup: no agents found, skipping cycle");
-                continue;
-            }
-
-            tracing::info!(agent_count = agents.len(), "auto-backup: starting cycle");
-
-            let now_epoch = crate::time_utils::now_epoch_secs();
-            let today_local = crate::time_utils::local_date_of_epoch(now_epoch);
-            let seven_days_ago = crate::time_utils::now_timestamp_from_epoch(now_epoch - 7 * 86400);
-            let thirty_days_ago =
-                crate::time_utils::now_timestamp_from_epoch(now_epoch - 30 * 86400);
-
-            for name in &agents {
-                // Resolve per-agent settings (override or global fallback)
-                let (agent_enabled, ret) = backup_settings.effective_for(name);
-                if !agent_enabled {
-                    tracing::debug!(agent = %name, "auto-backup: disabled for agent, skipping");
-                    continue;
-                }
-
-                let _guard = agent_write_guard(&state, name).await;
-
-                if let Some(age) = backup::container_age_secs(&state.docker, name).await {
-                    if age < backup::MIN_AGE_FOR_BACKUP_SECS {
-                        tracing::debug!(agent = %name, age_hours = age / 3600, "auto-backup: skipping young agent");
-                        continue;
-                    }
-                }
-
-                let mut backups = match backup::list_backups(&state.env_config.agents_dir, name)
-                    .await
-                {
-                    Ok(b) => b,
-                    Err(e) => {
-                        tracing::error!(agent = %name, error = %e, "auto-backup: failed to list backups");
-                        continue;
-                    }
-                };
-
-                let mut needed = Vec::new();
-
-                let has_daily_today = backups.iter().any(|b| {
-                    b.backup_type == crate::types::BackupType::Daily
-                        && crate::time_utils::parse_compact_utc_epoch(&b.created_at)
-                            .map(crate::time_utils::local_date_of_epoch)
-                            .as_deref()
-                            == Some(today_local.as_str())
-                });
-                if !has_daily_today {
-                    needed.push(crate::types::BackupType::Daily);
-                }
-
-                let has_recent_weekly = backups.iter().any(|b| {
-                    b.backup_type == crate::types::BackupType::Weekly
-                        && b.created_at >= seven_days_ago
-                });
-                if !has_recent_weekly {
-                    needed.push(crate::types::BackupType::Weekly);
-                }
-
-                let has_recent_monthly = backups.iter().any(|b| {
-                    b.backup_type == crate::types::BackupType::Monthly
-                        && b.created_at >= thirty_days_ago
-                });
-                if !has_recent_monthly {
-                    needed.push(crate::types::BackupType::Monthly);
-                }
-
-                if !needed.is_empty() {
-                    let _file_lock = match backup::agent_file_lock(name) {
-                        Ok(lock) => lock,
-                        Err(e) => {
-                            tracing::error!(agent = %name, error = %e, "auto-backup: failed to acquire lock");
-                            continue;
-                        }
-                    };
-                    tracing::info!(agent = %name, types = ?needed, "auto-backup: creating backups");
-                    for (bt, result) in
-                        backup::create_backups_batch(&state.docker, name, needed).await
-                    {
-                        match result {
-                            Ok(info) => {
-                                tracing::info!(agent = %name, backup_type = %bt, backup_id = %info.id, "auto-backup: created");
-                                backups.insert(0, info);
-                            }
-                            Err(e) => {
-                                tracing::error!(agent = %name, backup_type = %bt, error = %e, "auto-backup: failed");
-                            }
-                        }
-                    }
-                }
-
-                backup::cleanup_backups(name, &backups, &ret).await;
-            }
-
-            tracing::info!(agent_count = agents.len(), "auto-backup: cycle complete");
+            tokio::time::sleep(tokio::time::Duration::from_secs(update_check::CHECK_INTERVAL_SECS))
+                .await;
         }
     });
 }
 
-// --- Update-check background task ---
+// --- Maintenance cycle ---
 
-// Detection cadence with no update pending -- also the UpdatePill's refresh rate. While an update
-// waits for the fleet's quiet window we re-poll this often instead, so update_info, the release
-// channel and the fleet's timezones all stay fresh and a transient apply failure retries within the
-// window rather than a night later.
-const WINDOW_POLL_SECS: u64 = 15 * 60;
+// Poll cadence while waiting for the fleet's 4-5am window and, inside it, between idle checks.
+const WINDOW_POLL: jiff::SignedDuration = jiff::SignedDuration::from_secs(15 * 60);
 
 // Give the agent WS snapshots that carry each agent's timezone time to arrive before the first
-// auto-apply decision, so an update already pending at startup targets the fleet's real windows
-// instead of resolving a still-empty cache to host-local.
+// maintenance decision, so a pass pending at startup targets the fleet's real windows instead of
+// resolving a still-empty cache to host-local.
 const STARTUP_SETTLE_SECS: u64 = 60;
 
 /// The local timezone of every alive agent, falling back to host-local for any agent that hasn't
-/// reported one (pre-upstream-sync fleet). Drives which 3-5am window the auto-update targets.
+/// reported one (pre-upstream-sync fleet). Drives which 4-5am window maintenance targets.
 fn running_agent_zones(state: &SharedState) -> Vec<jiff::tz::TimeZone> {
     let timezones = state.agent_status_cache.timezones();
     state
@@ -2915,82 +2948,166 @@ fn running_agent_zones(state: &SharedState) -> Vec<jiff::tz::TimeZone> {
         .agents()
         .iter()
         .filter(|entry| entry.status == docker::AgentStatus::Alive)
-        .map(|entry| update_window::resolve_zone(timezones.get(&entry.name).map(String::as_str)))
+        .map(|entry| maintenance_window::resolve_zone(timezones.get(&entry.name).map(String::as_str)))
         .collect()
 }
 
-fn spawn_update_check_task(state: SharedState) {
+/// One maintenance cycle owns all scheduled disk and restart work: it fires in the fleet's
+/// best-coverage 4-5am agent-local window, at a poll where every agent is idle (or at the
+/// window's last poll), runs the restart-free snapshot pass, and applies a pending update
+/// as an add-on to that same pass.
+fn spawn_maintenance_task(state: SharedState) {
     tokio::spawn(async move {
-        // Settle first so the timezone cache is populated before any startup-pending update applies.
+        // Settle first so the timezone cache is populated before the first window decision.
         tokio::time::sleep(tokio::time::Duration::from_secs(STARTUP_SETTLE_SECS)).await;
+        let mut last_pass_epoch: u64 = 0;
         loop {
-            let channel = effective_channel(&state).await;
-            let update_available = match tokio::task::spawn_blocking(move || {
-                update_check::check_once(channel)
-            })
-            .await
-            {
-                Ok(Ok(info)) => {
-                    let available = info.update_available;
-                    *state.update_info.lock().await = Some(info);
-                    available
-                }
-                Ok(Err(e)) => {
-                    tracing::warn!("update check failed: {}", e);
-                    false
-                }
-                Err(e) => {
-                    tracing::error!("update check task failed: {}", e);
-                    false
-                }
-            };
-
-            // Apply a pending update only once the fleet is in the 3-5am window covering the most
-            // agents (see update_window); until then keep polling fast so we notice the window open,
-            // a channel switch, a pulled release, or a cleared auto_update. perform_update restarts
-            // this process on success, so control usually never returns from the apply branch.
-            let mut awaiting_window = false;
-            if update_available && state.settings.read().await.auto_update {
+            let now_epoch = crate::time_utils::now_epoch_secs();
+            if now_epoch.saturating_sub(last_pass_epoch) >= maintenance::PASS_DEDUP_SECS {
                 let zones = running_agent_zones(&state);
-                if update_window::wait_until_best_window(&zones, jiff::Timestamp::now()).is_zero() {
-                    tracing::info!(
-                        channel = channel.as_str(),
-                        agents = zones.len(),
-                        "auto-update: agent quiet window reached, applying"
-                    );
-                    match tokio::task::spawn_blocking(move || self_update::perform_update(channel))
-                        .await
-                    {
-                        Ok(Ok(outcome)) => tracing::info!(
-                            updated = outcome.updated,
-                            restarted = outcome.restarted,
-                            current = %outcome.current,
-                            latest = %outcome.latest,
-                            "auto-update finished",
-                        ),
-                        // Retry within the window on the fast cadence rather than the next night.
-                        Ok(Err(e)) => {
-                            tracing::warn!("auto-update failed: {}", e);
-                            awaiting_window = true;
-                        }
-                        Err(e) => {
-                            tracing::error!("auto-update task panicked: {}", e);
-                            awaiting_window = true;
-                        }
-                    }
-                } else {
-                    awaiting_window = true;
+                let now = jiff::Timestamp::now();
+                let in_window =
+                    maintenance_window::wait_until_best_window(&zones, now).is_zero();
+                let all_idle = state.agent_status_cache.all_alive_idle();
+                // The lookahead scan only matters when an in-window pass would otherwise defer.
+                let window_closing = in_window
+                    && !all_idle
+                    && !maintenance_window::wait_until_best_window(&zones, now + WINDOW_POLL).is_zero();
+                if maintenance::should_fire(in_window, window_closing, all_idle) {
+                    last_pass_epoch = now_epoch;
+                    run_maintenance(&state).await;
                 }
             }
-
-            let interval = if awaiting_window {
-                WINDOW_POLL_SECS
-            } else {
-                update_check::CHECK_INTERVAL_SECS
-            };
-            tokio::time::sleep(tokio::time::Duration::from_secs(interval)).await;
+            tokio::time::sleep(WINDOW_POLL.unsigned_abs()).await;
         }
     });
+}
+
+/// One fired maintenance cycle: the snapshot pass, then a pending update as its add-on.
+/// `perform_update` restarts this process on success, so control usually never returns
+/// from the apply branch.
+async fn run_maintenance(state: &SharedState) {
+    let update_pending = state
+        .update_info
+        .lock()
+        .await
+        .as_ref()
+        .is_some_and(|info| info.update_available);
+    let auto_update = state.settings.read().await.auto_update;
+
+    if update_pending && auto_update && !state.dev_mode {
+        run_snapshot_pass(state, maintenance::PassKind::pre_update_from_current()).await;
+        let channel = effective_channel(state).await;
+        tracing::info!(channel = channel.as_str(), "maintenance: applying pending update");
+        match tokio::task::spawn_blocking(move || self_update::perform_update(channel)).await {
+            Ok(Ok(outcome)) => tracing::info!(
+                updated = outcome.updated,
+                restarted = outcome.restarted,
+                current = %outcome.current,
+                latest = %outcome.latest,
+                "auto-update finished",
+            ),
+            // A failed apply retries next cycle; the fresh pre-update set is reused (<24h).
+            Ok(Err(e)) => tracing::warn!("auto-update failed: {}", e),
+            Err(e) => tracing::error!("auto-update task panicked: {}", e),
+        }
+    } else {
+        run_snapshot_pass(state, maintenance::PassKind::Routine).await;
+    }
+}
+
+/// Snapshot every agent the pass selects, restart-free and concurrently (bounded). After a
+/// successful pre-update snapshot the agent's periodic snapshots are superseded and deleted;
+/// an agent whose snapshot failed keeps them as its fallback rollback point.
+async fn run_snapshot_pass(state: &SharedState, kind: maintenance::PassKind) {
+    use futures_util::StreamExt;
+
+    let backup_settings = {
+        let settings = state.settings.read().await;
+        settings.backup.clone()
+    };
+    if !backup_settings.enabled && matches!(kind, maintenance::PassKind::Routine) {
+        tracing::debug!("maintenance: backups disabled, skipping routine pass");
+        return;
+    }
+
+    let agents = backup::list_agent_names(&state.docker).await;
+    if agents.is_empty() {
+        return;
+    }
+    let now_epoch = crate::time_utils::now_epoch_secs();
+    tracing::info!(agent_count = agents.len(), kind = ?kind, "maintenance: snapshot pass starting");
+
+    let kind = &kind;
+    let backup_settings = &backup_settings;
+    futures_util::stream::iter(agents)
+        .for_each_concurrent(maintenance::SNAPSHOT_CONCURRENCY, |name| async move {
+            snapshot_agent(state, &name, kind, backup_settings, now_epoch).await;
+        })
+        .await;
+    tracing::info!(kind = ?kind, "maintenance: snapshot pass complete");
+}
+
+async fn snapshot_agent(
+    state: &SharedState,
+    name: &str,
+    kind: &maintenance::PassKind,
+    backup_settings: &BackupGlobalSettings,
+    now_epoch: u64,
+) {
+    let (agent_enabled, retention) = backup_settings.effective_for(name);
+    if !agent_enabled {
+        tracing::debug!(agent = %name, "maintenance: backups disabled for agent, skipping");
+        return;
+    }
+    if let Some(age) = backup::container_age_secs(&state.docker, name).await {
+        if age < backup::MIN_AGE_FOR_BACKUP_SECS {
+            tracing::debug!(agent = %name, age_hours = age / 3600, "maintenance: skipping young agent");
+            return;
+        }
+    }
+
+    let _guard = agent_write_guard(state, name).await;
+    let mut backups = match backup::list_backups(&state.env_config.agents_dir, name).await {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::error!(agent = %name, error = %e, "maintenance: failed to list backups");
+            return;
+        }
+    };
+    if maintenance::agent_needs_snapshot(kind, &backups, now_epoch, backup_settings.every_n_days) {
+        let _file_lock = match backup::agent_file_lock(name) {
+            Ok(lock) => lock,
+            Err(e) => {
+                tracing::error!(agent = %name, error = %e, "maintenance: failed to acquire lock");
+                return;
+            }
+        };
+        match backup::create_backup(&state.docker, name, kind.backup_type(), kind.version_tag()).await {
+            Ok(info) => {
+                if info.backup_type == crate::types::BackupType::PreUpdate {
+                    let superseded: Vec<String> = backups
+                        .iter()
+                        .filter(|b| b.backup_type == crate::types::BackupType::Periodic)
+                        .map(|b| b.id.clone())
+                        .collect();
+                    if !superseded.is_empty() {
+                        tracing::info!(agent = %name, count = superseded.len(), "maintenance: clearing periodic snapshots superseded by pre-update set");
+                        if let Err(e) = crate::restic::forget(name, &superseded).await {
+                            tracing::warn!(agent = %name, error = %e, "maintenance: failed to clear periodic snapshots");
+                        } else {
+                            backups.retain(|b| b.backup_type != crate::types::BackupType::Periodic);
+                        }
+                    }
+                }
+                backups.insert(0, info);
+            }
+            Err(e) => tracing::error!(agent = %name, error = %e, "maintenance: snapshot failed"),
+        }
+    }
+    // Retention runs even when no snapshot was taken, so a tightened policy prunes on the
+    // next pass instead of waiting days for the next snapshot to trigger it.
+    backup::cleanup_backups(name, &backups, &retention).await;
 }
 
 // --- Server start ---
@@ -3082,6 +3199,10 @@ pub async fn run_server(cfg: ServerConfig) {
         },
     );
     let state = Arc::new(app_state);
+    // The device registry persists on a background flush task: every mutation (a /sync connect or a
+    // mobile push registration) marks it dirty and this task writes devices.json off the hot path.
+    let flush_registry = state.device_registry.clone();
+    tokio::spawn(async move { flush_registry.run_flusher().await });
     // Mobile delivery is a background worker: losing it costs TestFlight builds, not serving. A
     // supervisor reports its exit so run_server's select never waits on it, because a branch that
     // resolved would end the select and stop the shutdown handler from stopping the agents.
@@ -3150,7 +3271,7 @@ pub async fn run_server(cfg: ServerConfig) {
         sync_hub: state.sync_hub.clone(),
     });
     let app = build_router(state.clone());
-    spawn_auto_backup_task(state.clone());
+    spawn_maintenance_task(state.clone());
     if dev_mode {
         tracing::info!("dev mode: auto-update disabled");
     } else {
@@ -3356,7 +3477,7 @@ mod tests {
     fn presence_payload_is_snoozed_vestad_notification() {
         let payload = super::presence_notification_payload(
             1_700_000_000,
-            crate::sync::protocol::ClientKind::Web,
+            crate::types::ClientKind::Web,
         )
         .expect("payload");
         assert_eq!(payload["source"], "vestad");
@@ -3702,9 +3823,8 @@ mod tests {
 
         let backups: Vec<serde_json::Value> = [
             BackupType::Manual,
-            BackupType::Daily,
-            BackupType::Weekly,
-            BackupType::Monthly,
+            BackupType::Periodic,
+            BackupType::PreUpdate,
             BackupType::PreRestore,
         ]
         .into_iter()
@@ -3715,6 +3835,7 @@ mod tests {
                 backup_type,
                 created_at: "2026-01-01T00:00:00Z".into(),
                 size: 1234567890,
+                from_version: None,
             })
             .expect("serialize BackupInfo")
         })
@@ -3906,7 +4027,7 @@ mod tests {
 #[cfg(test)]
 mod gateway_settings_tests {
     use super::*;
-    use crate::settings::{default_retention, DEFAULT_AUTO_BACKUP_HOUR};
+    use crate::settings::{default_retention, DEFAULT_EVERY_N_DAYS};
 
     #[test]
     fn settings_json_has_unified_shape() {
@@ -3916,39 +4037,38 @@ mod gateway_settings_tests {
         assert_eq!(value["channel"], serde_json::json!("beta"));
         assert_eq!(value["auto_backup"]["enabled"], serde_json::json!(true));
         assert_eq!(
-            value["auto_backup"]["hour"],
-            serde_json::json!(DEFAULT_AUTO_BACKUP_HOUR)
+            value["auto_backup"]["every_n_days"],
+            serde_json::json!(DEFAULT_EVERY_N_DAYS)
         );
         assert_eq!(
-            value["auto_backup"]["retention"]["daily"],
-            serde_json::json!(backup::DEFAULT_RETENTION_DAILY)
+            value["auto_backup"]["retention"]["periodic"],
+            serde_json::json!(backup::DEFAULT_RETENTION_PERIODIC)
         );
     }
 
     #[test]
     fn backup_update_applies_only_present_fields() {
         let mut backup = BackupGlobalSettings::default();
-        let original_hour = backup.hour;
+        let original_every_n_days = backup.every_n_days;
         let body = SetBackupSettingsBody {
             enabled: Some(false),
-            hour: None,
+            every_n_days: None,
             retention: Some(RetentionUpdate {
-                daily: Some(9),
-                weekly: None,
-                monthly: None,
+                periodic: Some(9),
+                pre_update_versions: None,
             }),
         };
         apply_backup_update(&mut backup, &body);
         assert!(!backup.enabled, "enabled should be updated");
         assert_eq!(
-            backup.hour, original_hour,
-            "hour absent in body must be unchanged"
+            backup.every_n_days, original_every_n_days,
+            "every_n_days absent in body must be unchanged"
         );
-        assert_eq!(backup.retention.daily, 9, "daily should be updated");
+        assert_eq!(backup.retention.periodic, 9, "periodic should be updated");
         assert_eq!(
-            backup.retention.weekly,
-            default_retention().weekly,
-            "weekly absent must be unchanged"
+            backup.retention.pre_update_versions,
+            default_retention().pre_update_versions,
+            "pre_update_versions absent must be unchanged"
         );
     }
 

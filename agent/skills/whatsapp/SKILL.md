@@ -1,86 +1,46 @@
 ---
 name: whatsapp
-description: WhatsApp messages, contacts, groups, and live voice calls (place/answer, talk in your own voice; not generic text/SMS). Use to message or call someone on WhatsApp.
+description: Set up and operate WhatsApp accounts, messages, contacts, groups, and live voice calls (not generic text/SMS). Use when linking WhatsApp, choosing a Vesta Cloud WhatsApp account, a Double Tick WhatsApp account, or a self-managed account, or messaging or calling someone on WhatsApp.
 ---
 
 # WhatsApp (CLI: `whatsapp`)
 
-You never stop or restart anything, and you don't manage the daemon by hand. The
-`whatsapp` CLI runs its own background daemon: the restart skill runs `whatsapp
-start` at boot to bring it up (so inbound WhatsApp notifications flow before you
-send anything), and every command below also brings it up on demand. Your whole
-world is four verbs: **connect, status, send, messages** (plus profile and calls).
+Every `whatsapp` command starts the daemon on demand, and the restart skill runs
+`whatsapp daemon start` at boot (so inbound notifications flow before you send
+anything), so let it manage itself. Your whole world is four verbs: **connect,
+status, send, messages** (plus profile and calls).
 
-## The one rule
+## The linking rule
 
-**If `whatsapp status` shows `linked: false`, run `whatsapp connect`, except when
-it also shows `connecting: true`.** In that case a QR page is already active:
-wait for the user to scan it and do not start another connect. This is the only
-recovery you ever need. Never re-link, re-pair, or "restart the daemon" any other
-way; connect is idempotent outside an active QR session.
+Always start with `whatsapp status`:
 
-## Set up (one command)
+- `{"linked":true,...}`: use the existing link, do not pair again.
+- `{"linked":false,"connecting":true,...}`: an attempt is active; wait for it (follow `next`), never start another.
+- `{"linked":false,"connected":false,...}` on first-time setup: run the selected `whatsapp connect` method.
+- previously linked, now logged out or lost: get the user's explicit approval before reconnecting.
 
-`whatsapp connect` is the single setup verb. It picks the right path for the box on
-its own, so you never choose between modes. Every output carries a `next:` step, so
-just do what it says:
+Never recover by manually re-pairing or restarting the daemon.
 
-- **Hosted (vesta.run) box:** compose a warm, natural first-contact opener in your
-  own voice that says hi and introduces you by name, for example, "Hi, it's Nova,
-  nice to meet you!" Then run `whatsapp connect --opener '<your opener>'`. The
-  opener is prefilled for the USER to send TO you, so phrase it as the user reaching
-  out. The command claims the agent's own managed number and links
-  it, returning `{status:"linked", number, next:...}`. Follow `next`: share the
-  number and its `wa.me` link so the user messages you FIRST (reply-first: never
-  cold-initiate), then reply only once they do.
-- **Still filling:** `{status:"provisioning", next:...}` means the number is still
-  being set up. Re-run `whatsapp connect` in about 30 seconds; repeating is safe.
-- **Blocked:** `{status:"blocked", next:...}` means that number was banned. Re-run
-  `whatsapp connect` to get a fresh one.
-- **Rate limited:** `{status:"rate_limited", reason, next:...}` means the number keeps
-  failing to link and the ban guard paused pairing. Wait out the cooldown named in
-  `reason` before running `whatsapp connect` again; retrying sooner is what gets a
-  number banned.
-- **Self-hosted (user's own WhatsApp):** it serves a QR page and returns
-  `{status:"linking", url, next:...}`. Send the user the URL to scan in WhatsApp >
-  Settings > Linked Devices. The command returns as soon as the live page is ready.
-  Wait for the user to say they scanned it, then run `whatsapp status` once. Never
-  choose a port, register a QR service, or run a second connect while the page is
-  active. If the user cannot scan a QR, and
-  explicitly approves a pairing attempt, run `whatsapp connect --phone '+E.164'`
-  with the exact account number. Confirm the echoed number, then send the returned
-  code for WhatsApp > Linked Devices > Link a Device > Link with phone number.
-  While that code is active, wait for the user and do not run connect again. See
-  [SETUP.md](SETUP.md) / [MANAGED_AUTH.md](MANAGED_AUTH.md).
+## Choose the setup method
 
-## Other ways to connect
+`whatsapp connect` is the one setup verb, and `--source` is required: you state the
+account source, the CLI never guesses. [SETUP.md](SETUP.md) has the decision flow
+that picks the source from the environment and the user's choice; read the matching
+guide before the first link.
 
-- **User owns the number (`whatsapp connect --own-number`):** the pool hands you a
-  fresh number and its verification code to relay; the USER registers that number on
-  their OWN phone and owns it, and you link only as a companion. Use this only when the
-  user wants the WhatsApp account to live on their own device: they keep their phone
-  online and re-link it themselves if it drops. Normal messaging applies (no reply-first
-  restriction, since the number is theirs, not a fresh pooled one).
-- **Direct token (no vesta.run needed):** the doubletick number service is a standalone API, not
-  only reachable through vesta.run. If the box operator set `DOUBLETICK_API_URL` and
-  `DOUBLETICK_API_KEY` (a per-account `wak_` token they minted for you), `whatsapp
-  connect` uses them automatically: the same managed number and pairing, straight to the
-  home box, no membership gate and no control plane in the loop. You do nothing
-  different, it is transparent. This is how a non-managed agent gets a pooled number
-  when the operator has handed them a token.
+| Account source | Command | Guide |
+| --- | --- | --- |
+| Vesta Cloud WhatsApp account | `whatsapp connect --source vesta-cloud --opener '<text>'` | [SETUP_VESTA_CLOUD.md](SETUP_VESTA_CLOUD.md) |
+| Double Tick WhatsApp account | `whatsapp connect --source doubletick --opener '<text>'` | [SETUP_DOUBLETICK.md](SETUP_DOUBLETICK.md) |
+| Self-managed account | `whatsapp connect --source self-managed` (or `--phone`) | [SETUP_SELF_MANAGED.md](SETUP_SELF_MANAGED.md) |
 
-Before the companion connects, egress selection is `WHATSAPP_PROXY_URL`, then a
-doubletick residential lease, then direct. If you're managed or on a datacenter IP,
-the skill leases a residential proxy from doubletick automatically; it hardfails
-rather than run WhatsApp over a datacenter IP. A supplied proxy is validated too.
+A Vesta Cloud or Double Tick account is headless and **reply-first**: compose a
+warm opener in your own voice from the user's perspective, pass it with
+`--opener`, share the returned `wa.me` link, and wait for the user to message
+first. A self-managed account uses normal messaging rules.
 
-## Check state
-
-`whatsapp status` is your one diagnostic:
-- linked: `{"linked":true,"number":"+44...","connected":true}`
-- connecting: `{"linked":false,"connecting":true,"method":"qr","next":"wait for the user to scan..."}`
-- pairing code active: `{"linked":false,"connecting":true,"method":"phone","next":"wait for the user to enter..."}`
-- not linked: `{"linked":false,"connected":false,"next":"run: whatsapp connect","reason":"<why>"}`
+Recovery outcomes and diagnostics live in [SETUP.md](SETUP.md#status-and-recovery);
+the residential proxy-lease rule lives in [HEADLESS.md](HEADLESS.md).
 
 ## Send
 - Form: `whatsapp <subcommand> [positionals] [--flag value ...]`. **Subcommand goes first**, before any flags.
@@ -101,12 +61,6 @@ whatsapp send --to 'Alice' --message - --reply-to '<message_id>' <<'MSG'   # quo
 same here
 MSG
 ```
-- `--to` accepts a contact name, phone (`+E.164`), group name, or JID; the CLI resolves it.
-- `--message -` reads the body from stdin; pair it with a quoted heredoc so the shell cannot
-  mangle or evaluate anything in the text.
-- Short bubbles only: a wall (over ~220 chars, or 3+ sentences in one bubble) is rejected.
-  Re-send as several short calls, one thought each. Pass `--longform` only for genuine
-  reference material the user asked for (a brief, a code block, a list).
 - Before texting an unknown raw number, save it first with `add-contact` (name + phone).
 
 ## Read
@@ -116,6 +70,9 @@ MSG
 - `whatsapp backfill --to <name>` asks the phone for older history when the local DB is thin.
 - `whatsapp check-delivery --message-id <id>` (or `--recent`) checks whether a send landed.
 - Message IDs come from inbound notification payloads (`message_id`) or `messages` output.
+- **One direct chat is stored under two keys** (the peer's phone JID and their LID). `messages --to`
+  reads both; hand-written SQL against `messages.db` gets one side, which reads as "they never
+  replied" rather than as missing data. Prefer the command.
 
 ## Profile
 
@@ -155,12 +112,12 @@ Hold a live call in your own voice (the `voice` skill's TTS) and hear the other 
 
 - **Send one WhatsApp call at a time.** Never batch sends (or `say` lines) in a parallel tool-call
   block: if one fails you can't tell which landed, and a retry sends a duplicate; parallel `say` lines race.
-- **Never re-link without the user's explicit go-ahead.** Pairing is rate-limited because repeated
-  attempts get numbers flagged and banned. If linking fails, report it and wait; don't retry-loop.
+- **Never re-link without the user's explicit go-ahead** (the linking rule). Pairing is rate-limited to
+  about two attempts per hour because repeated attempts get accounts flagged and banned; if linking
+  fails, report it and wait, never retry-loop.
 - Phone numbers are E.164 with a leading `+` (e.g. `+12025551234`). Auth state lives in `~/.whatsapp/`.
 
-Advanced setup (second/personal account, read-only, silent instances) and how to develop the CLI:
-see [SETUP.md](SETUP.md) and [DEVELOPING.md](DEVELOPING.md).
+Shared setup and named-instance details: [SETUP.md](SETUP.md).
 
 ## Contact Preferences
 [How the user prefers to communicate with different contacts]

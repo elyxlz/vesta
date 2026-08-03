@@ -41,13 +41,19 @@ RECURRING_TRIGGER_TYPES = ("cron", "interval")  # trigger types that fire more t
 
 
 class DueSpec(BaseModel):
-    """A task due date: an absolute datetime + timezone, or a relative due-in offset."""
+    """A task due date: an absolute datetime + timezone, or a relative due-in offset.
+
+    `clear` removes the due date entirely. Without it, setting a due date is a one-way door:
+    every other field can only move the date, never unset it, and auto reminders are regenerated
+    from due_date, so a date set by mistake keeps its reminder cascade forever.
+    """
 
     due_datetime: str | None = None
     timezone: str | None = None
     due_in_minutes: int | None = None
     due_in_hours: int | None = None
     due_in_days: int | None = None
+    clear: bool = False
 
 
 class ReminderSpec(BaseModel):
@@ -236,12 +242,18 @@ def normalize_priority(priority: int | str) -> int:
 def _due_requested(due: DueSpec | None) -> bool:
     """Whether the spec asks for a due-date change (a timezone alone does not)."""
     return due is not None and (
-        due.due_datetime is not None or due.due_in_minutes is not None or due.due_in_hours is not None or due.due_in_days is not None
+        due.clear
+        or due.due_datetime is not None
+        or due.due_in_minutes is not None
+        or due.due_in_hours is not None
+        or due.due_in_days is not None
     )
 
 
 def _compute_due_date(due: DueSpec | None) -> str | None:
     if due is None:
+        return None
+    if due.clear:
         return None
     if due.due_datetime is not None:
         if due.timezone is None:
@@ -958,13 +970,27 @@ def remind_update(config: Config, *, reminder_id: str, message: str) -> dict:
         reminder = cursor.fetchone()
         if not reminder:
             raise ValueError(f"Reminder '{reminder_id}' not found. Use 'tasks remind list' to see active reminders.")
-        conn.execute("UPDATE reminders SET message = ? WHERE id = ?", (message, reminder_id))
+        # Clearing auto_generated is the point of the write, not a side effect. The flag means
+        # "this row is machine-owned and may be regenerated", and delete_auto_reminders (called by
+        # postpone and by any due-date change) deletes exactly the flagged rows. Leaving it set
+        # means hand-written text survives until the next postpone and is then silently destroyed.
+        schedule_type = reminder["schedule_type"]
+        if reminder["auto_generated"] and (schedule_type or "").startswith("auto: "):
+            # The old label described how the row was generated ("auto: 1 day before due"). Once
+            # the row is agent-owned that is no longer true, and leaving it makes `remind list`
+            # call a hand-written reminder auto while its marker says otherwise. Auto reminders
+            # are always one-off dates, so relabel to the same form a manual one-off carries.
+            schedule_type = f"once at {reminder['scheduled_time']}"
+        conn.execute(
+            "UPDATE reminders SET message = ?, auto_generated = 0, schedule_type = ? WHERE id = ?",
+            (message, schedule_type, reminder_id),
+        )
         conn.commit()
 
     return {
         "id": reminder_id,
         "message": message,
-        "schedule": reminder["schedule_type"],
+        "schedule": schedule_type,
         "next_run": reminder["scheduled_time"],
         "status": "updated",
     }

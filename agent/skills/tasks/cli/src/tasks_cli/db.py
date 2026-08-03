@@ -78,7 +78,7 @@ def _migrate_metadata_to_files(data_dir: Path, conn: sqlite3.Connection):
     conn.execute("ALTER TABLE tasks_new RENAME TO tasks")
 
 
-def _migrate_v1_to_v2(conn: sqlite3.Connection):
+def _migrate_v1_to_v2(conn: sqlite3.Connection, data_dir: Path):
     """v1 -> v2: Create reminders table, drop notified_thresholds, import old reminders."""
 
     # Create reminders table
@@ -121,9 +121,12 @@ def _migrate_v1_to_v2(conn: sqlite3.Connection):
         conn.execute("DROP TABLE tasks")
         conn.execute("ALTER TABLE tasks_v2 RENAME TO tasks")
 
-    # Import reminders from old reminder CLI db if it exists
+    # Import reminders from the old reminder CLI db, but ONLY into the real store. The legacy path
+    # is absolute and home-relative while the database being built is whatever the caller passed,
+    # so without this guard EVERY new database gets seeded from the developer's own reminders:
+    # a temp-directory database comes up holding 40 rows that belong to a different store entirely.
     old_reminder_db = Path.home() / ".reminder" / "reminders.db"
-    if old_reminder_db.exists():
+    if data_dir == Path.home() / ".tasks" and old_reminder_db.exists():
         try:
             old_conn = sqlite3.connect(old_reminder_db)
             old_conn.row_factory = sqlite3.Row
@@ -317,7 +320,7 @@ def init_db(data_dir: Path):
             version = 1
 
         if version < 2:
-            _migrate_v1_to_v2(conn)
+            _migrate_v1_to_v2(conn, data_dir)
             conn.execute("UPDATE schema_version SET version = 2")
             version = 2
 

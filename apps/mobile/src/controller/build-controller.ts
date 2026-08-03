@@ -16,6 +16,7 @@ export interface ControllerSession {
 export function buildController(
   session: ControllerSession,
   clientVersion?: string,
+  device?: { id: string; descriptor: string },
 ): Controller {
   const conn = () => session.getConnection();
   return createController({
@@ -26,6 +27,7 @@ export function buildController(
       clearTimer: (handle) => clearTimeout(handle),
       clientVersion,
       clientKind: "mobile",
+      device,
     },
     http: {
       baseUrl: () => conn()?.url ?? "",

@@ -345,6 +345,9 @@ jobs:
       - name: Run telegram checks
         run: ./check.sh telegram
 
+      - name: Run otp checks
+        run: ./check.sh otp
+
       - name: Run app-chat checks
         run: ./check.sh app-chat
 

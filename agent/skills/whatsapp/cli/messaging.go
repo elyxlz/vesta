@@ -102,6 +102,35 @@ func (wac *WhatsAppClient) mappedJID(jid types.JID) types.JID {
 	return types.JID{}
 }
 
+// chatStorageKeys resolves a --to argument to every storage key that chat's history can live
+// under. WhatsApp addresses a direct chat by the peer's LID, while a saved contact and any reply
+// resolve to their phone JID, so a conversation is stored under both: messages received before
+// the LID<->PN mapping was known sit under the LID, everything else under the phone JID. Reading
+// only the resolved JID therefore returns a one-sided transcript of a two-sided conversation,
+// which reads as "they never replied" rather than as missing data. Returns nil for an empty
+// argument (no chat filter). A group JID has no counterpart, so it yields a single key.
+func (wac *WhatsAppClient) chatStorageKeys(to string) ([]string, error) {
+	if to == "" {
+		return nil, nil
+	}
+	jid, err := wac.ResolveRecipient(to)
+	if err != nil {
+		return nil, err
+	}
+	return storageKeys(jid, wac.mappedJID(jid)), nil
+}
+
+// storageKeys unions a resolved chat JID with its LID<->PN counterpart, skipping an empty
+// counterpart (a group, or a peer with no mapping yet). Kept free of the client so the union
+// itself is directly testable.
+func storageKeys(primary, alt types.JID) []string {
+	keys := []string{primary.String()}
+	if !alt.IsEmpty() && alt.String() != primary.String() {
+		keys = append(keys, alt.String())
+	}
+	return keys
+}
+
 // requireReplyFirst enforces reply-first onboarding on a managed (pooled) number: it
 // must never cold-initiate, so the first outbound to any peer or group requires a
 // prior inbound from that chat. A self-hosted (QR-linked) number carries no such rule.
@@ -110,7 +139,7 @@ func (wac *WhatsAppClient) requireReplyFirst(jid types.JID) error {
 		return nil
 	}
 	return fmt.Errorf(
-		"cannot message %s first: this is a managed WhatsApp number and must never start a conversation (reply-first). Share your wa.me click-to-chat link, wait for them to message you, then reply",
+		"cannot message %s first: this is a headless account and must never start a conversation (reply-first). Share your wa.me click-to-chat link, wait for them to message you, then reply",
 		wac.getChatName(jid),
 	)
 }

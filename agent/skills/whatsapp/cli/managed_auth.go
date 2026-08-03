@@ -2,7 +2,7 @@ package main
 
 import (
 	"bytes"
-	"crypto/tls"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 )
@@ -78,15 +79,14 @@ func classifyBlock(err error) error {
 
 // Managed WhatsApp auth (the "token" strategy): the agent side of the hosted
 // vesta.run proxy. The agent reaches WhatsApp through the control plane, not the
-// home phone box directly, minting a short-lived server-identity token from its
-// own vestad (loopback, agent-token authed; no standing credential) and calling
-// /api/integrations/whatsapp/* with it as a Bearer. Every paid account is entitled to exactly
-// ONE number: provision claims it lazily and idempotently, reauth re-posts a
-// fresh pairing code for the same account (no new number, no OTP, no user step).
-// This file is the HTTP client + on-disk state; daemon wiring lives in MANAGED_AUTH.md.
+// home phone box directly, Bearing a short-lived server-identity token from
+// `vesta-cloud token` (no standing credential) to /api/integrations/whatsapp/*.
+// Every active paid account is entitled to exactly ONE number: provision claims
+// it lazily and idempotently, reauth re-posts a fresh pairing code for the same
+// account (no new number, no OTP, no user step). This file is the HTTP client +
+// on-disk state.
 
 const (
-	managedHTTPTimeout = 30 * time.Second
 	// controlHTTPTimeout bounds a call to the pool API. It is generous because
 	// /pair blocks server-side while the home box holds the primary online through
 	// the just-linked companion's initial sync (a cold primary there leaves the
@@ -103,25 +103,27 @@ const (
 var provisionPollInterval = 3 * time.Second
 
 // managedConfig selects between two ways to reach the same pool API:
-//   - direct (self-hosted): DOUBLETICK_API_URL + DOUBLETICK_API_KEY, a per-account key
-//     straight to the home box, no vesta.run and no vestad;
-//   - cloud (vesta.run tenant): a server-identity token minted from vestad, sent to
-//     vesta.run's /api/integrations/whatsapp, which authenticates and forwards to the home box.
+//   - direct: DOUBLETICK_API_URL + DOUBLETICK_API_KEY, a per-account key straight
+//     to the home box, no vesta.run involved;
+//   - cloud: a server-identity token from `vesta-cloud token`, sent to vesta.run's
+//     /api/integrations/whatsapp, which authenticates and forwards to the home box.
 //
 // Both hit the same native paths (/provision, /pair); only the base URL
 // and the credential differ.
 type managedConfig struct {
-	directURL  string // home box base, e.g. https://<tunnel> (direct mode)
-	directKey  string // per-account key (wak_...) for direct mode
-	controlURL string // vesta.run control-plane base, e.g. https://vesta.run/api (cloud mode)
-	vestadBase string // this box's vestad, https://$BOX_HOST:$VESTAD_PORT
-	agentName  string
-	agentToken string
-	// cloudManaged is the paid-tenant signal: the control plane's cloud-init sets
-	// VESTA_CLOUD_CONTROL_URL only on managed VMs and vestad forwards it into the
-	// container, so its presence tells a cloud tenant from a plain self-hosted box
-	// (whose identity env is otherwise identical).
-	cloudManaged bool
+	directURL string // home box base, e.g. https://<tunnel> (direct mode)
+	directKey string // per-account key (wak_...) for direct mode
+	// agentName ($AGENT_NAME) names this agent in pool calls (the proxy-lease
+	// X-Vesta-Account header) and the companion's profile name. It plays no part
+	// in authentication.
+	agentName string
+	// managedInfra is the INFRA fact that this VM is Vesta-provisioned: cloud-init
+	// sets VESTA_CLOUD_CONTROL_URL on managed VMs and vestad forwards it into the
+	// container. It is NOT the account signal (`vesta-cloud whoami` owns that; a
+	// self-hosted box can hold an account too). It keys only what follows from the
+	// infra: a managed VM is sold with the managed WhatsApp pool (boot paradigm)
+	// and egresses from a datacenter IP (residential-proxy lease).
+	managedInfra bool
 	// proxyURL is a bring-your-own egress override (WHATSAPP_PROXY_URL): an explicit
 	// http(s)://user:pass@host:port or socks5:// URL the companion egresses through
 	// in every mode, taking precedence over the cloud residential lease. Empty on a
@@ -130,14 +132,8 @@ type managedConfig struct {
 	configError string
 }
 
-// loadManagedConfig reads the managed-auth environment (mirrors the account skill).
+// loadManagedConfig reads the managed-auth environment.
 func loadManagedConfig() managedConfig {
-	base := ""
-	port := strings.TrimSpace(os.Getenv("VESTAD_PORT"))
-	host := strings.TrimSpace(os.Getenv("BOX_HOST"))
-	if port != "" && host != "" {
-		base = "https://" + host + ":" + port
-	}
 	directURL := strings.TrimSpace(os.Getenv("DOUBLETICK_API_URL"))
 	directKey := strings.TrimSpace(os.Getenv("DOUBLETICK_API_KEY"))
 	configError := ""
@@ -152,27 +148,31 @@ func loadManagedConfig() managedConfig {
 	return managedConfig{
 		directURL:    strings.TrimRight(directURL, "/"),
 		directKey:    directKey,
-		controlURL:   strings.TrimRight(envOrDefault("VESTA_CONTROL_URL", "https://vesta.run/api"), "/"),
-		vestadBase:   base,
 		agentName:    strings.TrimSpace(os.Getenv("AGENT_NAME")),
-		agentToken:   strings.TrimSpace(os.Getenv("AGENT_TOKEN")),
-		cloudManaged: strings.TrimSpace(os.Getenv("VESTA_CLOUD_CONTROL_URL")) != "",
+		managedInfra: strings.TrimSpace(os.Getenv("VESTA_CLOUD_CONTROL_URL")) != "",
 		proxyURL:     strings.TrimSpace(os.Getenv("WHATSAPP_PROXY_URL")),
 		configError:  configError,
 	}
 }
 
-func envOrDefault(name, def string) string {
-	if v := strings.TrimSpace(os.Getenv(name)); v != "" {
-		return v
-	}
-	return def
+// isDirect reports whether a direct home-box key is configured: the box talks
+// straight to the pool API with its own per-account key, no vesta.run involved.
+func (c managedConfig) isDirect() bool {
+	return c.directURL != "" && c.directKey != ""
+}
+
+// isManagedVM reports the infra fact that this is a Vesta-provisioned VM, which
+// ships with the managed WhatsApp pool. A paired self-hosted box is NOT this,
+// even though it can hold a Vesta Cloud account: its account gains managed
+// WhatsApp only with an active paid membership, which the control plane enforces
+// (403 membership_inactive), so the pool paradigm stays off until then.
+func (c managedConfig) isManagedVM() bool {
+	return c.managedInfra
 }
 
 type managedAuth struct {
 	cfg     managedConfig
 	control *http.Client
-	vestad  *http.Client
 }
 
 // managedState is the in-memory result of a claim/provision: the assigned number
@@ -218,19 +218,16 @@ func waMeLink(msisdn, text string) string {
 // isDirect reports whether a direct home-box key is configured: the box talks
 // straight to the pool API with its own per-account key, no vesta.run, no vestad.
 func (m *managedAuth) isDirect() bool {
-	return m.cfg.directURL != "" && m.cfg.directKey != ""
+	return m.cfg.isDirect()
 }
 
-// isHosted reports whether this box can use managed WhatsApp at all: either a direct
-// key (self-hosted managed), or a genuine vesta.run cloud tenant. Every agent
-// container carries VESTAD_PORT/AGENT_NAME/AGENT_TOKEN, so their presence alone
-// cannot tell a paid tenant from a plain self-hosted box. The distinguishing signal
-// is cloudManaged (VESTA_CLOUD_CONTROL_URL), which the control plane's cloud-init
-// drop-in sets only on managed VMs and vestad forwards into the container. Without
-// it, a plain box falls back to the QR strategy instead of dead-ending on a managed
-// path whose account-token mint would 404.
+// isHosted reports whether this box runs the managed-pool paradigm: a direct
+// per-account key, or a Vesta-provisioned VM (which ships with the pool). A box
+// that is neither links the user's own WhatsApp (QR strategy) — including a
+// self-hosted box holding a Vesta Cloud account, whose managed WhatsApp opens
+// only with an active paid membership (the control plane's gate).
 func (m *managedAuth) isHosted() bool {
-	return m.cfg.configError != "" || m.isDirect() || (m.cfg.cloudManaged && m.cfg.vestadBase != "" && m.cfg.agentName != "" && m.cfg.agentToken != "")
+	return m.cfg.configError != "" || m.cfg.isDirect() || m.cfg.isManagedVM()
 }
 
 // newManagedAuth builds the pool-API HTTP client. Direct-mode cred reconciliation
@@ -240,62 +237,82 @@ func newManagedAuth(cfg managedConfig) *managedAuth {
 	return &managedAuth{
 		cfg:     cfg,
 		control: &http.Client{Timeout: controlHTTPTimeout},
-		// vestad serves a self-signed cert on the loopback; the agent is on the
-		// same box, so TLS verification adds nothing and would just fail.
-		vestad: &http.Client{
-			Timeout:   managedHTTPTimeout,
-			Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
-		},
 	}
 }
 
-// mintToken asks this box's vestad for a short-lived server-identity token
-// (agent-token authed). vestad signs it locally from the box api_key, a pure
-// crypto operation with no network call, and hands it back.
-func (m *managedAuth) mintToken() (string, error) {
-	if m.cfg.vestadBase == "" || m.cfg.agentName == "" {
-		return "", fmt.Errorf("not running inside an agent container (no VESTAD_PORT/AGENT_NAME)")
-	}
-	if m.cfg.agentToken == "" {
-		return "", fmt.Errorf("missing AGENT_TOKEN, cannot authenticate to vestad")
-	}
-	var out struct {
-		Token string `json:"token"`
-	}
-	u := fmt.Sprintf("%s/agents/%s/account-token", m.cfg.vestadBase, m.cfg.agentName)
-	// A non-cloud-managed box answers 404; do() carries that status + body in the
-	// returned error, so the 404 detail surfaces without a separate decode branch.
-	if err := m.do(m.vestad, http.MethodPost, u, map[string]string{"X-Agent-Token": m.cfg.agentToken}, map[string]string{}, &out); err != nil {
-		return "", fmt.Errorf("mint server-identity token: %w", err)
-	}
-	if out.Token == "" {
-		return "", fmt.Errorf("vestad did not return a server-identity token")
-	}
-	return out.Token, nil
+// serverToken is the cloud-path credential: a short-lived server-identity token plus
+// the control-plane base URL it authenticates against.
+type serverToken struct {
+	token      string
+	controlURL string
 }
 
-// authorize resolves the pool-API base URL and Authorization header once. Direct
-// mode uses the static per-account key; cloud mode mints ONE short-lived
-// server-identity token (SERVER_IDENTITY_TTL 10m, comfortably longer than any
-// single command's work), so a caller making several requests in a row (claim's
-// poll loop) resolves once here and reuses the result rather than minting per call.
+// mintServerToken is a package var so tests stub the cloud credential without spawning
+// a subprocess.
+var mintServerToken = vestaCloudToken
+
+// vestaCloudTokenTimeout bounds the subprocess so a wedged `vesta-cloud token` can never
+// hang the daemon's auth path.
+const vestaCloudTokenTimeout = 30 * time.Second
+
+// vestaCloudToken shells out to `vesta-cloud token`, the single source of truth for
+// minting this box's server-identity token and resolving the control-plane URL. Every
+// skill that calls the control plane as the server routes through this one command, so
+// the vestad endpoint, the agent-token header, and the control URL live in one place and
+// cannot silently diverge across skills.
+func vestaCloudToken() (serverToken, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), vestaCloudTokenTimeout)
+	defer cancel()
+	out, runErr := exec.CommandContext(ctx, "vesta-cloud", "token").Output()
+	return parseServerToken(out, runErr, ctx.Err() == context.DeadlineExceeded)
+}
+
+// parseServerToken turns a `vesta-cloud token` run into a credential or a clear error,
+// split from the exec so the failure branches are unit tested. On failure the CLI prints
+// a structured {error} on stdout (surfaced verbatim); a missing command, a timeout, and
+// empty output each get their own message.
+func parseServerToken(out []byte, runErr error, timedOut bool) (serverToken, error) {
+	var resp struct {
+		Token      string `json:"token"`
+		ControlURL string `json:"control_url"`
+		Error      string `json:"error"`
+	}
+	_ = json.Unmarshal(out, &resp)
+	switch {
+	case resp.Token != "" && resp.ControlURL != "":
+		return serverToken{token: resp.Token, controlURL: strings.TrimRight(resp.ControlURL, "/")}, nil
+	case resp.Error != "":
+		return serverToken{}, fmt.Errorf("mint server-identity token: %s", resp.Error)
+	case timedOut:
+		return serverToken{}, fmt.Errorf("`vesta-cloud token` timed out after %s", vestaCloudTokenTimeout)
+	case runErr != nil:
+		return serverToken{}, fmt.Errorf("run `vesta-cloud token` (is the vesta-cloud skill installed?): %w", runErr)
+	default:
+		return serverToken{}, fmt.Errorf("`vesta-cloud token` returned no token")
+	}
+}
+
+// authorize resolves the pool-API base URL and Authorization header once. Direct mode
+// uses the static per-account key; cloud mode gets ONE short-lived server-identity token
+// (10m TTL, longer than any single command's work) from the vesta-cloud skill, so a
+// caller making several requests in a row (claim's poll loop) resolves once here.
 func (m *managedAuth) authorize() (base, auth string, err error) {
 	if m.isDirect() {
 		return m.cfg.directURL, "Bearer " + m.cfg.directKey, nil
 	}
-	token, err := m.mintToken()
+	st, err := mintServerToken()
 	if err != nil {
 		return "", "", err
 	}
-	return m.cfg.controlURL + "/integrations/whatsapp", "Bearer " + token, nil
+	return st.controlURL + "/integrations/whatsapp", "Bearer " + st.token, nil
 }
 
 // usesResidentialProxy reports whether this box must egress through a leased
-// residential proxy: a genuine cloud tenant whose companion would otherwise hit
-// WhatsApp from a datacenter IP (a ban signal). A direct self-hosted box already
-// egresses from the user's residential IP, so it never leases.
+// residential proxy: a Vesta-provisioned VM's companion would otherwise hit
+// WhatsApp from a datacenter IP (a ban signal). A box on the user's own
+// hardware already egresses from their residential IP, so it never leases.
 func (m *managedAuth) usesResidentialProxy() bool {
-	return m.cfg.cloudManaged && !m.isDirect()
+	return m.cfg.managedInfra && !m.isDirect()
 }
 
 // leaseProxy fetches a residential proxy from doubletick with the same authentication
@@ -327,40 +344,6 @@ func (m *managedAuth) leaseProxy() (string, error) {
 		return "", fmt.Errorf("doubletick returned a non-residential proxy lease (%s)", out.Kind)
 	}
 	return out.ProxyURL, nil
-}
-
-// provisionSelf claims (idempotently) a pool number the USER will own on their own
-// phone: the control plane reserves it, the user registers it themselves and keeps
-// their phone online, then the agent links only as a companion. Distinct from
-// provision, where the agent drives a headless primary for its own number.
-func (m *managedAuth) provisionSelf() (string, error) {
-	var out struct {
-		MSISDN string `json:"msisdn"`
-		State  string `json:"state"`
-	}
-	if err := m.call(http.MethodPost, "/byo", map[string]string{}, &out); err != nil {
-		return "", fmt.Errorf("reserve a user-owned number: %w", err)
-	}
-	if out.MSISDN == "" {
-		return "", fmt.Errorf("control plane returned no number for the user-owned account")
-	}
-	return out.MSISDN, nil
-}
-
-// selfNumberOTP blocks server-side (up to the pool API deadline) until the SMS
-// verification code for the user-owned number arrives, then returns it for the user
-// to enter while registering the number in WhatsApp on their own phone.
-func (m *managedAuth) selfNumberOTP() (string, error) {
-	var out struct {
-		Code string `json:"code"`
-	}
-	if err := m.call(http.MethodGet, "/byo/otp", nil, &out); err != nil {
-		return "", fmt.Errorf("fetch the user-owned number verification code: %w", err)
-	}
-	if out.Code == "" {
-		return "", fmt.Errorf("control plane returned an empty verification code")
-	}
-	return out.Code, nil
 }
 
 // call sends one authenticated request to the pool API, resolving the base +

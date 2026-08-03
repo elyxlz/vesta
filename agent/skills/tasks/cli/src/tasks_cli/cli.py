@@ -62,6 +62,15 @@ def _sync_jobs(config: Config, scheduler, notif_dir: Path):
         commands.restore_jobs_by_ids(config, scheduler, to_restore, notif_dir=notif_dir)
 
 
+def _add_due_args(parser: argparse.ArgumentParser) -> None:
+    """The shared due-date flags: an absolute datetime + timezone, or a relative offset."""
+    parser.add_argument("--due-datetime", default=None)
+    parser.add_argument("--timezone", default=None)
+    parser.add_argument("--due-in-minutes", type=int, default=None)
+    parser.add_argument("--due-in-hours", type=int, default=None)
+    parser.add_argument("--due-in-days", type=int, default=None)
+
+
 def _add_id_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("id_pos", nargs="?", default=None, metavar="id")
     parser.add_argument("--id", default=None, dest="task_id")
@@ -84,11 +93,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_add = sub.add_parser("add", help="Add a new task")
     p_add.add_argument("title_pos", nargs="?", default=None, metavar="title")
     p_add.add_argument("--title", default=None)
-    p_add.add_argument("--due-datetime", default=None)
-    p_add.add_argument("--timezone", default=None)
-    p_add.add_argument("--due-in-minutes", type=int, default=None)
-    p_add.add_argument("--due-in-hours", type=int, default=None)
-    p_add.add_argument("--due-in-days", type=int, default=None)
+    _add_due_args(p_add)
     p_add.add_argument("--priority", default="normal", help="low/normal/high or 1/2/3")
     p_add.add_argument("--initial-metadata", default=None)
 
@@ -114,11 +119,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p_update.add_argument("--status", default=None)
     p_update.add_argument("--title", default=None)
     p_update.add_argument("--priority", default=None)
-    p_update.add_argument("--due-datetime", default=None)
-    p_update.add_argument("--timezone", default=None)
-    p_update.add_argument("--due-in-minutes", type=int, default=None)
-    p_update.add_argument("--due-in-hours", type=int, default=None)
-    p_update.add_argument("--due-in-days", type=int, default=None)
+    _add_due_args(p_update)
+    p_update.add_argument("--clear-due", action="store_true", help="Remove the task's due date and its auto reminders")
 
     # done
     p_done = sub.add_parser("done", help="Mark a task done")
@@ -390,6 +392,7 @@ def _handle_task(args, config: Config):
                 due_in_minutes=args.due_in_minutes,
                 due_in_hours=args.due_in_hours,
                 due_in_days=args.due_in_days,
+                clear=args.clear_due,
             ),
         )
     elif args.command == "done":

@@ -32,6 +32,7 @@ import { useChatPacing } from "@/stores/use-chat-pacing";
 import { useAppMode, type AppMode } from "@/stores/use-app-mode";
 import { openExternalUrl } from "@/lib/open-external-url";
 import { KeybindsCard } from "@/components/Settings/KeybindsSection";
+import { DevicesCard } from "@/components/Settings/DevicesCard";
 import { ConnectionControls } from "@/components/ConnectionControls";
 import { GatewayRestart } from "@/components/GatewayRestart";
 import {
@@ -194,6 +195,8 @@ export function AppSettings() {
         </CardContent>
       </Card>
 
+      <DevicesCard />
+
       <GatewayLogsViewer open={showLogs} onOpenChange={setShowLogs} />
 
       {reachable && managed && (
@@ -251,12 +254,12 @@ function GatewaySetupFields({ setup }: { setup: GatewaySetup }) {
         <FieldContent>
           <FieldLabel className="text-sm">backups</FieldLabel>
           <FieldDescription>
-            automatic nightly snapshots of your agents
+            automatic snapshots of your agents, without interrupting them
           </FieldDescription>
         </FieldContent>
         <span className="shrink-0 text-sm text-muted-foreground">
           {setup.settings.auto_backup.enabled
-            ? `daily at ${String(setup.settings.auto_backup.hour).padStart(2, "0")}:00 server time`
+            ? `every ${String(setup.settings.auto_backup.every_n_days)} days, and before every update`
             : "disabled"}
         </span>
       </Field>

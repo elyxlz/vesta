@@ -30,5 +30,7 @@ export function reduceDelta(tree: Tree, delta: Delta): Tree {
       return tree
     case "presence":
       return tree
+    case "devices":
+      return { ...tree, devices: delta.devices }
   }
 }

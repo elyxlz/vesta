@@ -12,6 +12,7 @@ import { useAgent } from "@/agent/AgentProvider";
 import { AgentPagesSettingsSection } from "@/components/AgentPagesSettingsSection";
 import { AgentIdentityCard } from "@/components/agent-identity-card";
 import { Screen } from "@/components/layout/Screen";
+import { NativeSheetCloseButton } from "@/components/native-sheet-close-button";
 import { useToast } from "@/components/native-toast";
 import { Button, ButtonGroup } from "@/components/ui/Button";
 import { FormSection, SwitchRow } from "@/components/ui/Form";
@@ -196,7 +197,12 @@ function AgentSettingsContent() {
 }
 
 export default function AgentSettingsScreen() {
-  return <AgentSettingsContent />;
+  return (
+    <>
+      <NativeSheetCloseButton accessibilityLabel="Close agent settings" />
+      <AgentSettingsContent />
+    </>
+  );
 }
 
 const styles = StyleSheet.create({

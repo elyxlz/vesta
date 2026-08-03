@@ -13,11 +13,17 @@ import (
 // returns a terminal {status:"linked", number, next} (or {status:"provisioning"} /
 // {status:"blocked"}). No daemon management, no readiness polling, no code
 // shuttling. Idempotent, so re-running is always safe.
-func runProvision(opener string) {
+func runProvision(source, opener string) {
 	if err := ensureDaemon(linkServeArgs()); err != nil {
 		failJSON("%s", err.Error())
 	}
 	args := []string{}
+	// Thread the resolved source so the daemon pins its pairing auth to the agent's
+	// explicit choice, not its boot-time env: `cloud` forces the server-identity
+	// token even on a warm daemon that also carries direct pool creds.
+	if source != "" {
+		args = append(args, "--source", source)
+	}
 	if opener != "" {
 		args = append(args, "--opener", opener)
 	}

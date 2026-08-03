@@ -1,0 +1,27 @@
+[project]
+name = "vesta-cloud"
+version = "0.1.0"
+description = "vesta-cloud account authority: whoami + server-identity token, this box's hosting plan, referral code + earnings, and billing changes"
+readme = {text = "", content-type = "text/plain"}
+authors = [
+    { name = "elyxlz" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "requests>=2.31.0",
+]
+
+[project.scripts]
+vesta-cloud = "vesta_cloud_cli.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vesta_cloud_cli"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

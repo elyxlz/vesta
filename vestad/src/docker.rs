@@ -1,9 +1,10 @@
-use bollard::models::ContainerCreateBody;
+use bollard::models::{ContainerConfig, ContainerCreateBody};
 use bollard::query_parameters::{
-    BuildImageOptions, CreateContainerOptions, CreateImageOptions, DownloadFromContainerOptions,
-    ImportImageOptions, InspectContainerOptions, InspectNetworkOptionsBuilder,
-    ListContainersOptions, ListImagesOptions, RemoveContainerOptions, RemoveImageOptions,
-    RestartContainerOptions, StopContainerOptions, UploadToContainerOptions,
+    BuildImageOptions, CommitContainerOptionsBuilder, CreateContainerOptions, CreateImageOptions,
+    DownloadFromContainerOptions, ImportImageOptions, InspectContainerOptions,
+    InspectNetworkOptionsBuilder, ListContainersOptions, ListImagesOptions,
+    RemoveContainerOptions, RemoveImageOptions, RestartContainerOptions, StopContainerOptions,
+    UploadToContainerOptions,
 };
 use bollard::Docker;
 use bytes::Bytes;
@@ -1126,7 +1127,7 @@ pub fn write_agent_env_file(
     // The control-plane base URL the agent's account/onboard skills call. Comes
     // from vestad's own env (the cloud-init managed.conf drop-in); absent on
     // self-hosted boxes. (The referral code is NOT forwarded here: it lives with
-    // the control plane and the vesta-cloud-account skill reads it via GET /api/account.)
+    // the control plane and the vesta-cloud skill reads it via GET /api/account.)
     append_optional(
         "VESTA_CLOUD_CONTROL_URL",
         std::env::var("VESTA_CLOUD_CONTROL_URL").ok().as_deref(),
@@ -1387,6 +1388,49 @@ pub async fn container_restart_policy(docker: &Docker, cname: &str) -> String {
         .and_then(|r| r.name)
         .map(|n| format!("{n:?}").to_lowercase().replace('_', "-"))
         .unwrap_or_default()
+}
+
+/// Commit the container's filesystem to a local image. Docker pauses the
+/// container during the commit (a freeze of seconds), so the capture is
+/// point-in-time consistent without stopping the agent.
+pub async fn commit_container_to_image(
+    docker: &Docker,
+    cname: &str,
+    image_repo: &str,
+    image_tag: &str,
+) -> Result<(), DockerError> {
+    let options = CommitContainerOptionsBuilder::default()
+        .container(cname)
+        .repo(image_repo)
+        .tag(image_tag)
+        .pause(true)
+        .build();
+    docker
+        .commit_container(options, ContainerConfig::default())
+        .await
+        .map_err(|e| DockerError::Failed(format!("docker commit failed: {e}")))?;
+    Ok(())
+}
+
+/// Create (never start) a bare container from an image, as a `docker export` source.
+pub async fn create_plain_container(
+    docker: &Docker,
+    image: &str,
+    cname: &str,
+) -> Result<(), DockerError> {
+    let options = CreateContainerOptions {
+        name: Some(cname.to_string()),
+        ..Default::default()
+    };
+    let body = ContainerCreateBody {
+        image: Some(image.to_string()),
+        ..Default::default()
+    };
+    docker
+        .create_container(Some(options), body)
+        .await
+        .map_err(|e| DockerError::Failed(format!("docker create for backup failed: {e}")))?;
+    Ok(())
 }
 
 pub async fn remove_image(docker: &Docker, image: &str) -> Result<(), DockerError> {
@@ -5317,7 +5361,7 @@ mod tests {
             match crate::serve::drop_presence_notification(
                 &docker,
                 &agent_name,
-                crate::sync::protocol::ClientKind::Mobile,
+                crate::types::ClientKind::Mobile,
             )
             .await
             {

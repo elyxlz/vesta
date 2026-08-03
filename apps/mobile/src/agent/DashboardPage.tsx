@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Linking, Platform, StyleSheet, View } from "react-native";
+import { Linking, StyleSheet, View } from "react-native";
 import type { WebViewMessageEvent, ShouldStartLoadRequest } from "react-native-webview/lib/WebViewTypes";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { serviceKeyPathUrl } from "@vesta/core";
@@ -9,6 +9,7 @@ import { DashboardWebView, type DashboardWebViewHandle } from "@/components/Dash
 import { EmptyState } from "@/components/ui/States";
 import { usePreferences } from "@/preferences/PreferencesProvider";
 import { useSession } from "@/session/SessionProvider";
+import { navHeaderHeight } from "@/theme/layout";
 
 interface DashboardMessage {
   type?: string;
@@ -117,7 +118,7 @@ export default function DashboardPage() {
       style={[
         styles.screen,
         {
-          paddingTop: insets.top + (Platform.OS === "ios" ? 44 : 56),
+          paddingTop: insets.top + navHeaderHeight,
           paddingBottom: insets.bottom,
         },
       ]}

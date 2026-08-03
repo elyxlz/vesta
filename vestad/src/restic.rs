@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use crate::docker::{container_name, DockerError};
+use crate::docker::DockerError;
 use crate::types::{BackupInfo, BackupType};
 
 const REPO_DIR: &str = "restic-repo";
@@ -308,13 +308,22 @@ fn classify_snapshot_output(output: PipeOutput) -> Result<SnapshotOutcome, Docke
     }
 }
 
-/// Stream `docker export <cname>` into `restic backup --stdin`. Caller owns stop/start.
-pub async fn snapshot(name: &str, backup_type: &BackupType) -> Result<BackupInfo, DockerError> {
+/// Stream `docker export <export_cname>` into `restic backup --stdin`. The export source is the
+/// caller's choice: the agent's own (stopped) container, or a temp container committed from the
+/// running one, which is what keeps backups restart-free.
+pub async fn snapshot(
+    name: &str,
+    backup_type: &BackupType,
+    from_version: Option<&str>,
+    export_cname: &str,
+) -> Result<BackupInfo, DockerError> {
     ensure_repo(name)?;
-    let cname = container_name(name);
+    let cname = export_cname.to_string();
     let tar_name = agent_tar_name(name);
     let agent_tag = format!("agent:{name}");
     let type_tag = format!("type:{backup_type}");
+    let version_tag = from_version.map(|v| format!("from-version:{v}"));
+    let from_version = from_version.map(str::to_string);
     let backup_type = backup_type.clone();
     let name = name.to_string();
     let repo_name = name.clone();
@@ -334,8 +343,11 @@ pub async fn snapshot(name: &str, backup_type: &BackupType) -> Result<BackupInfo
             &agent_tag,
             "--tag",
             &type_tag,
-            "--json",
         ]);
+        if let Some(ref tag) = version_tag {
+            backup.args(["--tag", tag]);
+        }
+        backup.arg("--json");
         let output = pipe_through(
             export,
             "docker export",
@@ -386,6 +398,7 @@ pub async fn snapshot(name: &str, backup_type: &BackupType) -> Result<BackupInfo
         backup_type,
         created_at: crate::time_utils::now_timestamp(),
         size: summary.total_bytes_processed,
+        from_version,
     })
 }
 
@@ -452,12 +465,14 @@ fn snapshot_to_info(snap: ResticSnapshot) -> Option<BackupInfo> {
     let agent_name = tag_value(&snap.tags, "agent:")?.to_string();
     let backup_type = tag_value(&snap.tags, "type:")?.parse::<BackupType>().ok()?;
     let created_at = format_restic_time(&snap.time)?;
+    let from_version = tag_value(&snap.tags, "from-version:").map(str::to_string);
     Some(BackupInfo {
         id: snap.short_id,
         agent_name,
         backup_type,
         created_at,
         size: snap.summary.map_or(0, |s| s.total_bytes_processed),
+        from_version,
     })
 }
 
@@ -785,9 +800,11 @@ mod tests {
         let info = snapshot_to_info(snap).unwrap();
         assert_eq!(info.id, "abc12345");
         assert_eq!(info.agent_name, "okami");
-        assert_eq!(info.backup_type, BackupType::Daily);
+        // Legacy tier tags parse as periodic so old snapshots keep listing.
+        assert_eq!(info.backup_type, BackupType::Periodic);
         assert_eq!(info.created_at, "20260529-040001");
         assert_eq!(info.size, 4242);
+        assert_eq!(info.from_version, None);
 
         let untagged = ResticSnapshot {
             short_id: "abc12345".into(),

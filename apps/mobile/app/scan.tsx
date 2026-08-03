@@ -5,9 +5,8 @@ import { Stack, useRouter } from "expo-router";
 import { AuthPrimaryButton } from "@/components/auth-primary-button";
 import { LoadingState } from "@/components/ui/States";
 import { Text } from "@/components/ui/Typography";
+import { NativeSheetCloseButton } from "@/components/native-sheet-close-button";
 import { usePreferences } from "@/preferences/PreferencesProvider";
-
-const IS_IOS = process.env.EXPO_OS === "ios";
 
 export default function ScanScreen() {
   return <ScanContent />;
@@ -41,17 +40,10 @@ function ScanContent() {
           statusBarStyle: permission?.granted || dark ? "light" : "dark",
         }}
       />
-      <Stack.Toolbar placement="left">
-        <Stack.Toolbar.Button
-          accessibilityLabel="Close scanner"
-          icon={IS_IOS ? "xmark" : undefined}
-          separateBackground
-          tintColor={headerTintColor}
-          onPress={() => router.back()}
-        >
-          {IS_IOS ? undefined : "Close"}
-        </Stack.Toolbar.Button>
-      </Stack.Toolbar>
+      <NativeSheetCloseButton
+        accessibilityLabel="Close scanner"
+        tintColor={headerTintColor}
+      />
     </>
   );
 

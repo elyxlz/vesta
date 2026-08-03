@@ -129,7 +129,7 @@ At **create-agent** (step 6), put three things in `--context`:
 1. **The user's WhatsApp number**, so the new vesta knows who to expect: "your owner
    will message you from +1..., greet them by name when they arrive."
 2. **Set up WhatsApp first**: "Before anything else, set up and authenticate your own
-   WhatsApp number using the `whatsapp` skill."
+   Vesta Cloud-managed WhatsApp number using the `whatsapp` skill."
 3. **Leave the link where you'll fetch it**: "Then write your wa.me connect link to
    `~/.file-host/connect.txt` and serve it with the `file-host` skill." That publishes
    it at a fixed public URL you can construct yourself, no channel from them to you
@@ -237,7 +237,7 @@ same command; don't restart the whole flow or drop the person.
 The cases you'll actually hit, and the move for each:
 
 - `invalid referral code`: your code changed or was reissued. Re-run
-  `vesta-cloud-account referral` to fetch the current one, `vesta-cloud-account
+  `vesta-cloud referral` to fetch the current one, `vesta-cloud
   set-referral --code <code>` it, then re-run `onboard verify-send`, and mention
   to the owner that their referral code changed.
 - `invalid code` (a bad discount `--code` at checkout): re-run `onboard checkout`
@@ -261,14 +261,14 @@ for byte identical and still fails is it not the link.
 
 A completed invite only credits this account if `onboard verify-send` sends a
 referral code with it. That code is not yours to
-know or store; it lives with the `vesta-cloud-account` skill, which is the source of truth
+know or store; it lives with the `vesta-cloud` skill, which is the source of truth
 for it (the control plane issues it, not this box). So:
 
-1. **Set it up once.** Run `vesta-cloud-account referral` to get this box's code,
-   then `vesta-cloud-account set-referral --code <code>` to hand it to this skill.
+1. **Set it up once.** Run `vesta-cloud referral` to get this box's code,
+   then `vesta-cloud set-referral --code <code>` to hand it to this skill.
    From then on `onboard verify-send` picks it up automatically; you don't pass it
    each time.
-2. **If the box isn't cloud-managed**, `vesta-cloud-account referral` comes back
+2. **If the box isn't cloud-managed**, `vesta-cloud referral` comes back
    `{"error": "not_hosted", ...}`. Ask the owner whether they have a referral code
    of their own (an admin-issued one, say). If they do, `set-referral` it. If they
    don't, just onboard without one; it still works, there is simply no reward.

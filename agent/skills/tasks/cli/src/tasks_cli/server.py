@@ -35,6 +35,7 @@ class UpdateTaskBody(BaseModel):
     due_in_minutes: int | None = None
     due_in_hours: int | None = None
     due_in_days: int | None = None
+    clear_due: bool = False
 
 
 class UpdateReminderBody(BaseModel):
@@ -103,6 +104,7 @@ def _create_app(config: Config) -> FastAPI:
                 due_in_minutes=body.due_in_minutes,
                 due_in_hours=body.due_in_hours,
                 due_in_days=body.due_in_days,
+                clear=body.clear_due,
             ),
         )
 

@@ -427,6 +427,24 @@ pub async fn refresh_session_handler(
 }
 
 #[cfg(test)]
+mod agent_name_extraction {
+    use super::extract_agent_name;
+
+    #[test]
+    fn agent_paths_self_scope_and_daemon_paths_do_not() {
+        assert_eq!(
+            extract_agent_name("/agents/alpha/account-token").as_deref(),
+            Some("alpha")
+        );
+        // Daemon-level Vesta Cloud pairing paths carry no agent name; they ride
+        // the any-agent-token tier instead of the self-scoped one.
+        assert_eq!(extract_agent_name("/vesta-cloud/pair"), None);
+        assert_eq!(extract_agent_name("/health"), None);
+        assert_eq!(extract_agent_name("/agents"), None);
+    }
+}
+
+#[cfg(test)]
 mod refresh_rotation_tests {
     use super::*;
 

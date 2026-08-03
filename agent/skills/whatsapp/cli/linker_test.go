@@ -17,10 +17,12 @@ func TestChooseLinkerParadigm(t *testing.T) {
 		cfg  managedConfig
 		want string
 	}{
-		{"direct key", managedConfig{directURL: "https://box", directKey: "wak_x"}, "managed"},
-		{"cloud tenant", managedConfig{vestadBase: "https://localhost:1", agentName: "a", agentToken: "t", cloudManaged: true}, "managed"},
-		{"self-hosted container (identity but not a tenant)", managedConfig{vestadBase: "https://localhost:1", agentName: "a", agentToken: "t"}, "self-hosted"},
-		{"plain box", managedConfig{}, "self-hosted"},
+		{"direct key", managedConfig{directURL: "https://box", directKey: "wak_x"}, "headless"},
+		{"managed VM", managedConfig{managedInfra: true}, "headless"},
+		// A box with neither links the user's own WhatsApp, including a
+		// self-hosted box holding a Vesta Cloud account (managed WhatsApp
+		// opens for it only with an active paid membership).
+		{"plain box", managedConfig{}, "self-managed"},
 	}
 	for _, tc := range cases {
 		l := chooseLinker(tc.cfg, newStateStore(t.TempDir()))
@@ -54,7 +56,7 @@ func TestChooseLinkerPersistsDirectCredsAcrossEnvScrub(t *testing.T) {
 	dir := t.TempDir()
 
 	// First run: creds come from the environment (via cfg) and get persisted.
-	if l := chooseLinker(managedConfig{directURL: "https://wa.example", directKey: "wak_abc"}, newStateStore(dir)); l.name() != "managed" {
+	if l := chooseLinker(managedConfig{directURL: "https://wa.example", directKey: "wak_abc"}, newStateStore(dir)); l.name() != "headless" {
 		t.Fatalf("env creds should select managed, got %q", l.name())
 	}
 	if st := loadStateFromDisk(dir); st.DirectURL != "https://wa.example" || st.DirectKey != "wak_abc" {
@@ -62,7 +64,7 @@ func TestChooseLinkerPersistsDirectCredsAcrossEnvScrub(t *testing.T) {
 	}
 
 	// Later run with a scrubbed environment: creds load from state, still managed.
-	if l := chooseLinker(managedConfig{}, newStateStore(dir)); l.name() != "managed" {
+	if l := chooseLinker(managedConfig{}, newStateStore(dir)); l.name() != "headless" {
 		t.Fatalf("creds not recovered from state after env scrub: got %q", l.name())
 	}
 }

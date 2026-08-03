@@ -27,6 +27,52 @@ fn wait_for_events_db(cname: &str) {
     }
 }
 
+/// The container's docker identity and start time, for asserting a backup never restarts it.
+fn container_id_and_started_at(cname: &str) -> String {
+    let output = std::process::Command::new("docker")
+        .args(["inspect", "--format", "{{.Id}} {{.State.StartedAt}} {{.State.Status}}", cname])
+        .output()
+        .expect("docker inspect runs");
+    assert!(output.status.success(), "docker inspect {cname} failed");
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+#[test]
+fn backup_does_not_restart_running_agent() {
+    let c = SERVER.client();
+    let agent = TestAgent::create(&c, &unique_agent("bk-norestart")).unwrap();
+    let cname = agent_container_name(&agent.name);
+    wait_for_events_db(&cname);
+
+    let before = container_id_and_started_at(&cname);
+    assert!(before.ends_with("running"), "agent must be running before backup, got {before}");
+
+    let backup = c.create_backup(&agent.name).unwrap();
+
+    let after = container_id_and_started_at(&cname);
+    assert_eq!(
+        before, after,
+        "a backup must never stop or restart the container (same id, StartedAt, and status)"
+    );
+
+    c.delete_backup(&agent.name, &backup.id).ok();
+}
+
+#[test]
+fn backup_of_stopped_agent_succeeds() {
+    let c = SERVER.client();
+    let agent = TestAgent::create(&c, &unique_agent("bk-stopped")).unwrap();
+
+    c.stop_agent(&agent.name).unwrap();
+    let backup = c.create_backup(&agent.name).unwrap();
+    assert!(backup.size > 0);
+
+    let st = c.agent_status(&agent.name).unwrap();
+    assert!(!is_up(&st.status), "backup must leave a stopped agent stopped, got {}", st.status);
+
+    c.delete_backup(&agent.name, &backup.id).ok();
+}
+
 #[test]
 fn backup_create() {
     let c = SERVER.client();

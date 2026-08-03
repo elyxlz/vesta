@@ -945,7 +945,7 @@ func (wac *WhatsAppClient) SetProfileName(name string) error {
 		return err
 	}
 	if err := wac.client.SendAppState(context.Background(), appstate.BuildSettingPushName(name)); err != nil {
-		wac.logger.Warnf("set-profile-name: account-wide name skipped (no app-state keys yet, normal for a fresh managed number): %v", err)
+		wac.logger.Warnf("set-profile-name: account-wide name skipped (no app-state keys yet, normal for a fresh headless account): %v", err)
 	}
 	wac.client.Store.PushName = name
 	if err := wac.client.Store.Save(context.Background()); err != nil {

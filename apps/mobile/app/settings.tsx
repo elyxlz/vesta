@@ -15,6 +15,7 @@ import {
 } from "@/api/endpoints";
 import type { GatewayInfo, GatewaySettings } from "@/api/types";
 import { Screen } from "@/components/layout/Screen";
+import { NativeSheetCloseButton } from "@/components/native-sheet-close-button";
 import { useToast } from "@/components/native-toast";
 import { Button, ButtonGroup } from "@/components/ui/Button";
 import { FormRow, FormSection, SwitchRow } from "@/components/ui/Form";
@@ -40,6 +41,17 @@ type GatewayQueryData = {
 function titleCaseChannel(channel: ReleaseChannel | undefined): string {
   if (!channel) return "unknown";
   return channel === "beta" ? "Beta" : "Stable";
+}
+
+function lastSeenLabel(lastSeen: string): string {
+  const then = new Date(lastSeen).getTime();
+  if (Number.isNaN(then)) return "last seen recently";
+  const mins = Math.floor((Date.now() - then) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${String(mins)}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${String(hours)}h ago`;
+  return `${String(Math.floor(hours / 24))}d ago`;
 }
 
 export default function SettingsScreen() {
@@ -205,6 +217,10 @@ export default function SettingsScreen() {
 
   return (
     <Screen contentStyle={styles.content}>
+      <NativeSheetCloseButton
+        accessibilityLabel="Close settings"
+        visibleFromDetentIndex={1}
+      />
       <FormSection
         title="Experience"
         actions={
@@ -362,6 +378,18 @@ export default function SettingsScreen() {
           value={gateway.data?.info.tunnel_url ? "active" : "unavailable"}
         />
       </FormSection>
+
+      {roster.devices.length > 0 ? (
+        <FormSection title="Devices">
+          {roster.devices.map((device) => (
+            <FormRow
+              key={device.id}
+              label={device.descriptor ?? "Unnamed device"}
+              value={device.present ? "present now" : lastSeenLabel(device.lastSeen)}
+            />
+          ))}
+        </FormSection>
+      ) : null}
 
       {roster.managed ? (
         <FormSection

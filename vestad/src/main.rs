@@ -12,9 +12,12 @@ mod app_static;
 mod auth;
 mod backup;
 mod channel;
+mod device_registry;
 mod docker;
 mod jwt;
 mod lifecycle;
+mod maintenance;
+mod maintenance_window;
 mod manifest;
 mod mobile_app;
 mod mounts;
@@ -34,9 +37,9 @@ mod time_utils;
 mod tunnel;
 mod types;
 mod update_check;
-mod update_window;
 mod upstream;
 mod vendored_bin;
+mod vesta_cloud;
 
 use status::{paint, AgentEntry, Status, TunnelStatus};
 
@@ -91,6 +94,11 @@ enum Command {
     },
     /// Connect a Cloudflare domain so your agent gets a public URL
     Connect,
+    /// Link this box to a Vesta Cloud account (pair / unpair)
+    VestaCloud {
+        #[command(subcommand)]
+        action: VestaCloudAction,
+    },
     /// Manage the Cloudflare tunnel (advanced)
     Tunnel {
         #[command(subcommand)]
@@ -107,6 +115,14 @@ enum Command {
     Uninstall,
     /// Print version information
     Version,
+}
+
+#[derive(clap::Subcommand)]
+enum VestaCloudAction {
+    /// Pair this box to a Vesta Cloud account (shows a code the owner approves)
+    Login,
+    /// Unpair this box from its Vesta Cloud account
+    Logout,
 }
 
 #[derive(clap::Subcommand)]
@@ -924,6 +940,18 @@ fn main() {
                 paint("1", &format!("https://{}/app", tc.hostname)),
             );
             eprintln!();
+        }
+
+        Command::VestaCloud { action } => {
+            let config = config_dir();
+            match action {
+                VestaCloudAction::Login => {
+                    vesta_cloud::run_login(&config).unwrap_or_else(|e| die(e));
+                }
+                VestaCloudAction::Logout => {
+                    vesta_cloud::run_logout(&config).unwrap_or_else(|e| die(e));
+                }
+            }
         }
 
         Command::Tunnel { action } => {

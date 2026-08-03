@@ -1,7 +1,8 @@
 // Poll GitHub for new releases every 5 hours: often enough that the UpdatePill and a
 // power user's manual update see a release promptly. This only governs detection; an
-// auto-update is applied later, in the fleet's 3-5am quiet window (see serve.rs
-// apply_in_best_window). The desktop app can force an immediate check via POST /version/check.
+// auto-update is applied later, by the maintenance cycle in the fleet's 4-5am quiet
+// window (see serve.rs run_maintenance). The desktop app can force an immediate check
+// via POST /version/check.
 pub const CHECK_INTERVAL_SECS: u64 = 5 * 60 * 60;
 const FETCH_TIMEOUT_SECS: u64 = 10;
 const ERROR_SNIPPET_MAX_LEN: usize = 300;
