@@ -414,6 +414,20 @@ func (wac *WhatsAppClient) parseMentions(text string) (string, []string) {
 		captureStart, captureEnd := matches[i][2], matches[i][3]
 		identifier := text[captureStart:captureEnd]
 
+		// An "@" glued to a preceding word character is part of an email
+		// address, not a mention: in "S3044936@ed.ac.uk" the "@ed" would
+		// otherwise fuzzy-resolve to a contact and rewrite the address into a
+		// phone number, silently corrupting it. A real mention starts the text
+		// or follows whitespace/punctuation.
+		if fullStart > 0 {
+			prev := rune(text[fullStart-1])
+			if prev == '.' || prev == '_' || prev == '-' ||
+				(prev >= 'a' && prev <= 'z') || (prev >= 'A' && prev <= 'Z') ||
+				(prev >= '0' && prev <= '9') {
+				continue
+			}
+		}
+
 		jid, err := wac.ResolveRecipient(identifier)
 		if err != nil {
 			continue
