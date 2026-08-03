@@ -669,16 +669,12 @@ func cmdListMessages(args []string, wac *WhatsAppClient) (any, error) {
 		beforeTime = &t
 	}
 
-	var chatJID string
-	if to != "" {
-		jid, err := wac.ResolveRecipient(to)
-		if err != nil {
-			return nil, fmt.Errorf("failed to resolve chat: %v", err)
-		}
-		chatJID = jid.String()
+	chatJIDs, err := wac.chatStorageKeys(to)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve chat: %v", err)
 	}
 
-	messages, err := wac.store.ListMessages(afterTime, beforeTime, senderPhone, chatJID, query, limit, page*limit)
+	messages, err := wac.store.ListMessages(afterTime, beforeTime, senderPhone, chatJIDs, query, limit, page*limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1327,15 +1323,11 @@ func cmdListReceivedContacts(args []string, wac *WhatsAppClient) (any, error) {
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
-	var chatJID string
-	if to != "" {
-		jid, err := wac.ResolveRecipient(to)
-		if err != nil {
-			return nil, fmt.Errorf("failed to resolve chat: %v", err)
-		}
-		chatJID = jid.String()
+	chatJIDs, err := wac.chatStorageKeys(to)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve chat: %v", err)
 	}
-	messages, err := wac.store.ListMessages(nil, nil, "", chatJID, "[Contact:", limit, 0)
+	messages, err := wac.store.ListMessages(nil, nil, "", chatJIDs, "[Contact:", limit, 0)
 	if err != nil {
 		return nil, err
 	}

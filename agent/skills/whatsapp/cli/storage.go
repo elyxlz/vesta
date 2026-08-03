@@ -640,27 +640,58 @@ func normalizePhoneInput(input string) (string, string, error) {
 	return digits, "+" + digits, nil
 }
 
+// ListMessages reads stored messages. chatJIDs filters by chat; pass every storage key one
+// conversation can live under (a direct chat splits across the peer's phone JID and their LID),
+// or nil for no chat filter.
 func (ms *MessageStore) ListMessages(
 	after, before *time.Time,
-	senderPhone, chatJID, query string,
+	senderPhone string,
+	chatJIDs []string,
+	query string,
 	limit, offset int,
 ) ([]Message, error) {
 	// Try the FTS index first when searching; fall back to a LIKE scan if the
 	// FTS query errors (e.g. a syntactically invalid MATCH expression).
 	if query != "" {
-		messages, err := ms.listMessagesQuery(true, after, before, senderPhone, chatJID, query, limit, offset)
+		messages, err := ms.listMessagesQuery(true, after, before, senderPhone, chatJIDs, query, limit, offset)
 		if err == nil {
-			return messages, nil
+			return dedupeByID(messages, len(chatJIDs) > 1), nil
 		}
 	}
 
-	return ms.listMessagesQuery(false, after, before, senderPhone, chatJID, query, limit, offset)
+	messages, err := ms.listMessagesQuery(false, after, before, senderPhone, chatJIDs, query, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return dedupeByID(messages, len(chatJIDs) > 1), nil
+}
+
+// dedupeByID drops repeats of the same message id, keeping the first (most recent) copy. The
+// messages primary key is (id, chat_jid), so one message re-stored under a chat's other storage
+// key is two rows, and a union across both keys would show it twice. Only runs when more than one
+// key was queried, since a single key cannot repeat an id.
+func dedupeByID(messages []Message, active bool) []Message {
+	if !active || len(messages) < 2 {
+		return messages
+	}
+	seen := make(map[string]struct{}, len(messages))
+	out := messages[:0]
+	for _, m := range messages {
+		if _, dup := seen[m.ID]; dup {
+			continue
+		}
+		seen[m.ID] = struct{}{}
+		out = append(out, m)
+	}
+	return out
 }
 
 func (ms *MessageStore) listMessagesQuery(
 	useFTS bool,
 	after, before *time.Time,
-	senderPhone, chatJID, query string,
+	senderPhone string,
+	chatJIDs []string,
+	query string,
 	limit, offset int,
 ) ([]Message, error) {
 	qb := strings.Builder{}
@@ -690,9 +721,13 @@ func (ms *MessageStore) listMessagesQuery(
 		qb.WriteString(" AND m.sender LIKE ?")
 		args = append(args, "%"+senderPhone+"%")
 	}
-	if chatJID != "" {
-		qb.WriteString(" AND m.chat_jid = ?")
-		args = append(args, chatJID)
+	if len(chatJIDs) > 0 {
+		placeholders := strings.Repeat("?,", len(chatJIDs))
+		placeholders = placeholders[:len(placeholders)-1]
+		qb.WriteString(" AND m.chat_jid IN (" + placeholders + ")")
+		for _, jid := range chatJIDs {
+			args = append(args, jid)
+		}
 	}
 	if !useFTS && query != "" {
 		qb.WriteString(" AND m.content LIKE ?")
