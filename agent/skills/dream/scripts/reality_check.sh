@@ -1,16 +1,11 @@
 #!/usr/bin/env bash
 # Reality check: probe the SYSTEM, not the record of the system.
 #
-# Why this exists. Every nightly retrospective before 2026-08-01 worked by re-reading the previous
-# dreamer summaries. That can only ever re-certify what was already written down, so it is blind by
-# construction to any failure nobody noticed. It proved that: apple-calendar's iCloud credential died
-# 2026-07-17 12:48 and the daemon logged the same Unauthorized error 3,903 times over fourteen days
-# while `status` reported running:true and every read served a silently ageing snapshot. Seven
-# consecutive dreams passed over it, five of them reciting "verify-don't-guess 7/7".
-#
-# A ledger audited against another ledger is not a measurement. This script measures intake.
-# Run it FIRST in the dream, before the retrospective. Anything RED gets fixed tonight or gets an
-# explicit written decision not to; it does not get to evaporate.
+# The retrospective re-reads previous summaries, so it can only re-certify what someone already
+# noticed, and is blind to silent failure. Proof: a calendar credential died and the daemon logged
+# the same error 3,903 times over fourteen days while `status` said running:true. Seven dreams
+# missed it; daytime work found it. A ledger audited against another ledger is not a measurement.
+# Run FIRST. Every RED is fixed tonight or explicitly written off; it does not get to evaporate.
 
 RED=0
 red()  { printf '  RED   %s\n' "$1"; RED=$((RED+1)); }
@@ -166,17 +161,12 @@ done
 
 echo
 echo "== reachability: is anything bound loopback-only? =="
-# REWRITTEN 2026-08-02. The first version probed the public gateway and treated 401 as "ok, routing
-# works". That was a green light with the bulb painted on: vestad answers 401 BEFORE contacting any
-# upstream, so a service that DOES NOT EXIST returns exactly what a healthy private one returns
-# (verified: /agents/luna/nosuchsvc-xyz/health -> 401, same as /agents/luna/tasks/health). Ten of the
-# twelve green lines it printed were meaningless, and it would have printed ok for the identical
-# loopback bind in any private service.
-#
-# This version tests the actual failure directly and needs no credential: a process bound to
-# 127.0.0.1 answers on loopback and REFUSES on the container's own network address, which is the
-# address vestad's proxy reaches it on from the host. lo=answer + net=refused IS the bug signature.
-# It covers every registered service, public or private.
+# Do NOT probe the public gateway and treat 401 as "routing works": vestad answers 401 BEFORE
+# contacting any upstream, so a service that does not exist returns exactly what a healthy private
+# one does. That version printed ten meaningless green lines and would have passed the very bug it
+# was written for. This tests the failure directly and needs no credential: a process bound to
+# 127.0.0.1 answers on loopback and REFUSES on the container's own network address, which is where
+# the host-side proxy reaches it. lo=answer + net=refused IS the signature, for every service.
 IP=$(hostname -i 2>/dev/null | awk '{print $1}')
 if [ -z "$IP" ] || [ "$IP" = "127.0.0.1" ]; then
   red "could not determine the container IP, bind probe SKIPPED (a check that skips in silence is the original bug)"
