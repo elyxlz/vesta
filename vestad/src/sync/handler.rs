@@ -17,6 +17,7 @@ use crate::time_utils::now_epoch_secs;
 use crate::types::ClientKind;
 
 use super::hub::UserNotification;
+use super::presence::PRESENCE_NOTIFY_DELAY;
 use super::protocol::{
     AgentInfo, AgentNode, ClientFrame, Frame, GatewayInfo, GatewayLan, GatewayScope,
     NotificationsBranch, ServiceInfo, Tree,
@@ -60,6 +61,26 @@ fn token_deadline(token: &str, api_key: &str) -> Option<tokio::time::Instant> {
     let claims = crate::jwt::validate_token(api_key, token, "access").ok()?;
     let remaining = claims.exp.saturating_sub(crate::time_utils::now_epoch_secs());
     Some(tokio::time::Instant::now() + Duration::from_secs(remaining))
+}
+
+/// Wait the settle window, then drop the return-to-focus notification into every tapped agent,
+/// unless `confirm_return` reports the return was only a glance. Runs detached so the sleep never
+/// stalls the session loop's keepalive and deltas.
+async fn settle_and_notify(state: SharedState) {
+    tokio::time::sleep(PRESENCE_NOTIFY_DELAY).await;
+    let Some(client) = state.presence.confirm_return(tokio::time::Instant::now()) else {
+        return;
+    };
+    let agents = state.agent_status_cache.presence_notification_agents();
+    // The docker uploads are untimed, so run them concurrently rather than serializing behind the
+    // slowest; best-effort, each failure logs itself.
+    let docker = &state.docker;
+    let drops = agents.iter().map(|agent| async move {
+        if let Err(error) = crate::serve::drop_presence_notification(docker, agent, client).await {
+            tracing::warn!(%agent, %error, "could not drop presence notification");
+        }
+    });
+    futures_util::future::join_all(drops).await;
 }
 
 async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Option<String>) {
@@ -188,25 +209,8 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
                         if let Some(device_id) = ctx.device_id.clone() {
                             device_guard.attach(&device_id, ctx.client, ctx.descriptor.clone());
                         }
-                        if let Some(client) =
-                            state.presence.record(conn, ctx, tokio::time::Instant::now())
-                        {
-                            for agent in state.agent_status_cache.presence_notification_agents() {
-                                // Drop the notification off the session loop: the docker upload has no
-                                // timeout, and awaiting it here would stall this client's keepalive and
-                                // deltas. Best-effort, so the detached task logs its own failure.
-                                let docker = state.docker.clone();
-                                tokio::spawn(async move {
-                                    if let Err(error) =
-                                        crate::serve::drop_presence_notification(
-                                            &docker, &agent, client,
-                                        )
-                                        .await
-                                    {
-                                        tracing::warn!(%agent, %error, "could not drop presence notification");
-                                    }
-                                });
-                            }
+                        if state.presence.record(conn, ctx, tokio::time::Instant::now()) {
+                            tokio::spawn(settle_and_notify(state.clone()));
                         }
                     }
                     Ok(ClientFrame::Reauth { token }) => {
