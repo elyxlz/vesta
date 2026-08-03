@@ -1,0 +1,21 @@
+# Scope the knowledge graph to the Vesta system itself.
+# Vendored third-party tool docs and dev-tooling config (not the product)
+.claude/
+apps/desktop/.claude/
+apps/web/.agents/
+agent/skills/dashboard/shadcn/
+agent/skills/dashboard/design/
+tools/critique/apple-hig.md
+
+# Site-specific browser recipe library (standalone scraping/interaction docs,
+# each spawns an isolated micro-community)
+agent/skills/browser/domain-skills/
+agent/skills/browser/interaction-skills/
+
+# Vendored code (shadcn primitives, a11y snapshot bundle)
+apps/web/src/components/ui/
+agent/skills/dashboard/app/src/components/ui/
+agent/skills/browser/cli/src/vesta_browser/vendor/
+
+# Brand/logo image assets
+*.png
