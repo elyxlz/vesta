@@ -2,8 +2,10 @@
 
 import importlib.util
 import json
+import os
 import pathlib as pl
 import sqlite3
+import subprocess
 
 import pytest
 
@@ -298,3 +300,39 @@ def test_main_scan_then_scrub_end_to_end(tmp_path, event_bus, db_conn, monkeypat
     rows = [row[0] for row in db_conn.execute("SELECT data FROM events")]
     assert len(rows) == 2
     assert all(SECRET not in data for data in rows)
+
+
+def test_wrapper_behaves_the_same_whatever_the_caller_cwd(tmp_path):
+    """The .sh must resolve the same interpreter wherever it is invoked from.
+
+    `uv run` picks its interpreter by walking up from the caller's cwd, so an absolute-path
+    invocation from outside the agent tree (how the dream skill calls this, with $HOME outside)
+    can select an older Python than a run from inside it, and the script then dies on syntax that
+    interpreter cannot parse. HOME is redirected so the events DB is absent and both runs take the
+    cheap, deterministic "No database at" path rather than scanning a live DB, which would race.
+    """
+    scripts = pl.Path(__file__).resolve().parents[1] / "skills" / "dream" / "scripts"
+    wrapper = scripts / "redact_secrets.sh"
+    env = {**os.environ, "HOME": str(tmp_path)}
+    # Redirecting HOME also hides uv's downloaded interpreters; point it back at the real ones so
+    # this exercises cwd resolution rather than a broken toolchain.
+    pythons = pl.Path(os.environ.get("HOME", "")) / ".local" / "share" / "uv" / "python"
+    if pythons.is_dir():
+        env["UV_PYTHON_INSTALL_DIR"] = str(pythons)
+
+    runs = [
+        subprocess.run(["sh", str(wrapper)], cwd=str(cwd), env=env, capture_output=True, text=True, timeout=300, check=False)
+        for cwd in (tmp_path, scripts)
+    ]
+
+    # The contract, and what actually regressed: the caller's cwd must not change the outcome.
+    assert runs[0].stdout == runs[1].stdout
+    assert runs[0].returncode == runs[1].returncode
+
+    # Stronger check, only where the interpreter the wrapper reaches for actually exists. A bare
+    # checkout has no engine venv above the script, so there both runs legitimately agree on
+    # failing and only the equality above is meaningful.
+    if (pl.Path(__file__).resolve().parents[1] / ".venv").is_dir():
+        for run in runs:
+            assert "SyntaxError" not in run.stderr, f"interpreter too old: {run.stderr[-300:]}"
+            assert "No database at" in run.stdout
