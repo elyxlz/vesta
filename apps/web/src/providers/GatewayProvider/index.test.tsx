@@ -52,6 +52,7 @@ function tree(agentNames: string[]): Tree {
         { info: agentInfo(), notifications: { pending: [] } },
       ]),
     ),
+    devices: [],
   };
 }
 
