@@ -935,10 +935,7 @@ def remind_snooze(
             run_time = _now_utc() + offset
 
         new_data = {"type": "date", "run_date": run_time.isoformat()}
-        # Re-label the schedule too, not just the fire time. `schedule_type` is the human-readable
-        # string `remind list` prints next to each row, so leaving it at the original "once at <t>"
-        # makes a snoozed reminder advertise a date in the past while it is still pending: the
-        # reader concludes it already fired and the thread is closed, when it has not fired at all.
+        # schedule_type is the human-readable label `remind list` prints, so it tracks the new fire time.
         new_schedule = f"once at {run_time.isoformat()}"
         conn.execute(
             "UPDATE reminders SET completed = 0, trigger_data = ?, scheduled_time = ?, schedule_type = ? WHERE id = ?",
