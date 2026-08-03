@@ -43,9 +43,8 @@ RECURRING_TRIGGER_TYPES = ("cron", "interval")  # trigger types that fire more t
 class DueSpec(BaseModel):
     """A task due date: an absolute datetime + timezone, or a relative due-in offset.
 
-    `clear` removes the due date entirely. Without it, setting a due date is a one-way door:
-    every other field can only move the date, never unset it, and auto reminders are regenerated
-    from due_date, so a date set by mistake keeps its reminder cascade forever.
+    The due-setting fields only move the date. `clear` is the one that unsets it, along with the
+    auto reminders regenerated from it, and cannot be combined with a due-setting field.
     """
 
     due_datetime: str | None = None
@@ -239,21 +238,22 @@ def normalize_priority(priority: int | str) -> int:
     return priority_map[key]
 
 
+def _due_field_set(due: DueSpec) -> bool:
+    """Whether any due-setting field is populated (`clear` is not one of them)."""
+    return due.due_datetime is not None or due.due_in_minutes is not None or due.due_in_hours is not None or due.due_in_days is not None
+
+
 def _due_requested(due: DueSpec | None) -> bool:
     """Whether the spec asks for a due-date change (a timezone alone does not)."""
-    return due is not None and (
-        due.clear
-        or due.due_datetime is not None
-        or due.due_in_minutes is not None
-        or due.due_in_hours is not None
-        or due.due_in_days is not None
-    )
+    return due is not None and (due.clear or _due_field_set(due))
 
 
 def _compute_due_date(due: DueSpec | None) -> str | None:
     if due is None:
         return None
     if due.clear:
+        if _due_field_set(due):
+            raise ValueError("clear removes the due date, so it cannot be combined with a due date or offset")
         return None
     if due.due_datetime is not None:
         if due.timezone is None:
