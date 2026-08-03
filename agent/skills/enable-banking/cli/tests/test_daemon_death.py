@@ -1,20 +1,20 @@
-"""The finance watcher's half of the daemon contract: a death nobody asked for is announced,
-a deliberate `finance daemon stop` is not.
+"""The finance watcher's half of the daemon contract, at unit level: a death nobody asked for is
+announced, a deliberate `finance daemon stop` is not.
 
-The watcher is loaded from its source file rather than imported: it lives in a skill CLI project
-of its own, and every symbol these two cases touch is standard library.
+The end-to-end half lives in the conformance harness (`agent/tests/test_daemon_contract.py`), which
+now runs finance with `emits_daemon_died=True` and reads the real notifications directory. These
+two cases cover what a black-box harness cannot reach: the class of exception that arrives (a
+`MemoryError` rather than the SIGINT the harness can send) and the re-raise that keeps the exit
+status intact.
 """
 
-import importlib.util
 import json
 import os
-import pathlib as pl
 import signal
 import time
 
 import pytest
-
-WATCHER_PY = pl.Path(__file__).resolve().parents[1] / "skills/enable-banking/cli/src/finance_cli/transaction_watcher.py"
+from finance_cli import transaction_watcher as tw
 
 # A signal is delivered between bytecodes, so the wait is a formality; the budget only exists so a
 # handler that never runs fails the case instead of hanging it.
@@ -22,22 +22,19 @@ SIGTERM_BUDGET_SECS = 5
 SIGTERM_POLL_SECS = 0.01
 
 
-def _load_watcher():
-    spec = importlib.util.spec_from_file_location("finance_transaction_watcher", WATCHER_PY)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 @pytest.fixture
 def watcher(tmp_path, monkeypatch):
     """The module with its notifications directory pointed at tmp_path, and the process's own
-    SIGTERM disposition put back afterwards: serve() installs a handler on the running process."""
-    module = _load_watcher()
-    monkeypatch.setattr(module, "NOTIFICATIONS_DIR", tmp_path / "notifications")
+    SIGTERM disposition put back afterwards: serve() installs a handler on the running process.
+
+    The redirect is a tmp_path so the suite never writes into a real notifications directory, not a
+    patch around a wrong destination: `_notifications_dir()` resolves the engine's own path, the
+    harness case asserts the notice lands there for real, and `test_transaction_watcher.py` locks
+    the resolution itself.
+    """
+    monkeypatch.setattr(tw, "NOTIFICATIONS_DIR", tmp_path / "notifications")
     previous = signal.getsignal(signal.SIGTERM)
-    yield module
+    yield tw
     signal.signal(signal.SIGTERM, previous)
 
 

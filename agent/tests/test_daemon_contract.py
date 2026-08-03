@@ -249,7 +249,7 @@ SKILLS = [
         command=["uv", "run", "--project", str(SKILLS_DIR / "enable-banking/cli"), "finance"],
         name="finance",
         serves_port=False,
-        emits_daemon_died=False,
+        emits_daemon_died=True,
     ),
     Daemon(
         command=[str(SKILLS_DIR / "whatsapp/whatsapp")],

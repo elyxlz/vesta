@@ -1,6 +1,7 @@
 """Poll Enable Banking for new transactions and write notifications."""
 
 import json
+import os
 import signal
 import sys
 import time
@@ -8,8 +9,19 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 SEEN_FILE = Path.home() / ".finance" / "seen_transactions.json"
-NOTIFICATIONS_DIR = Path.home() / "notifications"
 POLL_INTERVAL = 300  # 5 minutes
+
+
+def _notifications_dir() -> Path:
+    """The directory the engine watches, mirroring config.notifications_dir (agent_dir / notifications,
+    with agent_dir following AGENT_DIR when set). Resolved rather than hardcoded because writing a
+    notification into any other directory still succeeds: nothing is delivered and nothing errors."""
+    env = os.environ.get("AGENT_DIR")
+    base = Path(env).expanduser().resolve() if env else Path.home() / "agent"
+    return base / "notifications"
+
+
+NOTIFICATIONS_DIR = _notifications_dir()
 
 
 def atomic_write_text(path: Path, text: str) -> None:
@@ -194,10 +206,6 @@ def serve() -> None:
         if not asked_to_stop:
             write_died_notification(f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__)
         raise
-    else:
-        # The loop never returns on its own, so an ordinary return is itself an anomaly.
-        if not asked_to_stop:
-            write_died_notification("poll loop returned unexpectedly")
 
 
 def _poll_forever() -> None:

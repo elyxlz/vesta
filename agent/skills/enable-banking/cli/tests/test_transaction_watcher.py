@@ -5,6 +5,17 @@ import json
 from finance_cli import transaction_watcher as tw
 
 
+def test_notifications_resolve_to_the_directory_the_engine_reads(tmp_path, monkeypatch):
+    """A notification written into any other directory still succeeds: no exception, no log line,
+    only silence, which is indistinguishable from a watcher with nothing to say. So the path the
+    engine reads (agent_dir / notifications, agent_dir following AGENT_DIR) is locked here."""
+    monkeypatch.delenv("AGENT_DIR", raising=False)
+    assert tw._notifications_dir().parts[-2:] == ("agent", "notifications")
+
+    monkeypatch.setenv("AGENT_DIR", str(tmp_path / "elsewhere"))
+    assert tw._notifications_dir() == (tmp_path / "elsewhere" / "notifications").resolve()
+
+
 def test_atomic_write_creates_parent_and_leaves_no_tmp(tmp_path):
     target = tmp_path / "notifications" / "hello.json"
     tw.atomic_write_text(target, '{"ok": true}')
