@@ -76,6 +76,34 @@ func cloudSourceAuth(source string) *managedAuth {
 	return newManagedAuth(cfg)
 }
 
+// provisionLinker makes the explicit connect source authoritative inside an
+// already-running daemon. Cloud temporarily pins server-token auth for this one
+// pairing. Double Tick installs the direct credentials carried over the private
+// Unix socket and switches the daemon's data path permanently, since it may have
+// booted before those credentials existed.
+func (wac *WhatsAppClient) provisionLinker(source, directURL, directKey string) (linker, func(), error) {
+	switch source {
+	case sourceVestaCloud:
+		auth := cloudSourceAuth(source)
+		saved := wac.managed
+		wac.managed = auth
+		return &managedLinker{auth: auth, state: wac.state}, func() { wac.managed = saved }, nil
+	case sourceDoubletick:
+		if directURL == "" || directKey == "" {
+			return nil, func() {}, fmt.Errorf("doubletick provision needs the direct API URL and key from the connect command")
+		}
+		cfg := loadManagedConfig()
+		cfg.directURL, cfg.directKey, cfg.configError = directURL, directKey, ""
+		auth := newManagedAuth(cfg)
+		selected := &managedLinker{auth: auth, state: wac.state}
+		wac.state.update(func(s *daemonState) { s.DirectURL, s.DirectKey = directURL, directKey })
+		wac.managed, wac.linker = auth, selected
+		return selected, func() {}, nil
+	default:
+		return wac.linker, func() {}, nil
+	}
+}
+
 // qrLinker links the user's own WhatsApp account (self-hosted paradigm).
 type qrLinker struct{}
 

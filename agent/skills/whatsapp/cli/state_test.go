@@ -43,6 +43,18 @@ func TestStateRoundTrip(t *testing.T) {
 	}
 }
 
+func TestStateFileIsOwnerOnly(t *testing.T) {
+	dir := t.TempDir()
+	newStateStore(dir).update(func(st *daemonState) { st.DirectKey = "wak_secret" })
+	info, err := os.Stat(statePath(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0600 {
+		t.Fatalf("state.json mode = %04o, want 0600 because it contains the Double Tick key", got)
+	}
+}
+
 // TestMigrateLegacyFiles proves the pre-consolidation files are folded into
 // state.json (import-then-remove) with no data loss.
 func TestMigrateLegacyFiles(t *testing.T) {

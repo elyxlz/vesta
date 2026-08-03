@@ -177,7 +177,7 @@ func atomicWriteJSON(path string, v any) error {
 		os.Remove(tmp)
 		return err
 	}
-	if err := os.Chmod(tmp, 0644); err != nil {
+	if err := os.Chmod(tmp, 0600); err != nil {
 		os.Remove(tmp)
 		return err
 	}

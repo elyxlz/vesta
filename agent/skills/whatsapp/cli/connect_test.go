@@ -157,6 +157,9 @@ func TestResolveConnectRoutesEachSource(t *testing.T) {
 	if !dtRoute.provision || dtRoute.source != sourceDoubletick || dtRoute.opener != "yo" {
 		t.Errorf("doubletick route = %+v, want provision with doubletick source", dtRoute)
 	}
+	if dtRoute.directURL != directCfg.directURL || dtRoute.directKey != directCfg.directKey {
+		t.Errorf("doubletick route lost direct credentials: %+v", dtRoute)
+	}
 
 	qrRoute, err := resolveConnect(connectOptions{source: sourceSelfManaged}, managedConfig{})
 	if err != nil {
@@ -212,7 +215,7 @@ func TestRunConnectDispatchesToProvisionForCloud(t *testing.T) {
 	var gotSource, gotOpener string
 	provisioned := false
 	restore := connectProvision
-	connectProvision = func(source, opener string) { provisioned = true; gotSource = source; gotOpener = opener }
+	connectProvision = func(source, opener, _, _ string) { provisioned = true; gotSource = source; gotOpener = opener }
 	t.Cleanup(func() { connectProvision = restore })
 
 	oldArgs := os.Args
@@ -232,12 +235,34 @@ func TestRunConnectDispatchesToProvisionForCloud(t *testing.T) {
 	}
 }
 
+// TestRunConnectCarriesDoubletickCredentialsToProvision proves a warm daemon can
+// receive credentials resolved by the foreground connect command. The seam stops
+// before the socket, so no key leaves the test process.
+func TestRunConnectCarriesDoubletickCredentialsToProvision(t *testing.T) {
+	t.Setenv("DOUBLETICK_API_URL", "https://doubletick.example")
+	t.Setenv("DOUBLETICK_API_KEY", "wak_secret")
+
+	var gotURL, gotKey string
+	restore := connectProvision
+	connectProvision = func(_, _, directURL, directKey string) { gotURL, gotKey = directURL, directKey }
+	t.Cleanup(func() { connectProvision = restore })
+
+	oldArgs := os.Args
+	os.Args = []string{"whatsapp", "--source", "doubletick"}
+	t.Cleanup(func() { os.Args = oldArgs })
+
+	runConnect()
+	if gotURL != "https://doubletick.example" || gotKey != "wak_secret" {
+		t.Fatalf("provision credentials = %q / %q", gotURL, gotKey)
+	}
+}
+
 // TestRunConnectAliasSkipsSourceRequirement verifies the dev-only provision and link
 // aliases route straight to their path without needing --source.
 func TestRunConnectAliasSkipsSourceRequirement(t *testing.T) {
 	provisioned, linked, phoneLinked := false, false, ""
 	rp, rl, rlp := connectProvision, connectLink, connectLinkPhone
-	connectProvision = func(string, string) { provisioned = true }
+	connectProvision = func(string, string, string, string) { provisioned = true }
 	connectLink = func() { linked = true }
 	connectLinkPhone = func(phone string) { phoneLinked = phone }
 	t.Cleanup(func() { connectProvision, connectLink, connectLinkPhone = rp, rl, rlp })
