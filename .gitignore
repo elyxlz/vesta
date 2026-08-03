@@ -29,6 +29,9 @@ vestad/vendored/
 !.claude/workflows/
 !.claude/settings.json
 
+# Graphify knowledge-graph output (generated locally, per dev)
+graphify-out/
+
 # Cursor / editor config
 .cursor/
 .editorconfig
