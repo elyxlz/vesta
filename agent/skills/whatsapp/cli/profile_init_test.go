@@ -143,6 +143,16 @@ func TestProvisionCommandRetriesPendingLinkedResult(t *testing.T) {
 	}
 }
 
+func TestProvisionCommandRecordsExplicitSourceOnResume(t *testing.T) {
+	wac := newLinkedTestClient(t)
+	if _, err := cmdProvisionManaged([]string{"--source", sourceVestaCloud}, wac); err != nil {
+		t.Fatal(err)
+	}
+	if got := wac.state.snapshot().AccountSource; got != sourceVestaCloud {
+		t.Fatalf("recorded source = %q, want %q", got, sourceVestaCloud)
+	}
+}
+
 func TestFreshPhotoWipeStateRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	store := newStateStore(dir)

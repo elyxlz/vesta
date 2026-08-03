@@ -520,9 +520,13 @@ func cleanupRejectedPairing(cleanup func(), activePort, requestedPort int) {
 // rate-limit slot or serves a blank QR). One call is the whole flow: no start/status/stop
 // trio and no client-side poll loop.
 func cmdLink(args []string, wac *WhatsAppClient) (any, error) {
-	return linkViaQR("link", args, wac, func(port int) (linkResult, error) {
+	result, err := linkViaQR("link", args, wac, func(port int) (linkResult, error) {
 		return wac.linker.linkQR(wac, port)
 	}, map[string]any{"status": string(AuthStatusAuthenticated)})
+	if err == nil {
+		wac.state.recordAccountSource(sourceSelfManaged)
+	}
+	return result, err
 }
 
 func cmdDaemonStatus(args []string, wac *WhatsAppClient) (any, error) {
@@ -544,6 +548,7 @@ func cmdDaemonStatus(args []string, wac *WhatsAppClient) (any, error) {
 		"pair_attempts_last_7d":    len(attemptsWithin(st.PairAttempts, now, PairWeekWindow)),
 	}
 	if wac.client.Store.ID != nil {
+		wac.state.recordAccountSource(source)
 		result["number"] = "+" + wac.client.Store.ID.User
 	}
 	if linkPort, linkService := wac.activeLink(); linkPort != 0 {
@@ -1182,6 +1187,7 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 		}
 		return nil, err
 	}
+	wac.state.recordAccountSource(source)
 	// A new number (first claim or a healed replacement) gets the reply-first
 	// onboarding; re-linking the same established number is a quiet resume.
 	if priorOnboardedMSISDN == "" || priorOnboardedMSISDN != res.MSISDN {
@@ -1309,6 +1315,7 @@ func cmdPairPhone(args []string, wac *WhatsAppClient) (any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate pairing code: %v", err)
 	}
+	wac.state.recordAccountSource(sourceSelfManaged)
 	wac.markPhonePairingPending(time.Now())
 	return map[string]any{
 		"pairing_code": code,

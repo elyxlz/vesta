@@ -262,12 +262,9 @@ func writeCallNotification(notifDir, instance string, n callNotif) error {
 	return writeNotificationFile(notifDir, n, n.Type)
 }
 
-// managedParadigm reports whether this box runs a managed (pooled) WhatsApp number,
-// mirroring the resolution runConnect and chooseLinker use: env creds first, filled
-// from persisted state so an env scrub still resolves the managed path. The auth
-// notifications read it because they run without a *WhatsAppClient (so without the
-// constructed linker) yet must still identify the exact recovery source. Whether
-// reconnect needs approval is derived separately from persisted link history.
+// notificationManagedConfig mirrors runConnect's persisted-credential recovery for
+// auth notifications, which run without a *WhatsAppClient. The explicit source is
+// stored separately so a mixed cloud/direct environment stays unambiguous.
 func notificationManagedConfig(instance string) managedConfig {
 	cfg := loadManagedConfig()
 	if cfg.directURL == "" || cfg.directKey == "" {
@@ -282,21 +279,46 @@ func notificationManagedConfig(instance string) managedConfig {
 	return cfg
 }
 
-func managedParadigm(instance string) bool {
-	return newManagedAuth(notificationManagedConfig(instance)).isHosted()
-}
-
 func wasPreviouslyLinked(instance string) bool {
 	st := loadStateFromDisk(stateDataDirFor(instance))
 	return st.OnboardedMSISDN != "" || !st.LinkedAt.IsZero() || st.AuthStatus == "logged_out" || st.ExitStatus != ""
 }
 
+func notificationSource(instance string) (string, string) {
+	st := loadStateFromDisk(stateDataDirFor(instance))
+	cfg := notificationManagedConfig(instance)
+	switch st.AccountSource {
+	case sourceVestaCloud:
+		if cfg.isManagedVM() {
+			return sourceVestaCloud, ""
+		}
+	case sourceDoubletick:
+		if cfg.isDirect() {
+			return sourceDoubletick, ""
+		}
+	case sourceSelfManaged:
+		if !cfg.isManagedVM() && !cfg.isDirect() && cfg.configError == "" {
+			return sourceSelfManaged, ""
+		}
+	}
+	// Migration fallback follows the setup decision order. A managed VM uses its
+	// cloud entitlement even when stale direct credentials are also present.
+	if cfg.isManagedVM() {
+		return sourceVestaCloud, ""
+	}
+	if cfg.isDirect() {
+		return sourceDoubletick, ""
+	}
+	if cfg.configError != "" {
+		return "", cfg.configError
+	}
+	return sourceSelfManaged, ""
+}
+
 func connectCommand(instance string) string {
-	source := sourceSelfManaged
-	if cfg := notificationManagedConfig(instance); cfg.isDirect() {
-		source = sourceDoubletick
-	} else if cfg.isManagedVM() {
-		source = sourceVestaCloud
+	source, _ := notificationSource(instance)
+	if source == "" {
+		return ""
 	}
 	command := "whatsapp connect --source " + source
 	if instance != "" {
@@ -311,7 +333,8 @@ func connectCommand(instance string) string {
 // under the linking rule. A self-managed first link waits for user participation.
 func WriteUnpairedNotification(notifDir, instance string) error {
 	priorLink := wasPreviouslyLinked(instance)
-	managed := managedParadigm(instance)
+	source, configError := notificationSource(instance)
+	managed := source == sourceVestaCloud || source == sourceDoubletick
 	command := connectCommand(instance)
 	recovery := "first_link"
 	message := "WhatsApp daemon started without a paired device session. Run the exact next_command when the user is ready."
@@ -321,6 +344,13 @@ func WriteUnpairedNotification(notifDir, instance string) error {
 	if priorLink {
 		recovery = "relink"
 		message = "WhatsApp lost a previously linked device session. Ask the user for explicit approval before reconnecting, then run the exact next_command once."
+	}
+	if configError != "" {
+		recovery = "configuration_error"
+		message = "WhatsApp cannot choose a safe reconnect method: " + configError + ". Fix the operator-managed configuration outside chat before connecting."
+		if priorLink {
+			message += " After it is fixed, ask the user for explicit approval before reconnecting."
+		}
 	}
 	if managed {
 		message += " The headless flow needs no phone or QR step."
@@ -346,7 +376,10 @@ func WriteLoggedOutNotification(notifDir, instance, reason string) error {
 	if reason != "" {
 		message += " (" + reason + ")"
 	}
-	if managedParadigm(instance) {
+	source, configError := notificationSource(instance)
+	if configError != "" {
+		message += ". Reconnect is blocked because " + configError + ". Fix the operator-managed configuration outside chat, then ask the user for explicit approval before reconnecting. Do not retry-loop pairing."
+	} else if source == sourceVestaCloud || source == sourceDoubletick {
 		message += ". Ask the user for explicit approval before reconnecting, then run the exact next_command once. The headless flow needs no phone or QR step. Do not retry-loop pairing."
 	} else {
 		message += ". Ask the user for explicit approval before reconnecting, then run the exact next_command once. Do not retry-loop pairing."

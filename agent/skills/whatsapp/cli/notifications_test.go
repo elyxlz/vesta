@@ -223,3 +223,57 @@ func TestNamedInstanceUsesItsOwnPersistedRecoveryState(t *testing.T) {
 		t.Fatalf("named-instance recovery = approval %v command %q", approval, command)
 	}
 }
+
+func TestManagedVMFallbackPrefersCloudOverDirectCredentials(t *testing.T) {
+	dir := prepareAuthNotificationTest(t)
+	t.Setenv("VESTA_CLOUD_CONTROL_URL", "https://api.vesta.run")
+	t.Setenv("DOUBLETICK_API_URL", "https://doubletick.example")
+	t.Setenv("DOUBLETICK_API_KEY", "wak_secret")
+
+	if err := WriteUnpairedNotification(dir, ""); err != nil {
+		t.Fatal(err)
+	}
+	fields := soleNotifFields(t, dir)
+	var command string
+	_ = json.Unmarshal(fields["next_command"], &command)
+	if command != "whatsapp connect --source vesta-cloud" {
+		t.Fatalf("mixed managed environment selected %q, want vesta-cloud", command)
+	}
+}
+
+func TestPersistedExplicitSourceWinsInMixedEnvironment(t *testing.T) {
+	dir := prepareAuthNotificationTest(t)
+	t.Setenv("VESTA_CLOUD_CONTROL_URL", "https://api.vesta.run")
+	t.Setenv("DOUBLETICK_API_URL", "https://doubletick.example")
+	t.Setenv("DOUBLETICK_API_KEY", "wak_secret")
+	newStateStore(stateDataDir()).recordAccountSource(sourceDoubletick)
+
+	if err := WriteUnpairedNotification(dir, ""); err != nil {
+		t.Fatal(err)
+	}
+	fields := soleNotifFields(t, dir)
+	var command string
+	_ = json.Unmarshal(fields["next_command"], &command)
+	if command != "whatsapp connect --source doubletick" {
+		t.Fatalf("persisted explicit source produced %q, want doubletick", command)
+	}
+}
+
+func TestIncompleteDirectConfigBlocksRecoveryCommand(t *testing.T) {
+	dir := prepareAuthNotificationTest(t)
+	t.Setenv("DOUBLETICK_API_URL", "https://doubletick.example")
+
+	if err := WriteUnpairedNotification(dir, ""); err != nil {
+		t.Fatal(err)
+	}
+	fields := soleNotifFields(t, dir)
+	if _, present := fields["next_command"]; present {
+		t.Fatal("incomplete credentials produced a connect command that cannot succeed")
+	}
+	var recovery, message string
+	_ = json.Unmarshal(fields["recovery"], &recovery)
+	_ = json.Unmarshal(fields["message"], &message)
+	if recovery != "configuration_error" || !strings.Contains(message, "must be set together") || strings.Contains(message, "headless") {
+		t.Fatalf("incomplete configuration notification = recovery %q message %q", recovery, message)
+	}
+}
