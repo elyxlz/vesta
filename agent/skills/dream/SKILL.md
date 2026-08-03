@@ -34,6 +34,33 @@ Self-improvement (retrospective plus validation) is the one phase that never get
 
 ## Self-Improvement
 
+### 0. Reality check FIRST, before you read a single summary
+
+Run `bash ~/agent/skills/dream/scripts/reality_check.sh`. It probes the running system: every daemon's
+liveness AND whether its third-party credential still works, how stale each cached snapshot actually
+is, logs full of repeating auth errors, whether anything is bound loopback-only, whether the
+integrations that own no daemon still authenticate, and disk.
+
+**Every RED gets fixed tonight or gets an explicit written decision in the summary saying why not.**
+Never carry a RED silently; that is the evaporation failure.
+
+Why this comes first, and why it is a script rather than a paragraph. The retrospective below reads
+your own previous summaries, so it can only ever re-certify what somebody already wrote down. It is
+blind by construction to any failure nobody noticed. That is not hypothetical: on the box this was
+written for, a calendar integration's credential died and the daemon logged the same error 3,903 times
+over fourteen days while `status` reported running:true and every read served an ageing snapshot as
+current. Seven consecutive dreams passed over it. It was found by daytime work, never by a dream.
+A ledger checked against another ledger is not a measurement. Measure intake.
+
+Two design rules the script follows, both learned by getting them wrong:
+- **Every probe needs a known-bad control.** A gateway check that treated 401 as "routing works" was
+  meaningless, because the gateway answers 401 *before* contacting any upstream, so a service that did
+  not exist returned exactly what a healthy one did.
+- **A check that skips in silence is the original bug.** A glob matching nothing, or a missing
+  credential, must go RED rather than print nothing and let the run look greener.
+
+A script also cannot be copy-pasted from last night or self-certified by imagining you ran it.
+
 ### 1. Retrospective
 
 Read the last 5-7 files in `~/agent/dreamer/` (sorted by date) to spot recurring patterns: fixes that keep resurfacing, problems marked "resolved" that came back, and improvements that actually stuck. For each fix in the recent summaries, check today's conversation: did that situation come up again? Did it go better? If a fix didn't help or made things worse, revisit it now. If it worked, note it in tonight's summary.
