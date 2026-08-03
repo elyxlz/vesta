@@ -75,6 +75,7 @@ class _Spawned:
     detached: bool
     log_path: str
     record: str
+    env: dict[str, str]
 
 
 @pytest.fixture
@@ -133,13 +134,14 @@ def _capture_spawn(monkeypatch, *, exit_code: int | None = None) -> list[_Spawne
         def poll(self) -> int | None:
             return exit_code
 
-    def fake_popen(argv, *, start_new_session, stdout, stderr):
+    def fake_popen(argv, *, env, start_new_session, stdout, stderr):
         spawns.append(
             _Spawned(
                 argv=list(argv),
                 detached=start_new_session,
                 log_path=stdout.name,
                 record=dl.PIDFILE.read_text(),
+                env=dict(env),
             )
         )
         return _Child()
@@ -200,6 +202,10 @@ def test_start_runs_the_poller_detached_and_names_no_cadence(records: pathlib.Pa
     assert [spawn.argv for spawn in spawns] == [[sys.argv[0], "poll"]]
     assert [spawn.detached for spawn in spawns] == [True]
     assert [spawn.log_path for spawn in spawns] == [str(dl.LOG)]
+    # stdout is that log file rather than a tty, so CPython would block-buffer the child and the
+    # log would sit empty while the daemon polls. The log is the only liveness evidence anyone
+    # reads, so an empty one gets diagnosed as a daemon that died.
+    assert [spawn.env.get("PYTHONUNBUFFERED") for spawn in spawns] == ["1"]
 
 
 def test_start_answers_already_running_and_never_stacks(records: pathlib.Path, monkeypatch, capsys):
