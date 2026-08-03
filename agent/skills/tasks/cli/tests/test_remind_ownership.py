@@ -53,7 +53,7 @@ def test_a_rewritten_reminder_survives_a_postpone(tmp_config: Config):
 
 
 def test_postpone_still_replaces_untouched_auto_reminders(tmp_config: Config):
-    """The fix must not stop postpone regenerating the reminders it does own."""
+    """Taking ownership of one reminder must not stop postpone regenerating the ones it still owns."""
     task_id, _ = _task_with_auto_reminders(tmp_config)
     before = {r["id"] for r in _reminders(tmp_config, task_id)}
 
