@@ -73,11 +73,14 @@ type editNotif struct {
 }
 
 type authNotif struct {
-	Source    string `json:"source"`
-	Type      string `json:"type"`
-	Instance  string `json:"instance,omitempty"`
-	Message   string `json:"message"`
-	Timestamp string `json:"timestamp"`
+	Source               string `json:"source"`
+	Type                 string `json:"type"`
+	Instance             string `json:"instance,omitempty"`
+	Message              string `json:"message"`
+	Recovery             string `json:"recovery,omitempty"`
+	NextCommand          string `json:"next_command,omitempty"`
+	RequiresUserApproval bool   `json:"requires_user_approval,omitempty"`
+	Timestamp            string `json:"timestamp"`
 }
 
 // A live voice call surfaces to the agent as whatsapp notifications, reaching the model through the
@@ -264,7 +267,7 @@ func writeCallNotification(notifDir, instance string, n callNotif) error {
 // from persisted state so an env scrub still resolves the managed path. The auth
 // notifications read it because they run without a *WhatsAppClient (so without the
 // constructed linker) yet must still tell a managed agent to reauth autonomously.
-func managedParadigm() bool {
+func notificationManagedConfig() managedConfig {
 	cfg := loadManagedConfig()
 	if cfg.directURL == "" || cfg.directKey == "" {
 		st := loadStateFromDisk(stateDataDir())
@@ -275,7 +278,30 @@ func managedParadigm() bool {
 			cfg.directKey = st.DirectKey
 		}
 	}
-	return newManagedAuth(cfg).isHosted()
+	return cfg
+}
+
+func managedParadigm() bool {
+	return newManagedAuth(notificationManagedConfig()).isHosted()
+}
+
+func wasPreviouslyLinked() bool {
+	st := loadStateFromDisk(stateDataDir())
+	return st.OnboardedMSISDN != "" || !st.LinkedAt.IsZero() || st.AuthStatus == "logged_out" || st.ExitStatus != ""
+}
+
+func connectCommand(instance string) string {
+	source := sourceSelfManaged
+	if cfg := notificationManagedConfig(); cfg.isDirect() {
+		source = sourceDoubletick
+	} else if cfg.isManagedVM() {
+		source = sourceVestaCloud
+	}
+	command := "whatsapp connect --source " + source
+	if instance != "" {
+		command += " --instance " + quoteReplyArg(instance)
+	}
+	return command
 }
 
 // WriteUnpairedNotification tells the agent the WhatsApp daemon came up without a
@@ -283,16 +309,27 @@ func managedParadigm() bool {
 // managed number reclaims itself autonomously (no user step), so only self-hosted QR
 // linking, which needs the human to scan, is gated on the user being ready.
 func WriteUnpairedNotification(notifDir, instance string) error {
-	message := "WhatsApp daemon started without a paired device session. Run `whatsapp connect` to link (when the user is ready)."
-	if managedParadigm() {
-		message = "WhatsApp daemon started without a paired device session. Run `whatsapp connect` now to re-link your headless account; it reclaims the number autonomously and needs no user step."
+	priorLink := wasPreviouslyLinked()
+	managed := managedParadigm()
+	command := connectCommand(instance)
+	recovery := "first_link"
+	message := "WhatsApp daemon started without a paired device session. Run the exact next_command when the user is ready."
+	if priorLink {
+		recovery = "relink"
+		message = "WhatsApp lost a previously linked device session. Ask the user for explicit approval before reconnecting, then run the exact next_command once."
+	}
+	if managed {
+		message += " The headless flow needs no phone or QR step."
 	}
 	n := authNotif{
-		Source:    "whatsapp",
-		Type:      "unpaired",
-		Instance:  instance,
-		Message:   message,
-		Timestamp: time.Now().Format(time.RFC3339),
+		Source:               "whatsapp",
+		Type:                 "unpaired",
+		Instance:             instance,
+		Message:              message,
+		Recovery:             recovery,
+		NextCommand:          command,
+		RequiresUserApproval: priorLink,
+		Timestamp:            time.Now().Format(time.RFC3339),
 	}
 	return writeNotificationFile(notifDir, n, "unpaired")
 }
@@ -306,16 +343,19 @@ func WriteLoggedOutNotification(notifDir, instance, reason string) error {
 		message += " (" + reason + ")"
 	}
 	if managedParadigm() {
-		message += ". This is NOT re-linked automatically, but a headless account reauthorizes autonomously: run `whatsapp connect` now to re-link the SAME number, no user step needed. Do not retry-loop pairing."
+		message += ". Ask the user for explicit approval before reconnecting, then run the exact next_command once. The headless flow needs no phone or QR step. Do not retry-loop pairing."
 	} else {
-		message += ". This is NOT re-linked automatically. When the user is ready, run `whatsapp connect` to re-link. Do not retry-loop pairing."
+		message += ". Ask the user for explicit approval before reconnecting, then run the exact next_command once. Do not retry-loop pairing."
 	}
 	n := authNotif{
-		Source:    "whatsapp",
-		Type:      "logged_out",
-		Instance:  instance,
-		Message:   message,
-		Timestamp: time.Now().Format(time.RFC3339),
+		Source:               "whatsapp",
+		Type:                 "logged_out",
+		Instance:             instance,
+		Message:              message,
+		Recovery:             "relink",
+		NextCommand:          connectCommand(instance),
+		RequiresUserApproval: true,
+		Timestamp:            time.Now().Format(time.RFC3339),
 	}
 	return writeNotificationFile(notifDir, n, "logged_out")
 }

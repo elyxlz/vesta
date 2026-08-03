@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func savedCtx(dir string) NotifContext {
@@ -121,5 +123,76 @@ func TestPrimaryAccountDoesNotLabelItsInstance(t *testing.T) {
 
 	if _, present := soleNotifFields(t, dir)["instance"]; present {
 		t.Errorf("instance is present for the unnamed primary account, want it omitted")
+	}
+}
+
+func prepareAuthNotificationTest(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("DOUBLETICK_API_URL", "")
+	t.Setenv("DOUBLETICK_API_KEY", "")
+	t.Setenv("WHATSAPP_API_URL", "")
+	t.Setenv("WHATSAPP_API_KEY", "")
+	t.Setenv("VESTA_CLOUD_CONTROL_URL", "")
+	if err := os.MkdirAll(filepath.Join(home, ".whatsapp"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	return t.TempDir()
+}
+
+func TestFreshManagedUnpairedCanConnectWithoutApproval(t *testing.T) {
+	dir := prepareAuthNotificationTest(t)
+	t.Setenv("DOUBLETICK_API_URL", "https://doubletick.example")
+	t.Setenv("DOUBLETICK_API_KEY", "wak_secret")
+
+	if err := WriteUnpairedNotification(dir, ""); err != nil {
+		t.Fatal(err)
+	}
+	fields := soleNotifFields(t, dir)
+	if _, present := fields["requires_user_approval"]; present {
+		t.Fatal("first-time setup must not be mislabeled as a recovery requiring fresh approval")
+	}
+	var recovery, command string
+	_ = json.Unmarshal(fields["recovery"], &recovery)
+	_ = json.Unmarshal(fields["next_command"], &command)
+	if recovery != "first_link" || command != "whatsapp connect --source doubletick" {
+		t.Fatalf("fresh managed notification = recovery %q command %q", recovery, command)
+	}
+}
+
+func TestPreviouslyLinkedUnpairedRequiresApproval(t *testing.T) {
+	dir := prepareAuthNotificationTest(t)
+	t.Setenv("DOUBLETICK_API_URL", "https://doubletick.example")
+	t.Setenv("DOUBLETICK_API_KEY", "wak_secret")
+	newStateStore(stateDataDir()).update(func(state *daemonState) { state.LinkedAt = time.Now() })
+
+	if err := WriteUnpairedNotification(dir, ""); err != nil {
+		t.Fatal(err)
+	}
+	fields := soleNotifFields(t, dir)
+	var approval bool
+	var recovery, message string
+	_ = json.Unmarshal(fields["requires_user_approval"], &approval)
+	_ = json.Unmarshal(fields["recovery"], &recovery)
+	_ = json.Unmarshal(fields["message"], &message)
+	if !approval || recovery != "relink" || !strings.Contains(message, "explicit approval") {
+		t.Fatalf("lost-link notification did not preserve the approval gate: approval=%v recovery=%q message=%q", approval, recovery, message)
+	}
+}
+
+func TestLoggedOutNotificationNamesExactApprovedRecoveryCommand(t *testing.T) {
+	dir := prepareAuthNotificationTest(t)
+
+	if err := WriteLoggedOutNotification(dir, "personal", "removed"); err != nil {
+		t.Fatal(err)
+	}
+	fields := soleNotifFields(t, dir)
+	var approval bool
+	var command string
+	_ = json.Unmarshal(fields["requires_user_approval"], &approval)
+	_ = json.Unmarshal(fields["next_command"], &command)
+	if !approval || command != "whatsapp connect --source self-managed --instance 'personal'" {
+		t.Fatalf("logged-out recovery = approval %v command %q", approval, command)
 	}
 }
