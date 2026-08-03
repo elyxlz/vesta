@@ -3,14 +3,15 @@
 //! descriptor + presence, fed by `sync::presence` from `/sync` connections) and an optional mobile
 //! push facet (Expo token + prefs, fed by `mobile_app`). Neither of those modules touches the file;
 //! all mutation, the live-connection refcount, the roster projection, and the atomic persistence
-//! live here behind one lock and one flush path. The push token is never placed on the `/sync` wire.
+//! live here behind the state lock, with the write serialized on a flush lock so concurrent flushers
+//! never tear the file. The push token is never placed on the `/sync` wire.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::{watch, Notify};
+use tokio::sync::{watch, Mutex as AsyncMutex, Notify};
 
 use crate::time_utils::epoch_to_rfc3339;
 use crate::types::{ClientKind, MobilePlatform};
@@ -92,6 +93,9 @@ pub(crate) struct DeviceRegistry {
     devices_tx: watch::Sender<Vec<DeviceInfo>>,
     path: PathBuf,
     dirty: Notify,
+    /// Serializes the write+rename so concurrent flushers (the background task and the mobile push
+    /// handlers) never interleave into the same tmp file and leave a torn store on disk.
+    flush_lock: AsyncMutex<()>,
 }
 
 impl DeviceRegistry {
@@ -102,7 +106,7 @@ impl DeviceRegistry {
         let devices = load_or_migrate(config_dir, &path);
         let state = RegistryState { devices, live_counts: HashMap::new() };
         let (devices_tx, _rx) = watch::channel(project(&state));
-        Self { state: Mutex::new(state), devices_tx, path, dirty: Notify::new() }
+        Self { state: Mutex::new(state), devices_tx, path, dirty: Notify::new(), flush_lock: AsyncMutex::new(()) }
     }
 
     pub(crate) fn subscribe_devices(&self) -> watch::Receiver<Vec<DeviceInfo>> {
@@ -163,6 +167,9 @@ impl DeviceRegistry {
         if record.descriptor.is_none() && record.push.is_none() {
             record.kind = ClientKind::Mobile;
         }
+        if record.last_seen == 0 {
+            record.last_seen = push.registered_at;
+        }
         record.push = Some(push);
         self.republish(&state);
         self.dirty.notify_one();
@@ -176,7 +183,7 @@ impl DeviceRegistry {
             record.push.as_ref().filter(|push| push.token == token).map(|_| id.clone())
         });
         if let Some(id) = owner {
-            self.drop_push(&mut state, &id);
+            Self::drop_push(&mut state, &id);
         }
         self.republish(&state);
         self.dirty.notify_one();
@@ -193,7 +200,7 @@ impl DeviceRegistry {
             })
             .collect();
         for id in owners {
-            self.drop_push(&mut state, &id);
+            Self::drop_push(&mut state, &id);
         }
         self.republish(&state);
         self.dirty.notify_one();
@@ -210,7 +217,7 @@ impl DeviceRegistry {
             .collect()
     }
 
-    fn drop_push(&self, state: &mut RegistryState, id: &str) {
+    fn drop_push(state: &mut RegistryState, id: &str) {
         if let Some(record) = state.devices.get_mut(id) {
             record.push = None;
             if record.is_empty() && !state.live_counts.contains_key(id) {
@@ -226,6 +233,7 @@ impl DeviceRegistry {
     /// Write the current map to `devices.json` atomically. Async so push register/delete handlers can
     /// await durability before their 200; the background flush task also drives it.
     pub(crate) async fn flush_now(&self) -> Result<(), String> {
+        let _flush_guard = self.flush_lock.lock().await;
         let snapshot = self.state.lock().expect("device registry mutex").devices.clone();
         let json = serde_json::to_vec_pretty(&snapshot)
             .map_err(|error| format!("serialize device registry: {error}"))?;
@@ -478,6 +486,29 @@ mod tests {
         assert_eq!(device.last_seen, epoch_to_rfc3339(1_780_000_000).expect("rfc3339"));
         assert!(!dir.path().join(LEGACY_PUSH_FILE).exists(), "legacy file removed");
         assert!(dir.path().join(STORE_FILE).exists(), "new store written");
+    }
+
+    #[tokio::test]
+    async fn concurrent_flushes_never_tear_the_store() {
+        use std::sync::Arc;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry = Arc::new(DeviceRegistry::load(dir.path()));
+        // Many devices so a torn interleave of two writers would corrupt the file, and a distinct
+        // mutation before each flush so the concurrent flushers race over differing map contents.
+        let mut tasks = Vec::new();
+        for index in 0..64u32 {
+            let registry = registry.clone();
+            tasks.push(tokio::spawn(async move {
+                registry.upsert_push(&format!("dev-{index}"), push(&format!("ExponentPushToken[{index}]"), &["chat"]));
+                registry.flush_now().await.expect("flush");
+            }));
+        }
+        for task in tasks {
+            task.await.expect("join");
+        }
+        // The store parses and holds every record: no writer clobbered another into a partial file.
+        let reloaded = DeviceRegistry::load(dir.path());
+        assert_eq!(reloaded.snapshot().len(), 64);
     }
 
     #[test]

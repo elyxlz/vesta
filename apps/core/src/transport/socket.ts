@@ -163,7 +163,9 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
       // resync and vestad doesn't read it as the user returning; never delivered (the report was
       // issued while the socket was still connecting) means this is that first genuine focus.
       if (lastFocused !== null) {
-        current.send(encodeFrame(clientContextFrame(lastFocused, deps.clientKind, focusSynced, deps.device)))
+        current.send(
+          encodeFrame(clientContextFrame(lastFocused, deps.clientKind, focusSynced, deps.device)),
+        )
         focusSynced = true
       }
       callbacks.onStateChange("open")
