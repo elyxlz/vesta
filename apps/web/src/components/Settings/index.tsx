@@ -251,12 +251,12 @@ function GatewaySetupFields({ setup }: { setup: GatewaySetup }) {
         <FieldContent>
           <FieldLabel className="text-sm">backups</FieldLabel>
           <FieldDescription>
-            automatic nightly snapshots of your agents
+            automatic snapshots of your agents, without interrupting them
           </FieldDescription>
         </FieldContent>
         <span className="shrink-0 text-sm text-muted-foreground">
           {setup.settings.auto_backup.enabled
-            ? `daily at ${String(setup.settings.auto_backup.hour).padStart(2, "0")}:00 server time`
+            ? `every ${String(setup.settings.auto_backup.every_n_days)} days, and before every update`
             : "disabled"}
         </span>
       </Field>
