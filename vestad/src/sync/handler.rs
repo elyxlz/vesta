@@ -14,6 +14,7 @@ use crate::settings::ServiceEntry;
 use crate::state::{SharedState, WS_KEEPALIVE_INTERVAL_SECS};
 
 use super::hub::UserNotification;
+use super::presence::PRESENCE_NOTIFY_DELAY;
 use super::protocol::{
     AgentInfo, AgentNode, ClientFrame, Frame, GatewayInfo, GatewayLan, GatewayScope,
     NotificationsBranch, ServiceInfo, Tree,
@@ -175,22 +176,31 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
                         if let Some(client) =
                             state.presence.record(conn, ctx, tokio::time::Instant::now())
                         {
-                            for agent in state.agent_status_cache.presence_notification_agents() {
-                                // Drop the notification off the session loop: the docker upload has no
-                                // timeout, and awaiting it here would stall this client's keepalive and
-                                // deltas. Best-effort, so the detached task logs its own failure.
-                                let docker = state.docker.clone();
-                                tokio::spawn(async move {
-                                    if let Err(error) =
-                                        crate::serve::drop_presence_notification(
-                                            &docker, &agent, client,
-                                        )
-                                        .await
-                                    {
-                                        tracing::warn!(%agent, %error, "could not drop presence notification");
-                                    }
-                                });
-                            }
+                            // Wait a settle window, then notify only if a client is still focused: a
+                            // return that unfocuses inside the window was only a glance. Detached so
+                            // the sleep never stalls this session's keepalive and deltas.
+                            let state = state.clone();
+                            tokio::spawn(async move {
+                                tokio::time::sleep(PRESENCE_NOTIFY_DELAY).await;
+                                if !state.presence.any_focused() {
+                                    return;
+                                }
+                                for agent in state.agent_status_cache.presence_notification_agents() {
+                                    // Each drop's docker upload has no timeout, so keep them on their
+                                    // own tasks. Best-effort: a detached task logs its own failure.
+                                    let docker = state.docker.clone();
+                                    tokio::spawn(async move {
+                                        if let Err(error) =
+                                            crate::serve::drop_presence_notification(
+                                                &docker, &agent, client,
+                                            )
+                                            .await
+                                        {
+                                            tracing::warn!(%agent, %error, "could not drop presence notification");
+                                        }
+                                    });
+                                }
+                            });
                         }
                     }
                     Ok(ClientFrame::Reauth { token }) => {

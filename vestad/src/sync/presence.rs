@@ -12,6 +12,10 @@ use super::protocol::{ClientContext, ClientKind};
 /// glances and alt-tabs never spam it.
 pub(crate) const PRESENCE_NOTIFY_DEBOUNCE: Duration = Duration::from_mins(10);
 
+/// After a return to focus is detected, wait this long before notifying the fleet: a return that
+/// unfocuses inside the window was only a glance, so nothing is sent.
+pub(crate) const PRESENCE_NOTIFY_DELAY: Duration = Duration::from_secs(5);
+
 pub(crate) type ConnId = u64;
 
 #[derive(Debug)]
