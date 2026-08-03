@@ -4,7 +4,9 @@
 Standalone, stdlib-only: the agent runs this as a subprocess, so it opens the db
 directly rather than going through core. The query mirrors EventBus.search in
 agent/core/events.py (same FTS5 table, same recency-boosted ranking); keep them
-in step if that ranking ever changes.
+in step if that ranking ever changes. A result's content is `$.text` for a
+conversational event and `$.summary` for an inbound-message notification, the two
+shapes the index carries.
 
 Windowing (--snippet) is a CLI-only presentation concern computed in Python:
 events_fts is an external-content table whose backing table has no text_content
@@ -36,7 +38,8 @@ def search(db_path: pathlib.Path, query: str, *, limit: int) -> list[dict[str, s
     try:
         rows = conn.execute(
             """
-            SELECT e.ts, json_extract(e.data, '$.type') AS role, json_extract(e.data, '$.text') AS content,
+            SELECT e.ts, json_extract(e.data, '$.type') AS role,
+                   COALESCE(json_extract(e.data, '$.text'), json_extract(e.data, '$.summary')) AS content,
                    f.rank / (1.0 + ? * max(julianday('now') - julianday(e.ts), 0)) AS score
             FROM events_fts f
             JOIN events e ON e.id = f.rowid

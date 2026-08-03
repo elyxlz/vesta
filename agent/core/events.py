@@ -190,6 +190,37 @@ CREATE TRIGGER IF NOT EXISTS events_fts_ad AFTER DELETE ON events BEGIN
 END;
 """
 
+# Inbound messages (whatsapp, telegram, app-chat, email, tasks) reach history as `notification`
+# events carrying their body in `$.summary`, so the conversational triggers above miss them and
+# recall would search only the agent's own words. These index them by summary. `source = 'core'`
+# is excluded: those are the agent's own scheduler boilerplate (proactive checks, greetings,
+# migrations), repeated near-identically thousands of times, and indexing them buries every real
+# hit under duplicates of one string.
+_NOTIFICATION_FTS_SCHEMA = """
+CREATE TRIGGER IF NOT EXISTS events_fts_ai_notif AFTER INSERT ON events BEGIN
+    INSERT INTO events_fts(rowid, text_content)
+    SELECT new.id, json_extract(new.data, '$.summary')
+    WHERE json_extract(new.data, '$.type') = 'notification'
+      AND COALESCE(json_extract(new.data, '$.source'), '') <> 'core'
+      AND json_extract(new.data, '$.summary') IS NOT NULL;
+END;
+
+CREATE TRIGGER IF NOT EXISTS events_fts_ad_notif AFTER DELETE ON events BEGIN
+    INSERT INTO events_fts(events_fts, rowid, text_content)
+    SELECT 'delete', old.id, json_extract(old.data, '$.summary')
+    WHERE json_extract(old.data, '$.type') = 'notification'
+      AND COALESCE(json_extract(old.data, '$.source'), '') <> 'core'
+      AND json_extract(old.data, '$.summary') IS NOT NULL;
+END;
+"""
+
+# The rows those triggers index, as a WHERE clause over `events`, for the v2 backfill.
+_NOTIFICATION_FTS_CONDITION = (
+    "json_extract(data, '$.type') = 'notification' "
+    "AND COALESCE(json_extract(data, '$.source'), '') <> 'core' "
+    "AND json_extract(data, '$.summary') IS NOT NULL"
+)
+
 _RECENCY_DECAY_RATE = 0.01
 
 # The notifications history channel: the arrivals list for the paginated view. Clears are not here —
@@ -200,19 +231,34 @@ _NOTIFICATION_CONDITION = "json_extract(data, '$.type') = 'notification'"
 # Schema-version migration seam for events.db. `PRAGMA user_version` is the on-disk
 # version; `_SCHEMA_VERSION` is the version this code expects. `_MIGRATIONS` is an
 # ordered, version-gated list of (target_version, step) pairs applied in sequence at
-# construction. Each step is idempotent: version 1 runs the baseline `_EVENTS_SCHEMA`
-# (all `CREATE ... IF NOT EXISTS`), so a fresh db and a pre-versioned db with the
-# tables already present both converge to version 1 with no data loss, the latter
-# simply being stamped. Add future schema changes as version 2+ steps here; never
-# edit a released step (existing dbs have already run it).
-_SCHEMA_VERSION = 1
+# construction, each step running exactly once. Version 1 runs the baseline
+# `_EVENTS_SCHEMA` (all `CREATE ... IF NOT EXISTS`), so a fresh db and a pre-versioned
+# db with the tables already present both converge to version 1 with no data loss, the
+# latter simply being stamped. Add further schema changes as version 3+ steps here;
+# never edit a released step (existing dbs have already run it).
+_SCHEMA_VERSION = 2
 
 
 def _migrate_v1_baseline(conn: sqlite3.Connection) -> None:
     conn.executescript(_EVENTS_SCHEMA)
 
 
-_MIGRATIONS: tuple[tuple[int, tp.Callable[[sqlite3.Connection], None]], ...] = ((1, _migrate_v1_baseline),)
+def _migrate_v2_index_notifications(conn: sqlite3.Connection) -> None:
+    """Add the notification triggers, then index the notifications already stored: triggers only
+    fire on new rows, so without the backfill an existing db stays blind to its whole history.
+    The version gate is what keeps the backfill one-shot: re-indexing an already-indexed rowid
+    writes duplicate postings that desync the external-content index from its delete trigger."""
+    conn.executescript(_NOTIFICATION_FTS_SCHEMA)
+    conn.execute(
+        "INSERT INTO events_fts(rowid, text_content) "
+        f"SELECT id, json_extract(data, '$.summary') FROM events WHERE {_NOTIFICATION_FTS_CONDITION}"
+    )
+
+
+_MIGRATIONS: tuple[tuple[int, tp.Callable[[sqlite3.Connection], None]], ...] = (
+    (1, _migrate_v1_baseline),
+    (2, _migrate_v2_index_notifications),
+)
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
