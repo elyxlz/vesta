@@ -289,6 +289,14 @@ func TestRunConnectAliasSkipsSourceRequirement(t *testing.T) {
 	}
 }
 
+func TestPublicProvisionAliasRejectsInternalCredentialFlags(t *testing.T) {
+	for _, flag := range []string{"--direct-key", "--direct-url"} {
+		if _, err := parseConnectOptions("provision", []string{flag, "secret"}); err == nil {
+			t.Fatalf("public provision alias accepted internal socket flag %s", flag)
+		}
+	}
+}
+
 func TestConnectPreservesExplicitZeroPort(t *testing.T) {
 	opts, err := parseConnectOptions("connect", []string{"--port", "0"})
 	if err != nil {

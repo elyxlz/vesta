@@ -18,6 +18,19 @@ output. Never ask the user to paste it into a conversation and never add it to
 `.bashrc`. If it is absent, ask the operator to set it outside chat and tell you
 when the environment is ready.
 
+For an already-running Vesta container, the operator can create a temporary
+mode-`0600` env file on the host containing the two values, then run:
+
+```bash
+docker exec --env-file /secure/path/doubletick.env <agent-container> \
+  whatsapp connect --source doubletick --opener '<text>'
+```
+
+The key enters only that CLI process, crosses the owner-only WhatsApp socket, and
+is saved in owner-only state for later daemon boots. Remove the temporary host file
+after the command. The agent should then use `whatsapp status`; do not ask for the
+file contents or repeat the connect command.
+
 Run `whatsapp status` first; stop if linked or connecting.
 
 ## Connect
