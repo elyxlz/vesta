@@ -173,18 +173,19 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
             Wake::Client(Some(Ok(Message::Text(text)))) => {
                 match serde_json::from_str::<ClientFrame>(text.as_str()) {
                     Ok(ClientFrame::ClientContext(ctx)) => {
-                        if let Some(client) =
-                            state.presence.record(conn, ctx, tokio::time::Instant::now())
-                        {
-                            // Wait a settle window, then notify only if a client is still focused: a
-                            // return that unfocuses inside the window was only a glance. Detached so
+                        if state.presence.record(conn, ctx, tokio::time::Instant::now()) {
+                            // Wait a settle window, then notify only if the return survived it: a
+                            // return that unfocuses inside the window was only a glance, and its
+                            // debounce clock stays put so the next return still fires. Detached so
                             // the sleep never stalls this session's keepalive and deltas.
                             let state = state.clone();
                             tokio::spawn(async move {
                                 tokio::time::sleep(PRESENCE_NOTIFY_DELAY).await;
-                                if !state.presence.any_focused() {
+                                let Some(client) =
+                                    state.presence.confirm_return(tokio::time::Instant::now())
+                                else {
                                     return;
-                                }
+                                };
                                 for agent in state.agent_status_cache.presence_notification_agents() {
                                     // Each drop's docker upload has no timeout, so keep them on their
                                     // own tasks. Best-effort: a detached task logs its own failure.
