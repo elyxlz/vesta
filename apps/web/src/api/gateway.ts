@@ -44,14 +44,13 @@ export interface GatewayInfo {
 }
 
 export interface GatewayRetention {
-  daily: number;
-  weekly: number;
-  monthly: number;
+  periodic: number;
+  pre_update_versions: number;
 }
 
 export interface GatewayAutoBackup {
   enabled: boolean;
-  hour: number;
+  every_n_days: number;
   retention: GatewayRetention;
 }
 

@@ -11,8 +11,8 @@ const settings: GatewaySettings = {
   channel: "stable",
   auto_backup: {
     enabled: true,
-    hour: 3,
-    retention: { daily: 7, weekly: 4, monthly: 6 },
+    every_n_days: 3,
+    retention: { periodic: 2, pre_update_versions: 2 },
   },
 };
 

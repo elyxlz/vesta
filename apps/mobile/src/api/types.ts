@@ -120,8 +120,8 @@ export interface GatewaySettings {
   channel: ReleaseChannel;
   auto_backup: {
     enabled: boolean;
-    hour: number;
-    retention: { daily: number; weekly: number; monthly: number };
+    every_n_days: number;
+    retention: { periodic: number; pre_update_versions: number };
   };
 }
 

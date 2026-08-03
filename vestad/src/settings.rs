@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-pub(crate) const DEFAULT_AUTO_BACKUP_HOUR: u8 = 4;
+pub(crate) const DEFAULT_EVERY_N_DAYS: u8 = 3;
 
 #[derive(Serialize, Copy, Clone, PartialEq)]
 pub(crate) struct ServiceEntry {
@@ -105,8 +105,8 @@ impl Settings {
 pub(crate) struct BackupGlobalSettings {
     #[serde(default = "default_true")]
     pub(crate) enabled: bool,
-    #[serde(default = "default_backup_hour")]
-    pub(crate) hour: u8,
+    #[serde(default = "default_every_n_days")]
+    pub(crate) every_n_days: u8,
     #[serde(default = "default_retention")]
     pub(crate) retention: crate::types::RetentionPolicy,
     #[serde(default)]
@@ -117,7 +117,7 @@ impl Default for BackupGlobalSettings {
     fn default() -> Self {
         Self {
             enabled: true,
-            hour: DEFAULT_AUTO_BACKUP_HOUR,
+            every_n_days: DEFAULT_EVERY_N_DAYS,
             retention: default_retention(),
             agents: HashMap::new(),
         }
@@ -139,13 +139,12 @@ impl BackupGlobalSettings {
 
 fn default_true() -> bool { true }
 
-fn default_backup_hour() -> u8 { DEFAULT_AUTO_BACKUP_HOUR }
+fn default_every_n_days() -> u8 { DEFAULT_EVERY_N_DAYS }
 
 pub(crate) fn default_retention() -> crate::types::RetentionPolicy {
     crate::types::RetentionPolicy {
-        daily: crate::backup::DEFAULT_RETENTION_DAILY,
-        weekly: crate::backup::DEFAULT_RETENTION_WEEKLY,
-        monthly: crate::backup::DEFAULT_RETENTION_MONTHLY,
+        periodic: crate::backup::DEFAULT_RETENTION_PERIODIC,
+        pre_update_versions: crate::backup::DEFAULT_RETENTION_PRE_UPDATE_VERSIONS,
     }
 }
 
@@ -265,6 +264,38 @@ mod tests {
         let s: Settings =
             serde_json::from_str(r#"{"auto_update": false}"#).expect("valid Settings");
         assert!(!s.auto_update);
+    }
+
+    // --- backup settings: a settings.json written by the old tiered scheduler (hour +
+    // daily/weekly/monthly retention) must deserialize to the new shape's defaults
+    // without losing unrelated fields ---
+
+    #[test]
+    fn settings_with_legacy_backup_shape_keeps_unrelated_fields() {
+        let s: Settings = serde_json::from_str(
+            r#"{
+                "services": {"okami": {"web": 8080}},
+                "channel": "beta",
+                "backup": {"enabled": false, "hour": 4,
+                           "retention": {"daily": 3, "weekly": 2, "monthly": 1}}
+            }"#,
+        )
+        .expect("legacy settings.json must deserialize");
+        assert_eq!(s.channel, "beta");
+        assert!(!s.backup.enabled);
+        assert_eq!(s.backup.every_n_days, 3);
+        assert_eq!(s.backup.retention.periodic, 2);
+        assert_eq!(s.backup.retention.pre_update_versions, 2);
+        assert!(s.services.contains_key("okami"));
+    }
+
+    #[test]
+    fn backup_defaults() {
+        let b = BackupGlobalSettings::default();
+        assert!(b.enabled);
+        assert_eq!(b.every_n_days, 3);
+        assert_eq!(b.retention.periodic, 2);
+        assert_eq!(b.retention.pre_update_versions, 2);
     }
 
     // --- expose_lan defaults off: a settings.json predating the field must keep the

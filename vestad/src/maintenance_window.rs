@@ -1,14 +1,15 @@
-//! Choosing when to apply an auto-update so it disturbs the fewest agents.
+//! Choosing when the maintenance pass (snapshots, plus a pending update) runs so it disturbs
+//! the fewest agents.
 //!
 //! An update restarts every agent container at once (that invariant stays), so a single instant
-//! must serve the whole fleet. We aim it at the upcoming 3-5am window that covers the most agents
+//! must serve the whole fleet. We aim it at the upcoming 4-5am window that covers the most agents
 //! in their own local time: agents sharing a timezone stack, and nearby timezones' windows overlap
-//! and stack too. The update always lands within 24h (each zone hits 3-5am daily), just at the
-//! least-disruptive moment.
+//! and stack too. Maintenance always lands within 24h (each zone hits 4-5am daily), after the
+//! agents' own dreams (default hour 3), at the least-disruptive moment.
 
 use jiff::{tz::TimeZone, SignedDuration, Timestamp};
 
-const WINDOW_START_HOUR: i8 = 3;
+const WINDOW_START_HOUR: i8 = 4;
 const WINDOW_END_HOUR: i8 = 5;
 const SCAN_HORIZON_HOURS: i64 = 24;
 const SCAN_STEP_MINUTES: i64 = 15;
@@ -20,14 +21,14 @@ pub fn resolve_zone(name: Option<&str>) -> TimeZone {
     name.and_then(|name| TimeZone::get(name).ok()).unwrap_or_else(TimeZone::system)
 }
 
-/// Whether `at` falls inside the `[3:00, 5:00)` local window for `zone`.
+/// Whether `at` falls inside the `[4:00, 5:00)` local window for `zone`.
 fn in_window(zone: &TimeZone, at: Timestamp) -> bool {
     let hour = at.to_zoned(zone.clone()).hour();
     (WINDOW_START_HOUR..WINDOW_END_HOUR).contains(&hour)
 }
 
-/// How long to wait from `now` before applying the update so it lands in the upcoming 3-5am
-/// window covering the most agents. Zero means apply now: either there are no agents to protect,
+/// How long to wait from `now` before running maintenance so it lands in the upcoming 4-5am
+/// window covering the most agents. Zero means run now: either there are no agents to protect,
 /// or now is already the fullest window. Scans the next 24h in 15-minute steps and returns the
 /// offset of the earliest step reaching the maximum coverage.
 pub fn wait_until_best_window(zones: &[TimeZone], now: Timestamp) -> SignedDuration {
@@ -66,8 +67,8 @@ mod tests {
     #[test]
     fn in_window_utc_boundaries_are_half_open() {
         let utc = zone("UTC");
-        assert!(!in_window(&utc, ts("2026-01-01T02:59:00Z")));
-        assert!(in_window(&utc, ts("2026-01-01T03:00:00Z")));
+        assert!(!in_window(&utc, ts("2026-01-01T03:59:00Z")));
+        assert!(in_window(&utc, ts("2026-01-01T04:00:00Z")));
         assert!(in_window(&utc, ts("2026-01-01T04:59:00Z")));
         assert!(!in_window(&utc, ts("2026-01-01T05:00:00Z")));
     }
@@ -82,26 +83,26 @@ mod tests {
 
     #[test]
     fn in_window_respects_dst_shift_in_summer() {
-        // New York is UTC-4 in July (EDT): 03:00 EDT == 07:00 UTC is in-window, while 09:00 UTC ==
+        // New York is UTC-4 in July (EDT): 04:00 EDT == 08:00 UTC is in-window, while 09:00 UTC ==
         // 05:00 EDT is out -- the very same 09:00 UTC instant that IS in-window in winter (04:00 EST,
         // asserted above), so the zone's DST offset is being applied, not a fixed one.
         let ny = zone("America/New_York");
-        assert!(in_window(&ny, ts("2026-07-01T07:00:00Z")));
+        assert!(in_window(&ny, ts("2026-07-01T08:00:00Z")));
         assert!(!in_window(&ny, ts("2026-07-01T09:00:00Z")));
     }
 
     #[test]
     fn wait_until_best_window_picks_the_least_disruptive_upcoming_window() {
         let cases: [(&str, Vec<TimeZone>, &str, SignedDuration); 7] = [
-            ("already inside the window applies now", vec![zone("UTC")], "2026-01-01T03:30:00Z", SignedDuration::ZERO),
-            ("waits for the next window to open", vec![zone("UTC")], "2026-01-01T01:00:00Z", SignedDuration::from_hours(2)),
-            // July: NY's 03:00 EDT window opens at 07:00 UTC (not 08:00), so 3h from 04:00 UTC.
-            ("targets the DST-shifted window in summer", vec![zone("America/New_York")], "2026-07-01T04:00:00Z", SignedDuration::from_hours(3)),
-            ("same-zone agents share one window", vec![zone("UTC"), zone("UTC"), zone("UTC")], "2026-01-01T00:00:00Z", SignedDuration::from_hours(3)),
-            // Two UTC agents outrank the lone NY agent, so aim at UTC's 03:00 window (3h) not NY's.
-            ("picks the window covering the most agents", vec![zone("UTC"), zone("UTC"), zone("America/New_York")], "2026-01-01T00:00:00Z", SignedDuration::from_hours(3)),
-            // Neither window covers more than one, so take the earliest: UTC's 03:00 (3h) beats NY's 08:00 UTC (8h).
-            ("disjoint single zones take the earliest window", vec![zone("UTC"), zone("America/New_York")], "2026-01-01T00:00:00Z", SignedDuration::from_hours(3)),
+            ("already inside the window applies now", vec![zone("UTC")], "2026-01-01T04:30:00Z", SignedDuration::ZERO),
+            ("waits for the next window to open", vec![zone("UTC")], "2026-01-01T01:00:00Z", SignedDuration::from_hours(3)),
+            // July: NY's 04:00 EDT window opens at 08:00 UTC (not 09:00), so 4h from 04:00 UTC.
+            ("targets the DST-shifted window in summer", vec![zone("America/New_York")], "2026-07-01T04:00:00Z", SignedDuration::from_hours(4)),
+            ("same-zone agents share one window", vec![zone("UTC"), zone("UTC"), zone("UTC")], "2026-01-01T00:00:00Z", SignedDuration::from_hours(4)),
+            // Two UTC agents outrank the lone NY agent, so aim at UTC's 04:00 window (4h) not NY's.
+            ("picks the window covering the most agents", vec![zone("UTC"), zone("UTC"), zone("America/New_York")], "2026-01-01T00:00:00Z", SignedDuration::from_hours(4)),
+            // Neither window covers more than one, so take the earliest: UTC's 04:00 (4h) beats NY's 09:00 UTC (9h).
+            ("disjoint single zones take the earliest window", vec![zone("UTC"), zone("America/New_York")], "2026-01-01T00:00:00Z", SignedDuration::from_hours(4)),
             ("no agents applies immediately", vec![], "2026-01-01T12:00:00Z", SignedDuration::ZERO),
         ];
         for (desc, zones, now, expected) in cases {

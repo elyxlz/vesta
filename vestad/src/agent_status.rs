@@ -264,6 +264,18 @@ impl AgentStatusCache {
         self.activity_rx.clone()
     }
 
+    /// Whether every alive agent is currently idle. Gates the maintenance pass so snapshots and a
+    /// pending update land between turns; an agent with no reported activity counts as idle (the
+    /// tap resets activity to idle on disconnect).
+    pub fn all_alive_idle(&self) -> bool {
+        let states = self.activity_rx.borrow();
+        self.agents_rx
+            .borrow()
+            .iter()
+            .filter(|entry| entry.status == docker::AgentStatus::Alive)
+            .all(|entry| states.get(&entry.name).is_none_or(|state| state == "idle"))
+    }
+
     /// Snapshot of each alive agent's IANA timezone, as last reported on its connect snapshot.
     pub fn timezones(&self) -> HashMap<String, String> {
         self.timezones_rx.borrow().clone()
@@ -723,6 +735,40 @@ mod tests {
 
         cache.clear_bridge_ip("ada");
         assert_eq!(cache.bridge_ip("ada"), None);
+    }
+
+    #[test]
+    fn all_alive_idle_reads_alive_agents_only() {
+        let cache = AgentStatusCache::new();
+        // No agents at all: vacuously idle.
+        assert!(cache.all_alive_idle());
+
+        cache.agents_tx.send_replace(vec![
+            ListEntry {
+                name: "apollo".into(),
+                status: docker::AgentStatus::Alive,
+                ws_port: 4200,
+                started_at: None,
+            },
+            ListEntry {
+                name: "hera".into(),
+                status: docker::AgentStatus::Stopped,
+                ws_port: 4201,
+                started_at: None,
+            },
+        ]);
+        // Alive agent with no reported activity counts as idle; stopped agents never count.
+        assert!(cache.all_alive_idle());
+
+        cache.activity_tx.send_replace(HashMap::from([("apollo".to_string(), "thinking".to_string())]));
+        assert!(!cache.all_alive_idle());
+
+        cache.activity_tx.send_replace(HashMap::from([
+            ("apollo".to_string(), "idle".to_string()),
+            ("hera".to_string(), "thinking".to_string()),
+        ]));
+        // A busy state on a non-alive agent (stale tap residue) does not block maintenance.
+        assert!(cache.all_alive_idle());
     }
 
     #[test]
