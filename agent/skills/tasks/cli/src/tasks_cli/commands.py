@@ -950,7 +950,11 @@ def remind_update(config: Config, *, reminder_id: str, message: str) -> dict:
         reminder = cursor.fetchone()
         if not reminder:
             raise ValueError(f"Reminder '{reminder_id}' not found. Use 'tasks remind list' to see active reminders.")
-        conn.execute("UPDATE reminders SET message = ? WHERE id = ?", (message, reminder_id))
+        # Clearing auto_generated is the point of the write, not a side effect. The flag means
+        # "this row is machine-owned and may be regenerated", and delete_auto_reminders (called by
+        # postpone and by any due-date change) deletes exactly the flagged rows. Leaving it set
+        # means hand-written text survives until the next postpone and is then silently destroyed.
+        conn.execute("UPDATE reminders SET message = ?, auto_generated = 0 WHERE id = ?", (message, reminder_id))
         conn.commit()
 
     return {
