@@ -29,8 +29,15 @@ vestad/vendored/
 !.claude/workflows/
 !.claude/settings.json
 
-# Graphify knowledge-graph output (generated locally, per dev)
-graphify-out/
+# Graphify knowledge graph: the built graph + semantic extraction cache are committed
+# so every dev's Claude has it prebuilt; machine-local artifacts stay ignored
+graphify-out/*
+!graphify-out/graph.json
+!graphify-out/GRAPH_REPORT.md
+!graphify-out/manifest.json
+!graphify-out/cache/
+graphify-out/cache/*
+!graphify-out/cache/semantic/
 
 # Cursor / editor config
 .cursor/

@@ -2,7 +2,7 @@
 
 ## graphify
 
-This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships. Graphify is optional tooling: if the `graphify` command is not on PATH, skip these rules (install with `uv tool install graphifyy`, then build the graph with `/graphify .`; graphify-out/ is gitignored, each dev builds it locally).
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships. The built graph (graph.json), report, manifest, and semantic extraction cache are committed, so queries work immediately with no build step. Graphify is optional tooling: if the `graphify` command is not on PATH, skip these rules (install with `uv tool install graphifyy`; `graphify update .` refreshes the graph incrementally after code changes, free local AST parsing).
 
 Rules:
 - For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
