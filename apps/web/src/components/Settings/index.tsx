@@ -32,6 +32,7 @@ import { useChatPacing } from "@/stores/use-chat-pacing";
 import { useAppMode, type AppMode } from "@/stores/use-app-mode";
 import { openExternalUrl } from "@/lib/open-external-url";
 import { KeybindsCard } from "@/components/Settings/KeybindsSection";
+import { DevicesCard } from "@/components/Settings/DevicesCard";
 import { ConnectionControls } from "@/components/ConnectionControls";
 import { GatewayRestart } from "@/components/GatewayRestart";
 import {
@@ -193,6 +194,8 @@ export function AppSettings() {
           </MenuSection>
         </CardContent>
       </Card>
+
+      <DevicesCard />
 
       <GatewayLogsViewer open={showLogs} onOpenChange={setShowLogs} />
 

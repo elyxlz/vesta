@@ -5,6 +5,7 @@ import { useSyncState } from "@vesta/core/react";
 import { useSession } from "@/session/SessionProvider";
 import { connectionKeyOf } from "@/session/session-model";
 import { buildController } from "./build-controller";
+import { deviceIdentity } from "./device-identity";
 import { controllerGateAction, type GateInput } from "./controller-gate";
 import { ControllerContext } from "./context";
 import { createAppStateForegroundSignal } from "./foreground-signal";
@@ -34,7 +35,20 @@ function ConnectedController({ children }: { children: ReactNode }) {
   const { connection, api, refreshAccessToken } = useSession();
   const [signal] = useState(createAppStateForegroundSignal);
   const [controller, setController] = useState<Controller | null>(null);
+  const [device, setDevice] = useState<{ id: string; descriptor: string } | undefined>(undefined);
   const connectionKey = connectionKeyOf(connection);
+
+  // Resolve this device's identity once (the id lives in AsyncStorage). When it lands it enters the
+  // build effect's deps, rebuilding the controller so /sync reports the device.
+  useEffect(() => {
+    let active = true;
+    void deviceIdentity().then((resolved) => {
+      if (active) setDevice(resolved);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
   const syncState = useOptionalControllerSyncState(controller);
 
   useEffect(() => {
@@ -52,6 +66,7 @@ function ConnectedController({ children }: { children: ReactNode }) {
             websocketUrl: api.websocketUrl,
           },
           CLIENT_VERSION,
+          device,
         );
         setController(current);
       } else if (action === "close") {
@@ -67,7 +82,7 @@ function ConnectedController({ children }: { children: ReactNode }) {
       current?.close();
       setController(null);
     };
-  }, [connectionKey, api, refreshAccessToken, signal]);
+  }, [connectionKey, api, refreshAccessToken, signal, device]);
 
   useEffect(() => {
     if (!controller) return;

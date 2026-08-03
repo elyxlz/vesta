@@ -57,6 +57,7 @@ const fixture: RosterValue = {
   managed: false,
   updateAvailable: false,
   latestVersion: null,
+  devices: [],
 };
 const FixtureContext = createContext<RosterValue | null>(null);
 

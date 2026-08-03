@@ -1,6 +1,6 @@
 import { createContext, use, useEffect, useState, type ReactNode } from "react";
-import type { AgentRow, ReleaseChannel, Tree } from "@vesta/core";
-import { rosterFromTree, rostersEqual } from "@vesta/core";
+import type { AgentRow, DeviceInfo, ReleaseChannel, Tree } from "@vesta/core";
+import { devicesEqual, rosterFromTree, rostersEqual, selectDevices } from "@vesta/core";
 import { ControllerContext } from "@/controller/context";
 import {
   useOptionalControllerReplica,
@@ -24,6 +24,7 @@ interface RosterValue {
   managed: boolean;
   updateAvailable: boolean;
   latestVersion: string | null;
+  devices: DeviceInfo[];
 }
 
 const RosterContext = createContext<RosterValue | null>(null);
@@ -69,7 +70,7 @@ function useRosterHold(): RosterHoldStore {
 function servedRoster(
   hold: RosterHold,
   live: { reachable: boolean },
-): RosterValue {
+): Omit<RosterValue, "devices"> {
   return {
     agents: hold.agents,
     agentsReady: hold.agentsReady,
@@ -89,7 +90,7 @@ function useServedRoster(
   connectionKey: string,
   fresh: RosterSnapshot | null,
   live: { reachable: boolean },
-): RosterValue {
+): Omit<RosterValue, "devices"> {
   const hold = reconcileRosterHold(store.read(), connectionKey, fresh);
   useEffect(() => {
     store.persist(hold);
@@ -111,6 +112,7 @@ export function RosterProvider({ children }: { children: ReactNode }) {
     rostersEqual,
   );
   const gateway = useOptionalControllerReplica(controller, selectGateway);
+  const devices = useOptionalControllerReplica(controller, selectDevices, devicesEqual);
   // A non-null gateway means the summary snapshot has populated the tree; only then is the roster fresh.
   const fresh: RosterSnapshot | null = gateway
     ? {
@@ -127,7 +129,9 @@ export function RosterProvider({ children }: { children: ReactNode }) {
   });
 
   return (
-    <RosterContext.Provider value={value}>{children}</RosterContext.Provider>
+    <RosterContext.Provider value={{ ...value, devices }}>
+      {children}
+    </RosterContext.Provider>
   );
 }
 

@@ -23,7 +23,7 @@ function baseGateway(): GatewayInfo {
 }
 
 function baseTree(): Tree {
-  return { gateway: baseGateway(), agents: {} }
+  return { gateway: baseGateway(), agents: {}, devices: [] }
 }
 
 function agentInfo(): AgentInfo {

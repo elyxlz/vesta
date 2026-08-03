@@ -98,6 +98,7 @@ function tree(): Tree {
         notifications: { pending: [] },
       },
     },
+    devices: [],
   };
 }
 

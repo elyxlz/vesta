@@ -23,6 +23,8 @@ export type {
   AgentOperation,
   AgentStatus,
   BuildPhase,
+  DeviceInfo,
+  DeviceKind,
   GatewayInfo,
   GatewayLan,
   ReleaseChannel,
@@ -30,7 +32,8 @@ export type {
   Tree,
 } from "./protocol/tree"
 export type { InputMethod, NotificationEvent, VestaEvent } from "./protocol/events"
-export type { UserNotificationDelta, Delta } from "./protocol/deltas"
+export type { UserNotificationDelta, DevicesDelta, Delta } from "./protocol/deltas"
+export { selectDevices, devicesEqual } from "./tree/devices"
 
 export { createReplica } from "./replica/store"
 export type { Replica } from "./replica/store"

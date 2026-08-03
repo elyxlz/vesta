@@ -2,8 +2,10 @@ import { useCallback, useContext, useEffect, type ReactNode } from "react";
 import type { Controller, SyncState, Tree } from "@vesta/core";
 import {
   checkForGatewayUpdate,
+  devicesEqual,
   rosterFromTree,
   rostersEqual,
+  selectDevices,
   triggerGatewayRestart as requestGatewayRestart,
   triggerGatewayUpdate as requestGatewayUpdate,
 } from "@vesta/core";
@@ -52,6 +54,7 @@ function ReplicaGateway({
 }) {
   const gateway = useReplica(controller.replica, selectGateway);
   const agents = useReplica(controller.replica, rosterFromTree, rostersEqual);
+  const devices = useReplica(controller.replica, selectDevices, devicesEqual);
   const syncState = useSyncState(controller);
   const reconnect = useControllerReconnect();
 
@@ -98,6 +101,7 @@ function ReplicaGateway({
     latestVersion: gateway?.latestVersion ?? null,
     agents,
     agentsFetched: gateway !== null,
+    devices,
     triggerGatewayUpdate,
     triggerGatewayRestart,
     checkForUpdate,

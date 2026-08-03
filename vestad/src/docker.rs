@@ -5317,7 +5317,7 @@ mod tests {
             match crate::serve::drop_presence_notification(
                 &docker,
                 &agent_name,
-                crate::sync::protocol::ClientKind::Mobile,
+                crate::types::ClientKind::Mobile,
             )
             .await
             {

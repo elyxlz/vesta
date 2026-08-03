@@ -6,7 +6,8 @@ use std::time::Duration;
 use tokio::sync::watch;
 use tokio::time::Instant;
 
-use super::protocol::{ClientContext, ClientKind};
+use super::protocol::ClientContext;
+use crate::types::ClientKind;
 
 /// The user must have been away this long before a return-to-focus notifies the agent fleet, so
 /// glances and alt-tabs never spam it.
@@ -147,7 +148,7 @@ mod tests {
     use tokio::time::Instant;
 
     fn ctx(focused: bool) -> ClientContext {
-        ClientContext { focused, client: ClientKind::Web, resync: false }
+        ClientContext { focused, client: ClientKind::Web, resync: false, ..Default::default() }
     }
 
     #[test]
@@ -162,6 +163,7 @@ mod tests {
                 focused: true,
                 client: ClientKind::Desktop,
                 resync: true,
+                ..Default::default()
             },
             Instant::now(),
         );
@@ -213,6 +215,7 @@ mod tests {
                 focused: true,
                 client: ClientKind::Mobile,
                 resync: false,
+                ..Default::default()
             },
             return_at,
         ));
@@ -295,12 +298,22 @@ mod tests {
         let mobile = presence.connect();
         let desktop = presence.connect();
         let t0 = Instant::now();
-        let mobile_ctx = |focused| ClientContext { focused, client: ClientKind::Mobile, resync: false };
+        let mobile_ctx = |focused| ClientContext {
+            focused,
+            client: ClientKind::Mobile,
+            resync: false,
+            ..Default::default()
+        };
         assert!(presence.record(mobile, mobile_ctx(true), t0));
         presence.record(mobile, mobile_ctx(false), t0 + Duration::from_secs(2));
         presence.record(
             desktop,
-            ClientContext { focused: true, client: ClientKind::Desktop, resync: false },
+            ClientContext {
+                focused: true,
+                client: ClientKind::Desktop,
+                resync: false,
+                ..Default::default()
+            },
             t0 + Duration::from_secs(3),
         );
         assert_eq!(

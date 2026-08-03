@@ -11,7 +11,10 @@ use tokio::sync::broadcast;
 
 use crate::docker::{AgentOperation, AgentStatus, BuildPhase, ListEntry};
 use crate::settings::ServiceEntry;
+use crate::device_registry::{DeviceInfo, DeviceRegistry};
 use crate::state::{SharedState, WS_KEEPALIVE_INTERVAL_SECS};
+use crate::time_utils::now_epoch_secs;
+use crate::types::ClientKind;
 
 use super::hub::UserNotification;
 use super::presence::PRESENCE_NOTIFY_DELAY;
@@ -67,6 +70,7 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
     // subscribe to the aggregate-focus watch before the snapshot so no flip is missed in the gap.
     let conn = state.presence.connect();
     let _presence_guard = PresenceGuard { presence: state.presence.clone(), conn };
+    let mut device_guard = DeviceGuard { registry: state.device_registry.clone(), device: None };
     let mut presence_rx = state.presence.subscribe_any_focused();
 
     // 1. hello: the served compatibility window (this gateway's version + the oldest client it accepts)
@@ -90,17 +94,19 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
     // User notifications are live-only (no snapshot backlog), so subscribing before the snapshot send
     // just avoids missing one that lands during setup; a broadcast receiver needs no borrow_and_update baseline.
     let mut user_notifications_rx = state.sync_hub.subscribe_user_notifications();
+    let mut devices_rx = state.device_registry.subscribe_devices();
     agents_rx.borrow_and_update();
     activity_rx.borrow_and_update();
     services_rx.borrow_and_update();
     invalidations_rx.borrow_and_update();
     notifications_rx.borrow_and_update();
+    devices_rx.borrow_and_update();
 
-    // 2. immediate snapshot: gateway + agents (info + pending sets), no tails.
+    // 2. immediate snapshot: gateway + agents (info + pending sets) + known devices, no tails.
     let mut last_roster = current_roster(&state);
     let mut last_gateway = build_gateway_info(&state).await;
     let mut last_pending = state.sync_hub.pending_all();
-    let tree = build_tree(&last_gateway, &last_roster, &last_pending);
+    let tree = build_tree(&last_gateway, &last_roster, &last_pending, state.device_registry.snapshot());
     if send_frame(&mut tx, &Frame::Snapshot { tree }).await.is_err() {
         return;
     }
@@ -128,6 +134,7 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
             r = invalidations_rx.changed() => { if r.is_err() { break } Wake::Roster }
             r = notifications_rx.changed() => { if r.is_err() { break } Wake::Notifications }
             r = presence_rx.changed() => { if r.is_err() { break } Wake::Presence }
+            r = devices_rx.changed() => { if r.is_err() { break } Wake::Devices }
             user_notification = user_notifications_rx.recv() => Wake::UserNotification(user_notification),
             client = rx.next() => Wake::Client(client),
             _ = keepalive.tick() => Wake::Keepalive,
@@ -159,6 +166,12 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
                     break;
                 }
             }
+            Wake::Devices => {
+                let devices = devices_rx.borrow_and_update().clone();
+                if send_frame(&mut tx, &Frame::Devices { devices }).await.is_err() {
+                    break;
+                }
+            }
             Wake::UserNotification(Ok(user_notification)) => {
                 let frame = Frame::UserNotification {
                     agent: user_notification.agent.clone(),
@@ -173,6 +186,9 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
             Wake::Client(Some(Ok(Message::Text(text)))) => {
                 match serde_json::from_str::<ClientFrame>(text.as_str()) {
                     Ok(ClientFrame::ClientContext(ctx)) => {
+                        if let Some(device_id) = ctx.device_id.clone() {
+                            device_guard.attach(&device_id, ctx.client, ctx.descriptor.clone());
+                        }
                         if state.presence.record(conn, ctx, tokio::time::Instant::now()) {
                             // Wait a settle window, then notify only if the return survived it: a
                             // return that unfocuses inside the window was only a glance, and its
@@ -231,6 +247,7 @@ enum Wake {
     Roster,
     Notifications,
     Presence,
+    Devices,
     UserNotification(Result<std::sync::Arc<UserNotification>, broadcast::error::RecvError>),
     Client(Option<Result<Message, axum::Error>>),
     Keepalive,
@@ -341,6 +358,36 @@ impl Drop for PresenceGuard {
     }
 }
 
+/// Tracks which device this `/sync` connection belongs to, feeding the registry's live-connection
+/// refcount: one `mark_connected` when the connection first reports a device id, `mark_disconnected`
+/// on drop (every break path, including the socket dying). A device id that changes mid-connection
+/// detaches the old device and attaches the new one.
+struct DeviceGuard {
+    registry: std::sync::Arc<DeviceRegistry>,
+    device: Option<String>,
+}
+
+impl DeviceGuard {
+    fn attach(&mut self, device_id: &str, kind: ClientKind, descriptor: Option<String>) {
+        if self.device.as_deref() == Some(device_id) {
+            return;
+        }
+        if let Some(previous) = self.device.take() {
+            self.registry.mark_disconnected(&previous, now_epoch_secs());
+        }
+        self.registry.mark_connected(device_id, kind, descriptor, now_epoch_secs());
+        self.device = Some(device_id.to_string());
+    }
+}
+
+impl Drop for DeviceGuard {
+    fn drop(&mut self) {
+        if let Some(device) = self.device.take() {
+            self.registry.mark_disconnected(&device, now_epoch_secs());
+        }
+    }
+}
+
 fn current_roster(state: &SharedState) -> BTreeMap<String, AgentInfo> {
     let cache = &state.agent_status_cache;
     build_roster(
@@ -444,6 +491,7 @@ fn build_tree(
     gateway: &GatewayInfo,
     roster: &BTreeMap<String, AgentInfo>,
     pending: &HashMap<String, Vec<serde_json::Value>>,
+    devices: Vec<DeviceInfo>,
 ) -> Tree {
     let agents = roster
         .iter()
@@ -452,7 +500,7 @@ fn build_tree(
             (name.clone(), AgentNode { info: info.clone(), notifications: NotificationsBranch { pending } })
         })
         .collect();
-    Tree { gateway: gateway.clone(), agents }
+    Tree { gateway: gateway.clone(), agents, devices }
 }
 
 async fn build_gateway_info(state: &SharedState) -> GatewayInfo {
