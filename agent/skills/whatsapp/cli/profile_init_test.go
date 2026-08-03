@@ -2,6 +2,8 @@ package main
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -161,6 +163,41 @@ func TestProvisionCommandConfiguresAlreadyLinkedWarmDaemon(t *testing.T) {
 	}
 	if state := wac.state.snapshot(); state.DirectURL != "https://wa.example" || state.DirectKey != "wak_secret" {
 		t.Fatalf("already-linked daemon lost direct credentials: %+v", state)
+	}
+}
+
+func TestProvisionCommandRecordsExplicitSourceOnResume(t *testing.T) {
+	wac := newLinkedTestClient(t)
+	if _, err := cmdProvisionManaged([]string{"--source", sourceVestaCloud}, wac); err != nil {
+		t.Fatal(err)
+	}
+	if got := wac.state.snapshot().AccountSource; got != sourceVestaCloud {
+		t.Fatalf("recorded source = %q, want %q", got, sourceVestaCloud)
+	}
+}
+
+func TestProvisionCommandRecordsExplicitSourceBeforeNetworkFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}))
+	t.Cleanup(server.Close)
+	wac := newLinkedTestClient(t)
+	wac.client.Store.ID = nil
+
+	_, err := cmdProvisionManaged([]string{
+		"--source", sourceDoubletick,
+		"--direct-url", server.URL,
+		"--direct-key", "wak_rejected",
+	}, wac)
+	if err == nil {
+		t.Fatal("rejected Double Tick credentials unexpectedly provisioned")
+	}
+	state := wac.state.snapshot()
+	if state.AccountSource != sourceDoubletick {
+		t.Fatalf("recorded source = %q, want %q", state.AccountSource, sourceDoubletick)
+	}
+	if state.DirectURL != "" || state.DirectKey != "" {
+		t.Fatalf("rejected credentials were persisted: %+v", state)
 	}
 }
 

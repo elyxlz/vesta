@@ -24,6 +24,9 @@ type daemonState struct {
 	MSISDN    string `json:"msisdn,omitempty"`
 	DirectURL string `json:"api_url,omitempty"`
 	DirectKey string `json:"api_key,omitempty"`
+	// AccountSource records the explicit connect choice so recovery notifications
+	// never infer cloud vs. Double Tick from an ambiguous mixed environment.
+	AccountSource string `json:"account_source,omitempty"`
 	// OnboardedMSISDN marks the number whose first-link profile and result finished.
 	// PendingLinkedOpener preserves first-link output across profile-init retries.
 	OnboardedMSISDN     string `json:"onboarded_msisdn,omitempty"`
@@ -133,6 +136,13 @@ func (s *stateStore) snapshot() daemonState {
 }
 
 func (s *stateStore) persistLocked() error { return atomicWriteJSON(s.path, s.st) }
+
+func (s *stateStore) recordAccountSource(source string) {
+	switch source {
+	case sourceVestaCloud, sourceDoubletick, sourceSelfManaged:
+		s.update(func(st *daemonState) { st.AccountSource = source })
+	}
+}
 
 // tryRecordPairAttempt checks the ban-avoidance rate limit and, when allowed,
 // records an attempt, atomically. For callers where initiating the flow IS the

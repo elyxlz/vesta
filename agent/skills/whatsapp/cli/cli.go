@@ -76,8 +76,12 @@ func extractSkipSenders() map[string]bool {
 // stateDataDir is the per-instance data directory under ~/.whatsapp (the bare
 // directory for the default instance, a named subdirectory otherwise).
 func stateDataDir() string {
+	return stateDataDirFor(extractInstance())
+}
+
+func stateDataDirFor(instance string) string {
 	base := filepath.Join(os.Getenv("HOME"), ".whatsapp")
-	if instance := extractInstance(); instance != "" {
+	if instance != "" {
 		return filepath.Join(base, instance)
 	}
 	return base
@@ -516,9 +520,13 @@ func cleanupRejectedPairing(cleanup func(), activePort, requestedPort int) {
 // rate-limit slot or serves a blank QR). One call is the whole flow: no start/status/stop
 // trio and no client-side poll loop.
 func cmdLink(args []string, wac *WhatsAppClient) (any, error) {
-	return linkViaQR("link", args, wac, func(port int) (linkResult, error) {
+	result, err := linkViaQR("link", args, wac, func(port int) (linkResult, error) {
 		return wac.currentLinker().linkQR(wac, port)
 	}, map[string]any{"status": string(AuthStatusAuthenticated)})
+	if err == nil {
+		wac.state.recordAccountSource(sourceSelfManaged)
+	}
+	return result, err
 }
 
 func cmdDaemonStatus(args []string, wac *WhatsAppClient) (any, error) {
@@ -1092,6 +1100,10 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Persist the explicit choice once its shape is valid, before network or pairing
+	// work begins. If that work logs the device out, recovery must retry the source
+	// the user selected rather than infer another one from a mixed environment.
+	wac.state.recordAccountSource(source)
 	finishedSource := false
 	finish := func(commit bool) {
 		if !finishedSource {
@@ -1315,6 +1327,7 @@ func cmdPairPhone(args []string, wac *WhatsAppClient) (any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate pairing code: %v", err)
 	}
+	wac.state.recordAccountSource(sourceSelfManaged)
 	wac.markPhonePairingPending(time.Now())
 	return map[string]any{
 		"pairing_code": code,
