@@ -131,7 +131,7 @@ mod tests {
     use tokio::time::Instant;
 
     fn ctx(focused: bool) -> ClientContext {
-        ClientContext { focused, client: ClientKind::Web, resync: false }
+        ClientContext { focused, client: ClientKind::Web, resync: false, ..Default::default() }
     }
 
     #[test]
@@ -146,6 +146,7 @@ mod tests {
                 focused: true,
                 client: ClientKind::Desktop,
                 resync: true,
+                ..Default::default()
             },
             Instant::now(),
         );
@@ -196,6 +197,7 @@ mod tests {
                     focused: true,
                     client: ClientKind::Mobile,
                     resync: false,
+                    ..Default::default()
                 },
                 t0 + Duration::from_secs(180) + PRESENCE_NOTIFY_DEBOUNCE,
             ),

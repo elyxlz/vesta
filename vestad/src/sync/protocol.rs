@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::device_registry::DeviceInfo;
 use crate::docker::{AgentOperation, AgentStatus, BuildPhase};
 use crate::types::ClientKind;
 
@@ -66,6 +67,8 @@ pub(crate) struct NotificationsBranch {
 pub(crate) struct Tree {
     pub gateway: GatewayInfo,
     pub agents: BTreeMap<String, AgentNode>,
+    #[serde(default)]
+    pub devices: Vec<DeviceInfo>,
 }
 
 /// The `state` delta's scope: the gateway branch is the only one, replaced whole.
@@ -89,6 +92,7 @@ pub(crate) enum Frame {
     Notifications { agent: String, pending: Vec<serde_json::Value> },
     UserNotification { agent: String, kind: String, title: String, body: String },
     Presence { any_focused: bool },
+    Devices { devices: Vec<DeviceInfo> },
 }
 
 impl Frame {
@@ -119,6 +123,13 @@ pub(crate) struct ClientContext {
     pub client: ClientKind,
     #[serde(default)]
     pub resync: bool,
+    /// The client-minted installation id identifying the device across reconnects. Absent from
+    /// older clients, which are simply not tracked in the device registry.
+    #[serde(default)]
+    pub device_id: Option<String>,
+    /// A human label the client composes for itself, e.g. "Chrome on macOS".
+    #[serde(default)]
+    pub descriptor: Option<String>,
 }
 
 /// Build one representative of every `/sync` frame through the real serde path, for the contract
@@ -157,7 +168,15 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
         "sample-agent".to_string(),
         AgentNode { info: info.clone(), notifications: NotificationsBranch { pending: vec![notification.clone()] } },
     );
-    let tree = Tree { gateway: gateway.clone(), agents };
+    let devices = vec![DeviceInfo {
+        id: "device-1".into(),
+        kind: ClientKind::Desktop,
+        descriptor: Some("Vesta Desktop on macOS".into()),
+        present: true,
+        last_seen: "2026-01-01T00:00:00Z".into(),
+        push_enabled: false,
+    }];
+    let tree = Tree { gateway: gateway.clone(), agents, devices: devices.clone() };
 
     serde_json::json!({
         "hello": to_value(Frame::Hello {
@@ -174,6 +193,7 @@ pub(crate) fn protocol_fixtures() -> serde_json::Value {
                 agent: "sample-agent".into(), kind: "message".into(), title: "sample-agent".into(), body: "hello".into(),
             }).expect("serialize user_notification"),
             "presence": to_value(Frame::Presence { any_focused: true }).expect("serialize presence"),
+            "devices": to_value(Frame::Devices { devices }).expect("serialize devices"),
         }
     })
 }
@@ -240,7 +260,7 @@ mod tests {
     fn every_frame_variant_uses_its_wire_tag() {
         let cases = [
             (Frame::Hello { version: "0.1.0".into(), min_supported: "0.0.0".into() }, "hello"),
-            (Frame::Snapshot { tree: Tree { gateway: sample_gateway(), agents: Default::default() } }, "snapshot"),
+            (Frame::Snapshot { tree: Tree { gateway: sample_gateway(), agents: Default::default(), devices: Default::default() } }, "snapshot"),
             (Frame::State { scope: GatewayScope::Gateway, value: sample_gateway() }, "state"),
             (Frame::Agent { name: "scout".into(), info: sample_agent_info() }, "agent"),
             (Frame::AgentRemoved { name: "scout".into() }, "agent_removed"),
@@ -285,6 +305,7 @@ mod tests {
                 focused: true,
                 client: ClientKind::Desktop,
                 resync: false,
+                ..Default::default()
             })
         );
         // A shipped client still sends the retired `active_agent`; unknown fields are ignored by
@@ -298,6 +319,7 @@ mod tests {
                 focused: true,
                 client: ClientKind::Unknown,
                 resync: false,
+                ..Default::default()
             })
         );
         let resync: ClientFrame = serde_json::from_str(
@@ -310,6 +332,7 @@ mod tests {
                 focused: false,
                 client: ClientKind::Unknown,
                 resync: true,
+                ..Default::default()
             })
         );
     }

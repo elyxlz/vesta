@@ -3234,6 +3234,10 @@ pub async fn run_server(cfg: ServerConfig) {
         },
     );
     let state = Arc::new(app_state);
+    // The device registry persists on a background flush task: every mutation (a /sync connect or a
+    // mobile push registration) marks it dirty and this task writes devices.json off the hot path.
+    let flush_registry = state.device_registry.clone();
+    tokio::spawn(async move { flush_registry.run_flusher().await });
     // Mobile delivery is a background worker: losing it costs TestFlight builds, not serving. A
     // supervisor reports its exit so run_server's select never waits on it, because a branch that
     // resolved would end the select and stop the shutdown handler from stopping the agents.

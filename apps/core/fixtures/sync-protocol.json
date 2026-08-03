@@ -21,6 +21,19 @@
       "name": "stopped-agent",
       "type": "agent_removed"
     },
+    "devices": {
+      "devices": [
+        {
+          "descriptor": "Vesta Desktop on macOS",
+          "id": "device-1",
+          "kind": "desktop",
+          "lastSeen": "2026-01-01T00:00:00Z",
+          "present": true,
+          "pushEnabled": false
+        }
+      ],
+      "type": "devices"
+    },
     "notifications": {
       "agent": "sample-agent",
       "pending": [
@@ -99,6 +112,16 @@
           }
         }
       },
+      "devices": [
+        {
+          "descriptor": "Vesta Desktop on macOS",
+          "id": "device-1",
+          "kind": "desktop",
+          "lastSeen": "2026-01-01T00:00:00Z",
+          "present": true,
+          "pushEnabled": false
+        }
+      ],
       "gateway": {
         "autoUpdate": true,
         "channel": "stable",
