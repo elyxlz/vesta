@@ -2180,30 +2180,27 @@ fn gateway_settings_json(settings: &Settings, channel: &str) -> serde_json::Valu
         "channel": channel,
         "auto_backup": {
             "enabled": settings.backup.enabled,
-            "hour": settings.backup.hour,
+            "every_n_days": settings.backup.every_n_days,
             "retention": settings.backup.retention,
         },
     })
 }
 
-/// Apply a sparse backup update in place. Validation (retention floor, hour range)
+/// Apply a sparse backup update in place. Validation (retention floor, cadence range)
 /// runs in the handler before this is called.
 fn apply_backup_update(backup: &mut BackupGlobalSettings, body: &SetBackupSettingsBody) {
     if let Some(enabled) = body.enabled {
         backup.enabled = enabled;
     }
-    if let Some(hour) = body.hour {
-        backup.hour = hour;
+    if let Some(days) = body.every_n_days {
+        backup.every_n_days = days;
     }
     if let Some(ref ret) = body.retention {
-        if let Some(d) = ret.daily {
-            backup.retention.daily = d;
+        if let Some(p) = ret.periodic {
+            backup.retention.periodic = p;
         }
-        if let Some(w) = ret.weekly {
-            backup.retention.weekly = w;
-        }
-        if let Some(m) = ret.monthly {
-            backup.retention.monthly = m;
+        if let Some(v) = ret.pre_update_versions {
+            backup.retention.pre_update_versions = v;
         }
     }
 }
@@ -2222,15 +2219,14 @@ fn agent_backup_json(
 #[derive(Deserialize)]
 struct SetBackupSettingsBody {
     enabled: Option<bool>,
-    hour: Option<u8>,
+    every_n_days: Option<u8>,
     retention: Option<RetentionUpdate>,
 }
 
 #[derive(Deserialize)]
 struct RetentionUpdate {
-    daily: Option<usize>,
-    weekly: Option<usize>,
-    monthly: Option<usize>,
+    periodic: Option<usize>,
+    pre_update_versions: Option<usize>,
 }
 
 const MIN_RETENTION: usize = 1;
@@ -2239,9 +2235,8 @@ fn validate_retention(
     update: &RetentionUpdate,
 ) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
     for (name, val) in [
-        ("daily", update.daily),
-        ("weekly", update.weekly),
-        ("monthly", update.monthly),
+        ("periodic", update.periodic),
+        ("pre_update_versions", update.pre_update_versions),
     ] {
         if let Some(v) = val {
             if v < MIN_RETENTION {
@@ -2278,9 +2273,9 @@ async fn put_gateway_settings_handler(
         if let Some(ref ret) = backup.retention {
             validate_retention(ret)?;
         }
-        if let Some(hour) = backup.hour {
-            if hour > 23 {
-                return Err(err_response(StatusCode::BAD_REQUEST, "hour must be 0-23"));
+        if let Some(days) = backup.every_n_days {
+            if !(1..=30).contains(&days) {
+                return Err(err_response(StatusCode::BAD_REQUEST, "every_n_days must be 1-30"));
             }
         }
     }
@@ -2392,14 +2387,11 @@ async fn set_agent_backup_settings_handler(
     }
     if let Some(ret) = body.retention {
         let mut r = entry.retention.unwrap_or(global_retention);
-        if let Some(d) = ret.daily {
-            r.daily = d;
+        if let Some(p) = ret.periodic {
+            r.periodic = p;
         }
-        if let Some(w) = ret.weekly {
-            r.weekly = w;
-        }
-        if let Some(m) = ret.monthly {
-            r.monthly = m;
+        if let Some(v) = ret.pre_update_versions {
+            r.pre_update_versions = v;
         }
         entry.retention = Some(r);
     }
@@ -2927,21 +2919,6 @@ fn spawn_auto_backup_task(state: SharedState) {
                 continue;
             }
 
-            // Fire on or after the configured local hour rather than only during that exact hour,
-            // then let the per-type dedup below make the work idempotent (one daily per local day,
-            // etc.). This way a spring-forward DST jump that skips the target hour still triggers a
-            // backup on the next cycle, and a daemon that was down through the hour catches up.
-            let target_hour = backup_settings.hour;
-            let current_hour = crate::time_utils::local_hour();
-            if current_hour < target_hour {
-                tracing::debug!(
-                    current_hour,
-                    target_hour,
-                    "auto-backup: before daily window, skipping"
-                );
-                continue;
-            }
-
             let agents = backup::list_agent_names(&state.docker).await;
 
             if agents.is_empty() {
@@ -2952,10 +2929,9 @@ fn spawn_auto_backup_task(state: SharedState) {
             tracing::info!(agent_count = agents.len(), "auto-backup: starting cycle");
 
             let now_epoch = crate::time_utils::now_epoch_secs();
-            let today_local = crate::time_utils::local_date_of_epoch(now_epoch);
-            let seven_days_ago = crate::time_utils::now_timestamp_from_epoch(now_epoch - 7 * 86400);
-            let thirty_days_ago =
-                crate::time_utils::now_timestamp_from_epoch(now_epoch - 30 * 86400);
+            let stale_before = crate::time_utils::now_timestamp_from_epoch(
+                now_epoch - u64::from(backup_settings.every_n_days) * 86400,
+            );
 
             for name in &agents {
                 // Resolve per-agent settings (override or global fallback)
@@ -2984,34 +2960,11 @@ fn spawn_auto_backup_task(state: SharedState) {
                     }
                 };
 
-                let mut needed = Vec::new();
-
-                let has_daily_today = backups.iter().any(|b| {
-                    b.backup_type == crate::types::BackupType::Daily
-                        && crate::time_utils::parse_compact_utc_epoch(&b.created_at)
-                            .map(crate::time_utils::local_date_of_epoch)
-                            .as_deref()
-                            == Some(today_local.as_str())
+                let has_recent_auto = backups.iter().any(|b| {
+                    matches!(b.backup_type, crate::types::BackupType::Periodic | crate::types::BackupType::PreUpdate)
+                        && b.created_at >= stale_before
                 });
-                if !has_daily_today {
-                    needed.push(crate::types::BackupType::Daily);
-                }
-
-                let has_recent_weekly = backups.iter().any(|b| {
-                    b.backup_type == crate::types::BackupType::Weekly
-                        && b.created_at >= seven_days_ago
-                });
-                if !has_recent_weekly {
-                    needed.push(crate::types::BackupType::Weekly);
-                }
-
-                let has_recent_monthly = backups.iter().any(|b| {
-                    b.backup_type == crate::types::BackupType::Monthly
-                        && b.created_at >= thirty_days_ago
-                });
-                if !has_recent_monthly {
-                    needed.push(crate::types::BackupType::Monthly);
-                }
+                let needed = if has_recent_auto { Vec::new() } else { vec![crate::types::BackupType::Periodic] };
 
                 if !needed.is_empty() {
                     let _file_lock = match backup::agent_file_lock(name) {
@@ -3854,9 +3807,8 @@ mod tests {
 
         let backups: Vec<serde_json::Value> = [
             BackupType::Manual,
-            BackupType::Daily,
-            BackupType::Weekly,
-            BackupType::Monthly,
+            BackupType::Periodic,
+            BackupType::PreUpdate,
             BackupType::PreRestore,
         ]
         .into_iter()
@@ -3867,6 +3819,7 @@ mod tests {
                 backup_type,
                 created_at: "2026-01-01T00:00:00Z".into(),
                 size: 1234567890,
+                from_version: None,
             })
             .expect("serialize BackupInfo")
         })
@@ -4058,7 +4011,7 @@ mod tests {
 #[cfg(test)]
 mod gateway_settings_tests {
     use super::*;
-    use crate::settings::{default_retention, DEFAULT_AUTO_BACKUP_HOUR};
+    use crate::settings::{default_retention, DEFAULT_EVERY_N_DAYS};
 
     #[test]
     fn settings_json_has_unified_shape() {
@@ -4068,39 +4021,38 @@ mod gateway_settings_tests {
         assert_eq!(value["channel"], serde_json::json!("beta"));
         assert_eq!(value["auto_backup"]["enabled"], serde_json::json!(true));
         assert_eq!(
-            value["auto_backup"]["hour"],
-            serde_json::json!(DEFAULT_AUTO_BACKUP_HOUR)
+            value["auto_backup"]["every_n_days"],
+            serde_json::json!(DEFAULT_EVERY_N_DAYS)
         );
         assert_eq!(
-            value["auto_backup"]["retention"]["daily"],
-            serde_json::json!(backup::DEFAULT_RETENTION_DAILY)
+            value["auto_backup"]["retention"]["periodic"],
+            serde_json::json!(backup::DEFAULT_RETENTION_PERIODIC)
         );
     }
 
     #[test]
     fn backup_update_applies_only_present_fields() {
         let mut backup = BackupGlobalSettings::default();
-        let original_hour = backup.hour;
+        let original_every_n_days = backup.every_n_days;
         let body = SetBackupSettingsBody {
             enabled: Some(false),
-            hour: None,
+            every_n_days: None,
             retention: Some(RetentionUpdate {
-                daily: Some(9),
-                weekly: None,
-                monthly: None,
+                periodic: Some(9),
+                pre_update_versions: None,
             }),
         };
         apply_backup_update(&mut backup, &body);
         assert!(!backup.enabled, "enabled should be updated");
         assert_eq!(
-            backup.hour, original_hour,
-            "hour absent in body must be unchanged"
+            backup.every_n_days, original_every_n_days,
+            "every_n_days absent in body must be unchanged"
         );
-        assert_eq!(backup.retention.daily, 9, "daily should be updated");
+        assert_eq!(backup.retention.periodic, 9, "periodic should be updated");
         assert_eq!(
-            backup.retention.weekly,
-            default_retention().weekly,
-            "weekly absent must be unchanged"
+            backup.retention.pre_update_versions,
+            default_retention().pre_update_versions,
+            "pre_update_versions absent must be unchanged"
         );
     }
 

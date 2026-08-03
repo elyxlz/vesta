@@ -10,9 +10,8 @@ use crate::docker::{
 };
 use crate::types::{BackupInfo, BackupType, RetentionPolicy};
 
-pub const DEFAULT_RETENTION_DAILY: usize = 3;
-pub const DEFAULT_RETENTION_WEEKLY: usize = 2;
-pub const DEFAULT_RETENTION_MONTHLY: usize = 1;
+pub const DEFAULT_RETENTION_PERIODIC: usize = 2;
+pub const DEFAULT_RETENTION_PRE_UPDATE_VERSIONS: usize = 2;
 const MIN_DISK_SPACE_BYTES: u64 = 1_000_000_000; // 1 GB
 const DISK_SPACE_MARGIN_BYTES: u64 = 500_000_000; // 500 MB margin above container size
 pub const BACKUP_STOP_TIMEOUT_SECS: i32 = 30;
@@ -133,9 +132,7 @@ fn backup_resume_reason(
     match backup_type {
         BackupType::Manual => &crate::lifecycle::MANUAL_BACKUP,
         BackupType::PreRestore => &crate::lifecycle::PRE_RESTORE_BACKUP,
-        BackupType::Daily | BackupType::Weekly | BackupType::Monthly => {
-            &crate::lifecycle::SCHEDULED_BACKUP
-        }
+        BackupType::Periodic | BackupType::PreUpdate => &crate::lifecycle::SCHEDULED_BACKUP,
     }
 }
 
@@ -366,18 +363,30 @@ pub fn compute_backups_to_delete(
 ) -> Vec<String> {
     let mut to_delete = Vec::new();
 
-    for (backup_type, keep) in [
-        (BackupType::Daily, retention.daily),
-        (BackupType::Weekly, retention.weekly),
-        (BackupType::Monthly, retention.monthly),
-    ] {
-        let mut typed: Vec<&BackupInfo> = backups
-            .iter()
-            .filter(|b| b.backup_type == backup_type)
-            .collect();
-        typed.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-        for excess in typed.into_iter().skip(keep) {
-            to_delete.push(excess.id.clone());
+    let mut periodic: Vec<&BackupInfo> = backups
+        .iter()
+        .filter(|b| b.backup_type == BackupType::Periodic)
+        .collect();
+    periodic.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    to_delete.extend(periodic.into_iter().skip(retention.periodic).map(|b| b.id.clone()));
+
+    // Pre-update snapshots are retained as whole version sets: the newest
+    // `pre_update_versions` distinct from-versions survive, older versions go.
+    let mut pre_update: Vec<&BackupInfo> = backups
+        .iter()
+        .filter(|b| b.backup_type == BackupType::PreUpdate)
+        .collect();
+    pre_update.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    let mut kept_versions: Vec<String> = Vec::new();
+    for info in pre_update {
+        let version = info.from_version.clone().unwrap_or_default();
+        if kept_versions.contains(&version) {
+            continue;
+        }
+        if kept_versions.len() < retention.pre_update_versions {
+            kept_versions.push(version);
+        } else {
+            to_delete.push(info.id.clone());
         }
     }
 
@@ -447,11 +456,7 @@ mod tests {
 
     // ── Retention policy tests ────────────────────────────────────
 
-    const DEFAULT_RETENTION: RetentionPolicy = RetentionPolicy {
-        daily: DEFAULT_RETENTION_DAILY,
-        weekly: DEFAULT_RETENTION_WEEKLY,
-        monthly: DEFAULT_RETENTION_MONTHLY,
-    };
+    const DEFAULT_RETENTION: RetentionPolicy = RetentionPolicy { periodic: 2, pre_update_versions: 2 };
 
     fn make_backup(agent: &str, bt: BackupType, ts: &str) -> BackupInfo {
         BackupInfo {
@@ -460,80 +465,36 @@ mod tests {
             backup_type: bt,
             created_at: ts.to_string(),
             size: 1000,
+            from_version: None,
         }
     }
 
-    #[test]
-    fn retention_empty_list() {
-        let to_delete = compute_backups_to_delete(&[], &DEFAULT_RETENTION);
-        assert!(to_delete.is_empty());
+    fn make_pre_update(agent: &str, version: &str, ts: &str) -> BackupInfo {
+        BackupInfo { from_version: Some(version.to_string()), ..make_backup(agent, BackupType::PreUpdate, ts) }
     }
 
     #[test]
-    fn retention_under_limit() {
+    fn retention_keeps_newest_periodic() {
         let backups = vec![
-            make_backup("a", BackupType::Daily, "20260401-120000"),
-            make_backup("a", BackupType::Daily, "20260402-120000"),
+            make_backup("a", BackupType::Periodic, "20260401-120000"),
+            make_backup("a", BackupType::Periodic, "20260404-120000"),
+            make_backup("a", BackupType::Periodic, "20260407-120000"),
         ];
         let to_delete = compute_backups_to_delete(&backups, &DEFAULT_RETENTION);
-        assert!(to_delete.is_empty());
+        assert_eq!(to_delete, vec![backups[0].id.clone()]);
     }
 
     #[test]
-    fn retention_daily_over_limit() {
+    fn retention_keeps_newest_distinct_pre_update_versions() {
         let backups = vec![
-            make_backup("a", BackupType::Daily, "20260401-120000"),
-            make_backup("a", BackupType::Daily, "20260402-120000"),
-            make_backup("a", BackupType::Daily, "20260403-120000"),
-            make_backup("a", BackupType::Daily, "20260404-120000"),
-            make_backup("a", BackupType::Daily, "20260405-120000"),
+            make_pre_update("a", "v0.1.180", "20260401-120000"),
+            make_pre_update("a", "v0.1.181", "20260404-120000"),
+            make_pre_update("a", "v0.1.182", "20260407-120000"),
+            // A second snapshot of a kept version stays (same set).
+            make_pre_update("a", "v0.1.182", "20260407-130000"),
         ];
         let to_delete = compute_backups_to_delete(&backups, &DEFAULT_RETENTION);
-        assert_eq!(to_delete.len(), 2);
-        // Oldest two should be deleted
-        assert!(to_delete.contains(&make_backup("a", BackupType::Daily, "20260401-120000").id));
-        assert!(to_delete.contains(&make_backup("a", BackupType::Daily, "20260402-120000").id));
-    }
-
-    #[test]
-    fn retention_weekly_over_limit() {
-        let backups = vec![
-            make_backup("a", BackupType::Weekly, "20260301-120000"),
-            make_backup("a", BackupType::Weekly, "20260308-120000"),
-            make_backup("a", BackupType::Weekly, "20260315-120000"),
-            make_backup("a", BackupType::Weekly, "20260322-120000"),
-        ];
-        let to_delete = compute_backups_to_delete(&backups, &DEFAULT_RETENTION);
-        assert_eq!(to_delete.len(), 2);
-        assert!(to_delete.contains(&make_backup("a", BackupType::Weekly, "20260301-120000").id));
-        assert!(to_delete.contains(&make_backup("a", BackupType::Weekly, "20260308-120000").id));
-    }
-
-    #[test]
-    fn retention_monthly_over_limit() {
-        let backups = vec![
-            make_backup("a", BackupType::Monthly, "20260101-120000"),
-            make_backup("a", BackupType::Monthly, "20260201-120000"),
-            make_backup("a", BackupType::Monthly, "20260301-120000"),
-        ];
-        let to_delete = compute_backups_to_delete(&backups, &DEFAULT_RETENTION);
-        assert_eq!(to_delete.len(), 2);
-    }
-
-    #[test]
-    fn retention_mixed_types() {
-        let backups = vec![
-            make_backup("a", BackupType::Daily, "20260401-120000"),
-            make_backup("a", BackupType::Daily, "20260402-120000"),
-            make_backup("a", BackupType::Daily, "20260403-120000"),
-            make_backup("a", BackupType::Weekly, "20260322-120000"),
-            make_backup("a", BackupType::Weekly, "20260329-120000"),
-            make_backup("a", BackupType::Monthly, "20260301-120000"),
-            make_backup("a", BackupType::Manual, "20260404-120000"),
-        ];
-        let to_delete = compute_backups_to_delete(&backups, &DEFAULT_RETENTION);
-        // 3 daily (keep all), 2 weekly (keep all), 1 monthly (keep all), manual not touched
-        assert!(to_delete.is_empty());
+        assert_eq!(to_delete, vec![backups[0].id.clone()]);
     }
 
     #[test]
@@ -542,11 +503,15 @@ mod tests {
             make_backup("a", BackupType::Manual, "20260401-120000"),
             make_backup("a", BackupType::Manual, "20260402-120000"),
             make_backup("a", BackupType::Manual, "20260403-120000"),
-            make_backup("a", BackupType::Manual, "20260404-120000"),
             make_backup("a", BackupType::PreRestore, "20260401-120000"),
             make_backup("a", BackupType::PreRestore, "20260402-120000"),
+            make_backup("a", BackupType::PreRestore, "20260403-120000"),
         ];
-        let to_delete = compute_backups_to_delete(&backups, &DEFAULT_RETENTION);
-        assert!(to_delete.is_empty());
+        assert!(compute_backups_to_delete(&backups, &DEFAULT_RETENTION).is_empty());
+    }
+
+    #[test]
+    fn retention_empty_list() {
+        assert!(compute_backups_to_delete(&[], &DEFAULT_RETENTION).is_empty());
     }
 }

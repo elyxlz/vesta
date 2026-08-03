@@ -386,6 +386,7 @@ pub async fn snapshot(name: &str, backup_type: &BackupType) -> Result<BackupInfo
         backup_type,
         created_at: crate::time_utils::now_timestamp(),
         size: summary.total_bytes_processed,
+        from_version: None,
     })
 }
 
@@ -452,12 +453,14 @@ fn snapshot_to_info(snap: ResticSnapshot) -> Option<BackupInfo> {
     let agent_name = tag_value(&snap.tags, "agent:")?.to_string();
     let backup_type = tag_value(&snap.tags, "type:")?.parse::<BackupType>().ok()?;
     let created_at = format_restic_time(&snap.time)?;
+    let from_version = tag_value(&snap.tags, "from-version:").map(str::to_string);
     Some(BackupInfo {
         id: snap.short_id,
         agent_name,
         backup_type,
         created_at,
         size: snap.summary.map_or(0, |s| s.total_bytes_processed),
+        from_version,
     })
 }
 
@@ -785,9 +788,11 @@ mod tests {
         let info = snapshot_to_info(snap).unwrap();
         assert_eq!(info.id, "abc12345");
         assert_eq!(info.agent_name, "okami");
-        assert_eq!(info.backup_type, BackupType::Daily);
+        // Legacy tier tags parse as periodic so old snapshots keep listing.
+        assert_eq!(info.backup_type, BackupType::Periodic);
         assert_eq!(info.created_at, "20260529-040001");
         assert_eq!(info.size, 4242);
+        assert_eq!(info.from_version, None);
 
         let untagged = ResticSnapshot {
             short_id: "abc12345".into(),

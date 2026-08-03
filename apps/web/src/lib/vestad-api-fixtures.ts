@@ -46,21 +46,14 @@ export const vestadApiFixtures = {
     },
     {
       "agent_name": "sample-agent",
-      "backup_type": "daily",
+      "backup_type": "periodic",
       "created_at": "2026-01-01T00:00:00Z",
       "id": "1a2b3c4d",
       "size": 1234567890
     },
     {
       "agent_name": "sample-agent",
-      "backup_type": "weekly",
-      "created_at": "2026-01-01T00:00:00Z",
-      "id": "1a2b3c4d",
-      "size": 1234567890
-    },
-    {
-      "agent_name": "sample-agent",
-      "backup_type": "monthly",
+      "backup_type": "pre_update",
       "created_at": "2026-01-01T00:00:00Z",
       "id": "1a2b3c4d",
       "size": 1234567890
