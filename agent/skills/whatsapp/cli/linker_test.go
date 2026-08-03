@@ -91,16 +91,37 @@ func TestDoubletickProvisionSwitchesAWarmDaemon(t *testing.T) {
 		managed: newManagedAuth(managedConfig{}),
 	}
 
-	selected, restore, err := wac.provisionLinker(sourceDoubletick, "https://wa.example", "wak_secret")
+	selected, finish, err := wac.provisionLinker(sourceDoubletick, "https://wa.example", "wak_secret")
 	if err != nil {
 		t.Fatal(err)
 	}
-	restore()
+	finish(true)
 	if selected.name() != "headless" || !wac.isManaged() || !wac.managed.isDirect() {
 		t.Fatalf("warm daemon did not switch to Double Tick: linker=%q managed=%v", selected.name(), wac.isManaged())
 	}
 	if state := store.snapshot(); state.DirectURL != "https://wa.example" || state.DirectKey != "wak_secret" {
 		t.Fatalf("direct credentials were not persisted: %+v", state)
+	}
+}
+
+func TestDoubletickProvisionDoesNotInstallFailedCredentials(t *testing.T) {
+	store := newStateStore(t.TempDir())
+	wac := &WhatsAppClient{
+		state:   store,
+		linker:  qrLinker{},
+		managed: newManagedAuth(managedConfig{}),
+	}
+
+	_, finish, err := wac.provisionLinker(sourceDoubletick, "https://bad.example", "wak_bad")
+	if err != nil {
+		t.Fatal(err)
+	}
+	finish(false)
+	if wac.isManaged() || wac.currentManaged().isDirect() {
+		t.Fatal("failed credentials replaced the daemon's working configuration")
+	}
+	if state := store.snapshot(); state.DirectURL != "" || state.DirectKey != "" {
+		t.Fatalf("failed credentials were persisted: %+v", state)
 	}
 }
 

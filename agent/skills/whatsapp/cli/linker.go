@@ -76,31 +76,52 @@ func cloudSourceAuth(source string) *managedAuth {
 	return newManagedAuth(cfg)
 }
 
+// currentLinker and currentManaged read the live source as one synchronized pair.
+func (wac *WhatsAppClient) currentLinker() linker {
+	wac.linkerMu.RLock()
+	defer wac.linkerMu.RUnlock()
+	return wac.linker
+}
+
+func (wac *WhatsAppClient) currentManaged() *managedAuth {
+	wac.linkerMu.RLock()
+	defer wac.linkerMu.RUnlock()
+	return wac.managed
+}
+
+func (wac *WhatsAppClient) installManagedLinker(auth *managedAuth, selected linker) {
+	wac.linkerMu.Lock()
+	defer wac.linkerMu.Unlock()
+	wac.managed, wac.linker = auth, selected
+}
+
 // provisionLinker makes the explicit connect source authoritative inside an
-// already-running daemon. Cloud temporarily pins server-token auth for this one
-// pairing. Double Tick installs the direct credentials carried over the private
-// Unix socket and switches the daemon's data path permanently, since it may have
-// booted before those credentials existed.
-func (wac *WhatsAppClient) provisionLinker(source, directURL, directKey string) (linker, func(), error) {
+// already-running daemon. Cloud pins server-token auth to this pairing operation.
+// Double Tick is installed as the durable data path only when finish(true) is
+// called after a successful pair, so invalid credentials cannot replace a known
+// good daemon configuration.
+func (wac *WhatsAppClient) provisionLinker(source, directURL, directKey string) (linker, func(bool), error) {
 	switch source {
 	case sourceVestaCloud:
 		auth := cloudSourceAuth(source)
-		saved := wac.managed
-		wac.managed = auth
-		return &managedLinker{auth: auth, state: wac.state}, func() { wac.managed = saved }, nil
+		return &managedLinker{auth: auth, state: wac.state}, func(bool) {}, nil
 	case sourceDoubletick:
 		if directURL == "" || directKey == "" {
-			return nil, func() {}, fmt.Errorf("doubletick provision needs the direct API URL and key from the connect command")
+			return nil, func(bool) {}, fmt.Errorf("doubletick provision needs the direct API URL and key from the connect command")
 		}
 		cfg := loadManagedConfig()
 		cfg.directURL, cfg.directKey, cfg.configError = directURL, directKey, ""
 		auth := newManagedAuth(cfg)
 		selected := &managedLinker{auth: auth, state: wac.state}
-		wac.state.update(func(s *daemonState) { s.DirectURL, s.DirectKey = directURL, directKey })
-		wac.managed, wac.linker = auth, selected
-		return selected, func() {}, nil
+		return selected, func(commit bool) {
+			if !commit {
+				return
+			}
+			wac.state.update(func(s *daemonState) { s.DirectURL, s.DirectKey = directURL, directKey })
+			wac.installManagedLinker(auth, selected)
+		}, nil
 	default:
-		return wac.linker, func() {}, nil
+		return wac.currentLinker(), func(bool) {}, nil
 	}
 }
 
@@ -157,7 +178,7 @@ func (l *managedLinker) provision(wac *WhatsAppClient) (linkResult, error) {
 
 	// Route the cloud companion through the residential proxy before the pairing WS
 	// comes up, so it never pairs from the datacenter IP. Fails closed.
-	if err := wac.ensureManagedProxy(); err != nil {
+	if err := wac.ensureManagedProxyFor(l.auth); err != nil {
 		return linkResult{}, err
 	}
 

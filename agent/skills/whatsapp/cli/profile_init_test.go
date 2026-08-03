@@ -143,6 +143,27 @@ func TestProvisionCommandRetriesPendingLinkedResult(t *testing.T) {
 	}
 }
 
+func TestProvisionCommandConfiguresAlreadyLinkedWarmDaemon(t *testing.T) {
+	wac := newLinkedTestClient(t)
+	wac.linker = qrLinker{}
+	wac.managed = newManagedAuth(managedConfig{})
+
+	_, err := cmdProvisionManaged([]string{
+		"--source", sourceDoubletick,
+		"--direct-url", "https://wa.example",
+		"--direct-key", "wak_secret",
+	}, wac)
+	if err != nil {
+		t.Fatalf("configure already-linked daemon: %v", err)
+	}
+	if !wac.isManaged() || !wac.currentManaged().isDirect() {
+		t.Fatal("already-linked warm daemon did not install Double Tick mode")
+	}
+	if state := wac.state.snapshot(); state.DirectURL != "https://wa.example" || state.DirectKey != "wak_secret" {
+		t.Fatalf("already-linked daemon lost direct credentials: %+v", state)
+	}
+}
+
 func TestFreshPhotoWipeStateRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	store := newStateStore(dir)

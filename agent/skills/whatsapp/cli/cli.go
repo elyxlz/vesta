@@ -517,7 +517,7 @@ func cleanupRejectedPairing(cleanup func(), activePort, requestedPort int) {
 // trio and no client-side poll loop.
 func cmdLink(args []string, wac *WhatsAppClient) (any, error) {
 	return linkViaQR("link", args, wac, func(port int) (linkResult, error) {
-		return wac.linker.linkQR(wac, port)
+		return wac.currentLinker().linkQR(wac, port)
 	}, map[string]any{"status": string(AuthStatusAuthenticated)})
 }
 
@@ -1088,7 +1088,23 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 	if err := parseFlags(fs, args); err != nil {
 		return nil, err
 	}
+	pairLinker, finishSource, err := wac.provisionLinker(source, directURL, directKey)
+	if err != nil {
+		return nil, err
+	}
+	finishedSource := false
+	finish := func(commit bool) {
+		if !finishedSource {
+			finishSource(commit)
+			finishedSource = true
+		}
+	}
+	defer finish(false)
 	if wac.client.Store.ID != nil {
+		// Configuration is useful even when no pairing is needed. In particular, a
+		// warm self-managed daemon may already hold the device produced by an earlier
+		// Double Tick connect but still need its managed data path installed.
+		finish(true)
 		// Already linked. If a takeover parked it, an explicit connect means
 		// "reclaim the session": clear the park and reconnect (a plain send never
 		// does this, so it can't ping-pong). If the other holder is still live it
@@ -1135,11 +1151,6 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 	// Honor the agent's explicit source over the daemon's boot-time linker. This
 	// switches a pre-credential daemon into Double Tick mode, or temporarily pins
 	// Vesta Cloud token auth when both credential sources exist.
-	pairLinker, restoreAuth, err := wac.provisionLinker(source, directURL, directKey)
-	if err != nil {
-		return nil, err
-	}
-	defer restoreAuth()
 	res, err := pairLinker.provision(wac)
 	if err != nil {
 		// A still-filling pool and a banned number are normal outcomes, not
@@ -1176,6 +1187,7 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 		}
 		return nil, err
 	}
+	finish(true)
 	// A new number (first claim or a healed replacement) gets the reply-first
 	// onboarding; re-linking the same established number is a quiet resume.
 	if priorOnboardedMSISDN == "" || priorOnboardedMSISDN != res.MSISDN {
@@ -1213,8 +1225,8 @@ func managedProfileName(agentName string) string {
 func (wac *WhatsAppClient) completeFreshProfile() error {
 	if wac.state.snapshot().FreshNameSetPending {
 		agentName := ""
-		if wac.managed != nil {
-			agentName = wac.managed.cfg.agentName
+		if managed := wac.currentManaged(); managed != nil {
+			agentName = managed.cfg.agentName
 		}
 		setName := wac.SetProfileName
 		if wac.setFreshProfileName != nil {
@@ -1299,7 +1311,7 @@ func cmdPairPhone(args []string, wac *WhatsAppClient) (any, error) {
 	if err := checkPairAttempt(wac.state.snapshot().PairAttempts, time.Now(), acknowledged); err != nil {
 		return nil, err
 	}
-	code, err := wac.linker.pairCode(wac, phone)
+	code, err := wac.currentLinker().pairCode(wac, phone)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate pairing code: %v", err)
 	}
