@@ -1100,9 +1100,12 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Persist the explicit choice once its shape is valid, before network or pairing
-	// work begins. If that work logs the device out, recovery must retry the source
-	// the user selected rather than infer another one from a mixed environment.
+	// Persist the explicit recovery intent once its shape is valid, before network
+	// or pairing work begins. This deliberately supersedes a prior source even when
+	// the attempt later fails: if pairing logs the device out, recovery must retry
+	// the source the user selected rather than silently infer another one from a
+	// mixed environment. Direct credentials themselves remain uncommitted until
+	// finish(true), so a rejected unlinked provision cannot replace working secrets.
 	wac.state.recordAccountSource(source)
 	finishedSource := false
 	finish := func(commit bool) {

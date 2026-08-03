@@ -98,8 +98,10 @@ func (wac *WhatsAppClient) installManagedLinker(auth *managedAuth, selected link
 // provisionLinker makes the explicit connect source authoritative inside an
 // already-running daemon. Cloud pins server-token auth to this pairing operation.
 // Double Tick is installed as the durable data path only when finish(true) is
-// called after a successful pair, so invalid credentials cannot replace a known
-// good daemon configuration.
+// called. The unlinked flow calls it after successful provisioning; an already-
+// linked resume calls it immediately because the explicit connect is a live source
+// reconfiguration and does not re-pair. Shape-invalid handoffs never reach finish,
+// while remote credential validation happens only when provisioning is required.
 func (wac *WhatsAppClient) provisionLinker(source, directURL, directKey string) (linker, func(bool), error) {
 	switch source {
 	case sourceVestaCloud:
