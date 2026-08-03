@@ -2086,7 +2086,7 @@ async fn create_backup_handler(
         let _operation =
             PublishedOperation::new(&state, &name, crate::docker::AgentOperation::BackingUp);
         let info =
-            backup::create_backup(&state.docker, &name, crate::types::BackupType::Manual).await?;
+            backup::create_backup(&state.docker, &name, crate::types::BackupType::Manual, None).await?;
         tracing::info!(backup_id = %info.id, size = info.size, "backup created");
         Ok(serde_json::to_string(&info).unwrap_or_default())
     })
@@ -2964,9 +2964,8 @@ fn spawn_auto_backup_task(state: SharedState) {
                     matches!(b.backup_type, crate::types::BackupType::Periodic | crate::types::BackupType::PreUpdate)
                         && b.created_at >= stale_before
                 });
-                let needed = if has_recent_auto { Vec::new() } else { vec![crate::types::BackupType::Periodic] };
 
-                if !needed.is_empty() {
+                if !has_recent_auto {
                     let _file_lock = match backup::agent_file_lock(name) {
                         Ok(lock) => lock,
                         Err(e) => {
@@ -2974,19 +2973,10 @@ fn spawn_auto_backup_task(state: SharedState) {
                             continue;
                         }
                     };
-                    tracing::info!(agent = %name, types = ?needed, "auto-backup: creating backups");
-                    for (bt, result) in
-                        backup::create_backups_batch(&state.docker, name, needed).await
-                    {
-                        match result {
-                            Ok(info) => {
-                                tracing::info!(agent = %name, backup_type = %bt, backup_id = %info.id, "auto-backup: created");
-                                backups.insert(0, info);
-                            }
-                            Err(e) => {
-                                tracing::error!(agent = %name, backup_type = %bt, error = %e, "auto-backup: failed");
-                            }
-                        }
+                    tracing::info!(agent = %name, "auto-backup: creating periodic backup");
+                    match backup::create_backup(&state.docker, name, crate::types::BackupType::Periodic, None).await {
+                        Ok(info) => backups.insert(0, info),
+                        Err(e) => tracing::error!(agent = %name, error = %e, "auto-backup: failed"),
                     }
                 }
 
