@@ -298,3 +298,111 @@ def test_main_scan_then_scrub_end_to_end(tmp_path, event_bus, db_conn, monkeypat
     rows = [row[0] for row in db_conn.execute("SELECT data FROM events")]
     assert len(rows) == 2
     assert all(SECRET not in data for data in rows)
+
+
+# A password a human chose: no prefix, low entropy, matches none of the scanner's API-key shapes.
+UNDETECTABLE = "correct-horse-battery-staple"
+
+
+def test_scanner_cannot_detect_a_human_chosen_password(event_bus, db_conn):
+    # The premise of --scrub-literal: --scrub is pattern-driven, so a value the scanner misses is
+    # one --scrub can never remove, even with the exact event ids in hand.
+    event_bus.emit(AssistantEvent(type="assistant", text=f"the login is {UNDETECTABLE} for now"))
+    ids = [row_id for row_id, _ in db_conn.execute("SELECT id, data FROM events")]
+
+    assert redact.scan(db_conn) == []
+    assert redact.scrub(db_conn, ids) == 0
+    assert UNDETECTABLE in db_conn.execute("SELECT data FROM events").fetchone()[0]
+
+
+def test_scrub_literal_removes_what_the_scanner_cannot_detect(event_bus, db_conn):
+    event_bus.emit(AssistantEvent(type="assistant", text=f"the login is {UNDETECTABLE} for now"))
+
+    assert redact.scrub_literal(db_conn, UNDETECTABLE) == (1, 0)
+
+    parsed = json.loads(db_conn.execute("SELECT data FROM events").fetchone()[0])
+    assert parsed["text"] == "the login is [REDACTED] for now"
+
+
+def test_scrub_literal_removes_every_stored_copy(event_bus, db_conn):
+    event_bus.emit(AssistantEvent(type="assistant", text=f"first {UNDETECTABLE}"))
+    event_bus.emit(AssistantEvent(type="assistant", text=f"again {UNDETECTABLE} and {UNDETECTABLE}"))
+    event_bus.emit(AssistantEvent(type="assistant", text="unrelated message"))
+
+    assert redact.scrub_literal(db_conn, UNDETECTABLE) == (2, 0)
+
+    rows = [row[0] for row in db_conn.execute("SELECT data FROM events")]
+    assert all(UNDETECTABLE not in data for data in rows)
+    assert redact.count_literal(db_conn, UNDETECTABLE) == 0
+
+
+def test_scrub_literal_keeps_fts_in_sync(event_bus, db_conn):
+    # The bug this guards: a plain UPDATE leaves the pre-scrub text (secret included) searchable,
+    # because events_fts is external-content with insert/delete triggers only.
+    event_bus.emit(AssistantEvent(type="assistant", text=f"password {UNDETECTABLE} for the account"))
+    assert event_bus.search(f'"{UNDETECTABLE}"') != []  # searchable before, so the check below bites
+
+    redact.scrub_literal(db_conn, UNDETECTABLE)
+
+    assert event_bus.search(f'"{UNDETECTABLE}"') == []  # quoted: FTS reads a bare hyphen as an operator
+    hits = event_bus.search("account")
+    assert len(hits) == 1
+    assert "[REDACTED]" in hits[0]["text"]
+
+
+def test_scrub_literal_handles_a_secret_abutting_an_escaped_quote(event_bus, db_conn):
+    # Same escape-boundary hazard as the pattern scrub: replacing on the serialized blob would
+    # splice [REDACTED] across the encoded quote and produce invalid JSON.
+    event_bus.emit(AssistantEvent(type="assistant", text=f'login "{UNDETECTABLE}" now'))
+
+    assert redact.scrub_literal(db_conn, UNDETECTABLE) == (1, 0)
+
+    data = db_conn.execute("SELECT data FROM events").fetchone()[0]
+    assert json.loads(data)["text"] == 'login "[REDACTED]" now'
+
+
+def test_scrub_literal_leaves_events_without_the_value_untouched(event_bus, db_conn):
+    event_bus.emit(AssistantEvent(type="assistant", text="a message with no secret in it"))
+    before = db_conn.execute("SELECT data FROM events").fetchone()[0]
+
+    assert redact.scrub_literal(db_conn, UNDETECTABLE) == (0, 0)
+
+    assert db_conn.execute("SELECT data FROM events").fetchone()[0] == before
+
+
+def test_main_scrub_literal_never_echoes_the_value(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    event_bus.emit(AssistantEvent(type="assistant", text=f"the login is {UNDETECTABLE}"))
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    monkeypatch.setattr("sys.argv", ["redact_secrets.py", "--scrub-literal", UNDETECTABLE])
+
+    assert redact.main() == 0
+
+    out = capsys.readouterr().out
+    assert UNDETECTABLE not in out
+    assert "Scrubbed 1 event(s); 0 remain" in out
+    assert f"length {len(UNDETECTABLE)}" in out
+    assert UNDETECTABLE not in db_conn.execute("SELECT data FROM events").fetchone()[0]
+
+
+def test_main_scrub_literal_rejects_a_missing_value(tmp_path, event_bus, monkeypatch, capsys):
+    event_bus.emit(AssistantEvent(type="assistant", text="anything"))
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    monkeypatch.setattr("sys.argv", ["redact_secrets.py", "--scrub-literal"])
+
+    assert redact.main() == 1
+    assert "usage:" in capsys.readouterr().out
+
+
+def test_main_scrub_explains_a_zero_event_result(tmp_path, event_bus, db_conn, monkeypatch, capsys):
+    # A 0 that reads like "those events were clean" is the failure mode: point at the other mode.
+    event_bus.emit(AssistantEvent(type="assistant", text=f"the login is {UNDETECTABLE}"))
+    leak_id = db_conn.execute("SELECT id FROM events").fetchone()[0]
+    monkeypatch.setattr(redact, "DB", tmp_path / "events.db")
+    monkeypatch.setattr("sys.argv", ["redact_secrets.py", "--scrub", str(leak_id)])
+
+    assert redact.main() == 0
+
+    out = capsys.readouterr().out
+    assert "Scrubbed secrets in 0 event(s)" in out
+    assert "does NOT mean they were clean" in out
+    assert "--scrub-literal" in out

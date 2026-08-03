@@ -2,6 +2,7 @@
 """Scan the events DB for secrets, then scrub the real leaks in place by event id.
 Usage: redact_secrets.py            # scan, printing each hit with the value masked
        redact_secrets.py --scrub ID [ID ...]   # redact every secret in those events
+       redact_secrets.py --scrub-literal 'VALUE'   # redact one known value the scanner can't detect
 """
 
 import json
@@ -134,6 +135,63 @@ def redact_json(value: JsonValue) -> JsonValue:
     return value
 
 
+def replace_literal(value: JsonValue, secret: str) -> JsonValue:
+    """Recursively replace one exact substring with the placeholder in every string of a parsed JSON
+    value. Same reason as redact_json for walking the decoded structure rather than the serialized
+    blob: the stored blob escapes quotes and backslashes, so a raw text .sub both misses a secret
+    containing either and can splice the placeholder across an escape boundary."""
+    if isinstance(value, str):
+        return value.replace(secret, REDACTED)
+    if isinstance(value, list):
+        return [replace_literal(v, secret) for v in value]
+    if isinstance(value, dict):
+        return {k: replace_literal(v, secret) for k, v in value.items()}
+    return value
+
+
+def count_literal(conn: sqlite3.Connection, secret: str) -> int:
+    """Events still holding the literal anywhere. Used before and after the write so the caller can
+    report a verified result instead of an intention (the FTS resync can roll the whole scrub back)."""
+    total = 0
+    for (data,) in conn.execute("SELECT data FROM events"):
+        if data and _literal_in_blob(data, secret):
+            total += 1
+    return total
+
+
+def _literal_in_blob(data: str, secret: str) -> bool:
+    try:
+        obj = json.loads(data)
+    except (json.JSONDecodeError, TypeError):
+        return secret in data
+    return replace_literal(obj, secret) != obj
+
+
+def scrub_literal(conn: sqlite3.Connection, secret: str) -> tuple[int, int]:
+    """Redact every stored copy of one exact value, returning (events changed, events still holding
+    it). Keyed by the literal rather than by pattern, because --scrub re-runs the SCANNER over the
+    named events and so can only remove what the scanner DETECTS: a value it does not recognise is
+    also one it cannot remove, even when the operator knows the exact value and the exact event ids.
+    Human-chosen passwords are the common case, matching none of the high-entropy or prefixed
+    API-key shapes above, and before this mode the only way out was hand-written SQL."""
+    changed: dict[int, str] = {}
+    for row_id, data in conn.execute("SELECT id, data FROM events"):
+        if not data:
+            continue
+        try:
+            obj = json.loads(data)
+        except (json.JSONDecodeError, TypeError):
+            new_data = data.replace(secret, REDACTED)
+            if new_data != data:
+                changed[row_id] = new_data
+            continue
+        new_obj = replace_literal(obj, secret)
+        if new_obj != obj:
+            changed[row_id] = json.dumps(new_obj)
+    count = write_scrubbed(conn, changed)
+    return count, count_literal(conn, secret)
+
+
 def _mask_context(window: str) -> str:
     """Mask both pattern hits and payment cards in a scan snippet, so reviewing a candidate never
     re-leaks the value back into a new event (the old redaction loop's self-reseeding)."""
@@ -186,6 +244,13 @@ def scrub(conn: sqlite3.Connection, ids: list[int]) -> int:
             # secret are never rewritten (a reformat-only diff would rewrite every event). Match
             # events.py's json.dumps(event) so a scrubbed blob keeps the fleet's byte representation.
             changed[row_id] = json.dumps(new_obj)
+    return write_scrubbed(conn, changed)
+
+
+def write_scrubbed(conn: sqlite3.Connection, changed: dict[int, str]) -> int:
+    """Commit rewritten event blobs, resyncing events_fts around the UPDATE. Every scrub path must
+    go through here: the FTS table has insert/delete triggers only, so an in-place UPDATE that skips
+    this leaves the OLD text (secret included) searchable and corrupts the external-content index."""
     if not changed:
         return 0
     changed_ids = list(changed)
@@ -218,6 +283,29 @@ def main() -> int:
         if args[:1] == ["--scrub"]:
             scrubbed = scrub(conn, [int(arg) for arg in args[1:]])
             print(f"Scrubbed secrets in {scrubbed} event(s) in place.")
+            if scrubbed == 0:
+                # 0 here used to read as "those events were clean", which is the wrong conclusion
+                # whenever the operator picked the ids precisely because they saw the secret there.
+                print(
+                    "0 events changed, which does NOT mean they were clean: --scrub re-runs the\n"
+                    "scanner's own patterns, so it can only remove a value the scanner DETECTS.\n"
+                    "For a value it does not recognise (a human-chosen password matches no API-key\n"
+                    "shape), redact it by value instead: redact_secrets.sh --scrub-literal '<value>'"
+                )
+            return 0
+
+        if args[:1] == ["--scrub-literal"]:
+            if len(args) != 2 or not args[1]:
+                print("usage: redact_secrets.sh --scrub-literal '<exact value>'")
+                return 1
+            secret = args[1]
+            scrubbed, remaining = scrub_literal(conn, secret)
+            # Report the shape, never the value: this process's own output is itself recorded.
+            print(f"Scrubbed {scrubbed} event(s); {remaining} remain. (length {len(secret)}, value not echoed)")
+            if remaining:
+                print("Copies remain: re-run the same command.")
+            else:
+                print("Re-run this command once more later: the event recording it also holds the value.")
             return 0
 
         matches = scan(conn)
