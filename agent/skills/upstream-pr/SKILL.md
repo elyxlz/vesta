@@ -69,12 +69,15 @@ Submitted by **$AGENT_NAME** on vesta v<version>
 
 ## Creating a PR
 
-The home `~` workspace ignores everything outside `agent/`, and local commits diverge from upstream; never branch from local HEAD. Always use a clean worktree off `origin/master`.
+The home `~` workspace ignores everything outside `agent/`, and local commits diverge from upstream; never branch from local HEAD. Always use a clean worktree off the upstream master branch.
+
+**The remote is NOT necessarily called `origin`.** On many workspaces the only remote is named `upstream`, so a hardcoded `git fetch origin` fails outright with "does not appear to be a git repository", which reads like an auth or network problem and is neither. Resolve the name first rather than assuming:
 
 1. **Create the worktree:**
    ```bash
-   git -C ~ fetch origin
-   git -C ~ worktree add /tmp/vesta-pr -b feature/<name> origin/master
+   REMOTE=$(git -C ~ remote -v | awk '/elyxlz\/vesta.*\(fetch\)/{print $1; exit}')
+   git -C ~ fetch "$REMOTE"
+   git -C ~ worktree add /tmp/vesta-pr -b feature/<name> "$REMOTE/master"
    ```
 
 2. **File the linked issue first** (if doing PR + issue), so the PR can reference it. See "Filing an issue" below.
