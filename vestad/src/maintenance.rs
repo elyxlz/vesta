@@ -20,6 +20,30 @@ pub enum PassKind {
     PreUpdate { from_version: String },
 }
 
+impl PassKind {
+    /// The pre-update pass for the vestad version currently running: the version its
+    /// snapshots roll back to, stamped as their `from-version` tag.
+    pub fn pre_update_from_current() -> Self {
+        Self::PreUpdate { from_version: format!("v{}", env!("CARGO_PKG_VERSION")) }
+    }
+
+    /// The snapshot type this pass produces.
+    pub fn backup_type(&self) -> BackupType {
+        match self {
+            Self::Routine => BackupType::Periodic,
+            Self::PreUpdate { .. } => BackupType::PreUpdate,
+        }
+    }
+
+    /// The `from-version` tag this pass stamps on its snapshots.
+    pub fn version_tag(&self) -> Option<&str> {
+        match self {
+            Self::Routine => None,
+            Self::PreUpdate { from_version } => Some(from_version),
+        }
+    }
+}
+
 /// The one firing rule: only inside the window, at a poll where every agent is idle
 /// or at the window's last poll (so maintenance always lands within its window).
 pub fn should_fire(in_window: bool, window_closing: bool, all_idle: bool) -> bool {
@@ -117,6 +141,18 @@ mod tests {
             agent_needs_snapshot(&kind, &[pre_update_at(NOW - 3600, "v0.1.181")], NOW, 3),
             "different from-version never reused"
         );
+    }
+
+    #[test]
+    fn pass_kind_owns_its_snapshot_type_and_version_tag() {
+        let routine = PassKind::Routine;
+        assert_eq!(routine.backup_type(), BackupType::Periodic);
+        assert_eq!(routine.version_tag(), None);
+
+        let pre_update = PassKind::pre_update_from_current();
+        assert_eq!(pre_update.backup_type(), BackupType::PreUpdate);
+        let expected_tag = format!("v{}", env!("CARGO_PKG_VERSION"));
+        assert_eq!(pre_update.version_tag(), Some(expected_tag.as_str()));
     }
 
     #[test]

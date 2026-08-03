@@ -552,8 +552,7 @@ async fn gateway_update_handler(
     );
     // The same pre-update snapshot pass the maintenance cycle runs, immediately: the user
     // asked now, so no window or idle wait. Restart-free, so it only delays the apply.
-    let from_version = format!("v{}", env!("CARGO_PKG_VERSION"));
-    run_snapshot_pass(&state, maintenance::PassKind::PreUpdate { from_version }).await;
+    run_snapshot_pass(&state, maintenance::PassKind::pre_update_from_current()).await;
     let join = tokio::task::spawn_blocking(move || self_update::perform_update(channel)).await;
     state
         .updating
@@ -2081,8 +2080,8 @@ async fn create_backup_handler(
     Path(name): Path<String>,
 ) -> Sse<impl futures_core::Stream<Item = Result<Event, std::convert::Infallible>>> {
     tracing::info!(agent = %name, "creating manual backup");
-    // Inline, a disconnect could drop the future at restic::snapshot, leaving the container
-    // stopped indefinitely (with_container_paused only restarts it after the snapshot returns).
+    // Inline, a disconnect could drop the future mid-pipeline, stranding the temp commit
+    // container/image that create_backup only removes after the snapshot returns.
     spawn_pipeline_sse(async move {
         let _guard = agent_write_guard(&state, &name).await;
         let _file_lock = backup::agent_file_lock(&name)?;
@@ -2933,7 +2932,6 @@ fn spawn_update_check_task(state: SharedState) {
 // --- Maintenance cycle ---
 
 // Poll cadence while waiting for the fleet's 4-5am window and, inside it, between idle checks.
-const WINDOW_POLL_SECS: u64 = 15 * 60;
 const WINDOW_POLL: jiff::SignedDuration = jiff::SignedDuration::from_secs(15 * 60);
 
 // Give the agent WS snapshots that carry each agent's timezone time to arrive before the first
@@ -2970,15 +2968,17 @@ fn spawn_maintenance_task(state: SharedState) {
                 let now = jiff::Timestamp::now();
                 let in_window =
                     maintenance_window::wait_until_best_window(&zones, now).is_zero();
-                let window_closing =
-                    !maintenance_window::wait_until_best_window(&zones, now + WINDOW_POLL).is_zero();
                 let all_idle = state.agent_status_cache.all_alive_idle();
+                // The lookahead scan only matters when an in-window pass would otherwise defer.
+                let window_closing = in_window
+                    && !all_idle
+                    && !maintenance_window::wait_until_best_window(&zones, now + WINDOW_POLL).is_zero();
                 if maintenance::should_fire(in_window, window_closing, all_idle) {
                     last_pass_epoch = now_epoch;
                     run_maintenance(&state).await;
                 }
             }
-            tokio::time::sleep(tokio::time::Duration::from_secs(WINDOW_POLL_SECS)).await;
+            tokio::time::sleep(WINDOW_POLL.unsigned_abs()).await;
         }
     });
 }
@@ -2996,8 +2996,7 @@ async fn run_maintenance(state: &SharedState) {
     let auto_update = state.settings.read().await.auto_update;
 
     if update_pending && auto_update && !state.dev_mode {
-        let from_version = format!("v{}", env!("CARGO_PKG_VERSION"));
-        run_snapshot_pass(state, maintenance::PassKind::PreUpdate { from_version }).await;
+        run_snapshot_pass(state, maintenance::PassKind::pre_update_from_current()).await;
         let channel = effective_channel(state).await;
         tracing::info!(channel = channel.as_str(), "maintenance: applying pending update");
         match tokio::task::spawn_blocking(move || self_update::perform_update(channel)).await {
@@ -3039,13 +3038,11 @@ async fn run_snapshot_pass(state: &SharedState, kind: maintenance::PassKind) {
     let now_epoch = crate::time_utils::now_epoch_secs();
     tracing::info!(agent_count = agents.len(), kind = ?kind, "maintenance: snapshot pass starting");
 
+    let kind = &kind;
+    let backup_settings = &backup_settings;
     futures_util::stream::iter(agents)
-        .for_each_concurrent(maintenance::SNAPSHOT_CONCURRENCY, |name| {
-            let kind = kind.clone();
-            let backup_settings = backup_settings.clone();
-            async move {
-                snapshot_agent(state, &name, &kind, &backup_settings, now_epoch).await;
-            }
+        .for_each_concurrent(maintenance::SNAPSHOT_CONCURRENCY, |name| async move {
+            snapshot_agent(state, &name, kind, backup_settings, now_epoch).await;
         })
         .await;
     tracing::info!(kind = ?kind, "maintenance: snapshot pass complete");
@@ -3078,45 +3075,39 @@ async fn snapshot_agent(
             return;
         }
     };
-    if !maintenance::agent_needs_snapshot(kind, &backups, now_epoch, backup_settings.every_n_days) {
-        return;
-    }
-
-    let _file_lock = match backup::agent_file_lock(name) {
-        Ok(lock) => lock,
-        Err(e) => {
-            tracing::error!(agent = %name, error = %e, "maintenance: failed to acquire lock");
-            return;
-        }
-    };
-    let (backup_type, from_version) = match kind {
-        maintenance::PassKind::Routine => (crate::types::BackupType::Periodic, None),
-        maintenance::PassKind::PreUpdate { from_version } => {
-            (crate::types::BackupType::PreUpdate, Some(from_version.as_str()))
-        }
-    };
-    match backup::create_backup(&state.docker, name, backup_type, from_version).await {
-        Ok(info) => {
-            if info.backup_type == crate::types::BackupType::PreUpdate {
-                let superseded: Vec<String> = backups
-                    .iter()
-                    .filter(|b| b.backup_type == crate::types::BackupType::Periodic)
-                    .map(|b| b.id.clone())
-                    .collect();
-                if !superseded.is_empty() {
-                    tracing::info!(agent = %name, count = superseded.len(), "maintenance: clearing periodic snapshots superseded by pre-update set");
-                    if let Err(e) = crate::restic::forget(name, &superseded).await {
-                        tracing::warn!(agent = %name, error = %e, "maintenance: failed to clear periodic snapshots");
-                    } else {
-                        backups.retain(|b| b.backup_type != crate::types::BackupType::Periodic);
+    if maintenance::agent_needs_snapshot(kind, &backups, now_epoch, backup_settings.every_n_days) {
+        let _file_lock = match backup::agent_file_lock(name) {
+            Ok(lock) => lock,
+            Err(e) => {
+                tracing::error!(agent = %name, error = %e, "maintenance: failed to acquire lock");
+                return;
+            }
+        };
+        match backup::create_backup(&state.docker, name, kind.backup_type(), kind.version_tag()).await {
+            Ok(info) => {
+                if info.backup_type == crate::types::BackupType::PreUpdate {
+                    let superseded: Vec<String> = backups
+                        .iter()
+                        .filter(|b| b.backup_type == crate::types::BackupType::Periodic)
+                        .map(|b| b.id.clone())
+                        .collect();
+                    if !superseded.is_empty() {
+                        tracing::info!(agent = %name, count = superseded.len(), "maintenance: clearing periodic snapshots superseded by pre-update set");
+                        if let Err(e) = crate::restic::forget(name, &superseded).await {
+                            tracing::warn!(agent = %name, error = %e, "maintenance: failed to clear periodic snapshots");
+                        } else {
+                            backups.retain(|b| b.backup_type != crate::types::BackupType::Periodic);
+                        }
                     }
                 }
+                backups.insert(0, info);
             }
-            backups.insert(0, info);
-            backup::cleanup_backups(name, &backups, &retention).await;
+            Err(e) => tracing::error!(agent = %name, error = %e, "maintenance: snapshot failed"),
         }
-        Err(e) => tracing::error!(agent = %name, error = %e, "maintenance: snapshot failed"),
     }
+    // Retention runs even when no snapshot was taken, so a tightened policy prunes on the
+    // next pass instead of waiting days for the next snapshot to trigger it.
+    backup::cleanup_backups(name, &backups, &retention).await;
 }
 
 // --- Server start ---

@@ -80,6 +80,13 @@ fn parse_rfc3339_epoch(ts: &str) -> Option<u64> {
 }
 
 const TEMP_IMAGE_REPO_PREFIX: &str = "vesta-backup-tmp";
+const TEMP_IMAGE_TAG: &str = "latest";
+
+/// Best-effort removal of the throwaway commit container/image (leftovers included).
+async fn remove_temp_artifacts(docker: &Docker, temp_cname: &str, image: &str) {
+    crate::docker::remove_container_force(docker, temp_cname).await.ok();
+    crate::docker::remove_image(docker, image).await.ok();
+}
 
 /// Create a backup of the given agent without ever stopping it. A running container is captured
 /// via `docker commit` (Docker pauses it for the seconds the commit takes), then the committed
@@ -98,18 +105,16 @@ pub async fn create_backup(
     let result = if cs == ContainerStatus::Running {
         // One shared name for the throwaway image repo and export container.
         let temp_cname = format!("{TEMP_IMAGE_REPO_PREFIX}-{name}");
-        let image = format!("{temp_cname}:latest");
+        let image = format!("{temp_cname}:{TEMP_IMAGE_TAG}");
         // A leftover temp container/image from a crashed run must not fail this one.
-        crate::docker::remove_container_force(docker, &temp_cname).await.ok();
-        crate::docker::remove_image(docker, &image).await.ok();
+        remove_temp_artifacts(docker, &temp_cname, &image).await;
         tracing::info!(agent = %name, backup_type = %backup_type, "committing running container for backup");
-        crate::docker::commit_container_to_image(docker, &cname, &temp_cname, "latest").await?;
+        crate::docker::commit_container_to_image(docker, &cname, &temp_cname, TEMP_IMAGE_TAG).await?;
         let snap = match crate::docker::create_plain_container(docker, &image, &temp_cname).await {
             Ok(()) => crate::restic::snapshot(name, &backup_type, from_version, &temp_cname).await,
             Err(e) => Err(e),
         };
-        crate::docker::remove_container_force(docker, &temp_cname).await.ok();
-        crate::docker::remove_image(docker, &image).await.ok();
+        remove_temp_artifacts(docker, &temp_cname, &image).await;
         snap
     } else {
         crate::restic::snapshot(name, &backup_type, from_version, &cname).await
