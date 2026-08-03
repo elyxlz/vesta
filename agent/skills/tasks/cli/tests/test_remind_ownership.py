@@ -63,3 +63,20 @@ def test_postpone_still_replaces_untouched_auto_reminders(tmp_config: Config):
     assert after, "postpone must leave a fresh set of auto reminders"
     assert all(r["auto_generated"] == 1 for r in after)
     assert not (before & {r["id"] for r in after}), "untouched auto reminders should be regenerated"
+
+
+def test_rewriting_relabels_the_schedule(tmp_config: Config):
+    """An owned reminder must not still describe itself as auto-generated. `remind list` renders
+    schedule_type, so leaving it makes a hand-written row read `auto: 1 day before due` while its
+    marker says otherwise."""
+    _, auto = _task_with_auto_reminders(tmp_config)
+    assert auto["auto_generated"] == 1
+
+    result = commands.remind_update(tmp_config, reminder_id=auto["id"], message="mine now")
+
+    with closing(db.get_db(tmp_config.data_dir)) as conn:
+        row = conn.execute("SELECT schedule_type, scheduled_time FROM reminders WHERE id = ?", (auto["id"],)).fetchone()
+
+    assert not row["schedule_type"].startswith("auto: "), f"an owned reminder still claims to be auto-generated: {row['schedule_type']}"
+    assert row["schedule_type"] == f"once at {row['scheduled_time']}"
+    assert result["schedule"] == row["schedule_type"], "the returned schedule must not be the stale label"
