@@ -5,7 +5,7 @@ import typing as tp
 import pytest
 from recall_cli import cli
 
-Add = tp.Callable[[str, str, str], None]
+Add = tp.Callable[..., None]
 
 # Both flanks are longer than SNIPPET_WINDOW_WORDS so a centered window trims (and elides) each side.
 _LEAD = " ".join(f"lead{i:02d}" for i in range(30))
@@ -76,9 +76,18 @@ def test_search_returns_full_content_by_default(events_db: tuple[pathlib.Path, A
     assert results[0]["content"] == long_message
 
 
-def test_search_ignores_non_conversational_events(events_db: tuple[pathlib.Path, Add]) -> None:
+def test_search_returns_the_body_of_an_inbound_message(events_db: tuple[pathlib.Path, Add]) -> None:
     path, add = events_db
-    add("notification", "wifi outage alert", "2026-01-01T00:00:00")
+    add("notification", "wifi outage alert", "2026-01-01T00:00:00", source="telegram")
+    results = cli.search(path, "wifi", limit=20)
+    assert len(results) == 1
+    assert results[0]["role"] == "notification"
+    assert results[0]["content"] == "wifi outage alert"
+
+
+def test_search_ignores_core_scheduler_notifications(events_db: tuple[pathlib.Path, Add]) -> None:
+    path, add = events_db
+    add("notification", "wifi check due", "2026-01-01T00:00:00", source="core")
     assert cli.search(path, "wifi", limit=20) == []
 
 
