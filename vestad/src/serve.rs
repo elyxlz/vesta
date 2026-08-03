@@ -19,8 +19,8 @@ use crate::settings::{
 };
 use crate::state::{err_response, map_docker_err, ok_json, AppState, SharedState};
 use crate::{
-    agent_provider, agent_proxy, agent_status, auth, backup, docker, mobile_app,
-    self_update, systemd, update_check, update_window,
+    agent_provider, agent_proxy, agent_status, auth, backup, docker, maintenance,
+    maintenance_window, mobile_app, self_update, systemd, update_check,
 };
 
 const GATEWAY_RESTART_DELAY_MS: u64 = 200;
@@ -42,7 +42,6 @@ const RESERVED_SERVICE_NAMES: &[&str] = &[
     "services",
 ];
 const DEFAULT_LOG_TAIL_LINES: u64 = 500;
-const AUTO_BACKUP_CHECK_INTERVAL_SECS: u64 = 3600;
 
 // --- TLS cert generation ---
 
@@ -551,6 +550,10 @@ async fn gateway_update_handler(
         channel = channel.as_str(),
         "gateway update requested via API"
     );
+    // The same pre-update snapshot pass the maintenance cycle runs, immediately: the user
+    // asked now, so no window or idle wait. Restart-free, so it only delays the apply.
+    let from_version = format!("v{}", env!("CARGO_PKG_VERSION"));
+    run_snapshot_pass(&state, maintenance::PassKind::PreUpdate { from_version }).await;
     let join = tokio::task::spawn_blocking(move || self_update::perform_update(channel)).await;
     state
         .updating
@@ -2899,110 +2902,36 @@ pub fn build_router(state: SharedState) -> Router {
 
 // --- Server start ---
 
-// --- Auto-backup background task ---
+// --- Update-check background task (detection only; the maintenance task applies) ---
 
-fn spawn_auto_backup_task(state: SharedState) {
+fn spawn_update_check_task(state: SharedState) {
     tokio::spawn(async move {
         loop {
-            tokio::time::sleep(tokio::time::Duration::from_secs(
-                AUTO_BACKUP_CHECK_INTERVAL_SECS,
-            ))
-            .await;
-
-            let backup_settings = {
-                let settings = state.settings.read().await;
-                settings.backup.clone()
-            };
-
-            if !backup_settings.enabled {
-                tracing::debug!("auto-backup: disabled, skipping cycle");
-                continue;
+            let channel = effective_channel(&state).await;
+            match tokio::task::spawn_blocking(move || update_check::check_once(channel)).await {
+                Ok(Ok(info)) => *state.update_info.lock().await = Some(info),
+                Ok(Err(e)) => tracing::warn!("update check failed: {}", e),
+                Err(e) => tracing::error!("update check task failed: {}", e),
             }
-
-            let agents = backup::list_agent_names(&state.docker).await;
-
-            if agents.is_empty() {
-                tracing::debug!("auto-backup: no agents found, skipping cycle");
-                continue;
-            }
-
-            tracing::info!(agent_count = agents.len(), "auto-backup: starting cycle");
-
-            let now_epoch = crate::time_utils::now_epoch_secs();
-            let stale_before = crate::time_utils::now_timestamp_from_epoch(
-                now_epoch - u64::from(backup_settings.every_n_days) * 86400,
-            );
-
-            for name in &agents {
-                // Resolve per-agent settings (override or global fallback)
-                let (agent_enabled, ret) = backup_settings.effective_for(name);
-                if !agent_enabled {
-                    tracing::debug!(agent = %name, "auto-backup: disabled for agent, skipping");
-                    continue;
-                }
-
-                let _guard = agent_write_guard(&state, name).await;
-
-                if let Some(age) = backup::container_age_secs(&state.docker, name).await {
-                    if age < backup::MIN_AGE_FOR_BACKUP_SECS {
-                        tracing::debug!(agent = %name, age_hours = age / 3600, "auto-backup: skipping young agent");
-                        continue;
-                    }
-                }
-
-                let mut backups = match backup::list_backups(&state.env_config.agents_dir, name)
-                    .await
-                {
-                    Ok(b) => b,
-                    Err(e) => {
-                        tracing::error!(agent = %name, error = %e, "auto-backup: failed to list backups");
-                        continue;
-                    }
-                };
-
-                let has_recent_auto = backups.iter().any(|b| {
-                    matches!(b.backup_type, crate::types::BackupType::Periodic | crate::types::BackupType::PreUpdate)
-                        && b.created_at >= stale_before
-                });
-
-                if !has_recent_auto {
-                    let _file_lock = match backup::agent_file_lock(name) {
-                        Ok(lock) => lock,
-                        Err(e) => {
-                            tracing::error!(agent = %name, error = %e, "auto-backup: failed to acquire lock");
-                            continue;
-                        }
-                    };
-                    tracing::info!(agent = %name, "auto-backup: creating periodic backup");
-                    match backup::create_backup(&state.docker, name, crate::types::BackupType::Periodic, None).await {
-                        Ok(info) => backups.insert(0, info),
-                        Err(e) => tracing::error!(agent = %name, error = %e, "auto-backup: failed"),
-                    }
-                }
-
-                backup::cleanup_backups(name, &backups, &ret).await;
-            }
-
-            tracing::info!(agent_count = agents.len(), "auto-backup: cycle complete");
+            tokio::time::sleep(tokio::time::Duration::from_secs(update_check::CHECK_INTERVAL_SECS))
+                .await;
         }
     });
 }
 
-// --- Update-check background task ---
+// --- Maintenance cycle ---
 
-// Detection cadence with no update pending -- also the UpdatePill's refresh rate. While an update
-// waits for the fleet's quiet window we re-poll this often instead, so update_info, the release
-// channel and the fleet's timezones all stay fresh and a transient apply failure retries within the
-// window rather than a night later.
+// Poll cadence while waiting for the fleet's 4-5am window and, inside it, between idle checks.
 const WINDOW_POLL_SECS: u64 = 15 * 60;
+const WINDOW_POLL: jiff::SignedDuration = jiff::SignedDuration::from_secs(15 * 60);
 
 // Give the agent WS snapshots that carry each agent's timezone time to arrive before the first
-// auto-apply decision, so an update already pending at startup targets the fleet's real windows
-// instead of resolving a still-empty cache to host-local.
+// maintenance decision, so a pass pending at startup targets the fleet's real windows instead of
+// resolving a still-empty cache to host-local.
 const STARTUP_SETTLE_SECS: u64 = 60;
 
 /// The local timezone of every alive agent, falling back to host-local for any agent that hasn't
-/// reported one (pre-upstream-sync fleet). Drives which 3-5am window the auto-update targets.
+/// reported one (pre-upstream-sync fleet). Drives which 4-5am window maintenance targets.
 fn running_agent_zones(state: &SharedState) -> Vec<jiff::tz::TimeZone> {
     let timezones = state.agent_status_cache.timezones();
     state
@@ -3010,82 +2939,173 @@ fn running_agent_zones(state: &SharedState) -> Vec<jiff::tz::TimeZone> {
         .agents()
         .iter()
         .filter(|entry| entry.status == docker::AgentStatus::Alive)
-        .map(|entry| update_window::resolve_zone(timezones.get(&entry.name).map(String::as_str)))
+        .map(|entry| maintenance_window::resolve_zone(timezones.get(&entry.name).map(String::as_str)))
         .collect()
 }
 
-fn spawn_update_check_task(state: SharedState) {
+/// One maintenance cycle owns all scheduled disk and restart work: it fires in the fleet's
+/// best-coverage 4-5am agent-local window, at a poll where every agent is idle (or at the
+/// window's last poll), runs the restart-free snapshot pass, and applies a pending update
+/// as an add-on to that same pass.
+fn spawn_maintenance_task(state: SharedState) {
     tokio::spawn(async move {
-        // Settle first so the timezone cache is populated before any startup-pending update applies.
+        // Settle first so the timezone cache is populated before the first window decision.
         tokio::time::sleep(tokio::time::Duration::from_secs(STARTUP_SETTLE_SECS)).await;
+        let mut last_pass_epoch: u64 = 0;
         loop {
-            let channel = effective_channel(&state).await;
-            let update_available = match tokio::task::spawn_blocking(move || {
-                update_check::check_once(channel)
-            })
-            .await
-            {
-                Ok(Ok(info)) => {
-                    let available = info.update_available;
-                    *state.update_info.lock().await = Some(info);
-                    available
-                }
-                Ok(Err(e)) => {
-                    tracing::warn!("update check failed: {}", e);
-                    false
-                }
-                Err(e) => {
-                    tracing::error!("update check task failed: {}", e);
-                    false
-                }
-            };
-
-            // Apply a pending update only once the fleet is in the 3-5am window covering the most
-            // agents (see update_window); until then keep polling fast so we notice the window open,
-            // a channel switch, a pulled release, or a cleared auto_update. perform_update restarts
-            // this process on success, so control usually never returns from the apply branch.
-            let mut awaiting_window = false;
-            if update_available && state.settings.read().await.auto_update {
+            let now_epoch = crate::time_utils::now_epoch_secs();
+            if now_epoch.saturating_sub(last_pass_epoch) >= maintenance::PASS_DEDUP_SECS {
                 let zones = running_agent_zones(&state);
-                if update_window::wait_until_best_window(&zones, jiff::Timestamp::now()).is_zero() {
-                    tracing::info!(
-                        channel = channel.as_str(),
-                        agents = zones.len(),
-                        "auto-update: agent quiet window reached, applying"
-                    );
-                    match tokio::task::spawn_blocking(move || self_update::perform_update(channel))
-                        .await
-                    {
-                        Ok(Ok(outcome)) => tracing::info!(
-                            updated = outcome.updated,
-                            restarted = outcome.restarted,
-                            current = %outcome.current,
-                            latest = %outcome.latest,
-                            "auto-update finished",
-                        ),
-                        // Retry within the window on the fast cadence rather than the next night.
-                        Ok(Err(e)) => {
-                            tracing::warn!("auto-update failed: {}", e);
-                            awaiting_window = true;
-                        }
-                        Err(e) => {
-                            tracing::error!("auto-update task panicked: {}", e);
-                            awaiting_window = true;
-                        }
-                    }
-                } else {
-                    awaiting_window = true;
+                let now = jiff::Timestamp::now();
+                let in_window =
+                    maintenance_window::wait_until_best_window(&zones, now).is_zero();
+                let window_closing =
+                    !maintenance_window::wait_until_best_window(&zones, now + WINDOW_POLL).is_zero();
+                let all_idle = state.agent_status_cache.all_alive_idle();
+                if maintenance::should_fire(in_window, window_closing, all_idle) {
+                    last_pass_epoch = now_epoch;
+                    run_maintenance(&state).await;
                 }
             }
-
-            let interval = if awaiting_window {
-                WINDOW_POLL_SECS
-            } else {
-                update_check::CHECK_INTERVAL_SECS
-            };
-            tokio::time::sleep(tokio::time::Duration::from_secs(interval)).await;
+            tokio::time::sleep(tokio::time::Duration::from_secs(WINDOW_POLL_SECS)).await;
         }
     });
+}
+
+/// One fired maintenance cycle: the snapshot pass, then a pending update as its add-on.
+/// `perform_update` restarts this process on success, so control usually never returns
+/// from the apply branch.
+async fn run_maintenance(state: &SharedState) {
+    let update_pending = state
+        .update_info
+        .lock()
+        .await
+        .as_ref()
+        .is_some_and(|info| info.update_available);
+    let auto_update = state.settings.read().await.auto_update;
+
+    if update_pending && auto_update && !state.dev_mode {
+        let from_version = format!("v{}", env!("CARGO_PKG_VERSION"));
+        run_snapshot_pass(state, maintenance::PassKind::PreUpdate { from_version }).await;
+        let channel = effective_channel(state).await;
+        tracing::info!(channel = channel.as_str(), "maintenance: applying pending update");
+        match tokio::task::spawn_blocking(move || self_update::perform_update(channel)).await {
+            Ok(Ok(outcome)) => tracing::info!(
+                updated = outcome.updated,
+                restarted = outcome.restarted,
+                current = %outcome.current,
+                latest = %outcome.latest,
+                "auto-update finished",
+            ),
+            // A failed apply retries next cycle; the fresh pre-update set is reused (<24h).
+            Ok(Err(e)) => tracing::warn!("auto-update failed: {}", e),
+            Err(e) => tracing::error!("auto-update task panicked: {}", e),
+        }
+    } else {
+        run_snapshot_pass(state, maintenance::PassKind::Routine).await;
+    }
+}
+
+/// Snapshot every agent the pass selects, restart-free and concurrently (bounded). After a
+/// successful pre-update snapshot the agent's periodic snapshots are superseded and deleted;
+/// an agent whose snapshot failed keeps them as its fallback rollback point.
+async fn run_snapshot_pass(state: &SharedState, kind: maintenance::PassKind) {
+    use futures_util::StreamExt;
+
+    let backup_settings = {
+        let settings = state.settings.read().await;
+        settings.backup.clone()
+    };
+    if !backup_settings.enabled && matches!(kind, maintenance::PassKind::Routine) {
+        tracing::debug!("maintenance: backups disabled, skipping routine pass");
+        return;
+    }
+
+    let agents = backup::list_agent_names(&state.docker).await;
+    if agents.is_empty() {
+        return;
+    }
+    let now_epoch = crate::time_utils::now_epoch_secs();
+    tracing::info!(agent_count = agents.len(), kind = ?kind, "maintenance: snapshot pass starting");
+
+    futures_util::stream::iter(agents)
+        .for_each_concurrent(maintenance::SNAPSHOT_CONCURRENCY, |name| {
+            let kind = kind.clone();
+            let backup_settings = backup_settings.clone();
+            async move {
+                snapshot_agent(state, &name, &kind, &backup_settings, now_epoch).await;
+            }
+        })
+        .await;
+    tracing::info!(kind = ?kind, "maintenance: snapshot pass complete");
+}
+
+async fn snapshot_agent(
+    state: &SharedState,
+    name: &str,
+    kind: &maintenance::PassKind,
+    backup_settings: &BackupGlobalSettings,
+    now_epoch: u64,
+) {
+    let (agent_enabled, retention) = backup_settings.effective_for(name);
+    if !agent_enabled {
+        tracing::debug!(agent = %name, "maintenance: backups disabled for agent, skipping");
+        return;
+    }
+    if let Some(age) = backup::container_age_secs(&state.docker, name).await {
+        if age < backup::MIN_AGE_FOR_BACKUP_SECS {
+            tracing::debug!(agent = %name, age_hours = age / 3600, "maintenance: skipping young agent");
+            return;
+        }
+    }
+
+    let _guard = agent_write_guard(state, name).await;
+    let mut backups = match backup::list_backups(&state.env_config.agents_dir, name).await {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::error!(agent = %name, error = %e, "maintenance: failed to list backups");
+            return;
+        }
+    };
+    if !maintenance::agent_needs_snapshot(kind, &backups, now_epoch, backup_settings.every_n_days) {
+        return;
+    }
+
+    let _file_lock = match backup::agent_file_lock(name) {
+        Ok(lock) => lock,
+        Err(e) => {
+            tracing::error!(agent = %name, error = %e, "maintenance: failed to acquire lock");
+            return;
+        }
+    };
+    let (backup_type, from_version) = match kind {
+        maintenance::PassKind::Routine => (crate::types::BackupType::Periodic, None),
+        maintenance::PassKind::PreUpdate { from_version } => {
+            (crate::types::BackupType::PreUpdate, Some(from_version.as_str()))
+        }
+    };
+    match backup::create_backup(&state.docker, name, backup_type, from_version).await {
+        Ok(info) => {
+            if info.backup_type == crate::types::BackupType::PreUpdate {
+                let superseded: Vec<String> = backups
+                    .iter()
+                    .filter(|b| b.backup_type == crate::types::BackupType::Periodic)
+                    .map(|b| b.id.clone())
+                    .collect();
+                if !superseded.is_empty() {
+                    tracing::info!(agent = %name, count = superseded.len(), "maintenance: clearing periodic snapshots superseded by pre-update set");
+                    if let Err(e) = crate::restic::forget(name, &superseded).await {
+                        tracing::warn!(agent = %name, error = %e, "maintenance: failed to clear periodic snapshots");
+                    } else {
+                        backups.retain(|b| b.backup_type != crate::types::BackupType::Periodic);
+                    }
+                }
+            }
+            backups.insert(0, info);
+            backup::cleanup_backups(name, &backups, &retention).await;
+        }
+        Err(e) => tracing::error!(agent = %name, error = %e, "maintenance: snapshot failed"),
+    }
 }
 
 // --- Server start ---
@@ -3245,7 +3265,7 @@ pub async fn run_server(cfg: ServerConfig) {
         sync_hub: state.sync_hub.clone(),
     });
     let app = build_router(state.clone());
-    spawn_auto_backup_task(state.clone());
+    spawn_maintenance_task(state.clone());
     if dev_mode {
         tracing::info!("dev mode: auto-update disabled");
     } else {
