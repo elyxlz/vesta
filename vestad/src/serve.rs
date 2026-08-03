@@ -2841,7 +2841,6 @@ pub fn build_router(state: SharedState) -> Router {
     let gateway_agent_shared = Router::new()
         .route("/version", get(version))
         .route("/version/check", post(version_check))
-        .route("/gateway/update", post(gateway_update_handler))
         // Vesta Cloud pairing is host-global like the update surface: the apps
         // drive it with the api key / access token, an agent with its own
         // token, and `vestad vesta-cloud login` runs the same core directly.
@@ -2849,6 +2848,17 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/vesta-cloud/pair/poll", post(vesta_cloud_pair_poll_handler))
         .route("/vesta-cloud/unpair", post(vesta_cloud_unpair_handler))
         .layer(control_timeout_layer())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_middleware_api_or_any_agent_token,
+        ));
+
+    // Update shares gateway_agent_shared's auth but rides the longrun deadline: it runs the
+    // pre-update snapshot pass inline before applying, and a first full snapshot of a
+    // multi-GB agent exceeds the control deadline, which would cancel the pass mid-stream.
+    let gateway_update = Router::new()
+        .route("/gateway/update", post(gateway_update_handler))
+        .layer(longrun_timeout_layer())
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware_api_or_any_agent_token,
@@ -2867,6 +2877,7 @@ pub fn build_router(state: SharedState) -> Router {
     Router::new()
         .merge(vestad_public)
         .merge(gateway_agent_shared)
+        .merge(gateway_update)
         .merge(vestad_protected_timed)
         .merge(vestad_protected_longrun)
         .merge(vestad_protected_streaming)
