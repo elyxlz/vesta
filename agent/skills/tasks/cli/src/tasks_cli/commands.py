@@ -962,13 +962,27 @@ def remind_update(config: Config, *, reminder_id: str, message: str) -> dict:
         reminder = cursor.fetchone()
         if not reminder:
             raise ValueError(f"Reminder '{reminder_id}' not found. Use 'tasks remind list' to see active reminders.")
-        conn.execute("UPDATE reminders SET message = ? WHERE id = ?", (message, reminder_id))
+        # Clearing auto_generated is the point of the write, not a side effect. The flag means
+        # "this row is machine-owned and may be regenerated", and delete_auto_reminders (called by
+        # postpone and by any due-date change) deletes exactly the flagged rows. Leaving it set
+        # means hand-written text survives until the next postpone and is then silently destroyed.
+        schedule_type = reminder["schedule_type"]
+        if reminder["auto_generated"] and (schedule_type or "").startswith("auto: "):
+            # The old label described how the row was generated ("auto: 1 day before due"). Once
+            # the row is agent-owned that is no longer true, and leaving it makes `remind list`
+            # call a hand-written reminder auto while its marker says otherwise. Auto reminders
+            # are always one-off dates, so relabel to the same form a manual one-off carries.
+            schedule_type = f"once at {reminder['scheduled_time']}"
+        conn.execute(
+            "UPDATE reminders SET message = ?, auto_generated = 0, schedule_type = ? WHERE id = ?",
+            (message, schedule_type, reminder_id),
+        )
         conn.commit()
 
     return {
         "id": reminder_id,
         "message": message,
-        "schedule": reminder["schedule_type"],
+        "schedule": schedule_type,
         "next_run": reminder["scheduled_time"],
         "status": "updated",
     }
