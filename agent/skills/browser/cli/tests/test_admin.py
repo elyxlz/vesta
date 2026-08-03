@@ -5,9 +5,13 @@ from __future__ import annotations
 import os
 import signal
 import socket
+import subprocess
 import threading
+import time
+from pathlib import Path
 
-from vesta_browser import admin, daemon
+import pytest
+from vesta_browser import admin, daemon, launcher
 
 HANG_GUARD_S = 5
 
@@ -265,3 +269,41 @@ def test_shutdown_is_fine_without_an_ephemeral_profile(tmp_path, monkeypatch):
     monkeypatch.setattr(admin, "stop_browser", lambda *a, **k: None)
 
     admin.shutdown()  # must not raise
+
+
+@pytest.mark.skipif(not Path("/proc").is_dir(), reason="liveness scan reads /proc")
+def test_live_owner_is_detected_from_the_real_launch_argv(tmp_path):
+    """The /proc scan must recognise a process launched with the real argv builder.
+
+    Every other prune test stubs `_profile_has_live_owner`, so nothing else pins the
+    matcher to the argv `launch` actually spawns. If they drift, a live session reads
+    as orphaned and `prune --yes` deletes its profile out from under it, with the
+    stubbed tests still green.
+    """
+    exe = tmp_path / "camoufox"
+    exe.write_text("#!/bin/sh\nsleep 30\n")
+    exe.chmod(0o755)
+    mine = tmp_path / "in-use"
+    mine.mkdir()
+    other = tmp_path / "not-in-use"
+    other.mkdir()
+
+    proc = subprocess.Popen(
+        launcher._camoufox_argv(str(exe), mine),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.monotonic() + HANG_GUARD_S
+        while time.monotonic() < deadline:
+            if launcher._profile_has_live_owner(mine):
+                break
+            time.sleep(0.05)
+        else:
+            pytest.fail("a running Camoufox was not detected as the profile's live owner")
+        assert not launcher._profile_has_live_owner(other)
+    finally:
+        proc.terminate()
+        proc.wait(timeout=HANG_GUARD_S)
+
+    assert not launcher._profile_has_live_owner(mine)
