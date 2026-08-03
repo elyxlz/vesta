@@ -548,7 +548,6 @@ func cmdDaemonStatus(args []string, wac *WhatsAppClient) (any, error) {
 		"pair_attempts_last_7d":    len(attemptsWithin(st.PairAttempts, now, PairWeekWindow)),
 	}
 	if wac.client.Store.ID != nil {
-		wac.state.recordAccountSource(source)
 		result["number"] = "+" + wac.client.Store.ID.User
 	}
 	if linkPort, linkService := wac.activeLink(); linkPort != 0 {
@@ -1096,6 +1095,7 @@ func cmdProvisionManaged(args []string, wac *WhatsAppClient) (any, error) {
 		return nil, err
 	}
 	if wac.client.Store.ID != nil {
+		wac.state.recordAccountSource(source)
 		// Already linked. If a takeover parked it, an explicit connect means
 		// "reclaim the session": clear the park and reconnect (a plain send never
 		// does this, so it can't ping-pong). If the other holder is still live it
