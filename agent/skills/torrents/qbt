@@ -1,0 +1,260 @@
+#!/usr/bin/env python3
+"""qbt - qBittorrent CLI over HTTP.
+
+qBittorrent ONLY. TorrentLeech is `tl`, Plex is `plex.py`.
+
+Replaces the old `qb` wrapper, which shelled out over SSH to a MEDIA_SERVER_HOST
+that does not exist on this box. qBittorrent is reachable directly at
+$BOX_HOST:8888, so everything here is plain HTTP.
+
+Every subcommand prints compact text by default and JSON with --json.
+"""
+import argparse
+import json
+import os
+import subprocess
+import sys
+import urllib.parse
+import urllib.request
+
+QB = f"http://{os.environ.get('BOX_HOST', 'host.docker.internal')}:8888/api/v2"
+UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/126 Safari/537.36"
+MOVIES = os.environ.get("QBT_MOVIES", "/media/Movies")
+TVSHOWS = os.environ.get("QBT_TV", "/media/TV")
+
+
+def api(path, data=None, files=None):
+    """Call the qBittorrent API. data=dict -> form POST, files=[(name,path)] -> multipart."""
+    url = f"{QB}/{path}"
+    if files:
+        boundary = "----qbt7f3a9"
+        body = b""
+        for k, v in (data or {}).items():
+            body += (
+                f"--{boundary}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n"
+            ).encode()
+        for name, fp in files:
+            fn = os.path.basename(fp)
+            body += (
+                f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"; "
+                f"filename=\"{fn}\"\r\nContent-Type: application/x-bittorrent\r\n\r\n"
+            ).encode()
+            body += open(fp, "rb").read() + b"\r\n"
+        body += f"--{boundary}--\r\n".encode()
+        req = urllib.request.Request(
+            url, data=body, headers={"Content-Type": f"multipart/form-data; boundary={boundary}"}
+        )
+    elif data is not None:
+        req = urllib.request.Request(url, data=urllib.parse.urlencode(data).encode())
+    else:
+        req = urllib.request.Request(url)
+    raw = urllib.request.urlopen(req, timeout=60).read().decode(errors="replace")
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return raw.strip()
+
+
+def norm(s):
+    """Fold ., _, - and whitespace together so 'quiet place' matches 'A.Quiet.Place'."""
+    return "".join(c if c.isalnum() else " " for c in s.lower()).split()
+
+
+def matches(needle, name):
+    return " ".join(norm(needle)) in " ".join(norm(name))
+
+
+def human(n):
+    return f"{n / 1e9:.1f}GB" if n else "0GB"
+
+
+def cmd_status(a):
+    ts = api("torrents/info")
+    if a.name:
+        ts = [t for t in ts if matches(a.name, t["name"])]
+    if not a.all:
+        ts = [t for t in ts if t["state"] not in ("pausedUP", "stoppedUP")]
+    if a.json:
+        print(json.dumps(ts, indent=1))
+        return
+    for t in sorted(ts, key=lambda x: -x["progress"]):
+        eta = t["eta"]
+        eta = "?" if eta > 8640000 else f"{eta // 60}min"
+        print(
+            f"  {t['name'][:44]:44} {t['progress'] * 100:5.1f}% {t['dlspeed'] / 1e6:5.2f}MB/s "
+            f"peers {t['num_seeds']:>3} ratio {t['ratio']:5.2f} {t['state']:<12} eta {eta}"
+        )
+    print(f"  ({len(ts)} shown)")
+
+
+def cmd_add(a):
+    save = a.path or (TVSHOWS if a.tv else MOVIES)
+    for src in a.source:
+        if os.path.isfile(src):
+            r = api("torrents/add", {"savepath": save}, files=[("torrents", src)])
+        else:
+            if not src.startswith("magnet:"):
+                src = f"magnet:?xt=urn:btih:{src}"
+            r = api("torrents/add", {"urls": src, "savepath": save})
+        print(f"  {r or 'Ok.'}  -> {save}  {os.path.basename(src)[:50]}")
+
+
+def cmd_rm(a):
+    ts = api("torrents/info")
+    hits = [t for t in ts if matches(a.name, t["name"])]
+    if not hits:
+        sys.exit(f"no torrent matching {a.name!r}")
+    print(f"  matched {len(hits)}:")
+    for t in hits:
+        print(f"    {t['name'][:60]}")
+    if not a.yes:
+        sys.exit("  refusing without --yes")
+    api(
+        "torrents/delete",
+        {"hashes": "|".join(t["hash"] for t in hits), "deleteFiles": str(bool(a.files)).lower()},
+    )
+    print(f"  deleted {len(hits)} (files={'yes' if a.files else 'no'})")
+
+
+def cmd_limits(a):
+    ts = api("torrents/info")
+    hits = [t for t in ts if matches(a.name, t["name"])] if a.name else ts
+    if not hits:
+        sys.exit(f"no torrent matching {a.name!r}")
+    if not a.name and not a.yes:
+        sys.exit(f"  no name given, that would set limits on ALL {len(hits)} torrents; pass --yes")
+    api(
+        "torrents/setShareLimits",
+        {
+            "hashes": "|".join(t["hash"] for t in hits),
+            "ratioLimit": a.ratio,
+            "seedingTimeLimit": a.hours * 60,
+            "inactiveSeedingTimeLimit": -2,
+        },
+    )
+    print(f"  set ratio {a.ratio} / {a.hours}h on {len(hits)} torrent(s), verifying:")
+    for t in api("torrents/info"):
+        if any(t["hash"] == h["hash"] for h in hits):
+            print(
+                f"    {t['name'][:40]:40} ratio_limit={t['ratio_limit']} "
+                f"seed_limit={t['seeding_time_limit']}min"
+            )
+
+
+def cmd_rule(a):
+    """Global share rule for EVERY torrent, present and future."""
+    ts = api("torrents/info")
+    live = [t for t in ts if t["state"] not in ("pausedUP", "pausedDL", "stoppedUP", "stoppedDL")]
+    hit = [t for t in live if t["ratio"] >= a.ratio or t.get("seeding_time", 0) >= a.hours * 3600]
+    print(f"  blast radius: {len(ts)} torrents, {len(live)} live, {len(hit)} would pause now")
+    for t in hit[:8]:
+        print(f"    {t['state']:<12} ratio {t['ratio']:5.2f}  {t['name'][:44]}")
+    if not a.yes:
+        sys.exit("  refusing without --yes")
+    api(
+        "app/setPreferences",
+        {
+            "json": json.dumps(
+                {
+                    "max_ratio_enabled": True,
+                    "max_ratio": a.ratio,
+                    "max_ratio_act": 0,
+                    "max_seeding_time_enabled": True,
+                    "max_seeding_time": a.hours * 60,
+                }
+            )
+        },
+    )
+    p = api("app/preferences")
+    print(
+        f"  VERIFIED ratio={p['max_ratio']} enabled={p['max_ratio_enabled']} "
+        f"time={p['max_seeding_time']}min act={p['max_ratio_act']} (0=pause, files kept)"
+    )
+
+
+def cmd_health(a):
+    s = api("sync/maindata").get("server_state", {})
+    print(f"  free space   : {human(s.get('free_space_on_disk', 0))}")
+    print(f"  dl / ul      : {s.get('dl_info_speed', 0) / 1e6:.2f} / {s.get('up_info_speed', 0) / 1e6:.2f} MB/s")
+    print(f"  write cache  : {s.get('write_cache_overload')}%  queued io: {s.get('queued_io_jobs')}")
+    print(f"  avg queue    : {s.get('average_time_queue')} ms")
+    print("  NOTE: peers connected + zero throughput + overload near 100% = DISK, not network.")
+
+
+def cmd_search(a):
+    q = " ".join(a.query)
+    rows = []
+    raw = subprocess.run(["curl", "-s", "--max-time", "60", "-A", UA,
+                          "https://apibay.org/q.php?q=" + urllib.parse.quote(q)],
+                         capture_output=True, text=True).stdout
+    for r in json.loads(raw or "[]"):
+        if r.get("id") != "0":
+            rows.append((int(r["seeders"]), int(r["size"]), r["name"], r["info_hash"]))
+    if a.min_gb:
+        rows = [r for r in rows if r[1] >= a.min_gb * 1e9]
+    if a.max_gb:
+        rows = [r for r in rows if r[1] <= a.max_gb * 1e9]
+    if a.p1080:
+        rows = [r for r in rows if "2160" not in r[2]]
+    rows.sort(key=lambda r: -r[0])
+    if a.json:
+        print(json.dumps([{"seeders": s, "size": z, "name": n, "id": i} for s, z, n, i in rows[: a.limit]], indent=1))
+        return
+    for s, z, n, i in rows[: a.limit]:
+        print(f"  {s:>4}s {human(z):>7}  {i:<12} {n[:62]}")
+    print(f"  ({len(rows)} matches, showing {min(a.limit, len(rows))}; ids are info-hashes)")
+
+
+def main():
+    p = argparse.ArgumentParser(prog="qbt", description=__doc__)
+    p.add_argument("--json", action="store_true")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    s = sub.add_parser("status", help="active torrents (add --all to include finished)")
+    s.add_argument("name", nargs="?")
+    s.add_argument("--all", action="store_true")
+    s.set_defaults(func=cmd_status)
+
+    s = sub.add_parser("add", help="add magnet, info-hash, or .torrent file")
+    s.add_argument("source", nargs="+")
+    s.add_argument("--path")
+    s.add_argument("--tv", action="store_true")
+    s.set_defaults(func=cmd_add)
+
+    s = sub.add_parser("rm", help="delete torrents matching a name (needs --yes)")
+    s.add_argument("name")
+    s.add_argument("--files", action="store_true")
+    s.add_argument("--yes", action="store_true")
+    s.set_defaults(func=cmd_rm)
+
+    s = sub.add_parser("limits", help="per-torrent share limits")
+    s.add_argument("name", nargs="?")
+    s.add_argument("--ratio", type=float, default=1.0)
+    s.add_argument("--hours", type=int, default=192)
+    s.add_argument("--yes", action="store_true", help="required when no name given")
+    s.set_defaults(func=cmd_limits)
+
+    s = sub.add_parser("rule", help="GLOBAL share rule for every torrent (needs --yes)")
+    s.add_argument("--ratio", type=float, default=1.0)
+    s.add_argument("--hours", type=int, default=192)
+    s.add_argument("--yes", action="store_true")
+    s.set_defaults(func=cmd_rule)
+
+    s = sub.add_parser("health", help="disk space + write-cache/io stats")
+    s.set_defaults(func=cmd_health)
+
+    s = sub.add_parser("search", help="search PUBLIC trackers; for TorrentLeech use `tl search`")
+    s.add_argument("query", nargs="+")
+    s.add_argument("--min-gb", type=float)
+    s.add_argument("--max-gb", type=float)
+    s.add_argument("--1080", dest="p1080", action="store_true", help="exclude 2160p")
+    s.add_argument("--limit", type=int, default=10)
+    s.set_defaults(func=cmd_search)
+
+
+    a = p.parse_args()
+    a.func(a)
+
+
+if __name__ == "__main__":
+    main()

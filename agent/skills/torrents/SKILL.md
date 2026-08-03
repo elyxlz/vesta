@@ -111,3 +111,62 @@ Recommended settings on the box (see Troubleshooting for `WebUI\LocalHostAuth=fa
 - `WebUI\AuthSubnetWhitelist=192.168.0.0/24` (or your LAN subnet)
 - SOCKS5 proxy configured for all torrent traffic (use a VPN)
 - Torrent export dir: `$MEDIA_LIBRARY_PATH/Torrents`
+
+## Three CLIs, one service each
+
+`qb` drives qBittorrent by SSH-ing into `$MEDIA_SERVER_HOST`. Where qBittorrent is reachable over
+HTTP instead, every server command in it fails, silently and with an empty result. `qbt` and `tl`
+talk to each service directly and are kept **separate on purpose**, so neither knows about the other:
+
+| tool | owns | never touches |
+|---|---|---|
+| `qbt` | the qBittorrent HTTP API | trackers, media server |
+| `tl` | TorrentLeech: search + fetch `.torrent` | qBittorrent, media server |
+
+The pipeline is composition: `tl search` -> `tl get <fid>` -> `qbt add <file>`.
+
+```bash
+qbt status [name] [--all]            # active torrents; --all includes finished
+qbt add <magnet|hash|file>...        # --tv saves to the TV dir instead of Movies
+qbt rm <name> [--files] --yes
+qbt limits [name] --ratio 1 --hours 192   # --yes required when no name given
+qbt rule --ratio 1 --hours 192 --yes      # GLOBAL: every torrent, present and future
+qbt health                           # free space, write-cache overload, queued io
+qbt search <query>                   # public trackers (apibay)
+
+tl search <query> [--1080|--uhd] [--min-gb N] [--max-gb N]
+tl get <fid>... [--out DIR]          # writes <fid>.torrent, then: qbt add
+```
+
+Config is all environment: `BOX_HOST` (qBittorrent host, port 8888), `QBT_MOVIES`, `QBT_TV`.
+TorrentLeech reads `~/.torrentleech_cred` (`{"username":..., "password":...}`, mode 600) and caches
+its session in `~/.torrentleech_cookies`; login is idempotent and re-authenticates only when the
+cookie goes stale.
+
+### Safety properties, each one a bug that actually bit
+
+- **Anything able to act on every torrent at once demands `--yes`.** `qbt limits` with no name
+  matched all 72 torrents on the box it was written for and would have rewritten every share limit
+  without a word. On a private tracker share limits are standing, so that is not cosmetic.
+- **Refusals exit 1, never 0**, so a calling script cannot read "I refused" as "I did it".
+- **`rule` prints its blast radius before acting**: how many *live* torrents would pause immediately.
+  It once looked like "65 of 72" when the true answer was 2, because 61 were already paused.
+- **The global rule pauses, never deletes** (`max_ratio_act=0`), so a private-tracker torrent can be
+  re-seeded with one click instead of re-downloaded.
+- **Name matching folds `.`, `_`, `-` and spaces together.** Release names mix conventions, and a
+  plain substring match on "quiet place" matched one of three torrents named `A.Quiet.Place...`.
+  A delete that matches a surprising subset is far worse than one that errors.
+
+### Two findings worth keeping
+
+- **A tracker's listed seeder count is a claim; connected peers are the fact.** They disagree often:
+  a release advertising 28 seeders found exactly one live peer and crawled at 0.01 MB/s. So **never
+  quote an ETA from a fresh add** — sample for ~10 minutes. Fresh adds have read 33h/108h/300h and
+  settled to 40min/115min/150min once peer discovery and cache warmup finished.
+- **`qbt health` separates disk from network.** Peers connected, zero throughput, and
+  `write_cache_overload` near 100% with a large `queued_io_jobs` is a saturated disk, not a
+  connectivity problem, and it clears on its own. Diagnosing that as a network fault sends you
+  looking for a VPN or a firewall that was never involved.
+- **The filename in TorrentLeech's download URL is arbitrary**: `/download/<fid>/x.torrent` returns
+  the right file, so no name lookup is needed. Searching the tracker for a bare fid does *not*
+  reliably return that torrent, so the lookup was both pointless and a source of failures.
