@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::docker::{AgentOperation, AgentStatus, BuildPhase};
+use crate::types::ClientKind;
 
 /// The gateway (host) branch of the state tree. camelCase on the wire to match
 /// `apps/core/src/protocol/tree.ts` `GatewayInfo`.
@@ -118,27 +119,6 @@ pub(crate) struct ClientContext {
     pub client: ClientKind,
     #[serde(default)]
     pub resync: bool,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum ClientKind {
-    Web,
-    Mobile,
-    Desktop,
-    #[default]
-    Unknown,
-}
-
-impl ClientKind {
-    pub(crate) fn display_name(self) -> &'static str {
-        match self {
-            Self::Web => "Vesta Web App",
-            Self::Mobile => "Vesta Mobile App",
-            Self::Desktop => "Vesta Desktop App",
-            Self::Unknown => "Vesta App",
-        }
-    }
 }
 
 /// Build one representative of every `/sync` frame through the real serde path, for the contract

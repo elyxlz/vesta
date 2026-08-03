@@ -1011,7 +1011,7 @@ pub(crate) async fn drop_rename_notification(
 /// (ambient presence), overridable by the user's `notification_rules`.
 fn presence_notification_payload(
     epoch_secs: u64,
-    client: crate::sync::protocol::ClientKind,
+    client: crate::types::ClientKind,
 ) -> Result<serde_json::Value, String> {
     let timestamp = crate::time_utils::epoch_to_rfc3339(epoch_secs)?;
     let client = client.display_name();
@@ -1030,7 +1030,7 @@ fn presence_notification_payload(
 pub(crate) async fn drop_presence_notification(
     docker: &bollard::Docker,
     agent: &str,
-    client: crate::sync::protocol::ClientKind,
+    client: crate::types::ClientKind,
 ) -> Result<String, String> {
     let epoch = crate::time_utils::now_epoch_secs();
     let payload = presence_notification_payload(epoch, client)?;
@@ -3508,7 +3508,7 @@ mod tests {
     fn presence_payload_is_snoozed_vestad_notification() {
         let payload = super::presence_notification_payload(
             1_700_000_000,
-            crate::sync::protocol::ClientKind::Web,
+            crate::types::ClientKind::Web,
         )
         .expect("payload");
         assert_eq!(payload["source"], "vestad");

@@ -16,6 +16,7 @@ use tokio::sync::{mpsc, Mutex, Semaphore};
 
 use crate::docker::{AgentStatus, ListEntry};
 use crate::state::{err_response, ok_json, SharedState};
+use crate::types::MobilePlatform;
 
 const EXPO_PUSH_URL: &str = "https://exp.host/--/api/v2/push/send";
 const MAX_INSTALLATION_ID_LENGTH: usize = 128;
@@ -26,13 +27,6 @@ const MOBILE_EVENT_QUEUE_CAPACITY: usize = 256;
 const MAX_CONCURRENT_EVENT_DELIVERIES: usize = 6;
 const PUSHABLE_EVENT_TYPES: &[&str] = &["chat", "status"];
 const MAX_CONCURRENT_PUSH_REQUESTS: usize = 6;
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-enum MobilePlatform {
-    Ios,
-    Android,
-}
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 struct MobileDevice {
@@ -741,7 +735,7 @@ mod tests {
             conn,
             crate::sync::protocol::ClientContext {
                 focused: true,
-                client: crate::sync::protocol::ClientKind::Mobile,
+                client: crate::types::ClientKind::Mobile,
                 resync: false,
             },
             tokio::time::Instant::now(),

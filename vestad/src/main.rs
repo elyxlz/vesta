@@ -12,6 +12,7 @@ mod app_static;
 mod auth;
 mod backup;
 mod channel;
+mod device_registry;
 mod docker;
 mod jwt;
 mod lifecycle;

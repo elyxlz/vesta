@@ -1,5 +1,36 @@
 use serde::{Deserialize, Serialize};
 
+/// The kind of client behind a `/sync` connection. Serialized on the wire (`client_context.client`,
+/// `DeviceInfo.kind`) and persisted in the device registry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClientKind {
+    Web,
+    Mobile,
+    Desktop,
+    #[default]
+    Unknown,
+}
+
+impl ClientKind {
+    pub(crate) fn display_name(self) -> &'static str {
+        match self {
+            Self::Web => "Vesta Web App",
+            Self::Mobile => "Vesta Mobile App",
+            Self::Desktop => "Vesta Desktop App",
+            Self::Unknown => "Vesta App",
+        }
+    }
+}
+
+/// The mobile OS a push subscription targets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MobilePlatform {
+    Ios,
+    Android,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum BackupType {

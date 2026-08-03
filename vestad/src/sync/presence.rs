@@ -6,7 +6,8 @@ use std::time::Duration;
 use tokio::sync::watch;
 use tokio::time::Instant;
 
-use super::protocol::{ClientContext, ClientKind};
+use super::protocol::ClientContext;
+use crate::types::ClientKind;
 
 /// The user must have been away this long before a return-to-focus notifies the agent fleet, so
 /// glances and alt-tabs never spam it.
