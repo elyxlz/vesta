@@ -204,3 +204,39 @@ Occasional topics live in their own files so this one stays lean:
 
 - **Heavy-JS auth pages (Google, Zoom, Apple `idmsa`/`dev.apple`, and similar SPAs) HANG `goto`/`wait_for_load` for the full timeout**: these SPAs keep network connections open so the `load` event never fires cleanly, yet the page almost always loaded underneath. After a `goto` that times out, do NOT retry it and NEVER call `wait_for_load()` on these. Run a SEPARATE short call (`timeout 30 browser`) that reads `page_info()` and inspects the DOM directly (no navigation, no wait_for_load). Cap every browser call at `timeout 40-55` so a hang costs seconds, not minutes. Long blocking browser calls during a live exchange make the agent go unresponsive, so keep them short.
 - **Login-form fills need care**: some sign-in widgets live in an iframe (e.g. Apple's `aid-auth-widget-iFrame`, same-origin so `contentDocument` works). A JS `value`-set often does NOT satisfy the form's own validation (it re-renders back to empty after "Verifying..."), and real keystrokes (`type_text`) can DOUBLE a field that already holds a value, so CLEAR it first. These flows also commonly gate on device-2FA or a passcode that only the user's phone has, so browser automation frequently cannot finish them: prefer the official API or app path.
+
+## Restaurant booking widgets without a browser
+
+The two engines most UK/EU restaurants sit behind answer plain `curl` with a normal desktop UA, so
+never open a browser to check a table. They also answer questions the restaurant itself often will
+not: whether a party size is even *bookable*, and whether a deposit or card hold applies.
+
+**SevenRooms** (`sevenrooms.com`), venue slug taken from the booking link:
+
+```bash
+curl "https://www.sevenrooms.com/api-yoa/availability/widget/range?venue=<slug>&time_slot=HH%3AMM&party_size=N&halo_size_interval=64&start_date=MM-DD-YYYY&num_days=1&channel=SEVENROOMS_WIDGET"
+```
+
+- `num_days` greater than 1 returns HTTP 400 `invalid num_days`, so query one day at a time.
+- A **closed day returns an empty availability list** while an open day returns 40+ slots. That is how
+  to establish opening days from the venue's own system rather than from opening hours in a search
+  result, which are frequently stale.
+- **Every slot carries a `type`, and for a large party that field is the whole answer.** `book` means
+  instantly confirmable, `request` means a human must convert it. Hold the date fixed and vary
+  `party_size`: if a small party gets `['book','request']` while yours gets `['request']` only, that
+  party size **cannot be confirmed online at all**. This matters because it tells you what a venue's
+  "we are able to accommodate you" actually means: it is the wording an unconverted request produces,
+  and it is not a held table. Verified against a live London venue that offered instant booking at 2
+  and request-only at 12, on the same date and shift.
+
+**CoverManager** (`covermanager.com`): fetch
+`https://www.covermanager.com/reservation/module_restaurant/<slug>/english` and read the widget's own
+config variables rather than inferring behaviour by clicking through: `max_people` (the online
+ceiling), `groupRequestHoldOnCard` and `groupRequestCancelPolicy` (both `0` means no card hold and no
+cancellation charge, so a backup booking costs nothing to drop).
+
+**The trap, on both: a wrong slug returns HTTP 200 with a plausible sentence**, e.g. "The booking
+module is temporarily disabled". That reads as "this venue is unavailable" when it is really a typo,
+and a truncated slug is easy to produce when scraping one out of a restaurant's own site. **Check the
+response size**: a real CoverManager module is ~136KB while the bad-slug reply is ~42 bytes. A 200 with
+prose in it is not proof the request was understood.
