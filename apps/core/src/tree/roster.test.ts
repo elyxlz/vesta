@@ -38,6 +38,7 @@ function tree(agents: Record<string, { info: AgentInfo; pending?: NotificationEv
         { info: node.info, notifications: { pending: node.pending ?? [] } },
       ]),
     ),
+    devices: [],
   }
 }
 

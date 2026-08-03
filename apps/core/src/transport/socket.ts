@@ -33,6 +33,9 @@ export interface SyncSocketDeps {
   // unparseable) fails open, so a dev build with a non-semver version never blocks.
   clientVersion?: string
   clientKind: ClientKind
+  // This device's stable installation id and self-composed label, reported so vestad tracks it in
+  // the device registry. Omitted by a build that has no identity to report; then it is untracked.
+  device?: { id: string; descriptor: string }
   baseDelayMs?: number
   maxDelayMs?: number
 }
@@ -160,7 +163,9 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
       // resync and vestad doesn't read it as the user returning; never delivered (the report was
       // issued while the socket was still connecting) means this is that first genuine focus.
       if (lastFocused !== null) {
-        current.send(encodeFrame(clientContextFrame(lastFocused, deps.clientKind, focusSynced)))
+        current.send(
+          encodeFrame(clientContextFrame(lastFocused, deps.clientKind, focusSynced, deps.device)),
+        )
         focusSynced = true
       }
       callbacks.onStateChange("open")
@@ -188,7 +193,7 @@ export function createSyncSocket(deps: SyncSocketDeps, callbacks: SyncSocketCall
       if (lastFocused === focused) return
       lastFocused = focused
       // A genuine user-driven report (resync=false): vestad may fire the return-to-focus notification.
-      focusSynced = emit(clientContextFrame(focused, deps.clientKind, false))
+      focusSynced = emit(clientContextFrame(focused, deps.clientKind, false, deps.device))
     },
     close: () => {
       terminal = true

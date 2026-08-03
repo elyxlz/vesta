@@ -4,6 +4,7 @@ import { useSyncState } from "@vesta/core/react";
 import { getConnection } from "@/lib/connection";
 import { websocketUrl } from "@/lib/authed-url";
 import { native } from "@/lib/native";
+import { deviceIdentity } from "@/lib/device-identity";
 import { ensureFreshToken } from "@/lib/token-refresh";
 import { useAuth } from "@/providers/AuthProvider";
 import { DisconnectedOverlay } from "@/components/DisconnectedOverlay";
@@ -31,6 +32,7 @@ function buildController(): Controller {
       clearTimer: (handle) => window.clearTimeout(handle),
       clientVersion: __CLIENT_VERSION__,
       clientKind: native.runtime === "electron" ? "desktop" : "web",
+      device: deviceIdentity(),
     },
     http: {
       baseUrl: () => getConnection()?.url ?? "",

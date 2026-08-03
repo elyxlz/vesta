@@ -17,6 +17,7 @@ function baseTree(): Tree {
       managed: false,
     },
     agents: {},
+    devices: [],
   }
 }
 

@@ -92,6 +92,39 @@ describe("parseServerFrame", () => {
     expect(parseServerFrame(JSON.stringify({ type: "presence" }))).toEqual({ kind: "unknown" })
   })
 
+  it("parses a devices delta", () => {
+    const device = {
+      id: "dev-1",
+      kind: "desktop",
+      descriptor: "Vesta Desktop on macOS",
+      present: true,
+      lastSeen: "2026-01-01T00:00:00Z",
+      pushEnabled: false,
+    }
+    const parsed = parseServerFrame(JSON.stringify({ type: "devices", devices: [device] }))
+    expect(parsed).toEqual({ kind: "delta", delta: { type: "devices", devices: [device] } })
+  })
+
+  it("accepts a device with a null descriptor", () => {
+    const device = {
+      id: "dev-1",
+      kind: "unknown",
+      descriptor: null,
+      present: false,
+      lastSeen: "2026-01-01T00:00:00Z",
+      pushEnabled: true,
+    }
+    const parsed = parseServerFrame(JSON.stringify({ type: "devices", devices: [device] }))
+    expect(parsed).toEqual({ kind: "delta", delta: { type: "devices", devices: [device] } })
+  })
+
+  it("treats a devices delta with a malformed entry as unknown", () => {
+    const bad = { id: "dev-1", kind: "desktop", present: true, pushEnabled: false } // no lastSeen
+    expect(parseServerFrame(JSON.stringify({ type: "devices", devices: [bad] }))).toEqual({
+      kind: "unknown",
+    })
+  })
+
   it("ignores unknown frame and delta types", () => {
     const inputs = [
       JSON.stringify({ type: "future_frame", data: 1 }),

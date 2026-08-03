@@ -66,7 +66,9 @@ function configuredProjectId(): string | null {
   return typeof eas.projectId === "string" ? eas.projectId : null;
 }
 
-async function pushInstallationId(): Promise<string> {
+// The stable per-install id, reused as this device's id in both push registration and the device
+// registry so one install is one device across both.
+export async function pushInstallationId(): Promise<string> {
   const stored = await AsyncStorage.getItem(PUSH_INSTALLATION_ID_KEY);
   if (stored) return stored;
   const installationId = Crypto.randomUUID();

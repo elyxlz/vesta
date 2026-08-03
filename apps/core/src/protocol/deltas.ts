@@ -1,4 +1,4 @@
-import type { AgentInfo, GatewayInfo } from "./tree"
+import type { AgentInfo, DeviceInfo, GatewayInfo } from "./tree"
 import type { NotificationEvent } from "./events"
 
 export interface StateDelta {
@@ -41,6 +41,13 @@ export interface PresenceDelta {
   anyFocused: boolean
 }
 
+// The whole known-device list, replaced on any change (a device connecting, disconnecting, or
+// registering push). Additive: an old client ignores it.
+export interface DevicesDelta {
+  type: "devices"
+  devices: DeviceInfo[]
+}
+
 export type Delta =
   | StateDelta
   | AgentDelta
@@ -48,3 +55,4 @@ export type Delta =
   | NotificationsDelta
   | UserNotificationDelta
   | PresenceDelta
+  | DevicesDelta

@@ -6,7 +6,8 @@ use std::time::Duration;
 use tokio::sync::watch;
 use tokio::time::Instant;
 
-use super::protocol::{ClientContext, ClientKind};
+use super::protocol::ClientContext;
+use crate::types::ClientKind;
 
 /// The user must have been away this long before a return-to-focus notifies the agent fleet, so
 /// glances and alt-tabs never spam it.
@@ -130,7 +131,7 @@ mod tests {
     use tokio::time::Instant;
 
     fn ctx(focused: bool) -> ClientContext {
-        ClientContext { focused, client: ClientKind::Web, resync: false }
+        ClientContext { focused, client: ClientKind::Web, resync: false, ..Default::default() }
     }
 
     #[test]
@@ -145,6 +146,7 @@ mod tests {
                 focused: true,
                 client: ClientKind::Desktop,
                 resync: true,
+                ..Default::default()
             },
             Instant::now(),
         );
@@ -195,6 +197,7 @@ mod tests {
                     focused: true,
                     client: ClientKind::Mobile,
                     resync: false,
+                    ..Default::default()
                 },
                 t0 + Duration::from_secs(180) + PRESENCE_NOTIFY_DEBOUNCE,
             ),

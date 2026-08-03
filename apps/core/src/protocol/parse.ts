@@ -1,7 +1,7 @@
 import type { Delta } from "./deltas"
 import type { NotificationEvent } from "./events"
 import type { HelloFrame, SnapshotFrame } from "./frames"
-import type { AgentInfo, GatewayInfo, Tree } from "./tree"
+import type { AgentInfo, DeviceInfo, DeviceKind, GatewayInfo, Tree } from "./tree"
 
 export type ParsedFrame =
   | { kind: "hello"; frame: HelloFrame }
@@ -53,6 +53,7 @@ export function parseServerFrame(raw: string): ParsedFrame {
     case "notifications":
     case "user_notification":
     case "presence":
+    case "devices":
       return parseDelta(type, frame)
     default:
       return UNKNOWN
@@ -112,7 +113,43 @@ function parseDelta(type: string, frame: Record<string, unknown>): ParsedFrame {
       if (anyFocused === null) return UNKNOWN
       return { kind: "delta", delta: { type: "presence", anyFocused } }
     }
+    case "devices": {
+      const raw = arr(frame.devices)
+      if (raw === null) return UNKNOWN
+      const devices: DeviceInfo[] = []
+      for (const entry of raw) {
+        const device = parseDevice(entry)
+        if (device === null) return UNKNOWN
+        devices.push(device)
+      }
+      return { kind: "delta", delta: { type: "devices", devices } }
+    }
     default:
       return UNKNOWN
   }
+}
+
+const DEVICE_KINDS: readonly DeviceKind[] = ["web", "mobile", "desktop", "unknown"]
+
+function parseDevice(value: unknown): DeviceInfo | null {
+  const device = record(value)
+  if (device === null) return null
+  const id = str(device.id)
+  const kind = str(device.kind)
+  const present = bool(device.present)
+  const lastSeen = str(device.lastSeen)
+  const pushEnabled = bool(device.pushEnabled)
+  if (
+    id === null ||
+    kind === null ||
+    present === null ||
+    lastSeen === null ||
+    pushEnabled === null
+  ) {
+    return null
+  }
+  if (!DEVICE_KINDS.includes(kind as DeviceKind)) return null
+  const descriptor = device.descriptor === null ? null : str(device.descriptor)
+  if (descriptor === null && device.descriptor !== null) return null
+  return { id, kind: kind as DeviceKind, descriptor, present, lastSeen, pushEnabled }
 }
