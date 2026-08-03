@@ -63,6 +63,26 @@ fn token_deadline(token: &str, api_key: &str) -> Option<tokio::time::Instant> {
     Some(tokio::time::Instant::now() + Duration::from_secs(remaining))
 }
 
+/// Wait the settle window, then drop the return-to-focus notification into every tapped agent,
+/// unless `confirm_return` reports the return was only a glance. Runs detached so the sleep never
+/// stalls the session loop's keepalive and deltas.
+async fn settle_and_notify(state: SharedState) {
+    tokio::time::sleep(PRESENCE_NOTIFY_DELAY).await;
+    let Some(client) = state.presence.confirm_return(tokio::time::Instant::now()) else {
+        return;
+    };
+    let agents = state.agent_status_cache.presence_notification_agents();
+    // The docker uploads are untimed, so run them concurrently rather than serializing behind the
+    // slowest; best-effort, each failure logs itself.
+    let docker = &state.docker;
+    let drops = agents.iter().map(|agent| async move {
+        if let Err(error) = crate::serve::drop_presence_notification(docker, agent, client).await {
+            tracing::warn!(%agent, %error, "could not drop presence notification");
+        }
+    });
+    futures_util::future::join_all(drops).await;
+}
+
 async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Option<String>) {
     let (mut tx, mut rx) = socket.split();
 
@@ -190,34 +210,7 @@ async fn sync_session(state: SharedState, socket: WebSocket, connect_token: Opti
                             device_guard.attach(&device_id, ctx.client, ctx.descriptor.clone());
                         }
                         if state.presence.record(conn, ctx, tokio::time::Instant::now()) {
-                            // Wait a settle window, then notify only if the return survived it: a
-                            // return that unfocuses inside the window was only a glance, and its
-                            // debounce clock stays put so the next return still fires. Detached so
-                            // the sleep never stalls this session's keepalive and deltas.
-                            let state = state.clone();
-                            tokio::spawn(async move {
-                                tokio::time::sleep(PRESENCE_NOTIFY_DELAY).await;
-                                let Some(client) =
-                                    state.presence.confirm_return(tokio::time::Instant::now())
-                                else {
-                                    return;
-                                };
-                                for agent in state.agent_status_cache.presence_notification_agents() {
-                                    // Each drop's docker upload has no timeout, so keep them on their
-                                    // own tasks. Best-effort: a detached task logs its own failure.
-                                    let docker = state.docker.clone();
-                                    tokio::spawn(async move {
-                                        if let Err(error) =
-                                            crate::serve::drop_presence_notification(
-                                                &docker, &agent, client,
-                                            )
-                                            .await
-                                        {
-                                            tracing::warn!(%agent, %error, "could not drop presence notification");
-                                        }
-                                    });
-                                }
-                            });
+                            tokio::spawn(settle_and_notify(state.clone()));
                         }
                     }
                     Ok(ClientFrame::Reauth { token }) => {

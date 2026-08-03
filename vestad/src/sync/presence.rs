@@ -88,7 +88,7 @@ impl Presence {
             return None;
         }
         state.pending_return = false;
-        let focused = state.contexts.values().find(|c| c.focused).map(|c| c.client);
+        let focused = Self::focused_client(&state.contexts);
         if focused.is_some() {
             state.last_online_at = Some(now);
         }
@@ -104,7 +104,12 @@ impl Presence {
     }
 
     fn compute_any_focused(contexts: &HashMap<ConnId, ClientContext>) -> bool {
-        contexts.values().any(|c| c.focused)
+        Self::focused_client(contexts).is_some()
+    }
+
+    /// The kind of some currently focused client; which one is unspecified when several are.
+    fn focused_client(contexts: &HashMap<ConnId, ClientContext>) -> Option<ClientKind> {
+        contexts.values().find(|c| c.focused).map(|c| c.client)
     }
 
     /// Reconcile a presence change: publish `any_focused` if it flipped, and report whether a
@@ -133,8 +138,7 @@ impl Presence {
                 .is_none_or(|last| now.duration_since(last) >= PRESENCE_NOTIFY_DEBOUNCE);
         if starts_return {
             state.pending_return = true;
-        }
-        if !state.pending_return && (was_present || is_present) {
+        } else if !state.pending_return && (was_present || is_present) {
             state.last_online_at = Some(now);
         }
         starts_return
@@ -147,8 +151,12 @@ mod tests {
     use std::time::Duration;
     use tokio::time::Instant;
 
+    fn ctx_kind(focused: bool, client: ClientKind) -> ClientContext {
+        ClientContext { focused, client, resync: false, ..Default::default() }
+    }
+
     fn ctx(focused: bool) -> ClientContext {
-        ClientContext { focused, client: ClientKind::Web, resync: false, ..Default::default() }
+        ctx_kind(focused, ClientKind::Web)
     }
 
     #[test]
@@ -209,16 +217,7 @@ mod tests {
         // Blur, then refocus after the debounce window: fires again, attributed at settle time.
         presence.record(a, ctx(false), t0 + Duration::from_secs(180));
         let return_at = t0 + Duration::from_secs(180) + PRESENCE_NOTIFY_DEBOUNCE;
-        assert!(presence.record(
-            a,
-            ClientContext {
-                focused: true,
-                client: ClientKind::Mobile,
-                resync: false,
-                ..Default::default()
-            },
-            return_at,
-        ));
+        assert!(presence.record(a, ctx_kind(true, ClientKind::Mobile), return_at));
         assert_eq!(
             presence.confirm_return(return_at + PRESENCE_NOTIFY_DELAY),
             Some(ClientKind::Mobile)
@@ -298,24 +297,9 @@ mod tests {
         let mobile = presence.connect();
         let desktop = presence.connect();
         let t0 = Instant::now();
-        let mobile_ctx = |focused| ClientContext {
-            focused,
-            client: ClientKind::Mobile,
-            resync: false,
-            ..Default::default()
-        };
-        assert!(presence.record(mobile, mobile_ctx(true), t0));
-        presence.record(mobile, mobile_ctx(false), t0 + Duration::from_secs(2));
-        presence.record(
-            desktop,
-            ClientContext {
-                focused: true,
-                client: ClientKind::Desktop,
-                resync: false,
-                ..Default::default()
-            },
-            t0 + Duration::from_secs(3),
-        );
+        assert!(presence.record(mobile, ctx_kind(true, ClientKind::Mobile), t0));
+        presence.record(mobile, ctx_kind(false, ClientKind::Mobile), t0 + Duration::from_secs(2));
+        presence.record(desktop, ctx_kind(true, ClientKind::Desktop), t0 + Duration::from_secs(3));
         assert_eq!(
             presence.confirm_return(t0 + PRESENCE_NOTIFY_DELAY),
             Some(ClientKind::Desktop)
