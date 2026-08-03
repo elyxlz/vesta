@@ -947,13 +947,21 @@ def remind_snooze(
             run_time = _now_utc() + offset
 
         new_data = {"type": "date", "run_date": run_time.isoformat()}
+        # schedule_type is the human-readable label `remind list` prints, so it tracks the new fire time.
+        new_schedule = f"once at {run_time.isoformat()}"
         conn.execute(
-            "UPDATE reminders SET completed = 0, trigger_data = ?, scheduled_time = ? WHERE id = ?",
-            (json.dumps(new_data), run_time.isoformat(), reminder_id),
+            "UPDATE reminders SET completed = 0, trigger_data = ?, scheduled_time = ?, schedule_type = ? WHERE id = ?",
+            (json.dumps(new_data), run_time.isoformat(), new_schedule, reminder_id),
         )
         conn.commit()
 
-    return {"id": reminder_id, "message": row["message"], "next_run": run_time.isoformat(), "status": "snoozed"}
+    return {
+        "id": reminder_id,
+        "message": row["message"],
+        "schedule": new_schedule,
+        "next_run": run_time.isoformat(),
+        "status": "snoozed",
+    }
 
 
 def remind_update(config: Config, *, reminder_id: str, message: str) -> dict:
