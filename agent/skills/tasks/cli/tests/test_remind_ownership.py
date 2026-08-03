@@ -65,6 +65,16 @@ def test_postpone_still_replaces_untouched_auto_reminders(tmp_config: Config):
     assert not (before & {r["id"] for r in after}), "untouched auto reminders should be regenerated"
 
 
+def test_marking_a_task_done_clears_owned_reminders_too(tmp_config: Config):
+    """A finished task stops reminding, so ownership must not let a rewritten reminder outlive it."""
+    task_id, auto = _task_with_auto_reminders(tmp_config)
+    commands.remind_update(tmp_config, reminder_id=auto["id"], message="hand written checkpoint")
+
+    commands.update_task(tmp_config, task_id=task_id, status="done")
+
+    assert _reminders(tmp_config, task_id) == [], "a done task must clear all its reminders, owned included"
+
+
 def test_rewriting_relabels_the_schedule(tmp_config: Config):
     """An owned reminder must not still describe itself as auto-generated. `remind list` renders
     schedule_type, so leaving it makes a hand-written row read `auto: 1 day before due` while its

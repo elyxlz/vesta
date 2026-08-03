@@ -399,7 +399,9 @@ def update_task(
             if status == "done":
                 updates.append("completed_at = ?")
                 params.append(_now_utc().isoformat())
-                db.delete_auto_reminders(conn, task_id)
+                # A finished task stops reminding entirely, so this clears owned reminders too, not
+                # just auto ones. A due-date change below rebuilds only the auto ones (delete_auto).
+                db.delete_task_reminders(conn, task_id)
             elif status == "pending":
                 updates.append("completed_at = NULL")
                 # Recreate auto-reminders if task has a due date and is reopened.
@@ -946,6 +948,7 @@ def remind_snooze(
                 raise ValueError("Say when: tasks remind snooze <id> --in-hours N (or --in-minutes/--in-days, or --at + --tz)")
             run_time = _now_utc() + offset
 
+        run_time = run_time.replace(microsecond=0)
         new_data = {"type": "date", "run_date": run_time.isoformat()}
         # schedule_type is the human-readable label `remind list` prints, so it tracks the new fire time.
         new_schedule = f"once at {run_time.isoformat()}"
