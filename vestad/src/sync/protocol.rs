@@ -117,6 +117,7 @@ pub(crate) enum ClientFrame {
 /// caused a return. `resync` is true when the socket replays its cached context on reconnect, so a
 /// reconnect never looks like the user returning.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct ClientContext {
     pub focused: bool,
     #[serde(default)]

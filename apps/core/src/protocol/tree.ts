@@ -61,7 +61,24 @@ export interface AgentNode {
   notifications: { pending: NotificationEvent[] }
 }
 
+// The kind vestad reports for a known device. Unlike the client-reported ClientKind (frames.ts),
+// this can be "unknown" for a device that connected without identifying its surface.
+export type DeviceKind = "web" | "mobile" | "desktop" | "unknown"
+
+// One device in the gateway-global registry: identity plus whether it currently holds a live /sync
+// connection, or when it last did. The push token is never on the wire; `pushEnabled` is the only
+// push signal. `descriptor` is null until a device connects and names itself.
+export interface DeviceInfo {
+  id: string
+  kind: DeviceKind
+  descriptor: string | null
+  present: boolean
+  lastSeen: string
+  pushEnabled: boolean
+}
+
 export interface Tree {
   gateway: GatewayInfo
   agents: Record<string, AgentNode>
+  devices: DeviceInfo[]
 }

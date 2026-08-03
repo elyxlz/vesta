@@ -48,6 +48,7 @@ describe("server frame and tree shapes", () => {
           notifications: { pending: [event] },
         },
       },
+      devices: [],
     }
     const snapshot: SnapshotFrame = { type: "snapshot", tree }
     expect(snapshot.tree.agents.scout?.notifications.pending[0]?.id).toBe(7)
