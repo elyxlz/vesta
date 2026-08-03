@@ -89,7 +89,9 @@ def _start() -> int:
     if answer is not None:
         return answer
     with LOG.open("ab") as log:
-        child = subprocess.Popen([sys.argv[0], "serve"], start_new_session=True, stdout=log, stderr=log)
+        child = subprocess.Popen(
+            [sys.argv[0], "serve"], env={**os.environ, "PYTHONUNBUFFERED": "1"}, start_new_session=True, stdout=log, stderr=log
+        )
     PIDFILE.write_text(str(child.pid))
     time.sleep(SETTLE_SECS)
     if child.poll() is None:

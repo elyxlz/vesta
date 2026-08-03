@@ -306,7 +306,9 @@ def _start() -> int:
         return _fail(f"could not register {NAME} with vestad; not launching")
     PORTFILE.write_text(port)
     with LOG.open("ab") as log:
-        child = subprocess.Popen([sys.argv[0], "serve", "--port", port], start_new_session=True, stdout=log, stderr=log)
+        child = subprocess.Popen(
+            [sys.argv[0], "serve", "--port", port], env={**os.environ, "PYTHONUNBUFFERED": "1"}, start_new_session=True, stdout=log, stderr=log
+        )
     PIDFILE.write_text(str(child.pid))
     return _await_ready(child, port)
 

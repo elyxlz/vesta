@@ -91,6 +91,7 @@ def _start() -> int:
     with LOG.open("ab") as log:
         child = subprocess.Popen(
             [sys.argv[0], "serve", "--notifications-dir", str(pl.Path.home() / "agent/notifications")],
+            env={**os.environ, "PYTHONUNBUFFERED": "1"},
             start_new_session=True,
             stdout=log,
             stderr=log,
