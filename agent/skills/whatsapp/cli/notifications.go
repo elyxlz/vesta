@@ -266,11 +266,12 @@ func writeCallNotification(notifDir, instance string, n callNotif) error {
 // mirroring the resolution runConnect and chooseLinker use: env creds first, filled
 // from persisted state so an env scrub still resolves the managed path. The auth
 // notifications read it because they run without a *WhatsAppClient (so without the
-// constructed linker) yet must still tell a managed agent to reauth autonomously.
-func notificationManagedConfig() managedConfig {
+// constructed linker) yet must still identify the exact recovery source. Whether
+// reconnect needs approval is derived separately from persisted link history.
+func notificationManagedConfig(instance string) managedConfig {
 	cfg := loadManagedConfig()
 	if cfg.directURL == "" || cfg.directKey == "" {
-		st := loadStateFromDisk(stateDataDir())
+		st := loadStateFromDisk(stateDataDirFor(instance))
 		if cfg.directURL == "" {
 			cfg.directURL = st.DirectURL
 		}
@@ -281,18 +282,18 @@ func notificationManagedConfig() managedConfig {
 	return cfg
 }
 
-func managedParadigm() bool {
-	return newManagedAuth(notificationManagedConfig()).isHosted()
+func managedParadigm(instance string) bool {
+	return newManagedAuth(notificationManagedConfig(instance)).isHosted()
 }
 
-func wasPreviouslyLinked() bool {
-	st := loadStateFromDisk(stateDataDir())
+func wasPreviouslyLinked(instance string) bool {
+	st := loadStateFromDisk(stateDataDirFor(instance))
 	return st.OnboardedMSISDN != "" || !st.LinkedAt.IsZero() || st.AuthStatus == "logged_out" || st.ExitStatus != ""
 }
 
 func connectCommand(instance string) string {
 	source := sourceSelfManaged
-	if cfg := notificationManagedConfig(); cfg.isDirect() {
+	if cfg := notificationManagedConfig(instance); cfg.isDirect() {
 		source = sourceDoubletick
 	} else if cfg.isManagedVM() {
 		source = sourceVestaCloud
@@ -306,14 +307,17 @@ func connectCommand(instance string) string {
 
 // WriteUnpairedNotification tells the agent the WhatsApp daemon came up without a
 // device session and needs re-pairing. Called once per unpaired daemon boot. A
-// managed number reclaims itself autonomously (no user step), so only self-hosted QR
-// linking, which needs the human to scan, is gated on the user being ready.
+// managed flow needs no phone or QR step, but a prior link still requires approval
+// under the linking rule. A self-managed first link waits for user participation.
 func WriteUnpairedNotification(notifDir, instance string) error {
-	priorLink := wasPreviouslyLinked()
-	managed := managedParadigm()
+	priorLink := wasPreviouslyLinked(instance)
+	managed := managedParadigm(instance)
 	command := connectCommand(instance)
 	recovery := "first_link"
 	message := "WhatsApp daemon started without a paired device session. Run the exact next_command when the user is ready."
+	if managed {
+		message = "WhatsApp daemon started without a paired device session. Run the exact next_command now."
+	}
 	if priorLink {
 		recovery = "relink"
 		message = "WhatsApp lost a previously linked device session. Ask the user for explicit approval before reconnecting, then run the exact next_command once."
@@ -342,7 +346,7 @@ func WriteLoggedOutNotification(notifDir, instance, reason string) error {
 	if reason != "" {
 		message += " (" + reason + ")"
 	}
-	if managedParadigm() {
+	if managedParadigm(instance) {
 		message += ". Ask the user for explicit approval before reconnecting, then run the exact next_command once. The headless flow needs no phone or QR step. Do not retry-loop pairing."
 	} else {
 		message += ". Ask the user for explicit approval before reconnecting, then run the exact next_command once. Do not retry-loop pairing."

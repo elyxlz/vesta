@@ -153,11 +153,12 @@ func TestFreshManagedUnpairedCanConnectWithoutApproval(t *testing.T) {
 	if _, present := fields["requires_user_approval"]; present {
 		t.Fatal("first-time setup must not be mislabeled as a recovery requiring fresh approval")
 	}
-	var recovery, command string
+	var recovery, command, message string
 	_ = json.Unmarshal(fields["recovery"], &recovery)
 	_ = json.Unmarshal(fields["next_command"], &command)
-	if recovery != "first_link" || command != "whatsapp connect --source doubletick" {
-		t.Fatalf("fresh managed notification = recovery %q command %q", recovery, command)
+	_ = json.Unmarshal(fields["message"], &message)
+	if recovery != "first_link" || command != "whatsapp connect --source doubletick" || !strings.Contains(message, "now") {
+		t.Fatalf("fresh managed notification = recovery %q command %q message %q", recovery, command, message)
 	}
 }
 
@@ -194,5 +195,31 @@ func TestLoggedOutNotificationNamesExactApprovedRecoveryCommand(t *testing.T) {
 	_ = json.Unmarshal(fields["next_command"], &command)
 	if !approval || command != "whatsapp connect --source self-managed --instance 'personal'" {
 		t.Fatalf("logged-out recovery = approval %v command %q", approval, command)
+	}
+}
+
+func TestNamedInstanceUsesItsOwnPersistedRecoveryState(t *testing.T) {
+	dir := prepareAuthNotificationTest(t)
+	instance := "personal"
+	instanceDir := stateDataDirFor(instance)
+	if err := os.MkdirAll(instanceDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	newStateStore(instanceDir).update(func(state *daemonState) {
+		state.DirectURL = "https://doubletick.example"
+		state.DirectKey = "wak_secret"
+		state.OnboardedMSISDN = "+15551230000"
+	})
+
+	if err := WriteUnpairedNotification(dir, instance); err != nil {
+		t.Fatal(err)
+	}
+	fields := soleNotifFields(t, dir)
+	var approval bool
+	var command string
+	_ = json.Unmarshal(fields["requires_user_approval"], &approval)
+	_ = json.Unmarshal(fields["next_command"], &command)
+	if !approval || command != "whatsapp connect --source doubletick --instance 'personal'" {
+		t.Fatalf("named-instance recovery = approval %v command %q", approval, command)
 	}
 }

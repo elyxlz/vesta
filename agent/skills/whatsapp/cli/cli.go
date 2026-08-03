@@ -76,8 +76,12 @@ func extractSkipSenders() map[string]bool {
 // stateDataDir is the per-instance data directory under ~/.whatsapp (the bare
 // directory for the default instance, a named subdirectory otherwise).
 func stateDataDir() string {
+	return stateDataDirFor(extractInstance())
+}
+
+func stateDataDirFor(instance string) string {
 	base := filepath.Join(os.Getenv("HOME"), ".whatsapp")
-	if instance := extractInstance(); instance != "" {
+	if instance != "" {
 		return filepath.Join(base, instance)
 	}
 	return base
