@@ -1,6 +1,6 @@
 ---
 name: emergency
-description: Someone is hurt, ill, in danger, or in crisis. Use the moment a message describes symptoms, injury, an accident, poisoning or overdose, an allergic reaction, chest pain, bleeding, someone unconscious, not breathing, not waking up, a pregnancy problem, a child who is unwell, or anyone talking about suicide or self-harm. Covers what to ask, when to stop asking, what to do when calling for help is not possible or not safe, and what you must never say.
+description: Someone is hurt, ill, in danger, or in crisis. Use the moment a message describes symptoms, injury, an accident, poisoning or overdose, an allergic reaction, chest pain, bleeding, someone unconscious, not breathing, not waking up, a pregnancy problem, a child who is unwell, or anyone talking about suicide or self-harm.
 ---
 
 # Emergency
@@ -209,10 +209,20 @@ family, and let the patient choose who is told.
   suspected heart attack: those need a centre with specific capability, and a local department
   without a scanner can burn the window that is the whole treatment. That is another reason to call
   rather than drive, because the ambulance chooses the destination.
-- **Send in this order:** the number first, because it needs no verification; then a maps link rather
-  than a prose address; then a phone number; then "confirm they are open when you call".
+- **Send in this order:** the emergency-services number first, because it needs no verification; then
+  a maps link rather than a prose address; then the facility's own phone number; then "confirm they
+  are open when you call".
 - **Mark what you have not verified, in the same breath.** "This should be the nearest, confirm with
-  the driver" costs nothing.
+  the driver" costs nothing. Urgency makes you *sound* certain, which is a different failure from
+  being wrong, and speed and honesty were never actually in conflict.
+- **A facility's phone number from a search snippet or a directory is the LEAST reliable thing you
+  will send, and it looks the most authoritative.** In the real case this file was built on, the
+  hospital and the street were right and the phone number was DEAD: a stale third-party listing for
+  a hospital that had since been renamed and renumbered. It cost nothing only because they took a
+  taxi and never rang it. So give the number from the FACILITY'S OWN SITE or say you have not
+  confirmed it, and remember the hierarchy: the emergency-services number is stable and public, an
+  address is fairly stable, a facility's direct line goes stale silently. Never let a phone number
+  be the only route you give.
 - **Be the memory.** Offer to hold the details: what was taken and when, the time symptoms started,
   allergies, regular medications, existing conditions, and afterwards what they were actually told.
 - **Help them say it clearly at the desk.** One sentence: mechanism, timeline, red flags. Then they
@@ -239,8 +249,10 @@ family, and let the patient choose who is told.
   data when the user is alone, after a self-harm disclosure, or when the last thing you heard was
   deterioration. Know which case you are in.
 - Never let a staged reminder or scheduled nudge fire into a live emergency. If one is due within
-  the hour, kill it now; anything further out waits for Afterwards. A cheerful reminder about a job
-  application landing mid-crisis is its own small cruelty.
+  the hour, **snooze it** (`tasks remind snooze <id> --in-hours N`); anything further out waits for
+  Afterwards. A cheerful reminder about a job application landing mid-crisis is its own small
+  cruelty. **Snooze, never delete**: deleting is unrecoverable, and it silently drops something the
+  user is counting on at the exact moment they have no attention to notice it missing.
 - Never compact or restart context mid-emergency if you can defer it. **Append** the live state to
   `data/LIVE-<what>-<date>.md` line by line as it happens, so a restart cannot lose the thread.
   Append, do not compose; writing a document is attention the patient is owed.
@@ -249,7 +261,8 @@ family, and let the patient choose who is told.
 
 Stand down deliberately. Re-examine every decision that was contingent on the outcome, alarms you
 were going to cancel, plans you were going to change, and put back the ones that no longer need
-changing. **Kill any staged reminder that would now fire into the aftermath.** Ask what the outcome
+changing. **Snooze any staged reminder that would now fire into the aftermath**, and tell the user
+you moved it rather than moving it silently. Ask what the outcome
 actually was: "sent home comfortable" is not "ruled out", and whether they were imaged or just looked
 at is worth knowing. Then leave them alone. Aftercare advice, if you have any worth giving, is
 offered ONCE at a natural moment, never fired at an exhausted person at dawn.
@@ -271,21 +284,8 @@ Do this when nothing is happening, because at 03:00 there is no time:
 - Keep it in one file per region, `data/emergency-reference-<region>.md`, built before travel, with
   **every line tagged with how it was verified** or explicitly marked unverified.
 
-## The lesson this file was built on
+## Before you need it
 
-Written after a real one: an adult, abroad, at night, whose throat closed after violent vomiting,
-with chest pain and blood. Escalated, seen, and fine.
-
-**Under time pressure my verification discipline collapsed.** I told them a hospital was the best in
-the city and passed on an address and phone from a search-result summary, having opened none of it.
-It happened to be right.
-
-The trade was correct: a plausible nearby hospital now beats a verified one in twenty minutes. **But
-speed and honesty were never in conflict.** I could have kept every second and still said "this
-should be the nearest, confirm with the driver". Urgency made me *sound* certain, which is a
-different failure from being wrong. Hence the send-order above: the number needs no verification and
-goes first, and everything after it carries its uncertainty out loud.
-
-The second lesson took longer to surface. **I wrote this skill and did not activate it**, so for
-several hours it could not have fired at all. A skill that exists and is not switched on is worth
-nothing. Check that it is live.
+**Check this skill is actually switched on**, wherever your setup records active skills. A file on
+disk that was never activated cannot fire, and nothing warns you: it sits there looking finished
+while the situation it was written for goes unhandled.

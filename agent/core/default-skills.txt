@@ -6,6 +6,7 @@ contacts
 dashboard
 dream
 email-client
+emergency
 microsoft
 nap
 notifications
