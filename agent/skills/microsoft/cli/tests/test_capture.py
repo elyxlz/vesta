@@ -110,6 +110,9 @@ def test_setup_start_personal_returns_device_code(monkeypatch, tmp_path):
     assert out["status"] == "device_code"
     assert out["code"] == "ABC123"
     assert "_flow_cache" in out
+    # A personal account is asked for mail + calendar only: Teams Graph scopes are work/school only.
+    requested = app.initiate_device_flow.call_args.kwargs["scopes"]
+    assert not [scope for scope in requested if scope in teams.TEAMS_SCOPES]
 
 
 def test_setup_start_work_domain_defaults_to_browser(monkeypatch, tmp_path):
@@ -140,7 +143,8 @@ def test_setup_browser_flag_starts_handover(monkeypatch, tmp_path):
 
 def test_setup_flow_complete_success_marks_teams(monkeypatch, tmp_path):
     cfg = Config(data_dir=tmp_path)
-    app = _fake_app(result={"access_token": "tok", "id_token_claims": {"preferred_username": "a@x.com"}})
+    granted = " ".join([*teams.TEAMS_SCOPES, "openid", "profile"])
+    app = _fake_app(result={"access_token": "tok", "scope": granted, "id_token_claims": {"preferred_username": "a@x.com"}})
     monkeypatch.setattr(auth_commands.auth, "get_app", lambda *a, **k: app)
     out = auth_commands.auth_setup(cfg, account_email="a@x.com", flow_cache=json.dumps({"device_code": "d"}))
     assert out["status"] == "success"

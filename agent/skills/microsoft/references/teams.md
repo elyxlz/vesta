@@ -4,6 +4,12 @@
 not authorize it separately (see [SETUP.md](../SETUP.md)). On a locked tenant the one browser sign-in
 covers Teams too, and the daemon keeps its token fresh.
 
+**Teams needs a work or school account.** Every Teams Graph permission (`Chat.*`, `Team.*`,
+`Channel.*`, `Presence.*`) is work/school only, so a personal Microsoft account (outlook.com,
+hotmail.\*, live.\*, msn.com) cannot authorize Teams by any route. `auth setup` handles this on its
+own: it signs a personal account in for mail and calendar only, and reports `provisioned:
+mail/calendar`. Do not go looking for a Teams workaround for a personal account, there isn't one.
+
 Every command takes `--backend {auto,graph,owa-rest}` (default `auto`): `graph` uses the device-flow
 token, `owa-rest` uses the browser-captured token, `auto` tries Graph then falls back. If a command
 returns a scope error, the token was captured without that permission, re-run `auth setup --browser`.
