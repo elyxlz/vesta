@@ -55,6 +55,14 @@ Press hardest when the code looks finished and the tests are green: that is exac
 - **Right idea, wrong execution.** The direction is correct and the fix is worth having, and it still double-books, drops, or duplicates in case X. Name X. That is `BUGGED`, not `MERGE`: a needed fix carried in wrong is still carried in wrong.
 - **Stale base.** A PR correct when it was written can be wrong against today's `master`. Read the current code paths, including whatever merged *after* it was opened, since a later change may have repurposed a field it relies on. When another open PR touches the same function, read that diff too and say whether they compose, conflict, or need a merge order.
 
+## Was it already fixed?
+
+Establish how far the PR's world is from today's before trusting anything the diff assumes. Find the commit the PR was written against (`gh pr view <n> --json headRefOid`, then `git merge-base origin/master <head>`) and read the repo version at both points (`git show <sha>:agent/core/pyproject.toml` at the base vs on `origin/master`). A gap of releases means everything the diff touches must be re-read in today's code, and it means the problem itself may already be gone.
+
+When the base is behind master, fan out one subagent dedicated to that single question, in parallel with your own read of the diff. Give it the problem the PR claims to solve and the files it touches, and have it walk `git log --oneline <base>..origin/master -- <paths>` plus a pickaxe (`git log -S`) on the load-bearing symbol, read the PRs those commits came from, then open today's code path and say whether the defect still exists. It returns a report, not an opinion about the diff: base sha and version, master sha and version, the commits since that touch the same ground, and one of `still broken` (with the line that proves it), `already fixed by <commit/PR>` (with the line that fixed it), or `partially fixed` (what remains). This is the one delegation that always pays for itself: it needs no context from your read, so it costs you nothing to launch first, and it settles a question you would otherwise answer late or not at all.
+
+Fold the report into the comment, not alongside it: a PR whose problem master already fixed is `NOISE` (superseded; name the commit that did it) whatever its code quality, `partially fixed` reframes what the PR still buys, and `still broken` is what lets the verdict stand on today's code rather than the base's.
+
 ## Also confirm
 
 **It fixes the issue it claims to.** Find the issue from a closing keyword in the PR body (`fixes #N`, `closes #N`, `resolves #N`) and read the issue itself, not the PR's description of it. Distinguish fixing it from fixing part of it, fixing something adjacent, and not addressing it at all. With no issue linked, say what problem the PR appears to solve and whether it is worth carrying.
