@@ -484,7 +484,9 @@ async def test_processor_drains_turnless_compaction_on_idle_tick():
 
         await message_queue.put(result_msg())
         await wait_for_condition(
-            lambda: any(call.args == (f"/compact curate the open threads {COMPACTION_CREDENTIAL_GUARD}",) for call in mock_client.query.call_args_list),
+            lambda: any(
+                call.args == (f"/compact curate the open threads {COMPACTION_CREDENTIAL_GUARD}",) for call in mock_client.query.call_args_list
+            ),
             timeout=5.0,
             message="idle tick never drained the pending compaction",
         )
